@@ -137,9 +137,15 @@ export function formatBytes(n: number): string {
 
 /** Heuristic: does this text read right-to-left? */
 export function isRtlText(text: string): boolean {
-  const sample = text.slice(0, 400);
-  const rtl = (sample.match(/[֐-ࣿיִ-﷿ﹰ-﻿]/g) ?? []).length;
-  const ltr = (sample.match(/[A-Za-zÀ-ɏ]/g) ?? []).length;
+  // (The letters of the first 400 counted in one pass, not gathered into two arrays by two expressions: asked of every
+  // paragraph of a book as it opens. The same ranges: Hebrew, Arabic and their presentation forms; Latin.)
+  const n = Math.min(400, text.length); let rtl = 0, ltr = 0;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x41) continue;
+    if (c <= 0x5a || (c >= 0x61 && c <= 0x7a) || (c >= 0xc0 && c <= 0x24f)) ltr++;
+    else if ((c >= 0x590 && c <= 0x8ff) || (c >= 0xfb1d && c <= 0xfdff) || (c >= 0xfe70 && c <= 0xfeff)) rtl++;
+  }
   return rtl > ltr;
 }
 
@@ -161,6 +167,18 @@ export function localDigits(n: number | string, ctx: 'data' | 'prose' = 'data'):
   if (current !== 'ar') return s;
   const pref = digitsPref();
   return pref === 'eastern' || (pref === 'auto' && ctx === 'prose') ? EASTERN(s) : s;
+}
+
+/** A percentage as the interface writes it: «15%»; in Arabic as the locale writes it — «١٥٪», or «15٪» with Western
+ *  digits (the digits by `ctx`, as localDigits), the sign where Arabic puts it whichever way the line runs. */
+export function formatPercent(p: number, ctx: 'data' | 'prose' = 'data'): string {
+  if (current !== 'ar') return `${p}%`;
+  return new Intl.NumberFormat(dateLocale(ctx), { style: 'percent', maximumFractionDigits: 0 }).format(p / 100);
+}
+/** The time of day: as the device writes it, and in Arabic as the locale does («٤:٤٤ م», the digits by `ctx`). */
+export function formatClock(d: Date, ctx: 'data' | 'prose' = 'data'): string {
+  if (current !== 'ar') return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d);
+  return new Intl.DateTimeFormat(dateLocale(ctx), { hour: 'numeric', minute: '2-digit' }).format(d);
 }
 
 /** A counted noun in Arabic (تمييز العدد), as the case requires: `one` and `two` are the noun alone (واحد

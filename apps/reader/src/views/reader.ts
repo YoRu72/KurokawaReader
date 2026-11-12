@@ -1,6 +1,10 @@
 // The reading surface. Flow documents (EPUB, DOCX, TXT, …) are rendered one
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
+import { markReading } from '../resume';
+import { diagOpen, diagLeaveIntent, diagEvent, diagBackHeld } from '../diag';
+import { onBack } from '../ui/backstack';
+import { readingKeys, refreshReadingKeys } from '../readkeys';
 import { takeJump, setJump, type Jump } from '../jump';
 export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
@@ -11,7 +15,7 @@ import { attachRuler } from '../ui/ruler';
 import { jumpBack } from '../ui/jumpback';
 import { leaveToCaller } from '../native';
 import { applyTypography, revertTypography } from '../ui/typography';
-import { t, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
+import { t, getLang, localDigits, countMinutes, formatPercent } from '../i18n';
 import { db, uid, stampAfter, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -21,6 +25,7 @@ import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
+import { createReadBar } from '../ui/readbar';
 import { attachSelectionToolbar, wrapRange, findTextRange, textPlace, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
 import { openGallery } from './gallery';
 const DOCK_KEY = 'kr.reader.dock';
@@ -34,18 +39,20 @@ import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
 import { kittenReady, kittenSpeak, kittenCanRead } from '../kittentts';
-import { takeJump as takeSearchJump, storedPages, storePages } from '../booksearch';
+import { takeJump as takeSearchJump, storedPages, storePages, partialPages, storePartialPages } from '../booksearch';
 import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices, queueSpeech, speakQueue } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
 import { textRules, applyTextRules } from '../textrules';
 import { attachPinyin } from '../readings';
 import { scheduleSync, markDeleted } from '../sync';
-import { toolbarSheet } from '../ui/toolbarconfig';
+import { mountBars, moreList, type ActionRun } from '../ui/buttonbars';
+import { buttonSheet } from '../ui/buttonsheet';
 import { shareFile, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, nativePlatform } from '../native';
+import { onPhone, fits } from '../platform';
 import type { HighlightColor } from '../ui/selection';
-import { openSheet } from '../ui/dom';
+import { openSheet, askText } from '../ui/dom';
 
 /** Whether the search keeps the last search (opened again, it shows it); asked by a switch in the search itself. */
 const searchKeep = (): boolean => { try { return localStorage.getItem('kr.searchKeep') !== '0'; } catch { return true; } };
@@ -78,22 +85,40 @@ export function readerView(ids: string[]): HTMLElement {
   const run = (fn: () => void) => { try { fn(); } catch (err) { console.error(err); } };
   const onDispose = (fn: () => void) => { if (disposed) run(fn); else cleanups.push(fn); };
   const gone = () => disposed;
+  // (Marked open until it is left: an app ended under it opens it again — see src/resume.ts.)
+  onDispose(markReading(ids));
+  // "Back twice to leave a book": Back (the phone's button or gesture, a computer's mouse button or Alt+←) — once what
+  // is open over the book is closed (src/ui/backstack.ts does that first) and a selection let go — shows a reminder
+  // the first time; a second Back within 2 s leaves. The top bar's arrow does not come here: it leaves at once.
+  let backAt = 0;
+  onDispose(onBack(() => {
+    if (!getSettings().backTwiceLeave) return false;
+    const sel = document.getSelection();
+    if (sel && !sel.isCollapsed && sel.anchorNode && root.contains(sel.anchorNode)) { sel.removeAllRanges(); diagBackHeld('selection'); return true; }
+    if (Date.now() - backAt <= 2000) { backAt = 0; return false; }
+    backAt = Date.now();
+    diagBackHeld('twice');
+    toast(t('backAgainToLeave'), 'info', 2000);
+    return true;
+  }));
 
   void (async () => {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
     if (disposed) return;
-    if (!books.length) { navigate('/', true); return; }
+    if (!books.length) { diagLeaveIntent('missing'); diagEvent('err', { what: 'book missing' }); navigate('/', true); return; }
     // (A series kept in the library without its volumes opens on its source, where its volumes are.)
-    if (books[0].format === 'series' && books[0].remote?.link) { navigate(books[0].remote.link, true); return; }
+    if (books[0].format === 'series' && books[0].remote?.link) { diagLeaveIntent('series'); navigate(books[0].remote.link, true); return; }
+    // (The opening timed for the Performance page — its kind and rounded size only: src/diag.ts.)
+    const op = diagOpen(books[0].format, books.length);
     setActiveBook(books[0].id); onDispose(() => setActiveBook(null));
-    if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); return; }
-    if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); return; }
+    if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); op.placed(); return; }
+    if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); op.placed(); return; }
     const pdfs = books.filter((b) => b.format === 'pdf');
     const flows = books.filter((b) => b.format !== 'pdf');
     if (pdfs.length && (flows.length || pdfs.length > 1)) toast(t('fmtPdf') + ' · ' + t('open'), 'info', 3000);
-    if (pdfs.length && !flows.length) await mountPdf(root, pdfs[0], onDispose, gone);
-    else await mountFlow(root, flows.length ? flows : pdfs, onDispose, gone);
-  })().catch((err) => { console.error(err); toast(t('openError', { error: String((err as Error)?.message ?? err) }), 'error', 6000); });
+    if (pdfs.length && !flows.length) await mountPdf(root, pdfs[0], onDispose, gone, op);
+    else await mountFlow(root, flows.length ? flows : pdfs, onDispose, gone, op);
+  })().catch((err) => { console.error(err); diagEvent('err', { what: 'open failed', name: (err as Error)?.name ?? typeof err }); diagLeaveIntent('error'); toast(t('openError', { error: String((err as Error)?.message ?? err) }), 'error', 6000); });
 
   (root as HTMLElement & { dispose?: () => void }).dispose = () => { if (disposed) return; disposed = true; cleanups.splice(0).forEach(run); };
   return root;
@@ -103,7 +128,8 @@ export function readerView(ids: string[]): HTMLElement {
 /* Flow reader                                                         */
 /* ------------------------------------------------------------------ */
 
-async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void, gone: () => boolean = () => false): Promise<void> {
+type DiagOpen = ReturnType<typeof diagOpen>;
+async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void, gone: () => boolean = () => false, op?: DiagOpen): Promise<void> {
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
   let programmatic = 0; // when the reader last scrolled by itself (restoring a place), so that is not taken for the person scrolling
@@ -123,54 +149,26 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const footerWhere = h('span', { class: 'where' });
   const footerPct = h('span', { class: 'pct' });
   const footer = h('div', { class: 'read-footer' }, footerWhere, h('div', { class: 'bar' }, footerBar), footerPct);
-  const statusWhere = h('span', { class: 'where' });
-  const statusPage = h('span', { class: 'pg' });
-  const statusClock = h('span', { class: 'clock' });
-  const statusBatt = h('span', { class: 'batt' });
-  const statusPct = h('span', { class: 'pct' });
-  const statusLeft = h('span', { class: 'left', title: t('timeLeftChapter') });
-  const statusBar = h('div', { class: 'read-status' }, statusWhere, statusPage, h('span', { class: 'sp' }), statusLeft, statusClock, statusBatt, statusPct);
-  const tickClock = () => {
-    const d = new Date();
-    if (getLang() === 'ar') { const h = d.getHours(); statusClock.textContent = localDigits(`${((h + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')}`) + (h >= 12 ? ' مساءً' : ' صباحًا'); }
-    else statusClock.textContent = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
-  };
-  statusBar.hidden = !getSettings().showStatusLine;
-  tickClock(); const clockTimer = window.setInterval(tickClock, 15000); onDispose(() => window.clearInterval(clockTimer));
-  (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void }> }).getBattery?.().then((b) => { const paint = () => { statusBatt.textContent = `${localDigits(Math.round(b.level * 100))}%`; }; paint(); b.addEventListener('levelchange', paint); }).catch(() => undefined);
+  // The reading bar (src/ui/readbar.ts), and the frame of the text as it is read with the chrome hidden — one page
+  // (reader.css .read-frame): the bar's pages are counted in it, so they do not change when the chrome shows or hides.
+  const bar = createReadBar(root, onDispose);
+  const statusBar = bar.el;
+  const frame = h('div', { class: 'read-frame', 'aria-hidden': 'true' });
+  root.classList.add('flow-reader');
   const title = h('div', { class: 'title' });
   const panel = new SidePanel(root);
 
   // (Back: to the book's own page when the book opens on one, else the library.)
-  const goBack = () => { const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => goBackView(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else goBackView('/'); };
-  const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), goBack),
-    title,
-    iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-  );
-  // M3 Expressive floating toolbar carries the reading actions.
+  const goBack = () => { diagLeaveIntent('top-back', true); const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => goBackView(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else goBackView('/'); };
+  // The top bar — the back arrow (always there), the buttons placed at its start, the title, those at its end — and
+  // the M3 Expressive floating toolbar: what each holds is the reader's choice (src/readbuttons.ts), drawn below
+  // once the reader's state is there (mountBars).
+  const backBtn = iconButton('back', t('back'), goBack);
+  const topbar = h('header', { class: 'topbar' }, backBtn, title);
   const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') });
-  const TOOLBAR_ITEMS: Record<string, () => HTMLElement> = {
-    toc: () => iconButton('toc', t('contents'), () => openContents('toc')),
-    search: () => iconButton('search', t('searchInBook'), () => openSearch()),
-    images: () => iconButton('images', t('images'), () => showGallery()),
-    bookmark: () => iconButton('bookmarkAdd', t('addBookmark'), () => addBookmark()),
-    bookmarks: () => iconButton('bookmark', t('bookmarks'), () => openContents('bookmarks')),
-    sep: () => h('span', { class: 'sep' }),
-    type: () => iconButton('type', t('visualOptions'), () => openOptions()),
-    translate: () => iconButton('translate', t('aiTranslate'), () => translator.toggleUi()),
-    speak: () => iconButton('speak', t('readAloud'), () => { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); }),
-    scroll: () => iconButton('scroll', t('autoScroll'), () => toggleAutoScroll()),
-    info: () => iconButton('info', t('bookInfo'), () => showInfo()),
-    snapshot: () => iconButton('camera', t('textAsImage'), () => toast(t('selectTextFirst'))),
-    fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-    more: () => iconButton('more', t('more'), () => openMore()),
-  };
+  const moreBtn = iconButton('more', t('more'), () => openMore());
   // (On a computer the tools sit in the top bar with their names — see the styles —; a phone keeps the floating icons.)
-  const named = (b: HTMLElement) => { const l = b.getAttribute('aria-label'); if (l && b.classList.contains('icon-btn')) b.append(h('span', { class: 'tb-label' }, l)); return b; };
-  const renderToolbar = () => { toolbar.replaceChildren(...getSettings().readerToolbar.filter((id) => TOOLBAR_ITEMS[id]).map((id) => named(TOOLBAR_ITEMS[id]()))); if (!getSettings().readerToolbar.includes('more')) toolbar.appendChild(named(TOOLBAR_ITEMS.more())); };
-  renderToolbar();
-  onDispose(onSettingsChange(() => renderToolbar()));
+  const named = (b: HTMLElement) => { const l = b.getAttribute('aria-label'); if (l && b.classList.contains('icon-btn') && !b.querySelector('.tb-label')) b.append(h('span', { class: 'tb-label' }, l)); return b; };
   reader.append(scroll);
   const chapterNav = h('nav', { class: 'chapter-nav', hidden: true });
   // A computer's page-turn arrows at the two sides of the text: shown while the mouse moves, gone when it rests.
@@ -179,11 +177,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   let restT = 0; const awake = () => { root.classList.add('mouse-awake'); window.clearTimeout(restT); restT = window.setTimeout(() => root.classList.remove('mouse-awake'), 1800); };
   root.addEventListener('mousemove', awake); onDispose(() => window.clearTimeout(restT));
   reader.append(...arrows);
-  root.append(topbar, reader, footer, statusBar, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
+  root.append(topbar, reader, footer, statusBar, toolbar, frame, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
+  // (The text ends above the floating toolbar while it shows: its height, for the styles.)
+  // (…and, the toolbar at a side, its width: the text keeps clear of it.)
+  { const tbObs = new ResizeObserver(() => { const hgt = toolbar.offsetHeight, w = toolbar.offsetWidth; if (hgt) root.style.setProperty('--tb-h', `${hgt}px`); if (w) root.style.setProperty('--tb-w', `${w}px`); }); tbObs.observe(toolbar); onDispose(() => tbObs.disconnect()); }
+  // Where the toolbar stands and how it looks (reader.css [data-tb], [data-tblook]): «auto» is at the foot on a phone
+  // and in the top bar on a computer ('inline').
+  const placeToolbar = () => { const s = getSettings(); const at = s.toolbarAt === 'auto' || !s.toolbarAt ? (document.documentElement.classList.contains('pc') ? 'inline' : 'bottom') : s.toolbarAt; root.dataset.tb = toolbar.hidden ? 'none' : at; root.dataset.tblook = at === 'inline' ? 'pill' : s.toolbarLook === 'docked' ? 'docked' : 'pill'; };
+  placeToolbar();
   syncChrome();
   panel.onClose = () => { try { localStorage.removeItem(DOCK_KEY); } catch { /* private mode */ } };
   { let was: string | null = null; try { was = localStorage.getItem(DOCK_KEY); } catch { /* private mode */ }
-    if (was && SidePanel.canDock()) { const tab = was as 'toc'; const tm = window.setTimeout(() => { if (root.isConnected && !panel.isOpen) openContents(tab); }, 900); onDispose(() => window.clearTimeout(tm)); } }
+    if (was && SidePanel.canDock()) { const tab = was as 'toc'; const tm = window.setTimeout(() => { void whole.then(() => { if (root.isConnected && !panel.isOpen) openContents(tab); }); }, 900); onDispose(() => window.clearTimeout(tm)); } }
   const chapterMode = () => getSettings().readingMode !== 'continuous';
   const flowMode = () => getSettings().readingMode === 'flow';
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
@@ -196,7 +201,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const translator = attachTranslator({
     root, scroll,
     blocks: () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks.map((el) => ({ el, bookId: d.book.id }))),
-    chapters: () => units().map((u, i) => ({ label: chapterTitle(u) || `${localDigits(i + 1)}`, bookId: u.doc.book.id, blocks: u.doc.allBlocks.filter((b) => u.el === b || u.el.contains(b)) })),
+    // (Each chapter's title and blocks worked out when asked for, not for every chapter at each call: the translator
+    // asks for the list at open, and a book of hundreds of chapters cost the whole book's blocks times its chapters.)
+    chapters: () => units().map((u, i) => { let label: string | undefined; return { get label() { return (label ??= chapterTitle(u) || `${localDigits(i + 1)}`); }, bookId: u.doc.book.id, get blocks() { return blocksOfUnit(u); } }; }),
     currentChapter: () => Math.max(0, currentUnitIndex()),
     onChapterChange: (fn) => chapterListeners.push(fn),
     bookTitle: (id) => docs.find((d) => d.book.id === id)?.book.title,
@@ -213,6 +220,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // later passes of restore — fonts and pictures settling — go back to it, not to the place read last. Declared
   // here, before the first restore, which runs while the rest of this function waits on the book.)
   let asked: (() => void) | null = null;
+  // A book of many chapters opened at the chapter read last, that chapter made first and the rest after (renderDoc,
+  // firstChapter): while the rest are made the book is shown but not yet whole — `early` — and what needs the whole
+  // book (the reader's actions) waits for `whole`.
+  interface Plan { k: number; map: ChapterMap | null; block?: number; offset?: number }
+  interface Early { doc: OpenDoc; plan: Plan; size: number; scrolled: boolean; applied: Set<string>; done?: boolean }
+  let early = null as Early | null;
+  let wholeDone: () => void = () => undefined; const whole = new Promise<void>((r) => { wholeDone = r; });
+  let saveSoon = false;
 
   for (let i = 0; i < books.length; i++) {
     const book = books[i];
@@ -238,13 +253,169 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const aiQueue = new Map<string, Blob>();
   let sleepTimer = 0;
 
-  async function renderDoc(doc: OpenDoc): Promise<void> {
+  // Every action of a flowing book (src/readbuttons.ts FLOW_ACTIONS), wherever the reader has put it: the top bar, the
+  // toolbar, «More» — or nowhere (its key and its tap zone still do it: onKey, onCommand).
+  const bookNow = () => currentLocator()?.doc.book ?? docs[0].book;
+  const speakToggle = () => { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } };
+  const actions: Record<string, ActionRun> = {
+    toc: { run: () => openContents('toc') },
+    search: { run: () => openSearch() },
+    images: { run: () => showGallery() },
+    bookmark: { run: () => void addBookmark() },
+    bookmarks: { run: () => openContents('bookmarks') },
+    highlights: { run: () => openContents('highlights') },
+    type: { run: () => openOptions() },
+    translate: { run: () => translator.toggleUi() },
+    glossary: { run: () => { const b = bookNow(); void import('../ui/glossarysheet').then((m) => m.glossarySheet({ id: b.id, title: b.title })); } },
+    speak: { run: speakToggle, label: () => (speaking ? t('stopReading') : t('readAloud')), icon: () => (speaking ? 'stop' : 'speak') },
+    scroll: { run: () => toggleAutoScroll() },
+    speedReading: { run: () => void startSpeedReading() },
+    sleepTimer: { run: () => sleepTimerSheet(), label: () => (sleepTimer ? t('sleepTimerOff') : t('sleepTimer')) },
+    dayNight: { run: () => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'dayNight' })) },
+    fullscreen: { run: () => { void toggleFullscreen(root); } },
+    readingBar: { run: () => updateSettings({ showStatusLine: !getSettings().showStatusLine }), label: () => (getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar')) },
+    info: { run: () => showInfo() },
+    favorite: { run: () => void toggleFavorite(bookNow()), label: () => (bookNow().tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite')), icon: () => (bookNow().tags?.includes(FAV_TAG) ? 'heartFill' : 'heart') },
+    exportNotes: { run: () => void exportNotes(bookNow()) },
+    exportAnki: { run: () => void exportNotesAnki(bookNow()) },
+    shareFile: { run: () => void shareBooks([bookNow().id]) },
+    convertFile: { run: () => { const b = bookNow(); void import('../ui/convert').then((m) => m.convertSheet(b)); } },
+    readInOrder: { run: () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : books.map((b) => b.id), { onChange: () => void findNext() })) },
+    jumpToBook: { run: () => openContents('toc'), available: () => docs.length > 1 },
+  };
+  // (Asked for while the book's later chapters are still being made: done once they are — on the whole book.)
+  for (const a of Object.values(actions)) { const run = a.run; a.run = () => { if (early) void whole.then(run); else run(); }; }
+  const bars = mountBars({ kind: 'flow', root, topbar, back: backBtn, title, toolbar, toolbarBox: toolbar, more: moreBtn, actions, dress: named, after: () => placeToolbar() });
+  bars.render();
+  onDispose(onSettingsChange(() => { placeToolbar(); bars.render(); }));
+  onDispose(() => bars.dispose());
+
+  /** The start of an element's text — `el.textContent.slice(0, n)` — without making the whole of it. */
+  function headText(el: Element, n: number): string {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION); let out = '';
+    for (let x = w.nextNode(); x && out.length < n; x = w.nextNode()) out += (x as CharacterData).data;
+    return out.slice(0, n);
+  }
+  /** The blocks of a book's text (or of a part of it), in order: the units its places are counted in. */
+  function blocksIn(el: Element): HTMLElement[] {
+    return [...el.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+  }
+  /** Whether a chapter has text or a picture (`textContent.trim()` without building the chapter's whole text). */
+  function hasContent(c: Element): boolean {
+    const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
+    for (let n = w.nextNode(); n; n = w.nextNode()) if (/\S/.test((n as CharacterData).data)) return true;
+    return !!c.querySelector('img, svg, image, video');
+  }
+  /** The book's blocks, its chapters and the one shown (chapter by chapter), its text rules, typography and highlights:
+   *  what the reader keeps of a book once its text is made — and again once the rest of its chapters are, for a book
+   *  opened at a chapter first (`target`: the element whose chapter is shown; else the place read last). */
+  function layDoc(doc: OpenDoc, target?: Element | null): void {
+    const el = doc.render!.element;
+    if (textRules().length) applyTextRules(el, doc.book.id);
+    if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(el);
+    doc.allBlocks = blocksIn(el);
+    const all = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')];
+    const sections = all.filter((c) => !c.classList.contains('kr-shell') && hasContent(c));
+    doc.chapters = sections.length > 1 ? sections : [el];
+    doc.chapter = 0;
+    doc.blocks = doc.allBlocks;
+    if (chapterMode() && doc.chapters.length > 1) {
+      // Hide the other chapters before the first layout: laying out a whole book
+      // just to show one chapter was most of the time a large EPUB took to open.
+      let pb: Element | undefined;
+      if (target !== undefined) pb = target ?? undefined;
+      else { const p = doc.book.progress; pb = p && p.bookId === doc.book.id && p.block !== undefined ? doc.allBlocks[p.block] : undefined; }
+      const idx = pb ? doc.chapters.findIndex((c) => c === pb || c.contains(pb!)) : -1;
+      doc.chapter = Math.max(0, idx);
+      doc.chapters.forEach((c, i) => { c.hidden = i !== doc.chapter; });
+      doc.blocks = doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b));
+    }
+    // (Chapters not made yet are kept out of sight chapter by chapter — held; once made, one that is not a chapter of
+    // the reader's — empty — is shown as it always was.)
+    for (const c of all) {
+      if (c.classList.contains('kr-shell')) { if (chapterMode()) { c.hidden = true; c.dataset.krHeld = '1'; } }
+      else if (c.dataset.krHeld) { delete c.dataset.krHeld; if (!doc.chapters.includes(c)) c.hidden = false; }
+    }
+    applyHighlights(doc);
+  }
+  /** The sizes of a book's chapters, kept on this device from its last opening (not synced, not backed up): each
+   *  chapter's blocks in the order of its spine, and its direction — so it can open at its place with only the chapter
+   *  there made (firstChapter). A guess only: the place is put right once the whole book is made. */
+  interface ChapterMap { size: number; b: number[]; rtl: boolean }
+  const MAPS = 'kr.chapterMaps';
+  function readMap(id: string, size: number): ChapterMap | null {
+    try { const m = (JSON.parse(localStorage.getItem(MAPS) ?? '{}') as Record<string, ChapterMap>)[id]; return m && m.size === size && Array.isArray(m.b) ? m : null; } catch { return null; }
+  }
+  function writeMap(doc: OpenDoc, size: number): void {
+    const el = doc.render?.element; if (!el || doc.book.format !== 'epub') return;
+    const all = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')]; if (all.length <= 6) return;
+    const at = new Map<Element, number>(all.map((c, i) => [c, i])); const b = all.map(() => 0);
+    for (const bl of doc.allBlocks) { let e: Element | null = bl; while (e && e.parentElement !== el) e = e.parentElement; const i = e ? at.get(e) : undefined; if (i !== undefined) b[i]++; }
+    const map: ChapterMap = { size, b, rtl: !!doc.render?.rtl };
+    try {
+      const maps = JSON.parse(localStorage.getItem(MAPS) ?? '{}') as Record<string, ChapterMap>;
+      const was = maps[doc.book.id]; if (was && JSON.stringify(was) === JSON.stringify(map)) return;
+      delete maps[doc.book.id]; maps[doc.book.id] = map;
+      const ids = Object.keys(maps); for (const id of ids.slice(0, Math.max(0, ids.length - 24))) delete maps[id];
+      localStorage.setItem(MAPS, JSON.stringify(maps));
+    } catch { /* full or private: opened whole next time */ }
+  }
+  /** The chapter (its place in the spine) a book of many chapters is opened at, made first with its neighbours, and the
+   *  block there — or null: made whole first, as always (books read together, a jump asked for — a bookmark, a note, a
+   *  search hit, the pictures —, a place this device cannot find without the whole book). */
+  function firstChapter(doc: OpenDoc, size: number): Plan | null {
+    if (docs.length !== 1 || doc.book.format !== 'epub') return null;
+    try { if (sessionStorage.getItem('kr.jump') || sessionStorage.getItem('kr.searchJump') || sessionStorage.getItem('kr.openGallery') === doc.book.id) return null; } catch { return null; }
+    const map = readMap(doc.book.id, size);
+    const p = doc.book.progress;
+    if (!p || p.bookId !== doc.book.id) return { k: 0, map };
+    if (p.anchor) return null;
+    if (p.block === undefined) return p.pct ? null : { k: 0, map };
+    if (!map) return p.block === 0 ? { k: 0, map, block: 0, offset: p.offset } : null;
+    let base = 0;
+    for (let i = 0; i < map.b.length; i++) { if (p.block < base + map.b[i]) return { k: i, map, block: p.block - base, offset: p.offset }; base += map.b[i]; }
+    return null;
+  }
+  /** The element a book made a chapter first opens at: the block of its place, else its chapter (null: the start). */
+  function firstTarget(doc: OpenDoc, plan: Plan): HTMLElement | null {
+    const el = doc.render!.element; const sec = document.getElementById(`${doc.book.id}-c${plan.k}`);
+    if (plan.block !== undefined) { const b = plan.map ? (sec ? blocksIn(sec)[plan.block] : undefined) : blocksIn(el)[plan.block]; if (b) return b; }
+    return plan.k > 0 && sec && el.contains(sec) ? sec : null;
+  }
+  /** Put the place back in a book made a chapter first (as scrollToLocator does, from the chapter's own blocks). */
+  function placeFirst(doc: OpenDoc, plan: Plan): void {
+    const target = firstTarget(doc, plan);
+    if (!target || plan.block === undefined) return;
+    programmatic = performance.now();
+    const sr = scroll.getBoundingClientRect(); const r = target.getBoundingClientRect();
+    scroll.scrollTop += r.top - sr.top - 8 + (plan.offset ?? 0) * r.height;
+  }
+  /** The place in a book still being made, from its chapters' sizes kept (only when the chapter read agrees with them):
+   *  saved if the app is hidden or the book left before it is whole. */
+  function earlyLocator(): Locator | null {
+    const e = early; const map = e?.plan.map; if (!e || !map) return null;
+    const blocks = e.doc.blocks; const sr = scroll.getBoundingClientRect(); if (!blocks.length || sr.height < 40) return null;
+    let lo = 0, hi = blocks.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (blocks[m].getBoundingClientRect().bottom - sr.top <= 8) lo = m + 1; else hi = m; }
+    const block = blocks[lo]; const sec = block.closest<HTMLElement>('.kr-chapter'); const i = Number(/-c(\d+)$/.exec(sec?.id ?? '')?.[1] ?? NaN);
+    if (!sec || !(i >= 0) || i >= map.b.length) return null;
+    const own = blocksIn(sec); if (own.length !== map.b[i]) return null;
+    let base = 0; for (let j = 0; j < i; j++) base += map.b[j];
+    const total = map.b.reduce((a, x) => a + x, 0); const r = block.getBoundingClientRect();
+    const offset = Math.min(1, Math.max(0, (sr.top + 8 - r.top) / Math.max(1, r.height))); const at = base + own.indexOf(block);
+    return { bookId: e.doc.book.id, block: at, offset, pct: total ? Math.min(1, (at + offset) / total) : 0 };
+  }
+
+  async function renderDoc(doc: OpenDoc, quick = false): Promise<void> {
     const handler = flowHandlerFor(doc.book.format);
     const t0 = performance.now();
     const file = await db.getFile(doc.book.id);
     performance.measure('kr:getFile', { start: t0 });
-    if (!handler || !file) { doc.wrapper.append(h('p', { class: 'kr-content' }, !file && doc.book.source ? t('linkedFileMissing', { title: doc.book.title }) : t('unsupportedFormat'))); return; }
-    const ctx = { bookId: doc.book.id, bookTitle: doc.book.title, publisherStyles: getSettings().publisherStyles, id: (s: string) => `${doc.book.id}-${s}` };
+    if (doc === docs[0] && file) op?.size('bytes', file.size);
+    if (!handler || !file) { if (doc === docs[0]) op?.failed(file ? 'unsupported' : 'file missing'); doc.wrapper.append(h('p', { class: 'kr-content' }, !file && doc.book.source ? t('linkedFileMissing', { title: doc.book.title }) : t('unsupportedFormat'))); return; }
+    // (A book of many chapters opened where it was read: that chapter made first — firstChapter.)
+    const plan = quick ? firstChapter(doc, file.size) : null;
+    const ctx = { bookId: doc.book.id, bookTitle: doc.book.title, publisherStyles: getSettings().publisherStyles, id: (s: string) => `${doc.book.id}-${s}`, ...(plan ? { first: plan.k, rtl: plan.map?.rtl } : {}) };
     try {
       doc.render?.dispose();
       doc.wrapper.querySelector('.kr-content')?.remove();
@@ -255,36 +426,22 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       doc.wrapper.append(doc.render.element);
       // (The reader's text rules — a watermark taken out, a name respelt — on the text, and on chapters that
       // come later.)
-      { const el = doc.render.element; const id = doc.book.id; if (textRules().length) applyTextRules(el, id); el.addEventListener('kr-content-changed', () => { if (textRules().length) applyTextRules(el, id); }); }
-      if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(doc.render.element);
-      doc.allBlocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+      { const el = doc.render.element; const id = doc.book.id; el.addEventListener('kr-content-changed', () => { if (textRules().length) applyTextRules(el, id); }); }
       // (Chapters that come after the book opened — a novel's, fetched as read — are blocks of it too: read aloud,
       // counted, found, their place kept; laid out as the rest.)
       { const d = doc; const el = doc.render.element; el.addEventListener('kr-content-changed', (ev) => {
         if (d.render?.element !== el) return;
         if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(((ev as CustomEvent<{ el?: Element }>).detail?.el) ?? el);
-        d.allBlocks = [...el.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+        d.allBlocks = blocksIn(el);
         d.blocks = chapterMode() && d.chapters.length > 1 ? d.allBlocks.filter((b) => d.chapters[d.chapter]?.contains(b)) : d.allBlocks;
         allImages = docs.flatMap((x) => x.render?.images ?? []);
       }); }
-      const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img, svg, image, video'));
-      doc.chapters = sections.length > 1 ? sections : [doc.render.element];
-      doc.chapter = 0;
-      doc.blocks = doc.allBlocks;
-      if (chapterMode() && doc.chapters.length > 1) {
-        // Hide the other chapters before the first layout: laying out a whole book
-        // just to show one chapter was most of the time a large EPUB took to open.
-        const p = doc.book.progress;
-        const pb = p && p.bookId === doc.book.id && p.block !== undefined ? doc.allBlocks[p.block] : undefined;
-        const idx = pb ? doc.chapters.findIndex((c) => c === pb || c.contains(pb)) : -1;
-        doc.chapter = Math.max(0, idx);
-        doc.chapters.forEach((c, i) => { c.hidden = i !== doc.chapter; });
-        doc.blocks = doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b));
-      }
-      applyHighlights(doc);
+      if (doc.render.rest && plan) { early = { doc, plan, size: file.size, scrolled: false, applied: new Set() }; layDoc(doc, firstTarget(doc, plan)); }
+      else { layDoc(doc); if (docs.length === 1 && doc.book.format === 'epub') { const d = doc, size = file.size; window.setTimeout(() => { if (d.render?.element.isConnected) writeMap(d, size); }, 2000); } }
       performance.measure('kr:dom', { start: t2 });
     } catch (err) {
       console.error(err);
+      if (doc === docs[0]) op?.failed((err as Error)?.name ?? 'error');
       const msg = String((err as Error)?.message ?? err);
       // (A file that came broken — its zip with no end, cut short — fetched again from where it came, into
       // this same book: its place and notes kept.)
@@ -315,13 +472,63 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // Render books in order so the first one appears quickly.
   // (Opened at the book read last: it is the one whose place is put back once it is on the page.)
   const lastRead = latestDoc();
+  // (Continuous reading's styles from the start — chapters away from the screen not laid out —, not only once the book
+  // is set up: the first place put back laid out every chapter before it.)
+  scroll.classList.toggle('reader-continuous', !chapterMode());
   for (const doc of docs) {
-    await renderDoc(doc);
+    await renderDoc(doc, true);
     // (Closed while it was opening: nothing more is set up — no keys, no listeners, no place saved.)
     if (gone()) { docs.forEach((d) => d.render?.dispose()); return; }
-    if (doc === docs[0]) root.querySelector('#kr-loading')?.remove();
-    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); restore(); performance.measure('kr:restore', { start: tr }); }
+    if (doc === docs[0]) { root.querySelector('#kr-loading')?.remove(); if (op) { if (early?.doc !== doc) op.size('paras', doc.allBlocks.length); op.shown(); } }
+    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); if (early?.doc === doc) { if (chapterMode()) renderChapterNav(); placeFirst(doc, early.plan); } else restore(); performance.measure('kr:restore', { start: tr }); if (doc === lastRead) op?.placed(); }
   }
+  // A book opened at a chapter made first: shown now, its other chapters made in slices between frames (the reader
+  // may read and scroll meanwhile), then the whole book's blocks, chapters and highlights taken as for a book made
+  // whole — the place read meanwhile kept — before the rest of the reader is set up.
+  if (early) {
+    const e = early;
+    // (Moved by the reader — a touch, the wheel, a key, then a scroll —, not by the page settling: lines a little taller
+    // once a font has loaded move the scroll too.)
+    let touched = false; const onInput = () => { touched = true; };
+    const onScroll = () => { if (touched && performance.now() - programmatic > 150) e.scrolled = true; };
+    // (Hidden or left before it is whole: the place read meanwhile saved, from the chapters' sizes kept.)
+    const keep = () => { if (!e.scrolled || e.done) return; const loc = earlyLocator(); if (!loc) return; e.doc.book.progress = loc; void db.updateBook(e.doc.book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); }); };
+    const onHidden = () => { if (document.visibilityState === 'hidden') keep(); };
+    const inputs = ['touchstart', 'wheel', 'pointerdown', 'keydown'] as const;
+    // (The page settling — fonts, pictures — before the reader has moved: the place put back again, as restore's later
+    // passes do for a book made whole.)
+    const settle = new ResizeObserver(() => { if (!touched && !e.scrolled && early === e && !gone()) placeFirst(e.doc, e.plan); });
+    settle.observe(e.doc.render!.element);
+    scroll.addEventListener('scroll', onScroll, { passive: true }); window.addEventListener('pagehide', keep); document.addEventListener('visibilitychange', onHidden);
+    for (const ev of inputs) root.addEventListener(ev, onInput, { passive: true, capture: true });
+    const unwatch = () => { settle.disconnect(); scroll.removeEventListener('scroll', onScroll); window.removeEventListener('pagehide', keep); document.removeEventListener('visibilitychange', onHidden); for (const ev of inputs) root.removeEventListener(ev, onInput, { capture: true }); };
+    onDispose(() => { keep(); unwatch(); });
+    // (The fonts loaded meanwhile — the lines a little taller or shorter —: the place put back again, as restore does
+    // for a book made whole, unless the reader has moved.)
+    void document.fonts.ready.then(() => { if (early === e && !touched && !e.scrolled && !gone()) placeFirst(e.doc, e.plan); });
+    const t3 = performance.now();
+    const made = await e.doc.render!.rest!().catch((err: unknown) => { console.error(err); return false; });
+    performance.measure('kr:rest', { start: t3 });
+    if (gone()) { unwatch(); docs.forEach((d) => d.render?.dispose()); return; }
+    if (!made) {
+      // (The rest could not be made: the book made whole, as it always was, and put at its place.)
+      if (e.scrolled) keep();
+      e.done = true; unwatch(); early = null;
+      await renderDoc(e.doc);
+      if (gone()) { docs.forEach((d) => d.render?.dispose()); return; }
+      restore();
+    } else {
+      const shown = chapterMode() ? (e.doc.chapters.length > 1 ? e.doc.chapters[e.doc.chapter] : firstTarget(e.doc, e.plan)) : undefined;
+      e.done = true;
+      layDoc(e.doc, shown);
+      unwatch();
+      early = null;
+      if (e.scrolled) { userScrolled = true; const c = currentLocator(); if (c) { c.doc.book.progress = c.loc; saveSoon = true; } }
+    }
+    op?.size('paras', e.doc.allBlocks.length);
+    { const d = e.doc, size = e.size; window.setTimeout(() => { if (d.render?.element.isConnected) writeMap(d, size); }, 2000); }
+  }
+  wholeDone();
   const tPost = performance.now();
   root.querySelector('#kr-loading')?.remove();
   // Opened from a search across books: at the found passage (its chapter, its place among the chapter's
@@ -340,8 +547,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   // Furigana for Japanese books (readings generated on the device; the setting shows/hides them).
-  const sample = docs.map((d) => d.wrapper.textContent?.slice(0, 4000) ?? '').join('\n');
-  const isJa = docs.some((d) => isJapanese(d.wrapper.textContent?.slice(0, 4000) ?? '', d.book.language));
+  // (The first 4,000 letters of each book, not its whole text made into one string to cut them from — megabytes.)
+  const heads = docs.map((d) => headText(d.wrapper, 4000));
+  const sample = heads.join('\n');
+  const isJa = docs.some((d, i) => isJapanese(heads[i], d.book.language));
   const isZh = !isJa && (/[\u4e00-\u9fff]/.test(sample) || docs.some((d) => /^zh/i.test(d.book.language ?? '')));
   const isKo = !isJa && !isZh && /[\uac00-\ud7af]/.test(sample);
   scroll.classList.toggle('cjk-book', isJa || isZh || isKo);
@@ -424,11 +633,30 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   performance.measure('kr:restore2', { start: tR2 });
   // Images loading above the saved position shift the layout; settle a few times.
   [400, 1200, 2500].forEach((ms) => setTimeout(() => { if (!userScrolled) restore(); }, ms));
-  void document.fonts.ready.then(() => { if (!userScrolled && reader.isConnected) restore(); });
+  void document.fonts.ready.then(() => {
+    if (!reader.isConnected) return;
+    // (A long text's runs not laid out yet take the height measured on its first one, in the fonts now loaded — the
+    // book's length, and so its pages on the reading bar, right from the start: sizeRuns.)
+    for (const d of docs) if (d.render) sizeRuns(d.render.element);
+    if (!userScrolled) restore();
+  });
 
   /* ---------- chapter mode ---------- */
   interface Unit { doc: OpenDoc; el: HTMLElement; index: number }
   function units(): Unit[] { return docs.flatMap((doc) => doc.chapters.map((el, index) => ({ doc, el, index }))); }
+  /** A unit's blocks: every block of the book sorted into its chapter in one pass (each one's chapter found by walking
+   *  up from it), kept until the book's blocks or chapters are made again. */
+  const unitBlocks = new WeakMap<OpenDoc, { all: HTMLElement[]; chapters: HTMLElement[]; by: HTMLElement[][] }>();
+  function blocksOfUnit(u: Unit): HTMLElement[] {
+    let c = unitBlocks.get(u.doc);
+    if (!c || c.all !== u.doc.allBlocks || c.chapters !== u.doc.chapters) {
+      const ix = new Map(u.doc.chapters.map((el, i) => [el as Element, i]));
+      const by = u.doc.chapters.map(() => [] as HTMLElement[]);
+      for (const b of u.doc.allBlocks) for (let e: Element | null = b; e; e = e.parentElement) { const i = ix.get(e); if (i !== undefined) { by[i].push(b); break; } }
+      c = { all: u.doc.allBlocks, chapters: u.doc.chapters, by }; unitBlocks.set(u.doc, c);
+    }
+    return c.by[u.index] ?? [];
+  }
   function chapterTitle(u: Unit): string {
     const toc = u.doc.render?.toc ?? [];
     const hit = toc.find((item) => { const el = document.getElementById(item.anchor); return !!el && (el === u.el || u.el.contains(el)); });
@@ -470,9 +698,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       return;
     }
     chapterNav.classList.remove('flow');
+    // (Pressed while the book's later chapters are still being made: done once they are, to the same chapter.)
+    const go = (u: Unit, fallback: number) => { if (!early) { showUnit(fallback); return; } void whole.then(() => { const i = units().findIndex((x) => x.doc === u.doc && x.el === u.el); if (i >= 0) showUnit(i); }); };
     chapterNav.append(
-      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => showUnit(k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
-      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => showUnit(k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
+      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
+      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
     );
   }
   function showUnit(k: number, atEnd = false): void {
@@ -584,6 +814,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function scrollToLocator(loc: Locator): void {
     const doc = docs.find((d) => d.book.id === loc.bookId) ?? docs[0];
     if (!doc) return;
+    for (const d of docs) if (d.render) sizeRuns(d.render.element);
     programmatic = performance.now();
     if (loc.anchor) { scrollToAnchor(loc.anchor); return; }
     // Positions are stored as whole-book block indices; older ones were chapter-local.
@@ -607,6 +838,22 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const wr = doc.wrapper.getBoundingClientRect();
       scroll.scrollTop += wr.top - sr.top + (loc.pct ?? 0) * wr.height;
     }
+  }
+
+  /** A long plain text's runs not laid out yet (formats/shared.ts textToParagraphs) take the height their text will
+   *  have: the sizes measured on the first run — per character, and per paragraph (its last line, its spacing) — so
+   *  that the book's length, the place's percentage and the scroll bar are right before the runs are laid out. Measured
+   *  again whenever a place is gone to (the text's size, spacing or width may have changed). */
+  function sizeRuns(el: HTMLElement): void {
+    const run = el.querySelector<HTMLElement>(':scope > .kr-run'); const first = run?.firstElementChild, last = run?.lastElementChild;
+    if (!run || !first || !last || !run.isConnected) return;
+    const hgt = last.getBoundingClientRect().bottom - first.getBoundingClientRect().top; if (!(hgt > 0)) return;
+    const cs = getComputedStyle(first); const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 16) * 1.6; const mb = parseFloat(cs.marginBlockEnd) || 0;
+    const c = Number(run.style.getPropertyValue('--kr-run-c')) || 1, p = Number(run.style.getPropertyValue('--kr-run-p')) || 1;
+    const ppx = lh * 0.5 + mb, cpx = Math.max(0, (hgt + mb - p * ppx) / c);
+    const a = `${cpx.toFixed(4)}px`, b = `${ppx.toFixed(2)}px`;
+    if (el.style.getPropertyValue('--kr-cpx') !== a) el.style.setProperty('--kr-cpx', a);
+    if (el.style.getPropertyValue('--kr-ppx') !== b) el.style.setProperty('--kr-ppx', b);
   }
 
   function scrollToAnchor(anchor: string, flash = true): void {
@@ -692,7 +939,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const offerNext = (pct: number) => {
     if (!nextVol || nextPill || pct < 0.985) return;
     const next = nextVol;
-    nextPill = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queued ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight'));
+    nextPill = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { diagLeaveIntent('next-book'); navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queued ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight'));
     root.appendChild(nextPill);
   };
   // Reading in order: scrolling on past the end goes to the next book.
@@ -717,19 +964,101 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const i = Math.min(u.after.length - 1, Math.max(0, block - u.start));
     return u.after[i];
   };
+  /* ---------- the reading bar's numbers ---------- */
+  // A page of a flowing book is one screen of its text as it is read — the frame the text has with the chrome hidden
+  // (.read-frame), at the font, size and margins in force. The sizes the count needs (the chapter's place and height,
+  // the frame's) are measured once and kept until something is resized — the text (pictures loading, a run of a long
+  // text laid out, the font changed), the screen (turned), the frame — so a scroll costs only arithmetic on scrollTop.
+  interface Geo { unit: Element; uTop: number; uH: number; sTop: number; fTop: number; pageH: number; max: number }
+  let geo: Geo | null = null; let geoDirty = true;
+  const measure = (unit: Element): Geo => {
+    if (geo && !geoDirty && geo.unit === unit) return geo;
+    const sr = scroll.getBoundingClientRect(), ur = unit.getBoundingClientRect(), fr = frame.getBoundingClientRect();
+    geoDirty = false;
+    return (geo = { unit, uTop: ur.top - sr.top + scroll.scrollTop, uH: ur.height, sTop: sr.top, fTop: fr.top, pageH: Math.max(40, fr.height), max: scroll.scrollHeight - scroll.clientHeight });
+  };
+  /** The page being read in a chapter (the one at the top of the frame; the last once the chapter's end is in the
+   *  frame, or the text can go no further), the chapter's pages, and how far into the chapter, 0–100. */
+  const pagesIn = (unit: Element): { page: number; pages: number; pct: number; screens: number } => {
+    const g = measure(unit); const st = scroll.scrollTop;
+    const top = g.sTop + g.uTop - st; const pos = g.fTop - top;
+    const pages = Math.max(1, Math.ceil(g.uH / g.pageH - 0.01));
+    const end = top + g.uH <= g.fTop + g.pageH + 1 || st >= g.max - 1;
+    const page = end ? pages : Math.min(pages, Math.max(1, Math.floor(pos / g.pageH + 0.01) + 1));
+    const pct = end ? 100 : Math.round(Math.min(1, Math.max(0, pos / Math.max(1, g.uH - g.pageH))) * 100);
+    return { page, pages, pct, screens: g.uH / g.pageH };
+  };
+  /** The chapter being read: the one shown (chapter by chapter), or the one the place is in (continuous reading). */
+  const chapterSets = new WeakMap<HTMLElement[], Set<Element>>();
+  const unitOf = (doc: OpenDoc, block: Element | undefined): HTMLElement => {
+    if (doc.chapters.length <= 1) return doc.chapters[0] ?? doc.wrapper;
+    if (chapterMode()) return doc.chapters[doc.chapter] ?? doc.chapters[0];
+    let set = chapterSets.get(doc.chapters); if (!set) { set = new Set(doc.chapters); chapterSets.set(doc.chapters, set); }
+    for (let e: Element | null = block ?? null; e; e = e.parentElement) if (set.has(e)) return e as HTMLElement;
+    return doc.chapters[0];
+  };
+  // The book's length beyond the chapter: each chapter's characters and words, counted once in idle moments, and only
+  // when an item that needs them is on the bar. Pages in the book are reckoned from them: the chapters not on the page
+  // are not laid out (one chapter at a time, or kept unlaid until near), so their pages are the characters left over
+  // the characters a page of this chapter holds — shown with «≈».
+  interface Counts { chapters: HTMLElement[]; chars: number[]; words: number[] }
+  const counts = new WeakMap<OpenDoc, Counts>(); const counting = new WeakSet<OpenDoc>();
+  const countBook = (doc: OpenDoc): Counts | null => {
+    const c = counts.get(doc); if (c && c.chapters === doc.chapters) return c;
+    if (counting.has(doc)) return null;
+    counting.add(doc);
+    const chapters = doc.chapters; const chars: number[] = [], words: number[] = [];
+    const step = (deadline?: { timeRemaining(): number }) => {
+      if (!reader.isConnected || doc.chapters !== chapters) { counting.delete(doc); return; }
+      const until = performance.now() + (deadline ? Math.max(2, Math.min(12, deadline.timeRemaining() - 1)) : 6);
+      while (chars.length < chapters.length && performance.now() < until) {
+        const k = chars.length; const u: Unit = { doc, el: chapters[k], index: k };
+        chars.push(chapters[k].textContent?.length ?? 0);
+        words.push(chapters.length === 1 ? doc.allBlocks.reduce((a, b) => a + wordCount(b), 0) : blocksOfUnit(u).reduce((a, b) => a + wordCount(b), 0));
+      }
+      if (chars.length < chapters.length) { const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(step, { timeout: 1500 }); else window.setTimeout(step, 30); return; }
+      counts.set(doc, { chapters, chars, words }); counting.delete(doc); updateChrome();
+    };
+    const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(step, { timeout: 1500 }); else window.setTimeout(step, 30);
+    return null;
+  };
+  const density = new WeakMap<OpenDoc, number>();
+  const BOOK_ITEMS = ['bookPage', 'bookLeft', 'timeBook'] as const;
   let lastLabel = '', lastTitleDoc: OpenDoc | null = null;
   const updateChrome = throttle(() => {
     const cur = currentLocator();
     if (!cur) return;
     const label = labelFor(cur.doc, cur.loc.block ?? 0);
     const pct = Math.round(cur.loc.pct * 100);
-    const unitEl = cur.doc.chapters[cur.doc.chapter] ?? cur.doc.wrapper;
-    const sr = scroll.getBoundingClientRect(); const ur = unitEl.getBoundingClientRect();
-    const total = Math.max(1, Math.ceil(ur.height / Math.max(1, sr.height)));
-    const page = Math.min(total, Math.max(1, Math.floor((sr.top - ur.top) / Math.max(1, sr.height)) + 1));
-    // Minutes left in the chapter at the reader's own pace (once a pace is known).
-    const speed = getSettings().showTimeLeft ? trackers.get(cur.doc)?.speed() : null;
-    const mins = speed ? Math.ceil(wordsLeft(cur.doc, unitEl, cur.loc.block ?? 0) / speed) : 0;
+    const block = cur.loc.block ?? 0;
+    const unitEl = unitOf(cur.doc, cur.doc.allBlocks[block]);
+    const v: import('../ui/readbar').BarValues = { chapter: label, title: cur.doc.book.title, bookPct: pct };
+    if (statusBar.hidden === false) {
+      const p = pagesIn(unitEl); v.page = p.page; v.pages = p.pages; v.chapterPct = p.pct;
+      // The book's pages: this chapter's own, and the others' reckoned (a book of one chapter: counted, exact).
+      const k = cur.doc.chapters.indexOf(unitEl);
+      const c = BOOK_ITEMS.some((id) => bar.wants(id)) && cur.doc.chapters.length > 1 ? countBook(cur.doc) : null;
+      if (cur.doc.chapters.length <= 1 || k < 0) { v.bookPage = p.page; v.bookPages = p.pages; }
+      else if (c && (bar.wants('bookPage') || bar.wants('bookLeft'))) {
+        if (c.chars[k] >= 400 && p.screens > 0.2) density.set(cur.doc, c.chars[k] / p.screens);
+        const per = density.get(cur.doc);
+        if (per) {
+          let before = 0, after = 0; for (let i = 0; i < c.chars.length; i++) if (i < k) before += c.chars[i]; else if (i > k) after += c.chars[i];
+          const pb = Math.round(before / per), pa = Math.round(after / per);
+          v.bookPage = pb + p.page; v.bookPages = pb + p.pages + pa; v.bookApprox = true;
+        }
+      }
+      // Minutes left at the reader's own pace (once the book's statistics know it: src/stats.ts).
+      const speed = bar.wants('timeChapter') || bar.wants('timeBook') ? trackers.get(cur.doc)?.speed() : null;
+      if (speed) {
+        const inChapter = wordsLeft(cur.doc, unitEl, block);
+        if (bar.wants('timeChapter')) v.minsChapter = Math.ceil(inChapter / speed);
+        if (bar.wants('timeBook')) {
+          if (cur.doc.chapters.length <= 1 || k < 0) v.minsBook = Math.ceil(inChapter / speed);
+          else if (c) { let after = 0; for (let i = k + 1; i < c.words.length; i++) after += c.words[i]; v.minsBook = Math.ceil((inChapter + after) / speed); }
+        }
+      }
+    }
     // — writes —
     if (label !== lastLabel || cur.doc !== lastTitleDoc) {
       lastLabel = label; lastTitleDoc = cur.doc;
@@ -738,16 +1067,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       title.setAttribute('dir', 'auto');
       footerWhere.textContent = docs.length > 1 ? `${docs.indexOf(cur.doc) + 1}/${docs.length} · ${label}` : label;
       footerWhere.setAttribute('dir', 'auto');
-      statusWhere.textContent = label; statusWhere.setAttribute('dir', 'auto');
     }
-    const pctText = `${localDigits(pct)}%`;
-    if (footerPct.textContent !== pctText) { footerPct.textContent = pctText; footerBar.style.width = `${pct}%`; statusPct.textContent = pctText; }
-    const pageText = `(${localDigits(page)}/${localDigits(total)})`;
-    if (statusPage.textContent !== pageText) statusPage.textContent = pageText;
-    const leftText = mins > 0 ? `⏳${localDigits(mins)}${getLang() === 'ar' ? ' د' : 'm'}` : '';
-    if (statusLeft.textContent !== leftText) statusLeft.textContent = leftText;
+    const pctText = formatPercent(pct, 'prose');
+    if (footerPct.textContent !== pctText) { footerPct.textContent = pctText; footerBar.style.width = `${pct}%`; }
+    bar.set(v);
     if (cur.doc === docs[docs.length - 1] && lastUnitShown()) offerNext(scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 ? 1 : cur.loc.pct);
   }, 150);
+  // (The sizes kept for the count are measured again when the text, the frame or the scroller change size.)
+  { const geoObs = new ResizeObserver(() => { geoDirty = true; updateChrome(); }); geoObs.observe(flow); geoObs.observe(frame); onDispose(() => geoObs.disconnect()); }
 
   function scheduleSave(): void {
     window.clearTimeout(saveTimer); savePending = true;
@@ -767,6 +1094,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   hooks.update = () => updateChrome();
   hooks.save = () => scheduleSave();
+  if (saveSoon) scheduleSave();
   const trackThrottled = throttle(trackProgress, 400);
   scroll.addEventListener('scroll', () => { if (performance.now() - programmatic > 150) userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); focusThrottled(); }, { passive: true });
   // Focus mode: the paragraph under the reading line (a little above the middle of the screen) is the one
@@ -815,9 +1143,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => window.clearTimeout(aheadTimer));
   window.setTimeout(layAhead, 900);
   const sizeObs = new ResizeObserver(() => {
+    geoDirty = true; updateChrome();
     const w = scroll.clientWidth, hgt = scroll.clientHeight;
     if (Math.abs(w - lastW) < 2 && Math.abs(hgt - lastH) < 2) return;
+    const narrowed = Math.abs(w - lastW) >= 2;
     lastW = w; lastH = hgt;
+    // (Only the height changed — the chrome or the reading bar shown or hidden, the system's bars: the text does not
+    // flow again, and is left where it is on the screen; put back at the scroller's new top, it jumped.)
+    if (!narrowed) return;
     if (!stable) { noteStable(); return; }
     resizing = true; const at = stable;
     requestAnimationFrame(() => { scrollToLocator(at); window.setTimeout(() => { resizing = false; }, 300); });
@@ -832,13 +1165,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(onSettingsChange((s) => {
     // (Where the reading is, read before the change is laid out.)
     const before = reader.isConnected ? currentLocator() : null;
-    applySettings(reader, s); syncChrome(); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome();
+    applySettings(reader, s); syncChrome(); syncComfort(); geoDirty = true; updateChrome();
     const want = s.bookFormat || s.smartTypography;
     // (The highlights taken off and put on again: on the text as it is now — a mark cut a changed word in pieces, and
     // turned back the text came out doubled.)
     if (want !== typoOn) { typoOn = want; for (const d of docs) if (d.render) { unmarkHighlights(d); (want ? applyTypography : revertTypography)(d.render.element); applyHighlights(d); } }
     syncFocus();
     // Text size, line spacing, margins, a font: the text flows again, and the paragraph being read is kept at the top.
+    for (const d of docs) if (d.render) sizeRuns(d.render.element);
     if (before) { const after = currentLocator(); if (after && (after.doc !== before.doc || after.loc.block !== before.loc.block || Math.abs((after.loc.offset ?? 0) - (before.loc.offset ?? 0)) > 0.02)) scrollToLocator(before.loc); }
   }));
   root.addEventListener('kr-rerender', async () => {
@@ -874,6 +1208,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(back.dispose);
 
   /* ---------- links & taps ---------- */
+  /** A link that would load a page of the app itself (its address the app's, not another site's). */
+  const staysInApp = (a: HTMLAnchorElement): boolean => { try { return new URL(a.href, location.href).origin === location.origin; } catch { return true; } };
+  /** The id of the place in the book a `#…` link points to (by id, or by an old `name` anchor), or null. */
+  let linkIds = 0;
+  const placeOfLink = (a: HTMLAnchorElement): string | null => {
+    const raw = (a.getAttribute('href') ?? '').split('#')[1]; if (!raw) return null;
+    let frag = raw; try { frag = decodeURIComponent(raw); } catch { /* as written */ }
+    const target = flow.querySelector<HTMLElement>(`[id="${CSS.escape(frag)}"]`) ?? flow.querySelector<HTMLElement>(`a[name="${CSS.escape(frag)}"]`);
+    if (!target || target === a) return null;
+    if (!target.id) target.id = `kr-link-${++linkIds}`;
+    return target.id;
+  };
   flow.addEventListener('dblclick', (e) => {
     if (!document.documentElement.classList.contains('pc')) return;
     const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null; if (!img || !allImages.length || !getSettings().pictureZoom) return;
@@ -887,12 +1233,26 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const small = !!img && (img.classList.contains('inline') || img.getBoundingClientRect().width < 64);
     // (On a computer a picture opens with a double-click — a single one is too easily made while reading.)
     if (img && allImages.length && getSettings().pictureZoom && !(linkOf && small) && !document.documentElement.classList.contains('pc')) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { e.preventDefault(); showGallery(idx); return; } }
+    if ((e.target as HTMLElement).closest('a')) diagLeaveIntent('link', true);
     if (linkOf) { e.preventDefault(); back.remember(); scrollToAnchor(linkOf.dataset.krAnchor!); return; }
+    // A link as the book wrote it — a web novel's note (`#fn1`), an empty `#`, a Markdown or HTML book's `#part` or
+    // `other.html`: followed, the address's fragment is the app's route (`#fn1` is the library's) and another page
+    // of the app starts it again — the book closed under the reader's finger. It goes to its place in the book when
+    // the book has one; else nothing happens. (Links to other sites open outside, as before.)
+    const own = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
+    if (own && staysInApp(own)) {
+      e.preventDefault();
+      const at = placeOfLink(own);
+      if (at) { back.remember(); scrollToAnchor(at); }
+      return;
+    }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
     if (document.getSelection()?.isCollapsed === false) return;
     // Tap zones on touch screens (nine of them, each given its action in the options; by default the lower
     // third turns to the next screen, the upper to the previous, the middle shows or hides the chrome).
-    if (getSettings().tapToTurn && isTouchDevice()) {
+    // (On a phone only, where the options offer them: a computer's click — a zone's action synced from the phone
+    // included — shows or hides the bars, as ever. src/platform.ts.)
+    if (getSettings().tapToTurn && onPhone()) {
       const sr = scroll.getBoundingClientRect(); const x = (e.clientX - sr.left) / sr.width, y = (e.clientY - sr.top) / sr.height;
       const col = x < 1 / 3 ? 0 : x < 2 / 3 ? 1 : 2, row = y < 0.22 ? 0 : y < 0.62 ? 1 : 2;
       const action = (getSettings().tapZones ?? [])[row * 3 + col] ?? 'menu';
@@ -928,14 +1288,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (Day and night swapped with one tap — ReadEra's top-left corner: the chosen theme and the night theme take turns.)
     else if (c === 'dayNight') { const st = getSettings(); const night = st.nightTheme && st.theme === st.nightTheme; updateSettings(night ? { theme: (st.dayTheme as typeof st.theme) || 'light', nightSchedule: false } : { dayTheme: st.theme, theme: st.nightTheme || 'dark', nightSchedule: false }); }
     else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); showUnit(c === 'nextChapter' ? k + 1 : k - 1); } }
+    else if (c === 'statusLine') updateSettings({ showStatusLine: !getSettings().showStatusLine });
     else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
   };
   document.addEventListener('kr:command', onCommand);
   onDispose(() => document.removeEventListener('kr:command', onCommand));
-  // Volume keys (Android) turn screens when enabled.
-  const onVolume = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; scroll.scrollBy({ top: dir * scroll.clientHeight * 0.88, behavior: 'smooth' }); };
-  document.addEventListener('kr:volume', onVolume);
-  onDispose(() => document.removeEventListener('kr:volume', onVolume));
+  // The phone's volume keys and screen edges (Android, as set — src/readkeys.ts): a key turns the page as Space and
+  // Shift+Space do (turnPage); sideways swipes turn chapters in the chapter modes, so the edges are kept for them.
+  onDispose(readingKeys({ sideways: () => chapterMode(), sounding: () => speaking || (!!aiAudio && !aiAudio.paused), turn: (forward) => turnPage(!forward) }));
 
   /* ---------- selection tools ---------- */
   onDispose(attachSelectionToolbar(scroll, {
@@ -1035,9 +1395,19 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function applyHighlights(doc: OpenDoc): void {
     const whole = doc.render?.element;
     if (!whole) return;
+    // (A book made a chapter first: the highlights of the chapters made are put on at once, in their own chapter only;
+    // the others — and one across chapters — once the whole book is.)
+    const part = early?.doc === doc ? early : null;
     for (const hl of doc.book.highlights ?? []) {
+      if (part?.applied.has(hl.id)) continue;
       const own = hl.anchor ? document.getElementById(hl.anchor) : null;
       const inOwn = own && whole.contains(own) ? own : null;
+      if (part && !part.done) {
+        if (!inOwn || inOwn.closest('.kr-shell')) continue;
+        const r = findTextRange(inOwn, hl.text, hl);
+        if (r) { const marks = wrapRange(r, 'kr-hl', hl.color, hl.id); if (hl.note) marks.forEach((m) => { m.title = hl.note!; m.classList.add('has-note'); }); part.applied.add(hl.id); }
+        continue;
+      }
       // (Which place it was is counted in its own chapter: elsewhere only the text around it tells.)
       const near = { before: hl.before, after: hl.after };
       let range = findTextRange(inOwn ?? whole, hl.text, inOwn || !hl.anchor ? hl : near);
@@ -1472,7 +1842,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function speak(chunks: string[], startBlock?: { doc: OpenDoc; index: number }): void {
     if (!ttsAvailable() && !(getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady()) && !(getSettings().speechEngine === 'kitten' && kittenReady())) { toast(t('speechUnavailable'), 'error', 6000); return; }
     stopSpeaking();
-    speaking = true;
+    speaking = true; refreshReadingKeys();
     keepAwake(true);
     let i = 0;
     // Where reading stops: the end of this chapter, or the end of the book.
@@ -1579,13 +1949,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         if (bi >= nextIdx - 40 && nextIdx <= last) more();
       },
       end: () => { if (!speaking) return; if (nextIdx > last || !more()) { stopSpeaking(); if (scopeEnd !== Infinity) toast(t('chapterReadDone')); } },
-      stopped: () => { speaking = false; keepAwake(getSettings().keepAwake); },
+      stopped: () => { speaking = false; keepAwake(getSettings().keepAwake); refreshReadingKeys(); },
     };
     const first = batch();
     if (!first.length) { stopSpeaking(); return; }
     void speakQueue(first, { ...opts(), on }).then((r) => { if (r !== 'ok' && speaking) noVoice(first[0].lang, 'unavailable'); });
   }
-  function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); stopSpeech(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
+  function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); stopSpeech(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } refreshReadingKeys(); }
   onDispose(stopSpeaking);
 
   // Sleep timer: stops read-aloud and auto-scroll after N minutes.
@@ -1603,30 +1973,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   function openMore(): void {
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
-      const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
-      body.append(h('ul', { class: 'plain-list' },
-        item('info', t('bookInfo'), () => showInfo()),
-        item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
-        item((currentLocator()?.doc.book ?? docs[0].book).tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', (currentLocator()?.doc.book ?? docs[0].book).tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(currentLocator()?.doc.book ?? docs[0].book)),
-        item('images', t('images'), () => showGallery()),
-        item('type', t('visualOptions'), openOptions),
-        item(speaking ? 'stop' : 'speak', speaking ? t('stopReading') : t('readAloud'), () => { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }),
-        item('scroll', t('autoScroll'), toggleAutoScroll),
-        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-        item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
-        item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
-        item('download', t('exportAnki'), () => { const cur = currentLocator(); void exportNotesAnki(cur?.doc.book ?? docs[0].book); }),
-        item('scroll', t('speedReading'), () => void startSpeedReading()),
-        item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : books.map((b) => b.id), { onChange: () => void findNext() }))),
-        item('external', t('shareFile'), () => { const cur = currentLocator(); void shareBooks([(cur?.doc.book ?? docs[0].book).id]); }),
-        item('convert', t('convertFile'), () => { const cur = currentLocator(); void import('../ui/convert').then((m) => m.convertSheet(cur?.doc.book ?? docs[0].book)); }),
-        item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
-        item('translate', t('aiTranslate'), () => translator.toggleUi()),
-        item('settings', t('toolbarButtons'), () => toolbarSheet()),
-        item('highlight', t('highlights'), () => openContents('highlights')),
-        docs.length > 1 ? item('books', t('jumpToBook'), () => openContents('toc')) : null,
-      ));
-      if (!isTouchDevice()) body.append(h('p', { class: 'shortcuts-hint' }, icon('keyboard'), ' ', t('shortcutsBody')));
+      // (What the reader placed in «More», and what the bars had no room for; «Customise buttons» always last.)
+      body.append(moreList('flow', bars.moreIds(), actions, () => panel.close(), () => buttonSheet('flow')));
+      if (fits('computer')) body.append(h('p', { class: 'shortcuts-hint' }, icon('keyboard'), ' ', t('shortcutsBody')));
     } }]);
   }
 
@@ -1634,20 +1983,21 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   /** A screen on, or back (Space and Shift+Space, PageDown, the computer's arrows): at a chapter's end, the next one. */
   function turnPage(back: boolean): void {
     const page = scroll.clientHeight * 0.9;
-    if (flowMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); return; } }
+    // (Both chapter modes: a page-turn key — or a volume button, src/readkeys.ts — at a chapter's very end goes on to the
+    // next, as a swipe does; only scrolling past the end is the "scroll into the next chapter" mode's own.)
+    if (chapterMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); return; } }
     scroll.scrollBy({ top: back ? -page : page, behavior: 'smooth' });
   }
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else if (autoScrollRaf) stopAutoScroll(); else if (speaking) stopSpeaking(); else void leaveFullscreen(root); return; }
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const page = scroll.clientHeight * 0.9;
     switch (e.key) {
       case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); showUnit(fwd ? k + 1 : k - 1, !fwd); break; }
       case 'j': case 'ArrowDown': scroll.scrollBy({ top: 80 }); break;
       case 'k': case 'ArrowUp': scroll.scrollBy({ top: -80 }); break;
       case ' ': case 'PageDown': { e.preventDefault(); turnPage(e.shiftKey); break; }
-      case 'PageUp': { e.preventDefault(); if (flowMode() && scroll.scrollTop <= 1 && units()[currentUnitIndex() - 1]) { showUnit(currentUnitIndex() - 1, true); break; } scroll.scrollBy({ top: -page, behavior: 'smooth' }); break; }
+      case 'PageUp': { e.preventDefault(); turnPage(true); break; }
       case 'Home': scroll.scrollTop = 0; break;
       case 'End': scroll.scrollTop = scroll.scrollHeight; break;
       case '/': e.preventDefault(); openSearch(); break;
@@ -1697,10 +2047,10 @@ function snapName(title: string): string {
   return `${title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 40)} ${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
 }
 
-async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void, gone: () => boolean = () => false): Promise<void> {
+async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void, gone: () => boolean = () => false, op?: DiagOpen): Promise<void> {
   const file = await db.getFile(book.id);
   if (gone()) return;
-  if (!file) { toast(t(book.source ? 'linkedFileMissing' : 'openError', { title: book.title, error: '' }), 'error', 5000); navigate('/', true); return; }
+  if (!file) { op?.failed('file missing'); diagLeaveIntent('missing'); toast(t(book.source ? 'linkedFileMissing' : 'openError', { title: book.title, error: '' }), 'error', 5000); navigate('/', true); return; }
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
   const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
@@ -1719,39 +2069,118 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   // "By orientation": down the side when the screen is upright, in one row when it is wide.
   const portrait = matchMedia('(orientation: portrait)');
   const barLayout = () => { const l = getSettings().pdfBar; return l === 'auto' ? (portrait.matches ? 'side' : 'row') : l; };
-  const bar = h('div', { class: 'pdf-bar', dataset: { layout: barLayout() } },
-    h('div', { class: 'pdf-bar-nav' },
+  const goForm = () => h('form', { style: { display: 'flex', gap: '6px', alignItems: 'center' }, onsubmit: (e: Event) => { e.preventDefault(); const n = Number(pageInput.value); if (n) viewer.goTo(n); pageInput.blur(); } }, pageInput, h('button', { class: 'btn small', type: 'submit' }, t('go')));
+  const barNav = h('div', { class: 'pdf-bar-nav' },
     iconButton('chevronLeft', t('previousPage'), () => viewer.goTo(viewer.current - 1)),
     slider,
     iconButton('chevronRight', t('nextPage'), () => viewer.goTo(viewer.current + 1)),
-    count),
-    h('div', { class: 'pdf-bar-tools' },
-    h('form', { style: { display: 'flex', gap: '6px', alignItems: 'center' }, onsubmit: (e: Event) => { e.preventDefault(); const n = Number(pageInput.value); if (n) viewer.goTo(n); pageInput.blur(); } }, pageInput, h('button', { class: 'btn small', type: 'submit' }, t('go'))),
-    iconButton('zoomOut', t('zoomOut'), () => viewer.zoom(-0.15)),
-    iconButton('zoomIn', t('zoomIn'), () => viewer.zoom(0.15)),
-    iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth()),
-    iconButton('pen', t('inkNotes'), () => ink?.setOn(!ink.on)),
-    iconButton('images', t('pageStrip'), () => strip?.toggle())),
-  );
-  const relayout = () => { bar.dataset.layout = barLayout(); bar.dataset.side = getSettings().pdfBarSide; bar.dataset.row = getSettings().pdfBarRow; };
+    count);
+  // (Its tools are the buttons the reader placed on it — src/readbuttons.ts, drawn by mountBars below.)
+  const barTools = h('div', { class: 'pdf-bar-tools' });
+  const bar = h('div', { class: 'pdf-bar', dataset: { layout: barLayout() } }, barNav, barTools);
+  const relayout = () => { const s = getSettings(); bar.dataset.layout = barLayout(); bar.dataset.side = s.pdfBarSide; bar.dataset.row = s.pdfBarRow; bar.dataset.look = s.pdfBarLook === 'docked' ? 'docked' : 'pill'; };
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
-  const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), () => { if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); }),
-    title,
-    iconButton('search', t('searchInBook'), () => openSearch()),
-    iconButton('toc', t('contents'), () => openContents('toc')),
-    iconButton('grid', t('pagesGrid'), () => showPagesGrid()),
-    iconButton('more', t('more'), () => openMore()),
-  );
+  const backBtn = iconButton('back', t('back'), () => { diagLeaveIntent('top-back', true); if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); });
+  const moreBtn = iconButton('more', t('more'), () => openMore());
+  const topbar = h('header', { class: 'topbar' }, backBtn, title, moreBtn);
+  // Every action of a PDF (src/readbuttons.ts PDF_ACTIONS), wherever the reader has put it — or nowhere (its key still
+  // does it: onKey).
+  const goToPage = async () => {
+    if (pageInput.isConnected && pageInput.getClientRects().length && !bar.hidden) { pageInput.focus(); return; }
+    const v = await askText({ title: t('goToPage'), label: t('page'), ok: t('go'), cancel: t('cancel'), numeric: true, value: String(viewer.current) });
+    const n = Number(String(v ?? '').replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))); if (n) viewer.goTo(n);
+  };
+  const actions: Record<string, ActionRun> = {
+    pageNav: { run: () => undefined },
+    search: { run: () => openSearch() },
+    toc: { run: () => openContents('toc') },
+    grid: { run: () => showPagesGrid() },
+    goToPage: { run: () => void goToPage(), bar: goForm },
+    zoomOut: { run: () => viewer.zoom(-0.15) },
+    zoomIn: { run: () => viewer.zoom(0.15) },
+    fitWidth: { run: () => viewer.fitToWidth() },
+    ink: { run: () => ink?.setOn(!ink.on) },
+    pageStrip: { run: () => strip?.toggle() },
+    info: { run: () => showInfo() },
+    exportNotes: { run: () => void exportNotes(book) },
+    exportAnki: { run: () => void exportNotesAnki(book) },
+    shareFile: { run: () => void shareBooks([book.id]) },
+    convertFile: { run: () => void import('../ui/convert').then((m) => m.convertSheet(book)) },
+    savePageImage: { run: () => void savePage(false) },
+    sharePage: { run: () => void savePage(true) },
+    copyPageImage: { run: () => void savePage('copy') },
+    cutPagePart: { run: () => void import('../ui/pdfsnap').then((m) => m.cutPagePart(viewer, book, snapName(book.title))) },
+    savePagesRange: { run: () => savePagesSheet() },
+    exportWithInk: { run: () => void exportWithInk(), available: () => (book.ink ?? []).length > 0 },
+    print: { run: () => void printBook() },
+    openWithApp: { run: () => void openWithApp(), available: () => fits('android') },
+    toolExtract: { run: () => void import('../ui/pdftools').then((m) => m.extractFromBook(book)) },
+    pdfTools: { run: () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book)) },
+    bookmark: { run: () => void addBookmark() },
+    noteOnPage: { run: () => placeNote() },
+    highlights: { run: () => openContents('notes') },
+    crop: { run: () => updateSettings({ pdfAutoCrop: !getSettings().pdfAutoCrop }), label: () => (getSettings().pdfAutoCrop ? t('cropMarginsOff') : t('cropMargins')) },
+    readInOrder: { run: () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : [book.id], { onChange: () => void findNextPdf() })) },
+    favorite: { run: () => void toggleFavorite(book), label: () => (book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite')), icon: () => (book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart') },
+    type: { run: () => openPdfOptions() },
+    readingBar: { run: () => updateSettings({ showStatusLine: !getSettings().showStatusLine }), label: () => (getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar')) },
+    dayNight: { run: () => { const st = getSettings(); const night = st.nightTheme && st.theme === st.nightTheme; updateSettings(night ? { theme: (st.dayTheme as typeof st.theme) || 'light', nightSchedule: false } : { dayTheme: st.theme, theme: st.nightTheme || 'dark', nightSchedule: false }); } },
+    fullscreen: { run: () => { void toggleFullscreen(root); } },
+    bookmarks: { run: () => openContents('bookmarks') },
+  };
+  const bars = mountBars({ kind: 'pdf', root, topbar, back: backBtn, title, toolbar: barTools, toolbarBox: bar, keepRoom: () => (bar.dataset.layout === 'row' ? [barNav] : []), more: moreBtn, actions,
+    onNav: (on) => { barNav.hidden = on ? false : true; },
+    after: ({ toolbarEmpty }) => { barTools.hidden = toolbarEmpty; bar.hidden = toolbarEmpty && barNav.hidden; } });
+  bars.render();
+  { const redo = () => bars.render(); onDispose(onSettingsChange(redo)); portrait.addEventListener('change', redo); onDispose(() => portrait.removeEventListener('change', redo)); }
+  onDispose(() => bars.dispose());
   const syncComfort = () => {
     const st = getComputedStyle(reader); const warm = st.getPropertyValue('--r-warmth').trim(), dim = st.getPropertyValue('--r-dim-overlay').trim();
     root.style.setProperty('--r-warmth', warm); root.style.setProperty('--r-dim-overlay', dim);
     const el = root.querySelector<HTMLElement>('.reader-comfort'); if (el) { el.hidden = !(Number(warm) > 0 || Number(dim) > 0); el.dataset.warm = Number(warm) > 0 ? '1' : '0'; }
   };
   queueMicrotask(syncComfort);
-  root.append(topbar, reader, bar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
+  // The reading bar (src/ui/readbar.ts): a PDF's pages are its own — the page in the book, and in its chapter where
+  // the PDF has an outline (the chapters are its top entries).
+  const readBar = createReadBar(root, onDispose);
+  root.classList.add('pdf-reader');
+  let parts: { page: number; label: string }[] = [];
+  const paintBar = () => {
+    const page = viewer?.current ?? 0, total = viewer?.total ?? 0; if (!total) return;
+    const v: import('../ui/readbar').BarValues = { title: book.title, bookPage: page, bookPages: total, bookPct: Math.round((page / total) * 100) };
+    let i = -1; for (let k = 0; k < parts.length && parts[k].page <= page; k++) i = k;
+    const start = i >= 0 ? parts[i].page : 1, end = i >= 0 ? (parts[i + 1]?.page ?? total + 1) - 1 : total;
+    v.chapter = i >= 0 ? parts[i].label : ''; v.page = page - start + 1; v.pages = Math.max(v.page, end - start + 1);
+    v.chapterPct = v.pages > 1 ? Math.round(((v.page - 1) / (v.pages - 1)) * 100) : 100;
+    readBar.set(v);
+  };
+  root.append(topbar, reader, bar, readBar.el, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
   syncChrome();
+  // The pages end above the page bar lying at the foot, and begin below one at the top (its room measured: --pb-room —
+  // reader.css [data-pb]); a docked bar down a side keeps them clear of it always, shown or hidden, so they are not
+  // fitted again when the chrome hides. (A floating bar down a side — a phone's — stays over the pages' edge.)
+  {
+    const room = () => {
+      const lay = bar.dataset.layout, look = bar.dataset.look === 'docked' ? 'docked' : 'pill';
+      const at = bar.hidden ? 'none' : lay === 'side' ? (look === 'docked' ? 'side' : 'none') : bar.dataset.row === 'top' ? 'top' : 'bottom';
+      if (root.dataset.pb !== at) root.dataset.pb = at;
+      if (root.dataset.pblook !== look) root.dataset.pblook = look;
+      const side = bar.dataset.side ?? 'right'; if (root.dataset.pbside !== side) root.dataset.pbside = side;
+      if (at === 'none' || root.classList.contains('immersive')) return;
+      // (Where the bar stands, its slide in and out aside — a fixed element's offsets do not count its transform.)
+      const parent = bar.offsetParent as HTMLElement | null; const pr = parent?.getBoundingClientRect(); const rr = root.getBoundingClientRect();
+      const top = bar.offsetTop + (pr ? pr.top + (parent?.clientTop ?? 0) : 0), hgt = bar.offsetHeight, wid = bar.offsetWidth;
+      if (!hgt || !wid) return;
+      const px = at === 'bottom' ? rr.bottom - top + (look === 'docked' ? 0 : 8) : at === 'top' ? top - rr.top + hgt + (look === 'docked' ? 4 : 8) : wid;
+      const v = `${Math.max(0, Math.round(px))}px`; if (root.style.getPropertyValue('--pb-room') !== v) root.style.setProperty('--pb-room', v);
+    };
+    const obs = new ResizeObserver(() => room()); obs.observe(bar); obs.observe(root);
+    const mo = new MutationObserver(() => room()); mo.observe(bar, { attributes: true, attributeFilter: ['hidden', 'data-layout', 'data-row', 'data-look', 'data-side'] });
+    mo.observe(root, { attributes: true, attributeFilter: ['class'] });
+    onDispose(() => { obs.disconnect(); mo.disconnect(); });
+    room();
+  }
 
   const openPdfOptions = () => panel.open(t('visualOptions'), [{ id: 'o', label: t('visualOptions'), render: (b) => renderOptions(b, { pdf: true }) }]);
   let saveTimer: number | undefined;
@@ -1768,10 +2197,11 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     container: reader,
     invert: getSettings().pdfInvert,
     crop: { enabled: () => getSettings().pdfAutoCrop, get: () => db.getMeta<unknown>(`crop:${book.id}`).then((v) => v ?? null), set: (store) => db.setMeta(`crop:${book.id}`, store) },
-    onPageRender: (n) => { renderHighlights(n); ink?.render(n); strip?.sync(); },
+    onPageRender: (n) => { op?.shown(); renderHighlights(n); ink?.render(n); strip?.sync(); },
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
       count.textContent = t('pageOf', { n: page, total });
+      paintBar();
       if (page >= total && total > 1) offerNextPdf();
       window.clearTimeout(saveTimer);
       // (Not before the place has been put back: the first page shown while the book opens is not a place read.)
@@ -1782,7 +2212,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   let nextVolPdf: Book | null = null; let nextPillPdf: HTMLElement | null = null; let queuedPdf = false;
   const findNextPdf = () => nextQueued(book.id).then(async (q) => { if (q) { nextVolPdf = q; queuedPdf = true; return; } queuedPdf = false; nextVolPdf = nextVolume(book, await db.allBooks()); }).catch(() => undefined);
   void findNextPdf();
-  const offerNextPdf = () => { if (!nextVolPdf || nextPillPdf) return; const next = nextVolPdf; nextPillPdf = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => navigate(`/read/${next.id}`) }, h('span', { dir: 'auto' }, `${queuedPdf ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight')); root.appendChild(nextPillPdf); };
+  const offerNextPdf = () => { if (!nextVolPdf || nextPillPdf) return; const next = nextVolPdf; nextPillPdf = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { diagLeaveIntent('next-book'); navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queuedPdf ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight')); root.appendChild(nextPillPdf); };
   onDispose(overscrollNext(viewer.scroll, () => (queuedPdf && nextVolPdf ? nextVolPdf.id : null)));
   const back = jumpBack(root, (loc) => { const l = loc as { page: number; offset: number }; viewer.goTo(l.page, l.offset); }, () => ({ page: viewer.current, offset: viewer.currentOffset() }), viewer.scroll);
   onDispose(back.dispose);
@@ -1790,8 +2220,16 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   (window as unknown as { __krPdfViewer?: unknown }).__krPdfViewer = viewer; // (for tests)
   viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
   onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); viewer.setCrop(st.pdfAutoCrop); }));
+  op?.size('bytes', file.size);
   await viewer.load(file, book.id, book.source?.uri);
   if (gone()) { viewer.destroy(); return; }
+  op?.size('pages', viewer.total);
+  // (The outline read once for the bar: its top entries with a page, in page order — all entries when it has one top.)
+  void viewer.outline().then((o) => {
+    const withPage = o.filter((x) => x.page && x.page > 0); const top = withPage.filter((x) => x.depth === 0);
+    parts = (top.length > 1 ? top : withPage).map((x) => ({ page: x.page!, label: x.label })).sort((a, b) => a.page - b.page);
+    paintBar();
+  }).catch(() => undefined);
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);
   const jump = takeJump();
@@ -1799,21 +2237,32 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   else if (jump?.kind === 'pin') { const pin = (book.pins ?? []).find((x) => x.id === jump.id); if (pin) viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); }
   else if (jump?.kind === 'hl') { const hl = (book.pdfHighlights ?? []).find((x) => x.id === jump.id); if (hl) viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); }
   else if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
-  placed = true;
+  placed = true; op?.placed();
   // Opened from a search across books: at the found page, the words marked.
   { const sj = takeSearchJump(book.id); if (sj) void viewer.highlightOnPage(sj.unit + 1, sj.q); }
   // (Left within a moment of a page turn or a scroll: the place saved as it is left, while the pages are still there.)
   onDispose(() => savePlace());
   onDispose(() => viewer.destroy());
   // The pages' text, read once and kept (from an earlier reading, or now, in idle moments), for quick searching.
-  setTimeout(() => void storedPages(book).then((stored) => { if (stored) viewer.seedTexts(stored); else void viewer.readAllWhenIdle((all) => void storePages(book, all)); }), 3000);
+  // (Read on from where an earlier opening got to, the pages read kept as it goes: a long PDF left before the end was
+  // read from its first page again at every opening, and never finished.)
+  setTimeout(() => void storedPages(book).then(async (stored) => {
+    if (stored) { viewer.seedTexts(stored); return; }
+    const from = await partialPages(book);
+    if (gone()) return;
+    void viewer.readAllWhenIdle((all) => void storePages(book, all), { from, save: (texts) => void storePartialPages(book, texts) });
+  }), 3000);
   onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); viewer.setInvert(s.pdfInvert); }));
   // "Speak" (selected words): the device's voice, or KittenTTS's audio — held, so a new "Speak" or the book closed
   // stops it (it went on talking in the library).
   let pdfAudio: HTMLAudioElement | null = null; let speechTurn = 0;
+  // (While the device's voice reads the words: the volume keys keep to the volume — src/readkeys.ts.)
+  let pdfVoice = false;
+  const voiceDone = (turn: number) => { if (turn === speechTurn) { pdfVoice = false; refreshReadingKeys(); } };
   function stopPdfSpeech(): void {
     speechTurn++; stopSpeech();
     if (pdfAudio) { pdfAudio.pause(); URL.revokeObjectURL(pdfAudio.src); pdfAudio = null; }
+    pdfVoice = false; refreshReadingKeys();
   }
   onDispose(stopPdfSpeech);
   onDispose(attachSelectionToolbar(reader, {
@@ -1830,12 +2279,14 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
           if (turn !== speechTurn) return;
           const url = URL.createObjectURL(b); const a = new Audio(url); pdfAudio = a;
           a.playbackRate = getSettings().speechRate;
-          a.onended = () => { URL.revokeObjectURL(url); if (pdfAudio === a) pdfAudio = null; };
-          return a.play();
+          a.onended = () => { URL.revokeObjectURL(url); if (pdfAudio === a) pdfAudio = null; refreshReadingKeys(); };
+          return a.play().then(() => refreshReadingKeys());
         }).catch((e) => { if (turn === speechTurn) toast(String((e as Error).message ?? e), 'error', 5000); });
         return;
       }
-      void speakPassage(text.replace(/\s+/g, ' ').trim(), lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => undefined, () => undefined).then((r) => {
+      const turn = speechTurn; pdfVoice = true; refreshReadingKeys();
+      void speakPassage(text.replace(/\s+/g, ' ').trim(), lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => voiceDone(turn), () => voiceDone(turn)).then((r) => {
+        if (r !== 'ok') voiceDone(turn);
         if (r === 'missing-data') { toast(t('voiceDataMissing', { lang: languageName(lang) }), 'info', 7000); void installVoices(); }
         else if (r !== 'ok') toast(r === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);
       });
@@ -1849,9 +2300,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   onDispose(() => { void setImmersive(false); keepAwake(false); });
   onDispose(attachEdgeBrightness(viewer.scroll));
   viewer.scroll.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); viewer.zoom(e.deltaY < 0 ? 0.1 : -0.1); }, { passive: false });
-  const onVolumePdf = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; viewer.scroll.scrollBy({ top: dir * viewer.scroll.clientHeight * 0.9, behavior: 'smooth' }); };
-  document.addEventListener('kr:volume', onVolumePdf);
-  onDispose(() => document.removeEventListener('kr:volume', onVolumePdf));
+  // The phone's volume keys (Android, as set — src/readkeys.ts): the next or previous page, as PageDown and PageUp
+  // turn it. (Pages run downwards: no sideways swipe here, so the screen's edges are left to the back gesture.)
+  onDispose(readingKeys({ sideways: () => false, sounding: () => pdfVoice || (!!pdfAudio && !pdfAudio.paused), turn: (forward) => viewer.goTo(viewer.current + (forward ? 1 : -1)) }));
 
   // Reading statistics for PDFs: words per page counted as pages are reached.
   const tracker = new ReadingTracker(book, () => true);
@@ -2259,36 +2710,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
 
   function openMore() {
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
-      const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
-      body.append(h('ul', { class: 'plain-list' },
-        item('info', t('bookInfo'), showInfo),
-        item('download', t('exportNotes'), () => void exportNotes(book)),
-        item('download', t('exportAnki'), () => void exportNotesAnki(book)),
-        item('external', t('shareFile'), () => void shareBooks([book.id])),
-        item('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertSheet(book))),
-        item('grid', t('pagesGrid'), showPagesGrid),
-        item('camera', t('savePageImage'), () => void savePage(false)),
-        item('external', t('sharePage'), () => void savePage(true)),
-        item('copy', t('copyPageImage'), () => void savePage('copy')),
-        item('images', t('cutPagePart'), () => void import('../ui/pdfsnap').then((m) => m.cutPagePart(viewer, book, snapName(book.title)))),
-        item('images', t('savePagesRange'), () => savePagesSheet()),
-        item('pen', t('inkNotes'), () => ink?.setOn(true)),
-        item('images', t('pageStrip'), () => strip?.toggle()),
-        ...((book.ink ?? []).length ? [item('download', t('exportWithInk'), () => void exportWithInk())] : []),
-        item('file', t('print'), () => void printBook()),
-        ...(nativePlatform() === 'android' ? [item('external', t('openWithApp'), () => void openWithApp())] : []),
-        item('file', t('toolExtract'), () => void import('../ui/pdftools').then((m) => m.extractFromBook(book))),
-        item('grid', t('pdfTools'), () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book))),
-        item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
-        item('note', t('noteOnPage'), placeNote),
-        item('fullscreen', getSettings().pdfAutoCrop ? t('cropMarginsOff') : t('cropMargins'), () => updateSettings({ pdfAutoCrop: !getSettings().pdfAutoCrop })),
-        item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : [book.id], { onChange: () => void findNextPdf() }))),
-        item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
-        item('type', t('visualOptions'), openPdfOptions),
-        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-        item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
-        item('target', t('goToPage'), () => pageInput.focus()),
-      ));
+      // (What the reader placed in «More», and what the bars had no room for; «Customise buttons» always last.)
+      body.append(moreList('pdf', bars.moreIds(), actions, () => panel.close(), () => buttonSheet('pdf')));
     } }]);
   }
 

@@ -1,11 +1,16 @@
 package app.kurokawa.reader;
 
+import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.ActionMode;
 import android.view.KeyEvent;
+import android.webkit.RenderProcessGoneDetail;
+import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.WebViewListener;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -13,6 +18,16 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(KurokawaPlugin.class);
         asView(getIntent());
         super.onCreate(savedInstanceState);
+        // The page's renderer ended under the app (the system took its memory back, or it crashed): unhandled, Android
+        // ends the whole app with it. The activity is made again instead — the app starts afresh and opens again the
+        // book that was open, at its saved place (src/resume.ts).
+        if (getBridge() != null) getBridge().addWebViewListener(new WebViewListener() {
+            @Override
+            public boolean onRenderProcessGone(WebView webView, RenderProcessGoneDetail detail) {
+                runOnUiThread(() -> { if (!isFinishing()) recreate(); });
+                return true;
+            }
+        });
     }
 
     @Override
@@ -73,25 +88,80 @@ public class MainActivity extends BridgeActivity {
         intent.setData(uri);
     }
 
-    /** The reader draws its own selection toolbar; keep the WebView's floating menu out of the way. */
+    /**
+     * The volume keys turn pages while the web side asks for it (src/readkeys.ts: a book open, the setting on, nothing
+     * open over the book, nothing being read aloud) — and nothing else on the device is playing sound. Taken here,
+     * before the WebView and the system see them, so the volume panel does not show; the key's release is taken with
+     * its press. Each press goes to the page as the document event `kr:volume` ('up' | 'down'). Held down, the key
+     * turns again at most every VOLUME_REPEAT_MS (the system repeats it every ~50 ms). Anything else, and every other
+     * key, goes on as usual.
+     */
+    private static final long VOLUME_REPEAT_MS = 450;
+    private int volumeTaken = 0;      // the key code whose press was taken (its release is taken too), or 0
+    private long volumeSentAt = 0;
+
     @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (KurokawaPlugin.volumeKeys && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event != null) {
+            int code = event.getKeyCode();
+            if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                if (volumeKey(code, event)) return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    private boolean volumeKey(int code, KeyEvent event) {
+        int action = event.getAction();
+        if (action == KeyEvent.ACTION_DOWN) {
             if (event.getRepeatCount() == 0) {
-                String dir = keyCode == KeyEvent.KEYCODE_VOLUME_UP ? "up" : "down";
-                getBridge().getWebView().evaluateJavascript("document.dispatchEvent(new CustomEvent('kr:volume',{detail:'" + dir + "'}))", null);
+                volumeTaken = 0;
+                if (!KurokawaPlugin.volumeKeys || soundPlaying()) return false;
+                volumeTaken = code;
+                volumeSentAt = event.getEventTime();
+                sendVolume(code);
+                return true;
+            }
+            if (volumeTaken != code) return false;
+            if (KurokawaPlugin.volumeKeys && event.getEventTime() - volumeSentAt >= VOLUME_REPEAT_MS) {
+                volumeSentAt = event.getEventTime();
+                sendVolume(code);
             }
             return true;
         }
-        return super.onKeyDown(keyCode, event);
+        if (action == KeyEvent.ACTION_UP) {
+            if (volumeTaken != code) return false;
+            volumeTaken = 0;
+            return true;
+        }
+        return volumeTaken == code;
     }
 
+    private void sendVolume(int code) {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        String dir = code == KeyEvent.KEYCODE_VOLUME_UP ? "up" : "down";
+        getBridge().getWebView().evaluateJavascript("document.dispatchEvent(new CustomEvent('kr:volume',{detail:'" + dir + "'}))", null);
+    }
+
+    /** Sound playing on the device (this app's voice or player, or another app's music): the keys are its volume. */
+    private boolean soundPlaying() {
+        try {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            return am != null && am.isMusicActive();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** In the background the keys are the system's again; the web side asks anew when the app comes back. */
     @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (KurokawaPlugin.volumeKeys && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) return true;
-        return super.onKeyUp(keyCode, event);
+    public void onPause() {
+        KurokawaPlugin.volumeKeys = false;
+        volumeTaken = 0;
+        super.onPause();
     }
 
+    /** The reader draws its own selection toolbar; keep the WebView's floating menu out of the way. */
     @Override
     public void onActionModeStarted(ActionMode mode) {
         mode.getMenu().clear();

@@ -42,7 +42,7 @@
 .reader.book-format .kr-content p { margin-block: 0 calc(var(--r-para, .9em) * .5); text-align: justify; text-align-last: start; hyphenate-limit-chars: 5 2 2; -webkit-hyphenate-limit-before: 2; -webkit-hyphenate-limit-after: 2; }
 .reader.book-format .kr-content p:has(> img:only-child), .reader.book-format .kr-content p.center, .reader.book-format .kr-content [style*='text-align: center'] { text-indent: 0; }
 .reader.book-format .kr-content p + p { margin-block-start: 0; }
-.reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
+.reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter, .reader.drop-cap .kr-content > .kr-run:first-child > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
 .reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
 
@@ -133,6 +133,9 @@
 /* (Chapters away from the screen are not laid out or painted until they come near it: a whole book in one long page
    — continuous reading — stays light.) */
 .reader-continuous .kr-content .kr-chapter { content-visibility: auto; contain-intrinsic-size: auto 3000px; }
+/* (A chapter not made yet — a book opened at a chapter, the others made just after: views/reader.ts firstChapter —
+   takes the room an unlaid chapter takes, near the screen or not, so the place does not move when it is made.) */
+.reader-continuous .kr-content .kr-chapter.kr-shell { min-height: 3000px; }
 .kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
 .kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
 .kr-content mark.kr-hl { background: color-mix(in srgb, var(--hl-amber, #e5c56b) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
@@ -147,6 +150,9 @@
 ::highlight(kr-search-current) { background: #e5a53b; color: #1a1408; }
 @keyframes flash { 0% { background: color-mix(in srgb, var(--r-link) 45%, transparent); } 100% { background: transparent; } }
 .kr-content .kr-txt { white-space: pre-wrap; }
+/* A long plain text's runs of paragraphs (formats/shared.ts textToParagraphs): each laid out only near the screen, its
+   height until then reckoned from its characters and paragraphs at the sizes measured on one run (sizeRuns, reader.ts). */
+.kr-content .kr-run { content-visibility: auto; contain-intrinsic-block-size: auto calc(var(--kr-run-c, 4000) * var(--kr-cpx, .45px) + var(--kr-run-p, 30) * var(--kr-ppx, 40px)); }
 /* Printed page markers (EPUB pagebreak spans) become quiet centred separators */
 .kr-content span.pb, .kr-content [epub\:type~='pagebreak'] { display: block; text-align: center; font-family: var(--font-ui); font-size: .62em; color: var(--r-dim); opacity: .8; margin: .6em 0; letter-spacing: .04em; }
 .kr-content .basmala { text-align: center; font-size: 1.25em; margin: .4em 0 1em; }
@@ -326,19 +332,9 @@ html[dir='rtl'] .pdf-bar[data-layout='side'] input[type='range'] { direction: lt
 .reader-view { position: relative; }
 .reader-view .tap-zones { position: absolute; inset: var(--topbar-h) 0 60px; pointer-events: none; }
 
-/* Moon+-style status line at the very bottom */
-.read-status {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 18; display: flex; align-items: center; gap: 8px;
-  padding: 3px 14px calc(3px + var(--safe-bottom)); font-family: var(--font-ui); font-size: 11.5px; color: var(--r-dim);
-  background: color-mix(in srgb, var(--r-bg) 92%, transparent); pointer-events: none; font-variant-numeric: tabular-nums;
-}
-.read-status .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55vw; }
-.read-status .left:empty { display: none; }
 .toc-list button { display: flex; align-items: baseline; gap: 8px; }
 .toc-list .toc-label { flex: 1; min-width: 0; }
 .toc-list .toc-len { font-size: 11.5px; color: var(--md-on-surface-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.read-status .sp { flex: 1; }
-.read-status .pct { font-weight: 600; }
 .reader-view.immersive .read-footer { opacity: 0; }
 .reader-flow { padding-bottom: calc(96px + var(--safe-bottom)); }
 
@@ -356,7 +352,6 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .chapter-nav .cn-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; flex-direction: column; align-items: flex-start; }
 .chapter-nav .cn-btn small { font-size: 11px; color: var(--r-dim); font-weight: 400; }
 .chapter-nav .end { color: var(--r-dim); font-size: 13px; }
-.read-status { color: var(--md-on-surface-dim); background: color-mix(in srgb, var(--md-surface) 92%, transparent); }
 
 .reader-view .float-toolbar, .reader-view .pdf-bar { bottom: calc(34px + var(--safe-bottom)); }
 /* Note bubbles after highlighted passages */
@@ -507,20 +502,23 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
    search docked beside the page and left open while reading; arrows at the text's sides to turn the page, shown
    while the mouse moves; a picture opens with a double-click. A phone keeps its own chrome. */
 .tb-label, .page-arrow { display: none; }
-html.pc .reader-view .float-toolbar {
-  position: absolute; top: var(--safe-top); bottom: auto; left: auto; inset-inline-end: 56px; transform: none; z-index: 21;
-  height: var(--topbar-h); max-width: calc(100% - 420px); padding: 0; gap: 2px; background: none; box-shadow: none; border-radius: 0;
+/* (The toolbar «in the top bar» — the computer's standard place, [data-tb='inline'] — sits over the top bar between the
+   title and the buttons at the top bar's end, whose width is measured: --te-w.) */
+.reader-view[data-tb='inline'] .float-toolbar {
+  position: absolute; top: var(--safe-top); bottom: auto; left: auto; inset-inline-end: var(--te-w, 56px); transform: none; z-index: 21;
+  height: var(--topbar-h); max-width: calc(100% - 364px - var(--te-w, 56px) - var(--ts-w, 0px)); padding: 0; gap: 2px; background: none; box-shadow: none; border-radius: 0;
   color: var(--chrome-fg, var(--md-on-surface)); overflow: hidden;
 }
-html.pc .reader-view .float-toolbar .icon-btn { display: inline-flex; flex-direction: row; align-items: center; width: auto; height: 38px; padding: 0 10px; gap: 7px; border-radius: 10px; flex: none; color: inherit; }
-html.pc .reader-view .float-toolbar .icon-btn svg { width: 19px; height: 19px; }
-html.pc .reader-view .float-toolbar .icon-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
-html.pc .reader-view .float-toolbar .tb-label { display: inline; font-size: 13px; font-weight: 500; white-space: nowrap; }
-html.pc .reader-view .float-toolbar .sep { height: 22px; background: color-mix(in srgb, currentColor 18%, transparent); }
-html.pc .reader-view.immersive .float-toolbar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
+.reader-view[data-tb='inline'] .float-toolbar .icon-btn { display: inline-flex; flex-direction: row; align-items: center; width: auto; height: 38px; padding: 0 10px; gap: 7px; border-radius: 10px; flex: none; color: inherit; }
+.reader-view[data-tb='inline'] .float-toolbar .icon-btn svg { width: 19px; height: 19px; }
+.reader-view[data-tb='inline'] .float-toolbar .icon-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.reader-view[data-tb='inline'] .float-toolbar .tb-label { display: inline; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.reader-view[data-tb='inline'] .float-toolbar.tb-compact .tb-label { display: none; }
+.reader-view[data-tb='inline'] .float-toolbar .sep { height: 22px; background: color-mix(in srgb, currentColor 18%, transparent); }
+.reader-view.immersive[data-tb='inline'] .float-toolbar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
 html.pc .reader-view .topbar .title { max-width: 34%; flex: 0 1 auto; }
-html.pc .reader-view .topbar > .icon-btn:last-child { margin-inline-start: auto; }
-@media (max-width: 1180px) { html.pc .reader-view .float-toolbar .tb-label { display: none; } html.pc .reader-view .float-toolbar { max-width: calc(100% - 300px); } }
+html.pc .reader-view .topbar > .top-end-first { margin-inline-start: auto; }
+@media (max-width: 1180px) { .reader-view[data-tb='inline'] .float-toolbar .tb-label { display: none; } .reader-view[data-tb='inline'] .float-toolbar { max-width: calc(100% - 244px - var(--te-w, 56px) - var(--ts-w, 0px)); } }
 
 html.pc .page-arrow { display: grid; place-items: center; position: absolute; top: 50%; z-index: 6; width: 44px; height: 88px; margin-top: -44px; border: 0; border-radius: 14px;
   background: color-mix(in srgb, var(--chrome-bg, var(--md-surface-container-high)) 82%, transparent); color: var(--chrome-fg, var(--md-on-surface)); cursor: pointer;
@@ -535,8 +533,233 @@ html.pc .reader-view .reader { position: relative; }
 html.pc .reader-view .panel.docked { width: 360px; top: 0; border-radius: 0; box-shadow: none; border-inline-start: 1px solid color-mix(in srgb, var(--md-on-surface) 10%, transparent); z-index: 25; transition: none; }
 html.pc .reader-view.panel-docked :is(.reader, .read-footer, .read-status) { margin-inline-end: 360px; }
 html.pc .reader-view.panel-docked .topbar { inset-inline-end: 360px; }
-html.pc .reader-view.panel-docked .float-toolbar { inset-inline-end: calc(360px + 56px); max-width: calc(100% - 360px - 420px); }
-html.pc .reader-view.panel-docked .float-toolbar .tb-label { display: none; }
+html.pc .reader-view.panel-docked[data-tb='inline'] .float-toolbar { inset-inline-end: calc(360px + var(--te-w, 56px)); max-width: calc(100% - 360px - 364px - var(--te-w, 56px) - var(--ts-w, 0px)); }
+html.pc .reader-view.panel-docked[data-tb='inline'] .float-toolbar .tb-label { display: none; }
+html.pc .reader-view.panel-docked[data-tb='bottom'] .float-toolbar, html.pc .reader-view.panel-docked[data-tb='top'] .float-toolbar { left: calc((100% - 360px) / 2); max-width: calc(100% - 360px - 24px); }
+html[dir='rtl'].pc .reader-view.panel-docked[data-tb='bottom'] .float-toolbar, html[dir='rtl'].pc .reader-view.panel-docked[data-tb='top'] .float-toolbar { left: calc(360px + (100% - 360px) / 2); }
+html.pc .reader-view.panel-docked[data-tb='end'] .float-toolbar { inset-inline-end: calc(360px + 10px); }
 html.pc .reader-view.panel-docked .page-arrow.next { inset-inline-end: 18px; }
 html.pc .reader-view .panel.docked .panel-head { min-height: calc(var(--topbar-h) + var(--safe-top)); padding-block: 0; }
 html.pc .reader-view .panel.docked .panel-head h2 { font-size: 17px; }
+
+/* ---------- The reading bar (Moon+'s status line) — src/ui/readbar.ts ----------
+   A thin line at the foot of the page in the page's own colours (so it reads on every theme — light, sepia, dark,
+   black, one's own), its items at the start, the centre and the end (mirrored in a right-to-left interface), the
+   figures of fixed width so the line does not shift as they change. The text always ends above whatever shows at the
+   foot — the bar, the floating toolbar, the system's gesture area — and the place read does not move on the screen
+   when they show or hide: with the chrome hidden the text's top padding takes the top bar's room, so the scroller
+   grows upward over text that was already above (no jump), and its foot is set by what stays. */
+.reader-view { --rb-size: 22px; --rb-imm-bottom: var(--safe-bottom); }
+.reader-view.rb-on.rb-imm { --rb-imm-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
+.read-status {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 18; box-sizing: border-box; height: calc(var(--rb-size) + var(--safe-bottom));
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: 12px;
+  padding: 0 max(14px, env(safe-area-inset-right, 0px)) var(--safe-bottom) max(14px, env(safe-area-inset-left, 0px));
+  font-family: var(--font-ui); font-size: 11.5px; line-height: 1; letter-spacing: .01em; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--chrome-fg, var(--md-on-surface)) 62%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg, var(--md-surface)) 94%, transparent);
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--chrome-fg, var(--md-on-surface)) 8%, transparent);
+  pointer-events: none; transition: opacity var(--dur-med), transform var(--dur-med) var(--ease-emph);
+}
+.read-status[hidden] { display: none; }
+/* (Nothing in the centre: the two sides share the line, the start giving way first. Too much for the line: names and
+   the items in words are cut with «…» — the chapter's first — the figures never; nothing overlaps.) */
+.read-status[data-centre='false'] { display: flex; justify-content: space-between; }
+.read-status[data-centre='false'] .rb-center { display: none; }
+.read-status[data-centre='false'] .rb-start { flex: 0 4 auto; }
+.read-status[data-centre='false'] .rb-end { flex: 0 1 auto; margin-inline-start: auto; }
+.read-status > div { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.read-status .rb-start { justify-content: flex-start; }
+.read-status .rb-center { justify-content: center; max-width: 46vw; }
+.read-status .rb-end { justify-content: flex-end; }
+.read-status .rb-item { flex: 0 0 auto; }
+.read-status .rb-item[hidden] { display: none; }
+.read-status :is(.rb-chapter, .rb-title) { flex: 0 8 auto; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; }
+.read-status :is(.rb-chapterLeft, .rb-chapterPct, .rb-bookLeft, .rb-timeChapter, .rb-timeBook) { flex: 0 1 auto; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; }
+.read-status :is(.rb-page, .rb-bookPage, .rb-bookPct) { font-weight: 600; color: color-mix(in srgb, var(--chrome-fg, var(--md-on-surface)) 78%, transparent); }
+/* The battery: a small drawn cell before its figure. */
+.read-status .rb-battery { display: inline-flex; align-items: center; gap: 4px; }
+.read-status .rb-battery::before { content: ''; width: 14px; height: 7px; border: 1.2px solid currentColor; border-radius: 2px; box-sizing: border-box; box-shadow: 1.5px 0 0 -0.3px currentColor; opacity: .85; }
+html[dir='rtl'] .read-status .rb-battery::before { box-shadow: -1.5px 0 0 -0.3px currentColor; }
+.reader-view.immersive:not(.rb-imm) .read-status { opacity: 0; transform: translateY(100%); }
+/* One page: the text's frame with the chrome hidden (the bar's pages are counted in it). */
+.read-frame { position: absolute; left: 0; right: 0; top: 0; bottom: var(--rb-imm-bottom); visibility: hidden; pointer-events: none; }
+/* The foot of the text: above the bar (when it shows), the system's gesture area, and — on a phone, with the chrome
+   shown — the floating toolbar (its height measured: --tb-h). */
+.reader-view.flow-reader .reader { padding-bottom: var(--safe-bottom); }
+.reader-view.flow-reader.rb-on .reader { padding-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
+.reader-view.flow-reader.immersive .reader { padding-bottom: var(--rb-imm-bottom); }
+/* (The toolbar at the foot — a phone's standard place —: the text ends above it. At the top: the text begins below it,
+   and with the chrome hidden the text's top padding takes its room too, so nothing moves. At a side: the text keeps
+   clear of it always — shown or hidden — so the lines do not flow again when the chrome hides.) */
+.reader-view.flow-reader[data-tb='bottom']:not(.immersive) .reader { padding-bottom: calc(34px + var(--tb-h, 60px) + 8px + var(--safe-bottom)); }
+.reader-view.flow-reader[data-tb='bottom'][data-tblook='docked']:not(.immersive) .reader { padding-bottom: calc(var(--dock-bottom) + var(--tb-h, 60px)); }
+.reader-view.flow-reader[data-tb='top']:not(.immersive) .reader { padding-top: calc(var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 14px); }
+.reader-view.flow-reader[data-tb='top'][data-tblook='docked']:not(.immersive) .reader { padding-top: calc(var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 4px); }
+.reader-view.flow-reader.immersive[data-tb='top'] .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 14px); }
+.reader-view.flow-reader.immersive[data-tb='top'][data-tblook='docked'] .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 4px); }
+.reader-view.flow-reader[data-tb='start'] .reader { padding-inline-start: calc(var(--tb-w, 60px) + 16px); }
+.reader-view.flow-reader[data-tb='end'] .reader { padding-inline-end: calc(var(--tb-w, 60px) + 16px); }
+.reader-view.flow-reader[data-tb='start'][data-tblook='docked'] .reader { padding-inline-start: var(--tb-w, 60px); }
+.reader-view.flow-reader[data-tb='end'][data-tblook='docked'] .reader { padding-inline-end: var(--tb-w, 60px); }
+.reader-view.flow-reader.immersive .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top)); }
+.reader-view.pdf-reader.rb-on:not(.immersive) .reader, .reader-view.pdf-reader.rb-on.rb-imm .reader { padding-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
+/* A PDF's pages as the text: they end above the page bar lying at the foot and begin below one at the top (its room
+   measured — views/reader.ts mountPdf: data-pb, --pb-room); a docked bar down a side keeps them clear of it always. And
+   the chrome hiding moves no page: with it hidden the scroller's top padding takes the room the top bar (and a bar at
+   the top) had, so the scroller grows upward over pages already above; at the foot only the scroller's end moves. */
+.reader-view.pdf-reader { --pdf-top: calc(var(--topbar-h) + 24px + var(--safe-top)); }
+.reader-view.pdf-reader[data-pb='top'] { --pdf-top: max(calc(var(--topbar-h) + 24px + var(--safe-top)), var(--pb-room, 0px)); }
+.reader-view.pdf-reader .reader { padding-top: var(--pdf-top); }
+.reader-view.pdf-reader.immersive .reader { padding-top: 0; }
+.reader-view.pdf-reader.immersive .pdf-scroll { padding-top: calc(12px + var(--pdf-top)); }
+.reader-view.pdf-reader[data-pb='bottom']:not(.immersive) .reader { padding-bottom: max(var(--pb-room, 0px), var(--safe-bottom)); }
+.reader-view.pdf-reader.rb-on[data-pb='bottom']:not(.immersive) .reader { padding-bottom: max(var(--pb-room, 0px), calc(var(--rb-size) + var(--safe-bottom))); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='right'] .reader { padding-right: var(--pb-room, 56px); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='left'] .reader { padding-left: var(--pb-room, 56px); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='start'] .reader { padding-inline-start: var(--pb-room, 56px); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='end'] .reader { padding-inline-end: var(--pb-room, 56px); }
+/* The reading bar's editor (the reader's options): a row per item — its switch and name, where it goes, up and down. */
+.placed-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.placed-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; border-radius: 14px; }
+.placed-row.on { background: color-mix(in srgb, var(--md-secondary-container) 70%, transparent); color: var(--md-on-secondary-container); }
+.placed-name { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 14px; cursor: pointer; }
+.placed-name input { accent-color: var(--md-primary); width: 18px; height: 18px; flex: none; }
+.placed-name span { display: flex; flex-direction: column; min-width: 0; }
+.placed-name small { font-size: 11.5px; opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.placed-at { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--sh-full); background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
+.placed-at button { width: 34px; height: 30px; padding: 0; display: grid; place-items: center; border-radius: var(--sh-full); color: var(--md-on-surface-variant); background: none; transition: background var(--dur-short), color var(--dur-short); }
+.placed-at button[aria-pressed='true'] { background: var(--md-primary); color: var(--md-on-primary); }
+.placed-at button:disabled { opacity: .35; }
+.place-glyph { display: inline-flex; gap: 2px; align-items: center; }
+.place-glyph > span { width: 5px; height: 5px; border-radius: 1.5px; box-shadow: inset 0 0 0 1.2px currentColor; opacity: .7; }
+.place-glyph > span.on { background: currentColor; opacity: 1; width: 7px; }
+.placed-row .row-actions .icon-btn { width: 32px; height: 32px; }
+.placed-row .row-actions .icon-btn:disabled { opacity: .3; }
+/* (The text's scroller takes the keyboard's focus when a book opens — for the keys that turn pages — and its ring, once
+   below the screen's foot, now drew a line above the toolbar: the reading surface needs none.) */
+.reader-scroll:focus-visible { outline: none; }
+
+/* ---------- The reader's buttons placed (src/readbuttons.ts, src/ui/buttonbars.ts) ----------
+   The toolbar at the foot (a phone's standard), at the top under the top bar, or down the start or end side (upright,
+   centred in the room below the top bar); a floating pill, or docked: the full width (or height) at the screen's edge,
+   above the reading bar. Start and end are mirrored right to left. What a bar cannot hold goes to «More» (measured):
+   the buttons never shrink or wrap. */
+.reader-view { --dock-bottom: 0px; --dock-pad: var(--safe-bottom); }
+.reader-view.rb-on { --dock-bottom: calc(var(--rb-size) + var(--safe-bottom)); --dock-pad: 0px; }
+.reader-view .float-toolbar > * { flex: none; }
+.reader-view .float-toolbar[hidden] { display: none; }
+.reader-view .topbar > * { flex-shrink: 0; }
+.reader-view .topbar > .title { flex-shrink: 1; min-width: 72px; }
+.reader-view[data-tb='top'] .float-toolbar { bottom: auto; top: calc(var(--topbar-h) + var(--safe-top) + 30px); }
+.reader-view.immersive[data-tb='top'] .float-toolbar { transform: translateX(-50%) translateY(calc(-100% - var(--topbar-h) - 40px)); }
+.reader-view:is([data-tb='start'], [data-tb='end']) .float-toolbar {
+  flex-direction: column; left: auto; right: auto; bottom: auto; top: calc(50% + (var(--topbar-h) + var(--safe-top) + 24px - var(--rb-room, 0px)) / 2); transform: translateY(-50%);
+  max-width: none; max-height: calc(100% - var(--topbar-h) - var(--safe-top) - 24px - 24px - var(--safe-bottom) - var(--rb-size));
+}
+.reader-view.rb-on { --rb-room: var(--rb-size); }
+.reader-view[data-tb='start'] .float-toolbar { inset-inline-start: max(10px, env(safe-area-inset-left, 0px)); }
+.reader-view[data-tb='end'] .float-toolbar { inset-inline-end: max(10px, env(safe-area-inset-right, 0px)); }
+html[dir='rtl'] .reader-view[data-tb='start'] .float-toolbar { inset-inline-start: max(10px, env(safe-area-inset-right, 0px)); }
+html[dir='rtl'] .reader-view[data-tb='end'] .float-toolbar { inset-inline-end: max(10px, env(safe-area-inset-left, 0px)); }
+.reader-view:is([data-tb='start'], [data-tb='end']) .float-toolbar .sep { width: 24px; height: 1px; margin: 4px 0; }
+.reader-view:is([data-tb='start'], [data-tb='end']) .float-toolbar .fab-in { margin-inline-start: 0; margin-top: 4px; }
+.reader-view.immersive[data-tb='start'] .float-toolbar { transform: translateY(-50%) translateX(-160%); }
+.reader-view.immersive[data-tb='end'] .float-toolbar { transform: translateY(-50%) translateX(160%); }
+html[dir='rtl'] .reader-view.immersive[data-tb='start'] .float-toolbar { transform: translateY(-50%) translateX(160%); }
+html[dir='rtl'] .reader-view.immersive[data-tb='end'] .float-toolbar { transform: translateY(-50%) translateX(-160%); }
+/* Docked. */
+.reader-view[data-tblook='docked'] .float-toolbar { border-radius: 0; box-shadow: none; max-width: none; justify-content: center; background: color-mix(in srgb, var(--chrome-bg, var(--md-surface-container-high)) 94%, var(--md-on-surface) 6%); }
+.reader-view[data-tblook='docked'][data-tb='bottom'] .float-toolbar { left: 0; right: 0; transform: none; bottom: var(--dock-bottom); padding: 4px max(8px, env(safe-area-inset-right, 0px)) calc(4px + var(--dock-pad)) max(8px, env(safe-area-inset-left, 0px)); box-shadow: 0 -1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive[data-tblook='docked'][data-tb='bottom'] .float-toolbar { transform: translateY(calc(100% + var(--dock-bottom))); }
+.reader-view[data-tblook='docked'][data-tb='top'] .float-toolbar { left: 0; right: 0; transform: none; top: calc(var(--topbar-h) + var(--safe-top) + 24px); padding: 4px 8px; box-shadow: 0 1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive[data-tblook='docked'][data-tb='top'] .float-toolbar { transform: translateY(calc(-100% - var(--topbar-h) - var(--safe-top) - 24px)); }
+.reader-view[data-tblook='docked']:is([data-tb='start'], [data-tb='end']) .float-toolbar { top: calc(var(--topbar-h) + var(--safe-top) + 24px); bottom: var(--dock-bottom); transform: none; max-height: none; justify-content: flex-start; padding: 8px 4px; overflow: hidden; }
+.reader-view[data-tblook='docked'][data-tb='start'] .float-toolbar { inset-inline-start: 0; box-shadow: 1px 0 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view[data-tblook='docked'][data-tb='end'] .float-toolbar { inset-inline-end: 0; box-shadow: -1px 0 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive[data-tblook='docked'][data-tb='start'] .float-toolbar { transform: translateX(-110%); }
+.reader-view.immersive[data-tblook='docked'][data-tb='end'] .float-toolbar { transform: translateX(110%); }
+html[dir='rtl'] .reader-view.immersive[data-tblook='docked'][data-tb='start'] .float-toolbar { transform: translateX(110%); }
+html[dir='rtl'] .reader-view.immersive[data-tblook='docked'][data-tb='end'] .float-toolbar { transform: translateX(-110%); }
+/* The PDF's page bar: its side as start or end (mirrored), and docked. */
+.pdf-bar[hidden], .pdf-bar-nav[hidden], .pdf-bar-tools[hidden] { display: none !important; }
+.pdf-bar-tools > * { flex: none; }
+.pdf-bar[data-layout='side'][data-side='start'] { left: auto; right: auto; inset-inline-start: max(14px, env(safe-area-inset-left, 0px) + 10px); }
+.pdf-bar[data-layout='side'][data-side='end'] { left: auto; right: auto; inset-inline-end: max(14px, env(safe-area-inset-right, 0px) + 10px); }
+.reader-view.immersive .pdf-bar[data-layout='side'][data-side='start'] { transform: translateY(-50%) translateX(-140%); }
+html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'][data-side='start'] { transform: translateY(-50%) translateX(140%); }
+html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'][data-side='end'] { transform: translateY(-50%) translateX(-140%); }
+.pdf-bar[data-look='docked']:not([data-layout='side']) { left: 0; right: 0; width: auto; transform: none; border-radius: 0; box-shadow: 0 -1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); bottom: var(--dock-bottom); padding-bottom: calc(6px + var(--dock-pad)); }
+.pdf-bar[data-look='docked'][data-row='top']:not([data-layout='side']) { top: calc(var(--topbar-h) + var(--safe-top)); bottom: auto; padding-bottom: 6px; box-shadow: 0 1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive .pdf-bar[data-look='docked']:not([data-layout='side']) { transform: translateY(calc(100% + var(--dock-bottom))); }
+.reader-view.immersive .pdf-bar[data-look='docked'][data-row='top']:not([data-layout='side']) { transform: translateY(calc(-100% - var(--topbar-h) - var(--safe-top))); }
+.pdf-bar[data-look='docked'][data-layout='side'] { top: calc(var(--topbar-h) + var(--safe-top)); bottom: var(--dock-bottom); height: auto; max-height: none; transform: none; border-radius: 0; box-shadow: none; }
+.pdf-bar[data-look='docked'][data-layout='side']:not([data-side='left'], [data-side='start']) { right: 0; }
+.pdf-bar[data-look='docked'][data-layout='side'][data-side='left'] { left: 0; }
+.pdf-bar[data-look='docked'][data-layout='side'][data-side='start'] { inset-inline-start: 0; }
+.pdf-bar[data-look='docked'][data-layout='side'][data-side='end'] { right: auto; inset-inline-end: 0; }
+.reader-view.immersive .pdf-bar[data-look='docked'][data-layout='side'] { transform: translateX(110%); }
+.reader-view.immersive .pdf-bar[data-look='docked'][data-layout='side'][data-side='left'] { transform: translateX(-110%); }
+.pdf-bar[data-look='docked'] { background: var(--md-surface-container-high); backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* The editor (src/ui/buttonsheet.ts): a picture of the bars, then a group per place — its rows, each with its icon,
+   name, a choice of place (a small screen with the spot marked) and up / down. */
+.buttons-sheet .buttons-kind { margin: 4px 0 12px; }
+.btn-preview { position: relative; height: 150px; margin: 4px auto 14px; max-width: 300px; border-radius: 18px; overflow: hidden; background: var(--md-surface-container); box-shadow: inset 0 0 0 1px var(--md-outline-variant); }
+.btn-preview .pv-top { position: absolute; inset: 0 0 auto; height: 26px; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--md-surface-container-highest); }
+.btn-preview .pv-title { flex: 1; height: 6px; margin: 0 6px; border-radius: 3px; background: color-mix(in srgb, var(--md-on-surface) 22%, transparent); min-width: 20px; }
+.btn-preview .pv-ic { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none; color: var(--md-on-surface-variant); }
+.btn-preview .pv-ic svg { width: 13px; height: 13px; }
+.btn-preview .pv-ic.fixed { color: var(--md-primary); }
+.btn-preview .pv-sep { width: 1px; height: 12px; margin: 0 2px; background: color-mix(in srgb, var(--md-on-surface) 25%, transparent); flex: none; }
+.btn-preview .pv-slider { width: 50px; height: 4px; margin: 0 4px; border-radius: 2px; background: var(--md-primary); flex: none; }
+.btn-preview .pv-lines { position: absolute; inset: 40px 34px 0; display: flex; flex-direction: column; gap: 7px; }
+.btn-preview .pv-lines i { display: block; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--md-on-surface) 12%, transparent); }
+.btn-preview .pv-bar { position: absolute; display: flex; align-items: center; gap: 1px; padding: 3px 5px; border-radius: 999px; background: var(--md-surface-container-highest); box-shadow: var(--el-2); max-width: calc(100% - 12px); overflow: hidden; }
+.btn-preview:is([data-at='bottom'], [data-at='auto']) .pv-bar { bottom: 10px; left: 50%; transform: translateX(-50%); }
+.btn-preview[data-at='top'] .pv-bar { top: 32px; left: 50%; transform: translateX(-50%); }
+.btn-preview[data-at='inline'] .pv-bar { top: 0; height: 26px; inset-inline-end: 24px; background: none; box-shadow: none; padding: 0; }
+.btn-preview:is([data-at='start'], [data-at='end']) .pv-bar { flex-direction: column; top: 34px; bottom: 6px; justify-content: center; padding: 5px 3px; border-radius: 12px; }
+.btn-preview:is([data-at='start'], [data-at='end']) .pv-sep { width: 12px; height: 1px; margin: 2px 0; }
+.btn-preview:is([data-at='start'], [data-at='end']) .pv-slider { width: 4px; height: 30px; margin: 3px 0; }
+.btn-preview[data-at='start'] .pv-bar { inset-inline-start: 4px; }
+.btn-preview[data-at='end'] .pv-bar { inset-inline-end: 4px; }
+.btn-preview[data-look='docked']:not([data-at='inline']) .pv-bar { border-radius: 0; box-shadow: 0 0 0 1px var(--md-outline-variant); }
+.btn-preview[data-look='docked']:is([data-at='bottom'], [data-at='auto']) .pv-bar { bottom: 0; left: 0; right: 0; transform: none; max-width: none; justify-content: center; }
+.btn-preview[data-look='docked'][data-at='top'] .pv-bar { top: 26px; left: 0; right: 0; transform: none; max-width: none; justify-content: center; }
+.btn-preview[data-look='docked']:is([data-at='start'], [data-at='end']) .pv-bar { top: 26px; bottom: 0; justify-content: flex-start; }
+.btn-preview[data-look='docked'][data-at='start'] .pv-bar { inset-inline-start: 0; }
+.btn-preview[data-look='docked'][data-at='end'] .pv-bar { inset-inline-end: 0; }
+.places-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.places-group { border-radius: 18px; padding: 6px 4px 8px; background: color-mix(in srgb, var(--md-on-surface) 3.5%, transparent); }
+.places-head { display: flex; align-items: center; gap: 8px; margin: 2px 8px 4px; font-size: 13px; font-weight: 650; color: var(--md-on-surface-variant); }
+.places-head small { margin-inline-start: auto; font-weight: 500; opacity: .7; font-variant-numeric: tabular-nums; }
+.places-editor .placed-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+.places-editor .placed-name { cursor: default; }
+.places-editor .placed-name > svg { width: 20px; height: 20px; flex: none; }
+.places-editor .placed-name > span { font-size: 14px; }
+.places-editor .placed-row.fixed { opacity: .78; grid-template-columns: minmax(0, 1fr) auto; }
+.places-editor .placed-row.fixed small { white-space: normal; }
+.places-editor .fixed-mark svg { width: 16px; height: 16px; opacity: .6; margin-inline-end: 8px; }
+.places-editor .placed-at.places button { width: 30px; }
+.places-editor .add-sep { margin: 6px 8px 0; }
+.places-editor .icon-btn.rm { width: 32px; height: 32px; }
+/* (A narrow screen: the choice of place goes under the name.) */
+@media (max-width: 460px) {
+  .places-editor .placed-row:not(.fixed) { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'name moves' 'at at'; row-gap: 4px; padding-block: 6px; }
+  .places-editor .placed-row:not(.fixed) .placed-name { grid-area: name; }
+  .places-editor .placed-row:not(.fixed) .row-actions { grid-area: moves; }
+  .places-editor .placed-row:not(.fixed) > .placed-at, .places-editor .placed-row:not(.fixed) > .rm { grid-area: at; justify-self: start; margin-inline-start: 30px; }
+}
+/* The places drawn: a small screen, its top bar a line, the spot filled. */
+.place-glyph2 { display: inline-grid; place-items: center; width: 18px; height: 18px; }
+.place-glyph2 svg { width: 16px; height: 16px; }
+.pg { position: relative; display: block; width: 13px; height: 16px; border: 1.4px solid currentColor; border-radius: 3px; box-sizing: border-box; }
+.pg::before { content: ''; position: absolute; left: 0; right: 0; top: 3px; height: 1.2px; background: currentColor; opacity: .55; }
+.pg i { position: absolute; display: block; background: currentColor; border-radius: 1px; }
+.pg-topStart i { top: 0.5px; inset-inline-start: 1px; width: 4px; height: 2.5px; }
+.pg-topEnd i { top: 0.5px; inset-inline-end: 1px; width: 4px; height: 2.5px; }
+.pg-bar i { bottom: 1.5px; left: 2px; right: 2px; height: 2.5px; border-radius: 2px; }
+.pg-hidden { border-style: dashed; }
+.pg-hidden::before { opacity: 0; }
+.pg-hidden i { top: 50%; left: -2px; right: -2px; height: 1.4px; transform: rotate(-45deg); }

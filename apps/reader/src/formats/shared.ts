@@ -104,23 +104,34 @@ export class UrlPool {
 }
 
 const purify = DOMPurify;
-purify.addHook('uponSanitizeAttribute', (_node, data) => {
+const keepLinks = (_node: Element, data: { attrName: string; attrValue: string; forceKeepAttr?: boolean }) => {
   // Keep the `epub:type` style namespaced attributes out, allow data-* and blob: image sources.
   if (data.attrName === 'src' || data.attrName === 'href' || data.attrName === 'xlink:href') {
     if (/^(blob:|data:image\/|#|[^:]*$)/i.test(data.attrValue)) data.forceKeepAttr = true;
   }
+};
+purify.addHook('uponSanitizeAttribute', keepLinks);
+
+const purifyConfig = (keepStyles: boolean) => ({
+  IN_PLACE: true,
+  WHOLE_DOCUMENT: false,
+  ADD_TAGS: ['section', 'figure', 'figcaption', 'svg', 'image', 'use', 'nav', 'aside', 'ruby', 'rt', 'rp', 'wbr', 'mark'],
+  ADD_ATTR: ['xlink:href', 'viewBox', 'preserveAspectRatio', 'dir', 'lang', 'epub:type', 'loading', 'decoding', 'data-kr-src', 'data-kr-anchor', 'colspan', 'rowspan'],
+  FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select', 'link', 'meta', 'base', 'title', ...(keepStyles ? [] : ['style', 'font'])],
+  FORBID_ATTR: keepStyles ? ['onload', 'onerror'] : ['style', 'color', 'bgcolor', 'background', 'face', 'align', 'width', 'height', 'border', 'cellpadding', 'cellspacing', 'onload', 'onerror'],
+  ALLOW_UNKNOWN_PROTOCOLS: true,
 });
+/** One sanitizer for each of the two settings, its settings read once: given with every call, they were read
+ *  again for each chapter — a third of the time a book of hundreds of chapters spent being cleaned. */
+const purifiers = new Map<boolean, typeof DOMPurify>();
+function purifierFor(keepStyles: boolean): typeof DOMPurify {
+  let p = purifiers.get(keepStyles);
+  if (!p) { p = DOMPurify(window); p.addHook('uponSanitizeAttribute', keepLinks); p.setConfig(purifyConfig(keepStyles)); purifiers.set(keepStyles, p); }
+  return p;
+}
 
 export function sanitize(root: Element, keepStyles: boolean): void {
-  purify.sanitize(root, {
-    IN_PLACE: true,
-    WHOLE_DOCUMENT: false,
-    ADD_TAGS: ['section', 'figure', 'figcaption', 'svg', 'image', 'use', 'nav', 'aside', 'ruby', 'rt', 'rp', 'wbr', 'mark'],
-    ADD_ATTR: ['xlink:href', 'viewBox', 'preserveAspectRatio', 'dir', 'lang', 'epub:type', 'loading', 'decoding', 'data-kr-src', 'data-kr-anchor', 'colspan', 'rowspan'],
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select', 'link', 'meta', 'base', 'title', ...(keepStyles ? [] : ['style', 'font'])],
-    FORBID_ATTR: keepStyles ? ['onload', 'onerror'] : ['style', 'color', 'bgcolor', 'background', 'face', 'align', 'width', 'height', 'border', 'cellpadding', 'cellspacing', 'onload', 'onerror'],
-    ALLOW_UNKNOWN_PROTOCOLS: true,
-  });
+  purifierFor(keepStyles).sanitize(root);
 }
 
 /** Give every block a direction of its own so mixed Arabic/English books read naturally,
@@ -142,19 +153,56 @@ export function numberLists(root: Element): void {
 }
 
 export function markDirections(root: Element): boolean {
-  numberLists(root);
+  const [rtlBlocks, total] = markBlockDirections(root);
+  const rtl = total > 0 && rtlBlocks / total > 0.5;
+  if (!root.getAttribute('dir')) root.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+  return rtl;
+}
+/** markDirections' work on the blocks inside `el` (and its lists numbered), `el` itself left as it is: how many of its
+ *  blocks with text read right to left, and how many have text — so a book made a chapter at a time is weighed whole. */
+export function markBlockDirections(el: Element): [number, number] {
+  numberLists(el);
   let rtlBlocks = 0, total = 0;
-  root.querySelectorAll<HTMLElement>(BLOCK_SELECTOR).forEach((el) => {
-    const text = el.textContent ?? '';
+  el.querySelectorAll<HTMLElement>(BLOCK_SELECTOR).forEach((b) => {
+    const text = b.textContent ?? '';
     if (!text.trim()) return;
     total++;
     const rtl = isRtlText(text);
     if (rtl) rtlBlocks++;
-    if (!el.getAttribute('dir')) el.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+    if (!b.getAttribute('dir')) b.setAttribute('dir', rtl ? 'rtl' : 'ltr');
   });
-  const rtl = total > 0 && rtlBlocks / total > 0.5;
-  if (!root.getAttribute('dir')) root.setAttribute('dir', rtl ? 'rtl' : 'ltr');
-  return rtl;
+  return [rtlBlocks, total];
+}
+
+/** A text file of a zip, read at once: its bytes inflated in one call and decoded natively — JSZip's own way passes
+ *  them through its stream of small chunks and its own UTF-8 decoder, a breath between each, which was a third of the
+ *  time a book of hundreds of chapters took to open on a phone. The same text (a byte-order mark kept, as JSZip keeps
+ *  it); anything unusual — another compression, a size that does not match — is read JSZip's way. */
+type Inflate = (d: Uint8Array) => Uint8Array;
+let inflateP: Promise<Inflate | null> | null = null;
+const utf8 = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { ignoreBOM: true }) : null;
+export async function zipText(f: JSZip.JSZipObject): Promise<string> {
+  const d = (f as unknown as { _data?: { compressedContent?: unknown; uncompressedSize?: number; compression?: { magic?: string } } })._data;
+  const raw = d?.compressedContent, magic = d?.compression?.magic;
+  if (utf8 && raw instanceof Uint8Array && (magic === '\x00\x00' || magic === '\x08\x00')) {
+    try {
+      let bytes: Uint8Array | null = raw;
+      if (magic === '\x08\x00') { const inflate = await (inflateP ??= import('pako').then((m) => ((m.default ?? m) as { inflateRaw?: Inflate }).inflateRaw ?? null).catch(() => null)); bytes = inflate ? inflate(raw) : null; }
+      if (bytes && bytes.length === d!.uncompressedSize) return utf8.decode(bytes);
+    } catch { /* read JSZip's way */ }
+  }
+  return f.async('text');
+}
+
+/** A breath between two slices of work: the page draws a frame if one is due and answers a touch (a message to
+ *  itself — a timer of 0 is held back 4 ms or more once timers nest). */
+export function breath(): Promise<void> {
+  return new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => { ch.port1.close(); r(); }; ch.port2.postMessage(0); });
+}
+/** Until the next frame has been drawn (work done then has the rest of the frame); a page hidden — no frames — goes on
+ *  after a second. */
+export function afterFrame(): Promise<void> {
+  return new Promise((r) => { let done = false; const go = () => { if (done) return; done = true; window.clearTimeout(t); void breath().then(r); }; const t = window.setTimeout(go, 1000); requestAnimationFrame(go); });
 }
 
 /** Detect dark line-art on a transparent background (so dark themes can invert it). */
@@ -247,11 +295,23 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, 
 export function textToParagraphs(text: string, container: HTMLElement): void {
   // Blank-line separated paragraphs; single newlines are kept as soft breaks.
   const paras = text.replace(/\r\n?/g, '\n').split(/\n{2,}/);
+  // A long text in runs of paragraphs (div.kr-run), each laid out only when near the screen (content-visibility in
+  // reader.css): a novel of several megabytes was laid out whole before its first line showed — seconds on a phone.
+  // Until a run is laid out its height is reckoned from its characters and paragraphs (--kr-run-c, --kr-run-p; the
+  // reader measures one run for the rest — sizeRuns in views/reader.ts). A short text stays as it was.
+  const long = text.length > RUN_TEXT * 3;
+  let run: HTMLElement | null = null, chars = 0, count = 0;
+  const close = () => { if (run) { run.style.setProperty('--kr-run-c', String(chars)); run.style.setProperty('--kr-run-p', String(count)); } };
   for (const p of paras) {
     const t = p.replace(/\n+$/, '');
     if (!t.trim()) continue;
     const pe = el('p', 'kr-txt');
     pe.textContent = t;
-    container.appendChild(pe);
+    if (!long) { container.appendChild(pe); continue; }
+    if (!run || chars >= RUN_TEXT || count >= 64) { close(); run = el('div', 'kr-run'); container.appendChild(run); chars = 0; count = 0; }
+    run.appendChild(pe); chars += t.length; count++;
   }
+  close();
 }
+/** About how much text a run of a long plain text holds (characters). */
+const RUN_TEXT = 12_000;

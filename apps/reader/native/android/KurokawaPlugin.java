@@ -1049,8 +1049,65 @@ public class KurokawaPlugin extends Plugin {
 
     @PluginMethod
     public void setVolumeKeys(PluginCall call) {
-        volumeKeys = call.getBoolean("on", false);
+        volumeKeys = Boolean.TRUE.equals(call.getBoolean("on", false));
         call.resolve();
+    }
+
+    /*
+     * The screen's edges while a book is read with sideways swipes (src/readkeys.ts asks): a band in the middle of the
+     * left and the right edge is kept from the system's back gesture (View.setSystemGestureExclusionRects, Android 10 /
+     * API 29+), so a swipe begun there reaches the page and turns the chapter. Android honours at most 200 dp of
+     * height per edge; the band is that, centred, and as wide as the system's own gesture area (32 dp at least, a
+     * quarter of the width at most). Back still works from the rest of the edge and from the button. Laid again when
+     * the WebView's size changes (a turn of the phone, the bars shown or hidden); cleared with `on: false`. Below
+     * Android 10 there is no back gesture to keep away: answered { ok: false } and nothing done.
+     */
+    private static final int EDGE_BAND_DP = 200;
+    private static final int EDGE_MIN_WIDTH_DP = 32;
+    private volatile boolean edgeGuard = false;
+    private View.OnLayoutChangeListener edgeLayout = null;
+
+    @PluginMethod
+    public void setEdgeGuard(PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || getActivity() == null) {
+            JSObject ret = new JSObject(); ret.put("ok", false); call.resolve(ret);
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            JSObject ret = new JSObject();
+            View v = getBridge() != null ? getBridge().getWebView() : null;
+            if (v == null) { ret.put("ok", false); call.resolve(ret); return; }
+            edgeGuard = on;
+            if (edgeLayout == null) {
+                edgeLayout = (view, l, t, r, b, ol, ot, or, ob) -> { if (r - l != or - ol || b - t != ob - ot) layEdgeGuard(view); };
+                v.addOnLayoutChangeListener(edgeLayout);
+            }
+            layEdgeGuard(v);
+            ret.put("ok", true);
+            call.resolve(ret);
+        });
+    }
+
+    private void layEdgeGuard(View v) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || v == null) return;
+        List<android.graphics.Rect> rects = new ArrayList<>();
+        int w = v.getWidth(), h = v.getHeight();
+        if (edgeGuard && w > 0 && h > 0) {
+            float d = v.getResources().getDisplayMetrics().density;
+            int band = Math.min(h, (int) Math.floor(EDGE_BAND_DP * d));
+            int top = (h - band) / 2;
+            int side = Math.round(EDGE_MIN_WIDTH_DP * d);
+            android.view.WindowInsets wi = v.getRootWindowInsets();
+            if (wi != null) {
+                android.graphics.Insets g = wi.getSystemGestureInsets();
+                if (g != null) side = Math.max(side, Math.max(g.left, g.right));
+            }
+            side = Math.min(side, w / 4);
+            rects.add(new android.graphics.Rect(0, top, side, top + band));
+            rects.add(new android.graphics.Rect(w - side, top, w, top + band));
+        }
+        try { v.setSystemGestureExclusionRects(rects); } catch (Exception ignored) {}
     }
 
     @PluginMethod

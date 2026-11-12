@@ -1,5 +1,8 @@
 import { familyFor } from './fonts';
 import { ensureFont } from './slim';
+import { onPhone } from './platform';
+import type { PlacedItem } from './ui/placeditems';
+import { DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, buttonsMigrated, type PlacedButton, type BarAt, type BarLook } from './readbuttons';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
@@ -10,7 +13,22 @@ export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'merriweather' | 'termes' | 'lora' | 'literata' | 'garamond' | 'crimson' | 'gelasio' | 'vollkorn' | 'bitter' | 'sourceserif' | 'atkinson' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
 export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
-export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen' | 'dayNight';
+export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen' | 'dayNight' | 'statusLine';
+/** The reading bar's items as it came before they could be chosen: the chapter and the page in it at the start;
+ *  the minutes left (once a reading speed is known), the clock, the battery and the book's percentage at the end. The
+ *  rest are there to be switched on. */
+export const DEFAULT_STATUS_ITEMS: PlacedItem[] = [
+  { id: 'chapter', on: true, at: 'start' }, { id: 'page', on: true, at: 'start' },
+  { id: 'timeChapter', on: true, at: 'end' }, { id: 'clock', on: true, at: 'end' }, { id: 'battery', on: true, at: 'end' }, { id: 'bookPct', on: true, at: 'end' },
+  { id: 'title', on: false, at: 'start' }, { id: 'chapterLeft', on: false, at: 'end' }, { id: 'chapterPct', on: false, at: 'end' },
+  { id: 'bookPage', on: false, at: 'end' }, { id: 'bookLeft', on: false, at: 'end' }, { id: 'timeBook', on: false, at: 'end' },
+];
+/** A set of settings from before the reading bar's items (no `statusItems` in it) that had the minutes left switched
+ *  off: the same bar, without that item. Anything else is left as it is. */
+export function barItemsMigrated<T extends Partial<VisualSettings>>(v: T, base: PlacedItem[] = DEFAULT_STATUS_ITEMS): T {
+  if (!v || typeof v !== 'object' || 'statusItems' in v || v.showTimeLeft !== false) return v;
+  return { ...v, statusItems: base.map((x) => (x.id === 'timeChapter' ? { ...x, on: false } : { ...x })) };
+}
 export const DEFAULT_TAP_ZONES: TapAction[] = ['prev', 'prev', 'prev', 'menu', 'menu', 'menu', 'next', 'next', 'next'];
 export type CjkFont = 'system' | 'mincho' | 'gothic' | 'publisher' | (string & {});
 
@@ -48,7 +66,9 @@ export interface VisualSettings {
   letterSpacing: number;  // em
   pdfInvert: boolean;
   pdfBar: 'auto' | 'row' | 'rows' | 'side';
-  pdfBarSide: 'right' | 'left';      // which side the upright bar stands on
+  /** Which side the upright bar stands on: «start» or «end» (mirrored right to left); «right» and «left» as an older
+   *  version chose, kept as they look. */
+  pdfBarSide: 'right' | 'left' | 'start' | 'end';
   pdfBarRow: 'bottom' | 'top';       // where the lying bar goes   // the PDF page bar: two rows when the screen is upright and one when it is wide, or fixed
   pdfPinchZoom: boolean;    // two-finger zoom in PDFs (on by default since 0.32)
   pdfAutoCrop: boolean;     // show only each page's printed area (margins cropped), at a common width
@@ -116,7 +136,13 @@ export interface VisualSettings {
   tapZones: TapAction[];
   turnAnimation: 'none' | 'slide' | 'fade';   // when a tap or key moves a screen
   showStatusLine: boolean;
-  showTimeLeft: boolean;      // minutes left in the chapter on the status line, from the reading speed
+  /** (Before 0.61: the minutes left in the chapter on the status line. Now an item of `statusItems`; read once, to
+   *  carry an older choice over — see barItemsMigrated.) */
+  showTimeLeft: boolean;
+  /** What the reading bar (the status line) shows, in what order, at which place along it — src/ui/readbar.ts. */
+  statusItems: PlacedItem[];
+  /** The reading bar stays when a tap hides the rest of the chrome (immersive reading). */
+  statusImmersive: boolean;
   importButton: 'chips' | 'top' | 'fab';
   appName: 'auto' | 'en' | 'ar' | 'ja' | 'zh' | 'ko';   // launcher name on the device (Android)
   importMode: 'link' | 'copy';   // keep imported files where they are (Android/desktop) or copy them into the app
@@ -187,7 +213,19 @@ export interface VisualSettings {
   kittenModel: string;
   kittenVoice: string;
   kittenSpeed: number;
-  readerToolbar: string[];    // ids of the floating toolbar buttons, in order
+  /** (Before the buttons could be placed: the ids of the floating toolbar's buttons, in order. Kept in step with
+   *  `readerButtons` for an older version reading the same settings; read once to carry an older choice over.) */
+  readerToolbar: string[];
+  /** Where each of a flowing book's actions lives — top bar (start, end), toolbar, «More», hidden — in order
+   *  (src/readbuttons.ts). */
+  readerButtons: PlacedButton[];
+  /** A PDF's, the same way (its toolbar is the page bar). */
+  pdfButtons: PlacedButton[];
+  /** Where a flowing book's toolbar stands, and how it looks (a floating pill, or docked the full width/height). */
+  toolbarAt: BarAt;
+  toolbarLook: BarLook;
+  /** A PDF page bar's look (where it stands is `pdfBar`, `pdfBarRow`, `pdfBarSide`). */
+  pdfBarLook: BarLook;
   systemFonts: string[];      // system font families picked on desktop
   highlightPalette: Record<'amber' | 'rose' | 'mint' | 'sky' | 'violet', string>;
   shortcuts: Record<string, string>;   // user rebindings, id → combo
@@ -202,6 +240,13 @@ export interface VisualSettings {
   syncFolder: string;
   syncLastAt: number;
   volumeKeys: boolean;        // page turning with volume keys (Android)
+  /** The volume keys the other way round: volume up forward, volume down back. */
+  volumeSwap: boolean;
+  /** Back (the phone's button or gesture, a computer's back) leaves a book only when pressed twice within 2 s. */
+  backTwiceLeave: boolean;
+  /** Android: a band in the middle of each side edge kept from the system's back gesture while sideways swipes
+   *  turn chapters, so a swipe begun there reaches the page. */
+  edgeGuard: boolean;
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -283,6 +328,8 @@ export const DEFAULTS: VisualSettings = {
   tapZones: DEFAULT_TAP_ZONES,
   turnAnimation: 'none',
   showTimeLeft: true,
+  statusItems: DEFAULT_STATUS_ITEMS,
+  statusImmersive: true,
   importButton: 'chips',
   appName: 'auto',
   importMode: 'link',
@@ -343,6 +390,11 @@ export const DEFAULTS: VisualSettings = {
   kittenVoice: 'leo',
   kittenSpeed: 1,
   readerToolbar: ['toc', 'search', 'images', 'bookmark', 'sep', 'type', 'more'],
+  readerButtons: DEFAULT_FLOW_BUTTONS.map((x) => ({ ...x })),
+  pdfButtons: DEFAULT_PDF_BUTTONS.map((x) => ({ ...x })),
+  toolbarAt: 'auto',
+  toolbarLook: 'pill',
+  pdfBarLook: 'pill',
   systemFonts: [],
   shortcuts: {},
   syncProvider: 'none',
@@ -356,6 +408,9 @@ export const DEFAULTS: VisualSettings = {
   syncLastAt: 0,
   highlightPalette: { amber: '#e5c56b', rose: '#e58a8a', mint: '#7fcfa5', sky: '#7fb4e5', violet: '#b9a3e8' },
   volumeKeys: false,
+  volumeSwap: false,
+  backTwiceLeave: false,
+  edgeGuard: true,
 };
 
 const KEY = 'kr.visual';
@@ -365,7 +420,7 @@ let current: VisualSettings = load();
 function load(): VisualSettings {
   try {
     const raw = localStorage.getItem(KEY);
-    const s: VisualSettings = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    const s: VisualSettings = raw ? { ...DEFAULTS, ...buttonsMigrated(barItemsMigrated(JSON.parse(raw) as Partial<VisualSettings>)) } : { ...DEFAULTS };
     // 0.18: the add-books button moved from the top bar to the folder row (sync took its place).
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
@@ -400,6 +455,8 @@ const GLOBAL_ONLY = new Set<string>([
   'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',
   // updates, jobs, the app on the device
   'autoUpdateCheck', 'updateChannel', 'updateEvery', 'updateAutoDownload', 'updateInstaller', 'jobNotify', 'appName', 'importMode', 'importButton', 'openLastOnLaunch', 'bookPage',
+  // the device's keys and gestures while reading
+  'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard',
   // the library
   'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
   // lists the reader builds up for every book
@@ -413,6 +470,10 @@ const overrides = (): Record<string, Partial<VisualSettings>> => {
   if (!bookOverrides) {
     try { bookOverrides = JSON.parse(localStorage.getItem(BOOK_KEY) ?? '{}') as Record<string, Partial<VisualSettings>>; } catch { bookOverrides = {}; }
     if (!bookOverrides || typeof bookOverrides !== 'object') bookOverrides = {};
+    // (A book's own «minutes left» switched off before the reading bar's items: the bar of the app, without them.)
+    for (const [id, v] of Object.entries(bookOverrides)) if (v && typeof v === 'object' && !('statusItems' in v) && v.showTimeLeft === false) bookOverrides[id] = barItemsMigrated(v, globals.statusItems);
+    // (A book's own toolbar buttons from before they could be placed: the same buttons, placed — src/readbuttons.ts.)
+    for (const [id, v] of Object.entries(bookOverrides)) if (v && typeof v === 'object') bookOverrides[id] = buttonsMigrated(v);
     // (Kept in a book's overrides by an older version — a key typed with a book open —: taken out of them; where
     // the app has no value of its own yet the book's is moved to the app, so nothing typed is lost. Values are
     // never printed.)
@@ -456,7 +517,7 @@ export function setBookScoped(on: boolean): void {
 export const globalSettings = (): VisualSettings => globals;
 /** Every book's own settings (a copy), and one book's set (a backup's, restored). */
 export const allBookSettings = (): Record<string, Partial<VisualSettings>> => JSON.parse(JSON.stringify(overrides())) as Record<string, Partial<VisualSettings>>;
-export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = bookPart(v); saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
+export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = bookPart(buttonsMigrated(barItemsMigrated(v, globals.statusItems))); saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
 /** Drop the settings kept for books no longer in the library. */
 export function forgetBookSettings(ids: string[]): void { for (const id of ids) delete overrides()[id]; saveOverrides(); }
 
@@ -626,6 +687,8 @@ function applyCustomAccent(html: HTMLElement, hex: string, light: boolean): void
 
 /** Lock or release the screen orientation (Capacitor plugin when present, Web API otherwise). */
 export async function applyOrientation(s: VisualSettings = current): Promise<void> {
+  // (A computer's screen does not turn: an orientation synced from the phone is left alone there. src/platform.ts.)
+  if (!onPhone()) return;
   const cap = (window as unknown as { Capacitor?: { Plugins?: { ScreenOrientation?: { lock(o: { orientation: string }): Promise<void>; unlock(): Promise<void> } } } }).Capacitor;
   const plugin = cap?.Plugins?.ScreenOrientation;
   try {

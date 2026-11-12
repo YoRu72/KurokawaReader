@@ -6,12 +6,14 @@
 import JSZip from 'jszip';
 import { db, stampAfter, type Book, type Folder, type TagDef } from './db';
 import { globalSettings, updateSettings, allBookSettings, setBookSettings, type VisualSettings } from './settings';
+import { buttonsMigrated } from './readbuttons';
 import { listFonts, type CustomFont } from './fonts';
 import { shareFile } from './ui/share';
 import { importFiles } from './library';
 import { t } from './i18n';
 import { terms as glossTerms, saveTerms, type Term, type Folder as GlossFolder } from './glossary';
 import { textRules, saveTextRules, type TextRule } from './textrules';
+import { whenStill } from './still';
 
 type CustomApi = NonNullable<VisualSettings['aiCustomApis']>[number];
 interface BookRecord {
@@ -133,9 +135,13 @@ export function setAutoBackupEvery(days: number): void { try { localStorage.setI
 export function autoBackupKeep(): number { try { return Math.min(20, Math.max(1, Number(localStorage.getItem('kr.autoBackup.keep') ?? '5') || 5)); } catch { return 5; } }
 export function setAutoBackupKeep(n: number): void { try { localStorage.setItem('kr.autoBackup.keep', String(n)); } catch { /* private mode */ } }
 export async function autoBackups(): Promise<AutoBackup[]> { return ((await db.getMeta<AutoBackup[]>(AUTO_INDEX)) ?? []).sort((a, b) => b.at - a.at); }
-/** One made now, the oldest beyond the number kept let go. */
-export async function makeAutoBackup(): Promise<AutoBackup> {
+/** One made now, the oldest beyond the number kept let go. `background` (made by itself, not asked for): its big
+ *  steps — the library read, the backup written — each wait for the reader to be still (src/still.ts). */
+export async function makeAutoBackup(o: { background?: boolean } = {}): Promise<AutoBackup> {
+  const still = o.background ? () => whenStill() : () => Promise.resolve();
+  await still();
   const m = await manifest(false);
+  await still();
   const text = JSON.stringify(m);
   const e: AutoBackup = { key: `${AUTO}${m.createdAt}`, at: m.createdAt, size: text.length, books: m.books.length };
   await db.setMeta(e.key, text);
@@ -162,8 +168,9 @@ export async function autoBackupIfDue(): Promise<void> {
   const days = autoBackupEvery(); if (!days) return;
   const last = (await autoBackups())[0];
   if (last && Date.now() - last.at < days * 86400000 - 3600000) return;
+  await whenStill();
   if (!(await db.allBooks()).length) return;
-  await makeAutoBackup();
+  await makeAutoBackup({ background: true });
 }
 /** An automatic backup as a file (to restore from, or to keep elsewhere). */
 export async function autoBackupFile(e: AutoBackup): Promise<File | null> {
@@ -273,7 +280,8 @@ function restoreSettings(m: Manifest): void {
   // The custom services: the device's kept as they are (keys and all); the backup's it lacks added.
   const mine = (cur.aiCustomApis ?? []) as CustomApi[];
   const apis = [...mine, ...apisIn.filter((a) => a?.id && !mine.some((x) => x.id === a.id)).map((a) => ({ ...a, key: a.key ?? '' }))];
-  updateSettings({ ...(inc as Partial<VisualSettings>), ...(apis.length || mine.length ? { aiCustomApis: apis } : {}) });
+  // (A backup from before the reader's buttons could be placed: its toolbar's buttons, placed — src/readbuttons.ts.)
+  updateSettings({ ...buttonsMigrated(inc as Partial<VisualSettings>), ...(apis.length || mine.length ? { aiCustomApis: apis } : {}) });
 }
 
 const mergeById = <T extends { id: string }>(local: T[] | undefined, inc: T[] | undefined): T[] => { const ids = new Set((local ?? []).map((x) => x.id)); return [...(local ?? []), ...(inc ?? []).filter((x) => x && !ids.has(x.id))]; };

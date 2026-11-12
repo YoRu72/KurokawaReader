@@ -3,6 +3,7 @@
 // view); then a place inside the view that the view itself keeps — a series opened in the library, the books
 // selected — then the view's own back; then the library. Only at the library's top does the app go away.
 import { navigate } from '../router';
+import { diagBack } from '../diag';
 
 const handlers: (() => boolean)[] = [];
 /** A view's own step back (a series opened inside it): `fn` returns true when it went back. The latest first;
@@ -41,10 +42,10 @@ export function wirePcBack(): void {
   // (The mouse's back button: its press kept from the page, so no text is selected and the browser does not
   // go back a page on its own.)
   window.addEventListener('mousedown', (e) => { if (e.button === 3) e.preventDefault(); }, true);
-  window.addEventListener('mouseup', (e) => { if (e.button === 3) { e.preventDefault(); goBack(); } }, true);
+  window.addEventListener('mouseup', (e) => { if (e.button === 3) { e.preventDefault(); diagBack('back-pc'); goBack(); } }, true);
   window.addEventListener('keydown', (e) => {
     if (!(e.altKey && e.key === 'ArrowLeft') || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if ((e.target as HTMLElement).matches?.('input, textarea, select, [contenteditable]')) return;
-    e.preventDefault(); goBack();
+    e.preventDefault(); diagBack('back-pc'); goBack();
   });
 }

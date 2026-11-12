@@ -9,6 +9,7 @@ import { listRepos, pluginCode, pluginKey, langLabel, type Repo, type ExtItem } 
 import { loadPlugin, callPlugin, isLoaded, withQuiet, badStatusSince } from './sandbox';
 import { pool, fetchBytes } from '../http';
 import { SourceError, type Source, type SourceFilter, type FilterValues, type SourcePage, type SourceBook, type SourceDetails, type SourceChapter } from '../types';
+import { whenStill } from '../../still';
 
 /* ---------- ids ---------- */
 export const SRC_PREFIX = 'ext:';
@@ -381,7 +382,9 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
   // it grows: after a quarter more of what it holds, or a minute. Written out of the way of the fetching, one
   // write at a time.)
   let saving: Promise<unknown> = Promise.resolve();
-  const saveSoon = () => { saving = saving.then(() => saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } }))).catch(() => undefined); };
+  // (Each write — the whole file read and written, a long moment on a slow phone with a big novel — waits for the
+  // reader to be still: src/still.ts. The chapters fetched meanwhile are kept here and go in with it.)
+  const saveSoon = () => { saving = saving.then(() => whenStill()).then(() => saveNovelFile(book, (cur) => ({ ...cur, content: { ...(cur.content ?? {}), ...content } }))).catch(() => undefined); };
   await pool(wanted, pace.at, async (c) => {
     for (let attempt = 0; ; attempt++) {
       try { content[c.path] = { html: await fetchChapter(h, info, c), at: Date.now() }; break; }
@@ -399,6 +402,7 @@ export async function downloadNovel(book: Book, onProgress: (done: number, total
     if (pace.pause && (!live || live())) await new Promise((r) => setTimeout(r, pace.pause));
   }, live);
   await saving;
+  await whenStill();
   const complete = wanted.every((c) => content[c.path]) && (!live || live());
   const whole = complete && info.chapters.every((c) => content[c.path]);
   await saveNovelFile(book, (cur) => { const all = { ...(cur.content ?? {}), ...content }; for (const p of dropped) if (!content[p]) delete all[p]; return { ...cur, content: all, fetchedAt: whole ? Date.now() : cur.fetchedAt }; });

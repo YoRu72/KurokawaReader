@@ -9,6 +9,7 @@ import { db, type Book, type Folder, type TagDef, type Bookmark, type Highlight,
 import { combineStats, emptyPart, partOf, withCounters } from './stats';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
+import { whenStill } from './still';
 import { t } from './i18n';
 import { toast } from './ui/dom';
 
@@ -353,21 +354,29 @@ export function syncConfigured(): boolean {
   return (s.syncProvider === 'dropbox' && !!s.syncDropboxRefresh) || (s.syncProvider === 'webdav' && !!s.syncWebdavUrl) || (s.syncProvider === 'folder' && !!s.syncFolder && !!desk()?.readTextFile);
 }
 
-export function syncNow(): Promise<SyncResult> {
+/** `background`: started by itself (a minute after a change, at launch, back online) — each of its big steps waits
+ *  for the reader to be still (src/still.ts); one asked for by the reader runs straight through. Either way the
+ *  same steps, in the same order. */
+export function syncNow(o: { background?: boolean } = {}): Promise<SyncResult> {
   if (running) return running;
+  const still = o.background ? () => whenStill() : () => Promise.resolve();
   running = (async (): Promise<SyncResult> => {
     listeners.forEach((f) => f('running'));
     try {
+      await still();
       if (!syncConfigured()) throw new Error(t('syncNotConnected'));
       if (!navigator.onLine && getSettings().syncProvider !== 'folder') throw new Error(t('offlineService'));
       const p = getSettings().syncProvider;
       const read = p === 'dropbox' ? dropboxRead : p === 'webdav' ? davRead : folderRead;
       const write = p === 'dropbox' ? dropboxWrite : p === 'webdav' ? davWrite : folderWrite;
       const remote = await read();
+      await still();
       // (No file yet: nothing to merge, but this device's books set up for the next — see mergeStats.)
       const changed = await applyRemote(remote ?? { app: 'KurokawaReader', version: SYNC_VERSION, updatedAt: 0, device: '', folders: [], tags: [], books: {}, deleted: {} });
+      await still();
       const { state, links } = await localState(remote);
       const merged = mergeStates(state, remote, links);
+      await still();
       await write(merged);
       const res: SyncResult = { ok: true, changed, at: Date.now() };
       updateSettings({ syncLastAt: res.at });
@@ -390,19 +399,19 @@ export function scheduleSync(delayMs = 60000): void {
   localStorage.setItem('kr.sync.pending', '1');
   if (!getSettings().syncAuto) return;
   window.clearTimeout(timer);
-  timer = window.setTimeout(() => { if (navigator.onLine || getSettings().syncProvider === 'folder') void syncNow(); }, delayMs);
+  timer = window.setTimeout(() => { if (navigator.onLine || getSettings().syncProvider === 'folder') void syncNow({ background: true }); }, delayMs);
 }
 
 /** Launch / back-online behaviour. */
 export function initSync(onAsk: () => void): void {
   const kick = () => {
     if (!syncConfigured()) return;
-    if (getSettings().syncAuto) void syncNow();
+    if (getSettings().syncAuto) void syncNow({ background: true });
     else if (localStorage.getItem('kr.sync.pending') || Date.now() - (getSettings().syncLastAt || 0) > 6 * 3600 * 1000) onAsk();
   };
   setTimeout(kick, 2500);
   window.addEventListener('online', () => setTimeout(kick, 1500));
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && localStorage.getItem('kr.sync.pending') && getSettings().syncAuto) void syncNow(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && localStorage.getItem('kr.sync.pending') && getSettings().syncAuto) void syncNow({ background: true }); });
   // OAuth redirects
   if (location.search.includes('code=') && (localStorage.getItem('kr.dbx.verifier') || localStorage.getItem('kr.shamelalink.flow'))) { void handleOAuthRedirect(location.href).then(() => history.replaceState(null, '', location.pathname + location.hash)).catch((e) => toast(String((e as Error).message ?? e), 'error')); }
 }

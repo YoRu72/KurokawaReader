@@ -9,8 +9,9 @@ import { toast } from './ui/dom';
 import { t } from './i18n';
 import { getSettings } from './settings';
 import { actionFor } from './shortcuts';
+import { diagBack, diagLeaveIntent, diagAppState } from './diag';
 
-interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton', fn: (d: { url: string; canGoBack?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
+interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton' | 'appStateChange', fn: (d: { url: string; canGoBack?: boolean; isActive?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
 interface CapFs { readFile(o: { path: string }): Promise<{ data: string | Blob }> }
 interface CapGlobal { isNativePlatform?(): boolean; getPlatform?(): string; Plugins?: { App?: CapApp; Filesystem?: CapFs } }
 interface DesktopBridge { onOpenFile(cb: (p: { name: string; data: ArrayBuffer }) => void): void; platform: string }
@@ -65,6 +66,7 @@ export function leaveToCaller(bookId: string): boolean {
   externalBook = null;
   const app = window.Capacitor?.Plugins?.App as { minimizeApp?(): Promise<void> } | undefined;
   if (!app?.minimizeApp) return false;
+  diagLeaveIntent('to-caller');
   navigate('/', true);
   void app.minimizeApp();
   return true;
@@ -174,6 +176,7 @@ export function initNativeBridges(): void {
     const cmd = actionFor(e);
     if (!cmd) return;
     e.preventDefault();
+    if (cmd === 'library' || cmd === 'settings' || cmd === 'notes') diagLeaveIntent('key');
     if (cmd === 'library') navigate('/'); else if (cmd === 'settings') navigate('/settings'); else if (cmd === 'notes') navigate('/notes');
     else document.dispatchEvent(new CustomEvent('kr:command', { detail: cmd }));
   });
@@ -185,7 +188,11 @@ export function initNativeBridges(): void {
     // at the library's top the app is put away.
     // (ReadEra's «exit only by double-clicking Back», when it is on: the first press at the library's top warns.)
     let backAt = 0;
-    void cap.Plugins.App.addListener('backButton', () => { if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); });
+    // (The app sent to the background and back: the Performance page's record of how a session ended.)
+    // (Also told to the reader's keys — src/readkeys.ts —, which let the volume keys and the screen's edges go meanwhile.)
+    void cap.Plugins.App.addListener('appStateChange', (d) => { diagAppState(!!d.isActive); document.dispatchEvent(new CustomEvent('kr:appstate', { detail: !!d.isActive })); });
+    // (Each press kept for the Performance page, with where the last touch began: src/diag.ts.)
+    void cap.Plugins.App.addListener('backButton', () => { diagBack('back-button'); if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); });
   }
   wirePcBack();
   if (window.kurokawaDesktop) {
@@ -195,7 +202,7 @@ export function initNativeBridges(): void {
     (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string | { open: string }) => void): void }).onCommand?.((c) => {
       if (typeof c === 'object') { if (c?.open) navigate(c.open); return; }
       if (c === 'library') navigate('/');
-      else if (c === 'back') goBack();
+      else if (c === 'back') { diagBack('back-pc'); goBack(); }
       else if (c === 'settings') navigate('/settings');
       else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));
       else document.dispatchEvent(new CustomEvent('kr:command', { detail: c }));
@@ -262,10 +269,17 @@ export function keepAwake(on: boolean): void {
   else if (wakeLock) { void wakeLock.release().catch(() => undefined); wakeLock = null; }
 }
 
-/** Tell the Android shell whether volume keys should turn pages (they then stop changing the volume). */
+/** Tell the Android shell whether volume keys should turn pages (they then stop changing the volume). Asked for by
+ *  src/readkeys.ts only while a book is open and the setting is on. */
 export async function setVolumeKeys(on: boolean): Promise<void> {
   const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setVolumeKeys?(o: { on: boolean }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await kr?.setVolumeKeys?.({ on }); } catch { /* ignore */ }
+}
+/** Tell the Android shell whether to keep a band of each side edge from the system's back gesture (Android 10+;
+ *  older versions answer without doing anything). See src/readkeys.ts. */
+export async function setEdgeGuard(on: boolean): Promise<void> {
+  const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setEdgeGuard?(o: { on: boolean }): Promise<unknown> } } }) | undefined)?.Plugins?.Kurokawa;
+  try { await kr?.setEdgeGuard?.({ on }); } catch { /* ignore */ }
 }
 
 /** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */

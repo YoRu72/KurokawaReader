@@ -1,0 +1,100 @@
+// node tests/staysinbook.cjs: a tap on a link inside a book's text never takes the reader out of the book.
+// A web novel's chapter (sources/ext/source.ts cleanChapter keeps `#…` links: a translator's notes), a Markdown or
+// an HTML book keep their links as written; a tap on `href="#fn1"` or `href="#"` changed the address's fragment,
+// which is the app's own route (src/router.ts) — and the route `#fn1` is the library: the book closed. A relative link
+// (`other.html`) loaded another page of the app: the app started again, in the library. Now: a link to a place in
+// the book goes there; a link to nothing in it does nothing; the book stays open. (The book is made here.)
+const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
+const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.png': 'image/png' };
+const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
+let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-staysinbook-'));
+const para = (i) => `<p>Paragraph ${i}. ${'The river ran past the old city and the people read their books. '.repeat(4)}</p>`;
+const html = `<!doctype html><html><head><title>Links Book</title></head><body>
+<h1>Links Book</h1>
+<p id="intro">Intro with a note<a id="l-ref" href="#fn1">[1]</a>, an empty link <a id="l-empty" href="#">here</a>, one to nowhere <a id="l-none" href="#no-such-place">there</a> and another page <a id="l-rel" href="other.html">other</a>.</p>
+${Array.from({ length: 80 }, (_, i) => para(i + 1)).join('\n')}
+<p id="fn1">[1] The translator's note.</p>
+</body></html>`;
+const file = path.join(TMP, 'links.html'); fs.writeFileSync(file, html);
+
+(async () => {
+  await new Promise((r) => server.listen(0, r)); const base = `http://127.0.0.1:${server.address().port}/`;
+  const br = await chromium.launch(); const errors = [];
+  const ctx = await br.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, locale: 'en' });
+  const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
+  let loads = 0; p.on('load', () => loads++);
+  await p.goto(base); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await p.reload(); await p.waitForSelector('.library-view');
+  await p.setInputFiles('.library-view input[type=file]', [file]);
+  let id = null;
+  for (let i = 0; i < 120 && !id; i++) { await p.waitForTimeout(250); id = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result[0]?.id ?? null); }; })); }
+  ok('the book is imported', !!id);
+  await p.evaluate((id) => { location.hash = `#/read/${id}`; }, id);
+  await p.waitForSelector('.reader-flow .kr-content a', { timeout: 30000 }); await p.waitForTimeout(1500);
+  const where = () => p.evaluate(() => ({ hash: location.hash, reader: !!document.querySelector('.reader-flow .kr-content'), library: !!document.querySelector('.library-view') }));
+  const tap = async (sel) => {
+    const before = loads;
+    if (!(await p.evaluate((sel) => !!document.querySelector(`.reader-flow .kr-content ${sel}`), sel))) return { ...(await where()), missing: sel };
+    await p.evaluate((sel) => { const a = [...document.querySelectorAll('.reader-flow .kr-content a')].find((x) => x.matches(sel)); a.scrollIntoView({ block: 'center' }); }, sel);
+    await p.waitForTimeout(300);
+    const box = await p.evaluate((sel) => { const r = [...document.querySelectorAll('.reader-flow .kr-content a')].find((x) => x.matches(sel)).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, sel);
+    await p.touchscreen.tap(box.x, box.y); await p.waitForTimeout(1200);
+    return { ...(await where()), reloaded: loads > before };
+  };
+  const inBook = (w) => w.reader && !w.library && !w.reloaded && /^#\/read\//.test(w.hash);
+  let w = await tap('a[id="l-ref"]');
+  ok('a tap on a note link (#fn1) keeps the book open', inBook(w), w);
+  const noteSeen = await p.evaluate(() => { const n = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('[1] The translator')); const r = n?.getBoundingClientRect(); return !!r && r.bottom > 0 && r.top < innerHeight; });
+  ok('… and goes to the note', noteSeen);
+  w = await tap('a[id="l-empty"]');
+  ok('a tap on an empty link (#) keeps the book open', inBook(w), w);
+  w = await tap('a[id="l-none"]');
+  ok('a tap on a link to no place in the book keeps the book open', inBook(w), w);
+  w = await tap('a[id="l-rel"]');
+  ok('a tap on a link to another page keeps the book open (the app is not loaded again)', inBook(w), w);
+  // The way back still works: the reader's back leaves the book for the library.
+  await p.evaluate(() => history.back()); await p.waitForTimeout(800);
+  ok('back from the book leaves it (one step, to the library)', await p.evaluate(() => !!document.querySelector('.library-view') && !document.querySelector('.reader-flow')));
+  // The app ended under the open book and started again (the address the app starts at: the library's).
+  const topPara = () => cur.evaluate(() => { const sc = document.querySelector('.reader-scroll'); if (!sc) return null; const r = sc.getBoundingClientRect(); for (let y = r.top + 10; y < r.top + 200; y += 6) { const e = document.elementFromPoint(r.left + r.width / 2, y)?.closest('.reader-flow p'); if (e) return /Paragraph (\d+)/.exec(e.textContent)?.[1] ?? e.textContent.slice(0, 12); } return null; });
+  // (The app ended by the system — the process killed, the renderer gone — runs nothing on its way out: imitated by
+  // taking the app's storage as it is at that moment, closing the page, and starting the app anew at its start
+  // address in another page with that storage. A page closed in the ordinary way runs its unload, below.)
+  let cur = p;
+  const restart = async (how = 'killed') => {
+    const old = cur;
+    const kept = how === 'killed' ? await old.evaluate(() => localStorage.getItem('kr.reading')) : undefined;
+    await old.close({ runBeforeUnload: true });
+    cur = await ctx.newPage(); cur.on('pageerror', (e) => errors.push(e.message));
+    if (how === 'killed') await cur.addInitScript((v) => { if (!sessionStorage.getItem('kr.test.started')) { sessionStorage.setItem('kr.test.started', '1'); if (v === null) localStorage.removeItem('kr.reading'); else localStorage.setItem('kr.reading', v); } }, kept);
+    await cur.goto(base); await cur.waitForSelector('.library-view, .reader-view', { timeout: 20000 }); await cur.waitForTimeout(3500);
+    return cur.evaluate(() => ({ hash: location.hash, reader: !!document.querySelector('.reader-flow .kr-content'), library: !!document.querySelector('.library-view') }));
+  };
+  await cur.evaluate((id) => { location.hash = `#/read/${id}`; }, id); await cur.waitForSelector('.reader-flow .kr-content p'); await cur.waitForTimeout(1500);
+  await cur.evaluate(() => { const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('Paragraph 40.')); const sc = document.querySelector('.reader-scroll'); sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top; });
+  await cur.waitForTimeout(1500);
+  const was = await topPara();
+  w = await restart();
+  ok('the app started again under an open book: the book is open again', w.reader && /^#\/read\//.test(w.hash), w);
+  const now = await topPara();
+  ok('… at its place', now === was, { was, now });
+  await cur.waitForTimeout(21000);   // (read a while: it did not end the app)
+  // Left by the reader: the next start is the library's.
+  await cur.evaluate(() => { location.hash = '#/'; }); await cur.waitForSelector('.library-view'); await cur.waitForTimeout(500);
+  w = await restart();
+  ok('a book left by the reader is not opened again at the next start', w.library && !w.reader, w);
+  // A book that ends the app each time: opened again once, not twice in a row.
+  await cur.evaluate((id) => { location.hash = `#/read/${id}`; }, id); await cur.waitForSelector('.reader-flow .kr-content p'); await cur.waitForTimeout(800);
+  w = await restart();
+  ok('ended once: opened again', w.reader, w);
+  w = await restart();
+  ok('ended again at once: not opened a third time (the library)', w.library && !w.reader, w);
+  // Closed in the ordinary way while reading (a window, a tab): the next start is the library's.
+  await cur.evaluate((id) => { location.hash = `#/read/${id}`; }, id); await cur.waitForSelector('.reader-flow .kr-content p'); await cur.waitForTimeout(800);
+  w = await restart('close');
+  ok('a page closed in the ordinary way while reading does not open the book at the next start', w.library && !w.reader, w);
+  ok('no page errors', errors.length === 0, errors);
+  console.log(fails ? `${fails} failed` : 'all passed');
+  await br.close(); server.close(); fs.rmSync(TMP, { recursive: true, force: true }); process.exit(fails ? 1 : 0);
+})().catch((e) => { console.error(e); process.exit(1); });

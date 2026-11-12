@@ -1,4 +1,5 @@
 import { readPending, writePending, onPendingChanged } from '../sources/pending';
+import { diagMark } from '../diag';
 import { busyNow, onBusy } from '../busy';
 import { h, icon, iconButton, toast, clear, coverColors, openSheet, askText } from '../ui/dom';
 import { onBack } from '../ui/backstack';
@@ -433,7 +434,7 @@ export function libraryView(): HTMLElement {
     // The mark: how far the book is read, and «read» once it is (the one takes the other's place).
     const isNew = book.addedAt > lastVisit && !book.lastOpenedAt;
     const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : !done && pct > 0 && getSettings().showProgress ? h('span', { class: `badge done pct at-${doneAt}` }, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : null;
-    const cover = h('div', { class: 'cover' },
+    const cover = h('div', { class: 'cover' + (!url && doneBadge && doneAt === 'below' ? ' mark-below' : '') },
       url ? h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
       h('span', { class: 'badges' }, book.remote?.newChapters ? h('span', { class: 'badge alert', title: countChapters(book.remote.newChapters) }, '!', h('small', null, localDigits(book.remote.newChapters))) : null, h('span', { class: 'badge' }, formatLabel(book.format)), book.remote?.online ? h('span', { class: 'badge online', title: t('onlineBook') }, icon('cloud')) : null, doneBadge && doneAt === 'beside' ? doneBadge : null, isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
@@ -916,7 +917,7 @@ export function libraryView(): HTMLElement {
 
   function renderGoal() {
     const goal = getSettings().readingGoalMinutes;
-    const today = books.reduce((a, b) => a + ((liveStatsOf(b.id) ?? b.stats)?.days[todayKey()]?.ms ?? 0), 0);
+    const today = books.reduce((a, b) => a + ((liveStatsOf(b.id) ?? b.stats)?.days?.[todayKey()]?.ms ?? 0), 0);
     clear(heroGoal);
     heroGoal.hidden = !goal;
     if (!goal) return;
@@ -1131,6 +1132,7 @@ export function libraryView(): HTMLElement {
 
   // Back from a book opened from the search across books: that search opens again, as it was.
   void refresh().then(async () => {
+    diagMark('usable');
     try { if (!sessionStorage.getItem('kr.searchReturn')) return; } catch { return; }
     const { takeReturn } = await import('../booksearch');
     const back = takeReturn();
