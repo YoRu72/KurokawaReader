@@ -56,3 +56,60 @@ export function placedItemsEditor(items: readonly PlacedItem[], label: (id: stri
   render();
   return list;
 }
+
+/** A list whose items each sit at one of several places, shown by place: a group per place (its name, its items in
+ *  order), each row with the item's icon and name, a choice of place (a small picture of each), and up / down to move
+ *  it within its place. Moved to another place, an item goes to that place's end. Used by the reader's buttons
+ *  (src/ui/buttonsheet.ts); like the editor above it knows nothing of what the items are. */
+export interface PlaceChoice<P extends string> { id: P; label: string; glyph: () => Node }
+export function groupedPlacesEditor<P extends string>(items: readonly { id: string; at: P }[], o: {
+  places: PlaceChoice<P>[];
+  label: (id: string) => string;
+  icon?: (id: string) => string;
+  /** The places an item may take (all by default). */
+  allowed?: (id: string, at: P) => boolean;
+  /** Items taken out rather than hidden (a separator): a remove button in place of the choice. */
+  removable?: (id: string) => boolean;
+  /** Rows that cannot be moved, shown in a group (the back arrow, «More»…). */
+  fixed?: (at: P) => { icon: string; label: string; note: string }[];
+  /** Something more at a group's foot (add a separator). */
+  extra?: (at: P, add: (id: string) => void) => HTMLElement | null;
+  onChange: (items: { id: string; at: P }[]) => void;
+}): HTMLElement {
+  let cur = items.map((x) => ({ ...x }));
+  const box = h('div', { class: 'places-editor' });
+  let focusAfter: { id: string; cls: string } | null = null;
+  const commit = (focus?: { id: string; cls: string }) => { o.onChange(cur.map((x) => ({ ...x }))); focusAfter = focus ?? null; render(); };
+  const move = (id: string, d: -1 | 1) => {
+    const i = cur.findIndex((x) => x.id === id); const at = cur[i].at;
+    let j = i + d; while (j >= 0 && j < cur.length && cur[j].at !== at) j += d;
+    if (j < 0 || j >= cur.length) return;
+    [cur[i], cur[j]] = [cur[j], cur[i]]; commit({ id, cls: d < 0 ? '.mv-up' : '.mv-down' });
+  };
+  const place = (id: string, at: P) => { const i = cur.findIndex((x) => x.id === id); const [it] = cur.splice(i, 1); it.at = at; cur.push(it); commit({ id, cls: `[data-place="${at}"]` }); };
+  const render = () => {
+    box.replaceChildren(...o.places.map((pl) => {
+      const rows = cur.filter((x) => x.at === pl.id);
+      const fixed = o.fixed?.(pl.id) ?? [];
+      return h('section', { class: 'places-group', dataset: { group: pl.id } },
+        h('h5', { class: 'places-head' }, h('span', { class: 'place-glyph2', 'aria-hidden': 'true' }, pl.glyph()), pl.label, h('small', null, String(rows.length || ''))),
+        h('div', { class: 'placed-list', role: 'list', 'aria-label': pl.label },
+          ...fixed.map((f) => h('div', { class: 'placed-row fixed', role: 'listitem' }, h('span', { class: 'placed-name' }, icon(f.icon), h('span', null, f.label, h('small', null, f.note))), h('span', { class: 'fixed-mark', title: f.note }, icon('lock')))),
+          ...rows.map((it, k) => {
+            const name = o.label(it.id);
+            return h('div', { class: 'placed-row on', role: 'listitem', dataset: { id: it.id } },
+              h('span', { class: 'placed-name' }, o.icon ? icon(o.icon(it.id)) : null, h('span', null, name)),
+              o.removable?.(it.id)
+                ? h('button', { type: 'button', class: 'icon-btn rm', 'aria-label': `${t('remove')}: ${name}`, title: t('remove'), onclick: () => { cur = cur.filter((x) => x.id !== it.id); commit(); } }, icon('close'))
+                : h('div', { class: 'placed-at places', role: 'radiogroup', 'aria-label': `${t('buttonPlace')}: ${name}` }, ...o.places.map((q) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(q.id === it.at), 'aria-pressed': String(q.id === it.at), dataset: { place: q.id }, title: q.label, 'aria-label': `${name}: ${q.label}`, disabled: o.allowed && !o.allowed(it.id, q.id), onclick: () => { if (q.id !== it.at) place(it.id, q.id); } }, h('span', { class: 'place-glyph2', 'aria-hidden': 'true' }, q.glyph())))),
+              h('span', { class: 'row-actions' },
+                h('button', { type: 'button', class: 'icon-btn mv-up', 'aria-label': `${t('moveUp')}: ${name}`, title: t('moveUp'), disabled: k === 0, onclick: () => move(it.id, -1) }, icon('chevronUp')),
+                h('button', { type: 'button', class: 'icon-btn mv-down', 'aria-label': `${t('moveDown')}: ${name}`, title: t('moveDown'), disabled: k === rows.length - 1, onclick: () => move(it.id, 1) }, icon('chevronDown'))));
+          })),
+        o.extra?.(pl.id, (id) => { cur.push({ id, at: pl.id }); commit(); }) ?? null);
+    }));
+    if (focusAfter) { const f = focusAfter; box.querySelector<HTMLElement>(`.placed-row[data-id="${CSS.escape(f.id)}"] ${f.cls}`)?.focus(); focusAfter = null; }
+  };
+  render();
+  return box;
+}

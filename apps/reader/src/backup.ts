@@ -6,6 +6,7 @@
 import JSZip from 'jszip';
 import { db, stampAfter, type Book, type Folder, type TagDef } from './db';
 import { globalSettings, updateSettings, allBookSettings, setBookSettings, type VisualSettings } from './settings';
+import { buttonsMigrated } from './readbuttons';
 import { listFonts, type CustomFont } from './fonts';
 import { shareFile } from './ui/share';
 import { importFiles } from './library';
@@ -273,7 +274,8 @@ function restoreSettings(m: Manifest): void {
   // The custom services: the device's kept as they are (keys and all); the backup's it lacks added.
   const mine = (cur.aiCustomApis ?? []) as CustomApi[];
   const apis = [...mine, ...apisIn.filter((a) => a?.id && !mine.some((x) => x.id === a.id)).map((a) => ({ ...a, key: a.key ?? '' }))];
-  updateSettings({ ...(inc as Partial<VisualSettings>), ...(apis.length || mine.length ? { aiCustomApis: apis } : {}) });
+  // (A backup from before the reader's buttons could be placed: its toolbar's buttons, placed — src/readbuttons.ts.)
+  updateSettings({ ...buttonsMigrated(inc as Partial<VisualSettings>), ...(apis.length || mine.length ? { aiCustomApis: apis } : {}) });
 }
 
 const mergeById = <T extends { id: string }>(local: T[] | undefined, inc: T[] | undefined): T[] => { const ids = new Set((local ?? []).map((x) => x.id)); return [...(local ?? []), ...(inc ?? []).filter((x) => x && !ids.has(x.id))]; };

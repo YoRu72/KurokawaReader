@@ -45,12 +45,13 @@ import { attachFurigana, isJapanese } from '../furigana';
 import { textRules, applyTextRules } from '../textrules';
 import { attachPinyin } from '../readings';
 import { scheduleSync, markDeleted } from '../sync';
-import { toolbarSheet } from '../ui/toolbarconfig';
+import { mountBars, moreList, type ActionRun } from '../ui/buttonbars';
+import { buttonSheet } from '../ui/buttonsheet';
 import { shareFile, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, nativePlatform } from '../native';
 import type { HighlightColor } from '../ui/selection';
-import { openSheet } from '../ui/dom';
+import { openSheet, askText } from '../ui/dom';
 
 /** Whether the search keeps the last search (opened again, it shows it); asked by a switch in the search itself. */
 const searchKeep = (): boolean => { try { return localStorage.getItem('kr.searchKeep') !== '0'; } catch { return true; } };
@@ -158,34 +159,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   // (Back: to the book's own page when the book opens on one, else the library.)
   const goBack = () => { diagLeaveIntent('top-back', true); const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => goBackView(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else goBackView('/'); };
-  const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), goBack),
-    title,
-    iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-  );
-  // M3 Expressive floating toolbar carries the reading actions.
+  // The top bar — the back arrow (always there), the buttons placed at its start, the title, those at its end — and
+  // the M3 Expressive floating toolbar: what each holds is the reader's choice (src/readbuttons.ts), drawn below
+  // once the reader's state is there (mountBars).
+  const backBtn = iconButton('back', t('back'), goBack);
+  const topbar = h('header', { class: 'topbar' }, backBtn, title);
   const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') });
-  const TOOLBAR_ITEMS: Record<string, () => HTMLElement> = {
-    toc: () => iconButton('toc', t('contents'), () => openContents('toc')),
-    search: () => iconButton('search', t('searchInBook'), () => openSearch()),
-    images: () => iconButton('images', t('images'), () => showGallery()),
-    bookmark: () => iconButton('bookmarkAdd', t('addBookmark'), () => addBookmark()),
-    bookmarks: () => iconButton('bookmark', t('bookmarks'), () => openContents('bookmarks')),
-    sep: () => h('span', { class: 'sep' }),
-    type: () => iconButton('type', t('visualOptions'), () => openOptions()),
-    translate: () => iconButton('translate', t('aiTranslate'), () => translator.toggleUi()),
-    speak: () => iconButton('speak', t('readAloud'), () => { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); }),
-    scroll: () => iconButton('scroll', t('autoScroll'), () => toggleAutoScroll()),
-    info: () => iconButton('info', t('bookInfo'), () => showInfo()),
-    snapshot: () => iconButton('camera', t('textAsImage'), () => toast(t('selectTextFirst'))),
-    fullscreen: () => iconButton('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-    more: () => iconButton('more', t('more'), () => openMore()),
-  };
+  const moreBtn = iconButton('more', t('more'), () => openMore());
   // (On a computer the tools sit in the top bar with their names — see the styles —; a phone keeps the floating icons.)
-  const named = (b: HTMLElement) => { const l = b.getAttribute('aria-label'); if (l && b.classList.contains('icon-btn')) b.append(h('span', { class: 'tb-label' }, l)); return b; };
-  const renderToolbar = () => { toolbar.replaceChildren(...getSettings().readerToolbar.filter((id) => TOOLBAR_ITEMS[id]).map((id) => named(TOOLBAR_ITEMS[id]()))); if (!getSettings().readerToolbar.includes('more')) toolbar.appendChild(named(TOOLBAR_ITEMS.more())); };
-  renderToolbar();
-  onDispose(onSettingsChange(() => renderToolbar()));
+  const named = (b: HTMLElement) => { const l = b.getAttribute('aria-label'); if (l && b.classList.contains('icon-btn') && !b.querySelector('.tb-label')) b.append(h('span', { class: 'tb-label' }, l)); return b; };
   reader.append(scroll);
   const chapterNav = h('nav', { class: 'chapter-nav', hidden: true });
   // A computer's page-turn arrows at the two sides of the text: shown while the mouse moves, gone when it rests.
@@ -196,7 +178,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   reader.append(...arrows);
   root.append(topbar, reader, footer, statusBar, toolbar, frame, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
   // (The text ends above the floating toolbar while it shows: its height, for the styles.)
-  { const tbObs = new ResizeObserver(() => { const hgt = toolbar.offsetHeight; if (hgt) root.style.setProperty('--tb-h', `${hgt}px`); }); tbObs.observe(toolbar); onDispose(() => tbObs.disconnect()); }
+  // (…and, the toolbar at a side, its width: the text keeps clear of it.)
+  { const tbObs = new ResizeObserver(() => { const hgt = toolbar.offsetHeight, w = toolbar.offsetWidth; if (hgt) root.style.setProperty('--tb-h', `${hgt}px`); if (w) root.style.setProperty('--tb-w', `${w}px`); }); tbObs.observe(toolbar); onDispose(() => tbObs.disconnect()); }
+  // Where the toolbar stands and how it looks (reader.css [data-tb], [data-tblook]): «auto» is at the foot on a phone
+  // and in the top bar on a computer ('inline').
+  const placeToolbar = () => { const s = getSettings(); const at = s.toolbarAt === 'auto' || !s.toolbarAt ? (document.documentElement.classList.contains('pc') ? 'inline' : 'bottom') : s.toolbarAt; root.dataset.tb = toolbar.hidden ? 'none' : at; root.dataset.tblook = at === 'inline' ? 'pill' : s.toolbarLook === 'docked' ? 'docked' : 'pill'; };
+  placeToolbar();
   syncChrome();
   panel.onClose = () => { try { localStorage.removeItem(DOCK_KEY); } catch { /* private mode */ } };
   { let was: string | null = null; try { was = localStorage.getItem(DOCK_KEY); } catch { /* private mode */ }
@@ -256,6 +243,41 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   let aiAudio: HTMLAudioElement | null = null;
   const aiQueue = new Map<string, Blob>();
   let sleepTimer = 0;
+
+  // Every action of a flowing book (src/readbuttons.ts FLOW_ACTIONS), wherever the reader has put it: the top bar, the
+  // toolbar, «More» — or nowhere (its key and its tap zone still do it: onKey, onCommand).
+  const bookNow = () => currentLocator()?.doc.book ?? docs[0].book;
+  const speakToggle = () => { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } };
+  const actions: Record<string, ActionRun> = {
+    toc: { run: () => openContents('toc') },
+    search: { run: () => openSearch() },
+    images: { run: () => showGallery() },
+    bookmark: { run: () => void addBookmark() },
+    bookmarks: { run: () => openContents('bookmarks') },
+    highlights: { run: () => openContents('highlights') },
+    type: { run: () => openOptions() },
+    translate: { run: () => translator.toggleUi() },
+    glossary: { run: () => { const b = bookNow(); void import('../ui/glossarysheet').then((m) => m.glossarySheet({ id: b.id, title: b.title })); } },
+    speak: { run: speakToggle, label: () => (speaking ? t('stopReading') : t('readAloud')), icon: () => (speaking ? 'stop' : 'speak') },
+    scroll: { run: () => toggleAutoScroll() },
+    speedReading: { run: () => void startSpeedReading() },
+    sleepTimer: { run: () => sleepTimerSheet(), label: () => (sleepTimer ? t('sleepTimerOff') : t('sleepTimer')) },
+    dayNight: { run: () => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'dayNight' })) },
+    fullscreen: { run: () => { void toggleFullscreen(root); } },
+    readingBar: { run: () => updateSettings({ showStatusLine: !getSettings().showStatusLine }), label: () => (getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar')) },
+    info: { run: () => showInfo() },
+    favorite: { run: () => void toggleFavorite(bookNow()), label: () => (bookNow().tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite')), icon: () => (bookNow().tags?.includes(FAV_TAG) ? 'heartFill' : 'heart') },
+    exportNotes: { run: () => void exportNotes(bookNow()) },
+    exportAnki: { run: () => void exportNotesAnki(bookNow()) },
+    shareFile: { run: () => void shareBooks([bookNow().id]) },
+    convertFile: { run: () => { const b = bookNow(); void import('../ui/convert').then((m) => m.convertSheet(b)); } },
+    readInOrder: { run: () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : books.map((b) => b.id), { onChange: () => void findNext() })) },
+    jumpToBook: { run: () => openContents('toc'), available: () => docs.length > 1 },
+  };
+  const bars = mountBars({ kind: 'flow', root, topbar, back: backBtn, title, toolbar, toolbarBox: toolbar, more: moreBtn, actions, dress: named, after: () => placeToolbar() });
+  bars.render();
+  onDispose(onSettingsChange(() => { placeToolbar(); bars.render(); }));
+  onDispose(() => bars.dispose());
 
   async function renderDoc(doc: OpenDoc): Promise<void> {
     const handler = flowHandlerFor(doc.book.format);
@@ -1770,30 +1792,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   function openMore(): void {
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
-      const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
-      body.append(h('ul', { class: 'plain-list' },
-        item('info', t('bookInfo'), () => showInfo()),
-        item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
-        item((currentLocator()?.doc.book ?? docs[0].book).tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', (currentLocator()?.doc.book ?? docs[0].book).tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(currentLocator()?.doc.book ?? docs[0].book)),
-        item('images', t('images'), () => showGallery()),
-        item('type', t('visualOptions'), openOptions),
-        item(speaking ? 'stop' : 'speak', speaking ? t('stopReading') : t('readAloud'), () => { if (speaking) stopSpeaking(); else { const cur = currentLocator(); if (cur) speak([], { doc: cur.doc, index: cur.loc.block ?? 0 }); } }),
-        item('scroll', t('autoScroll'), toggleAutoScroll),
-        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-        item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
-        item('download', t('exportNotes'), () => { const cur = currentLocator(); void exportNotes(cur?.doc.book ?? docs[0].book); }),
-        item('download', t('exportAnki'), () => { const cur = currentLocator(); void exportNotesAnki(cur?.doc.book ?? docs[0].book); }),
-        item('scroll', t('speedReading'), () => void startSpeedReading()),
-        item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : books.map((b) => b.id), { onChange: () => void findNext() }))),
-        item('external', t('shareFile'), () => { const cur = currentLocator(); void shareBooks([(cur?.doc.book ?? docs[0].book).id]); }),
-        item('convert', t('convertFile'), () => { const cur = currentLocator(); void import('../ui/convert').then((m) => m.convertSheet(cur?.doc.book ?? docs[0].book)); }),
-        item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
-        item('translate', t('aiTranslate'), () => translator.toggleUi()),
-        item('settings', t('toolbarButtons'), () => toolbarSheet()),
-        item('eye', getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar'), () => updateSettings({ showStatusLine: !getSettings().showStatusLine })),
-        item('highlight', t('highlights'), () => openContents('highlights')),
-        docs.length > 1 ? item('books', t('jumpToBook'), () => openContents('toc')) : null,
-      ));
+      // (What the reader placed in «More», and what the bars had no room for; «Customise buttons» always last.)
+      body.append(moreList('flow', bars.moreIds(), actions, () => panel.close(), () => buttonSheet('flow')));
       if (!isTouchDevice()) body.append(h('p', { class: 'shortcuts-hint' }, icon('keyboard'), ' ', t('shortcutsBody')));
     } }]);
   }
@@ -1888,31 +1888,72 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   // "By orientation": down the side when the screen is upright, in one row when it is wide.
   const portrait = matchMedia('(orientation: portrait)');
   const barLayout = () => { const l = getSettings().pdfBar; return l === 'auto' ? (portrait.matches ? 'side' : 'row') : l; };
-  const bar = h('div', { class: 'pdf-bar', dataset: { layout: barLayout() } },
-    h('div', { class: 'pdf-bar-nav' },
+  const goForm = () => h('form', { style: { display: 'flex', gap: '6px', alignItems: 'center' }, onsubmit: (e: Event) => { e.preventDefault(); const n = Number(pageInput.value); if (n) viewer.goTo(n); pageInput.blur(); } }, pageInput, h('button', { class: 'btn small', type: 'submit' }, t('go')));
+  const barNav = h('div', { class: 'pdf-bar-nav' },
     iconButton('chevronLeft', t('previousPage'), () => viewer.goTo(viewer.current - 1)),
     slider,
     iconButton('chevronRight', t('nextPage'), () => viewer.goTo(viewer.current + 1)),
-    count),
-    h('div', { class: 'pdf-bar-tools' },
-    h('form', { style: { display: 'flex', gap: '6px', alignItems: 'center' }, onsubmit: (e: Event) => { e.preventDefault(); const n = Number(pageInput.value); if (n) viewer.goTo(n); pageInput.blur(); } }, pageInput, h('button', { class: 'btn small', type: 'submit' }, t('go'))),
-    iconButton('zoomOut', t('zoomOut'), () => viewer.zoom(-0.15)),
-    iconButton('zoomIn', t('zoomIn'), () => viewer.zoom(0.15)),
-    iconButton('fullscreen', t('fitWidth'), () => viewer.fitToWidth()),
-    iconButton('pen', t('inkNotes'), () => ink?.setOn(!ink.on)),
-    iconButton('images', t('pageStrip'), () => strip?.toggle())),
-  );
-  const relayout = () => { bar.dataset.layout = barLayout(); bar.dataset.side = getSettings().pdfBarSide; bar.dataset.row = getSettings().pdfBarRow; };
+    count);
+  // (Its tools are the buttons the reader placed on it — src/readbuttons.ts, drawn by mountBars below.)
+  const barTools = h('div', { class: 'pdf-bar-tools' });
+  const bar = h('div', { class: 'pdf-bar', dataset: { layout: barLayout() } }, barNav, barTools);
+  const relayout = () => { const s = getSettings(); bar.dataset.layout = barLayout(); bar.dataset.side = s.pdfBarSide; bar.dataset.row = s.pdfBarRow; bar.dataset.look = s.pdfBarLook === 'docked' ? 'docked' : 'pill'; };
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
-  const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), () => { diagLeaveIntent('top-back', true); if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); }),
-    title,
-    iconButton('search', t('searchInBook'), () => openSearch()),
-    iconButton('toc', t('contents'), () => openContents('toc')),
-    iconButton('grid', t('pagesGrid'), () => showPagesGrid()),
-    iconButton('more', t('more'), () => openMore()),
-  );
+  const backBtn = iconButton('back', t('back'), () => { diagLeaveIntent('top-back', true); if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); });
+  const moreBtn = iconButton('more', t('more'), () => openMore());
+  const topbar = h('header', { class: 'topbar' }, backBtn, title, moreBtn);
+  // Every action of a PDF (src/readbuttons.ts PDF_ACTIONS), wherever the reader has put it — or nowhere (its key still
+  // does it: onKey).
+  const goToPage = async () => {
+    if (pageInput.isConnected && pageInput.getClientRects().length && !bar.hidden) { pageInput.focus(); return; }
+    const v = await askText({ title: t('goToPage'), label: t('page'), ok: t('go'), cancel: t('cancel'), numeric: true, value: String(viewer.current) });
+    const n = Number(String(v ?? '').replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))); if (n) viewer.goTo(n);
+  };
+  const actions: Record<string, ActionRun> = {
+    pageNav: { run: () => undefined },
+    search: { run: () => openSearch() },
+    toc: { run: () => openContents('toc') },
+    grid: { run: () => showPagesGrid() },
+    goToPage: { run: () => void goToPage(), bar: goForm },
+    zoomOut: { run: () => viewer.zoom(-0.15) },
+    zoomIn: { run: () => viewer.zoom(0.15) },
+    fitWidth: { run: () => viewer.fitToWidth() },
+    ink: { run: () => ink?.setOn(!ink.on) },
+    pageStrip: { run: () => strip?.toggle() },
+    info: { run: () => showInfo() },
+    exportNotes: { run: () => void exportNotes(book) },
+    exportAnki: { run: () => void exportNotesAnki(book) },
+    shareFile: { run: () => void shareBooks([book.id]) },
+    convertFile: { run: () => void import('../ui/convert').then((m) => m.convertSheet(book)) },
+    savePageImage: { run: () => void savePage(false) },
+    sharePage: { run: () => void savePage(true) },
+    copyPageImage: { run: () => void savePage('copy') },
+    cutPagePart: { run: () => void import('../ui/pdfsnap').then((m) => m.cutPagePart(viewer, book, snapName(book.title))) },
+    savePagesRange: { run: () => savePagesSheet() },
+    exportWithInk: { run: () => void exportWithInk(), available: () => (book.ink ?? []).length > 0 },
+    print: { run: () => void printBook() },
+    openWithApp: { run: () => void openWithApp(), available: () => nativePlatform() === 'android' },
+    toolExtract: { run: () => void import('../ui/pdftools').then((m) => m.extractFromBook(book)) },
+    pdfTools: { run: () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book)) },
+    bookmark: { run: () => void addBookmark() },
+    noteOnPage: { run: () => placeNote() },
+    highlights: { run: () => openContents('notes') },
+    crop: { run: () => updateSettings({ pdfAutoCrop: !getSettings().pdfAutoCrop }), label: () => (getSettings().pdfAutoCrop ? t('cropMarginsOff') : t('cropMargins')) },
+    readInOrder: { run: () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : [book.id], { onChange: () => void findNextPdf() })) },
+    favorite: { run: () => void toggleFavorite(book), label: () => (book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite')), icon: () => (book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart') },
+    type: { run: () => openPdfOptions() },
+    readingBar: { run: () => updateSettings({ showStatusLine: !getSettings().showStatusLine }), label: () => (getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar')) },
+    dayNight: { run: () => { const st = getSettings(); const night = st.nightTheme && st.theme === st.nightTheme; updateSettings(night ? { theme: (st.dayTheme as typeof st.theme) || 'light', nightSchedule: false } : { dayTheme: st.theme, theme: st.nightTheme || 'dark', nightSchedule: false }); } },
+    fullscreen: { run: () => { void toggleFullscreen(root); } },
+    bookmarks: { run: () => openContents('bookmarks') },
+  };
+  const bars = mountBars({ kind: 'pdf', root, topbar, back: backBtn, title, toolbar: barTools, toolbarBox: bar, keepRoom: () => (bar.dataset.layout === 'row' ? [barNav] : []), more: moreBtn, actions,
+    onNav: (on) => { barNav.hidden = on ? false : true; },
+    after: ({ toolbarEmpty }) => { barTools.hidden = toolbarEmpty; bar.hidden = toolbarEmpty && barNav.hidden; } });
+  bars.render();
+  { const redo = () => bars.render(); onDispose(onSettingsChange(redo)); portrait.addEventListener('change', redo); onDispose(() => portrait.removeEventListener('change', redo)); }
+  onDispose(() => bars.dispose());
   const syncComfort = () => {
     const st = getComputedStyle(reader); const warm = st.getPropertyValue('--r-warmth').trim(), dim = st.getPropertyValue('--r-dim-overlay').trim();
     root.style.setProperty('--r-warmth', warm); root.style.setProperty('--r-dim-overlay', dim);
@@ -2457,37 +2498,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
 
   function openMore() {
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
-      const item = (name: string, label: string, fn: () => void) => h('li', null, h('button', { type: 'button', onclick: () => { panel.close(); fn(); } }, icon(name), label));
-      body.append(h('ul', { class: 'plain-list' },
-        item('info', t('bookInfo'), showInfo),
-        item('download', t('exportNotes'), () => void exportNotes(book)),
-        item('download', t('exportAnki'), () => void exportNotesAnki(book)),
-        item('external', t('shareFile'), () => void shareBooks([book.id])),
-        item('convert', t('convertFile'), () => void import('../ui/convert').then((m) => m.convertSheet(book))),
-        item('grid', t('pagesGrid'), showPagesGrid),
-        item('camera', t('savePageImage'), () => void savePage(false)),
-        item('external', t('sharePage'), () => void savePage(true)),
-        item('copy', t('copyPageImage'), () => void savePage('copy')),
-        item('images', t('cutPagePart'), () => void import('../ui/pdfsnap').then((m) => m.cutPagePart(viewer, book, snapName(book.title)))),
-        item('images', t('savePagesRange'), () => savePagesSheet()),
-        item('pen', t('inkNotes'), () => ink?.setOn(true)),
-        item('images', t('pageStrip'), () => strip?.toggle()),
-        ...((book.ink ?? []).length ? [item('download', t('exportWithInk'), () => void exportWithInk())] : []),
-        item('file', t('print'), () => void printBook()),
-        ...(nativePlatform() === 'android' ? [item('external', t('openWithApp'), () => void openWithApp())] : []),
-        item('file', t('toolExtract'), () => void import('../ui/pdftools').then((m) => m.extractFromBook(book))),
-        item('grid', t('pdfTools'), () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book))),
-        item('bookmarkAdd', t('addBookmark'), () => void addBookmark()),
-        item('note', t('noteOnPage'), placeNote),
-        item('fullscreen', getSettings().pdfAutoCrop ? t('cropMarginsOff') : t('cropMargins'), () => updateSettings({ pdfAutoCrop: !getSettings().pdfAutoCrop })),
-        item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : [book.id], { onChange: () => void findNextPdf() }))),
-        item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
-        item('type', t('visualOptions'), openPdfOptions),
-        item('eye', getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar'), () => updateSettings({ showStatusLine: !getSettings().showStatusLine })),
-        item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
-        item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
-        item('target', t('goToPage'), () => pageInput.focus()),
-      ));
+      // (What the reader placed in «More», and what the bars had no room for; «Customise buttons» always last.)
+      body.append(moreList('pdf', bars.moreIds(), actions, () => panel.close(), () => buttonSheet('pdf')));
     } }]);
   }
 

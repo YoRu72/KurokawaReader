@@ -11,6 +11,7 @@ import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
 import { fontsSync } from '../fonts';
 import { placedItemsEditor } from './placeditems';
+import { buttonsField } from './buttonsheet';
 import { barItems, barText, BAR_ITEM_LABEL, type BarItem, type BarValues } from './readbar';
 /** The reading bar's items as the editor shows them, each with an example. */
 const BAR_SAMPLE: BarValues = { chapter: '', title: '', page: 12, pages: 34, chapterPct: 35, bookPage: 120, bookPages: 410, bookPct: 29, minsChapter: 9, minsBook: 135 };
@@ -107,6 +108,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     grid.append(stepper([t('warmth'), 'warmth'], s.warmth, 0, 0.6, 0.05, (v) => updateSettings({ warmth: round2(v) }), pct));
     grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['device', t('brightnessDevice')], ['app', t('brightnessApp')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); rerender(); })));
     if (s.brightnessMode === 'app') grid.append(stepper([t('dimScreen'), 'dimOverlay'], s.dimOverlay, 0, 0.7, 0.05, (v) => updateSettings({ dimOverlay: round2(v) }), pct));
+    grid.append(buttonsField('pdf'));
     container.append(grid, footer());
     return;
   }
@@ -231,9 +233,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   if (nativePlatform() === 'android') grid.append(toggle([t('edgeGuard'), 'edgeGuard'], s.edgeGuard, (v) => updateSettings({ edgeGuard: v })), h('p', { class: 'hint' }, t('edgeGuardHint')));
   grid.append(toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v })));
   grid.append(toggle([t('cropMargins'), 'pdfAutoCrop'], s.pdfAutoCrop, (v) => updateSettings({ pdfAutoCrop: v })), h('p', { class: 'hint' }, t('cropMarginsHint')));
-  grid.append(section([t('pdfBar'), 'pdfBar'], segmented([['auto', t('pdfBarAuto')], ['rows', t('pdfBarRows')], ['row', t('pdfBarRow')], ['side', t('pdfBarSide')]] as [VisualSettings['pdfBar'], string][], s.pdfBar, (v) => { updateSettings({ pdfBar: v }); rerender(); })));
-  if (s.pdfBar !== 'row' && s.pdfBar !== 'rows') grid.append(section([t('pdfBarSidePlace'), 'pdfBarSide'], segmented([['right', t('sideRight')], ['left', t('sideLeft')]] as [VisualSettings['pdfBarSide'], string][], s.pdfBarSide, (v) => { updateSettings({ pdfBarSide: v }); rerender(); })));
-  if (s.pdfBar !== 'side') grid.append(section([t('pdfBarRowPlace'), 'pdfBarRow'], segmented([['bottom', t('posBottom')], ['top', t('posTop')]] as [VisualSettings['pdfBarRow'], string][], s.pdfBarRow, (v) => { updateSettings({ pdfBarRow: v }); rerender(); })));
+  // The reader's buttons — where each lives, where the toolbar and the PDF's page bar stand, how they look: one sheet
+  // (src/ui/buttonsheet.ts), for books and PDFs.
+  grid.append(buttonsField('flow'));
   grid.append(toggle([t('pdfPageNumbers'), 'pdfPageNumbers'], s.pdfPageNumbers, (v) => updateSettings({ pdfPageNumbers: v })));
   const pinStyles: [VisualSettings['pdfNoteStyle'], string][] = [['badge', t('pinBadge')], ['pin', t('pinIcon')], ['dot', t('pinDot')]];
   grid.append(section([t('pdfNoteStyle'), 'pdfNoteStyle'], segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));
