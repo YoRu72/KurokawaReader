@@ -39,7 +39,7 @@ import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
 import { aiSpeak, aiTtsSupported, aiReady } from '../ai';
 import { kittenReady, kittenSpeak, kittenCanRead } from '../kittentts';
-import { takeJump as takeSearchJump, storedPages, storePages } from '../booksearch';
+import { takeJump as takeSearchJump, storedPages, storePages, partialPages, storePartialPages } from '../booksearch';
 import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, installVoices, queueSpeech, speakQueue } from '../tts';
 import { attachFurigana, isJapanese } from '../furigana';
 import { textRules, applyTextRules } from '../textrules';
@@ -187,7 +187,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   syncChrome();
   panel.onClose = () => { try { localStorage.removeItem(DOCK_KEY); } catch { /* private mode */ } };
   { let was: string | null = null; try { was = localStorage.getItem(DOCK_KEY); } catch { /* private mode */ }
-    if (was && SidePanel.canDock()) { const tab = was as 'toc'; const tm = window.setTimeout(() => { if (root.isConnected && !panel.isOpen) openContents(tab); }, 900); onDispose(() => window.clearTimeout(tm)); } }
+    if (was && SidePanel.canDock()) { const tab = was as 'toc'; const tm = window.setTimeout(() => { void whole.then(() => { if (root.isConnected && !panel.isOpen) openContents(tab); }); }, 900); onDispose(() => window.clearTimeout(tm)); } }
   const chapterMode = () => getSettings().readingMode !== 'continuous';
   const flowMode = () => getSettings().readingMode === 'flow';
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
@@ -219,6 +219,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // later passes of restore — fonts and pictures settling — go back to it, not to the place read last. Declared
   // here, before the first restore, which runs while the rest of this function waits on the book.)
   let asked: (() => void) | null = null;
+  // A book of many chapters opened at the chapter read last, that chapter made first and the rest after (renderDoc,
+  // firstChapter): while the rest are made the book is shown but not yet whole — `early` — and what needs the whole
+  // book (the reader's actions) waits for `whole`.
+  interface Plan { k: number; map: ChapterMap | null; block?: number; offset?: number }
+  interface Early { doc: OpenDoc; plan: Plan; size: number; scrolled: boolean; applied: Set<string>; done?: boolean }
+  let early = null as Early | null;
+  let wholeDone: () => void = () => undefined; const whole = new Promise<void>((r) => { wholeDone = r; });
+  let saveSoon = false;
 
   for (let i = 0; i < books.length; i++) {
     const book = books[i];
@@ -274,19 +282,139 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     readInOrder: { run: () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : books.map((b) => b.id), { onChange: () => void findNext() })) },
     jumpToBook: { run: () => openContents('toc'), available: () => docs.length > 1 },
   };
+  // (Asked for while the book's later chapters are still being made: done once they are — on the whole book.)
+  for (const a of Object.values(actions)) { const run = a.run; a.run = () => { if (early) void whole.then(run); else run(); }; }
   const bars = mountBars({ kind: 'flow', root, topbar, back: backBtn, title, toolbar, toolbarBox: toolbar, more: moreBtn, actions, dress: named, after: () => placeToolbar() });
   bars.render();
   onDispose(onSettingsChange(() => { placeToolbar(); bars.render(); }));
   onDispose(() => bars.dispose());
 
-  async function renderDoc(doc: OpenDoc): Promise<void> {
+  /** The start of an element's text — `el.textContent.slice(0, n)` — without making the whole of it. */
+  function headText(el: Element, n: number): string {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION); let out = '';
+    for (let x = w.nextNode(); x && out.length < n; x = w.nextNode()) out += (x as CharacterData).data;
+    return out.slice(0, n);
+  }
+  /** The blocks of a book's text (or of a part of it), in order: the units its places are counted in. */
+  function blocksIn(el: Element): HTMLElement[] {
+    return [...el.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+  }
+  /** Whether a chapter has text or a picture (`textContent.trim()` without building the chapter's whole text). */
+  function hasContent(c: Element): boolean {
+    const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
+    for (let n = w.nextNode(); n; n = w.nextNode()) if (/\S/.test((n as CharacterData).data)) return true;
+    return !!c.querySelector('img, svg, image, video');
+  }
+  /** The book's blocks, its chapters and the one shown (chapter by chapter), its text rules, typography and highlights:
+   *  what the reader keeps of a book once its text is made — and again once the rest of its chapters are, for a book
+   *  opened at a chapter first (`target`: the element whose chapter is shown; else the place read last). */
+  function layDoc(doc: OpenDoc, target?: Element | null): void {
+    const el = doc.render!.element;
+    if (textRules().length) applyTextRules(el, doc.book.id);
+    if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(el);
+    doc.allBlocks = blocksIn(el);
+    const all = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')];
+    const sections = all.filter((c) => !c.classList.contains('kr-shell') && hasContent(c));
+    doc.chapters = sections.length > 1 ? sections : [el];
+    doc.chapter = 0;
+    doc.blocks = doc.allBlocks;
+    if (chapterMode() && doc.chapters.length > 1) {
+      // Hide the other chapters before the first layout: laying out a whole book
+      // just to show one chapter was most of the time a large EPUB took to open.
+      let pb: Element | undefined;
+      if (target !== undefined) pb = target ?? undefined;
+      else { const p = doc.book.progress; pb = p && p.bookId === doc.book.id && p.block !== undefined ? doc.allBlocks[p.block] : undefined; }
+      const idx = pb ? doc.chapters.findIndex((c) => c === pb || c.contains(pb!)) : -1;
+      doc.chapter = Math.max(0, idx);
+      doc.chapters.forEach((c, i) => { c.hidden = i !== doc.chapter; });
+      doc.blocks = doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b));
+    }
+    // (Chapters not made yet are kept out of sight chapter by chapter — held; once made, one that is not a chapter of
+    // the reader's — empty — is shown as it always was.)
+    for (const c of all) {
+      if (c.classList.contains('kr-shell')) { if (chapterMode()) { c.hidden = true; c.dataset.krHeld = '1'; } }
+      else if (c.dataset.krHeld) { delete c.dataset.krHeld; if (!doc.chapters.includes(c)) c.hidden = false; }
+    }
+    applyHighlights(doc);
+  }
+  /** The sizes of a book's chapters, kept on this device from its last opening (not synced, not backed up): each
+   *  chapter's blocks in the order of its spine, and its direction — so it can open at its place with only the chapter
+   *  there made (firstChapter). A guess only: the place is put right once the whole book is made. */
+  interface ChapterMap { size: number; b: number[]; rtl: boolean }
+  const MAPS = 'kr.chapterMaps';
+  function readMap(id: string, size: number): ChapterMap | null {
+    try { const m = (JSON.parse(localStorage.getItem(MAPS) ?? '{}') as Record<string, ChapterMap>)[id]; return m && m.size === size && Array.isArray(m.b) ? m : null; } catch { return null; }
+  }
+  function writeMap(doc: OpenDoc, size: number): void {
+    const el = doc.render?.element; if (!el || doc.book.format !== 'epub') return;
+    const all = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')]; if (all.length <= 6) return;
+    const at = new Map<Element, number>(all.map((c, i) => [c, i])); const b = all.map(() => 0);
+    for (const bl of doc.allBlocks) { let e: Element | null = bl; while (e && e.parentElement !== el) e = e.parentElement; const i = e ? at.get(e) : undefined; if (i !== undefined) b[i]++; }
+    const map: ChapterMap = { size, b, rtl: !!doc.render?.rtl };
+    try {
+      const maps = JSON.parse(localStorage.getItem(MAPS) ?? '{}') as Record<string, ChapterMap>;
+      const was = maps[doc.book.id]; if (was && JSON.stringify(was) === JSON.stringify(map)) return;
+      delete maps[doc.book.id]; maps[doc.book.id] = map;
+      const ids = Object.keys(maps); for (const id of ids.slice(0, Math.max(0, ids.length - 24))) delete maps[id];
+      localStorage.setItem(MAPS, JSON.stringify(maps));
+    } catch { /* full or private: opened whole next time */ }
+  }
+  /** The chapter (its place in the spine) a book of many chapters is opened at, made first with its neighbours, and the
+   *  block there — or null: made whole first, as always (books read together, a jump asked for — a bookmark, a note, a
+   *  search hit, the pictures —, a place this device cannot find without the whole book). */
+  function firstChapter(doc: OpenDoc, size: number): Plan | null {
+    if (docs.length !== 1 || doc.book.format !== 'epub') return null;
+    try { if (sessionStorage.getItem('kr.jump') || sessionStorage.getItem('kr.searchJump') || sessionStorage.getItem('kr.openGallery') === doc.book.id) return null; } catch { return null; }
+    const map = readMap(doc.book.id, size);
+    const p = doc.book.progress;
+    if (!p || p.bookId !== doc.book.id) return { k: 0, map };
+    if (p.anchor) return null;
+    if (p.block === undefined) return p.pct ? null : { k: 0, map };
+    if (!map) return p.block === 0 ? { k: 0, map, block: 0, offset: p.offset } : null;
+    let base = 0;
+    for (let i = 0; i < map.b.length; i++) { if (p.block < base + map.b[i]) return { k: i, map, block: p.block - base, offset: p.offset }; base += map.b[i]; }
+    return null;
+  }
+  /** The element a book made a chapter first opens at: the block of its place, else its chapter (null: the start). */
+  function firstTarget(doc: OpenDoc, plan: Plan): HTMLElement | null {
+    const el = doc.render!.element; const sec = document.getElementById(`${doc.book.id}-c${plan.k}`);
+    if (plan.block !== undefined) { const b = plan.map ? (sec ? blocksIn(sec)[plan.block] : undefined) : blocksIn(el)[plan.block]; if (b) return b; }
+    return plan.k > 0 && sec && el.contains(sec) ? sec : null;
+  }
+  /** Put the place back in a book made a chapter first (as scrollToLocator does, from the chapter's own blocks). */
+  function placeFirst(doc: OpenDoc, plan: Plan): void {
+    const target = firstTarget(doc, plan);
+    if (!target || plan.block === undefined) return;
+    programmatic = performance.now();
+    const sr = scroll.getBoundingClientRect(); const r = target.getBoundingClientRect();
+    scroll.scrollTop += r.top - sr.top - 8 + (plan.offset ?? 0) * r.height;
+  }
+  /** The place in a book still being made, from its chapters' sizes kept (only when the chapter read agrees with them):
+   *  saved if the app is hidden or the book left before it is whole. */
+  function earlyLocator(): Locator | null {
+    const e = early; const map = e?.plan.map; if (!e || !map) return null;
+    const blocks = e.doc.blocks; const sr = scroll.getBoundingClientRect(); if (!blocks.length || sr.height < 40) return null;
+    let lo = 0, hi = blocks.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (blocks[m].getBoundingClientRect().bottom - sr.top <= 8) lo = m + 1; else hi = m; }
+    const block = blocks[lo]; const sec = block.closest<HTMLElement>('.kr-chapter'); const i = Number(/-c(\d+)$/.exec(sec?.id ?? '')?.[1] ?? NaN);
+    if (!sec || !(i >= 0) || i >= map.b.length) return null;
+    const own = blocksIn(sec); if (own.length !== map.b[i]) return null;
+    let base = 0; for (let j = 0; j < i; j++) base += map.b[j];
+    const total = map.b.reduce((a, x) => a + x, 0); const r = block.getBoundingClientRect();
+    const offset = Math.min(1, Math.max(0, (sr.top + 8 - r.top) / Math.max(1, r.height))); const at = base + own.indexOf(block);
+    return { bookId: e.doc.book.id, block: at, offset, pct: total ? Math.min(1, (at + offset) / total) : 0 };
+  }
+
+  async function renderDoc(doc: OpenDoc, quick = false): Promise<void> {
     const handler = flowHandlerFor(doc.book.format);
     const t0 = performance.now();
     const file = await db.getFile(doc.book.id);
     performance.measure('kr:getFile', { start: t0 });
     if (doc === docs[0] && file) op?.size('bytes', file.size);
     if (!handler || !file) { if (doc === docs[0]) op?.failed(file ? 'unsupported' : 'file missing'); doc.wrapper.append(h('p', { class: 'kr-content' }, !file && doc.book.source ? t('linkedFileMissing', { title: doc.book.title }) : t('unsupportedFormat'))); return; }
-    const ctx = { bookId: doc.book.id, bookTitle: doc.book.title, publisherStyles: getSettings().publisherStyles, id: (s: string) => `${doc.book.id}-${s}` };
+    // (A book of many chapters opened where it was read: that chapter made first — firstChapter.)
+    const plan = quick ? firstChapter(doc, file.size) : null;
+    const ctx = { bookId: doc.book.id, bookTitle: doc.book.title, publisherStyles: getSettings().publisherStyles, id: (s: string) => `${doc.book.id}-${s}`, ...(plan ? { first: plan.k, rtl: plan.map?.rtl } : {}) };
     try {
       doc.render?.dispose();
       doc.wrapper.querySelector('.kr-content')?.remove();
@@ -297,33 +425,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       doc.wrapper.append(doc.render.element);
       // (The reader's text rules — a watermark taken out, a name respelt — on the text, and on chapters that
       // come later.)
-      { const el = doc.render.element; const id = doc.book.id; if (textRules().length) applyTextRules(el, id); el.addEventListener('kr-content-changed', () => { if (textRules().length) applyTextRules(el, id); }); }
-      if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(doc.render.element);
-      doc.allBlocks = [...doc.render.element.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+      { const el = doc.render.element; const id = doc.book.id; el.addEventListener('kr-content-changed', () => { if (textRules().length) applyTextRules(el, id); }); }
       // (Chapters that come after the book opened — a novel's, fetched as read — are blocks of it too: read aloud,
       // counted, found, their place kept; laid out as the rest.)
       { const d = doc; const el = doc.render.element; el.addEventListener('kr-content-changed', (ev) => {
         if (d.render?.element !== el) return;
         if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(((ev as CustomEvent<{ el?: Element }>).detail?.el) ?? el);
-        d.allBlocks = [...el.querySelectorAll<HTMLElement>(`${BLOCK_SELECTOR}, img`)].filter((b) => !b.closest('table') || b.tagName === 'TD' || b.tagName === 'TH');
+        d.allBlocks = blocksIn(el);
         d.blocks = chapterMode() && d.chapters.length > 1 ? d.allBlocks.filter((b) => d.chapters[d.chapter]?.contains(b)) : d.allBlocks;
         allImages = docs.flatMap((x) => x.render?.images ?? []);
       }); }
-      const sections = [...doc.render.element.querySelectorAll<HTMLElement>(':scope > .kr-chapter')].filter((c) => (c.textContent ?? '').trim().length > 0 || c.querySelector('img, svg, image, video'));
-      doc.chapters = sections.length > 1 ? sections : [doc.render.element];
-      doc.chapter = 0;
-      doc.blocks = doc.allBlocks;
-      if (chapterMode() && doc.chapters.length > 1) {
-        // Hide the other chapters before the first layout: laying out a whole book
-        // just to show one chapter was most of the time a large EPUB took to open.
-        const p = doc.book.progress;
-        const pb = p && p.bookId === doc.book.id && p.block !== undefined ? doc.allBlocks[p.block] : undefined;
-        const idx = pb ? doc.chapters.findIndex((c) => c === pb || c.contains(pb)) : -1;
-        doc.chapter = Math.max(0, idx);
-        doc.chapters.forEach((c, i) => { c.hidden = i !== doc.chapter; });
-        doc.blocks = doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b));
-      }
-      applyHighlights(doc);
+      if (doc.render.rest && plan) { early = { doc, plan, size: file.size, scrolled: false, applied: new Set() }; layDoc(doc, firstTarget(doc, plan)); }
+      else { layDoc(doc); if (docs.length === 1 && doc.book.format === 'epub') { const d = doc, size = file.size; window.setTimeout(() => { if (d.render?.element.isConnected) writeMap(d, size); }, 2000); } }
       performance.measure('kr:dom', { start: t2 });
     } catch (err) {
       console.error(err);
@@ -358,13 +471,63 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // Render books in order so the first one appears quickly.
   // (Opened at the book read last: it is the one whose place is put back once it is on the page.)
   const lastRead = latestDoc();
+  // (Continuous reading's styles from the start — chapters away from the screen not laid out —, not only once the book
+  // is set up: the first place put back laid out every chapter before it.)
+  scroll.classList.toggle('reader-continuous', !chapterMode());
   for (const doc of docs) {
-    await renderDoc(doc);
+    await renderDoc(doc, true);
     // (Closed while it was opening: nothing more is set up — no keys, no listeners, no place saved.)
     if (gone()) { docs.forEach((d) => d.render?.dispose()); return; }
-    if (doc === docs[0]) { root.querySelector('#kr-loading')?.remove(); if (op) { op.size('paras', doc.allBlocks.length); op.shown(); } }
-    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); restore(); performance.measure('kr:restore', { start: tr }); if (doc === lastRead) op?.placed(); }
+    if (doc === docs[0]) { root.querySelector('#kr-loading')?.remove(); if (op) { if (early?.doc !== doc) op.size('paras', doc.allBlocks.length); op.shown(); } }
+    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); if (early?.doc === doc) { if (chapterMode()) renderChapterNav(); placeFirst(doc, early.plan); } else restore(); performance.measure('kr:restore', { start: tr }); if (doc === lastRead) op?.placed(); }
   }
+  // A book opened at a chapter made first: shown now, its other chapters made in slices between frames (the reader
+  // may read and scroll meanwhile), then the whole book's blocks, chapters and highlights taken as for a book made
+  // whole — the place read meanwhile kept — before the rest of the reader is set up.
+  if (early) {
+    const e = early;
+    // (Moved by the reader — a touch, the wheel, a key, then a scroll —, not by the page settling: lines a little taller
+    // once a font has loaded move the scroll too.)
+    let touched = false; const onInput = () => { touched = true; };
+    const onScroll = () => { if (touched && performance.now() - programmatic > 150) e.scrolled = true; };
+    // (Hidden or left before it is whole: the place read meanwhile saved, from the chapters' sizes kept.)
+    const keep = () => { if (!e.scrolled || e.done) return; const loc = earlyLocator(); if (!loc) return; e.doc.book.progress = loc; void db.updateBook(e.doc.book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); }); };
+    const onHidden = () => { if (document.visibilityState === 'hidden') keep(); };
+    const inputs = ['touchstart', 'wheel', 'pointerdown', 'keydown'] as const;
+    // (The page settling — fonts, pictures — before the reader has moved: the place put back again, as restore's later
+    // passes do for a book made whole.)
+    const settle = new ResizeObserver(() => { if (!touched && !e.scrolled && early === e && !gone()) placeFirst(e.doc, e.plan); });
+    settle.observe(e.doc.render!.element);
+    scroll.addEventListener('scroll', onScroll, { passive: true }); window.addEventListener('pagehide', keep); document.addEventListener('visibilitychange', onHidden);
+    for (const ev of inputs) root.addEventListener(ev, onInput, { passive: true, capture: true });
+    const unwatch = () => { settle.disconnect(); scroll.removeEventListener('scroll', onScroll); window.removeEventListener('pagehide', keep); document.removeEventListener('visibilitychange', onHidden); for (const ev of inputs) root.removeEventListener(ev, onInput, { capture: true }); };
+    onDispose(() => { keep(); unwatch(); });
+    // (The fonts loaded meanwhile — the lines a little taller or shorter —: the place put back again, as restore does
+    // for a book made whole, unless the reader has moved.)
+    void document.fonts.ready.then(() => { if (early === e && !touched && !e.scrolled && !gone()) placeFirst(e.doc, e.plan); });
+    const t3 = performance.now();
+    const made = await e.doc.render!.rest!().catch((err: unknown) => { console.error(err); return false; });
+    performance.measure('kr:rest', { start: t3 });
+    if (gone()) { unwatch(); docs.forEach((d) => d.render?.dispose()); return; }
+    if (!made) {
+      // (The rest could not be made: the book made whole, as it always was, and put at its place.)
+      if (e.scrolled) keep();
+      e.done = true; unwatch(); early = null;
+      await renderDoc(e.doc);
+      if (gone()) { docs.forEach((d) => d.render?.dispose()); return; }
+      restore();
+    } else {
+      const shown = chapterMode() ? (e.doc.chapters.length > 1 ? e.doc.chapters[e.doc.chapter] : firstTarget(e.doc, e.plan)) : undefined;
+      e.done = true;
+      layDoc(e.doc, shown);
+      unwatch();
+      early = null;
+      if (e.scrolled) { userScrolled = true; const c = currentLocator(); if (c) { c.doc.book.progress = c.loc; saveSoon = true; } }
+    }
+    op?.size('paras', e.doc.allBlocks.length);
+    { const d = e.doc, size = e.size; window.setTimeout(() => { if (d.render?.element.isConnected) writeMap(d, size); }, 2000); }
+  }
+  wholeDone();
   const tPost = performance.now();
   root.querySelector('#kr-loading')?.remove();
   // Opened from a search across books: at the found passage (its chapter, its place among the chapter's
@@ -383,8 +546,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   allImages = docs.flatMap((d) => d.render?.images ?? []);
   // Furigana for Japanese books (readings generated on the device; the setting shows/hides them).
-  const sample = docs.map((d) => d.wrapper.textContent?.slice(0, 4000) ?? '').join('\n');
-  const isJa = docs.some((d) => isJapanese(d.wrapper.textContent?.slice(0, 4000) ?? '', d.book.language));
+  // (The first 4,000 letters of each book, not its whole text made into one string to cut them from — megabytes.)
+  const heads = docs.map((d) => headText(d.wrapper, 4000));
+  const sample = heads.join('\n');
+  const isJa = docs.some((d, i) => isJapanese(heads[i], d.book.language));
   const isZh = !isJa && (/[\u4e00-\u9fff]/.test(sample) || docs.some((d) => /^zh/i.test(d.book.language ?? '')));
   const isKo = !isJa && !isZh && /[\uac00-\ud7af]/.test(sample);
   scroll.classList.toggle('cjk-book', isJa || isZh || isKo);
@@ -532,9 +697,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       return;
     }
     chapterNav.classList.remove('flow');
+    // (Pressed while the book's later chapters are still being made: done once they are, to the same chapter.)
+    const go = (u: Unit, fallback: number) => { if (!early) { showUnit(fallback); return; } void whole.then(() => { const i = units().findIndex((x) => x.doc === u.doc && x.el === u.el); if (i >= 0) showUnit(i); }); };
     chapterNav.append(
-      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => showUnit(k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
-      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => showUnit(k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
+      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
+      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
     );
   }
   function showUnit(k: number, atEnd = false): void {
@@ -926,6 +1093,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   hooks.update = () => updateChrome();
   hooks.save = () => scheduleSave();
+  if (saveSoon) scheduleSave();
   const trackThrottled = throttle(trackProgress, 400);
   scroll.addEventListener('scroll', () => { if (performance.now() - programmatic > 150) userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); focusThrottled(); }, { passive: true });
   // Focus mode: the paragraph under the reading line (a little above the middle of the screen) is the one
@@ -1224,9 +1392,19 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function applyHighlights(doc: OpenDoc): void {
     const whole = doc.render?.element;
     if (!whole) return;
+    // (A book made a chapter first: the highlights of the chapters made are put on at once, in their own chapter only;
+    // the others — and one across chapters — once the whole book is.)
+    const part = early?.doc === doc ? early : null;
     for (const hl of doc.book.highlights ?? []) {
+      if (part?.applied.has(hl.id)) continue;
       const own = hl.anchor ? document.getElementById(hl.anchor) : null;
       const inOwn = own && whole.contains(own) ? own : null;
+      if (part && !part.done) {
+        if (!inOwn || inOwn.closest('.kr-shell')) continue;
+        const r = findTextRange(inOwn, hl.text, hl);
+        if (r) { const marks = wrapRange(r, 'kr-hl', hl.color, hl.id); if (hl.note) marks.forEach((m) => { m.title = hl.note!; m.classList.add('has-note'); }); part.applied.add(hl.id); }
+        continue;
+      }
       // (Which place it was is counted in its own chapter: elsewhere only the text around it tells.)
       const near = { before: hl.before, after: hl.after };
       let range = findTextRange(inOwn ?? whole, hl.text, inOwn || !hl.anchor ? hl : near);
@@ -1976,6 +2154,30 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   };
   root.append(topbar, reader, bar, readBar.el, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
   syncChrome();
+  // The pages end above the page bar lying at the foot, and begin below one at the top (its room measured: --pb-room —
+  // reader.css [data-pb]); a docked bar down a side keeps them clear of it always, shown or hidden, so they are not
+  // fitted again when the chrome hides. (A floating bar down a side — a phone's — stays over the pages' edge.)
+  {
+    const room = () => {
+      const lay = bar.dataset.layout, look = bar.dataset.look === 'docked' ? 'docked' : 'pill';
+      const at = bar.hidden ? 'none' : lay === 'side' ? (look === 'docked' ? 'side' : 'none') : bar.dataset.row === 'top' ? 'top' : 'bottom';
+      if (root.dataset.pb !== at) root.dataset.pb = at;
+      if (root.dataset.pblook !== look) root.dataset.pblook = look;
+      const side = bar.dataset.side ?? 'right'; if (root.dataset.pbside !== side) root.dataset.pbside = side;
+      if (at === 'none' || root.classList.contains('immersive')) return;
+      // (Where the bar stands, its slide in and out aside — a fixed element's offsets do not count its transform.)
+      const parent = bar.offsetParent as HTMLElement | null; const pr = parent?.getBoundingClientRect(); const rr = root.getBoundingClientRect();
+      const top = bar.offsetTop + (pr ? pr.top + (parent?.clientTop ?? 0) : 0), hgt = bar.offsetHeight, wid = bar.offsetWidth;
+      if (!hgt || !wid) return;
+      const px = at === 'bottom' ? rr.bottom - top + (look === 'docked' ? 0 : 8) : at === 'top' ? top - rr.top + hgt + (look === 'docked' ? 4 : 8) : wid;
+      const v = `${Math.max(0, Math.round(px))}px`; if (root.style.getPropertyValue('--pb-room') !== v) root.style.setProperty('--pb-room', v);
+    };
+    const obs = new ResizeObserver(() => room()); obs.observe(bar); obs.observe(root);
+    const mo = new MutationObserver(() => room()); mo.observe(bar, { attributes: true, attributeFilter: ['hidden', 'data-layout', 'data-row', 'data-look', 'data-side'] });
+    mo.observe(root, { attributes: true, attributeFilter: ['class'] });
+    onDispose(() => { obs.disconnect(); mo.disconnect(); });
+    room();
+  }
 
   const openPdfOptions = () => panel.open(t('visualOptions'), [{ id: 'o', label: t('visualOptions'), render: (b) => renderOptions(b, { pdf: true }) }]);
   let saveTimer: number | undefined;
@@ -2039,7 +2241,14 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   onDispose(() => savePlace());
   onDispose(() => viewer.destroy());
   // The pages' text, read once and kept (from an earlier reading, or now, in idle moments), for quick searching.
-  setTimeout(() => void storedPages(book).then((stored) => { if (stored) viewer.seedTexts(stored); else void viewer.readAllWhenIdle((all) => void storePages(book, all)); }), 3000);
+  // (Read on from where an earlier opening got to, the pages read kept as it goes: a long PDF left before the end was
+  // read from its first page again at every opening, and never finished.)
+  setTimeout(() => void storedPages(book).then(async (stored) => {
+    if (stored) { viewer.seedTexts(stored); return; }
+    const from = await partialPages(book);
+    if (gone()) return;
+    void viewer.readAllWhenIdle((all) => void storePages(book, all), { from, save: (texts) => void storePartialPages(book, texts) });
+  }), 3000);
   onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); viewer.setInvert(s.pdfInvert); }));
   // "Speak" (selected words): the device's voice, or KittenTTS's audio — held, so a new "Speak" or the book closed
   // stops it (it went on talking in the library).

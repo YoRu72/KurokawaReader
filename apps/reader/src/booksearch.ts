@@ -189,6 +189,25 @@ export async function storedPages(book: Book): Promise<string[] | null> {
   memo.set(book.id, stored.units);
   return stored.units.map((u) => u.text);
 }
+/** The page texts of a PDF read so far by the reader, not yet all (page n at n − 1; null: none kept). Kept apart from
+ *  a whole one — another key —, so neither this search nor the reader's takes it for the book's text. */
+const partKey = (b: Book) => `part:${keyOf(b)}`;
+export async function partialPages(book: Book): Promise<(string | null)[] | null> {
+  const stored = await db.getText(book.id).catch(() => null);
+  if (!stored || stored.key !== partKey(book)) return null;
+  const out: (string | null)[] = [];
+  for (const u of stored.units) { const n = Number(u.label); if (Number.isInteger(n) && n >= 1) out[n - 1] = u.text; }
+  return out;
+}
+/** Keep the page texts read so far (the reader's reading in idle moments goes on from them next time) — never over the
+ *  whole text, kept meanwhile by a search. */
+export async function storePartialPages(book: Book, texts: (string | null)[]): Promise<void> {
+  if (memo.has(book.id)) return;
+  const now = await db.getText(book.id).catch(() => null);
+  if (now && now.key === keyOf(book)) return;
+  const units = texts.flatMap((text, i) => (typeof text === 'string' ? [{ label: String(i + 1), text }] : []));
+  if (units.length) await db.putText(book.id, { key: partKey(book), units }).catch(() => undefined);
+}
 /** Keep a PDF's page texts once the reader has read them all (its search across books is then quick too). */
 export async function storePages(book: Book, texts: string[]): Promise<void> {
   if (memo.has(book.id)) return;

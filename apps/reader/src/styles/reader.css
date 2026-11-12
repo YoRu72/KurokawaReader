@@ -133,6 +133,9 @@
 /* (Chapters away from the screen are not laid out or painted until they come near it: a whole book in one long page
    — continuous reading — stays light.) */
 .reader-continuous .kr-content .kr-chapter { content-visibility: auto; contain-intrinsic-size: auto 3000px; }
+/* (A chapter not made yet — a book opened at a chapter, the others made just after: views/reader.ts firstChapter —
+   takes the room an unlaid chapter takes, near the screen or not, so the place does not move when it is made.) */
+.reader-continuous .kr-content .kr-chapter.kr-shell { min-height: 3000px; }
 .kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
 .kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
 .kr-content mark.kr-hl { background: color-mix(in srgb, var(--hl-amber, #e5c56b) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
@@ -601,6 +604,21 @@ html[dir='rtl'] .read-status .rb-battery::before { box-shadow: -1.5px 0 0 -0.3px
 .reader-view.flow-reader[data-tb='end'][data-tblook='docked'] .reader { padding-inline-end: var(--tb-w, 60px); }
 .reader-view.flow-reader.immersive .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top)); }
 .reader-view.pdf-reader.rb-on:not(.immersive) .reader, .reader-view.pdf-reader.rb-on.rb-imm .reader { padding-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
+/* A PDF's pages as the text: they end above the page bar lying at the foot and begin below one at the top (its room
+   measured — views/reader.ts mountPdf: data-pb, --pb-room); a docked bar down a side keeps them clear of it always. And
+   the chrome hiding moves no page: with it hidden the scroller's top padding takes the room the top bar (and a bar at
+   the top) had, so the scroller grows upward over pages already above; at the foot only the scroller's end moves. */
+.reader-view.pdf-reader { --pdf-top: calc(var(--topbar-h) + 24px + var(--safe-top)); }
+.reader-view.pdf-reader[data-pb='top'] { --pdf-top: max(calc(var(--topbar-h) + 24px + var(--safe-top)), var(--pb-room, 0px)); }
+.reader-view.pdf-reader .reader { padding-top: var(--pdf-top); }
+.reader-view.pdf-reader.immersive .reader { padding-top: 0; }
+.reader-view.pdf-reader.immersive .pdf-scroll { padding-top: calc(12px + var(--pdf-top)); }
+.reader-view.pdf-reader[data-pb='bottom']:not(.immersive) .reader { padding-bottom: max(var(--pb-room, 0px), var(--safe-bottom)); }
+.reader-view.pdf-reader.rb-on[data-pb='bottom']:not(.immersive) .reader { padding-bottom: max(var(--pb-room, 0px), calc(var(--rb-size) + var(--safe-bottom))); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='right'] .reader { padding-right: var(--pb-room, 56px); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='left'] .reader { padding-left: var(--pb-room, 56px); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='start'] .reader { padding-inline-start: var(--pb-room, 56px); }
+.reader-view.pdf-reader[data-pb='side'][data-pbside='end'] .reader { padding-inline-end: var(--pb-room, 56px); }
 /* The reading bar's editor (the reader's options): a row per item — its switch and name, where it goes, up and down. */
 .placed-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .placed-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; border-radius: 14px; }
