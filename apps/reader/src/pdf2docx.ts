@@ -38,7 +38,7 @@ type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number;
 type Box = { l: number; r: number; top: number; bottom: number };
 type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; tabEnd?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece };
 type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: { pos: number; type: 'left' | 'right' | 'center' }[]; /** its first line's baseline (PDF units, from the page's foot) */ base0?: number };
-type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number };
+type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number; exts?: [number, number][]; lead?: boolean };
 /** A ruled table: its columns (page x, left to right) and rows (page y, top down), and per row its cells
  *  left to right — each spanning `span` columns, `cont` when it carries on the cell above (no rule between). */
 type GridCell = { c0: number; span: number; cont?: boolean; lines: Piece[][]; fill?: string };
@@ -146,7 +146,9 @@ function readOs2(bytes: Uint8Array): Os2 | null {
 /** Code points a TrueType font's cmap covers (to decide whether embedding it can render the text). */
 /** Text without the tatweels that stretch its words; a tatweel standing alone between spaces is a dash
  *  ("أي شجاع ـ تحمّل") and stays. */
-const dropStretch = (s: string) => s.replace(/\u0640+/g, (m, at: number) => (/[^\s(\[«"'-]/.test(s[at - 1] ?? ' ') || /[^\s)\]»"'.,،؛:-]/.test(s[at + m.length] ?? ' ') ? '' : m));
+// (The hijri year's «هـ» — a lone ه, the tatweel after it, the word's end — is spelt with its tatweel: kept.)
+const dropStretch = (s: string) => s.replace(/\u0640+/g, (m, at: number) => (s[at - 1] === '\u0647' && !/[\u0621-\u064A\u0640]/.test(s[at - 2] ?? ' ') && !/[\u0621-\u0652]/.test(s[at + m.length] ?? ' ') ? '\u0640'
+  : /[^\s(\[«"'-]/.test(s[at - 1] ?? ' ') || /[^\s)\]»"'.,،؛:-]/.test(s[at + m.length] ?? ' ') ? '' : m));
 
 const HONORIFICS: Record<string, string> = { 'صلى الله عليه وسلم': '\uFDFA', 'صلى الله عليه و سلم': '\uFDFA', 'جل جلاله': '\uFDFB', 'بسم الله الرحمن الرحيم': '\uFDFD' };
 
@@ -684,22 +686,48 @@ function splitVerse(line: Line, L: number, R: number): [Piece[], Piece[], Piece[
       return [all.filter((p) => p.l >= nr - 1 && !midNums.includes(p)), all.filter((p) => p.r <= nl + 1 && !midNums.includes(p)), midNums];
     }
   }
+  // A verse number set before the verse, at the line's start ("٥٢ ــــ", "-٦٥"), stands outside its halves: the
+  // gap is looked for, and its middle measured, on the verse's own text. (Measured on the whole line, the number
+  // moved the middle off the gap, and a book's numbered verses ran on as lines of one paragraph.)
+  // (Short: a half-line drawn as a long stretch, «١٩٦- ـــــــ», is the verse's first half, not its number.)
+  const isLabel = (p: Piece) => /^[\s\-\u2013\u0640()0-9\u0660-\u0669\u06F0-\u06F9]+$/.test(p.text) && p.r - p.l < line.size * 2.5;
+  const fromStart = line.rtl ? [...ps].sort((a, b) => b.r - a.r) : ps;
+  let k = 0; while (k < fromStart.length && isLabel(fromStart[k])) k++;
+  const lead = fromStart.slice(0, k), text = [...fromStart.slice(k)].sort((a, b) => a.l - b.l);
+  const leadText = lead.map((p) => p.text).join('');
+  let numbered = false;
+  if (lead.length && text.length >= 2 && /[0-9\u0660-\u0669\u06F0-\u06F9]/.test(leadText)) {
+    const tlo = text[0].l, thi = Math.max(...text.map((p) => p.r));
+    // (At the edge of the text block, not indented as a numbered paragraph's first line is; and set apart by a
+    // dash, a stretch or a space of its own.)
+    const atEdge = (line.rtl ? R - Math.max(...lead.map((p) => p.r)) : Math.min(...lead.map((p) => p.l)) - L) < line.size * 1.5;
+    const apart = line.rtl ? Math.min(...lead.map((p) => p.l)) - thi : tlo - Math.max(...lead.map((p) => p.r));
+    numbered = atEdge && (/[\-\u2013\u0640]/.test(leadText) || apart > line.size * 0.5);
+  }
+  const gs = numbered ? text : ps;
+  const tw = numbered ? Math.max(...gs.map((p) => p.r)) - gs[0].l : width, tmid = numbered ? (Math.max(...gs.map((p) => p.r)) + gs[0].l) / 2 : mid;
   let best = -1, bestGap = 0;
-  let edge = ps[0].r;
-  for (let i = 1; i < ps.length; i++) { const gap = ps[i].l - edge; if (gap > bestGap) { bestGap = gap; best = i; } edge = Math.max(edge, ps[i].r); }
+  let edge = gs[0].r;
+  for (let i = 1; i < gs.length; i++) { const gap = gs[i].l - edge; if (gap > bestGap) { bestGap = gap; best = i; } edge = Math.max(edge, gs[i].r); }
   if (best < 0 || bestGap < line.size * 0.5) return null;
-  const left = ps.slice(0, best), right = ps.slice(best);
+  const left = gs.slice(0, best), right = gs.slice(best);
   const gapMid = (Math.max(...left.map((p) => p.r)) + Math.min(...right.map((p) => p.l))) / 2;
   const lw = Math.max(...left.map((p) => p.r)) - Math.min(...left.map((p) => p.l)), rw = Math.max(...right.map((p) => p.r)) - Math.min(...right.map((p) => p.l));
   // A wide gap near the middle, or a narrower one right at the centre with two long halves.
-  const wideGap = bestGap >= Math.max(line.size * 1.5, width * 0.045) && Math.abs(gapMid - mid) <= width * 0.18 && lw >= width * 0.3 && rw >= width * 0.3;
-  const centred = Math.abs(gapMid - mid) <= width * 0.03 && lw >= width * 0.35 && rw >= width * 0.35 && bestGap >= line.size * (0.75 - (/\u0640/.test(left.map((p) => p.text).join('')) && /\u0640/.test(right.map((p) => p.text).join('')) ? 0.25 : 0));
+  // (A numbered verse is measured both ways: some books centre the gap on the verse's text, others on the whole
+  // line, the number counted in its first half.)
+  const spanOf = (a: Piece[]) => (a.length ? Math.max(...a.map((p) => p.r)) - Math.min(...a.map((p) => p.l)) : 0);
+  const ways = numbered ? [[tw, tmid, lw, rw], [width, mid, spanOf(ps.filter((p) => p.r <= gapMid)), spanOf(ps.filter((p) => p.r > gapMid))]] : [[width, mid, lw, rw]];
+  const wideGap = ways.some(([w, m, a, b]) => bestGap >= Math.max(line.size * 1.5, w * 0.045) && Math.abs(gapMid - m) <= w * 0.18 && a >= w * 0.3 && b >= w * 0.3);
+  const centred = ways.some(([w, m, a, b]) => Math.abs(gapMid - m) <= w * 0.03 && a >= w * 0.35 && b >= w * 0.35 && bestGap >= line.size * (0.75 - (/\u0640/.test(left.map((p) => p.text).join('')) && /\u0640/.test(right.map((p) => p.text).join('')) ? 0.25 : 0)));
   if (!wideGap && !centred) return null;
   const all = line.pieces;
   const inLeft = (p: Piece) => p.r <= gapMid + 0.01;
-  const res: [Piece[], Piece[], Piece[]] & { weak?: number } = [all.filter((p) => !inLeft(p)), all.filter(inLeft), []];
+  const res: [Piece[], Piece[], Piece[]] & { weak?: number; numbered?: boolean } = [all.filter((p) => !inLeft(p)), all.filter(inLeft), []];
   // Only a narrow gap: verse if a neighbouring line splits there too (a wide space after a full stop is not).
   if (!wideGap) res.weak = gapMid;
+  // (A lone verse may show itself by its number: see buildBlocks.)
+  if (numbered) res.numbered = true;
   return res;
 }
 
@@ -987,15 +1015,32 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
   };
   let verse: Verse | null = null;
   const closeVerse = () => { if (verse) blocks.push(verse); verse = null; };
-  const splits = lines.map((l) => splitVerse(l, L, R) as ReturnType<typeof splitVerse> & { weak?: number } | null);
+  const splits = lines.map((l) => splitVerse(l, L, R) as ReturnType<typeof splitVerse> & { weak?: number; numbered?: boolean } | null);
   const gapAt = (h: (typeof splits)[number]) => (h ? h.weak ?? (Math.max(...h[1].map((p) => p.r)) + Math.min(...h[0].map((p) => p.l))) / 2 : NaN);
   lines.forEach((l, i) => {
     const h = splits[i]; if (!h || h.weak === undefined) return;
     const near = [splits[i - 1], splits[i + 1]].some((o) => o && Math.abs(gapAt(o) - h.weak!) < l.size * 1.5);
     // (A lone verse shows itself by its halves: each stretched with tatweel to fill its half of the line.)
     const stretched = (ps: Piece[]) => ps.some((p) => /\u0640/.test(p.text));
-    if (!near && !(stretched(h[0]) && stretched(h[1]))) splits[i] = null;
+    // (Or by its number set before it, with one half stretched: a lone verse quoted in a commentary, «-٦٥ سَلِي…».)
+    if (!near && !(stretched(h[0]) && stretched(h[1])) && !(h.numbered && (stretched(h[0]) || stretched(h[1])))) splits[i] = null;
   });
+  // The pitch a paragraph's lines are set at, for each size: the tighter of the steps between lines here (a
+  // quarter of them are at most this). The page's median step, on a page of many short paragraphs, is the wider
+  // step between paragraphs.
+  const tight = new Map<number, number>();
+  {
+    const steps = new Map<number, number[]>();
+    const plain = lines.filter((l) => !l.grid && !l.spacer);
+    plain.forEach((l, i) => { const n = plain[i + 1]; if (n && Math.abs(n.size - l.size) < l.size * 0.1) { const d = l.base - n.base; if (d > l.size * 0.9 && d < l.size * 2.6) { const k = Math.round(l.size); steps.set(k, [...(steps.get(k) ?? []), d]); } } });
+    for (const [k, d] of steps) if (d.length >= 3) tight.set(k, [...d].sort((a, b) => a - b)[Math.floor(d.length / 4)]);
+  }
+  // Where the lines after a paragraph's first start, for each size (for a page's notes, set in from the text's
+  // edge, that is not the edge).
+  const conts = new Map<number, number[]>();
+  const texts = new Map<Line, string>();
+  const textOf = (l: Line) => { let t = texts.get(l); if (t === undefined) { t = joinLine(l.pieces.map((p) => ({ text: p.text, l: p.l, r: p.r, h: p.h, keep: p.keep }))).text; texts.set(l, t); } return t; };
+  const numberedAt = (l: Line) => /^\s*[(（[]?[0-9\u0660-\u0669\u06F0-\u06F9]+\s?[)）\].\-–]/.test(textOf(l));
   for (const [li, line] of lines.entries()) {
     if (line.grid) {
       closePara(); closeVerse();
@@ -1089,6 +1134,10 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
         verse = { kind: 'verse', rows: [row], rtl, before: prevBase === null ? 0 : Math.max(0, prevBase - line.base - (1 - BASE) * (prevPitch || pitch) - BASE * pitch), pitch, size: line.size, width: line.r - line.l, indStart: Math.max(0, rtl ? R - line.r : line.l - L), midW, gap };
       }
       if (verse.rows.length > 1) verse.pitch = (verse.pitch + (prevBase! - line.base)) / 2;
+      // (Each half's width, for a verse whose first half carries its number: see verseFor.)
+      const span = (a: Piece[]) => { const [x0, x1] = ext(a); return x1 - x0; };
+      (verse.exts ??= []).push([span(first), span(second)]);
+      if (halves.numbered) verse.lead = true;
       prevBase = line.base; prevPitch = verse.pitch;
       continue;
     }
@@ -1104,11 +1153,24 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
         || (startGap(line) > startGap(last) + tolOf(line) && full(last) && !(cur.lines.length === 1 && /^\s*[(（[]?[0-9\u0660-\u0669\u06F0-\u06F9]+[)）\].\-–]/.test(joinLine(last.pieces.map((p) => ({ text: p.text, l: p.l, r: p.r, h: p.h, keep: p.keep }))).text)))
         || (cur.lines.length > 1 && Math.abs(startGap(line) - startGap(cur.lines[cur.lines.length - 1])) > tolOf(line) && startGap(cur.lines[1]) - startGap(cur.lines[0]) > tolOf(line) && full(last))
         || centered(line) !== centered(last)
-        || (centered(line) && centered(last));
+        || (centered(line) && centered(last))
+        || (() => {
+          // A step a fifth wider than the paragraph's own, before a line that starts as a paragraph does: numbered,
+          // or set in past where the paragraph's lines start — or, after a paragraph of one full line set in, set
+          // in as far again. (The step alone is not enough: a line with taller glyphs, a Quran font, is set lower
+          // in its paragraph by as much.)
+          const inner = cur.lines.length > 1 ? Math.min(...cur.lines.slice(1).map((l, i) => cur!.lines[i].base - l.base)) : tight.get(Math.round(last.size)) ?? pitchOf(last.size);
+          if (!(gap > inner * 1.2) || Math.abs(line.size - last.size) > last.size * 0.05) return false;
+          if (numberedAt(line)) return true;
+          if (cur.lines.length > 1) return startGap(line) - Math.min(...cur.lines.slice(1).map(startGap)) > tolOf(line) * 0.5;
+          const cs = conts.get(Math.round(line.size));
+          return !!cs && endGap(last) < tolOf(last) * 0.5 && startGap(last) > median(cs) + tolOf(last) * 0.5 && startGap(line) > startGap(last) - tolOf(line) * 0.5 && !numberedAt(last);
+        })();
       if (brk) closePara();
     }
     if (!cur) cur = { lines: [] };
     cur.lines.push(line);
+    if (cur.lines.length > 1) { const k = Math.round(line.size); (conts.get(k) ?? conts.set(k, []).get(k)!).push(startGap(line)); }
   }
   closePara(); closeVerse();
   return blocks;
@@ -1193,7 +1255,11 @@ function findGutter(lines: Line[], W: number): [number, number] | null {
   if (!best) return null;
   const [g0, g1] = best;
   // Both sides must carry text on many lines (a centred title over empty space is not a gutter).
-  const side = (inSide: (p: Piece) => boolean) => ls.map((l) => l.pieces.filter((p) => p.text.trim() && p.text !== '\u2009' && inSide(p))).filter((ps) => ps.length);
+  // (A line that runs on across the gutter is a line of neither column: a page in one column whose stretched lines
+  // happen to leave a gap there counted the ends of its long lines as a column's, and its short lines' last words
+  // were set apart in a column of their own — a list item cut in two, the items above run together.)
+  const across = (l: Line) => l.pieces.some((p) => p.text.trim() && p.text !== '\u2009' && p.l < g1 - 1 && p.r > g0 + 1);
+  const side = (inSide: (p: Piece) => boolean) => ls.filter((l) => !across(l)).map((l) => l.pieces.filter((p) => p.text.trim() && p.text !== '\u2009' && inSide(p))).filter((ps) => ps.length);
   const left = side((p) => p.r <= g0 + 1), right = side((p) => p.l >= g1 - 1);
   if (left.length < 4 || right.length < 4) return null;
   // Columns of running text, not a table: the lines on each side carry several words.
@@ -2142,7 +2208,11 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     // The gap between the halves becomes cell padding (half on each side of each cell), so the table grows by it.
     const pad = cols === 2 ? Math.round((v.gap / 2) * PT) : 0;
     const colW = Math.round(((v.width * PT) - midW) / 2) + pad;
-    const widths = cols === 3 ? [colW, midW, colW] : [colW, colW];
+    // A verse numbered at its start ("٥٢ ــــ نَكِرَةٌ…"): its first half is wider by the number, the second
+    // narrower; each column as wide as its widest half, or the first half, in a column of half the line, broke
+    // in two.
+    const lead = cols === 2 && v.lead && v.exts?.length ? [0, 1].map((i) => Math.max(...v.exts!.map((e) => e[i]))) : null;
+    const widths = cols === 3 ? [colW, midW, colW] : lead ? lead.map((w) => Math.round(w * PT) + 2 * pad) : [colW, colW];
     const indent = Math.round((v.indStart + (v.rtl ? slackNow[1] : slackNow[0])) * PT) - pad;
     return W_.table({ rtl: v.rtl, width: widths.reduce((a, b) => a + b, 0), columns: widths, indent: indent || undefined, borders: none },
       v.rows.map((row, i) => W_.tableRow({}, row.map((runs, c) => W_.tableCell({ width: widths[c], margins: { top: 0, bottom: 0, left: pad, right: pad } },
