@@ -28,3 +28,10 @@
 - What does not fit a bar on a narrow screen moves into More by itself, and comes back when there is room.
 - The back arrow, More and "Customise buttons" stay where they are, so the way out of a book and back to this page is never lost. A hidden action still answers its keyboard shortcut and its tap zone.
 - The More menu no longer repeats what is already on the bars.
+
+### Faster (second pass)
+- **EPUBs open at once.** The chapter you are in is shown first and the rest of the book is made right after, in place of every chapter being prepared before the first line shows (a 320-chapter book on a slowed phone imitation: 2.5 s → 0.4 s; reopening at your place 2.3 s → 0.2 s). Your place, percentages, search, highlights and contents work as before.
+- **Long PDFs no longer take more and more memory as you scroll through them**; reading the PDF's text for search in the background now carries on where it stopped in place of starting again at each opening, and waits while you scroll.
+### Fixes
+- **PDF pages end clear of the page bar** at the foot or the top, and showing or hiding the bars no longer makes the page jump.
+- Reading statistics saved in an older shape no longer stop the reading tracker.
