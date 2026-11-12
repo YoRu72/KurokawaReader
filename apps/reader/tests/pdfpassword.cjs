@@ -1,8 +1,8 @@
 // node tests/pdfpassword.cjs: a password-protected PDF asks for its password in the app's own dialog
 // (src/ui/dom.ts askPassword, src/formats/pdf.ts openDoc, src/pdfkeys.ts openPdfjs), not with window.prompt — which
 // the desktop app (Electron) does not have: there it throws, as it is made to here. A wrong password asks again
-// (saying it was wrong); the right one opens the file; Cancel closes the dialog cleanly (no book, no error left on
-// the page). The password is not written to the page's storage, the book's record or the console.
+// (saying it was wrong); the right one opens the file; Cancel or Escape closes the dialog cleanly (the file chosen is
+// still added under its name, as it was before, and asks again when opened; no error is left on the page). The password is not written to the page's storage, the book's record or the console.
 // The PDFs are made here with pdf-lib and encrypted (AES-256) with the app's own src/pdfcrypt.ts: no fixtures.
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
@@ -84,8 +84,21 @@ async function waitDialog(p, ms = 15000) {
       await p.click('.sheet .sheet-actions .btn.text'); await p.waitForTimeout(1500);
       // (Whatever the import shows after, dismissed.)
       ok(`${lang}: Cancel closes the dialog`, !(await dialog(p)));
-      const after = await allBooks(p);
-      ok(`${lang}: … and adds no book`, after.length === before && !after.some((b) => b.title === 'Other Paper'), after.map((b) => b.title));
+      // (The file chosen is still added, as it was with the old prompt — under its file name, nothing read from it —
+      // so that opening it later asks again.)
+      const after = await allBooks(p); const other = after.find((b) => b.fileName === 'other.pdf');
+      ok(`${lang}: … the file kept under its name, nothing read from it`, after.length === before + 1 && !!other && other.title === 'other' && !other.pageCount, after.map((b) => b.title));
+      if (other) {
+        await p.evaluate((id) => { location.hash = `#/read/${id}`; }, other.id);
+        d = await waitDialog(p);
+        ok(`${lang}: opening it asks again`, !!d, d);
+        if (d) {
+          await p.keyboard.press('Escape'); await p.waitForTimeout(1500);
+          ok(`${lang}: Escape closes the dialog, and nothing is left over it`, !(await dialog(p)) && !(await p.$('.sheet-scrim')));
+          ok(`${lang}: … no page drawn from it`, !(await p.$('.pdf-page canvas')));
+        }
+        await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view');
+      }
     }
     ok(`${lang}: no native prompt was used`, native === 0, native);
     const stored = await p.evaluate(() => JSON.stringify(Object.fromEntries(Object.keys(localStorage).map((k) => [k, localStorage.getItem(k)]))) + JSON.stringify(sessionStorage));
