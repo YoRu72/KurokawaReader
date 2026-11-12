@@ -15,7 +15,7 @@ import { attachRuler } from '../ui/ruler';
 import { jumpBack } from '../ui/jumpback';
 import { leaveToCaller } from '../native';
 import { applyTypography, revertTypography } from '../ui/typography';
-import { t, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
+import { t, isTouchDevice, getLang, localDigits, countMinutes, formatPercent } from '../i18n';
 import { db, uid, stampAfter, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -25,6 +25,7 @@ import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
+import { createReadBar } from '../ui/readbar';
 import { attachSelectionToolbar, wrapRange, findTextRange, textPlace, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
 import { openGallery } from './gallery';
 const DOCK_KEY = 'kr.reader.dock';
@@ -146,21 +147,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const footerWhere = h('span', { class: 'where' });
   const footerPct = h('span', { class: 'pct' });
   const footer = h('div', { class: 'read-footer' }, footerWhere, h('div', { class: 'bar' }, footerBar), footerPct);
-  const statusWhere = h('span', { class: 'where' });
-  const statusPage = h('span', { class: 'pg' });
-  const statusClock = h('span', { class: 'clock' });
-  const statusBatt = h('span', { class: 'batt' });
-  const statusPct = h('span', { class: 'pct' });
-  const statusLeft = h('span', { class: 'left', title: t('timeLeftChapter') });
-  const statusBar = h('div', { class: 'read-status' }, statusWhere, statusPage, h('span', { class: 'sp' }), statusLeft, statusClock, statusBatt, statusPct);
-  const tickClock = () => {
-    const d = new Date();
-    if (getLang() === 'ar') { const h = d.getHours(); statusClock.textContent = localDigits(`${((h + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')}`) + (h >= 12 ? ' مساءً' : ' صباحًا'); }
-    else statusClock.textContent = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
-  };
-  statusBar.hidden = !getSettings().showStatusLine;
-  tickClock(); const clockTimer = window.setInterval(tickClock, 15000); onDispose(() => window.clearInterval(clockTimer));
-  (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void }> }).getBattery?.().then((b) => { const paint = () => { statusBatt.textContent = `${localDigits(Math.round(b.level * 100))}%`; }; paint(); b.addEventListener('levelchange', paint); }).catch(() => undefined);
+  // The reading bar (src/ui/readbar.ts), and the frame of the text as it is read with the chrome hidden — one page
+  // (reader.css .read-frame): the bar's pages are counted in it, so they do not change when the chrome shows or hides.
+  const bar = createReadBar(root, onDispose);
+  const statusBar = bar.el;
+  const frame = h('div', { class: 'read-frame', 'aria-hidden': 'true' });
+  root.classList.add('flow-reader');
   const title = h('div', { class: 'title' });
   const panel = new SidePanel(root);
 
@@ -202,7 +194,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   let restT = 0; const awake = () => { root.classList.add('mouse-awake'); window.clearTimeout(restT); restT = window.setTimeout(() => root.classList.remove('mouse-awake'), 1800); };
   root.addEventListener('mousemove', awake); onDispose(() => window.clearTimeout(restT));
   reader.append(...arrows);
-  root.append(topbar, reader, footer, statusBar, toolbar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
+  root.append(topbar, reader, footer, statusBar, toolbar, frame, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }));
+  // (The text ends above the floating toolbar while it shows: its height, for the styles.)
+  { const tbObs = new ResizeObserver(() => { const hgt = toolbar.offsetHeight; if (hgt) root.style.setProperty('--tb-h', `${hgt}px`); }); tbObs.observe(toolbar); onDispose(() => tbObs.disconnect()); }
   syncChrome();
   panel.onClose = () => { try { localStorage.removeItem(DOCK_KEY); } catch { /* private mode */ } };
   { let was: string | null = null; try { was = localStorage.getItem(DOCK_KEY); } catch { /* private mode */ }
@@ -451,7 +445,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   performance.measure('kr:restore2', { start: tR2 });
   // Images loading above the saved position shift the layout; settle a few times.
   [400, 1200, 2500].forEach((ms) => setTimeout(() => { if (!userScrolled) restore(); }, ms));
-  void document.fonts.ready.then(() => { if (!userScrolled && reader.isConnected) restore(); });
+  void document.fonts.ready.then(() => {
+    if (!reader.isConnected) return;
+    // (A long text's runs not laid out yet take the height measured on its first one, in the fonts now loaded — the
+    // book's length, and so its pages on the reading bar, right from the start: sizeRuns.)
+    for (const d of docs) if (d.render) sizeRuns(d.render.element);
+    if (!userScrolled) restore();
+  });
 
   /* ---------- chapter mode ---------- */
   interface Unit { doc: OpenDoc; el: HTMLElement; index: number }
@@ -774,19 +774,101 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const i = Math.min(u.after.length - 1, Math.max(0, block - u.start));
     return u.after[i];
   };
+  /* ---------- the reading bar's numbers ---------- */
+  // A page of a flowing book is one screen of its text as it is read — the frame the text has with the chrome hidden
+  // (.read-frame), at the font, size and margins in force. The sizes the count needs (the chapter's place and height,
+  // the frame's) are measured once and kept until something is resized — the text (pictures loading, a run of a long
+  // text laid out, the font changed), the screen (turned), the frame — so a scroll costs only arithmetic on scrollTop.
+  interface Geo { unit: Element; uTop: number; uH: number; sTop: number; fTop: number; pageH: number; max: number }
+  let geo: Geo | null = null; let geoDirty = true;
+  const measure = (unit: Element): Geo => {
+    if (geo && !geoDirty && geo.unit === unit) return geo;
+    const sr = scroll.getBoundingClientRect(), ur = unit.getBoundingClientRect(), fr = frame.getBoundingClientRect();
+    geoDirty = false;
+    return (geo = { unit, uTop: ur.top - sr.top + scroll.scrollTop, uH: ur.height, sTop: sr.top, fTop: fr.top, pageH: Math.max(40, fr.height), max: scroll.scrollHeight - scroll.clientHeight });
+  };
+  /** The page being read in a chapter (the one at the top of the frame; the last once the chapter's end is in the
+   *  frame, or the text can go no further), the chapter's pages, and how far into the chapter, 0–100. */
+  const pagesIn = (unit: Element): { page: number; pages: number; pct: number; screens: number } => {
+    const g = measure(unit); const st = scroll.scrollTop;
+    const top = g.sTop + g.uTop - st; const pos = g.fTop - top;
+    const pages = Math.max(1, Math.ceil(g.uH / g.pageH - 0.01));
+    const end = top + g.uH <= g.fTop + g.pageH + 1 || st >= g.max - 1;
+    const page = end ? pages : Math.min(pages, Math.max(1, Math.floor(pos / g.pageH + 0.01) + 1));
+    const pct = end ? 100 : Math.round(Math.min(1, Math.max(0, pos / Math.max(1, g.uH - g.pageH))) * 100);
+    return { page, pages, pct, screens: g.uH / g.pageH };
+  };
+  /** The chapter being read: the one shown (chapter by chapter), or the one the place is in (continuous reading). */
+  const chapterSets = new WeakMap<HTMLElement[], Set<Element>>();
+  const unitOf = (doc: OpenDoc, block: Element | undefined): HTMLElement => {
+    if (doc.chapters.length <= 1) return doc.chapters[0] ?? doc.wrapper;
+    if (chapterMode()) return doc.chapters[doc.chapter] ?? doc.chapters[0];
+    let set = chapterSets.get(doc.chapters); if (!set) { set = new Set(doc.chapters); chapterSets.set(doc.chapters, set); }
+    for (let e: Element | null = block ?? null; e; e = e.parentElement) if (set.has(e)) return e as HTMLElement;
+    return doc.chapters[0];
+  };
+  // The book's length beyond the chapter: each chapter's characters and words, counted once in idle moments, and only
+  // when an item that needs them is on the bar. Pages in the book are reckoned from them: the chapters not on the page
+  // are not laid out (one chapter at a time, or kept unlaid until near), so their pages are the characters left over
+  // the characters a page of this chapter holds — shown with «≈».
+  interface Counts { chapters: HTMLElement[]; chars: number[]; words: number[] }
+  const counts = new WeakMap<OpenDoc, Counts>(); const counting = new WeakSet<OpenDoc>();
+  const countBook = (doc: OpenDoc): Counts | null => {
+    const c = counts.get(doc); if (c && c.chapters === doc.chapters) return c;
+    if (counting.has(doc)) return null;
+    counting.add(doc);
+    const chapters = doc.chapters; const chars: number[] = [], words: number[] = [];
+    const step = (deadline?: { timeRemaining(): number }) => {
+      if (!reader.isConnected || doc.chapters !== chapters) { counting.delete(doc); return; }
+      const until = performance.now() + (deadline ? Math.max(2, Math.min(12, deadline.timeRemaining() - 1)) : 6);
+      while (chars.length < chapters.length && performance.now() < until) {
+        const k = chars.length; const u: Unit = { doc, el: chapters[k], index: k };
+        chars.push(chapters[k].textContent?.length ?? 0);
+        words.push(chapters.length === 1 ? doc.allBlocks.reduce((a, b) => a + wordCount(b), 0) : blocksOfUnit(u).reduce((a, b) => a + wordCount(b), 0));
+      }
+      if (chars.length < chapters.length) { const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(step, { timeout: 1500 }); else window.setTimeout(step, 30); return; }
+      counts.set(doc, { chapters, chars, words }); counting.delete(doc); updateChrome();
+    };
+    const w = window as Idle; if (w.requestIdleCallback) w.requestIdleCallback(step, { timeout: 1500 }); else window.setTimeout(step, 30);
+    return null;
+  };
+  const density = new WeakMap<OpenDoc, number>();
+  const BOOK_ITEMS = ['bookPage', 'bookLeft', 'timeBook'] as const;
   let lastLabel = '', lastTitleDoc: OpenDoc | null = null;
   const updateChrome = throttle(() => {
     const cur = currentLocator();
     if (!cur) return;
     const label = labelFor(cur.doc, cur.loc.block ?? 0);
     const pct = Math.round(cur.loc.pct * 100);
-    const unitEl = cur.doc.chapters[cur.doc.chapter] ?? cur.doc.wrapper;
-    const sr = scroll.getBoundingClientRect(); const ur = unitEl.getBoundingClientRect();
-    const total = Math.max(1, Math.ceil(ur.height / Math.max(1, sr.height)));
-    const page = Math.min(total, Math.max(1, Math.floor((sr.top - ur.top) / Math.max(1, sr.height)) + 1));
-    // Minutes left in the chapter at the reader's own pace (once a pace is known).
-    const speed = getSettings().showTimeLeft ? trackers.get(cur.doc)?.speed() : null;
-    const mins = speed ? Math.ceil(wordsLeft(cur.doc, unitEl, cur.loc.block ?? 0) / speed) : 0;
+    const block = cur.loc.block ?? 0;
+    const unitEl = unitOf(cur.doc, cur.doc.allBlocks[block]);
+    const v: import('../ui/readbar').BarValues = { chapter: label, title: cur.doc.book.title, bookPct: pct };
+    if (statusBar.hidden === false) {
+      const p = pagesIn(unitEl); v.page = p.page; v.pages = p.pages; v.chapterPct = p.pct;
+      // The book's pages: this chapter's own, and the others' reckoned (a book of one chapter: counted, exact).
+      const k = cur.doc.chapters.indexOf(unitEl);
+      const c = BOOK_ITEMS.some((id) => bar.wants(id)) && cur.doc.chapters.length > 1 ? countBook(cur.doc) : null;
+      if (cur.doc.chapters.length <= 1 || k < 0) { v.bookPage = p.page; v.bookPages = p.pages; }
+      else if (c && (bar.wants('bookPage') || bar.wants('bookLeft'))) {
+        if (c.chars[k] >= 400 && p.screens > 0.2) density.set(cur.doc, c.chars[k] / p.screens);
+        const per = density.get(cur.doc);
+        if (per) {
+          let before = 0, after = 0; for (let i = 0; i < c.chars.length; i++) if (i < k) before += c.chars[i]; else if (i > k) after += c.chars[i];
+          const pb = Math.round(before / per), pa = Math.round(after / per);
+          v.bookPage = pb + p.page; v.bookPages = pb + p.pages + pa; v.bookApprox = true;
+        }
+      }
+      // Minutes left at the reader's own pace (once the book's statistics know it: src/stats.ts).
+      const speed = bar.wants('timeChapter') || bar.wants('timeBook') ? trackers.get(cur.doc)?.speed() : null;
+      if (speed) {
+        const inChapter = wordsLeft(cur.doc, unitEl, block);
+        if (bar.wants('timeChapter')) v.minsChapter = Math.ceil(inChapter / speed);
+        if (bar.wants('timeBook')) {
+          if (cur.doc.chapters.length <= 1 || k < 0) v.minsBook = Math.ceil(inChapter / speed);
+          else if (c) { let after = 0; for (let i = k + 1; i < c.words.length; i++) after += c.words[i]; v.minsBook = Math.ceil((inChapter + after) / speed); }
+        }
+      }
+    }
     // — writes —
     if (label !== lastLabel || cur.doc !== lastTitleDoc) {
       lastLabel = label; lastTitleDoc = cur.doc;
@@ -795,16 +877,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       title.setAttribute('dir', 'auto');
       footerWhere.textContent = docs.length > 1 ? `${docs.indexOf(cur.doc) + 1}/${docs.length} · ${label}` : label;
       footerWhere.setAttribute('dir', 'auto');
-      statusWhere.textContent = label; statusWhere.setAttribute('dir', 'auto');
     }
-    const pctText = `${localDigits(pct)}%`;
-    if (footerPct.textContent !== pctText) { footerPct.textContent = pctText; footerBar.style.width = `${pct}%`; statusPct.textContent = pctText; }
-    const pageText = `(${localDigits(page)}/${localDigits(total)})`;
-    if (statusPage.textContent !== pageText) statusPage.textContent = pageText;
-    const leftText = mins > 0 ? `⏳${localDigits(mins)}${getLang() === 'ar' ? ' د' : 'm'}` : '';
-    if (statusLeft.textContent !== leftText) statusLeft.textContent = leftText;
+    const pctText = formatPercent(pct, 'prose');
+    if (footerPct.textContent !== pctText) { footerPct.textContent = pctText; footerBar.style.width = `${pct}%`; }
+    bar.set(v);
     if (cur.doc === docs[docs.length - 1] && lastUnitShown()) offerNext(scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 ? 1 : cur.loc.pct);
   }, 150);
+  // (The sizes kept for the count are measured again when the text, the frame or the scroller change size.)
+  { const geoObs = new ResizeObserver(() => { geoDirty = true; updateChrome(); }); geoObs.observe(flow); geoObs.observe(frame); onDispose(() => geoObs.disconnect()); }
 
   function scheduleSave(): void {
     window.clearTimeout(saveTimer); savePending = true;
@@ -872,9 +952,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => window.clearTimeout(aheadTimer));
   window.setTimeout(layAhead, 900);
   const sizeObs = new ResizeObserver(() => {
+    geoDirty = true; updateChrome();
     const w = scroll.clientWidth, hgt = scroll.clientHeight;
     if (Math.abs(w - lastW) < 2 && Math.abs(hgt - lastH) < 2) return;
+    const narrowed = Math.abs(w - lastW) >= 2;
     lastW = w; lastH = hgt;
+    // (Only the height changed — the chrome or the reading bar shown or hidden, the system's bars: the text does not
+    // flow again, and is left where it is on the screen; put back at the scroller's new top, it jumped.)
+    if (!narrowed) return;
     if (!stable) { noteStable(); return; }
     resizing = true; const at = stable;
     requestAnimationFrame(() => { scrollToLocator(at); window.setTimeout(() => { resizing = false; }, 300); });
@@ -889,13 +974,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(onSettingsChange((s) => {
     // (Where the reading is, read before the change is laid out.)
     const before = reader.isConnected ? currentLocator() : null;
-    applySettings(reader, s); syncChrome(); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome();
+    applySettings(reader, s); syncChrome(); syncComfort(); geoDirty = true; updateChrome();
     const want = s.bookFormat || s.smartTypography;
     // (The highlights taken off and put on again: on the text as it is now — a mark cut a changed word in pieces, and
     // turned back the text came out doubled.)
     if (want !== typoOn) { typoOn = want; for (const d of docs) if (d.render) { unmarkHighlights(d); (want ? applyTypography : revertTypography)(d.render.element); applyHighlights(d); } }
     syncFocus();
     // Text size, line spacing, margins, a font: the text flows again, and the paragraph being read is kept at the top.
+    for (const d of docs) if (d.render) sizeRuns(d.render.element);
     if (before) { const after = currentLocator(); if (after && (after.doc !== before.doc || after.loc.block !== before.loc.block || Math.abs((after.loc.offset ?? 0) - (before.loc.offset ?? 0)) > 0.02)) scrollToLocator(before.loc); }
   }));
   root.addEventListener('kr-rerender', async () => {
@@ -1009,6 +1095,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (Day and night swapped with one tap — ReadEra's top-left corner: the chosen theme and the night theme take turns.)
     else if (c === 'dayNight') { const st = getSettings(); const night = st.nightTheme && st.theme === st.nightTheme; updateSettings(night ? { theme: (st.dayTheme as typeof st.theme) || 'light', nightSchedule: false } : { dayTheme: st.theme, theme: st.nightTheme || 'dark', nightSchedule: false }); }
     else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); showUnit(c === 'nextChapter' ? k + 1 : k - 1); } }
+    else if (c === 'statusLine') updateSettings({ showStatusLine: !getSettings().showStatusLine });
     else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
   };
   document.addEventListener('kr:command', onCommand);
@@ -1703,6 +1790,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         item('clock', sleepTimer ? t('sleepTimerOff') : t('sleepTimer'), () => sleepTimerSheet()),
         item('translate', t('aiTranslate'), () => translator.toggleUi()),
         item('settings', t('toolbarButtons'), () => toolbarSheet()),
+        item('eye', getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar'), () => updateSettings({ showStatusLine: !getSettings().showStatusLine })),
         item('highlight', t('highlights'), () => openContents('highlights')),
         docs.length > 1 ? item('books', t('jumpToBook'), () => openContents('toc')) : null,
       ));
@@ -1831,7 +1919,21 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     const el = root.querySelector<HTMLElement>('.reader-comfort'); if (el) { el.hidden = !(Number(warm) > 0 || Number(dim) > 0); el.dataset.warm = Number(warm) > 0 ? '1' : '0'; }
   };
   queueMicrotask(syncComfort);
-  root.append(topbar, reader, bar, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
+  // The reading bar (src/ui/readbar.ts): a PDF's pages are its own — the page in the book, and in its chapter where
+  // the PDF has an outline (the chapters are its top entries).
+  const readBar = createReadBar(root, onDispose);
+  root.classList.add('pdf-reader');
+  let parts: { page: number; label: string }[] = [];
+  const paintBar = () => {
+    const page = viewer?.current ?? 0, total = viewer?.total ?? 0; if (!total) return;
+    const v: import('../ui/readbar').BarValues = { title: book.title, bookPage: page, bookPages: total, bookPct: Math.round((page / total) * 100) };
+    let i = -1; for (let k = 0; k < parts.length && parts[k].page <= page; k++) i = k;
+    const start = i >= 0 ? parts[i].page : 1, end = i >= 0 ? (parts[i + 1]?.page ?? total + 1) - 1 : total;
+    v.chapter = i >= 0 ? parts[i].label : ''; v.page = page - start + 1; v.pages = Math.max(v.page, end - start + 1);
+    v.chapterPct = v.pages > 1 ? Math.round(((v.page - 1) / (v.pages - 1)) * 100) : 100;
+    readBar.set(v);
+  };
+  root.append(topbar, reader, bar, readBar.el, h('div', { class: 'reader-comfort', 'aria-hidden': 'true' }), h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
   syncChrome();
 
   const openPdfOptions = () => panel.open(t('visualOptions'), [{ id: 'o', label: t('visualOptions'), render: (b) => renderOptions(b, { pdf: true }) }]);
@@ -1853,6 +1955,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
       count.textContent = t('pageOf', { n: page, total });
+      paintBar();
       if (page >= total && total > 1) offerNextPdf();
       window.clearTimeout(saveTimer);
       // (Not before the place has been put back: the first page shown while the book opens is not a place read.)
@@ -1875,6 +1978,12 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   await viewer.load(file, book.id, book.source?.uri);
   if (gone()) { viewer.destroy(); return; }
   op?.size('pages', viewer.total);
+  // (The outline read once for the bar: its top entries with a page, in page order — all entries when it has one top.)
+  void viewer.outline().then((o) => {
+    const withPage = o.filter((x) => x.page && x.page > 0); const top = withPage.filter((x) => x.depth === 0);
+    parts = (top.length > 1 ? top : withPage).map((x) => ({ page: x.page!, label: x.label })).sort((a, b) => a.page - b.page);
+    paintBar();
+  }).catch(() => undefined);
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);
   const jump = takeJump();
@@ -2374,6 +2483,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         item('sort', t('readInOrder'), () => void import('../ui/queue').then((m) => m.queueSheet(getQueue().length ? getQueue() : [book.id], { onChange: () => void findNextPdf() }))),
         item(book.tags?.includes(FAV_TAG) ? 'heartFill' : 'heart', book.tags?.includes(FAV_TAG) ? t('unfavorite') : t('favorite'), () => void toggleFavorite(book)),
         item('type', t('visualOptions'), openPdfOptions),
+        item('eye', getSettings().showStatusLine ? t('hideReadingBar') : t('showReadingBar'), () => updateSettings({ showStatusLine: !getSettings().showStatusLine })),
         item('fullscreen', t('fullscreen'), () => { void toggleFullscreen(root); }),
         item('bookmark', t('bookmarks'), () => openContents('bookmarks')),
         item('target', t('goToPage'), () => pageInput.focus()),
