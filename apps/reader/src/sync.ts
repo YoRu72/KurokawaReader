@@ -182,7 +182,10 @@ async function applyRemote(remote: SyncState): Promise<number> {
         x.highlights = mergedHl;
         x.pins = merge(x.pins ?? [], r.pins ?? []);
         x.ink = merge(x.ink ?? [], r.ink ?? []);
-        x.pdfHighlights = merge(x.pdfHighlights ?? [], r.pdfHighlights ?? []);
+        // (A PDF highlight's note likewise: an edit, or a note cleared, made later on another device wins.)
+        const mergedPdf = merge(x.pdfHighlights ?? [], r.pdfHighlights ?? []);
+        for (const rh of r.pdfHighlights ?? []) { const lh = mergedPdf.find((y) => y.id === rh.id); if (lh && rh.note !== lh.note && (rh.noteAt ?? 0) > (lh.noteAt ?? 0)) { lh.note = rh.note; lh.noteAt = rh.noteAt; dirty = true; } }
+        x.pdfHighlights = mergedPdf;
         // The position: the one stamped later. (A stamp from a device whose clock runs ahead is kept as it is: a
         // position saved here after this one is stamped after it — db.stampAfter — and so wins, here and there.)
         if (r.progress && (r.progressAt ?? 0) > (x.progressAt ?? x.lastOpenedAt ?? 0)) { x.progress = { ...r.progress, bookId: x.id }; x.progressAt = r.progressAt; dirty = true; }
