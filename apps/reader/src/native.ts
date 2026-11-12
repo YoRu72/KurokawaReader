@@ -189,7 +189,8 @@ export function initNativeBridges(): void {
     // (ReadEra's «exit only by double-clicking Back», when it is on: the first press at the library's top warns.)
     let backAt = 0;
     // (The app sent to the background and back: the Performance page's record of how a session ended.)
-    void cap.Plugins.App.addListener('appStateChange', (d) => diagAppState(!!d.isActive));
+    // (Also told to the reader's keys — src/readkeys.ts —, which let the volume keys and the screen's edges go meanwhile.)
+    void cap.Plugins.App.addListener('appStateChange', (d) => { diagAppState(!!d.isActive); document.dispatchEvent(new CustomEvent('kr:appstate', { detail: !!d.isActive })); });
     // (Each press kept for the Performance page, with where the last touch began: src/diag.ts.)
     void cap.Plugins.App.addListener('backButton', () => { diagBack('back-button'); if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); });
   }
@@ -268,10 +269,17 @@ export function keepAwake(on: boolean): void {
   else if (wakeLock) { void wakeLock.release().catch(() => undefined); wakeLock = null; }
 }
 
-/** Tell the Android shell whether volume keys should turn pages (they then stop changing the volume). */
+/** Tell the Android shell whether volume keys should turn pages (they then stop changing the volume). Asked for by
+ *  src/readkeys.ts only while a book is open and the setting is on. */
 export async function setVolumeKeys(on: boolean): Promise<void> {
   const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setVolumeKeys?(o: { on: boolean }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await kr?.setVolumeKeys?.({ on }); } catch { /* ignore */ }
+}
+/** Tell the Android shell whether to keep a band of each side edge from the system's back gesture (Android 10+;
+ *  older versions answer without doing anything). See src/readkeys.ts. */
+export async function setEdgeGuard(on: boolean): Promise<void> {
+  const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setEdgeGuard?(o: { on: boolean }): Promise<unknown> } } }) | undefined)?.Plugins?.Kurokawa;
+  try { await kr?.setEdgeGuard?.({ on }); } catch { /* ignore */ }
 }
 
 /** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */

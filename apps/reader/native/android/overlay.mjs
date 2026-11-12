@@ -151,6 +151,12 @@ if (!manifest.includes('android:name=".LauncherAuto"')) {
 // or in Download — the folder Android's picker refuses to hand out.
 if (!manifest.includes('MANAGE_EXTERNAL_STORAGE')) manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />\n    <application`);
 if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
+// Back: Capacitor's App plugin takes it through AndroidX's OnBackPressedDispatcher (a callback that is always on) and
+// hands it to the page as `backButton`; the page decides (src/ui/backstack.ts, "Back twice to leave a book"). The
+// template leaves predictive back off (its targetSdk is below 36, where it would become the default); it is said
+// here, so the Back the page receives stays the same when the template's targetSdk is raised: the press arrives when
+// the gesture is let go, never a system animation back to the launcher half-way through a book.
+if (!manifest.includes('enableOnBackInvokedCallback')) manifest = manifest.replace(/<application\b/, '<application android:enableOnBackInvokedCallback="false"');
 await fs.writeFile(manifestPath, manifest);
 
 // App name follows the system language: KurokawaReader by default, قارئ كروكاوا on Arabic devices.

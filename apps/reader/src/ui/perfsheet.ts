@@ -34,7 +34,12 @@ export function diagReport(d: Data = diagData()): string {
   const leaves = d.events.filter((e) => e.k === 'leave').slice(-15).reverse();
   L.push('', `Reader left (last ${leaves.length}):`);
   for (const e of leaves) L.push(`  ${stamp(e.t)} ${e.why} -> ${e.to}${e.inBook !== undefined ? ` after ${e.inBook} s` : ''}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
-  const rest = d.events.filter((e) => e.k !== 'open' && e.k !== 'leave').slice(-25).reverse();
+  const held = d.events.filter((e) => e.k === 'backheld').slice(-15).reverse();
+  if (held.length) {
+    L.push('', `Back held by "Back twice to leave a book" (last ${held.length}):`);
+    for (const e of held) L.push(`  ${stamp(e.t)} ${e.why === 'twice' ? 'reminder shown, book kept' : e.why === 'selection' ? 'selection cleared, book kept' : e.why}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
+  }
+  const rest = d.events.filter((e) => e.k !== 'open' && e.k !== 'leave' && e.k !== 'backheld').slice(-25).reverse();
   L.push('', `Other events (last ${rest.length}):`);
   for (const e of rest) L.push(`  ${stamp(e.t)} ${e.k} ${fields(e)}`.trimEnd());
   return L.join('\n') + '\n';
@@ -86,7 +91,8 @@ export function perfSheet(): void {
     const leaves = d.events.filter((e) => e.k === 'leave');
     const by = new Map<string, number>(); for (const e of leaves) by.set(String(e.why), (by.get(String(e.why)) ?? 0) + 1);
     const edged = leaves.filter((e) => e.edge && e.edge !== 'none').length;
-    row(t('perfLeft'), ...(leaves.length ? [...by].sort((a, b) => b[1] - a[1]).map(([w, n]) => t('perfWhyCount', { why: WHY[w] ? t(WHY[w]) : w, n })) : [t('perfLeftNone')]), edged ? t('perfEdgeNote', { n: edged }) : null);
+    const held = d.events.filter((e) => e.k === 'backheld').length;
+    row(t('perfLeft'), ...(leaves.length ? [...by].sort((a, b) => b[1] - a[1]).map(([w, n]) => t('perfWhyCount', { why: WHY[w] ? t(WHY[w]) : w, n })) : [t('perfLeftNone')]), edged ? t('perfEdgeNote', { n: edged }) : null, held ? t('perfBackHeld', { n: held }) : null);
     row(t('perfOverheadShort'), t('perfOverhead', { ms: fmtMs(d.overhead), dur: fmtDur(now?.ran ?? 0) }));
     sh.body.replaceChildren(h('p', { class: 'hint perf-note' }, t('perfNote')), tiles, ...rows);
   };
