@@ -27,8 +27,16 @@ async function makeProtected(file, title, text) {
 }
 
 const allBooks = (p) => p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result); }; }));
-const dialog = (p) => p.evaluate(() => { const s = [...document.querySelectorAll('.sheet')].find((x) => x.querySelector('input[type=password]') && x.offsetParent !== null); return s ? { hint: s.querySelector('.hint')?.textContent ?? '', wrong: !!s.querySelector('.hint.error'), title: s.querySelector('.sheet-head h3')?.textContent ?? '' } : null; });
-async function waitDialog(p, ms = 15000) { for (let i = 0; i < ms / 200; i++) { const d = await dialog(p); if (d) return d; await p.waitForTimeout(200); } return null; }
+const dialog = (p) => p.evaluate(() => { const s = [...document.querySelectorAll('.sheet')].find((x) => x.querySelector('input[type=password]') && x.isConnected && x.getClientRects().length > 0); return s ? { hint: s.querySelector('.hint')?.textContent ?? '', wrong: !!s.querySelector('.hint.error'), title: s.querySelector('.sheet-head h3')?.textContent ?? '' } : null; });
+/** The password dialog, once it is up (any other sheet the import shows first — where to put the book — passed). */
+async function waitDialog(p, ms = 15000) {
+  for (let i = 0; i < ms / 200; i++) {
+    const d = await dialog(p); if (d) return d;
+    await p.evaluate(() => { const s = [...document.querySelectorAll('.sheet')].pop(); if (s && !s.querySelector('input[type=password]')) s.querySelector('.sheet-actions button, button.btn')?.click(); });
+    await p.waitForTimeout(200);
+  }
+  return null;
+}
 
 (async () => {
   const one = path.join(TMP, 'secret.pdf'); await makeProtected(one, 'Secret Paper', 'Behind a password.');
