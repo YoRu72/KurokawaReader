@@ -202,6 +202,13 @@ export interface VisualSettings {
   syncFolder: string;
   syncLastAt: number;
   volumeKeys: boolean;        // page turning with volume keys (Android)
+  /** The volume keys the other way round: volume up forward, volume down back. */
+  volumeSwap: boolean;
+  /** Back (the phone's button or gesture, a computer's back) leaves a book only when pressed twice within 2 s. */
+  backTwiceLeave: boolean;
+  /** Android: a band in the middle of each side edge kept from the system's back gesture while sideways swipes
+   *  turn chapters, so a swipe begun there reaches the page. */
+  edgeGuard: boolean;
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -356,6 +363,9 @@ export const DEFAULTS: VisualSettings = {
   syncLastAt: 0,
   highlightPalette: { amber: '#e5c56b', rose: '#e58a8a', mint: '#7fcfa5', sky: '#7fb4e5', violet: '#b9a3e8' },
   volumeKeys: false,
+  volumeSwap: false,
+  backTwiceLeave: false,
+  edgeGuard: true,
 };
 
 const KEY = 'kr.visual';
@@ -400,6 +410,8 @@ const GLOBAL_ONLY = new Set<string>([
   'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',
   // updates, jobs, the app on the device
   'autoUpdateCheck', 'updateChannel', 'updateEvery', 'updateAutoDownload', 'updateInstaller', 'jobNotify', 'appName', 'importMode', 'importButton', 'openLastOnLaunch', 'bookPage',
+  // the device's keys and gestures while reading
+  'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard',
   // the library
   'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
   // lists the reader builds up for every book

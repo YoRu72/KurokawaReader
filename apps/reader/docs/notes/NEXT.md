@@ -10,3 +10,7 @@
 
 ### New
 - **Performance page** (Settings → About → Performance). The app keeps a small record on your device of start-up time, how long books take to open, slow moments, how each session ended and why a book was left — times, counts and kinds only: no titles, file names or text, and nothing is sent anywhere. "Copy report" gives it as text you can send when something is slow or a book closes by itself.
+- **Volume buttons turn pages** (Android; Reader settings → Behaviour; off by default), with **Swap direction**. They work only while a book is open and nothing is playing: during read-aloud or music, and everywhere outside a book, they change the volume as usual. Holding a button keeps turning. (An earlier form of this setting took the buttons everywhere in the app and only scrolled.)
+- **Back twice to leave a book** (off by default): the first Back closes what is open, the next shows a reminder, and a second within two seconds leaves. The arrow at the top always leaves at once.
+- **Page-turn swipes protected at the screen edges** (Android, on by default, in the chapter modes): a swipe along the middle of the left or right edge changes the chapter in place of being taken as Back. Back still works from the top and bottom of the edge.
+- Space and Page Up/Down now carry on into the next or previous chapter in "Chapter by chapter" mode too.

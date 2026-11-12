@@ -110,7 +110,9 @@ void loadFonts();
 void loadSlim().then((sl) => { if (sl.fonts) warmFonts(); });
 window.addEventListener('kr:font-missing', () => void import('./ui/dom').then((m) => m.toast(t('fontFetchFailed'), 'info', 5000)));
 initNativeBridges();
-void setVolumeKeys(getSettings().volumeKeys);
+// (The volume keys are taken only while a book is open — src/readkeys.ts —: let go at the start, whatever an
+// older version left asked for.)
+void setVolumeKeys(false);
 // (The update checks loaded once the first screen is up: nothing on it needs them.)
 void import('./updates').then((m) => m.scheduleAutoCheck()).catch(() => undefined);
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);

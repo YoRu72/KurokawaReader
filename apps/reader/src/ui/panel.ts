@@ -42,6 +42,8 @@ export class SidePanel {
     this.el.classList.add('open');
     this.isOpen = true;
     this.show(activeId ?? tabs[0]?.id ?? '');
+    // (Said aloud for the reader's keys — src/readkeys.ts: nothing is taken from the phone's keys while a panel is open.)
+    document.dispatchEvent(new Event('kr:panel'));
   }
 
   show(id: string): void {
@@ -60,7 +62,7 @@ export class SidePanel {
     this.el.classList.remove('open', 'docked'); this.host.classList.remove('panel-docked');
     this.scrim.hidden = true;
     this.isOpen = false;
-    if (was) this.onClose?.();
+    if (was) { this.onClose?.(); document.dispatchEvent(new Event('kr:panel')); }
   }
 
   /** After a jump from the panel (a chapter, a bookmark, a search hit): shut — unless it is docked beside the page. */

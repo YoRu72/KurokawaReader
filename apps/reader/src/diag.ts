@@ -116,6 +116,14 @@ export function diagBack(src: string): void {
   diagLeaveIntent(src, false, e);
   diagEvent('back', { src, scr: screenNow, ...e });
 }
+/** A press of back kept from leaving the book ("Back twice to leave a book": `why` 'twice' — the first press, the
+ *  reminder shown instead; 'selection' — a selection let go instead): kept with where the last touch began, and the
+ *  press no longer counts as the reason of a leave that follows. */
+export function diagBackHeld(why: string): void {
+  const e = cost(edge);
+  intent = null;
+  diagEvent('backheld', { why, scr: screenNow, ...e });
+}
 /** The reader left, for the screen `to`: the reason said just before (within 2 s), else how the address changed. */
 export function diagReaderLeft(to: string, move: string): void {
   const now = performance.now();

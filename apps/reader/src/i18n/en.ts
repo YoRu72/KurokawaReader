@@ -909,7 +909,7 @@ export const en = {
   doneTopLeft: 'Top left',
   doneBottom: 'Bottom',
   keepAwake: 'Keep the screen on while reading',
-  volumeKeys: 'Turn pages with the volume keys',
+  volumeKeys: "Volume buttons turn pages",
   exportNotes: 'Export highlights & notes',
   notesFile: 'notes',
   brightness: 'Brightness',
@@ -2076,6 +2076,15 @@ export const en = {
   perfMs: "{n}\u00a0ms",
   perfSec: "{n}\u00a0s",
   perfMin: "{n}\u00a0min",
+  volumeKeysHint: "While a book is open: volume down turns forward, volume up back. While something is read aloud or played, or a menu is open, the buttons change the volume as usual.",
+  volumeSwap: "Swap direction",
+  volumeSwapHint: "Volume up turns forward, volume down back.",
+  backTwiceLeave: "Back twice to leave a book",
+  backTwiceLeaveHint: "Back first closes what is open; then it shows a reminder, and only a second Back within two seconds leaves the book. The arrow in the top bar always leaves at once.",
+  backAgainToLeave: "Press Back again to leave the book",
+  edgeGuard: "Protect page-turn swipes at the screen edges",
+  edgeGuardHint: "While a book is read chapter by chapter, a swipe that starts in the middle of the left or right edge turns the chapter instead of going back. Back still works from the rest of the edge and from the button.",
+  perfBackHeld: "Back presses held by “Back twice to leave a book”: {n}",
 };
 
 export type Strings = typeof en;

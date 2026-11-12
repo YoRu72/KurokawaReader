@@ -2,7 +2,9 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { markReading } from '../resume';
-import { diagOpen, diagLeaveIntent, diagEvent } from '../diag';
+import { diagOpen, diagLeaveIntent, diagEvent, diagBackHeld } from '../diag';
+import { onBack } from '../ui/backstack';
+import { readingKeys, refreshReadingKeys } from '../readkeys';
 import { takeJump, setJump, type Jump } from '../jump';
 export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
@@ -82,6 +84,20 @@ export function readerView(ids: string[]): HTMLElement {
   const gone = () => disposed;
   // (Marked open until it is left: an app ended under it opens it again — see src/resume.ts.)
   onDispose(markReading(ids));
+  // "Back twice to leave a book": Back (the phone's button or gesture, a computer's mouse button or Alt+←) — once what
+  // is open over the book is closed (src/ui/backstack.ts does that first) and a selection let go — shows a reminder
+  // the first time; a second Back within 2 s leaves. The top bar's arrow does not come here: it leaves at once.
+  let backAt = 0;
+  onDispose(onBack(() => {
+    if (!getSettings().backTwiceLeave) return false;
+    const sel = document.getSelection();
+    if (sel && !sel.isCollapsed && sel.anchorNode && root.contains(sel.anchorNode)) { sel.removeAllRanges(); diagBackHeld('selection'); return true; }
+    if (Date.now() - backAt <= 2000) { backAt = 0; return false; }
+    backAt = Date.now();
+    diagBackHeld('twice');
+    toast(t('backAgainToLeave'), 'info', 2000);
+    return true;
+  }));
 
   void (async () => {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
@@ -997,10 +1013,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   };
   document.addEventListener('kr:command', onCommand);
   onDispose(() => document.removeEventListener('kr:command', onCommand));
-  // Volume keys (Android) turn screens when enabled.
-  const onVolume = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; scroll.scrollBy({ top: dir * scroll.clientHeight * 0.88, behavior: 'smooth' }); };
-  document.addEventListener('kr:volume', onVolume);
-  onDispose(() => document.removeEventListener('kr:volume', onVolume));
+  // The phone's volume keys and screen edges (Android, as set — src/readkeys.ts): a key turns the page as Space and
+  // Shift+Space do (turnPage); sideways swipes turn chapters in the chapter modes, so the edges are kept for them.
+  onDispose(readingKeys({ sideways: () => chapterMode(), sounding: () => speaking || (!!aiAudio && !aiAudio.paused), turn: (forward) => turnPage(!forward) }));
 
   /* ---------- selection tools ---------- */
   onDispose(attachSelectionToolbar(scroll, {
@@ -1537,7 +1552,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function speak(chunks: string[], startBlock?: { doc: OpenDoc; index: number }): void {
     if (!ttsAvailable() && !(getSettings().speechEngine === 'ai' && aiTtsSupported() && aiReady()) && !(getSettings().speechEngine === 'kitten' && kittenReady())) { toast(t('speechUnavailable'), 'error', 6000); return; }
     stopSpeaking();
-    speaking = true;
+    speaking = true; refreshReadingKeys();
     keepAwake(true);
     let i = 0;
     // Where reading stops: the end of this chapter, or the end of the book.
@@ -1644,13 +1659,13 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         if (bi >= nextIdx - 40 && nextIdx <= last) more();
       },
       end: () => { if (!speaking) return; if (nextIdx > last || !more()) { stopSpeaking(); if (scopeEnd !== Infinity) toast(t('chapterReadDone')); } },
-      stopped: () => { speaking = false; keepAwake(getSettings().keepAwake); },
+      stopped: () => { speaking = false; keepAwake(getSettings().keepAwake); refreshReadingKeys(); },
     };
     const first = batch();
     if (!first.length) { stopSpeaking(); return; }
     void speakQueue(first, { ...opts(), on }).then((r) => { if (r !== 'ok' && speaking) noVoice(first[0].lang, 'unavailable'); });
   }
-  function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); stopSpeech(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } }
+  function stopSpeaking(): void { speaking = false; keepAwake(getSettings().keepAwake); stopSpeech(); if (aiAudio) { aiAudio.pause(); aiAudio = null; } refreshReadingKeys(); }
   onDispose(stopSpeaking);
 
   // Sleep timer: stops read-aloud and auto-scroll after N minutes.
@@ -1699,20 +1714,21 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   /** A screen on, or back (Space and Shift+Space, PageDown, the computer's arrows): at a chapter's end, the next one. */
   function turnPage(back: boolean): void {
     const page = scroll.clientHeight * 0.9;
-    if (flowMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); return; } }
+    // (Both chapter modes: a page-turn key — or a volume button, src/readkeys.ts — at a chapter's very end goes on to the
+    // next, as a swipe does; only scrolling past the end is the "scroll into the next chapter" mode's own.)
+    if (chapterMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); return; } }
     scroll.scrollBy({ top: back ? -page : page, behavior: 'smooth' });
   }
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else if (autoScrollRaf) stopAutoScroll(); else if (speaking) stopSpeaking(); else void leaveFullscreen(root); return; }
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const page = scroll.clientHeight * 0.9;
     switch (e.key) {
       case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); showUnit(fwd ? k + 1 : k - 1, !fwd); break; }
       case 'j': case 'ArrowDown': scroll.scrollBy({ top: 80 }); break;
       case 'k': case 'ArrowUp': scroll.scrollBy({ top: -80 }); break;
       case ' ': case 'PageDown': { e.preventDefault(); turnPage(e.shiftKey); break; }
-      case 'PageUp': { e.preventDefault(); if (flowMode() && scroll.scrollTop <= 1 && units()[currentUnitIndex() - 1]) { showUnit(currentUnitIndex() - 1, true); break; } scroll.scrollBy({ top: -page, behavior: 'smooth' }); break; }
+      case 'PageUp': { e.preventDefault(); turnPage(true); break; }
       case 'Home': scroll.scrollTop = 0; break;
       case 'End': scroll.scrollTop = scroll.scrollHeight; break;
       case '/': e.preventDefault(); openSearch(); break;
@@ -1878,9 +1894,13 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   // "Speak" (selected words): the device's voice, or KittenTTS's audio — held, so a new "Speak" or the book closed
   // stops it (it went on talking in the library).
   let pdfAudio: HTMLAudioElement | null = null; let speechTurn = 0;
+  // (While the device's voice reads the words: the volume keys keep to the volume — src/readkeys.ts.)
+  let pdfVoice = false;
+  const voiceDone = (turn: number) => { if (turn === speechTurn) { pdfVoice = false; refreshReadingKeys(); } };
   function stopPdfSpeech(): void {
     speechTurn++; stopSpeech();
     if (pdfAudio) { pdfAudio.pause(); URL.revokeObjectURL(pdfAudio.src); pdfAudio = null; }
+    pdfVoice = false; refreshReadingKeys();
   }
   onDispose(stopPdfSpeech);
   onDispose(attachSelectionToolbar(reader, {
@@ -1897,12 +1917,14 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
           if (turn !== speechTurn) return;
           const url = URL.createObjectURL(b); const a = new Audio(url); pdfAudio = a;
           a.playbackRate = getSettings().speechRate;
-          a.onended = () => { URL.revokeObjectURL(url); if (pdfAudio === a) pdfAudio = null; };
-          return a.play();
+          a.onended = () => { URL.revokeObjectURL(url); if (pdfAudio === a) pdfAudio = null; refreshReadingKeys(); };
+          return a.play().then(() => refreshReadingKeys());
         }).catch((e) => { if (turn === speechTurn) toast(String((e as Error).message ?? e), 'error', 5000); });
         return;
       }
-      void speakPassage(text.replace(/\s+/g, ' ').trim(), lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => undefined, () => undefined).then((r) => {
+      const turn = speechTurn; pdfVoice = true; refreshReadingKeys();
+      void speakPassage(text.replace(/\s+/g, ' ').trim(), lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => voiceDone(turn), () => voiceDone(turn)).then((r) => {
+        if (r !== 'ok') voiceDone(turn);
         if (r === 'missing-data') { toast(t('voiceDataMissing', { lang: languageName(lang) }), 'info', 7000); void installVoices(); }
         else if (r !== 'ok') toast(r === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);
       });
@@ -1916,9 +1938,9 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   onDispose(() => { void setImmersive(false); keepAwake(false); });
   onDispose(attachEdgeBrightness(viewer.scroll));
   viewer.scroll.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); viewer.zoom(e.deltaY < 0 ? 0.1 : -0.1); }, { passive: false });
-  const onVolumePdf = (e: Event) => { const dir = (e as CustomEvent<string>).detail === 'up' ? -1 : 1; viewer.scroll.scrollBy({ top: dir * viewer.scroll.clientHeight * 0.9, behavior: 'smooth' }); };
-  document.addEventListener('kr:volume', onVolumePdf);
-  onDispose(() => document.removeEventListener('kr:volume', onVolumePdf));
+  // The phone's volume keys (Android, as set — src/readkeys.ts): the next or previous page, as PageDown and PageUp
+  // turn it. (Pages run downwards: no sideways swipe here, so the screen's edges are left to the back gesture.)
+  onDispose(readingKeys({ sideways: () => false, sounding: () => pdfVoice || (!!pdfAudio && !pdfAudio.paused), turn: (forward) => viewer.goTo(viewer.current + (forward ? 1 : -1)) }));
 
   // Reading statistics for PDFs: words per page counted as pages are reached.
   const tracker = new ReadingTracker(book, () => true);

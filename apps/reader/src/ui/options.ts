@@ -6,7 +6,7 @@ import { aiTtsSupported } from '../ai';
 import { h, clear, icon, toast, pickButton, pickSheet, askText } from './dom';
 import { colorField } from './colorpicker';
 import { isTouchDevice, t, countMinutes, localDigits, dateLocale } from '../i18n';
-import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
+import { keepAwake, nativePlatform } from '../native';
 import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
 import { fontsSync } from '../fonts';
@@ -212,7 +212,14 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(stepper([t('dailyGoal'), 'readingGoalMinutes'], s.readingGoalMinutes, 0, 240, 15, (v) => updateSettings({ readingGoalMinutes: v }), (v) => v ? t('goalValue', { n: v }) : t('goalOff')));
   if (isTouchDevice()) grid.append(toggle([t('pinchText'), 'pinchText'], s.pinchText, (v) => updateSettings({ pinchText: v })));
   grid.append(toggle([t('keepAwake'), 'keepAwake'], s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
-  if (nativePlatform() === 'android') grid.append(toggle([t('volumeKeys'), 'volumeKeys'], s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
+  // The phone's keys and edges while reading (Android; Back also on a computer — its mouse's back button, Alt+←). They
+  // reach the shell through src/readkeys.ts, only while a book is open.
+  if (nativePlatform() === 'android') {
+    grid.append(toggle([t('volumeKeys'), 'volumeKeys'], s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); rerender(); }), h('p', { class: 'hint' }, t('volumeKeysHint')));
+    if (s.volumeKeys) grid.append(toggle([t('volumeSwap'), 'volumeSwap'], s.volumeSwap, (v) => updateSettings({ volumeSwap: v })), h('p', { class: 'hint' }, t('volumeSwapHint')));
+  }
+  if (nativePlatform() !== 'ios') grid.append(toggle([t('backTwiceLeave'), 'backTwiceLeave'], s.backTwiceLeave, (v) => updateSettings({ backTwiceLeave: v })), h('p', { class: 'hint' }, t('backTwiceLeaveHint')));
+  if (nativePlatform() === 'android') grid.append(toggle([t('edgeGuard'), 'edgeGuard'], s.edgeGuard, (v) => updateSettings({ edgeGuard: v })), h('p', { class: 'hint' }, t('edgeGuardHint')));
   grid.append(toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v })));
   grid.append(toggle([t('cropMargins'), 'pdfAutoCrop'], s.pdfAutoCrop, (v) => updateSettings({ pdfAutoCrop: v })), h('p', { class: 'hint' }, t('cropMarginsHint')));
   grid.append(section([t('pdfBar'), 'pdfBar'], segmented([['auto', t('pdfBarAuto')], ['rows', t('pdfBarRows')], ['row', t('pdfBarRow')], ['side', t('pdfBarSide')]] as [VisualSettings['pdfBar'], string][], s.pdfBar, (v) => { updateSettings({ pdfBar: v }); rerender(); })));
