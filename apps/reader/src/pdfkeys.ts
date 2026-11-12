@@ -66,7 +66,7 @@ type Opened = { doc: import('pdfjs-dist').PDFDocumentProxy; destroy: () => void;
  * one only when `ask` is set (otherwise a missing or wrong one throws Error('password')), remembering the
  * one that worked, and — when pdf.js cannot open a protected file — from a copy decrypted here.
  */
-export async function openPdfjs(pdfjs: PdfJs, bytes: Uint8Array, options: Record<string, unknown>, opts: { password?: string; ask?: (wrong: boolean) => string | null } = {}): Promise<Opened> {
+export async function openPdfjs(pdfjs: PdfJs, bytes: Uint8Array, options: Record<string, unknown>, opts: { password?: string; ask?: (wrong: boolean) => string | null | Promise<string | null> } = {}): Promise<Opened> {
   const fp = fingerprint(bytes);
   const encrypted = await isEncrypted(bytes);
   let used = opts.password ?? (encrypted ? await knownPassword(fp) : undefined);
@@ -75,10 +75,12 @@ export async function openPdfjs(pdfjs: PdfJs, bytes: Uint8Array, options: Record
     // (pdf.js takes over the buffer it is given: a protected file keeps its own copy for the fallback.)
     const task = pdfjs.getDocument({ ...options, data: encrypted ? data.slice() : data, password } as Parameters<PdfJs['getDocument']>[0]);
     if (prompt && opts.ask) {
+      // (Asked in the app's own dialog, which answers later; a wrong one is asked for again by pdf.js.)
       task.onPassword = (update: (pw: string) => void, reason: number) => {
-        const pw = opts.ask!(reason === 2);
-        if (!pw) { cancelled = true; void task.destroy(); return; }
-        used = pw; update(pw);
+        void Promise.resolve().then(() => opts.ask!(reason === 2)).catch(() => null).then((pw) => {
+          if (!pw) { cancelled = true; void task.destroy(); return; }
+          used = pw; update(pw);
+        });
       };
     }
     const doc = await task.promise;

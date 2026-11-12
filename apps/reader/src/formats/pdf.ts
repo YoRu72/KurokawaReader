@@ -5,7 +5,7 @@ import { cmapsUrl } from '../slim';
 import { buildTextLayer } from '../pdflayer';
 import type { BookMeta, TocItem } from './types';
 import { titleFromFileName, normalizeForSearch } from './types';
-import { h } from '../ui/dom';
+import { h, askPassword } from '../ui/dom';
 import { t } from '../i18n';
 
 import { loadPdfjs, offscreen } from '../pdfjsload';
@@ -32,7 +32,7 @@ async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () =
     standardFontDataUrl: `${RES}standard_fonts/`,
     wasmUrl: `${RES}wasm/`,
     iccUrl: `${RES}iccs/`,
-  }, { ask: (wrong) => window.prompt(wrong ? t('pdfPasswordWrong') : t('pdfPasswordPrompt')) }).catch((e) => {
+  }, { ask: (wrong) => askPassword({ title: t('pdfProtected'), hint: wrong ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'), wrong, label: t('password'), open: t('open'), cancel: t('cancel') }) }).catch((e) => {
     if ((e as Error).message === 'cancelled' || (e as Error).message === 'password') throw new Error(t('cancelled'));
     throw e;
   });

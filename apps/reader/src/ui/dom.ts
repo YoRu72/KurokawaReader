@@ -148,13 +148,14 @@ export function closeSheets(): void {
   document.querySelectorAll<HTMLElement & { __close?: () => void }>('.sheet').forEach((s) => { if (s.__close) s.__close(); else s.remove(); });
   document.querySelectorAll('.sheet-scrim').forEach((s) => s.remove());
 }
-export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean; /** On a computer: a small menu at this point (the pointer, or the button's corner) instead of a dialog. */ at?: { x: number; y: number } | Event } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
+export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean; /** On a computer: a small menu at this point (the pointer, or the button's corner) instead of a dialog. */ at?: { x: number; y: number } | Event; /** Called once when the sheet goes, however it is closed. */ onClose?: () => void } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
   // A stacked sheet opens above the current one (choice lists inside a form) instead of replacing it.
   if (!opts.stack) closeSheets();
   const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
-  const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); };
+  let closed = false;
+  const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
   // Escape closes the top-most sheet (capture phase, so the reader's own shortcuts don't fire underneath).
   const onEsc = (e: KeyboardEvent) => { if (!el.isConnected) { close(); return; } if (e.key !== 'Escape') return; const all = document.querySelectorAll('.sheet'); if (all[all.length - 1] !== el) return; e.preventDefault(); e.stopPropagation(); close(); };
   window.addEventListener('keydown', onEsc, true);
@@ -229,4 +230,23 @@ export function pickButton<T extends string>(title: string, options: [T, string,
   // (On a computer a dropdown under the button; on a phone a sheet.)
   btn.addEventListener('click', (e) => pickSheet(title, options, cur, (v) => { btn.setValue(v); onChange(v); btn.dispatchEvent(new Event('change', { bubbles: true })); }, closeLabel, e));
   return btn;
+}
+
+/**
+ * Ask for a password in the app's own dialog (window.prompt does not exist in the desktop app, and looks foreign
+ * on a phone). Resolves with what was typed, or null when the dialog is closed or cancelled. Nothing typed is kept:
+ * the field goes with the dialog.
+ */
+export function askPassword(o: { title: string; hint: string; wrong?: boolean; open: string; cancel: string; label: string }): Promise<string | null> {
+  return new Promise((resolve) => {
+    let answer: string | null = null;
+    const sh = openSheet(o.title, o.cancel, { stack: true, onClose: () => resolve(answer) });
+    sh.el.classList.add('password-sheet');
+    const input = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off', spellcheck: 'false', 'aria-label': o.label }) as HTMLInputElement;
+    const submit = () => { if (!input.value) { input.focus(); return; } answer = input.value; input.value = ''; sh.close(); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    sh.body.append(h('p', { class: 'hint' + (o.wrong ? ' error' : ''), role: o.wrong ? 'alert' : undefined }, o.hint), h('label', { class: 'field' }, h('span', null, o.label), input));
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => sh.close() }, o.cancel), h('button', { type: 'button', class: 'btn primary', onclick: submit }, o.open));
+    setTimeout(() => input.focus(), 30);
+  });
 }

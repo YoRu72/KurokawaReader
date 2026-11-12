@@ -4,7 +4,7 @@
 import JSZip from 'jszip';
 import type { BookMeta, FlowHandler, FlowRender, ImageRef, RenderContext, TocItem } from './types';
 import { titleFromFileName } from './types';
-import { UrlPool, collectImages, markDirections, mimeFor, parseXml, resolveZipPath, sanitize, tocFromHeadings, zipFile } from './shared';
+import { UrlPool, collectImages, markDirections, mimeFor, parseXml, resolveZipPath, safeDecode, sanitize, tocFromHeadings, zipFile } from './shared';
 
 interface ManifestItem { id: string; href: string; type: string; properties: string }
 
@@ -35,7 +35,8 @@ function cachedPackage(file: Blob, bookId: string): Promise<Package> {
 /** What a book's page shows before the book is opened: its blurb and its contents (labels and depths). */
 export async function epubOutline(file: Blob, bookId: string): Promise<{ description?: string; language?: string; toc: { label: string; depth: number }[] }> {
   const pkg = await cachedPackage(file, bookId);
-  const raw = await readToc(pkg);
+  // (Only the entries the reader keeps — tocOf — so the n-th chapter here is the n-th the reader opens.)
+  const raw = resolvableToc(await readToc(pkg), pkg);
   const desc = pkg.meta.description ? pkg.meta.description.replace(/<[^>]+>/g, '').replace(/\s+\n/g, '\n').trim() : undefined;
   return { description: desc, language: pkg.meta.language, toc: raw.map((r) => ({ label: r.label, depth: r.depth })) };
 }
@@ -120,7 +121,7 @@ async function readToc(pkg: Package): Promise<RawToc[]> {
           const label = (a?.textContent ?? '').replace(/\s+/g, ' ').trim();
           if (label) {
             const [p, frag = ''] = href.split('#');
-            out.push({ label, depth, path: resolveZipPath(pkg.navItem!.href, p), frag });
+            out.push({ label, depth, path: resolveZipPath(pkg.navItem!.href, p), frag: safeDecode(frag) });
           }
           walk(li.querySelector(':scope > ol'), depth + 1);
         }
@@ -139,7 +140,7 @@ async function readToc(pkg: Package): Promise<RawToc[]> {
           const label = np.querySelector('navLabel > text')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
           const src = np.querySelector('content')?.getAttribute('src') ?? '';
           const [p, frag = ''] = src.split('#');
-          if (label) out.push({ label, depth, path: resolveZipPath(pkg.ncxItem!.href, p), frag });
+          if (label) out.push({ label, depth, path: resolveZipPath(pkg.ncxItem!.href, p), frag: safeDecode(frag) });
           walk(np, depth + 1);
         }
       };
@@ -148,6 +149,14 @@ async function readToc(pkg: Package): Promise<RawToc[]> {
     }
   }
   return out;
+}
+
+/** The contents entries that lead into the book: those pointing at a chapter of its spine (every chapter gets an
+ *  anchor, and an entry whose fragment is missing falls back to its chapter's start). The reader's contents and
+ *  the book's page are both built from this list, so their indexes agree. */
+function resolvableToc(raw: RawToc[], pkg: Package): RawToc[] {
+  const inSpine = new Set(pkg.spine.map((s) => s.href));
+  return raw.filter((r) => inSpine.has(r.path));
 }
 
 /** Rewrite a publisher stylesheet so it only applies inside one chapter. */
@@ -287,15 +296,17 @@ async function renderChapter(pkg: Package, item: ManifestItem, index: number, ct
   body.querySelectorAll('a[href]').forEach((a) => {
     const href = a.getAttribute('href')!;
     if (/^(https?:|mailto:|tel:)/i.test(href)) { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener'); return; }
-    const [p, frag] = href.split('#');
+    const [p, rawFrag] = href.split('#');
+    const frag = rawFrag ? safeDecode(rawFrag) : rawFrag;
     const path = p ? resolveZipPath(item.href, p) : item.href;
     a.setAttribute('data-kr-link', frag ? `${path}#${frag}` : path);
     a.removeAttribute('href');
   });
 
   sanitize(body, ctx.publisherStyles);
-  // Strip empty wrapper structure that EPUB producers love.
-  body.querySelectorAll('div, span').forEach((e) => { if (!e.textContent?.trim() && !e.querySelector('img, svg, image, video, audio, hr')) e.remove(); });
+  // Strip empty wrapper structure that EPUB producers love — but not an empty element that is a link's or the
+  // contents' target (<span id="…"/>, common in converted books), nor one holding such a target.
+  body.querySelectorAll('div, span').forEach((e) => { if (!e.id && !e.textContent?.trim() && !e.querySelector('img, svg, image, video, audio, hr, [id]')) e.remove(); });
   // Mark inline images so they don't get block layout.
   body.querySelectorAll('p img, span img, a img').forEach((img) => { if (img.parentElement && (img.parentElement.textContent ?? '').trim()) img.classList.add('inline'); });
 
@@ -350,7 +361,7 @@ export const epubHandler: FlowHandler = {
     });
 
     // TOC
-    const raw = await readToc(pkg);
+    const raw = resolvableToc(await readToc(pkg), pkg);
     let toc: TocItem[] = raw
       .map((r) => ({ label: r.label, depth: r.depth, anchor: idMap.get(r.frag ? `${r.path}#${r.frag}` : r.path) ?? idMap.get(r.path) ?? '' }))
       .filter((t) => t.anchor);

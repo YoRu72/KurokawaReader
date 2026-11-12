@@ -106,6 +106,9 @@
 .kr-content { font-feature-settings: 'rlig' 1, 'liga' 1, 'calt' 1, 'ccmp' 1, 'kern' 1; font-variant-ligatures: common-ligatures contextual; }
 .kr-content p, .kr-content li, .kr-content blockquote, .kr-content dd { margin: 0 0 var(--r-para); }
 .kr-content p:empty { display: none; }
+/* A Word document's numbered list: each number as the document writes it ("1.", "(a)", "أ.", "١-"), hung before its item. */
+.kr-content ol.kr-wnum { list-style: none; }
+.kr-content ol.kr-wnum > li[data-kr-num]::before { content: attr(data-kr-num); display: inline-block; min-width: 1.8em; margin-inline-start: -1.8em; padding-inline-end: .3em; box-sizing: border-box; text-align: start; font-variant-numeric: tabular-nums; }
 .kr-content h1, .kr-content h2, .kr-content h3, .kr-content h4, .kr-content h5, .kr-content h6 {
   line-height: 1.25; font-weight: 600; margin: 1.6em 0 .7em; text-align: start;
 }
