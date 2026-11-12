@@ -479,20 +479,32 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (Closed while it was opening: nothing more is set up — no keys, no listeners, no place saved.)
     if (gone()) { docs.forEach((d) => d.render?.dispose()); return; }
     if (doc === docs[0]) { root.querySelector('#kr-loading')?.remove(); if (op) { if (early?.doc !== doc) op.size('paras', doc.allBlocks.length); op.shown(); } }
-    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); if (early?.doc === doc) placeFirst(doc, early.plan); else restore(); performance.measure('kr:restore', { start: tr }); if (doc === lastRead) op?.placed(); }
+    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); if (early?.doc === doc) { if (chapterMode()) renderChapterNav(); placeFirst(doc, early.plan); } else restore(); performance.measure('kr:restore', { start: tr }); if (doc === lastRead) op?.placed(); }
   }
   // A book opened at a chapter made first: shown now, its other chapters made in slices between frames (the reader
   // may read and scroll meanwhile), then the whole book's blocks, chapters and highlights taken as for a book made
   // whole — the place read meanwhile kept — before the rest of the reader is set up.
   if (early) {
     const e = early;
-    const onScroll = () => { if (performance.now() - programmatic > 150) e.scrolled = true; };
+    // (Moved by the reader — a touch, the wheel, a key, then a scroll —, not by the page settling: lines a little taller
+    // once a font has loaded move the scroll too.)
+    let touched = false; const onInput = () => { touched = true; };
+    const onScroll = () => { if (touched && performance.now() - programmatic > 150) e.scrolled = true; };
     // (Hidden or left before it is whole: the place read meanwhile saved, from the chapters' sizes kept.)
     const keep = () => { if (!e.scrolled || e.done) return; const loc = earlyLocator(); if (!loc) return; e.doc.book.progress = loc; void db.updateBook(e.doc.book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); }); };
     const onHidden = () => { if (document.visibilityState === 'hidden') keep(); };
+    const inputs = ['touchstart', 'wheel', 'pointerdown', 'keydown'] as const;
+    // (The page settling — fonts, pictures — before the reader has moved: the place put back again, as restore's later
+    // passes do for a book made whole.)
+    const settle = new ResizeObserver(() => { if (!touched && !e.scrolled && early === e && !gone()) placeFirst(e.doc, e.plan); });
+    settle.observe(e.doc.render!.element);
     scroll.addEventListener('scroll', onScroll, { passive: true }); window.addEventListener('pagehide', keep); document.addEventListener('visibilitychange', onHidden);
-    const unwatch = () => { scroll.removeEventListener('scroll', onScroll); window.removeEventListener('pagehide', keep); document.removeEventListener('visibilitychange', onHidden); };
+    for (const ev of inputs) root.addEventListener(ev, onInput, { passive: true, capture: true });
+    const unwatch = () => { settle.disconnect(); scroll.removeEventListener('scroll', onScroll); window.removeEventListener('pagehide', keep); document.removeEventListener('visibilitychange', onHidden); for (const ev of inputs) root.removeEventListener(ev, onInput, { capture: true }); };
     onDispose(() => { keep(); unwatch(); });
+    // (The fonts loaded meanwhile — the lines a little taller or shorter —: the place put back again, as restore does
+    // for a book made whole, unless the reader has moved.)
+    void document.fonts.ready.then(() => { if (early === e && !touched && !e.scrolled && !gone()) placeFirst(e.doc, e.plan); });
     const t3 = performance.now();
     const made = await e.doc.render!.rest!().catch((err: unknown) => { console.error(err); return false; });
     performance.measure('kr:rest', { start: t3 });
@@ -685,9 +697,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       return;
     }
     chapterNav.classList.remove('flow');
+    // (Pressed while the book's later chapters are still being made: done once they are, to the same chapter.)
+    const go = (u: Unit, fallback: number) => { if (!early) { showUnit(fallback); return; } void whole.then(() => { const i = units().findIndex((x) => x.doc === u.doc && x.el === u.el); if (i >= 0) showUnit(i); }); };
     chapterNav.append(
-      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => showUnit(k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
-      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => showUnit(k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
+      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
+      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
     );
   }
   function showUnit(k: number, atEnd = false): void {

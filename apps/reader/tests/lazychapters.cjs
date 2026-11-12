@@ -174,6 +174,7 @@ async function run(dist, label) {
     // Scrolled on at once, a little each frame, the marks at the top read each frame — through the moment it is whole.
     const trail = await p.evaluate(() => new Promise((res) => {
       const sc = document.querySelector('.reader-scroll'); const marks = []; let n = 0; let wholeAt = -1;
+      sc.dispatchEvent(new WheelEvent('wheel', { deltaY: 6, bubbles: true }));   // (the reader's own hand on it)
       const mark = () => { const r = sc.getBoundingClientRect(); for (let y = r.top + 12; y < r.top + 200; y += 6) { const e = document.elementFromPoint(r.left + r.width / 2, y)?.closest('.reader-flow p'); const m = /\[C(\d+)-P(\d+)\]/.exec(e?.textContent ?? ''); if (m) return +m[1] * 1000 + +m[2]; } return -1; };
       const step = () => { if (wholeAt < 0 && !document.querySelector('.kr-content .kr-shell')) wholeAt = marks.length; if (n < 400) sc.scrollTop += 6; marks.push(mark()); n++; if (n < 520) requestAnimationFrame(step); else res({ marks, wholeAt }); };
       requestAnimationFrame(step);

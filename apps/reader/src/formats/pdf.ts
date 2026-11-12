@@ -868,9 +868,14 @@ export class PdfViewer {
     el.classList.remove('loading'); delete el.dataset.res;
     this.shown.delete(n); this.released++;
     // (pdf.js lets go of what it kept to draw the page.)
-    void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined);
+    this.letGo(n);
   }
 
+  /** pdf.js lets go of what it kept for page n (not once the book is closed: its worker is gone, and asking threw). */
+  private letGo(n: number): void {
+    if (this.destroyed && !this.doc) return;
+    try { void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined); } catch { /* closed */ }
+  }
   /** Pages let go of since pdf.js was last asked to clean up. */
   private released = 0;
   /** After a good many pages let go of (a long scroll, far jumps), pdf.js lets go of what it keeps for the whole book —
@@ -880,7 +885,7 @@ export class PdfViewer {
     if (this.released < (deviceMemory() <= 4 ? 24 : 64)) return;
     if (this.destroyed || this.busy || this.running || this.thumbBusy || this.cropBusy || this.textPending.size || !this.doc) return;
     this.released = 0;
-    void this.doc.cleanup().catch(() => undefined);
+    try { void this.doc.cleanup().catch(() => undefined); } catch { /* closed */ }
   }
 
   private rescale(scale: number): void {
@@ -1205,7 +1210,7 @@ export class PdfViewer {
       if (this.textCache.has(n)) continue;
       await this.pageText(n);
       if (this.textCache.has(n)) fresh++;
-      if (!this.shown.has(n)) void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined);
+      if (!this.shown.has(n)) this.letGo(n);
       if (fresh >= 20) save();
     }
     if (this.destroyed) { save(); return; }
