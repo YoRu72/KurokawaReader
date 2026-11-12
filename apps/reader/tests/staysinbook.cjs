@@ -58,14 +58,16 @@ const file = path.join(TMP, 'links.html'); fs.writeFileSync(file, html);
   ok('back from the book leaves it (one step, to the library)', await p.evaluate(() => !!document.querySelector('.library-view') && !document.querySelector('.reader-flow')));
   // The app ended under the open book and started again (the address the app starts at: the library's).
   const topPara = () => cur.evaluate(() => { const sc = document.querySelector('.reader-scroll'); if (!sc) return null; const r = sc.getBoundingClientRect(); for (let y = r.top + 10; y < r.top + 200; y += 6) { const e = document.elementFromPoint(r.left + r.width / 2, y)?.closest('.reader-flow p'); if (e) return /Paragraph (\d+)/.exec(e.textContent)?.[1] ?? e.textContent.slice(0, 12); } return null; });
-  // (The app ended by the system: its page's renderer crashed — nothing unloads — and the app started anew, at
-  // its start address, in another page of the same storage. A page closed in the ordinary way, below.)
+  // (The app ended by the system — the process killed, the renderer gone — runs nothing on its way out: imitated by
+  // taking the app's storage as it is at that moment, closing the page, and starting the app anew at its start
+  // address in another page with that storage. A page closed in the ordinary way runs its unload, below.)
   let cur = p;
-  const restart = async (how = 'crash') => {
+  const restart = async (how = 'killed') => {
     const old = cur;
-    if (how === 'crash') { const c = await ctx.newCDPSession(old); await c.send('Page.crash').catch(() => undefined); await new Promise((r) => setTimeout(r, 300)); }
+    const kept = how === 'killed' ? await old.evaluate(() => localStorage.getItem('kr.reading')) : undefined;
+    await old.close({ runBeforeUnload: true });
     cur = await ctx.newPage(); cur.on('pageerror', (e) => errors.push(e.message));
-    if (how !== 'crash') await old.close({ runBeforeUnload: true }); else await old.close().catch(() => undefined);
+    if (how === 'killed') await cur.addInitScript((v) => { if (!sessionStorage.getItem('kr.test.started')) { sessionStorage.setItem('kr.test.started', '1'); if (v === null) localStorage.removeItem('kr.reading'); else localStorage.setItem('kr.reading', v); } }, kept);
     await cur.goto(base); await cur.waitForSelector('.library-view, .reader-view', { timeout: 20000 }); await cur.waitForTimeout(3500);
     return cur.evaluate(() => ({ hash: location.hash, reader: !!document.querySelector('.reader-flow .kr-content'), library: !!document.querySelector('.library-view') }));
   };
