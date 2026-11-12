@@ -499,20 +499,23 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
    search docked beside the page and left open while reading; arrows at the text's sides to turn the page, shown
    while the mouse moves; a picture opens with a double-click. A phone keeps its own chrome. */
 .tb-label, .page-arrow { display: none; }
-html.pc .reader-view .float-toolbar {
-  position: absolute; top: var(--safe-top); bottom: auto; left: auto; inset-inline-end: 56px; transform: none; z-index: 21;
-  height: var(--topbar-h); max-width: calc(100% - 420px); padding: 0; gap: 2px; background: none; box-shadow: none; border-radius: 0;
+/* (The toolbar «in the top bar» — the computer's standard place, [data-tb='inline'] — sits over the top bar between the
+   title and the buttons at the top bar's end, whose width is measured: --te-w.) */
+.reader-view[data-tb='inline'] .float-toolbar {
+  position: absolute; top: var(--safe-top); bottom: auto; left: auto; inset-inline-end: var(--te-w, 56px); transform: none; z-index: 21;
+  height: var(--topbar-h); max-width: calc(100% - 364px - var(--te-w, 56px) - var(--ts-w, 0px)); padding: 0; gap: 2px; background: none; box-shadow: none; border-radius: 0;
   color: var(--chrome-fg, var(--md-on-surface)); overflow: hidden;
 }
-html.pc .reader-view .float-toolbar .icon-btn { display: inline-flex; flex-direction: row; align-items: center; width: auto; height: 38px; padding: 0 10px; gap: 7px; border-radius: 10px; flex: none; color: inherit; }
-html.pc .reader-view .float-toolbar .icon-btn svg { width: 19px; height: 19px; }
-html.pc .reader-view .float-toolbar .icon-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
-html.pc .reader-view .float-toolbar .tb-label { display: inline; font-size: 13px; font-weight: 500; white-space: nowrap; }
-html.pc .reader-view .float-toolbar .sep { height: 22px; background: color-mix(in srgb, currentColor 18%, transparent); }
-html.pc .reader-view.immersive .float-toolbar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
+.reader-view[data-tb='inline'] .float-toolbar .icon-btn { display: inline-flex; flex-direction: row; align-items: center; width: auto; height: 38px; padding: 0 10px; gap: 7px; border-radius: 10px; flex: none; color: inherit; }
+.reader-view[data-tb='inline'] .float-toolbar .icon-btn svg { width: 19px; height: 19px; }
+.reader-view[data-tb='inline'] .float-toolbar .icon-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.reader-view[data-tb='inline'] .float-toolbar .tb-label { display: inline; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.reader-view[data-tb='inline'] .float-toolbar.tb-compact .tb-label { display: none; }
+.reader-view[data-tb='inline'] .float-toolbar .sep { height: 22px; background: color-mix(in srgb, currentColor 18%, transparent); }
+.reader-view.immersive[data-tb='inline'] .float-toolbar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
 html.pc .reader-view .topbar .title { max-width: 34%; flex: 0 1 auto; }
-html.pc .reader-view .topbar > .icon-btn:last-child { margin-inline-start: auto; }
-@media (max-width: 1180px) { html.pc .reader-view .float-toolbar .tb-label { display: none; } html.pc .reader-view .float-toolbar { max-width: calc(100% - 300px); } }
+html.pc .reader-view .topbar > .top-end-first { margin-inline-start: auto; }
+@media (max-width: 1180px) { .reader-view[data-tb='inline'] .float-toolbar .tb-label { display: none; } .reader-view[data-tb='inline'] .float-toolbar { max-width: calc(100% - 244px - var(--te-w, 56px) - var(--ts-w, 0px)); } }
 
 html.pc .page-arrow { display: grid; place-items: center; position: absolute; top: 50%; z-index: 6; width: 44px; height: 88px; margin-top: -44px; border: 0; border-radius: 14px;
   background: color-mix(in srgb, var(--chrome-bg, var(--md-surface-container-high)) 82%, transparent); color: var(--chrome-fg, var(--md-on-surface)); cursor: pointer;
@@ -527,8 +530,11 @@ html.pc .reader-view .reader { position: relative; }
 html.pc .reader-view .panel.docked { width: 360px; top: 0; border-radius: 0; box-shadow: none; border-inline-start: 1px solid color-mix(in srgb, var(--md-on-surface) 10%, transparent); z-index: 25; transition: none; }
 html.pc .reader-view.panel-docked :is(.reader, .read-footer, .read-status) { margin-inline-end: 360px; }
 html.pc .reader-view.panel-docked .topbar { inset-inline-end: 360px; }
-html.pc .reader-view.panel-docked .float-toolbar { inset-inline-end: calc(360px + 56px); max-width: calc(100% - 360px - 420px); }
-html.pc .reader-view.panel-docked .float-toolbar .tb-label { display: none; }
+html.pc .reader-view.panel-docked[data-tb='inline'] .float-toolbar { inset-inline-end: calc(360px + var(--te-w, 56px)); max-width: calc(100% - 360px - 364px - var(--te-w, 56px) - var(--ts-w, 0px)); }
+html.pc .reader-view.panel-docked[data-tb='inline'] .float-toolbar .tb-label { display: none; }
+html.pc .reader-view.panel-docked[data-tb='bottom'] .float-toolbar, html.pc .reader-view.panel-docked[data-tb='top'] .float-toolbar { left: calc((100% - 360px) / 2); max-width: calc(100% - 360px - 24px); }
+html[dir='rtl'].pc .reader-view.panel-docked[data-tb='bottom'] .float-toolbar, html[dir='rtl'].pc .reader-view.panel-docked[data-tb='top'] .float-toolbar { left: calc(360px + (100% - 360px) / 2); }
+html.pc .reader-view.panel-docked[data-tb='end'] .float-toolbar { inset-inline-end: calc(360px + 10px); }
 html.pc .reader-view.panel-docked .page-arrow.next { inset-inline-end: 18px; }
 html.pc .reader-view .panel.docked .panel-head { min-height: calc(var(--topbar-h) + var(--safe-top)); padding-block: 0; }
 html.pc .reader-view .panel.docked .panel-head h2 { font-size: 17px; }
@@ -580,7 +586,19 @@ html[dir='rtl'] .read-status .rb-battery::before { box-shadow: -1.5px 0 0 -0.3px
 .reader-view.flow-reader .reader { padding-bottom: var(--safe-bottom); }
 .reader-view.flow-reader.rb-on .reader { padding-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
 .reader-view.flow-reader.immersive .reader { padding-bottom: var(--rb-imm-bottom); }
-html:not(.pc) .reader-view.flow-reader:not(.immersive) .reader { padding-bottom: calc(34px + var(--tb-h, 60px) + 8px + var(--safe-bottom)); }
+/* (The toolbar at the foot — a phone's standard place —: the text ends above it. At the top: the text begins below it,
+   and with the chrome hidden the text's top padding takes its room too, so nothing moves. At a side: the text keeps
+   clear of it always — shown or hidden — so the lines do not flow again when the chrome hides.) */
+.reader-view.flow-reader[data-tb='bottom']:not(.immersive) .reader { padding-bottom: calc(34px + var(--tb-h, 60px) + 8px + var(--safe-bottom)); }
+.reader-view.flow-reader[data-tb='bottom'][data-tblook='docked']:not(.immersive) .reader { padding-bottom: calc(var(--dock-bottom) + var(--tb-h, 60px)); }
+.reader-view.flow-reader[data-tb='top']:not(.immersive) .reader { padding-top: calc(var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 14px); }
+.reader-view.flow-reader[data-tb='top'][data-tblook='docked']:not(.immersive) .reader { padding-top: calc(var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 4px); }
+.reader-view.flow-reader.immersive[data-tb='top'] .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 14px); }
+.reader-view.flow-reader.immersive[data-tb='top'][data-tblook='docked'] .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top) + var(--tb-h, 60px) + 4px); }
+.reader-view.flow-reader[data-tb='start'] .reader { padding-inline-start: calc(var(--tb-w, 60px) + 16px); }
+.reader-view.flow-reader[data-tb='end'] .reader { padding-inline-end: calc(var(--tb-w, 60px) + 16px); }
+.reader-view.flow-reader[data-tb='start'][data-tblook='docked'] .reader { padding-inline-start: var(--tb-w, 60px); }
+.reader-view.flow-reader[data-tb='end'][data-tblook='docked'] .reader { padding-inline-end: var(--tb-w, 60px); }
 .reader-view.flow-reader.immersive .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top)); }
 .reader-view.pdf-reader.rb-on:not(.immersive) .reader, .reader-view.pdf-reader.rb-on.rb-imm .reader { padding-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
 /* The reading bar's editor (the reader's options): a row per item — its switch and name, where it goes, up and down. */
@@ -603,3 +621,127 @@ html:not(.pc) .reader-view.flow-reader:not(.immersive) .reader { padding-bottom:
 /* (The text's scroller takes the keyboard's focus when a book opens — for the keys that turn pages — and its ring, once
    below the screen's foot, now drew a line above the toolbar: the reading surface needs none.) */
 .reader-scroll:focus-visible { outline: none; }
+
+/* ---------- The reader's buttons placed (src/readbuttons.ts, src/ui/buttonbars.ts) ----------
+   The toolbar at the foot (a phone's standard), at the top under the top bar, or down the start or end side (upright,
+   centred in the room below the top bar); a floating pill, or docked: the full width (or height) at the screen's edge,
+   above the reading bar. Start and end are mirrored right to left. What a bar cannot hold goes to «More» (measured):
+   the buttons never shrink or wrap. */
+.reader-view { --dock-bottom: 0px; --dock-pad: var(--safe-bottom); }
+.reader-view.rb-on { --dock-bottom: calc(var(--rb-size) + var(--safe-bottom)); --dock-pad: 0px; }
+.reader-view .float-toolbar > * { flex: none; }
+.reader-view .float-toolbar[hidden] { display: none; }
+.reader-view .topbar > * { flex-shrink: 0; }
+.reader-view .topbar > .title { flex-shrink: 1; min-width: 72px; }
+.reader-view[data-tb='top'] .float-toolbar { bottom: auto; top: calc(var(--topbar-h) + var(--safe-top) + 30px); }
+.reader-view.immersive[data-tb='top'] .float-toolbar { transform: translateX(-50%) translateY(calc(-100% - var(--topbar-h) - 40px)); }
+.reader-view:is([data-tb='start'], [data-tb='end']) .float-toolbar {
+  flex-direction: column; left: auto; right: auto; bottom: auto; top: calc(50% + (var(--topbar-h) + var(--safe-top) + 24px - var(--rb-room, 0px)) / 2); transform: translateY(-50%);
+  max-width: none; max-height: calc(100% - var(--topbar-h) - var(--safe-top) - 24px - 24px - var(--safe-bottom) - var(--rb-size));
+}
+.reader-view.rb-on { --rb-room: var(--rb-size); }
+.reader-view[data-tb='start'] .float-toolbar { inset-inline-start: max(10px, env(safe-area-inset-left, 0px)); }
+.reader-view[data-tb='end'] .float-toolbar { inset-inline-end: max(10px, env(safe-area-inset-right, 0px)); }
+html[dir='rtl'] .reader-view[data-tb='start'] .float-toolbar { inset-inline-start: max(10px, env(safe-area-inset-right, 0px)); }
+html[dir='rtl'] .reader-view[data-tb='end'] .float-toolbar { inset-inline-end: max(10px, env(safe-area-inset-left, 0px)); }
+.reader-view:is([data-tb='start'], [data-tb='end']) .float-toolbar .sep { width: 24px; height: 1px; margin: 4px 0; }
+.reader-view:is([data-tb='start'], [data-tb='end']) .float-toolbar .fab-in { margin-inline-start: 0; margin-top: 4px; }
+.reader-view.immersive[data-tb='start'] .float-toolbar { transform: translateY(-50%) translateX(-160%); }
+.reader-view.immersive[data-tb='end'] .float-toolbar { transform: translateY(-50%) translateX(160%); }
+html[dir='rtl'] .reader-view.immersive[data-tb='start'] .float-toolbar { transform: translateY(-50%) translateX(160%); }
+html[dir='rtl'] .reader-view.immersive[data-tb='end'] .float-toolbar { transform: translateY(-50%) translateX(-160%); }
+/* Docked. */
+.reader-view[data-tblook='docked'] .float-toolbar { border-radius: 0; box-shadow: none; max-width: none; justify-content: center; background: color-mix(in srgb, var(--chrome-bg, var(--md-surface-container-high)) 94%, var(--md-on-surface) 6%); }
+.reader-view[data-tblook='docked'][data-tb='bottom'] .float-toolbar { left: 0; right: 0; transform: none; bottom: var(--dock-bottom); padding: 4px max(8px, env(safe-area-inset-right, 0px)) calc(4px + var(--dock-pad)) max(8px, env(safe-area-inset-left, 0px)); box-shadow: 0 -1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive[data-tblook='docked'][data-tb='bottom'] .float-toolbar { transform: translateY(calc(100% + var(--dock-bottom))); }
+.reader-view[data-tblook='docked'][data-tb='top'] .float-toolbar { left: 0; right: 0; transform: none; top: calc(var(--topbar-h) + var(--safe-top) + 24px); padding: 4px 8px; box-shadow: 0 1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive[data-tblook='docked'][data-tb='top'] .float-toolbar { transform: translateY(calc(-100% - var(--topbar-h) - var(--safe-top) - 24px)); }
+.reader-view[data-tblook='docked']:is([data-tb='start'], [data-tb='end']) .float-toolbar { top: calc(var(--topbar-h) + var(--safe-top) + 24px); bottom: var(--dock-bottom); transform: none; max-height: none; justify-content: flex-start; padding: 8px 4px; overflow: hidden; }
+.reader-view[data-tblook='docked'][data-tb='start'] .float-toolbar { inset-inline-start: 0; box-shadow: 1px 0 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view[data-tblook='docked'][data-tb='end'] .float-toolbar { inset-inline-end: 0; box-shadow: -1px 0 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive[data-tblook='docked'][data-tb='start'] .float-toolbar { transform: translateX(-110%); }
+.reader-view.immersive[data-tblook='docked'][data-tb='end'] .float-toolbar { transform: translateX(110%); }
+html[dir='rtl'] .reader-view.immersive[data-tblook='docked'][data-tb='start'] .float-toolbar { transform: translateX(110%); }
+html[dir='rtl'] .reader-view.immersive[data-tblook='docked'][data-tb='end'] .float-toolbar { transform: translateX(-110%); }
+/* The PDF's page bar: its side as start or end (mirrored), and docked. */
+.pdf-bar[hidden], .pdf-bar-nav[hidden], .pdf-bar-tools[hidden] { display: none !important; }
+.pdf-bar-tools > * { flex: none; }
+.pdf-bar[data-layout='side'][data-side='start'] { left: auto; right: auto; inset-inline-start: max(14px, env(safe-area-inset-left, 0px) + 10px); }
+.pdf-bar[data-layout='side'][data-side='end'] { left: auto; right: auto; inset-inline-end: max(14px, env(safe-area-inset-right, 0px) + 10px); }
+.reader-view.immersive .pdf-bar[data-layout='side'][data-side='start'] { transform: translateY(-50%) translateX(-140%); }
+html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'][data-side='start'] { transform: translateY(-50%) translateX(140%); }
+html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'][data-side='end'] { transform: translateY(-50%) translateX(-140%); }
+.pdf-bar[data-look='docked']:not([data-layout='side']) { left: 0; right: 0; width: auto; transform: none; border-radius: 0; box-shadow: 0 -1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); bottom: var(--dock-bottom); padding-bottom: calc(6px + var(--dock-pad)); }
+.pdf-bar[data-look='docked'][data-row='top']:not([data-layout='side']) { top: calc(var(--topbar-h) + var(--safe-top)); bottom: auto; padding-bottom: 6px; box-shadow: 0 1px 0 color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.reader-view.immersive .pdf-bar[data-look='docked']:not([data-layout='side']) { transform: translateY(calc(100% + var(--dock-bottom))); }
+.reader-view.immersive .pdf-bar[data-look='docked'][data-row='top']:not([data-layout='side']) { transform: translateY(calc(-100% - var(--topbar-h) - var(--safe-top))); }
+.pdf-bar[data-look='docked'][data-layout='side'] { top: calc(var(--topbar-h) + var(--safe-top)); bottom: var(--dock-bottom); height: auto; max-height: none; transform: none; border-radius: 0; box-shadow: none; }
+.pdf-bar[data-look='docked'][data-layout='side']:not([data-side='left'], [data-side='start']) { right: 0; }
+.pdf-bar[data-look='docked'][data-layout='side'][data-side='left'] { left: 0; }
+.pdf-bar[data-look='docked'][data-layout='side'][data-side='start'] { inset-inline-start: 0; }
+.pdf-bar[data-look='docked'][data-layout='side'][data-side='end'] { right: auto; inset-inline-end: 0; }
+.reader-view.immersive .pdf-bar[data-look='docked'][data-layout='side'] { transform: translateX(110%); }
+.reader-view.immersive .pdf-bar[data-look='docked'][data-layout='side'][data-side='left'] { transform: translateX(-110%); }
+.pdf-bar[data-look='docked'] { background: var(--md-surface-container-high); backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* The editor (src/ui/buttonsheet.ts): a picture of the bars, then a group per place — its rows, each with its icon,
+   name, a choice of place (a small screen with the spot marked) and up / down. */
+.buttons-sheet .buttons-kind { margin: 4px 0 12px; }
+.btn-preview { position: relative; height: 150px; margin: 4px auto 14px; max-width: 300px; border-radius: 18px; overflow: hidden; background: var(--md-surface-container); box-shadow: inset 0 0 0 1px var(--md-outline-variant); }
+.btn-preview .pv-top { position: absolute; inset: 0 0 auto; height: 26px; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--md-surface-container-highest); }
+.btn-preview .pv-title { flex: 1; height: 6px; margin: 0 6px; border-radius: 3px; background: color-mix(in srgb, var(--md-on-surface) 22%, transparent); min-width: 20px; }
+.btn-preview .pv-ic { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none; color: var(--md-on-surface-variant); }
+.btn-preview .pv-ic svg { width: 13px; height: 13px; }
+.btn-preview .pv-ic.fixed { color: var(--md-primary); }
+.btn-preview .pv-sep { width: 1px; height: 12px; margin: 0 2px; background: color-mix(in srgb, var(--md-on-surface) 25%, transparent); flex: none; }
+.btn-preview .pv-slider { width: 50px; height: 4px; margin: 0 4px; border-radius: 2px; background: var(--md-primary); flex: none; }
+.btn-preview .pv-lines { position: absolute; inset: 40px 34px 0; display: flex; flex-direction: column; gap: 7px; }
+.btn-preview .pv-lines i { display: block; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--md-on-surface) 12%, transparent); }
+.btn-preview .pv-bar { position: absolute; display: flex; align-items: center; gap: 1px; padding: 3px 5px; border-radius: 999px; background: var(--md-surface-container-highest); box-shadow: var(--el-2); max-width: calc(100% - 12px); overflow: hidden; }
+.btn-preview:is([data-at='bottom'], [data-at='auto']) .pv-bar { bottom: 10px; left: 50%; transform: translateX(-50%); }
+.btn-preview[data-at='top'] .pv-bar { top: 32px; left: 50%; transform: translateX(-50%); }
+.btn-preview[data-at='inline'] .pv-bar { top: 0; height: 26px; inset-inline-end: 24px; background: none; box-shadow: none; padding: 0; }
+.btn-preview:is([data-at='start'], [data-at='end']) .pv-bar { flex-direction: column; top: 34px; bottom: 6px; justify-content: center; padding: 5px 3px; border-radius: 12px; }
+.btn-preview:is([data-at='start'], [data-at='end']) .pv-sep { width: 12px; height: 1px; margin: 2px 0; }
+.btn-preview:is([data-at='start'], [data-at='end']) .pv-slider { width: 4px; height: 30px; margin: 3px 0; }
+.btn-preview[data-at='start'] .pv-bar { inset-inline-start: 4px; }
+.btn-preview[data-at='end'] .pv-bar { inset-inline-end: 4px; }
+.btn-preview[data-look='docked']:not([data-at='inline']) .pv-bar { border-radius: 0; box-shadow: 0 0 0 1px var(--md-outline-variant); }
+.btn-preview[data-look='docked']:is([data-at='bottom'], [data-at='auto']) .pv-bar { bottom: 0; left: 0; right: 0; transform: none; max-width: none; justify-content: center; }
+.btn-preview[data-look='docked'][data-at='top'] .pv-bar { top: 26px; left: 0; right: 0; transform: none; max-width: none; justify-content: center; }
+.btn-preview[data-look='docked']:is([data-at='start'], [data-at='end']) .pv-bar { top: 26px; bottom: 0; justify-content: flex-start; }
+.btn-preview[data-look='docked'][data-at='start'] .pv-bar { inset-inline-start: 0; }
+.btn-preview[data-look='docked'][data-at='end'] .pv-bar { inset-inline-end: 0; }
+.places-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.places-group { border-radius: 18px; padding: 6px 4px 8px; background: color-mix(in srgb, var(--md-on-surface) 3.5%, transparent); }
+.places-head { display: flex; align-items: center; gap: 8px; margin: 2px 8px 4px; font-size: 13px; font-weight: 650; color: var(--md-on-surface-variant); }
+.places-head small { margin-inline-start: auto; font-weight: 500; opacity: .7; font-variant-numeric: tabular-nums; }
+.places-editor .placed-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+.places-editor .placed-name { cursor: default; }
+.places-editor .placed-name > svg { width: 20px; height: 20px; flex: none; }
+.places-editor .placed-name > span { font-size: 14px; }
+.places-editor .placed-row.fixed { opacity: .78; grid-template-columns: minmax(0, 1fr) auto; }
+.places-editor .placed-row.fixed small { white-space: normal; }
+.places-editor .fixed-mark svg { width: 16px; height: 16px; opacity: .6; margin-inline-end: 8px; }
+.places-editor .placed-at.places button { width: 30px; }
+.places-editor .add-sep { margin: 6px 8px 0; }
+.places-editor .icon-btn.rm { width: 32px; height: 32px; }
+/* (A narrow screen: the choice of place goes under the name.) */
+@media (max-width: 460px) {
+  .places-editor .placed-row:not(.fixed) { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'name moves' 'at at'; row-gap: 4px; padding-block: 6px; }
+  .places-editor .placed-row:not(.fixed) .placed-name { grid-area: name; }
+  .places-editor .placed-row:not(.fixed) .row-actions { grid-area: moves; }
+  .places-editor .placed-row:not(.fixed) > .placed-at, .places-editor .placed-row:not(.fixed) > .rm { grid-area: at; justify-self: start; margin-inline-start: 30px; }
+}
+/* The places drawn: a small screen, its top bar a line, the spot filled. */
+.place-glyph2 { display: inline-grid; place-items: center; width: 18px; height: 18px; }
+.place-glyph2 svg { width: 16px; height: 16px; }
+.pg { position: relative; display: block; width: 13px; height: 16px; border: 1.4px solid currentColor; border-radius: 3px; box-sizing: border-box; }
+.pg::before { content: ''; position: absolute; left: 0; right: 0; top: 3px; height: 1.2px; background: currentColor; opacity: .55; }
+.pg i { position: absolute; display: block; background: currentColor; border-radius: 1px; }
+.pg-topStart i { top: 0.5px; inset-inline-start: 1px; width: 4px; height: 2.5px; }
+.pg-topEnd i { top: 0.5px; inset-inline-end: 1px; width: 4px; height: 2.5px; }
+.pg-bar i { bottom: 1.5px; left: 2px; right: 2px; height: 2.5px; border-radius: 2px; }
+.pg-hidden { border-style: dashed; }
+.pg-hidden::before { opacity: 0; }
+.pg-hidden i { top: 50%; left: -2px; right: -2px; height: 1.4px; transform: rotate(-45deg); }

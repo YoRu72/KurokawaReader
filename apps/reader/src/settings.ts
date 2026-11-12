@@ -1,6 +1,7 @@
 import { familyFor } from './fonts';
 import { ensureFont } from './slim';
 import type { PlacedItem } from './ui/placeditems';
+import { DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, buttonsMigrated, type PlacedButton, type BarAt, type BarLook } from './readbuttons';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
@@ -64,7 +65,9 @@ export interface VisualSettings {
   letterSpacing: number;  // em
   pdfInvert: boolean;
   pdfBar: 'auto' | 'row' | 'rows' | 'side';
-  pdfBarSide: 'right' | 'left';      // which side the upright bar stands on
+  /** Which side the upright bar stands on: «start» or «end» (mirrored right to left); «right» and «left» as an older
+   *  version chose, kept as they look. */
+  pdfBarSide: 'right' | 'left' | 'start' | 'end';
   pdfBarRow: 'bottom' | 'top';       // where the lying bar goes   // the PDF page bar: two rows when the screen is upright and one when it is wide, or fixed
   pdfPinchZoom: boolean;    // two-finger zoom in PDFs (on by default since 0.32)
   pdfAutoCrop: boolean;     // show only each page's printed area (margins cropped), at a common width
@@ -209,7 +212,19 @@ export interface VisualSettings {
   kittenModel: string;
   kittenVoice: string;
   kittenSpeed: number;
-  readerToolbar: string[];    // ids of the floating toolbar buttons, in order
+  /** (Before the buttons could be placed: the ids of the floating toolbar's buttons, in order. Kept in step with
+   *  `readerButtons` for an older version reading the same settings; read once to carry an older choice over.) */
+  readerToolbar: string[];
+  /** Where each of a flowing book's actions lives — top bar (start, end), toolbar, «More», hidden — in order
+   *  (src/readbuttons.ts). */
+  readerButtons: PlacedButton[];
+  /** A PDF's, the same way (its toolbar is the page bar). */
+  pdfButtons: PlacedButton[];
+  /** Where a flowing book's toolbar stands, and how it looks (a floating pill, or docked the full width/height). */
+  toolbarAt: BarAt;
+  toolbarLook: BarLook;
+  /** A PDF page bar's look (where it stands is `pdfBar`, `pdfBarRow`, `pdfBarSide`). */
+  pdfBarLook: BarLook;
   systemFonts: string[];      // system font families picked on desktop
   highlightPalette: Record<'amber' | 'rose' | 'mint' | 'sky' | 'violet', string>;
   shortcuts: Record<string, string>;   // user rebindings, id → combo
@@ -374,6 +389,11 @@ export const DEFAULTS: VisualSettings = {
   kittenVoice: 'leo',
   kittenSpeed: 1,
   readerToolbar: ['toc', 'search', 'images', 'bookmark', 'sep', 'type', 'more'],
+  readerButtons: DEFAULT_FLOW_BUTTONS.map((x) => ({ ...x })),
+  pdfButtons: DEFAULT_PDF_BUTTONS.map((x) => ({ ...x })),
+  toolbarAt: 'auto',
+  toolbarLook: 'pill',
+  pdfBarLook: 'pill',
   systemFonts: [],
   shortcuts: {},
   syncProvider: 'none',
@@ -399,7 +419,7 @@ let current: VisualSettings = load();
 function load(): VisualSettings {
   try {
     const raw = localStorage.getItem(KEY);
-    const s: VisualSettings = raw ? { ...DEFAULTS, ...barItemsMigrated(JSON.parse(raw) as Partial<VisualSettings>) } : { ...DEFAULTS };
+    const s: VisualSettings = raw ? { ...DEFAULTS, ...buttonsMigrated(barItemsMigrated(JSON.parse(raw) as Partial<VisualSettings>)) } : { ...DEFAULTS };
     // 0.18: the add-books button moved from the top bar to the folder row (sync took its place).
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
@@ -451,6 +471,8 @@ const overrides = (): Record<string, Partial<VisualSettings>> => {
     if (!bookOverrides || typeof bookOverrides !== 'object') bookOverrides = {};
     // (A book's own «minutes left» switched off before the reading bar's items: the bar of the app, without them.)
     for (const [id, v] of Object.entries(bookOverrides)) if (v && typeof v === 'object' && !('statusItems' in v) && v.showTimeLeft === false) bookOverrides[id] = barItemsMigrated(v, globals.statusItems);
+    // (A book's own toolbar buttons from before they could be placed: the same buttons, placed — src/readbuttons.ts.)
+    for (const [id, v] of Object.entries(bookOverrides)) if (v && typeof v === 'object') bookOverrides[id] = buttonsMigrated(v);
     // (Kept in a book's overrides by an older version — a key typed with a book open —: taken out of them; where
     // the app has no value of its own yet the book's is moved to the app, so nothing typed is lost. Values are
     // never printed.)
@@ -494,7 +516,7 @@ export function setBookScoped(on: boolean): void {
 export const globalSettings = (): VisualSettings => globals;
 /** Every book's own settings (a copy), and one book's set (a backup's, restored). */
 export const allBookSettings = (): Record<string, Partial<VisualSettings>> => JSON.parse(JSON.stringify(overrides())) as Record<string, Partial<VisualSettings>>;
-export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = bookPart(barItemsMigrated(v, globals.statusItems)); saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
+export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = bookPart(buttonsMigrated(barItemsMigrated(v, globals.statusItems))); saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
 /** Drop the settings kept for books no longer in the library. */
 export function forgetBookSettings(ids: string[]): void { for (const id of ids) delete overrides()[id]; saveOverrides(); }
 

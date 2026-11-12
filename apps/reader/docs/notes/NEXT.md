@@ -21,3 +21,10 @@
 ### Fixes (reading bar)
 - **Text no longer sits under the toolbar or the reading bar**; and showing or hiding the bars no longer moves the text.
 - In Arabic the bar's numbers, percentage and clock are written the Arabic way («٤:٤٤ م», «١٥٪»).
+
+### New — place the reader's buttons as you like
+- **Customise buttons** (More → Customise buttons, or Reader options → Reader buttons). Every action of the reader — contents, search, bookmark, translate, glossary, read aloud, day/night, full screen and the rest; the PDF reader's too — can be put at the start or end of the top bar, on the toolbar, in the More menu, or hidden; and ordered within its place. Separate layouts for books and for PDFs; "Reset to default" brings back today's layout.
+- **The toolbar itself** can sit at the bottom, at the top, or along either side, floating or docked to the edge. Text always ends clear of it.
+- What does not fit a bar on a narrow screen moves into More by itself, and comes back when there is room.
+- The back arrow, More and "Customise buttons" stay where they are, so the way out of a book and back to this page is never lost. A hidden action still answers its keyboard shortcut and its tap zone.
+- The More menu no longer repeats what is already on the bars.
