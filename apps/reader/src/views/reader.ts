@@ -906,6 +906,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(back.dispose);
 
   /* ---------- links & taps ---------- */
+  /** A link that would load a page of the app itself (its address the app's, not another site's). */
+  const staysInApp = (a: HTMLAnchorElement): boolean => { try { return new URL(a.href, location.href).origin === location.origin; } catch { return true; } };
+  /** The id of the place in the book a `#…` link points to (by id, or by an old `name` anchor), or null. */
+  let linkIds = 0;
+  const placeOfLink = (a: HTMLAnchorElement): string | null => {
+    const raw = (a.getAttribute('href') ?? '').split('#')[1]; if (!raw) return null;
+    let frag = raw; try { frag = decodeURIComponent(raw); } catch { /* as written */ }
+    const target = flow.querySelector<HTMLElement>(`[id="${CSS.escape(frag)}"]`) ?? flow.querySelector<HTMLElement>(`a[name="${CSS.escape(frag)}"]`);
+    if (!target || target === a) return null;
+    if (!target.id) target.id = `kr-link-${++linkIds}`;
+    return target.id;
+  };
   flow.addEventListener('dblclick', (e) => {
     if (!document.documentElement.classList.contains('pc')) return;
     const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null; if (!img || !allImages.length || !getSettings().pictureZoom) return;
@@ -920,6 +932,17 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (On a computer a picture opens with a double-click — a single one is too easily made while reading.)
     if (img && allImages.length && getSettings().pictureZoom && !(linkOf && small) && !document.documentElement.classList.contains('pc')) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { e.preventDefault(); showGallery(idx); return; } }
     if (linkOf) { e.preventDefault(); back.remember(); scrollToAnchor(linkOf.dataset.krAnchor!); return; }
+    // A link as the book wrote it — a web novel's note (`#fn1`), an empty `#`, a Markdown or HTML book's `#part` or
+    // `other.html`: followed, the address's fragment is the app's route (`#fn1` is the library's) and another page
+    // of the app starts it again — the book closed under the reader's finger. It goes to its place in the book when
+    // the book has one; else nothing happens. (Links to other sites open outside, as before.)
+    const own = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
+    if (own && staysInApp(own)) {
+      e.preventDefault();
+      const at = placeOfLink(own);
+      if (at) { back.remember(); scrollToAnchor(at); }
+      return;
+    }
     if ((e.target as HTMLElement).closest('a, button, input, select, mark, .kr-sheet-tabs')) return;
     if (document.getSelection()?.isCollapsed === false) return;
     // Tap zones on touch screens (nine of them, each given its action in the options; by default the lower
