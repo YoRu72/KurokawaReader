@@ -2002,4 +2002,5 @@ export const ar: Strings = {
   glossCopyAll: "انسخ المسرد كاملًا",
   glossPasted: "المصطلحات المضافة: {n}",
   copyAllNotes: "انسخ كل التعليقات",
+  pdfProtected: "ملفٌّ محميّ بكلمة مرور",
 };

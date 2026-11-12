@@ -165,4 +165,5 @@ export const zh: Partial<Strings> = {
   glossCopyAll: "复制整个术语表",
   glossPasted: "已添加术语：{n}",
   copyAllNotes: "复制全部笔记",
+  pdfProtected: "受保护的 PDF",
 };

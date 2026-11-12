@@ -1998,6 +1998,7 @@ export const en = {
   glossCopyAll: "Copy the whole glossary",
   glossPasted: "Terms added: {n}",
   copyAllNotes: "Copy all the notes",
+  pdfProtected: "Protected PDF",
 };
 
 export type Strings = typeof en;

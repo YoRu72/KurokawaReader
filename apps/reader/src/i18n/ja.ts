@@ -165,4 +165,5 @@ export const ja: Partial<Strings> = {
   glossCopyAll: "用語集をすべてコピー",
   glossPasted: "追加した用語：{n}",
   copyAllNotes: "メモをすべてコピー",
+  pdfProtected: "保護された PDF",
 };

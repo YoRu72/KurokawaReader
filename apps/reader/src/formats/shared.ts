@@ -13,9 +13,16 @@ export function mimeFor(path: string): string {
   } as Record<string, string>)[ext] ?? 'application/octet-stream';
 }
 
+/** Percent-decode a link's path or fragment without ever throwing: each run of valid escapes is decoded, and a
+ *  bare "%" (a file named "50%.xhtml", written unescaped as books often do) is kept as it is. */
+export function safeDecode(s: string): string {
+  if (!s.includes('%')) return s;
+  return s.replace(/(?:%[0-9a-f]{2})+/gi, (m) => { try { return decodeURIComponent(m); } catch { return m; } });
+}
+
 /** Resolve `href` relative to `base` inside a zip (POSIX-style paths). */
 export function resolveZipPath(base: string, href: string): string {
-  href = decodeURIComponent(href.split('#')[0].split('?')[0]);
+  href = safeDecode(href.split('#')[0].split('?')[0]);
   if (!href) return base;
   if (href.startsWith('/')) return href.slice(1);
   const parts = base.split('/').slice(0, -1);
@@ -208,14 +215,17 @@ export function parseXml(text: string): Document {
   return new DOMParser().parseFromString(text, 'application/xml');
 }
 
-/** Decode text with a sensible fallback for legacy Arabic/Latin encodings. */
-export async function decodeText(blob: Blob): Promise<string> {
+/** Decode text with a sensible fallback for legacy Arabic/Latin encodings. `partial`: the bytes are the head of a
+ *  longer file (a title read from its start), so a character cut in two at the end is dropped, not taken for a
+ *  sign that the file is not UTF-8 — Arabic, Japanese, Chinese and Korean letters take two to four bytes each. */
+export async function decodeText(blob: Blob, opts: { partial?: boolean } = {}): Promise<string> {
   const buf = await blob.arrayBuffer();
   const bytes = new Uint8Array(buf);
   if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf);
   if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(buf);
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    // (Streaming, the decoder keeps an unfinished last character back instead of failing on it.)
+    return opts.partial ? new TextDecoder('utf-8', { fatal: true }).decode(buf, { stream: true }) : new TextDecoder('utf-8', { fatal: true }).decode(buf);
   } catch {
     // Not valid UTF-8. Guess between windows-1256 (Arabic) and windows-1252 by
     // counting high bytes that land in Arabic letter ranges.

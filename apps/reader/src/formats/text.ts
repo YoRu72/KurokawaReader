@@ -8,9 +8,11 @@ export const txtHandler: FlowHandler = {
   kind: 'flow',
   format: 'txt',
   async readMeta(file, fileName) {
-    const text = await decodeText(file.slice(0, 4000));
+    const text = await decodeText(file.slice(0, 4000), { partial: file.size > 4000 });
     const first = text.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0 && l.length < 120);
-    return { title: first && !/^[\W\d]+$/.test(first) ? first : titleFromFileName(fileName) };
+    // (A first line with a letter in it, of any script: without the u flag, \W counted every Arabic or Japanese
+    // letter as punctuation, and such a book was named after its file.)
+    return { title: first && /\p{L}/u.test(first) ? first : titleFromFileName(fileName) };
   },
   async render(file): Promise<FlowRender> {
     const root = el('div', 'kr-content kr-text');
@@ -24,7 +26,7 @@ export const mdHandler: FlowHandler = {
   kind: 'flow',
   format: 'md',
   async readMeta(file, fileName) {
-    const text = await decodeText(file.slice(0, 4000));
+    const text = await decodeText(file.slice(0, 4000), { partial: file.size > 4000 });
     const m = /^#\s+(.+)$/m.exec(text);
     return { title: m ? m[1].trim() : titleFromFileName(fileName) };
   },
@@ -41,7 +43,7 @@ export const htmlHandler: FlowHandler = {
   kind: 'flow',
   format: 'html',
   async readMeta(file, fileName) {
-    const text = await decodeText(file.slice(0, 20000));
+    const text = await decodeText(file.slice(0, 20000), { partial: file.size > 20000 });
     const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(text);
     return { title: m ? m[1].replace(/\s+/g, ' ').trim() : titleFromFileName(fileName) };
   },

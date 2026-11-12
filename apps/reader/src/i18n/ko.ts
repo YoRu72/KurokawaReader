@@ -165,4 +165,5 @@ export const ko: Partial<Strings> = {
   glossCopyAll: "용어집 전체 복사",
   glossPasted: "추가된 용어: {n}",
   copyAllNotes: "메모 전체 복사",
+  pdfProtected: "보호된 PDF",
 };
