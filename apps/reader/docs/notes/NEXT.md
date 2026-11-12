@@ -14,3 +14,10 @@
 - **Back twice to leave a book** (off by default): the first Back closes what is open, the next shows a reminder, and a second within two seconds leaves. The arrow at the top always leaves at once.
 - **Page-turn swipes protected at the screen edges** (Android, on by default, in the chapter modes): a swipe along the middle of the left or right edge changes the chapter in place of being taken as Back. Back still works from the top and bottom of the edge.
 - Space and Page Up/Down now carry on into the next or previous chapter in "Chapter by chapter" mode too.
+- **The reading bar shows what you choose.** Page in the chapter «١٢ / ٣٤», pages left in the chapter, the chapter's and the book's percentage, page and pages left in the book, time left in the chapter and in the book, clock, battery, chapter name, book title — each switched on or off, placed at the start, middle or end, in the order you want (Visual options → Show the reading bar). It stays hidden until you switch it on; "Show / hide the reading bar" is in the More menu and can be set as a tap-zone action.
+- **The reading bar in immersive mode**: its own switch — keep it while the other bars are hidden, or hide it with them.
+- A page is one screen of text at your font and size; the count follows font, margin and rotation changes. For a book of several chapters, "page in the book" is an estimate, marked «≈».
+
+### Fixes (reading bar)
+- **Text no longer sits under the toolbar or the reading bar**; and showing or hiding the bars no longer moves the text.
+- In Arabic the bar's numbers, percentage and clock are written the Arabic way («٤:٤٤ م», «١٥٪»).
