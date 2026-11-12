@@ -1,5 +1,6 @@
 import { familyFor } from './fonts';
 import { ensureFont } from './slim';
+import { onPhone } from './platform';
 import type { PlacedItem } from './ui/placeditems';
 import { DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, buttonsMigrated, type PlacedButton, type BarAt, type BarLook } from './readbuttons';
 // Visual settings for the reading surface, persisted in localStorage and
@@ -686,6 +687,8 @@ function applyCustomAccent(html: HTMLElement, hex: string, light: boolean): void
 
 /** Lock or release the screen orientation (Capacitor plugin when present, Web API otherwise). */
 export async function applyOrientation(s: VisualSettings = current): Promise<void> {
+  // (A computer's screen does not turn: an orientation synced from the phone is left alone there. src/platform.ts.)
+  if (!onPhone()) return;
   const cap = (window as unknown as { Capacitor?: { Plugins?: { ScreenOrientation?: { lock(o: { orientation: string }): Promise<void>; unlock(): Promise<void> } } } }).Capacitor;
   const plugin = cap?.Plugins?.ScreenOrientation;
   try {

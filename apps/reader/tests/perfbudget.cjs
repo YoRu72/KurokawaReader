@@ -16,7 +16,9 @@
 //     after a garbage collection — formats/pdf.ts releasePage: a text layer taken off a page the browser was skipping
 //     was kept by it for good);
 //  8. the 1,000-page PDF's text read in idle moments goes on, at the next opening, from where it got to — the pages
-//     read before are not asked of pdf.js again (formats/pdf.ts readAllWhenIdle, booksearch.ts partialPages).
+//     read before are not asked of pdf.js again (formats/pdf.ts readAllWhenIdle, booksearch.ts partialPages);
+//  9. a sync that starts by itself (back online) while the page is being scrolled does none of its work — the sync
+//     file read, the library read — till the scroll stops (src/still.ts), and then syncs (the sync file written).
 // The books are made here (no fixtures).
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
@@ -25,7 +27,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-perfbudget-'));
 
-const BUDGET = { startJsKB: 340, diagKB: 8, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800, epubParsedFirst: 3, epubTextRead: 100000, pdfNodesKept: 1500, pdfTextReread: 2 };
+const BUDGET = { startJsKB: 340, diagKB: 8, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800, epubParsedFirst: 3, epubTextRead: 100000, pdfNodesKept: 1500, pdfTextReread: 2, syncReadsWhileScrolled: 0 };
 
 // Counters the app does not know of: pdf.js's page requests to its worker, and Node.contains calls.
 const INIT = () => {
@@ -208,6 +210,28 @@ function makeText(file) {
     // (Pages near the top — the first screens' text layers — are asked again as they are shown: left out.)
     const read = new Set(first.filter((i) => i >= 8)); const twice = again.filter((i) => read.has(i));
     ok(`2,500-page PDF: the text read in idle moments goes on at the next opening — no more than ${BUDGET.pdfTextReread} of the ${read.size} pages read before asked again`, read.size >= 10 && read.size < 2400 && twice.length <= BUDGET.pdfTextReread, { readBefore: read.size, askedAgain: twice.length, firstAgain: again.filter((i) => i >= 8).slice(0, 5) });
+    await p.context().close();
+  }
+
+  // 9. A sync started by itself while the page is scrolled: held till the scroll stops.
+  {
+    // (The desktop app's folder transport, its file calls imitated and counted — the only sync that needs no network;
+    // the rest of its bridge answers nothing. The window is a phone's: the phone's layout.)
+    const file = path.join(TMP, 'sync.epub'); await makeEpub(file, 4);
+    const p = await phone();
+    await p.addInitScript(() => { window.__syncIo = []; window.__syncFile = null; window.kurokawaDesktop = new Proxy({ readTextFile: async () => { window.__syncIo.push(['read', performance.now()]); return window.__syncFile; }, writeTextFile: async (_p, t) => { window.__syncIo.push(['write', performance.now()]); window.__syncFile = t; return true; } }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : () => undefined) }); });
+    await p.goto(base); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ syncProvider: 'folder', syncFolder: '/cloud', syncAuto: true, bookPage: 'never' })); }); await p.reload(); await p.waitForSelector('.library-view');
+    const id = await importBook(p, file);
+    await openBook(p, id, 'text');
+    // (The sync made at the start, done first.)
+    await p.waitForFunction(() => window.__syncIo.some((x) => x[0] === 'write'), null, { timeout: 20000 }); await p.waitForTimeout(500);
+    const r = await p.evaluate(() => new Promise((res) => {
+      const el = document.querySelector('.reader-scroll'); const n0 = window.__syncIo.length; let t0 = 0; let end = 0;
+      window.dispatchEvent(new Event('online'));   // (a sync asked for 1.5 s later: in the middle of the scroll)
+      const step = (now) => { if (!t0) t0 = now; el.scrollTop += 6; if (now - t0 < 4000) requestAnimationFrame(step); else { end = performance.now(); setTimeout(() => res({ during: window.__syncIo.slice(n0).filter((x) => x[1] <= end).length, after: window.__syncIo.slice(n0).filter((x) => x[1] > end).map((x) => x[0]) }), 4000); } };
+      requestAnimationFrame(step);
+    }));
+    ok(`a sync started by itself during a scroll: no more than ${BUDGET.syncReadsWhileScrolled} of its steps while the page moves, then done`, r.during <= BUDGET.syncReadsWhileScrolled && r.after.includes('read') && r.after.includes('write'), r);
     await p.context().close();
   }
 

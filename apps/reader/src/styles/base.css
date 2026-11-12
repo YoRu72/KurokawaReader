@@ -342,8 +342,14 @@ html[style*='--lib-cols'] .book-grid { grid-template-columns: repeat(var(--lib-c
 .book-card:active .cover { transform: scale(.97); border-radius: var(--sh-xl); }
 .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cover .gen { position: absolute; inset: 0; padding: 16px 14px; display: flex; flex-direction: column; justify-content: space-between; background: linear-gradient(160deg, var(--c1), var(--c2)); color: #f6edd9; }
-.cover .gen .t { padding-right: 44px; font-family: var(--font-read); font-size: 16px; line-height: 1.25; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.cover .gen .t { font-family: var(--font-read); font-size: 16px; line-height: 1.25; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
 .cover .gen .a { font-size: 11.5px; opacity: .85; }
+/* (The title of a made cover starts below the marks on the cover's top — its format, «New», the favourite's heart, a
+   «read» mark at the top — whatever their number, the card's size or the writing's direction; a mark set «below» the
+   others takes a second row. A cover in the list look is too small for a title of its own: the row beside it has it.) */
+.cover .gen { padding-top: 42px; }
+.cover.mark-below .gen { padding-top: 70px; }
+html[data-card-look='list'] .book-card .cover .gen { padding-top: 16px; }
 .cover .badge { position: absolute; top: 10px; right: 10px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: 4px 8px; border-radius: var(--sh-full); background: var(--md-inverse-surface); color: var(--md-inverse-on-surface); }
 .cover .progress { position: absolute; left: 10px; right: 10px; bottom: 10px; height: 6px; border-radius: var(--sh-full); background: rgba(0,0,0,.45); overflow: hidden; }
 .cover .progress i { display: block; height: 100%; border-radius: var(--sh-full); background: var(--md-primary); }

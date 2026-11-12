@@ -9,6 +9,8 @@
 // end), and «Customise buttons» at the foot of «More». A hidden action still answers its key and its tap zone.
 // (No imports from the interface: settings.ts uses this to carry older settings over.)
 
+import type { Need } from './platform';
+
 export type ButtonPlace = 'topStart' | 'topEnd' | 'bar' | 'more' | 'hidden';
 export interface PlacedButton { id: string; at: ButtonPlace }
 export const BUTTON_PLACES: readonly ButtonPlace[] = ['topStart', 'topEnd', 'bar', 'more', 'hidden'];
@@ -18,8 +20,9 @@ export type BarAt = 'auto' | 'bottom' | 'top' | 'start' | 'end';
 export type BarLook = 'pill' | 'docked';
 
 /** One action: its id, icon (src/ui/dom.ts PATHS) and name (an i18n key). `only`: the places it may take (the
- *  PDF's page slider is a part of its bar). */
-export interface ActionInfo { id: string; icon: string; label: string; only?: ButtonPlace[] }
+ *  PDF's page slider is a part of its bar). `need`: where it can be done at all (src/platform.ts) — elsewhere the
+ *  editor leaves it out and the reader does not draw it, its place kept. */
+export interface ActionInfo { id: string; icon: string; label: string; only?: ButtonPlace[]; need?: Need }
 
 /** A flowing book's actions. */
 export const FLOW_ACTIONS: readonly ActionInfo[] = [
@@ -73,7 +76,7 @@ export const PDF_ACTIONS: readonly ActionInfo[] = [
   { id: 'savePagesRange', icon: 'images', label: 'savePagesRange' },
   { id: 'exportWithInk', icon: 'download', label: 'exportWithInk' },
   { id: 'print', icon: 'file', label: 'print' },
-  { id: 'openWithApp', icon: 'external', label: 'openWithApp' },
+  { id: 'openWithApp', icon: 'external', label: 'openWithApp', need: 'android' },
   { id: 'toolExtract', icon: 'file', label: 'toolExtract' },
   { id: 'pdfTools', icon: 'grid', label: 'pdfTools' },
   { id: 'bookmark', icon: 'bookmarkAdd', label: 'addBookmark' },
