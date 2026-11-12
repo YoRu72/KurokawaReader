@@ -55,6 +55,28 @@ const file = path.join(TMP, 'links.html'); fs.writeFileSync(file, html);
   // The way back still works: the reader's back leaves the book for the library.
   await p.evaluate(() => history.back()); await p.waitForTimeout(800);
   ok('back from the book leaves it (one step, to the library)', await p.evaluate(() => !!document.querySelector('.library-view') && !document.querySelector('.reader-flow')));
+  // The app ended under the open book and started again (the address the app starts at: the library's).
+  const topPara = () => p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const r = sc.getBoundingClientRect(); for (let y = r.top + 10; y < r.top + 200; y += 6) { const e = document.elementFromPoint(r.left + r.width / 2, y)?.closest('.reader-flow p'); if (e) return /Paragraph (\d+)/.exec(e.textContent)?.[1] ?? e.textContent.slice(0, 12); } return null; });
+  const restart = async () => { await p.goto(base); await p.waitForSelector('.library-view, .reader-view', { timeout: 20000 }); await p.waitForTimeout(3500); return where(); };
+  await p.evaluate((id) => { location.hash = `#/read/${id}`; }, id); await p.waitForSelector('.reader-flow .kr-content p'); await p.waitForTimeout(1500);
+  await p.evaluate(() => { const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('Paragraph 40.')); const sc = document.querySelector('.reader-scroll'); sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top; });
+  await p.waitForTimeout(1500);
+  const was = await topPara();
+  w = await restart();
+  ok('the app started again under an open book: the book is open again', w.reader && /^#\/read\//.test(w.hash), w);
+  const now = await topPara();
+  ok('… at its place', now === was, { was, now });
+  await p.waitForTimeout(21000);   // (read a while: it did not end the app)
+  // Left by the reader: the next start is the library's.
+  await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view'); await p.waitForTimeout(500);
+  w = await restart();
+  ok('a book left by the reader is not opened again at the next start', w.library && !w.reader, w);
+  // A book that ends the app each time: opened again once, not twice in a row.
+  await p.evaluate((id) => { location.hash = `#/read/${id}`; }, id); await p.waitForSelector('.reader-flow .kr-content p'); await p.waitForTimeout(800);
+  w = await restart();
+  ok('ended once: opened again', w.reader, w);
+  w = await restart();
+  ok('ended again at once: not opened a third time (the library)', w.library && !w.reader, w);
   ok('no page errors', errors.length === 0, errors);
   console.log(fails ? `${fails} failed` : 'all passed');
   await br.close(); server.close(); fs.rmSync(TMP, { recursive: true, force: true }); process.exit(fails ? 1 : 0);

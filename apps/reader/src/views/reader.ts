@@ -1,6 +1,7 @@
 // The reading surface. Flow documents (EPUB, DOCX, TXT, …) are rendered one
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
+import { markReading } from '../resume';
 import { takeJump, setJump, type Jump } from '../jump';
 export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
@@ -78,6 +79,8 @@ export function readerView(ids: string[]): HTMLElement {
   const run = (fn: () => void) => { try { fn(); } catch (err) { console.error(err); } };
   const onDispose = (fn: () => void) => { if (disposed) run(fn); else cleanups.push(fn); };
   const gone = () => disposed;
+  // (Marked open until it is left: an app ended under it opens it again — see src/resume.ts.)
+  onDispose(markReading(ids));
 
   void (async () => {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
