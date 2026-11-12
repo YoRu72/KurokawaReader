@@ -91,7 +91,7 @@ const marks = (p) => p.evaluate(() => { const ms = [...document.querySelectorAll
   };
 
   // ---- 1. the second of two places, in English and in Arabic
-  for (const [lang, file, title, phrase, first, second] of [['en', EN, 'Bells', 'old bell rang over the square', 'Nobody', 'Everybody'], ['ar', AR, 'jaras', 'قال الشيخ كلمة طيبة', 'يحضر أحد', 'الجميع']]) {
+  for (const [lang, file, title, phrase, first, second] of [['en', EN, 'Bells', 'old bell rang over the square', 'Nobody', 'Everybody'], ['ar', AR, 'أجراس', 'قال الشيخ كلمة طيبة', 'يحضر أحد', 'الجميع']]) {
     const p = await newPage(lang); const tag = `[${lang}] `;
     const bk = await importFile(p, file, title); await openReader(p, bk.id);
     if (lang === 'ar') ok(tag + 'the Arabic book reads right to left', await p.evaluate(() => getComputedStyle(document.querySelector('.reader-flow p')).direction === 'rtl'));
