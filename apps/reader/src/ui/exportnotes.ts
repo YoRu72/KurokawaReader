@@ -38,6 +38,12 @@ export function notesMarkdown(book: Book): string {
       out.push(...pdfMarkLines(book, hl));
     }
   }
+  // (A PDF's page notes — pins — with their pages, as the notes list shows them.)
+  const pins = [...(book.pins ?? [])].sort((a, b) => a.createdAt - b.createdAt);
+  if (pins.length) {
+    out.push(`## ${t('notes')} · PDF`, '');
+    for (const pin of pins) out.push(...pinLines(book, pin));
+  }
   if (book.bookmarks.length) {
     out.push(`## ${t('bookmarks')}`, '');
     for (const bm of book.bookmarks) out.push(bookmarkLine(bm));
@@ -66,6 +72,11 @@ export function notesAnkiTsv(book: Book): string {
   for (const hl of [...(book.pdfHighlights ?? [])].sort((a, b) => a.createdAt - b.createdAt)) {
     const back = [hl.note ? esc(hl.note) : '', `<small>${esc(book.title)} · ${esc(t('pageOf', { n: hl.page, total: book.pageCount ?? hl.page }))}</small>`].filter(Boolean).join('<br>');
     lines.push([cell(esc(hl.text)), cell(back), tag].join('\t'));
+  }
+  // (A page note has no words of the page: the note is the front, the book and page the back.)
+  for (const pin of [...(book.pins ?? [])].sort((a, b) => a.createdAt - b.createdAt)) {
+    if (!pin.note?.trim()) continue;
+    lines.push([cell(esc(pin.note)), `<small>${cell(esc(book.title))} · ${esc(t('pageOf', { n: pin.page, total: book.pageCount ?? pin.page }))}</small>`, tag].join('\t'));
   }
   return lines.join('\n') + '\n';
 }
