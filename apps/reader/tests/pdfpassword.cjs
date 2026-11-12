@@ -100,6 +100,19 @@ async function waitDialog(p, ms = 15000) {
         await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view');
       }
     }
+    // Converting a protected file (src/ui/convert.ts) asks in the same dialog — it called window.prompt, which threw
+    // in the desktop app and left the conversion stuck.
+    if (lang === 'en') {
+      await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view .book-card', { state: 'visible' }); await p.waitForTimeout(400);
+      const card = p.locator('.book-card', { hasText: 'other' }).first(); await card.dispatchEvent('contextmenu'); await p.waitForSelector('.sel-actions', { state: 'visible' });
+      const direct = await p.evaluate(() => { const b = [...document.querySelectorAll('.sel-actions button')].find((x) => /Convert/.test(x.textContent)); b?.click(); return !!b; });
+      if (!direct) { await p.evaluate(() => { const bs = [...document.querySelectorAll('.sel-actions button')]; bs[bs.length - 1].click(); }); await p.waitForSelector('.sheet', { state: 'visible' }); await p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /Convert/.test(x.textContent)); b?.click(); }); }
+      await p.waitForSelector('.convert-target', { state: 'visible' }); await p.click('.convert-target >> nth=0');
+      await p.waitForSelector('.sheet input[type=password]', { state: 'visible', timeout: 20000 }).catch(() => undefined);
+      d = await dialog(p); ok(`${lang}: converting a protected file asks in the app's dialog`, !!d && !!d.title, d);
+      if (d) { await p.fill('.sheet input[type=password]', SECRET); await p.keyboard.press('Enter'); await p.waitForSelector('.convert-result:not([hidden])', { state: 'visible', timeout: 60000 }).catch(() => undefined); ok(`${lang}: … and with the password it converts`, !!(await p.$('.convert-result:not([hidden])'))); }
+      await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+    }
     ok(`${lang}: no native prompt was used`, native === 0, native);
     const stored = await p.evaluate(() => JSON.stringify(Object.fromEntries(Object.keys(localStorage).map((k) => [k, localStorage.getItem(k)]))) + JSON.stringify(sessionStorage));
     const books = JSON.stringify(await allBooks(p));

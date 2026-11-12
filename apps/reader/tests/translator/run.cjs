@@ -70,7 +70,11 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   // read for names as a job — the name it finds again not doubled.
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
   await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translation glossary' }).click(); await p.waitForSelector('.gloss-sheet .gloss-row');
-  p.once('dialog', (d) => d.accept('Gate series')); await p.locator('.gloss-folder-bar button').click(); await p.waitForTimeout(300);
+  // (The folder's name asked in the app's own dialog — window.prompt does not exist in the desktop app.)
+  let native = false; p.once('dialog', (d) => { native = true; void d.accept('Gate series'); }); await p.locator('.gloss-folder-bar button').click();
+  if (!native) { await p.waitForSelector('.text-ask-sheet input', { state: 'visible', timeout: 5000 }); await p.fill('.text-ask-sheet input', 'Gate series'); await p.click('.text-ask-sheet .text-ask-ok'); }
+  await p.waitForTimeout(300);
+  ok('the folder\'s name asked in the app\'s dialog, not the browser\'s', !native);
   const g2 = await p.evaluate(() => ({ t: JSON.parse(localStorage.getItem('kr.glossary') || '[]'), f: JSON.parse(localStorage.getItem('kr.glossaryFolders') || '[]'), l: JSON.parse(localStorage.getItem('kr.glossaryLinks') || '{}') })); console.log('folder:', JSON.stringify(g2));
   ok('the book\'s names made a folder, the book using it', g2.f.length === 1 && g2.f[0].name === 'Gate series' && g2.t.every((x) => x.folder === g2.f[0].id && !x.book) && Object.values(g2.l).some((v) => v.includes(g2.f[0].id)));
   await p.locator('.gloss-sheet .gloss-scan').click(); await p.waitForSelector('.job-chip', { timeout: 8000 }).catch(() => undefined); await p.waitForFunction(() => !document.querySelector('.job-chip') || /ready|added/i.test(document.querySelector('.job-chip').textContent), null, { timeout: 20000 }).catch(() => undefined); await p.waitForTimeout(800);
@@ -125,6 +129,15 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.reload(); await p.waitForSelector('.kr-chapter', { timeout: 30000 });
   await p.waitForFunction(() => document.querySelectorAll('.kr-chapter .kr-translated').length >= 2, null, { timeout: 15000 }).catch(() => undefined);
   ok('saved with the book: it opens translated', (await p.$$('.kr-chapter .kr-translated')).length >= 2 && !!(await p.$('.tr-pill .tr-save.on')));
+  // Translations restored from a backup while this book's were in hand: not written over by them when the next one
+  // is kept (the translations in hand are merged into what is kept, not put in its place).
+  const meta = (fn) => p.evaluate(([fn, i]) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('meta', 'readwrite'); const st = tx.objectStore('meta'); const q = st.get(`tr:${i}`); q.onsuccess = () => { const cur = q.result || {}; if (fn === 'add') st.put({ ...cur, restoredKey: 'RESTORED' }, `tr:${i}`); res(Object.keys(cur)); }; }; }), [fn, id]);
+  await meta('add');
+  await p.evaluate(() => document.querySelectorAll('.panel, .sheet, .sheet-scrim').forEach((e) => e.remove()));
+  await p.click('.tr-pill button[aria-label="Translate the chapter again"]'); await p.locator('.sheet .dest-row', { hasText: 'This chapter again' }).click();
+  await p.waitForFunction(() => document.querySelectorAll('.kr-chapter .kr-translated').length >= 2, null, { timeout: 15000 }).catch(() => undefined); await p.waitForTimeout(2000);
+  const keys = await meta('read'); console.log('kept after a restore:', keys.length, keys.includes('restoredKey'));
+  ok('a translation restored from a backup is not written over by the ones in hand', keys.includes('restoredKey') && keys.length > 1);
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close();
   console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);

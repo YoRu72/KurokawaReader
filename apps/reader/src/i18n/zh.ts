@@ -166,4 +166,5 @@ export const zh: Partial<Strings> = {
   glossPasted: "已添加术语：{n}",
   copyAllNotes: "复制全部笔记",
   pdfProtected: "受保护的 PDF",
+  textRuleSlow: "此表达式含有“重复中的重复”（如 (a+)+），遇到长行时可能使阅读器卡住。请去掉外层的重复后再写。",
 };

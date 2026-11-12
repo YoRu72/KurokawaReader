@@ -355,6 +355,7 @@ export const en = {
   textRuleEveryBook: 'In every book',
   textRuleHint: 'Applies as books are opened. A rule changed or removed shows in a book when it is opened again.',
   textRuleBad: 'This is not a valid regular expression.',
+  textRuleSlow: 'This expression has a repeat inside a repeat, such as (a+)+, which can freeze the reader on a long line. Write it without the outer repeat.',
   textRuleEmptyMatch: 'This would match empty text. Make it more specific.',
   textRuleSaved: 'Rule saved',
   textRuleSave: 'Save',

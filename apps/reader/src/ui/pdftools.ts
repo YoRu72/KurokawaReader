@@ -2,7 +2,7 @@
 // protection removed, pages saved as pictures. Every tool makes a new file; the ones it starts from are
 // left as they are. The work itself is in ../pdftools.ts (pdf-lib) and ../pdfcrypt.ts.
 import { runJob } from '../jobs';
-import { h, icon, openSheet, toast, pickButton } from './dom';
+import { h, icon, openSheet, toast, pickButton, askPassword, askText } from './dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { db, type Book } from '../db';
 import { importFiles } from '../library';
@@ -90,7 +90,8 @@ async function withPassword<T>(src: Source, fn: (s: Source) => Promise<T>): Prom
     try { const out = await fn(src); void rememberPassword(fp, src.password); return out; } catch (err) {
       const msg = String((err as Error).message ?? err);
       if (msg !== 'password') throw err;
-      const pw = window.prompt(wrong || src.password ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'));
+      const bad = wrong || !!src.password;
+      const pw = await askPassword({ title: t('pdfProtected'), hint: bad ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'), wrong: bad, label: t('password'), open: t('open'), cancel: t('cancel') });
       if (!pw) { toast(t('cancelled')); return null; }
       src.password = pw; wrong = true;
     }
@@ -441,8 +442,8 @@ async function organizeSheet(src: Source, onDone?: () => void, extractOnly = fal
   range.addEventListener('input', async () => { const { parseRanges } = await tools(); const chosen = new Set(parseRanges(range.value, n)); for (const p of pages) { if (p.sel !== chosen.has(p.i)) { p.sel = chosen.has(p.i); paint(p); } } sync(); });
   const setAll = (v: boolean) => { for (const p of pages) if (p.sel !== v) { p.sel = v; paint(p); } if (!v) range.value = ''; sync(); };
   // Many pages moved at once: the chosen ones, in their order, to the place typed.
-  const moveSel = h('button', { class: 'chip small', type: 'button', onclick: () => {
-    const to = window.prompt(t('moveChosenTo', { n: localDigits(String(pages.length)) }));
+  const moveSel = h('button', { class: 'chip small', type: 'button', onclick: async () => {
+    const to = await askText({ title: t('moveChosen').replace(/[….]+$/, ''), label: t('moveChosenTo', { n: localDigits(String(pages.length)) }), numeric: true, ok: t('go'), cancel: t('cancel') });
     const v = parseInt((to ?? '').replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10); if (!Number.isFinite(v)) return;
     const chosen = pages.filter((p) => p.sel); const rest = pages.filter((p) => !p.sel);
     const at = Math.max(0, Math.min(rest.length, rest.filter((p, idx) => idx < v - 1).length));

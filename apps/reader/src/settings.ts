@@ -432,7 +432,6 @@ const overrides = (): Record<string, Partial<VisualSettings>> => {
   }
   return bookOverrides;
 };
-overrides();
 const saveOverrides = () => { try { localStorage.setItem(BOOK_KEY, JSON.stringify(overrides())); } catch { /* full */ } };
 const merged = (): VisualSettings => (activeBook && overrides()[activeBook] ? { ...globals, ...overrides()[activeBook] } : globals);
 

@@ -1,6 +1,6 @@
 import { readPending, writePending, onPendingChanged } from '../sources/pending';
 import { busyNow, onBusy } from '../busy';
-import { h, icon, iconButton, toast, clear, coverColors, openSheet } from '../ui/dom';
+import { h, icon, iconButton, toast, clear, coverColors, openSheet, askText } from '../ui/dom';
 import { onBack } from '../ui/backstack';
 import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
@@ -583,8 +583,8 @@ export function libraryView(): HTMLElement {
       onHoldOrContext(chip, () => { if (confirm(t('shelfRemoveConfirm', { name: sh.name }))) { updateSettings({ shelves: getSettings().shelves.filter((x) => x.id !== sh.id) }); renderGrid(); } });
       fmtChips.prepend(chip);
     }
-    if ((active.size || st.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => {
-      const name = (prompt(t('shelfName'), '') ?? '').trim(); if (!name) return;
+    if ((active.size || st.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: async () => {
+      const name = ((await askText({ title: t('saveShelf'), label: t('shelfName'), ok: t('save'), cancel: t('cancel') })) ?? '').trim(); if (!name) return;
       updateSettings({ shelves: [...getSettings().shelves, { id: String(Date.now()), name, ...current }] }); toast(t('shelfSaved', { name })); renderGrid();
     } }, icon('plus'), h('span', null, t('saveShelf'))));
   }

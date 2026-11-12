@@ -166,4 +166,5 @@ export const ko: Partial<Strings> = {
   glossPasted: "추가된 용어: {n}",
   copyAllNotes: "메모 전체 복사",
   pdfProtected: "보호된 PDF",
+  textRuleSlow: "이 식에는 (a+)+ 처럼 반복 안의 반복이 있어 긴 줄에서 리더가 멈출 수 있습니다. 바깥쪽 반복 없이 작성해 주세요.",
 };

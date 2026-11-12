@@ -96,6 +96,14 @@ export function linkUp(out: Element, originalHtml: string): void {
   }
 }
 
+/** A book's translations in hand written to the library merged with what is kept there (the ones in hand win),
+ *  and those kept that were not in hand taken into them. */
+async function keepMerged(key: string, mem: Record<string, string> | undefined): Promise<void> {
+  if (!mem) return;
+  const all = await db.updateMeta<Record<string, string>>(key, (cur) => ({ ...(cur ?? {}), ...mem }));
+  if (all) for (const [k, v] of Object.entries(all)) if (!(k in mem)) mem[k] = v;
+}
+
 export type Translator = { titles(bookId: string, labels: string[]): Promise<Record<string, string>>; toggleUi(): void; dispose(): void; hasTranslations(bookIds: string[]): Promise<boolean>; load(bookIds: string[]): Promise<void>; pairOf(el: HTMLElement, bookId: string): { orig: string; tr?: string }; target(): string };
 export function attachTranslator(host: TranslatorHost): Translator {
   let on = false; let disposed = false;
@@ -128,8 +136,11 @@ export function attachTranslator(host: TranslatorHost): Translator {
   function scheduleSave(bookId: string) {
     dirty.add(bookId);
     window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => { for (const id of dirty) { void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); if (bySource.has(id)) void db.setMeta(`trs:${id}`, bySource.get(id)!); } dirty.clear(); }, 800);
+    saveTimer = window.setTimeout(flush, 800);
   }
+  // (Written over what is kept, not in its place: translations put there since this book's were read — restored
+  // from a backup, or brought by sync — stay, and come into the ones in hand.)
+  function flush() { for (const id of dirty) { void keepMerged(`tr:${id}`, caches.get(id)); void keepMerged(`trs:${id}`, bySource.get(id)); } dirty.clear(); }
 
   const plainOf = (el: HTMLElement) => (el.innerText ?? el.textContent ?? '').replace(/\s+\n/g, '\n').trim();
   const furi = () => getSettings().aiTask === 'furigana';
@@ -586,7 +597,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     },
     // (The toolbar's button: the bar shown or hidden — the translation stays; the first time, turned on.)
     toggleUi() { if (pill && !pill.hidden) { hidePill(); return; } if (pill) { showPill(); return; } buildPill(); void (async () => { const id = firstBook(); const kept = !!id && (Object.keys(await sourceIndex(id)).length > 0 || Object.keys(await cache(id)).length > 0); if (aiReady() || kept) setOn(true); else settingsSheet(); })(); },
-    dispose() { disposed = true; offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); for (const id of dirty) void db.setMeta(`tr:${id}`, caches.get(id) ?? {}); },
+    dispose() { disposed = true; offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); flush(); },
   };
 
   function settingsSheet() { aiSettingsSheet(() => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }, h('div', null, optionControls(), aheadControls())); }

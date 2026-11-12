@@ -166,4 +166,5 @@ export const ja: Partial<Strings> = {
   glossPasted: "追加した用語：{n}",
   copyAllNotes: "メモをすべてコピー",
   pdfProtected: "保護された PDF",
+  textRuleSlow: "この式には (a+)+ のような「繰り返しの中の繰り返し」があり、長い行でリーダーが固まることがあります。外側の繰り返しを使わずに書いてください。",
 };
