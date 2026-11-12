@@ -3,7 +3,7 @@
 import { h, icon, openSheet, toast, pickSheet } from './dom';
 import { t, formatBytes } from '../i18n';
 import { TARGETS, convertBook, convertible, type Target, type ConvOptions, type PdfPaper } from '../convert';
-import { db, type Book } from '../db';
+import { db, stampAfter, type Book } from '../db';
 import { importFiles } from '../library';
 import { shareFile, downloadBlob, fileNameField } from './share';
 import { runJob } from '../jobs';
@@ -99,7 +99,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       result.replaceChildren(
         h('button', { class: 'btn small primary', type: 'button', onclick: () => void shareFile(blob, name(), book.title) }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),
         h('button', { class: 'btn small', type: 'button', onclick: () => downloadBlob(blob, name()) }, icon('download'), t('saveFile')),
-        h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name(), { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
+        h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name(), { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; b.folderAt = stampAfter(b.folderAt); }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
       );
       result.hidden = false;
       if (target === 'kindle') result.append(h('p', { class: 'hint', style: { marginTop: '8px' } }, t('kindleHint')));

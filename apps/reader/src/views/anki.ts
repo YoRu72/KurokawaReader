@@ -3,7 +3,7 @@
 // so each note type's own CSS applies without touching the app.
 import { h, icon, iconButton, toast, clear, openSheet, pickSheet } from '../ui/dom';
 import { t, localDigits, countCards } from '../i18n';
-import { db, type Book } from '../db';
+import { db, stampAfter, type Book } from '../db';
 import { navigate, back } from '../router';
 import { getSettings, pageIsLight } from '../settings';
 import { scheduleSync } from '../sync';
@@ -49,7 +49,7 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
     const studied = Object.keys(p.cards).length;
     const pct = deck.cards.length ? studied / deck.cards.length : 0;
     tracker.advance(0, pct);
-    await db.updateBook(book.id, (b) => { b.progress = { bookId: book.id, pct }; b.progressAt = Date.now(); if (!getSettings().incognito) b.lastOpenedAt = Date.now(); });
+    await db.updateBook(book.id, (b) => { b.progress = { bookId: book.id, pct }; b.progressAt = stampAfter(b.progressAt); if (!getSettings().incognito) b.lastOpenedAt = Date.now(); });
     scheduleSync();
   };
 

@@ -1,10 +1,10 @@
 // Backup & restore. A "notes" backup is a small JSON file: settings, folders, custom-font list, the glossary and
 // text rules, and every book's bookmarks, highlights, notes, ink, reading position, ratings, chapter marks and links
-// (keyed by file name + size so they re-attach to the same files). A "full" backup is a ZIP with that JSON plus the
+// (keyed by file name + size so they re-attach to the same files; a book from an online source by its source and id). A "full" backup is a ZIP with that JSON plus the
 // book files, covers and the books' translations (paid for, at times: kept with the books, not in the small file).
 // No backup carries a credential (API keys, tokens, passwords): see scrubSettings.
 import JSZip from 'jszip';
-import { db, type Book, type Folder, type TagDef } from './db';
+import { db, stampAfter, type Book, type Folder, type TagDef } from './db';
 import { globalSettings, updateSettings, allBookSettings, setBookSettings, type VisualSettings } from './settings';
 import { listFonts, type CustomFont } from './fonts';
 import { shareFile } from './ui/share';
@@ -217,11 +217,15 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   // books
   const existing = await db.allBooks();
   const byKey = new Map(existing.map((b) => [keyOf(b), b]));
+  // (A book from an online source by where it came from: a web novel's file grows with every chapter, so its
+  // size — in the key — is not what it was when the backup was made.)
+  const remoteKey = (r?: Book['remote']) => (r?.source && r.id ? `${r.source}\u0000${r.id}` : '');
+  const byRemote = new Map(existing.filter((b) => remoteKey(b.remote)).map((b) => [remoteKey(b.remote), b]));
   const idMap = new Map<string, string>();   // the backup's book id → this device's
   let applied = 0;
   for (const rec of m.books) {
     onProgress?.(rec.title);
-    let book = byKey.get(rec.key);
+    let book = byRemote.get(remoteKey(rec.remote)) ?? byKey.get(rec.key);
     if (!book && zip && want.books) {
       const entry = zip.file(`books/${rec.id}/${rec.fileName}`);
       if (entry) {
@@ -290,7 +294,7 @@ function applyRecord(b: Book, rec: BookRecord, fid: string | undefined): void {
   if ((rec.lastOpenedAt ?? 0) > (b.lastOpenedAt ?? 0)) b.lastOpenedAt = rec.lastOpenedAt;
   if (rec.prefs) b.prefs = { ...b.prefs, ...rec.prefs };
   if (rec.stats && (rec.stats.sessionAt ?? 0) > (b.stats?.sessionAt ?? 0)) b.stats = rec.stats;
-  if (fid && !b.folderId) b.folderId = fid;
+  if (fid && !b.folderId) { b.folderId = fid; b.folderAt = stampAfter(b.folderAt); }
   if (rec.tags?.length) { b.tags = [...new Set([...(b.tags ?? []), ...rec.tags])]; b.tagsAt = Date.now(); }
   if (rec.done !== undefined && (rec.doneAt ?? 0) > (b.doneAt ?? 0)) { b.done = rec.done; b.doneAt = rec.doneAt; }
   if (rec.rating !== undefined && later(rec.ratingAt, b.ratingAt, b.rating !== undefined)) { b.rating = rec.rating; b.ratingAt = rec.ratingAt; }

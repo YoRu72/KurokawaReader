@@ -6,8 +6,8 @@ import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
 import { searchFormOf } from '../formats/types';
-import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
-import { db, uid, FAV_TAG, TOREAD_TAG, type Book, type Folder, type TagDef } from '../db';
+import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks, moveToFolder, deleteFolder, renameFolder } from '../library';
+import { db, uid, stampAfter, FAV_TAG, TOREAD_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats/detect';
 import { navigate } from '../router';
 import { readContentUri } from '../native';
@@ -862,7 +862,8 @@ export function libraryView(): HTMLElement {
   }
 
   async function moveBooks(ids: string[], folderId: string | null): Promise<void> {
-    for (const id of ids) { await db.updateBook(id, (b) => { if (folderId) b.folderId = folderId; else delete b.folderId; }); const bk = books.find((b) => b.id === id); if (bk) { if (folderId) bk.folderId = folderId; else delete bk.folderId; } }
+    await moveToFolder(ids, folderId);
+    for (const id of ids) { const bk = books.find((b) => b.id === id); if (bk) { if (folderId) bk.folderId = folderId; else delete bk.folderId; } }
     setSelecting(false);
     renderGrid();
   }
@@ -886,8 +887,8 @@ export function libraryView(): HTMLElement {
       const s = openSheet(f.name, t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
-        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const name = await askName(t('renameFolder'), f.name); if (name) { f.name = name; await db.setMeta('folders', folders); renderChips(); renderGrid(); } } }, icon('type'), t('renameFolder'))),
-        h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteFolderConfirm', { name: f.name }))) return; folders = folders.filter((x) => x.id !== id); await db.setMeta('folders', folders); for (const b of books) if (b.folderId === id) { delete b.folderId; await db.updateBook(b.id, (bb) => { delete bb.folderId; }); } if (activeFolder === id) { activeFolder = null; localStorage.removeItem('kr.folder'); } renderChips(); renderGrid(); s.close(); } }, icon('trash'), t('deleteFolder')))));
+        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const name = await askName(t('renameFolder'), f.name); if (name) { folders = await renameFolder(id, name); renderChips(); renderGrid(); } } }, icon('type'), t('renameFolder'))),
+        h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteFolderConfirm', { name: f.name }))) return; folders = await deleteFolder(id); for (const b of books) if (b.folderId === id) delete b.folderId; if (activeFolder === id) { activeFolder = null; localStorage.removeItem('kr.folder'); } renderChips(); renderGrid(); s.close(); } }, icon('trash'), t('deleteFolder')))));
     });
   }
 
@@ -1107,7 +1108,7 @@ export function libraryView(): HTMLElement {
     let ok = 0;
     const target = folderId;
     await importFiles(files, (book, file, err) => {
-      if (book) { ok++; if (target) void db.updateBook(book.id, (b) => { b.folderId = target; }); } else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
+      if (book) { ok++; if (target) void db.updateBook(book.id, (b) => { b.folderId = target; b.folderAt = stampAfter(b.folderAt); }); } else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
     });
     if (ok) toast(t('imported', { n: countBooks(ok) }));
     await refresh();

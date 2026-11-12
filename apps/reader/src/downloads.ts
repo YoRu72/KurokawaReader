@@ -7,7 +7,7 @@
 // whatever view is open, and the view that asked is told through onDownloads.
 import { fileFault } from './filecheck';
 import { setBusy, clearBusy } from './busy';
-import { db } from './db';
+import { db, stampAfter } from './db';
 import { importFiles } from './library';
 import { t, formatBytes, localDigits, countConnections } from './i18n';
 import { toast } from './ui/dom';
@@ -120,7 +120,7 @@ async function runNow(d: Download): Promise<void> {
       }
       const added = await importFiles([file]);
       if (!added.length) throw new Error(t('convertFailed'));
-      await db.updateBook(added[0].id, (b) => { b.remote = { source: d.then.srcId, id: d.then.itemId }; if (d.then.folderId) b.folderId = d.then.folderId; if (d.then.series) b.series = d.then.series; if (d.then.tags?.length) b.tags = [...new Set([...(b.tags ?? []), ...d.then.tags])]; });
+      await db.updateBook(added[0].id, (b) => { b.remote = { source: d.then.srcId, id: d.then.itemId }; if (d.then.folderId) { b.folderId = d.then.folderId; b.folderAt = stampAfter(b.folderAt); } if (d.then.series) b.series = d.then.series; if (d.then.tags?.length) b.tags = [...new Set([...(b.tags ?? []), ...d.then.tags])]; });
       d.bookId = added[0].id; book = added[0];
       return { blob: file, name: file.name };
     }, () => true, { quiet: true });

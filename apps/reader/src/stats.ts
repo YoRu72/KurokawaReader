@@ -1,7 +1,7 @@
 // Reading statistics: time spent with a book open and visible, words passed,
 // pages, sessions, per-day history. Drives "Book information" and the library
 // statistics sheet (hours, speed, history, time left, daily goal).
-import { db, type Book, type ReadingStats } from './db';
+import { db, type Book, type ReadingStats, type ReadingDay, type StatsPart } from './db';
 import { getSettings } from './settings';
 
 const TICK_MS = 5000;
@@ -48,6 +48,35 @@ export function todayKey(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/* ---------- counters, added and compared (sync keeps each device's apart: src/sync.ts) ---------- */
+const COUNTERS = ['ms', 'words', 'pages', 'sessions'] as const;
+export const emptyPart = (): StatsPart => ({ ms: 0, words: 0, days: {} });
+/** The counters of `a` and `b` put together day by day: `add` (the sum), `max` (the larger), `sub` (a less b, not
+ *  below 0). A day's `pct` (how far the book was that day) is the larger, or a's for `sub`. */
+export function combineStats(a: StatsPart | undefined, b: StatsPart | undefined, op: 'add' | 'max' | 'sub'): StatsPart {
+  const f = (x = 0, y = 0) => (op === 'add' ? x + y : op === 'max' ? Math.max(x, y) : Math.max(0, x - y));
+  const out: StatsPart = { ms: 0, words: 0, days: {} };
+  for (const k of COUNTERS) { const v = f(a?.[k], b?.[k]); if (v || k === 'ms' || k === 'words') out[k] = v; }
+  const days = new Set([...Object.keys(a?.days ?? {}), ...Object.keys(b?.days ?? {})]);
+  for (const d of days) {
+    const x = a?.days?.[d], y = b?.days?.[d];
+    if (op === 'sub' && !x) continue;
+    const day: ReadingDay = { ms: f(x?.ms, y?.ms), words: f(x?.words, y?.words), pct: op === 'sub' ? x?.pct ?? 0 : Math.max(x?.pct ?? 0, y?.pct ?? 0) };
+    for (const k of ['sessions', 'pages'] as const) { const v = f(x?.[k], y?.[k]); if (v) day[k] = v; }
+    if (op === 'sub' && !day.ms && !day.words && !day.sessions && !day.pages && day.pct <= (y?.pct ?? 0)) continue;
+    out.days[d] = day;
+  }
+  return out;
+}
+/** The counters of a book's statistics (a copy). */
+export const partOf = (s?: StatsPart): StatsPart => combineStats(s, undefined, 'add');
+/** Statistics with their counters replaced (the book's word counts and last session time kept). */
+export const withCounters = (s: ReadingStats | undefined, part: StatsPart): ReadingStats => {
+  const out: ReadingStats = { ...(s ?? { ms: 0, words: 0, days: {} }) };
+  delete out.pages; delete out.sessions;
+  return Object.assign(out, part);
+};
+
 /** Statistics of books being read right now, so the library is current before the next save. */
 const liveStats = new Map<string, ReadingStats>();
 export function liveStatsOf(id: string): ReadingStats | undefined {
@@ -56,6 +85,8 @@ export function liveStatsOf(id: string): ReadingStats | undefined {
 
 export class ReadingTracker {
   private stats: ReadingStats;
+  /** The counters as last saved: a save adds what was read since to what is kept (which a sync may have changed). */
+  private saved: StatsPart;
   private timer: number | undefined;
   private saveTimer: number | undefined;
   private lastTick = 0;
@@ -67,6 +98,7 @@ export class ReadingTracker {
 
   constructor(private book: Book, private isActive: () => boolean, bookWords?: number, bookChars?: number) {
     this.stats = book.stats ?? { ms: 0, words: 0, days: {} };
+    this.saved = partOf(this.stats);
     if (bookWords != null) this.stats.bookWords = bookWords;
     if (bookChars != null) this.stats.bookChars = bookChars;
     this.totalPages = book.pageCount ?? (this.stats.bookWords ? Math.max(1, Math.round(this.stats.bookWords / WORDS_PER_PAGE)) : 0);
@@ -145,7 +177,25 @@ export class ReadingTracker {
     this.dirty = false;
     this.book.stats = this.stats;
     liveStats.set(this.book.id, this.stats);
-    await db.updateBook(this.book.id, (b) => { b.stats = this.stats; });
+    // (What was read since the last save, added to what is kept — not the whole written over it: a sync in between
+    // may have added another device's reading, and this device's own part is counted apart for the next one.)
+    const snap = partOf(this.stats); const delta = combineStats(snap, this.saved, 'sub');
+    const { sessionAt, bookWords, bookChars } = this.stats;
+    const kept = await db.updateBook(this.book.id, (b) => {
+      const next = withCounters(b.stats, combineStats(b.stats, delta, 'add'));
+      next.sessionAt = Math.max(next.sessionAt ?? 0, sessionAt ?? 0) || undefined;
+      if (bookWords != null) next.bookWords = bookWords;
+      if (bookChars != null) next.bookChars = bookChars;
+      b.stats = next;
+      if (b.statsSync) b.statsSync.own = combineStats(b.statsSync.own, delta, 'add');
+    });
+    if (!kept?.stats) return;
+    // (Ticks counted while it was being written are kept on top.)
+    const extra = combineStats(partOf(this.stats), snap, 'sub');
+    this.saved = partOf(kept.stats);
+    this.stats = withCounters({ ...kept.stats, sessionAt: this.stats.sessionAt }, combineStats(kept.stats, extra, 'add'));
+    this.book.stats = this.stats;
+    liveStats.set(this.book.id, this.stats);
   }
 
   async stop(): Promise<void> {

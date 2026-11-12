@@ -63,6 +63,14 @@ export interface Highlight {
 
 export interface ReadingDay { ms: number; pct: number; words: number; sessions?: number; pages?: number }
 export interface ReadingStats { ms: number; words: number; pages?: number; sessions?: number; sessionAt?: number; days: Record<string, ReadingDay>; bookWords?: number; bookChars?: number }
+/** Reading counted by one device (or before devices kept theirs apart): the counters of ReadingStats only. */
+export type StatsPart = Pick<ReadingStats, 'ms' | 'words' | 'pages' | 'sessions' | 'days'>;
+/** How a book's statistics are made up across devices (sync): `stats` is base + own + every other device's part,
+ *  each part only ever growing, so a merge takes the larger of each and never counts one twice.
+ *  `dev`: this device (its `own` counted since); `base`: what all devices had counted before they kept parts
+ *  apart (the larger of theirs); `by`: the other devices' parts, as last seen; `floor`: the whole statistics
+ *  an earlier version wrote (the total is never less). */
+export interface StatsSync { dev: string; own: StatsPart; base: StatsPart; by: Record<string, StatsPart>; floor?: StatsPart }
 
 export interface Folder { id: string; name: string; createdAt: number }
 /** A tag the user created; kept even while no book carries it (meta 'tags'). */
@@ -71,9 +79,12 @@ export interface TagDef { name: string; createdAt: number }
 export interface Book {
   id: string;
   folderId?: string;
+  /** When the book was last put in a folder or taken out of one (sync: the later move wins). */
+  folderAt?: number;
   tags?: string[];
   tagsAt?: number;
   stats?: ReadingStats;
+  statsSync?: StatsSync;
   title: string;
   author?: string;
   language?: string;
@@ -299,6 +310,12 @@ export const db = {
     await tx('texts', 'readwrite', (s) => s.clear()).catch(() => undefined);
   },
 };
+
+/** A time for a change that replaces one stamped `prev`: now, or just after `prev` when that is later (a stamp
+ *  that came from a device whose clock runs ahead) — so a change made after seeing another always wins over it. */
+export function stampAfter(prev?: number): number {
+  return Math.max(Date.now(), (prev ?? 0) + 1);
+}
 
 export function uid(): string {
   return (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/-/g, '').slice(0, 20);
