@@ -104,23 +104,34 @@ export class UrlPool {
 }
 
 const purify = DOMPurify;
-purify.addHook('uponSanitizeAttribute', (_node, data) => {
+const keepLinks = (_node: Element, data: { attrName: string; attrValue: string; forceKeepAttr?: boolean }) => {
   // Keep the `epub:type` style namespaced attributes out, allow data-* and blob: image sources.
   if (data.attrName === 'src' || data.attrName === 'href' || data.attrName === 'xlink:href') {
     if (/^(blob:|data:image\/|#|[^:]*$)/i.test(data.attrValue)) data.forceKeepAttr = true;
   }
+};
+purify.addHook('uponSanitizeAttribute', keepLinks);
+
+const purifyConfig = (keepStyles: boolean) => ({
+  IN_PLACE: true,
+  WHOLE_DOCUMENT: false,
+  ADD_TAGS: ['section', 'figure', 'figcaption', 'svg', 'image', 'use', 'nav', 'aside', 'ruby', 'rt', 'rp', 'wbr', 'mark'],
+  ADD_ATTR: ['xlink:href', 'viewBox', 'preserveAspectRatio', 'dir', 'lang', 'epub:type', 'loading', 'decoding', 'data-kr-src', 'data-kr-anchor', 'colspan', 'rowspan'],
+  FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select', 'link', 'meta', 'base', 'title', ...(keepStyles ? [] : ['style', 'font'])],
+  FORBID_ATTR: keepStyles ? ['onload', 'onerror'] : ['style', 'color', 'bgcolor', 'background', 'face', 'align', 'width', 'height', 'border', 'cellpadding', 'cellspacing', 'onload', 'onerror'],
+  ALLOW_UNKNOWN_PROTOCOLS: true,
 });
+/** One sanitizer for each of the two settings, its settings read once: given with every call, they were read
+ *  again for each chapter — a third of the time a book of hundreds of chapters spent being cleaned. */
+const purifiers = new Map<boolean, typeof DOMPurify>();
+function purifierFor(keepStyles: boolean): typeof DOMPurify {
+  let p = purifiers.get(keepStyles);
+  if (!p) { p = DOMPurify(window); p.addHook('uponSanitizeAttribute', keepLinks); p.setConfig(purifyConfig(keepStyles)); purifiers.set(keepStyles, p); }
+  return p;
+}
 
 export function sanitize(root: Element, keepStyles: boolean): void {
-  purify.sanitize(root, {
-    IN_PLACE: true,
-    WHOLE_DOCUMENT: false,
-    ADD_TAGS: ['section', 'figure', 'figcaption', 'svg', 'image', 'use', 'nav', 'aside', 'ruby', 'rt', 'rp', 'wbr', 'mark'],
-    ADD_ATTR: ['xlink:href', 'viewBox', 'preserveAspectRatio', 'dir', 'lang', 'epub:type', 'loading', 'decoding', 'data-kr-src', 'data-kr-anchor', 'colspan', 'rowspan'],
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select', 'link', 'meta', 'base', 'title', ...(keepStyles ? [] : ['style', 'font'])],
-    FORBID_ATTR: keepStyles ? ['onload', 'onerror'] : ['style', 'color', 'bgcolor', 'background', 'face', 'align', 'width', 'height', 'border', 'cellpadding', 'cellspacing', 'onload', 'onerror'],
-    ALLOW_UNKNOWN_PROTOCOLS: true,
-  });
+  purifierFor(keepStyles).sanitize(root);
 }
 
 /** Give every block a direction of its own so mixed Arabic/English books read naturally,
@@ -247,11 +258,23 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, 
 export function textToParagraphs(text: string, container: HTMLElement): void {
   // Blank-line separated paragraphs; single newlines are kept as soft breaks.
   const paras = text.replace(/\r\n?/g, '\n').split(/\n{2,}/);
+  // A long text in runs of paragraphs (div.kr-run), each laid out only when near the screen (content-visibility in
+  // reader.css): a novel of several megabytes was laid out whole before its first line showed — seconds on a phone.
+  // Until a run is laid out its height is reckoned from its characters and paragraphs (--kr-run-c, --kr-run-p; the
+  // reader measures one run for the rest — sizeRuns in views/reader.ts). A short text stays as it was.
+  const long = text.length > RUN_TEXT * 3;
+  let run: HTMLElement | null = null, chars = 0, count = 0;
+  const close = () => { if (run) { run.style.setProperty('--kr-run-c', String(chars)); run.style.setProperty('--kr-run-p', String(count)); } };
   for (const p of paras) {
     const t = p.replace(/\n+$/, '');
     if (!t.trim()) continue;
     const pe = el('p', 'kr-txt');
     pe.textContent = t;
-    container.appendChild(pe);
+    if (!long) { container.appendChild(pe); continue; }
+    if (!run || chars >= RUN_TEXT || count >= 64) { close(); run = el('div', 'kr-run'); container.appendChild(run); chars = 0; count = 0; }
+    run.appendChild(pe); chars += t.length; count++;
   }
+  close();
 }
+/** About how much text a run of a long plain text holds (characters). */
+const RUN_TEXT = 12_000;

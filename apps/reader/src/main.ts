@@ -15,6 +15,7 @@ import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
 import { initPcShell } from './ui/pcshell';
+import { takeResume } from './resume';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
@@ -125,8 +126,12 @@ onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);
 mount(parseRoute());
+// A book the app was ended under (by the system, for its memory) opened again where it was — not the library.
+const startsOnLibrary = location.hash === '' || location.hash === '#/' || location.hash === '#';
+const resumed = startsOnLibrary ? takeResume() : null;
+if (resumed) navigate(`/read/${resumed.join(',')}`);
 // Optionally resume the last book on a cold start.
-if (getSettings().openLastOnLaunch && (location.hash === '' || location.hash === '#/' || location.hash === '#')) {
+else if (getSettings().openLastOnLaunch && startsOnLibrary) {
   void import('./db').then(({ db }) => db.allBooks()).then((books) => {
     const last = books.filter((b) => b.lastOpenedAt).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
     if (last) navigate(`/read/${last.id}`);
