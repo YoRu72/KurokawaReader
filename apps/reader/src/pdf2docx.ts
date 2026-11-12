@@ -6,8 +6,8 @@
 // Arabic is right-to-left throughout (bidi paragraphs and tables, complex-script fonts and sizes).
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import { cmapsUrl } from './slim';
-import { buildFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
-import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics, renamedFont } from './fontbuild';
+import { buildFont, plainFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
+import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics, renamedFont, type Outline } from './fontbuild';
 import { loadPdfjs, offscreen } from './pdfjsload';
 import { type ZipLike } from './ziputil';
 import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets, numberRunsForward, ltrRunsForward } from './pdftext';
@@ -32,11 +32,13 @@ type Piece = { text: string; l: number; r: number; y: number; h: number; font: s
   /** Marks put into this piece's text that the page draws in a colour of their own (a red haraka on a black letter). */
   tints?: { base: string; mark: string; color: string }[] };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
-type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[] };
+type Os2 = { weight: number; italic: boolean; bold: boolean; usb: number[]; csb: number[]; panose?: string };
 type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number; rtl: boolean; spacer?: number; grid?: GridSpec };
 /** A page area in PDF coordinates (y up). */
 type Box = { l: number; r: number; top: number; bottom: number };
-type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; tabEnd?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece };
+/** (`fk`: the PDF font the run was set in — its key in the converter's font map — so that two different fonts
+ *  that give themselves one name can be told apart once all pages are read; see buildDocFonts.) */
+export type Run = { text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; tab?: number; tabEnd?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece; fk?: string };
 type Para = { kind: 'p'; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: { pos: number; type: 'left' | 'right' | 'center' }[]; /** its first line's baseline (PDF units, from the page's foot) */ base0?: number };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number; exts?: [number, number][]; lead?: boolean };
 /** A ruled table: its columns (page x, left to right) and rows (page y, top down), and per row its cells
@@ -142,7 +144,7 @@ function readOs2(bytes: Uint8Array): Os2 | null {
     for (let i = 0; i < n; i++) { const r = 12 + i * 16; if (String.fromCharCode(...bytes.subarray(r, r + 4)) === 'OS/2') o = dv.getUint32(r + 8); }
     if (o < 0) return null;
     const version = dv.getUint16(o), sel = dv.getUint16(o + 62);
-    return { weight: dv.getUint16(o + 4), italic: !!(sel & 1), bold: !!(sel & 32), usb: [42, 46, 50, 54].map((k) => dv.getUint32(o + k)), csb: version >= 1 ? [dv.getUint32(o + 78), dv.getUint32(o + 82)] : [1, 0] };
+    return { weight: dv.getUint16(o + 4), italic: !!(sel & 1), bold: !!(sel & 32), usb: [42, 46, 50, 54].map((k) => dv.getUint32(o + k)), csb: version >= 1 ? [dv.getUint32(o + 78), dv.getUint32(o + 82)] : [1, 0], panose: Array.from(bytes.subarray(o + 32, o + 42), (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase() };
   } catch { return null; }
 }
 
@@ -165,6 +167,19 @@ function editableFont(bytes: Uint8Array): boolean {
     }
     return true;
   } catch { return false; }
+}
+
+/** Whether a font's OS/2 fsType lets it travel in a document that can be edited: installable (0) or editable
+ *  (8) — the least restrictive bit set wins — not preview & print (4) or restricted (2) alone. */
+function embeddable(bytes: Uint8Array): boolean {
+  try {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let i = 0, n = dv.getUint16(4); i < n; i++) {
+      const r = 12 + i * 16;
+      if (String.fromCharCode(...bytes.subarray(r, r + 4)) === 'OS/2') { const t = dv.getUint16(dv.getUint32(r + 8) + 8); return !(t & 0x6) || !!(t & 0x8); }
+    }
+    return true;
+  } catch { return true; }
 }
 
 function cmapCoverage(bytes: Uint8Array, windowsOnly = false): Set<number> {
@@ -867,7 +882,7 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
       const cut = Math.min(trim, /\u0640$/.test(lastText) ? lead : lead - 1);
       if (cut > 0) text = text.slice(cut);
     }
-    const look: Omit<Run, 'text'> = { font: f.family, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
+    const look: Omit<Run, 'text'> = { font: f.family, fk: p.font, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
     // (Marks the page colours apart from their letters: the text cut there, each part a run in its colour.)
     const parts = p.tints ? tintParts(text, p.tints, look.color) : null;
     if (parts) text = parts[0].text;
@@ -1444,16 +1459,56 @@ function isWordFont(f: FontInfo, seq: GlyphUse[]): boolean {
 /** Rebuild the embedded fonts from their glyphs and how the document uses them (see fontfix.ts). Fonts
  *  that are one face (same family and style: subsets of one font) or that share words (legacy Arabic fonts
  *  holding different letter forms) become one font. Returns family renames for the runs. */
-function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched: Set<string>): Map<string, string> {
-  const alias = new Map<string, string>();
+function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched: Set<string>): { alias: Map<string, string>; byKey: Map<string, string> } {
+  const alias = new Map<string, string>(); const byKey = new Map<string, string>();
   const parent = new Map<string, string>();
   const find = (k: string): string => { let r = k; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(k, r); return r; };
   const union = (a: string, b: string) => { const x = find(a), y = find(b); if (x !== y) parent.set(y, x); };
   const used = [...fonts].filter(([, f]) => f.uses && f.src);
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) for (const [k, f] of fonts) if (!(f.uses && f.src)) console.warn('P2D font-unused', k, f.family, f.uses, !!f.src, !!f.raw, f.legacy, f.wordFont);
   for (const [k] of used) parent.set(k, k);
-  const byFace = new Map<string, string>();
-  for (const [k, f] of used) { const key = `${f.family}|${f.bold}|${f.italic}`; const o = byFace.get(key); if (o) union(o, k); else byFace.set(key, k); }
+  // Fonts of one name and style are subsets of one face — unless they draw the same characters with other
+  // glyphs: two fonts that only share a name (a maker's own "Times New Roman" that draws Arabic under Latin
+  // codes beside the real one; two different fonts a PDF tool called alike). Merged, each character got one of
+  // the two glyphs and the other font's text drew the wrong ones; they stay apart, the second under a name of
+  // its own. (Told by the characters both set: none of them drawn with the same outline.)
+  const drawn = new Map<string, Map<string, Set<string>>>(); // font key → character → its glyphs' outlines
+  let index: Map<string, number[]> | null = null; // font key → the lines it sets (worked out when first asked)
+  const seqsOf = () => { if (!index) { index = new Map(); store.seqs.forEach((seq, si) => { let last = ''; for (const [font] of seq) if (font !== last) { last = font; const l = index!.get(font) ?? index!.set(font, []).get(font)!; if (l[l.length - 1] !== si) l.push(si); } }); } return index; };
+  const drawnBy = (k: string): Map<string, Set<string>> => {
+    let m = drawn.get(k); if (m) return m; m = new Map(); drawn.set(k, m);
+    const f = fonts.get(k)!; const sf = readSfnt(f.src!.data); if (!sf) return m;
+    try {
+      const r = glyphReader(sf); const cm = cmapGlyphs(sf); const pairs = new Set<string>();
+      for (const si of seqsOf().get(k) ?? []) for (const [font, u] of store.seqs[si]) if (font === k && u[1] && [...u[1]].length === 1 && u[1].trim() && !COMBINING.test(u[1])) pairs.add(`${u[0]}|${u[1]}`);
+      const sc = 1000 / r.upem; const keyOf = new Map<number, string>();
+      for (const pr of pairs) {
+        const at = pr.indexOf('|'); const g = cm.get(f.src!.toFontChar[pr.slice(0, at)]); if (!g) continue;
+        let key = keyOf.get(g);
+        if (key === undefined) { const o = r.outline(g); key = o.contours.length ? o.contours.map((c) => c.map((q) => `${Math.round(q.x * sc)},${Math.round(q.y * sc)}`).join(';')).join('|') : ''; keyOf.set(g, key); }
+        if (!key) continue;
+        const ch = pr.slice(at + 1); (m.get(ch) ?? m.set(ch, new Set()).get(ch)!).add(key);
+      }
+    } catch { /* unreadable: no evidence either way */ }
+    return m;
+  };
+  const alike = (a: string, b: string): boolean => {
+    const x = drawnBy(a), y = drawnBy(b); let common = 0;
+    for (const [ch, gs] of x) { const o = y.get(ch); if (!o) continue; common++; for (const g of gs) if (o.has(g)) return true; }
+    return common < 3;
+  };
+  const byFace = new Map<string, string[]>();
+  const firstName = new Map<string, string>(); // a group's first font → the name its font gets
+  const taken = new Set([...fonts.values()].map((f) => f.family));
+  for (const [k, f] of used) {
+    const key = `${f.family}|${f.bold}|${f.italic}`; const reps = byFace.get(key);
+    if (!reps) { byFace.set(key, [k]); continue; }
+    const o = reps.find((r) => alike(r, k));
+    if (o) { union(o, k); continue; }
+    reps.push(k);
+    let n = reps.length, name: string; do name = `${f.family} (${n++})`; while (taken.has(name));
+    taken.add(name); firstName.set(k, name);
+  }
   // Legacy fonts are one font when they meet inside words often (a bold face meets the regular one only now
   // and then, where a phrase in bold runs into its quote mark).
   const meet = new Map<string, number>();
@@ -1469,6 +1524,12 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
   }
   const groups = new Map<string, string[]>();
   for (const [k] of used) { const r = find(k); (groups.get(r) ?? groups.set(r, []).get(r)!).push(k); }
+  // (A font told apart from its namesake: it and its subsets go by their own name, and so do their runs.)
+  const ownFamily = new Map<string, string>(); // font key → the family it had (what `stretched` knows it by)
+  for (const keys of groups.values()) {
+    const name = keys.map((k) => firstName.get(k)).find(Boolean); if (!name) continue;
+    for (const k of keys) { const f = fonts.get(k)!; ownFamily.set(k, f.family); f.family = name; byKey.set(k, name); }
+  }
   const debug = (globalThis as { krDebugP2D?: boolean }).krDebugP2D;
   // (The fonts each line sets, worked out once: a font's lines are then found without going through every line
   // of the book for each font.)
@@ -1478,13 +1539,20 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     const lead = fonts.get(keys[0])!;
     // A complete TrueType font with a Unicode map is carried as it is.
     // A font of its own with a Unicode map that has the characters the document sets in it is carried as it is.
+    // (Its characters as the runs will have them: a presentation form read as its letter — a word font's codes
+    // stay as they are — and a sign font's symbol table counted, where its kept codes are looked up. Measured on
+    // the glyphs' own text, the forms a Word-made subset maps passed, the letters the runs carry did not, and the
+    // font was neither rebuilt nor embedded: "Droid Arabic Naskh" fell back to whatever Word had.)
+    // (Every Arabic letter must be there: a letter that falls back to another font breaks its word's joining —
+    // a «خ» missing from a subset showed 55 times in a stranger's shape. A missing sign or digit or two still may.)
     if (keys.length === 1 && lead.raw && !lead.legacy) {
-      let cov: Set<number> | null = null; try { cov = cmapCoverage(lead.raw); } catch { /* unreadable */ }
+      let cov: Set<number> | null = null; try { cov = new Set([...cmapCoverage(lead.raw), ...cmapCoverage(lead.raw, true)]); } catch { /* unreadable */ }
       if (cov?.size) {
         const used = new Set<number>();
-        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of u[1]) { const c = ch.codePointAt(0)!; if (c > 0x20 && !(c >= 0x200b && c <= 0x200f) && !COMBINING.test(ch)) used.add(c); } });
-        let ok = 0; for (const c of used) if (cov.has(c)) ok++;
-        if (!used.size || ok / used.size >= 0.97) continue;
+        const asRun = (s: string) => (lead.wordFont || !/[ﭐ-﷯ﹰ-﻿]/.test(s) ? s : s.normalize('NFKC'));
+        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of asRun(u[1])) { const c = ch.codePointAt(0)!; if (c > 0x20 && !(c >= 0x200b && c <= 0x200f) && c !== 0xffff && !COMBINING.test(ch)) used.add(c); } });
+        let ok = 0, letters = 0; for (const c of used) if (cov.has(c)) ok++; else if (ARABIC_LETTER.test(String.fromCodePoint(c))) letters++;
+        if (!used.size || (ok / used.size >= 0.97 && !letters)) continue;
       }
     }
     const sources: GlyphSource[] = []; const c2g: Map<number, number>[] = []; const idx = new Map<string, number>();
@@ -1517,14 +1585,18 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     let sp = !lead.legacy && lead.spaceCode !== undefined && idx.has(keys[0]) ? c2g[idx.get(keys[0])!].get(lead.spaceCode) : undefined;
     if (sp !== undefined) { try { if (sources[idx.get(keys[0])!].outline(sp).contours.length) sp = undefined; } catch { sp = undefined; } }
     let built: Uint8Array | null = null;
-    try { built = buildFont(sources, lines, { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) }, sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp); } catch (e) { console.warn('P2D font rebuild failed', lead.family, e); }
+    try { built = buildFont(sources, lines, { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(ownFamily.get(k) ?? fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) }, sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp); } catch (e) { console.warn('P2D font rebuild failed', lead.family, e); }
     if (debug) console.warn('P2D rebuilt', lead.family, keys.length, lines.length, built?.length, built ? (() => { try { const c = cmapCoverage(built); return `cov=${c.size} ${[...c].slice(0, 12).map((x) => x.toString(16)).join(' ')}`; } catch (e) { return `cov-err ${String(e)}`; } })() : '', JSON.stringify(lines.slice(0, 2).map((l) => l.slice(0, 4).map((u) => [u[0] >> 16, u[0] & 0xffff, u[1]]))));
     if (!built) continue;
-    lead.raw = built; lead.cov = undefined; lead.rebuilt = true; lead.noUnicode = false;
+    // (Its coverage is the new font's: the symbol table read from the PDF's copy no longer describes it.)
+    lead.raw = built; lead.cov = undefined; lead.winCov = undefined; lead.rebuilt = true; lead.noUnicode = false;
     for (const k of keys.slice(1)) { const f = fonts.get(k)!; if (f.family !== lead.family) alias.set(f.family, lead.family); f.raw = undefined; }
   }
-  return alias;
+  return { alias, byKey };
 }
+
+/** An Arabic letter (one that joins its word, or a hamza / alef form): not a mark, digit, sign or punctuation. */
+const ARABIC_LETTER = /[ؠ-ؿف-يٮٯٱ-ۓەۮۯۺ-ۼۿ]/;
 
 /** A space as wide as the commonest gap between words (em), when the PDF draws none. */
 function spaceFromGaps(gaps: number[]): number {
@@ -1535,9 +1607,9 @@ function spaceFromGaps(gaps: number[]): number {
 
 /** Runs set in fonts merged into another take its name, and runs that now match are joined (Arabic joins only
  *  within a run). */
-function renameRuns(pg: PageModel, alias: Map<string, string>) {
+function renameRuns(pg: PageModel, alias: Map<string, string>, byKey = new Map<string, string>()) {
   const fix = (runs: Run[]) => {
-    for (const r of runs) r.font = alias.get(r.font) ?? r.font;
+    for (const r of runs) r.font = (r.fk !== undefined ? byKey.get(r.fk) : undefined) ?? alias.get(r.font) ?? r.font;
     for (let i = runs.length - 1; i > 0; i--) {
       const a = runs[i - 1], b = runs[i];
       if (a.font === b.font && a.size === b.size && a.bold === b.bold && a.italic === b.italic && a.color === b.color && a.sup === b.sup && a.rtl === b.rtl && a.raise === b.raise
@@ -1548,10 +1620,113 @@ function renameRuns(pg: PageModel, alias: Map<string, string>) {
       }
     }
   };
+  eachRunList(pg, fix);
+}
+
+/** Every list of runs a page holds: its paragraphs', table cells', notes', running heads', boxes'. */
+export function eachRunList(pg: PageModel, fix: (runs: Run[]) => void): void {
   const block = (b: Block) => { if (b.kind === 'p') fix(b.runs); else for (const row of b.rows) for (const cell of row) fix(cell); };
   for (const b of [...pg.body, ...pg.header, ...pg.footer, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat()), ...(pg.placed ?? []).flatMap((x) => x.blocks)]) block(b);
   for (const f of pg.furniture) fix(f.runs);
   for (const pp of pg.vert?.paras ?? []) fix(pp.runs);
+  for (const bx of pg.boxes ?? []) fix(bx.runs);
+}
+
+/** Code points a word font's glyphs are filed under when fonts of them are merged: Arabic presentation forms
+ *  (letters, so right to left like the codes the Quran fonts use themselves — a private-use code is left to
+ *  right, and a verse's words would come out in the wrong order — and none the shapers treat apart: no
+ *  harakat forms, no word ligatures like ﷲ). */
+const WORD_CODES: number[] = (() => { const out: number[] = []; for (const [a, z] of [[0xfb50, 0xfdc7], [0xfe80, 0xfefc]]) for (let c = a; c <= z; c++) if (/\p{Script=Arabic}/u.test(String.fromCharCode(c)) && /\p{Lo}/u.test(String.fromCharCode(c))) out.push(c); return out; })();
+
+/**
+ * The Quran's word fonts (QCF: a font per page of the mushaf, each glyph a whole word filed under a code that
+ * every page's font uses again for another word) put together into a few fonts: each word's glyph copied as it
+ * is — outline and advance — under a code of its own, the runs' codes changed to match. A book quoting the
+ * Quran carried a font per page it quotes (263 in one, Word's font list full of them); now a font for each set
+ * of fonts that measure alike (units per em, ascent and descent, space), as many words as there are codes.
+ * The runs' text was never the words (presentation-form codes standing for glyphs); it stays codes. A font
+ * with shaping or kerning tables, a code it has no glyph for, or more words than codes, stays as it is.
+ */
+function mergeWordFonts(fonts: Map<string, FontInfo>, pages: PageModel[]): void {
+  // (Of a name's copies, the one the text was set in — rebuilt or carried — as the font table would pick it; two
+  // such copies of one name are left alone.)
+  const cand = new Map<string, FontInfo[]>();
+  for (const f of fonts.values()) if (f.wordFont && f.raw && /^QCF/i.test(f.family)) (cand.get(f.family) ?? cand.set(f.family, []).get(f.family)!).push(f);
+  const fam = new Map<string, FontInfo>();
+  for (const [k, list] of cand) { const live = list.filter((f) => f.uses || f.rebuilt); const pick = live.length ? live : list; if (pick.length === 1) fam.set(k, pick[0]); }
+  if (fam.size < 2) return;
+  const used = new Map<string, Set<number>>();
+  for (const pg of pages) eachRunList(pg, (runs) => { for (const r of runs) if (fam.has(r.font)) { const u = used.get(r.font) ?? used.set(r.font, new Set()).get(r.font)!; for (const ch of r.text + (r.kText ?? '')) u.add(ch.codePointAt(0)!); } });
+  const i16 = (t: Uint8Array | undefined, o: number) => (t && t.length >= o + 2 ? new DataView(t.buffer, t.byteOffset, t.byteLength).getInt16(o) : 0);
+  const lookups = (t: Uint8Array | undefined) => { if (!t || t.length < 10) return 0; const d = new DataView(t.buffer, t.byteOffset, t.byteLength); const ll = d.getUint16(8); return ll && ll + 2 <= t.length ? d.getUint16(ll) : 0; };
+  type Word = { outline: Outline; key: string };
+  const groups = new Map<string, { name: string; words: Map<number, Word>; space?: Outline; upem: number; asc: number; desc: number; os2: Uint8Array; rebuilt: boolean }[]>();
+  for (const [name, f] of fam) {
+    const chars = used.get(name); if (!chars?.size) continue;
+    const sf = readSfnt(f.raw!); if (!sf || sf.cff) continue;
+    const os2 = sf.tables.get('OS/2'); if (!os2 || os2.length < 78) continue;
+    if (lookups(sf.tables.get('GSUB')) || lookups(sf.tables.get('GPOS')) || sf.tables.has('kern')) continue;
+    let cm: Map<number, number>, rd: ReturnType<typeof glyphReader>;
+    try { cm = cmapGlyphs(sf); rd = glyphReader(sf); } catch { continue; }
+    const words = new Map<number, Word>(); let space: Outline | undefined; let ok = true;
+    for (const c of chars) {
+      const g = cm.get(c); if (!g) { ok = false; break; }
+      let o: Outline; try { o = rd.outline(g); } catch { ok = false; break; }
+      if (c === 0x20) { space = o; continue; }
+      words.set(c, { outline: o, key: `${o.adv}|${JSON.stringify(o.contours)}` });
+    }
+    if (!ok || words.size > WORD_CODES.length) continue;
+    const hh = sf.tables.get('hhea');
+    // (Fonts that measure alike: the merged font's lines and spaces are each of theirs.)
+    const key = [rd.upem, i16(hh, 4), i16(hh, 6), i16(hh, 8), ...[68, 70, 72, 74, 76].map((o) => i16(os2, o)), space ? space.adv : -1, f.rebuilt ? 1 : 0].join('|');
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push({ name, words, space, upem: rd.upem, asc: i16(hh, 4), desc: i16(hh, 6), os2, rebuilt: !!f.rebuilt });
+  }
+  const taken = new Set([...fonts.values()].map((f) => f.family));
+  let n = 0;
+  const rename = new Map<string, { to: string; map: Map<number, number> }>();
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    members.sort((a, b) => a.name.localeCompare(b.name));
+    let chunk: typeof members = [];
+    const flush = () => {
+      if (chunk.length < 2) { chunk = []; return; }
+      let to: string; do { to = `QCF Merged ${++n}`; } while (taken.has(to));
+      const outlines: Outline[] = [{ contours: [], adv: 0 }]; const map = new Map<number, number>(); const byKey = new Map<string, number>();
+      const m0 = chunk[0];
+      if (m0.space) { outlines.push(m0.space); map.set(0x20, outlines.length - 1); }
+      for (const m of chunk) {
+        const conv = new Map<number, number>();
+        for (const [c, w] of m.words) {
+          // (One word drawn alike on two pages is one glyph, under one code.)
+          let code = byKey.get(w.key);
+          if (code === undefined) { code = WORD_CODES[byKey.size]; byKey.set(w.key, code); outlines.push(w.outline); map.set(code, outlines.length - 1); }
+          conv.set(c, code);
+        }
+        rename.set(m.name, { to, map: conv });
+      }
+      const data = plainFont({ family: to, upem: m0.upem, asc: m0.asc, desc: m0.desc }, outlines, map, m0.os2);
+      fonts.set(`kr-words-${n}`, { family: to, bold: false, italic: false, raw: data, rebuilt: m0.rebuilt, wordFont: true, uses: chunk.reduce((a, m) => a + (fam.get(m.name)!.uses ?? 0), 0) });
+      taken.add(to); chunk = [];
+    };
+    for (const m of members) {
+      // (Distinct words so far in this font, give or take one drawn alike on two pages.)
+      const have = new Set(chunk.flatMap((x) => [...x.words.values()].map((w) => w.key)));
+      const more = [...m.words.values()].filter((w) => !have.has(w.key)).length;
+      if (have.size + more > WORD_CODES.length) flush();
+      chunk.push(m);
+    }
+    flush();
+  }
+  if (!rename.size) return;
+  for (const pg of pages) eachRunList(pg, (runs) => {
+    for (const r of runs) {
+      const x = rename.get(r.font); if (!x) continue;
+      const conv = (t: string) => [...t].map((ch) => { const c = x.map.get(ch.codePointAt(0)!); return c === undefined ? ch : String.fromCharCode(c); }).join('');
+      r.text = conv(r.text); if (r.kText !== undefined) r.kText = conv(r.kText); r.font = x.to;
+    }
+  });
+  for (const f of fonts.values()) if (rename.has(f.family)) f.raw = undefined;
+  if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D words', JSON.stringify([...rename].map(([k, v]) => [k, v.to, [...v.map].map(([a, b]) => [a.toString(16), b.toString(16)])])));
 }
 
 /** A short hash of a font file (its first and last kilobytes and its length), to know it again. */
@@ -2237,13 +2412,14 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     else if (b.kind === 'grid') { for (const row of b.rows) for (const cell of row) for (const r of cell) if (r.text.includes('\u0640')) stretched.add(r.font); }
     else for (const r of b.runs) if (b.kashida || r.text.includes('\u0640')) stretched.add(r.font);
   }
-  const alias = buildDocFonts(fonts, store, stretched);
+  const { alias, byKey } = buildDocFonts(fonts, store, stretched);
+  store.seqs = [];
+  if (alias.size || byKey.size) for (const pg of pages) renameRuns(pg, alias, byKey);
+  mergeWordFonts(fonts, pages);
   // In a font rebuilt from the PDF's own glyphs, the page's own tatweels give its lines exactly their width:
   // they stay, and Word adds none.
   const exact = new Set([...fonts.values()].filter((f) => f.rebuilt && f.raw).map((f) => f.family));
   for (const [a, b] of alias) if (exact.has(b)) exact.add(a);
-  store.seqs = [];
-  if (alias.size) for (const pg of pages) renameRuns(pg, alias);
 
   // The document's XML, written straight (src/docxwrite.ts): a paragraph, a run, a table each a string.
   const W_ = await import('./docxwrite');
@@ -2524,9 +2700,17 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const faceOf = (bold: boolean, italic: boolean): Face => (bold && italic ? 'BoldItalic' : bold ? 'Bold' : italic ? 'Italic' : 'Regular');
   const faces = new Map<string, Map<Face, Uint8Array>>();
   const best = new Map<string, { score: number }>();
+  // (A copy of a face whose glyphs no text of the document used — a subset met only for its spaces — does not
+  // compete with the copy rebuilt or carried for the text: an equal score let it in, missing what the text set.)
+  const usedFace = new Set([...fonts.values()].filter((f) => f.raw && (f.uses || f.rebuilt)).map((f) => `${f.family}|${faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic)}`));
   for (const f of fonts.values()) {
     if (!f.raw) continue;
     const face = faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic);
+    if (!f.uses && !f.rebuilt && usedFace.has(`${f.family}|${face}`)) continue;
+    // (A font carried as the PDF has it whose maker allows no editable embedding — "preview & print" or
+    // restricted — is not put in an editable document: Word may open such a file read-only, and LibreOffice
+    // leaves the font out. Its runs keep its name, declared for Word to substitute.)
+    if (!f.rebuilt && !embeddable(f.raw)) continue;
     const used = usedChars.get(`${f.family}|${face}`); if (!used?.size) continue;
     // (Its symbol table too: codes kept as drawn — a sign font's — are looked up there.)
     const cov = new Set([...(f.cov ??= cmapCoverage(f.raw)), ...(f.winCov ??= cmapCoverage(f.raw, true))]);
@@ -2542,6 +2726,44 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     let m = faces.get(f.family); if (!m) faces.set(f.family, m = new Map());
     m.set(face, f.raw);
   }
+  // What the font table says of each font the document names, for Word to find a stand-in when it has not got
+  // it (or cannot load the copy carried): taken from the PDF's own copy of the font when there is one, else
+  // from what the text set in it is (Arabic, Latin), with a common font of that kind as its other name.
+  const KNOWN: Record<string, import('./docxwrite').FontDecl> = {
+    'Times New Roman': { panose: '02020603050405020304', family: 'roman', sig: { usb: [0xe0002eff, 0xc000785b, 0x00000009, 0], csb: [0x000001ff, 0] } },
+    'Arial': { panose: '020B0604020202020204', family: 'swiss', sig: { usb: [0xe0002eff, 0xc000785b, 0x00000009, 0], csb: [0x000001ff, 0] } },
+    'Traditional Arabic': { charset: 'B2', family: 'roman', sig: { usb: [0x00002003, 0x80000000, 0x00000008, 0], csb: [0x00000041, 0] } },
+    'Courier New': { panose: '02070309020205020404', family: 'modern', pitch: 'fixed', sig: { usb: [0xe0002eff, 0xc0007843, 0x00000009, 0], csb: [0x000001ff, 0] } },
+    'Microsoft YaHei': { panose: '020B0503020204020204', charset: '86', family: 'swiss', sig: { usb: [0x80000287, 0x2acf3c50, 0x00000016, 0], csb: [0x0004001f, 0] } },
+    'SimSun': { panose: '02010600030101010101', charset: '86', family: 'auto', sig: { usb: [0x00000003, 0x288f0000, 0x00000016, 0], csb: [0x00040001, 0] } },
+    'MS Gothic': { panose: '020B0609070205080204', charset: '80', family: 'modern', pitch: 'fixed' },
+    'MS Mincho': { panose: '02020609040205080304', charset: '80', family: 'modern', pitch: 'fixed' },
+  };
+  const declOf = (name: string, data?: Uint8Array): import('./docxwrite').FontDecl => {
+    if (KNOWN[name]) return KNOWN[name];
+    const info = [...fonts.values()].find((f) => f.family === name && (f.raw || f.src)) ?? [...fonts.values()].find((f) => f.family === name);
+    const raw = data ?? info?.raw;
+    const os2 = raw ? readOs2(raw) : null;
+    const chars = [...usedChars.entries()].filter(([k]) => k.startsWith(`${name}|`)).flatMap(([, s]) => [...s]);
+    const arabic = chars.some((c) => (c >= 0x600 && c <= 0x6ff) || (c >= 0x750 && c <= 0x77f) || (c >= 0xfb50 && c <= 0xfeff));
+    const cjk = chars.some((c) => (c >= 0x3000 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xffef));
+    // (A font whose only map is the symbol one draws signs under its codes: Word's symbol character set.)
+    const symbol = !!raw && cmapCoverage(raw).size === 0 && cmapCoverage(raw, true).size > 0;
+    const p = os2?.panose && os2.panose !== '0'.repeat(20) ? os2.panose : undefined;
+    const pb = p ? p.match(/../g)!.map((h) => parseInt(h, 16)) : null;
+    // (An Arabic font's PANOSE often says nothing true — old makers left "monospaced" in it.)
+    const mono = !!info?.mono || (!!pb && pb[3] === 9 && !arabic);
+    const family: import('./docxwrite').FontDecl['family'] = symbol ? 'decorative' : mono ? 'modern' : pb?.[0] === 3 ? 'script' : pb?.[0] === 4 || pb?.[0] === 5 ? 'decorative' : pb?.[0] === 2 ? (pb[1] >= 11 && pb[1] <= 13 ? 'swiss' : 'roman') : info?.serif ? 'roman' : 'auto';
+    const sig = os2 && (os2.usb.some((x) => x) || os2.csb.some((x) => x)) ? { usb: os2.usb, csb: os2.csb } : { usb: [(arabic && !chars.some((c) => c < 0x600) ? 0 : 1) | (arabic ? 0x2000 : 0), 0, 0, 0], csb: [(arabic && !chars.some((c) => c < 0x600) ? 0 : 1) | (arabic ? 0x40 : 0) | (symbol ? 0x80000000 : 0), 0] };
+    const sub = fontSubstitute(name, info);
+    const sansLike = /kufi|sans|arial|tahoma|frutiger|gess|helvet|verdana|segoe|calibri/i.test(name) || family === 'swiss';
+    return {
+      panose: p, family, pitch: mono ? 'fixed' : 'variable',
+      charset: symbol ? '02' : arabic || (os2 && os2.csb[0] & 0x40 && !(os2.csb[0] & 1)) ? 'B2' : cjk ? (/^(MS |Yu |Meiryo)/.test(name) ? '80' : '86') : '00',
+      sig,
+      alt: symbol || COMMON_FONTS.test(name) ? undefined : arabic ? (sansLike ? 'Arial' : 'Traditional Arabic') : cjk ? sub?.ea : sub?.latin,
+    };
+  };
   const embedded: import('./docxwrite').EmbeddedFont[] = [];
   const extraFaces: { family: string; face: Face; data: Uint8Array }[] = [];
   const sigs = new Map<string, Os2>();
@@ -2551,7 +2773,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const firstFace = [...m.entries()].find(([, v]) => v === first)![0];
     // (Every face named after the family the runs ask for, in all its records: see renamedFont.)
     const sub = (f: Face) => (f === 'BoldItalic' ? 'Bold Italic' : f);
-    embedded.push({ name: family, data: renamedFont(first, family, sub(firstFace)) ?? first, arabic });
+    embedded.push({ name: family, data: renamedFont(first, family, sub(firstFace)) ?? first, arabic, ...declOf(family, first), alt: undefined });
     for (const [face, data] of m) if (data !== first) extraFaces.push({ family, face, data: renamedFont(data, family, sub(face)) ?? data });
     if (firstFace !== 'Regular') extraFaces.push({ family, face: firstFace, data: new Uint8Array(0) }); // marks: move embedRegular to this face
     const os2 = readOs2(first); if (os2) sigs.set(family, os2);
@@ -2574,7 +2796,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   }
   const tc0 = performance.now();
   const zip = await writer.pack(sections, embedded);
-  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs);
+  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs, declOf);
   if (TT) TT.compile = performance.now() - tc0;
   const { zipOut } = await import('./ziputil');
   const blob = await zipOut(zip as unknown as ZipLike, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -2585,7 +2807,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
 
 
 /** Word details the library has no option for: right-to-left sections, footnote numbers restart on each page. */
-async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>()): Promise<void> {
+async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>(), declOf?: (name: string) => import('./docxwrite').FontDecl): Promise<void> {
   // Fonts: the other faces of each embedded family (bold, …), the fonts' own signatures, and the switch that
   // tells Word the document carries its fonts.
   const ft = zip.file('word/fontTable.xml');
@@ -2640,6 +2862,23 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
         const sub = bySlot.get(v); if (!sub) return m;
         return `w:${slot}="${slot === 'cs' ? sub.cs : slot === 'eastAsia' ? sub.ea : sub.latin}"`;
       }));
+    }
+  }
+  // Every font a run, a paragraph mark or the defaults name is in the font table — the ones the document does not
+  // carry too, with what Word needs to pick a stand-in of the same kind (unlisted, Word substitutes blindly:
+  // "Droid Arabic Naskh", "louts shamy" and the default "Traditional Arabic" were named and never declared).
+  if (ft && declOf) {
+    const unesc = (t: string) => t.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    let table = await zip.file('word/fontTable.xml')!.async('string');
+    const have = new Set([...table.matchAll(/<w:font w:name="([^"]*)"/g)].map((m) => unesc(m[1])));
+    const named: string[] = [];
+    for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes|endnotes|styles)\.xml$/.test(n))) {
+      for (const m of (await zip.file(name)!.async('string')).matchAll(/w:(?:ascii|hAnsi|cs|eastAsia)="([^"]*)"/g)) { const v = unesc(m[1]); if (v && !have.has(v)) { have.add(v); named.push(v); } }
+    }
+    if (named.length) {
+      const { fontEntry } = await import('./docxwrite');
+      table = table.replace('</w:fonts>', `${named.map((n) => fontEntry(n, declOf(n))).join('')}</w:fonts>`);
+      zip.file('word/fontTable.xml', table);
     }
   }
   // The page already shows the book's own rule above the notes (in the background): Word's separator goes.

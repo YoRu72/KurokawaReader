@@ -199,7 +199,18 @@ export type Section = {
 
 /* ---------- the document ---------- */
 
-export type EmbeddedFont = { name: string; data: Uint8Array; arabic?: boolean };
+/** A font of the document's font table: its file when the document carries it, and what Word goes by to
+ *  substitute it when it cannot use that file (or there is none): another name to look for, its PANOSE
+ *  classification, character set, family kind, pitch and Unicode / code-page signature. */
+export type FontDecl = { alt?: string; panose?: string; charset?: string; family?: 'roman' | 'swiss' | 'modern' | 'script' | 'decorative' | 'auto'; pitch?: 'variable' | 'fixed'; sig?: { usb: number[]; csb: number[] } };
+export type EmbeddedFont = FontDecl & { name: string; data: Uint8Array; arabic?: boolean };
+
+const hex8 = (v: number) => (v >>> 0).toString(16).toUpperCase().padStart(8, '0');
+/** A w:font entry (children in the schema's order: altName, panose1, charset, family, pitch, sig, embeds). */
+export function fontEntry(name: string, d: FontDecl & { arabic?: boolean }, embeds = ''): string {
+  const sig = d.sig ?? { usb: [0, 0, 0, 0], csb: [0, 0] };
+  return `<w:font w:name="${att(name)}">${d.alt && d.alt !== name ? `<w:altName w:val="${att(d.alt)}"/>` : ''}${d.panose && /^[0-9A-F]{20}$/.test(d.panose) && d.panose !== '0'.repeat(20) ? `<w:panose1 w:val="${d.panose}"/>` : ''}<w:charset w:val="${d.charset ?? (d.arabic ? 'B2' : '00')}"/><w:family w:val="${d.family ?? 'auto'}"/><w:pitch w:val="${d.pitch ?? 'variable'}"/><w:sig w:usb0="${hex8(sig.usb[0])}" w:usb1="${hex8(sig.usb[1])}" w:usb2="${hex8(sig.usb[2])}" w:usb3="${hex8(sig.usb[3])}" w:csb0="${hex8(sig.csb[0])}" w:csb1="${hex8(sig.csb[1])}"/>${embeds}</w:font>`;
+}
 
 export class DocxWriter {
   nextRel = 100; nextDrawing = 1;
@@ -280,7 +291,7 @@ export class DocxWriter {
       const id = `rId${i + 1}`;
       zip.file(`word/fonts/font${i + 1}.odttf`, ob);
       fontRels.push(`<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font${i + 1}.odttf"/>`);
-      fontsXmlOut += `<w:font w:name="${att(f.name)}"><w:charset w:val="${f.arabic ? 'B2' : '00'}"/><w:family w:val="auto"/><w:pitch w:val="variable"/><w:sig w:usb0="00000000" w:usb1="00000000" w:usb2="00000000" w:usb3="00000000" w:csb0="00000000" w:csb1="00000000"/><w:embedRegular r:id="${id}" w:fontKey="${key}"/></w:font>`;
+      fontsXmlOut += fontEntry(f.name, f, `<w:embedRegular r:id="${id}" w:fontKey="${key}"/>`);
     });
     zip.file('word/fontTable.xml', `${XML_HEAD}<w:fonts xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ${NS_W} mc:Ignorable="w14 w15">${fontsXmlOut}</w:fonts>`);
     zip.file('word/_rels/fontTable.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${fontRels.join('')}</Relationships>`);
