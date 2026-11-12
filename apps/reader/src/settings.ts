@@ -169,6 +169,8 @@ export interface VisualSettings {
   aiModel: string;
   aiBaseUrl: string;
   aiPrompt: string;
+  /** The glossary's Retranslate: the reader's own instructions ('' or absent: the default); «{lang}» in it is the language translated into. */
+  aiGlossPrompt?: string;
   aiPromptPrefill: boolean;   // show the built-in instructions in the box, ready to be extended
   aiTarget: string;           // target language code
   aiTask: 'translate' | 'furigana';  // what the chapter pass does
@@ -392,7 +394,7 @@ let bookOverrides: Record<string, Partial<VisualSettings>> | null = null;
  *  about how that book is read (its face, size, theme, layout…); these are never kept with one. */
 const GLOBAL_ONLY = new Set<string>([
   // AI services and voices downloaded
-  'aiProvider', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
+  'aiProvider', 'aiGlossPrompt', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
   // sync, accounts, tracking
   'syncProvider', 'syncAuto', 'syncDropboxKey', 'syncDropboxRefresh', 'syncWebdavUrl', 'syncWebdavUser', 'syncWebdavPass', 'syncFolder', 'syncLastAt',
   'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',

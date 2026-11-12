@@ -2,11 +2,15 @@
 // term — for one book or every book — to change or remove.
 import { h, iconButton, openSheet, toast, icon, pickButton, askText } from './dom';
 import { t, localDigits } from '../i18n';
-import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, scriptOf, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, type Term, type TermKind } from '../glossary';
+import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, termLang, misScripted, langForNew, scriptVerdict, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, type Term, type TermKind } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
+import { aiReady, retranslateTerms } from '../ai';
 import { copyText } from './share';
 
 const newId = () => Math.random().toString(36).slice(2, 10);
+const baseLang = (c: string) => (c || '').split('-')[0];
+/** A language's name in the interface's language («العربية», "Japanese"). */
+export const langLabel = (c: string): string => { try { return new Intl.DisplayNames([document.documentElement.lang || 'en'], { type: 'language' }).of(c) ?? c; } catch { return c; } };
 
 export function termSheet(o: { from?: string; book?: { id: string; title: string }; term?: Term; made?: () => void }): void {
   const x0 = o.term;
@@ -41,19 +45,22 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
   let tab: Tab = 'all'; let where = book ? 'book' : 'all'; let q = '';
   // (Languages: a tap shows only those, a second leaves them out, a third clears — as the filters elsewhere.)
   const inc = new Set<string>(), exc = new Set<string>();
-  const SCRIPT_LANG: Record<string, string> = { arabic: 'ar', latin: 'en', cyrillic: 'ru', cjk: 'ja', hangul: 'ko', hebrew: 'he', thai: 'th', devanagari: 'hi' };
-  const langOf = (x: Term) => (x.lang ? x.lang.split('-')[0] : SCRIPT_LANG[scriptOf(x.to)] ?? '');
-  const langName = (c: string) => { try { return new Intl.DisplayNames([document.documentElement.lang || 'en'], { type: 'language' }).of(c) ?? c; } catch { return c; } };
+  // (Each term under the language it renders into; one made before languages were kept, whose language cannot be
+  // known, under «language not set» — '-' here.)
+  const langOf = (x: Term) => termLang(x) || '-';
+  const langName = (c: string) => (c === '-' ? t('glossLangUnset') : langLabel(c));
+  // (Ticked for Retranslate.)
+  const picked = new Set<string>(); let undo: (() => void) | null = null;
   const langs = h('div', { class: 'chip-row gloss-langs' });
   const KINDS: [Tab, string][] = [['all', t('glossAll')], ['person', t('glossPeople')], ['place', t('glossPlaces')], ['group', t('glossGroups')], ['term', t('glossTerms')]];
   const places = h('div', { class: 'chip-row gloss-places' }); const tabs = h('div', { class: 'chip-row gloss-tabs' }); const folderBar = h('div', { class: 'gloss-folder-bar' });
   const search = h('input', { type: 'search', class: 'gloss-search', placeholder: t('glossSearch'), oninput: (e: Event) => { q = (e.target as HTMLInputElement).value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
   const auto = h('input', { type: 'checkbox', checked: !!getSettings().aiAutoGlossary, onchange: (e: Event) => updateSettings({ aiAutoGlossary: (e.target as HTMLInputElement).checked }) }) as HTMLInputElement;
-  const list = h('div', { class: 'gloss-list' });
+  const list = h('div', { class: 'gloss-list' }); const retrBar = h('div', { class: 'gloss-retr-bar' });
   sh.body.append(
     h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('glossAuto'), h('small', { class: 'hint' }, t('glossAutoHint'))), auto),
     ...(book && o.scan ? [h('button', { type: 'button', class: 'btn tonal small gloss-scan', onclick: () => { const f = where !== 'book' && where !== 'all' ? where : undefined; sh.close(); o.scan!(f); } }, icon('books'), t('glossScanBook'))] : []),
-    destBox(), places, folderBar, tabs, langs, search, list);
+    destBox(), places, folderBar, tabs, langs, search, retrBar, list);
   // (Where the names the translator finds go, for this book: its own list, a folder made by itself for its series,
   // or a folder chosen — new names added there, or the folder only used.)
   function destBox(): HTMLElement {
@@ -81,14 +88,18 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
     // (Moved: to this book, every book, or a folder.)
     const moveTo = pickButton(t('glossMove'), [['book', book?.title ?? t('textRuleOneBook')], ['all', t('textRuleAllBooks')], ...folders().map((f) => [`f:${f.id}`, `📁 ${f.name}`] as [string, string])].filter(([k]) => k !== 'book' || !!book) as [string, string][], x.folder ? `f:${x.folder}` : x.book ? 'book' : 'all', (v) => { const { book: _b, folder: _f, ...rest } = x; void _b; void _f; x = { ...rest, ...(v === 'book' && book ? { book: book.id } : v.startsWith('f:') ? { folder: v.slice(2) } : {}) } as Term; if (x.from && x.to) save(x); draw(); }, t('close'));
     moveTo.classList.add('gloss-move');
-    const target = getSettings().aiTarget.split('-')[0]; const codes = [...new Set([langOf(x), target, 'ar', 'en'].filter(Boolean))];
-    const lang = h('select', { class: 'gloss-kind gloss-lang', 'aria-label': t('glossLang') }, ...codes.map((c) => h('option', { value: c, selected: langOf(x) === c }, langName(c)))) as HTMLSelectElement;
-    lang.addEventListener('change', () => { x = { ...x, lang: lang.value }; if (x.from && x.to) save(x); });
-    const el = h('div', { class: 'gloss-row' + (fresh ? ' fresh' : '') },
+    const target = baseLang(getSettings().aiTarget); const codes = [...new Set([langOf(x), target, 'ar', 'en'])];
+    const lang = h('select', { class: 'gloss-kind gloss-lang', 'aria-label': t('glossLang') }, ...codes.map((c) => h('option', { value: c, selected: langOf(x) === c, disabled: c === '-' }, langName(c)))) as HTMLSelectElement;
+    lang.addEventListener('change', () => { if (lang.value === '-') return; x = { ...x, lang: lang.value }; if (x.from && x.to) { save(x); draw(); } });
+    const sel = h('input', { type: 'checkbox', class: 'gloss-sel', 'aria-label': t('glossSelect'), checked: picked.has(x.id), onchange: () => { if (sel.checked) picked.add(x.id); else picked.delete(x.id); drawRetr(); } }) as HTMLInputElement;
+    const wrong = !fresh && misScripted(x);
+    const el = h('div', { class: 'gloss-row' + (fresh ? ' fresh' : '') + (wrong ? ' wrong' : ''), 'data-id': x.id },
       h('div', { class: 'gloss-pair' }, from, h('span', { class: 'gloss-arrow' }, '→'), to),
-      h('div', { class: 'gloss-meta' }, kind, lang, x.auto ? h('span', { class: 'gloss-badge' }, t('glossAutoBadge')) : null, moveTo,
+      ...(wrong ? [h('p', { class: 'gloss-warn' }, icon('info'), t('glossWrongScript', { lang: langLabel(termLang(x)) }))] : []),
+      h('div', { class: 'gloss-meta' }, ...(fresh ? [] : [sel]), kind, lang, x.auto ? h('span', { class: 'gloss-badge' }, t('glossAutoBadge')) : null, moveTo,
+        ...(fresh ? [] : [iconButton('rotate', t('glossRetrOne'), () => { const now = terms().find((y) => y.id === x.id); if (now) retranslate([now]); })]),
         iconButton('copy', t('copy'), () => void copyText(termLine({ from: from.value, to: to.value }, false))),
-        iconButton('trash', t('delete'), () => { saveTerms(terms().filter((y) => y.id !== x.id)); el.remove(); drawTabs(); })));
+        iconButton('trash', t('delete'), () => { saveTerms(terms().filter((y) => y.id !== x.id)); picked.delete(x.id); el.remove(); drawTabs(); drawRetr(); })));
     void placeOf;
     return el;
   };
@@ -117,14 +128,31 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
     const langOk = (x: Term) => { const c = langOf(x); return (!inc.size || inc.has(c)) && !exc.has(c); };
     const shown = terms().filter((x) => inWhere(x) && langOk(x) && (tab === 'all' || (x.kind ?? 'term') === tab) && (!q || x.from.toLowerCase().includes(q) || x.to.toLowerCase().includes(q))).sort((a, b) => a.from.localeCompare(b.from));
     list.replaceChildren(...(shown.length ? shown.map((x) => row(x)) : [h('p', { class: 'src' }, t('glossaryNone'))]));
+    shownNow = shown; for (const id of [...picked]) if (!shown.some((x) => x.id === id)) picked.delete(id);
+    drawRetr();
   }
+  /* Retranslate: one entry (its row's button), the ones ticked, or every one shown (this book's, a folder's, every
+     book's — with the kind, language and search chosen); the instructions asked for first. */
+  let shownNow: Term[] = [];
+  function drawRetr() {
+    const n = picked.size;
+    retrBar.replaceChildren(
+      h('button', { type: 'button', class: 'btn tonal small gloss-retr-sel', disabled: !n, onclick: () => retranslate(terms().filter((x) => picked.has(x.id))) }, icon('rotate'), t('glossRetrSelected'), n ? h('span', { class: 'gloss-count' }, localDigits(n)) : null),
+      h('button', { type: 'button', class: 'btn text small gloss-retr-all', disabled: !shownNow.length, onclick: () => retranslate(shownNow.map((x) => terms().find((y) => y.id === x.id)).filter(Boolean) as Term[]) }, icon('rotate'), t('glossRetrAll')),
+      ...(undo ? [h('button', { type: 'button', class: 'btn text small gloss-retr-undo', onclick: () => { const u = undo; undo = null; u?.(); draw(); toast(t('glossRetrUndone')); } }, icon('undo'), t('glossRetrUndo'))] : []));
+  }
+  const retranslate = (list: Term[]) => retranslateSheet(list, { changed: () => draw(), undo: (fn) => { undo = fn; drawRetr(); } });
   draw();
   // (The whole list shown's place — every kind and language — as text, one term to a line; and such text pasted back in.)
   const scopeNow = () => (where === 'book' && book ? { book: book.id } : where === 'all' ? {} : { folder: where });
   sh.actions.append(
     iconButton('import', t('paste'), async () => {
       let txt = ''; try { txt = await navigator.clipboard.readText(); } catch { txt = (await askText({ title: t('paste'), label: t('paste'), multiline: true, ok: t('add'), cancel: t('cancel') })) ?? ''; } if (!txt.trim()) return;
-      const n = addTerms(parseTerms(txt).map((x) => ({ ...x, lang: x.lang ?? getSettings().aiTarget.split('-')[0], ...scopeNow() }))); draw(); toast(t('glossPasted', { n: localDigits(n) }));
+      // (Each line under its own language when it names one; else the one translated into, when its rendering can be
+      // in it; else the one its script alone tells, or none — never an English rendering kept as Arabic.)
+      const tl = baseLang(getSettings().aiTarget); const got = parseTerms(txt).map((x) => ({ ...x, lang: x.lang ?? (langForNew(x.to, tl) || undefined), ...scopeNow() }));
+      const other = got.filter((x) => baseLang(x.lang ?? '') !== tl).length;
+      const n = addTerms(got); draw(); toast(t('glossPasted', { n: localDigits(n) }) + (other ? ` · ${t('glossPastedOther', { lang: langLabel(tl), n: localDigits(other) })}` : ''), 'info', other ? 5000 : 2200);
     }),
     iconButton('copy', t('glossCopyAll'), () => void copyText(termsText(terms().filter(inWhere).sort((a, b) => a.from.localeCompare(b.from))))));
   // (+: a new line at the top to fill in — of the kind shown, where it is shown.)
@@ -134,4 +162,89 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
     const x: Term = { id: newId(), from: '', to: '', kind: tab === 'all' ? 'person' : tab, lang: getSettings().aiTarget.split('-')[0], ...scope };
     const r = row(x, true); list.prepend(r); (r.querySelector('.gloss-from') as HTMLInputElement).focus();
   } }, icon('plus'), t('glossaryAdd')));
+}
+
+/* ---------- Retranslate: new renderings for some terms, in the language translated into ---------- */
+/** The instructions shown in the box: the reader's own, or the default, the language named in them. */
+export function retranslatePrompt(target = getSettings().aiTarget): string {
+  return (getSettings().aiGlossPrompt?.trim() || t('glossRetrDefault')).replaceAll('{lang}', langLabel(target));
+}
+/** The instructions kept: the language's name kept as «{lang}» (the same words then name the next language
+ *  chosen); the default kept as nothing. */
+function keepPrompt(text: string, target: string): void {
+  const v = text.trim().replaceAll(langLabel(target), '{lang}');
+  updateSettings({ aiGlossPrompt: v === t('glossRetrDefault').trim() ? '' : v });
+}
+const BATCH = 30;
+/** The floating box: the instructions (the reader's own, kept; or the default again), then the run — in batches,
+ *  its progress, Stop; each entry's rendering changed only when its new one has come, one not written in the
+ *  language's script refused and counted; Undo puts the glossary back as it was. Nothing is changed when there is
+ *  no AI service, no connection, or the service fails at once. */
+export function retranslateSheet(list: Term[], o: { changed?: () => void; undo?: (fn: (() => void) | null) => void } = {}): void {
+  if (!list.length) { toast(t('glossRetrNone')); return; }
+  const target = getSettings().aiTarget; const tl = baseLang(target);
+  let stop = false; let running = false;
+  const sh = openSheet(t('glossRetrTitle'), t('close'), { stack: true, onClose: () => { stop = true; } });
+  sh.el.classList.add('gloss-retr-sheet'); sh.body.style.fontFamily = 'var(--font-ui)';
+  const box = h('textarea', { class: 'gloss-retr-prompt', rows: 9, dir: 'auto', spellcheck: 'false', 'aria-label': t('glossRetrPrompt') }) as HTMLTextAreaElement;
+  box.value = retranslatePrompt(target);
+  const reset = h('button', { type: 'button', class: 'btn text small gloss-retr-reset', onclick: () => { box.value = t('glossRetrDefault').replaceAll('{lang}', langLabel(target)); box.focus(); } }, icon('undo'), t('glossRetrReset'));
+  const status = h('p', { class: 'src gloss-retr-status', role: 'status' }); const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
+  const report = h('div', { class: 'gloss-retr-report' });
+  sh.body.append(h('p', { class: 'gloss-retr-info' }, t('glossRetrInfo', { n: localDigits(list.length), lang: langLabel(target) })),
+    h('label', { class: 'field' }, h('span', { class: 'label' }, t('glossRetrPrompt')), box),
+    h('div', { class: 'gloss-retr-tools' }, h('small', { class: 'hint' }, t('glossRetrHint')), reset), track, status, report);
+  const cancel = h('button', { type: 'button', class: 'btn text gloss-retr-cancel', onclick: () => { if (running) { stop = true; cancel.disabled = true; } else sh.close(); } }, t('cancel'));
+  const go = h('button', { type: 'button', class: 'btn primary gloss-retr-go', onclick: () => void run() }, icon('rotate'), t('glossRetranslate'));
+  sh.actions.append(cancel, go);
+  setTimeout(() => box.focus(), 60);
+
+  async function run(): Promise<void> {
+    if (!box.value.trim()) { box.focus(); return; }
+    if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { toast(t('glossRetrOffline'), 'error', 4000); return; }
+    const instructions = box.value; keepPrompt(instructions, target);
+    running = true; box.disabled = true; reset.disabled = true; go.disabled = true; track.hidden = false;
+    // (What each changed entry was, to put back: an entry added beside one of another language goes again.)
+    const before = new Map<string, Term | null>();
+    let changed = 0, refused = 0, missing = 0, done = 0; let failed = '';
+    const paint = () => { status.textContent = t('glossRetrProgress', { n: localDigits(done), total: localDigits(list.length) }); bar.style.width = `${Math.round((done / list.length) * 100)}%`; };
+    paint();
+    for (let i = 0; i < list.length && !stop; i += BATCH) {
+      const part = list.slice(i, i + BATCH);
+      let got: { from: string; to: string }[];
+      try { got = await retranslateTerms(instructions, part.map((x) => ({ from: x.from, now: x.to, ...(x.kind ? { kind: x.kind } : {}) })), target); }
+      catch (e) { failed = String((e as Error)?.message ?? e); break; }
+      if (stop) break;   // (Stopped while it was asked: its answer is not used.)
+      const all = terms().slice(); const left = [...part];
+      for (const g of got) {
+        const k = left.findIndex((x) => x.from.toLocaleLowerCase() === g.from.toLocaleLowerCase()); if (k < 0) continue;
+        const e = left.splice(k, 1)[0]; if (!g.to) { missing++; continue; }
+        if (scriptVerdict(g.to, tl) === 'bad') { refused++; continue; }
+        const cur = all.find((y) => y.id === e.id); if (!cur) continue;
+        const place = (y: Term) => (y.folder ?? '') === (cur.folder ?? '') && (y.book ?? '') === (cur.book ?? '');
+        // (Its twin in this language, in the same place, changed; else the entry itself, when it is for this
+        // language or mis-picked; else — a sound term of another language — a new one beside it.)
+        const twin = all.find((y) => y.id !== cur.id && place(y) && termLang(y) === tl && y.from.toLocaleLowerCase() === cur.from.toLocaleLowerCase());
+        const own = termLang(cur); const mine = !own || own === tl || misScripted(cur);
+        const at = twin ?? (mine ? cur : null);
+        if (at) {
+          if (at.to === g.to && termLang(at) === tl && at.lang) continue;
+          if (!before.has(at.id)) before.set(at.id, { ...at });
+          all[all.indexOf(at)] = { ...at, to: g.to, lang: tl };
+        } else { const id = newId(); before.set(id, null); all.push({ id, from: cur.from, to: g.to, lang: tl, ...(cur.kind ? { kind: cur.kind } : {}), ...(cur.book ? { book: cur.book } : {}), ...(cur.folder ? { folder: cur.folder } : {}) }); }
+        changed++;
+      }
+      missing += left.length; done += part.length;
+      saveTerms(all); o.changed?.(); paint();
+    }
+    running = false; cancel.disabled = false; cancel.textContent = t('close'); go.hidden = true;
+    const restore = () => { let l = terms().slice(); for (const [id, prev] of before) { l = l.filter((y) => y.id !== id); if (prev) l.push(prev); } saveTerms(l); };
+    if (before.size) o.undo?.(restore);
+    const lines = [t('glossRetrDone', { n: localDigits(changed) }), ...(refused ? [t('glossRetrRefused', { n: localDigits(refused), lang: langLabel(target) })] : []), ...(missing && !failed && !stop ? [t('glossRetrMissing', { n: localDigits(missing) })] : [])];
+    report.replaceChildren(...(failed ? [h('p', { class: 'gloss-retr-error', role: 'alert' }, t('glossRetrError', { why: failed.slice(0, 200) }))] : []), ...(stop && !failed ? [h('p', { class: 'hint' }, t('glossRetrStopped'))] : []),
+      ...lines.map((l) => h('p', { class: 'gloss-retr-line' }, l)),
+      ...(before.size ? [h('button', { type: 'button', class: 'btn tonal small gloss-retr-undo2', onclick: (ev: Event) => { restore(); o.changed?.(); o.undo?.(null); (ev.currentTarget as HTMLButtonElement).disabled = true; toast(t('glossRetrUndone')); } }, icon('undo'), t('glossRetrUndo'))] : []));
+    if (failed) toast(t('glossRetrError', { why: failed.slice(0, 160) }), 'error', 6000);
+  }
 }
