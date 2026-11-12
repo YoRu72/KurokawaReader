@@ -37,7 +37,8 @@ const toLibrary = async (p) => { await p.evaluate(() => { location.hash = '#/'; 
 async function openIds(p, ids, sel = '.reader-flow .kr-content') {
   await toLibrary(p); await p.waitForTimeout(300);
   await p.evaluate((ids) => { location.hash = `#/read/${ids.join(',')}`; }, ids);
-  await p.waitForSelector(sel, { timeout: 30000 }); await p.waitForTimeout(3200); // (the passes that settle the place: up to 2.5 s)
+  // (Any one shown: in chapter mode the first book's content is hidden when the place is in the second.)
+  await p.waitForFunction((sel) => [...document.querySelectorAll(sel)].some((e) => e.offsetParent !== null && e.getClientRects().length), sel, { timeout: 30000 }); await p.waitForTimeout(3200); // (the passes that settle the place: up to 2.5 s)
 }
 /** The marker of the paragraph at the top of the reading area. */
 const topPara = (p) => p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const top = sc.getBoundingClientRect().top + 10; const ps = [...document.querySelectorAll('.reader-flow p')].filter((x) => x.offsetParent); const hit = ps.find((x) => x.getBoundingClientRect().bottom > top); return /\[(V\d+-P\d+)\]/.exec(hit?.textContent ?? '')?.[1] ?? (hit?.textContent ?? 'none').slice(0, 30); });
