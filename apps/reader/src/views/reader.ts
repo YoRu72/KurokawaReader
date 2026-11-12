@@ -12,7 +12,7 @@ import { jumpBack } from '../ui/jumpback';
 import { leaveToCaller } from '../native';
 import { applyTypography, revertTypography } from '../ui/typography';
 import { t, isTouchDevice, getLang, localDigits, countMinutes } from '../i18n';
-import { db, uid, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
+import { db, uid, stampAfter, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch, searchFormOf } from '../formats/types';
@@ -731,7 +731,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   async function saveProgress(): Promise<void> {
     const cur = currentLocator();
     if (!cur) return;
-    await db.updateBook(cur.doc.book.id, (b) => { b.progress = cur.loc; b.progressAt = Date.now(); });
+    await db.updateBook(cur.doc.book.id, (b) => { b.progress = cur.loc; b.progressAt = stampAfter(b.progressAt); });
     if (cur.doc.book.track && cur.loc.toc !== undefined) void import('../ui/track').then((m) => m.pushProgress(cur.doc.book, cur.loc.toc! + 1));
     scheduleSync();
     cur.doc.book.progress = cur.loc;
@@ -1694,7 +1694,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       count.textContent = t('pageOf', { n: page, total });
       if (page >= total && total > 1) offerNextPdf();
       window.clearTimeout(saveTimer);
-      saveTimer = window.setTimeout(() => { const loc: Locator = { bookId: book.id, page, offset: viewer.currentOffset(), pct: total ? page / total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = Date.now(); }); scheduleSync(); }, 600);
+      saveTimer = window.setTimeout(() => { const loc: Locator = { bookId: book.id, page, offset: viewer.currentOffset(), pct: total ? page / total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); }); scheduleSync(); }, 600);
     },
   });
   slider.addEventListener('input', () => viewer.goTo(Number(slider.value)));
@@ -1764,7 +1764,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   };
   viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
   onDispose(() => void tracker.stop());
-  const flushPdf = () => { void tracker.save(); const loc: Locator = { bookId: book.id, page: viewer.current, offset: viewer.currentOffset(), pct: viewer.total ? viewer.current / viewer.total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = Date.now(); }); };
+  const flushPdf = () => { void tracker.save(); const loc: Locator = { bookId: book.id, page: viewer.current, offset: viewer.currentOffset(), pct: viewer.total ? viewer.current / viewer.total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); }); };
   const onHidePdf = () => { if (document.visibilityState === 'hidden') flushPdf(); };
   window.addEventListener('pagehide', flushPdf); document.addEventListener('visibilitychange', onHidePdf);
   onDispose(() => { window.removeEventListener('pagehide', flushPdf); document.removeEventListener('visibilitychange', onHidePdf); });

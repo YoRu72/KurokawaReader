@@ -1,5 +1,5 @@
 // Library operations: importing files, listing, deleting, progress.
-import { db, uid, type Book, type FileSource } from './db';
+import { db, uid, stampAfter, type Book, type FileSource, type Folder } from './db';
 import { forgetBookSettings, getSettings } from './settings';
 
 /** A File that knows where it came from, so it can be linked instead of copied. */
@@ -94,6 +94,31 @@ export async function cleanOrphans(): Promise<number> {
 }
 export async function cleanOrphansOnce(): Promise<void> {
   try { if (localStorage.getItem('kr.orphansCleaned')) return; await cleanOrphans(); localStorage.setItem('kr.orphansCleaned', '1'); } catch { /* next start */ }
+}
+
+/* ---------- folders (each move timed, each deletion marked: sync takes the later, and brings nothing back) ---------- */
+/** Books put in a folder, or taken out of any (`null`). */
+export async function moveToFolder(ids: string[], folderId: string | null): Promise<void> {
+  for (const id of ids) await db.updateBook(id, (b) => { if (folderId) b.folderId = folderId; else delete b.folderId; b.folderAt = stampAfter(b.folderAt); });
+}
+/** A folder deleted (its books in none); returns the folders left. */
+export async function deleteFolder(id: string): Promise<Folder[]> {
+  let name = '';
+  const left = (await db.updateMeta<Folder[]>('folders', (cur) => { name = cur?.find((f) => f.id === id)?.name ?? ''; return (cur ?? []).filter((f) => f.id !== id); })) ?? [];
+  if (name) await (await import('./sync')).markDeleted(`folder:${name}`);
+  await moveToFolder((await db.allBooks()).filter((b) => b.folderId === id).map((b) => b.id), null);
+  return left;
+}
+/** A folder renamed (on another device: the old name goes, the new one comes with its books); returns the folders. */
+export async function renameFolder(id: string, name: string): Promise<Folder[]> {
+  let old = '';
+  const out = (await db.updateMeta<Folder[]>('folders', (cur) => (cur ?? []).map((f) => (f.id === id ? (old = f.name, { ...f, name, createdAt: Date.now() }) : f)))) ?? [];
+  if (old && old !== name) {
+    await (await import('./sync')).markDeleted(`folder:${old}`);
+    // (Stamped after the old name's deletion: on the other device they go to the new name, not to none.)
+    await moveToFolder((await db.allBooks()).filter((b) => b.folderId === id).map((b) => b.id), id);
+  }
+  return out;
 }
 
 export async function touchBook(id: string): Promise<void> {
