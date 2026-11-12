@@ -46,7 +46,9 @@ type GridSpec = { xs: number[]; ys: number[]; rows: GridCell[][]; rule: number }
 type Grid = { kind: 'grid'; pad: number; rows: Run[][][]; cells: { span: number; vmerge?: 'restart' | 'continue'; align: Para['align']; vcenter: boolean; pitch: number }[][]; spec: GridSpec; colW: number[]; rowH: number[]; rtl: boolean; before: number; indStart: number; size: number; pitch: number };
 type Block = Para | Verse | Grid;
 type Note = { num: number; paras: Block[] };
-type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean };
+/** A running head or page number: its runs, centre and baseline (points from the page's top). `num`: the page
+ *  number it holds (between those characters of its text, as the page writes it), for a PAGE field. */
+type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean; num?: { from: number; to: number; value: number; fmt: 'decimal' | 'hindiNumbers' | 'lowerRoman' | 'upperRoman' } };
 /** Part of a page: full width (one column) or set in columns (blocks per column in reading order, column edges in page x). */
 type Region = { cols: Block[][]; edges: [number, number][] };
 /** A box of text at its own place on a designed page (points from the page's top-left corner). */
@@ -55,7 +57,8 @@ type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] }
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
 /** Text set at an angle (a design's stamp, a label up the side): one text box, turned, in page points from the top-left. */
 type TextBox = { runs: Run[]; x: number; y: number; w: number; h: number; rot: number; line: number };
-export type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; boxes?: TextBox[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
+export type PageModel = { vert?: VPage; w: number; h: number; pics: Pic[]; boxes?: TextBox[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number;
+  /** The lines taken for the running head as text blocks, and where they start and end (points from the top). */ uncut?: { blocks: Block[]; top: number; bottom: number }; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -1215,12 +1218,82 @@ function pinnedFurniture(header: Line[], footer: Line[], fonts: Map<string, Font
     const ps = l.pieces.filter((p) => p.text.trim() || p.text === '\u2009').sort((a, b) => a.l - b.l);
     const groups: Piece[][] = [];
     for (const p of ps) { const g = groups[groups.length - 1]; if (g && p.l - Math.max(...g.map((q) => q.r)) < l.size * 2.5) g.push(p); else groups.push([p]); }
+    // (A page number at either end an item of its own even nearer its head than that, for its PAGE field.)
+    const num = (g: Piece[]) => /^[\s\-\u2013\u2014()[\]]*[0-9\u0660-\u0669\u06F0-\u06F9]{1,4}[\s\-\u2013\u2014()[\]]*$/.test(g.map((p) => p.text).join(''));
+    for (const end of [0, 1]) {
+      const gi = end ? groups.length - 1 : 0, g = groups[gi];
+      if (!g || g.length < 2) continue;
+      for (let k = 1; k < g.length; k++) {
+        const inner = end ? g.slice(0, g.length - k) : g.slice(k), outer = end ? g.slice(g.length - k) : g.slice(0, k);
+        const gap = end ? Math.min(...outer.map((p) => p.l)) - Math.max(...inner.map((p) => p.r)) : Math.min(...inner.map((p) => p.l)) - Math.max(...outer.map((p) => p.r));
+        if (gap > l.size && num(outer) && !num(inner)) { groups.splice(gi, 1, ...(end ? [inner, outer] : [outer, inner])); break; }
+      }
+    }
     for (const g of groups) {
       const runs = runsOf(g, fonts, l.rtl); if (!runs.length) continue;
       furniture.push({ runs, cx: (Math.min(...g.map((p) => p.l)) + Math.max(...g.map((p) => p.r))) / 2, base: H - l.base, size: l.size, top: header.includes(l) });
     }
   }
   return furniture;
+}
+
+const FOLIO_MARK = /^[\s\-\u2013\u2014()[\]{}\u00ab\u00bb\ufd3e\ufd3f*\u2022|\u0640]*$/;
+/** A page number in a running head's or footer's text: where it stands in the text, its value and its digits —
+ *  alone or between marks ("- ١٢ -", "(xii)"), or at either end of a head, a space away from its words. */
+function folioIn(text: string): Furniture['num'] | null {
+  for (const m of text.matchAll(/[0-9\u0660-\u0669\u06F0-\u06F9]+|[ivxlcdm]+|[IVXLCDM]+/g)) {
+    const a = m.index!, b = a + m[0].length, before = text.slice(0, a), after = text.slice(b);
+    const alone = FOLIO_MARK.test(before) && FOLIO_MARK.test(after);
+    const roman = /[ivxlcdm]/i.test(m[0]);
+    // (At an end of a head: only digits, and a space between it and the head's words.)
+    const atEnd = !roman && ((FOLIO_MARK.test(before) && /^[^\s\p{L}\p{N}]*\s/u.test(after) && /\p{L}/u.test(after)) || (FOLIO_MARK.test(after) && /\s[^\s\p{L}\p{N}]*$/u.test(before) && /\p{L}/u.test(before)));
+    if (!alone && !atEnd) continue;
+    if (!roman) {
+      if (m[0].length > 4) continue;
+      const value = [...m[0]].reduce((v, c) => v * 10 + ((c.codePointAt(0)! - (c >= '\u06F0' ? 0x6f0 : c >= '\u0660' ? 0x660 : 0x30))), 0);
+      return { from: a, to: b, value, fmt: /[0-9]/.test(m[0]) ? 'decimal' : 'hindiNumbers' };
+    }
+    const vals: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 };
+    const ds = [...m[0].toLowerCase()].map((c) => vals[c]);
+    const value = ds.reduce((v, d, i) => v + (d < (ds[i + 1] ?? 0) ? -d : d), 0);
+    // (Only a numeral written the usual way: not a word that happens to be made of those letters.)
+    const roman2 = (n: number) => { let out = ''; for (const [k, r] of [[1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'], [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']] as [number, string][]) while (n >= k) { out += r; n -= k; } return out; };
+    if (value > 0 && value < 400 && roman2(value) === m[0].toLowerCase()) return { from: a, to: b, value, fmt: m[0] === m[0].toLowerCase() ? 'lowerRoman' : 'upperRoman' };
+  }
+  return null;
+}
+
+/** Across the pages: which head or foot numbers are the pages' numbers (each in step with a number a few pages
+ *  away: the same distance from its page's place in the file), made PAGE fields; and the lines taken for a
+ *  running head that are none — no page number among them, their words on no other page near — go back into the
+ *  text where the page has them (a heading or the text's first line at the top of a page). */
+function sortFurniture(pages: PageModel[]): void {
+  const textOf = (f: Furniture) => f.runs.map((r) => r.text).join('');
+  const found = pages.map((pg) => pg.furniture.map((f) => ({ f, n: folioIn(textOf(f)) })).filter((c): c is { f: Furniture; n: NonNullable<Furniture['num']> } => !!c.n));
+  found.forEach((cs, k) => {
+    for (const c of cs) {
+      const off = c.n.value - k, roman = c.n.fmt.endsWith('Roman');
+      let near = false;
+      for (let j = Math.max(0, k - 3); j <= Math.min(pages.length - 1, k + 3) && !near; j++) if (j !== k) near = found[j].some((d) => d.n.value - j === off && d.n.fmt.endsWith('Roman') === roman);
+      if (near) { c.f.num = c.n; break; }
+    }
+  });
+  // (A head's words without marks, vowels, tatweels or digits: the same head on the next pages reads alike.)
+  const key = (f: Furniture) => textOf(f).replace(/[\s\u0640\u064B-\u065F\u0670\u06D6-\u06ED.,:;!?\u060C\u061B\u061F()[\]{}\u00ab\u00bb\-\u2013\u2014*0-9\u0660-\u0669\u06F0-\u06F9]/g, '');
+  const heads = pages.map((pg) => new Set(pg.furniture.filter((f) => f.top).map(key).filter(Boolean)));
+  pages.forEach((pg, k) => {
+    const u = pg.uncut; delete pg.uncut;
+    const top = pg.furniture.filter((f) => f.top);
+    if (!u || !pg.body.length || !top.length || top.some((f) => f.num)) return;
+    const keys = top.map(key).filter(Boolean);
+    if (!keys.length) return; // (a number or a mark alone stays where it was put)
+    for (let j = Math.max(0, k - 4); j <= Math.min(pages.length - 1, k + 4); j++) if (j !== k && keys.some((x) => heads[j].has(x))) return;
+    // (The text's first line keeps its place: the room between the lines put back and it goes before it.)
+    pg.body[0].before += Math.max(0, pg.m.top - u.bottom);
+    pg.body.unshift(...u.blocks);
+    pg.m.top = Math.max(6, u.top);
+    pg.furniture = pg.furniture.filter((f) => !f.top);
+  });
 }
 
 /** Typical baseline-to-baseline pitch for a given size, measured on runs of consecutive lines. */
@@ -1762,9 +1835,28 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   };
   // A lone page number may sit well inside the page (TeX leaves wide bottom margins).
   const folio = (l: Line) => /^[\s\-\u2013\u2014(\[]*([0-9\u0660-\u0669\u06F0-\u06F9]{1,4}|[ivxlcdm]{1,6})[\s\-\u2013\u2014)\]]*$/i.test(l.pieces.map((p) => p.text).join(''));
-  const cutTop = (i: number) => (body[i].base > H * 0.88 || (body[i].base > H * 0.75 && folio(body[i]))) && body[i].base - body[i + 1].base > pitchOf(body[i + 1].size) * 1.2 && sparse(body[i]);
+  // A number standing apart at either end of a line ("١٤      بلوغ المرام"), or alone: a page number.
+  const edgeFolio = (l: Line) => {
+    if (folio(l)) return true;
+    const ps = l.pieces.filter((p) => p.text.trim() && p.text !== '\u2009').sort((a, b) => a.l - b.l);
+    for (const seq of [ps, [...ps].reverse()]) {
+      const g: Piece[] = [];
+      for (const p of seq) { const q = g[g.length - 1]; if (q && (seq === ps ? p.l - q.r : q.l - p.r) > l.size) break; g.push(p); }
+      if (g.length < ps.length && /^[\s\-\u2013\u2014()[\]]*[0-9\u0660-\u0669\u06F0-\u06F9]{1,4}[\s\-\u2013\u2014()[\]]*$/.test(g.map((p) => p.text).join(''))) return true;
+    }
+    return false;
+  };
+  // (A line with a page number in the top or bottom band is the page's furniture even when the text starts close
+  // below it, or its running head is long: books set their text nearer the head on some pages than on others.
+  // Whether the number is the page's — it follows the pages' sequence — and whether a head without one repeats
+  // is settled across the pages, and a line that turns out to be neither goes back into the text: see
+  // sortFurniture.)
+  const nearGap = (gap: number, next: Line) => gap > Math.max(pitchOf(next.size) * 0.85, next.size * 1.5);
+  const cutTop = (i: number) => ((body[i].base > H * 0.88 || (body[i].base > H * 0.75 && folio(body[i]))) && body[i].base - body[i + 1].base > pitchOf(body[i + 1].size) * 1.2 && sparse(body[i]))
+    || (body[i].base > H * 0.85 && nearGap(body[i].base - body[i + 1].base, body[i + 1]) && edgeFolio(body[i]));
   while (body.length > 1 && header.length < 3 && cutTop(0)) header.push(body.shift()!);
-  const cutBottom = (i: number) => (body[i].base < H * 0.08 || (body[i].base < H * 0.25 && folio(body[i]))) && body[i - 1].base - body[i].base > pitchOf(body[i].size) * 1.2 && sparse(body[i]);
+  const cutBottom = (i: number) => ((body[i].base < H * 0.08 || (body[i].base < H * 0.25 && folio(body[i]))) && body[i - 1].base - body[i].base > pitchOf(body[i].size) * 1.2 && sparse(body[i]))
+    || (body[i].base < H * 0.12 && nearGap(body[i - 1].base - body[i].base, body[i - 1]) && folio(body[i]));
   while (body.length > 1 && footer.length < 2 && cutBottom(body.length - 1)) footer.unshift(body.pop()!);
   // Columns: a gutter down the middle splits the text into regions — full-width lines (titles, an abstract)
   // and runs of lines set in two columns.
@@ -1779,7 +1871,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   // (Every line of the page is a candidate: a designed page has no running head to set apart.)
   // (A ruled table's cells are not boxes of a design: its lines are left out, or a page with a table of a few
   // columns reads as a designed page and the table comes apart into frames.)
-  const placedBoxes = gutter ? null : findPlacedBoxes([...header, ...body, ...footer].filter((l) => !inRuled(l)).sort((a, b) => b.base - a.base), W, H);
+  // (Save a page number alone at the head or foot: that is the page's, not a box of the design.)
+  const placedBoxes = gutter ? null : findPlacedBoxes([...header, ...body, ...footer].filter((l) => !inRuled(l) && !((header.includes(l) || footer.includes(l)) && folio(l))).sort((a, b) => b.base - a.base), W, H);
   if (placedBoxes) {
     const pitchP = pitchTable(placedBoxes.map((b) => b.lines));
     const placed: PlacedBox[] = placedBoxes.map((b) => {
@@ -1789,7 +1882,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
       return { x: b.l, y: top, w: b.r - b.l, h: Math.max(bottom - top, first.size), blocks: buildBlocks(b.lines, fonts, b.l, b.r, pitchP, null) };
     });
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D placed', JSON.stringify(placed.map((b) => [Math.round(b.x), Math.round(b.y), Math.round(b.w), Math.round(b.h), b.blocks.map((k) => (k.kind === 'p' ? k.runs.map((x) => x.text).join('').slice(0, 20) : k.kind))])));
-    const furnitureP: Furniture[] = [];
+    const furnitureP = pinnedFurniture(header.filter(folio), footer.filter(folio), fonts, H);
     const picsP = withGraphics ? await renderGraphics(page, 2, keepFonts, [], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
     page.cleanup();
     return { vert, w: W, h: H, pics: picsP, boxes, furniture: furnitureP, placed, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: { top: 18, bottom: 18, left: 18, right: 18, header: 6, footer: 6 } };
@@ -1945,7 +2038,10 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   }
   // Margins from where the text sits.
   const top = body.length ? body[0] : textLines[0];
-  const lowest = (notesLines.length ? notesLines : body).slice(-1)[0];
+  // (A ruled table's line stands at the table's top: its foot is where the table ends. Or a table round the notes
+  // takes the bottom margin up to its top, above the text, and the page's margins overlap.)
+  const lowest0 = (notesLines.length ? notesLines : body).slice(-1)[0];
+  const lowest = lowest0?.grid ? { ...lowest0, base: lowest0.grid.ys[lowest0.grid.ys.length - 1] + (1 - BASE) * pitchOf(lowest0.size) } : lowest0;
   const firstPitch = bodyBlocks[0]?.pitch ?? (top ? pitchOf(top.size) : 14);
   const m = {
     // The first line's baseline lands where the page has it; the last line's box ends just above the bottom margin.
@@ -1960,6 +2056,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     header: 6, footer: 6, slack: [0, 0] as [number, number],
   };
   m.slack = [L - m.left, W - R - m.right];
+  // (Never margins that meet: Word would spread the page over several.)
+  if (m.top + m.bottom > H - 36) m.bottom = Math.max(8, H - 36 - m.top);
   const grids = [...bodyBlocks, ...notesRaw].filter((b): b is Grid => b.kind === 'grid').map((b) => b.spec);
   lap('layout');
   const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
@@ -1970,7 +2068,10 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
   const notesAt = notesLines.length && notesRaw[0] ? H - notesLines[0].base - BASE * notesRaw[0].pitch : undefined;
-  return { vert, w: W, h: H, pics, boxes, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m };
+  // The lines taken as the running head, set as the text would have them — for sortFurniture to put back.
+  const headBlocks = header.length && bodyBlocks.length ? buildBlocks(header, fonts, L, R, pitchOf, null) : [];
+  const uncut = headBlocks.length ? { blocks: headBlocks, top: H - header[0].base - BASE * headBlocks[0].pitch, bottom: H - header[header.length - 1].base + (1 - BASE) * headBlocks[headBlocks.length - 1].pitch } : undefined;
+  return { vert, w: W, h: H, pics, boxes, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m, uncut };
 }
 
 /* ------------------------------------------------------------------ */
@@ -2128,6 +2229,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   // several fonts a legacy Arabic book spreads its letter forms over made one), then runs renamed to them.
   // Fonts whose text Word stretches with kashidas (verses, tatweel-justified paragraphs, tatweels kept in the
   // text) keep their tatweel; the others lose it, or LibreOffice would stretch every justified line with it.
+  // Page numbers and running heads, across the pages.
+  sortFurniture(pages);
   const stretched = new Set<string>();
   for (const pg of pages) for (const b of [...pg.body, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat()), ...(pg.placed ?? []).flatMap((x) => x.blocks)]) {
     if (b.kind === 'verse') { for (const row of b.rows) for (const cell of row) for (const r of cell) stretched.add(r.font); }
@@ -2149,6 +2252,16 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const writer = new W_.DocxWriter({ creator: 'KurokawaReader', title: book.title, rtl: rtlDoc, defaultFont: rtlDoc ? { ascii: 'Times New Roman', cs: 'Traditional Arabic', hAnsi: 'Times New Roman', eastAsia: 'Times New Roman' } : 'Times New Roman' });
 
   const usedChars = new Map<string, Set<number>>();
+  const propsOf = (r: Run): import('./docxwrite').RunProps => ({
+    font: r.font, size: Math.max(2, Math.round(r.size * 2)),
+    scale: r.cs && r.cs !== 100 ? r.cs : undefined,
+    spacing: r.spacing ? Math.round(r.spacing * PT) : undefined,
+    bold: r.bold, italic: r.italic,
+    color: r.color && r.color !== '000000' ? r.color : undefined,
+    rtl: r.rtl || undefined,
+    // Raised by exactly what the page raises it, at its own size (Word's superscript would shrink it again).
+    ...(r.sup ? (r.raise ? { position: Math.round(r.raise * 2) } : { superScript: true }) : {}),
+  });
   const runFor = (r: Run, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => {
     if (r.art) {
       const pic = r.art.pic;
@@ -2159,17 +2272,27 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const key = `${r.font}|${r.bold && r.italic ? 'BoldItalic' : r.bold ? 'Bold' : r.italic ? 'Italic' : 'Regular'}`;
     let set = usedChars.get(key); if (!set) usedChars.set(key, set = new Set());
     for (const ch of r.text) set.add(ch.codePointAt(0)!);
-    const half = Math.max(2, Math.round(r.size * 2));
-    return W_.textRun(r.text, {
-      font: r.font, size: half,
-      scale: r.cs && r.cs !== 100 ? r.cs : undefined,
-      spacing: r.spacing ? Math.round(r.spacing * PT) : undefined,
-      bold: r.bold, italic: r.italic,
-      color: r.color && r.color !== '000000' ? r.color : undefined,
-      rtl: r.rtl || undefined,
-      // Raised by exactly what the page raises it, at its own size (Word's superscript would shrink it again).
-      ...(r.sup ? (r.raise ? { position: Math.round(r.raise * 2) } : { superScript: true }) : {}),
-    }, { br: !!r.br, tab: r.tab !== undefined });
+    return W_.textRun(r.text, propsOf(r), { br: !!r.br, tab: r.tab !== undefined });
+  };
+  // A running head's or page number's runs: the page number a PAGE field (its digits, as the page has them, its
+  // last result), the marks and words round it plain text.
+  const furnitureRuns = (f: Furniture, part: InstanceType<typeof W_.Part>): string => {
+    if (!f.num) return f.runs.map((r) => runFor(r, null, part)).join('');
+    const { from, to } = f.num;
+    let at = 0, out = '', result = '', look: Run | null = null;
+    const close = () => { if (result) out += W_.field('PAGE', result, propsOf(look!)); result = ''; };
+    for (const r of f.runs) {
+      const a = at; at += r.text.length;
+      const i = Math.max(0, Math.min(r.text.length, from - a)), j = Math.max(0, Math.min(r.text.length, to - a));
+      if (i >= j || r.art) { if (a >= to) close(); out += runFor(r, null, part); continue; }
+      // (A line break or tab before the number stays outside the field.)
+      if (i > 0 || r.br || r.tab !== undefined) out += runFor({ ...r, text: r.text.slice(0, i) }, null, part);
+      look ??= r;
+      result += runFor({ ...r, text: r.text.slice(i, j), br: false, tab: undefined }, null, part);
+      if (j < r.text.length) { close(); out += runFor({ ...r, text: r.text.slice(j), br: false, tab: undefined }, null, part); }
+    }
+    close();
+    return out;
   };
   const alignOf = (a: Para['align']): import('./docxwrite').Align => (a === 'center' ? 'center' : a === 'both' ? 'both' : a === 'end' ? 'end' : 'start');
   const markRun = (b: { runs?: Run[]; rtl: boolean; size: number }): import('./docxwrite').RunProps => {
@@ -2273,7 +2396,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
           align: 'left', widowControl: false, indent: { left: 0, right: 0 },
           spacing: { before: Math.max(0, Math.round((top - cursor) * PT)), after: 0, line: Math.round(L * PT), lineRule: 'exact' },
           tabs: sorted.map((f) => ({ type: 'center' as const, pos: Math.max(0, Math.round((f.cx - pg.m.left) * PT)) })),
-        }, sorted.map((f) => W_.tabRun() + f.runs.map((r) => runFor(r, null, part)).join('')).join(''));
+        }, sorted.map((f) => W_.tabRun() + furnitureRuns(f, part)).join(''));
         cursor = top + L;
       }
       return { paras: out, end: cursor };
@@ -2385,6 +2508,15 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const children = blocksFor(pg.body, map, body) + blocksFor(flowNotes, null, body);
     return [{ type: 'nextPage', page, header, footer, children: [children || emptyPara] }];
   });
+  // Each page with its number in a PAGE field starts its section at that number, in the page's digits: Word shows
+  // the number the page shows, whatever came before (a page the reader's fonts spill onto a second one included).
+  // (Not on a page's later, continuous sections: a number set there would count the page again.)
+  let pi = -1;
+  for (const s of sections) {
+    if (s.type === 'nextPage') pi++;
+    const num = pages[pi]?.furniture.find((f) => f.num)?.num;
+    if (num) s.pageNumbers = { fmt: num.fmt, ...(s.type === 'nextPage' ? { start: num.value } : {}) };
+  }
 
   // Embed the PDF's own fonts — each face (regular, bold, …) under its family — where they can draw
   // every character used with them in that style.
@@ -2485,8 +2617,10 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
   const docXml = await zip.file('word/document.xml')!.async('string');
   let eaId = 1;
   const fixed = (!docXml.includes('\uE000') ? docXml : docXml.replace(/<w:r>(<w:rPr>(?:(?!<\/w:rPr>)[\s\S])*)<\/w:rPr>(<w:t[^>]*>)\uE000([^<]*)<\/w:t>/g, (_m, pr: string, t: string, txt: string) => `<w:r>${pr}<w:eastAsianLayout w:id="${eaId++}" w:vert="1" w:vertCompress="1"/></w:rPr>${t}${txt}</w:t>`))
-    .replace(/<w:sectPr([^>]*)>/g, (m) => `${m}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
-    .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<\/w:sectPr>)/g, (m, a: string, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${b}` : m));
+    // (Each where the schema has it — the notes' settings after the header and footer references, the
+    // direction just before the grid — or Word may call the file damaged.)
+    .replace(/<w:sectPr>((?:<w:(?:header|footer)Reference [^>]*\/>)*)/g, (_m, refs: string) => `<w:sectPr>${refs}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
+    .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<w:docGrid [^>]*\/>)?(<\/w:sectPr>)/g, (m, a: string, g: string | undefined, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${g ?? ''}${b}` : m));
   zip.file('word/document.xml', fixed);
   // Full-width punctuation keeps its full width (as the PDF sets it): no squeezing that would fit more
   // characters into a line or column than the page has.

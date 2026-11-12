@@ -76,6 +76,12 @@ export function textRun(text: string, p: RunProps, opts: { br?: boolean; tab?: b
   return `<w:r>${rPr(p)}${inner}</w:r>`;
 }
 export const tabRun = (): string => '<w:r><w:tab/></w:r>';
+/** A field (PAGE, …): its code, then `result` — the runs that show its last value until Word works it out
+ *  again — each mark in the look `p` gives (Word takes a field's look from its code's first character). */
+export function field(instr: string, result: string, p: RunProps): string {
+  const r = rPr(p);
+  return `<w:r>${r}<w:fldChar w:fldCharType="begin"/></w:r><w:r>${r}<w:instrText xml:space="preserve"> ${esc(instr)} </w:instrText></w:r><w:r>${r}<w:fldChar w:fldCharType="separate"/></w:r>${result}<w:r>${r}<w:fldChar w:fldCharType="end"/></w:r>`;
+}
 export const columnBreak = (): string => '<w:r><w:br w:type="column"/></w:r>';
 export const footnoteRef = (id: number): string => `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="${id}"/></w:r>`;
 
@@ -186,6 +192,8 @@ export type Section = {
   type: 'nextPage' | 'continuous'; page: PageSetup; columns?: Columns;
   /** The header's and footer's paragraphs (their own parts). */
   header?: { xml: string; part: Part }; footer?: { xml: string; part: Part };
+  /** How its PAGE fields count: the number of its first page (else on from the section before) and the digits. */
+  pageNumbers?: { start?: number; fmt?: 'decimal' | 'hindiNumbers' | 'lowerRoman' | 'upperRoman' };
   children: string[];
 };
 
@@ -215,9 +223,12 @@ export class DocxWriter {
     x += `<w:type w:val="${s.type}"/>`;
     x += `<w:pgSz w:w="${Math.round(pg.width)}" w:h="${Math.round(pg.height)}" w:orient="${pg.width > pg.height ? 'landscape' : 'portrait'}"/>`;
     x += `<w:pgMar w:top="${Math.round(m.top)}" w:right="${Math.round(m.right)}" w:bottom="${Math.round(m.bottom)}" w:left="${Math.round(m.left)}" w:header="${Math.round(m.header)}" w:footer="${Math.round(m.footer)}" w:gutter="${Math.round(m.gutter ?? 0)}"/>`;
+    // (In the order the schema has them: page numbering, columns, text direction, grid.)
+    const pn = s.pageNumbers;
+    x += `<w:pgNumType${pn?.fmt ? ` w:fmt="${pn.fmt}"` : ''}${pn?.start !== undefined ? ` w:start="${Math.max(0, Math.round(pn.start))}"` : ''}/>`;
     if (s.columns) { const c = s.columns; x += `<w:cols w:space="${Math.round(c.space)}" w:num="${c.widths.length}" w:equalWidth="false">${c.widths.map((w, i) => `<w:col w:w="${Math.round(w)}"${i < c.widths.length - 1 ? ` w:space="${Math.round(c.space)}"` : ''}/>`).join('')}</w:cols>`; }
-    x += '<w:pgNumType/><w:docGrid w:linePitch="360"/>';
     if (pg.textDirection) x += `<w:textDirection w:val="${pg.textDirection}"/>`;
+    x += '<w:docGrid w:linePitch="360"/>';
     x += '</w:sectPr>';
     return x;
   }
