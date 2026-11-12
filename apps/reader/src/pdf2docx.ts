@@ -7,6 +7,7 @@
 import { findVertical, plainVerticalForms } from './pdfvertical';
 import { cmapsUrl } from './slim';
 import { buildFont, plainFont, type GlyphUse, type Use, type GlyphSource } from './fontfix';
+import { GlyphRuns } from './glyphruns';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics, renamedFont, type Outline } from './fontbuild';
 import { loadPdfjs, offscreen } from './pdfjsload';
 import { type ZipLike } from './ziputil';
@@ -18,7 +19,7 @@ type PdfJs = Awaited<ReturnType<typeof loadPdfjs>>;
 export type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; winCov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[]; wordFont?: boolean };
 /** How the document uses its embedded fonts' glyphs: runs of glyphs along a line, cut where a word ends (each
  *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
-export type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; seen: Map<string, Set<number>>;
+export type UseStore = { seqs: GlyphRuns; seen: Map<string, Set<number>>;
   /** The same font under two names (a second copy of the document names its fonts afresh): the other name → the first. */
   same?: Map<string, string>; byFile?: Map<string, string>;
   /** For a reader of only some of the pages (a lane, see pdf2docx.lane.ts): the page's fonts in the order its text
@@ -28,6 +29,7 @@ export type UseStore = { seqs: ([string, GlyphUse][] & { rtl?: boolean })[]; see
   /** Every glyph run kept (a lane: the cap on uses is applied where the lanes' pages come together). */
   keepAll?: boolean };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
+
 type Piece = { text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; inked?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
   /** Marks put into this piece's text that the page draws in a colour of their own (a red haraka on a black letter). */
   tints?: { base: string; mark: string; color: string }[] };
@@ -215,6 +217,26 @@ type Pic = { png: Uint8Array; kind?: 'png' | 'jpg'; x: number; y: number; w: num
 /** Pictures still being encoded (the browser encodes them off this thread): the pages go on meanwhile, and the
  *  document is built once they are all in. */
 let pendingPngs: Promise<void>[] = [];
+/** Pictures met so far, by their size and a hash of their ends: the same ornament or frame drawn on every page of
+ *  a book is held once, not once per page until the end (28 MB of one book's 5). Cleared after each document. */
+const pngSeen = new Map<string, Uint8Array[]>();
+function samePng(b: Uint8Array): Uint8Array {
+  if (!b.length) return b;
+  let h = 0x811c9dc5; const step = (i: number) => { h ^= b[i]; h = Math.imul(h, 0x01000193); };
+  for (let i = 0; i < Math.min(2048, b.length); i++) step(i);
+  for (let i = Math.max(2048, b.length - 2048); i < b.length; i++) step(i);
+  const key = `${b.length}:${h >>> 0}`; const list = pngSeen.get(key);
+  if (!list) { pngSeen.set(key, [b]); return b; }
+  for (const o of list) { let i = 0; while (i < b.length && o[i] === b[i]) i++; if (i === b.length) return o; }
+  list.push(b); return b;
+}
+/** (Debug: with `globalThis.krMem = []` set, the converter notes the JS heap at each stage — after a full
+ *  collection when the page has `gc` (Chromium run with --js-flags=--expose-gc) — as [stage, ms, bytes].) */
+export function memMark(stage: string): void {
+  const M = (globalThis as { krMem?: [string, number, number][] }).krMem; if (!M) return;
+  (globalThis as { gc?: () => void }).gc?.();
+  M.push([stage, Math.round(performance.now()), (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0]);
+}
 function encodeLater(c: HTMLCanvasElement, into: { png: Uint8Array; kind?: 'png' | 'jpg' }): void {
   // A picture with nothing see-through in it — a photograph, a page's coloured background, a scan — is a JPEG
   // (a tenth of the PNG's bytes: a worksheet book of forty pages came out at seventy megabytes as PNGs); one
@@ -228,7 +250,7 @@ function encodeLater(c: HTMLCanvasElement, into: { png: Uint8Array; kind?: 'png'
     const g = flat.getContext('2d')!; g.fillStyle = '#fff'; g.fillRect(0, 0, flat.width, flat.height); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, flat.width, flat.height);
     src = flat;
   }
-  pendingPngs.push(canvasBytes(src, opaque ? 'image/jpeg' : 'image/png', 0.86).then((b) => { into.png = b; into.kind = opaque ? 'jpg' : 'png'; }));
+  pendingPngs.push(canvasBytes(src, opaque ? 'image/jpeg' : 'image/png', 0.86).then((b) => { into.png = samePng(b); into.kind = opaque ? 'jpg' : 'png'; }));
 }
 /** Whether a canvas is painted everywhere (no pixel see-through), judged on a sample of its pixels. */
 function isOpaque(c: HTMLCanvasElement): boolean {
@@ -1459,7 +1481,7 @@ function isWordFont(f: FontInfo, seq: GlyphUse[]): boolean {
 /** Rebuild the embedded fonts from their glyphs and how the document uses them (see fontfix.ts). Fonts
  *  that are one face (same family and style: subsets of one font) or that share words (legacy Arabic fonts
  *  holding different letter forms) become one font. Returns family renames for the runs. */
-function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched: Set<string>): { alias: Map<string, string>; byKey: Map<string, string> } {
+async function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched: Set<string>, tick?: (done: number) => Promise<void>): Promise<{ alias: Map<string, string>; byKey: Map<string, string> }> {
   const alias = new Map<string, string>(); const byKey = new Map<string, string>();
   const parent = new Map<string, string>();
   const find = (k: string): string => { let r = k; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(k, r); return r; };
@@ -1474,13 +1496,13 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
   // its own. (Told by the characters both set: none of them drawn with the same outline.)
   const drawn = new Map<string, Map<string, Set<string>>>(); // font key → character → its glyphs' outlines
   let index: Map<string, number[]> | null = null; // font key → the lines it sets (worked out when first asked)
-  const seqsOf = () => { if (!index) { index = new Map(); store.seqs.forEach((seq, si) => { let last = ''; for (const [font] of seq) if (font !== last) { last = font; const l = index!.get(font) ?? index!.set(font, []).get(font)!; if (l[l.length - 1] !== si) l.push(si); } }); } return index; };
+  const seqsOf = () => { if (!index) { index = new Map(); for (let si = 0; si < store.seqs.length; si++) { let last = ''; for (const font of store.seqs.fontsAt(si)) if (font !== last) { last = font; const l = index!.get(font) ?? index!.set(font, []).get(font)!; if (l[l.length - 1] !== si) l.push(si); } } } return index; };
   const drawnBy = (k: string): Map<string, Set<string>> => {
     let m = drawn.get(k); if (m) return m; m = new Map(); drawn.set(k, m);
     const f = fonts.get(k)!; const sf = readSfnt(f.src!.data); if (!sf) return m;
     try {
       const r = glyphReader(sf); const cm = cmapGlyphs(sf); const pairs = new Set<string>();
-      for (const si of seqsOf().get(k) ?? []) for (const [font, u] of store.seqs[si]) if (font === k && u[1] && [...u[1]].length === 1 && u[1].trim() && !COMBINING.test(u[1])) pairs.add(`${u[0]}|${u[1]}`);
+      for (const si of seqsOf().get(k) ?? []) for (const [font, u] of store.seqs.at(si)) if (font === k && u[1] && [...u[1]].length === 1 && u[1].trim() && !COMBINING.test(u[1])) pairs.add(`${u[0]}|${u[1]}`);
       const sc = 1000 / r.upem; const keyOf = new Map<number, string>();
       for (const pr of pairs) {
         const at = pr.indexOf('|'); const g = cm.get(f.src!.toFontChar[pr.slice(0, at)]); if (!g) continue;
@@ -1512,8 +1534,8 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
   // Legacy fonts are one font when they meet inside words often (a bold face meets the regular one only now
   // and then, where a phrase in bold runs into its quote mark).
   const meet = new Map<string, number>();
-  for (const seq of store.seqs) for (let i = 1; i < seq.length; i++) {
-    const a = seq[i - 1][0], b = seq[i][0];
+  for (let si = 0; si < store.seqs.length; si++) for (let i = 1, seq = store.seqs.fontsAt(si); i < seq.length; i++) {
+    const a = seq[i - 1], b = seq[i];
     if (a !== b && parent.has(a) && parent.has(b) && fonts.get(a)!.legacy && fonts.get(b)!.legacy) { const k = a < b ? `${a}\n${b}` : `${b}\n${a}`; meet.set(k, (meet.get(k) ?? 0) + 1); }
   }
   const most = new Map<string, number>();
@@ -1531,10 +1553,17 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     for (const k of keys) { const f = fonts.get(k)!; ownFamily.set(k, f.family); f.family = name; byKey.set(k, name); }
   }
   const debug = (globalThis as { krDebugP2D?: boolean }).krDebugP2D;
-  // (The fonts each line sets, worked out once: a font's lines are then found without going through every line
-  // of the book for each font.)
-  const seqFonts = store.seqs.map((seq) => { const f = new Set<string>(); for (const u of seq) f.add(u[0]); return f; });
+  // (A font's lines found from the index of the lines each font sets, in the book's order — not by going through
+  // every line of the book for each font: a book of a thousand pages has a hundred and fifty thousand.)
+  const linesOf = (keys: string[]): number[] => {
+    if (keys.length === 1) return seqsOf().get(keys[0]) ?? [];
+    const all = new Set<number>(); for (const k of keys) for (const si of seqsOf().get(k) ?? []) all.add(si);
+    return [...all].sort((a, b) => a - b);
+  };
+  let nGroup = 0, lastTick = performance.now();
   for (const keys of groups.values()) {
+    if (tick && performance.now() - lastTick > 200) { await tick(nGroup / groups.size); lastTick = performance.now(); }
+    nGroup++;
     keys.sort((a, b) => (fonts.get(b)!.uses ?? 0) - (fonts.get(a)!.uses ?? 0));
     const lead = fonts.get(keys[0])!;
     // A complete TrueType font with a Unicode map is carried as it is.
@@ -1550,7 +1579,7 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
       if (cov?.size) {
         const used = new Set<number>();
         const asRun = (s: string) => (lead.wordFont || !/[ﭐ-﷯ﹰ-﻿]/.test(s) ? s : s.normalize('NFKC'));
-        store.seqs.forEach((seq, si) => { if (seqFonts[si].has(keys[0])) for (const [font, u] of seq) if (font === keys[0]) for (const ch of asRun(u[1])) { const c = ch.codePointAt(0)!; if (c > 0x20 && !(c >= 0x200b && c <= 0x200f) && c !== 0xffff && !COMBINING.test(ch)) used.add(c); } });
+        for (const si of linesOf([keys[0]])) for (const [font, u] of store.seqs.at(si)) if (font === keys[0]) for (const ch of asRun(u[1])) { const c = ch.codePointAt(0)!; if (c > 0x20 && !(c >= 0x200b && c <= 0x200f) && c !== 0xffff && !COMBINING.test(ch)) used.add(c); }
         let ok = 0, letters = 0; for (const c of used) if (cov.has(c)) ok++; else if (ARABIC_LETTER.test(String.fromCodePoint(c))) letters++;
         if (!used.size || (ok / used.size >= 0.97 && !letters)) continue;
       }
@@ -1568,9 +1597,8 @@ function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stretched:
     if (!sources.length) continue;
     const member = new Set(keys);
     const lines: Use[][] = [];
-    for (let si = 0; si < store.seqs.length; si++) {
-      if (!keys.some((k) => seqFonts[si].has(k))) continue;
-      const seq = store.seqs[si];
+    for (const si of linesOf(keys)) {
+      const seq = store.seqs.at(si);
       let cur: Use[] = [];
       const push = (x: Use[]) => lines.push(Object.assign(x, { rtl: seq.rtl }));
       for (const [font, u] of seq) {
@@ -1762,7 +1790,7 @@ export function askAhead(pg: import('pdfjs-dist').PDFPageProxy): void { void pg.
 export function takePendingPngs(): Promise<void>[] { const p = pendingPngs; pendingPngs = []; return p; }
 const prefetched = new WeakMap<object, Promise<Awaited<ReturnType<import('pdfjs-dist').PDFPageProxy['getTextContent']>>>>();
 
-export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean, store: UseStore = { seqs: [], seen: new Map() }): Promise<PageModel> {
+export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPageProxy, fonts: Map<string, FontInfo>, withGraphics: boolean, store: UseStore = { seqs: new GlyphRuns(), seen: new Map() }): Promise<PageModel> {
   const [, , W, H] = page.view;
   const T = (globalThis as { krTiming?: Record<string, number> }).krTiming; let t0 = performance.now();
   const lap = (k: string) => { if (T) { const n = performance.now(); T[k] = (T[k] ?? 0) + n - t0; t0 = n; } };
@@ -1969,7 +1997,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
         if ((fi.uses ?? 0) < USE_CAP || !seen.has(u[0]) || store.keepAll) keep = true;
       }
       if (keep) for (const [font, u] of seq) { const fi = fonts.get(font)!; fi.uses = (fi.uses ?? 0) + 1; store.seen.get(font)!.add(u[0]); }
-      if (keep) store.seqs.push(Object.assign(seq, { rtl: l.rtl }));
+      if (keep) store.seqs.push(seq, l.rtl);
       seq = [];
     };
     for (const p of [...l.pieces].sort((a, b) => a.l - b.l)) {
@@ -2255,13 +2283,22 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
 
 /** How many lanes (page readers in workers of their own, see pdf2docx.lane.ts) a book is read in: none on a
  *  device with few cores (the app's thread and pdf.js's worker are all it has), else one lane for each two cores
- *  beyond the app's own, up to six (a computer with many cores; a phone's eight make three). */
+ *  beyond the app's own, up to six (a computer with many cores; a phone's eight make three) — and as many as its
+ *  memory holds: each lane is a whole reader (its copy of the document, pdf.js's worker and its own, a canvas),
+ *  some 200 MB more at its height on a book of a thousand pages. A device of 2 GB or less reads on this thread,
+ *  one of 4 GB in two lanes at most. */
 function laneCount(pages: number, size: number): number {
   const forced = (globalThis as { krLanes?: number }).krLanes;
   if (forced !== undefined) return forced;
   if (pages < 8 || size > 80 * 1024 * 1024 || typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') return 0;
   const cores = navigator.hardwareConcurrency ?? 2;
-  return Math.min(6, Math.floor((cores - 2) / 2), Math.ceil(pages / 4), size > 40 * 1024 * 1024 ? 2 : 6);
+  return Math.min(6, Math.floor((cores - 2) / 2), Math.ceil(pages / 4), size > 40 * 1024 * 1024 ? 2 : 6, lanesForMemory());
+}
+/** The lanes the device's memory allows (navigator.deviceMemory: gigabytes, rounded down to a power of two and
+ *  at most 8; unknown — not every browser tells — leaves the cores to decide). */
+function lanesForMemory(): number {
+  const gb = (globalThis as { krDeviceMemory?: number }).krDeviceMemory ?? (navigator as { deviceMemory?: number }).deviceMemory;
+  return gb === undefined ? 6 : gb <= 2 ? 0 : gb < 8 ? 2 : 6;
 }
 
 /**
@@ -2293,7 +2330,8 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
         else if (m.t === 'error') { failed = m.message; fail(new Error(m.message)); poke(); }
         else { l.out--; done.set(m.n, m); redoing.delete(m.n); feed(l); poke(); }
       };
-      const copy = bytes.slice().buffer;
+      // (Each lane its own copy, the last the bytes themselves: none kept here while the lanes read.)
+      const copy = i === nLanes - 1 && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer as ArrayBuffer : bytes.slice().buffer;
       w.postMessage({ t: 'open', bytes: copy, lane: i }, [copy]);
     })));
     for (const l of lanes) feed(l);
@@ -2316,6 +2354,9 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
         l.w.postMessage({ t: 'page', n, force: [...words] }); n--; continue;
       }
       done.delete(n);
+      // (Each lane's pictures came as its own copies: one held for all that are the same.)
+      for (const p of r.model.pics) p.png = samePng(p.png);
+      eachRunList(r.model, (runs) => { for (const x of runs) if (x.art?.pic) x.art.pic.png = samePng(x.art.pic.png); });
       for (const [id, info] of r.fonts) if (!defs.has(id)) defs.set(id, info);
       for (const id of r.pageFonts) if (!fonts.has(id)) { const d = defs.get(id); if (d) fonts.set(id, { ...d }); }
       for (const s of r.seqs) {
@@ -2325,7 +2366,7 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
           const seen = store.seen.get(font) ?? store.seen.set(font, new Set()).get(font)!;
           if ((fi.uses ?? 0) < USE_CAP || !seen.has(u[0])) keep = true;
         }
-        if (keep) { for (const [font, u] of s.uses) { const fi = fonts.get(font)!; fi.uses = (fi.uses ?? 0) + 1; store.seen.get(font)!.add(u[0]); } store.seqs.push(Object.assign(s.uses, { rtl: s.rtl })); }
+        if (keep) { for (const [font, u] of s.uses) { const fi = fonts.get(font)!; fi.uses = (fi.uses ?? 0) + 1; store.seen.get(font)!.add(u[0]); } store.seqs.push(s.uses, s.rtl); }
       }
       for (const [id, add] of r.gaps) { const fi = fonts.get(id); if (!fi) continue; const g = (fi.gaps ??= []); for (const x of add) { if (g.length >= 400) break; g.push(x); } }
       const found = r.wordFound.filter((id) => !words.has(id));
@@ -2357,29 +2398,39 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     const text = (tc.items as { str?: string }[]).map((i) => i.str ?? '').join('');
     if (looksGarbled(text, text.length)) opened = (await reopenDecrypted(pdfjs, opened, jsOpts)) ?? opened;
   }
-  const doc = opened.doc;
+  let doc = opened.doc;
   const fonts = new Map<string, FontInfo>();
-  let store: UseStore = { seqs: [], seen: new Map() };
+  pngSeen.clear();
+  let store: UseStore = { seqs: new GlyphRuns(), seen: new Map() };
   let pages: PageModel[] = [];
   pendingPngs = [];
   // On a device with cores to spare, the pages are read in lanes (workers of their own, each with its copy of
   // the document) and only put together here.
   const nLanes = opened.encrypted ? 0 : laneCount(doc.numPages, file.size);
-  const laned = nLanes > 1 ? await readInLanes(new Uint8Array(await file.arrayBuffer()), doc.numPages, nLanes, fonts, store, progress) : null;
-  if (laned) { pages = laned; await opened.destroy(); }
+  let laned: PageModel[] | null = null;
+  if (nLanes > 1) {
+    // (The copy opened here to count the pages is closed while the lanes read theirs — on a phone, the memory
+    // of a whole document that only waits — and opened again only if the lanes could not do it.)
+    const nPages = doc.numPages;
+    await opened.destroy();
+    laned = await readInLanes(new Uint8Array(await file.arrayBuffer()), nPages, nLanes, fonts, store, progress);
+    if (!laned) { opened = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }); doc = opened.doc; }
+  }
+  if (laned) pages = laned;
   else {
     fonts.clear();
     // On a device with cores to spare, a second copy of the document in a worker of its own reads the even pages
     // while the first reads the odd ones: pdf.js parses a page's drawing and its text in one thread, and that
     // thread, not this one, is what a long book waits on. (The fonts the second copy loads are the first's again
     // under other names; buildDocFonts makes one of each face.)
-    const twice = doc.numPages >= 6 && !opened.encrypted && file.size < 60 * 1024 * 1024 && ((globalThis as { krTwoWorkers?: boolean }).krTwoWorkers ?? (navigator.hardwareConcurrency ?? 2) >= 4);
+    // (Not where memory is short: the second copy is another document parsed in full.)
+    const twice = doc.numPages >= 6 && !opened.encrypted && file.size < 60 * 1024 * 1024 && ((globalThis as { krTwoWorkers?: boolean }).krTwoWorkers ?? ((navigator.hardwareConcurrency ?? 2) >= 4 && lanesForMemory() > 0));
     const opened2 = twice ? await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }).catch(() => null) : null;
     const doc2 = opened2 && opened2.doc.numPages === doc.numPages ? opened2.doc : null;
     if (opened2 && !doc2) void opened2.destroy();
     const docOf = (n: number) => (doc2 && n % 2 === 0 ? doc2 : doc);
     const task = { destroy: async () => { await opened.destroy(); if (doc2) await opened2!.destroy(); } };
-    store = { seqs: [], seen: new Map(), ...(doc2 ? { same: new Map(), byFile: new Map() } : {}) };
+    store = { seqs: new GlyphRuns(), seen: new Map(), ...(doc2 ? { same: new Map(), byFile: new Map() } : {}) };
     pages = [];
     pendingPngs = [];
     // The worker reads the next pages (their drawing and their text) while this one is laid out here — a couple
@@ -2398,6 +2449,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     await Promise.all(pendingPngs); pendingPngs = [];
   }
   progress('build', 85);
+  memMark('read');
   const TT = (globalThis as { krTiming?: Record<string, number> }).krTiming; const tb = performance.now();
 
   // The PDF's embedded fonts, rebuilt as TrueType fonts Word can carry (subsets of one face merged, and the
@@ -2412,8 +2464,11 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     else if (b.kind === 'grid') { for (const row of b.rows) for (const cell of row) for (const r of cell) if (r.text.includes('\u0640')) stretched.add(r.font); }
     else for (const r of b.runs) if (b.kashida || r.text.includes('\u0640')) stretched.add(r.font);
   }
-  const { alias, byKey } = buildDocFonts(fonts, store, stretched);
-  store.seqs = [];
+  // (The fonts take a while on a long book — seconds here, more on a phone: the progress moves on with them.)
+  const { alias, byKey } = await buildDocFonts(fonts, store, stretched, async (done) => { progress('build', 85 + Math.round(done * 4)); await yieldNow(); });
+  memMark('docFonts');
+  store.seqs = new GlyphRuns();
+  memMark('runsFreed');
   if (alias.size || byKey.size) for (const pg of pages) renameRuns(pg, alias, byKey);
   mergeWordFonts(fonts, pages);
   // In a font rebuilt from the PDF's own glyphs, the page's own tatweels give its lines exactly their width:
@@ -2423,8 +2478,10 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
 
   // The document's XML, written straight (src/docxwrite.ts): a paragraph, a run, a table each a string.
   const W_ = await import('./docxwrite');
-  const allBlocks = pages.flatMap((p) => [...p.body, ...(p.regions ?? []).flatMap((r) => r.cols.flat()), ...(p.placed ?? []).flatMap((b) => b.blocks)]);
-  const rtlDoc = allBlocks.filter((b) => b.rtl).length > allBlocks.length / 2;
+  // (Counted, not kept: a list of every block of the book would hold every page until the end.)
+  let nBlocks = 0, nRtl = 0;
+  for (const p of pages) for (const b of [...p.body, ...(p.regions ?? []).flatMap((r) => r.cols.flat()), ...(p.placed ?? []).flatMap((x) => x.blocks)]) { nBlocks++; if (b.rtl) nRtl++; }
+  const rtlDoc = nRtl > nBlocks / 2;
   const writer = new W_.DocxWriter({ creator: 'KurokawaReader', title: book.title, rtl: rtlDoc, defaultFont: rtlDoc ? { ascii: 'Times New Roman', cs: 'Traditional Arabic', hAnsi: 'Times New Roman', eastAsia: 'Times New Roman' } : 'Times New Roman' });
 
   const usedChars = new Map<string, Set<number>>();
@@ -2547,7 +2604,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const blocksFor = (bs: Block[], footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => bs.map((b) => (b.kind === 'p' ? paraFor(b, footnotes, part) : b.kind === 'grid' ? gridBlock(b, footnotes, part) : verseFor(b, footnotes, part))).join('');
   const emptyPara = '<w:p/>';
 
-  const sections: import('./docxwrite').Section[] = pages.flatMap((pg): import('./docxwrite').Section[] => {
+  const sectionsOf = (pg: PageModel): import('./docxwrite').Section[] => {
     slackNow = pg.m.slack ?? [0, 0];
     const body = writer.body;
     const map = new Map<number, number>();
@@ -2683,17 +2740,30 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     }
     const children = blocksFor(pg.body, map, body) + blocksFor(flowNotes, null, body);
     return [{ type: 'nextPage', page, header, footer, children: [children || emptyPara] }];
-  });
+  };
+  // The document's body is written page by page (each page's sections turned to bytes at once — see
+  // DocxWriter.addSection — with the finishing pass's changes to them made there), and each page let go once
+  // written: the book is never held twice, as pages and as text.
+  const eaSeq = { n: 1 };
+  writer.fixBody = (xml) => fixBodyXml(xml, rtlDoc, eaSeq);
   // Each page with its number in a PAGE field starts its section at that number, in the page's digits: Word shows
   // the number the page shows, whatever came before (a page the reader's fonts spill onto a second one included).
   // (Not on a page's later, continuous sections: a number set there would count the page again.)
+  const nums = pages.map((p) => p.furniture.find((f) => f.num)?.num);
   let pi = -1;
-  for (const s of sections) {
-    if (s.type === 'nextPage') pi++;
-    const num = pages[pi]?.furniture.find((f) => f.num)?.num;
-    if (num) s.pageNumbers = { fmt: num.fmt, ...(s.type === 'nextPage' ? { start: num.value } : {}) };
+  for (let i = 0; i < pages.length; i++) {
+    for (const s of sectionsOf(pages[i])) {
+      if (s.type === 'nextPage') pi++;
+      const num = nums[pi];
+      if (num) s.pageNumbers = { fmt: num.fmt, ...(s.type === 'nextPage' ? { start: num.value } : {}) };
+      writer.addSection(s);
+    }
+    (pages as (PageModel | null)[])[i] = null;
+    if (i % 32 === 31) { progress('build', 89 + Math.round((i / pages.length) * 3)); await yieldNow(); }
   }
+  pages = [];
 
+  memMark('sections');
   // Embed the PDF's own fonts — each face (regular, bold, …) under its family — where they can draw
   // every character used with them in that style.
   type Face = 'Regular' | 'Bold' | 'Italic' | 'BoldItalic';
@@ -2795,19 +2865,41 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     if (sub) subs.set(family, sub);
   }
   const tc0 = performance.now();
-  const zip = await writer.pack(sections, embedded);
-  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs, declOf);
+  const zip = await writer.pack(embedded);
+  memMark('pack');
+  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs, declOf, writer);
   if (TT) TT.compile = performance.now() - tc0;
+  memMark('finish');
+  progress('build', 95);
   const { zipOut } = await import('./ziputil');
-  const blob = await zipOut(zip as unknown as ZipLike, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  const blob = await zipOut(zip as unknown as ZipLike, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', undefined, new Map([['word/document.xml', writer.documentBlob()]]));
   if (TT) TT.pack = performance.now() - tb - TT.build;
+  pngSeen.clear();
+  memMark('zip');
   progress('build', 100);
   return blob;
 }
 
 
+/** The finishing pass's changes to the document's own XML, each local to a run or to a section's properties (so
+ *  made on the body piece by piece as it is written, in order — `ea` numbers the vertical runs on): characters
+ *  set upright in vertical text, the notes' numbering and the sections' direction, raised runs in half-points. */
+function fixBodyXml(xml: string, rtl: boolean, ea: { n: number }): string {
+  const fixed = (!xml.includes('\uE000') ? xml : xml.replace(/<w:r>(<w:rPr>(?:(?!<\/w:rPr>)[\s\S])*)<\/w:rPr>(<w:t[^>]*>)\uE000([^<]*)<\/w:t>/g, (_m, pr: string, t: string, txt: string) => `<w:r>${pr}<w:eastAsianLayout w:id="${ea.n++}" w:vert="1" w:vertCompress="1"/></w:rPr>${t}${txt}</w:t>`))
+    // (Each where the schema has it — the notes' settings after the header and footer references, the
+    // direction just before the grid — or Word may call the file damaged.)
+    .replace(/<w:sectPr>((?:<w:(?:header|footer)Reference [^>]*\/>)*)/g, (_m, refs: string) => `<w:sectPr>${refs}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
+    .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<w:docGrid [^>]*\/>)?(<\/w:sectPr>)/g, (m, a: string, g: string | undefined, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${g ?? ''}${b}` : m));
+  return fixed.includes('<w:position w:val="') ? positionsInHalfPoints(fixed) : fixed;
+}
+/** A raised run's position in half-points (docx wrote "4pt", which LibreOffice and older Words ignore). */
+const positionsInHalfPoints = (xml: string): string => xml.replace(/<w:position w:val="(-?[\d.]+)pt"\/>/g, (_m, v: string) => `<w:position w:val="${Math.round(+v * 2)}"/>`);
+
 /** Word details the library has no option for: right-to-left sections, footnote numbers restart on each page. */
-async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>(), declOf?: (name: string) => import('./docxwrite').FontDecl): Promise<void> {
+async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>(), declOf?: (name: string) => import('./docxwrite').FontDecl, writer?: { mapBody(fix: (xml: string) => string): void }): Promise<void> {
+  // (The document's own XML — word/document.xml, a placeholder in the zip — was written by the writer piece by
+  // piece and changed as it was written (fixBodyXml); what is done to it here is done to its pieces.)
+  const DOC = 'word/document.xml';
   // Fonts: the other faces of each embedded family (bold, …), the fonts' own signatures, and the switch that
   // tells Word the document carries its fonts.
   const ft = zip.file('word/fontTable.xml');
@@ -2836,32 +2928,39 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
     zip.file('word/fontTable.xml', table);
     zip.file('word/_rels/fontTable.xml.rels', rels);
   }
-  const docXml = await zip.file('word/document.xml')!.async('string');
-  let eaId = 1;
-  const fixed = (!docXml.includes('\uE000') ? docXml : docXml.replace(/<w:r>(<w:rPr>(?:(?!<\/w:rPr>)[\s\S])*)<\/w:rPr>(<w:t[^>]*>)\uE000([^<]*)<\/w:t>/g, (_m, pr: string, t: string, txt: string) => `<w:r>${pr}<w:eastAsianLayout w:id="${eaId++}" w:vert="1" w:vertCompress="1"/></w:rPr>${t}${txt}</w:t>`))
-    // (Each where the schema has it — the notes' settings after the header and footer references, the
-    // direction just before the grid — or Word may call the file damaged.)
-    .replace(/<w:sectPr>((?:<w:(?:header|footer)Reference [^>]*\/>)*)/g, (_m, refs: string) => `<w:sectPr>${refs}<w:footnotePr><w:numRestart w:val="eachPage"/></w:footnotePr>`)
-    .replace(/(<w:sectPr[^>]*>[\s\S]*?)(<w:docGrid [^>]*\/>)?(<\/w:sectPr>)/g, (m, a: string, g: string | undefined, b: string) => (rtl && !a.includes('<w:bidi') ? `${a}<w:bidi/>${g ?? ''}${b}` : m));
-  zip.file('word/document.xml', fixed);
+  if (!writer) { const docXml = await zip.file(DOC)!.async('string'); zip.file(DOC, fixBodyXml(docXml, rtl, { n: 1 })); }
   // Full-width punctuation keeps its full width (as the PDF sets it): no squeezing that would fit more
   // characters into a line or column than the page has.
   const st = zip.file('word/settings.xml');
   if (st) { const x = await st.async('string'); if (!x.includes('characterSpacingControl')) zip.file('word/settings.xml', x.replace(/(<w:compat>)/, '<w:characterSpacingControl w:val="doNotCompress"/>$1')); }
   // A raised run's position in half-points (docx writes "4pt", which LibreOffice and older Words ignore).
   for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes)\.xml$/.test(n))) {
+    if (writer && name === DOC) continue; // (done as it was written: fixBodyXml)
     const xml = await zip.file(name)!.async('string');
-    if (xml.includes('<w:position w:val="')) zip.file(name, xml.replace(/<w:position w:val="(-?[\d.]+)pt"\/>/g, (m, v: string) => `<w:position w:val="${Math.round(+v * 2)}"/>`));
+    if (xml.includes('<w:position w:val="')) zip.file(name, positionsInHalfPoints(xml));
+  }
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const bySlot = new Map([...subs].map(([k, v]) => [esc(k), v]));
+  const subbed = (xml: string) => xml.replace(/w:(ascii|hAnsi|cs|eastAsia)="([^"]*)"/g, (m, slot: string, v: string) => {
+    const sub = bySlot.get(v); if (!sub) return m;
+    return `w:${slot}="${slot === 'cs' ? sub.cs : slot === 'eastAsia' ? sub.ea : sub.latin}"`;
+  });
+  // (The body's pieces read once here: the fonts' stand-ins put in, and the font names its runs give noted, in
+  // order, for the font table below.)
+  const bodyNames: string[] = [];
+  if (writer) {
+    const noted = new Set<string>();
+    writer.mapBody((xml) => {
+      const out = subs.size ? subbed(xml) : xml;
+      for (const m of out.matchAll(/w:(?:ascii|hAnsi|cs|eastAsia)="([^"]*)"/g)) if (!noted.has(m[1])) { noted.add(m[1]); bodyNames.push(m[1]); }
+      return out;
+    });
   }
   if (subs.size) {
-    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    const bySlot = new Map([...subs].map(([k, v]) => [esc(k), v]));
     for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes)\.xml$/.test(n))) {
+      if (writer && name === DOC) continue;
       const xml = await zip.file(name)!.async('string');
-      zip.file(name, xml.replace(/w:(ascii|hAnsi|cs|eastAsia)="([^"]*)"/g, (m, slot: string, v: string) => {
-        const sub = bySlot.get(v); if (!sub) return m;
-        return `w:${slot}="${slot === 'cs' ? sub.cs : slot === 'eastAsia' ? sub.ea : sub.latin}"`;
-      }));
+      zip.file(name, subbed(xml));
     }
   }
   // Every font a run, a paragraph mark or the defaults name is in the font table — the ones the document does not
@@ -2873,7 +2972,8 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
     const have = new Set([...table.matchAll(/<w:font w:name="([^"]*)"/g)].map((m) => unesc(m[1])));
     const named: string[] = [];
     for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes|endnotes|styles)\.xml$/.test(n))) {
-      for (const m of (await zip.file(name)!.async('string')).matchAll(/w:(?:ascii|hAnsi|cs|eastAsia)="([^"]*)"/g)) { const v = unesc(m[1]); if (v && !have.has(v)) { have.add(v); named.push(v); } }
+      const values = writer && name === DOC ? bodyNames : Array.from((await zip.file(name)!.async('string')).matchAll(/w:(?:ascii|hAnsi|cs|eastAsia)="([^"]*)"/g), (m) => m[1]);
+      for (const raw of values) { const v = unesc(raw); if (v && !have.has(v)) { have.add(v); named.push(v); } }
     }
     if (named.length) {
       const { fontEntry } = await import('./docxwrite');

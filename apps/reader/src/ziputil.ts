@@ -34,15 +34,21 @@ export async function packDocx(doc: unknown, finish?: (zip: ZipLike) => Promise<
 }
 
 /** A JSZip's files written out: by the browser's own deflate when it has one (several times faster than JSZip's
- *  in JS), else by JSZip. */
-export async function zipOut(zip: ZipLike, mimeType: string, first?: string): Promise<Blob> {
+ *  in JS), else by JSZip. `over`: parts whose content is this Blob instead of what the JSZip holds under that
+ *  name (a part too big to go through JSZip as one string: a book's document.xml). */
+export async function zipOut(zip: ZipLike, mimeType: string, first?: string, over?: Map<string, Blob>): Promise<Blob> {
   const { canDeflate, zipWrite, STORED } = await import('./zipstore');
-  if (!canDeflate()) { storeCompressed(zip); return zip.generateAsync({ type: 'blob', mimeType, compression: 'DEFLATE' }); }
+  if (!canDeflate()) {
+    storeCompressed(zip);
+    if (over) for (const [name, blob] of over) zip.file(name, new Uint8Array(await blob.arrayBuffer()));
+    return zip.generateAsync({ type: 'blob', mimeType, compression: 'DEFLATE' });
+  }
   const names = Object.keys(zip.files).filter((n) => !(zip.files[n] as { dir?: boolean }).dir);
   if (first && names.includes(first)) names.splice(names.indexOf(first), 1), names.unshift(first);
   const files: { name: string; blob: Blob | Uint8Array; store?: boolean }[] = [];
   const enc = new TextEncoder();
   for (const name of names) {
+    const o = over?.get(name); if (o) { files.push({ name, blob: o, store: STORED.test(name) || name === first }); continue; }
     const f = zip.files[name] as { async(type: 'uint8array'): Promise<Uint8Array>; _data?: unknown };
     // (JSZip holds what it was given — a string or bytes, behind a promise — read here as it is rather than
     // through its own stream, which costs a millisecond a part; a part as bytes stays bytes: each trip from a

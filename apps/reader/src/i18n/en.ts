@@ -804,6 +804,7 @@ export const en = {
   convertDone: 'Ready: {name} · {size}',
   convertFailed: 'Conversion failed',
   convertUnsupported: 'This format cannot be converted.',
+  convertNoMemory: 'This device ran out of memory converting this book. Close other apps and try again.',
   conv_render: 'Reading the book…',
   conv_images: 'Collecting pictures…',
   conv_pdfPage: 'Reading pages…',
