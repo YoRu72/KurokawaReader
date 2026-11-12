@@ -163,6 +163,18 @@ export function localDigits(n: number | string, ctx: 'data' | 'prose' = 'data'):
   return pref === 'eastern' || (pref === 'auto' && ctx === 'prose') ? EASTERN(s) : s;
 }
 
+/** A percentage as the interface writes it: «15%»; in Arabic as the locale writes it — «١٥٪», or «15٪» with Western
+ *  digits (the digits by `ctx`, as localDigits), the sign where Arabic puts it whichever way the line runs. */
+export function formatPercent(p: number, ctx: 'data' | 'prose' = 'data'): string {
+  if (current !== 'ar') return `${p}%`;
+  return new Intl.NumberFormat(dateLocale(ctx), { style: 'percent', maximumFractionDigits: 0 }).format(p / 100);
+}
+/** The time of day: as the device writes it, and in Arabic as the locale does («٤:٤٤ م», the digits by `ctx`). */
+export function formatClock(d: Date, ctx: 'data' | 'prose' = 'data'): string {
+  if (current !== 'ar') return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d);
+  return new Intl.DateTimeFormat(dateLocale(ctx), { hour: 'numeric', minute: '2-digit' }).format(d);
+}
+
 /** A counted noun in Arabic (تمييز العدد), as the case requires: `one` and `two` are the noun alone (واحد
  *  and the dual, nominative or genitive), `few` the plural for 3–10, `many` the singular for 11–99
  *  (accusative), `hundred` the singular for 100, 200… (genitive). */

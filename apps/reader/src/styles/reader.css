@@ -329,19 +329,9 @@ html[dir='rtl'] .pdf-bar[data-layout='side'] input[type='range'] { direction: lt
 .reader-view { position: relative; }
 .reader-view .tap-zones { position: absolute; inset: var(--topbar-h) 0 60px; pointer-events: none; }
 
-/* Moon+-style status line at the very bottom */
-.read-status {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 18; display: flex; align-items: center; gap: 8px;
-  padding: 3px 14px calc(3px + var(--safe-bottom)); font-family: var(--font-ui); font-size: 11.5px; color: var(--r-dim);
-  background: color-mix(in srgb, var(--r-bg) 92%, transparent); pointer-events: none; font-variant-numeric: tabular-nums;
-}
-.read-status .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55vw; }
-.read-status .left:empty { display: none; }
 .toc-list button { display: flex; align-items: baseline; gap: 8px; }
 .toc-list .toc-label { flex: 1; min-width: 0; }
 .toc-list .toc-len { font-size: 11.5px; color: var(--md-on-surface-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.read-status .sp { flex: 1; }
-.read-status .pct { font-weight: 600; }
 .reader-view.immersive .read-footer { opacity: 0; }
 .reader-flow { padding-bottom: calc(96px + var(--safe-bottom)); }
 
@@ -359,7 +349,6 @@ html[dir='rtl'] .chapter-nav .cn-btn svg { transform: scaleX(-1); }
 .chapter-nav .cn-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; flex-direction: column; align-items: flex-start; }
 .chapter-nav .cn-btn small { font-size: 11px; color: var(--r-dim); font-weight: 400; }
 .chapter-nav .end { color: var(--r-dim); font-size: 13px; }
-.read-status { color: var(--md-on-surface-dim); background: color-mix(in srgb, var(--md-surface) 92%, transparent); }
 
 .reader-view .float-toolbar, .reader-view .pdf-bar { bottom: calc(34px + var(--safe-bottom)); }
 /* Note bubbles after highlighted passages */
@@ -543,3 +532,74 @@ html.pc .reader-view.panel-docked .float-toolbar .tb-label { display: none; }
 html.pc .reader-view.panel-docked .page-arrow.next { inset-inline-end: 18px; }
 html.pc .reader-view .panel.docked .panel-head { min-height: calc(var(--topbar-h) + var(--safe-top)); padding-block: 0; }
 html.pc .reader-view .panel.docked .panel-head h2 { font-size: 17px; }
+
+/* ---------- The reading bar (Moon+'s status line) — src/ui/readbar.ts ----------
+   A thin line at the foot of the page in the page's own colours (so it reads on every theme — light, sepia, dark,
+   black, one's own), its items at the start, the centre and the end (mirrored in a right-to-left interface), the
+   figures of fixed width so the line does not shift as they change. The text always ends above whatever shows at the
+   foot — the bar, the floating toolbar, the system's gesture area — and the place read does not move on the screen
+   when they show or hide: with the chrome hidden the text's top padding takes the top bar's room, so the scroller
+   grows upward over text that was already above (no jump), and its foot is set by what stays. */
+.reader-view { --rb-size: 22px; --rb-imm-bottom: var(--safe-bottom); }
+.reader-view.rb-on.rb-imm { --rb-imm-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
+.read-status {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 18; box-sizing: border-box; height: calc(var(--rb-size) + var(--safe-bottom));
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: 12px;
+  padding: 0 max(14px, env(safe-area-inset-right, 0px)) var(--safe-bottom) max(14px, env(safe-area-inset-left, 0px));
+  font-family: var(--font-ui); font-size: 11.5px; line-height: 1; letter-spacing: .01em; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--chrome-fg, var(--md-on-surface)) 62%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg, var(--md-surface)) 94%, transparent);
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--chrome-fg, var(--md-on-surface)) 8%, transparent);
+  pointer-events: none; transition: opacity var(--dur-med), transform var(--dur-med) var(--ease-emph);
+}
+.read-status[hidden] { display: none; }
+/* (Nothing in the centre: the two sides share the line, the start giving way first. Too much for the line: names and
+   the items in words are cut with «…» — the chapter's first — the figures never; nothing overlaps.) */
+.read-status[data-centre='false'] { display: flex; justify-content: space-between; }
+.read-status[data-centre='false'] .rb-center { display: none; }
+.read-status[data-centre='false'] .rb-start { flex: 0 4 auto; }
+.read-status[data-centre='false'] .rb-end { flex: 0 1 auto; margin-inline-start: auto; }
+.read-status > div { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.read-status .rb-start { justify-content: flex-start; }
+.read-status .rb-center { justify-content: center; max-width: 46vw; }
+.read-status .rb-end { justify-content: flex-end; }
+.read-status .rb-item { flex: 0 0 auto; }
+.read-status .rb-item[hidden] { display: none; }
+.read-status :is(.rb-chapter, .rb-title) { flex: 0 8 auto; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; }
+.read-status :is(.rb-chapterLeft, .rb-chapterPct, .rb-bookLeft, .rb-timeChapter, .rb-timeBook) { flex: 0 1 auto; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; }
+.read-status :is(.rb-page, .rb-bookPage, .rb-bookPct) { font-weight: 600; color: color-mix(in srgb, var(--chrome-fg, var(--md-on-surface)) 78%, transparent); }
+/* The battery: a small drawn cell before its figure. */
+.read-status .rb-battery { display: inline-flex; align-items: center; gap: 4px; }
+.read-status .rb-battery::before { content: ''; width: 14px; height: 7px; border: 1.2px solid currentColor; border-radius: 2px; box-sizing: border-box; box-shadow: 1.5px 0 0 -0.3px currentColor; opacity: .85; }
+html[dir='rtl'] .read-status .rb-battery::before { box-shadow: -1.5px 0 0 -0.3px currentColor; }
+.reader-view.immersive:not(.rb-imm) .read-status { opacity: 0; transform: translateY(100%); }
+/* One page: the text's frame with the chrome hidden (the bar's pages are counted in it). */
+.read-frame { position: absolute; left: 0; right: 0; top: 0; bottom: var(--rb-imm-bottom); visibility: hidden; pointer-events: none; }
+/* The foot of the text: above the bar (when it shows), the system's gesture area, and — on a phone, with the chrome
+   shown — the floating toolbar (its height measured: --tb-h). */
+.reader-view.flow-reader .reader { padding-bottom: var(--safe-bottom); }
+.reader-view.flow-reader.rb-on .reader { padding-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
+.reader-view.flow-reader.immersive .reader { padding-bottom: var(--rb-imm-bottom); }
+html:not(.pc) .reader-view.flow-reader:not(.immersive) .reader { padding-bottom: calc(34px + var(--tb-h, 60px) + 8px + var(--safe-bottom)); }
+.reader-view.flow-reader.immersive .reader-flow { padding-top: calc(28px + var(--topbar-h) + 24px + var(--safe-top)); }
+.reader-view.pdf-reader.rb-on:not(.immersive) .reader, .reader-view.pdf-reader.rb-on.rb-imm .reader { padding-bottom: calc(var(--rb-size) + var(--safe-bottom)); }
+/* The reading bar's editor (the reader's options): a row per item — its switch and name, where it goes, up and down. */
+.placed-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.placed-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; border-radius: 14px; }
+.placed-row.on { background: color-mix(in srgb, var(--md-secondary-container) 70%, transparent); color: var(--md-on-secondary-container); }
+.placed-name { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 14px; cursor: pointer; }
+.placed-name input { accent-color: var(--md-primary); width: 18px; height: 18px; flex: none; }
+.placed-name span { display: flex; flex-direction: column; min-width: 0; }
+.placed-name small { font-size: 11.5px; opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.placed-at { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--sh-full); background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
+.placed-at button { width: 34px; height: 30px; padding: 0; display: grid; place-items: center; border-radius: var(--sh-full); color: var(--md-on-surface-variant); background: none; transition: background var(--dur-short), color var(--dur-short); }
+.placed-at button[aria-pressed='true'] { background: var(--md-primary); color: var(--md-on-primary); }
+.placed-at button:disabled { opacity: .35; }
+.place-glyph { display: inline-flex; gap: 2px; align-items: center; }
+.place-glyph > span { width: 5px; height: 5px; border-radius: 1.5px; box-shadow: inset 0 0 0 1.2px currentColor; opacity: .7; }
+.place-glyph > span.on { background: currentColor; opacity: 1; width: 7px; }
+.placed-row .row-actions .icon-btn { width: 32px; height: 32px; }
+.placed-row .row-actions .icon-btn:disabled { opacity: .3; }
+/* (The text's scroller takes the keyboard's focus when a book opens — for the keys that turn pages — and its ring, once
+   below the screen's foot, now drew a line above the toolbar: the reading surface needs none.) */
+.reader-scroll:focus-visible { outline: none; }

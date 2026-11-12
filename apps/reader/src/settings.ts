@@ -1,5 +1,6 @@
 import { familyFor } from './fonts';
 import { ensureFont } from './slim';
+import type { PlacedItem } from './ui/placeditems';
 // Visual settings for the reading surface, persisted in localStorage and
 // applied as CSS custom properties on the .reader element.
 
@@ -10,7 +11,22 @@ export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'merriweather' | 'termes' | 'lora' | 'literata' | 'garamond' | 'crimson' | 'gelasio' | 'vollkorn' | 'bitter' | 'sourceserif' | 'atkinson' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
 export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
-export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen' | 'dayNight';
+export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen' | 'dayNight' | 'statusLine';
+/** The reading bar's items as it came before they could be chosen: the chapter and the page in it at the start;
+ *  the minutes left (once a reading speed is known), the clock, the battery and the book's percentage at the end. The
+ *  rest are there to be switched on. */
+export const DEFAULT_STATUS_ITEMS: PlacedItem[] = [
+  { id: 'chapter', on: true, at: 'start' }, { id: 'page', on: true, at: 'start' },
+  { id: 'timeChapter', on: true, at: 'end' }, { id: 'clock', on: true, at: 'end' }, { id: 'battery', on: true, at: 'end' }, { id: 'bookPct', on: true, at: 'end' },
+  { id: 'title', on: false, at: 'start' }, { id: 'chapterLeft', on: false, at: 'end' }, { id: 'chapterPct', on: false, at: 'end' },
+  { id: 'bookPage', on: false, at: 'end' }, { id: 'bookLeft', on: false, at: 'end' }, { id: 'timeBook', on: false, at: 'end' },
+];
+/** A set of settings from before the reading bar's items (no `statusItems` in it) that had the minutes left switched
+ *  off: the same bar, without that item. Anything else is left as it is. */
+export function barItemsMigrated<T extends Partial<VisualSettings>>(v: T, base: PlacedItem[] = DEFAULT_STATUS_ITEMS): T {
+  if (!v || typeof v !== 'object' || 'statusItems' in v || v.showTimeLeft !== false) return v;
+  return { ...v, statusItems: base.map((x) => (x.id === 'timeChapter' ? { ...x, on: false } : { ...x })) };
+}
 export const DEFAULT_TAP_ZONES: TapAction[] = ['prev', 'prev', 'prev', 'menu', 'menu', 'menu', 'next', 'next', 'next'];
 export type CjkFont = 'system' | 'mincho' | 'gothic' | 'publisher' | (string & {});
 
@@ -116,7 +132,13 @@ export interface VisualSettings {
   tapZones: TapAction[];
   turnAnimation: 'none' | 'slide' | 'fade';   // when a tap or key moves a screen
   showStatusLine: boolean;
-  showTimeLeft: boolean;      // minutes left in the chapter on the status line, from the reading speed
+  /** (Before 0.61: the minutes left in the chapter on the status line. Now an item of `statusItems`; read once, to
+   *  carry an older choice over — see barItemsMigrated.) */
+  showTimeLeft: boolean;
+  /** What the reading bar (the status line) shows, in what order, at which place along it — src/ui/readbar.ts. */
+  statusItems: PlacedItem[];
+  /** The reading bar stays when a tap hides the rest of the chrome (immersive reading). */
+  statusImmersive: boolean;
   importButton: 'chips' | 'top' | 'fab';
   appName: 'auto' | 'en' | 'ar' | 'ja' | 'zh' | 'ko';   // launcher name on the device (Android)
   importMode: 'link' | 'copy';   // keep imported files where they are (Android/desktop) or copy them into the app
@@ -290,6 +312,8 @@ export const DEFAULTS: VisualSettings = {
   tapZones: DEFAULT_TAP_ZONES,
   turnAnimation: 'none',
   showTimeLeft: true,
+  statusItems: DEFAULT_STATUS_ITEMS,
+  statusImmersive: true,
   importButton: 'chips',
   appName: 'auto',
   importMode: 'link',
@@ -375,7 +399,7 @@ let current: VisualSettings = load();
 function load(): VisualSettings {
   try {
     const raw = localStorage.getItem(KEY);
-    const s: VisualSettings = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    const s: VisualSettings = raw ? { ...DEFAULTS, ...barItemsMigrated(JSON.parse(raw) as Partial<VisualSettings>) } : { ...DEFAULTS };
     // 0.18: the add-books button moved from the top bar to the folder row (sync took its place).
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
@@ -425,6 +449,8 @@ const overrides = (): Record<string, Partial<VisualSettings>> => {
   if (!bookOverrides) {
     try { bookOverrides = JSON.parse(localStorage.getItem(BOOK_KEY) ?? '{}') as Record<string, Partial<VisualSettings>>; } catch { bookOverrides = {}; }
     if (!bookOverrides || typeof bookOverrides !== 'object') bookOverrides = {};
+    // (A book's own «minutes left» switched off before the reading bar's items: the bar of the app, without them.)
+    for (const [id, v] of Object.entries(bookOverrides)) if (v && typeof v === 'object' && !('statusItems' in v) && v.showTimeLeft === false) bookOverrides[id] = barItemsMigrated(v, globals.statusItems);
     // (Kept in a book's overrides by an older version — a key typed with a book open —: taken out of them; where
     // the app has no value of its own yet the book's is moved to the app, so nothing typed is lost. Values are
     // never printed.)
@@ -468,7 +494,7 @@ export function setBookScoped(on: boolean): void {
 export const globalSettings = (): VisualSettings => globals;
 /** Every book's own settings (a copy), and one book's set (a backup's, restored). */
 export const allBookSettings = (): Record<string, Partial<VisualSettings>> => JSON.parse(JSON.stringify(overrides())) as Record<string, Partial<VisualSettings>>;
-export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = bookPart(v); saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
+export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = bookPart(barItemsMigrated(v, globals.statusItems)); saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
 /** Drop the settings kept for books no longer in the library. */
 export function forgetBookSettings(ids: string[]): void { for (const id of ids) delete overrides()[id]; saveOverrides(); }
 
