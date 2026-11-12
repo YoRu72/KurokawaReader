@@ -31,4 +31,19 @@ ok('a series\' name from a volume\'s title', G.seriesOf('回復術士のやり�
 G.setDest('v8', { to: 'auto', addNew: true }); const p8 = G.namesTarget('v8', 'Overlord Vol. 8'); G.setDest('v9', { to: 'auto', addNew: true }); const p9 = G.namesTarget('v9', 'Overlord Vol. 9');
 ok('the series folder made once, used by both volumes', !!p8.folder && p8.folder === p9.folder && G.linkedFolders('v9').includes(p8.folder));
 G.setDest('v10', { to: p8.folder, addNew: false }); ok('a folder only used: new names stay with the book', G.namesTarget('v10', 'x').book === 'v10' && G.linkedFolders('v10').includes(p8.folder));
+// Putting right what the model left: whole words in scripts written with spaces, the longest term first, the
+// rendering taken as it is written (no «$&» or «$1» read in it); Arabic and Japanese words met inside longer ones.
+const T = (from, to) => ({ id: from, from, to });
+ok('a term inside a longer word left alone (Lin in Linda)', G.applyGlossary('Linda met Lin.', [T('Lin', 'لين')]) === 'Linda met لين.', G.applyGlossary('Linda met Lin.', [T('Lin', 'لين')]));
+ok('… and Ren not taken out of Karen\'s middle, nor of «Ren\'s» end', G.applyGlossary("Karen saw Ren's sword", [T('Ren', 'رين')]) === "Karen saw رين's sword", G.applyGlossary("Karen saw Ren's sword", [T('Ren', 'رين')]));
+ok('the longest term first, whatever their order', G.applyGlossary('ثم جاء Lin Feng.', [T('Lin', 'لين'), T('Lin Feng', 'لين فنغ')]) === 'ثم جاء لين فنغ.', G.applyGlossary('ثم جاء Lin Feng.', [T('Lin', 'لين'), T('Lin Feng', 'لين فنغ')]));
+ok('a rendering with «$&» and «$1» kept as written', G.applyGlossary('Gold coins', [T('Gold', '$& $1 $$')]) === '$& $1 $$ coins', G.applyGlossary('Gold coins', [T('Gold', '$& $1 $$')]));
+ok('one replacement not replaced again by another term', G.applyGlossary('Azure', [T('Azure', 'Sky Sect'), T('Sky', 'سماء')]) === 'Sky Sect', G.applyGlossary('Azure', [T('Azure', 'Sky Sect'), T('Sky', 'سماء')]));
+// Arabic: a name with «و» or «بـ» joined to it is still the name (the letters before it are not a word break).
+ok('Arabic: a name with a prefix joined to it still put right', G.applyGlossary('وكيارو قال لفلير', [T('كيارو', 'Keyaru'), T('فلير', 'Flare')]) === 'وKeyaru قال لFlare', G.applyGlossary('وكيارو قال لفلير', [T('كيارو', 'Keyaru'), T('فلير', 'Flare')]));
+ok('Arabic: the longer name first («لين فنغ» over «لين»)', G.applyGlossary('قال لين فنغ', [T('لين', 'Lin'), T('لين فنغ', 'Lin Feng')]) === 'قال Lin Feng', G.applyGlossary('قال لين فنغ', [T('لين', 'Lin'), T('لين فنغ', 'Lin Feng')]));
+// Japanese: no spaces between words, so a name is found inside the sentence; the longer one wins.
+ok('Japanese: a name in a sentence without spaces put right', G.applyGlossary('ケヤルは笑った', [T('ケヤル', 'Keyaru')]) === 'Keyaruは笑った', G.applyGlossary('ケヤルは笑った', [T('ケヤル', 'Keyaru')]));
+ok('Japanese: the longer name first (ケヤルガ over ケヤル)', G.applyGlossary('ケヤルガは笑った', [T('ケヤル', 'Keyaru'), T('ケヤルガ', 'Keyaruga')]) === 'Keyarugaは笑った', G.applyGlossary('ケヤルガは笑った', [T('ケヤル', 'Keyaru'), T('ケヤルガ', 'Keyaruga')]));
+ok('an English name left in Japanese text still put right (the kana beside it is not part of it)', G.applyGlossary('Keyaruは笑った', [T('Keyaru', 'ケヤル')]) === 'ケヤルは笑った', G.applyGlossary('Keyaruは笑った', [T('Keyaru', 'ケヤル')]));
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
