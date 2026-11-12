@@ -7,3 +7,6 @@
 - **Long text books open about five to eight times faster** and take far less memory (a 4.7 MB text: about 12 s → under 2 s on a slowed phone imitation).
 - **EPUBs with many chapters open up to twice as fast.**
 - **Long PDFs** no longer read every page when opened.
+
+### New
+- **Performance page** (Settings → About → Performance). The app keeps a small record on your device of start-up time, how long books take to open, slow moments, how each session ended and why a book was left — times, counts and kinds only: no titles, file names or text, and nothing is sent anywhere. "Copy report" gives it as text you can send when something is slow or a book closes by itself.

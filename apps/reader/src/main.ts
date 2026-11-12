@@ -1,3 +1,5 @@
+// (First: the recorder's clock and observers start before anything else is run — src/diag.ts.)
+import { diagScreen, diagMark, diagReaderLeft, diagBookClosed, diagEvent } from './diag';
 import { normalizeForSearch } from './formats/types';
 import { cmapsUrl, loadSlim } from './slim';
 import './styles/fonts.css';
@@ -70,7 +72,10 @@ function restore(view: HTMLElement, s: ViewState): void {
 function mount(route: Route): void {
   const key = JSON.stringify(route);
   if (key === currentKey && current) return;
+  // (The reader left — for another screen, or another book: why, for the Performance page.)
+  if (currentKey.startsWith('{"name":"read"')) { diagReaderLeft(route.name, lastMove()); diagBookClosed(); }
   currentKey = key;
+  diagScreen(route.name);
   if (current && currentPath && !currentPath.startsWith('/read/')) { try { states.set(currentPath, snapshot(current)); } catch { /* not kept */ } }
   current?.dispose?.();
   current?.remove();
@@ -125,11 +130,13 @@ void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefi
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);
-mount(parseRoute());
+const route0 = parseRoute();
+mount(route0);
 // A book the app was ended under (by the system, for its memory) opened again where it was — not the library.
 const startsOnLibrary = location.hash === '' || location.hash === '#/' || location.hash === '#';
 const resumed = startsOnLibrary ? takeResume() : null;
-if (resumed) navigate(`/read/${resumed.join(',')}`);
+if (resumed) { diagEvent('resume'); navigate(`/read/${resumed.join(',')}`); }
+else if (current && route0.name === 'library') diagMark('shown');
 // Optionally resume the last book on a cold start.
 else if (getSettings().openLastOnLaunch && startsOnLibrary) {
   void import('./db').then(({ db }) => db.allBooks()).then((books) => {

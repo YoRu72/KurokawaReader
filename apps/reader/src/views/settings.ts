@@ -371,6 +371,9 @@ export function settingsView(): HTMLElement {
   body.append(h('section', { class: 'card' }, h('h3', null, t('about')), h('p', null, t('aboutBody')),
     h('p', null, `${t('version')} ${APP_VERSION}`),
     standalone ? h('p', null, t('installed')) : window.__krInstallPrompt ? installBtn : null,
+    // (What the app measured of itself on this device, to copy and send: ui/perfsheet.ts.)
+    h('div', { class: 'field perf-entry' }, h('div', { class: 'grow' }, h('span', null, t('perfTitle')), h('small', { class: 'hint' }, t('perfAbout'))),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/perfsheet').then((m) => m.perfSheet()) }, icon('chart'), t('perfTitle'))),
     h('h3', null, t('supportedFormats')),
     h('ul', null, ...(['fmtEpub', 'fmtPdf', 'fmtDocx', 'fmtXlsx', 'fmtPptx', 'fmtText', 'fmtFb2', 'fmtOdt', 'fmtCbz', 'fmtImages'] as const).map((k) => h('li', null, t(k)))),
     ...(isTouchDevice() ? [] : [h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsBody'))])));

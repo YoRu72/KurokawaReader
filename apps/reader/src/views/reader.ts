@@ -2,6 +2,7 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { markReading } from '../resume';
+import { diagOpen, diagLeaveIntent, diagEvent } from '../diag';
 import { takeJump, setJump, type Jump } from '../jump';
 export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
@@ -85,18 +86,20 @@ export function readerView(ids: string[]): HTMLElement {
   void (async () => {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
     if (disposed) return;
-    if (!books.length) { navigate('/', true); return; }
+    if (!books.length) { diagLeaveIntent('missing'); diagEvent('err', { what: 'book missing' }); navigate('/', true); return; }
     // (A series kept in the library without its volumes opens on its source, where its volumes are.)
-    if (books[0].format === 'series' && books[0].remote?.link) { navigate(books[0].remote.link, true); return; }
+    if (books[0].format === 'series' && books[0].remote?.link) { diagLeaveIntent('series'); navigate(books[0].remote.link, true); return; }
+    // (The opening timed for the Performance page — its kind and rounded size only: src/diag.ts.)
+    const op = diagOpen(books[0].format, books.length);
     setActiveBook(books[0].id); onDispose(() => setActiveBook(null));
-    if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); return; }
-    if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); return; }
+    if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); op.placed(); return; }
+    if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); op.placed(); return; }
     const pdfs = books.filter((b) => b.format === 'pdf');
     const flows = books.filter((b) => b.format !== 'pdf');
     if (pdfs.length && (flows.length || pdfs.length > 1)) toast(t('fmtPdf') + ' · ' + t('open'), 'info', 3000);
-    if (pdfs.length && !flows.length) await mountPdf(root, pdfs[0], onDispose, gone);
-    else await mountFlow(root, flows.length ? flows : pdfs, onDispose, gone);
-  })().catch((err) => { console.error(err); toast(t('openError', { error: String((err as Error)?.message ?? err) }), 'error', 6000); });
+    if (pdfs.length && !flows.length) await mountPdf(root, pdfs[0], onDispose, gone, op);
+    else await mountFlow(root, flows.length ? flows : pdfs, onDispose, gone, op);
+  })().catch((err) => { console.error(err); diagEvent('err', { what: 'open failed', name: (err as Error)?.name ?? typeof err }); diagLeaveIntent('error'); toast(t('openError', { error: String((err as Error)?.message ?? err) }), 'error', 6000); });
 
   (root as HTMLElement & { dispose?: () => void }).dispose = () => { if (disposed) return; disposed = true; cleanups.splice(0).forEach(run); };
   return root;
@@ -106,7 +109,8 @@ export function readerView(ids: string[]): HTMLElement {
 /* Flow reader                                                         */
 /* ------------------------------------------------------------------ */
 
-async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void, gone: () => boolean = () => false): Promise<void> {
+type DiagOpen = ReturnType<typeof diagOpen>;
+async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void, gone: () => boolean = () => false, op?: DiagOpen): Promise<void> {
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
   let programmatic = 0; // when the reader last scrolled by itself (restoring a place), so that is not taken for the person scrolling
@@ -145,7 +149,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const panel = new SidePanel(root);
 
   // (Back: to the book's own page when the book opens on one, else the library.)
-  const goBack = () => { const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => goBackView(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else goBackView('/'); };
+  const goBack = () => { diagLeaveIntent('top-back', true); const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => goBackView(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else goBackView('/'); };
   const topbar = h('header', { class: 'topbar' },
     iconButton('back', t('back'), goBack),
     title,
@@ -248,7 +252,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const t0 = performance.now();
     const file = await db.getFile(doc.book.id);
     performance.measure('kr:getFile', { start: t0 });
-    if (!handler || !file) { doc.wrapper.append(h('p', { class: 'kr-content' }, !file && doc.book.source ? t('linkedFileMissing', { title: doc.book.title }) : t('unsupportedFormat'))); return; }
+    if (doc === docs[0] && file) op?.size('bytes', file.size);
+    if (!handler || !file) { if (doc === docs[0]) op?.failed(file ? 'unsupported' : 'file missing'); doc.wrapper.append(h('p', { class: 'kr-content' }, !file && doc.book.source ? t('linkedFileMissing', { title: doc.book.title }) : t('unsupportedFormat'))); return; }
     const ctx = { bookId: doc.book.id, bookTitle: doc.book.title, publisherStyles: getSettings().publisherStyles, id: (s: string) => `${doc.book.id}-${s}` };
     try {
       doc.render?.dispose();
@@ -290,6 +295,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       performance.measure('kr:dom', { start: t2 });
     } catch (err) {
       console.error(err);
+      if (doc === docs[0]) op?.failed((err as Error)?.name ?? 'error');
       const msg = String((err as Error)?.message ?? err);
       // (A file that came broken — its zip with no end, cut short — fetched again from where it came, into
       // this same book: its place and notes kept.)
@@ -324,8 +330,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     await renderDoc(doc);
     // (Closed while it was opening: nothing more is set up — no keys, no listeners, no place saved.)
     if (gone()) { docs.forEach((d) => d.render?.dispose()); return; }
-    if (doc === docs[0]) root.querySelector('#kr-loading')?.remove();
-    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); restore(); performance.measure('kr:restore', { start: tr }); }
+    if (doc === docs[0]) { root.querySelector('#kr-loading')?.remove(); if (op) { op.size('paras', doc.allBlocks.length); op.shown(); } }
+    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); restore(); performance.measure('kr:restore', { start: tr }); if (doc === lastRead) op?.placed(); }
   }
   const tPost = performance.now();
   root.querySelector('#kr-loading')?.remove();
@@ -727,7 +733,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const offerNext = (pct: number) => {
     if (!nextVol || nextPill || pct < 0.985) return;
     const next = nextVol;
-    nextPill = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queued ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight'));
+    nextPill = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { diagLeaveIntent('next-book'); navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queued ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight'));
     root.appendChild(nextPill);
   };
   // Reading in order: scrolling on past the end goes to the next book.
@@ -934,6 +940,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const small = !!img && (img.classList.contains('inline') || img.getBoundingClientRect().width < 64);
     // (On a computer a picture opens with a double-click — a single one is too easily made while reading.)
     if (img && allImages.length && getSettings().pictureZoom && !(linkOf && small) && !document.documentElement.classList.contains('pc')) { const idx = allImages.findIndex((im) => im.anchor === img.id); if (idx >= 0) { e.preventDefault(); showGallery(idx); return; } }
+    if ((e.target as HTMLElement).closest('a')) diagLeaveIntent('link', true);
     if (linkOf) { e.preventDefault(); back.remember(); scrollToAnchor(linkOf.dataset.krAnchor!); return; }
     // A link as the book wrote it — a web novel's note (`#fn1`), an empty `#`, a Markdown or HTML book's `#part` or
     // `other.html`: followed, the address's fragment is the app's route (`#fn1` is the library's) and another page
@@ -1755,10 +1762,10 @@ function snapName(title: string): string {
   return `${title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 40)} ${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
 }
 
-async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void, gone: () => boolean = () => false): Promise<void> {
+async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void, gone: () => boolean = () => false, op?: DiagOpen): Promise<void> {
   const file = await db.getFile(book.id);
   if (gone()) return;
-  if (!file) { toast(t(book.source ? 'linkedFileMissing' : 'openError', { title: book.title, error: '' }), 'error', 5000); navigate('/', true); return; }
+  if (!file) { op?.failed('file missing'); diagLeaveIntent('missing'); toast(t(book.source ? 'linkedFileMissing' : 'openError', { title: book.title, error: '' }), 'error', 5000); navigate('/', true); return; }
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
   const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
@@ -1795,7 +1802,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
   const topbar = h('header', { class: 'topbar' },
-    iconButton('back', t('back'), () => { if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); }),
+    iconButton('back', t('back'), () => { diagLeaveIntent('top-back', true); if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); }),
     title,
     iconButton('search', t('searchInBook'), () => openSearch()),
     iconButton('toc', t('contents'), () => openContents('toc')),
@@ -1826,7 +1833,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     container: reader,
     invert: getSettings().pdfInvert,
     crop: { enabled: () => getSettings().pdfAutoCrop, get: () => db.getMeta<unknown>(`crop:${book.id}`).then((v) => v ?? null), set: (store) => db.setMeta(`crop:${book.id}`, store) },
-    onPageRender: (n) => { renderHighlights(n); ink?.render(n); strip?.sync(); },
+    onPageRender: (n) => { op?.shown(); renderHighlights(n); ink?.render(n); strip?.sync(); },
     onPageChange: (page, total) => {
       slider.max = String(total); slider.value = String(page); pageInput.max = String(total); pageInput.placeholder = String(page);
       count.textContent = t('pageOf', { n: page, total });
@@ -1840,7 +1847,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   let nextVolPdf: Book | null = null; let nextPillPdf: HTMLElement | null = null; let queuedPdf = false;
   const findNextPdf = () => nextQueued(book.id).then(async (q) => { if (q) { nextVolPdf = q; queuedPdf = true; return; } queuedPdf = false; nextVolPdf = nextVolume(book, await db.allBooks()); }).catch(() => undefined);
   void findNextPdf();
-  const offerNextPdf = () => { if (!nextVolPdf || nextPillPdf) return; const next = nextVolPdf; nextPillPdf = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => navigate(`/read/${next.id}`) }, h('span', { dir: 'auto' }, `${queuedPdf ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight')); root.appendChild(nextPillPdf); };
+  const offerNextPdf = () => { if (!nextVolPdf || nextPillPdf) return; const next = nextVolPdf; nextPillPdf = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { diagLeaveIntent('next-book'); navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queuedPdf ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight')); root.appendChild(nextPillPdf); };
   onDispose(overscrollNext(viewer.scroll, () => (queuedPdf && nextVolPdf ? nextVolPdf.id : null)));
   const back = jumpBack(root, (loc) => { const l = loc as { page: number; offset: number }; viewer.goTo(l.page, l.offset); }, () => ({ page: viewer.current, offset: viewer.currentOffset() }), viewer.scroll);
   onDispose(back.dispose);
@@ -1848,8 +1855,10 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   (window as unknown as { __krPdfViewer?: unknown }).__krPdfViewer = viewer; // (for tests)
   viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
   onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); viewer.setCrop(st.pdfAutoCrop); }));
+  op?.size('bytes', file.size);
   await viewer.load(file, book.id, book.source?.uri);
   if (gone()) { viewer.destroy(); return; }
+  op?.size('pages', viewer.total);
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);
   const jump = takeJump();
@@ -1857,7 +1866,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   else if (jump?.kind === 'pin') { const pin = (book.pins ?? []).find((x) => x.id === jump.id); if (pin) viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); }
   else if (jump?.kind === 'hl') { const hl = (book.pdfHighlights ?? []).find((x) => x.id === jump.id); if (hl) viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); }
   else if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
-  placed = true;
+  placed = true; op?.placed();
   // Opened from a search across books: at the found page, the words marked.
   { const sj = takeSearchJump(book.id); if (sj) void viewer.highlightOnPage(sj.unit + 1, sj.q); }
   // (Left within a moment of a page turn or a scroll: the place saved as it is left, while the pages are still there.)
