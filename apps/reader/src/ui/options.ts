@@ -3,7 +3,7 @@
 import { ttsAvailable } from '../tts';
 import { slimNow } from '../slim';
 import { aiTtsSupported } from '../ai';
-import { h, clear, icon, toast, pickButton, pickSheet } from './dom';
+import { h, clear, icon, toast, pickButton, pickSheet, askText } from './dom';
 import { colorField } from './colorpicker';
 import { isTouchDevice, t, countMinutes, localDigits, dateLocale } from '../i18n';
 import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
@@ -37,9 +37,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   // The reader's own saved themes: colours of text, page, links and selection, by name.
   const mine = s.myThemes;
   const applyMine = (m: (typeof mine)[number]) => updateSettings({ theme: 'custom', myTheme: m.id, customBg: m.bg, customFg: m.fg, linkOverride: m.link, selOverride: m.sel, fgOverride: '', bgOverride: '' });
-  const saveMine = () => {
+  const saveMine = async () => {
+    const name = (await askText({ title: t('saveTheme'), label: t('themeName'), ok: t('save'), cancel: t('cancel') })) ?? ''; if (!name.trim()) return;
     const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
-    const name = prompt(t('themeName'), '') ?? ''; if (!name.trim()) return;
     const m = { id: String(Date.now()), name: name.trim(), bg: toHex(s.bgOverride || cur.getPropertyValue('--r-bg').trim() || s.customBg), fg: toHex(s.fgOverride || cur.getPropertyValue('--r-fg').trim() || s.customFg), link: toHex(s.linkOverride || cur.getPropertyValue('--r-link').trim() || '#8ec8e8'), sel: s.selOverride || toHex(cur.getPropertyValue('--r-sel').trim() || '#7fb4e5') };
     updateSettings({ myThemes: [...mine, m] }); applyMine(m); rerender();
   };

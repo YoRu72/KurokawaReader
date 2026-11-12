@@ -8,9 +8,19 @@ export interface Rel { tag: string; version: string; url: string; notes: string;
 export interface Fetched { status: number; body: string }
 export type FetchText = (url: string, accept?: string) => Promise<Fetched>;
 
+/** Two versions compared as SemVer does: the numbers first (as many parts as given), then a pre-release
+ *  («-beta.2») before the release itself, its parts compared as numbers where both are numbers, else as text; build
+ *  metadata («+…») left out. Negative when `a` is older. */
 export function cmpVersion(a: string, b: string): number {
-  const pa = a.replace(/^v/, '').split(/[.+-]/).map((x) => Number(x) || 0), pb = b.replace(/^v/, '').split(/[.+-]/).map((x) => Number(x) || 0);
-  for (let i = 0; i < 3; i++) { const d = (pa[i] ?? 0) - (pb[i] ?? 0); if (d) return d; }
+  const parse = (v: string) => { const s = v.trim().replace(/^v/i, '').split('+')[0]; const i = s.indexOf('-'); return { core: (i < 0 ? s : s.slice(0, i)).split('.').map((x) => Number(x) || 0), pre: i < 0 ? [] : s.slice(i + 1).split('.').filter(Boolean) }; };
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < Math.max(x.core.length, y.core.length, 3); i++) { const d = (x.core[i] ?? 0) - (y.core[i] ?? 0); if (d) return d; }
+  if (!x.pre.length || !y.pre.length) return x.pre.length ? -1 : y.pre.length ? 1 : 0;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i], q = y.pre[i]; if (p === undefined) return -1; if (q === undefined) return 1;
+    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+    if (pn && qn) { const d = Number(p) - Number(q); if (d) return d; } else if (pn !== qn) return pn ? -1 : 1; else if (p !== q) return p < q ? -1 : 1;
+  }
   return 0;
 }
 const isOurs = (tag: string, prefix: string) => tag.startsWith(prefix) && /^\d+\.\d+/.test(tag.slice(prefix.length));

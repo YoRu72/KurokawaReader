@@ -2,7 +2,7 @@
 // everywhere, or put others in their place — and the list of every rule, to switch off, change or remove.
 import { h, icon, iconButton, openSheet, toast } from './dom';
 import { t } from '../i18n';
-import { textRules, saveTextRules, patternOf, type TextRule } from '../textrules';
+import { textRules, saveTextRules, patternOf, nestedRepeat, type TextRule } from '../textrules';
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -28,7 +28,7 @@ export function ruleSheet(o: { find?: string; book?: { id: string; title: string
   const save = h('button', { type: 'button', class: 'btn primary', onclick: () => {
     const f = find.value.trim(); if (!f) { find.focus(); return; }
     const r: TextRule = { id: r0?.id ?? newId(), find: f, replace: repl.value, ...(regex.checked ? { regex: true } : {}), ...(caseS.checked ? { caseSensitive: true } : {}), ...(!every.checked && bookId ? { book: bookId } : {}), ...(r0?.off ? { off: true } : {}) };
-    if (!patternOf(r)) { err.textContent = t('textRuleBad'); return; }
+    if (!patternOf(r)) { err.textContent = t(r.regex && nestedRepeat(r.find) ? 'textRuleSlow' : 'textRuleBad'); return; }
     // (A pattern that matches nothing at all — "" or ".*?" — would eat the text.)
     if (patternOf(r)!.test('')) { err.textContent = t('textRuleEmptyMatch'); return; }
     const list = textRules().filter((x) => x.id !== r.id); list.push(r); saveTextRules(list);

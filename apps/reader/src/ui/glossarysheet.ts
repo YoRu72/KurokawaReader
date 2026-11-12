@@ -1,6 +1,6 @@
 // The glossary's sheets (src/glossary.ts): a term added from the words picked in a book, and the list of every
 // term — for one book or every book — to change or remove.
-import { h, iconButton, openSheet, toast, icon, pickButton } from './dom';
+import { h, iconButton, openSheet, toast, icon, pickButton, askText } from './dom';
 import { t, localDigits } from '../i18n';
 import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, scriptOf, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, type Term, type TermKind } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
@@ -96,16 +96,16 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
   function drawPlaces() {
     const fs = folders();
     places.replaceChildren(...[...(book ? [['book', book.title]] : []), ['all', t('glossEveryBook')], ...fs.map((f) => [f.id, `📁 ${f.name}`])].map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (where === k ? ' on' : ''), dir: 'auto', onclick: () => { where = k; draw(); } }, l)),
-      h('button', { type: 'button', class: 'chip small', onclick: () => { const name = prompt(t('glossFolderName'))?.trim(); if (!name) return; const f = addFolder(name); if (book) setLinked(book.id, [...linkedFolders(book.id), f.id]); where = f.id; draw(); toast(t('glossFolderMade', { name })); } }, icon('plus'), t('glossNewFolder')));
+      h('button', { type: 'button', class: 'chip small', onclick: async () => { const name = (await askText({ title: t('glossNewFolder'), label: t('glossFolderName'), ok: t('create'), cancel: t('cancel') }))?.trim(); if (!name) return; const f = addFolder(name); if (book) setLinked(book.id, [...linkedFolders(book.id), f.id]); where = f.id; draw(); toast(t('glossFolderMade', { name })); } }, icon('plus'), t('glossNewFolder')));
     // A folder shown: used by this book or not; renamed; removed. This book: its own names made a folder.
     const f = fs.find((x) => x.id === where);
     if (f) {
       const used = book ? linkedFolders(book.id).includes(f.id) : false;
       folderBar.replaceChildren(...(book ? [h('label', { class: 'row gloss-use' }, h('span', null, t('glossUseFolder', { book: book.title })), h('input', { type: 'checkbox', checked: used, onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; setLinked(book.id, v ? [...linkedFolders(book.id), f.id] : linkedFolders(book.id).filter((x) => x !== f.id)); toast(v ? t('glossFolderOn') : t('glossFolderOff')); } }))] : []),
-        h('div', { class: 'row-btns' }, h('button', { type: 'button', class: 'btn text small', onclick: () => { const n = prompt(t('glossFolderName'), f.name)?.trim(); if (n) { renameFolder(f.id, n); draw(); } } }, icon('pen'), t('glossRename')),
+        h('div', { class: 'row-btns' }, h('button', { type: 'button', class: 'btn text small', onclick: async () => { const n = (await askText({ title: t('glossRename'), label: t('glossFolderName'), value: f.name, ok: t('save'), cancel: t('cancel') }))?.trim(); if (n) { renameFolder(f.id, n); draw(); } } }, icon('pen'), t('glossRename')),
           h('button', { type: 'button', class: 'btn text small danger', onclick: () => { if (!confirm(t('glossFolderDeleteAsk', { name: f.name }))) return; removeFolder(f.id); where = book ? 'book' : 'all'; draw(); } }, icon('trash'), t('delete'))));
     } else if (where === 'book' && book && terms().some((x) => !x.folder && x.book === book.id)) {
-      folderBar.replaceChildren(h('button', { type: 'button', class: 'btn text small', onclick: () => { const name = prompt(t('glossFolderName'), book.title)?.trim(); if (!name) return; const nf = addFolder(name); saveTerms(terms().map((x) => (!x.folder && x.book === book.id ? { ...x, book: undefined, folder: nf.id } : x))); setLinked(book.id, [...linkedFolders(book.id), nf.id]); where = nf.id; draw(); toast(t('glossFolderMade', { name })); } }, icon('folderPlus'), t('glossBookToFolder')));
+      folderBar.replaceChildren(h('button', { type: 'button', class: 'btn text small', onclick: async () => { const name = (await askText({ title: t('glossBookToFolder'), label: t('glossFolderName'), value: book.title, ok: t('create'), cancel: t('cancel') }))?.trim(); if (!name) return; const nf = addFolder(name); saveTerms(terms().map((x) => (!x.folder && x.book === book.id ? { ...x, book: undefined, folder: nf.id } : x))); setLinked(book.id, [...linkedFolders(book.id), nf.id]); where = nf.id; draw(); toast(t('glossFolderMade', { name })); } }, icon('folderPlus'), t('glossBookToFolder')));
     } else folderBar.replaceChildren();
   }
   function drawTabs() { tabs.replaceChildren(...KINDS.map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (tab === k ? ' on' : ''), onclick: () => { tab = k; draw(); } }, l, h('small', null, ` ${terms().filter((x) => inWhere(x) && (k === 'all' || (x.kind ?? 'term') === k)).length}`)))); }
@@ -123,7 +123,7 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
   const scopeNow = () => (where === 'book' && book ? { book: book.id } : where === 'all' ? {} : { folder: where });
   sh.actions.append(
     iconButton('import', t('paste'), async () => {
-      let txt = ''; try { txt = await navigator.clipboard.readText(); } catch { txt = prompt(t('paste')) ?? ''; }
+      let txt = ''; try { txt = await navigator.clipboard.readText(); } catch { txt = (await askText({ title: t('paste'), label: t('paste'), multiline: true, ok: t('add'), cancel: t('cancel') })) ?? ''; } if (!txt.trim()) return;
       const n = addTerms(parseTerms(txt).map((x) => ({ ...x, lang: x.lang ?? getSettings().aiTarget.split('-')[0], ...scopeNow() }))); draw(); toast(t('glossPasted', { n: localDigits(n) }));
     }),
     iconButton('copy', t('glossCopyAll'), () => void copyText(termsText(terms().filter(inWhere).sort((a, b) => a.from.localeCompare(b.from))))));

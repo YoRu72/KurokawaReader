@@ -387,7 +387,51 @@ const BOOK_KEY = 'kr.bookVisual';
 let activeBook: string | null = null;
 let globals: VisualSettings = current;
 let bookOverrides: Record<string, Partial<VisualSettings>> | null = null;
-const overrides = (): Record<string, Partial<VisualSettings>> => { if (!bookOverrides) { try { bookOverrides = JSON.parse(localStorage.getItem(BOOK_KEY) ?? '{}') as Record<string, Partial<VisualSettings>>; } catch { bookOverrides = {}; } } return bookOverrides; };
+/** Settings that are the app's whatever book is open: the AI service and its key, sync and its sign-in, updates,
+ *  the library's look and filters, tracking, the interface's language-wide habits. A book's own settings are
+ *  about how that book is read (its face, size, theme, layout…); these are never kept with one. */
+const GLOBAL_ONLY = new Set<string>([
+  // AI services and voices downloaded
+  'aiProvider', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
+  // sync, accounts, tracking
+  'syncProvider', 'syncAuto', 'syncDropboxKey', 'syncDropboxRefresh', 'syncWebdavUrl', 'syncWebdavUser', 'syncWebdavPass', 'syncFolder', 'syncLastAt',
+  'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',
+  // updates, jobs, the app on the device
+  'autoUpdateCheck', 'updateChannel', 'updateEvery', 'updateAutoDownload', 'updateInstaller', 'jobNotify', 'appName', 'importMode', 'importButton', 'openLastOnLaunch', 'bookPage',
+  // the library
+  'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
+  // lists the reader builds up for every book
+  'myThemes', 'systemFonts', 'shortcuts', 'snapFolder',
+]);
+/** Whether a setting is the app's alone (never one book's). */
+export const isGlobalOnly = (k: string): boolean => GLOBAL_ONLY.has(k) || /(?:Key|Token|Secret|Pass|Password|Refresh)$/.test(k);
+/** A book's settings without the app's own. */
+const bookPart = (v: Partial<VisualSettings>): Partial<VisualSettings> => { const o = { ...v } as Record<string, unknown>; for (const k of Object.keys(o)) if (isGlobalOnly(k)) delete o[k]; return o as Partial<VisualSettings>; };
+const overrides = (): Record<string, Partial<VisualSettings>> => {
+  if (!bookOverrides) {
+    try { bookOverrides = JSON.parse(localStorage.getItem(BOOK_KEY) ?? '{}') as Record<string, Partial<VisualSettings>>; } catch { bookOverrides = {}; }
+    if (!bookOverrides || typeof bookOverrides !== 'object') bookOverrides = {};
+    // (Kept in a book's overrides by an older version — a key typed with a book open —: taken out of them; where
+    // the app has no value of its own yet the book's is moved to the app, so nothing typed is lost. Values are
+    // never printed.)
+    let moved = false, cleaned = false;
+    for (const v of Object.values(bookOverrides)) {
+      if (!v || typeof v !== 'object') continue;
+      for (const k of Object.keys(v)) {
+        if (!isGlobalOnly(k)) continue;
+        const val = (v as Record<string, unknown>)[k]; const g = globals as unknown as Record<string, unknown>;
+        const unset = JSON.stringify(g[k]) === JSON.stringify((DEFAULTS as unknown as Record<string, unknown>)[k]);
+        // (The custom services: the book's that the app lacks added to the app's list.)
+        if (k === 'aiCustomApis' && Array.isArray(val)) { const mine = (Array.isArray(g[k]) ? g[k] : []) as { id: string }[]; const add = (val as { id: string }[]).filter((a) => a && a.id && !mine.some((x) => x.id === a.id)); if (add.length) { globals = { ...globals, aiCustomApis: [...mine, ...add] as VisualSettings['aiCustomApis'] }; moved = true; } }
+        else if (unset && JSON.stringify(val) !== JSON.stringify(g[k])) { globals = { ...globals, [k]: val }; moved = true; }
+        delete (v as Record<string, unknown>)[k]; cleaned = true;
+      }
+    }
+    if (moved) { try { localStorage.setItem(KEY, JSON.stringify(globals)); } catch { /* full */ } if (!activeBook) current = globals; }
+    if (cleaned) { try { localStorage.setItem(BOOK_KEY, JSON.stringify(bookOverrides)); } catch { /* full */ } }
+  }
+  return bookOverrides;
+};
 const saveOverrides = () => { try { localStorage.setItem(BOOK_KEY, JSON.stringify(overrides())); } catch { /* full */ } };
 const merged = (): VisualSettings => (activeBook && overrides()[activeBook] ? { ...globals, ...overrides()[activeBook] } : globals);
 
@@ -410,15 +454,19 @@ export function setBookScoped(on: boolean): void {
 export const globalSettings = (): VisualSettings => globals;
 /** Every book's own settings (a copy), and one book's set (a backup's, restored). */
 export const allBookSettings = (): Record<string, Partial<VisualSettings>> => JSON.parse(JSON.stringify(overrides())) as Record<string, Partial<VisualSettings>>;
-export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = v; saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
+export function setBookSettings(id: string, v: Partial<VisualSettings>): void { overrides()[id] = bookPart(v); saveOverrides(); if (id === activeBook) { current = merged(); listeners.forEach((fn) => fn(current)); } }
 /** Drop the settings kept for books no longer in the library. */
 export function forgetBookSettings(ids: string[]): void { for (const id of ids) delete overrides()[id]; saveOverrides(); }
 
 export function updateSettings(patch: Partial<VisualSettings>): VisualSettings {
-  if (activeBook && overrides()[activeBook]) {
-    overrides()[activeBook] = { ...overrides()[activeBook], ...patch }; saveOverrides();
-  } else {
-    globals = { ...globals, ...patch };
+  // (With a book of its own settings open, what is about reading it goes to the book; the app's own settings —
+  // the AI key, sync, the library — to the app, always.)
+  const scoped = !!activeBook && !!overrides()[activeBook];
+  const toBook = scoped ? bookPart(patch) : {};
+  const toApp = scoped ? Object.fromEntries(Object.entries(patch).filter(([k]) => isGlobalOnly(k))) as Partial<VisualSettings> : patch;
+  if (scoped && Object.keys(toBook).length) { overrides()[activeBook!] = { ...overrides()[activeBook!], ...toBook }; saveOverrides(); }
+  if (Object.keys(toApp).length || !scoped) {
+    globals = { ...globals, ...toApp };
     localStorage.setItem(KEY, JSON.stringify(globals));
   }
   current = merged();
@@ -426,8 +474,10 @@ export function updateSettings(patch: Partial<VisualSettings>): VisualSettings {
   return current;
 }
 
+/** The reading options back to their factory values (the app's own — the AI key, sync, the library — left as they
+ *  are: the reading options' «Reset» is not a sign-out). */
 export function resetSettings(): VisualSettings {
-  return updateSettings({ ...DEFAULTS });
+  return updateSettings(bookPart({ ...DEFAULTS }));
 }
 
 /** The factory value of one setting. */

@@ -10,6 +10,17 @@ const SHA = 'c'.repeat(64);
 const rel = (tag, notes, pre = false) => ({ tag_name: tag, html_url: `https://github.com/x/y/releases/tag/${tag}`, body: `## What's new\n${notes.map((n) => `- ${n}`).join('\n')}\n\n## Files\n| a |`, published_at: '2026-11-01T00:00:00Z', prerelease: pre, draft: false,
   assets: [{ name: `KurokawaReader-${tag.replace(/^\D+/, '')}-arm64-v8a.apk`, browser_download_url: 'https://github.com/x/y/a.apk', size: 11600000, digest: `sha256:${SHA}` }] });
 const RELEASES = [rel('tools-v99.9.0', ['TOOLS'], true), rel('v99.1.0', ['Reader newest', 'Second line'], true), rel('v99.0.0', ['Reader older']), rel('v0.0.1', ['ancient'])];
+// The order of versions (src/updateCore.ts cmpVersion): a pre-release comes before its release and after the one
+// before; its parts compared as numbers where they are numbers (beta.10 after beta.2); a fourth part counts.
+{
+  const esbuild = require('esbuild'); const code = esbuild.buildSync({ entryPoints: ['src/updateCore.ts'], bundle: true, format: 'cjs', write: false, platform: 'node', logLevel: 'error' }).outputFiles[0].text;
+  const m = { exports: {} }; new Function('module', 'exports', code)(m, m.exports); const { cmpVersion, newerThan } = m.exports;
+  ok('a release is newer than its pre-release (1.0.0 > 1.0.0-beta.1)', cmpVersion('1.0.0', '1.0.0-beta.1') > 0 && cmpVersion('v1.0.0-beta.1', 'v1.0.0') < 0);
+  ok('pre-releases in order (beta.2 < beta.10 < rc.1)', cmpVersion('1.0.0-beta.2', '1.0.0-beta.10') < 0 && cmpVersion('1.0.0-beta.10', '1.0.0-rc.1') < 0);
+  ok('a pre-release still newer than the release before (0.61.0-beta.1 > 0.60.27)', cmpVersion('0.61.0-beta.1', '0.60.27') > 0);
+  ok('a fourth part counts; build metadata does not', cmpVersion('0.60.27.1', '0.60.27') > 0 && cmpVersion('1.0.0+abc', '1.0.0+def') === 0);
+  ok('the stable release offered to one on its beta', newerThan([{ version: '1.0.0' }], '1.0.0-beta.3').length === 1);
+}
 (async () => {
   await new Promise((r) => server.listen(0, r)); const port = server.address().port;
   const b = await chromium.launch();

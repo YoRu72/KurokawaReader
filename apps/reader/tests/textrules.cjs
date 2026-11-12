@@ -4,6 +4,20 @@ const { chromium } = require('playwright'); const http = require('http'); const 
 const DIST = path.resolve(__dirname, '../dist'); const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
+// The patterns themselves (src/textrules.ts patternOf): «\\p{L}» means a letter (the «u» flag), a pattern written
+// for the older reading still works, and a shape known to freeze the reader on a long line — a repeat inside a
+// repeat, «(a+)+» — is refused like an invalid one (when saved, and when an older one is read).
+{
+  const esbuild = require('esbuild'); const code = esbuild.buildSync({ entryPoints: ['src/textrules.ts'], bundle: true, format: 'cjs', write: false, platform: 'node', logLevel: 'error' }).outputFiles[0].text;
+  globalThis.localStorage ??= { getItem: () => null, setItem() {}, removeItem() {} };
+  const m = { exports: {} }; new Function('module', 'exports', code)(m, m.exports); const R = m.exports;
+  const run = (find, text, replace = '') => { const re = R.patternOf({ id: 'x', find, replace, regex: true }); return re ? R.applyRulesTo(text, [{ re, to: replace }]) : null; };
+  ok('«\\p{L}+» takes out words in any script', run('\\p{L}+', 'abc 123 كلمة 日本') === ' 123  ', run('\\p{L}+', 'abc 123 كلمة 日本'));
+  ok('a pattern valid only the old way («\\-», «a{») still works', run('x\\-y', 'a x-y b') === 'a  b' && run('a{', 'a{b') === 'b', [run('x\\-y', 'a x-y b'), run('a{', 'a{b')]);
+  ok('a repeat inside a repeat refused («(a+)+$», «(\\w+\\s?)*x», «(.*)*»)', ['(a+)+$', '(\\w+\\s?)*x', '(.*)*', '(?:a|b+){2,}'].every((f) => R.patternOf({ id: 'x', find: f, replace: '', regex: true }) === null));
+  ok('… while ordinary repeats are kept («(foo|bar)+», «\\d+(?:\\.\\d+)?», «[(+]+»)', ['(foo|bar)+', '\\d+(?:\\.\\d+)?', '[(+]+', '\\((ab)\\)+', '(a{2})+'].every((f) => R.patternOf({ id: 'x', find: f, replace: '', regex: true }) !== null));
+  const t0 = Date.now(); run('(a+)+$', 'a'.repeat(40) + '!'); ok('… so a long line does not freeze the reader', Date.now() - t0 < 1000);
+}
 (async () => {
   await new Promise((r) => server.listen(5491, r));
   const b = await chromium.launch(); const p = await (await b.newContext({ viewport: { width: 1100, height: 900 }, locale: 'en' })).newPage();

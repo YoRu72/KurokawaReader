@@ -1,6 +1,6 @@
 // The converter sheet: pick a target, watch the progress, then save / share /
 // add the result to the library or send it to a Kindle.
-import { h, icon, openSheet, toast, pickSheet } from './dom';
+import { h, icon, openSheet, toast, pickSheet, askPassword } from './dom';
 import { t, formatBytes } from '../i18n';
 import { TARGETS, convertBook, convertible, type Target, type ConvOptions, type PdfPaper } from '../convert';
 import { db, stampAfter, type Book } from '../db';
@@ -107,7 +107,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       const msg = String((err as Error).message ?? err);
       if (msg === 'password') {
         // Asked again (with the right wording) when a password was given and was wrong.
-        const pw = prompt(password ? t('pdfPasswordWrong') : t('pdfPasswordPrompt')) ?? '';
+        const pw = (await askPassword({ title: t('pdfProtected'), hint: password ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'), wrong: !!password, label: t('password'), open: t('open'), cancel: t('cancel') })) ?? '';
         if (pw) { busy = false; queueMicrotask(() => void run(target, pw)); return; }
         status.textContent = t('cancelled');
       } else if (msg === 'unsupported') status.textContent = t('convertUnsupported');

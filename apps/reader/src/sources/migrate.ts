@@ -4,37 +4,10 @@
 // follows chapter for chapter: the place reached, the chapters marked read or starred, the bookmarks, the
 // chapters already kept offline.
 import { db, type Book, type Locator } from '../db';
-import { extHandle, fetchNovel, readNovelFile, MIME, type WebChapter, type WebNovel } from './ext/source';
+import { extHandle, fetchNovel, readNovelFile, MIME, type WebNovel } from './ext/source';
 
-/** A chapter's number as its name gives it ("Chapter 12", "Ch. 12.5 - …", "第12话", «الفصل ١٢»), else null. */
-export function chapterNumber(name: string): number | null {
-  const s = name.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)).replace(/[０-９]/g, (d) => String(d.charCodeAt(0) - 0xff10));
-  const m = /(?:chapter|chap|ch|episode|ep|part|الفصل|فصل|الحلقة|第)\s*\.?\s*(\d+(?:\.\d+)?)/i.exec(s) ?? /(?:^|\s|#)(\d+(?:\.\d+)?)(?=\s|$|[:：.\-–—)])/.exec(s);
-  return m ? Number(m[1]) : null;
-}
-const nameKey = (s: string) => s.normalize('NFKD').toLowerCase().replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]+/gu, '');
-
-/** Which of the new chapters each old one is: by its number (the most reliable across sites), else by its
- *  name, else — the lists numbered alike from the start — by its place. */
-export function chapterMap(from: WebChapter[], to: WebChapter[]): (i: number) => number | undefined {
-  const byNum = new Map<number, number>(); const byName = new Map<string, number>();
-  to.forEach((c, j) => { const n = chapterNumber(c.name); if (n !== null && !byNum.has(n)) byNum.set(n, j); const k = nameKey(c.name); if (k && !byName.has(k)) byName.set(k, j); });
-  // (Both lists numbered — most chapters carrying a number — the number decides; a site that counts from 0 or
-  // skips a prologue is matched all the same.)
-  const numbered = (l: WebChapter[]) => l.filter((c) => chapterNumber(c.name) !== null).length >= l.length * 0.6;
-  const useNum = numbered(from) && numbered(to);
-  const cache = new Map<number, number | undefined>();
-  return (i: number) => {
-    if (cache.has(i)) return cache.get(i);
-    const c = from[i]; let j: number | undefined;
-    if (c) {
-      if (useNum) { const n = chapterNumber(c.name); if (n !== null) j = byNum.get(n); }
-      if (j === undefined) j = byName.get(nameKey(c.name));
-      if (j === undefined && !useNum && from.length && Math.abs(from.length - to.length) <= Math.max(2, from.length * 0.05) && i < to.length) j = i;
-    }
-    cache.set(i, j); return j;
-  };
-}
+export { chapterNumber, chapterMap } from './chaptermap';
+import { chapterMap } from './chaptermap';
 
 export interface Moved { mapped: number; total: number; at?: string; kept: number }
 
