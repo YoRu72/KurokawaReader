@@ -1133,11 +1133,14 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(clearSearchMarks);
 
   // Searching the book. Each chapter's text nodes are gathered once and their search forms (harakat, tatweel
-  // and letter variants aside) joined into one string, kept from one search to the next and made ahead in idle
-  // moments; a search is then a scan of a few long strings — a book of fifteen million letters in a fraction
-  // of a second — run in slices between frames, handing over its hits as it goes, so the page stays live and
-  // the first results show at once. A chapter whose text changes (a highlight added) is gathered again.
-  interface ChapterIndex { nodes: Text[]; parts: string[]; starts: number[]; next: number; text: string | null; dirty: boolean }
+  // and letter variants aside — normalizeForSearch) joined into one string, kept from one search to the next and
+  // made ahead in idle moments; a search is then a scan of a few long strings — a book of fifteen million letters
+  // in a fraction of a second — run in slices between frames, handing over its hits as it goes, so the page stays
+  // live and the first results show at once. A chapter whose text changes (a highlight added) is gathered again.
+  // (The nodes of one paragraph are joined as they read — "the <b>quick</b> fox", a word across a highlight's edge,
+  // ruby's base without its reading — so a phrase is found across them; a line break marks where one block ends
+  // and the next begins, or a <br>, so no phrase is made of the end of one and the start of the next.)
+  interface ChapterIndex { nodes: Text[]; brk: Uint8Array; parts: string[]; starts: number[]; next: number; len: number; text: string | null; dirty: boolean }
   const chapterIndexes = new WeakMap<Element, ChapterIndex>();
   const watched = new WeakSet<Element>();
   function unitsOf(doc: OpenDoc): Element[] {
@@ -1149,26 +1152,37 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     }
     return doc.chapters.length ? doc.chapters : [content];
   }
-  function textNodesUnder(el: Element): Text[] {
+  const INLINE = /^(a|abbr|b|bdi|bdo|big|cite|code|data|del|dfn|em|font|i|ins|kbd|label|mark|q|rb|rtc|ruby|s|samp|small|span|strike|strong|sub|sup|time|tt|u|var)$/;
+  /** A chapter's text nodes, and before which of them a block (or a line) begins. */
+  function textNodesUnder(el: Element): { nodes: Text[]; brk: Uint8Array } {
     // (Style and script elements are stepped over whole, rather than every text node asking for its ancestors.)
-    // (Readings — furigana, pinyin — stepped over too: a search is for the text.)
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : /^(style|script|rt|rp)$/.test((n as Element).localName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP });
-    const nodes: Text[] = []; let node: Node | null;
-    while ((node = walker.nextNode())) nodes.push(node as Text);
-    return nodes;
+    // (Readings — furigana, pinyin — stepped over too: a search is for the text; and the numbers of the notes'
+    // bubbles, which are not the book's.)
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : /^(style|script|rt|rp)$/.test((n as Element).localName) || (n as Element).classList.contains('kr-note-badge') ? NodeFilter.FILTER_REJECT : (n as Element).localName === 'br' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+    const nodes: Text[] = []; const brk: number[] = []; let node: Node | null;
+    let lastParent: Element | null = null, lastBlock: Element | null = null, lineBreak = false;
+    while ((node = walker.nextNode())) {
+      if (node.nodeType !== Node.TEXT_NODE) { lineBreak = true; continue; }
+      const parent = node.parentElement;
+      let block: Element | null = lastBlock;
+      if (parent !== lastParent) { block = parent; while (block && block !== el && INLINE.test(block.localName)) block = block.parentElement; lastParent = parent; }
+      brk.push(nodes.length && (lineBreak || block !== lastBlock) ? 1 : 0);
+      nodes.push(node as Text); lastBlock = block; lineBreak = false;
+    }
+    return { nodes, brk: Uint8Array.from(brk) };
   }
   /** The index of a chapter, built as far as `until` allows (null when more remains; call again). */
   function chapterIndex(el: Element, until = Infinity): ChapterIndex | null {
     let ix = chapterIndexes.get(el);
-    if (!ix || ix.dirty) { ix = { nodes: textNodesUnder(el), parts: [], starts: [], next: 0, text: null, dirty: false }; chapterIndexes.set(el, ix); }
+    if (!ix || ix.dirty) { const { nodes, brk } = textNodesUnder(el); ix = { nodes, brk, parts: [], starts: [], next: 0, len: 0, text: null, dirty: false }; chapterIndexes.set(el, ix); }
     if (ix.text !== null) return ix;
-    let at = ix.starts.length ? ix.starts[ix.starts.length - 1] + ix.parts[ix.parts.length - 1].length + 1 : 0;
     for (; ix.next < ix.nodes.length; ix.next++) {
       if ((ix.next & 31) === 0 && performance.now() > until) return null;
       const form = searchFormOf(ix.nodes[ix.next].data);
-      ix.starts.push(at); ix.parts.push(form); at += form.length + 1;
+      if (ix.brk[ix.next]) { ix.parts.push('\n'); ix.len++; }
+      ix.starts.push(ix.len); ix.parts.push(form); ix.len += form.length;
     }
-    ix.text = ix.parts.join('\n');   // (the break keeps a match inside one node, as the page has it)
+    ix.text = ix.parts.join('');
     return ix;
   }
   const yieldToPage = (): Promise<void> => new Promise((r) => { const sch = (window as Window & { scheduler?: { yield?(): Promise<void> } }).scheduler; if (sch?.yield) void sch.yield().then(r); else setTimeout(r, 0); });
@@ -1216,17 +1230,24 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         const text = ix.text!; done += text.length;
         const maps = new Map<number, { text: string; map: Int32Array }>();
         for (let at = text.indexOf(q.text); at >= 0 && hits.length < LIMIT; at = text.indexOf(q.text, at + q.text.length)) {
-          // The node the hit falls in: the last one starting at or before it.
-          let lo = 0, hi = ix.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ix.starts[m] <= at) lo = m; else hi = m - 1; }
-          const node = ix.nodes[lo]; const local = at - ix.starts[lo];
-          if (local + q.text.length > ix.parts[lo].length || !node.isConnected) continue;
-          let norm = maps.get(lo); if (!norm) { norm = normalizeForSearch(node.data); maps.set(lo, norm); }
-          const raw = node.data;
-          const s = norm.map[local], e = norm.map[Math.min(norm.map.length - 1, local + q.text.length)];
-          const range = document.createRange(); range.setStart(node, s); range.setEnd(node, e); ranges.push(range);
-          const block = node.parentElement?.closest(BLOCK_SELECTOR) as HTMLElement | null;
+          // The nodes the hit begins and ends in: the last ones starting at or before its first and last letters
+          // (a hit may run on from one node into the next — across a bold word, a link, a highlight's edge).
+          const nodeAt = (pos: number) => { let lo = 0, hi = ix!.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ix!.starts[m] <= pos) lo = m; else hi = m - 1; } return lo; };
+          const a = nodeAt(at), b = nodeAt(at + q.text.length - 1);
+          const startNode = ix.nodes[a], endNode = ix.nodes[b];
+          if (!startNode.isConnected || !endNode.isConnected) continue;
+          const normOf = (k: number) => { let n = maps.get(k); if (!n) { n = normalizeForSearch(ix!.nodes[k].data); maps.set(k, n); } return n; };
+          const sNorm = normOf(a), eNorm = normOf(b);
+          const s = sNorm.map[Math.min(sNorm.map.length - 1, at - ix.starts[a])], e = eNorm.map[Math.min(eNorm.map.length - 1, at + q.text.length - ix.starts[b])];
+          const range = document.createRange(); range.setStart(startNode, s); range.setEnd(endNode, e); ranges.push(range);
+          // (The words around it, from the same paragraph.)
+          let match = a === b ? startNode.data.slice(s, e) : startNode.data.slice(s);
+          for (let k = a + 1; k <= b; k++) match += k === b ? endNode.data.slice(0, e) : ix.nodes[k].data;
+          let before = startNode.data.slice(0, s); for (let k = a; k > 0 && !ix.brk[k] && before.length < 60; k--) before = ix.nodes[k - 1].data + before;
+          let after = endNode.data.slice(e); for (let k = b + 1; k < ix.nodes.length && !ix.brk[k] && after.length < 60; k++) after += ix.nodes[k].data;
+          const block = startNode.parentElement?.closest(BLOCK_SELECTOR) as HTMLElement | null;
           const bi = block ? Math.max(0, blockIndexOf(doc, block)) : 0;
-          const hit = { bookId: doc.book.id, label: labelFor(doc, bi), pct: all.length ? (bi / all.length) * 100 : 0, before: raw.slice(Math.max(0, s - 60), s), match: raw.slice(s, e), after: raw.slice(e, e + 60), range };
+          const hit = { bookId: doc.book.id, label: labelFor(doc, bi), pct: all.length ? (bi / all.length) * 100 : 0, before: before.slice(-60), match, after: after.slice(0, 60), range };
           hits.push(hit); batch.push(hit);
         }
         if (done >= SLICE) {
@@ -1787,14 +1808,33 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   // The pages' text, read once and kept (from an earlier reading, or now, in idle moments), for quick searching.
   setTimeout(() => void storedPages(book).then((stored) => { if (stored) viewer.seedTexts(stored); else void viewer.readAllWhenIdle((all) => void storePages(book, all)); }), 3000);
   onDispose(onSettingsChange((s) => { applySettings(reader, s); syncChrome(); syncComfort(); viewer.setInvert(s.pdfInvert); }));
+  // "Speak" (selected words): the device's voice, or KittenTTS's audio — held, so a new "Speak" or the book closed
+  // stops it (it went on talking in the library).
+  let pdfAudio: HTMLAudioElement | null = null; let speechTurn = 0;
+  function stopPdfSpeech(): void {
+    speechTurn++; stopSpeech();
+    if (pdfAudio) { pdfAudio.pause(); URL.revokeObjectURL(pdfAudio.src); pdfAudio = null; }
+  }
+  onDispose(stopPdfSpeech);
   onDispose(attachSelectionToolbar(reader, {
     search: (text) => openSearch(text),
     highlight: (range, text, color) => addPdfHighlight(range, text, color),
     note: (range, text) => addPdfNote(range, text),
     speak: (text) => {
-      stopSpeech();
+      stopPdfSpeech();
       const lang = speechLangOf(text, book.language);
-      if (getSettings().speechEngine === 'kitten' && kittenReady() && kittenCanRead(text)) { void kittenSpeak(text.replace(/\s+/g, ' ').trim()).then((b) => { const a = new Audio(URL.createObjectURL(b)); a.playbackRate = getSettings().speechRate; a.onended = () => URL.revokeObjectURL(a.src); return a.play(); }).catch((e) => toast(String((e as Error).message ?? e), 'error', 5000)); return; }
+      if (getSettings().speechEngine === 'kitten' && kittenReady() && kittenCanRead(text)) {
+        const turn = speechTurn;
+        void kittenSpeak(text.replace(/\s+/g, ' ').trim()).then((b) => {
+          // (Stopped, spoken again or the book closed while the voice was being made: not played.)
+          if (turn !== speechTurn) return;
+          const url = URL.createObjectURL(b); const a = new Audio(url); pdfAudio = a;
+          a.playbackRate = getSettings().speechRate;
+          a.onended = () => { URL.revokeObjectURL(url); if (pdfAudio === a) pdfAudio = null; };
+          return a.play();
+        }).catch((e) => { if (turn === speechTurn) toast(String((e as Error).message ?? e), 'error', 5000); });
+        return;
+      }
       void speakPassage(text.replace(/\s+/g, ' ').trim(), lang, getSettings().speechRate, getSettings().speechVoice || undefined, () => undefined, () => undefined).then((r) => {
         if (r === 'missing-data') { toast(t('voiceDataMissing', { lang: languageName(lang) }), 'info', 7000); void installVoices(); }
         else if (r !== 'ok') toast(r === 'unavailable' ? t('speechUnavailable') : t('noVoiceFor', { lang: languageName(lang) }), 'error', 8000);

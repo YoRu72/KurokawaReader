@@ -86,13 +86,18 @@ export function voiceFor(list: Voice[], lang: string, preferred?: string): Voice
 export type SpeakResult = 'ok' | 'no-voice' | 'missing-data' | 'unavailable';
 let seq = 0;
 let cancelNative: (() => void) | null = null;
+// (Counted up by every stop: a passage still finding its voice when reading is stopped — the voice list can take
+// a moment to come — is not spoken once it has one.)
+let stops = 0;
 
 /**
  * Speak one passage; `onEnd` when it has been spoken (not when stopped). Resolves at once with whether it
  * could start: 'no-voice' when the device has no voice for the language.
  */
 export async function speakPassage(text: string, lang: string, rate: number, preferred: string | undefined, onEnd: () => void, onError: (e: string) => void): Promise<SpeakResult> {
+  const at = stops;
   const list = await voices();
+  if (at !== stops) return 'ok';   // (stopped meanwhile)
   const n = native();
   if (n) {
     const id = `kr${++seq}`;
@@ -101,6 +106,7 @@ export async function speakPassage(text: string, lang: string, rate: number, pre
     const clear = () => { for (const s of subs.splice(0)) s.remove(); };
     subs.push(await n.addListener('ttsDone', (d) => { if (d.id === id) { clear(); onEnd(); } }));
     subs.push(await n.addListener('ttsError', (d) => { if (d.id === id) { clear(); onError(`tts ${d.code ?? ''}`); } }));
+    if (at !== stops) { clear(); return 'ok'; }
     cancelNative = clear;
     const r = await n.ttsSpeak({ text, lang: v?.lang ?? lang, rate, id, voice: v?.name }).catch(() => ({ ok: false, reason: 'unavailable' }));
     if (!r.ok) { clear(); return r.reason === 'missing-data' ? 'missing-data' : r.reason === 'not-supported' ? 'no-voice' : 'unavailable'; }
@@ -130,23 +136,29 @@ let queueSubs: { remove(): void }[] = [];
  *  passage's language is chosen here. `on` is told as each starts and when the queue runs out or is stopped. */
 export async function speakQueue(items: { id: string; text: string; lang: string }[], o: { rate: number; preferred?: string; title: string; append?: boolean; on?: { start?(id: string): void; end?(): void; stopped?(): void; state?(playing: boolean): void } }): Promise<SpeakResult> {
   const n = native(); if (!n?.ttsQueue) return 'unavailable';
+  const at = stops;
   const list = await voices();
+  if (at !== stops) return 'ok';   // (stopped meanwhile)
   const voiceOf = new Map<string, string | undefined>();
   const full: QueueItem[] = items.map((x) => { if (!voiceOf.has(x.lang)) voiceOf.set(x.lang, voiceFor(list, x.lang, o.preferred)?.name); return { ...x, voice: voiceOf.get(x.lang) }; });
   if (!o.append) {
     for (const s of queueSubs.splice(0)) s.remove();
     if (o.on) {
-      const on = o.on;
-      queueSubs.push(await n.addListener('ttsStart', (d) => on.start?.(d.id)));
-      queueSubs.push(await n.addListener('ttsQueueEnd', () => on.end?.()));
-      queueSubs.push(await n.addListener('ttsStopped', () => on.stopped?.()));
-      queueSubs.push(await n.addListener('ttsState', (d) => on.state?.(!!d.playing)));
+      const on = o.on; const mine: { remove(): void }[] = [];
+      mine.push(await n.addListener('ttsStart', (d) => on.start?.(d.id)));
+      mine.push(await n.addListener('ttsQueueEnd', () => on.end?.()));
+      mine.push(await n.addListener('ttsStopped', () => on.stopped?.()));
+      mine.push(await n.addListener('ttsState', (d) => on.state?.(!!d.playing)));
+      if (at !== stops) { for (const s of mine) s.remove(); return 'ok'; }
+      queueSubs.push(...mine);
     }
   }
+  if (at !== stops) return 'ok';
   const r = await n.ttsQueue({ items: full, rate: o.rate, title: o.title, append: o.append }).catch(() => ({ ok: false, reason: 'unavailable' }));
   return r.ok ? 'ok' : 'unavailable';
 }
 export function stopSpeech(): void {
+  stops++;
   for (const s of queueSubs.splice(0)) s.remove();
   const n = native();
   if (n) { cancelNative?.(); cancelNative = null; void n.ttsStop().catch(() => undefined); return; }
