@@ -196,7 +196,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const translator = attachTranslator({
     root, scroll,
     blocks: () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks.map((el) => ({ el, bookId: d.book.id }))),
-    chapters: () => units().map((u, i) => ({ label: chapterTitle(u) || `${localDigits(i + 1)}`, bookId: u.doc.book.id, blocks: u.doc.allBlocks.filter((b) => u.el === b || u.el.contains(b)) })),
+    // (Each chapter's title and blocks worked out when asked for, not for every chapter at each call: the translator
+    // asks for the list at open, and a book of hundreds of chapters cost the whole book's blocks times its chapters.)
+    chapters: () => units().map((u, i) => { let label: string | undefined; return { get label() { return (label ??= chapterTitle(u) || `${localDigits(i + 1)}`); }, bookId: u.doc.book.id, get blocks() { return blocksOfUnit(u); } }; }),
     currentChapter: () => Math.max(0, currentUnitIndex()),
     onChapterChange: (fn) => chapterListeners.push(fn),
     bookTitle: (id) => docs.find((d) => d.book.id === id)?.book.title,
@@ -429,6 +431,19 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   /* ---------- chapter mode ---------- */
   interface Unit { doc: OpenDoc; el: HTMLElement; index: number }
   function units(): Unit[] { return docs.flatMap((doc) => doc.chapters.map((el, index) => ({ doc, el, index }))); }
+  /** A unit's blocks: every block of the book sorted into its chapter in one pass (each one's chapter found by walking
+   *  up from it), kept until the book's blocks or chapters are made again. */
+  const unitBlocks = new WeakMap<OpenDoc, { all: HTMLElement[]; chapters: HTMLElement[]; by: HTMLElement[][] }>();
+  function blocksOfUnit(u: Unit): HTMLElement[] {
+    let c = unitBlocks.get(u.doc);
+    if (!c || c.all !== u.doc.allBlocks || c.chapters !== u.doc.chapters) {
+      const ix = new Map(u.doc.chapters.map((el, i) => [el as Element, i]));
+      const by = u.doc.chapters.map(() => [] as HTMLElement[]);
+      for (const b of u.doc.allBlocks) for (let e: Element | null = b; e; e = e.parentElement) { const i = ix.get(e); if (i !== undefined) { by[i].push(b); break; } }
+      c = { all: u.doc.allBlocks, chapters: u.doc.chapters, by }; unitBlocks.set(u.doc, c);
+    }
+    return c.by[u.index] ?? [];
+  }
   function chapterTitle(u: Unit): string {
     const toc = u.doc.render?.toc ?? [];
     const hit = toc.find((item) => { const el = document.getElementById(item.anchor); return !!el && (el === u.el || u.el.contains(el)); });
@@ -584,6 +599,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   function scrollToLocator(loc: Locator): void {
     const doc = docs.find((d) => d.book.id === loc.bookId) ?? docs[0];
     if (!doc) return;
+    for (const d of docs) if (d.render) sizeRuns(d.render.element);
     programmatic = performance.now();
     if (loc.anchor) { scrollToAnchor(loc.anchor); return; }
     // Positions are stored as whole-book block indices; older ones were chapter-local.
@@ -607,6 +623,22 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const wr = doc.wrapper.getBoundingClientRect();
       scroll.scrollTop += wr.top - sr.top + (loc.pct ?? 0) * wr.height;
     }
+  }
+
+  /** A long plain text's runs not laid out yet (formats/shared.ts textToParagraphs) take the height their text will
+   *  have: the sizes measured on the first run — per character, and per paragraph (its last line, its spacing) — so
+   *  that the book's length, the place's percentage and the scroll bar are right before the runs are laid out. Measured
+   *  again whenever a place is gone to (the text's size, spacing or width may have changed). */
+  function sizeRuns(el: HTMLElement): void {
+    const run = el.querySelector<HTMLElement>(':scope > .kr-run'); const first = run?.firstElementChild, last = run?.lastElementChild;
+    if (!run || !first || !last || !run.isConnected) return;
+    const hgt = last.getBoundingClientRect().bottom - first.getBoundingClientRect().top; if (!(hgt > 0)) return;
+    const cs = getComputedStyle(first); const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 16) * 1.6; const mb = parseFloat(cs.marginBlockEnd) || 0;
+    const c = Number(run.style.getPropertyValue('--kr-run-c')) || 1, p = Number(run.style.getPropertyValue('--kr-run-p')) || 1;
+    const ppx = lh * 0.5 + mb, cpx = Math.max(0, (hgt + mb - p * ppx) / c);
+    const a = `${cpx.toFixed(4)}px`, b = `${ppx.toFixed(2)}px`;
+    if (el.style.getPropertyValue('--kr-cpx') !== a) el.style.setProperty('--kr-cpx', a);
+    if (el.style.getPropertyValue('--kr-ppx') !== b) el.style.setProperty('--kr-ppx', b);
   }
 
   function scrollToAnchor(anchor: string, flash = true): void {

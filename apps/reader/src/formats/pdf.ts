@@ -171,6 +171,10 @@ export class PdfViewer {
   private scale = 1;
   private baseWidths: number[] = [];
   private baseHeights: number[] = [];
+  /** Which pages' sizes are their own (read from the file), not page 1's taken for them. */
+  private sized = new Uint8Array(0);
+  /** The first page's picture is on the screen (the sizes of the others are read after it, not before). */
+  private firstPic!: Promise<void>; private firstPicDone: () => void = () => undefined;
   readonly scroll: HTMLElement;
   private inner: HTMLElement;
   pinchZoom = true;
@@ -223,6 +227,8 @@ export class PdfViewer {
     const w1 = vp1?.width ?? 612, h1 = vp1?.height ?? 792;
     this.baseWidths = new Array<number>(this.total).fill(w1);
     this.baseHeights = new Array<number>(this.total).fill(h1);
+    this.sized = new Uint8Array(this.total); if (first) this.sized[0] = 1;
+    this.firstPic = new Promise<void>((r) => { this.firstPicDone = r; });
     this.crops = new Array<CropBox | null>(this.total).fill(null); this.cropShownAs = this.crops.slice();
     // (Margins cropped: what was found before is read first, so the pages are laid out cropped from the start.)
     this.cropWanted = !!this.opts.crop?.enabled();
@@ -283,36 +289,67 @@ export class PdfViewer {
     this.frame();
   }
 
-  /** Fetch real page sizes in the background and correct the placeholders. */
+  /** Page sizes read from the file, correcting page 1's taken for them. Not every page at open — a thousand-page
+   *  book asked pdf.js for a thousand pages, ahead of the page being drawn: the first pages and a sample spread
+   *  through the book, after the first picture is up; when they all have page 1's size (most books), the rest are
+   *  read as they are met (drawn, measured for cropping, made into thumbnails); else all of them, as before. */
   private async measurePages(): Promise<void> {
-    let changed: number[] = [];
-    const apply = () => {
-      if (!changed.length) return;
-      // Keep what the reader is looking at where it is when earlier pages change size (worked out from the sizes,
-      // not by asking the page for its height — that would lay the whole book out again each time).
-      let shift = 0;
-      for (const i of changed) {
-        const el = this.pages[i - 1]; const before = parseFloat(el.style.height) || 0;
-        this.sizePage(el, i);
-        if (i < this.current) shift += (parseFloat(el.style.height) || 0) - before;
-        const s = this.shown.get(i); if (s) { s.level = Math.min(s.level, 1) as 0 | 1; this.dropTiles(s); }
-      }
-      changed = [];
-      this.tops = null;
-      if (shift) this.scroll.scrollTop += shift;
-      this.pump();
-    };
-    for (let i = 2; i <= this.total; i++) {
+    await Promise.race([this.firstPic, new Promise((r) => setTimeout(r, 1500))]);
+    const N = this.total; if (N <= 1 || this.destroyed) return;
+    const sample = new Set<number>();
+    for (let i = 2; i <= Math.min(N, 8); i++) sample.add(i);
+    if (N > 8) for (let k = 0; k < 24; k++) sample.add(Math.min(N, 9 + Math.round(((k + 0.5) * (N - 9)) / 24)));
+    let uniform = true;
+    for (const i of sample) {
+      const page = await this.doc.getPage(i).catch(() => null);
       if (this.destroyed) return;
+      if (page && this.noteSize(i, page, true)) uniform = false;
+    }
+    this.applySizes();
+    if (uniform) return;
+    for (let i = 2; i <= N; i++) {
+      if (this.destroyed) return;
+      if (this.sized[i - 1]) continue;
       const page = await this.doc.getPage(i).catch(() => null);
       if (this.destroyed || !page) continue;
-      const vp = page.getViewport({ scale: 1 });
-      if (Math.abs(vp.width - this.baseWidths[i - 1]) >= 0.5 || Math.abs(vp.height - this.baseHeights[i - 1]) >= 0.5) {
-        this.baseWidths[i - 1] = vp.width; this.baseHeights[i - 1] = vp.height; changed.push(i);
-      }
-      if (i % 40 === 0 || i === this.total) { apply(); await new Promise((r) => setTimeout(r, 0)); }
+      this.noteSize(i, page, true);
+      if (i % 40 === 0 || i === N) { this.applySizes(); await new Promise((r) => setTimeout(r, 0)); }
     }
-    apply();
+    this.applySizes();
+  }
+  /** Page `n`'s own size, from pdf.js's page: true when it differs from what it was laid out with. Applied at once,
+   *  or with the others waiting (`later`) by applySizes. */
+  private sizesWaiting: number[] = [];
+  private noteSize(n: number, page: PDFPageProxy, later = false): boolean {
+    if (this.sized[n - 1]) return false;
+    this.sized[n - 1] = 1;
+    const vp = page.getViewport({ scale: 1 });
+    if (Math.abs(vp.width - this.baseWidths[n - 1]) < 0.5 && Math.abs(vp.height - this.baseHeights[n - 1]) < 0.5) return false;
+    this.baseWidths[n - 1] = vp.width; this.baseHeights[n - 1] = vp.height; this.sizesWaiting.push(n);
+    if (!later) this.applySizes();
+    return true;
+  }
+  /** Page `n`'s own size known (read from the file when it is not yet). */
+  private async ensureSize(n: number): Promise<void> {
+    if (this.sized[n - 1]) return;
+    const page = await this.doc.getPage(n).catch(() => null);
+    if (page && !this.destroyed) this.noteSize(n, page);
+  }
+  private applySizes(): void {
+    const changed = this.sizesWaiting; if (!changed.length || this.destroyed) return;
+    this.sizesWaiting = [];
+    // Keep what the reader is looking at where it is when earlier pages change size (worked out from the sizes,
+    // not by asking the page for its height — that would lay the whole book out again each time).
+    let shift = 0;
+    for (const i of changed) {
+      const el = this.pages[i - 1]; const before = parseFloat(el.style.height) || 0;
+      this.sizePage(el, i);
+      if (i < this.current) shift += (parseFloat(el.style.height) || 0) - before;
+      const s = this.shown.get(i); if (s) { s.level = Math.min(s.level, 1) as 0 | 1; this.dropTiles(s); }
+    }
+    this.tops = null;
+    if (shift) this.scroll.scrollTop += shift;
+    this.pump();
   }
 
   /** The part of page `n` that is shown, in page points, and `k`: how much the page is shrunk so that it is no wider
@@ -450,9 +487,10 @@ export class PdfViewer {
     const ctx = c.getContext('2d', { willReadFrequently: true })!;
     const fitIn = (w: number, hh: number) => { const k = Math.min(320 / w, 480 / hh); c.width = Math.max(16, Math.round(w * k)); c.height = Math.max(16, Math.round(hh * k)); };
     let ok = false;
-    if (this.native) { fitIn(this.baseWidths[n - 1], this.baseHeights[n - 1]); ok = await this.nativeDraw(n, c, { width: c.width }).catch(() => false); }
+    if (this.native) { await this.ensureSize(n); fitIn(this.baseWidths[n - 1], this.baseHeights[n - 1]); ok = await this.nativeDraw(n, c, { width: c.width }).catch(() => false); }
     if (!ok) {
       const page = await this.doc.getPage(n);
+      this.noteSize(n, page);
       try {
         const vp1 = page.getViewport({ scale: 1 }); fitIn(vp1.width, vp1.height);
         ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
@@ -674,10 +712,11 @@ export class PdfViewer {
     let s = this.shown.get(n);
     if (!s) { s = { level: 0, at: 0 }; this.shown.set(n, s); }
     const scale = this.scale;
-    const { px } = this.sizeFor(n, level);
     let page: PDFPageProxy;
     try { page = await this.doc.getPage(n); } catch { s.level = level; s.at = scale; return; }
     if (this.destroyed || this.shown.get(n) !== s) return;
+    this.noteSize(n, page);
+    const { px } = this.sizeFor(n, level);
     const vp1 = page.getViewport({ scale: 1 });
     const k = px / vp1.width;
     const W = Math.max(1, Math.round(px)), H = Math.max(1, Math.round(vp1.height * k));
@@ -702,6 +741,7 @@ export class PdfViewer {
     el.classList.remove('loading');
     el.dataset.res = level === 2 && !this.sizeFor(n, 2).tiled ? 'full' : 'low';
     if (!s.seen) { s.seen = true; this.opts.onPageRender?.(n); }
+    this.firstPicDone();
   }
 
   /** Draw with Android's renderer: written to a file by it and read here as bytes (no text encoding, no bridge
@@ -1249,6 +1289,7 @@ export class PdfViewer {
     const px = Math.round(width * Math.min(2, this.device()));
     const canvas = offscreen(document.createElement('canvas'));
     if (this.native) {
+      await this.ensureSize(n);
       canvas.width = px; canvas.height = Math.round(px * (this.baseHeights[n - 1] / this.baseWidths[n - 1] || 1.4));
       if (await this.nativeDraw(n, canvas, { width: px }).catch(() => false)) return canvas.toDataURL('image/jpeg', 0.7);
     }

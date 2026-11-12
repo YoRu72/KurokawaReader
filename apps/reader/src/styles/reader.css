@@ -42,7 +42,7 @@
 .reader.book-format .kr-content p { margin-block: 0 calc(var(--r-para, .9em) * .5); text-align: justify; text-align-last: start; hyphenate-limit-chars: 5 2 2; -webkit-hyphenate-limit-before: 2; -webkit-hyphenate-limit-after: 2; }
 .reader.book-format .kr-content p:has(> img:only-child), .reader.book-format .kr-content p.center, .reader.book-format .kr-content [style*='text-align: center'] { text-indent: 0; }
 .reader.book-format .kr-content p + p { margin-block-start: 0; }
-.reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
+.reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter, .reader.drop-cap .kr-content > .kr-run:first-child > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
 .reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
 
@@ -147,6 +147,9 @@
 ::highlight(kr-search-current) { background: #e5a53b; color: #1a1408; }
 @keyframes flash { 0% { background: color-mix(in srgb, var(--r-link) 45%, transparent); } 100% { background: transparent; } }
 .kr-content .kr-txt { white-space: pre-wrap; }
+/* A long plain text's runs of paragraphs (formats/shared.ts textToParagraphs): each laid out only near the screen, its
+   height until then reckoned from its characters and paragraphs at the sizes measured on one run (sizeRuns, reader.ts). */
+.kr-content .kr-run { content-visibility: auto; contain-intrinsic-block-size: auto calc(var(--kr-run-c, 4000) * var(--kr-cpx, .45px) + var(--kr-run-p, 30) * var(--kr-ppx, 40px)); }
 /* Printed page markers (EPUB pagebreak spans) become quiet centred separators */
 .kr-content span.pb, .kr-content [epub\:type~='pagebreak'] { display: block; text-align: center; font-family: var(--font-ui); font-size: .62em; color: var(--r-dim); opacity: .8; margin: .6em 0; letter-spacing: .04em; }
 .kr-content .basmala { text-align: center; font-size: 1.25em; margin: .4em 0 1em; }
