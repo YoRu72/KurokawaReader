@@ -787,6 +787,10 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     let space = pendingSpace;
     const gap = prev ? gapOf(prev, p) : 0;
     if (prev && gap > Math.min(prev.h, p.h) * (marked ? 0.3 : 0.18)) space = true;
+    // (A drawn space next to nothing — a sliver of a space set where a word and its comma or closing quote still
+    // touch — parts nothing the page shows: the words stand where they would without it.)
+    // (Not beside a word font's glyph: its box is the whole word with the room around it, which shows no gap.)
+    else if (space && prev && pendingW < Math.min(prev.h, p.h) * 0.03 && gap < Math.min(prev.h, p.h) * 0.03 && !fonts.get(prev.font)?.wordFont && !fonts.get(p.font)?.wordFont) space = false;
     // A stretch drawn as overlapping tatweel pieces: as many tatweels as the overlap hides are not drawn width.
     let trim = 0;
     if (prev && rtlLine && gap < -0.5 && /^\u0640/.test(p.text)) {
@@ -1223,9 +1227,15 @@ function findPlacedBoxes(body: Line[], W: number, H: number): { lines: Line[]; l
   for (const l of body) {
     const ps = l.pieces.filter((p) => p.text.trim() && p.text !== ' ').sort((a, b) => a.l - b.l);
     if (!ps.length) continue;
-    let cur: Piece[] = [ps[0]]; let hi = ps[0].r;
-    for (let i = 1; i < ps.length; i++) { const p = ps[i]; if (p.l - hi > Math.max(l.size * 3, 14)) { segs.push(subLine(l, cur)); cur = []; } cur.push(p); hi = Math.max(hi, p.r); }
-    segs.push(subLine(l, cur));
+    let cur: Piece[] = [ps[0]]; let hi = ps[0].r; const cut: Piece[][] = [];
+    for (let i = 1; i < ps.length; i++) { const p = ps[i]; if (p.l - hi > Math.max(l.size * 3, 14)) { cut.push(cur); cur = []; } cur.push(p); hi = Math.max(hi, p.r); }
+    cut.push(cur);
+    // (The drawn spaces go with the stretch they stand in: without them a box's words were spaced by their gaps
+    // alone, and a page that sets its words close — a narrow drawn space — lost every space in its boxes.)
+    // (Its extent stays its words'.)
+    const parts = cut.map((ws) => subLine(l, ws));
+    for (const sp of l.pieces) if (sp.text === '\u2009') { const s = parts.find((x) => sp.l >= x.l - 0.5 && sp.r <= x.r + 0.5); if (s) s.pieces.push(sp); }
+    segs.push(...parts);
   }
   if (segs.length === body.length) {
     // (No line is cut: scattered only if the lines themselves stand at many different places.)
