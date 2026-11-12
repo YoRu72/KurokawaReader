@@ -32,14 +32,18 @@ export function placedGroups(items: readonly PlacedItem[]): Record<ItemPlace, st
 
 /** An editor for such a list: a row per item — a switch, its name, where it goes (start · centre · end), and
  *  up / down to move it. `onChange` gets the whole new list. */
-export function placedItemsEditor(items: readonly PlacedItem[], label: (id: string) => string, onChange: (items: PlacedItem[]) => void, opts: { sample?: (id: string) => string } = {}): HTMLElement {
+export function placedItemsEditor(items: readonly PlacedItem[], label: (id: string) => string, onChange: (items: PlacedItem[]) => void, opts: { sample?: (id: string) => string; hidden?: (id: string) => boolean } = {}): HTMLElement {
+  // (An item that cannot be shown here — the battery where the device does not tell it — is left out of the list but
+  // kept, at its place and in its order, in what is saved.)
+  const shows = (id: string) => !opts.hidden?.(id);
   let cur = items.map((x) => ({ ...x }));
   const list = h('div', { class: 'placed-list', role: 'list' });
   const commit = () => { onChange(cur.map((x) => ({ ...x }))); render(); };
-  const move = (i: number, d: -1 | 1) => { const j = i + d; if (j < 0 || j >= cur.length) return; [cur[i], cur[j]] = [cur[j], cur[i]]; commit(); list.querySelectorAll<HTMLElement>('.placed-row')[j]?.querySelector<HTMLElement>(d < 0 ? '.mv-up' : '.mv-down')?.focus(); };
+  const move = (k: number, d: -1 | 1) => { const vis = cur.map((x, n) => (shows(x.id) ? n : -1)).filter((n) => n >= 0); const i = vis[k], j = vis[k + d]; if (i === undefined || j === undefined) return; [cur[i], cur[j]] = [cur[j], cur[i]]; commit(); list.querySelectorAll<HTMLElement>('.placed-row')[k + d]?.querySelector<HTMLElement>(d < 0 ? '.mv-up' : '.mv-down')?.focus(); };
   const places: [ItemPlace, string][] = [['start', t('placeStart')], ['center', t('placeCenter')], ['end', t('placeEnd')]];
   const render = () => {
-    list.replaceChildren(...cur.map((it, i) => {
+    const vis = cur.filter((it) => shows(it.id));
+    list.replaceChildren(...vis.map((it, i) => {
       const name = label(it.id); const sample = opts.sample?.(it.id);
       return h('div', { class: 'placed-row' + (it.on ? ' on' : ''), role: 'listitem', dataset: { id: it.id } },
         h('label', { class: 'placed-name' },
@@ -50,7 +54,7 @@ export function placedItemsEditor(items: readonly PlacedItem[], label: (id: stri
           h('span', { class: 'place-glyph', 'aria-hidden': 'true' }, ...places.map(([q]) => h('span', { class: q === p ? 'on' : '' })))))),
         h('span', { class: 'row-actions' },
           h('button', { type: 'button', class: 'icon-btn mv-up', 'aria-label': `${t('moveUp')}: ${name}`, title: t('moveUp'), disabled: i === 0, onclick: () => move(i, -1) }, icon('chevronUp')),
-          h('button', { type: 'button', class: 'icon-btn mv-down', 'aria-label': `${t('moveDown')}: ${name}`, title: t('moveDown'), disabled: i === cur.length - 1, onclick: () => move(i, 1) }, icon('chevronDown'))));
+          h('button', { type: 'button', class: 'icon-btn mv-down', 'aria-label': `${t('moveDown')}: ${name}`, title: t('moveDown'), disabled: i === vis.length - 1, onclick: () => move(i, 1) }, icon('chevronDown'))));
     }));
   };
   render();

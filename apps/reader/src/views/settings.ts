@@ -2,7 +2,7 @@ import { brandIcon, setBrandIcon } from '../ui/brandIcon';
 import { h, icon, iconButton, toast, clear, openSheet, pickButton } from '../ui/dom';
 import { isPc, uiSize, setUiSize, UI_SIZES } from '../ui/pcshell';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
-import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, isTouchDevice, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels, countHours } from '../i18n';
+import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels, countHours } from '../i18n';
 import { navigate, back } from '../router';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
@@ -10,8 +10,9 @@ import { colorField } from '../ui/colorpicker';
 import { getSettings, updateSettings, applyOrientation, isDefault, resetSetting, type VisualSettings, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
-import { nativePlatform, canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon } from '../native';
+import { canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon } from '../native';
 import { decksCard } from '../ui/decks';
+import { fits, only } from '../platform';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
@@ -44,14 +45,16 @@ export function settingsView(): HTMLElement {
     const modes: [UiMode, string][] = [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')], ['page', t('uiPage')]];
     const accents: [Accent, string, string][] = [['graphite', t('accentGraphite'), '#c9ccd2'], ['aqua', t('accentAqua'), '#8fd0f0'], ['teal', t('accentTeal'), '#86d6cf'], ['gold', t('accentGold'), '#ebc47e'], ['coral', t('accentCoral'), '#ffb59f'], ['rose', t('accentRose'), '#f3b3c6'], ['mint', t('accentMint'), '#a6d3c4'], ['violet', t('accentViolet'), '#cdbdff'], ['olive', t('accentOlive'), '#c3cf9a'], ['sand', t('accentSand'), '#e3c9a3'], ['mono', t('accentMono'), '#e2e2e2'], ['custom', t('accentCustom'), cur.accentCustom]];
     const orients: [Orientation, string][] = [['auto', t('orientationAuto')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]];
-    // (On a computer: the interface's size — everything but an open book.)
-    const sizeField = isPc() ? h('div', { class: 'field' }, h('label', null, t('uiSize')), h('div', { class: 'segmented' }, ...UI_SIZES.map((v) => h('button', { type: 'button', 'aria-pressed': String(Math.abs(uiSize() - v) < 0.01), onclick: () => { setUiSize(v); renderAppearance(); } }, `${localDigits(Math.round(v * 100))}%`))), h('p', { class: 'hint' }, t('uiSizeHint'))) : null;
+    // (On a computer: the interface's size — everything but an open book. The desktop app's window zooms; a web page
+    // has no way to, so it is not offered there.)
+    const sizeField = isPc() && fits('desktopApp') ? h('div', { class: 'field' }, h('label', null, t('uiSize')), h('div', { class: 'segmented' }, ...UI_SIZES.map((v) => h('button', { type: 'button', 'aria-pressed': String(Math.abs(uiSize() - v) < 0.01), onclick: () => { setUiSize(v); renderAppearance(); } }, `${localDigits(Math.round(v * 100))}%`))), h('p', { class: 'hint' }, t('uiSizeHint'))) : null;
     const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), appIconField(), sizeField,
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       document.documentElement.dataset.ui !== 'light' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
       cur.accent === 'custom' ? h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('span', null, t('accentCustom')), colorField(cur.accentCustom, (v) => updateSettings({ accentCustom: v }), t('accentCustom'))) : null,
-      h('div', { class: 'field' }, resettable(t('orientation'), 'orientation', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label)))),
+      // (Where each row shows, and why: src/platform.ts. A computer's screen does not turn.)
+      ...only('phone', h('div', { class: 'field' }, resettable(t('orientation'), 'orientation', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...orients.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.orientation === id), onclick: () => { updateSettings({ orientation: id }); void applyOrientation(); renderAppearance(); } }, label))))),
       h('div', { class: 'field' }, resettable(t('libraryView'), 'libraryView', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...([['cards', t('viewCards')], ['chips', t('viewChips')]] as ['cards' | 'chips', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.libraryView === id), onclick: () => { updateSettings({ libraryView: id }); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, resettable(t('importButtonPlace'), 'importButton', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...([['chips', t('importChips')], ['top', t('importTop')], ['fab', t('importFab')]] as ['chips' | 'top' | 'fab', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.importButton === id), onclick: () => { updateSettings({ importButton: id }); renderAppearance(); } }, label)))),
       h('div', { class: 'field' }, resettable(t('coverSize'), 'coverSize', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...([['small', t('coverSmall')], ['medium', t('coverMedium')], ['large', t('coverLarge')]] as ['small' | 'medium' | 'large', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.coverSize === id), onclick: () => { updateSettings({ coverSize: id }); renderAppearance(); } }, label)))),
@@ -64,7 +67,7 @@ export function settingsView(): HTMLElement {
       cur.showDone ? h('div', { class: 'field' }, resettable(t('doneMarkPlace'), 'doneMark', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['beside', t('doneBeside')], ['below', t('doneBelow')], ['topLeft', t('doneTopLeft')], ['bottom', t('doneBottom')]] as ['beside' | 'below' | 'topLeft' | 'bottom', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.doneMark === id), onclick: () => { updateSettings({ doneMark: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('calendarKind'), 'calendar', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['gregory', t('calGregory')], ['hijri', t('calHijri')], ['both', t('calBoth')]] as ['gregory' | 'hijri' | 'both', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.calendar === id), onclick: () => { updateSettings({ calendar: id }); renderAppearance(); } }, label)))),
       h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('openLastOnLaunch')), (() => { const c = h('input', { type: 'checkbox', checked: cur.openLastOnLaunch, onchange: () => updateSettings({ openLastOnLaunch: c.checked }) }) as HTMLInputElement; return c; })()),
-      ...(nativePlatform() === 'android' ? [h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('doubleBackExit')), (() => { const c = h('input', { type: 'checkbox', checked: !!cur.doubleBackExit, onchange: () => updateSettings({ doubleBackExit: c.checked }) }) as HTMLInputElement; return c; })())] : []),
+      ...only('android', h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('doubleBackExit')), (() => { const c = h('input', { type: 'checkbox', checked: !!cur.doubleBackExit, onchange: () => updateSettings({ doubleBackExit: c.checked }) }) as HTMLInputElement; return c; })())),
       h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('searchEngine')), pickButton(t('searchEngine'), [['duckduckgo', 'DuckDuckGo'], ['google', 'Google'], ['bing', 'Bing'], ['wikipedia', 'Wikipedia'], ['yandex', 'Yandex'], ['baidu', 'Baidu']], cur.searchEngine ?? 'duckduckgo', (v) => updateSettings({ searchEngine: v as VisualSettings['searchEngine'] }), t('close'))),
     ];
     appearance.append(...parts.filter((x): x is HTMLElement => x !== null));
@@ -296,8 +299,9 @@ export function settingsView(): HTMLElement {
       h('button', { class: 'btn small outlined', onclick: () => void import('../ui/restoresheet').then((m) => m.restoreSheet()) }, icon('import'), t('restore')), restoreInput),
     bkStatus, autoBackupRow()));
 
-  // Keyboard shortcuts: every PC and browser (touch-screen laptops included); phones and tablets skip it.
-  if (nativePlatform() !== 'android' && nativePlatform() !== 'ios') {
+  // Keyboard shortcuts: every computer, the desktop app or a browser (touch-screen laptops included); phones and
+  // tablets — a phone's browser too — skip it.
+  if (fits('computer')) {
     const list = h('div', { class: 'dest-list' });
     const renderKeys = () => {
       list.replaceChildren(...SHORTCUTS.map((sc) => {
@@ -361,7 +365,7 @@ export function settingsView(): HTMLElement {
   }).catch(() => undefined);
   paintStorage();
   if (navigator.storage?.persist) navigator.storage.persisted().then((p) => { if (!p) void navigator.storage.persist(); }).catch(() => undefined);
-  const importModeField = (nativePlatform() === 'android' || 'kurokawaDesktop' in window) ? h('div', { class: 'field' }, resettable(t('importMode'), 'importMode', () => renderAppearance()), h('div', { class: 'segmented' }, ...([['link', t('importLink')], ['copy', t('importCopy')]] as ['link' | 'copy', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getSettings().importMode === id), onclick: () => { updateSettings({ importMode: id }); navigate('/settings', true); } }, label))), h('span', { class: 'hint' }, t('importModeHint'))) : null;
+  const importModeField = (fits('android') || fits('desktopApp')) ? h('div', { class: 'field' }, resettable(t('importMode'), 'importMode', () => renderAppearance()), h('div', { class: 'segmented' }, ...([['link', t('importLink')], ['copy', t('importCopy')]] as ['link' | 'copy', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(getSettings().importMode === id), onclick: () => { updateSettings({ importMode: id }); navigate('/settings', true); } }, label))), h('span', { class: 'hint' }, t('importModeHint'))) : null;
   body.append(h('section', { class: 'card' }, h('h3', null, t('storage')), storageP, storageActions, importModeField,
     h('div', null, h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: (await db.allBooks()).length }))) { await db.clearAll(); toast(t('done')); } } }, icon('trash'), t('clearLibrary')))));
 
@@ -376,7 +380,7 @@ export function settingsView(): HTMLElement {
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/perfsheet').then((m) => m.perfSheet()) }, icon('chart'), t('perfTitle'))),
     h('h3', null, t('supportedFormats')),
     h('ul', null, ...(['fmtEpub', 'fmtPdf', 'fmtDocx', 'fmtXlsx', 'fmtPptx', 'fmtText', 'fmtFb2', 'fmtOdt', 'fmtCbz', 'fmtImages'] as const).map((k) => h('li', null, t(k)))),
-    ...(isTouchDevice() ? [] : [h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsBody'))])));
+    ...only('computer', h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsBody')))));
 
   void s;
 

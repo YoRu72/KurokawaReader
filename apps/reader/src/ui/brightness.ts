@@ -3,10 +3,11 @@
 import { getSettings, updateSettings } from '../settings';
 import { canDeviceBrightness, getDeviceBrightness, setDeviceBrightness } from '../native';
 import { h } from './dom';
-import { t, localDigits, isTouchDevice } from '../i18n';
+import { t, localDigits } from '../i18n';
+import { onPhone } from '../platform';
 
 export function attachEdgeBrightness(area: HTMLElement): () => void {
-  if (!isTouchDevice()) return () => undefined;
+  if (!onPhone()) return () => undefined;
   let startY = 0, startDim = 0, active = false, moved = false;
   let device = false, startBright = 0.5, lastBright = -1;
   let hud: HTMLElement | null = null; let hideT = 0;
@@ -56,7 +57,7 @@ export function attachEdgeBrightness(area: HTMLElement): () => void {
  *  from scrolling under the pinch exists only while two fingers are down, so a single finger never waits
  *  for it: scrolling stays smooth. */
 export function attachPinchText(area: HTMLElement): () => void {
-  if (!isTouchDevice()) return () => undefined;
+  if (!onPhone()) return () => undefined;
   let startDist = 0, startSize = 0, last = 0;
   const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   const move = (e: TouchEvent) => {

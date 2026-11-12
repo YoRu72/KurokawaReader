@@ -15,7 +15,7 @@ import { attachRuler } from '../ui/ruler';
 import { jumpBack } from '../ui/jumpback';
 import { leaveToCaller } from '../native';
 import { applyTypography, revertTypography } from '../ui/typography';
-import { t, isTouchDevice, getLang, localDigits, countMinutes, formatPercent } from '../i18n';
+import { t, getLang, localDigits, countMinutes, formatPercent } from '../i18n';
 import { db, uid, stampAfter, type PdfNote, type PdfHighlight, type InkStroke, type Book, type Locator, type Bookmark, type Highlight, FAV_TAG } from '../db';
 import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
@@ -50,6 +50,7 @@ import { buttonSheet } from '../ui/buttonsheet';
 import { shareFile, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
 import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, nativePlatform } from '../native';
+import { onPhone, fits } from '../platform';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet, askText } from '../ui/dom';
 
@@ -1249,7 +1250,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (document.getSelection()?.isCollapsed === false) return;
     // Tap zones on touch screens (nine of them, each given its action in the options; by default the lower
     // third turns to the next screen, the upper to the previous, the middle shows or hides the chrome).
-    if (getSettings().tapToTurn && isTouchDevice()) {
+    // (On a phone only, where the options offer them: a computer's click — a zone's action synced from the phone
+    // included — shows or hides the bars, as ever. src/platform.ts.)
+    if (getSettings().tapToTurn && onPhone()) {
       const sr = scroll.getBoundingClientRect(); const x = (e.clientX - sr.left) / sr.width, y = (e.clientY - sr.top) / sr.height;
       const col = x < 1 / 3 ? 0 : x < 2 / 3 ? 1 : 2, row = y < 0.22 ? 0 : y < 0.62 ? 1 : 2;
       const action = (getSettings().tapZones ?? [])[row * 3 + col] ?? 'menu';
@@ -1972,7 +1975,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     panel.open(t('more'), [{ id: 'more', label: t('more'), render: (body) => {
       // (What the reader placed in «More», and what the bars had no room for; «Customise buttons» always last.)
       body.append(moreList('flow', bars.moreIds(), actions, () => panel.close(), () => buttonSheet('flow')));
-      if (!isTouchDevice()) body.append(h('p', { class: 'shortcuts-hint' }, icon('keyboard'), ' ', t('shortcutsBody')));
+      if (fits('computer')) body.append(h('p', { class: 'shortcuts-hint' }, icon('keyboard'), ' ', t('shortcutsBody')));
     } }]);
   }
 
@@ -2111,7 +2114,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     savePagesRange: { run: () => savePagesSheet() },
     exportWithInk: { run: () => void exportWithInk(), available: () => (book.ink ?? []).length > 0 },
     print: { run: () => void printBook() },
-    openWithApp: { run: () => void openWithApp(), available: () => nativePlatform() === 'android' },
+    openWithApp: { run: () => void openWithApp(), available: () => fits('android') },
     toolExtract: { run: () => void import('../ui/pdftools').then((m) => m.extractFromBook(book)) },
     pdfTools: { run: () => void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book)) },
     bookmark: { run: () => void addBookmark() },

@@ -7,6 +7,7 @@ import { t, getLang } from '../i18n';
 import type { Strings } from '../i18n/en';
 import { getSettings, updateSettings, defaultOf, type VisualSettings } from '../settings';
 import { groupedPlacesEditor, type PlaceChoice } from './placeditems';
+import { fits } from '../platform';
 import { normalizeButtons, toolbarOf, isSep, idsAt, FLOW_ACTIONS, PDF_ACTIONS, DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, type ButtonPlace, type PlacedButton, type BarAt } from '../readbuttons';
 
 type Kind = 'flow' | 'pdf';
@@ -51,8 +52,12 @@ function editorFor(kind: Kind, redraw: () => void): HTMLElement[] {
   const s = getSettings();
   const actions = kind === 'pdf' ? PDF_ACTIONS : FLOW_ACTIONS;
   const key = kind === 'pdf' ? 'pdfButtons' : 'readerButtons';
-  const list = normalizeButtons(s[key], kind);
-  const save = (next: PlacedButton[]) => { updateSettings(kind === 'pdf' ? { pdfButtons: next } : { readerButtons: next, readerToolbar: toolbarOf(next) }); paint(); };
+  // (An action that cannot be done here — «Open with another app» off Android — is left out of the editor; its place
+  // is kept in what is saved, for the device where it can. src/platform.ts.)
+  const here = (id: string) => { const need = actions.find((a) => a.id === id)?.need; return !need || fits(need); };
+  const all = normalizeButtons(s[key], kind);
+  const list = all.filter((x) => here(x.id));
+  const save = (shown: PlacedButton[]) => { const next = [...shown, ...normalizeButtons(getSettings()[key], kind).filter((x) => !here(x.id))]; updateSettings(kind === 'pdf' ? { pdfButtons: next } : { readerButtons: next, readerToolbar: toolbarOf(next) }); paint(); };
   const nameOf = (id: string) => (isSep(id) ? t('separator') : t((actions.find((a) => a.id === id)?.label ?? 'more') as keyof Strings));
   const iconOf = (id: string) => (isSep(id) ? 'minus' : actions.find((a) => a.id === id)?.icon ?? 'more');
 
