@@ -9,6 +9,7 @@
 // depends on earlier pages read elsewhere — a font of whole-word glyphs met on an earlier page — is told back
 // so that the page can be read again when it mattered.
 import type { FontInfo, PageModel, UseStore } from './pdf2docx';
+import { GlyphRuns } from './glyphruns';
 import type { GlyphUse } from './fontfix';
 
 // What pdf.js and the converter ask of a document here: canvases (off the screen) and the fonts' face set.
@@ -41,7 +42,7 @@ const fonts = new Map<string, FontInfo>();
 const idOf = new Map<string, string>(); // this copy's font name → the font's id
 const forced = new Set<string>(); // ids of fonts of whole-word glyphs, met on earlier pages
 let fresh: string[] = [];
-const store: UseStore = { seqs: [], seen: new Map(), keepAll: true, onFont: (name, info, fo) => {
+const store: UseStore = { seqs: new GlyphRuns(), seen: new Map(), keepAll: true, onFont: (name, info, fo) => {
   const id = (fo as { krId?: string } | null)?.krId ?? `x${lane}:${name}`;
   idOf.set(name, id); fresh.push(name);
   if (forced.has(id)) info.wordFont = true;
@@ -94,7 +95,7 @@ async function pump(): Promise<void> {
       }
       const gapsBefore = new Map([...fonts].map(([k, f]) => [k, f.gaps?.length ?? 0]));
       const wordBefore = new Set([...fonts].filter(([, f]) => f.wordFont).map(([k]) => k));
-      fresh = []; store.seqs = []; store.pageFonts = []; store.stickyMiss = new Set();
+      fresh = []; store.seqs = new GlyphRuns(); store.pageFonts = []; store.stickyMiss = new Set();
       let model: PageModel;
       try {
         model = await analysePage(pdfjs, page, fonts, true, store);
@@ -108,12 +109,12 @@ async function pump(): Promise<void> {
         t: 'page', n: job.n, model,
         fonts: fresh.map((name) => { const { uses: _u, gaps: _g, wordFont: _w, ...info } = fonts.get(name)!; return [id(name), info as FontInfo]; }),
         pageFonts: store.pageFonts.map(id),
-        seqs: store.seqs.map((s) => ({ rtl: s.rtl, uses: s.map(([f, u]) => [id(f), u] as [string, GlyphUse]) })),
+        seqs: Array.from({ length: store.seqs.length }, (_, si) => { const s = store.seqs.at(si); return { rtl: s.rtl, uses: s.map(([f, u]) => [id(f), u] as [string, GlyphUse]) }; }),
         gaps: [...fonts].flatMap(([k, f]) => { const was = gapsBefore.get(k) ?? 0; return (f.gaps?.length ?? 0) > was ? [[id(k), f.gaps!.slice(was)] as [string, number[]]] : []; }),
         wordFound: [...fonts].filter(([k, f]) => f.wordFont && !wordBefore.has(k)).map(([k]) => id(k)),
         stickyMiss: [...store.stickyMiss].map(id),
       };
-      store.seqs = [];
+      store.seqs = new GlyphRuns();
       // The pictures' bytes go over, not copied (each its own buffer).
       const bufs = new Set<ArrayBuffer>();
       const take = (u?: Uint8Array) => { if (u && u.byteLength && u.byteOffset === 0 && u.buffer.byteLength === u.byteLength) bufs.add(u.buffer as ArrayBuffer); };

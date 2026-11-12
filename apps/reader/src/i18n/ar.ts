@@ -809,6 +809,7 @@ export const ar: Strings = {
   convertDone: 'جاهز: {name} · {size}',
   convertFailed: 'تعذّر التحويل',
   convertUnsupported: 'لا يمكن تحويل هذه الصيغة.',
+  convertNoMemory: 'نفدت ذاكرة الجهاز أثناء تحويل هذا الكتاب. أغلق التطبيقات الأخرى وحاول مرة أخرى.',
   conv_render: 'قراءة الكتاب…',
   conv_images: 'جمع الصور…',
   conv_pdfPage: 'قراءة الصفحات…',

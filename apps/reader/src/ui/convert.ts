@@ -111,6 +111,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
         if (pw) { busy = false; queueMicrotask(() => void run(target, pw)); return; }
         status.textContent = t('cancelled');
       } else if (msg === 'unsupported') status.textContent = t('convertUnsupported');
+      else if (msg === 'memory') status.textContent = t('convertNoMemory');
       else { status.textContent = `${t('convertFailed')} — ${msg}`; console.error(err); }
     } finally { busy = false; grid.querySelectorAll('button').forEach((b) => { b.disabled = false; }); }
   };

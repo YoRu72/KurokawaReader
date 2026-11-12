@@ -216,6 +216,18 @@ export class DocxWriter {
   nextRel = 100; nextDrawing = 1;
   readonly media = new Map<string, Uint8Array>();
   readonly body = new Part(this);
+  /** What each piece of the body is passed through before it is turned to bytes (the finishing pass's changes
+   *  to the document's own XML — each local to a run or a section's properties). */
+  fixBody: (xml: string) => string = (x) => x;
+  // The body as it is written, section by section (see addSection), as UTF-8: a book's text is never one string
+  // (a thousand pages of Arabic made one of 130 MB, and each pass over it — the finishing pass's, the encoder's —
+  // another as big, which a phone's WebView could not hold).
+  private bodyBytes: Uint8Array[] = [];
+  private lastSect: string | null = null;
+  private readonly enc = new TextEncoder();
+  private readonly hfParts: { name: string; xml: string; part: Part; kind: 'header' | 'footer' }[] = [];
+  private readonly hfRels: { id: string; type: string; target: string }[] = [];
+  private nHeaders = 0; private nFooters = 0;
   constructor(readonly opts: { title?: string; creator?: string; rtl: boolean; defaultFont: Fonts | string }) {}
   newPart(): Part { return new Part(this); }
   mediaName(data: Uint8Array, kind: 'png' | 'jpg'): string {
@@ -244,29 +256,47 @@ export class DocxWriter {
     return x;
   }
 
-  /** The package as a JSZip (its parts and pictures in place), ready for the finishing pass and the zip. */
-  async pack(sections: Section[], fonts: EmbeddedFont[] = []): Promise<JSZip> {
+  /** A section of the body, written now: its paragraphs (passed through fixBody) turned to bytes, its header and
+   *  footer filed. Sections are added in order; pack closes the body. */
+  addSection(s: Section): void {
+    const refs: { header?: string; footer?: string } = {};
+    if (s.header) { const n = ++this.nHeaders; const id = `rIdH${n}`; this.hfParts.push({ name: `header${n}.xml`, xml: s.header.xml, part: s.header.part, kind: 'header' }); this.hfRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', target: `header${n}.xml` }); refs.header = id; }
+    if (s.footer) { const n = ++this.nFooters; const id = `rIdF${n}`; this.hfParts.push({ name: `footer${n}.xml`, xml: s.footer.xml, part: s.footer.part, kind: 'footer' }); this.hfRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', target: `footer${n}.xml` }); refs.footer = id; }
+    // (The section's properties ride in a paragraph of their own at its end, as Word writes them — written with
+    // the next section's text, once it is known not to be the last; the last section's close the body.)
+    const before = this.lastSect !== null ? `<w:p><w:pPr>${this.lastSect}</w:pPr></w:p>` : '';
+    this.lastSect = this.sectPrXml(s, refs);
+    this.bodyOut(before + s.children.join(''));
+  }
+  private bodyOut(xml: string): void { if (xml) this.bodyBytes.push(this.enc.encode(this.fixBody(xml))); }
+  /** The body's pieces as bytes, to be changed in place (decoded, changed, encoded again) by `fix`; a piece it
+   *  returns as it was given stays as it is. */
+  mapBody(fix: (xml: string) => string): void {
+    const dec = new TextDecoder();
+    this.bodyBytes = this.bodyBytes.map((b) => { const x = dec.decode(b); const y = fix(x); return y === x ? b : this.enc.encode(y); });
+  }
+  /** document.xml, whole, as a Blob of its pieces (the bytes leave the script's heap), the pieces let go. */
+  documentBlob(): Blob {
+    const blob = new Blob([this.enc.encode(`${XML_HEAD}<w:document ${NS_ALL}><w:body>`), ...(this.bodyBytes as Uint8Array<ArrayBuffer>[]), this.enc.encode('</w:body></w:document>')]);
+    this.bodyBytes = [];
+    return blob;
+  }
+
+  /** The package as a JSZip (its parts and pictures in place), ready for the finishing pass and the zip. Its
+   *  word/document.xml is a placeholder: the body, written as the sections were added, is documentBlob(). */
+  async pack(fonts: EmbeddedFont[] = []): Promise<JSZip> {
     const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
-    const parts: { name: string; xml: string; part: Part; kind: 'header' | 'footer' }[] = [];
+    const parts = this.hfParts;
     const bodyRels: { id: string; type: string; target: string }[] = [
       { id: 'rId1', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles', target: 'styles.xml' },
       { id: 'rId2', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings', target: 'settings.xml' },
       { id: 'rId3', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable', target: 'fontTable.xml' },
+      ...this.hfRels,
     ];
-    const out: string[] = [];
-    sections.forEach((s, i) => {
-      const refs: { header?: string; footer?: string } = {};
-      if (s.header) { const n = parts.filter((p) => p.kind === 'header').length + 1; const id = `rIdH${n}`; parts.push({ name: `header${n}.xml`, xml: s.header.xml, part: s.header.part, kind: 'header' }); bodyRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', target: `header${n}.xml` }); refs.header = id; }
-      if (s.footer) { const n = parts.filter((p) => p.kind === 'footer').length + 1; const id = `rIdF${n}`; parts.push({ name: `footer${n}.xml`, xml: s.footer.xml, part: s.footer.part, kind: 'footer' }); bodyRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', target: `footer${n}.xml` }); refs.footer = id; }
-      const sect = this.sectPrXml(s, refs);
-      out.push(...s.children);
-      // (The section's properties ride in a paragraph of their own at its end, as Word writes them; the last
-      // section's close the body.)
-      if (i < sections.length - 1) out.push(`<w:p><w:pPr>${sect}</w:pPr></w:p>`); else out.push(sect);
-    });
-    const docXml = `${XML_HEAD}<w:document ${NS_ALL}><w:body>${out.join('')}</w:body></w:document>`;
-    zip.file('word/document.xml', docXml);
+    if (this.lastSect !== null) { this.bodyOut(this.lastSect); this.lastSect = null; }
+    // (First among the parts, where the whole document was put before.)
+    zip.file('word/document.xml', '');
     for (const r of this.body.rels) bodyRels.push(r);
     zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${bodyRels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${att(r.target)}"/>`).join('')}</Relationships>`);
     for (const p of parts) {

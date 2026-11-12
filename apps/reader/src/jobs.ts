@@ -47,7 +47,7 @@ function noteProgress(j: Job): void {
 }
 function noteDone(j: Job): void {
   const others = jobs.some((x) => x.state === 'running');
-  const text = j.state === 'done' ? (j.doneText ? j.doneText() : j.quiet ? t('jobDoneQuiet', { name: j.out!.name }) : t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) })) : `${t(j.quiet ? 'downloadFailed' : 'convertFailed')} — ${j.error ?? ''}`;
+  const text = j.state === 'done' ? (j.doneText ? j.doneText() : j.quiet ? t('jobDoneQuiet', { name: j.out!.name }) : t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) })) : `${t(j.quiet ? 'downloadFailed' : 'convertFailed')} — ${j.error === 'memory' ? t('convertNoMemory') : j.error ?? ''}`;
   const a = android();
   // (Seen in the app as it ends: nothing to announce, the service only stops.)
   const quiet = j.watched() && document.visibilityState === 'visible';
