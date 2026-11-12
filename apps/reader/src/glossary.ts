@@ -114,11 +114,29 @@ export function glossaryPrompt(list: Term[]): string {
   return `Glossary — translate these names and terms exactly as given, every time:\n${list.map((x) => `- ${JSON.stringify(x.from)} → ${JSON.stringify(x.to)}`).join('\n')}`;
 }
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** A term the model left untranslated put right. */
+// (Letters of the scripts written with spaces between words and nothing joined to them: a term whose edge is one
+// of these is only a whole word there — «Lin» is not put right inside «Linda». Arabic and Hebrew (letters joined
+// before a name: و، بـ، لـ، الـ), Korean (particles after one), Japanese, Chinese and Thai (no spaces at all) are
+// matched anywhere, as before.)
+const WORDY = '\\p{Script=Latin}\\p{Script=Cyrillic}\\p{Script=Greek}\\p{Script=Armenian}\\p{Script=Georgian}';
+const wordyEdge = new RegExp(`^[${WORDY}\\p{N}]$`, 'u');
+/** A term the model left untranslated put right: in one pass over the text (what was put in is not looked at
+ *  again), the longest term first where two begin at the same place, the rendering written as it is (a «$&» in it
+ *  is not read as a pattern). A term the same in both languages still holds its place, so a shorter one inside it
+ *  is not put in. */
 export function applyGlossary(text: string, list: Term[]): string {
-  let s = text;
-  for (const x of list) { if (lower(x.from) === lower(x.to)) continue; s = s.replace(new RegExp(esc(x.from), 'gi'), x.to); }
-  return s;
+  const to = new Map<string, string>();
+  for (const x of list) { const k = lower(x.from); if (k && !to.has(k)) to.set(k, x.to); }
+  if (!to.size) return text;
+  const parts = [...list.reduce((m, x) => { const f = x.from.trim(); if (f && !m.has(lower(f))) m.set(lower(f), f); return m; }, new Map<string, string>()).values()]
+    .sort((a, b) => b.length - a.length)
+    .map((f) => {
+      const chars = [...f]; const head = wordyEdge.test(chars[0]), tail = wordyEdge.test(chars[chars.length - 1]);
+      return `${head ? `(?<![${WORDY}\\p{N}\\p{M}_])` : ''}${esc(f)}${tail ? `(?![${WORDY}\\p{N}\\p{M}_])` : ''}`;
+    });
+  let re: RegExp;
+  try { re = new RegExp(parts.join('|'), 'giu'); } catch { return text; }
+  return text.replace(re, (m) => { const r = to.get(lower(m)); if (r !== undefined) return lower(m) === lower(r) ? m : r; for (const [k, v] of to) if (new RegExp(`^${esc(k)}$`, 'iu').test(m)) return lower(k) === lower(v) ? m : v; return m; });
 }
 
 /* ---------- where the names the translator finds go, for each book ---------- */

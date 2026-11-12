@@ -10,4 +10,11 @@ ok('a picture alone is a chapter', badChapter('<p><img src="a.jpg"></p>') === nu
 ok('a short chapter', badChapter('<p>Author\'s note: no chapter this week, sorry!</p>') === null);
 ok('a long chapter that says "access denied" in its story', badChapter('<p>' + 'The gate said access denied, and he laughed. '.repeat(30) + '</p>') === null);
 ok('an Arabic chapter', badChapter('<p>قال الراوي: وكان ذلك في أول الليل.</p>') === null);
+// A chapter that is short by right — "The End.", «تمت.», «完» — is a chapter (it was taken for nothing, never kept,
+// and «download all» never finished); a page that is only a short error is still nothing.
+ok('a very short chapter ("The End.")', badChapter('<p>The End.</p>') === null);
+ok('an Arabic one («تمت.»)', badChapter('<p>تمت.</p>') === null);
+ok('a Japanese one («完»)', badChapter('<p>完</p>') === null);
+ok('punctuation alone is nothing', badChapter('<p>…</p><p>* * *</p>') === 'empty');
+ok('a short error in the chapter\'s place is nothing ("404 Not Found", "Error")', badChapter('<h1>404 Not Found</h1>') === 'empty' && badChapter('<p>Error</p>') === 'empty' && badChapter('<p>null</p>') === 'empty');
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
