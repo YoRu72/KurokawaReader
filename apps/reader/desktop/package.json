@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader-desktop",
-  "version": "0.60.24",
+  "version": "0.60.25",
   "description": "KurokawaReader for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
