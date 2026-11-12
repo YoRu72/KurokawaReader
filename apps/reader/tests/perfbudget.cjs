@@ -1,6 +1,7 @@
 // node tests/perfbudget.cjs: performance budgets on an imitated phone (412×915, touch), as counts that do not
 // depend on the machine's speed — not times, which flake in CI:
 //  1. the first load: the scripts fetched before the library is shown stay under a ceiling, and pdf.js is not among them;
+//     the performance recorder (src/diag.ts, always on) is among them, and small;
 //  2. a library of 2,000 books with covers: the cards, images and DOM nodes made at first stay a screenful or two;
 //  3. a 1,000-page PDF: pdf.js is asked for only a few pages before the first page is shown, and for a sample — not
 //     every page — after it (views/../formats/pdf.ts measurePages);
@@ -16,7 +17,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-perfbudget-'));
 
-const BUDGET = { startJsKB: 340, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800 };
+const BUDGET = { startJsKB: 340, diagKB: 8, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800 };
 
 // Counters the app does not know of: pdf.js's page requests to its worker, and Node.contains calls.
 const INIT = () => {
@@ -99,6 +100,9 @@ function makeText(file) {
     ok(`the scripts loaded before the library shows are under ${BUDGET.startJsKB} KB`, kb > 0 && kb <= BUDGET.startJsKB, `${kb} KB in ${js.length} files`);
     const pdfjs = js.filter((f) => f.body.includes('GlobalWorkerOptions')).map((f) => path.basename(f.url));
     ok('pdf.js is not loaded on the library screen', pdfjs.length === 0, pdfjs);
+    // (The performance recorder, always on, loaded at the start: src/diag.ts — kept small.)
+    const diag = js.filter((f) => f.body.includes('"kr.diag"')).map((f) => ({ file: path.basename(f.url), kb: Math.round(Buffer.byteLength(f.body) / 102.4) / 10 }));
+    ok(`the performance recorder is loaded at the start and is under ${BUDGET.diagKB} KB`, diag.length === 1 && diag[0].kb <= BUDGET.diagKB, diag);
     await p.context().close();
   }
 

@@ -74,7 +74,7 @@ export function diagFlush(): void {
 function later(): void {
   dirty = true; if (pending) return;
   const w = window as Window & { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number };
-  pending = window.setTimeout(() => { if (w.requestIdleCallback) w.requestIdleCallback(() => { if (dirty) diagFlush(); }, { timeout: 5000 }); else diagFlush(); }, 1500);
+  pending = window.setTimeout(() => { pending = 0; if (w.requestIdleCallback) w.requestIdleCallback(() => { if (dirty) diagFlush(); }, { timeout: 5000 }); else diagFlush(); }, 1500);
 }
 
 /** One thing that happened (kinds and numbers only). */
