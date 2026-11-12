@@ -38,9 +38,31 @@ export function logicalNeutral(s: string, rtlLine: boolean): string {
 
 /** A drawn space lying inside a word's own box (a writer that draws the space and then sets the word back
  *  over it) separates nothing: such markers go. `isSpace` tells the markers. */
-export function dropBuriedSpaces<T extends { l: number; r: number; text: string }>(line: T[], isSpace: (p: T) => boolean): T[] {
+export function dropBuriedSpaces<T extends { l: number; r: number; text: string; h?: number }>(line: T[], isSpace: (p: T) => boolean): T[] {
   const words = line.filter((p) => !isSpace(p) && p.text.trim());
-  return line.filter((p) => !isSpace(p) || !words.some((q) => Math.min(q.r, p.r) - Math.max(q.l, p.l) > (p.r - p.l) * 0.5));
+  // (A space of no width — a writer that moves the next word along itself — drawn at a word's very edge stands
+  // between words, not in one: a hair inside the box, as rounding leaves it, does not bury it, when the next
+  // word stands clear of that edge (a space of no width where two pieces of a word touch is no word break). It
+  // is set just outside that edge, so that it is read on the side of the word it stands on.)
+  const out: T[] = [];
+  for (const p of line) {
+    if (!isSpace(p)) { out.push(p); continue; }
+    let at: T | null = p;
+    for (const q of words) {
+      if (Math.min(q.r, p.r) - Math.max(q.l, p.l) <= (p.r - p.l) * 0.5) continue;
+      const h = p.h ?? q.h ?? 10, edge = Math.max(0.3, h * 0.05), cx = (p.l + p.r) / 2;
+      if (p.r - p.l > edge || (cx > q.l + edge && cx < q.r - edge)) { at = null; break; }
+      const left = cx - q.l < q.r - cx;
+      // (How far the nearest word on that side stands from the edge.)
+      let clear = Infinity;
+      for (const w of words) if (w !== q) clear = Math.min(clear, left ? (w.l < q.l ? q.l - w.r : Infinity) : (w.r > q.r ? w.l - q.r : Infinity));
+      if (!(clear > h * 0.1 && clear < Infinity)) { at = null; break; }
+      const x = left ? q.l - 0.01 : q.r + 0.01;
+      at = { ...at!, l: x, r: x };
+    }
+    if (at) out.push(at);
+  }
+  return out;
 }
 
 /** Inside one piece, a bracket type written one way only ("[النور: ٤٥[" — a PDF that names both by one
