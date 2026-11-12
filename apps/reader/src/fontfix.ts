@@ -214,8 +214,10 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     for (const [gid, text, x, y, em, w, span] of line) {
       if (!gid) continue;
       allGids.add(gid);
-      // (A code with no real text comes as a control or private-use character.)
-      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd && !(c >= 0x200b && c <= 0x200f) && c !== 0x2060 && c !== 0xfeff);
+      // (A code with no real text comes as a control character.) A private-use character stays: a sign font's
+      // codes are kept as such in the text (see analysePage), and the font must draw them as the page does —
+      // dropped, a subset of AGA Arabesque merged with another lost every sign it drew.
+      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && c !== 0xfffd && !(c >= 0x200b && c <= 0x200f) && c !== 0x2060 && c !== 0xfeff);
       if (text === '\uffff') { cls.push({ gid, cps: [], marks: [], x, y, em, adv: w * em, mpos: [], bad: true }); continue; }
       if (w > 0 && !(cps.length && cps.every(isMark))) cls.push({ gid, cps, marks: [], x, y, em, adv: w * em, mpos: [], span: span || undefined });
       else loose.push({ gid, x, y, cps, span: span || undefined });
@@ -369,7 +371,9 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     }
   }
   const nominal = new Map<number, number>();
-  for (const [c, uses] of plain) nominal.set(c, top(uses));
+  // (A private-use code drawn with two different glyphs — codes a viewer made up, a font each — stands for
+  // nothing certain: it gets none.)
+  for (const [c, uses] of plain) if (!(c >= 0xe000 && c <= 0xf8ff) || uses.size === 1) nominal.set(c, top(uses));
   // A bracket's glyph goes by the shape it draws, not by the name the PDF gave it: a font set for Arabic may
   // name a bracket by its shape or by the character it stands for (and two pages of one book can differ).
   // The cmap's "(" must draw "(" — the shaper mirrors it on a right-to-left line — or every bracket of the
@@ -600,6 +604,15 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   const asc = sources[0].asc !== undefined ? sources[0].asc * k0 : undefined, desc = sources[0].desc !== undefined ? sources[0].desc * k0 : undefined;
   return writeTrueType({ family: meta.family, bold: meta.bold, italic: meta.italic, upem, asc, desc }, outlines, extra,
     (box, avg) => buildOs2(upem, box, avg, nominalN, { asc: asc ?? box[3], desc: desc ?? box[1], bold: !!meta.bold, italic: !!meta.italic }));
+}
+
+/** A font of glyphs drawn as they are, no shaping: each under its code (`map`: code → glyph index in
+ *  `outlines`, 0 the empty .notdef), its OS/2 table given (a copy of the fonts it was made from), its first and
+ *  last character set to what it holds. */
+export function plainFont(meta: { family: string; upem: number; asc: number; desc: number }, outlines: Outline[], map: Map<number, number>, os2: Uint8Array): Uint8Array {
+  const o = os2.slice(); const cs = [...map.keys()].filter((c) => c <= 0xffff);
+  if (o.length >= 68 && cs.length) { const d = dvOf(o); d.setUint16(64, Math.min(...cs)); d.setUint16(66, Math.max(...cs)); }
+  return writeTrueType(meta, outlines, new Map([['cmap', buildCmap(map)], ['OS/2', o]]), () => o);
 }
 
 function buildCmap(map: Map<number, number>): Uint8Array {

@@ -74,7 +74,7 @@ async function open(bytes: ArrayBuffer): Promise<void> {
 async function pump(): Promise<void> {
   if (busy || !doc) return;
   busy = true;
-  const { analysePage, askAhead, takePendingPngs } = await import('./pdf2docx');
+  const { analysePage, askAhead, takePendingPngs, eachRunList } = await import('./pdf2docx');
   try {
     while (queue.length) {
       const job = queue.shift()!;
@@ -102,6 +102,8 @@ async function pump(): Promise<void> {
       } catch (e) { restore?.(); post({ t: 'error', n: job.n, message: String((e as Error)?.stack ?? e) }); continue; }
       restore?.();
       const id = (name: string) => idOf.get(name) ?? `x${lane}:${name}`;
+      // (Each run's font by its id in the file too, as the fonts are told.)
+      eachRunList(model, (runs) => { for (const r of runs) if (r.fk) r.fk = id(r.fk); });
       const res: LanePage = {
         t: 'page', n: job.n, model,
         fonts: fresh.map((name) => { const { uses: _u, gaps: _g, wordFont: _w, ...info } = fonts.get(name)!; return [id(name), info as FontInfo]; }),
