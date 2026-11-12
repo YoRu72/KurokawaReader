@@ -1,4 +1,5 @@
 import { readPending, writePending, onPendingChanged } from '../sources/pending';
+import { diagMark } from '../diag';
 import { busyNow, onBusy } from '../busy';
 import { h, icon, iconButton, toast, clear, coverColors, openSheet, askText } from '../ui/dom';
 import { onBack } from '../ui/backstack';
@@ -1131,6 +1132,7 @@ export function libraryView(): HTMLElement {
 
   // Back from a book opened from the search across books: that search opens again, as it was.
   void refresh().then(async () => {
+    diagMark('usable');
     try { if (!sessionStorage.getItem('kr.searchReturn')) return; } catch { return; }
     const { takeReturn } = await import('../booksearch');
     const back = takeReturn();
