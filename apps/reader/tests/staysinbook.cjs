@@ -13,7 +13,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-staysinbook-'));
 const para = (i) => `<p>Paragraph ${i}. ${'The river ran past the old city and the people read their books. '.repeat(4)}</p>`;
 const html = `<!doctype html><html><head><title>Links Book</title></head><body>
 <h1>Links Book</h1>
-<p id="intro">Intro with a note<a id="ref1" href="#fn1">[1]</a>, an empty link <a id="empty" href="#">here</a>, one to nowhere <a id="nowhere" href="#no-such-place">there</a> and another page <a id="rel" href="other.html">other</a>.</p>
+<p id="intro">Intro with a note<a id="l-ref" href="#fn1">[1]</a>, an empty link <a id="l-empty" href="#">here</a>, one to nowhere <a id="l-none" href="#no-such-place">there</a> and another page <a id="l-rel" href="other.html">other</a>.</p>
 ${Array.from({ length: 80 }, (_, i) => para(i + 1)).join('\n')}
 <p id="fn1">[1] The translator's note.</p>
 </body></html>`;
@@ -35,6 +35,7 @@ const file = path.join(TMP, 'links.html'); fs.writeFileSync(file, html);
   const where = () => p.evaluate(() => ({ hash: location.hash, reader: !!document.querySelector('.reader-flow .kr-content'), library: !!document.querySelector('.library-view') }));
   const tap = async (sel) => {
     const before = loads;
+    if (!(await p.evaluate((sel) => !!document.querySelector(`.reader-flow .kr-content ${sel}`), sel))) return { ...(await where()), missing: sel };
     await p.evaluate((sel) => { const a = [...document.querySelectorAll('.reader-flow .kr-content a')].find((x) => x.matches(sel)); a.scrollIntoView({ block: 'center' }); }, sel);
     await p.waitForTimeout(300);
     const box = await p.evaluate((sel) => { const r = [...document.querySelectorAll('.reader-flow .kr-content a')].find((x) => x.matches(sel)).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, sel);
@@ -42,21 +43,21 @@ const file = path.join(TMP, 'links.html'); fs.writeFileSync(file, html);
     return { ...(await where()), reloaded: loads > before };
   };
   const inBook = (w) => w.reader && !w.library && !w.reloaded && /^#\/read\//.test(w.hash);
-  let w = await tap('a[id="ref1"]');
+  let w = await tap('a[id="l-ref"]');
   ok('a tap on a note link (#fn1) keeps the book open', inBook(w), w);
   const noteSeen = await p.evaluate(() => { const n = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('[1] The translator')); const r = n?.getBoundingClientRect(); return !!r && r.bottom > 0 && r.top < innerHeight; });
   ok('… and goes to the note', noteSeen);
-  w = await tap('a[id="empty"]');
+  w = await tap('a[id="l-empty"]');
   ok('a tap on an empty link (#) keeps the book open', inBook(w), w);
-  w = await tap('a[id="nowhere"]');
+  w = await tap('a[id="l-none"]');
   ok('a tap on a link to no place in the book keeps the book open', inBook(w), w);
-  w = await tap('a[id="rel"]');
+  w = await tap('a[id="l-rel"]');
   ok('a tap on a link to another page keeps the book open (the app is not loaded again)', inBook(w), w);
   // The way back still works: the reader's back leaves the book for the library.
   await p.evaluate(() => history.back()); await p.waitForTimeout(800);
   ok('back from the book leaves it (one step, to the library)', await p.evaluate(() => !!document.querySelector('.library-view') && !document.querySelector('.reader-flow')));
   // The app ended under the open book and started again (the address the app starts at: the library's).
-  const topPara = () => p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const r = sc.getBoundingClientRect(); for (let y = r.top + 10; y < r.top + 200; y += 6) { const e = document.elementFromPoint(r.left + r.width / 2, y)?.closest('.reader-flow p'); if (e) return /Paragraph (\d+)/.exec(e.textContent)?.[1] ?? e.textContent.slice(0, 12); } return null; });
+  const topPara = () => p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); if (!sc) return null; const r = sc.getBoundingClientRect(); for (let y = r.top + 10; y < r.top + 200; y += 6) { const e = document.elementFromPoint(r.left + r.width / 2, y)?.closest('.reader-flow p'); if (e) return /Paragraph (\d+)/.exec(e.textContent)?.[1] ?? e.textContent.slice(0, 12); } return null; });
   const restart = async () => { await p.goto(base); await p.waitForSelector('.library-view, .reader-view', { timeout: 20000 }); await p.waitForTimeout(3500); return where(); };
   await p.evaluate((id) => { location.hash = `#/read/${id}`; }, id); await p.waitForSelector('.reader-flow .kr-content p'); await p.waitForTimeout(1500);
   await p.evaluate(() => { const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('Paragraph 40.')); const sc = document.querySelector('.reader-scroll'); sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top; });
