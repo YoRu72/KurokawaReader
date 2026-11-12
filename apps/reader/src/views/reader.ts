@@ -21,7 +21,7 @@ import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
 import { renderOptions } from '../ui/options';
-import { attachSelectionToolbar, wrapRange, findTextRange, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
+import { attachSelectionToolbar, wrapRange, findTextRange, textPlace, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
 import { openGallery } from './gallery';
 const DOCK_KEY = 'kr.reader.dock';
 import { touchBook, coverUrl, shareBooks } from '../library';
@@ -73,7 +73,11 @@ export function readerView(ids: string[]): HTMLElement {
   const root = h('div', { class: 'view reader-view' });
   let disposed = false;
   const cleanups: (() => void)[] = [];
-  const onDispose = (fn: () => void) => cleanups.push(fn);
+  // (A clean-up asked for once the reader is gone — a book closed while it was still opening — is done at once: kept
+  // for later, it would never be done, and the book's keys and listeners would stay on the next screen.)
+  const run = (fn: () => void) => { try { fn(); } catch (err) { console.error(err); } };
+  const onDispose = (fn: () => void) => { if (disposed) run(fn); else cleanups.push(fn); };
+  const gone = () => disposed;
 
   void (async () => {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
@@ -87,11 +91,11 @@ export function readerView(ids: string[]): HTMLElement {
     const pdfs = books.filter((b) => b.format === 'pdf');
     const flows = books.filter((b) => b.format !== 'pdf');
     if (pdfs.length && (flows.length || pdfs.length > 1)) toast(t('fmtPdf') + ' · ' + t('open'), 'info', 3000);
-    if (pdfs.length && !flows.length) await mountPdf(root, pdfs[0], onDispose);
-    else await mountFlow(root, flows.length ? flows : pdfs, onDispose);
+    if (pdfs.length && !flows.length) await mountPdf(root, pdfs[0], onDispose, gone);
+    else await mountFlow(root, flows.length ? flows : pdfs, onDispose, gone);
   })().catch((err) => { console.error(err); toast(t('openError', { error: String((err as Error)?.message ?? err) }), 'error', 6000); });
 
-  (root as HTMLElement & { dispose?: () => void }).dispose = () => { disposed = true; cleanups.forEach((fn) => fn()); };
+  (root as HTMLElement & { dispose?: () => void }).dispose = () => { if (disposed) return; disposed = true; cleanups.splice(0).forEach(run); };
   return root;
 }
 
@@ -99,7 +103,7 @@ export function readerView(ids: string[]): HTMLElement {
 /* Flow reader                                                         */
 /* ------------------------------------------------------------------ */
 
-async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void): Promise<void> {
+async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void, gone: () => boolean = () => false): Promise<void> {
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
   let programmatic = 0; // when the reader last scrolled by itself (restoring a place), so that is not taken for the person scrolling
@@ -203,7 +207,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // the book is still opening uses them.)
   const blockIdx = new WeakMap<OpenDoc, WeakMap<Element, number>>();
   const anchorsOf = new Map<OpenDoc, Element[]>();
-  let saveTimer: number | undefined;
+  let saveTimer: number | undefined; let savePending = false;
   let userScrolled = false;
   // (The place asked for when the book was opened — a chapter tapped on a novel's page, a bookmark, a note: the
   // later passes of restore — fonts and pictures settling — go back to it, not to the place read last. Declared
@@ -309,7 +313,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
 
   // Render books in order so the first one appears quickly.
-  for (const doc of docs) { await renderDoc(doc); if (doc === docs[0]) { const tr = performance.now(); root.querySelector('#kr-loading')?.remove(); restore(); performance.measure('kr:restore', { start: tr }); } }
+  // (Opened at the book read last: it is the one whose place is put back once it is on the page.)
+  const lastRead = latestDoc();
+  for (const doc of docs) {
+    await renderDoc(doc);
+    // (Closed while it was opening: nothing more is set up — no keys, no listeners, no place saved.)
+    if (gone()) { docs.forEach((d) => d.render?.dispose()); return; }
+    if (doc === docs[0]) root.querySelector('#kr-loading')?.remove();
+    if (doc === docs[0] || doc === lastRead) { const tr = performance.now(); restore(); performance.measure('kr:restore', { start: tr }); }
+  }
   const tPost = performance.now();
   root.querySelector('#kr-loading')?.remove();
   // Opened from a search across books: at the found passage (its chapter, its place among the chapter's
@@ -399,7 +411,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // The eye-rest reminder: every so many minutes with the book open on screen.
   { let read = 0, last = Date.now(); const tick = window.setInterval(() => { const n = getSettings().eyeRestMinutes; const now = Date.now(); if (!document.hidden) read += now - last; last = now; if (n && read >= n * 60000) { read = 0; toast(t('eyeRestNow'), 'info', 8000); } }, 15000); onDispose(() => window.clearInterval(tick)); }
   // Mobile systems may kill the app without warning: flush position and statistics when the page hides.
-  const flushAll = () => { hooks.save(); trackers.forEach((tr) => void tr.save()); };
+  // (Saved there and then: a timer set now would not run in an app the system has stopped.)
+  const flushAll = () => { if (savePending) { window.clearTimeout(saveTimer); void saveProgress(); } trackers.forEach((tr) => void tr.save()); };
   // (Taken away with the reader: a closed book's would otherwise stay in memory and still save its place.)
   const onHide = () => { if (document.visibilityState === 'hidden') flushAll(); };
   window.addEventListener('pagehide', flushAll); document.addEventListener('visibilitychange', onHide);
@@ -608,6 +621,16 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     scheduleSave();
   }
 
+  /** The book of those open whose place was saved last (places are stamped — db.stampAfter); for places saved before
+   *  they were, the first book read and not finished (one scrolled past is marked finished), else the first. */
+  function latestDoc(): OpenDoc | undefined {
+    const has = (d: OpenDoc) => !!d.book.progress && d.book.progress.bookId === d.book.id;
+    let best: OpenDoc | undefined;
+    for (const d of docs) if (has(d) && (d.book.progressAt ?? 0) > (best?.book.progressAt ?? 0)) best = d;
+    if (best) return best;
+    return docs.find((d) => has(d) && (d.book.progress!.pct ?? 0) < 1 && !!(d.book.progress!.block || d.book.progress!.pct || d.book.progress!.anchor)) ?? docs[0];
+  }
+
   function restore(): void {
     const first = docs[0];
     if (!first) return;
@@ -621,8 +644,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (jump.kind === 'anchor' && document.getElementById(jump.id)) { asked = () => scrollToAnchor(jump.id, false); setTimeout(asked, 30); return; }
       if (jump.kind === 'hl') { asked = () => { const m = doc.wrapper.querySelector(`mark[data-hl="${jump.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${jump.id}`; scrollToAnchor(m.id, false); } }; setTimeout(asked, 50); return; }
     }
-    const p = first.book.progress;
-    if (p && p.bookId === first.book.id) scrollToLocator(p);
+    // (Books read together — a series, a merged session — open at the one read last, not at the first.)
+    const at = latestDoc() ?? first;
+    const p = at.book.progress;
+    if (p && p.bookId === at.book.id) scrollToLocator(p);
     // (Opened for its pictures — a novel's, from its page in the sources.)
     try { if (sessionStorage.getItem('kr.openGallery') === first.book.id) { sessionStorage.removeItem('kr.openGallery'); setTimeout(() => showGallery(), 400); } } catch { /* private mode */ }
   }
@@ -725,10 +750,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }, 150);
 
   function scheduleSave(): void {
-    window.clearTimeout(saveTimer);
+    window.clearTimeout(saveTimer); savePending = true;
     saveTimer = window.setTimeout(saveProgress, 600);
   }
   async function saveProgress(): Promise<void> {
+    savePending = false;
     const cur = currentLocator();
     if (!cur) return;
     await db.updateBook(cur.doc.book.id, (b) => { b.progress = cur.loc; b.progressAt = stampAfter(b.progressAt); });
@@ -804,10 +830,16 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   /* ---------- settings ---------- */
   let typoOn = getSettings().bookFormat || getSettings().smartTypography;
   onDispose(onSettingsChange((s) => {
+    // (Where the reading is, read before the change is laid out.)
+    const before = reader.isConnected ? currentLocator() : null;
     applySettings(reader, s); syncChrome(); syncComfort(); statusBar.hidden = !s.showStatusLine; updateChrome();
     const want = s.bookFormat || s.smartTypography;
-    if (want !== typoOn) { typoOn = want; for (const d of docs) if (d.render) (want ? applyTypography : revertTypography)(d.render.element); }
+    // (The highlights taken off and put on again: on the text as it is now — a mark cut a changed word in pieces, and
+    // turned back the text came out doubled.)
+    if (want !== typoOn) { typoOn = want; for (const d of docs) if (d.render) { unmarkHighlights(d); (want ? applyTypography : revertTypography)(d.render.element); applyHighlights(d); } }
     syncFocus();
+    // Text size, line spacing, margins, a font: the text flows again, and the paragraph being read is kept at the top.
+    if (before) { const after = currentLocator(); if (after && (after.doc !== before.doc || after.loc.block !== before.loc.block || Math.abs((after.loc.offset ?? 0) - (before.loc.offset ?? 0)) > 0.02)) scrollToLocator(before.loc); }
   }));
   root.addEventListener('kr-rerender', async () => {
     const cur = currentLocator();
@@ -947,7 +979,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const doc = docForNode(range.commonAncestorContainer);
     if (!doc) return;
     const chapter = (range.startContainer.parentElement?.closest('.kr-chapter, .kr-slide, section, .kr-content') as HTMLElement | null);
-    const hl: Highlight = { id: uid(), text, anchor: chapter?.id || undefined, color, note, createdAt: Date.now() };
+    // (One that runs on into the next chapter is kept with the whole book; an earlier version looks for it there too.)
+    const own = chapter?.id && chapter.contains(range.endContainer) ? chapter : null;
+    const scope = own ?? doc.render?.element;
+    // Which of the places its words have it is, and the text around it — so it comes back here, not at the first.
+    const place = scope ? textPlace(scope, range, text) : {};
+    const hl: Highlight = { id: uid(), text, anchor: own?.id || undefined, ...place, color, note, ...(note ? { noteAt: Date.now() } : {}), createdAt: Date.now() };
     const marks = wrapRange(range, 'kr-hl', hl.color, hl.id);
     if (note) marks.forEach((m) => { m.title = note; m.classList.add('has-note'); });
     doc.book.highlights = [...(doc.book.highlights ?? []), hl]; scheduleSync();
@@ -955,6 +992,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (note) renumberNotes(doc);
     updateSettings({ highlightColor: color });
     if (!note) toast(t('highlight'));
+  }
+
+  /** The highlights' marks taken off the text (the text itself as it was), to be put on again. */
+  function unmarkHighlights(doc: OpenDoc): void {
+    doc.wrapper.querySelectorAll('mark.kr-hl').forEach((m) => m.replaceWith(...m.childNodes));
+    doc.wrapper.querySelectorAll('.kr-note-badge').forEach((b) => b.remove());
   }
 
   /** Numbered bubbles after highlights that carry a note, numbered in creation order per book. */
@@ -986,14 +1029,20 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       ta);
     sheet.actions.append(
       h('button', { class: 'btn danger small', onclick: async () => { await removeHighlight(doc, hl.id); sheet.close(); } }, icon('trash'), t('removeHighlight')),
-      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = Date.now(); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = stampAfter(hl.noteAt); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
   }, true);
 
   function applyHighlights(doc: OpenDoc): void {
+    const whole = doc.render?.element;
+    if (!whole) return;
     for (const hl of doc.book.highlights ?? []) {
-      const scope = (hl.anchor && document.getElementById(hl.anchor)) || doc.render?.element;
-      if (!scope) continue;
-      const range = findTextRange(scope, hl.text);
+      const own = hl.anchor ? document.getElementById(hl.anchor) : null;
+      const inOwn = own && whole.contains(own) ? own : null;
+      // (Which place it was is counted in its own chapter: elsewhere only the text around it tells.)
+      const near = { before: hl.before, after: hl.after };
+      let range = findTextRange(inOwn ?? whole, hl.text, inOwn || !hl.anchor ? hl : near);
+      // (One across chapters, kept by an earlier version with the chapter it starts in: looked for in the whole book.)
+      if (!range && inOwn) range = findTextRange(whole, hl.text, near);
       if (range) { const marks = wrapRange(range, 'kr-hl', hl.color, hl.id); if (hl.note) marks.forEach((m) => { m.title = hl.note!; m.classList.add('has-note'); }); }
     }
     renumberNotes(doc);
@@ -1062,7 +1111,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { const m = doc.wrapper.querySelector(`mark[data-hl="${hl.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${hl.id}`; scrollToAnchor(m.id); } panel.dismiss(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(n)), h('span', { dir: 'auto', class: 'meta' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { hl.note = undefined; doc.wrapper.querySelectorAll(`mark[data-hl="${hl.id}"]`).forEach((m) => { (m as HTMLElement).title = ''; m.classList.remove('has-note'); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { hl.note = undefined; hl.noteAt = stampAfter(hl.noteAt); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${hl.id}"]`).forEach((m) => { (m as HTMLElement).title = ''; m.classList.remove('has-note'); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); panel.refresh(); } }, icon('trash'))))));
       } },
       { id: 'highlights', label: t('highlights'), render: (body) => {
         const all = docs.flatMap((d) => (d.book.highlights ?? []).map((hl) => ({ doc: d, hl }))).sort((a, b) => b.hl.createdAt - a.hl.createdAt);
@@ -1627,8 +1676,9 @@ function snapName(title: string): string {
   return `${title.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 40)} ${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
 }
 
-async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void): Promise<void> {
+async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => void) => void, gone: () => boolean = () => false): Promise<void> {
   const file = await db.getFile(book.id);
+  if (gone()) return;
   if (!file) { toast(t(book.source ? 'linkedFileMissing' : 'openError', { title: book.title, error: '' }), 'error', 5000); navigate('/', true); return; }
   const reader = h('div', { class: 'reader' });
   applySettings(reader);
@@ -1684,6 +1734,15 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
 
   const openPdfOptions = () => panel.open(t('visualOptions'), [{ id: 'o', label: t('visualOptions'), render: (b) => renderOptions(b, { pdf: true }) }]);
   let saveTimer: number | undefined;
+  let placed = false; // the saved place put back (until then, the page shown is not one to save)
+  /** The place saved now (left, hidden, or a moment after a page turn). */
+  const savePlace = (sync = true) => {
+    window.clearTimeout(saveTimer); saveTimer = undefined;
+    if (!placed || !viewer.total) return;
+    const loc: Locator = { bookId: book.id, page: viewer.current, offset: viewer.currentOffset(), pct: viewer.total ? viewer.current / viewer.total : 0 };
+    book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); });
+    if (sync) scheduleSync();
+  };
   viewer = new PdfViewer({
     container: reader,
     invert: getSettings().pdfInvert,
@@ -1694,7 +1753,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
       count.textContent = t('pageOf', { n: page, total });
       if (page >= total && total > 1) offerNextPdf();
       window.clearTimeout(saveTimer);
-      saveTimer = window.setTimeout(() => { const loc: Locator = { bookId: book.id, page, offset: viewer.currentOffset(), pct: total ? page / total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); }); scheduleSync(); }, 600);
+      // (Not before the place has been put back: the first page shown while the book opens is not a place read.)
+      if (placed) saveTimer = window.setTimeout(() => savePlace(), 600);
     },
   });
   slider.addEventListener('input', () => viewer.goTo(Number(slider.value)));
@@ -1710,6 +1770,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   viewer.root.dataset.pagenums = String(getSettings().pdfPageNumbers);
   onDispose(onSettingsChange((st) => { viewer.pinchZoom = st.pdfPinchZoom; viewer.root.dataset.pagenums = String(st.pdfPageNumbers); viewer.setCrop(st.pdfAutoCrop); }));
   await viewer.load(file, book.id, book.source?.uri);
+  if (gone()) { viewer.destroy(); return; }
   root.querySelector('#kr-loading')?.remove();
   void touchBook(book.id);
   const jump = takeJump();
@@ -1717,8 +1778,11 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   else if (jump?.kind === 'pin') { const pin = (book.pins ?? []).find((x) => x.id === jump.id); if (pin) viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); }
   else if (jump?.kind === 'hl') { const hl = (book.pdfHighlights ?? []).find((x) => x.id === jump.id); if (hl) viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); }
   else if (book.progress?.page) viewer.goTo(book.progress.page, book.progress.offset ?? 0);
+  placed = true;
   // Opened from a search across books: at the found page, the words marked.
   { const sj = takeSearchJump(book.id); if (sj) void viewer.highlightOnPage(sj.unit + 1, sj.q); }
+  // (Left within a moment of a page turn or a scroll: the place saved as it is left, while the pages are still there.)
+  onDispose(() => savePlace());
   onDispose(() => viewer.destroy());
   // The pages' text, read once and kept (from an earlier reading, or now, in idle moments), for quick searching.
   setTimeout(() => void storedPages(book).then((stored) => { if (stored) viewer.seedTexts(stored); else void viewer.readAllWhenIdle((all) => void storePages(book, all)); }), 3000);
@@ -1764,7 +1828,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   };
   viewer.scroll.addEventListener('scroll', throttle(() => void trackPage(), 500), { passive: true });
   onDispose(() => void tracker.stop());
-  const flushPdf = () => { void tracker.save(); const loc: Locator = { bookId: book.id, page: viewer.current, offset: viewer.currentOffset(), pct: viewer.total ? viewer.current / viewer.total : 0 }; book.progress = loc; void db.updateBook(book.id, (b) => { b.progress = loc; b.progressAt = stampAfter(b.progressAt); }); };
+  const flushPdf = () => { void tracker.save(); savePlace(false); };
   const onHidePdf = () => { if (document.visibilityState === 'hidden') flushPdf(); };
   window.addEventListener('pagehide', flushPdf); document.addEventListener('visibilitychange', onHidePdf);
   onDispose(() => { window.removeEventListener('pagehide', flushPdf); document.removeEventListener('visibilitychange', onHidePdf); });
@@ -1877,7 +1941,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: hl.page, total: viewer.total }))),
             h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text),
             h('span', { dir: 'auto' }, hl.note!)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) x.note = undefined; }); const local = (book.pdfHighlights ?? []).find((y) => y.id === hl.id); if (local) local.note = undefined; renderHighlights(hl.page); panel.refresh(); } }, icon('trash')))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { const at = stampAfter(hl.noteAt); await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) { x.note = undefined; x.noteAt = at; } }); const local = (book.pdfHighlights ?? []).find((y) => y.id === hl.id); if (local) { local.note = undefined; local.noteAt = at; } scheduleSync(); renderHighlights(hl.page); panel.refresh(); } }, icon('trash')))));
         body.append(list);
       } },
     ], tab, { dock: true });
@@ -1982,7 +2046,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     sheet.body.append(h('p', { class: 'src', dir: 'auto' }, hl.text.length > 200 ? hl.text.slice(0, 200) + '…' : hl.text), colors, ta);
     sheet.actions.append(
       h('button', { class: 'btn danger small', onclick: async () => { void markDeleted(hl.id); book.pdfHighlights = (book.pdfHighlights ?? []).filter((x) => x.id !== hl.id); await persistHighlights(); renderHighlights(hl.page); panel.refresh(); sheet.close(); } }, icon('trash'), t('removeHighlight')),
-      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = Date.now(); await persistHighlights(); renderHighlights(hl.page); panel.refresh(); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = stampAfter(hl.noteAt); await persistHighlights(); scheduleSync(); renderHighlights(hl.page); panel.refresh(); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
     setTimeout(() => ta.focus(), 100);
   }
 
@@ -2044,6 +2108,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
 
   // Ink: strokes kept with the book, drawn over the pages, and put into the file when exported.
   const { inkLayer } = await import('../ui/ink');
+  if (gone()) return;
   let inkTimer = 0;
   ink = inkLayer({
     viewer,
@@ -2056,6 +2121,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   reader.append(ink.toolbar); ink.render();
   { const i = ink; onDispose(() => i.dispose()); }
   const { pageStrip } = await import('../ui/pagestrip');
+  if (gone()) return;
   strip = pageStrip(viewer, reader);
   { const st = strip; onDispose(() => st.dispose()); }
   async function bytesWithInk(): Promise<Uint8Array> {

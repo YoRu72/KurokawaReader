@@ -2,11 +2,11 @@
 // with a note and every PDF pin, grouped by book; tap to open the book there.
 import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, formatDate, localDigits, countItems } from '../i18n';
-import { db, type Book } from '../db';
+import { db, stampAfter, type Book } from '../db';
 import { listBooks, coverUrl } from '../library';
 import { navigate, back } from '../router';
 import { setJump } from '../jump';
-import { markDeleted } from '../sync';
+import { markDeleted, scheduleSync } from '../sync';
 import { copyText } from '../ui/share';
 import { markLines, pdfMarkLines, pinLines, listedNotesMarkdown } from '../ui/exportnotes';
 
@@ -51,7 +51,7 @@ export function notesView(): HTMLElement {
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
           iconButton('copy', t('copy'), () => void copyText(markLines(hl).join('\n').trim())),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = b.highlights.find((y) => y.id === hl.id); if (x) x.note = undefined; }); void render(); } }, icon('trash'))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = b.highlights.find((y) => y.id === hl.id); if (x) { x.note = undefined; x.noteAt = stampAfter(x.noteAt); } }); scheduleSync(); void render(); } }, icon('trash'))));
       });
       (book.pdfHighlights ?? []).filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt).forEach((hl, i) => {
         items.append(h('li', null,
@@ -59,7 +59,7 @@ export function notesView(): HTMLElement {
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
           iconButton('copy', t('copy'), () => void copyText(pdfMarkLines(book, hl).join('\n').trim())),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) x.note = undefined; }); void render(); } }, icon('trash'))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) { x.note = undefined; x.noteAt = stampAfter(x.noteAt); } }); scheduleSync(); void render(); } }, icon('trash'))));
       });
       (book.pins ?? []).sort((a, b) => a.createdAt - b.createdAt).forEach((pin, i) => {
         items.append(h('li', null,

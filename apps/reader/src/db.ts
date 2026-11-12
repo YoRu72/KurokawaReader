@@ -53,8 +53,13 @@ export interface PdfHighlight { id: string; page: number; rects: [number, number
 export interface Highlight {
   id: string;
   text: string;
-  /** Anchor of the chapter / block the highlight lives in. */
+  /** Anchor of the chapter / block the highlight lives in (none: the whole book — one across chapters). */
   anchor?: string;
+  /** Where it is among the places its words have there (ui/selection TextPlace): which of them, counted from 0, and a
+   *  little of the text before and after it. Missing on highlights made before 0.60.25 (found at the first place). */
+  at?: number;
+  before?: string;
+  after?: string;
   color: 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
   note?: string;
   noteAt?: number;

@@ -312,41 +312,132 @@ export function wrapRange(range: Range, cls: string, color: string, id: string):
   return marks;
 }
 
-/** Find `text` inside `root` (whitespace-insensitive) and return a Range, or null. */
-export function findTextRange(root: Element, text: string): Range | null {
-  const needle = text.replace(/\s+/g, ' ').trim();
-  if (!needle) return null;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (isReading(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
-  const nodes: Text[] = [];
-  const starts: number[] = [];
-  let full = '';
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    nodes.push(node as Text);
-    starts.push(full.length);
-    full += node.textContent ?? '';
+/**
+ * Where a highlight is among the places its words have in its chapter: which of them (`at`, counted from 0) and a
+ * little of the text just before and after it — so that words a chapter has more than once come back where they were
+ * marked. Kept with the highlight (db Highlight); an earlier version passes these by.
+ */
+export interface TextPlace { at?: number; before?: string; after?: string }
+
+/** How many letters of the text around a highlight are kept with it. */
+const CONTEXT = 32;
+
+/**
+ * One character as it is compared when words are looked for: space of any kind, soft hyphens and joiners count for
+ * nothing (a selection across paragraphs has line breaks where the page has none, and the reverse); typographic
+ * punctuation as the plain kind (curly quotes, an em dash for two hyphens, an ellipsis for three dots), so words marked
+ * with "typographic punctuation" on are found with it off, and the reverse.
+ */
+function foldChar(c: string): string {
+  if (/[\s\u00ad\u200b-\u200d\u2060\ufeff]/.test(c)) return '';
+  switch (c) {
+    case '\u201c': case '\u201d': case '\u201e': case '\u201f': return '"';
+    case '\u2018': case '\u2019': case '\u201a': case '\u201b': return "'";
+    case '\u2014': return '-';
+    case '\u2026': return '...';
+    default: return c;
   }
-  // Build a whitespace-collapsed copy with an index map back to `full`.
-  const collapsed: string[] = []; const map: number[] = [];
-  let prevSpace = false;
-  for (let i = 0; i < full.length; i++) {
-    const ch = full[i];
-    if (/\s/.test(ch)) { if (prevSpace) continue; prevSpace = true; collapsed.push(' '); map.push(i); }
-    else { prevSpace = false; collapsed.push(ch); map.push(i); }
+}
+/** Text as it is compared (see foldChar); `map` gives, for each character of the result, its index in `text`. */
+function fold(text: string, map?: number[]): string {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const f = foldChar(text[i]);
+    if (!f) continue;
+    // (A run of hyphens is one dash: «--» and «---» are both made one «—».)
+    if (f === '-' && out[out.length - 1] === '-') continue;
+    for (let k = 0; k < f.length; k++) { out += f[k]; map?.push(i); }
   }
-  const idx = collapsed.join('').indexOf(needle);
-  if (idx < 0) return null;
-  const s = map[idx], e = map[idx + needle.length - 1] + 1;
+  return out;
+}
+
+interface Flat { nodes: Text[]; starts: number[]; full: string; folded: string; map: number[] }
+/** The text of `root` (readings left out), and the same as it is compared, with the way back from one to the other. */
+function flatten(root: Element): Flat {
+  // (Readings, and the numbers of the notes' bubbles, are not the book's text.)
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (isReading(n) || n.parentElement?.closest('.kr-note-badge') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
+  const nodes: Text[] = []; const starts: number[] = [];
+  let full = ''; let node: Node | null;
+  while ((node = walker.nextNode())) { nodes.push(node as Text); starts.push(full.length); full += node.textContent ?? ''; }
+  const map: number[] = [];
+  const folded = fold(full, map);
+  return { nodes, starts, full, folded, map };
+}
+/** Every place the folded words start in the folded text (overlapping ones too). */
+function placesOf(f: Flat, needle: string): number[] {
+  const out: number[] = [];
+  for (let i = f.folded.indexOf(needle); i >= 0; i = f.folded.indexOf(needle, i + 1)) out.push(i);
+  return out;
+}
+function rangeAt(f: Flat, at: number, len: number): Range {
+  const s = f.map[at], e = f.map[at + len - 1] + 1;
   const locate = (pos: number, isEnd: boolean) => {
-    let lo = 0, hi = nodes.length - 1;
-    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (starts[m] < pos || (isEnd && starts[m] === pos)) lo = m; else hi = m - 1; }
-    return { node: nodes[lo], offset: pos - starts[lo] };
+    let lo = 0, hi = f.nodes.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (f.starts[m] < pos || (isEnd && f.starts[m] === pos)) lo = m; else hi = m - 1; }
+    return { node: f.nodes[lo], offset: pos - f.starts[lo] };
   };
   const a = locate(s, false), b = locate(e, true);
   const range = document.createRange();
   range.setStart(a.node, Math.min(a.offset, a.node.length));
   range.setEnd(b.node, Math.min(b.offset, b.node.length));
   return range;
+}
+const commonEnd = (a: string, b: string) => { let n = 0; while (n < a.length && n < b.length && a[a.length - 1 - n] === b[b.length - 1 - n]) n++; return n; };
+const commonStart = (a: string, b: string) => { let n = 0; while (n < a.length && n < b.length && a[n] === b[n]) n++; return n; };
+
+/**
+ * Find `text` inside `root` and return a Range, or null. Spaces, line breaks and typographic punctuation do not count
+ * (see foldChar). With a `place` (kept with the highlight when it was made) the one of several places that fits it best
+ * — the text around it first, then which of them it was; without one (a highlight from an earlier version) the first,
+ * as before: one whose words match exactly preferred to one that matches only so.
+ */
+export function findTextRange(root: Element, text: string, place?: TextPlace): Range | null {
+  const needle = fold(text);
+  if (!needle) return null;
+  const f = flatten(root);
+  const hits = placesOf(f, needle);
+  if (!hits.length) return null;
+  let pick = hits[0];
+  if (hits.length > 1 && place && (place.at !== undefined || place.before || place.after)) {
+    const before = fold(place.before ?? ''), after = fold(place.after ?? '');
+    let best = -1;
+    hits.forEach((h, i) => {
+      const score = commonEnd(before, f.folded.slice(Math.max(0, h - before.length), h)) + commonStart(after, f.folded.slice(h + needle.length, h + needle.length + after.length)) + (i === place.at ? 4 : 0);
+      if (score > best) { best = score; pick = h; }
+    });
+  } else if (hits.length > 1) {
+    const exact = text.replace(/\s+/g, ' ').trim();
+    pick = hits.find((h) => f.full.slice(f.map[h], f.map[h + needle.length - 1] + 1).replace(/\s+/g, ' ').trim() === exact) ?? hits[0];
+  }
+  return rangeAt(f, pick, needle.length);
+}
+
+/**
+ * The place (see TextPlace) of the words `text`, selected as `range`, among their places in `root` — kept with a
+ * highlight when it is made. Empty when the words are not found as they are in `root` (it is then found as before).
+ */
+export function textPlace(root: Element, range: Range, text: string): TextPlace {
+  const needle = fold(text);
+  if (!needle) return {};
+  const f = flatten(root);
+  const hits = placesOf(f, needle);
+  if (!hits.length) return {};
+  // Where the selection starts, in the text of `root`.
+  let pos = -1;
+  for (let k = 0; k < f.nodes.length; k++) {
+    const n = f.nodes[k];
+    if (n === range.startContainer) { pos = f.starts[k] + range.startOffset; break; }
+    if (range.intersectsNode(n) && (n.textContent ?? '').trim()) { pos = f.starts[k]; break; }
+  }
+  if (pos < 0) return {};
+  let start = f.map.findIndex((m) => m >= pos); if (start < 0) start = f.folded.length;
+  let at = 0;
+  hits.forEach((h, i) => { if (Math.abs(h - start) < Math.abs(hits[at] - start)) at = i; });
+  const h = hits[at], end = h + needle.length;
+  const clean = (s: string) => s.replace(/\s+/g, ' ');
+  const before = h > 0 ? clean(f.full.slice(f.map[Math.max(0, h - CONTEXT)], f.map[h])) : '';
+  const after = end < f.folded.length ? clean(f.full.slice(f.map[end - 1] + 1, f.map[Math.min(f.folded.length, end + CONTEXT) - 1] + 1)) : '';
+  return { at, ...(before ? { before } : {}), ...(after ? { after } : {}) };
 }
 
 /** A floating ruby popover above the selection (auto-readings setting). Disappears when the selection changes. */

@@ -22,7 +22,9 @@ export function polish(text: string, prev = ' '): string {
   return out.replace(/(\d) (?=(?:%|°|[\p{L}]{1,3}\b))/gu, '$1 ').replace(/(^|\s)([AaIi]|[وف]) (?=\p{L})/gu, '$1$2 ');
 }
 
-const originals = new WeakMap<Text, string>();
+// (Each text node changed: its original, and what it was made — a node cut in pieces since, by a highlight, is told
+// by its text no longer being all of that.)
+const originals = new WeakMap<Text, { src: string; out: string }>();
 
 /** Polish every text node under `root` (remembering the original, so it can be undone). */
 export function applyTypography(root: Element): void {
@@ -30,19 +32,36 @@ export function applyTypography(root: Element): void {
   let prevChar = ' ';
   let node: Text | null;
   while ((node = walker.nextNode() as Text | null)) {
-    const src = originals.get(node) ?? node.data;
+    const kept = originals.get(node);
+    // (A node already changed, and cut since: what it holds now is changed already — only its own part is seen.)
+    const src = kept && kept.out === node.data ? kept.src : kept ? null : node.data;
+    if (src === null) { if (node.data.trim()) prevChar = node.data[node.data.length - 1]; continue; }
     if (!/["'.-]/.test(src)) { if (src.trim()) prevChar = src[src.length - 1]; continue; }
     const block = node.parentElement?.closest('p, li, h1, h2, h3, h4, h5, h6, div, td, th, blockquote, figcaption');
     const first = block && block.firstChild === node || !node.previousSibling && !/\S/.test(prevChar);
     const next = polish(src, first ? ' ' : prevChar);
-    if (next !== node.data) { if (!originals.has(node)) originals.set(node, src); node.data = next; }
+    if (next !== node.data) { originals.set(node, { src, out: next }); node.data = next; }
     if (src.trim()) prevChar = next[next.length - 1];
   }
 }
 
-/** Put the original text back. */
+/** Put the original text back. A node that was cut in pieces after it was changed (a highlight's marks wrap some of
+ *  them) is put back whole when its pieces follow it as they were cut, the pieces then emptied; one that cannot be
+ *  told so is left as it is — never doubled. */
 export function revertTypography(root: Element): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) { const o = originals.get(node); if (o !== undefined) { node.data = o; originals.delete(node); } }
+  const nodes: Text[] = []; let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) nodes.push(node);
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]; const o = originals.get(n);
+    if (!o) continue;
+    originals.delete(n);
+    if (n.data === o.out) { n.data = o.src; continue; }
+    if (!o.out.startsWith(n.data)) continue;
+    let got = n.data; let j = i + 1; const parts: Text[] = [];
+    while (got.length < o.out.length && j < nodes.length && !originals.has(nodes[j]) && o.out.startsWith(got + nodes[j].data)) { got += nodes[j].data; parts.push(nodes[j]); j++; }
+    if (got !== o.out) continue;
+    n.data = o.src; parts.forEach((x) => { x.data = ''; });
+    i = j - 1;
+  }
 }
