@@ -1,0 +1,27 @@
+[package]
+name = "kurokawa-reader"
+# (Not the app's version: Tauri takes that from tauri.conf.json, which reads apps/reader/package.json.)
+version = "0.0.0"
+description = "KurokawaReader — the Tauri shell (stage R0)"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# The versions of Kurokawa Tools' Tauri shell (branch work-tauri), where they compiled on all three systems.
+# kurokawa-shell (shared/shell-rs) uses the same, so one version of each is resolved.
+[dependencies]
+kurokawa-shell = { path = "../../../../shared/shell-rs" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

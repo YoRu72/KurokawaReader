@@ -1,0 +1,178 @@
+name: Tauri check (Reader)
+
+# The Reader's Tauri shell (apps/reader/desktop-tauri, stage R0 of docs/RUST-PORT-READER.md) and the crate it shares
+# with Kurokawa Tools' (shared/shell-rs) built on Windows, Linux and macOS beside the Electron one, to see that it
+# builds, how big its bundles are, and that it runs: the built app is started with KR_SELFTEST set, waits for the
+# library to render and checks its own bridge — files, the whole-computer scan, web requests and charsets, the update
+# check, window state, the clipboard, the stubs — against a loopback test server (desktop-tauri/selftest.js). Linux
+# and Windows must pass; macOS is reported without failing the job for now. Modelled on tauri-check.yml (Tools'). The
+# bundles are kept as workflow artifacts for 7 days; nothing is signed, published or released. Not run on main.
+on:
+  push:
+    branches: ['work-reader-tauri*']
+    paths:
+      - 'apps/reader/desktop-tauri/**'
+      - 'shared/shell-rs/**'
+      - '.github/workflows/tauri-check-reader.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-22.04, bundles: 'appimage,deb', target: '' }
+          - { name: Windows, os: windows-latest, bundles: 'nsis', target: '' }
+          - { name: macOS, os: macos-latest, bundles: 'dmg', target: '' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      # (The bridge against the Electron preload, the Rust command list and the self-test script: plain node. The
+      # same test's page part — the built app in Chromium with a fake Tauri IPC — needs Playwright and runs locally.)
+      - name: Web UI
+        working-directory: apps/reader
+        run: |
+          for i in 1 2 3; do npm install && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
+          node scripts/build.mjs
+          node tests/tauribridge.cjs --node-only
+          # (Left out of the computer apps, as the Electron build leaves it out: fetched from the web app when asked.)
+          rm -f dist/samples/alice-in-wonderland.epub
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev file xvfb xauth at-spi2-core dbus-x11
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
+
+      # (The shared crate's and the Reader's std-only modules, tested alone: no crates needed.)
+      - name: Std-only unit tests
+        if: runner.os == 'Linux'
+        run: |
+          d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs; do
+            n=$(basename "$f" .rs)
+            rustc --edition 2021 --test "$f" -o "$d/$n"
+            "$d/$n"
+          done
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'apps/reader/desktop-tauri/src-tauri -> target'
+          key: ${{ matrix.target }}
+
+      - name: Icons (from desktop/icon.png)
+        working-directory: apps/reader/desktop-tauri
+        run: |
+          npx --yes @tauri-apps/cli@^2 icon ../desktop/icon.png
+          ls -la src-tauri/icons
+
+      - name: Build
+        working-directory: apps/reader/desktop-tauri
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}
+          else
+            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }}
+          fi
+
+      - name: Sizes
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        run: |
+          {
+            echo "### ${{ matrix.name }} — Reader Tauri bundles"
+            echo ""
+            echo "| File | Size (MB) |"
+            echo "|---|---:|"
+            find target -path '*/release/bundle/*' -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' \) | sort | while read -r f; do
+              b=$(wc -c < "$f" | tr -d ' ')
+              echo "| \`$f\` | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"
+            done
+            find target -maxdepth 3 -path '*/release/*' -type f \( -name 'kurokawa-reader' -o -name 'kurokawa-reader.exe' \) | sort | while read -r f; do
+              b=$(wc -c < "$f" | tr -d ' ')
+              echo "| \`$f\` (bare executable) | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"
+            done
+            echo ""
+            echo "Electron today: Windows installer 81.6 MB, portable 81.5 MB, macOS 166 MB, Linux AppImage 82.5 MB."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-reader-${{ matrix.os }}${{ matrix.target && format('-{0}', matrix.target) || '' }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/nsis/*.exe
+            apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/appimage/*.AppImage
+            apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/deb/*.deb
+            apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/dmg/*.dmg
+
+      # The runtime self-test: the built app started with KR_SELFTEST=<file>; it writes its results there and exits
+      # 0 (all required checks passed), 1 (one failed) or 2 (its own watchdog, KR_SELFTEST_TIMEOUT seconds). (Longer
+      # than Tools': the whole-computer scan walks up to 20000 folders.)
+      - name: Self-test (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        env:
+          KR_SELFTEST_TIMEOUT: '140'
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          NO_AT_BRIDGE: '1'
+        run: |
+          out="$RUNNER_TEMP/kr-selftest.json"
+          set +e
+          KR_SELFTEST="$out" timeout 200 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-reader
+          code=$?
+          set -e
+          node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+      - name: Self-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        env:
+          KR_SELFTEST_TIMEOUT: '140'
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'kr-selftest.json'
+          $env:KR_SELFTEST = $out
+          $exe = (Resolve-Path 'target/release/kurokawa-reader.exe').Path
+          $p = Start-Process -FilePath $exe -PassThru
+          $null = $p.Handle
+          if ($p.WaitForExit(200000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          node ../selftest-report.cjs $out $code '${{ matrix.name }}' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          exit $code
+
+      - name: Self-test (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        env:
+          KR_SELFTEST_TIMEOUT: '140'
+        run: |
+          out="$RUNNER_TEMP/kr-selftest.json"
+          # (The bare executable, as on Linux: the web UI is built into it.)
+          if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/kurokawa-reader"; else bin="target/release/kurokawa-reader"; fi
+          [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
+          echo "running $bin"
+          set +e
+          # (No `timeout` on macOS: perl's alarm ends it after 200 s.)
+          KR_SELFTEST="$out" perl -e 'alarm 200; exec @ARGV' "$bin"
+          code=$?
+          set -e
+          node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code

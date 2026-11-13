@@ -1,0 +1,26 @@
+[package]
+name = "kurokawa-shell"
+# (Never published; the apps take it by path. Its version is not the apps'.)
+version = "0.0.0"
+description = "The Rust shared by the Kurokawa apps' Tauri shells: files, dialogs, clipboard, web requests, update check, window state, hashes, the self-tests' frame and test server"
+edition = "2021"
+publish = false
+
+[lib]
+name = "kurokawa_shell"
+path = "src/lib.rs"
+
+# The same crates and versions as Kurokawa Tools' Tauri shell (apps/tools/desktop-tauri/src-tauri/Cargo.toml on
+# branch work-tauri), so an app that takes this crate resolves one version of each. An app must also list tauri and
+# the three plugins itself (it registers the plugins; Tauri's build reads their permissions from its direct
+# dependencies).
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "deflate"] }
+sha2 = "0.10"
+sha1 = "0.10"
+md-5 = "0.10"

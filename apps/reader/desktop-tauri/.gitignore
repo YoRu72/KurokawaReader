@@ -1,0 +1,4 @@
+# Build output and files generated in CI (icons come from ../desktop/icon.png via `tauri icon`).
+src-tauri/target/
+src-tauri/gen/
+src-tauri/icons/
