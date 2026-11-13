@@ -94,11 +94,25 @@ static DL_DEST: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 static LAST_WAIT: Mutex<String> = Mutex::new(String::new());
 /// Cookies a «forget» deleted that the web view still listed after (for the self-test).
 static FORGET_LEFT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// What the last «forget» of a site found in the browser (for the self-test): how many of its cookies were listed.
+static FORGET_SAW: Mutex<String> = Mutex::new(String::new());
 /// Windows: a hidden window kept on the browser's profile while the app runs. WebView2 ends the profile's browser
 /// process when its last window closes, and the session's cookies (a sign-in without an expiry) go with it — the
 /// first CI run: a site signed in by a check window was signed out to the next lane. Electron's session lives as long
 /// as the app.
 static KEEPER: Mutex<Option<Arc<Win>>> = Mutex::new(None);
+/// (Linux) the addresses of downloads the app's own downloader took over from the web view (see on_download): the
+/// web view's own «failed» for them (it was cancelled) is not reported.
+static TAKEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// (A Mac) how the last large answer's body came (for the self-test): "app" — the app's client took it over.
+static LAST_CARRIED: Mutex<String> = Mutex::new(String::new());
+
+/// Linux and Windows keep the browser's profile open by a hidden window while the app runs (KEEPER). On Linux it is
+/// also the one window that catches the profile's downloads: WebKitGTK's web context outlives every window there, and
+/// each window built with on_download connects one more handler to it — the first one connected decides a download's
+/// place and stops the others, and a closed window's handler cancels it (Tauri answers false when its window is gone):
+/// R4's CI run, a download in a live window failed twice and was never offered to it.
+const KEEPS_PROFILE: bool = cfg!(any(target_os = "windows", target_os = "linux"));
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -152,6 +166,10 @@ pub fn abilities() -> Value {
         "cookieDelete": cfg!(kr_cookie_delete),
         "clearAll": cfg!(kr_clear_all) && !cfg!(target_os = "macos"),
         "downloads": cfg!(kr_download_api),
+        // (R4b) a large GET answer's body fetched by the app's own client with the browser's cookies (a Mac); a
+        // download taken over by the app's own downloader with the browser's cookies (Linux).
+        "largeByApp": cfg!(target_os = "macos"),
+        "downloadsByApp": cfg!(all(kr_download_api, target_os = "linux")),
     })
 }
 
@@ -188,13 +206,16 @@ mode:function(){return mode;}};
 try{Object.defineProperty(w,K,{value:api});}catch(e){w[K]=api;}return api;})"#;
 
 /// A request made by the site's own page (main.cjs's LANE_FETCH): its answer — status, headers, address — and its
-/// body's bytes. The headers a browser sets itself are left to it.
+/// body's bytes. The headers a browser sets itself are left to it. With `o.big` (a Mac) a GET answer whose
+/// Content-Length is over it sends its head alone, `large: <length>`, and stops: Rust fetches the body (browser_fetch).
 const FETCH_JS: &str = r#"(function(){var S=__S__;var rid=__RID__;var o=__O__;
 try{var h={},h0=o.headers||{};Object.keys(h0).forEach(function(k){if(!/^(user-agent|referer|cookie|cookie2|accept-encoding|host|origin|connection|content-length|keep-alive|te|trailer|transfer-encoding|upgrade|via|sec-.*|proxy-.*)$/i.test(k))h[k]=h0[k];});
 var init={method:o.method||'GET',headers:h,credentials:'include',cache:'no-store',redirect:'follow'};
 if(o.body!=null)init.body=o.bodyBase64?Uint8Array.from(atob(o.body),function(c){return c.charCodeAt(0);}):o.body;
 var ctl=typeof AbortController==='function'?new AbortController():null;var tm=setTimeout(function(){if(ctl)ctl.abort();},o.timeout||90000);if(ctl)init.signal=ctl.signal;
-fetch(o.url,init).then(function(r){var hs={};r.headers.forEach(function(v,n){hs[n.toLowerCase()]=v;});return r.arrayBuffer().then(function(b){clearTimeout(tm);S.send(rid,{status:r.status,headers:hs,url:r.url||o.url},new Uint8Array(b));});}).catch(function(e){clearTimeout(tm);S.send(rid,{error:String(e&&e.message||e)},null);});
+fetch(o.url,init).then(function(r){var hs={};r.headers.forEach(function(v,n){hs[n.toLowerCase()]=v;});var n=parseInt(r.headers.get('content-length')||'',10);
+if(o.big>0&&n>o.big&&init.method.toUpperCase()==='GET'){clearTimeout(tm);S.send(rid,{status:r.status,headers:hs,url:r.url||o.url,large:n},null);try{if(ctl)ctl.abort();}catch(e){}return;}
+return r.arrayBuffer().then(function(b){clearTimeout(tm);S.send(rid,{status:r.status,headers:hs,url:r.url||o.url},new Uint8Array(b));});}).catch(function(e){clearTimeout(tm);S.send(rid,{error:String(e&&e.message||e)},null);});
 }catch(e){S.send(rid,{error:String(e&&e.message||e)},null);}})();"#;
 
 /// What the page says of itself (main.cjs's STATE_JS): loaded or not, its origin, a check on it, a refusal, its
@@ -476,7 +497,8 @@ fn via_name() -> &'static str {
     }
 }
 
-/// (Windows) the hidden window that keeps the browser's profile — its session cookies — alive (KEEPER).
+/// (Windows, Linux) the hidden window that keeps the browser's profile — its session cookies — alive (KEEPER); on
+/// Linux the one that catches downloads (KEEPS_PROFILE).
 fn keep_profile(app: &AppHandle) {
     static OPENING: AtomicBool = AtomicBool::new(false);
     // (Never held while a window is made: the main thread, which makes it, takes this lock when a window goes.)
@@ -495,7 +517,7 @@ fn open_window(app: &AppHandle, s: &Spec) -> Result<Arc<Win>, String> {
     if SHUTDOWN.load(Ordering::SeqCst) {
         return Err("the app is closing".to_string());
     }
-    if cfg!(target_os = "windows") && s.kind != "keep" {
+    if KEEPS_PROFILE && s.kind != "keep" {
         keep_profile(app);
     }
     let label = format!("{}{}-{}", PREFIX, s.kind, SEQ.fetch_add(1, Ordering::SeqCst));
@@ -530,8 +552,14 @@ fn open_window(app: &AppHandle, s: &Spec) -> Result<Arc<Win>, String> {
     }
     #[cfg(kr_download_api)]
     {
-        let dl_app = app.clone();
-        b = b.on_download(move |_webview, event| on_download(&dl_app, event));
+        // (Linux: the keeper alone — or a window made while there is none —, see KEEPS_PROFILE.)
+        let catches = !cfg!(target_os = "linux")
+            || s.kind == "keep"
+            || !lock(&KEEPER).as_ref().map(|w| !w.closed.load(Ordering::SeqCst)).unwrap_or(false);
+        if catches {
+            let dl_app = app.clone();
+            b = b.on_download(move |_webview, event| on_download(&dl_app, event));
+        }
     }
     if let Err(e) = b.build() {
         lock(wins()).remove(&label);
@@ -571,12 +599,23 @@ fn gone(label: &str) {
 
 /// Every browser window closed (the main window closing: they would keep the app running unseen).
 fn close_all(app: &AppHandle) -> usize {
-    let all: Vec<Arc<Win>> = lock(wins()).values().cloned().collect();
+    // (Linux: the keeper stays until the app ends — a new one would come after its handler, which then cancels every
+    // download: see KEEPS_PROFILE.)
+    let kept = kept_keeper();
+    let all: Vec<Arc<Win>> = lock(wins()).values().filter(|w| Some(&w.label) != kept.as_ref()).cloned().collect();
     lock(lanes()).clear();
     for w in all.iter() {
         close(app, w);
     }
     all.len()
+}
+
+/// (Linux, while the app runs) the keeper's label: the window close_all leaves open.
+fn kept_keeper() -> Option<String> {
+    if !cfg!(target_os = "linux") || SHUTDOWN.load(Ordering::SeqCst) {
+        return None;
+    }
+    lock(&KEEPER).as_ref().filter(|w| !w.closed.load(Ordering::SeqCst)).map(|w| w.label.clone())
 }
 
 /// The windows' events (main.rs): a browser window gone; the main window closing → every browser window closed.
@@ -624,6 +663,32 @@ fn with_profile<T>(app: &AppHandle, prefer: Option<&str>, f: impl FnOnce(&tauri:
     out
 }
 
+/// The browser's cookies of the site of `url` (a window `w` of its profile) → Option<Vec<cookie>> (None: not listed).
+/// A Mac: every cookie listed and matched by its domain here (browserlogic::cookie_for_host) — WKWebView's
+/// cookies_for_url compares a cookie's domain with the address's domain name exactly, so it lists nothing for an IP
+/// address and no parent domain's cookie: R4's «forget» deleted nothing there (CI: the clearance «forgotten», then
+/// sent again). Elsewhere the web view's own answer. (A macro: the cookie's type is not named.)
+#[cfg(kr_cookie_read)]
+macro_rules! site_cookies {
+    ($w:expr, $url:expr) => {{
+        let url: &str = $url;
+        #[cfg(all(target_os = "macos", kr_cookie_all))]
+        let listed = match logic::host_of(url) {
+            Some(host) => $w
+                .cookies()
+                .ok()
+                .map(|l| l.into_iter().filter(|c| logic::cookie_for_host(&host, c.domain().unwrap_or(""))).collect::<Vec<_>>()),
+            None => None,
+        };
+        #[cfg(not(all(target_os = "macos", kr_cookie_all)))]
+        let listed = match url.parse() {
+            Ok(u) => $w.cookies_for_url(u).ok(),
+            Err(_) => None,
+        };
+        listed
+    }};
+}
+
 /// The browser's cookies put in the app's own jar (net.rs), so the app's requests carry what was done in the browser
 /// — a sign-in, a check's clearance — as Electron's one session does: every cookie where the web view can list them
 /// all, else those of `url`. → how many.
@@ -654,10 +719,7 @@ fn share_cookies(app: &AppHandle, prefer: Option<&str>, url: &str) -> usize {
         let secure = url.starts_with("https:");
         let n = with_profile(app, prefer, |w| {
             let mut n = 0;
-            let listed = match url.parse() {
-                Ok(u) => w.cookies_for_url(u).ok(),
-                Err(_) => None,
-            };
+            let listed = site_cookies!(w, url);
             if let Some(list) = listed {
                 for c in list.iter() {
                     if net::put_cookie(&c.to_string(), &host, secure) {
@@ -682,10 +744,8 @@ fn forget_in_browser(app: &AppHandle, url: &str, all: bool) -> Vec<String> {
     {
         let out = with_profile(app, None, |w| {
             let mut names: Vec<String> = Vec::new();
-            let listed = match url.parse() {
-                Ok(u) => w.cookies_for_url(u).ok(),
-                Err(_) => None,
-            };
+            let listed = site_cookies!(w, url);
+            let seen = listed.as_ref().map(|l| l.len());
             if let Some(list) = listed {
                 for c in list.iter() {
                     let name = c.name().to_string();
@@ -700,13 +760,11 @@ fn forget_in_browser(app: &AppHandle, url: &str, all: bool) -> Vec<String> {
             let until = Instant::now() + Duration::from_secs(3);
             while !left.is_empty() && Instant::now() < until {
                 sleep_ms(250);
-                let now: Vec<String> = match url.parse() {
-                    Ok(u) => w.cookies_for_url(u).map(|l| l.iter().map(|c| c.name().to_string()).collect()).unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                };
+                let now: Vec<String> = site_cookies!(w, url).map(|l| l.iter().map(|c| c.name().to_string()).collect()).unwrap_or_default();
                 left.retain(|n| now.contains(n));
             }
             *lock(&FORGET_LEFT) = left.clone();
+            *lock(&FORGET_SAW) = format!("{} listed for the site, {} deleted", seen.map(|n| n.to_string()).unwrap_or_else(|| "none could be".into()), names.len());
             names.retain(|n| !left.contains(n));
             names
         });
@@ -768,8 +826,8 @@ fn forget(app: &AppHandle, url: &str, all: bool) -> usize {
         Some(o) => o,
         None => return 0,
     };
-    retire(app, &origin);
     if all {
+        retire(app, &origin);
         let _ = close_all_lanes(app);
         let mut sites: HashSet<String> = HashSet::new();
         for (d, _) in net::forget_picked_cookies(None, &|_| true) {
@@ -788,6 +846,9 @@ fn forget(app: &AppHandle, url: &str, all: bool) -> usize {
     for n in forget_in_browser(app, url, false) {
         names.insert(n);
     }
+    // (R4b: set aside after the browser's cookies were deleted — through its window while it is open; set aside first,
+    // that window was closing under the deletion where it was the only one, a Mac's.)
+    retire(app, &origin);
     names.len()
 }
 
@@ -986,6 +1047,7 @@ fn browser_fetch(app: &AppHandle, o: &Value) -> Result<Value, String> {
         "body": o.get("body").cloned().unwrap_or(Value::Null),
         "bodyBase64": flag(o, "bodyBase64"),
         "timeout": timeout,
+        "big": if cfg!(target_os = "macos") { logic::LARGE_MAC } else { 0 },
     });
     let rid = next_rid();
     let js = FETCH_JS
@@ -1003,6 +1065,19 @@ fn browser_fetch(app: &AppHandle, o: &Value) -> Result<Value, String> {
         u if u.is_empty() => url.clone(),
         u => u,
     };
+    // (A Mac: a large answer's body by the app's own client, with the browser's cookies — see FETCH_JS.)
+    if a.meta.get("large").is_some() {
+        let r = fetch_by_app(app, &lane, &page, &final_url, o, timeout);
+        *lock(&LAST_CARRIED) = match &r {
+            Ok(v) => format!("app: {} bytes, status {}", text(v, "size"), text(v, "status")),
+            Err(e) => format!("app: {}", e),
+        };
+        let mut v = r?;
+        if let Some(m) = v.as_object_mut() {
+            m.remove("size");
+        }
+        return Ok(v);
+    }
     Ok(json!({
         "status": a.meta.get("status").cloned().unwrap_or(json!(0)),
         "headers": a.meta.get("headers").cloned().unwrap_or_else(|| json!({})),
@@ -1010,6 +1085,63 @@ fn browser_fetch(app: &AppHandle, o: &Value) -> Result<Value, String> {
         "url": final_url,
         "via": "browser",
     }))
+}
+
+/// A future run on the app's async runtime, waited for here (a blocking thread) up to `wait` → its output.
+fn run_async<T: Send + 'static>(f: impl std::future::Future<Output = T> + Send + 'static, wait: Duration) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tauri::async_runtime::spawn(async move {
+        let _ = tx.send(f.await);
+    });
+    rx.recv_timeout(wait).ok()
+}
+
+/// (A Mac, R4b) a large GET answer the lane's page saw the head of: its body fetched by the app's own client (net.rs:
+/// the app's user agent, which is the browser's here, its cookie jar) with the browser's cookies put in that jar
+/// first, the page as its Referer and the headers the page was given (as its fetch sends them) → browser_fetch's
+/// answer (+ `size`, `carried: "app"`). What differs from the page's own request: the connection is the app's, not
+/// WebKit's (a site that tells them apart may answer otherwise: that answer is given as it is).
+fn fetch_by_app(app: &AppHandle, lane: &Arc<Lane>, page: &str, url: &str, o: &Value, timeout: u64) -> Result<Value, String> {
+    lane.busy.fetch_add(1, Ordering::SeqCst);
+    share_cookies(app, Some(&lane.win.label), url);
+    lane.busy.fetch_sub(1, Ordering::SeqCst);
+    let client = net::client()?;
+    let mut rb = client.get(url).header("referer", page).timeout(Duration::from_millis(timeout));
+    if let Some(Value::Object(h)) = o.get("headers") {
+        for (k, v) in h.iter() {
+            if logic::page_may_send(k) {
+                if let Some(s) = v.as_str() {
+                    rb = rb.header(k.as_str(), s);
+                }
+            }
+        }
+    }
+    let job = async move {
+        let resp = rb.send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let final_url = resp.url().to_string();
+        let mut headers = serde_json::Map::new();
+        for (k, v) in resp.headers().iter() {
+            let key = k.as_str().to_ascii_lowercase();
+            let val = String::from_utf8_lossy(v.as_bytes()).into_owned();
+            let joined = match headers.get(&key) {
+                Some(Value::String(prev)) => format!("{}, {}", prev, val),
+                _ => val,
+            };
+            headers.insert(key, Value::String(joined));
+        }
+        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        Ok::<Value, String>(json!({
+            "status": status,
+            "headers": Value::Object(headers),
+            "body": util::b64_encode(&bytes),
+            "url": final_url,
+            "via": "browser",
+            "carried": "app",
+            "size": bytes.len(),
+        }))
+    };
+    run_async(job, Duration::from_millis(timeout + 5_000)).unwrap_or_else(|| Err("Browser request timed out (the app's client, a large answer)".to_string()))
 }
 
 /* ---------- a check passed, a site opened for the reader ---------- */
@@ -1161,7 +1293,29 @@ fn on_download(app: &AppHandle, event: tauri::webview::DownloadEvent<'_>) -> boo
             let _ = std::fs::create_dir_all(&dir);
             *destination = logic::unique_path(&dir, &name, &|p: &std::path::Path| p.exists());
             let to = destination.to_string_lossy().into_owned();
-            lock(&DOWNLOADS).push(json!({ "url": url.as_str(), "requested": to.as_str() }));
+            // (Linux, R4b: an http(s) download is taken over by the app's own downloader — see take_over.)
+            let by_app = cfg!(target_os = "linux") && (url.scheme() == "http" || url.scheme() == "https");
+            lock(&DOWNLOADS).push(json!({ "url": url.as_str(), "requested": to.as_str(), "by": if by_app { "app" } else { "webview" } }));
+            #[cfg(target_os = "linux")]
+            {
+                if by_app {
+                    // (The name taken now, so a second download does not get it too.)
+                    let _ = std::fs::OpenOptions::new().write(true).create_new(true).open(&*destination);
+                    {
+                        let mut t = lock(&TAKEN);
+                        t.push(url.as_str().to_string());
+                        if t.len() > 50 {
+                            t.remove(0);
+                        }
+                    }
+                    let app = app.clone();
+                    let u = url.as_str().to_string();
+                    let path = destination.clone();
+                    std::thread::spawn(move || take_over(&app, &u, &path));
+                    // (The web view's own download cancelled.)
+                    return false;
+                }
+            }
             let mut d = lock(&DL_DEST);
             d.push((url.as_str().to_string(), to));
             if d.len() > 50 {
@@ -1170,6 +1324,10 @@ fn on_download(app: &AppHandle, event: tauri::webview::DownloadEvent<'_>) -> boo
             true
         }
         tauri::webview::DownloadEvent::Finished { url, path, success, .. } => {
+            // (A download the app took over: the web view's «failed» — it was cancelled — is not its end.)
+            if lock(&TAKEN).iter().any(|u| u == url.as_str()) {
+                return true;
+            }
             let mut p: String = path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
             // (A Mac's web view gives no path: the one it was sent to.)
             if p.is_empty() && success {
@@ -1177,16 +1335,71 @@ fn on_download(app: &AppHandle, event: tauri::webview::DownloadEvent<'_>) -> boo
                     p = to.clone();
                 }
             }
-            lock(&DOWNLOADS).push(json!({ "url": url.as_str(), "path": p.as_str(), "ok": success }));
-            if success && !p.is_empty() && !frame::active() {
-                use tauri_plugin_notification::NotificationExt;
-                let name = std::path::Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let _ = app.notification().builder().title(name).body(p.clone()).show();
+            lock(&DOWNLOADS).push(json!({ "url": url.as_str(), "path": p.as_str(), "ok": success, "by": "webview" }));
+            if success && !p.is_empty() {
+                saved_note(app, &p);
             }
             true
         }
         #[allow(unreachable_patterns)]
         _ => true,
+    }
+}
+
+/// A download saved: a notification with its name and place (not in a self-test run).
+#[cfg(kr_download_api)]
+fn saved_note(app: &AppHandle, p: &str) {
+    if frame::active() {
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    let name = std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let _ = app.notification().builder().title(name).body(p.to_string()).show();
+}
+
+/// (Linux, R4b) a download a site started, taken over from WebKitGTK by the app's own client (net.rs: the app's user
+/// agent, which is the browser's, its cookie jar) with the browser's cookies put in that jar first, into the path
+/// chosen for it. Why not WebKitGTK's own: wry hands WebKitGTK 4.1 the place as a plain path where, as far as can be
+/// told without a run, its webkit_download_set_destination takes a URI (the GTK 4 API a path), and no CI run showed
+/// it saved. What differs: a download the site answers only to a POST, or to a page's own
+/// connection, is fetched by a GET of its address. Ends in DOWNLOADS ({ url, path, ok, by: "app" }) and a
+/// notification.
+#[cfg(all(kr_download_api, target_os = "linux"))]
+fn take_over(app: &AppHandle, url: &str, path: &std::path::Path) {
+    share_cookies(app, None, url);
+    let file = path.to_path_buf();
+    let got: Result<u64, String> = match net::client() {
+        Err(e) => Err(e),
+        Ok(client) => {
+            let rb = client.get(url);
+            let job = async move {
+                let mut resp = rb.send().await.map_err(|e| e.to_string())?;
+                let status = resp.status().as_u16();
+                if !(200..300).contains(&status) {
+                    return Err(format!("HTTP {}", status));
+                }
+                let mut out = std::fs::File::create(&file).map_err(|e| e.to_string())?;
+                let mut n: u64 = 0;
+                while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+                    std::io::Write::write_all(&mut out, &chunk).map_err(|e| e.to_string())?;
+                    n += chunk.len() as u64;
+                }
+                std::io::Write::flush(&mut out).map_err(|e| e.to_string())?;
+                Ok::<u64, String>(n)
+            };
+            run_async(job, Duration::from_secs(6 * 3600)).unwrap_or_else(|| Err("timed out".to_string()))
+        }
+    };
+    let p = path.to_string_lossy().into_owned();
+    match got {
+        Ok(n) => {
+            lock(&DOWNLOADS).push(json!({ "url": url, "path": p.as_str(), "ok": true, "by": "app", "bytes": n }));
+            saved_note(app, &p);
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(path);
+            lock(&DOWNLOADS).push(json!({ "url": url, "path": "", "ok": false, "by": "app", "error": e }));
+        }
     }
 }
 
@@ -1242,10 +1455,7 @@ pub async fn kr_selftest_browser(app: AppHandle, o: Value) -> Result<Value, Stri
 fn cookie_names(app: &AppHandle, url: &str) -> Option<Vec<String>> {
     #[cfg(kr_cookie_read)]
     {
-        return with_profile(app, None, |w| match url.parse() {
-            Ok(u) => w.cookies_for_url(u).map(|l| l.iter().map(|c| c.name().to_string()).collect()).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        });
+        return with_profile(app, None, |w| site_cookies!(w, url).map(|l| l.iter().map(|c| c.name().to_string()).collect()).unwrap_or_default());
     }
     #[cfg(not(kr_cookie_read))]
     {
@@ -1269,12 +1479,15 @@ fn selftest_act(app: &AppHandle, o: &Value) -> Result<Value, String> {
     let act = text(o, "act");
     match act.as_str() {
         "windows" => {
-            let list: Vec<String> = lock(wins()).keys().cloned().collect();
-            Ok(json!({ "windows": list, "lanes": lock(lanes()).keys().cloned().collect::<Vec<String>>() }))
+            // (Linux's keeper, kept while the app runs, said apart.)
+            let kept = kept_keeper();
+            let list: Vec<String> = lock(wins()).keys().filter(|k| Some(*k) != kept.as_ref()).cloned().collect();
+            Ok(json!({ "windows": list, "lanes": lock(lanes()).keys().cloned().collect::<Vec<String>>(), "keeper": kept }))
         }
         "close" => Ok(json!({ "closed": close_all(app) })),
         "downloads" => Ok(json!({ "downloads": lock(&DOWNLOADS).clone() })),
-        "forgetLeft" => Ok(json!({ "left": lock(&FORGET_LEFT).clone() })),
+        "forgetLeft" => Ok(json!({ "left": lock(&FORGET_LEFT).clone(), "saw": lock(&FORGET_SAW).clone() })),
+        "carried" => Ok(json!({ "carried": lock(&LAST_CARRIED).clone() })),
         "cookies" => Ok(json!({ "names": cookie_names(app, &text(o, "url")) })),
         "via" => Ok(json!({ "via": via_name() })),
         "probe" | "click" => {

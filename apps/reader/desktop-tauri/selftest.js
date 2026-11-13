@@ -393,8 +393,12 @@
        stays in the window; a download the site offers is saved (where this build catches downloads); a check window
        and a sign-in's end (until) close by themselves; a site that keeps its check answers the refusal; reset opens
        the site afresh; forget clears the clearance, then everything; the browser as a browser ends when closed; no
-       window is left. Required on Windows; reported elsewhere (Xvfb without a window manager, a Mac's runner). */
+       window is left. Required on Windows; reported elsewhere (Xvfb without a window manager, a Mac's runner) — but
+       the 2 MiB answer and forget required on a Mac too, the download on Linux too (R4b). */
     var site = cfg.site || {}; var ab = cfg.browser || {}; var onWin = cfg.os === 'win32'; var siteUrl = base + '/site/';
+    // (R4b: the 2 MiB answer and «forget» required on a Mac too, a download saved required on Linux too — see
+    // PORTING.md, «After R4».)
+    var onMac = cfg.os === 'darwin'; var onLinux = cfg.os === 'linux';
     function browserAct(o) { return env.invoke('kr_selftest_browser', { o: o }); }
     // (When a signed-in page answers «signed out»: the cookies the browser holds for the site, and those its page's
     // own request sent — names only —, and how the answers came.)
@@ -419,17 +423,18 @@
       var via = await browserAct({ act: 'via' });
       return 'signed in; the browser\'s user agent ' + (ua === mine ? 'is the app\'s' : 'differs from the app\'s: ' + ua) + '; answers came by ' + (via && via.via);
     }, 60000);
-    await check('browserFetch: binary, POST, a 2 MiB answer in parts', onWin, async function () {
+    await check('browserFetch: binary, POST, a 2 MiB answer in parts', onWin || onMac, async function () {
       var b = await kd.browserFetch({ url: base + '/bin', binary: true });
       must(b.body === cfg.binB64, 'binary ' + short(b.body));
       var p = await kd.browserFetch({ url: base + '/echo', method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8' }, body: 'نص ✓' });
       must(p.body === 'POST:نص ✓', 'POST ' + short(p.body));
       var e = await kd.browserFetch({ url: base + '/echo', method: 'POST', body: 'eHl6', bodyBase64: true });
       must(e.body === 'POST:xyz', 'POST from base64 ' + short(e.body));
-      var t0 = env.now(); var big = await kd.browserFetch({ url: base + '/big/kr-browser.bin', binary: true, timeout: 60000 });
+      var t0 = env.now(); var big = null; var carried = function () { return browserAct({ act: 'carried' }).then(function (c) { return (c && c.carried) || 'by the page'; }, function () { return '?'; }); };
+      try { big = await kd.browserFetch({ url: base + '/big/kr-browser.bin', binary: true, timeout: 60000 }); } catch (e) { must(false, 'the 2 MiB answer: ' + ((e && e.message) || e) + ' after ' + (env.now() - t0) + ' ms; body ' + (await carried()) + (ab.largeByApp ? ' (this build: a large answer\'s body by the app\'s client)' : '')); }
       var bytes = fromB64(big.body);
-      must(bytes.length === cfg.bigSize && crc32(bytes) === cfg.bigCrc, 'the 2 MiB answer: ' + bytes.length + ' bytes, ' + (crc32(bytes) === cfg.bigCrc ? 'same' : 'other') + ' bytes');
-      return '256 bytes, two POSTs, ' + bytes.length + ' bytes in ' + (env.now() - t0) + ' ms';
+      must(bytes.length === cfg.bigSize && crc32(bytes) === cfg.bigCrc, 'the 2 MiB answer: status ' + big.status + ', ' + bytes.length + ' bytes, ' + (crc32(bytes) === cfg.bigCrc ? 'same' : 'other') + ' bytes; body ' + (await carried()));
+      return '256 bytes, two POSTs, ' + bytes.length + ' bytes in ' + (env.now() - t0) + ' ms; body ' + (ab.largeByApp ? (await carried()) : 'by the page');
     }, 120000);
     await check('the app\'s own requests carry the browser\'s cookies', false, async function () {
       var r = await kd.http({ url: base + '/site/private' });
@@ -451,17 +456,17 @@
       must(/\/site\/popup$/.test(r.href || ''), 'went to ' + short(r.href));
       return r.href;
     }, 40000);
-    await check('a download a site offers is saved', false, async function () {
+    await check('a download a site offers is saved', onLinux && !!ab.downloads, async function () {
       if (!ab.downloads) return 'not caught in this build: the web view\'s own way';
       var r = await browserAct({ act: 'click', url: siteUrl, p: '#dl' });
       must(r && r.found === true, 'answer ' + short(r));
       var d = null; var until = env.now() + 15000;
       while (!d && env.now() < until) { var l = (await browserAct({ act: 'downloads' })).downloads || []; d = l.filter(function (x) { return /\/site\/file\.epub$/.test(x.url) && 'ok' in x; })[0] || null; if (!d) await sleep(300); }
       var all = (await browserAct({ act: 'downloads' })).downloads || [];
-      must(d && d.ok && d.path, 'download ' + short(d) + '; its events ' + short(all));
+      must(d && d.ok && d.path, 'download ' + short(d) + '; its events ' + short(all) + (all.some(function (x) { return 'requested' in x; }) ? '' : ' (never offered to the app: no «requested»)'));
       var n = await kd.fileSize(d.path); await env.invoke('kr_selftest_remove', { p: d.path });
-      must(n === site.fileSize, 'size ' + n + ' ≠ ' + site.fileSize);
-      return d.path;
+      must(n === site.fileSize, 'size ' + n + ' ≠ ' + site.fileSize + ' (' + short(d) + ')');
+      return d.path + (d.by ? ' (saved by the ' + (d.by === 'app' ? 'app\'s downloader' : 'web view') + ')' : '');
     }, 60000);
     await check('a check window closes by itself once the site shows its page', onWin, async function () {
       var r = await kd.openWebView({ url: siteUrl, timeout: 20000, message: 'KurokawaReader self-test' });
@@ -489,12 +494,12 @@
       if (r.status !== 200) must(false, 'status ' + r.status + (await whySignedOut()));
       return 'set aside; afresh and signed in';
     }, 60000);
-    await check('browserForget: the clearance only, then every site\'s data', onWin && !!(ab.cookieDelete || ab.clearAll), async function () {
+    await check('browserForget: the clearance only, then every site\'s data', (onWin || onMac) && !!(ab.cookieDelete || ab.clearAll), async function () {
       var a = await kd.browserForget(siteUrl, false);
       must(a && typeof a.cleared === 'number', 'answer ' + short(a));
       var r1 = await kd.browserFetch({ url: base + '/site/private' });
-      var left = (await browserAct({ act: 'forgetLeft' })).left;
-      var said = 'the clearance: ' + a.cleared + ' cleared' + (left && left.length ? ' (still listed after 3 s: ' + left.join(',') + ')' : '') + ', then ' + r1.status + ' ' + short(r1.body).slice(0, 30);
+      var fl = await browserAct({ act: 'forgetLeft' }); var left = fl.left;
+      var said = 'the clearance: ' + a.cleared + ' cleared (in the browser: ' + (fl.saw || '?') + ')' + (left && left.length ? ' (still listed after 3 s: ' + left.join(',') + ')' : '') + ', then ' + r1.status + ' ' + short(r1.body).slice(0, 30);
       if (r1.status !== 200) said += await whySignedOut();
       if (ab.cookieDelete) must(r1.status === 200 && /clearance=0/.test(r1.body), said);
       var b = await kd.browserForget(siteUrl, true);

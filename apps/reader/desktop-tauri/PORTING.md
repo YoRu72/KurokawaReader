@@ -375,7 +375,8 @@ external address; labels `krb-<kind>-<n>`; never the bridge, never the app's tit
   given — `example.com` from that Settings button.)
 - **Downloads** a site offers: into the system's Downloads folder under the name it suggests (never over a file), a
   notification with its name and place — where Tauri's `on_download` is found; else the web view's own way
-  (WebView2: its download bar; WKWebView / WebKitGTK: nothing happens).
+  (WebView2: its download bar; WKWebView / WebKitGTK: nothing happens). On Linux (R4b) an `http(s)` download is
+  saved by the app's own downloader with the browser's cookies (see «After R4 on macOS and Linux»).
 - **Closing**: the main window closing closes every browser window (they would keep the app running); a window the
   reader closes ends its `openWebView` with what it had seen (polled each 0.6 s).
 - **DNS over HTTPS**: not for the browser (the system's DNS, said in Settings: `dohHintApp`, five languages).
@@ -391,6 +392,43 @@ self-test says which were left, and, when a signed-in page answers «signed out�
 the site and which its page's request sent. Linux (WebKitGTK) reported a download not saved: the self-test now shows
 the path asked for and the web view's answer.
 
+**After R4 on macOS and Linux (R4b)** — the three rows CI reported failed there, their causes read from the logs and
+from the sources of the Tauri / wry CI resolved (tauri 2.12.5, wry 0.57), each fixed and now **required** there:
+- **A Mac, a 2 MiB `browserFetch` timed out** — «nothing came», not even the answer's head, which the page sent only
+  after reading the whole body: a hidden WKWebView did not finish reading a 2 MiB answer (the test server sends it at
+  about 320 KB/s) in 75 s, though small answers come at once — the system slows a web view that is not shown. Now, on
+  a Mac only, a **GET answer whose Content-Length is over 256 KiB** (`browserlogic::LARGE_MAC`) is not read by the
+  page: the page sends its head alone (`large`), and **the app's own client** (net.rs — the app's user agent, which is
+  the browser's on a Mac, its cookie jar) fetches the body from the address the page ended at, with **the browser's
+  cookies** put in the jar first, the page as its Referer and the headers the page was given (those a browser sets
+  itself left out, as the page leaves them). The answer is the same `{status, headers, body, url, via: 'browser'}`.
+  What differs, said plainly: that one request goes by the app's connection, not WebKit's — a site that tells them
+  apart may answer it otherwise (its answer is given as it is); POST answers, and answers without a length, are still
+  read by the page. The self-test says how the body came (`kr_selftest_browser {act: 'carried'}`).
+- **A Mac, «forget» did not forget** — wry's `cookies_for_url` on a Mac compares a cookie's domain with the address's
+  domain *name* exactly, so it lists nothing for an IP address (the test site, 127.0.0.1) and no parent domain's
+  cookie (`.example.com` for `www.example.com`): nothing was deleted in the browser, and the «1 cleared» was the app's
+  own jar's. Now on a Mac the site's cookies are every cookie (`cookies()`) matched here by RFC 6265's domain rule
+  (`browserlogic::cookie_for_host`) — for forgetting, for the check after it, for sharing and for the self-test's
+  report; Windows and Linux keep the web view's own `cookies_for_url`. The site's window is now set aside after the
+  deletion, not before (it was the window the deletion went through, closing under it). The self-test says how many of
+  the site's cookies the browser listed and deleted.
+- **Linux, a download in a browser window not saved** — WebKitGTK's web context lives as long as the app (tauri-runtime-
+  wry keeps it on Linux), and every window built with `on_download` connects one more handler to it; a download's place
+  is decided by the first handler connected (it stops the others), and Tauri answers «cancel» for a window that is
+  gone — so once the first browser window had closed, every download was cancelled before the window it started in
+  was asked (CI: two «failed», no «requested»). And wry gives WebKitGTK 4.1 the place as a plain path, where, as far
+  as can be told without a run, 4.1's `webkit_download_set_destination` takes a URI (the GTK 4 API a path). Now on Linux the profile's **keeper window** (as on Windows: hidden,
+  `about:blank`, opened before any other browser window, kept until the app ends — the self-test's «close all» leaves
+  it and lists it apart) is the one window with `on_download`, and a download of an `http(s)` address is **taken
+  over by the app's own downloader** with the browser's cookies (the web view's own cancelled; its «failed» for it not
+  reported) into the Downloads folder under the name the site gives, never over a file, with the same notification.
+  What differs, said plainly: a download the site gives only to a POST or only to the page's own connection is
+  fetched by a GET of its address; `blob:` / `data:` downloads are left to WebKitGTK.
+Uncertain until the next CI run: whether WKWebView's `deleteCookie` removes a cookie rebuilt from its listing (the
+check after it says, `still listed after 3 s`); whether the head of a large answer comes at once from a hidden
+WKWebView (the row says how long, and how the body came).
+
 **Which newer Tauri functions** (`apidetect.rs`, run by `build.rs`: the version in `Cargo.lock`, its source in Cargo's
 registry, each signature found on both `Webview` and `WebviewWindow`): `cookies_for_url` → `kr_cookie_read`, `cookies`
 → `kr_cookie_all`, `delete_cookie` → `kr_cookie_delete`, `clear_all_browsing_data` → `kr_clear_all`, `on_download` →
@@ -401,16 +439,19 @@ says what was found (`warning: … KR build: tauri 2.x.y — yes …; no …`).
 in the browser (a site signed in there is signed out to `http`; the sources still reach it through `browserFetch` once
 it has turned them away); without `delete_cookie` a site's clearance cannot be forgotten in the browser alone (only in
 the app's jar), and on a Mac `all` then clears nothing in the browser; the bar floats over the page instead of above
-it; hidden windows may be slowed by the system (no `backgroundThrottling: false` here); downloads where `on_download`
-is missing go the web view's way.
+it; hidden windows may be slowed by the system (no `backgroundThrottling: false` here — on a Mac a large answer's body
+is therefore the app's client's, R4b); downloads where `on_download` is missing go the web view's way; on Linux a
+download goes by a GET of its address (R4b).
 
 Tests: `browserlogic.rs`, `apidetect.rs` std-only unit tests (CI); `tests/tauribrowser.cjs` — the page's scripts taken
 from `browser.rs` and run in Chromium on a local site, by the command and by addresses (204 for the refused
 navigation), read back as `browserlogic.rs` reads them (and by `browserlogic.rs` itself through `rustc`): state, the
-signed-in page (HttpOnly cookie), binary, POST, 300 KB in pieces, an error, `until`, three at once, new windows kept,
+signed-in page (HttpOnly cookie), binary, POST, 300 KB in pieces, (R4b) a large GET answer's head alone and a small
+one or a POST whole, an error, `until`, three at once, new windows kept,
 the site's own navigation kept, a check page, the bar, the title; `tests/tauribridge.cjs` (the four functions'
 commands and arguments, the body's charset, the guard, the Settings card: «Open the browser» opens it as a browser,
-«Forget all sites» forgets every site); `selftest.js` in CI (14 rows, required on Windows): a site opened out of sight
+«Forget all sites» forgets every site); `selftest.js` in CI (14 rows, required on Windows; R4b: the 2 MiB answer and
+forget required on a Mac too, the download on Linux too): a site opened out of sight
 sets its cookies; `browserFetch` of the signed-in page carries them and the browser's user agent; binary, POST, 2 MiB;
 the app's requests carry the browser's cookies (reported); the site's page refused the app's commands (two of the
 app's, the browser's own, a plugin's, an event); a link aimed at a new window stays (reported); a download saved
