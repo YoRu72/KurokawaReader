@@ -61,7 +61,7 @@ export interface VisualSettings {
   align: 'start' | 'justify' | 'center';
   publisherStyles: boolean;
   dimImages: boolean;
-  hyphenate: boolean;
+  hyphenate: boolean;      // (no longer a switch of its own: hyphenation follows book formatting; kept so stored settings and backups load)
   /** Chapter titles and heading-like lines: centred, at the start, or as the book places them. */
   chapterTitles: 'center' | 'start' | 'book';
   /** The label of a chapter's title («Chapter 1», «الفصل الأول») hidden when the title has more (the name shown too). */
@@ -321,7 +321,7 @@ export const DEFAULTS: VisualSettings = {
   myTheme: '',
   indent: 0,
   dropCap: false,
-  bookFormat: false,
+  bookFormat: true,
   customCss: '',
   smartTypography: false,
   focusMode: false,
@@ -447,6 +447,10 @@ function load(): VisualSettings {
     // so a «false» left by the old default cannot be told from one chosen: it is turned on once for everyone; turned off
     // again after that, it stays off.
     if (!localStorage.getItem('kr.hyphenMigrated')) { s.hyphenate = true; localStorage.setItem('kr.hyphenMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
+    // 0.61.2: book formatting is on by default. It was off by default and the whole settings object is stored at every
+    // change, so a «false» left by the old default cannot be told from one chosen: it is turned on once for everyone;
+    // turned off again after that, it stays off. (A book with a «bookFormat» of its own keeps it.)
+    if (!localStorage.getItem('kr.bookFormatMigrated')) { s.bookFormat = true; localStorage.setItem('kr.bookFormatMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
     // 0.59.8: the dots and polka textures are gone; a page that had one is plain again.
     if (!['none', 'paper', 'linen', 'parchment'].includes(s.texture as string)) s.texture = 'none';
     // 0.61.1: the edge guard is off by default; 0.61.0 stored the old default (on) with every other setting, so it is
@@ -745,6 +749,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.classList.toggle('has-link-override', !!s.linkOverride);
   if (s.selOverride) root.style.setProperty('--r-sel', s.selOverride); else root.style.removeProperty('--r-sel');
   root.style.setProperty('--r-indent', s.bookFormat ? `${s.indent || 2}em` : s.indent ? `${s.indent}em` : '0');
+  root.style.setProperty('--r-indent-own', s.indent ? `${s.indent}em` : '0');  // (Japanese, Chinese and Korean text keep the reader's own indent under book formatting.)
   root.classList.toggle('book-format', s.bookFormat);
   root.classList.toggle('focus-mode', s.focusMode);
   root.classList.toggle('drop-cap', s.dropCap);
@@ -785,7 +790,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.style.setProperty('--r-align', s.bookFormat ? 'justify' : s.align);
   root.style.setProperty('--r-word', s.wordSpacing ? `${s.wordSpacing}em` : 'normal');
   root.style.setProperty('--r-letter', s.letterSpacing ? `${s.letterSpacing}em` : 'normal');
-  root.style.setProperty('--r-hyphens', s.hyphenate || s.bookFormat ? 'auto' : 'manual');
+  root.style.setProperty('--r-hyphens', s.bookFormat ? 'auto' : 'manual');
   root.classList.toggle('publisher-styles', s.publisherStyles);
   applyCustomCss(s.customCss);
 }
