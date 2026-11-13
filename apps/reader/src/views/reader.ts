@@ -4,7 +4,7 @@
 import { markReading } from '../resume';
 import { diagOpen, diagLeaveIntent, diagEvent, diagBackHeld } from '../diag';
 import { onBack } from '../ui/backstack';
-import { readingKeys, refreshReadingKeys } from '../readkeys';
+import { readingKeys, refreshReadingKeys, swipeTurned } from '../readkeys';
 import { takeJump, setJump, type Jump } from '../jump';
 export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
@@ -756,8 +756,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (pull >= 240) { window.clearTimeout(wheelT); fire(); }
     }, { passive: true });
   }
-  // Swipe between chapters on touch screens.
+  // Swipe between chapters on touch screens. (A touch cancelled — Android's back gesture took it — turns nothing; a
+  // turn made is told to src/readkeys.ts, so a Back the same swipe fired is not taken for leaving the book.)
   scroll.addEventListener('touchstart', (e) => { const tch = e.touches[0]; swipe = { x: tch.clientX, y: tch.clientY, t: Date.now() }; }, { passive: true });
+  scroll.addEventListener('touchcancel', () => { swipe = null; }, { passive: true });
   scroll.addEventListener('touchend', (e) => {
     if (!swipe || !chapterMode()) return;
     const tch = e.changedTouches[0]; const dx = tch.clientX - swipe.x, dy = tch.clientY - swipe.y; swipe = null;
@@ -765,6 +767,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const rtl = (docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false);
     const forward = rtl ? dx > 0 : dx < 0;
     const k = currentUnitIndex();
+    swipeTurned();
     showUnit(forward ? k + 1 : k - 1, !forward);
   }, { passive: true });
 
@@ -1295,7 +1298,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => document.removeEventListener('kr:command', onCommand));
   // The phone's volume keys and screen edges (Android, as set — src/readkeys.ts): a key turns the page as Space and
   // Shift+Space do (turnPage); sideways swipes turn chapters in the chapter modes, so the edges are kept for them.
-  onDispose(readingKeys({ sideways: () => chapterMode(), sounding: () => speaking || (!!aiAudio && !aiAudio.paused), turn: (forward) => turnPage(!forward) }));
+  // (With the bars shown the reader is finding his way, not reading: the edges are left to Back.)
+  onDispose(readingKeys({ sideways: () => chapterMode(), sounding: () => speaking || (!!aiAudio && !aiAudio.paused), turn: (forward) => turnPage(!forward), barsShown: () => !root.classList.contains('immersive'), root }));
 
   /* ---------- selection tools ---------- */
   onDispose(attachSelectionToolbar(scroll, {

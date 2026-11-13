@@ -1096,13 +1096,15 @@ public class KurokawaPlugin extends Plugin {
     /*
      * The screen's edges while a book is read with sideways swipes (src/readkeys.ts asks): a band in the middle of the
      * left and the right edge is kept from the system's back gesture (View.setSystemGestureExclusionRects, Android 10 /
-     * API 29+), so a swipe begun there reaches the page and turns the chapter. Android honours at most 200 dp of
-     * height per edge; the band is that, centred, and as wide as the system's own gesture area (32 dp at least, a
-     * quarter of the width at most). Back still works from the rest of the edge and from the button. Laid again when
-     * the WebView's size changes (a turn of the phone, the bars shown or hidden); cleared with `on: false`. Below
+     * API 29+), so a swipe begun there reaches the page and turns the chapter. The band is centred and short: 40 % of
+     * the height, and never more than the 200 dp per edge Android honours (Back still works above and below it), as
+     * wide as the system's own gesture area (32 dp at least, a quarter of the width at most). The page asks for it only
+     * while a book is read with its bars hidden; off by default. Back still works from the rest of the edge and from
+     * the button. Laid again when the WebView's size changes (a turn of the phone, the bars shown or hidden); cleared with `on: false`. Below
      * Android 10 there is no back gesture to keep away: answered { ok: false } and nothing done.
      */
     private static final int EDGE_BAND_DP = 200;
+    private static final float EDGE_BAND_SHARE = 0.4f;
     private static final int EDGE_MIN_WIDTH_DP = 32;
     private volatile boolean edgeGuard = false;
     private View.OnLayoutChangeListener edgeLayout = null;
@@ -1135,7 +1137,7 @@ public class KurokawaPlugin extends Plugin {
         int w = v.getWidth(), h = v.getHeight();
         if (edgeGuard && w > 0 && h > 0) {
             float d = v.getResources().getDisplayMetrics().density;
-            int band = Math.min(h, (int) Math.floor(EDGE_BAND_DP * d));
+            int band = Math.min((int) Math.floor(h * EDGE_BAND_SHARE), (int) Math.floor(EDGE_BAND_DP * d));
             int top = (h - band) / 2;
             int side = Math.round(EDGE_MIN_WIDTH_DP * d);
             android.view.WindowInsets wi = v.getRootWindowInsets();

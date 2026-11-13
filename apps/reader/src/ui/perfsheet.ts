@@ -38,13 +38,24 @@ export function diagReport(d: Data = diagData()): string {
   for (const e of leaves) L.push(`  ${stamp(e.t)} ${e.why} -> ${e.to}${e.inBook !== undefined ? ` after ${e.inBook} s` : ''}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
   const held = d.events.filter((e) => e.k === 'backheld').slice(-15).reverse();
   if (held.length) {
-    L.push('', `Back held by "Back twice to leave a book" (last ${held.length}):`);
-    for (const e of held) L.push(`  ${stamp(e.t)} ${e.why === 'twice' ? 'reminder shown, book kept' : e.why === 'selection' ? 'selection cleared, book kept' : e.why}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
+    L.push('', `Back held, book kept (last ${held.length}):`);
+    for (const e of held) L.push(`  ${stamp(e.t)} ${heldWhy(e)}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
   }
-  const rest = d.events.filter((e) => e.k !== 'open' && e.k !== 'leave' && e.k !== 'backheld').slice(-25).reverse();
+  // (Whether the edges were kept from Back in the books opened: the setting as each opened.)
+  const guards = d.events.filter((e) => e.k === 'edgeguard');
+  const g = guards[guards.length - 1];
+  L.push('', g ? `Edge guard ("Protect page-turn swipes at the screen edges") at the last book open: ${g.on ? 'ON' : 'off'}${g.on && !g.sideways ? ' (not used: no sideways swipes in that mode)' : ''}; on at ${guards.filter((e) => e.on).length} of the last ${guards.length} opens.` : 'Edge guard: no book opened on Android since the record began.');
+  const rest = d.events.filter((e) => e.k !== 'open' && e.k !== 'leave' && e.k !== 'backheld' && e.k !== 'edgeguard').slice(-25).reverse();
   L.push('', `Other events (last ${rest.length}):`);
   for (const e of rest) L.push(`  ${stamp(e.t)} ${e.k} ${fields(e)}`.trimEnd());
   return L.join('\n') + '\n';
+}
+/** Why a Back was held, for the report. */
+function heldWhy(e: DiagEvent): string {
+  if (e.why === 'twice') return 'Back twice to leave: reminder shown, book kept';
+  if (e.why === 'selection') return 'Back twice to leave: selection cleared, book kept';
+  if (e.why === 'swipe') return `IGNORED AS PART OF A PAGE-TURN SWIPE (${e.how === 'after-turn' ? `${e.ms} ms after the chapter turned` : e.how === 'down' ? 'came with the finger down; that touch then turned the chapter' : e.how}; the touch began ${e.edge0 && e.edge0 !== 'none' ? `at the ${e.edge0} edge` : 'away from the edges'})`;
+  return String(e.why);
 }
 function sessionLine(s: DiagSession, running: boolean): string {
   const st = s.st; const how = (running ? 'running' : END_EN[s.end ?? ''] ?? '?') + (!running && s.why ? `: ${WHY_EN[s.why] ?? s.why}${s.det ? ` (${s.det})` : ''}` : '');
@@ -97,8 +108,9 @@ export function perfSheet(): void {
     const leaves = d.events.filter((e) => e.k === 'leave');
     const by = new Map<string, number>(); for (const e of leaves) by.set(String(e.why), (by.get(String(e.why)) ?? 0) + 1);
     const edged = leaves.filter((e) => e.edge && e.edge !== 'none').length;
-    const held = d.events.filter((e) => e.k === 'backheld').length;
-    row(t('perfLeft'), ...(leaves.length ? [...by].sort((a, b) => b[1] - a[1]).map(([w, n]) => t('perfWhyCount', { why: WHY[w] ? t(WHY[w]) : w, n })) : [t('perfLeftNone')]), edged ? t('perfEdgeNote', { n: edged }) : null, held ? t('perfBackHeld', { n: held }) : null);
+    const held = d.events.filter((e) => e.k === 'backheld' && e.why !== 'swipe').length;
+    const swiped = d.events.filter((e) => e.k === 'backheld' && e.why === 'swipe').length;
+    row(t('perfLeft'), ...(leaves.length ? [...by].sort((a, b) => b[1] - a[1]).map(([w, n]) => t('perfWhyCount', { why: WHY[w] ? t(WHY[w]) : w, n })) : [t('perfLeftNone')]), edged ? t('perfEdgeNote', { n: edged }) : null, held ? t('perfBackHeld', { n: held }) : null, swiped ? t('backSwipeHeldPerf', { n: swiped }) : null);
     row(t('perfOverheadShort'), t('perfOverhead', { ms: fmtMs(d.overhead), dur: fmtDur(now?.ran ?? 0) }));
     sh.body.replaceChildren(h('p', { class: 'hint perf-note' }, t('perfNote')), tiles, ...rows);
   };

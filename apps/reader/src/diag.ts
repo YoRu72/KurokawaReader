@@ -128,12 +128,13 @@ export function diagBack(src: string): void {
   diagEvent('back', { src, scr: screenNow, ...e });
 }
 /** A press of back kept from leaving the book ("Back twice to leave a book": `why` 'twice' — the first press, the
- *  reminder shown instead; 'selection' — a selection let go instead): kept with where the last touch began, and the
+ *  reminder shown instead; 'selection' — a selection let go instead; 'swipe' — the press came with a page-turn swipe,
+ *  src/readkeys.ts, `how` 'after-turn' (`ms` after the turn) or 'down' (the finger still down, then the turn)): kept with where the last touch began, and the
  *  press no longer counts as the reason of a leave that follows. */
-export function diagBackHeld(why: string): void {
+export function diagBackHeld(why: string, f?: Record<string, string | number | boolean>): void {
   const e = cost(edge);
   intent = null;
-  diagEvent('backheld', { why, scr: screenNow, ...e });
+  diagEvent('backheld', { why, scr: screenNow, ...e, ...f });
 }
 /** The reader left, for the screen `to`: the reason said just before (within 2 s), else how the address changed. */
 export function diagReaderLeft(to: string, move: string): void {
