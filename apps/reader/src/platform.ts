@@ -10,13 +10,16 @@
 //  - Some options need a part of the app's own shell rather than a kind of device: `android` (the volume keys, the
 //    edge kept from the system's back gesture, Back twice to leave the app), `phoneApp` (the Android or iOS app: the
 //    gallery's folder), `desktopApp` (the window's zoom), `shell` (either app: the system bars hidden on a phone, the
-//    window made full screen on a computer — a web page cannot do either), `touchScreen` (any screen that takes a
+//    window made full screen on a computer — a web page cannot do either), `windowBar` (a desktop shell that draws the
+//    window's title bar itself, its buttons included — the Tauri shell for now: desktop-tauri/bridge.js marks itself
+//    with window.__KR_SHELL__; Electron's keeps the system's buttons, so the choice of bar is not offered there),
+//    `touchScreen` (any screen that takes a
 //    finger, a computer's included: pinching a PDF), `notIos` (iOS has no Back), `battery` (the device tells it).
 // (No imports: settings, the options and the reader all use this.)
 
-export type Need = 'phone' | 'computer' | 'android' | 'phoneApp' | 'desktopApp' | 'shell' | 'touchScreen' | 'notIos' | 'battery';
+export type Need = 'phone' | 'computer' | 'android' | 'phoneApp' | 'desktopApp' | 'windowBar' | 'shell' | 'touchScreen' | 'notIos' | 'battery';
 
-type W = { kurokawaDesktop?: unknown; Capacitor?: { isNativePlatform?(): boolean; getPlatform?(): string } };
+type W = { kurokawaDesktop?: unknown; __KR_SHELL__?: string; Capacitor?: { isNativePlatform?(): boolean; getPlatform?(): string } };
 /** 'android' | 'ios' (the phone apps), 'desktop' (the desktop app) or 'web' (a plain web page). */
 export function shellOf(): 'android' | 'ios' | 'desktop' | 'web' {
   const w = window as unknown as W;
@@ -40,6 +43,7 @@ export function fits(need: Need): boolean {
     case 'android': return s === 'android';
     case 'phoneApp': return s === 'android' || s === 'ios';
     case 'desktopApp': return s === 'desktop';
+    case 'windowBar': return s === 'desktop' && (window as unknown as W).__KR_SHELL__ === 'tauri';
     case 'shell': return s !== 'web';
     case 'touchScreen': return onPhone() || (typeof navigator !== 'undefined' && (navigator.maxTouchPoints ?? 0) > 0);
     case 'notIos': return s !== 'ios';

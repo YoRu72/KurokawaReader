@@ -1,6 +1,7 @@
 // Visual Options panel: theme & custom colours, background systems (texture,
 // picture), comfort filters (warmth, dimming), type and layout.
 import { ttsAvailable } from '../tts';
+import { kittenSupported } from '../kittentts';
 import { slimNow } from '../slim';
 import { aiTtsSupported } from '../ai';
 import { h, clear, icon, toast, pickButton, pickSheet, askText } from './dom';
@@ -260,7 +261,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('translatorChoice'), 'translator'], segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));
 
   /* ----- Read aloud ----- */
-  if (ttsAvailable() || aiTtsSupported()) {
+  // (Shown wherever some voice can be had: a system without voices of its own — WebKitGTK has no speechSynthesis —
+  // can still read aloud with KittenTTS, made here, or an AI voice; the system engine then says it has none.)
+  if (ttsAvailable() || aiTtsSupported() || kittenSupported()) {
     grid.append(head('behaviour', t('readAloud')));
     grid.append(stepper([t('speechRate'), 'speechRate'], s.speechRate, 0.5, 2, 0.1, (v) => updateSettings({ speechRate: round2(v) }), (v) => `${v.toFixed(1)}×`));
   grid.append(section([t('speechScope'), 'speechScope'], segmented([['chapter', t('speechChapter')], ['book', t('speechBook')]], s.speechScope, (v) => updateSettings({ speechScope: v }))));

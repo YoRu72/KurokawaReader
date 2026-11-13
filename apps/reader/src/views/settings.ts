@@ -10,9 +10,10 @@ import { colorField } from '../ui/colorpicker';
 import { getSettings, updateSettings, applyOrientation, isDefault, resetSetting, type VisualSettings, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
-import { canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon } from '../native';
+import { canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon, appIconHint } from '../native';
 import { decksCard } from '../ui/decks';
 import { fits, only } from '../platform';
+import { titleBarWaits as winBarWaits } from '../ui/winbar';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
@@ -48,7 +49,23 @@ export function settingsView(): HTMLElement {
     // (On a computer: the interface's size — everything but an open book. The desktop app's window zooms; a web page
     // has no way to, so it is not offered there.)
     const sizeField = isPc() && fits('desktopApp') ? h('div', { class: 'field' }, h('label', null, t('uiSize')), h('div', { class: 'segmented' }, ...UI_SIZES.map((v) => h('button', { type: 'button', 'aria-pressed': String(Math.abs(uiSize() - v) < 0.01), onclick: () => { setUiSize(v); renderAppearance(); } }, `${localDigits(Math.round(v * 100))}%`))), h('p', { class: 'hint' }, t('uiSizeHint'))) : null;
-    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), appIconField(), sizeField,
+    // (The window's title bar: offered where the shell draws it itself — src/platform.ts's `windowBar`, the Tauri
+    // shell —; the app's own (default) or the system's frame, made at once on Windows and Linux, on a Mac at the next
+    // start; the app's own transparent or not, its name shown or not. ui/winbar.ts.)
+    const barSwitch = (label: string, on: boolean, set: (v: boolean) => void, cls: string, hint?: string): HTMLElement => {
+      const c = h('input', { type: 'checkbox', class: cls, onchange: () => set(c.checked) }) as HTMLInputElement; c.checked = on;
+      return h('div', { class: 'field' }, h('span', { class: 'label' }, label), h('label', { class: 'switch', title: label }, c, h('i')), hint ? h('p', { class: 'hint' }, hint) : null);
+    };
+    const waits = (): boolean => document.documentElement.classList.contains('wb-mac') || /Mac/.test(navigator.platform) || winBarWaits();
+    const titleBarFields: HTMLElement[] = only('windowBar',
+      h('div', { class: 'field title-bar-field' }, resettable(t('titleBar'), 'titleBarKind', () => renderAppearance()),
+        h('div', { class: 'segmented' }, ...([['own', t('titleBarOwn')], ['system', t('titleBarSystem')]] as ['own' | 'system', string][]).map(([id, label]) => h('button', { type: 'button', 'data-tb-kind': id, 'aria-pressed': String(cur.titleBarKind === id), onclick: () => { updateSettings({ titleBarKind: id }); renderAppearance(); } }, label))),
+        h('p', { class: 'hint' }, t('titleBarHint') + (waits() ? ` ${t('titleBarNextStart')}` : ''))),
+      ...(cur.titleBarKind !== 'system' ? [
+        barSwitch(t('titleBarClear'), cur.titleBarClear, (v) => { updateSettings({ titleBarClear: v }); renderAppearance(); }, 'wb-clear-switch', t('titleBarClearHint')),
+        ...(cur.titleBarClear ? [] : [barSwitch(t('titleBarName'), cur.titleBarName, (v) => updateSettings({ titleBarName: v }), 'wb-name-switch')]),
+      ] : []));
+    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), appIconField(), sizeField, ...titleBarFields,
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       document.documentElement.dataset.ui !== 'light' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
@@ -193,8 +210,10 @@ export function settingsView(): HTMLElement {
   {
     const card = h('section', { class: 'card' }, h('h3', null, t('inAppBrowser')), h('p', null, t('inAppBrowserBody')));
     void import('../sources/http').then(({ hasBrowser, openBrowser, forgetSite, hasDoh, dohProvider, setDoh, testDoh, DOH_PROVIDERS }) => {
-      if (!hasBrowser()) { card.append(h('p', { class: 'hint' }, t('inAppBrowserNone'))); return; }
-      card.append(
+      // (Without an app browser the DNS-over-HTTPS choice still shows where the shell has one — the Tauri shell's,
+      // for its own requests; every other shell with DoH has a browser too.)
+      if (!hasBrowser()) card.append(h('p', { class: 'hint' }, t('inAppBrowserNone')));
+      else card.append(
         h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           h('button', { class: 'btn primary', type: 'button', onclick: () => void openBrowser() }, icon('globe'), t('openBrowser')),
           h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const n = await forgetSite('https://example.com/', true); toast(t('sitesForgotten', { n: localDigits(n) })); } }, icon('trash'), t('forgetAllSites'))));
@@ -223,7 +242,8 @@ export function settingsView(): HTMLElement {
             if (v === 'custom') { custom.focus(); return; }
             void setDoh(v).then(() => { status.textContent = ''; toast(v === 'off' ? t('dohTurnedOff') : t('dohSet')); });
           }, t('close')), test),
-        customRow, h('span', { class: 'hint' }, t('dohHint')), status));
+        // (The Tauri shell's resolver serves the app's own requests only: the web view's own keep the system's DNS.)
+        customRow, h('span', { class: 'hint' }, t((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri' ? 'dohHintApp' : 'dohHint')), status));
     });
     body.append(card);
   }
@@ -298,6 +318,11 @@ export function settingsView(): HTMLElement {
       h('button', { class: 'btn small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { backupFull } = await import('../backup'); await backupFull((d, n) => { bkStatus.textContent = `${d}/${n}`; }); bkStatus.textContent = ''; } finally { b.disabled = false; } } }, icon('books'), t('backupFull')),
       h('button', { class: 'btn small outlined', onclick: () => void import('../ui/restoresheet').then((m) => m.restoreSheet()) }, icon('import'), t('restore')), restoreInput),
     bkStatus, autoBackupRow()));
+  // (Stage R6a, the Rust build only — where the shell reads a hand-over: the library from the previous version.)
+  if ((window as unknown as { kurokawaHandover?: { find?: unknown } }).kurokawaHandover?.find) {
+    const bkCard = body.lastElementChild;
+    void import('../ui/handoversheet').then((m) => { const rows = m.handoverRows(); if (rows && bkCard) bkCard.append(rows); });
+  }
 
   // Keyboard shortcuts: every computer, the desktop app or a browser (touch-screen laptops included); phones and
   // tablets — a phone's browser too — skip it.
@@ -472,5 +497,5 @@ function appIconField(): HTMLElement | null {
     const { pickIconImage } = await import('../ui/iconCrop'); const u = await pickIconImage(); if (!u) return;
     try { const ok = await setAppIcon(u, t('appName')); if (way === 'desktop') { show(u); toast(t('myIconSet')); } else { if (ok) show(u); toast(ok ? t('myIconPinned') : t('iconCantRead'), ok ? 'info' : 'error', 5000); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
   };
-  return h('div', { class: 'field app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, way === 'desktop' ? t('myIconHintPc') : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));
+  return h('div', { class: 'field app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, way === 'desktop' ? t(appIconHint()) : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));
 }

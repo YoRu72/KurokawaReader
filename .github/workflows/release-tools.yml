@@ -6,7 +6,7 @@ name: Release tools
 on:
   push:
     branches: [main]
-    paths: ['apps/tools/**', 'shared/**', '.github/workflows/release-tools.yml']
+    paths: ['apps/tools/**', 'shared/**', '!shared/shell-rs/**', '.github/workflows/release-tools.yml']
   workflow_dispatch:
 
 permissions:

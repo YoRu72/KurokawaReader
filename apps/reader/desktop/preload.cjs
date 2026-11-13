@@ -43,3 +43,16 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   onCommand(cb) { ipcRenderer.on('kr:command', (_e, c) => cb(c)); },
   setProgress(p) { ipcRenderer.send('kr:progress', p); },
 });
+// (Stage R6a: the hand-over to the Rust build — handover.cjs; the page's side is src/handover.ts. A name of its own,
+// not one of kurokawaDesktop's: the Rust build's bridge answers the same object for its reading half.)
+contextBridge.exposeInMainWorld('kurokawaHandover', {
+  shell: 'electron',
+  begin(o) { return ipcRenderer.invoke('kr:handover-begin', o); },
+  write(rel, data, append) { return ipcRenderer.invoke('kr:handover-write', rel, data, !!append); },
+  shellFiles() { return ipcRenderer.invoke('kr:handover-shell'); },
+  readPart(rel) { return ipcRenderer.invoke('kr:handover-read', rel); },
+  verify(list) { return ipcRenderer.invoke('kr:handover-verify', list); },
+  finish(info) { return ipcRenderer.invoke('kr:handover-finish', info); },
+  abort() { return ipcRenderer.invoke('kr:handover-abort'); },
+  status() { return ipcRenderer.invoke('kr:handover-status'); },
+});

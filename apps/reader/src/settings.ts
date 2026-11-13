@@ -152,6 +152,13 @@ export interface VisualSettings {
   /** The reading bar stays when a tap hides the rest of the chrome (immersive reading). */
   statusImmersive: boolean;
   importButton: 'chips' | 'top' | 'fab';
+  /** A computer's window (the desktop shell that draws its own bar — src/ui/winbar.ts): the app's own title bar in the
+   *  theme's colours, or the system's frame. */
+  titleBarKind: 'own' | 'system';
+  /** The app's own bar without a surface: the window's buttons float over the top of the page. */
+  titleBarClear: boolean;
+  /** The app's icon and name at the start of its own (solid) bar; off, the sidebar keeps them. */
+  titleBarName: boolean;
   appName: 'auto' | 'en' | 'ar' | 'ja' | 'zh' | 'ko';   // launcher name on the device (Android)
   importMode: 'link' | 'copy';   // keep imported files where they are (Android/desktop) or copy them into the app
   translator: 'builtin' | 'system';
@@ -429,6 +436,9 @@ export const DEFAULTS: VisualSettings = {
   edgeGuard: false,
   swipeTurn: true,
   swipeSensitivity: 'normal',
+  titleBarKind: 'own',
+  titleBarClear: false,
+  titleBarName: true,
 };
 
 const KEY = 'kr.visual';
@@ -484,6 +494,8 @@ const GLOBAL_ONLY = new Set<string>([
   'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',
   // updates, jobs, the app on the device
   'autoUpdateCheck', 'updateChannel', 'updateEvery', 'updateAutoDownload', 'updateInstaller', 'jobNotify', 'appName', 'importMode', 'importButton', 'openLastOnLaunch', 'bookPage',
+  // the computer's window
+  'titleBarKind', 'titleBarClear', 'titleBarName',
   // the device's keys and gestures while reading
   'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library

@@ -3,6 +3,7 @@ import { diagMark } from '../diag';
 import { busyNow, onBusy } from '../busy';
 import { h, icon, iconButton, toast, clear, coverColors, openSheet, askText } from '../ui/dom';
 import { onBack } from '../ui/backstack';
+import { brandIcon } from '../ui/brandIcon';
 import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
@@ -128,7 +129,7 @@ export function libraryView(): HTMLElement {
   const importTopBtn = iconButton('import', t('importBooks'), () => importMenu());
   const syncTopBtn = iconButton('cloud', t('sync'), () => void import('../ui/syncsheet').then((m) => m.syncSheet()));
   const topbar = h('header', { class: 'topbar' },
-    h('div', { class: 'brand title' }, h('img', { src: 'icons/icon.svg', alt: '' }), h('span', { class: 'brand-name' }, t('appName'))),
+    h('div', { class: 'brand title' }, h('img', { src: brandIcon() || 'icons/icon.svg', alt: '', 'data-brand': '' }), h('span', { class: 'brand-name' }, t('appName'))),
     importTopBtn,
     syncTopBtn,
     iconButton('chart', t('readingStats'), () => void import('../ui/stats').then((m) => m.showStats())),

@@ -135,7 +135,7 @@ async function runNow(d: Download): Promise<void> {
 /* ---------- the bytes ---------- */
 
 type AndroidDl = { downloadFile(o: { id: string; url: string; name: string; headers?: Record<string, string>; persist: boolean; connections: number }): Promise<{ path: string; size: number }>; cancelDownload?(o: { id: string }): Promise<void>; deleteDownload?(o: { path: string }): Promise<unknown>; addListener?(ev: string, fn: (p: Progress & { id?: string }) => void): Promise<{ remove(): void }> };
-type DesktopDl = { download?(u: string, n: string, id?: string): Promise<string>; addDownloadListener?(cb: (p: Progress & { id?: string }) => void): () => void; onDownloadProgress?(cb: (p: Progress) => void): void; readFile(p: string): Promise<ArrayBuffer>; deleteDownload?(p: string): Promise<boolean> };
+type DesktopDl = { download?(u: string, n: string, id?: string): Promise<string>; addDownloadListener?(cb: (p: Progress & { id?: string }) => void): () => void; onDownloadProgress?(cb: (p: Progress) => void): void; readFile(p: string): Promise<ArrayBuffer>; deleteDownload?(p: string): Promise<boolean>; cancelDownload?(id: string): Promise<boolean> };
 
 /** Sites whose files the downloader was turned away from though a check had been passed: the lane only. */
 const laneOnly = new Set<string>();
@@ -179,6 +179,8 @@ async function fetchBytes(d: Download, onProgress: (p: Progress) => void): Promi
   const dk = window.kurokawaDesktop as unknown as DesktopDl | undefined;
   if (plat === 'desktop' && dk?.download) {
     const off = dk.addDownloadListener?.((p) => { if (!p.id || p.id === d.id) onProgress(p); });
+    // (The Tauri shell stops a download it is asked to; Electron's has no way to, and runs on to the end.)
+    if (dk.cancelDownload) cancels.set(d.id, () => void dk.cancelDownload!(d.id).catch(() => false));
     try {
       const path = await dk.download(d.url, `${d.id}-${safe}`, d.id);
       const file = new File([await dk.readFile(path)], d.name, { type: d.mime ?? '' });

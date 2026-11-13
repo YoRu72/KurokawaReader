@@ -1,0 +1,7 @@
+# Build output and files generated in CI (icons come from ../desktop/icon.png via `tauri icon`).
+src-tauri/target/
+src-tauri/gen/
+src-tauri/icons/
+# (Stage R5: 7-Zip from desktop/node_modules/7zip-bin, copied in CI into 7zip/<plat>/<arch>/ with its licences.)
+7zip/*
+!7zip/README.txt

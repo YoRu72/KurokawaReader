@@ -11,6 +11,8 @@ import { GlyphRuns } from './glyphruns';
 import { readSfnt, cmapGlyphs, glyphReader, verticalMetrics, renamedFont, type Outline } from './fontbuild';
 import { loadPdfjs, offscreen } from './pdfjsload';
 import { type ZipLike } from './ziputil';
+import { LinePack, unpackLines } from './fontpack';
+import { onPhone } from './platform';
 import { cleanPdfText, isRtlText, joinLine, COMBINING, attachMarks, logicalNeutral, fixLoneBrackets, dropBuriedSpaces, balanceBrackets, numberRunsForward, ltrRunsForward } from './pdftext';
 import type { Book } from './db';
 import type { Progress } from './convert';
@@ -1561,8 +1563,11 @@ async function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stre
     return [...all].sort((a, b) => a - b);
   };
   let nGroup = 0, lastTick = performance.now();
+  // (Each font built by the font workers while the next is got ready here; put in place in the groups' order.)
+  const builder = fontBuilder();
+  const builds: { keys: string[]; lead: FontInfo; lines: ReturnType<LinePack['done']>; built: Promise<Uint8Array | null> }[] = [];
   for (const keys of groups.values()) {
-    if (tick && performance.now() - lastTick > 200) { await tick(nGroup / groups.size); lastTick = performance.now(); }
+    if (tick && performance.now() - lastTick > 30) { await tick(nGroup / groups.size); lastTick = performance.now(); }
     nGroup++;
     keys.sort((a, b) => (fonts.get(b)!.uses ?? 0) - (fonts.get(a)!.uses ?? 0));
     const lead = fonts.get(keys[0])!;
@@ -1584,23 +1589,25 @@ async function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stre
         if (!used.size || (ok / used.size >= 0.97 && !letters)) continue;
       }
     }
-    const sources: GlyphSource[] = []; const c2g: Map<number, number>[] = []; const idx = new Map<string, number>();
+    const sources: GlyphSource[] = []; const c2g: Map<number, number>[] = []; const idx = new Map<string, number>(); const datas: Uint8Array[] = [];
     for (const k of keys) {
       const f = fonts.get(k)!; const sf = readSfnt(f.src!.data); if (!sf) continue;
       try {
         const r = glyphReader(sf); const vm = verticalMetrics(sf); const cm = cmapGlyphs(sf);
         const m = new Map<number, number>();
         for (const [code, fc] of Object.entries(f.src!.toFontChar)) { const g = cm.get(fc); if (g) m.set(+code, g); }
-        idx.set(k, sources.length); sources.push({ outline: r.outline, upem: r.upem, asc: vm?.asc, desc: vm?.desc }); c2g.push(m);
+        idx.set(k, sources.length); sources.push({ outline: r.outline, upem: r.upem, asc: vm?.asc, desc: vm?.desc }); c2g.push(m); datas.push(f.src!.data);
       } catch (e) { if (debug) console.warn('P2D font read failed', f.family, e); }
     }
     if (!sources.length) continue;
     const member = new Set(keys);
-    const lines: Use[][] = [];
+    // (Its lines packed as they are made — for the font worker, and never all of them as arrays at once — with the
+    // screen given its turn every 30 ms: a book's main font sets most of its glyphs.)
+    const pack = new LinePack(); let slice = performance.now();
     for (const si of linesOf(keys)) {
       const seq = store.seqs.at(si);
       let cur: Use[] = [];
-      const push = (x: Use[]) => lines.push(Object.assign(x, { rtl: seq.rtl }));
+      const push = (x: Use[]) => pack.add(x, seq.rtl);
       for (const [font, u] of seq) {
         const i = member.has(font) ? idx.get(font) : undefined;
         if (i === undefined) { if (cur.length) push(cur); cur = []; continue; }
@@ -1608,19 +1615,66 @@ async function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stre
         cur.push([i * 65536 + g, u[1], u[2], u[3], u[4], u[5], u[6]]);
       }
       if (cur.length) push(cur);
+      if (tick && performance.now() - slice > 30) { await tick(nGroup / groups.size); slice = lastTick = performance.now(); }
     }
+    const lines = pack.done();
     // The space code's glyph, when it is a blank one (a legacy font's "space" may be a letter).
     let sp = !lead.legacy && lead.spaceCode !== undefined && idx.has(keys[0]) ? c2g[idx.get(keys[0])!].get(lead.spaceCode) : undefined;
     if (sp !== undefined) { try { if (sources[idx.get(keys[0])!].outline(sp).contours.length) sp = undefined; } catch { sp = undefined; } }
-    let built: Uint8Array | null = null;
-    try { built = buildFont(sources, lines, { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(ownFamily.get(k) ?? fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) }, sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp); } catch (e) { console.warn('P2D font rebuild failed', lead.family, e); }
-    if (debug) console.warn('P2D rebuilt', lead.family, keys.length, lines.length, built?.length, built ? (() => { try { const c = cmapCoverage(built); return `cov=${c.size} ${[...c].slice(0, 12).map((x) => x.toString(16)).join(' ')}`; } catch (e) { return `cov-err ${String(e)}`; } })() : '', JSON.stringify(lines.slice(0, 2).map((l) => l.slice(0, 4).map((u) => [u[0] >> 16, u[0] & 0xffff, u[1]]))));
-    if (!built) continue;
-    // (Its coverage is the new font's: the symbol table read from the PDF's copy no longer describes it.)
-    lead.raw = built; lead.cov = undefined; lead.winCov = undefined; lead.rebuilt = true; lead.noUnicode = false;
-    for (const k of keys.slice(1)) { const f = fonts.get(k)!; if (f.family !== lead.family) alias.set(f.family, lead.family); f.raw = undefined; }
+    const meta = { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(ownFamily.get(k) ?? fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) };
+    const spaceGid = sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp;
+    const family = lead.family;
+    builds.push({ keys, lead, lines, built: builder.build(datas, lines, meta, spaceGid, () => buildFont(sources, unpackLines(lines), meta, spaceGid)).catch((e) => { console.warn('P2D font rebuild failed', family, e); return null; }) });
   }
+  try {
+    for (let bi = 0; bi < builds.length; bi++) {
+      const { keys, lead, lines, built: pending } = builds[bi]; (builds as unknown[])[bi] = null; // (each let go once in place)
+      if (tick && performance.now() - lastTick > 30) { await tick(bi / builds.length); lastTick = performance.now(); }
+      const built = await pending;
+      if (debug) console.warn('P2D rebuilt', lead.family, keys.length, lines.rtl.length, built?.length, built ? (() => { try { const c = cmapCoverage(built); return `cov=${c.size} ${[...c].slice(0, 12).map((x) => x.toString(16)).join(' ')}`; } catch (e) { return `cov-err ${String(e)}`; } })() : '', JSON.stringify(unpackLines(lines).slice(0, 2).map((l) => l.slice(0, 4).map((u) => [u[0] >> 16, u[0] & 0xffff, u[1]]))));
+      if (!built) continue;
+      // (Its coverage is the new font's: the symbol table read from the PDF's copy no longer describes it.)
+      lead.raw = built; lead.cov = undefined; lead.winCov = undefined; lead.rebuilt = true; lead.noUnicode = false;
+      for (const k of keys.slice(1)) { const f = fonts.get(k)!; if (f.family !== lead.family) alias.set(f.family, lead.family); f.raw = undefined; }
+    }
+  } finally { builder.end(); }
   return { alias, byKey };
+}
+
+/** The font workers of a job (src/pdf2docx.fonts.worker.ts: one, two where there are cores to spare), started when
+ *  the first font is sent and ended with the job. A font is built here instead where workers cannot start or one
+ *  fails: the same font, on this thread. */
+function fontBuilder(): { build(datas: Uint8Array[], lines: ReturnType<LinePack['done']>, meta: Parameters<typeof buildFont>[2], spaceGid: number | undefined, here: () => Uint8Array | null): Promise<Uint8Array | null>; end(): void } {
+  type Wait = { res: (b: Uint8Array | null) => void; rej: (e: unknown) => void; here: () => Uint8Array | null };
+  const pool: { w: Worker; waiting: Map<number, Wait> }[] = []; let broken = (globalThis as { krFontWorkers?: boolean }).krFontWorkers === false || typeof Worker === 'undefined';
+  let n = 0;
+  const fallBack = (waiting: Map<number, Wait>) => { for (const x of waiting.values()) { try { x.res(x.here()); } catch (e) { x.rej(e); } } waiting.clear(); };
+  const start = () => {
+    const size = Math.min(2, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 4)));
+    for (let i = 0; i < size; i++) {
+      try {
+        const w = new Worker(new URL('./pdf2docxfonts.js', import.meta.url), { type: 'module' }); liveWorkers.add(w);
+        const s = { w, waiting: new Map<number, Wait>() }; pool.push(s);
+        w.onmessage = (e: MessageEvent<import('./fontpack').FontDone>) => { const x = s.waiting.get(e.data.id); if (!x) return; s.waiting.delete(e.data.id); if (e.data.error) x.rej(new Error(e.data.error)); else x.res(e.data.built); };
+        w.onerror = (e) => { e.preventDefault(); broken = true; fallBack(s.waiting); };
+      } catch { broken = true; }
+    }
+  };
+  return {
+    build(datas, lines, meta, spaceGid, here) {
+      if (!broken && !pool.length) start();
+      const s = pool.filter(() => !broken).sort((a, b) => a.waiting.size - b.waiting.size)[0];
+      if (broken || !s) return Promise.resolve().then(here);
+      const id = ++n;
+      return new Promise((res, rej) => {
+        s.waiting.set(id, { res, rej, here });
+        // (A font's bytes that are part of a bigger buffer are sent alone: a view is sent with its whole buffer.)
+        const own = datas.map((d) => (d.byteOffset === 0 && d.byteLength === d.buffer.byteLength ? d : d.slice()));
+        s.w.postMessage({ id, datas: own, meta, spaceGid, ...lines } satisfies import('./fontpack').FontJob);
+      });
+    },
+    end() { for (const s of pool) { s.w.terminate(); liveWorkers.delete(s.w); fallBack(s.waiting); } pool.length = 0; },
+  };
 }
 
 /** An Arabic letter (one that joins its word, or a hamza / alef form): not a mark, digit, sign or punctuation. */
@@ -2281,25 +2335,34 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
 /* Writing                                                             */
 /* ------------------------------------------------------------------ */
 
-/** How many lanes (page readers in workers of their own, see pdf2docx.lane.ts) a book is read in: none on a
- *  device with few cores (the app's thread and pdf.js's worker are all it has), else one lane for each two cores
- *  beyond the app's own, up to six (a computer with many cores; a phone's eight make three) — and as many as its
- *  memory holds: each lane is a whole reader (its copy of the document, pdf.js's worker and its own, a canvas),
- *  some 200 MB more at its height on a book of a thousand pages. A device of 2 GB or less reads on this thread,
- *  one of 4 GB in two lanes at most. */
+/** How many lanes (page readers in workers of their own, see pdf2docx.lane.ts) a book is read in: at least one
+ *  wherever workers can draw (OffscreenCanvas) — the pages are then laid out and drawn off the app's thread, which
+ *  only puts them together and stays free for the screen, and everything a lane held goes when its worker ends —
+ *  and one for each two cores beyond that, up to six on a computer and two on a phone; as many as its memory holds
+ *  (each lane is a whole reader: its copy of the document in its pdf.js worker, a canvas), and fewer for a big
+ *  file. One lane costs what reading on this thread costs (one copy of the document); none only for a short book
+ *  (a lane's start-up is not worth it) or where workers cannot draw. */
 function laneCount(pages: number, size: number): number {
   const forced = (globalThis as { krLanes?: number }).krLanes;
   if (forced !== undefined) return forced;
-  if (pages < 8 || size > 80 * 1024 * 1024 || typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined') return 0;
-  const cores = navigator.hardwareConcurrency ?? 2;
-  return Math.min(6, Math.floor((cores - 2) / 2), Math.ceil(pages / 4), size > 40 * 1024 * 1024 ? 2 : 6, lanesForMemory());
+  if (pages < 8 || typeof OffscreenCanvas === 'undefined' || typeof Worker === 'undefined' || typeof MessageChannel === 'undefined') return 0;
+  const cores = navigator.hardwareConcurrency || 2;
+  const phone = (globalThis as { krPhone?: boolean }).krPhone ?? (typeof window !== 'undefined' && onPhone());
+  return Math.max(1, Math.min(phone ? 2 : 6, Math.floor(cores / 2), Math.ceil(pages / 8), size > 80 * 1024 * 1024 ? 1 : size > 40 * 1024 * 1024 ? 2 : 6, lanesForMemory()));
 }
-/** The lanes the device's memory allows (navigator.deviceMemory: gigabytes, rounded down to a power of two and
- *  at most 8; unknown — not every browser tells — leaves the cores to decide). */
+/** The device's memory in gigabytes (navigator.deviceMemory: rounded down to a power of two, at most 8; unknown
+ *  where the browser does not tell). */
+const deviceGb = (): number | undefined => (globalThis as { krDeviceMemory?: number }).krDeviceMemory ?? (navigator as { deviceMemory?: number }).deviceMemory;
+/** The lanes the device's memory allows: one on a device of 2 GB or less, two under 8 GB; unknown leaves the
+ *  cores to decide. */
 function lanesForMemory(): number {
-  const gb = (globalThis as { krDeviceMemory?: number }).krDeviceMemory ?? (navigator as { deviceMemory?: number }).deviceMemory;
-  return gb === undefined ? 6 : gb <= 2 ? 0 : gb < 8 ? 2 : 6;
+  const gb = deviceGb();
+  return gb === undefined ? 6 : gb <= 2 ? 1 : gb < 8 ? 2 : 6;
 }
+/** The workers of the lanes of the conversions under way (theirs and their pdf.js workers'), for a test to see that
+ *  none outlives its job. */
+const liveWorkers = new Set<Worker>();
+(globalThis as { krConvWorkers?: () => number }).krConvWorkers = () => liveWorkers.size;
 
 /**
  * The pages read in lanes, put together here in page order exactly as one reader would have them: each font
@@ -2307,33 +2370,53 @@ function lanesForMemory(): number {
  * page order; and a page that a font of whole-word glyphs met on an earlier page (read in another lane) would
  * have read otherwise, read again. Null when the lanes could not do it (the caller reads the pages itself).
  */
-async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fonts: Map<string, FontInfo>, store: UseStore, progress: Progress): Promise<PageModel[] | null> {
-  type Lane = { w: Worker; out: number };
+async function readInLanes(file: Blob, nPages: number, nLanes: number, fonts: Map<string, FontInfo>, store: UseStore, progress: Progress): Promise<PageModel[] | null> {
+  type Lane = { w: Worker; pw: Worker; out: number; ready: boolean; heard: number; said: string };
   const lanes: Lane[] = [];
   const done = new Map<number, import('./pdf2docx.lane').LanePage>();
   const defs = new Map<string, FontInfo>();
   let next = 1, failed: string | null = null, wake: (() => void) | null = null, heard = Date.now();
   const poke = () => { const w = wake; wake = null; w?.(); };
   const QUEUE = 3;
+  // (A lane that says nothing for this long before it is ready — its script, pdf.js or pdf.js's worker never
+  // started — is given up, and the pages are read here: a conversion never waits on lanes that cannot answer.)
+  const OPEN_WAIT = Number((globalThis as { krLaneWait?: number }).krLaneWait ?? 20000);
   // (Never far ahead of the page being put together: pages done early wait here, pictures and all.)
   let at = 1; const AHEAD = 8 * nLanes;
   const feed = (l: Lane) => { while (l.out < QUEUE && next <= nPages && next < at + AHEAD) { l.w.postMessage({ t: 'page', n: next++ }); l.out++; } };
   const redoing = new Set<number>(), redone = new Set<number>();
   try {
-    await Promise.all(Array.from({ length: nLanes }, (_, i) => new Promise<void>((ready, fail) => {
-      const w = new Worker(new URL('./pdf2docxlane.js', import.meta.url), { type: 'module' });
-      const l: Lane = { w, out: 0 }; lanes.push(l);
-      w.onerror = (e) => { failed = e.message || 'lane failed'; fail(new Error(failed)); poke(); };
+    for (let i = 0; i < nLanes; i++) {
+      // Each lane and its pdf.js worker are both started here, on the page, and joined by a channel: a worker
+      // cannot start a worker everywhere (Windows' WebView2), and a lane that tried gave up there.
+      const pw = new Worker(new URL('./pdfjsport.js', import.meta.url), { type: 'module' }); liveWorkers.add(pw);
+      const w = new Worker(new URL('./pdf2docxlane.js', import.meta.url), { type: 'module' }); liveWorkers.add(w);
+      const l: Lane = { w, pw, out: 0, ready: false, heard: Date.now(), said: 'nothing' }; lanes.push(l);
+      w.onerror = (e) => { failed = failed ?? `lane ${i}: ${e.message || 'its script did not start'}`; poke(); };
+      // (pdf.js listens to none of its worker's failures when given a channel: one that cannot start would leave
+      // the lane waiting for ever. Seen here instead, so the pages are read on this thread at once.)
+      pw.onerror = (e) => { e.preventDefault(); failed = failed ?? `pdf.js's worker for lane ${i} did not start (${e.message || 'no message'})`; poke(); };
+      pw.onmessage = (e: MessageEvent<{ krPdfjs?: string; message?: string }>) => { if (e.data?.krPdfjs === 'failed') { failed = failed ?? `pdf.js's worker for lane ${i} did not start (${e.data.message})`; poke(); } };
       w.onmessage = (e: MessageEvent<import('./pdf2docx.lane').LaneOut>) => {
-        const m = e.data; heard = Date.now();
-        if (m.t === 'ready') { if (m.pages !== nPages) { failed = 'pages'; fail(new Error(failed)); } else ready(); }
-        else if (m.t === 'error') { failed = m.message; fail(new Error(m.message)); poke(); }
+        const m = e.data; heard = l.heard = Date.now();
+        if (m.t === 'step') l.said = m.s;
+        else if (m.t === 'closed') endLane(l);
+        else if (m.t === 'ready') { if (m.pages !== nPages) failed = failed ?? 'pages'; else l.ready = true; poke(); }
+        else if (m.t === 'error') { failed = failed ?? m.message; poke(); }
         else { l.out--; done.set(m.n, m); redoing.delete(m.n); feed(l); poke(); }
       };
-      // (Each lane its own copy, the last the bytes themselves: none kept here while the lanes read.)
-      const copy = i === nLanes - 1 && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer as ArrayBuffer : bytes.slice().buffer;
-      w.postMessage({ t: 'open', bytes: copy, lane: i }, [copy]);
-    })));
+      // (The file itself goes, not its bytes: a Blob is passed, not copied — each lane reads it once and hands it
+      // over to its pdf.js worker; nothing of it is kept here.)
+      const ch = new MessageChannel();
+      pw.postMessage({ krPort: ch.port1 }, [ch.port1]);
+      w.postMessage({ t: 'open', file, lane: i, port: ch.port2 } satisfies import('./pdf2docx.lane').LaneIn, [ch.port2]);
+    }
+    while (!lanes.every((l) => l.ready)) {
+      if (failed) throw new Error(failed);
+      const t = Date.now();
+      if (lanes.some((l) => !l.ready && t - l.heard > OPEN_WAIT)) throw new Error(`lanes silent ${Math.round(OPEN_WAIT / 1000)} s before they were ready; last heard: ${lanes.map((l, i) => `lane ${i} «${l.ready ? 'ready' : l.said}»`).join(', ')}`);
+      await new Promise<void>((r) => { wake = r; setTimeout(r, Math.min(1000, OPEN_WAIT)); });
+    }
     for (const l of lanes) feed(l);
     const pages: PageModel[] = [];
     const words = new Set<string>();
@@ -2380,11 +2463,31 @@ async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fo
     console.warn('[kurokawa] PDF → Word lanes: reading on this thread instead', e);
     return null;
   } finally {
-    for (const l of lanes) { l.w.postMessage({ t: 'close' }); setTimeout(() => l.w.terminate(), 2000); }
+    // (Each lane closes its document and says so, and is ended with its pdf.js worker then — or after a moment,
+    // whatever it is doing: all that the lane and pdf.js held goes with them.)
+    for (const l of lanes) { l.w.postMessage({ t: 'close' }); setTimeout(() => endLane(l), 1000); }
   }
+}
+function endLane(l: { w: Worker; pw: Worker }): void {
+  l.w.onmessage = null; l.w.terminate(); l.pw.terminate();
+  liveWorkers.delete(l.w); liveWorkers.delete(l.pw);
 }
 
 export async function pdfToDocx(book: Book, file: Blob, progress: Progress, password?: string): Promise<Blob> {
+  // Whatever the job opened or drew on is let go when it ends — done, failed or cancelled: pdf.js's documents
+  // (and the worker each keeps), the canvases kept from page to page, the pictures met. (A document left open by a
+  // job that failed half-way held its whole file and pdf.js's caches until the app was closed.)
+  const docs = new Set<{ destroy(): unknown }>();
+  try { return await convertPdf(book, file, progress, password, (o) => { docs.add(o); return o; }); }
+  finally {
+    for (const o of docs) { try { await o.destroy(); } catch { /* gone */ } }
+    for (const c of [graphicsCanvas, scanCanvas]) if (c) { c.width = 0; c.height = 0; }
+    graphicsCanvas = null; scanCanvas = null;
+    pngSeen.clear(); pendingPngs = [];
+  }
+}
+
+async function convertPdf(book: Book, file: Blob, progress: Progress, password: string | undefined, track: <T extends { destroy(): unknown }>(o: T) => T): Promise<Blob> {
   const pdfjs = await loadPdfjs();
   const { yieldNow } = await import('./jobs');
   const RES = new URL('./pdfjs/', import.meta.url).href;
@@ -2392,11 +2495,11 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   // (it comes out as control characters) is read from a copy decrypted here instead.
   const { openPdfjs, reopenDecrypted, looksGarbled } = await import('./pdfkeys');
   const jsOpts = { fontExtraProperties: true, useSystemFonts: false, cMapUrl: cmapsUrl(RES), cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` };
-  let opened = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password });
+  let opened = track(await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }));
   if (opened.encrypted) {
     const p1 = await opened.doc.getPage(1); const tc = await p1.getTextContent();
     const text = (tc.items as { str?: string }[]).map((i) => i.str ?? '').join('');
-    if (looksGarbled(text, text.length)) opened = (await reopenDecrypted(pdfjs, opened, jsOpts)) ?? opened;
+    if (looksGarbled(text, text.length)) opened = track((await reopenDecrypted(pdfjs, opened, jsOpts)) ?? opened);
   }
   let doc = opened.doc;
   const fonts = new Map<string, FontInfo>();
@@ -2406,15 +2509,17 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   pendingPngs = [];
   // On a device with cores to spare, the pages are read in lanes (workers of their own, each with its copy of
   // the document) and only put together here.
-  const nLanes = opened.encrypted ? 0 : laneCount(doc.numPages, file.size);
+  // (Not a protected file: the lanes read the file as it is, without its password — and a copy decrypted here,
+  // the bytes pdf.js was given and kept, is not that file.)
+  const nLanes = opened.encrypted || opened.bytes.byteLength > 0 ? 0 : laneCount(doc.numPages, file.size);
   let laned: PageModel[] | null = null;
-  if (nLanes > 1) {
+  if (nLanes >= 1) {
     // (The copy opened here to count the pages is closed while the lanes read theirs — on a phone, the memory
     // of a whole document that only waits — and opened again only if the lanes could not do it.)
     const nPages = doc.numPages;
     await opened.destroy();
-    laned = await readInLanes(new Uint8Array(await file.arrayBuffer()), nPages, nLanes, fonts, store, progress);
-    if (!laned) { opened = await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }); doc = opened.doc; }
+    laned = await readInLanes(file, nPages, nLanes, fonts, store, progress);
+    if (!laned) { opened = track(await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password })); doc = opened.doc; }
   }
   if (laned) pages = laned;
   else {
@@ -2424,8 +2529,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
     // thread, not this one, is what a long book waits on. (The fonts the second copy loads are the first's again
     // under other names; buildDocFonts makes one of each face.)
     // (Not where memory is short: the second copy is another document parsed in full.)
-    const twice = doc.numPages >= 6 && !opened.encrypted && file.size < 60 * 1024 * 1024 && ((globalThis as { krTwoWorkers?: boolean }).krTwoWorkers ?? ((navigator.hardwareConcurrency ?? 2) >= 4 && lanesForMemory() > 0));
-    const opened2 = twice ? await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }).catch(() => null) : null;
+    const twice = doc.numPages >= 6 && !opened.encrypted && file.size < 60 * 1024 * 1024 && ((globalThis as { krTwoWorkers?: boolean }).krTwoWorkers ?? ((navigator.hardwareConcurrency ?? 2) >= 4 && (deviceGb() ?? 4) > 2));
+    const opened2 = twice ? await openPdfjs(pdfjs, new Uint8Array(await file.arrayBuffer()), jsOpts, { password }).then(track).catch(() => null) : null;
     const doc2 = opened2 && opened2.doc.numPages === doc.numPages ? opened2.doc : null;
     if (opened2 && !doc2) void opened2.destroy();
     const docOf = (n: number) => (doc2 && n % 2 === 0 ? doc2 : doc);
@@ -2458,19 +2563,24 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   // text) keep their tatweel; the others lose it, or LibreOffice would stretch every justified line with it.
   // Page numbers and running heads, across the pages.
   sortFurniture(pages);
+  // (Between the passes over the whole book, the screen gets its turn: each is tens of milliseconds on a long one.)
+  await yieldNow();
   const stretched = new Set<string>();
   for (const pg of pages) for (const b of [...pg.body, ...pg.notesRaw, ...pg.notes.flatMap((n) => n.paras), ...(pg.regions ?? []).flatMap((r) => r.cols.flat()), ...(pg.placed ?? []).flatMap((x) => x.blocks)]) {
     if (b.kind === 'verse') { for (const row of b.rows) for (const cell of row) for (const r of cell) stretched.add(r.font); }
     else if (b.kind === 'grid') { for (const row of b.rows) for (const cell of row) for (const r of cell) if (r.text.includes('\u0640')) stretched.add(r.font); }
     else for (const r of b.runs) if (b.kashida || r.text.includes('\u0640')) stretched.add(r.font);
   }
+  await yieldNow();
   // (The fonts take a while on a long book — seconds here, more on a phone: the progress moves on with them.)
   const { alias, byKey } = await buildDocFonts(fonts, store, stretched, async (done) => { progress('build', 85 + Math.round(done * 4)); await yieldNow(); });
   memMark('docFonts');
   store.seqs = new GlyphRuns();
   memMark('runsFreed');
+  await yieldNow();
   if (alias.size || byKey.size) for (const pg of pages) renameRuns(pg, alias, byKey);
   mergeWordFonts(fonts, pages);
+  await yieldNow();
   // In a font rebuilt from the PDF's own glyphs, the page's own tatweels give its lines exactly their width:
   // they stay, and Word adds none.
   const exact = new Set([...fonts.values()].filter((f) => f.rebuilt && f.raw).map((f) => f.family));
@@ -2750,7 +2860,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   // the number the page shows, whatever came before (a page the reader's fonts spill onto a second one included).
   // (Not on a page's later, continuous sections: a number set there would count the page again.)
   const nums = pages.map((p) => p.furniture.find((f) => f.num)?.num);
-  let pi = -1;
+  let pi = -1, slice = performance.now();
   for (let i = 0; i < pages.length; i++) {
     for (const s of sectionsOf(pages[i])) {
       if (s.type === 'nextPage') pi++;
@@ -2759,7 +2869,8 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
       writer.addSection(s);
     }
     (pages as (PageModel | null)[])[i] = null;
-    if (i % 32 === 31) { progress('build', 89 + Math.round((i / pages.length) * 3)); await yieldNow(); }
+    // (Every 30 ms of work the screen gets its turn: a page with many runs takes several.)
+    if (performance.now() - slice > 30) { progress('build', 89 + Math.round((i / pages.length) * 3)); await yieldNow(); slice = performance.now(); }
   }
   pages = [];
 
@@ -2867,7 +2978,7 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   const tc0 = performance.now();
   const zip = await writer.pack(embedded);
   memMark('pack');
-  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs, declOf, writer);
+  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs, declOf, writer, yieldNow);
   if (TT) TT.compile = performance.now() - tc0;
   memMark('finish');
   progress('build', 95);
@@ -2896,7 +3007,7 @@ function fixBodyXml(xml: string, rtl: boolean, ea: { n: number }): string {
 const positionsInHalfPoints = (xml: string): string => xml.replace(/<w:position w:val="(-?[\d.]+)pt"\/>/g, (_m, v: string) => `<w:position w:val="${Math.round(+v * 2)}"/>`);
 
 /** Word details the library has no option for: right-to-left sections, footnote numbers restart on each page. */
-async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>(), declOf?: (name: string) => import('./docxwrite').FontDecl, writer?: { mapBody(fix: (xml: string) => string): void }): Promise<void> {
+async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>(), declOf?: (name: string) => import('./docxwrite').FontDecl, writer?: { mapBody(fix: (xml: string) => string, pause?: () => Promise<void>): Promise<void> }, pause?: () => Promise<void>): Promise<void> {
   // (The document's own XML — word/document.xml, a placeholder in the zip — was written by the writer piece by
   // piece and changed as it was written (fixBodyXml); what is done to it here is done to its pieces.)
   const DOC = 'word/document.xml';
@@ -2950,11 +3061,11 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
   const bodyNames: string[] = [];
   if (writer) {
     const noted = new Set<string>();
-    writer.mapBody((xml) => {
+    await writer.mapBody((xml) => {
       const out = subs.size ? subbed(xml) : xml;
       for (const m of out.matchAll(/w:(?:ascii|hAnsi|cs|eastAsia)="([^"]*)"/g)) if (!noted.has(m[1])) { noted.add(m[1]); bodyNames.push(m[1]); }
       return out;
-    });
+    }, pause);
   }
   if (subs.size) {
     for (const name of Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*|footnotes)\.xml$/.test(n))) {

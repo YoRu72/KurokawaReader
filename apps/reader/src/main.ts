@@ -103,7 +103,10 @@ registerNativePlugins();
 applyDocumentLang();
 applyChrome();
 initPcShell();
-void import('./ui/titlebar').then((m) => m.startTitleBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop, t('appName')));
+// (The window's own title bar on a computer: drawn whole by the page in the Tauri shell, which marks itself —
+// ui/winbar.ts —; Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
+if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop));
+else void import('./ui/titlebar').then((m) => m.startTitleBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop, t('appName')));
 setTimeout(() => void import('./ui/share').then((m) => m.clearShareCache()), 8000);
 void loadFonts();
 // (A slim package: what it left out, and the chosen font fetched before the first book opens.)
@@ -115,6 +118,11 @@ initNativeBridges();
 void setVolumeKeys(false);
 // (The update checks loaded once the first screen is up: nothing on it needs them.)
 void import('./updates').then((m) => m.scheduleAutoCheck()).catch(() => undefined);
+// (Stage R6b + R6a: the Tauri build's first start — ONE screen: the first-run page over the library (language, look,
+// the library from the previous version, opening books with the app), which carries the hand-over's offer when the
+// previous (Electron) version left one; when the first run was done before, that offer alone. ui/firstrun.ts
+// startScreens; the offer itself ui/handoversheet.ts.)
+if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') void import('./ui/firstrun').then((m) => m.startScreens()).catch(() => undefined);
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
 // (Downloads the app was closed in the middle of: taken up again.)
 setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).catch(() => undefined), 2500);
@@ -129,6 +137,15 @@ setTimeout(() => void import('./library').then((m) => m.cleanOrphansOnce()).catc
 setTimeout(() => { try { if (localStorage.getItem('kr.al.pending')) void import('./ui/track').then((m) => { m.watchPending(); void m.flushTracking(); }).catch(() => undefined); } catch { /* private mode */ } }, 5000);
 import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
 void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
+// (Stage R6a, the computer's apps only — the shells that give window.kurokawaHandover: both give the tests and the
+// update their way in — src/handover.ts; the Electron bridge build's switch (desktop/handover.cjs prepare) runs
+// beforeInstall() and installs the Rust build only on true. The Rust build's offer at the start: above, startScreens.)
+if ((window as unknown as { kurokawaHandover?: { find?: unknown } }).kurokawaHandover) {
+  const ho = () => import('./handover'); const hs = () => import('./ui/handoversheet');
+  Object.defineProperty(window, '__KR_HANDOVER__', { configurable: true, value: Object.freeze({
+    make: () => ho().then((m) => m.makeHandover()), beforeInstall: () => hs().then((m) => m.handoverBeforeInstall()),
+    snapshot: () => ho().then((m) => m.profileSnapshot()), atStart: () => hs().then((m) => m.handoverAtStart()) }) });
+}
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);

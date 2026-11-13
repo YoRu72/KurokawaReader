@@ -55,7 +55,25 @@ Things to prove early, because they depend on the engine, not on Rust:
 | R5 | **Archives, printing, images, window**: archives through the same 7-Zip program (unchanged), print a PDF, copy an image, full screen, immersive, title bar, tray if any, portable mode. | archive list/extract/create; print to file | medium |
 | R6 | **Carry-over and updater**: on first start, the library, settings, covers and positions are copied from the Electron profile (read with a small bundled exporter if the storage formats differ — nothing is deleted from the old profile); in-app update download, verification and install; the Electron build updates into the Tauri one only at the switch-over. | an Electron profile made in CI opened by the Tauri build: same books, same positions, same highlights | **high — users' libraries** |
 | R7 | **Preview period**: Tauri builds published beside each Electron release; the owner uses it daily on Windows; a list of every difference found. | — | — |
-| R8 | **Switch-over**: Tauri becomes the main download; Electron kept as a fallback download for two versions. Needs the owner's go-ahead. | full suite; size table | low, but hard to undo for users |
+| R8 | **Switch-over** (done in 0.62.0, the owner's go-ahead given): Tauri becomes the main download; Electron kept as a fallback download — the bridge build, under its old file names — for **two versions** (0.62.x and the next minor version), then its jobs leave `release.yml`. | full suite; size table | low, but hard to undo for users |
+
+**R5, as done** (see `apps/reader/desktop-tauri/PORTING.md`, «Archives, the window, the app's icon»): archives as
+`archive.cjs` does them (its own ZIP and tar readers in Rust, the same 7-Zip program shipped beside the app for the
+rest); full screen, the interface's size, taskbar progress, an image on the clipboard, a Mac's menu bar; the user's own
+app icon kept outside the program and put on the window, the title bar, Windows' shortcuts and Linux's desktop entry
+(a Mac's Dock refuses it), carried in backups. Printing a text PDF has no Tauri equivalent: the converter keeps its
+picture PDF on every system (WebView2's own `PrintToPdf` would need unsafe COM code, not written); the viewer's Print
+opens the system's PDF program on a Mac and Linux. Portable mode stays Electron's (`isPortable` is false here). No tray:
+Electron's Reader has none.
+
+**R6a, as done** (the data; see `apps/reader/desktop-tauri/PORTING.md`, «The hand-over»): the last Electron build writes
+a hand-over — the stores copied whole (ids kept), every localStorage key, the local AI's models, its own icon, window
+and DNS files; linked books as links — into `<userData>/handover/`, streamed, hashed, read back and checked, marked
+last and only then renamed into place; a full disk or any failure means no install and a plain message. The Rust build
+offers it on its first start (count, size, «your old data is untouched at …»), copies it into its empty profile (or
+merges it into one with books), never twice, and frees its space only when asked. Backups read every format version in
+both builds and on the phones. Proved by `tests/handover.cjs` here and, in CI, the real Electron app handing over to
+the Tauri build (Windows required). The updater and installer half is R6b.
 
 ## 6. What to expect
 

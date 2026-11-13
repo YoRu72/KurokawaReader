@@ -18,6 +18,9 @@ function replaceOnce(src, find, repl, label) {
   return src.slice(0, i) + repl + src.slice(i + find.length);
 }
 
+/** The polyfill put before pdf.js's own code (main build and worker): a ReadableStream iterable with `for await`. */
+const streamIter = () => fs.readFile(new URL('./pdfjs-stream-iter.js', import.meta.url), 'utf8').then((s) => s + '\n');
+
 export async function buildPdfWorker(outFile) {
   let src = await fs.readFile(require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'), 'utf8');
 
@@ -646,6 +649,32 @@ export async function buildPdfWorker(outFile) {
     } else {
       const cmapTable = readCmapTable(tables.cmap, font, this.isSymbolicFont, properties.hasEncoding);`, 'marks from the font cmap');
 
+  // 5) A JPEG decoded by the browser as an ImageBitmap (createImageBitmap), not through WebCodecs' ImageDecoder:
+  // the same decoder and the same pixels, but each frame ImageDecoder gave was also kept in Chromium's store of
+  // decoded images (discardable memory, held for the whole renderer) after pdf.js had drawn and closed it — some
+  // 300 MB still there after a PDF of forty photographs had been converted, and as much while a long picture book
+  // is read. An ImageBitmap's pixels are its own and go when pdf.js closes it. (ImageDecoder still where
+  // createImageBitmap is missing.)
+  src = replaceOnce(src, `      decoder = new ImageDecoder({
+        data,
+        type: "image/jpeg",
+        preferAnimation: false
+      });
+      return (await decoder.decode()).image;`, `      if (typeof createImageBitmap === "function") {
+        return await createImageBitmap(new Blob([data], {
+          type: "image/jpeg"
+        }));
+      }
+      decoder = new ImageDecoder({
+        data,
+        type: "image/jpeg",
+        preferAnimation: false
+      });
+      return (await decoder.decode()).image;`, 'jpeg as an ImageBitmap');
+
+  // 6) `for await` over a ReadableStream where the engine lacks it (WebKit): see scripts/pdfjs-stream-iter.js.
+  src = (await streamIter()) + src;
+
   const out = await esbuild.transform(src, { minify: !process.env.NOMINIFY, format: 'esm', target: 'es2020', legalComments: 'inline' });
   await fs.writeFile(outFile, out.code);
 }
@@ -657,6 +686,8 @@ export const pdfjsMainPlugin = {
   setup(build) {
     build.onLoad({ filter: /pdfjs-dist[\\/]legacy[\\/]build[\\/]pdf\.mjs$/ }, async (args) => {
       let src = await fs.readFile(args.path, 'utf8');
+      // (First: `for await` over a ReadableStream where the engine lacks it — WebKit; see scripts/pdfjs-stream-iter.js.)
+      src = (await streamIter()) + src;
       src = replaceOnce(src, '  showText(opIdx, glyphs) {\n', '  showText(opIdx, glyphs) {\n    if (this.ctx?.canvas?.krNoText && !this.ctx.canvas.krKeepFonts?.has(this.current.font?.loadedName)) return undefined;\n', 'showText');
       // Text layer: a one-letter piece gets its true width too (pdf.js leaves it at the browser font's width,
       // so in PDFs set letter by letter — Arabic with harakat, legacy fonts — the boxes overlap their

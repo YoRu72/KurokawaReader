@@ -225,6 +225,17 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const anchorsOf = new Map<OpenDoc, Element[]>();
   let saveTimer: number | undefined; let savePending = false;
   let userScrolled = false;
+  // (The place the reader last put the text at by itself — a place restored, a bookmark or a chapter gone to — and
+  // when: a resize that comes right after holds to it; see «re-settled after a resize» below. Declared here, before
+  // the first restore.)
+  let placed: Locator | null = null; let placedAt = -1;
+  // (A resize under way — «re-settled after a resize» below —: the place it holds. Declared here: a chapter turned by
+  // the reader — readerTurn — makes the new chapter the place it holds, and may come before that part has run.)
+  let burst: { at: Locator | null; since: number; reflowed: boolean } | null = null; let burstTimer = 0;
+  // (The place a resize was last re-settled at, and when: the engine's own scroll that still comes just after it — a
+  // Mac's window ending its full-screen animation moves the offset once more — is put back, not taken for the reader's.)
+  // (Not when the reader acted since — an input, or the text put somewhere: a chapter turned, a note gone to.)
+  let settledLoc: Locator | null = null; let settledAt = -1e9; const SETTLE_GRACE = 1500;
   // (The place asked for when the book was opened — a chapter tapped on a novel's page, a bookmark, a note: the
   // later passes of restore — fonts and pictures settling — go back to it, not to the place read last. Declared
   // here, before the first restore, which runs while the rest of this function waits on the book.)
@@ -708,7 +719,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     }
     chapterNav.classList.remove('flow');
     // (Pressed while the book's later chapters are still being made: done once they are, to the same chapter.)
-    const go = (u: Unit, fallback: number) => { if (!early) { showUnit(fallback); return; } void whole.then(() => { const i = units().findIndex((x) => x.doc === u.doc && x.el === u.el); if (i >= 0) showUnit(i); }); };
+    const go = (u: Unit, fallback: number) => { if (!early) { readerTurn(fallback); return; } void whole.then(() => { const i = units().findIndex((x) => x.doc === u.doc && x.el === u.el); if (i >= 0) readerTurn(i); }); };
     chapterNav.append(
       prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), shownName(chapterTitle(prev)) || t('previousPage'))) : h('span'),
       next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), shownName(chapterTitle(next)) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
@@ -726,6 +737,17 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     hooks.update(); hooks.save();
     chapterListeners.forEach((fn) => fn());
   }
+  /** A chapter turned by the reader (a swipe, the chapter buttons, a pull past the end): the reader's own — the open's
+   *  later passes of restore do not take them back — and the new chapter is the place a resize holds (one under way
+   *  included), so a re-settle never puts the chapter left back. (Its scroll may fire no event: a chapter's top to
+   *  the next one's top.) */
+  function readerTurn(k: number, atEnd = false): void {
+    userScrolled = true;
+    showUnit(k, atEnd);
+    const c = currentLocator(); if (!c) return;
+    placed = c.loc; placedAt = performance.now();
+    if (burst) burst.at = c.loc;
+  }
   /** Make sure the element's chapter is on screen (chapter mode) before scrolling to it. */
   function revealElement(el: Element): void {
     if (!chapterMode()) return;
@@ -742,7 +764,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const paintPull = () => { const el = indicator(); if (el) el.style.setProperty('--pull', String(Math.min(1, pull / 110))); root.classList.toggle('pulling', pull > 8); };
     const fire = () => {
       const list = units(); const k = currentUnitIndex();
-      if (pullDir > 0 && list[k + 1]) showUnit(k + 1); else if (pullDir < 0 && list[k - 1]) showUnit(k - 1, true);
+      if (pullDir > 0 && list[k + 1]) readerTurn(k + 1); else if (pullDir < 0 && list[k - 1]) readerTurn(k - 1, true);
       pull = 0; paintPull();
     };
     const reset = () => { pull = 0; pullDir = 0; armed = false; paintPull(); };
@@ -829,7 +851,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const forward = rtl ? dx > 0 : dx < 0;
       const k = currentUnitIndex();
       swipeTurned();
-      showUnit(forward ? k + 1 : k - 1, !forward);
+      readerTurn(forward ? k + 1 : k - 1, !forward);
     }, { passive: true });
   }
 
@@ -903,6 +925,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const wr = doc.wrapper.getBoundingClientRect();
       scroll.scrollTop += wr.top - sr.top + (loc.pct ?? 0) * wr.height;
     }
+    placed = loc; placedAt = performance.now();
   }
 
   /** A long plain text's runs not laid out yet (formats/shared.ts textToParagraphs) take the height their text will
@@ -929,6 +952,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const sr = scroll.getBoundingClientRect();
     const r = el.getBoundingClientRect();
     scroll.scrollTop += r.top - sr.top - 12;
+    { const c = currentLocator(); if (c) { placed = c.loc; placedAt = performance.now(); } }
     if (flash) { el.classList.add('kr-flash'); setTimeout(() => el.classList.remove('kr-flash'), 1600); }
     scheduleSave();
   }
@@ -1162,7 +1186,17 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   hooks.save = () => scheduleSave();
   if (saveSoon) scheduleSave();
   const trackThrottled = throttle(trackProgress, 400);
-  scroll.addEventListener('scroll', () => { if (performance.now() - programmatic > 150) userScrolled = true; updateChrome(); scheduleSave(); trackThrottled(); noteStable(); focusThrottled(); }, { passive: true });
+  scroll.addEventListener('scroll', () => {
+    // (The reader's scroll — not the reader's own placing, nor the text reflowing while the window changes size: see
+    // «re-settled after a resize» below; those are neither taken for the reader's nor saved.)
+    const now = performance.now(); const input = now - lastInputAt < 1000;
+    // (Within SETTLE_GRACE ms of a re-settle, with no input from the reader since: the engine's, put back.)
+    const afterSettle = !burst && !!settledLoc && now - settledAt < SETTLE_GRACE && lastInputAt < settledAt && placedAt <= settledAt && now - programmatic > 150;
+    const byReader = now - programmatic > 150 && (!burst || input) && !afterSettle;
+    if (byReader) { userScrolled = true; lastUserScrollAt = now; }
+    if (afterSettle) { const at = settledLoc!; requestAnimationFrame(() => { if (!burst && reader.isConnected && lastInputAt < settledAt && placedAt <= settledAt) { putBack(at); settledAt = Math.max(settledAt, placedAt); } }); }
+    updateChrome(); if ((!burst && !afterSettle) || byReader) scheduleSave(); trackThrottled(); noteStable(); focusThrottled();
+  }, { passive: true });
   // Focus mode: the paragraph under the reading line (a little above the middle of the screen) is the one
   // that stands out; the rest of the page is dimmed by CSS. Found by a point test, so it costs nothing.
   let focused: HTMLElement | null = null;
@@ -1177,11 +1211,68 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   };
   const focusThrottled = throttle(syncFocus, 80);
   window.setTimeout(syncFocus, 600);
-  // The screen turned (or the window resized): the text reflows, so the place being read is found again and
-  // put back where it was — the reader does not land somewhere else in the chapter.
-  let stable: Locator | null = null; let stableTimer = 0; let lastW = scroll.clientWidth, lastH = scroll.clientHeight; let resizing = false;
-  let lastScrollAt = 0;
-  const noteStable = () => { lastScrollAt = performance.now(); if (resizing) return; window.clearTimeout(stableTimer); stableTimer = window.setTimeout(() => { const c = currentLocator(); if (c) stable = c.loc; layAhead(); }, 250); };
+  // Re-settled after a resize. The screen turned, the window resized, full screen entered or left, the zoom changed:
+  // the text reflows — over many frames when a Mac's window animates into full screen as the book opens
+  // (setImmersive) —, and the scroll events that reflow causes are not the reader's. So from the first change the
+  // place being read is held (the later of the place the reader settled at and the place the text was put at — the
+  // place the book opened at), those scroll events are neither taken for the reader's nor saved, the place is put
+  // back at each change of width, and once the size has stayed still for a moment it is put back again — the same
+  // paragraph, at the same offset — unless the reader has scrolled since (a wheel, a touch, a press on the text or a
+  // reading key, then a scroll). Only when the width changed: a change of height alone — the chrome, the system's
+  // bars, a phone's keyboard — does not reflow the text, which is left where it is on the screen.
+  let stable: Locator | null = null; let stableAt = -1; let stableTimer = 0; let lastW = scroll.clientWidth; let settledW = lastW; let resizing = false;
+  let lastScrollAt = 0; let lastUserScrollAt = -1; let lastInputAt = -1;
+  {
+    const onInput = () => { lastInputAt = performance.now(); };
+    const READ_KEYS = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' ', 'Spacebar']);
+    const onKey = (e: KeyboardEvent) => { if (READ_KEYS.has(e.key)) onInput(); };
+    const evs = ['wheel', 'touchstart', 'pointerdown'] as const;
+    for (const ev of evs) scroll.addEventListener(ev, onInput, { passive: true, capture: true });
+    document.addEventListener('keydown', onKey, { capture: true });
+    onDispose(() => { for (const ev of evs) scroll.removeEventListener(ev, onInput, { capture: true }); document.removeEventListener('keydown', onKey, { capture: true }); });
+  }
+  const putBack = (at: Locator) => {
+    const c = currentLocator();
+    if (!c || c.loc.bookId !== at.bookId || c.loc.block !== at.block || Math.abs((c.loc.offset ?? 0) - (at.offset ?? 0)) > 0.02) scrollToLocator(at);
+  };
+  const resettle = () => {
+    const b = burst; burst = null;
+    if (!b || !reader.isConnected) { resizing = false; return; }
+    settledW = scroll.clientWidth;
+    // (A book still being made a chapter first puts its own place back as it grows: early's settle, above.)
+    if (b.reflowed && b.at && lastUserScrollAt <= b.since && !early) {
+      const at = b.at; putBack(at);
+      // (Once more a frame later: a chapter laid out by the first put-back can move the text a little.)
+      requestAnimationFrame(() => {
+        if (reader.isConnected && !burst && lastUserScrollAt <= b.since) putBack(at);
+        if (!burst) { stable = at; stableAt = performance.now(); resizing = false; settledLoc = at; settledAt = stableAt; }
+      });
+    } else { resizing = false; noteStable(); }
+  };
+  const sizeChanging = () => {
+    if (!reader.isConnected) return;
+    if (!burst) {
+      window.clearTimeout(stableTimer);
+      const settled = placedAt > stableAt ? placed : stable;
+      // (The reader scrolled after the place last settled — within the moment noteStable waits —: where they are now.)
+      const at = lastUserScrollAt > Math.max(placedAt, stableAt) ? currentLocator()?.loc ?? settled : settled;
+      burst = { at, since: performance.now(), reflowed: false };
+      resizing = true;
+    }
+    if (Math.abs(scroll.clientWidth - settledW) >= 2) burst.reflowed = true;
+    if (burst.reflowed && burst.at && lastUserScrollAt <= burst.since && !early) { const b = burst; requestAnimationFrame(() => { if (burst === b && b.at && reader.isConnected) putBack(b.at); }); }
+    window.clearTimeout(burstTimer); burstTimer = window.setTimeout(resettle, 350);
+  };
+  {
+    // (Only a change of width starts one: a phone's address bar or keyboard changes the height alone, while the reader
+    // flings — those are left to the reader. Full screen and the zoom change the width.)
+    const vv = window.visualViewport; let winW = window.innerWidth, vvW = vv?.width ?? 0;
+    const onWin = () => { if (burst || Math.abs(window.innerWidth - winW) >= 1) { winW = window.innerWidth; sizeChanging(); } };
+    const onVv = () => { if (vv && (burst || Math.abs(vv.width - vvW) >= 1)) { vvW = vv.width; sizeChanging(); } };
+    window.addEventListener('resize', onWin); document.addEventListener('fullscreenchange', sizeChanging); vv?.addEventListener('resize', onVv);
+    onDispose(() => { window.removeEventListener('resize', onWin); document.removeEventListener('fullscreenchange', sizeChanging); vv?.removeEventListener('resize', onVv); window.clearTimeout(burstTimer); });
+  }
+  const noteStable = () => { lastScrollAt = performance.now(); if (resizing) return; window.clearTimeout(stableTimer); stableTimer = window.setTimeout(() => { if (resizing) return; const c = currentLocator(); if (c) { stable = c.loc; stableAt = performance.now(); } layAhead(); }, 250); };
   // Continuous reading keeps chapters away from the screen unlaid (content-visibility), and laying one out when
   // it comes near takes a frame or three on a phone — a page of Arabic, shaped, is slow work — which showed as
   // a catch in every fling that reached a new chapter. So once the scrolling has settled, the chapters within
@@ -1210,16 +1301,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   window.setTimeout(layAhead, 900);
   const sizeObs = new ResizeObserver(() => {
     geoDirty = true; updateChrome();
-    const w = scroll.clientWidth, hgt = scroll.clientHeight;
-    if (Math.abs(w - lastW) < 2 && Math.abs(hgt - lastH) < 2) return;
-    const narrowed = Math.abs(w - lastW) >= 2;
-    lastW = w; lastH = hgt;
+    const w = scroll.clientWidth;
     // (Only the height changed — the chrome or the reading bar shown or hidden, the system's bars: the text does not
     // flow again, and is left where it is on the screen; put back at the scroller's new top, it jumped.)
-    if (!narrowed) return;
-    if (!stable) { noteStable(); return; }
-    resizing = true; const at = stable;
-    requestAnimationFrame(() => { scrollToLocator(at); window.setTimeout(() => { resizing = false; }, 300); });
+    if (Math.abs(w - lastW) < 2) return;
+    lastW = w;
+    sizeChanging();
   });
   sizeObs.observe(scroll); onDispose(() => sizeObs.disconnect());
   window.setTimeout(noteStable, 1500);
@@ -1353,7 +1440,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     else if (c === 'fullscreen') { void toggleFullscreen(root); }
     // (Day and night swapped with one tap — ReadEra's top-left corner: the chosen theme and the night theme take turns.)
     else if (c === 'dayNight') { const st = getSettings(); const night = st.nightTheme && st.theme === st.nightTheme; updateSettings(night ? { theme: (st.dayTheme as typeof st.theme) || 'light', nightSchedule: false } : { dayTheme: st.theme, theme: st.nightTheme || 'dark', nightSchedule: false }); }
-    else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); showUnit(c === 'nextChapter' ? k + 1 : k - 1); } }
+    else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); readerTurn(c === 'nextChapter' ? k + 1 : k - 1); } }
     else if (c === 'statusLine') updateSettings({ showStatusLine: !getSettings().showStatusLine });
     else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
   };
@@ -2052,7 +2139,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const page = scroll.clientHeight * 0.9;
     // (Both chapter modes: a page-turn key — or a volume button, src/readkeys.ts — at a chapter's very end goes on to the
     // next, as a swipe does; only scrolling past the end is the "scroll into the next chapter" mode's own.)
-    if (chapterMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { showUnit(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { showUnit(k - 1, true); return; } }
+    if (chapterMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { readerTurn(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { readerTurn(k - 1, true); return; } }
     scroll.scrollBy({ top: back ? -page : page, behavior: 'smooth' });
   }
   const onKey = (e: KeyboardEvent) => {
@@ -2060,7 +2147,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {
-      case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); showUnit(fwd ? k + 1 : k - 1, !fwd); break; }
+      case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); readerTurn(fwd ? k + 1 : k - 1, !fwd); break; }
       case 'j': case 'ArrowDown': scroll.scrollBy({ top: 80 }); break;
       case 'k': case 'ArrowUp': scroll.scrollBy({ top: -80 }); break;
       case ' ': case 'PageDown': { e.preventDefault(); turnPage(e.shiftKey); break; }

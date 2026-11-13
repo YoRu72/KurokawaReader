@@ -1,5 +1,6 @@
 // node tests/platformsettings.cjs: each setting shown only where it can act (src/platform.ts) — on an imitated Android
 // phone (Capacitor imitated, as tests/backkeys.cjs does), the desktop app (its bridge imitated, as tests/pcui.cjs does),
+// the desktop app's Tauri shell (the same, marked as bridge.js marks it: the window's title bar is offered there alone),
 // a plain web page on a computer (a mouse) and a plain web page on a phone (a finger; a browser that does not tell the
 // battery), in English and Arabic:
 //  1. Settings and the reader's options: the rows that must show there and the rows that must not.
@@ -20,7 +21,7 @@ const strings = (lang) => { const src = fs.readFileSync(path.join(__dirname, `..
 
 // Where each row shows (src/platform.ts). Platforms: android, desktop (the app), webpc (a browser with a mouse),
 // webphone (a phone's browser).
-const ALL = ['android', 'desktop', 'webpc', 'webphone'];
+const ALL = ['android', 'desktop', 'tauri', 'webpc', 'webphone'];
 const ROWS = {
   tapToTurn: ['android', 'webphone'], tapZones: ['android', 'webphone'], pinchText: ['android', 'webphone'], edgeBrightness: ['android', 'webphone'], orientation: ['android', 'webphone'],
   swipeTurn: ['android', 'webphone'], swipeSensitivity: ['android', 'webphone'],
@@ -28,7 +29,11 @@ const ROWS = {
   hideSystemBars: ['android', 'desktop'], uiSize: ['desktop'], shortcutsEditBody: ['desktop', 'webpc'],
   pdfPinchZoom: ['android', 'webphone'], barItemBattery: ['android', 'desktop', 'webpc'],
   backTwiceLeave: ALL, keepAwake: ALL, showStatusLine: ALL, readingMode: ALL,
+  // (The window's title bar: only where the shell draws it itself — the Tauri shell, not Electron's.)
+  titleBar: ['tauri'], titleBarClear: ['tauri'],
 };
+// (The Tauri shell is the desktop app too: whatever shows on Electron's shows there.)
+for (const where of Object.values(ROWS)) if (where.includes('desktop') && !where.includes('tauri')) where.push('tauri');
 
 async function makeEpub(file) {
   const JSZip = require('jszip'); const z = new JSZip();
@@ -45,6 +50,7 @@ const CTX = {
   android: { viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true },
   webphone: { viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true },
   desktop: { viewport: { width: 1366, height: 768 } },
+  tauri: { viewport: { width: 1366, height: 768 } },
   webpc: { viewport: { width: 1366, height: 768 } },
 };
 // (Each page's imitation: the shell, and a record of what is asked of the screen's orientation and the window's zoom.)
@@ -59,13 +65,14 @@ const INIT = ({ plat, lang, visual }) => {
       ScreenOrientation: { lock: async (o) => { window.__locks.push(o.orientation); }, unlock: async () => { window.__locks.push('unlock'); } },
     } };
   }
-  if (plat === 'desktop') window.kurokawaDesktop = new Proxy({ setZoom: (f) => window.__zoom.push(f) }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : () => undefined) });
+  if (plat === 'tauri') window.__KR_SHELL__ = 'tauri';
+  if (plat === 'desktop' || plat === 'tauri') window.kurokawaDesktop = new Proxy({ setZoom: (f) => window.__zoom.push(f) }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : () => undefined) });
   if (plat === 'webphone') { try { delete Navigator.prototype.getBattery; } catch { /* none */ } }
   if (!sessionStorage.getItem('kr.platform.init')) {
     sessionStorage.setItem('kr.platform.init', '1');
     localStorage.setItem('kr.lang', lang); localStorage.setItem('kr.update.lastCheck', String(Date.now()));
     localStorage.setItem('kr.visual', JSON.stringify(visual));
-    if (plat !== 'desktop') localStorage.setItem('kr.uiSize', '1.3');
+    if (plat !== 'desktop' && plat !== 'tauri') localStorage.setItem('kr.uiSize', '1.3');
   }
 };
 
@@ -94,7 +101,7 @@ const INIT = ({ plat, lang, visual }) => {
 
       /* ---------- 2. Search ---------- */
       const search = async (q) => { await p.fill('.settings-search', q); await p.waitForTimeout(250); return p.evaluate((q) => [...document.querySelectorAll('.settings-body .card *')].some((e) => !e.closest('[hidden]') && [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.includes(q)) && e.getClientRects().length > 0), q); };
-      for (const k of ['tapToTurn', 'volumeKeys', 'uiSize', 'snapFolder']) {
+      for (const k of ['tapToTurn', 'volumeKeys', 'uiSize', 'snapFolder', 'titleBarClear']) {
         const want = ROWS[k].includes(plat);
         ok(`${tag}: searching «${S(k)}» ${want ? 'finds it' : 'finds nothing'}`, (await search(S(k))) === want);
       }

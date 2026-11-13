@@ -188,6 +188,9 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
 
   let suppressed = false; // while the More sheet is up the toolbar stays away
   let lastAuto = '';
+  // (A selection that was off the screen when it was made — the text still reflowing as a window changes size —: the
+  // bar comes once it is on the screen.)
+  let offscreen = false;
   const hide = () => { bar?.remove(); bar = null; };
 
   const build = () => {
@@ -211,6 +214,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   };
 
   const show = () => {
+    offscreen = false;
     if (suppressed) { hide(); return; }
     const sel = document.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hide(); return; }
@@ -220,7 +224,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     if (!text) { hide(); return; }
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) { hide(); return; }
-    if (rect.bottom < 0 || rect.top > window.innerHeight) { hide(); return; }
+    if (rect.bottom < 0 || rect.top > window.innerHeight) { hide(); offscreen = true; return; }
     state.text = text; state.range = range.cloneRange();
     if (!bar) { bar = build(); document.body.appendChild(bar); }
     // The Reading button only matters for Chinese / Japanese text.
@@ -245,7 +249,13 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   const onChange = () => { if (touch && bar) { const sel = document.getSelection(); if (sel && !sel.isCollapsed) bar.style.opacity = '0'; } schedule(); };
   const onTouchStart = () => { touching = true; window.clearTimeout(timer); };
   const onTouchEnd = () => { touching = false; schedule(); };
-  const onScroll = () => { if (bar) show(); };
+  const onScroll = () => { if (bar || offscreen) show(); };
+  // (The window resized, full screen, the zoom, a phone's keyboard: the bar placed again over the selection, once the
+  // layout has settled in the next frame.)
+  let rz = 0;
+  const onResize = () => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => { if (bar || offscreen) show(); }); };
+  const vv = window.visualViewport;
+  window.addEventListener('resize', onResize); vv?.addEventListener('resize', onResize);
   // (Copied with the system's own Copy — the keyboard, the phone's menu — the text without its readings.)
   const onCopy = (e: ClipboardEvent) => { const sel = document.getSelection(); if (!sel?.rangeCount || !scope.contains(sel.anchorNode)) return; const clean = withoutReadings(sel.getRangeAt(0)); if (clean === null || !e.clipboardData) return; e.clipboardData.setData('text/plain', clean); e.preventDefault(); };
   document.addEventListener('copy', onCopy);
@@ -259,6 +269,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     document.removeEventListener('touchstart', onTouchStart);
     document.removeEventListener('touchend', onTouchEnd); document.removeEventListener('touchcancel', onTouchEnd);
     scope.removeEventListener('scroll', onScroll, true); hide();
+    window.removeEventListener('resize', onResize); vv?.removeEventListener('resize', onResize); cancelAnimationFrame(rz);
   };
 }
 

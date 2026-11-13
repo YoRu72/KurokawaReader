@@ -6,7 +6,8 @@ import { goBack, wirePcBack } from './ui/backstack';
 import { importFiles } from './library';
 import { navigate } from './router';
 import { toast } from './ui/dom';
-import { t } from './i18n';
+import { t, onLangChange } from './i18n';
+import { brandIcon, setBrandIcon } from './ui/brandIcon';
 import { getSettings } from './settings';
 import { actionFor } from './shortcuts';
 import { diagBack, diagLeaveIntent, diagAppState } from './diag';
@@ -208,10 +209,33 @@ export function initNativeBridges(): void {
       else if (c === 'back') { diagBack('back-pc'); goBack(); }
       else if (c === 'settings') navigate('/settings');
       else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));
+      // (Stage R6b: Electron's shell found the Tauri build — desktop/main.cjs RUST_SWITCH — and offers the switch.)
+      else if (c === 'rust-switch') void import('./updates').then((u) => u.showRustSwitch()).catch(() => undefined);
       else document.dispatchEvent(new CustomEvent('kr:command', { detail: c }));
     });
+    if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') initTauriShell();
   }
 }
+
+/** The Tauri shell (desktop-tauri/bridge.js): the icon it keeps is the one in force — the page's logos (title bar,
+ *  sidebar) follow it from the start, whatever this profile's storage holds —, and a Mac's menu bar speaks the
+ *  interface's language (bridge menuText → src-tauri/src/menu.rs; English until told). */
+function initTauriShell(): void {
+  void appIconNow().then((u) => { if (u !== brandIcon()) setBrandIcon(u); });
+  const kd = window.kurokawaDesktop as (DesktopBridge & { platform?: string; menuText?(l: Record<string, string>): Promise<boolean> }) | undefined;
+  if (kd?.menuText && kd.platform === 'darwin') {
+    const send = () => { void kd.menuText!(menuWords()).catch(() => undefined); };
+    send(); onLangChange(send);
+  }
+}
+/** The words of a Mac's menu bar (menu.rs's keys). */
+export const menuWords = (): Record<string, string> => ({
+  about: t('menuAbout'), settings: t('menuSettings'), hide: t('menuHide'), hideOthers: t('menuHideOthers'), showAll: t('menuShowAll'), quit: t('menuQuit'),
+  file: t('menuFile'), addBooks: t('menuAddBooks'), scan: t('menuScan'), library: t('library'), closeWindow: t('menuCloseWindow'),
+  edit: t('menuEdit'), undo: t('menuUndo'), redo: t('menuRedo'), cut: t('menuCut'), copy: t('menuCopy'), paste: t('menuPaste'), selectAll: t('menuSelectAll'),
+  view: t('menuView'), options: t('visualOptions'), search: t('searchInBook'), fullscreen: t('menuFullscreen'),
+  window: t('menuWindow'), minimize: t('menuMinimize'), zoom: t('menuZoom'), help: t('menuHelp'), update: t('checkUpdates'), releases: t('menuReleases'),
+});
 
 interface ImmersivePlugin { setImmersive(o: { on: boolean }): Promise<void> }
 interface StatusBarPlugin { hide(): Promise<void>; show(): Promise<void> }
@@ -234,6 +258,14 @@ type IconDesk = { appIcon?(o?: { set: string | null }): Promise<string | boolean
 type IconPlug = { pinIcon?(o: { png: string; label: string }): Promise<{ ok: boolean }> };
 const iconPlug = (): IconPlug | undefined => (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: IconPlug } }) | undefined)?.Plugins?.Kurokawa;
 export const appIconWay = (): 'desktop' | 'android' | null => ((window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon ? 'desktop' : nativePlatform() === 'android' && iconPlug()?.pinIcon ? 'android' : null);
+/** Which hint the app-icon row shows: what this computer lets the app change. The Tauri shell on a Mac changes only
+ *  the app's own title bar and sidebar (no Dock), on Linux the window and the .deb's menu entry; Windows, and the
+ *  Electron shell everywhere, the window, the taskbar and the shortcuts. */
+export const appIconHint = (): 'myIconHintPc' | 'myIconHintMac' | 'myIconHintLinux' => {
+  const w = window as unknown as { __KR_SHELL__?: string; kurokawaDesktop?: { platform?: string } };
+  if (w.__KR_SHELL__ !== 'tauri') return 'myIconHintPc';
+  return w.kurokawaDesktop?.platform === 'darwin' ? 'myIconHintMac' : w.kurokawaDesktop?.platform === 'linux' ? 'myIconHintLinux' : 'myIconHintPc';
+};
 export async function appIconNow(): Promise<string | null> { const u = await Promise.resolve((window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon?.()).catch(() => null); return typeof u === 'string' && u ? u : null; }
 export async function setAppIcon(png: string | null, label: string): Promise<boolean> {
   if (appIconWay() === 'desktop') { await (window.kurokawaDesktop as unknown as IconDesk).appIcon!({ set: png }); return true; }

@@ -145,6 +145,22 @@ const LOCAL_SECRETS = { 'kr.anilist.token': 'SECRET-al', 'kr.opds': JSON.stringi
   ok('18: a place here older than the backup\'s gives way to it', r18.c[0] === 0.42, r18.c);
   ok('18: a newer note here and an older different one in the backup — both there after restoring', r18.dh.join() === 'h1,hLocal' && r18.db.join() === 'bLocal,bm1', r18);
 
+  // ---- R5: the app's icon of the user's choosing — carried by a backup (a PNG data URL), brought back where a desktop
+  // shell sets the app's own icon (Electron's or the Tauri shell's appIcon), left alone elsewhere (a phone pins it
+  // with the user's consent; a web page has none); one that is no PNG data URL is never taken.
+  const ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const D = await fresh({ 'kr.lang': 'en', 'app.icon': ICON });
+  const withIcon = await D.evaluate(async () => { await T.B.backupNotes(); return window.__shared.text(); });
+  ok('R5: the notes backup carries the app icon', JSON.parse(withIcon).appIcon === ICON && leaks(JSON.parse(withIcon)).length === 0, JSON.parse(withIcon).appIcon?.slice(0, 40));
+  const restoreIcon = async (text, desk) => { const E = await fresh({ 'kr.lang': 'en' }); return E.evaluate(async ([t, d]) => { const got = []; if (d) window.kurokawaDesktop = { appIcon: async (o) => { got.push(o); return true; }, onOpenFile() {}, platform: 'linux' }; await T.B.restoreBackup(new File([t], 'b.json', { type: 'application/json' })); return { got, brand: localStorage.getItem('app.icon') }; }, [text, desk]); };
+  const onDesk = await restoreIcon(withIcon, true);
+  ok('R5: restored on a desktop shell — the app\'s icon set, the page\'s logos too', onDesk.got.length === 1 && onDesk.got[0].set === ICON && onDesk.brand === ICON, onDesk);
+  const onWeb = await restoreIcon(withIcon, false);
+  ok('R5: restored on a web page — left alone', onWeb.brand === null, onWeb);
+  const forged = JSON.stringify({ ...JSON.parse(withIcon), appIcon: 'data:text/html;base64,PHNjcmlwdD4=' });
+  const notPng = await restoreIcon(forged, true);
+  ok('R5: an icon that is no PNG data URL is not taken', notPng.got.length === 0 && notPng.brand === null, notPng);
+
   ok('no page errors', errors.length === 0, errors);
   console.log(fails ? `${fails} failed` : 'all passed');
   await b.close(); server.close(); process.exit(fails ? 1 : 0);

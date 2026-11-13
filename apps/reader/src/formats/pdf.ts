@@ -298,6 +298,8 @@ export class PdfViewer {
       this.lastFit = fit;
     });
     this.resizeObs.observe(this.scroll);
+    // (What the view thinks, for the desktop shells' engine test when a page is not drawn.)
+    (this.scroll as HTMLElement & { krPdfState?: () => unknown }).krPdfState = () => ({ first: this.first, last: this.last, current: this.current, scale: Math.round(this.scale * 1000) / 1000, fit: this.fitWidth, busy: this.busy, scrolling: this.scrolling, running: this.running?.n ?? null, shown: [...this.shown.keys()].slice(-8), topsStale: this.topsStale, tops: this.tops ? [this.tops[0], this.tops[this.first - 1], this.tops[this.tops.length - 1]] : null, laid: [this.pages[0]?.offsetTop, this.pages[this.first - 1]?.offsetTop, this.pages[this.pages.length - 1]?.offsetTop] });
     this.opts.onPageChange(this.current, this.total);
     this.frame();
   }
@@ -622,8 +624,21 @@ export class PdfViewer {
     this.settleTimer = window.setTimeout(() => this.settle(), 220);
   }
 
+  /** The pages' places kept between frames, checked against the layout (the page at the top and the last one): the
+   *  window resized, the web view zoomed or put full screen as a book opens moved them on WebView2 without the kept
+   *  list being let go (a 300-page book drawn five pages short of where it was scrolled), so they are read again. */
+  private topsStale = 0;
+  private checkTops(): void {
+    const t = this.tops; if (!t || t.length !== this.pages.length) return;
+    const base = this.pages[0]?.offsetParent === this.inner ? this.inner.offsetTop : 0;
+    for (const i of [Math.min(this.pages.length, Math.max(1, this.first)) - 1, this.pages.length - 1]) {
+      if (Math.abs(this.pages[i].offsetTop + base - t[i]) > 1) { this.tops = null; this.topsStale++; return; }
+    }
+  }
+
   private frame(): void {
     if (this.destroyed || !this.pages.length) return;
+    this.checkTops();
     const top = this.scroll.scrollTop, hgt = this.scroll.clientHeight;
     const now = performance.now();
     if (now - this.lastAt < 400 && now > this.lastAt) this.speed = (top - this.lastTop) / (now - this.lastAt); else if (now - this.lastAt >= 400) this.speed = 0;
@@ -641,6 +656,7 @@ export class PdfViewer {
   private settle(): void {
     this.scrolling = false; this.speed = 0;
     if (this.destroyed) return;
+    this.tops = null;   // (read again once still: whatever moved the pages meanwhile)
     this.frame();
     for (const n of [...this.shown.keys()]) if (n < this.first - 3 || n > this.last + 3) this.releasePage(n);
     this.applyWaiting();
