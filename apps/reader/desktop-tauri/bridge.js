@@ -7,8 +7,8 @@
 // names the stage; the page already copes with each (PORTING.md says how). The stubs are listed in STUBS below, so
 // tests/tauribridge.cjs and the self-test can tell them from the ported ones. Some names are LEFT OUT instead (LEFT_OUT
 // below): the page tests for those before it uses them, and without them it takes a way that works — its own full
-// screen, its picture PDF — or shows no control that could not work (Archives, the in-app browser, the app icon);
-// each comes back with the stage that ports it.
+// screen, its picture PDF — or shows no control that could not work (Archives, the app icon); each comes back with
+// the stage that ports it.
 (function () {
   'use strict';
   if (window.kurokawaDesktop) return;
@@ -93,13 +93,12 @@
   };
   // name → the stage that brings it. Not defined at all until then: the page looks for each before using it, and
   // without it does what works here (src/: native.ts toggleFullscreen → the HTML full screen; convert.ts buildPdf →
-  // the picture PDF; archives.ts canArchive, sources/http.ts hasBrowser, native.ts appIconWay, updates.ts → no
-  // Archives button, no in-app browser, no app-icon option, no «download in the background» switch).
+  // the picture PDF; archives.ts canArchive, native.ts appIconWay, updates.ts → no Archives button, no app-icon
+  // option, no «download in the background» switch). (The in-app browser's four, R4, are here since that stage.)
   var LEFT_OUT = {
     appIcon: 'R5', downloadUpdate: 'R6', installDownloadedUpdate: 'R6',
     archiveList: 'R5', archiveExtract: 'R5', archiveCancel: 'R5', archiveCreate: 'R5', archiveTest: 'R5', archiveRestore: 'R5', archiveFree: 'R5', archiveExisting: 'R5', onArchiveProgress: 'R5',
     setFullscreen: 'R5', printToPdf: 'R5',
-    openWebView: 'R4', browserFetch: 'R4', browserReset: 'R4', browserForget: 'R4',
   };
   function notYet(name, stage) { return new Error(name + ' is not in this preview build yet (Tauri stage ' + stage + ')'); }
   function copy(v) { return v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v; }
@@ -233,6 +232,26 @@
     // A system notification (the notification plugin): → true when shown. (A click on it does not open the app at
     // o.hash, as Electron's does: the plugin gives no click on a computer.)
     notify: function (o) { return call('kr_notify', { o: obj(o) }); },
+
+    /* the app's own browser, for the sites that answer only a browser (stage R4: src-tauri/src/browser.rs; main.cjs's
+       kr:open-webview, kr:browser-fetch, kr:browser-reset, kr:browser-forget). openWebView(o) — a site's check passed
+       out of sight ({hidden}) or by the reader in a window titled {message}; {stay} until the reader closes it;
+       {until} until its address matches (given back as url); {browse} the browser as a browser — → { passed,
+       blocked, title, url? }. browserFetch(o) — a request made by a page of the site itself (its cookies, its user
+       agent) → { status, headers, body, url, via: 'browser' }, the body base64 from the shell and made text here in
+       the page's charset unless o.binary, as http's is; a site that would not let the browser through answers 403
+       with x-kr-lane. browserReset(url) — the site's window set aside → true. browserForget(url, all) — the site's
+       clearance, or (all) every site's data, forgotten → { cleared }. */
+    openWebView: function (o) { return call('kr_open_webview', { o: typeof o === 'string' ? { url: o } : obj(o) }); },
+    browserFetch: function (o) {
+      o = obj(o);
+      return call('kr_browser_fetch', { o: o }).then(function (r) {
+        r = obj(r); var rh = obj(r.headers);
+        return { status: r.status, headers: rh, body: o.binary ? String(r.body || '') : decodeText(fromBase64(r.body), rh['content-type']), url: r.url, via: r.via || 'browser' };
+      });
+    },
+    browserReset: function (url) { return call('kr_browser_reset', { url: str(url) }); },
+    browserForget: function (url, all) { return call('kr_browser_forget', { url: str(url), all: !!all }); },
   };
   Object.keys(STUBS).forEach(function (k) { api[k] = stub(k); });
   // Names this shell has that Electron's has not (EXTRA): scanFolder(root, exts) — the whole-computer scan's walk

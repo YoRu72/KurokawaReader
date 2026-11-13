@@ -263,6 +263,26 @@ impl Jar {
         before - self.list.len()
     }
 
+    /// Cookies taken away (the in-app browser's «forget», stage R4): those of `host` — its own and its parent
+    /// domains', as forget's — or of every site (None), whose name `pick` accepts → each one's (domain, name).
+    pub fn forget_picked(&mut self, host: Option<&str>, pick: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
+        let host = host.map(|h| h.to_ascii_lowercase());
+        let mut gone: Vec<(String, String)> = Vec::new();
+        self.list.retain(|c| {
+            let site = match &host {
+                Some(h) => domain_match(h, &c.domain) || domain_match(&c.domain, h),
+                None => true,
+            };
+            if site && pick(&c.name) {
+                gone.push((c.domain.clone(), c.name.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        gone
+    }
+
     /// The cookies kept between runs (those with an expiry still to come), one per line: domain, host-only (1/0),
     /// path, secure (1/0), expiry, name, value — tab-separated.
     pub fn to_lines(&self, now: u64) -> String {
@@ -403,6 +423,22 @@ mod tests {
         assert_eq!(k.len(), 1);
         assert_eq!(k.forget("a.example", false), 1);
         assert_eq!(k.len(), 0);
+    }
+
+    #[test]
+    fn forget_picked_and_a_browsers_line() {
+        let mut j = Jar::new();
+        // (A cookie as the in-app browser's store writes it — cookie's Display: «name=value; HttpOnly; …» —, put in.)
+        assert!(!j.set("cf_clearance=x; HttpOnly; SameSite=None; Secure; Path=/; Domain=.site.example", "site.example", "/", true, NOW));
+        j.set("sid=1; Path=/; Expires=Wed, 21 Oct 2037 07:28:00 GMT", "www.site.example", "/", true, NOW);
+        j.set("o=1", "other.example", "/", true, NOW);
+        assert_eq!(j.header("www.site.example", "/", true, NOW).as_deref(), Some("cf_clearance=x; sid=1"));
+        let gone = j.forget_picked(Some("www.site.example"), &|n| n == "cf_clearance");
+        assert_eq!(gone, vec![("site.example".to_string(), "cf_clearance".to_string())]);
+        assert_eq!(j.header("www.site.example", "/", true, NOW).as_deref(), Some("sid=1"));
+        let all = j.forget_picked(None, &|_| true);
+        assert_eq!(all.len(), 2);
+        assert_eq!(j.len(), 0);
     }
 
     #[test]

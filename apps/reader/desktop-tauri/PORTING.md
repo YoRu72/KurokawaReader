@@ -6,7 +6,8 @@ Tauri project, the interface opening in it, and the bridge's round trips proven 
 engine test — the web app's key cases run in each system's own web view in CI (see «Engine test» below). **Stage R2**:
 files and library — files opened from outside, single instance, file associations, drag and drop, folders by path (see
 «Files and library» below). **Stage R3**: network — downloads with progress, cookies, DNS over HTTPS, notifications (see
-«Network» below).
+«Network» below). **Stage R4**: the in-app browser the sources use — a site's check passed, a site opened for the
+reader, requests made by the site's own page, its sign-ins forgotten (see «The in-app browser» below).
 
 ## How it works
 
@@ -18,13 +19,19 @@ files and library — files opened from outside, single instance, file associati
   fills a small screen) saves the size it has, as Electron always saves its normal bounds.
 - `bridge.js` runs before the page's own scripts on every load, after a line that sets `window.__KR_BOOT__ = { os,
   arch }`, and defines the same `window.kurokawaDesktop` the Electron preload does: **all 48 names** (47 functions and
-  `platform`) — except the 18 **left out** until their stage (below) —, and two of its own (`scanFolder`, R2;
+  `platform`) — except the 14 **left out** until their stage (below) —, and two of its own (`scanFolder`, R2;
   `cancelDownload`, R3: its `EXTRA`, `window.__KR_BRIDGE_EXTRA__`). Each Electron channel `kr:a-b` is the Tauri
   command `kr_a_b` (`src-tauri/src/commands.rs`); arguments
   are sent under one-word keys (`p`, `o`, `text`, `b64`, `append`, `exts`, `url`, `name`, `id`, `provider`, `test`),
   so Tauri's camelCase mapping never matters.
 - The commands are thin wrappers over **kurokawa-shell** (`shared/shell-rs`), the Rust both apps' shells share (see
-  below). Only `scan.rs` (the whole-computer scan, std only) is the Reader's own.
+  below). Only `scan.rs` (the whole-computer scan, std only) is the Reader's own — and, since R4, the in-app browser
+  (`browser.rs`, `browserlogic.rs`).
+- **Only the main window calls the app's commands** (R4): `main.rs` wraps `generate_handler!` in `main_only`, which
+  refuses every command from a window whose label is not `main` — except `kr_browser_deliver` from a window of the
+  in-app browser (`krb-…`), which takes an answer for that window only. The plugins' commands are refused there by
+  Tauri itself (`capabilities/default.json` names the main window). A site's page in the in-app browser therefore gets
+  nothing of the app (the self-test proves it).
 - What is not ported yet is a **stub** in `bridge.js` (its `STUBS` table): it never reaches Rust, and answers as
   Electron itself answers when it cannot do the thing (`false`, `null`, `'unsupported'`, `{ cleared: 0 }`…), or —
   where Electron has no such answer — rejects with `Error('<name> is not in this preview build yet (Tauri stage
@@ -56,7 +63,8 @@ files and library — files opened from outside, single instance, file associati
 
 What differs from Electron in this stage, on purpose: the window's title bar is drawn whole by the page — its buttons
 too — instead of Electron's strip under the system's buttons (see «The window's title bar» below), no application menu (R5; the page's own keyboard shortcuts
-work), no cookies shared between `http` and an in-app browser (there is none until R4), and the page's origin is Tauri's
+work), the in-app browser's cookies reaching `http` only where this build can read them (see «The in-app browser»),
+and the page's origin is Tauri's
 (`tauri://localhost`, `http://tauri.localhost` on Windows), not `app://kurokawa` — so the library starts empty; carrying
 it over from the Electron profile is R6.
 
@@ -72,13 +80,13 @@ its own commands (Tools `kt_*`, the Reader `kr_*`) as wrappers, so no command ma
 | `util.rs` | Node's OS/CPU names, base64, hex, version order, file:// → path, the release asset for an OS (std only) | no |
 | `files.rs` | list, path info, exists, siblings, write text, remove, temp files (std only) | added `write_bytes` (append), `file_size` (-1), `read_text` (null) for the Reader |
 | `hash.rs` | md5 / sha1 / sha256 of a file | no |
-| `net.rs` | `http`, the update check | user agent set by the app (`configure`); the update check split into `check_update_at(url, prefix, current, prereleases)` and a pure `pick_release`; Tools' `check_update(current)` kept, same behaviour. R3: a cookie jar (`configure_cookies`, `forget_cookies`), DNS over HTTPS (`set_doh`, `doh_lookup`, `doh_try`; a second client with reqwest's resolver hook), `client()` public; reqwest features `cookies`, `macos-system-configuration`; `pub use reqwest` in `lib.rs` |
-| `cookiejar.rs` | the cookies of the apps' own requests (std only) | new (R3) |
+| `net.rs` | `http`, the update check | user agent set by the app (`configure`); the update check split into `check_update_at(url, prefix, current, prereleases)` and a pure `pick_release`; Tools' `check_update(current)` kept, same behaviour. R3: a cookie jar (`configure_cookies`, `forget_cookies`), DNS over HTTPS (`set_doh`, `doh_lookup`, `doh_try`; a second client with reqwest's resolver hook), `client()` public; reqwest features `cookies`, `macos-system-configuration`; `pub use reqwest` in `lib.rs`. R4: `put_cookie` (a cookie of the in-app browser put in the jar), `forget_picked_cookies` |
+| `cookiejar.rs` | the cookies of the apps' own requests (std only) | new (R3); R4: `forget_picked` (a site's, or every site's, cookies of the names asked for) |
 | `doh.rs` | DNS over HTTPS: providers, RFC 8484 / 1035 wire format, a cache (std only) | new (R3) |
 | `winstate.rs` | window size/place kept between runs | default and smallest sizes given by the app (`Defaults`; were Tools' 1100×780 / 420×560); `save`, `file`, `parse` public |
 | `shell.rs` | system folders, file dialogs, clipboard, opening a path / an address, a file's bytes for the IPC | new file, bodies moved unchanged from Tools' `commands.rs`; added `set_clipboard_text` |
 | `selftest.rs` | the self-tests' frame: `<PREFIX>_SELFTEST`, watchdog, verdict, results file | the app-neutral half of Tools' `selftest.rs`; prefix and exit hook given by the app |
-| `testserver.rs` | loopback test server (std only) | added `/latin`, `/meta`, `/releases`; R3: `/cookie/set`, `/cookie/hop`, `/cookie/echo`, `/chain/<n>`, `/headers`, `/large/<name>` (3 MiB), `POST /dns-query` (a resolver: `kr-doh-selftest.test` → 127.0.0.1), `/dns-count` |
+| `testserver.rs` | loopback test server (std only) | added `/latin`, `/meta`, `/releases`; R3: `/cookie/set`, `/cookie/hop`, `/cookie/echo`, `/chain/<n>`, `/headers`, `/large/<name>` (3 MiB), `POST /dns-query` (a resolver: `kr-doh-selftest.test` → 127.0.0.1), `/dns-count`; R4: a small site — `/site/` (sets a session cookie, HttpOnly, and a clearance), `/site/private` (signed in only), `/site/file.epub` (a download), `/site/popup`, `/site/token` (→ `/site/landing#access_token=…`), `/site/landing`, `/site/check` (a check that stays) |
 
 Both apps' `Cargo.toml` list `tauri` and the three plugins (dialog, clipboard-manager, opener) at the same versions as
 the crate (`"2"`), so one version of each is resolved; the app registers the plugins (Tauri's build reads their
@@ -115,9 +123,10 @@ with progress (2 MiB: whole file by CRC, the name made safe, `deleteDownload` on
 (3 MiB, several connections), one cancelled by its id, one of a missing file (HTTP 404), DNS over HTTPS through the
 test server's resolver (a made-up name reached, the resolver asked, the try of an unknown name answered `ok: false`,
 then off again; that the name is unknown without it: reported), `notify` answering (reported); the update check against a canned releases list (stable 0.62.0 with this OS's asset, beta
-0.63.0, nothing after 0.62.0); window state saved and read back as the next start would; the clipboard round trip (not
-required); every stub answers as documented. Results go to `kr_selftest_done`, which writes them and exits 0/1; a
-watchdog exits 2 after `KR_SELFTEST_TIMEOUT` (140 in CI) seconds. `.github/workflows/tauri-check-reader.yml` runs it
+0.63.0, nothing after 0.62.0); window state saved and read back as the next start would; (R4) the in-app browser on
+the test server's small site (see «The in-app browser»); the clipboard round trip (not required); every stub answers as
+documented. Results go to `kr_selftest_done`, which writes them and exits 0/1; a
+watchdog exits 2 after `KR_SELFTEST_TIMEOUT` (260 in CI since R4) seconds. `.github/workflows/tauri-check-reader.yml` runs it
 on Linux under Xvfb and on Windows (both required), and on macOS (reported only). `selftest-report.cjs` prints the
 results as a table. Not tested by the self-test: the file dialogs (they wait for a person) and `openDefaultApps` (it
 opens the system's settings).
@@ -131,8 +140,8 @@ sends the right command and arguments from the page.
 
 `docs/RUST-PORT-READER.md` says 38; `desktop/preload.cjs` today gives 47 functions and `platform`. All are here.
 
-**Done: 22** (R0: 12, the title bar: 2, R2: 2, R3: 6; + `platform`) · **stubs: 7** (R5: 5, R6: 2) · **left out: 18** (R4: 4, R5:
-12, R6: 2) · **extra: 2** (`scanFolder`, R2; `cancelDownload`, R3).
+**Done: 26** (R0: 12, the title bar: 2, R2: 2, R3: 6, R4: 4; + `platform`) · **stubs: 7** (R5: 5, R6: 2) · **left out:
+14** (R5: 12, R6: 2) · **extra: 2** (`scanFolder`, R2; `cancelDownload`, R3).
 
 | Function | Electron (`main.cjs`) | R0 | How the page copes with the stub | Stage |
 |---|---|---|---|---|
@@ -172,10 +181,10 @@ sends the right command and arguments from the page.
 | `copyImage(b64)` | `kr:copy-image`: image to the clipboard | stub: `false` | the page falls back to `navigator.clipboard.write` | R5 |
 | `printToPdf(html, o)` | `kr:print-pdf`: a hidden window prints a text PDF | **left out** | the converter's PDF output is the picture PDF (searchable text over page pictures), as on the web | R5 |
 | `setDoh(provider, test)` | `kr:set-doh`: Chromium's secure DNS | **done** (R3) `kr_set_doh`: DoH for the app's own requests (see «Network») | | |
-| `openWebView(o)` | `kr:open-webview`: a site's check passed in the app's browser window | **left out** | no in-app browser (`hasBrowser()` is false: Settings says there is none); a site behind a check reports it as not passed | R4 |
-| `browserFetch(o)` | `kr:browser-fetch`: a request from the site's own page | **left out** | the sources' requests go the plain way (`http`) | R4 |
-| `browserReset(url)` | `kr:browser-reset` | **left out** | | R4 |
-| `browserForget(url, all)` | `kr:browser-forget` | **left out** | (no in-app browser section) | R4 |
+| `openWebView(o)` | `kr:open-webview`: a site's check passed in the app's browser window | **done** (R4) `kr_open_webview` (`browser.rs`) | | |
+| `browserFetch(o)` | `kr:browser-fetch`: a request from the site's own page | **done** (R4) `kr_browser_fetch` | | |
+| `browserReset(url)` | `kr:browser-reset` | **done** (R4) `kr_browser_reset` | | |
+| `browserForget(url, all)` | `kr:browser-forget` | **done** (R4) `kr_browser_forget`; `all` = every site (see below) | | |
 | `notify(o)` | `kr:notify`: a system notification | **done** (R3) `kr_notify` (the notification plugin; no click action) | | |
 | `download(url, name, id)` | `kr:download`: into the app's data folder (aria2c or ranges), progress events | **done** (R3) `kr_download` (`download.rs`: ranges, as main.cjs's built-in downloader) | | |
 | `deleteDownload(p)` | `kr:delete-download` | **done** (R3) `kr_delete_download` | | |
@@ -255,8 +264,8 @@ R5 — the page has no fallback either way), `copyImage` (answers false: the pag
   `useSessionCookies`. Cookies with an expiry are kept between runs in `<app data>/cookies.txt` (Chromium keeps the
   session's on disk too); the others until the app ends. A `Cookie` header the page sets itself goes as given (reqwest
   adds the jar's only when there is none). `set-cookie` is shown to the page in the response's headers (`ranobe.ts`
-  reads it). Not shared with the web view's own cookies (the in-app browser: R4 — `net::forget_cookies` is ready for
-  its «forget»).
+  reads it). Since R4 the in-app browser's cookies are put in this jar where the build can read them (see «The in-app
+  browser»).
 - **Headers**: any header the page gives is sent — Referer, Origin, User-Agent, Cookie (a browser forbids those) —;
   redirects followed up to 20; no time limit (Electron's has none); bodies of any size, binary as base64; charsets as
   before.
@@ -294,6 +303,100 @@ R5 — the page has no fallback either way), `copyImage` (answers false: the pag
 - Tests: std-only unit tests (CI) of `cookiejar.rs`, `doh.rs`, `dlplan.rs` and the test server's new routes;
   `tests/tauribridge.cjs` (the six functions' commands and arguments, the progress listeners' Electron rules, the extra
   `cancelDownload`, the DoH section in Settings with this shell's hint); `selftest.js` in CI (above).
+
+## The in-app browser (stage R4)
+
+`src-tauri/src/browser.rs` (windows, commands), `browserlogic.rs` (std only: origins, when a page counts as passed, the
+channel's messages, `until`, clearance names, a download's place), `apidetect.rs` + `build.rs` (which of Tauri's newer
+web-view functions the resolved Tauri has).
+
+**What Electron's does** (`main.cjs`; the callers: `src/sources/http.ts`, `views/sources.ts`, `views/settings.ts`,
+`ui/anilistlink.ts`, `sources/linkopen.ts`, `sources/ranobe.ts`): windows sharing the app's one session (cookies, user
+agent).
+- `openWebView(o)` → `{ passed, blocked, title, url? }`. `{hidden}`: out of sight, 15 s — the site's own scripts run,
+  as in any browser (the page's `solveChallenge` tries this first); else a window titled `o.message` the reader acts
+  in (5 min); passed once the site shows a page of its own (no check: title / known check elements), blocked on a
+  refusal page. `{fresh}` forgets the site's clearance first; `{stay}` keeps the window until the reader closes it
+  (`openSite`: sign in, look around); `{until}` (a regular expression) ends it once the address matches and gives the
+  address back (AniList's sign-in: `access_token=`); `{browse}`: the browser as a browser (Settings → Open the
+  browser; «solve in the browser»): a bar — back, forward, reload, an address or words searched for (DuckDuckGo) —,
+  resolves `{passed: true}` when closed. `done` / `reload` / `browserLabel` are not used by Electron's windows.
+- `browserFetch(o)` (`{url, method, headers, body, bodyBase64, binary, timeout, page, openTimeout}`) → `{status,
+  headers, body, url, via: 'browser'}`: a hidden window per origin opened on `o.page` (or the origin's `/`) and kept
+  four minutes; the request is that page's own `fetch` (cookies included, the headers a browser sets itself left
+  out); a site whose check does not pass out of sight in `openTimeout` answers 403 with `x-kr-lane: challenge`
+  (`cf-mitigated`), a refusal 403 `x-kr-lane: blocked`; a page that will not load throws (the page then goes the plain
+  way).
+- `browserReset(url)` → `true`: the origin's window set aside (requests under way finish; closed within a minute).
+- `browserForget(url, all)` → `{cleared}`: the window set aside and the site's clearance cookies (`cf_clearance`,
+  `__cf*`, `cf_chl*`, `__ddg*`) — or with `all` every cookie of that one site — removed.
+- New windows a site opens: in the same window (browse mode); downloads: Electron's default (a save dialog).
+
+**What this shell does.** The same functions, the same answers, with these windows (`WebviewWindowBuilder`, an
+external address; labels `krb-<kind>-<n>`; never the bridge, never the app's title bar):
+- **Profile**: on Windows and Linux the browser's own (`data_directory`: `<app local data>/browser`), apart from the
+  library; on a Mac WKWebView's default store, which is the app's too (`data_store_identifier` not used: not sure of it
+  in the resolved Tauri) — sites' cookies are per site anyway; nothing ever clears that store whole.
+- **Answers from the site's page** (fetch results, the page's state). Rust runs a script in the page (`eval`); the page
+  answers by `kr_browser_deliver` — the one command a browser window may call (see «How it works»), for its own window
+  and with its random token —, or, where Tauri's IPC does not carry it from a site's page (an `https` site, a strict
+  CSP), by asking to go to `https://kr-lane.invalid/<token>/<id>/<part>/<parts>?<base64url>`: the window's navigation
+  handler reads and refuses it, so the page stays; one message at a time (96 KiB of body each), each acknowledged; never
+  within 8 s of a navigation the site itself started (it would cancel it), and the site's `beforeunload` handlers do
+  not run for it. Which way the answers came: the self-test's row says.
+- **Checks**: as Electron's — polled every 0.6 s (the same title and element tests), hidden 15 s, visible 5 min, `stay`,
+  `until` (tested on each address the window goes to when it is plain text, and by the page's own `RegExp` on its
+  address), `fresh`. Nothing is clicked or typed for the reader: a check that wants a person stays in its window until
+  they pass it or close it.
+- **The bar** (`browse`): Electron's bar is a strip above the page (a second web view); a Tauri window holds one web
+  view without the `unstable` feature, so here the bar floats in a corner of the page (the start side; a closed shadow
+  root the site's styles and scripts cannot reach): ← → ↻ and the address, in the page's words; Alt+← / Alt+→; the
+  window titled with the page's title.
+- **New windows** (window.open, links and forms aimed at another window) open in the same window, in every mode.
+- **Requests**: a hidden window per origin, kept four minutes, as Electron's; the same `fetch`, the same headers left
+  out, the same refusals; cross-origin requests from that page are the page's own (CORS applies, as in Electron); POST
+  and binary bodies of any size; several at once; `timeout` (90 s) + 15 s.
+- **Cookies shared with the app's own requests** (`http`): Electron has one session. Here the browser's cookies are put
+  in the app's jar (`net::put_cookie`) after a check, when a lane opens, and every 5 s while the browser is open as a
+  browser — every cookie where Tauri can list them all (`cookies()`), else the site's (`cookies_for_url`); not at all
+  where it can do neither (the build's log and the self-test say which).
+- **Forget**: the site's clearance deleted in the browser where Tauri can delete a cookie (`delete_cookie`), and in the
+  app's jar always. **`all` means every site** (Settings' «Forget all sites' sign-ins», its only caller): every cookie
+  deleted where Tauri can list and delete them, and on Windows / Linux the browser's own profile cleared whole
+  (`clear_all_browsing_data`); the app's jar emptied; → how many sites. (Electron's `all` clears only the one site
+  given — `example.com` from that Settings button.)
+- **Downloads** a site offers: into the system's Downloads folder under the name it suggests (never over a file), a
+  notification with its name and place — where Tauri's `on_download` is found; else the web view's own way
+  (WebView2: its download bar; WKWebView / WebKitGTK: nothing happens).
+- **Closing**: the main window closing closes every browser window (they would keep the app running); a window the
+  reader closes ends its `openWebView` with what it had seen (polled each 0.6 s).
+- **DNS over HTTPS**: not for the browser (the system's DNS, said in Settings: `dohHintApp`, five languages).
+
+**Which newer Tauri functions** (`apidetect.rs`, run by `build.rs`: the version in `Cargo.lock`, its source in Cargo's
+registry, each signature found on both `Webview` and `WebviewWindow`): `cookies_for_url` → `kr_cookie_read`, `cookies`
+→ `kr_cookie_all`, `delete_cookie` → `kr_cookie_delete`, `clear_all_browsing_data` → `kr_clear_all`, `on_download` →
+`kr_download_api`. Code using one is compiled only when it is found, with the signature written for it; the build's log
+says what was found (`warning: … KR build: tauri 2.x.y — yes …; no …`).
+
+**Gaps against Electron**, said plainly: without the cookie functions the app's own requests do not carry what was done
+in the browser (a site signed in there is signed out to `http`; the sources still reach it through `browserFetch` once
+it has turned them away); without `delete_cookie` a site's clearance cannot be forgotten in the browser alone (only in
+the app's jar), and on a Mac `all` then clears nothing in the browser; the bar floats over the page instead of above
+it; hidden windows may be slowed by the system (no `backgroundThrottling: false` here); downloads where `on_download`
+is missing go the web view's way.
+
+Tests: `browserlogic.rs`, `apidetect.rs` std-only unit tests (CI); `tests/tauribrowser.cjs` — the page's scripts taken
+from `browser.rs` and run in Chromium on a local site, by the command and by addresses (204 for the refused
+navigation), read back as `browserlogic.rs` reads them (and by `browserlogic.rs` itself through `rustc`): state, the
+signed-in page (HttpOnly cookie), binary, POST, 300 KB in pieces, an error, `until`, three at once, new windows kept,
+the site's own navigation kept, a check page, the bar, the title; `tests/tauribridge.cjs` (the four functions'
+commands and arguments, the body's charset, the guard, the Settings card: «Open the browser» opens it as a browser,
+«Forget all sites» forgets every site); `selftest.js` in CI (14 rows, required on Windows): a site opened out of sight
+sets its cookies; `browserFetch` of the signed-in page carries them and the browser's user agent; binary, POST, 2 MiB;
+the app's requests carry the browser's cookies (reported); the site's page refused the app's commands (two of the
+app's, the browser's own, a plugin's, an event); a link aimed at a new window stays (reported); a download saved
+(reported); a check window and a sign-in's end close by themselves; a check that stays answers the refusal; reset;
+forget (the clearance, then everything); the browser as a browser ends when closed (reported); no window left.
 
 ## The window's title bar (from R5, done ahead of it)
 

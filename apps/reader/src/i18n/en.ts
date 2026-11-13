@@ -1423,7 +1423,7 @@ export const en = {
   dohCustom: 'Another resolver…',
   dohHint: 'Sites are looked up through the chosen resolver instead of your network’s DNS — for the browser, the sources and the downloads alike. Useful when a network hides a site by its name.',
   // (The Tauri shell: its resolver serves the app's own requests; the web view's keep the system's DNS.)
-  dohHintApp: 'Sites are looked up through the chosen resolver instead of your network’s DNS — for the app’s own requests: the sources, the catalogues, the downloads and the update check. Pictures inside web pages are still looked up by the system. Useful when a network hides a site by its name.',
+  dohHintApp: 'Sites are looked up through the chosen resolver instead of your network’s DNS — for the app’s own requests: the sources, the catalogues, the downloads and the update check. Pictures inside web pages and the in-app browser are still looked up by the system. Useful when a network hides a site by its name.',
   dohSet: 'Secure DNS is on',
   dohTurnedOff: 'Secure DNS is off',
   dohBadAddress: 'Enter a resolver address starting with https://',

@@ -81,6 +81,9 @@ async function nodePart() {
     openDefaultApps: [], titleBar: [{ act: 'minimize' }],
     // (Stage R3.)
     download: ['https://example.org/a b.epub', 'a b.epub', 'dl-1'], deleteDownload: ['/data/downloads/a.epub'], setDoh: ['cloudflare', 'example.com'], notify: [{ title: 'T', body: 'B', hash: '/read/1' }],
+    // (Stage R4: the in-app browser.)
+    openWebView: [{ url: 'https://example.org/', hidden: true, timeout: 25000 }], browserFetch: [{ url: 'https://example.org/a', method: 'POST', body: 'eHl6', bodyBase64: true, binary: true, openTimeout: 20000 }],
+    browserReset: ['https://example.org/'], browserForget: ['https://example.org/', true],
   };
   const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl', 'onDownloadProgress', 'addDownloadListener'];
   assert.deepEqual([...Object.keys(samples), ...special].sort(), [...ported].sort(), 'samples ≠ ported functions');
@@ -153,6 +156,15 @@ async function nodePart() {
   tCalls = []; await kd.download('u', 'n'); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args)), { url: 'u', name: 'n', id: null });
   tCalls = []; await kd.cancelDownload('dl-1'); assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_download_cancel', args: { id: 'dl-1' } }]); sent.kr_download_cancel = ['id'];
   tCalls = []; await kd.notify(); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args)), { o: {} });
+  // Stage R4: openWebView with an address alone (the preload's {url}); browserForget without `all` (false);
+  // browserFetch's body made text in the page's charset as http's is, left base64 when binary, via 'browser'.
+  tCalls = []; await kd.openWebView('https://example.org/x'); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0])), { cmd: 'kr_open_webview', args: { o: { url: 'https://example.org/x' } } });
+  eCalls = []; await pre.openWebView('https://example.org/x'); assert.deepEqual(eCalls[0].a, [{ url: 'https://example.org/x' }]);
+  tCalls = []; await kd.browserForget('https://example.org/'); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args)), { url: 'https://example.org/', all: false });
+  reply = (cmd) => (cmd === 'kr_browser_fetch' ? { status: 403, url: 'https://example.org/a', headers: { 'content-type': 'text/html; charset=windows-1256', 'x-kr-lane': 'challenge' }, body: b64([0xe3, 0xd1, 0xcd, 0xc8, 0xc7]), via: 'browser' } : null);
+  assert.deepEqual(JSON.parse(JSON.stringify(await kd.browserFetch({ url: 'https://example.org/a' }))), { status: 403, headers: { 'content-type': 'text/html; charset=windows-1256', 'x-kr-lane': 'challenge' }, body: 'مرحبا', url: 'https://example.org/a', via: 'browser' });
+  assert.equal((await kd.browserFetch({ url: 'u', binary: true })).body, b64([0xe3, 0xd1, 0xcd, 0xc8, 0xc7]));
+  reply = () => null;
   // onDownloadProgress / addDownloadListener: main.cjs's kr:download-progress to every listener through one Tauri
   // listening; onDownloadProgress first removes them all (the preload's removeAllListeners), addDownloadListener's
   // remover takes away its own; without the event API they are kept and the listening tried again later.
@@ -249,13 +261,19 @@ async function nodePart() {
   // Rust: every command the bridge and the self-test call is registered, with the argument names they send.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile|browser)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs', 'browser.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
-  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs + titlebar.rs + openfile.rs define');
+  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs + titlebar.rs + openfile.rs + browser.rs define');
+  // (Stage R4: only the main window may call the app's commands; a browser window kr_browser_deliver alone.)
+  assert.match(main, /\.invoke_handler\(main_only\(tauri::generate_handler!\[/, 'the commands guarded (main_only)');
+  assert.match(main, /let allowed = label == "main" \|\| \(label\.starts_with\(browser::PREFIX\) && command == browser::DELIVER\);/);
+  assert.match(fs.readFileSync(path.join(src, 'browser.rs'), 'utf8'), /pub const DELIVER: &str = "kr_browser_deliver";/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(TAURI, 'src-tauri', 'capabilities', 'default.json'), 'utf8')).windows, ['main'], 'capabilities for the main window only');
+  assert.match(main, /browser::on_event\(window, event\)/, 'browser windows closed with the main one');
   // (Stage R2's plugin, registered first, and the files the system hands the app: the launch's own, a Mac's.)
   assert.match(main, /let mut builder = tauri::Builder::default\(\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if openfile::single_instance_possible\(\) \{\s*builder = builder\.plugin\(tauri_plugin_single_instance::init\(/, 'single-instance registered first');
   assert.match(main, /openfile::at_start\(&handle\)/); assert.match(main, /RunEvent::Opened \{ urls \}/);
@@ -290,7 +308,7 @@ async function nodePart() {
   // The self-test script: inert without its settings; its list of names is the preload's; its verdict; a full run
   // against a fake bridge passes, and fails when one answer is wrong.
   const sw = { addEventListener() { throw new Error('should be inert'); } };
-  vm.runInContext(stSrc, vm.createContext({ window: sw, Promise, Object, Array, String, Error, JSON, Uint8Array, Date, setTimeout, clearTimeout, unescape, encodeURIComponent }));
+  vm.runInContext(stSrc, vm.createContext({ window: sw, Promise, Object, Array, String, Error, JSON, Uint8Array, Date, setTimeout, clearTimeout, unescape, encodeURIComponent, atob }));
   const lib = sw.__KR_SELFTEST_LIB__;
   assert.ok(lib && typeof lib.run === 'function', 'selftest.js exposes its lib');
   assert.equal(sw.__KR_SELFTEST_STARTED__, undefined);
@@ -303,7 +321,8 @@ async function nodePart() {
   assert.deepEqual([...lib.utf8('a✓ن')], [...Buffer.from('a✓ن')]);
   assert.ok(lib.sameBytes(new Uint8Array([1, 2]).buffer, [1, 2]) && !lib.sameBytes([1], [1, 2]));
   const bigBytes = Buffer.from([...Array(3000).keys()].map((i) => (i * 7) & 255)); const largeBytes = Buffer.concat([bigBytes, bigBytes]);
-  const cfg = { base: 'http://127.0.0.1:1', temp: '/tmp', home: '/home/u', text: 'T ✓', gzText: 'G', latinText: 'مرحبا بالعالم', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), os: 'linux', version: '0.61.0', minWidth: 420, minHeight: 600, bigSize: bigBytes.length, bigCrc: lib.crc32(bigBytes), largeSize: largeBytes.length, largeCrc: lib.crc32(largeBytes), cookie: 'jar-ok', dohHost: 'kr-doh-selftest.test' };
+  const cfg = { base: 'http://127.0.0.1:1', temp: '/tmp', home: '/home/u', text: 'T ✓', gzText: 'G', latinText: 'مرحبا بالعالم', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), os: 'linux', version: '0.61.0', minWidth: 420, minHeight: 600, bigSize: bigBytes.length, bigCrc: lib.crc32(bigBytes), largeSize: largeBytes.length, largeCrc: lib.crc32(largeBytes), cookie: 'jar-ok', dohHost: 'kr-doh-selftest.test',
+    site: { title: 'KR test site', cookie: 'signed-in', token: 'kr-token-1', fileName: 'kr-selftest-download.epub', fileSize: 37 }, browser: { ownProfile: true, cookieRead: true, cookieAll: true, cookieDelete: true, clearAll: true, downloads: true } };
   // (testserver.rs's CRC-32 is the self-test's: «123456789» → CBF43926.)
   assert.equal(lib.crc32(Buffer.from('123456789')), 0xCBF43926); assert.equal(lib.crc32(new Uint8Array([1, 2]).buffer), lib.crc32([1, 2]));
   const releases = JSON.parse(fs.readFileSync(path.join(ROOT, '..', '..', 'shared', 'shell-rs', 'src', 'testserver.rs'), 'utf8').match(/pub const RELEASES: &str = r#"([\s\S]*?)"#;/)[1]);
@@ -314,6 +333,10 @@ async function nodePart() {
     const fake = loadBridge({ os: 'linux' }, { __TAURI__: { core: { invoke: () => Promise.reject('fake') } } }).kurokawaDesktop;
     // (Stage R3: a jar, a resolver, the downloads folder and its listeners, as the shell keeps them.)
     const jar = new Map(); let doh = 'off'; let dnsCount = 0; let dls = []; const running = new Map();
+    // (Stage R4: the browser's cookies — shared with the jar as the shell shares them —, its lanes and windows.)
+    const bjar = new Map(); const lanes = new Set(); const wins = new Set(); let browsePending = null;
+    const privateAnswer = () => (bjar.get('kr_site') === 'signed-in' ? { status: 200, body: 'signed-in;clearance=' + (bjar.has('cf_clearance') ? 1 : 0) + ';ua=UA' } : { status: 401, body: 'signed out' });
+    const share = () => { for (const [k, v] of bjar) jar.set(k, v); };
     const emit = (p) => dls.slice().forEach((f) => f(p));
     const safe = (n) => String(n).replace(/[\\/:*?"<>|]/g, '_');
     return Object.assign({}, fake, {
@@ -341,6 +364,7 @@ async function nodePart() {
         if (u === '/latin') return { status: 200, url: o.url, headers: {}, body: cfg.latinText };
         if (u === '/meta') return { status: 200, url: o.url, headers: {}, body: '<meta charset="windows-1256">' + cfg.latinText };
         if (u === '/releases') return { status: 200, url: o.url, headers: {}, body: JSON.stringify(releases) };
+        if (u === '/site/private') return { status: jar.get('kr_site') === 'signed-in' ? 200 : 401, url: o.url, headers: {}, body: '' };
         return { status: 404, url: o.url, headers: {}, body: '' };
       },
       titleBar: async (o) => { o = o || {}; if (o.act === 'maximize') { tb.maximized = !tb.maximized; const st = { ...tb }; setTimeout(() => tbSubs.forEach((f) => f(st)), 3); } return { ...tb }; },
@@ -366,6 +390,38 @@ async function nodePart() {
       onDownloadProgress: (f) => { dls = [f]; },
       addDownloadListener: (f) => { dls.push(f); return () => { dls = dls.filter((x) => x !== f); }; },
       notify: async () => true,
+      openWebView: async (o) => {
+        if (o.browse) { wins.add('b'); return new Promise((r) => { browsePending = () => { wins.delete('b'); r({ passed: true, blocked: false, title: '' }); }; }); }
+        if (o.url === cfg.base + '/site/') { bjar.set('kr_site', 'signed-in'); bjar.set('kr_seen', '1'); bjar.set('cf_clearance', '1'); share(); return { passed: true, blocked: false, title: 'KR test site' }; }
+        if (o.url === cfg.base + '/site/token') return { passed: true, blocked: false, title: 'KR landing', url: cfg.base + '/site/landing#access_token=kr-token-1' };
+        return { passed: false, blocked: false, title: '' };
+      },
+      browserFetch: async (o) => {
+        const u = o.url.startsWith(cfg.base) ? o.url.slice(cfg.base.length) : null;
+        if (u === null) return { status: 403, headers: { 'content-type': 'text/html; charset=utf-8', 'cf-mitigated': 'challenge', 'x-kr-lane': 'challenge' }, body: '<html><head><title>Just a moment...</title></head><body></body></html>', url: o.url, via: 'browser' };
+        lanes.add(cfg.base);
+        if (u === '/site/private') { const a = privateAnswer(); return { status: a.status, headers: {}, body: a.body, url: o.url, via: 'browser' }; }
+        if (u === '/bin') return { status: 200, headers: {}, body: cfg.binB64, url: o.url, via: 'browser' };
+        if (u === '/echo') return { status: 200, headers: {}, body: 'POST:' + (o.bodyBase64 ? Buffer.from(o.body, 'base64').toString() : o.body), url: o.url, via: 'browser' };
+        if (u.startsWith('/big/')) return { status: 200, headers: {}, body: bigBytes.toString('base64'), url: o.url, via: 'browser' };
+        return { status: 404, headers: {}, body: '', url: o.url, via: 'browser' };
+      },
+      browserReset: async () => { lanes.clear(); return true; },
+      browserForget: async (url, all) => {
+        lanes.clear(); let n = 0;
+        for (const k of [...bjar.keys()]) if (all || k === 'cf_clearance') { bjar.delete(k); n++; }
+        for (const k of [...jar.keys()]) if (all || k === 'cf_clearance') jar.delete(k);
+        return { cleared: all ? 1 : n };
+      },
+      _browserAct: (o) => {
+        if (o.act === 'via') return { via: 'command' };
+        if (o.act === 'probe') return { tauri: 'object', internals: 'object', bridge: 'undefined', mode: 'ipc', appCommand: 'refused: kr_folder_read may not be called from this window', appCommand2: 'refused: x', browserCommand: 'refused: x', plugin: 'refused: not allowed', event: 'no answer' };
+        if (o.act === 'click') { if (o.p === '#dl') { disk.set('/home/u/Downloads/kr-selftest-download.epub', Buffer.alloc(37)); return { found: true, href: cfg.base + '/site/' }; } return { found: true, href: cfg.base + '/site/popup' }; }
+        if (o.act === 'downloads') return { downloads: disk.has('/home/u/Downloads/kr-selftest-download.epub') ? [{ url: cfg.base + '/site/file.epub', path: '/home/u/Downloads/kr-selftest-download.epub', ok: true }] : [] };
+        if (o.act === 'windows') return { windows: [...wins], lanes: [...lanes] };
+        if (o.act === 'close') { const n = wins.size; if (browsePending) { browsePending(); browsePending = null; } return { closed: n }; }
+        return { error: 'unknown act' };
+      },
       _disk: disk, _dirs: dirs,
     });
   }
@@ -383,6 +439,7 @@ async function nodePart() {
         if (cmd === 'kr_selftest_clipboard') return Promise.resolve(args.text);
         if (cmd === 'kr_selftest_mkdir') { for (let d = args.p; d.includes('kr-scanfolder-'); d = path.posix.dirname(d)) kdFake._dirs.add(d); return Promise.resolve(true); }
         if (cmd === 'kr_selftest_rmdir') { for (const d of [...kdFake._dirs]) if (d.startsWith(args.p)) kdFake._dirs.delete(d); return Promise.resolve(true); }
+        if (cmd === 'kr_selftest_browser') return Promise.resolve(kdFake._browserAct(args.o));
         if (cmd === 'kr_selftest_launch') { const [p, link] = args.args; const b = kdFake._disk.get(p); setTimeout(() => { openLog.push({ kind: 'file', name: path.posix.basename(p), size: b.length }, { kind: 'url', url: link }); }, 5); return Promise.resolve({ code: 0, killed: false, ms: 300, singleInstance: true }); }
         return Promise.resolve();
       },
@@ -395,6 +452,10 @@ async function nodePart() {
     assert.equal(lib.verdict(res), bad ? 1 : 0);
     assert.ok(res.some((x) => x.name === 'scanDevice' && x.ok) && res.some((x) => x.name === 'stubs answer as documented' && x.ok));
     for (const n of ['open with: the file given at start reaches the page', 'scanFolder: a picked folder walked by path, its file read by path', 'second launch: hands its file and link over, and ends']) assert.ok(res.some((x) => x.name === n && x.ok), n + ': ' + JSON.stringify(res.find((x) => x.name === n)));
+    // (Stage R4's rows, required on Windows only, all pass against a good fake.)
+    const r4 = res.filter((x) => /in-app browser|browserFetch|browserReset|browserForget|the site's page|a link that opens|a download a site|a check window|until:|keeps its check|as a browser|no browser window|own requests carry/.test(x.name));
+    assert.equal(r4.length, 14, 'R4 rows: ' + r4.map((x) => x.name).join(' | '));
+    for (const x of r4) assert.ok(x.ok, `${x.name}: ${x.detail}`);
     const tbRow = res.find((x) => /^title bar/.test(x.name)); assert.ok(tbRow.ok && (bad ? /toggled/ : /^skipped: no window manager/).test(tbRow.detail), 'title bar row: ' + tbRow.detail);
     assert.equal(kdFake._dirs.size, 0, 'the self-test left folders behind');
     assert.ok(sent2.some((c) => c.cmd === 'kr_selftest_progress'));
@@ -428,6 +489,9 @@ async function pagePart(ported) {
         // (What the shell keeps of files and links handed to the app: nothing at first; the test puts some in later.)
         kr_download: (a) => '/data/downloads/' + a.name, kr_delete_download: () => true, kr_set_doh: (a) => ({ provider: a.provider || 'off' }), kr_notify: () => true, kr_download_cancel: () => false,
         kr_open_take: (a) => { const l = window.__openQueue[a.kind] || []; window.__openQueue[a.kind] = []; return l; }, kr_title_bar: (a) => ({ platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: !!(a.o && a.o.act === 'maximize'), fullscreen: false, focused: true }), kr_http: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('ok') }),
+        // (Stage R4: the in-app browser.)
+        kr_open_webview: () => ({ passed: true, blocked: false, title: 'T' }), kr_browser_fetch: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('in the browser'), via: 'browser' }),
+        kr_browser_reset: () => true, kr_browser_forget: (a) => ({ cleared: a.all ? 3 : 1 }),
       };
       window.__openQueue = { file: [], url: [] }; window.__listeners = [];
       window.__TAURI__ = {
@@ -441,7 +505,7 @@ async function pagePart(ported) {
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 47 - shape.leftOut + 2, 'functions in the page (and the extras scanFolder, cancelDownload)'); assert.equal(shape.leftOut, 18, 'left out'); assert.equal(shape.platform, 'linux');
+    assert.equal(shape.fns, 47 - shape.leftOut + 2, 'functions in the page (and the extras scanFolder, cancelDownload)'); assert.equal(shape.leftOut, 14, 'left out'); assert.equal(shape.platform, 'linux');
     const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));
     assert.ok(!shape.frameless && !shape.bar, 'Electron\'s title bar (ui/titlebar.ts) in the Tauri shell');
     assert.ok(own.winbar && own.bar && own.buttons === 3, 'the Tauri shell\'s own title bar (ui/winbar.ts): ' + JSON.stringify(own));
@@ -462,6 +526,7 @@ async function pagePart(ported) {
     await p.waitForSelector('.reader-flow .kr-content, .reader-flow p', { timeout: 30000 });
     // Settings.
     await p.goto(base + '#/settings'); await p.waitForSelector('.settings-body', { timeout: 15000 }); await p.waitForTimeout(500);
+    let n0 = 0;
 
     // Each ported function from the page: the command and the arguments the bridge sends.
     const got = await p.evaluate(async () => {
@@ -477,6 +542,8 @@ async function pagePart(ported) {
         download: () => kd.download('https://example.org/b.epub', 'b.epub', 'd1'), deleteDownload: () => kd.deleteDownload('/data/downloads/b.epub'), setDoh: () => kd.setDoh('quad9'), notify: () => kd.notify({ title: 'T', body: 'B', hash: '/' }),
         onDownloadProgress: () => { let n = 0; kd.onDownloadProgress(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:download-progress').forEach((l) => l[1]({ payload: { id: '', pct: 1 } })); return n; },
         addDownloadListener: () => { let n = 0; const off = kd.addDownloadListener(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:download-progress').forEach((l) => l[1]({ payload: { id: 'x', pct: 1 } })); off(); return n; },
+        openWebView: () => kd.openWebView({ url: 'https://example.org/', hidden: true }), browserFetch: async () => (await kd.browserFetch({ url: 'https://example.org/p' })).body,
+        browserReset: () => kd.browserReset('https://example.org/'), browserForget: () => kd.browserForget('https://example.org/', true),
       };
       for (const [k, f] of Object.entries(runs)) { const n = window.__calls.length; const r = await f(); out[k] = { r, calls: window.__calls.slice(n) }; }
       return out;
@@ -491,6 +558,9 @@ async function pagePart(ported) {
       titleBar: ['kr_title_bar', { o: { act: 'maximize' } }, true],
       download: ['kr_download', { url: 'https://example.org/b.epub', name: 'b.epub', id: 'd1' }, '/data/downloads/b.epub'], deleteDownload: ['kr_delete_download', { p: '/data/downloads/b.epub' }, true],
       setDoh: ['kr_set_doh', { provider: 'quad9', test: null }, { provider: 'quad9' }], notify: ['kr_notify', { o: { title: 'T', body: 'B', hash: '/' } }, true],
+      openWebView: ['kr_open_webview', { o: { url: 'https://example.org/', hidden: true } }, { passed: true, blocked: false, title: 'T' }],
+      browserFetch: ['kr_browser_fetch', { o: { url: 'https://example.org/p' } }, 'in the browser'],
+      browserReset: ['kr_browser_reset', { url: 'https://example.org/' }, true], browserForget: ['kr_browser_forget', { url: 'https://example.org/', all: true }, { cleared: 3 }],
     };
     // (onOpenFile / onOpenUrl: a take of their kind — and, for a file, its bytes read by path.)
     assert.deepEqual(got.onOpenFile.calls.map((c) => [c.cmd, c.args]), [['kr_open_take', { kind: 'file' }], ['kr_read_file', { p: '/x/a.epub' }]]);
@@ -506,10 +576,25 @@ async function pagePart(ported) {
     assert.equal(got.isPortable.r, false); assert.equal(got.isPortable.calls.length, 0);
     assert.equal(got.onTitleBarState.r, 'function'); assert.equal(got.onTitleBarState.calls.length, 0);
     for (const k of ['onDownloadProgress', 'addDownloadListener']) { assert.equal(got[k].r, 1, `${k}: heard the event`); assert.equal(got[k].calls.length, 0, `${k}: no command`); }
-    // (Stage R3: Settings shows the DNS-over-HTTPS choice here without an in-app browser, with this shell's hint.)
+    // (Stage R3: Settings shows the DNS-over-HTTPS choice here, with this shell's hint — since R4 saying that the
+    // in-app browser keeps the system's DNS.)
     await p.goto(base + '#/settings'); await p.waitForSelector('.settings-body');
     const dohHint = await p.evaluate(async () => { for (let i = 0; i < 50; i++) { const h = [...document.querySelectorAll('.settings-body .hint')].map((x) => x.textContent).find((x) => /app’s own requests/.test(x)); if (h) return h; await new Promise((r) => setTimeout(r, 100)); } return null; });
     assert.ok(dohHint, 'the DNS-over-HTTPS section (with the Tauri hint) is not in Settings');
+    assert.match(dohHint, /in-app browser/, 'the hint names the in-app browser: ' + dohHint);
+    // (Stage R4: the in-app browser's card — «Open the browser» opens it as a browser, with the bar's words; «Forget
+    // all sites' sign-ins» forgets every site — and no «this platform opens sites in your own browser».)
+    const card = await p.evaluate(() => { const b = [...document.querySelectorAll('.settings-body button')]; return { open: b.some((x) => /Open the browser/.test(x.textContent)), forget: b.some((x) => /Forget all sites/.test(x.textContent)), none: /opens sites in your own browser/.test(document.querySelector('.settings-body').textContent) }; });
+    assert.deepEqual(card, { open: true, forget: true, none: false }, 'the in-app browser card');
+    n0 = await p.evaluate(() => window.__calls.length);
+    // (The cards fold: the buttons pressed as a tap would, folded or not.)
+    const press = (re) => p.evaluate((src) => { const b = [...document.querySelectorAll('.settings-body button')].find((x) => new RegExp(src).test(x.textContent)); b.click(); }, re);
+    await press('Open the browser'); await p.waitForTimeout(300);
+    const opened = await p.evaluate((n) => window.__calls.slice(n).filter((c) => c.cmd === 'kr_open_webview'), n0);
+    assert.equal(opened.length, 1); assert.equal(opened[0].args.o.browse, true); assert.equal(opened[0].args.o.stay, true); assert.equal(opened[0].args.o.back, 'Back'); assert.equal(opened[0].args.o.placeholder.length > 0, true);
+    await press('Forget all sites'); await p.waitForTimeout(300);
+    const forgot = await p.evaluate(() => window.__calls.filter((c) => c.cmd === 'kr_browser_forget').pop());
+    assert.deepEqual(forgot.args, { url: 'https://example.com/', all: true });
     // scanFolder (the extra): kr_scan_folder { p, exts }.
     const sf = await p.evaluate(async () => { const n = window.__calls.length; const r = await window.kurokawaDesktop.scanFolder('/books', ['epub']); return { r, calls: window.__calls.slice(n) }; });
     assert.deepEqual(sf, { r: { root: '/books', files: [], truncated: false }, calls: [{ cmd: 'kr_scan_folder', args: { p: '/books', exts: ['epub'] } }] });
@@ -519,7 +604,7 @@ async function pagePart(ported) {
     await p.goto(base + '#/'); await p.waitForSelector('.library-view');
     await p.click('.book-card.device-card'); await p.waitForSelector('.sheet .btn:has-text("Choose folder")');
     await p.waitForTimeout(400);
-    let n0 = await p.evaluate(() => window.__calls.length);
+    n0 = await p.evaluate(() => window.__calls.length);
     await p.click('.sheet .btn:has-text("Choose folder")');
     await p.waitForSelector('.scan-row:not(.head) .name:has-text("Linked Book.epub")', { timeout: 10000 });
     const pickCalls = await p.evaluate((n) => window.__calls.slice(n).map((c) => [c.cmd, c.args]), n0);

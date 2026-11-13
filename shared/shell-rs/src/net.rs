@@ -151,6 +151,41 @@ pub fn forget_cookies(host: &str, all: bool) -> usize {
     n
 }
 
+/// A cookie the in-app browser holds (stage R4), put in the app's own jar as if `host` had set it with this
+/// Set-Cookie line over https (`secure`) or not, so the app's requests carry it as Electron's one session does →
+/// whether it was taken.
+pub fn put_cookie(line: &str, host: &str, secure: bool) -> bool {
+    let name: String = line.split(';').next().unwrap_or("").split('=').next().unwrap_or("").trim().to_string();
+    let j = jar();
+    let taken = match j.jar.lock() {
+        Ok(mut inner) => {
+            if inner.set(line, &host.to_ascii_lowercase(), "/", secure, now_secs()) {
+                j.save(&inner);
+            }
+            !name.is_empty() && inner.cookies().iter().any(|c| c.name == name)
+        }
+        Err(_) => false,
+    };
+    taken
+}
+
+/// Cookies of the app's jar taken away (the in-app browser's «forget», stage R4): of the site `host` (None: every
+/// site) whose name `pick` accepts → each one's (domain, name).
+pub fn forget_picked_cookies(host: Option<&str>, pick: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
+    let j = jar();
+    let gone = match j.jar.lock() {
+        Ok(mut inner) => {
+            let gone = inner.forget_picked(host, pick);
+            if !gone.is_empty() {
+                j.save(&inner);
+            }
+            gone
+        }
+        Err(_) => Vec::new(),
+    };
+    gone
+}
+
 /* ---------- DNS over HTTPS ---------- */
 
 /// The resolver chosen: a provider's name, an https:// address (or an http:// one on this computer), or anything

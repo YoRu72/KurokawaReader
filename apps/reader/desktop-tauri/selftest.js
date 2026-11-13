@@ -1,7 +1,7 @@
 // The Reader's Tauri shell, its runtime self-test (CI only). Added after bridge.js to the window's initialization
 // script by src-tauri/src/selftest.rs only when the KR_SELFTEST environment variable is set, after a line that sets
 // window.__KR_SELFTEST__ = { base, temp, home, text, gzText, latinText, binB64, os, version, minWidth, minHeight,
-// openFirst, openFirstSize, openDir, noWm, bigSize, bigCrc, largeSize, largeCrc, cookie, dohHost }.
+// openFirst, openFirstSize, openDir, noWm, bigSize, bigCrc, largeSize, largeCrc, cookie, dohHost, site, browser }.
 // Without that object it does nothing. Once the page has loaded it waits for the library to render, then runs its
 // checks through window.kurokawaDesktop — the same calls the page makes — and a few kr_selftest_* commands (the
 // shared crate's clipboard, window state and update check, which the Reader's bridge does not expose), sends the
@@ -38,13 +38,15 @@
     for (var i = 0; i < u.length; i++) crc = CRC_TABLE[(crc ^ u[i]) & 0xFF] ^ (crc >>> 8);
     return (crc ^ 0xFFFFFFFF) >>> 0;
   }
+  function fromB64(s) { var bin = atob(String(s || '')); var u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
   function dirOf(p) { var i = Math.max(String(p).lastIndexOf('/'), String(p).lastIndexOf('\\')); return i > 0 ? String(p).slice(0, i) : ''; }
   function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s); }
 
   /**
    * The checks. kd: window.kurokawaDesktop. stubs: { name: stage } (window.__KR_BRIDGE_STUBS__).
    * env: { sleep(ms), invoke(cmd, args), doc (document), now(), leftOut ({ name: stage }: window.__KR_BRIDGE_LEFT_OUT__),
-   * openLog() (window.__KR_OPEN_LOG__: what the bridge handed the page), home() (the library shown again), inReader() }.
+   * openLog() (window.__KR_OPEN_LOG__: what the bridge handed the page), home() (the library shown again), inReader(),
+   * ua() (the page's user agent) }.
    * Resolves with the results, after kr_selftest_done.
    */
   async function run(kd, stubs, cfg, env, results) {
@@ -352,6 +354,131 @@
       } finally { await env.invoke('kr_selftest_remove', { p: p }); if (env.home) env.home(); }
     }, 40000);
 
+    /* stage R4 — the in-app browser (browser.rs): windows of the system's web view on the test server's small site
+       (/site/: its page sets a session cookie, HttpOnly, and a clearance). Out of sight it passes and sets its
+       cookies; a request made by the site's own page carries them (and the browser's user agent); binary, POST and a
+       2 MiB answer come back whole; the site's page cannot call the app's commands; a link aimed at a new window
+       stays in the window; a download the site offers is saved (where this build catches downloads); a check window
+       and a sign-in's end (until) close by themselves; a site that keeps its check answers the refusal; reset opens
+       the site afresh; forget clears the clearance, then everything; the browser as a browser ends when closed; no
+       window is left. Required on Windows; reported elsewhere (Xvfb without a window manager, a Mac's runner). */
+    var site = cfg.site || {}; var ab = cfg.browser || {}; var onWin = cfg.os === 'win32'; var siteUrl = base + '/site/';
+    function browserAct(o) { return env.invoke('kr_selftest_browser', { o: o }); }
+    await check('in-app browser: a site opened out of sight passes and sets its cookies (openWebView hidden)', onWin, async function () {
+      must(typeof kd.openWebView === 'function', 'no openWebView');
+      var r = await kd.openWebView({ url: siteUrl, hidden: true, timeout: 15000 });
+      must(r && r.passed === true && r.blocked === false, 'answer ' + short(r));
+      must(r.title === site.title, 'title ' + short(r.title));
+      return 'passed: «' + r.title + '»; this build: ' + short(ab);
+    }, 40000);
+    await check('browserFetch: the signed-in page through the browser\'s session (its HttpOnly cookie, its user agent)', onWin, async function () {
+      var r = await kd.browserFetch({ url: base + '/site/private', timeout: 20000, openTimeout: 20000 });
+      must(r && r.status === 200 && /^signed-in;clearance=1;ua=/.test(r.body) && r.via === 'browser', 'answer ' + short(r));
+      var ua = r.body.replace(/^signed-in;clearance=1;ua=/, ''); var mine = env.ua ? env.ua() : '';
+      var via = await browserAct({ act: 'via' });
+      return 'signed in; the browser\'s user agent ' + (ua === mine ? 'is the app\'s' : 'differs from the app\'s: ' + ua) + '; answers came by ' + (via && via.via);
+    }, 60000);
+    await check('browserFetch: binary, POST, a 2 MiB answer in parts', onWin, async function () {
+      var b = await kd.browserFetch({ url: base + '/bin', binary: true });
+      must(b.body === cfg.binB64, 'binary ' + short(b.body));
+      var p = await kd.browserFetch({ url: base + '/echo', method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8' }, body: 'نص ✓' });
+      must(p.body === 'POST:نص ✓', 'POST ' + short(p.body));
+      var e = await kd.browserFetch({ url: base + '/echo', method: 'POST', body: 'eHl6', bodyBase64: true });
+      must(e.body === 'POST:xyz', 'POST from base64 ' + short(e.body));
+      var t0 = env.now(); var big = await kd.browserFetch({ url: base + '/big/kr-browser.bin', binary: true, timeout: 60000 });
+      var bytes = fromB64(big.body);
+      must(bytes.length === cfg.bigSize && crc32(bytes) === cfg.bigCrc, 'the 2 MiB answer: ' + bytes.length + ' bytes, ' + (crc32(bytes) === cfg.bigCrc ? 'same' : 'other') + ' bytes');
+      return '256 bytes, two POSTs, ' + bytes.length + ' bytes in ' + (env.now() - t0) + ' ms';
+    }, 120000);
+    await check('the app\'s own requests carry the browser\'s cookies', false, async function () {
+      var r = await kd.http({ url: base + '/site/private' });
+      if (ab.cookieRead || ab.cookieAll) must(r.status === 200, 'status ' + r.status + ' (this build reads the browser\'s cookies)');
+      return r.status === 200 ? 'yes (' + (ab.cookieAll ? 'every cookie' : 'the site\'s') + ' shared)' : 'no: this build cannot read the browser\'s cookies (status ' + r.status + ')';
+    });
+    await check('the site\'s page cannot call the app (its commands refused)', onWin, async function () {
+      var r = await browserAct({ act: 'probe', url: siteUrl, p: join(cfg.temp, 'kr-probe-nothing.txt', cfg.os) });
+      must(r && !r.error, 'probe ' + short(r));
+      var calls = ['appCommand', 'appCommand2', 'browserCommand', 'plugin', 'event'];
+      var allowed = calls.filter(function (k) { return /^ALLOWED/.test(String(r[k])); });
+      must(!allowed.length, 'allowed: ' + allowed.map(function (k) { return k + ' ' + r[k]; }).join('; '));
+      must(r.bridge === 'undefined', 'the app\'s bridge is there: ' + r.bridge);
+      return calls.map(function (k) { return k + ' ' + String(r[k]).slice(0, 50); }).join('; ') + '; __TAURI__ ' + r.tauri + '; channel ' + (r.mode || '?');
+    }, 60000);
+    await check('a link that opens a new window stays in the browser window', false, async function () {
+      var r = await browserAct({ act: 'click', url: siteUrl, p: '#pop' });
+      must(r && r.found === true, 'answer ' + short(r));
+      must(/\/site\/popup$/.test(r.href || ''), 'went to ' + short(r.href));
+      return r.href;
+    }, 40000);
+    await check('a download a site offers is saved', false, async function () {
+      if (!ab.downloads) return 'not caught in this build: the web view\'s own way';
+      var r = await browserAct({ act: 'click', url: siteUrl, p: '#dl' });
+      must(r && r.found === true, 'answer ' + short(r));
+      var d = null; var until = env.now() + 15000;
+      while (!d && env.now() < until) { var l = (await browserAct({ act: 'downloads' })).downloads || []; d = l.filter(function (x) { return /\/site\/file\.epub$/.test(x.url); })[0] || null; if (!d) await sleep(300); }
+      must(d && d.ok && d.path, 'download ' + short(d));
+      var n = await kd.fileSize(d.path); await env.invoke('kr_selftest_remove', { p: d.path });
+      must(n === site.fileSize, 'size ' + n + ' ≠ ' + site.fileSize);
+      return d.path;
+    }, 60000);
+    await check('a check window closes by itself once the site shows its page', onWin, async function () {
+      var r = await kd.openWebView({ url: siteUrl, timeout: 20000, message: 'KurokawaReader self-test' });
+      must(r && r.passed === true && r.blocked === false, 'answer ' + short(r));
+      return 'passed: «' + r.title + '»';
+    }, 45000);
+    await check('until: a sign-in\'s end address given back', onWin, async function () {
+      var r = await kd.openWebView({ url: base + '/site/token', until: 'access_token=', stay: true, timeout: 20000, message: 'KurokawaReader self-test' });
+      must(r && r.passed === true && /\/site\/landing#access_token=/.test(r.url || '') && r.url.indexOf(site.token) >= 0, 'answer ' + short(r && { passed: r.passed, url: String(r.url || '').replace(/access_token=.*/, 'access_token=…') }));
+      return r.url.replace(/access_token=.*/, 'access_token=…');
+    }, 45000);
+    await check('a site that keeps its check: the request answers the refusal (x-kr-lane)', onWin, async function () {
+      var other = 'http://localhost:' + port;
+      var r = await kd.browserFetch({ url: other + '/site/private', page: other + '/site/check', openTimeout: 3000 });
+      must(r && r.status === 403 && r.headers['x-kr-lane'] === 'challenge' && r.headers['cf-mitigated'] === 'challenge', 'answer ' + short(r));
+      must(/Just a moment/.test(r.body), 'body ' + short(r.body));
+      return '403, x-kr-lane: challenge';
+    }, 40000);
+    await check('browserReset: the site\'s window set aside, opened afresh by the next request (still signed in)', onWin, async function () {
+      must((await kd.browserReset(siteUrl)) === true, 'reset did not answer true');
+      await sleep(800);
+      var w = await browserAct({ act: 'windows' });
+      must(w && w.lanes.indexOf(base) < 0, 'its lane still there: ' + short(w));
+      var r = await kd.browserFetch({ url: base + '/site/private' });
+      must(r.status === 200, 'status ' + r.status);
+      return 'set aside; afresh and signed in';
+    }, 60000);
+    await check('browserForget: the clearance only, then every site\'s data', onWin && !!(ab.cookieDelete || ab.clearAll), async function () {
+      var a = await kd.browserForget(siteUrl, false);
+      must(a && typeof a.cleared === 'number', 'answer ' + short(a));
+      var r1 = await kd.browserFetch({ url: base + '/site/private' });
+      var said = 'the clearance: ' + a.cleared + ' cleared, then ' + r1.status + ' ' + short(r1.body).slice(0, 30);
+      if (ab.cookieDelete) must(r1.status === 200 && /clearance=0/.test(r1.body), said);
+      var b = await kd.browserForget(siteUrl, true);
+      var r2 = await kd.browserFetch({ url: base + '/site/private' });
+      said += '; everything: ' + b.cleared + ' site(s), then ' + r2.status;
+      if (ab.cookieDelete || ab.clearAll) must(r2.status === 401, said);
+      var h = await kd.http({ url: base + '/site/private' });
+      must(h.status === 401, said + '; the app\'s own requests still signed in');
+      return said + (ab.cookieDelete || ab.clearAll ? '' : ' (this build cannot clear the browser\'s cookies)');
+    }, 90000);
+    await check('the browser as a browser (Settings): opens with its bar, ends when closed', false, async function () {
+      var p = kd.openWebView({ url: siteUrl, browse: true, message: 'KurokawaReader self-test', back: 'Back', forward: 'Forward', reload: 'Reload', placeholder: 'Address', rtl: false });
+      var over = null; p.then(function (r) { over = r || {}; }, function (e) { over = { error: (e && e.message) || String(e) }; });
+      await sleep(2500);
+      must(over === null, 'ended before it was closed: ' + short(over));
+      var c = await browserAct({ act: 'close' });
+      var r = await within(p, 10000, 'the answer once closed');
+      must(r && r.passed === true, 'answer ' + short(r));
+      return 'closed (' + c.closed + ' window(s)); ' + short(r);
+    }, 30000);
+    await check('no browser window left', onWin, async function () {
+      await browserAct({ act: 'close' });
+      var w = null; var until = env.now() + 8000;
+      for (;;) { w = await browserAct({ act: 'windows' }); if (!w.windows.length || env.now() > until) break; await sleep(300); }
+      must(!w.windows.length, 'still open: ' + short(w.windows));
+      return 'none';
+    }, 20000);
+
     /* clipboard (the shared shell.rs): not required — a headless desktop may have none */
     await check('clipboard write → read', false, async function () { var t = 'kr selftest ✓ نص'; var back = await env.invoke('kr_selftest_clipboard', { text: t }); must(back === t, 'read ' + short(back)); return 'round trip'; });
 
@@ -373,7 +500,7 @@
     return results;
   }
 
-  var lib = { NAMES: NAMES, ASSET: ASSET, verdict: verdict, sameBytes: sameBytes, utf8: utf8, join: join, crc32: crc32, run: run };
+  var lib = { NAMES: NAMES, ASSET: ASSET, verdict: verdict, sameBytes: sameBytes, utf8: utf8, join: join, crc32: crc32, fromB64: fromB64, run: run };
   try { Object.defineProperty(root, '__KR_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KR_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KR_SELFTEST__;
@@ -401,6 +528,7 @@
       // (Back to the library: a file opened from outside opens in the reader.)
       home: function () { try { if (root.location.hash !== '#/') root.location.hash = '#/'; } catch (e) { /* stays */ } },
       inReader: function () { try { return /^#\/read\//.test(root.location.hash); } catch (e) { return false; } },
+      ua: function () { try { return root.navigator.userAgent; } catch (e) { return ''; } },
     };
     setTimeout(function () {
       run(root.kurokawaDesktop, root.__KR_BRIDGE_STUBS__ || {}, cfg, env, results).catch(function (e) {

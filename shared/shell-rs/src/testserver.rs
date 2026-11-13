@@ -20,6 +20,17 @@
 //   GET  /large/<name>  LARGE_SIZE bytes made as /big's are, Range answered, sent slowly (a download in parts)
 //   POST /dns-query     DNS over HTTPS (RFC 8484): DOH_HOST → 127.0.0.1 (A), no AAAA; any other name: «no such
 //                       name»; /dns-count tells how many queries came
+// and for the in-app browser (R4), a small site:
+//   GET  /site/         its page (titled SITE_TITLE): sets kr_site=SITE_COOKIE (HttpOnly), kr_seen=1 and a
+//                       clearance, cf_clearance=1 (HttpOnly); links to a download (#dl) and to a page in a new window
+//                       (#pop)
+//   GET  /site/private  signed in only: 200 «signed-in;clearance=<0|1>;ua=<User-Agent>» with kr_site's cookie, else
+//                       401 «signed out»
+//   GET  /site/file.epub   a file offered as a download (Content-Disposition: attachment; SITE_FILE bytes)
+//   GET  /site/popup    a page (KR popup)
+//   GET  /site/token    302 → /site/landing#access_token=SITE_TOKEN (a sign-in's end)
+//   GET  /site/landing  a page (KR landing)
+//   GET  /site/check    a page that stays a check («Just a moment...»)
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::net::{TcpListener, TcpStream};
@@ -34,6 +45,13 @@ pub const BIG_SIZE: usize = 2 * 1024 * 1024;
 pub const LARGE_SIZE: usize = 3 * 1024 * 1024;
 /// The value /cookie/set gives (a fixed test string: the self-test may log that it came back).
 pub const COOKIE_VALUE: &str = "jar-ok";
+/// The in-app browser's test site (R4): its page's title, the session cookie it sets, a sign-in's token, the file it
+/// offers. (Fixed test strings: the self-test may log them.)
+pub const SITE_TITLE: &str = "KR test site";
+pub const SITE_COOKIE: &str = "signed-in";
+pub const SITE_TOKEN: &str = "kr-token-1";
+pub const SITE_FILE: &[u8] = b"PK\x03\x04 kurokawa selftest download";
+pub const SITE_FILE_NAME: &str = "kr-selftest-download.epub";
 /// The made-up name /dns-query answers with 127.0.0.1 (.test is reserved: no real resolver knows it).
 pub const DOH_HOST: &str = "kr-doh-selftest.test";
 static DNS_QUERIES: AtomicUsize = AtomicUsize::new(0);
@@ -332,6 +350,47 @@ fn serve(mut s: TcpStream) -> std::io::Result<()> {
     } else if path == "/dns-count" {
         let n = DNS_QUERIES.load(Ordering::SeqCst).to_string();
         answer(&mut s, "200 OK", &[("Content-Type", "text/plain".to_string())], n.as_bytes())
+    } else if path == "/site/" || path == "/site" {
+        let h = [
+            ("Content-Type", "text/html; charset=utf-8".to_string()),
+            ("Set-Cookie", format!("kr_site={}; Path=/; HttpOnly", SITE_COOKIE)),
+            ("Set-Cookie", "kr_seen=1; Path=/".to_string()),
+            ("Set-Cookie", "cf_clearance=1; Path=/; HttpOnly".to_string()),
+        ];
+        let page = format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title></head><body><h1>{}</h1><p><a id=\"dl\" href=\"/site/file.epub\">{}</a></p><p><a id=\"pop\" href=\"/site/popup\" target=\"_blank\">popup</a></p></body></html>",
+            SITE_TITLE, SITE_TITLE, SITE_FILE_NAME
+        );
+        answer(&mut s, "200 OK", &h, page.as_bytes())
+    } else if path == "/site/private" {
+        let c = header_of(&req, "cookie").unwrap_or_default();
+        let has = |kv: &str| c.split(';').any(|x| x.trim() == kv);
+        let h = [("Content-Type", "text/plain; charset=utf-8".to_string())];
+        if has(&format!("kr_site={}", SITE_COOKIE)) {
+            let ua = header_of(&req, "user-agent").unwrap_or_default();
+            let b = format!("signed-in;clearance={};ua={}", if has("cf_clearance=1") { 1 } else { 0 }, ua);
+            answer(&mut s, "200 OK", &h, b.as_bytes())
+        } else {
+            answer(&mut s, "401 Unauthorized", &h, b"signed out")
+        }
+    } else if path == "/site/file.epub" {
+        let h = [
+            ("Content-Type", "application/epub+zip".to_string()),
+            ("Content-Disposition", format!("attachment; filename=\"{}\"", SITE_FILE_NAME)),
+        ];
+        answer(&mut s, "200 OK", &h, SITE_FILE)
+    } else if path == "/site/popup" || path == "/site/landing" || path == "/site/check" {
+        let title = match path.as_str() {
+            "/site/popup" => "KR popup",
+            "/site/landing" => "KR landing",
+            _ => "Just a moment...",
+        };
+        let h = [("Content-Type", "text/html; charset=utf-8".to_string())];
+        let page = format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title></head><body><p>{}</p></body></html>", title, title);
+        answer(&mut s, "200 OK", &h, page.as_bytes())
+    } else if path == "/site/token" {
+        let h = [("Location", format!("/site/landing#access_token={}", SITE_TOKEN))];
+        answer(&mut s, "302 Found", &h, b"")
     } else if path == "/latin" {
         let h = [("Content-Type", "text/plain; charset=windows-1256".to_string())];
         answer(&mut s, "200 OK", &h, &LATIN_BYTES)
@@ -511,6 +570,27 @@ mod tests {
         assert!(e.contains("referer: https://r.example/\n") && e.contains("user-agent: UA ✓\n"), "{}", e);
         let l = get(port, "GET /large/x HTTP/1.1\r\nRange: bytes=0-0\r\n\r\n");
         assert!(String::from_utf8_lossy(&l).contains(&format!("Content-Range: bytes 0-0/{}", LARGE_SIZE)));
+    }
+
+    #[test]
+    fn site_routes() {
+        let port = start().unwrap();
+        let p = String::from_utf8_lossy(&get(port, "GET /site/ HTTP/1.1\r\n\r\n")).into_owned();
+        assert!(p.contains("Set-Cookie: kr_site=signed-in; Path=/; HttpOnly\r\n") && p.contains("Set-Cookie: cf_clearance=1; Path=/; HttpOnly\r\n"));
+        assert!(p.contains(&format!("<title>{}</title>", SITE_TITLE)) && p.contains("id=\"dl\"") && p.contains("target=\"_blank\""));
+        let out = String::from_utf8_lossy(&get(port, "GET /site/private HTTP/1.1\r\nCookie: kr_seen=1\r\n\r\n")).into_owned();
+        assert!(out.starts_with("HTTP/1.1 401") && out.ends_with("signed out"));
+        let inn = body_of(&get(port, "GET /site/private HTTP/1.1\r\nUser-Agent: UA 1\r\nCookie: kr_seen=1; kr_site=signed-in\r\n\r\n"));
+        assert_eq!(inn, "signed-in;clearance=0;ua=UA 1");
+        let both = body_of(&get(port, "GET /site/private HTTP/1.1\r\nCookie: cf_clearance=1; kr_site=signed-in\r\n\r\n"));
+        assert!(both.starts_with("signed-in;clearance=1;"));
+        let f = get(port, "GET /site/file.epub HTTP/1.1\r\n\r\n");
+        assert!(String::from_utf8_lossy(&f).contains(&format!("Content-Disposition: attachment; filename=\"{}\"", SITE_FILE_NAME)));
+        assert!(f.ends_with(SITE_FILE));
+        let t = String::from_utf8_lossy(&get(port, "GET /site/token HTTP/1.1\r\n\r\n")).into_owned();
+        assert!(t.starts_with("HTTP/1.1 302") && t.contains("Location: /site/landing#access_token=kr-token-1\r\n"));
+        assert!(body_of(&get(port, "GET /site/check HTTP/1.1\r\n\r\n")).contains("<title>Just a moment...</title>"));
+        assert!(body_of(&get(port, "GET /site/popup HTTP/1.1\r\n\r\n")).contains("KR popup"));
     }
 
     #[test]

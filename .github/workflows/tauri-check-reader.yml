@@ -1,6 +1,6 @@
 name: Tauri check (Reader)
 
-# The Reader's Tauri shell (apps/reader/desktop-tauri, stages R0–R2 of docs/RUST-PORT-READER.md) and the crate it
+# The Reader's Tauri shell (apps/reader/desktop-tauri, stages R0–R4 of docs/RUST-PORT-READER.md) and the crate it
 # shares with Kurokawa Tools' (shared/shell-rs) built on Windows, Linux and macOS beside the Electron one, to see that
 # it builds, how big its bundles are, and that it runs: the built app is started with KR_SELFTEST set, waits for the
 # library to render and checks its own bridge — files, the whole-computer scan, web requests and charsets, the update
@@ -9,7 +9,10 @@ name: Tauri check (Reader)
 # with a file and a link hands them over and ends (single instance); (R3) cookies kept across requests and
 # redirects, long redirect chains, the headers a page may not set, downloads with progress (whole, in parts,
 # cancelled, deleted only in their folder), DNS over HTTPS through a resolver the test server plays, a notification
-# asked for. Then
+# asked for; (R4) the in-app browser on the test server's small site — passed out of sight, requests made by the
+# site's own page with its cookies, the site's page refused the app's commands, a check window and a sign-in's end
+# closing by themselves, a refusal, reset and forget, no window left. (The build's log says which of Tauri's newer
+# web-view functions it found: «KR build: …».) Then
 # (R1) it is started again with KR_ENGINETEST set: the web app's key cases run in the system's own web view — books
 # imported, kept over a reload, opened, searched, highlighted, a text book's place kept, PDFs drawn (one of 300
 # pages), the PDF → Word converter, fonts and Arabic, read-aloud, full screen — with screenshots for a person to
@@ -74,7 +77,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs; do
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -133,12 +136,12 @@ jobs:
 
       # The runtime self-test: the built app started with KR_SELFTEST=<file>; it writes its results there and exits
       # 0 (all required checks passed), 1 (one failed) or 2 (its own watchdog, KR_SELFTEST_TIMEOUT seconds). (Longer
-      # than Tools': the whole-computer scan walks up to 20000 folders.)
+      # than Tools': the whole-computer scan walks up to 20000 folders; since R4 the in-app browser's checks.)
       - name: Self-test (Linux, under Xvfb)
         if: runner.os == 'Linux'
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_SELFTEST_TIMEOUT: '140'
+          KR_SELFTEST_TIMEOUT: '260'
           # (Xvfb without a window manager: the title bar's maximise is not tried — the row says «skipped».)
           KR_SELFTEST_NO_WM: '1'
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
@@ -152,7 +155,7 @@ jobs:
           bus=""; command -v dbus-run-session >/dev/null && bus="dbus-run-session --"
           echo "D-Bus: ${bus:-none}"
           set +e
-          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" timeout 200 $bus xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader "$f"
+          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" timeout 330 $bus xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader "$f"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -163,7 +166,7 @@ jobs:
         shell: pwsh
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_SELFTEST_TIMEOUT: '140'
+          KR_SELFTEST_TIMEOUT: '260'
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'kr-selftest.json'
           $env:KR_SELFTEST = $out
@@ -176,7 +179,7 @@ jobs:
           $exe = (Resolve-Path 'target/release/KurokawaReader.exe').Path
           $p = Start-Process -FilePath $exe -ArgumentList ('"' + $f + '"') -PassThru
           $null = $p.Handle
-          if ($p.WaitForExit(200000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          if ($p.WaitForExit(330000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
           node ../selftest-report.cjs $out $code '${{ matrix.name }}' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           exit $code
 
@@ -185,7 +188,7 @@ jobs:
         continue-on-error: true
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_SELFTEST_TIMEOUT: '140'
+          KR_SELFTEST_TIMEOUT: '260'
         run: |
           out="$RUNNER_TEMP/kr-selftest.json"
           # (The bare executable, as on Linux: the web UI is built into it.)
@@ -195,8 +198,8 @@ jobs:
           # (R2: a file given on the command line — the page must receive it.)
           d="$RUNNER_TEMP/kr-open"; mkdir -p "$d"; f="$d/kr open-first.txt"; printf 'Opened at start, from the command line.\n' > "$f"
           set +e
-          # (No `timeout` on macOS: perl's alarm ends it after 200 s.)
-          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" perl -e 'alarm 200; exec @ARGV' "$bin" "$f"
+          # (No `timeout` on macOS: perl's alarm ends it after 330 s.)
+          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" perl -e 'alarm 330; exec @ARGV' "$bin" "$f"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"

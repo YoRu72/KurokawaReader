@@ -1,10 +1,12 @@
-// KurokawaReader — the Tauri shell (stages R0–R1 of docs/RUST-PORT-READER.md, beside the Electron one in ../../desktop):
+// KurokawaReader — the Tauri shell (stages R0–R4 of docs/RUST-PORT-READER.md, beside the Electron one in ../../desktop):
 // the same web app (../../dist) in a window made here, with bridge.js run before the page's own scripts on every load
 // so the page finds the same `window.kurokawaDesktop` the Electron preload gives it. The commands are thin wrappers
 // (commands.rs) over the crate both apps' shells share (shared/shell-rs, `kurokawa_shell`); what is not ported yet is
 // a stub in bridge.js (see ../PORTING.md).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod browser;
+mod browserlogic;
 mod commands;
 mod dlplan;
 mod download;
@@ -47,6 +49,26 @@ fn user_agent() -> String {
     )
 }
 
+/// Only the main window's page may call the app's commands. A window of the in-app browser (stage R4: a site's own
+/// page, browser.rs) may call one — kr_browser_deliver, which takes an answer for that window only —, and nothing
+/// else: every other command is refused before it runs. (The plugins' commands are refused there by Tauri itself:
+/// capabilities/default.json grants them to the main window only.)
+fn main_only<F>(handler: F) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static
+where
+    F: Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static,
+{
+    move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+        let label: String = invoke.message.webview().label().to_string();
+        let command: String = invoke.message.command().to_string();
+        let allowed = label == "main" || (label.starts_with(browser::PREFIX) && command == browser::DELIVER);
+        if !allowed {
+            invoke.resolver.reject(format!("{} may not be called from this window", command));
+            return true;
+        }
+        handler(invoke)
+    }
+}
+
 fn main() {
     net::configure(user_agent());
     let mut builder = tauri::Builder::default();
@@ -63,7 +85,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         // (Stage R3: system notifications — kr_notify, from Rust only, so no JS permission is granted.)
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(main_only(tauri::generate_handler![
             commands::kr_read_file,
             commands::kr_file_size,
             commands::kr_folder_read,
@@ -93,11 +115,19 @@ fn main() {
             openfile::kr_open_take,
             titlebar::kr_title_bar,
             enginetest::kr_engine_shot,
-            enginetest::kr_engine_profile
-        ])
+            enginetest::kr_engine_profile,
+            browser::kr_open_webview,
+            browser::kr_browser_fetch,
+            browser::kr_browser_reset,
+            browser::kr_browser_forget,
+            browser::kr_browser_deliver,
+            browser::kr_selftest_browser
+        ]))
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
             titlebar::on_event(window, event);
+            // (Stage R4: a browser window gone; the main window closing takes every browser window with it.)
+            browser::on_event(window, event);
         })
         .setup(|app| {
             let handle = app.handle().clone();

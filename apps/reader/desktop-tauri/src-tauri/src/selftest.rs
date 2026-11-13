@@ -57,6 +57,15 @@ pub fn script(app: &AppHandle) -> Option<String> {
         "largeCrc": testserver::crc32(&large),
         "cookie": testserver::COOKIE_VALUE,
         "dohHost": testserver::DOH_HOST,
+        // (Stage R4: the in-app browser's test site, and what this build's browser can do — browser.rs.)
+        "site": {
+            "title": testserver::SITE_TITLE,
+            "cookie": testserver::SITE_COOKIE,
+            "token": testserver::SITE_TOKEN,
+            "fileName": testserver::SITE_FILE_NAME,
+            "fileSize": testserver::SITE_FILE.len(),
+        },
+        "browser": crate::browser::abilities(),
     });
     Some(format!("window.__KR_SELFTEST__ = {};\n{}", cfg, SELFTEST_JS))
 }
