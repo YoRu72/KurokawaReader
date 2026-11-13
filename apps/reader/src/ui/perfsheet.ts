@@ -15,6 +15,9 @@ const ms = (n?: number) => (n === undefined ? '-' : n < 1000 ? `${Math.round(n)}
 const dur = (n: number) => (n < 60000 ? `${Math.round(n / 1000)} s` : n < 3600000 ? `${Math.round(n / 60000)} min` : `${(n / 3600000).toFixed(1)} h`);
 const stamp = (at: number) => { const d = new Date(at); const p = (x: number) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const END_EN: Record<string, string> = { left: 'closed normally', bg: 'ended in the background, not seen again', unexpected: 'ENDED UNEXPECTEDLY' };
+/** How an unexpected end is told apart (src/diag.ts `why`). */
+const WHY_EN: Record<string, string> = { 'renderer-crash': 'renderer crashed', 'renderer-killed': 'renderer killed by the system (memory)', 'app-memory': 'app process killed for memory', 'app-crash': 'app process crashed', anr: 'app not responding (ANR)', 'anr?': 'ANR suspected', 'app-killed': 'app process ended by the system', unknown: 'cause unknown' };
+const NAV_EN: Record<string, string> = { gesture: 'gesture navigation', buttons: 'button navigation (no side zone)', old: 'Android 9 or older (no side zone)', unknown: 'not told by the app shell' };
 const fields = (e: DiagEvent) => Object.entries(e).filter(([k]) => k !== 't' && k !== 'k').map(([k, v]) => `${k}=${v}`).join(' ');
 
 export function diagReport(d: Data = diagData()): string {
@@ -36,16 +39,31 @@ export function diagReport(d: Data = diagData()): string {
   for (const e of leaves) L.push(`  ${stamp(e.t)} ${e.why} -> ${e.to}${e.inBook !== undefined ? ` after ${e.inBook} s` : ''}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
   const held = d.events.filter((e) => e.k === 'backheld').slice(-15).reverse();
   if (held.length) {
-    L.push('', `Back held by "Back twice to leave a book" (last ${held.length}):`);
-    for (const e of held) L.push(`  ${stamp(e.t)} ${e.why === 'twice' ? 'reminder shown, book kept' : e.why === 'selection' ? 'selection cleared, book kept' : e.why}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
+    L.push('', `Back held, book kept (last ${held.length}):`);
+    for (const e of held) L.push(`  ${stamp(e.t)} ${heldWhy(e)}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
   }
-  const rest = d.events.filter((e) => e.k !== 'open' && e.k !== 'leave' && e.k !== 'backheld').slice(-25).reverse();
+  // (Whether the edges were kept from Back in the books opened: the setting as each opened.)
+  const guards = d.events.filter((e) => e.k === 'edgeguard');
+  const g = guards[guards.length - 1];
+  L.push('', g ? `Edge guard ("Protect page-turn swipes at the screen edges") at the last book open: ${g.on ? 'ON' : 'off'}${g.on && !g.sideways ? ' (not used: no sideways swipes in that mode)' : ''}; on at ${guards.filter((e) => e.on).length} of the last ${guards.length} opens.` : 'Edge guard: no book opened on Android since the record began.');
+  // (The phone's own Back zone as each book opened — src/readkeys.ts —, and the touches begun in it, left to the system.)
+  const zones = d.events.filter((e) => e.k === 'syszone'); const z = zones[zones.length - 1];
+  const sysT = d.events.filter((e) => e.k === 'systouch');
+  if (z) L.push(`System Back zone at the last book open: left ${z.l} px, right ${z.r} px, ${NAV_EN[String(z.nav)] ?? z.nav}.`, `Touches begun in it, left to the system: ${sysT.reduce((n, e) => n + Number(e.n || 0), 0)} (in ${sysT.length} of the last ${zones.length} books opened).`);
+  const rest = d.events.filter((e) => !['open', 'leave', 'backheld', 'edgeguard', 'syszone', 'systouch'].includes(e.k)).slice(-25).reverse();
   L.push('', `Other events (last ${rest.length}):`);
   for (const e of rest) L.push(`  ${stamp(e.t)} ${e.k} ${fields(e)}`.trimEnd());
   return L.join('\n') + '\n';
 }
+/** Why a Back was held, for the report. */
+function heldWhy(e: DiagEvent): string {
+  if (e.why === 'twice') return 'Back twice to leave: reminder shown, book kept';
+  if (e.why === 'selection') return 'Back twice to leave: selection cleared, book kept';
+  if (e.why === 'swipe') return `IGNORED AS PART OF A PAGE-TURN SWIPE (${e.how === 'after-turn' ? `${e.ms} ms after the chapter turned` : e.how === 'down' ? 'came with the finger down; that touch then turned the chapter' : e.how}; the touch began ${e.edge0 && e.edge0 !== 'none' ? `at the ${e.edge0} edge` : 'away from the edges'})`;
+  return String(e.why);
+}
 function sessionLine(s: DiagSession, running: boolean): string {
-  const st = s.st; const how = running ? 'running' : END_EN[s.end ?? ''] ?? '?';
+  const st = s.st; const how = (running ? 'running' : END_EN[s.end ?? ''] ?? '?') + (!running && s.why ? `: ${WHY_EN[s.why] ?? s.why}${s.det ? ` (${s.det})` : ''}` : '');
   const parts = [`${stamp(s.at)} ${how} after ${dur(s.ran)} on ${s.scr}${s.hid && s.end !== 'left' ? ' (in background)' : ''}${s.book && !running ? ' (book open)' : ''}`, `app ${s.env.v} ${s.env.plat}`];
   if (st.js !== undefined) parts.push(`start: script ${ms(st.js)}, library shown ${ms(st.shown)}, usable ${ms(st.usable)}`);
   if (s.opens || s.leaves) parts.push(`opens ${s.opens}, reader left ${s.leaves}`);
@@ -54,6 +72,9 @@ function sessionLine(s: DiagSession, running: boolean): string {
   if (s.worst.length) parts.push(`worst ${s.worst.map(([m, scr, k]) => `${m}ms ${k}@${scr}`).join(', ')}`);
   if (s.ev.slow || s.ev.maxDelay > 50) parts.push(`slow taps ${s.ev.slow}, max input delay ${s.ev.maxDelay} ms, max to paint ${s.ev.maxDur} ms`);
   if (s.mem) parts.push(`heap ${s.mem} MB`);
+  if (s.ms?.length) parts.push(`memory while reading [s: heap MB/elements k/chapters made/pictures] ${s.ms.map(([at, hp, el, ch, pic]) => `${at}: ${hp < 0 ? '-' : hp}/${el}/${ch}/${pic}`).join(', ')}`);
+  if (s.rlt?.length) parts.push(`last long tasks ${s.rlt.map(([m, at]) => `${ms(m)} at ${at} s`).join(', ')}`);
+  if (s.errs && Object.keys(s.errs).length) parts.push(`uncaught ${Object.entries(s.errs).map(([k, n]) => `${k} x${n}`).join(', ')}`);
   return parts.join(' · ');
 }
 
@@ -67,6 +88,7 @@ const KIND: Record<string, keyof Strings> = { text: 'perfKindText', 'web novel':
 const kindName = (k: string) => (KIND[k] ? t(KIND[k]) : k.toUpperCase());
 const WHY: Record<string, keyof Strings> = { 'back-button': 'perfWhyBackButton', 'top-back': 'perfWhyTopBack', link: 'perfWhyLink', missing: 'perfWhyMissing', error: 'perfWhyError', code: 'perfWhyCode', history: 'perfWhyHistory', 'next-book': 'perfWhyNextBook', 'to-caller': 'perfWhyToCaller', key: 'perfWhyKey', 'back-pc': 'perfWhyBackPc', series: 'perfWhySeries' };
 const END: Record<string, keyof Strings> = { left: 'perfEndLeft', bg: 'perfEndBg', unexpected: 'perfEndUnexpected' };
+const CAUSE: Record<string, keyof Strings> = { 'renderer-crash': 'perfCauseRendererCrash', 'renderer-killed': 'perfCauseRendererKilled', 'app-memory': 'perfCauseAppMemory', 'app-crash': 'perfCauseAppCrash', anr: 'perfCauseAnr', 'anr?': 'perfCauseAnrSuspected', 'app-killed': 'perfCauseAppKilled' };
 
 export function perfSheet(): void {
   diagFlush();
@@ -87,12 +109,13 @@ export function perfSheet(): void {
     row(t('perfStartup'), started ? t('perfStartupVal', { shown: fmtMs(started.st.shown), usable: fmtMs(started.st.usable) }) : t('perfNotYet'));
     row(t('perfLastOpen'), lastOpen ? t('perfLastOpenVal', { kind: kindName(String(lastOpen.kind)), first: fmtMs(lastOpen.first as number | undefined), placed: fmtMs(lastOpen.placed as number | undefined) }) : t('perfNoOpen'));
     if (now) row(t('perfSlow'), t('perfSlowVal', { t1: fmtMs(100), a: now.lt[1] + now.laf[1], t2: fmtMs(250), b: now.lt[2] + now.laf[2], t3: fmtMs(1000), c: now.lt[3] + now.laf[3] }), now.ltRead ? t('perfSlowReading', { n: now.ltRead }) : null, now.ev.slow || now.ev.maxDelay ? t('perfSlowTaps', { n: now.ev.slow, ms: fmtMs(now.ev.maxDelay) }) : null);
-    row(t('perfSessions'), ...d.sessions.slice(-6).reverse().map((s) => `${when(s.at)} · ${s === now ? t('perfRunning') : t(END[s.end ?? 'unexpected'])}${s.hid && s !== now && s.end !== 'left' ? ` (${t('perfInBg')})` : ''} · ${t('perfSessionVal', { dur: fmtDur(s.ran), screen: screenName(s.scr) })}`));
+    row(t('perfSessions'), ...d.sessions.slice(-6).reverse().map((s) => `${when(s.at)} · ${s === now ? t('perfRunning') : t(END[s.end ?? 'unexpected'])}${s !== now && s.why && CAUSE[s.why] ? ` — ${t(CAUSE[s.why])}` : ''}${s.hid && s !== now && s.end !== 'left' ? ` (${t('perfInBg')})` : ''} · ${t('perfSessionVal', { dur: fmtDur(s.ran), screen: screenName(s.scr) })}`));
     const leaves = d.events.filter((e) => e.k === 'leave');
     const by = new Map<string, number>(); for (const e of leaves) by.set(String(e.why), (by.get(String(e.why)) ?? 0) + 1);
     const edged = leaves.filter((e) => e.edge && e.edge !== 'none').length;
-    const held = d.events.filter((e) => e.k === 'backheld').length;
-    row(t('perfLeft'), ...(leaves.length ? [...by].sort((a, b) => b[1] - a[1]).map(([w, n]) => t('perfWhyCount', { why: WHY[w] ? t(WHY[w]) : w, n })) : [t('perfLeftNone')]), edged ? t('perfEdgeNote', { n: edged }) : null, held ? t('perfBackHeld', { n: held }) : null);
+    const held = d.events.filter((e) => e.k === 'backheld' && e.why !== 'swipe').length;
+    const swiped = d.events.filter((e) => e.k === 'backheld' && e.why === 'swipe').length;
+    row(t('perfLeft'), ...(leaves.length ? [...by].sort((a, b) => b[1] - a[1]).map(([w, n]) => t('perfWhyCount', { why: WHY[w] ? t(WHY[w]) : w, n })) : [t('perfLeftNone')]), edged ? t('perfEdgeNote', { n: edged }) : null, held ? t('perfBackHeld', { n: held }) : null, swiped ? t('backSwipeHeldPerf', { n: swiped }) : null);
     row(t('perfOverheadShort'), t('perfOverhead', { ms: fmtMs(d.overhead), dur: fmtDur(now?.ran ?? 0) }));
     sh.body.replaceChildren(h('p', { class: 'hint perf-note' }, t('perfNote')), tiles, ...rows);
   };

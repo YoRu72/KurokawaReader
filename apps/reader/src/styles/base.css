@@ -295,6 +295,7 @@ html[dir='rtl'] .switch input:checked + i::after { transform: translateX(-20px);
 .segmented button:hover { background: var(--md-surface-container-highest); }
 .segmented button:active { transform: scale(.95); }
 .segmented button[aria-pressed='true'] { background: var(--md-primary); color: var(--md-on-primary); border-radius: var(--sh-full); font-weight: 600; }
+.segmented button:disabled { opacity: .55; pointer-events: none; }
 
 /* ---------- Library ---------- */
 .library-body { flex: 1; overflow: auto; padding: 8px 20px 0; padding-bottom: calc(110px + var(--safe-bottom)); }

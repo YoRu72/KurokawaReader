@@ -166,7 +166,7 @@ public class KurokawaPlugin extends Plugin {
     protected void handleOnPause() {
         super.handleOnPause();
         // (While work runs, the page goes on at full speed behind other apps.)
-        if (KrWebView.keepAwake && getBridge() != null && getBridge().getWebView() != null) { android.webkit.WebView w = getBridge().getWebView(); w.postDelayed(() -> { if (KrWebView.keepAwake) { w.onResume(); w.resumeTimers(); } }, 150); }
+        if (KrWebView.keepAwake && getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().getParent() != null) { android.webkit.WebView w = getBridge().getWebView(); w.postDelayed(() -> { if (KrWebView.keepAwake) { w.onResume(); w.resumeTimers(); } }, 150); }
     }
 
     @PluginMethod
@@ -1047,6 +1047,46 @@ public class KurokawaPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /**
+     * What the page's own record (src/diag.ts) cannot see from inside: the ends of its renderer kept by MainActivity
+     * (time, crashed or killed, its priority then, the app on screen or not, a memory warning just before) — handed
+     * over once and let go —, the last memory warning, and (Android 11 / API 30+) why the app's earlier processes
+     * ended, as the system recorded it: the reason's number, its status, the importance then, its memory (MB) and
+     * whether it was the app's main process — never the system's description (it may hold text of the app's).
+     * Each exit is handed over once (the newest time handed over is kept).
+     */
+    @PluginMethod
+    public void takeCrashInfo(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.content.SharedPreferences sp = getContext().getSharedPreferences(MainActivity.CRASH_PREFS, Context.MODE_PRIVATE);
+            String gone;
+            synchronized (MainActivity.class) { gone = sp.getString("gone", "[]"); sp.edit().remove("gone").apply(); }
+            ret.put("gone", new JSArray(gone));
+            if (sp.getLong("trimAt", 0) > 0) { ret.put("trim", sp.getInt("trim", 0)); ret.put("trimAt", sp.getLong("trimAt", 0)); }
+            JSArray exits = new JSArray();
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.app.ActivityManager am = (android.app.ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
+                long seen = sp.getLong("exitSeen", 0), newest = seen;
+                List<android.app.ApplicationExitInfo> list = am != null ? am.getHistoricalProcessExitReasons(null, 0, 8) : null;
+                if (list != null) for (android.app.ApplicationExitInfo x : list) {
+                    if (x.getTimestamp() <= seen) continue;
+                    JSObject o = new JSObject();
+                    o.put("at", x.getTimestamp()); o.put("reason", x.getReason()); o.put("status", x.getStatus());
+                    o.put("imp", x.getImportance()); o.put("pss", Math.round(x.getPss() / 1024.0)); o.put("rss", Math.round(x.getRss() / 1024.0));
+                    o.put("main", getContext().getPackageName().equals(x.getProcessName()));
+                    exits.put(o); newest = Math.max(newest, x.getTimestamp());
+                }
+                if (newest > seen) sp.edit().putLong("exitSeen", newest).apply();
+            }
+            ret.put("exits", exits);
+            ret.put("sdk", Build.VERSION.SDK_INT);
+        } catch (Throwable e) {
+            ret.put("error", e.getClass().getSimpleName());
+        }
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void setVolumeKeys(PluginCall call) {
         volumeKeys = Boolean.TRUE.equals(call.getBoolean("on", false));
@@ -1056,13 +1096,15 @@ public class KurokawaPlugin extends Plugin {
     /*
      * The screen's edges while a book is read with sideways swipes (src/readkeys.ts asks): a band in the middle of the
      * left and the right edge is kept from the system's back gesture (View.setSystemGestureExclusionRects, Android 10 /
-     * API 29+), so a swipe begun there reaches the page and turns the chapter. Android honours at most 200 dp of
-     * height per edge; the band is that, centred, and as wide as the system's own gesture area (32 dp at least, a
-     * quarter of the width at most). Back still works from the rest of the edge and from the button. Laid again when
-     * the WebView's size changes (a turn of the phone, the bars shown or hidden); cleared with `on: false`. Below
+     * API 29+), so a swipe begun there reaches the page and turns the chapter. The band is centred and short: 40 % of
+     * the height, and never more than the 200 dp per edge Android honours (Back still works above and below it), as
+     * wide as the system's own gesture area (32 dp at least, a quarter of the width at most). The page asks for it only
+     * while a book is read with its bars hidden; off by default. Back still works from the rest of the edge and from
+     * the button. Laid again when the WebView's size changes (a turn of the phone, the bars shown or hidden); cleared with `on: false`. Below
      * Android 10 there is no back gesture to keep away: answered { ok: false } and nothing done.
      */
     private static final int EDGE_BAND_DP = 200;
+    private static final float EDGE_BAND_SHARE = 0.4f;
     private static final int EDGE_MIN_WIDTH_DP = 32;
     private volatile boolean edgeGuard = false;
     private View.OnLayoutChangeListener edgeLayout = null;
@@ -1095,7 +1137,7 @@ public class KurokawaPlugin extends Plugin {
         int w = v.getWidth(), h = v.getHeight();
         if (edgeGuard && w > 0 && h > 0) {
             float d = v.getResources().getDisplayMetrics().density;
-            int band = Math.min(h, (int) Math.floor(EDGE_BAND_DP * d));
+            int band = Math.min((int) Math.floor(h * EDGE_BAND_SHARE), (int) Math.floor(EDGE_BAND_DP * d));
             int top = (h - band) / 2;
             int side = Math.round(EDGE_MIN_WIDTH_DP * d);
             android.view.WindowInsets wi = v.getRootWindowInsets();
@@ -1108,6 +1150,73 @@ public class KurokawaPlugin extends Plugin {
             rects.add(new android.graphics.Rect(w - side, top, w, top + band));
         }
         try { v.setSystemGestureExclusionRects(rects); } catch (Exception ignored) {}
+    }
+
+    /*
+     * The system's own Back zone at the side edges, for the page (src/native.ts getGestureInsets, src/readkeys.ts): the
+     * left and right system gesture insets (WindowInsets.getSystemGestureInsets, Android 10 / API 29+; their width
+     * follows "Back sensitivity") in CSS px (device px / density), and the navigation: "gesture" when a side has a zone
+     * (or the system's navigation_mode says 2), "buttons" otherwise, "old" below Android 10 (0 and 0). Told again as
+     * the event "gestureInsets" when they change: looked at after each layout of the window (once the page has asked)
+     * and when the app comes back to the screen (the sensitivity is changed in the system's Settings).
+     */
+    private String lastInsets = "";
+    private android.view.ViewTreeObserver.OnGlobalLayoutListener insetsWatch = null;
+
+    @PluginMethod
+    public void gestureInsets(PluginCall call) {
+        if (getActivity() == null) { call.resolve(gestureInsetsNow(null)); return; }
+        getActivity().runOnUiThread(() -> {
+            View v = getBridge() != null ? getBridge().getWebView() : null;
+            JSObject r = gestureInsetsNow(v);
+            lastInsets = r.toString();
+            if (v != null && insetsWatch == null) {
+                insetsWatch = () -> checkGestureInsets();
+                try { v.getViewTreeObserver().addOnGlobalLayoutListener(insetsWatch); } catch (Exception e) { insetsWatch = null; }
+            }
+            call.resolve(r);
+        });
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        View v = getBridge() != null ? getBridge().getWebView() : null;
+        if (v != null && insetsWatch != null) v.postDelayed(() -> checkGestureInsets(), 300);
+    }
+
+    private void checkGestureInsets() {
+        View v = getBridge() != null ? getBridge().getWebView() : null;
+        if (v == null || insetsWatch == null) return;
+        JSObject r = gestureInsetsNow(v);
+        String now = r.toString();
+        if (now.equals(lastInsets)) return;
+        lastInsets = now;
+        notifyListeners("gestureInsets", r);
+    }
+
+    private JSObject gestureInsetsNow(View v) {
+        JSObject r = new JSObject();
+        double left = 0, right = 0;
+        String nav = "old";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            int mode = -1;
+            try { mode = android.provider.Settings.Secure.getInt(getContext().getContentResolver(), "navigation_mode", -1); } catch (Exception ignored) {}
+            try {
+                android.view.WindowInsets wi = v != null ? v.getRootWindowInsets() : null;
+                if (wi != null) {
+                    android.graphics.Insets g = wi.getSystemGestureInsets();
+                    float d = v.getResources().getDisplayMetrics().density;
+                    if (g != null && d > 0) { left = Math.round(g.left / d * 10) / 10.0; right = Math.round(g.right / d * 10) / 10.0; }
+                }
+            } catch (Exception ignored) {}
+            nav = left > 0 || right > 0 || mode == 2 ? "gesture" : "buttons";
+            r.put("navMode", mode);
+        }
+        r.put("left", left);
+        r.put("right", right);
+        r.put("nav", nav);
+        return r;
     }
 
     @PluginMethod

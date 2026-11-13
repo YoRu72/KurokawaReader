@@ -42,9 +42,65 @@
 .reader.book-format .kr-content p { margin-block: 0 calc(var(--r-para, .9em) * .5); text-align: justify; text-align-last: start; hyphenate-limit-chars: 5 2 2; -webkit-hyphenate-limit-before: 2; -webkit-hyphenate-limit-after: 2; }
 .reader.book-format .kr-content p:has(> img:only-child), .reader.book-format .kr-content p.center, .reader.book-format .kr-content [style*='text-align: center'] { text-indent: 0; }
 .reader.book-format .kr-content p + p { margin-block-start: 0; }
+/* … but not inside list items, table cells or captions (no indent, table cells not justified), and not in Japanese, Chinese or
+   Korean text, which keeps its own paragraph spacing and the reader's own indent (those books often indent with a full-width space). */
+.reader.book-format .kr-content :is(li, dd, dt, td, th, figcaption) p { text-indent: 0; }
+.reader.book-format .kr-content :is(td, th) p { text-align: start; }
+.reader.book-format .kr-content p:where(:lang(ja), :lang(zh), :lang(ko)) { margin-block: 0 var(--r-para, .9em); text-indent: var(--r-indent-own, 0); }
 .reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter, .reader.drop-cap .kr-content > .kr-run:first-child > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
 .reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
 .reader[data-dim-images='false'] { --r-img-filter: none; }
+/* The book's own layout of its lines (src/formats/titles.ts): its centred and right-aligned blocks (titles, point-of-view
+   names, scene breaks, verse, signatures) as it sets them, without the first-line indent; its relative sizes, bold and
+   italic under the reader's own size (on by default; «The book's own sizes and bold»). */
+.reader .kr-content [data-kr-align='center'][data-kr-align] { text-align: center; text-align-last: center; text-indent: 0; }
+.reader .kr-content [data-kr-align='right'][data-kr-align] { text-align: right; text-align-last: right; text-indent: 0; }
+.reader .kr-content [data-kr-align='end'][data-kr-align] { text-align: end; text-align-last: end; text-indent: 0; }
+.reader.book-sizes .kr-content [data-kr-fs='70'] { font-size: 0.7em; }
+.reader.book-sizes .kr-content [data-kr-fs='75'] { font-size: 0.75em; }
+.reader.book-sizes .kr-content [data-kr-fs='80'] { font-size: 0.8em; }
+.reader.book-sizes .kr-content [data-kr-fs='85'] { font-size: 0.85em; }
+.reader.book-sizes .kr-content [data-kr-fs='90'] { font-size: 0.9em; }
+.reader.book-sizes .kr-content [data-kr-fs='95'] { font-size: 0.95em; }
+.reader.book-sizes .kr-content [data-kr-fs='105'] { font-size: 1.05em; }
+.reader.book-sizes .kr-content [data-kr-fs='110'] { font-size: 1.1em; }
+.reader.book-sizes .kr-content [data-kr-fs='117'] { font-size: 1.17em; }
+.reader.book-sizes .kr-content [data-kr-fs='125'] { font-size: 1.25em; }
+.reader.book-sizes .kr-content [data-kr-fs='133'] { font-size: 1.33em; }
+.reader.book-sizes .kr-content [data-kr-fs='150'] { font-size: 1.5em; }
+.reader.book-sizes .kr-content [data-kr-fs='175'] { font-size: 1.75em; }
+.reader.book-sizes .kr-content [data-kr-fs='200'] { font-size: 2em; }
+.reader.book-sizes .kr-content [data-kr-fs='250'] { font-size: 2.5em; }
+.reader.book-sizes .kr-content [data-kr-fs='300'] { font-size: 3em; }
+.reader.book-sizes .kr-content [data-kr-fs='350'] { font-size: 3.5em; }
+.reader.book-sizes .kr-content :is(span, b, strong, i, em, a, small, big, font, cite, q, abbr)[data-kr-fs] { line-height: normal; }
+.reader.book-sizes .kr-content [data-kr-b] { font-weight: 700; }
+.reader.book-sizes .kr-content [data-kr-i] { font-style: italic; }
+/* A large first letter: bold at the text's size by default, the book's own size when asked, or plain. */
+.reader:not([data-first-letter='book']) .kr-content [data-kr-initial][data-kr-fs] { font-size: 1em; line-height: inherit; }
+.reader[data-first-letter='plain'] .kr-content [data-kr-initial][data-kr-initial] { font-weight: inherit; font-size: 1em; line-height: inherit; }
+/* Empty spacer paragraphs: one modest gap, however many the book stacks. */
+.reader .kr-content [data-kr-spacer][data-kr-spacer] { height: .5em; margin: 0; padding: 0; overflow: hidden; font-size: 1px; line-height: 0; text-indent: 0; }
+.reader .kr-content [data-kr-spacer] + [data-kr-spacer][data-kr-spacer] { height: 0; }
+/* Chapter titles: no indent, never hyphenated nor justified, balanced lines; centred unless the reader chose otherwise. */
+.reader .kr-content [data-kr-title][data-kr-title] { text-indent: 0 !important; hyphens: manual !important; -webkit-hyphens: manual !important; text-align-last: auto; text-wrap: balance; }
+.reader .kr-content :is(p, div)[data-kr-title][data-kr-title] { font-weight: 600; margin-block: 1em 1.4em; line-height: 1.3; font-family: var(--r-font-head); }
+.reader .kr-content :is(p, div)[data-kr-title][data-kr-title]:is([dir='rtl'], :lang(ar), :lang(fa), :lang(ur)), .reader .kr-content[dir='rtl'] :is(p, div)[data-kr-title][data-kr-title] { font-family: var(--r-font-head-rtl); }
+.reader .kr-content:is(:lang(ja), :lang(zh), :lang(ko)) :is(p, div)[data-kr-title][data-kr-title], .reader .kr-content :is(p, div)[data-kr-title][data-kr-title]:is(:lang(ja), :lang(zh), :lang(ko)) { font-family: var(--r-font-cjk); }
+.reader .kr-content :is(p, div)[data-kr-title='title'] { font-size: 1.3em; }
+/* (A title the book styles itself — bold, 1.17em — at the book's own size, not the heading scale.) */
+.reader.book-sizes .kr-content :is(p, div)[data-kr-title][data-kr-strong] { font-size: 1em; font-family: var(--r-font); }
+.reader.book-sizes .kr-content :is(p, div)[data-kr-title][data-kr-strong]:is([dir='rtl'], :lang(ar), :lang(fa), :lang(ur)), .reader.book-sizes .kr-content[dir='rtl'] :is(p, div)[data-kr-title][data-kr-strong] { font-family: var(--r-font-rtl); }
+.reader .kr-content :is(p, div)[data-kr-title='label'][data-kr-title] { font-size: 1.05em; margin-block-end: .25em; }
+.reader .kr-content [data-kr-title='label'] + [data-kr-title='title'][data-kr-title] { margin-block-start: 0; }
+.reader .kr-content :is(p, div)[data-kr-title='sub'][data-kr-title] { font-size: 1.06em; margin-block: .4em 1.2em; }
+.reader:not([data-titles='start']):not([data-titles='book']) .kr-content [data-kr-title] { text-align: center !important; }
+.reader[data-titles='start'] .kr-content [data-kr-title] { text-align: start !important; }
+:where(.reader[data-titles='book'] .kr-content [data-kr-title]) { text-align: start; }
+.reader.drop-cap .kr-content :is([data-kr-title], [data-kr-spacer])::first-letter { float: none; font-size: inherit; line-height: inherit; padding: 0; font-weight: inherit; }
+/* «Hide the word Chapter»: the label alone hidden (its text stays in the page: positions, search and highlights keep it). */
+.reader.hide-chapter-word .kr-content [data-kr-title='label'][data-kr-title] { height: 0; margin: 0 !important; padding: 0; overflow: hidden; border: 0; }
+.reader.hide-chapter-word .kr-content .kr-title-label { display: none; }
 
 /* Background systems: texture, picture, warmth and brightness overlays — all
    sit under the text so selection and reading are unaffected. */
@@ -136,8 +192,10 @@
 /* (A chapter not made yet — a book opened at a chapter, the others made just after: views/reader.ts firstChapter —
    takes the room an unlaid chapter takes, near the screen or not, so the place does not move when it is made.) */
 .reader-continuous .kr-content .kr-chapter.kr-shell { min-height: 3000px; }
-.kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
-.kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
+/* (The rule between two chapters: continuous reading only — chapter by chapter the one before is hidden, and the
+   chapter opened at its top would start under an empty band.) */
+.reader-continuous .kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
+.reader-continuous .kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
 .kr-content mark.kr-hl { background: color-mix(in srgb, var(--hl-amber, #e5c56b) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
 .kr-content mark.kr-hl[data-color='rose'] { background: color-mix(in srgb, var(--hl-rose, #e58a8a) 45%, transparent); }
 .kr-content mark.kr-hl[data-color='mint'] { background: color-mix(in srgb, var(--hl-mint, #7fcfa5) 45%, transparent); }

@@ -61,7 +61,15 @@ export interface VisualSettings {
   align: 'start' | 'justify' | 'center';
   publisherStyles: boolean;
   dimImages: boolean;
-  hyphenate: boolean;
+  hyphenate: boolean;      // (no longer a switch of its own: hyphenation follows book formatting; kept so stored settings and backups load)
+  /** Chapter titles and heading-like lines: centred, at the start, or as the book places them. */
+  chapterTitles: 'center' | 'start' | 'book';
+  /** The label of a chapter's title («Chapter 1», «الفصل الأول») hidden when the title has more (the name shown too). */
+  hideChapterWord: boolean;
+  /** The book's own relative sizes, bold and italic (its inline styles and stylesheet), under the reader's size. */
+  bookSizes: boolean;
+  /** A paragraph's large first letter (a drop cap the book sets): bold at the text's size, as the book sets it, or plain. */
+  firstLetter: 'bold' | 'book' | 'plain';
   wordSpacing: number;    // em
   letterSpacing: number;  // em
   pdfInvert: boolean;
@@ -252,8 +260,12 @@ export interface VisualSettings {
   /** Back (the phone's button or gesture, a computer's back) leaves a book only when pressed twice within 2 s. */
   backTwiceLeave: boolean;
   /** Android: a band in the middle of each side edge kept from the system's back gesture while sideways swipes
-   *  turn chapters, so a swipe begun there reaches the page. */
+   *  turn chapters and the bars are hidden, so a swipe begun there reaches the page. Off by default (0.61.1). */
   edgeGuard: boolean;
+  /** A sideways swipe turns the chapter while a book is read chapter by chapter (a phone). */
+  swipeTurn: boolean;
+  /** How short or quick a sideways swipe may be and still turn (views/reader.ts SWIPE). */
+  swipeSensitivity: 'low' | 'normal' | 'high';
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -275,7 +287,11 @@ export const DEFAULTS: VisualSettings = {
   align: 'start',
   publisherStyles: false,
   dimImages: true,
-  hyphenate: false,
+  hyphenate: true,
+  chapterTitles: 'center',
+  hideChapterWord: false,
+  bookSizes: true,
+  firstLetter: 'bold',
   wordSpacing: 0,
   letterSpacing: 0,
   pdfInvert: false,
@@ -312,7 +328,7 @@ export const DEFAULTS: VisualSettings = {
   myTheme: '',
   indent: 0,
   dropCap: false,
-  bookFormat: false,
+  bookFormat: true,
   customCss: '',
   smartTypography: false,
   focusMode: false,
@@ -417,7 +433,9 @@ export const DEFAULTS: VisualSettings = {
   volumeKeys: false,
   volumeSwap: false,
   backTwiceLeave: false,
-  edgeGuard: true,
+  edgeGuard: false,
+  swipeTurn: true,
+  swipeSensitivity: 'normal',
   titleBarKind: 'own',
   titleBarClear: false,
   titleBarName: true,
@@ -435,8 +453,19 @@ function load(): VisualSettings {
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
     if (!localStorage.getItem('kr.pinchMigrated')) { s.pdfPinchZoom = true; localStorage.setItem('kr.pinchMigrated', '1'); localStorage.setItem(KEY, JSON.stringify(s)); }
+    // 0.61.1: hyphenation is on by default. It was off by default and the whole settings object is stored at every change,
+    // so a «false» left by the old default cannot be told from one chosen: it is turned on once for everyone; turned off
+    // again after that, it stays off.
+    if (!localStorage.getItem('kr.hyphenMigrated')) { s.hyphenate = true; localStorage.setItem('kr.hyphenMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
+    // 0.61.2: book formatting is on by default. It was off by default and the whole settings object is stored at every
+    // change, so a «false» left by the old default cannot be told from one chosen: it is turned on once for everyone;
+    // turned off again after that, it stays off. (A book with a «bookFormat» of its own keeps it.)
+    if (!localStorage.getItem('kr.bookFormatMigrated')) { s.bookFormat = true; localStorage.setItem('kr.bookFormatMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
     // 0.59.8: the dots and polka textures are gone; a page that had one is plain again.
     if (!['none', 'paper', 'linen', 'parchment'].includes(s.texture as string)) s.texture = 'none';
+    // 0.61.1: the edge guard is off by default; 0.61.0 stored the old default (on) with every other setting, so it is
+    // turned off once for everyone, and kept as the reader sets it from then on.
+    if (!localStorage.getItem('kr.edgeGuardOff')) { localStorage.setItem('kr.edgeGuardOff', '1'); if (s.edgeGuard) { s.edgeGuard = false; const kept = localStorage.getItem(KEY); if (kept) localStorage.setItem(KEY, JSON.stringify({ ...JSON.parse(kept), edgeGuard: false })); } }
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -468,7 +497,7 @@ const GLOBAL_ONLY = new Set<string>([
   // the computer's window
   'titleBarKind', 'titleBarClear', 'titleBarName',
   // the device's keys and gestures while reading
-  'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard',
+  'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library
   'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
   // lists the reader builds up for every book
@@ -732,6 +761,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.classList.toggle('has-link-override', !!s.linkOverride);
   if (s.selOverride) root.style.setProperty('--r-sel', s.selOverride); else root.style.removeProperty('--r-sel');
   root.style.setProperty('--r-indent', s.bookFormat ? `${s.indent || 2}em` : s.indent ? `${s.indent}em` : '0');
+  root.style.setProperty('--r-indent-own', s.indent ? `${s.indent}em` : '0');  // (Japanese, Chinese and Korean text keep the reader's own indent under book formatting.)
   root.classList.toggle('book-format', s.bookFormat);
   root.classList.toggle('focus-mode', s.focusMode);
   root.classList.toggle('drop-cap', s.dropCap);
@@ -772,7 +802,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.style.setProperty('--r-align', s.bookFormat ? 'justify' : s.align);
   root.style.setProperty('--r-word', s.wordSpacing ? `${s.wordSpacing}em` : 'normal');
   root.style.setProperty('--r-letter', s.letterSpacing ? `${s.letterSpacing}em` : 'normal');
-  root.style.setProperty('--r-hyphens', s.hyphenate || s.bookFormat ? 'auto' : 'manual');
+  root.style.setProperty('--r-hyphens', s.bookFormat ? 'auto' : 'manual');
   root.classList.toggle('publisher-styles', s.publisherStyles);
   applyCustomCss(s.customCss);
 }

@@ -193,7 +193,10 @@ export function initNativeBridges(): void {
     // (Also told to the reader's keys — src/readkeys.ts —, which let the volume keys and the screen's edges go meanwhile.)
     void cap.Plugins.App.addListener('appStateChange', (d) => { diagAppState(!!d.isActive); document.dispatchEvent(new CustomEvent('kr:appstate', { detail: !!d.isActive })); });
     // (Each press kept for the Performance page, with where the last touch began: src/diag.ts.)
-    void cap.Plugins.App.addListener('backButton', () => { diagBack('back-button'); if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); });
+    // (A Back that comes in the middle of a page-turn swipe is first offered to the open reader — src/readkeys.ts —,
+    // which may take it as part of the swipe, or let it go on a moment later: `backGate`.)
+    const press = (): void => { if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); };
+    void cap.Plugins.App.addListener('backButton', () => { diagBack('back-button'); if (backGate?.(press)) return; press(); });
   }
   wirePcBack();
   if (window.kurokawaDesktop) {
@@ -307,11 +310,32 @@ export async function setVolumeKeys(on: boolean): Promise<void> {
   const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setVolumeKeys?(o: { on: boolean }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await kr?.setVolumeKeys?.({ on }); } catch { /* ignore */ }
 }
+/** The open reader's say over a Back press (src/readkeys.ts): returns true when it takes the press — held as part of
+ *  a page-turn swipe, or kept until the touch under way ends, `go` then called if it is to go on after all. */
+let backGate: ((go: () => void) => boolean) | null = null;
+export function setBackGate(fn: ((go: () => void) => boolean) | null): void { backGate = fn; }
 /** Tell the Android shell whether to keep a band of each side edge from the system's back gesture (Android 10+;
  *  older versions answer without doing anything). See src/readkeys.ts. */
 export async function setEdgeGuard(on: boolean): Promise<void> {
   const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setEdgeGuard?(o: { on: boolean }): Promise<unknown> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await kr?.setEdgeGuard?.({ on }); } catch { /* ignore */ }
+}
+
+/** The system's own Back zone at the side edges (Android 10+ with gesture navigation; its width follows "Back
+ *  sensitivity"), in CSS px, and the navigation: 'gesture', 'buttons' (two or three buttons: no side zone) or 'old'
+ *  (before Android 10). Null where there is no Android shell, or it does not tell. */
+export interface GestureInsets { left: number; right: number; nav: string }
+type InsetsPlug = { gestureInsets?(): Promise<Partial<GestureInsets>>; addListener?(ev: 'gestureInsets', fn: (d: Partial<GestureInsets>) => void): Promise<unknown> };
+const insetsPlug = (): InsetsPlug | undefined => (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: InsetsPlug } }) | undefined)?.Plugins?.Kurokawa;
+const asInsets = (d: Partial<GestureInsets> | null | undefined): GestureInsets | null => (d && typeof d === 'object' ? { left: Math.max(0, Number(d.left) || 0), right: Math.max(0, Number(d.right) || 0), nav: String(d.nav ?? 'unknown') } : null);
+export async function getGestureInsets(): Promise<GestureInsets | null> {
+  if (nativePlatform() !== 'android') return null;
+  try { return asInsets(await insetsPlug()?.gestureInsets?.()); } catch { return null; }
+}
+/** Told again whenever the system's zone changes (the sensitivity moved, the phone turned, the navigation changed). */
+export function onGestureInsets(fn: (g: GestureInsets) => void): void {
+  if (nativePlatform() !== 'android') return;
+  try { void insetsPlug()?.addListener?.('gestureInsets', (d) => { const g = asInsets(d); if (g) fn(g); })?.catch?.(() => undefined); } catch { /* none */ }
 }
 
 /** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */

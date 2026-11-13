@@ -4,7 +4,7 @@
 import { markReading } from '../resume';
 import { diagOpen, diagLeaveIntent, diagEvent, diagBackHeld } from '../diag';
 import { onBack } from '../ui/backstack';
-import { readingKeys, refreshReadingKeys } from '../readkeys';
+import { readingKeys, refreshReadingKeys, swipeTurned, inSystemZone, overBook } from '../readkeys';
 import { takeJump, setJump, type Jump } from '../jump';
 export { setJump, type Jump };
 import { h, icon, iconButton, toast, clear, throttle } from '../ui/dom';
@@ -21,6 +21,7 @@ import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch, searchFormOf } from '../formats/types';
 import { BLOCK_SELECTOR, setLazyRoot } from '../formats/shared';
+import { applyTitleSettings, prepareFlow, stripChapterLabel } from '../formats/titles';
 import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
@@ -29,6 +30,12 @@ import { createReadBar } from '../ui/readbar';
 import { attachSelectionToolbar, wrapRange, findTextRange, textPlace, HIGHLIGHT_COLORS, plainText } from '../ui/selection';
 import { openGallery } from './gallery';
 const DOCK_KEY = 'kr.reader.dock';
+/** A sideways swipe that turns the chapter (chapter by chapter, on a touch screen): the finger's direction decided once
+ *  it has moved SLOP px — within LOCK_DEG degrees of the horizontal a swipe, else a scroll —; then it turns when it went
+ *  `dist` px, or `flick` px at `speed` px/ms or more over its last VEL_MS ms ("Swipe sensitivity": low, normal, high);
+ *  coming back at BACK_V px/ms or more at the end, it turns nothing. (Up to 0.61.1: 90 px and no more than 60 px
+ *  up or down, whatever the speed.) */
+export const SWIPE = { SLOP: 10, LOCK_DEG: 30, VEL_MS: 100, BACK_V: 0.3, low: { dist: 120, flick: 50, speed: 0.6 }, normal: { dist: 90, flick: 36, speed: 0.45 }, high: { dist: 60, flick: 24, speed: 0.3 } };
 import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate, back as goBackView } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
@@ -131,7 +138,9 @@ export function readerView(ids: string[]): HTMLElement {
 type DiagOpen = ReturnType<typeof diagOpen>;
 async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void, gone: () => boolean = () => false, op?: DiagOpen): Promise<void> {
   const reader = h('div', { class: 'reader' });
-  applySettings(reader);
+  applySettings(reader); applyTitleSettings(reader, getSettings());
+  /** A chapter's name as shown (its «Chapter 1:» left out when asked); stored names and matching use the name as it is. */
+  const shownName = (name: string): string => (getSettings().hideChapterWord ? stripChapterLabel(name) : name);
   let programmatic = 0; // when the reader last scrolled by itself (restoring a place), so that is not taken for the person scrolling
   const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
   onDispose(() => { document.body.style.background = ''; applyChrome(); });
@@ -248,7 +257,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   // Reader state lives above the (slow) render loop so toolbar actions used while
   // a long book is still rendering never hit a temporal-dead-zone error.
-  let swipe: { x: number; y: number; t: number } | null = null;
   let searchHighlight: Highlight | undefined;
   let autoScrollRaf = 0;
   let autoHud: HTMLElement | null = null;
@@ -317,6 +325,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const el = doc.render!.element;
     if (textRules().length) applyTextRules(el, doc.book.id);
     if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(el);
+    prepareFlow(el, doc.book.language, getLang());
     doc.allBlocks = blocksIn(el);
     const all = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')];
     const sections = all.filter((c) => !c.classList.contains('kr-shell') && hasContent(c));
@@ -698,15 +707,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (flowMode()) {
       // Scroll-on mode: no buttons, just a hint that pulling past the end goes on.
       chapterNav.classList.add('flow');
-      chapterNav.append(h('div', { class: 'cn-pull', dir: 'auto' }, h('div', { class: 'spinner small' }), h('span', null, next ? `${t('pullForNext')} · ${chapterTitle(next)}`.replace(/ · $/, '') : t('endOfBook'))));
+      chapterNav.append(h('div', { class: 'cn-pull', dir: 'auto' }, h('div', { class: 'spinner small' }), h('span', null, next ? `${t('pullForNext')} · ${shownName(chapterTitle(next))}`.replace(/ · $/, '') : t('endOfBook'))));
       return;
     }
     chapterNav.classList.remove('flow');
     // (Pressed while the book's later chapters are still being made: done once they are, to the same chapter.)
     const go = (u: Unit, fallback: number) => { if (!early) { showUnit(fallback); return; } void whole.then(() => { const i = units().findIndex((x) => x.doc === u.doc && x.el === u.el); if (i >= 0) showUnit(i); }); };
     chapterNav.append(
-      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
-      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
+      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), shownName(chapterTitle(prev)) || t('previousPage'))) : h('span'),
+      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), shownName(chapterTitle(next)) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
     );
   }
   function showUnit(k: number, atEnd = false): void {
@@ -760,17 +769,73 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       if (pull >= 240) { window.clearTimeout(wheelT); fire(); }
     }, { passive: true });
   }
-  // Swipe between chapters on touch screens.
-  scroll.addEventListener('touchstart', (e) => { const tch = e.touches[0]; swipe = { x: tch.clientX, y: tch.clientY, t: Date.now() }; }, { passive: true });
-  scroll.addEventListener('touchend', (e) => {
-    if (!swipe || !chapterMode()) return;
-    const tch = e.changedTouches[0]; const dx = tch.clientX - swipe.x, dy = tch.clientY - swipe.y; swipe = null;
-    if (Math.abs(dx) < 90 || Math.abs(dy) > 60 || document.getSelection()?.isCollapsed === false) return;
-    const rtl = (docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false);
-    const forward = rtl ? dx > 0 : dx < 0;
-    const k = currentUnitIndex();
-    showUnit(forward ? k + 1 : k - 1, !forward);
-  }, { passive: true });
+  // Swipe between chapters on touch screens (chapter by chapter; "Turn pages by swiping" on). See SWIPE above.
+  //  - The phone's own: a touch that begins in the system's Back zone (src/readkeys.ts inSystemZone) starts nothing here
+  //    — no turn, so never a turn followed by the system's Back.
+  //  - Direction decided once, when the finger has moved SLOP px: within LOCK_DEG of the horizontal it is a swipe,
+  //    else a scroll (it then never turns, however it bends later).
+  //  - It turns when it went `dist` px, or `flick` px quickly (`speed` px/ms over the last VEL_MS ms); else nothing.
+  //  - Nothing when text is selected, a second finger came, a sheet or floating panel is open, or it began on
+  //    something that still scrolls sideways that way (a wide table, code, a picture); a cancelled touch (Android's
+  //    back gesture took it) turns nothing.
+  //  - A book written right to left turns forward with a swipe to the right.
+  // A turn made is told to src/readkeys.ts, so a Back the same swipe fired is not taken for leaving the book.
+  {
+    type Swipe = { x: number; y: number; at: number; el: Element | null; lock: '' | 'h' | 'v'; off: string; pts: [number, number][] };
+    let sw: Swipe | null = null;
+    const selecting = () => document.getSelection()?.isCollapsed === false;
+    /** Whether `el` (or an element it is in, within the page) can still scroll sideways the way a finger moving by
+     *  `dx` would scroll it. */
+    const scrollsSideways = (el: Element | null, dx: number): boolean => {
+      for (let e = el; e && e !== scroll && e instanceof HTMLElement; e = e.parentElement) {
+        if (e.scrollWidth <= e.clientWidth + 1) continue;
+        const ox = getComputedStyle(e).overflowX; if (ox !== 'auto' && ox !== 'scroll') continue;
+        const max = e.scrollWidth - e.clientWidth; const rtlEl = getComputedStyle(e).direction === 'rtl';
+        const lo = rtlEl ? -max : 0, hi = rtlEl ? 0 : max;
+        // (A finger moving left shows what lies to the right: scrollLeft grows.)
+        if (dx < 0 ? e.scrollLeft < hi - 1 : e.scrollLeft > lo + 1) return true;
+      }
+      return false;
+    };
+    scroll.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) { if (sw) sw.off = 'fingers'; return; }
+      const tch = e.touches[0]; const st = getSettings();
+      const off = !chapterMode() ? 'mode' : !st.swipeTurn ? 'setting' : inSystemZone(tch.clientX, tch.clientY) ? 'system' : selecting() ? 'selection' : overBook() ? 'over' : '';
+      sw = { x: tch.clientX, y: tch.clientY, at: performance.now(), el: e.target as Element, lock: '', off, pts: [[tch.clientX, performance.now()]] };
+    }, { passive: true });
+    scroll.addEventListener('touchmove', (e) => {
+      if (!sw || sw.off) return;
+      if (e.touches.length > 1) { sw.off = 'fingers'; return; }
+      const tch = e.touches[0]; const dx = tch.clientX - sw.x, dy = tch.clientY - sw.y; const now = performance.now();
+      sw.pts.push([tch.clientX, now]); while (sw.pts.length > 2 && now - sw.pts[0][1] > SWIPE.VEL_MS) sw.pts.shift();
+      if (!sw.lock && Math.hypot(dx, dy) >= SWIPE.SLOP) {
+        sw.lock = Math.abs(dy) <= Math.abs(dx) * Math.tan(SWIPE.LOCK_DEG * Math.PI / 180) ? 'h' : 'v';
+        if (sw.lock === 'v') sw.off = 'vertical';
+        else if (scrollsSideways(sw.el, dx)) sw.off = 'sideways-scroll';
+      }
+    }, { passive: true });
+    scroll.addEventListener('touchcancel', () => { sw = null; }, { passive: true });
+    scroll.addEventListener('touchend', (e) => {
+      if (e.touches.length) return;   // (a finger of several lifted: the gesture is not over)
+      const g = sw; sw = null;
+      if (!g || g.off || !chapterMode() || selecting()) return;
+      const tch = e.changedTouches[0]; const dx = tch.clientX - g.x, dy = tch.clientY - g.y; const now = performance.now();
+      if (g.lock !== 'h' && Math.hypot(dx, dy) >= SWIPE.SLOP) g.lock = Math.abs(dy) <= Math.abs(dx) * Math.tan(SWIPE.LOCK_DEG * Math.PI / 180) ? 'h' : 'v';
+      if (g.lock !== 'h' || Math.abs(dy) > Math.abs(dx) || scrollsSideways(g.el, dx)) return;
+      const k0 = SWIPE[getSettings().swipeSensitivity] ?? SWIPE.normal;
+      // (The speed of its last moments, the same way as the whole swipe; one that came back at the end turns nothing.)
+      const ref = g.pts.find((q) => now - q[1] <= SWIPE.VEL_MS) ?? g.pts[0];
+      const v = (tch.clientX - ref[0]) / Math.max(16, now - ref[1]);
+      if (Math.sign(v) === -Math.sign(dx) && Math.abs(v) > SWIPE.BACK_V) return;
+      const far = Math.abs(dx) >= k0.dist, quick = Math.abs(dx) >= k0.flick && Math.sign(v) === Math.sign(dx) && Math.abs(v) >= k0.speed;
+      if (!far && !quick) return;
+      const rtl = (docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false);
+      const forward = rtl ? dx > 0 : dx < 0;
+      const k = currentUnitIndex();
+      swipeTurned();
+      showUnit(forward ? k + 1 : k - 1, !forward);
+    }, { passive: true });
+  }
 
   /* ---------- position & progress ---------- */
 
@@ -1034,7 +1099,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const updateChrome = throttle(() => {
     const cur = currentLocator();
     if (!cur) return;
-    const label = labelFor(cur.doc, cur.loc.block ?? 0);
+    const named = labelFor(cur.doc, cur.loc.block ?? 0);
+    const label = named === cur.doc.book.title ? named : shownName(named);
     const pct = Math.round(cur.loc.pct * 100);
     const block = cur.loc.block ?? 0;
     const unitEl = unitOf(cur.doc, cur.doc.allBlocks[block]);
@@ -1231,7 +1297,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(onSettingsChange((s) => {
     // (Where the reading is, read before the change is laid out.)
     const before = reader.isConnected ? currentLocator() : null;
-    applySettings(reader, s); syncChrome(); syncComfort(); geoDirty = true; updateChrome();
+    applySettings(reader, s); applyTitleSettings(reader, s); syncChrome(); syncComfort(); geoDirty = true; updateChrome();
     const want = s.bookFormat || s.smartTypography;
     // (The highlights taken off and put on again: on the text as it is now — a mark cut a changed word in pieces, and
     // turned back the text came out doubled.)
@@ -1361,7 +1427,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(() => document.removeEventListener('kr:command', onCommand));
   // The phone's volume keys and screen edges (Android, as set — src/readkeys.ts): a key turns the page as Space and
   // Shift+Space do (turnPage); sideways swipes turn chapters in the chapter modes, so the edges are kept for them.
-  onDispose(readingKeys({ sideways: () => chapterMode(), sounding: () => speaking || (!!aiAudio && !aiAudio.paused), turn: (forward) => turnPage(!forward) }));
+  // (With the bars shown the reader is finding his way, not reading: the edges are left to Back.)
+  onDispose(readingKeys({ sideways: () => chapterMode(), sounding: () => speaking || (!!aiAudio && !aiAudio.paused), turn: (forward) => turnPage(!forward), barsShown: () => !root.classList.contains('immersive'), root }));
 
   /* ---------- selection tools ---------- */
   onDispose(attachSelectionToolbar(scroll, {
@@ -1524,7 +1591,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           const starts = toc.map((it) => { const el = document.getElementById(it.anchor); return el ? doc.allBlocks.findIndex((b) => b === el || el.contains(b) || (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) : -1; });
           const cum: number[] = [0]; for (const b of doc.allBlocks) cum.push(cum[cum.length - 1] + wordCount(b));
           const lengthOf = (i: number) => { const a = starts[i]; if (a < 0) return 0; let j = i + 1; while (j < starts.length && (starts[j] < 0 || starts[j] <= a)) j++; const b = j < starts.length ? starts[j] : doc.allBlocks.length; return Math.round((cum[b] - cum[a]) / speed); };
-          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.dismiss(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
+          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.dismiss(); } }, h('span', { class: 'toc-label' }, shownName(item.label)), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
           body.append(ul);
           // (The translation on: each title translated, its original beneath.)
           const labels = toc.map((x) => x.label);

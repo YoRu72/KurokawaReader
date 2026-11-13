@@ -15,7 +15,11 @@ export const ko: Partial<Strings> = {
 
   copySelected: '복사', copied: '복사했습니다', searchSelected: '검색', defineSelected: '뜻', translateSelected: '번역', highlight: '형광펜', highlights: '형광펜', noHighlights: '아직 형광펜이 없습니다', speakSelected: '읽기', define: '뜻풀이', translate: '번역', translateTo: '번역할 언어', translating: '번역 중…', lookingUp: '찾는 중…', offlineService: '인터넷 연결이 필요합니다. 리더 자체는 오프라인으로 작동하며, 뜻풀이와 번역은 연결될 때 웹에서 가져옵니다.', noDefinition: '뜻풀이를 찾지 못했습니다.', openInDictionary: '사전에서 열기', openInTranslator: '번역기에서 열기', serviceFailed: '서비스에 연결할 수 없습니다.',
 
-  theme: '테마', themeDark: '다크', themeBlack: '블랙', themeSepia: '세피아', themeLight: '라이트', themePaper: '종이', latinFont: '로마자 글꼴', arabicFont: '아랍 문자 글꼴', fontPublisher: '출판사 지정', fontSystemSerif: '시스템 명조', fontSystemSans: '시스템 고딕', fontSize: '글자 크기', lineHeight: '줄 간격', paragraphSpacing: '문단 간격', pageWidth: '본문 너비', margins: '여백', textAlign: '정렬', alignStart: '기본', alignJustify: '양쪽 정렬', alignCenter: '가운데 정렬', publisherStyles: '출판사 스타일 사용', dimImages: '다크 테마에서 이미지 어둡게', hyphenate: '하이픈 넣기', resetDefaults: '기본값으로 되돌리기', wordSpacing: '단어 간격', letterSpacing: '자간',
+  theme: '테마', themeDark: '다크', themeBlack: '블랙', themeSepia: '세피아', themeLight: '라이트', themePaper: '종이', latinFont: '로마자 글꼴', arabicFont: '아랍 문자 글꼴', fontPublisher: '출판사 지정', fontSystemSerif: '시스템 명조', fontSystemSans: '시스템 고딕', fontSize: '글자 크기', lineHeight: '줄 간격', paragraphSpacing: '문단 간격', pageWidth: '본문 너비', margins: '여백', textAlign: '정렬', alignStart: '기본', alignJustify: '양쪽 정렬', alignCenter: '가운데 정렬', publisherStyles: '출판사 스타일 사용', dimImages: '다크 테마에서 이미지 어둡게', resetDefaults: '기본값으로 되돌리기', wordSpacing: '단어 간격', letterSpacing: '자간',
+  bookSizes: '책의 글자 크기와 굵기', bookSizesHint: '책이 정한 큰 제목, 굵은 글씨, 기울임, 큰 첫 글자를 내가 고른 글자 크기에 맞춰 보여 줍니다.',
+  chapterTitles: '장 제목', chapterTitlesCenter: '가운데', chapterTitlesStart: '줄 시작', chapterTitlesBook: '책대로',
+  hideChapterWord: '“제N장” 표시 숨기기', hideChapterWordHint: '“제1장: 귀환”은 “귀환”으로 보입니다. “제1장”만 있는 제목은 그대로 둡니다.',
+  firstLetter: '장의 첫 글자', firstLetterBold: '굵게, 본문 크기', firstLetterBook: '책에 정해진 대로', firstLetterPlain: '보통',
 
   galleryTitle: '이미지', galleryEmpty: '열린 책에 이미지가 없습니다', galleryCount: '이미지 {n}개', jumpToImage: '본문에서 보기', saveImage: '이미지 저장', imageFrom: '{title}에서',
 
@@ -25,7 +29,7 @@ export const ko: Partial<Strings> = {
 
   savedProgress: '진행 상황을 저장했습니다', error: '문제가 발생했습니다', sheet: '시트', slide: '슬라이드', rows: '{n}행', showMoreRows: '행 더 보기', shortcutsBody: 'J / K 또는 화살표: 스크롤 · [ ]: 이전 / 다음 책 · / : 검색 · B: 책갈피 · G: 이미지 · V: 보기 설정 · F: 전체 화면 · Esc: 패널 닫기',
 
-  background: '배경', comfort: '눈 편하게', typeSection: '글자', layoutSection: '레이아웃', behaviourSection: '동작', themeCustom: '사용자 지정', customColors: '사용자 지정 색', backgroundColor: '페이지 색', textColor: '글자 색', texture: '질감', textureNone: '없음', texturePaper: '종이', textureLinen: '리넨', textureParchment: '양피지', textureDots: '점', bookFormat: '책 조판', smartTypography: '조판용 문장 부호', vocabulary: '단어장', saveShelf: '책장으로 저장', shelfName: '책장 이름 (예: 안 읽은 아랍어 PDF)', shelfSaved: '책장 「{name}」 저장됨', shelfRemoveConfirm: '책장 「{name}」을 삭제할까요? 책은 남습니다.', vocabularyBody: '찾아본 단어는 그 문장과 함께 여기에 남습니다. Anki로: 파일을 내보낸 뒤 Anki에서 「파일 › 가져오기」(탭 구분: 앞면·뒷면·태그).', vocabSave: '찾아본 단어 저장', openVocabulary: '단어장 열기', wordsCount: '{n}개 단어', vocabEmpty: '아직 단어가 없습니다. 읽는 중에 단어를 선택하고 「정의」를 고르세요.', exportAnki: 'Anki용 내보내기', vocabExported: '저장됨 — Anki에서 「파일 › 가져오기」', vocabClearConfirm: '단어장을 모두 지울까요?', clearAll: '모두 지우기', smartTypographyHint: '둥근 따옴표, 진짜 대시와 줄임표. 숫자와 단위는 같은 줄에 둡니다.', focusMode: '집중 모드', focusModeHint: '읽고 있는 문단은 또렷하게, 나머지는 흐리게.', bookOnly: '이 책만의 설정', bookOnlyHint: '켜면 이 책에만 글꼴·크기·테마·레이아웃을 따로 정합니다. 다른 책은 공용 설정을 유지합니다.', bookOnlyOn: '아래 변경은 이 책에만 적용됩니다. 끄면 공용 설정으로 돌아갑니다.', bookFormatHint: '양쪽 정렬, 하이픈 넣기, 문단 들여쓰기를 인쇄된 책처럼.', texturePolka: '물방울무늬', polkaAmount: '점의 수', polkaPlace: '점의 위치', polkaBoth: '양쪽 여백', polkaLeft: '왼쪽 여백', polkaRight: '오른쪽 여백', polkaEdges: '네 가장자리', polkaSize: '점 크기', textureStrength: '질감 강도', backgroundImage: '배경 그림', chooseImage: '그림 선택', removeImage: '그림 제거', imageOpacity: '그림 불투명도', imageBlur: '그림 흐림', warmth: '따뜻한 색 (야간 필터)', dimScreen: '페이지 어둡게', sampleBooks: '먼저 책 두 권 추가', sampleBooksBody: '하리리의 『마카마트』(아랍어)와 『이상한 나라의 앨리스』(영어).', addingSamples: '시작용 책을 추가하는 중…', presets: '프리셋', presetNight: '밤', presetCandle: '촛불', presetManuscript: '필사본', presetDaylight: '낮', presetEink: '전자 잉크',
+  background: '배경', comfort: '눈 편하게', typeSection: '글자', layoutSection: '레이아웃', behaviourSection: '동작', themeCustom: '사용자 지정', customColors: '사용자 지정 색', backgroundColor: '페이지 색', textColor: '글자 색', texture: '질감', textureNone: '없음', texturePaper: '종이', textureLinen: '리넨', textureParchment: '양피지', textureDots: '점', bookFormat: '책 조판', smartTypography: '조판용 문장 부호', vocabulary: '단어장', saveShelf: '책장으로 저장', shelfName: '책장 이름 (예: 안 읽은 아랍어 PDF)', shelfSaved: '책장 「{name}」 저장됨', shelfRemoveConfirm: '책장 「{name}」을 삭제할까요? 책은 남습니다.', vocabularyBody: '찾아본 단어는 그 문장과 함께 여기에 남습니다. Anki로: 파일을 내보낸 뒤 Anki에서 「파일 › 가져오기」(탭 구분: 앞면·뒷면·태그).', vocabSave: '찾아본 단어 저장', openVocabulary: '단어장 열기', wordsCount: '{n}개 단어', vocabEmpty: '아직 단어가 없습니다. 읽는 중에 단어를 선택하고 「정의」를 고르세요.', exportAnki: 'Anki용 내보내기', vocabExported: '저장됨 — Anki에서 「파일 › 가져오기」', vocabClearConfirm: '단어장을 모두 지울까요?', clearAll: '모두 지우기', smartTypographyHint: '둥근 따옴표, 진짜 대시와 줄임표. 숫자와 단위는 같은 줄에 둡니다.', focusMode: '집중 모드', focusModeHint: '읽고 있는 문단은 또렷하게, 나머지는 흐리게.', bookOnly: '이 책만의 설정', bookOnlyHint: '켜면 이 책에만 글꼴·크기·테마·레이아웃을 따로 정합니다. 다른 책은 공용 설정을 유지합니다.', bookOnlyOn: '아래 변경은 이 책에만 적용됩니다. 끄면 공용 설정으로 돌아갑니다.', bookFormatHint: '양쪽 정렬, 줄 끝 단어 나눔, 문단 들여쓰기를 인쇄된 책처럼.', alignBookHint: '책 조판은 양쪽 정렬로 맞춥니다. 다른 정렬을 고르려면 끄세요.', texturePolka: '물방울무늬', polkaAmount: '점의 수', polkaPlace: '점의 위치', polkaBoth: '양쪽 여백', polkaLeft: '왼쪽 여백', polkaRight: '오른쪽 여백', polkaEdges: '네 가장자리', polkaSize: '점 크기', textureStrength: '질감 강도', backgroundImage: '배경 그림', chooseImage: '그림 선택', removeImage: '그림 제거', imageOpacity: '그림 불투명도', imageBlur: '그림 흐림', warmth: '따뜻한 색 (야간 필터)', dimScreen: '페이지 어둡게', sampleBooks: '먼저 책 두 권 추가', sampleBooksBody: '하리리의 『마카마트』(아랍어)와 『이상한 나라의 앨리스』(영어).', addingSamples: '시작용 책을 추가하는 중…', presets: '프리셋', presetNight: '밤', presetCandle: '촛불', presetManuscript: '필사본', presetDaylight: '낮', presetEink: '전자 잉크',
 
   appearance: '모양', uiMode: '인터페이스 모드', uiSystem: '시스템', uiLight: '라이트', uiDark: '다크', uiPage: '페이지를 따름', accent: '강조 색', accentAqua: '아쿠아', accentGold: '골드', accentRose: '로즈', accentMint: '민트', accentOlive: '올리브', accentSand: '샌드', accentViolet: '바이올렛', accentMono: '모노', accentCustom: '사용자 지정', orientation: '화면 방향', orientationAuto: '자동', orientationPortrait: '세로', orientationLandscape: '가로', readerSettings: '리더',
 
@@ -212,6 +216,13 @@ export const ko: Partial<Strings> = {
   perfEndBg: "백그라운드에서 종료",
   perfEndUnexpected: "예기치 않게 종료",
   perfInBg: "백그라운드",
+  perfCauseRendererCrash: "페이지 렌더러 충돌",
+  perfCauseRendererKilled: "시스템이 페이지 렌더러를 종료함(메모리 부족 추정)",
+  perfCauseAppMemory: "메모리 부족으로 시스템이 앱을 종료함",
+  perfCauseAppCrash: "앱 충돌",
+  perfCauseAnr: "앱이 응답하지 않음",
+  perfCauseAnrSuspected: "응답하지 않았던 것으로 보임",
+  perfCauseAppKilled: "시스템이 앱을 종료함",
   perfSessionVal: "{dur} 실행, 마지막 화면: {screen}",
   perfLeft: "리더를 떠난 이유",
   perfLeftNone: "아직 떠나지 않음",
@@ -250,7 +261,13 @@ export const ko: Partial<Strings> = {
   backTwiceLeaveHint: "뒤로는 먼저 열려 있는 것을 닫고, 그다음 안내를 보여 줍니다. 2초 안에 한 번 더 누르면 책을 나갑니다. 위쪽 막대의 화살표는 바로 나갑니다.",
   backAgainToLeave: "뒤로를 한 번 더 누르면 책을 나갑니다",
   edgeGuard: "화면 가장자리의 페이지 넘김 스와이프 보호",
-  edgeGuardHint: "장 단위로 읽는 동안 왼쪽이나 오른쪽 가장자리 가운데에서 시작한 스와이프는 뒤로 가지 않고 장을 넘깁니다. 가장자리의 나머지 부분과 버튼으로는 뒤로를 쓸 수 있습니다.",
+  edgeGuardHint: "기본값은 꺼짐입니다. 켜면 장 단위로 읽으며 막대가 숨겨져 있는 동안, 왼쪽이나 오른쪽 가장자리 가운데에서 하는 뒤로 스와이프를 장 넘김에 씁니다. 가장자리의 위아래와 버튼으로는 뒤로를 쓸 수 있고, 막대가 보일 때는 언제나 쓸 수 있습니다.",
+  backSwipeHeldPerf: "페이지 넘김 스와이프의 일부로 보고 무시한 뒤로: {n}",
+  swipeTurn: "스와이프로 페이지 넘기기",
+  swipeSensitivity: "스와이프 감도",
+  swipeLow: "낮음",
+  swipeNormal: "보통",
+  swipeHigh: "높음",
   perfBackHeld: "“뒤로를 두 번 눌러 책 나가기”가 막은 뒤로: {n}",
   readingBar: "읽기 표시줄",
   barItemChapter: "장 제목",
