@@ -130,6 +130,8 @@ async function everyState(lang, theme, scale) {
   // Options open.
   await page.click('#opt-btn'); await settle(page, 80);
   eq(await page.getAttribute('#opt-btn', 'aria-expanded'), 'true', `${tag}: options expanded`);
+  // (The options open with a short motion; on a slow machine 80 ms is not always enough.)
+  await page.waitForSelector('#opt-desktop', { state: 'visible', timeout: 5000 }).catch(() => {});
   ok(await page.isVisible('#opt-desktop'), `${tag}: options shown`);
   await layoutOk(page, `${tag} options`);
   if (lang === 'ar') {
