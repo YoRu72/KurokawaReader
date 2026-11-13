@@ -361,6 +361,7 @@ jobs:
             ${{ runner.temp }}/kr-install/*.md
             ${{ runner.temp }}/kr-install/*.log
             ${{ runner.temp }}/kr-install/feed/server.log
+            ${{ runner.temp }}/kr-install/nsis-*/*.nsi
 
       # The engine test's report (Markdown and JSON), versions and screenshots, for a person to look at.
       - uses: actions/upload-artifact@v4

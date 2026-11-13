@@ -9,6 +9,11 @@
 const fs = require('fs'); const path = require('path'); const os = require('os');
 let pw; try { pw = require('playwright-core'); } catch { pw = require('playwright'); }
 const ROOT = path.resolve(__dirname, '..'); const DESK = path.join(ROOT, 'desktop'); const FIX = path.join(__dirname, 'fixtures');
+// (The books it imports: the copies in the repository — tests/fixtures/ is git-ignored, a local folder that CI never
+// has; a local copy there is used when present.)
+const pickFile = (...c) => c.find((f) => fs.existsSync(f)) || c[c.length - 1];
+const EPUB_FILE = pickFile(path.join(FIX, 'alice-in-wonderland.epub'), path.join(__dirname, '..', 'public', 'samples', 'alice-in-wonderland.epub'));
+const PDF_FILE = pickFile(path.join(FIX, 'sample.pdf'), path.join(__dirname, 'pdfsearch', 'sample.pdf'));
 const [outFile, workArg] = process.argv.slice(2);
 if (!outFile) { console.error('usage: node tests/handover-electron.cjs <expected.json> [work folder]'); process.exit(2); }
 const WORK = workArg || fs.mkdtempSync(path.join(os.tmpdir(), 'kr-handover-e-'));
@@ -44,8 +49,8 @@ async function importFile(p, file, re) {
 
   const txt = path.join(WORK, 'Long Text.txt');
   fs.writeFileSync(txt, ['Long Text', ...Array.from({ length: 260 }, (_, i) => `[P${i + 1}] ` + `Words of paragraph ${i + 1}, a line to read on and on. `.repeat(6))].join('\n\n') + '\n');
-  const epub = await importFile(p, path.join(FIX, 'alice-in-wonderland.epub'), 'Alice');
-  const pdf = await importFile(p, path.join(FIX, 'sample.pdf'), 'sample');
+  const epub = await importFile(p, EPUB_FILE, 'Alice');
+  const pdf = await importFile(p, PDF_FILE, 'sample');
   const tb = await importFile(p, txt, 'Long Text');
   log('imported', epub.title, '|', pdf.title, '|', tb.title);
   // The text book read to its 120th paragraph: the reader saves the place.

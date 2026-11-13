@@ -269,9 +269,10 @@
   function $(sel, from) { return (from || doc).querySelector(sel); }
   function $$(sel, from) { return Array.prototype.slice.call((from || doc).querySelectorAll(sel)); }
   function visible(el) { if (!el || !el.getClientRects().length) return false; var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
+  /** `what`: the words of a timeout — or a function giving them, read when it times out (the state then). */
   async function waitFor(fn, ms, what) {
     var until = now() + ms;
-    for (;;) { var v; try { v = await fn(); } catch (e) { if (e && e.krFatal) throw e; v = null; } if (v) return v; if (now() > until) throw new Error('timeout (' + Math.round(ms / 1000) + ' s): ' + what); await sleep(120); }
+    for (;;) { var v; try { v = await fn(); } catch (e) { if (e && e.krFatal) throw e; v = null; } if (v) return v; if (now() > until) throw new Error('timeout (' + Math.round(ms / 1000) + ' s): ' + (typeof what === 'function' ? what() : what)); await sleep(120); }
   }
   /** An error that ends a waitFor at once (the page said it failed), where any other is taken for «not yet». */
   function fatal(msg) { var e = new Error(msg); e.krFatal = true; return e; }
@@ -726,7 +727,8 @@
         await toLibrary(); await sleep(600);
         var b = await bookById(st.data.text);
         await openReader(st.data.text, '.reader-flow p');
-        var back = await waitFor(async function () { await sleep(400); var p = topPara(); return p && Math.abs(p - st.data.textAt) <= 2 ? p : null; }, 12000, 'back at paragraph ' + st.data.textAt + ' (now ' + topPara() + ', saved ' + short(b && b.progress) + ')');
+        var atOpen = topPara();
+        var back = await waitFor(async function () { await sleep(400); var p = topPara(); return p && Math.abs(p - st.data.textAt) <= 2 ? p : null; }, 12000, function () { return 'back at paragraph ' + st.data.textAt + ' (at the open ' + atOpen + ', at the end ' + topPara() + '; window ' + root.innerWidth + '×' + root.innerHeight + '; saved ' + short(b && b.progress) + ')'; });
         return 'paragraph ' + back + ' (left at ' + st.data.textAt + '; saved ' + short(b && b.progress) + ')';
       }, 60000);
       return at;

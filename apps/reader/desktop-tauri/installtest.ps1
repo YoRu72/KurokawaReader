@@ -12,10 +12,14 @@
 #      first download cut off halfway), and installed over the first through the app's OWN updater (KR_UPDATETEST:
 #      downloadUpdate → installDownloadedUpdate); the new version in place, a marker in the data folders kept;
 #   6. uninstalled silently: the program gone, the data folders (and the library in them) kept.
-# Pictures, logs and a summary go to $env:RUNNER_TEMP\kr-install (the workflow keeps it as an artifact).
+# Pictures, logs and a summary go to $env:RUNNER_TEMP\kr-install (the workflow keeps it as an artifact), with the
+# installer scripts Tauri rendered (nsis-<version>\installer.nsi, and installer.kr.nsi with the one screen in) and the
+# install trace (install-trace.log: each install and uninstall step as installer/hooks.nsh notes it with
+# KR_INSTALL_TRACE — which installer, the uninstall entry's DisplayVersion at that moment, its command line).
 $ErrorActionPreference = 'Stop'
 $d = Join-Path $env:RUNNER_TEMP 'kr-install'
 New-Item -ItemType Directory -Force -Path $d | Out-Null
+$trace = Join-Path $d 'install-trace.log'; $env:KR_INSTALL_TRACE = $trace
 $fails = New-Object System.Collections.ArrayList
 $rows = New-Object System.Collections.ArrayList
 function Row($name, $ok, $detail, $required = $true) {
@@ -34,6 +38,16 @@ function Shot($name) {
     $bmp.Save((Join-Path $d "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
   } catch { Write-Host "screenshot $name failed: $_" }
 }
+# The installer scripts Tauri rendered for this build (and the one-page one), kept for a person to read.
+function SaveNsi($tag) {
+  $to = Join-Path $d "nsis-$tag"; New-Item -ItemType Directory -Force -Path $to | Out-Null
+  Get-ChildItem 'target' -Directory -Recurse -Depth 3 -Filter 'nsis' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]bundle[\\/]' } |
+    ForEach-Object { Get-ChildItem $_.FullName -Recurse -Filter '*.nsi' -ErrorAction SilentlyContinue } | ForEach-Object { Copy-Item $_.FullName (Join-Path $to $_.Name) -Force }
+}
+# The update's installer and any uninstaller it runs (NSIS runs one from a copy in the temp folder: Un_*.exe, Au_.exe).
+function Installers($instDir) {
+  @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -like '*KurokawaReader-update*' -or $_.Name -like 'Un_*.exe' -or $_.Name -like 'Au_*.exe' -or $_.ExecutablePath -eq (Join-Path $instDir 'uninstall.exe')) })
+}
 function LnkTarget($p) { if (-not (Test-Path $p)) { return $null }; return (New-Object -ComObject WScript.Shell).CreateShortcut($p).TargetPath }
 function MB($f) { '{0:N2} MB' -f ((Get-Item $f).Length / 1MB) }
 $UN = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
@@ -43,6 +57,7 @@ if (-not $setup) { throw 'no NSIS installer built' }
 $setup1 = Join-Path $d 'setup-1.exe'; Copy-Item $setup.FullName $setup1
 $v1 = (node -p "require('../../package.json').version").Trim()
 Row 'installer size' $true "$(MB $setup1) ($($setup.Name)); Electron's: 81.6 MB"
+SaveNsi $v1
 
 # 0. An Electron install, as electron-builder leaves one.
 $old = Join-Path $env:LOCALAPPDATA 'Programs\KurokawaReader'
@@ -123,6 +138,7 @@ Push-Location ..
 npx --yes @tauri-apps/cli@^2 build --bundles nsis --config src-tauri/v2.conf.json 2>&1 | Select-Object -Last 15 | Write-Host
 node src-tauri/installer/onepage.cjs src-tauri --strict | Write-Host
 Pop-Location
+SaveNsi $v2
 $setup2 = Get-ChildItem "target/release/bundle/nsis/*$v2*-setup.exe" | Select-Object -First 1
 Row "second build ($v2)" ($null -ne $setup2) $(if ($setup2) { "$($setup2.Name), $(MB $setup2.FullName)" } else { 'not built' })
 if ($setup2) {
@@ -140,16 +156,40 @@ if ($setup2) {
   $env:KR_UPDATETEST = $log; $env:KR_UPDATE_FEED = "http://127.0.0.1:$port/releases"
   $t = Measure-Command { $p = Start-Process $exe -PassThru; $null = $p.Handle; if (-not $p.WaitForExit(240000)) { Stop-Process -Id $p.Id -Force } }
   Remove-Item Env:KR_UPDATETEST, Env:KR_UPDATE_FEED
+  # The installer the app started (/P /R /UPDATE), and any uninstaller it runs, waited for until they end (150 s at
+  # most); the screen pictured while it runs, and again if one is still there at the end (a question waiting shows).
+  $sw = [Diagnostics.Stopwatch]::StartNew(); $seen = @(); $pictured = $false
+  while ($sw.Elapsed.TotalSeconds -lt 150) {
+    $ps = Installers $dir
+    foreach ($q in $ps) { $line = "$($q.ProcessId) $($q.CommandLine)"; if ($seen -notcontains $line) { $seen += $line } }
+    if ($ps.Count -and -not $pictured) { Start-Sleep -Milliseconds 400; Shot 'update-installer'; $pictured = $true }
+    if (-not $ps.Count -and $sw.Elapsed.TotalSeconds -ge 4) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  $left = Installers $dir
+  if ($left.Count) { Shot 'update-installer-stuck' }
+  $waited = $sw.Elapsed.TotalSeconds
   $now = $null
-  for ($i = 0; $i -lt 120; $i++) { $now = (Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue).DisplayVersion; if ($now -eq $v2) { break }; Start-Sleep -Seconds 1 }
-  Start-Sleep -Seconds 5
+  for ($i = 0; $i -lt 10; $i++) { $now = (Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue).DisplayVersion; if ($now -eq $v2) { break }; Start-Sleep -Seconds 1 }
+  $entry = Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue
+  $entryText = if ($entry) { ($entry.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' } else { 'the uninstall entry HKCU\...\Uninstall\KurokawaReader is gone' }
+  # (Started again by the installer, /R: the new program running from the install folder.)
+  $again = @(Get-CimInstance Win32_Process -Filter "Name='KurokawaReader.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $exe })
+  Start-Sleep -Seconds 2
   Get-Process KurokawaReader -ErrorAction SilentlyContinue | Stop-Process -Force
   Write-Host '--- update test log'; Get-Content $log -ErrorAction SilentlyContinue | Write-Host
   Write-Host '--- server log'; Get-Content (Join-Path $feed 'server.log') -ErrorAction SilentlyContinue | Write-Host
+  Write-Host '--- installers seen'; $seen | Write-Host
+  Write-Host '--- install trace'; Get-Content $trace -ErrorAction SilentlyContinue | Write-Host
+  Write-Host "--- uninstall entry: $entryText"
+  Write-Host '--- program folder'; Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { '{0}  {1:N0} B  {2:u}  {3}' -f $_.FullName, $_.Length, $_.LastWriteTime, $_.VersionInfo.ProductVersion } | Write-Host
   $text = Get-Content $log -Raw -ErrorAction SilentlyContinue
   Row 'update downloaded (resumed) and checked' ($text -match 'download downloaded') (($text -split "`n" | Where-Object { $_ -match '^download|^install|^FAIL' }) -join ' / ')
   Row 'resumed after a cut' ((Get-Content (Join-Path $feed 'server.log') -Raw) -match 'range \d+-') 'server.log: a Range request after the cut'
-  Row "installed version $v1 → $v2 (the app's own updater)" ($now -eq $v2) ("{0} after {1:N0} s" -f $now, $t.TotalSeconds)
+  Row "the update's installer ended by itself" ($left.Count -eq 0) ("{0:N0} s after the app left; {1} process(es) seen: {2}{3}" -f $waited, $seen.Count, (($seen | ForEach-Object { ($_ -replace '^\d+ ', '') -replace '^"?([^"]*\\)?([^"\\]+\.exe)"?', '$2' }) -join ' + '), $(if ($left.Count) { '; STILL RUNNING (update-installer-stuck.png): ' + (($left | ForEach-Object { $_.CommandLine }) -join ' + ') } else { '' }))
+  Row "installed version $v1 → $v2 (the app's own updater)" ($now -eq $v2) ("{0} — {1}" -f $(if ($now) { $now } else { 'none' }), $entryText)
+  Row 'install trace (installer/hooks.nsh)' (Test-Path $trace) $(if (Test-Path $trace) { ((Get-Content $trace) | ForEach-Object { ($_ -split ' tick=')[0] }) -join ' → ' } else { 'not written' }) $false
+  Row 'started again after the update (/R)' ($again.Count -gt 0) $(if ($again.Count) { "$exe, $(($again | ForEach-Object { $_.CreationDate }) -join ', ')" } else { 'not running after the installer ended' }) $false
   Row 'program version' ((Get-Item $exe).VersionInfo.ProductVersion -like "$v2*") ((Get-Item $exe).VersionInfo.ProductVersion) $false
   Row 'data kept over the update' ((Test-Path (Join-Path $cfgDir 'kr-ci-marker.txt')) -and (Test-Path (Join-Path $locDir 'kr-ci-marker.txt'))) "$cfgDir, $locDir"
   Row 'desktop shortcut kept' ((LnkTarget $deskLnk) -eq $exe) (LnkTarget $deskLnk)
@@ -157,9 +197,11 @@ if ($setup2) {
 }
 
 # 6. Uninstalled silently: program gone, data kept.
-Start-Process $un -ArgumentList '/S' -Wait
-for ($i = 0; $i -lt 60 -and (Test-Path $exe); $i++) { Start-Sleep -Seconds 1 }
-Row 'uninstalled' (-not (Test-Path $exe) -and -not (Test-Path "$UN\KurokawaReader")) $dir
+if (Test-Path $un) {
+  Start-Process $un -ArgumentList '/S' -Wait
+  for ($i = 0; $i -lt 60 -and (Test-Path $exe); $i++) { Start-Sleep -Seconds 1 }
+  Row 'uninstalled' (-not (Test-Path $exe) -and -not (Test-Path "$UN\KurokawaReader")) $dir
+} else { Row 'uninstalled' $false "no uninstaller at $un" }
 Row 'library (data folders) kept after uninstall' ((Test-Path (Join-Path $env:APPDATA 'app.kurokawa.reader\kr-ci-marker.txt')) -and (Test-Path (Join-Path $env:LOCALAPPDATA 'app.kurokawa.reader'))) 'app.kurokawa.reader in Roaming and Local'
 Row 'Electron data still kept' (Test-Path (Join-Path $edata 'kr-ci-electron-data.txt')) $edata
 

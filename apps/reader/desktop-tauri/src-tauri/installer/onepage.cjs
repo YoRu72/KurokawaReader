@@ -98,6 +98,14 @@ function walk(dir, test, acc = []) {
   return acc;
 }
 
+/** The bundle's installers this rendered script is for: those named with its version (Tauri names them
+ *  <product>_<version>_<arch>-setup.exe), else the newest one alone. */
+function pickSetups(all, version) {
+  const mine = version ? all.filter((p) => path.basename(p).includes(`_${version}_`)) : [];
+  if (mine.length) return mine;
+  return [all.slice().sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0]];
+}
+
 function makensis() {
   const c = [process.env.MAKENSIS, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'tauri', 'NSIS', 'makensis.exe'), process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'tauri', 'NSIS', 'Bin', 'makensis.exe'), 'C:\\Program Files (x86)\\NSIS\\makensis.exe', 'C:\\Program Files\\NSIS\\makensis.exe'].filter(Boolean);
   for (const p of c) if (fs.existsSync(p)) return p;
@@ -133,8 +141,12 @@ function main() {
     if (run.status !== 0) return say(`makensis failed (${run.error ? run.error.message : 'exit ' + run.status}) on ${patched}`);
     // (The bundle's installer replaced by the new one: target/<…>/release/bundle/nsis/*-setup.exe beside this nsis/.)
     const bundle = path.join(dir, '..', '..', 'bundle', 'nsis');
-    const setups = walk(bundle, (p) => /-setup\.exe$/i.test(p));
-    if (!setups.length) return say(`no setup .exe in ${bundle}`);
+    // (Only this script's version's: an earlier build's installer beside it — CI's installtest.ps1 builds a second,
+    // higher version into the same folder — is left as it is.)
+    const all = walk(bundle, (p) => /-setup\.exe$/i.test(p));
+    if (!all.length) return say(`no setup .exe in ${bundle}`);
+    const version = (/^\s*!define\s+VERSION\s+"([^"]+)"/im.exec(src) || [])[1];
+    const setups = pickSetups(all, version);
     for (const s of setups) if (path.resolve(s) !== path.resolve(outFile)) fs.copyFileSync(outFile, s);
     const mb = (fs.statSync(setups[0]).size / 1048576).toFixed(2);
     console.log(`one-page installer: applied to ${setups.map((s) => path.basename(s)).join(', ')} (${mb} MB, compiled in ${((Date.now() - started) / 1000).toFixed(1)} s); first page at line ${r.notes.at + 1}; Tauri's pages skipped: ${r.notes.wrappers.join(', ') || 'none'}`);
@@ -144,4 +156,4 @@ function main() {
 }
 
 if (require.main === module) process.exit(main());
-module.exports = { transform };
+module.exports = { transform, pickSetups };

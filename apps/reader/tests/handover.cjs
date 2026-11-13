@@ -22,6 +22,11 @@ const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.join
 const BRIDGE = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8');
 const HBRIDGE = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'handover-bridge.js'), 'utf8');
 const FIX = path.join(__dirname, 'fixtures');
+// (The books it imports: the copies in the repository — tests/fixtures/ is git-ignored, a local folder that CI never
+// has; a local copy there is used when present.)
+const pickFile = (...c) => c.find((f) => fs.existsSync(f)) || c[c.length - 1];
+const EPUB_FILE = pickFile(path.join(FIX, 'alice-in-wonderland.epub'), path.join(__dirname, '..', 'public', 'samples', 'alice-in-wonderland.epub'));
+const PDF_FILE = pickFile(path.join(FIX, 'sample.pdf'), path.join(__dirname, 'pdfsearch', 'sample.pdf'));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.epub': 'application/epub+zip', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x).slice(0, 900))); if (!c) fails++; return !!c; };
@@ -162,8 +167,8 @@ function compare(a, b) {
   const A = await electronPage();
   const txt = path.join(TMP, 'Long Text.txt');
   fs.writeFileSync(txt, ['Long Text', ...Array.from({ length: 260 }, (_, i) => `[P${i + 1}] ` + `Words of paragraph ${i + 1}, a line to read on and on. `.repeat(6))].join('\n\n') + '\n');
-  const epub = await importFile(A, path.join(FIX, 'alice-in-wonderland.epub'), 'Alice');
-  const pdf = await importFile(A, path.join(FIX, 'sample.pdf'), 'sample');
+  const epub = await importFile(A, EPUB_FILE, 'Alice');
+  const pdf = await importFile(A, PDF_FILE, 'sample');
   const tb = await importFile(A, txt, 'Long Text');
   // The text book read to its 120th paragraph (the reader saves its place).
   await openBook(A, tb.id);
@@ -283,7 +288,7 @@ function compare(a, b) {
   const made2 = await A.evaluate(() => window.__KR_HANDOVER__.make());
   ok('a new hand-over made', made2.ok, made2);
   const M = await rustPage();
-  const m0 = await importFile(M, path.join(FIX, 'sample.pdf'), 'sample');
+  const m0 = await importFile(M, PDF_FILE, 'sample');
   await M.evaluate(async (id) => { const d = await new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => res(r.result); }); await new Promise((res) => { const tx = d.transaction('books', 'readwrite'); const st = tx.objectStore('books'); const q = st.get(id); q.onsuccess = () => { const b = q.result; b.pdfHighlights = [{ id: 'mine', page: 1, rects: [[0, 0, 0.1, 0.1]], text: 'mine', color: 'rose', createdAt: 1 }]; st.put(b); }; tx.oncomplete = res; }); d.close(); }, m0.id);
   await M.reload(); await M.waitForSelector('.library-view'); await M.waitForTimeout(2500);
   ok('a library with books: not offered at the start', !(await M.$('[data-handover="offer"]')));

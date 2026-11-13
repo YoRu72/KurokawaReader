@@ -29,6 +29,38 @@ Var KrOldKey
 
 !define KR_UNINST "Software\Microsoft\Windows\CurrentVersion\Uninstall"
 
+; (CI: with KR_INSTALL_TRACE=<file> in the environment — installtest.ps1 sets it —, each step of an install or an
+; uninstall is noted there, one line each: the step, this installer's version, the uninstall entry's DisplayVersion at
+; that moment, the tick count, the command line. Nothing is read or written without it.)
+!macro KR_TRACE WHAT
+  Push $0
+  Push $1
+  Push $2
+  ClearErrors
+  ReadEnvStr $0 KR_INSTALL_TRACE
+  ${IfNot} ${Errors}
+  ${AndIf} $0 != ""
+    ; (Tauri's own entry is named after the product, see KR_FIND_ELECTRON.)
+    ReadRegStr $1 HKCU "${KR_UNINST}\KurokawaReader" "DisplayVersion"
+    System::Call 'kernel32::GetTickCount()i .r2'
+    ClearErrors
+    FileOpen $0 $0 a
+    ${IfNot} ${Errors}
+      FileSeek $0 0 END
+      !ifdef VERSION
+        FileWrite $0 "${WHAT} v${VERSION} entry=[$1] tick=$2 cmd=$CMDLINE$\r$\n"
+      !else
+        FileWrite $0 "${WHAT} entry=[$1] tick=$2 cmd=$CMDLINE$\r$\n"
+      !endif
+      FileClose $0
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
 ; The Electron install: its folder in $KrOldDir and its uninstall key's name in $KrOldKey ("" when there is none).
 !macro KR_FIND_ELECTRON
   StrCpy $KrOldDir ""
@@ -130,9 +162,23 @@ Var KrOldKey
   Pop $R6
 !macroend
 
+!macro NSIS_HOOK_PREINSTALL
+  !insertmacro KR_TRACE "preinstall"
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro KR_TRACE "postinstall"
   ${If} $KrGui = 1
     DetailPrint "KurokawaReader: desktop shortcut $KrDesk, open when done $KrRun, open books with it $KrAssoc"
   ${EndIf}
   !insertmacro KR_REPLACE_ELECTRON
+!macroend
+
+; (The uninstaller: only traced — CI's KR_INSTALL_TRACE —, whether it is run by a person, by /S, or by an installer.)
+!macro NSIS_HOOK_PREUNINSTALL
+  !insertmacro KR_TRACE "preuninstall"
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  !insertmacro KR_TRACE "postuninstall"
 !macroend

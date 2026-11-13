@@ -6,6 +6,7 @@
 // self-test prints them (kr_boot_times), and with KR_BOOTTIME=<file> set the program writes them there and ends once
 // its first screen is in place (the workflow starts the installed app twice: a cold start, then a warm one).
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -16,6 +17,7 @@ use crate::bootlogic::{self, Times};
 
 static START: OnceLock<Instant> = OnceLock::new();
 static TIMES: Mutex<Times> = Mutex::new(Times { paint: None, ready: None });
+static BOOTTIME_WRITTEN: AtomicBool = AtomicBool::new(false);
 
 /// The program's start: called first thing in main().
 pub fn mark_start() {
@@ -60,18 +62,38 @@ pub async fn kr_boot_mark(app: AppHandle, what: String, bg: Option<String>) -> R
             }
         }
     }
-    if what == "ready" {
-        if let Some(out) = std::env::var_os("KR_BOOTTIME").filter(|v| !v.is_empty()) {
-            let line = json!({ "paint": times.paint, "ready": times.ready, "line": times.line(), "version": app.package_info().version.to_string() });
-            let _ = std::fs::write(PathBuf::from(out), format!("{}\n", line));
+    if std::env::var_os("KR_BOOTTIME").filter(|v| !v.is_empty()).is_some() {
+        if times.complete() {
+            write_boottime(&app, times);
+        } else if what == "ready" {
+            // (The first paint can come a frame after the first screen: waited for, up to 3 s, then written as is.)
             let h = app.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(300));
-                h.exit(0);
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let t = TIMES.lock().map(|g| *g).unwrap_or_default();
+                write_boottime(&h, t);
             });
         }
     }
     Ok(json!({ "paint": times.paint, "ready": times.ready, "now": ms }))
+}
+
+/// KR_BOOTTIME=<file> (CI): the times written there once — both marks in, or 3 s after the app was ready —, then the
+/// program ends.
+fn write_boottime(app: &AppHandle, times: Times) {
+    if BOOTTIME_WRITTEN.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Some(out) = std::env::var_os("KR_BOOTTIME").filter(|v| !v.is_empty()) else {
+        return;
+    };
+    let line = json!({ "paint": times.paint, "ready": times.ready, "line": times.line(), "version": app.package_info().version.to_string() });
+    let _ = std::fs::write(PathBuf::from(out), format!("{}\n", line));
+    let h = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        h.exit(0);
+    });
 }
 
 /// The start-up times (the self-test's row): first paint and app ready, in ms from the program's start.

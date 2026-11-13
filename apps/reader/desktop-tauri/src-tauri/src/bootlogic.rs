@@ -71,6 +71,11 @@ impl Times {
             false
         }
     }
+    /// Both marks in: the first paint and the app ready. (The paint is the first frame after the page's DOM — a
+    /// requestAnimationFrame —, which can come a frame after its first screen is in place: KR_BOOTTIME waits for it.)
+    pub fn complete(&self) -> bool {
+        self.paint.is_some() && self.ready.is_some()
+    }
     /// One line for a log: «paint 212 ms · ready 486 ms».
     pub fn line(&self) -> String {
         let f = |x: Option<u64>| x.map(|v| format!("{} ms", v)).unwrap_or_else(|| "—".to_string());
@@ -81,6 +86,19 @@ impl Times {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn times_complete() {
+        let mut t = Times::default();
+        assert!(!t.complete());
+        assert!(t.mark("ready", 537));
+        assert!(!t.complete());
+        assert_eq!(t.line(), "paint — · ready 537 ms");
+        assert!(t.mark("paint", 553));
+        assert!(t.complete());
+        assert!(!t.mark("paint", 900));
+        assert_eq!(t.line(), "paint 553 ms · ready 537 ms");
+    }
 
     #[test]
     fn colours() {

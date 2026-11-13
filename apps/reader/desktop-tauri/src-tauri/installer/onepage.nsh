@@ -202,6 +202,9 @@ FunctionEnd
 !macroend
 
 Function KrAfterInstall
+  !ifmacrodef KR_TRACE
+    !insertmacro KR_TRACE "success"
+  !endif
   ${If} $KrGui = 1
     ${If} $KrDesk = 0
       Delete "$DESKTOP\${PRODUCTNAME}.lnk"

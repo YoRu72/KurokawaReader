@@ -11,7 +11,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const DIR = path.join(__dirname, '..', 'desktop-tauri', 'src-tauri', 'installer');
-const { transform } = require(path.join(DIR, 'onepage.cjs'));
+const { transform, pickSetups } = require(path.join(DIR, 'onepage.cjs'));
 
 // A rendered script laid out as Tauri 2's template lays its own out (the parts the change touches).
 const rendered = `\ufeffUnicode true
@@ -119,4 +119,21 @@ assert.ok(fs.existsSync(path.join(DIR, 'hooks.nsh')));
 const hooks = fs.readFileSync(path.join(DIR, 'hooks.nsh'), 'utf8');
 assert.match(hooks, /!macro NSIS_HOOK_POSTINSTALL/); assert.ok(!/\$\{PRODUCTNAME\}|\$\{MAINBINARYNAME\}/.test(hooks), 'hooks.nsh needs none of Tauri\'s defines');
 assert.ok(!/RMDir[^\n]*APPDATA/i.test(hooks), 'hooks.nsh never removes a data folder');
+// The trace (CI's KR_INSTALL_TRACE only): each install and uninstall step noted, nothing done without the variable.
+for (const h of ['NSIS_HOOK_PREINSTALL', 'NSIS_HOOK_POSTINSTALL', 'NSIS_HOOK_PREUNINSTALL', 'NSIS_HOOK_POSTUNINSTALL']) assert.match(hooks, new RegExp(`!macro ${h}\\s*\\n\\s*!insertmacro KR_TRACE "`), `${h} traced`);
+assert.match(hooks, /ReadEnvStr \$0 KR_INSTALL_TRACE\s*\n\s*\$\{IfNot\} \$\{Errors\}\s*\n\s*\$\{AndIf\} \$0 != ""/, 'the trace only with KR_INSTALL_TRACE');
+assert.match(page, /Function KrAfterInstall\s*\n\s*!ifmacrodef KR_TRACE\s*\n\s*!insertmacro KR_TRACE "success"/);
+// The compiled installer copied only over this version's bundle file (installtest.ps1 builds a second version beside
+// the first): the one named with the script's version, else the newest alone.
+{
+  const os = require('node:os');
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-setups-'));
+  const a = path.join(t, 'KurokawaReader_0.61.0_x64-setup.exe'); const b = path.join(t, 'KurokawaReader_0.61.1_x64-setup.exe');
+  fs.writeFileSync(a, 'a'); fs.writeFileSync(b, 'b'); fs.utimesSync(a, new Date(2000, 1, 1), new Date(2000, 1, 1));
+  assert.deepEqual(pickSetups([a, b], '0.61.1'), [b]);
+  assert.deepEqual(pickSetups([a, b], '0.61.0'), [a]);
+  assert.deepEqual(pickSetups([a, b], '0.70.0'), [b], 'no name with the version: the newest alone');
+  assert.deepEqual(pickSetups([a, b], undefined), [b]);
+  fs.rmSync(t, { recursive: true, force: true });
+}
 console.log('installerpatch: ok');

@@ -786,7 +786,9 @@ system's default-apps page, Windows and macOS), «Start reading» (not while the
 first run was done before. Closing the page without bringing the library leaves the offer for the next start.
 **Start-up** (`src-tauri/src/boot.rs`): the bridge tells the shell its first paint and its first screen
 (`kr_boot_mark`), timed from `main()`; the self-test prints them (row «start-up times»), and with `KR_BOOTTIME=<file>`
-the app writes them and ends (the workflow's cold and warm starts of the installed app). The page's interface colour
+the app writes them and ends (the workflow's cold and warm starts of the installed app) — once both marks are in, or
+3 s after «ready» (the first paint is a requestAnimationFrame after the DOM, and can come a frame after the first
+screen: run 43470847539 wrote at «ready» and ended, so «paint —» both times). The page's interface colour
 (its `theme-color`) is kept in `<config>/boot.json` and given to the window before the page paints where the resolved
 Tauri has `background_color` (`bootdetect.rs` + `build.rs`, cfg `kr_bg_color`, «KR build (R6b): …» in the log) — no
 white flash.
@@ -802,7 +804,8 @@ downloaded. Portable Electron copies are told to download the new build by hand.
 `tests/installerpatch.cjs` (node, CI); `tests/firstrun.cjs` (Chromium: the first-run screen, the update sheet of this
 build — its file, size and digest, progress, the refusals in words); `tests/tauribridge.cjs` (the four functions'
 commands and arguments); `selftest.js` (CI): «updater: resume, checksum, refusals» (required) and «start-up times»;
-`installtest.ps1` (CI, Windows): the installer end to end — see the workflow.
+`installtest.ps1` (CI, Windows): the installer end to end — see the workflow (its install trace and the rendered
+scripts in the artifact `tauri-reader-install-windows`).
 
 **R5, second and third runs** (a8fc6a1, c05ef5c): Windows failed the same check; the new details settled it. In
 run 43461902233: «frames in 1000 ms: 65; visible, focused; scrollTop 347853 of 419232 (view 1012×581); page 250 at
@@ -819,10 +822,52 @@ when they moved; once a scroll stops they are always read again. The view also t
 shown in the row whether it passes or fails.
 
 **macOS, the text reader** (continue-on-error there): run 1 failed «a highlight added» (the selection 1044 px down a
-768 px window, the toolbar never shown), run 3 «the place saved and restored» (at paragraph 347 when the book opened,
-then moved off and not put back in 12 s). Both are text reader checks taken while the window's native full-screen
-animation, started by opening the book (`setImmersive`, Electron's behaviour), reflows the text; R4 (no full screen)
-passed both. Not fixed here: whether a computer should go full screen at all when a book opens is to be decided.
+768 px window, the toolbar never shown), run 3 and run 43470847539 «the place saved and restored» (at paragraph 347
+when the book opened, then moved off and not put back in 12 s). Both are text reader checks taken while the window's
+native full-screen animation, started by opening the book (`setImmersive`, Electron's behaviour), reflows the text; R4
+(no full screen) passed both. **Fixed in the app** (`src/views/reader.ts`, «re-settled after a resize»;
+`src/ui/selection.ts`): from the first change of size (window `resize`, `fullscreenchange`, `visualViewport` resize, the
+scroller's width) the place being read is held — the later of the place the reader settled at and the place the
+text was put at (the place the book opened at) —; the scroll events of that reflow (WebKit has no scroll anchoring,
+and a WKWebView moves its offset itself as it resizes) are neither taken for the reader's (so restore's passes still
+run) nor saved; the place is put back at each change of width and again 350 ms after the last one (the same
+paragraph, the same offset), unless the reader scrolled meanwhile (a wheel, a touch, a press on the text or a reading
+key, then a scroll — their place stands). A change of height alone moves nothing, as before. The selection toolbar is
+placed again after a resize, and a selection made while it was off the screen gets its toolbar once it is on it.
+`tests/resettle.cjs` (Playwright): both reading modes, as Chromium is and as WebKit is (`overflow-anchor: none`), full
+screen at the open, 3 s after it, and with the engine moving the scroll as it resizes; a later width change; a wheel
+during the resize (not put back); the toolbar. The build before this fails 10 of its checks. (Whether a computer
+should go full screen at all when a book opens is still to be decided.) The engine test's failure line now gives the
+place at the open and at the end of the wait, and the window's size (it gave the place at the open only).
+
+**R6 (R6a + R6b), first CI run** (43470847539, a74367b). Linux and macOS passed; on Windows the build, the
+self-test and the engine test passed, three steps failed — none of them had run before:
+- *Installer, end to end*: all passed (installer 9.44 MB one-page, silent install 1.6 s, uninstall entry, files,
+  shortcuts, file types, link, Electron replaced, its data kept, the installed self-test, the second build, the
+  update downloaded, cut and resumed, checked) but «installed version 0.61.0 → 0.61.1 (the app's own updater)»: the
+  uninstall entry `HKCU\…\Uninstall\KurokawaReader` was **gone** after the update (DisplayVersion empty through the
+  whole 120 s wait) while the program was 0.61.1, the data and the desktop shortcut kept and `uninstall.exe` still
+  there. Only Tauri's uninstaller deletes that key (`hooks.nsh` never touches it: it skips the key named after the
+  product) — so an uninstaller ran during the update, or the update's installer stopped before writing it. Tauri's
+  rendered script was not kept, so which is not settled here (no Tauri source can be read on this machine). Added so
+  the next run settles it: `hooks.nsh` traces every install and uninstall step into `KR_INSTALL_TRACE` (set by
+  installtest.ps1 only — nothing is read or written without it): PREINSTALL, POSTINSTALL, PREUNINSTALL, POSTUNINSTALL
+  and `.onInstSuccess`, each with the entry's DisplayVersion at that moment and the command line; installtest.ps1
+  keeps both rendered scripts (`nsis-<version>/installer.nsi`, `installer.kr.nsi`, in the artifact), waits for the
+  update's installer and any uninstaller (Un_*.exe, Au_.exe) to end rather than polling the registry blindly,
+  pictures the screen while it runs (`update-installer.png`; `update-installer-stuck.png` if it never ends), lists
+  the uninstall entry's values, the program folder (sizes, times, versions) and whether the app was started again
+  (/R). The check stays required: an update that loses the uninstall entry leaves the app out of Windows' «Installed
+  apps» and the next update without a version to compare.
+- *Hand-over — Electron makes it*: `tests/handover-electron.cjs` (and `tests/handover.cjs`) imported
+  `tests/fixtures/alice-in-wonderland.epub` and `sample.pdf` — but `tests/fixtures/` is git-ignored (apps/reader/.gitignore),
+  so CI never has it (ENOENT; Linux the same). They now take the repository's copies (`public/samples/alice-in-wonderland.epub`,
+  `tests/pdfsearch/sample.pdf`), a local `tests/fixtures/` copy first when there is one.
+- *Hand-over — the Tauri build brings it*: only «no expectation: the Electron step did not finish».
+- Also: `onepage.cjs`, run again for installtest's second build, copied the 0.61.1 installer over the 0.61.0 one
+  in `bundle/nsis` («applied to …0.61.0…, …0.61.1…»); it now patches only the bundle file named with the script's
+  version (else the newest alone). NSIS's warnings are harmless: `KrPre_2` (the licence page's wrapper, inside
+  Tauri's `!ifdef LICENSE`) unreferenced, and `choowHowToInstall` — Tauri's own misspelt LangString.
 
 ## The hand-over (stage R6a)
 
