@@ -39,7 +39,8 @@
         ]
       },
       "archive.cjs",
-      "prepare.cjs"
+      "prepare.cjs",
+      "handover.cjs"
     ],
     "win": {
       "target": [

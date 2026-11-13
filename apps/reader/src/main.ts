@@ -132,6 +132,16 @@ setTimeout(() => void import('./library').then((m) => m.cleanOrphansOnce()).catc
 setTimeout(() => { try { if (localStorage.getItem('kr.al.pending')) void import('./ui/track').then((m) => { m.watchPending(); void m.flushTracking(); }).catch(() => undefined); } catch { /* private mode */ } }, 5000);
 import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
 void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
+// (Stage R6a, the computer's apps only — the shells that give window.kurokawaHandover: the Rust build offers, on its
+// first start, the library the previous (Electron) version handed over — ui/handoversheet.ts; and both shells give
+// the tests and the update their way in — src/handover.ts.)
+if ((window as unknown as { kurokawaHandover?: { find?: unknown } }).kurokawaHandover) {
+  const ho = () => import('./handover'); const hs = () => import('./ui/handoversheet');
+  Object.defineProperty(window, '__KR_HANDOVER__', { configurable: true, value: Object.freeze({
+    make: () => ho().then((m) => m.makeHandover()), beforeInstall: () => hs().then((m) => m.handoverBeforeInstall()),
+    snapshot: () => ho().then((m) => m.profileSnapshot()), atStart: () => hs().then((m) => m.handoverAtStart()) }) });
+  if ((window as unknown as { kurokawaHandover: { find?: unknown } }).kurokawaHandover.find) setTimeout(() => void hs().then((m) => m.handoverAtStart()).catch(() => undefined), 1500);
+}
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);

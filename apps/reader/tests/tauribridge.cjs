@@ -29,7 +29,7 @@ let eCalls = [];
 function loadPreload() {
   let exposed = null;
   const fake = {
-    contextBridge: { exposeInMainWorld: (_n, o) => { exposed = o; } },
+    contextBridge: { exposeInMainWorld: (n, o) => { if (n === 'kurokawaDesktop') exposed = o; /* (R6a: kurokawaHandover is tests/handover.cjs's) */ } },
     ipcRenderer: { invoke: (ch, ...a) => { eCalls.push({ ch, a }); return Promise.resolve(null); }, send: (ch, ...a) => { eCalls.push({ ch, a, send: true }); }, on() {}, removeListener() {}, removeAllListeners() {} },
     webFrame: { setZoomFactor() {} },
   };

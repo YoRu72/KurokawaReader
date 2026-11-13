@@ -678,3 +678,7 @@ ipcMain.handle('kr:print-pdf', async (_e, html, opts) => {
 });
 ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });
+
+// (Stage R6a: the hand-over to the Rust build — the page writes the whole library into <userData>/handover/,
+// checked and marked, before the Rust build is installed: handover.cjs; preload.cjs window.kurokawaHandover.)
+require('./handover.cjs').install({ ipcMain, app });
