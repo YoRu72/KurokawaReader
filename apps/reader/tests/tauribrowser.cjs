@@ -56,7 +56,7 @@ function site() {
     if (u === '/site/slow') { setTimeout(() => page('KR slow'), 1500); return; }
     if (u === '/site/landing') return page('KR landing');
     if (u === '/bin') { res.writeHead(200, { 'content-type': 'application/octet-stream' }); res.end(BIN); return; }
-    if (u === '/big') { res.writeHead(200, { 'content-type': 'application/octet-stream' }); res.end(BIG); return; }
+    if (u === '/big') { res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': BIG.length }); res.end(BIG); return; }
     if (u === '/echo') { const parts = []; req.on('data', (c) => parts.push(c)); req.on('end', () => { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'x-kr': 'a' }); res.end(req.method + ':' + Buffer.concat(parts).toString()); }); return; }
     res.writeHead(404); res.end('not found');
   });
@@ -126,6 +126,14 @@ async function main() {
       const r6 = await w.ask(fetchScript(nonce, 'r6', { url: base + '/big', method: 'GET', headers: {}, body: null, bodyBase64: false, timeout: 9000 }), 'r6', 30000);
       assert.ok(r6.body.equals(BIG), 'a body in parts');
       if (mode === 'nav') assert.ok(w.navs.length >= 1 + Math.ceil(BIG.length / CHUNK), 'messages ' + w.navs.length);
+      // (R4b, a Mac: a GET answer over `big` sends its head alone — `large`, its length — and no body; a POST's
+      // body still comes whole.)
+      const r6b = await w.ask(fetchScript(nonce, 'r6b', { url: base + '/big', method: 'GET', headers: {}, body: null, bodyBase64: false, timeout: 9000, big: 100 * 1024 }), 'r6b');
+      assert.equal(r6b.meta.status, 200); assert.equal(r6b.meta.large, BIG.length); assert.equal(r6b.body.length, 0, 'no body with large');
+      const r6c = await w.ask(fetchScript(nonce, 'r6c', { url: base + '/bin', method: 'GET', headers: {}, body: null, bodyBase64: false, timeout: 9000, big: 100 * 1024 }), 'r6c');
+      assert.ok(r6c.body.equals(BIN) && r6c.meta.large === undefined, 'a small answer under big comes whole');
+      const r6d = await w.ask(fetchScript(nonce, 'r6d', { url: base + '/echo', method: 'POST', headers: {}, body: 'x'.repeat(200 * 1024), bodyBase64: false, timeout: 9000, big: 100 * 1024 }), 'r6d', 30000);
+      assert.equal(r6d.body.length, 5 + 200 * 1024, 'a POST answer over big comes whole'); assert.equal(r6d.meta.large, undefined);
       const r7 = await w.ask(fetchScript(nonce, 'r7', { url: 'http://127.0.0.1:1/x', method: 'GET', headers: {}, body: null, bodyBase64: false, timeout: 9000 }), 'r7');
       assert.ok(typeof r7.meta.error === 'string' && r7.meta.error.length > 0, 'a failed request answers its error');
       // (The page is where it was; its own beforeunload never ran for the channel.)

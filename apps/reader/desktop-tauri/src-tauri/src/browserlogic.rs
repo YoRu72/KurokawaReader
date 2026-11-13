@@ -22,6 +22,39 @@ pub const CHUNK: usize = 96 * 1024;
 pub const CHUNK_SMALL: usize = 24 * 1024;
 /// The most messages one answer may have.
 pub const MAX_PARTS: usize = 20_000;
+/// (A Mac, stage R4b) a GET answer longer than this (by its Content-Length) is not read by the page: its head comes
+/// by the channel, its body is fetched by the app's own client with the browser's cookies — a hidden WKWebView did
+/// not finish reading a 2 MiB answer in 75 s (CI, R4: not even the head came, which the page sent after the body).
+pub const LARGE_MAC: usize = 256 * 1024;
+
+/// Whether a request header the page was given may be sent by the page's own fetch (FETCH_JS's rule): the headers a
+/// browser sets itself are left to it — the app's client, taking a large answer over, leaves them out too.
+pub fn page_may_send(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    const OWN: [&str; 16] = [
+        "user-agent", "referer", "cookie", "cookie2", "accept-encoding", "host", "origin", "connection", "content-length",
+        "keep-alive", "te", "trailer", "transfer-encoding", "upgrade", "via", "range",
+    ];
+    // (Range: the app's client asks for the whole body, as the page's request did.)
+    !n.is_empty() && !OWN.contains(&n.as_str()) && !n.starts_with("sec-") && !n.starts_with("proxy-")
+}
+
+/// Whether a cookie of `domain` (as the web view lists it: a leading dot or not) goes with a request to `host`
+/// (RFC 6265's domain-match): the same host, or a host under that domain — never under an IP address. (A Mac's
+/// WKWebView answers cookies_for_url by comparing the cookie's domain with the address's domain name exactly: nothing
+/// for an IP address, nor a parent domain's cookie; so there every cookie is listed and matched here.)
+pub fn cookie_for_host(host: &str, domain: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let d = domain.trim().trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || d.is_empty() {
+        return false;
+    }
+    if host == d {
+        return true;
+    }
+    let ip = host.starts_with('[') || host.parse::<std::net::IpAddr>().is_ok();
+    !ip && host.ends_with(&format!(".{}", d))
+}
 
 /// A random token for a window's channel (std's hasher keys are random per process; mixed with the time and a
 /// counter).
@@ -447,6 +480,27 @@ mod tests {
         assert_eq!(refusal_html("", false), "<html><head><title>Just a moment...</title></head><body></body></html>");
         assert_eq!(refusal_html("", true), "<html><head><title>Access denied</title></head><body></body></html>");
         assert_eq!(refusal_html("a<b&c", true), "<html><head><title>a&lt;b&amp;c</title></head><body></body></html>");
+    }
+
+    #[test]
+    fn cookies_and_headers() {
+        assert!(cookie_for_host("127.0.0.1", "127.0.0.1"));
+        assert!(cookie_for_host("example.com", ".example.com"));
+        assert!(cookie_for_host("www.example.com", ".example.com"));
+        assert!(cookie_for_host("www.example.com", "example.com"));
+        assert!(cookie_for_host("WWW.Example.com", "example.COM"));
+        assert!(!cookie_for_host("example.com", "www.example.com"));
+        assert!(!cookie_for_host("badexample.com", "example.com"));
+        assert!(!cookie_for_host("10.0.0.1", "0.1"));
+        assert!(!cookie_for_host("", "x"));
+        assert!(!cookie_for_host("x", "."));
+        for n in ["accept", "content-type", "x-requested-with", "authorization"] {
+            assert!(page_may_send(n), "{}", n);
+        }
+        for n in ["User-Agent", "cookie", "Referer", "sec-fetch-mode", "proxy-authorization", "range", "host", ""] {
+            assert!(!page_may_send(n), "{}", n);
+        }
+        assert!(LARGE_MAC > CHUNK_SMALL && LARGE_MAC < 2 * 1024 * 1024);
     }
 
     #[test]
