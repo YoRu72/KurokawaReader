@@ -257,6 +257,8 @@ async function session(dist, fn) {
     const bj = await importFile(p, ja, '灯台'); ok('the Japanese book imported', !!bj);
     if (bj) {
       await openReader(p, bj.id);
+      // (The slower CI machine: the chapter's text may come a moment after the reader opens.)
+      await p.waitForFunction(() => [...document.querySelectorAll('.reader-flow .kr-content p')].some((x) => x.textContent.includes('第一話')), null, { timeout: 15000 }).catch(() => {});
       const j1 = await block(p, '第一話');
       ok('Japanese «第一話　帰り道»: centred', isCentred(j1), j1);
     }
