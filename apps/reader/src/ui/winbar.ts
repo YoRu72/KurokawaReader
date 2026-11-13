@@ -136,7 +136,9 @@ export function startWinBar(bridge: WinBridge | undefined): void {
     root.classList.toggle('wb-named', s.titleBarName !== false && !s.titleBarClear);
     root.classList.toggle('wb-maxed', !!state.maximized);
     root.classList.toggle('wb-blur', state.focused === false);
-    if (!bar.isConnected) root.append(bar);
+    // (The logo as chosen now: an icon the shell gave back while the bar waited for its first state — off the page,
+    // where applyBrandIcon does not reach — is put on as it goes in.)
+    if (!bar.isConnected) { logo.src = brandIcon() || 'icons/icon.svg'; root.append(bar); }
     words(); look(); room();
   };
   const take = (s: Partial<WinState>): void => { state = { ...(state ?? { platform: '', height: 32, own: false }), ...s }; paint(); };

@@ -145,6 +145,17 @@
       }).catch(function () { return b64; });
     } catch (e) { return Promise.resolve(b64); }
   }
+  // The window's changes (full screen, immersive, zoom) sent one after another, each once the one before has answered:
+  // Tauri runs async commands side by side, so a book closed and another opened at once (immersive off, then on) or
+  // the library's zoom and the reader's asked together could land in either order and leave the wrong one in force.
+  var winQ = Promise.resolve(), winBusy = 0;
+  function inOrder(fn) {
+    var p = winBusy ? winQ.then(fn, fn) : fn();
+    winBusy++;
+    var done = function () { winBusy--; };
+    winQ = p.then(done, done);
+    return p;
+  }
   // The interface's size where this build's Tauri cannot zoom the web view: the page zoomed with CSS (1: none).
   function cssZoom(v) { try { document.documentElement.style.zoom = v === 1 ? '' : String(v); } catch (e) { /* no page */ } }
 
@@ -328,13 +339,13 @@
 
     /* the window (stage R5: src-tauri/src/winbits.rs) */
     // The window full screen ('toggle': the other way) → its new state; the app's own title bar hides meanwhile.
-    setFullscreen: function (v) { return call('kr_fullscreen', { v: v === 'toggle' ? 'toggle' : !!v }); },
+    setFullscreen: function (v) { return inOrder(function () { return call('kr_fullscreen', { v: v === 'toggle' ? 'toggle' : !!v }); }); },
     // The reader's immersive mode: the window full screen → true.
-    setImmersive: function (on) { return call('kr_immersive', { on: !!on }); },
+    setImmersive: function (on) { return inOrder(function () { return call('kr_immersive', { on: !!on }); }); },
     // The interface's size (0.5–2): the web view's zoom, or — where this build cannot — the page's CSS zoom.
     setZoom: function (f) {
       var v = Number(f); if (!(v >= 0.5 && v <= 2)) return undefined;
-      call('kr_set_zoom', { f: v }).then(function (ok) { cssZoom(ok === true ? 1 : v); }, function () { cssZoom(v); });
+      inOrder(function () { return call('kr_set_zoom', { f: v }); }).then(function (ok) { cssZoom(ok === true ? 1 : v); }, function () { cssZoom(v); });
       return undefined;
     },
     // Long work's progress (0–1; below 0 takes it away) on the taskbar button.

@@ -210,6 +210,19 @@ async function nodePart() {
   eCalls = []; pre.setZoom(1.25); assert.equal(eCalls.length, 0, 'the preload zooms in its own process');
   // setProgress without a number: taken away (-1); setFullscreen with a boolean: as it is.
   tCalls = []; kd.setProgress(); await kd.setFullscreen(false); assert.deepEqual(JSON.parse(JSON.stringify(tCalls.map((c) => c.args))), [{ p: -1 }, { v: false }]);
+  // The window's changes one after another (a book closed and another opened: immersive off, then on; the zoom): each
+  // sent once the one before has answered, so they cannot land out of order (Tauri runs async commands side by side).
+  {
+    const r0 = reply; let release = null;
+    reply = (cmd, args) => (cmd === 'kr_immersive' && args.on === false ? new Promise((res) => { release = () => res(true); }) : r0(cmd, args));
+    const seen = () => tCalls.map((c) => `${c.cmd} ${JSON.stringify(c.args)}`);
+    tCalls = []; const off = kd.setImmersive(false); const on = kd.setImmersive(true); kd.setZoom(1);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(seen(), ['kr_immersive {"on":false}'], 'nothing more sent before the first answers');
+    release(); await off; await on; await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(seen(), ['kr_immersive {"on":false}', 'kr_immersive {"on":true}', 'kr_set_zoom {"f":1}']);
+    reply = r0;
+  }
   // onCommand / onArchiveProgress: the kr:command and kr:archive-progress events to the callback (onCommand answers
   // nothing, onArchiveProgress a remover — the preload's answers).
   {

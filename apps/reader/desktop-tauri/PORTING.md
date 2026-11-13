@@ -645,3 +645,23 @@ page gives lanes up when one fails, or when one is silent 20 s before it is read
 reads the pages itself — with the reason, and where each lane stopped, in the console (the engine test's row shows
 it). `tests/pdf2docxlanes.cjs`: silent lanes (given up after 20 s, same text), lanes whose pdf.js worker cannot start
 (given up at once), working lanes (not given up); the old code hangs on the second.
+
+**R5, first run** (WebView2 156, macOS, WebKitGTK). Linux and macOS passed; Windows failed one required check:
+**case 5, «300 pages: page 250 reached and drawn»** — no ink on page 250 in 60 s, nothing in the console (it took
+0.5 s in every earlier Windows run, and 0.4–0.5 s on Linux and macOS in this one). What R5 changed under that case on
+Windows: opening a book now puts the window **full screen** (the reader's `hideSystemBars`, on by default and not in
+the settings, calls `setImmersive(true)` — Electron's `kr:immersive` is `setFullScreen` too; the bridge had no
+`setImmersive` before R5) and leaving it takes it out again, and the web view's zoom changes from the library's
+interface size (1.1) to 1 in the reader. Not reproduced in Chromium with both emulated (`tests/tauriengine.cjs` with
+the zoom and the full screen applied after 0–1.6 s, fourteen runs: 0.4 s each), so the step now says, when it fails, what
+the page and the window were like: frames made in a second, visibility and focus, the scroll and page 250's place, its
+canvases and their ink, the page count, the device pixel ratio and window size, the window's full screen, maximised and
+bar state, and how many times the test put the scroll back on page 250. It stays required. Two defects found on the
+way, fixed: the bridge sent `setFullscreen` / `setImmersive` / `setZoom` side by side (Tauri runs async commands in
+parallel, so a book closed and another opened at once — immersive off, then on — could land in either order); they now
+go one after another, each when the one before has answered. And **case 12, «the title bar shows it»** (reported) failed
+on Windows and macOS: the bar's logo is made with the icon in the page's storage, but the bar goes into the page only
+when the shell's first state answers; an icon the shell gave back before that answer (a fresh start: storage empty,
+the shell's record set) was put on every `img[data-brand]` in the page — not on the bar, not in it yet — so the bar
+kept the app's own. `winbar.ts` now puts the icon in force on the logo as the bar goes in (reproduced in Chromium with
+the icon answering at 50–300 ms and the bar's state at 400–1500 ms: the default logo before, the chosen one after).

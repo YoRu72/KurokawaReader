@@ -342,6 +342,21 @@
     for (var i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 600) dark++;
     return dark;
   }
+  /** What the PDF view and the window were like when a page did not get drawn (R5, a Windows run: page 250 never drawn,
+   *  nothing in the console) — so the report says whether the page stopped making frames, was hidden, sat elsewhere,
+   *  or was drawn without ink. */
+  async function pdfDiag(sc, p) {
+    var frames = 0, t0 = now(), on = true;
+    var tick = function () { if (!on) return; frames++; root.requestAnimationFrame(tick); };
+    root.requestAnimationFrame(tick); await sleep(1000); on = false; var span = now() - t0;
+    var cv = p ? $$('canvas', p).map(function (c) { return c.width + '×' + c.height + (c.width && c.height ? ' ink ' + (function () { try { return ink(c); } catch (e) { return 'unread'; } })() : ''); }) : [];
+    var win = null; try { var kd = root.kurokawaDesktop; win = kd && kd.titleBar ? await within(Promise.resolve(kd.titleBar({})), 3000, 'titleBar') : null; } catch (e) { win = null; }
+    return 'frames in ' + span + ' ms: ' + frames + '; ' + doc.visibilityState + (doc.hasFocus() ? ', focused' : ', not focused') +
+      '; scrollTop ' + Math.round(sc.scrollTop) + ' of ' + sc.scrollHeight + ' (view ' + sc.clientWidth + '×' + sc.clientHeight + ')' +
+      (p ? '; page 250 at ' + p.offsetTop + ', ' + p.offsetWidth + '×' + p.offsetHeight + (p.classList.contains('loading') ? ', loading' : '') + (p.dataset.res ? ', res ' + p.dataset.res : '') + '; canvases [' + cv.join(', ') + ']' : '; no page 250') +
+      '; ' + ((($('.pcount') || {}).textContent) || 'no page count') + '; DPR ' + root.devicePixelRatio + ', window ' + root.innerWidth + '×' + root.innerHeight +
+      (win ? '; window full screen ' + !!win.fullscreen + ', maximised ' + !!win.maximized + ', own bar ' + !!win.own : '');
+  }
   function pageInk(page) { return $$('canvas', page).reduce(function (n, c) { try { return n + (c.width && c.height ? ink(c) : 0); } catch (e) { return n; } }, 0); }
   async function shot(cs, name) {
     var t0 = now();
@@ -780,8 +795,10 @@
         var target = function () { return $$('.pdf-page')[249]; };
         await waitFor(function () { return target(); }, 10000, 'page 250 in the list');
         sc.scrollTop = target().offsetTop; await sleep(400); sc.scrollTop = target().offsetTop;
-        await waitFor(function () { var p = target(); if (Math.abs(sc.scrollTop - p.offsetTop) > p.offsetHeight) sc.scrollTop = p.offsetTop; return pageInk(p) > 10; }, 60000, 'ink on page 250');
-        return 'in ' + (now() - tGo) + ' ms; ' + ((($('.pcount') || {}).textContent) || '');
+        var moved = 0;
+        try { await waitFor(function () { var p = target(); if (Math.abs(sc.scrollTop - p.offsetTop) > p.offsetHeight) { sc.scrollTop = p.offsetTop; moved++; } return pageInk(p) > 10; }, 60000, 'ink on page 250'); }
+        catch (e) { throw new Error(e.message + ' — ' + (await pdfDiag(sc, target())) + '; scroll put back on page 250 ' + moved + ' time(s)'); }
+        return 'in ' + (now() - tGo) + ' ms; ' + ((($('.pcount') || {}).textContent) || '') + (moved ? '; scroll put back ' + moved + ' time(s)' : '');
       }, 80000);
     });
   }
