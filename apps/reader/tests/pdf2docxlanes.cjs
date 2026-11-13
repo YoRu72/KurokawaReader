@@ -3,9 +3,12 @@
 // (pdf-lib) converted in two lanes (krLanes = 2) while the lanes are made to fail in each way seen or feared:
 // - lanes that never say anything (their script loads, then silence): given up after the bounded wait (20 s by
 //   default), the pages read on the app's thread, the same text as without lanes, and the reason in the console;
-// - lanes whose own pdf.js worker cannot start (the worker inside the worker gets a 404): the lane says so at once
-//   and the pages are read on the app's thread — no 20 s wait;
-// - lanes that work: no giving up, the same text.
+// - lanes whose pdf.js worker cannot start (the page starts it — src/pdfjsport.worker.ts — and it gets a 404): seen
+//   at once and the pages are read on the app's thread — no 20 s wait;
+// - lanes that work: no giving up, the same text;
+// - lanes where a worker cannot start a worker (WebView2: the rig makes Worker throw inside a lane): they work all
+//   the same — each lane and its pdf.js worker are started by the page — the same text, and no worker of the job
+//   is left once it is done (the app's own count, krConvWorkers).
 // (KR_DIST=<dir> runs it against another build.)
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const JSZip = require('jszip'); const { PDFDocument, StandardFonts } = require('pdf-lib');
@@ -39,10 +42,13 @@ function rig(mode, port) {
       globalThis.__laneStarts++;
       const code = mode === 'silent'
         ? `import ${JSON.stringify(s)}; self.onmessage = () => {};` // (loads the lane's code: its own handler replaced by one that never answers)
-        : `import ${JSON.stringify(s)}; const W = self.Worker; self.Worker = function (u, o) { return /pdf\\.worker/.test(String(u)) ? new W('http://127.0.0.1:${port}/missing/pdf.worker.min.mjs', o) : new W(u, o); };`;
+        : mode === 'nonest'
+          ? `import ${JSON.stringify(URL.createObjectURL(new Blob(["self.Worker = function () { throw new Error('no worker in a worker here'); };"], { type: 'text/javascript' })))}; import ${JSON.stringify(s)};` // (Worker taken away before the lane's code runs)
+          : `import ${JSON.stringify(s)};`;
       return new Native(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })), { type: 'module' });
     }
     if (/pdf2docxlane/.test(s)) globalThis.__laneStarts++;
+    if (/pdfjsport/.test(s)) { globalThis.__portStarts = (globalThis.__portStarts || 0) + 1; if (mode === 'nested') return new Native(`http://127.0.0.1:${port}/missing/pdfjsport.js`, opts); }
     return new Native(url, opts);
   };
   globalThis.Worker.prototype = Native.prototype;
@@ -62,12 +68,15 @@ async function convert(browser, file, mode) {
   await page.waitForSelector('.convert-result:not([hidden]) button', { timeout: 90000 });
   const ms = Date.now() - t0;
   const starts = await page.evaluate(() => globalThis.__laneStarts);
+  const portStarts = await page.evaluate(() => globalThis.__portStarts || 0);
+  await page.waitForTimeout(1500);
+  const left = await page.evaluate(() => (globalThis.krConvWorkers ? globalThis.krConvWorkers() : -1));
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('.convert-result button:has-text("Save")')]);
   const out = path.join(tmp, `lanes-${mode}.docx`); await dl.saveAs(out); await ctx.close();
   const xml = await (await JSZip.loadAsync(fs.readFileSync(out))).file('word/document.xml').async('string');
   const text = [...xml.matchAll(/<w:t(?: [^>]*)?>([^<]*)<\/w:t>/g)].map((m) => m[1]).join('').replace(/\s+/g, '');
   const gaveUp = warns.find((w) => /lanes: reading on this thread/.test(w)) || '';
-  return { ms, text, gaveUp, starts, warns };
+  return { ms, text, gaveUp, starts, portStarts, left, warns };
 }
 
 (async () => {
@@ -88,12 +97,19 @@ async function convert(browser, file, mode) {
 
     const nested = await convert(browser, f, 'nested');
     ok(`pdf.js's worker in a lane cannot start: given up at once (${Math.round(nested.ms / 1000)} s)`, !!nested.gaveUp && nested.ms < 15000);
-    ok(`pdf.js's worker in a lane cannot start: the reason is said: ${nested.gaveUp.slice(0, 200)}`, /pdf\.js's worker in a lane did not start/.test(nested.gaveUp));
+    ok(`pdf.js's worker for a lane cannot start: the reason is said: ${nested.gaveUp.slice(0, 200)}`, /pdf\.js's worker for lane \d did not start/.test(nested.gaveUp));
     ok('pdf.js\'s worker in a lane cannot start: the same text as without lanes', nested.text === plainRig.text);
 
     const real = await convert(browser, f, 'real');
     ok(`working lanes: two started (${real.starts}), none given up${real.gaveUp ? ': ' + real.gaveUp : ''} (${Math.round(real.ms / 1000)} s)`, real.starts === 2 && !real.gaveUp);
     ok('working lanes: the same text as without lanes', real.text === plainRig.text);
+    ok(`working lanes: their pdf.js workers started by the page (${real.portStarts} for ${real.starts} lanes)`, real.portStarts === real.starts);
+    ok(`working lanes: no worker of the job left after it (${real.left})`, real.left === 0);
+
+    const nonest = await convert(browser, f, 'nonest');
+    ok(`no worker in a worker (WebView2): the lanes work all the same (${nonest.starts} started)${nonest.gaveUp ? ': ' + nonest.gaveUp : ''}`, nonest.starts === 2 && !nonest.gaveUp);
+    ok('no worker in a worker: the same text as without lanes', nonest.text === plainRig.text);
+    ok(`no worker in a worker: no worker of the job left after it (${nonest.left})`, nonest.left === 0);
   } catch (e) { console.log('FAIL', e); fails++; }
   await browser.close(); server.close(); fs.rmSync(tmp, { recursive: true, force: true });
   console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);

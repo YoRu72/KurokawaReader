@@ -1,7 +1,12 @@
 // A lane of the PDF → Word converter: a worker that reads some of the pages — its own copy of the document,
-// parsed by its own pdf.js worker, each page laid out and its graphics drawn here (on an OffscreenCanvas) —
+// parsed by a pdf.js worker of its own, each page laid out and its graphics drawn here (on an OffscreenCanvas) —
 // while other lanes read others and the app's thread only puts the pages together (src/pdf2docx.ts,
 // readInLanes). A long book on a phone with eight cores reads about three times as fast.
+//
+// The lane starts no worker itself: its pdf.js worker is started by the page (src/pdfjsport.worker.ts) and the two
+// are joined by a MessageChannel whose end comes with 'open' — a worker cannot start a worker under Windows'
+// WebView2. The document comes as the file itself (a Blob: nothing copied on the page), read here once and handed
+// over whole to pdf.js's worker, which keeps the only copy.
 //
 // Every page comes out as it would on the app's thread. The fonts are named by what they are in the file (the
 // font id pdf.js is patched to give, see scripts/patch-pdfjs.mjs), not by the order this copy met them; the
@@ -21,7 +26,7 @@ if (!g.document) {
 }
 
 type Job = { n: number; force?: string[] };
-export type LaneIn = { t: 'open'; bytes: ArrayBuffer; lane: number } | { t: 'page'; n: number; force?: string[] } | { t: 'word'; ids: string[] } | { t: 'close' };
+export type LaneIn = { t: 'open'; file: Blob; lane: number; port: MessagePort } | { t: 'page'; n: number; force?: string[] } | { t: 'word'; ids: string[] } | { t: 'close' };
 export type LanePage = {
   t: 'page'; n: number; model: PageModel;
   /** Fonts this lane met first on this page: their ids and what is known of them. */
@@ -34,7 +39,7 @@ export type LanePage = {
 };
 /** `step`: how far the lane has gone in opening the document — for the app's thread, which gives up on a lane that
  *  falls silent before it is ready, and says where it stopped. */
-export type LaneOut = { t: 'ready'; pages: number } | { t: 'step'; s: string } | LanePage | { t: 'error'; n?: number; message: string };
+export type LaneOut = { t: 'ready'; pages: number } | { t: 'step'; s: string } | LanePage | { t: 'error'; n?: number; message: string } | { t: 'closed' };
 
 let pdfjs: typeof import('pdfjs-dist/legacy/build/pdf.mjs');
 let doc: import('pdfjs-dist').PDFDocumentProxy | null = null;
@@ -59,7 +64,7 @@ const force = (ids: string[]) => {
   for (const [name, f] of fonts) if (forced.has(idOf.get(name) ?? '')) f.wordFont = true;
 };
 
-async function open(bytes: ArrayBuffer): Promise<void> {
+async function open(file: Blob, port: MessagePort): Promise<void> {
   // (Text kept as drawn is drawn with the PDF's own fonts, which pdf.js loads into the worker's font set.)
   if (!(self as unknown as { fonts?: unknown }).fonts || typeof (OffscreenCanvas.prototype as unknown as { convertToBlob?: unknown }).convertToBlob !== 'function') throw new Error('no fonts or canvas in workers here');
   const step = (s: string) => post({ t: 'step', s });
@@ -68,15 +73,14 @@ async function open(bytes: ArrayBuffer): Promise<void> {
   pdfjs = await loadPdfjs();
   step('pdf.js loaded');
   const RES = new URL('./pdfjs/', import.meta.url).href;
-  // (pdf.js's own worker, made here: in a worker it would otherwise read the file on this thread.)
-  const port = new Worker(pdfjs.GlobalWorkerOptions.workerSrc, { type: 'module' });
-  // (pdf.js listens to none of its worker's failures when given the worker: one that cannot start would leave the
-  // document waiting for ever. Told instead, so the app's thread reads the pages itself at once.)
-  port.addEventListener('error', (e) => { e.preventDefault?.(); post({ t: 'error', message: `pdf.js's worker in a lane did not start (${(e as ErrorEvent).message || 'no message'}; ${String(pdfjs.GlobalWorkerOptions.workerSrc).split('/').pop()})` }); });
-  port.addEventListener('messageerror', () => post({ t: 'error', message: 'pdf.js\'s worker in a lane: a message could not be read' }));
-  step('its worker made');
+  // (pdf.js's worker, started by the page, over the channel it gave: its failure to start is the page's to see.)
+  port.addEventListener('messageerror', () => post({ t: 'error', message: 'pdf.js\'s worker for a lane: a message could not be read' }));
   const worker = new pdfjs.PDFWorker({ port } as unknown as ConstructorParameters<typeof pdfjs.PDFWorker>[0]);
-  const t = pdfjs.getDocument({ worker, data: new Uint8Array(bytes), fontExtraProperties: true, useSystemFonts: false, cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` } as Parameters<typeof pdfjs.getDocument>[0]);
+  port.start();
+  step('joined to its pdf.js worker');
+  // (Read once here and handed over, not copied: pdf.js transfers a whole buffer to its worker.)
+  const data = new Uint8Array(await file.arrayBuffer());
+  const t = pdfjs.getDocument({ worker, data, fontExtraProperties: true, useSystemFonts: false, cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` } as Parameters<typeof pdfjs.getDocument>[0]);
   task = t;
   step('opening the document');
   const d = await t.promise; doc = d;
@@ -140,8 +144,9 @@ async function pump(): Promise<void> {
 self.addEventListener('unhandledrejection', (e) => post({ t: 'error', message: String((e as PromiseRejectionEvent).reason?.stack ?? (e as PromiseRejectionEvent).reason) }));
 self.onmessage = (e: MessageEvent<LaneIn>) => {
   const m = e.data;
-  if (m.t === 'open') { lane = m.lane; open(m.bytes).catch((err) => post({ t: 'error', message: String((err as Error)?.stack ?? err) })); }
+  if (m.t === 'open') { lane = m.lane; open(m.file, m.port).catch((err) => post({ t: 'error', message: String((err as Error)?.stack ?? err) })); }
   else if (m.t === 'page') { queue.push({ n: m.n, force: m.force }); void pump(); }
   else if (m.t === 'word') force(m.ids);
-  else if (m.t === 'close') { void task?.destroy().finally(() => self.close()); if (!task) self.close(); }
+  // (Told when done, so the page can end this worker and its pdf.js worker at once.)
+  else if (m.t === 'close') { queue.length = 0; const end = () => { post({ t: 'closed' }); self.close(); }; if (task) void task.destroy().finally(end); else end(); }
 };
