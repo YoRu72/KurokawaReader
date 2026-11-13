@@ -103,7 +103,10 @@ registerNativePlugins();
 applyDocumentLang();
 applyChrome();
 initPcShell();
-void import('./ui/titlebar').then((m) => m.startTitleBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop, t('appName')));
+// (The window's own title bar on a computer: drawn whole by the page in the Tauri shell, which marks itself —
+// ui/winbar.ts —; Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
+if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop));
+else void import('./ui/titlebar').then((m) => m.startTitleBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop, t('appName')));
 setTimeout(() => void import('./ui/share').then((m) => m.clearShareCache()), 8000);
 void loadFonts();
 // (A slim package: what it left out, and the chosen font fetched before the first book opens.)

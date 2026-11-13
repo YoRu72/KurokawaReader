@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const [file, codeText, label, outMd] = process.argv.slice(2);
 const code = Number(codeText);
 const MEANING = { 0: 'passed', 1: 'a required check failed', 2: 'watchdog: no verdict in time', 124: 'killed by timeout', 142: 'killed by timeout' };
-const CASES = { run: 'run', env: '1 environment', storage: '2 storage', storage2: '2 storage (after a reload)', epub: '3 EPUB and Arabic', arui: '3 Arabic interface', text: '4 text book', pdf: '5 PDF', convert: '6 converter', speech: '7 read-aloud', window: '8 full screen, printing, drag and drop', fonts: '9 fonts', page: 'page errors (reported)' };
+const CASES = { run: 'run', env: '1 environment', storage: '2 storage', storage2: '2 storage (after a reload)', epub: '3 EPUB and Arabic', arui: '3 Arabic interface', text: '4 text book', pdf: '5 PDF', convert: '6 converter', speech: '7 read-aloud', window: '8 full screen, printing, drag and drop', fonts: '9 fonts', titlebar: '10 the window\'s title bar', page: 'page errors (reported)' };
 let doc = null;
 try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { doc = null; }
 const cell = (s) => String(s === undefined || s === null ? '' : s).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');

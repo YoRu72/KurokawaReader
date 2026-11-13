@@ -158,6 +158,26 @@
       return Math.round(w.file.width) + '×' + Math.round(w.file.height) + (w.file.maximized ? ' (maximized; the size to come back to)' : '') + ' in ' + w.path + scr;
     });
 
+    /* the window's own title bar (titlebar.rs): its state; maximise → the state event → restore. Required on Windows;
+       elsewhere reported (Xvfb has no window manager to maximise a window; a Mac's runner may say it is maximised
+       already). After the window state's check, so that one sees the window as it was made. */
+    await check('title bar: state, maximise → state event → restore', cfg.os === 'win32', async function () {
+      must(typeof kd.titleBar === 'function' && typeof kd.onTitleBarState === 'function', 'no titleBar / onTitleBarState');
+      var s0 = await kd.titleBar({});
+      must(s0 && typeof s0.own === 'boolean' && typeof s0.maximized === 'boolean' && s0.platform === cfg.os && s0.height > 0, 'state ' + short(s0));
+      var heard = []; var off = kd.onTitleBarState(function (st) { heard.push(st); });
+      try {
+        await sleep(300);
+        await kd.titleBar({ act: 'maximize' });
+        await waitFor(function () { return heard.some(function (e) { return e && e.maximized === !s0.maximized; }); }, 8000, 'a kr:titleBarState event with maximized ' + !s0.maximized + ' (heard ' + short(heard) + ')');
+        await kd.titleBar({ act: 'maximize' });
+        await waitFor(function () { var e = heard[heard.length - 1]; return e && e.maximized === s0.maximized; }, 8000, 'the window back as it was (heard ' + short(heard) + ')');
+        var s2 = await kd.titleBar({});
+        must(s2.maximized === s0.maximized, 'state after ' + short(s2));
+      } finally { off(); }
+      return 'own bar ' + s0.own + ' (' + s0.controls + ' buttons), ' + (s0.maximized ? 'maximised' : 'not maximised') + ' → toggled → back; ' + heard.length + ' event(s)';
+    });
+
     /* clipboard (the shared shell.rs): not required — a headless desktop may have none */
     await check('clipboard write → read', false, async function () { var t = 'kr selftest ✓ نص'; var back = await env.invoke('kr_selftest_clipboard', { text: t }); must(back === t, 'read ' + short(back)); return 'round trip'; });
 

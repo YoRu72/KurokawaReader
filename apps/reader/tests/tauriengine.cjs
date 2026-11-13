@@ -71,9 +71,9 @@ async function nodePart() {
   // Every command it calls is registered, with the argument names it sends.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest|enginetest)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
@@ -119,8 +119,11 @@ async function pagePart() {
     });
     // (What main.rs puts first: the fake IPC stands for Tauri's own, then the boot line, the bridge and the test.)
     await p.addInitScript(() => {
-      const replies = { kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_file_size: () => -1, kr_folder_read: () => null, kr_http: (a) => ({ status: 404, url: a.o.url, headers: {}, body: '' }) };
-      window.__TAURI__ = { core: { invoke: (cmd, args) => (replies[cmd] ? Promise.resolve(replies[cmd](args)) : window.__krTest(cmd, JSON.parse(JSON.stringify(args || {})))) } };
+      const replies = { kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_file_size: () => -1, kr_folder_read: () => null, kr_http: (a) => ({ status: 404, url: a.o.url, headers: {}, body: '' }),
+        // (The window's own title bar: a window's state kept here, each change told as the kr:titleBarState event.)
+        kr_title_bar: (a) => { const o = (a && a.o) || {}; const st = window.__wbState; if (o.act === 'maximize') { st.maximized = !st.maximized; setTimeout(() => window.__wbSubs.forEach((f) => f({ payload: { ...st } })), 5); } if (typeof o.own === 'boolean') st.own = o.own; return { ...st }; } };
+      window.__wbState = { platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: false, fullscreen: false, focused: true }; window.__wbSubs = [];
+      window.__TAURI__ = { core: { invoke: (cmd, args) => (replies[cmd] ? Promise.resolve(replies[cmd](args)) : window.__krTest(cmd, JSON.parse(JSON.stringify(args || {})))) }, event: { listen: (n, f) => { if (n === 'kr:titleBarState') window.__wbSubs.push(f); return Promise.resolve(() => {}); } } };
     });
     // --webkit: Chromium made to lack what CI's WebKit lacks (found in the R1 reports) — in the page and, by rewriting
     // the scripts as they are served, in every worker — so that a missing fallback shows here before it shows there.

@@ -36,6 +36,27 @@
     if (Array.isArray(r)) return new Uint8Array(r).buffer;
     return new ArrayBuffer(0);
   }
+  // (Tauri's event listener, looked up at each call like the invoker — the global API's, else the event plugin's own
+  // command —; null where there is neither.)
+  function listener() {
+    var t = window.__TAURI__;
+    if (t && t.event && typeof t.event.listen === 'function') return function (n, f) { return t.event.listen(n, f); };
+    var i = window.__TAURI_INTERNALS__;
+    if (i && typeof i.invoke === 'function' && typeof i.transformCallback === 'function') return function (n, f) { return i.invoke('plugin:event|listen', { event: n, target: { kind: 'Any' }, handler: i.transformCallback(f) }); };
+    return null;
+  }
+  // A Tauri event's payloads to cb; the remover ends it (at once, or when the listening is set up).
+  function subscribe(name, cb) {
+    var on = listener(); var off = null; var gone = false;
+    if (on && typeof cb === 'function') {
+      try {
+        Promise.resolve(on(name, function (ev) { if (!gone) { try { cb(ev && ev.payload); } catch (e) { /* the page's */ } } })).then(function (u) {
+          if (typeof u === 'function') { if (gone) { try { u(); } catch (e) { /* gone */ } } else off = u; }
+        }).catch(function () {});
+      } catch (e) { /* no events: the remover alone */ }
+    }
+    return function () { gone = true; if (off) { try { off(); } catch (e) { /* gone */ } off = null; } };
+  }
   var str = function (x) { return String(x); };
   var obj = function (o) { return o && typeof o === 'object' ? o : {}; };
 
@@ -65,7 +86,7 @@
   // preload's own answer for these); 'off': a remover function (the preload's subscribe answer); anything else: that
   // value, resolved.
   var STUBS = {
-    titleBar: ['R5', null], onTitleBarState: ['R5', 'off'], setZoom: ['R5', 'none'],
+    setZoom: ['R5', 'none'],
     // (Called by the page without a test first: it must be there.)
     onOpenFile: ['R2', 'none'],
     installUpdate: ['R6', 'reject'], onUpdateProgress: ['R6', 'none'],
@@ -111,6 +132,14 @@
     archivePickDir: function () { return call('kr_archive_pick_dir'); },
     archivePickFile: function (o) { return call('kr_archive_pick_file', { o: { multiple: !!(o && o.multiple) } }); },
 
+    /* the window's own title bar (src-tauri/src/titlebar.rs): titleBar(o) — o.own asks for the app's own bar (true) or
+       the system's frame (false), o.act works the window ('minimize', 'maximize' — maximise or restore —, 'close',
+       'drag') — answers the state { platform, height, own, wanted, controls, maximized, fullscreen, focused };
+       onTitleBarState(cb) — each change of it (the kr:titleBarState event). The page draws the bar, its buttons too:
+       src/ui/winbar.ts. */
+    titleBar: function (o) { return call('kr_title_bar', { o: obj(o) }); },
+    onTitleBarState: function (cb) { return subscribe('kr:titleBarState', cb); },
+
     /* the system */
     openDefaultApps: function () { return call('kr_default_apps'); },
     // (This build is never the portable one: that is Electron's portable .exe.)
@@ -134,6 +163,8 @@
 
   // (For the tests and the self-test: which names are stubs, which are left out, and at what stage each is due.)
   var stages = {}; Object.keys(STUBS).forEach(function (k) { stages[k] = STUBS[k][0]; });
+  // (Which shell this is: the page draws the window's whole title bar here — src/ui/winbar.ts, src/platform.ts.)
+  try { Object.defineProperty(window, '__KR_SHELL__', { value: 'tauri', configurable: true }); } catch (e) { /* the page then keeps the system's frame */ }
   try { Object.defineProperty(window, '__KR_BRIDGE_STUBS__', { value: Object.freeze(stages), configurable: true }); } catch (e) { /* not needed by the page */ }
   try { Object.defineProperty(window, '__KR_BRIDGE_LEFT_OUT__', { value: Object.freeze(LEFT_OUT), configurable: true }); } catch (e) { /* not needed by the page */ }
   Object.defineProperty(window, 'kurokawaDesktop', { value: api, enumerable: true, configurable: false, writable: false });

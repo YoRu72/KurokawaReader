@@ -20,7 +20,8 @@ const assert = require('node:assert/strict');
 const ROOT = path.join(__dirname, '..');
 const TAURI = path.join(ROOT, 'desktop-tauri');
 const BRIDGE = fs.readFileSync(path.join(TAURI, 'bridge.js'), 'utf8');
-const snake = (ch) => ch.replace(/^kr:/, 'kr_').replace(/-/g, '_');
+// (Electron's app:titleBar — the channel both apps' shells share — is the Reader's kr_title_bar.)
+const snake = (ch) => (ch === 'app:titleBar' ? 'kr_title_bar' : ch.replace(/^kr:/, 'kr_').replace(/-/g, '_'));
 
 // --- Electron's preload, with a fake electron that records each invoke / send.
 let eCalls = [];
@@ -73,9 +74,9 @@ async function nodePart() {
   const samples = {
     readFile: ['/x/a.epub'], fileSize: ['/x/a.epub'], readTextFile: ['/x/sync.json'], writeTextFile: ['/x/sync.json', 'نص'],
     writeBinary: ['/x/b.bin', 'AAEC', true], scanDevice: [['epub', 'pdf']], pickFolder: [], archivePickDir: [], archivePickFile: [{ multiple: true }],
-    openDefaultApps: [],
+    openDefaultApps: [], titleBar: [{ act: 'minimize' }],
   };
-  const special = ['http', 'isPortable'];
+  const special = ['http', 'isPortable', 'onTitleBarState'];
   assert.deepEqual([...Object.keys(samples), ...special].sort(), [...ported].sort(), 'samples ≠ ported functions');
   const sent = {};
   for (const m of Object.keys(samples)) {
@@ -86,6 +87,24 @@ async function nodePart() {
     assert.equal(cmd, snake(ch), `${m}: ${ch} → ${cmd}`);
     assert.deepEqual(JSON.parse(JSON.stringify(Object.values(args))), JSON.parse(JSON.stringify(a)), `${m}: arguments`);
     sent[cmd] = Object.keys(args);
+  }
+  // titleBar with nothing: { o: {} } (the state asked for).
+  tCalls = []; await kd.titleBar(); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args)), { o: {} });
+  // onTitleBarState: the kr:titleBarState event's payloads to the callback, through Tauri's event API; its remover
+  // ends the listening (also when it was set up after); without the event API, a remover alone.
+  {
+    const heard = []; let unlistened = 0; const listeners = [];
+    const ew = loadBridge({ os: 'win32' }, { __TAURI__: { core: { invoke: () => Promise.resolve(null) }, event: { listen: (n, f) => { listeners.push([n, f]); return Promise.resolve(() => { unlistened++; }); } } } });
+    const off = ew.kurokawaDesktop.onTitleBarState((st) => heard.push(st));
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(listeners.length, 1); assert.equal(listeners[0][0], 'kr:titleBarState');
+    listeners[0][1]({ event: 'kr:titleBarState', payload: { maximized: true } });
+    assert.deepEqual(JSON.parse(JSON.stringify(heard)), [{ maximized: true }]);
+    off(); assert.equal(unlistened, 1);
+    listeners[0][1]({ payload: { maximized: false } }); assert.equal(heard.length, 1, 'heard after the remover');
+    const off2 = ew.kurokawaDesktop.onTitleBarState(() => {}); off2(); await new Promise((r) => setTimeout(r, 5)); assert.equal(unlistened, 2, 'a remover called before the listening was set up');
+    const none = kd.onTitleBarState(() => {}); assert.equal(typeof none, 'function'); none();
+    assert.equal(win.__KR_SHELL__, 'tauri', 'the bridge marks the Tauri shell');
   }
   // isPortable: answered here (this build is never Electron's portable .exe), no IPC.
   tCalls = []; assert.equal(await kd.isPortable(), false); assert.equal(tCalls.length, 0);
@@ -130,10 +149,10 @@ async function nodePart() {
 
   // Stubs: never the IPC; each answers as STUBS says (and the way the page copes with — see PORTING.md).
   tCalls = [];
-  const answers = { titleBar: null, setImmersive: false, copyImage: false, notify: false };
+  const answers = { setImmersive: false, copyImage: false, notify: false };
   const rejecting = ['installUpdate'];
   const sync = ['setZoom', 'onOpenFile', 'onUpdateProgress', 'onOpenUrl', 'onCommand', 'setProgress'];
-  const removers = ['onTitleBarState'];
+  const removers = [];
   assert.deepEqual([...Object.keys(answers), ...rejecting, ...sync, ...removers].sort(), Object.keys(stubs).sort(), 'every stub is checked');
   for (const [k, v] of Object.entries(answers)) assert.deepEqual(JSON.parse(JSON.stringify({ v: await kd[k]() })), JSON.parse(JSON.stringify({ v })), `${k}()`);
   for (const k of rejecting) await assert.rejects(kd[k]({}), (e) => e instanceof Error && new RegExp(`^${k} is not in this preview build yet \\(Tauri stage ${stubs[k]}\\)$`).test(e.message), k);
@@ -157,13 +176,13 @@ async function nodePart() {
   // Rust: every command the bridge and the self-test call is registered, with the argument names they send.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest|enginetest)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
-  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs define');
+  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs + titlebar.rs define');
   for (const [cmd, ks] of Object.entries(sent)) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
     assert.deepEqual([...ks].sort(), [...params[cmd]].sort(), `${cmd}: bridge sends ${ks}, Rust takes ${params[cmd]}`);
@@ -199,6 +218,7 @@ async function nodePart() {
   assert.equal(releases.length, 5, 'testserver.rs RELEASES parses as five releases');
   function fakeKd(bad) {
     const disk = new Map();
+    const tb = { platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: false, fullscreen: false, focused: true }; const tbSubs = [];
     const fake = loadBridge({ os: 'linux' }, { __TAURI__: { core: { invoke: () => Promise.reject('fake') } } }).kurokawaDesktop;
     return Object.assign({}, fake, {
       platform: 'linux',
@@ -219,6 +239,8 @@ async function nodePart() {
         if (u === '/releases') return { status: 200, url: o.url, headers: {}, body: JSON.stringify(releases) };
         return { status: 404, url: o.url, headers: {}, body: '' };
       },
+      titleBar: async (o) => { o = o || {}; if (o.act === 'maximize') { tb.maximized = !tb.maximized; const st = { ...tb }; setTimeout(() => tbSubs.forEach((f) => f(st)), 3); } return { ...tb }; },
+      onTitleBarState: (f) => { tbSubs.push(f); return () => { const i = tbSubs.indexOf(f); if (i >= 0) tbSubs.splice(i, 1); }; },
       _disk: disk,
     });
   }
@@ -270,7 +292,7 @@ async function pagePart(ported) {
       const replies = {
         kr_read_file: () => new Uint8Array([1, 2, 3]), kr_file_size: () => 3, kr_folder_read: () => 'text', kr_folder_write: () => true, kr_write_binary: () => true,
         kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_folder_pick: () => '/picked', kr_archive_pick_dir: () => '/picked', kr_archive_pick_file: () => ['/a.zip'],
-        kr_default_apps: () => null, kr_http: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('ok') }),
+        kr_default_apps: () => null, kr_title_bar: (a) => ({ platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: !!(a.o && a.o.act === 'maximize'), fullscreen: false, focused: true }), kr_http: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('ok') }),
       };
       window.__TAURI__ = { core: { invoke: (cmd, args) => { window.__calls.push({ cmd, args: JSON.parse(JSON.stringify(args || {})) }); return replies[cmd] ? Promise.resolve(replies[cmd](args)) : Promise.reject('unknown command ' + cmd); } } };
     });
@@ -280,7 +302,9 @@ async function pagePart(ported) {
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
     assert.equal(shape.fns, 47 - shape.leftOut, 'functions in the page'); assert.equal(shape.leftOut, 23, 'left out'); assert.equal(shape.platform, 'linux');
-    assert.ok(!shape.frameless && !shape.bar, 'the app\'s own title bar should be gone (titleBar answers null: the system frame for now)');
+    const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));
+    assert.ok(!shape.frameless && !shape.bar, 'Electron\'s title bar (ui/titlebar.ts) in the Tauri shell');
+    assert.ok(own.winbar && own.bar && own.buttons === 3, 'the Tauri shell\'s own title bar (ui/winbar.ts): ' + JSON.stringify(own));
     const startup = await p.evaluate(() => window.__calls.map((c) => c.cmd));
     assert.ok(startup.every((c) => /^kr_/.test(c)), 'startup calls ' + startup);
 
@@ -303,6 +327,7 @@ async function pagePart(ported) {
         writeTextFile: () => kd.writeTextFile('/x/s.json', 'نص'), writeBinary: () => kd.writeBinary('/x/b.bin', 'AAEC', true), scanDevice: () => kd.scanDevice(['epub']),
         pickFolder: () => kd.pickFolder(), archivePickDir: () => kd.archivePickDir(), archivePickFile: () => kd.archivePickFile({ multiple: true }), openDefaultApps: () => kd.openDefaultApps(),
         http: async () => (await kd.http({ url: 'https://example.org/', headers: { 'accept-encoding': 'br' } })).body, isPortable: () => kd.isPortable(),
+        titleBar: async () => (await kd.titleBar({ act: 'maximize' })).maximized, onTitleBarState: () => { const off = kd.onTitleBarState(() => {}); off(); return typeof off; },
       };
       for (const [k, f] of Object.entries(runs)) { const n = window.__calls.length; const r = await f(); out[k] = { r, calls: window.__calls.slice(n) }; }
       return out;
@@ -314,6 +339,7 @@ async function pagePart(ported) {
       scanDevice: ['kr_scan_device', { exts: ['epub'] }, { root: '/home/u', files: [], truncated: false }], pickFolder: ['kr_folder_pick', {}, '/picked'], archivePickDir: ['kr_archive_pick_dir', {}, '/picked'],
       archivePickFile: ['kr_archive_pick_file', { o: { multiple: true } }, ['/a.zip']], openDefaultApps: ['kr_default_apps', {}, null],
       http: ['kr_http', { o: { url: 'https://example.org/', method: 'GET', headers: {}, binary: true } }, 'ok'],
+      titleBar: ['kr_title_bar', { o: { act: 'maximize' } }, true],
     };
     for (const [k, [cmd, args, r]] of Object.entries(want)) {
       assert.equal(got[k].calls.length, 1, `${k}: one call`);
@@ -322,6 +348,7 @@ async function pagePart(ported) {
       assert.deepEqual(got[k].r, r, `${k}: answer`);
     }
     assert.equal(got.isPortable.r, false); assert.equal(got.isPortable.calls.length, 0);
+    assert.equal(got.onTitleBarState.r, 'function'); assert.equal(got.onTitleBarState.calls.length, 0);
     assert.deepEqual(errors, [], 'page errors');
     await ctx.close();
     console.log('tauribridge (page): ok — library, a book in the reader, settings; ' + Object.keys(want).length + ' ported calls checked from the page');

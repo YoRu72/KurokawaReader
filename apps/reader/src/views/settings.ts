@@ -13,6 +13,7 @@ import { renderUpdateCard, APP_VERSION } from '../updates';
 import { canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon } from '../native';
 import { decksCard } from '../ui/decks';
 import { fits, only } from '../platform';
+import { titleBarWaits as winBarWaits } from '../ui/winbar';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
@@ -48,7 +49,23 @@ export function settingsView(): HTMLElement {
     // (On a computer: the interface's size — everything but an open book. The desktop app's window zooms; a web page
     // has no way to, so it is not offered there.)
     const sizeField = isPc() && fits('desktopApp') ? h('div', { class: 'field' }, h('label', null, t('uiSize')), h('div', { class: 'segmented' }, ...UI_SIZES.map((v) => h('button', { type: 'button', 'aria-pressed': String(Math.abs(uiSize() - v) < 0.01), onclick: () => { setUiSize(v); renderAppearance(); } }, `${localDigits(Math.round(v * 100))}%`))), h('p', { class: 'hint' }, t('uiSizeHint'))) : null;
-    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), appIconField(), sizeField,
+    // (The window's title bar: offered where the shell draws it itself — src/platform.ts's `windowBar`, the Tauri
+    // shell —; the app's own (default) or the system's frame, made at once on Windows and Linux, on a Mac at the next
+    // start; the app's own transparent or not, its name shown or not. ui/winbar.ts.)
+    const barSwitch = (label: string, on: boolean, set: (v: boolean) => void, cls: string, hint?: string): HTMLElement => {
+      const c = h('input', { type: 'checkbox', class: cls, onchange: () => set(c.checked) }) as HTMLInputElement; c.checked = on;
+      return h('div', { class: 'field' }, h('span', { class: 'label' }, label), h('label', { class: 'switch', title: label }, c, h('i')), hint ? h('p', { class: 'hint' }, hint) : null);
+    };
+    const waits = (): boolean => document.documentElement.classList.contains('wb-mac') || /Mac/.test(navigator.platform) || winBarWaits();
+    const titleBarFields: HTMLElement[] = only('windowBar',
+      h('div', { class: 'field title-bar-field' }, resettable(t('titleBar'), 'titleBarKind', () => renderAppearance()),
+        h('div', { class: 'segmented' }, ...([['own', t('titleBarOwn')], ['system', t('titleBarSystem')]] as ['own' | 'system', string][]).map(([id, label]) => h('button', { type: 'button', 'data-tb-kind': id, 'aria-pressed': String(cur.titleBarKind === id), onclick: () => { updateSettings({ titleBarKind: id }); renderAppearance(); } }, label))),
+        h('p', { class: 'hint' }, t('titleBarHint') + (waits() ? ` ${t('titleBarNextStart')}` : ''))),
+      ...(cur.titleBarKind !== 'system' ? [
+        barSwitch(t('titleBarClear'), cur.titleBarClear, (v) => { updateSettings({ titleBarClear: v }); renderAppearance(); }, 'wb-clear-switch', t('titleBarClearHint')),
+        ...(cur.titleBarClear ? [] : [barSwitch(t('titleBarName'), cur.titleBarName, (v) => updateSettings({ titleBarName: v }), 'wb-name-switch')]),
+      ] : []));
+    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), appIconField(), sizeField, ...titleBarFields,
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       document.documentElement.dataset.ui !== 'light' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),

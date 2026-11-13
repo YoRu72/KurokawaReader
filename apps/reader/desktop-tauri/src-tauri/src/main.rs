@@ -9,6 +9,7 @@ mod commands;
 mod enginetest;
 mod scan;
 mod selftest;
+mod titlebar;
 
 use kurokawa_shell::{net, util, winstate};
 #[allow(unused_imports)]
@@ -66,10 +67,14 @@ fn main() {
             selftest::kr_selftest_clipboard,
             selftest::kr_selftest_winstate,
             selftest::kr_selftest_update,
+            titlebar::kr_title_bar,
             enginetest::kr_engine_shot,
             enginetest::kr_engine_profile
         ])
-        .on_window_event(|window, event| winstate::on_event(window, event))
+        .on_window_event(|window, event| {
+            winstate::on_event(window, event);
+            titlebar::on_event(window, event);
+        })
         .setup(|app| {
             let handle = app.handle().clone();
             // (What Electron's preload knows before the first call: the OS, in Node's words — its `platform`.)
@@ -86,9 +91,12 @@ fn main() {
                 script.push_str(&t);
             }
             // (The window of desktop/main.cjs's createWindow: 1180×820 or as it was left, at least 420×600, titled
-            // KurokawaReader — with the system's own frame for now: the app's own title bar is stage R5. Made here
-            // rather than in tauri.conf.json so it can carry the initialization script. Tauri's own drag-and-drop
-            // handling is off so the page gets the HTML drop events it uses to import books.)
+            // KurokawaReader — with the app's own title bar unless the system's was chosen (titlebar.rs): no system
+            // frame on Windows and Linux, the page draws the bar and its buttons; on a Mac the system's lights over
+            // the page, its title hidden. Made here rather than in tauri.conf.json so it can carry the
+            // initialization script. Tauri's own drag-and-drop handling is off so the page gets the HTML drop events
+            // it uses to import books.)
+            let own = titlebar::own_at_start(&handle);
             let saved = winstate::load(&handle, &WINDOW);
             let mut b = tauri::WebviewWindowBuilder::new(
                 app.handle(),
@@ -102,6 +110,18 @@ fn main() {
             .initialization_script(script.as_str());
             if let (Some(x), Some(y)) = (saved.x, saved.y) {
                 b = b.position(x, y);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                b = b.decorations(!own);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                if own {
+                    b = b
+                        .title_bar_style(tauri::TitleBarStyle::Overlay)
+                        .hidden_title(true);
+                }
             }
             if saved.maximized {
                 b = b.maximized(true);

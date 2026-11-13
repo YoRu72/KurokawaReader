@@ -43,8 +43,8 @@ engine test — the web app's key cases run in each system's own web view in CI 
 - `samples/alice-in-wonderland.epub` is taken out of `dist/` before the build in CI, as the Electron build leaves it out
   (the app fetches it from the web app when asked).
 
-What differs from Electron in this stage, on purpose: the system's own window frame (the app's title bar is R5;
-`titleBar` answers `null`, so the page removes its bar), no application menu (R5; the page's own keyboard shortcuts
+What differs from Electron in this stage, on purpose: the window's title bar is drawn whole by the page — its buttons
+too — instead of Electron's strip under the system's buttons (see «The window's title bar» below), no application menu (R5; the page's own keyboard shortcuts
 work), no cookies shared between `http` and an in-app browser (R3/R4), and the page's origin is Tauri's
 (`tauri://localhost`, `http://tauri.localhost` on Windows), not `app://kurokawa` — so the library starts empty; carrying
 it over from the Electron profile is R6.
@@ -113,7 +113,7 @@ sends the right command and arguments from the page.
 
 `docs/RUST-PORT-READER.md` says 38; `desktop/preload.cjs` today gives 47 functions and `platform`. All are here.
 
-**Done in R0: 12** (+ `platform`) · **stubs: 12** (R2: 2, R3: 1, R5: 7, R6: 2) · **left out: 23** (R3: 5, R4: 4, R5:
+**Done: 14** (R0: 12, the title bar: 2; + `platform`) · **stubs: 10** (R2: 2, R3: 1, R5: 5, R6: 2) · **left out: 23** (R3: 5, R4: 4, R5:
 12, R6: 2).
 
 | Function | Electron (`main.cjs`) | R0 | How the page copes with the stub | Stage |
@@ -132,8 +132,8 @@ sends the right command and arguments from the page.
 | `http(o)` | `kr:http`: request without cross-site limits, session cookies, text in the page's charset | **done** `kr_http` (no cookie jar yet: R3/R4) | | |
 | `isPortable()` | `kr:is-portable` | **done**: `false` (this build is never Electron's portable .exe) | | |
 | `appIcon(o)` | `kr:appIcon`: the user's own icon on window, taskbar, shortcuts | **left out** | no app-icon option in Settings (`appIconWay()` is null) | R5 |
-| `titleBar(o)` | `app:titleBar`: the app's own bar's colours, `{platform, height, …}` | stub: `null` | the page removes its bar: the system frame is used | R5 |
-| `onTitleBarState(cb)` | `app:titleBarState` events | stub: a remover, never called | (no bar) | R5 |
+| `titleBar(o)` | `app:titleBar`: the app's own bar's colours, `{platform, height, …}` | **done** `kr_title_bar` (`titlebar.rs`): `o.own` asks for the app's own bar or the system's frame, `o.act` works the window (`minimize`, `maximize` = maximise / restore, `close`, `drag`) → `{platform, height, own, wanted, controls, maximized, fullscreen, focused}` — a different protocol from Electron's (see below) | | |
+| `onTitleBarState(cb)` | `app:titleBarState` events | **done**: the `kr:titleBarState` Tauri event (the state above, on each change) | | |
 | `setZoom(f)` | `webFrame.setZoomFactor` | stub: nothing | the interface stays at 100% (Appearance → size has no effect) | R5 |
 | `onOpenFile(cb)` | `kr:open-file` events (double-click, open-with, second instance) + `kr:ready` | stub: nothing | files are added from inside the app only | R2 |
 | `installUpdate(url, o)` | `kr:install-update`: download, then install / swap | stub: rejects | the update sheet shows its error | R6 |
@@ -170,8 +170,35 @@ sends the right command and arguments from the page.
 Kept as stubs on purpose: `setZoom` (Appearance → interface size is shown on every computer and has no effect until
 R5 — the page has no fallback either way), `copyImage` (answers false: the page then uses `navigator.clipboard.write`),
 `notify` (no notification either way: the page treats the desktop as allowed and never asks the web's permission),
-`setImmersive`, `titleBar` / `onTitleBarState`, `onOpenFile` (called without a test), `onOpenUrl`, `onCommand`,
+`setImmersive`, `onOpenFile` (called without a test), `onOpenUrl`, `onCommand`,
 `setProgress`, `installUpdate` / `onUpdateProgress`.
+
+## The window's title bar (from R5, done ahead of it)
+
+The page draws the whole bar in this shell (`src/ui/winbar.ts`; Electron keeps `src/ui/titlebar.ts`, a strip under
+the system's own buttons, unchanged). `bridge.js` marks the shell with `window.__KR_SHELL__ = 'tauri'`; `src/main.ts`
+starts the one bar or the other by it, and `src/platform.ts`'s `windowBar` need offers the settings (Appearance →
+Title bar: the app's own / the system's; Transparent title bar; The app's name in the title bar — device settings, in
+`GLOBAL_ONLY`) only here.
+
+- **Windows, Linux**: the window is made without the system's frame (`decorations(false)`); the page draws the icon,
+  the name, the drag strip (a press calls `kr_title_bar({act:'drag'})` → `start_dragging`, the second press of a
+  double-click `{act:'maximize'}`, as Tauri's own drag script does) and minimise / maximise-restore / close (46×32).
+  Choosing the system's frame calls `set_decorations(true)` at once; the choice is kept in `<config>/titlebar.json`
+  (read by `main.rs` before the window is made) as well as in the page's settings, which tell it at each start.
+- **macOS**: `title_bar_style(Overlay)` + `hidden_title(true)` — the system's lights over the page, which keeps 78 px
+  for them and draws no buttons; a change of bar waits for the next start (the Settings row says so).
+- State: `titlebar.rs` emits `kr:titleBarState` on `Resized` / `Focused` when the state changed (maximised → the icon
+  turns to «restore»; not in front → the bar quietens; full screen → hidden).
+- Commands of the app need no permission (`capabilities/default.json` unchanged): no JS window API is used, so no
+  `core:window:allow-*` permission is granted.
+- Left out: Mica / acrylic / vibrancy (needs a transparent window and web view, `macos-private-api` on a Mac, and a
+  page whose surfaces are see-through — a design change of its own); Windows 11's snap layouts on hovering maximise
+  (they need the system to see a caption button: `WM_NCHITTEST` → `HTMAXBUTTON` from a native subclass of the window,
+  not reachable from the page).
+- Tests: `tests/titlebar.cjs` (the bar, its settings, mirroring, hiding, nothing under its buttons), `tests/tauribridge.cjs`
+  (the command and the event), `selftest.js` (in CI: the state, maximise → event → restore; required on Windows),
+  `enginetest.js` case 10 (screenshots of the real window: solid and transparent, library and reader, maximise tried).
 
 ## Engine test (stage R1)
 
@@ -216,6 +243,9 @@ detail, a time; «required» ones fail the job on Linux and Windows):
 8. **Window** (reported): F11 in the reader → HTML full screen or immersive mode; `window.print` present (not called);
    a file dropped on the library (a DOM drop event).
 9. **Fonts**: each bundled family loads (`document.fonts`); Noto Naskh Arabic renders at a width unlike a fallback's.
+10. **The window's title bar** (reported): the app's own bar and its buttons; screenshots of the real window — the
+   library and the reader with the bar solid (`04`, `05`) and transparent (`06`, `07`) —; the maximise button pressed
+   and pressed again (`08` while toggled; under Xvfb, without a window manager, nothing changes and that is said).
 
 Screenshots: `kr_engine_shot` runs the system's tool — `import -window root` (ImageMagick, under Xvfb), `screencapture
 -x` (macOS; without the screen-recording permission it may show only the desktop), PowerShell `CopyFromScreen`

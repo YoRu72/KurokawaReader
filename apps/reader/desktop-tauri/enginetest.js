@@ -948,6 +948,51 @@
     });
   }
 
+  // The window's own title bar (src/ui/winbar.ts, src-tauri/src/titlebar.rs): there, its buttons, and the window as
+  // a person sees it — solid and transparent, in the library and in the reader — for a person to judge; the maximise
+  // button tried (a window manager may be missing under Xvfb: then nothing changes, and that is said).
+  async function caseTitleBar() {
+    await runCase('titlebar', '10 the window\'s title bar', 120000, async function (step) {
+      var html = doc.documentElement;
+      var setClear = async function (on) {
+        root.location.hash = '#/settings';
+        var sw = await waitFor(function () { return $('.wb-clear-switch'); }, 15000, 'the «Transparent title bar» switch');
+        if (sw.checked !== on) sw.click();
+        await waitFor(function () { return html.classList.contains('wb-clear') === on; }, 5000, 'the bar ' + (on ? 'transparent' : 'solid'));
+      };
+      var ok = await step('the app\'s own bar', false, async function () {
+        await toLibrary();
+        await waitFor(function () { return html.classList.contains('winbar') && visible($('.kr-winbar')); }, 10000, 'the bar (html.winbar)');
+        var bar = $('.kr-winbar').getBoundingClientRect();
+        var btns = $$('.kr-winbar .wb-btn').filter(visible).map(function (b) { var r = b.getBoundingClientRect(); return b.getAttribute('aria-label') + ' ' + Math.round(r.width) + '×' + Math.round(r.height) + '@' + Math.round(r.left); });
+        return 'bar ' + Math.round(bar.width) + '×' + Math.round(bar.height) + (html.classList.contains('wb-mac') ? ', the system\'s lights (a Mac)' : ', buttons: ' + btns.join(', ')) + (html.classList.contains('wb-maxed') ? ', maximised' : '');
+      });
+      if (!ok) return;
+      await shot('titlebar', '04-titlebar-library-solid');
+      if (st.data.mill) {
+        await step('the bar over the reader (solid)', false, async function () { await openReader(st.data.mill, '.reader-flow p'); await sleep(600); return root.getComputedStyle($('.kr-winbar')).backgroundColor; }, 50000);
+        await shot('titlebar', '05-titlebar-reader-solid');
+      }
+      await step('transparent', false, async function () { await setClear(true); await toLibrary(); return 'html.wb-clear'; });
+      await shot('titlebar', '06-titlebar-library-transparent');
+      if (st.data.mill) {
+        await step('the bar over the reader (transparent)', false, async function () { await openReader(st.data.mill, '.reader-flow p'); await sleep(600); return 'room kept: ' + root.getComputedStyle(html).getPropertyValue('--wb-end').trim(); }, 50000);
+        await shot('titlebar', '07-titlebar-reader-transparent');
+      }
+      await step('solid again', false, async function () { await setClear(false); await toLibrary(); return 'html.winbar, not wb-clear'; });
+      if (!html.classList.contains('wb-mac')) {
+        await step('the maximise button', false, async function () {
+          var was = html.classList.contains('wb-maxed');
+          click($('.kr-winbar .wb-max'));
+          var changed = false;
+          try { await waitFor(function () { return html.classList.contains('wb-maxed') !== was; }, 5000, 'the state'); changed = true; } catch (e) { /* below */ }
+          if (changed) { await shot('titlebar', '08-titlebar-maximise-toggled'); click($('.kr-winbar .wb-max')); await waitFor(function () { return html.classList.contains('wb-maxed') === was; }, 5000, 'back as it was'); }
+          return changed ? (was ? 'restored' : 'maximised') + ', then back (the icon followed the state event)' : 'no change (no window manager to maximise?)';
+        }, 20000);
+      }
+    });
+  }
+
   async function caseArabicUi() {
     await runCase('arui', '3 Arabic interface', 60000, async function (step) {
       await step('the interface in Arabic, right to left', false, async function () {
@@ -993,6 +1038,7 @@
       await caseConvert();
       await caseSpeech();
       await caseWindow();
+      await caseTitleBar();
       try { ls.setItem('kr.lang', 'ar'); } catch (e) { /* stays English */ }
       return reload('arabic-ui');
     }

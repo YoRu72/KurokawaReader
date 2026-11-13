@@ -2146,6 +2146,19 @@ export const en = {
   readerButtons: "Reader buttons",
   readerButtonsHint: "Where each button lives (top bar, toolbar, More or hidden), and where the toolbar and the PDF page bar stand.",
   pageSlider: "Page slider",
+  titleBar: "Title bar",
+  titleBarOwn: "The app's own",
+  titleBarSystem: "The system's",
+  titleBarHint: "The app's own bar takes the theme's colours; the system's is the window's usual frame.",
+  titleBarNextStart: "Takes effect the next time the app starts.",
+  titleBarClear: "Transparent title bar",
+  titleBarClearHint: "No surface of its own: the window's buttons float over the top of the page.",
+  titleBarName: "The app's name in the title bar",
+  winMinimize: "Minimise",
+  winMaximize: "Maximise",
+  winRestore: "Restore",
+  winClose: "Close",
+  winControls: "Window controls",
 };
 
 export type Strings = typeof en;
