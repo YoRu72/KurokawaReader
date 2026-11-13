@@ -166,7 +166,7 @@ public class KurokawaPlugin extends Plugin {
     protected void handleOnPause() {
         super.handleOnPause();
         // (While work runs, the page goes on at full speed behind other apps.)
-        if (KrWebView.keepAwake && getBridge() != null && getBridge().getWebView() != null) { android.webkit.WebView w = getBridge().getWebView(); w.postDelayed(() -> { if (KrWebView.keepAwake) { w.onResume(); w.resumeTimers(); } }, 150); }
+        if (KrWebView.keepAwake && getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().getParent() != null) { android.webkit.WebView w = getBridge().getWebView(); w.postDelayed(() -> { if (KrWebView.keepAwake) { w.onResume(); w.resumeTimers(); } }, 150); }
     }
 
     @PluginMethod
@@ -1044,6 +1044,46 @@ public class KurokawaPlugin extends Plugin {
             try { v = android.provider.Settings.System.getInt(getContext().getContentResolver(), android.provider.Settings.System.SCREEN_BRIGHTNESS) / 255.0; } catch (Exception e) { v = 0.5; }
         }
         ret.put("value", v);
+        call.resolve(ret);
+    }
+
+    /**
+     * What the page's own record (src/diag.ts) cannot see from inside: the ends of its renderer kept by MainActivity
+     * (time, crashed or killed, its priority then, the app on screen or not, a memory warning just before) — handed
+     * over once and let go —, the last memory warning, and (Android 11 / API 30+) why the app's earlier processes
+     * ended, as the system recorded it: the reason's number, its status, the importance then, its memory (MB) and
+     * whether it was the app's main process — never the system's description (it may hold text of the app's).
+     * Each exit is handed over once (the newest time handed over is kept).
+     */
+    @PluginMethod
+    public void takeCrashInfo(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.content.SharedPreferences sp = getContext().getSharedPreferences(MainActivity.CRASH_PREFS, Context.MODE_PRIVATE);
+            String gone;
+            synchronized (MainActivity.class) { gone = sp.getString("gone", "[]"); sp.edit().remove("gone").apply(); }
+            ret.put("gone", new JSArray(gone));
+            if (sp.getLong("trimAt", 0) > 0) { ret.put("trim", sp.getInt("trim", 0)); ret.put("trimAt", sp.getLong("trimAt", 0)); }
+            JSArray exits = new JSArray();
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.app.ActivityManager am = (android.app.ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
+                long seen = sp.getLong("exitSeen", 0), newest = seen;
+                List<android.app.ApplicationExitInfo> list = am != null ? am.getHistoricalProcessExitReasons(null, 0, 8) : null;
+                if (list != null) for (android.app.ApplicationExitInfo x : list) {
+                    if (x.getTimestamp() <= seen) continue;
+                    JSObject o = new JSObject();
+                    o.put("at", x.getTimestamp()); o.put("reason", x.getReason()); o.put("status", x.getStatus());
+                    o.put("imp", x.getImportance()); o.put("pss", Math.round(x.getPss() / 1024.0)); o.put("rss", Math.round(x.getRss() / 1024.0));
+                    o.put("main", getContext().getPackageName().equals(x.getProcessName()));
+                    exits.put(o); newest = Math.max(newest, x.getTimestamp());
+                }
+                if (newest > seen) sp.edit().putLong("exitSeen", newest).apply();
+            }
+            ret.put("exits", exits);
+            ret.put("sdk", Build.VERSION.SDK_INT);
+        } catch (Throwable e) {
+            ret.put("error", e.getClass().getSimpleName());
+        }
         call.resolve(ret);
     }
 
