@@ -31,6 +31,17 @@ export interface DiagSession {
   mem?: number;
   /** Books opened; times the reader was left; ms spent recording all this. */
   opens: number; leaves: number; oh: number;
+  /** An unexpected end told apart, once known (from the native app's word at the next start, else a guess): 'renderer-crash'
+   *  | 'renderer-killed' | 'app-memory' | 'app-crash' | 'anr' | 'anr?' | 'app-killed' | 'unknown'; and its detail
+   *  (numbers and kinds only). */
+  why?: string; det?: string;
+  /** Memory while reading, every half minute (the last few): [s from the start, JS heap MB (-1: not told), DOM elements
+   *  (thousands), chapters made, pictures loaded]. */
+  ms?: number[][];
+  /** The last long frames (over 200 ms; a long task is one): [ms, s from the start]. */
+  rlt?: number[][];
+  /** Errors nothing caught, by name only (TypeError: 2…), and promises rejected with none to hear. */
+  errs?: Record<string, number>;
 }
 export interface DiagEvent { t: number; k: string; [f: string]: string | number | boolean | undefined }
 interface Store { s: DiagSession[]; e: DiagEvent[] }
@@ -177,6 +188,40 @@ function observe(type: string, fn: (e: PerformanceEntry) => void, extra: Record<
   } catch { /* not here */ }
 }
 
+/** A long task kept among the last few, with when it began (s from the start). */
+function recentLong(ms: number, start: number): void {
+  const r = cur.rlt ??= []; r.push([Math.round(ms), Math.round(start / 1000)]); if (r.length > 5) r.splice(0, r.length - 5);
+}
+
+/* ---- memory while reading, errors nothing caught ---- */
+/** One memory sample of the reading (counts only), kept among the last few of the session. */
+export function diagSample(): number[] {
+  return cost(() => {
+    const m = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+    const heap = m ? Math.round(m.usedJSHeapSize / 1048576) : -1;
+    const els = Math.round(document.getElementsByTagName('*').length / 100) / 10;
+    const made = document.querySelectorAll('.kr-content > .kr-chapter:not(.kr-shell)').length;
+    const pics = document.querySelectorAll('.kr-content img[src^="blob:"]').length;
+    const row = [Math.round((Date.now() - cur.at) / 1000), heap, els, made, pics];
+    const a = cur.ms ??= []; a.push(row); if (a.length > 8) a.splice(0, a.length - 8);
+    if (heap > 0) cur.mem = Math.max(cur.mem ?? 0, heap);
+    return row;
+  });
+}
+const errName = (x: unknown): string => { const n = x && typeof x === 'object' && 'name' in x ? String((x as { name: unknown }).name) : typeof x; return /^[A-Za-z][\w$]{0,40}$/.test(n) ? n : 'other'; };
+/** An error nothing caught (`how` 'error' | 'rejection'): its name only — never its message (it may hold text). */
+export function diagError(x: unknown, how: 'error' | 'rejection'): void {
+  const key = `${how === 'rejection' ? 'rejected ' : ''}${errName(x)}`;
+  const e = cur.errs ??= {}; const first = !e[key]; e[key] = (e[key] ?? 0) + 1;
+  // (Each kind once a session in the events — a loop that throws does not push everything else out.)
+  if (first) diagEvent('jserr', { name: key, scr: screenNow }); else later();
+}
+
+/* ---- why an end came: the native app's word (src/diagnative.ts, loaded when there is one) ---- */
+export type { NativeCrashInfo } from './diagnative';
+/** The record itself and the session running, for diagnative.ts. */
+export function diagStore(): { s: DiagSession[]; e: DiagEvent[]; cur: DiagSession } { return { s: store.s, e: store.e, cur }; }
+
 /** The record as it is now (the page reads it; the current session last). */
 export function diagData(): { sessions: DiagSession[]; events: DiagEvent[]; overhead: number; since: number } {
   cur.ran = Math.round(Date.now() - cur.at); cur.oh = Math.round(overhead * 10) / 10;
@@ -199,6 +244,10 @@ cost(() => {
   const prev = store.s[store.s.length - 1];
   if (prev && !prev.end) {
     prev.end = prev.book || readingMark ? 'unexpected' : prev.hid ? 'bg' : 'unexpected';
+    // (A guess until the native app says more: a task of 5 s or longer in its last minute, on screen — the system's
+    // "not responding" comes at 5 s.)
+    if (prev.end === 'unexpected' && !prev.hid && (prev.rlt ?? []).some(([ms, at]) => ms >= 5000 && at >= prev.ran / 1000 - 60)) { prev.why = 'anr?'; prev.det = 'task >= 5 s in last min'; }
+    else if (prev.end === 'unexpected') prev.why = 'unknown';
     store.e.push({ t: Date.now(), k: 'ended', how: prev.end, scr: prev.scr, bg: prev.hid, book: prev.book || readingMark, ran: Math.round(prev.ran / 1000) });
   }
   cur = fresh();
@@ -208,7 +257,7 @@ cost(() => {
   if (nav) { const dcl = () => { cur.st.dcl = Math.round(nav.domContentLoadedEventEnd) || undefined; }; if (nav.domContentLoadedEventEnd) dcl(); else document.addEventListener('DOMContentLoaded', () => setTimeout(dcl, 0), { once: true }); }
 });
 observe('longtask', (e) => { bucket(cur.lt, e.duration); if (screenNow === 'read') cur.ltRead += e.duration > 50 ? 1 : 0; if (e.duration > 100) worst(e.duration, 'task'); });
-observe('long-animation-frame', (e) => { bucket(cur.laf, e.duration); if (e.duration > 100) worst(e.duration, 'frame'); });
+observe('long-animation-frame', (e) => { bucket(cur.laf, e.duration); if (e.duration > 100) worst(e.duration, 'frame'); if (e.duration > 200) recentLong(e.duration, e.startTime); });
 observe('event', (e) => {
   const ev = e as PerformanceEventTiming; if (!/^(pointer|touch|click|key|mouse)/.test(ev.name)) return;
   cur.ev.slow++; cur.ev.maxDur = Math.max(cur.ev.maxDur, Math.round(ev.duration)); cur.ev.maxDelay = Math.max(cur.ev.maxDelay, Math.round(ev.processingStart - ev.startTime));
@@ -228,10 +277,29 @@ document.addEventListener('visibilitychange', () => hidden(document.visibilitySt
 addEventListener('pagehide', (e) => { if (!(e as PageTransitionEvent).persisted) cur.end = 'left'; diagFlush(); });
 /** The native app's own word that it went to the background or came back (Capacitor's appStateChange). */
 export function diagAppState(active: boolean): void { diagEvent(active ? 'fg' : 'bg', { scr: screenNow }); hidden(!active); }
-// While in use, every half minute: how long it has run (the last record before an end no one saw).
-setInterval(() => { if (document.visibilityState === 'visible') later(); }, 30000);
+// While in use: how long it has run (the last record before an end no one saw) — every 10 s with a book open (the gap
+// between the last record and an end the native app timed tells a main thread stuck from one ended at once), else every
+// half minute; and, reading, the memory every half minute.
+let beats = 0;
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  beats++;
+  if (cur.book && beats % 3 === 0) setTimeout(() => { if (cur.book) diagSample(); }, 0);
+  if (cur.book || beats % 3 === 0) later();
+}, 10000);
+// Errors nothing caught, by name; the system's memory warnings (MainActivity.onTrimMemory → `kr:trim`).
+// (The browser's own notice that a ResizeObserver went round in a loop comes as an error with no error object: named so —
+// its message is only looked at, never kept.)
+addEventListener('error', (e) => { const ev = e as ErrorEvent; diagError(ev.error ?? { name: /^ResizeObserver loop/.test(ev.message ?? '') ? 'ResizeObserverLoop' : 'Error' }, 'error'); });
+addEventListener('unhandledrejection', (e) => diagError((e as PromiseRejectionEvent).reason, 'rejection'));
+document.addEventListener('kr:trim', (e) => diagEvent('trim', { level: Number((e as CustomEvent).detail) || 0, scr: screenNow, book: cur.book }));
+// The native app's word on how the last sessions ended (Android), a moment after the start.
+setTimeout(() => {
+  const k = (window as unknown as { Capacitor?: { Plugins?: { Kurokawa?: { takeCrashInfo?(): Promise<import('./diagnative').NativeCrashInfo> } } } }).Capacitor?.Plugins?.Kurokawa;
+  if (k?.takeCrashInfo) void k.takeCrashInfo().then((info) => (info ? import('./diagnative').then((m) => m.diagApplyNative(info)) : undefined)).catch(() => undefined);
+}, 1500);
 // The storage's size, once, well after the start.
 setTimeout(() => void navigator.storage?.estimate?.().then((s) => { cur.env.sto = `${Math.round((s.usage ?? 0) / 1048576)}/${Math.round((s.quota ?? 0) / 1048576)} MB`; later(); }).catch(() => undefined), 8000);
 diagFlush();
 // (For tests and for a look from the WebView's inspector.)
-(window as unknown as { __krDiag?: unknown }).__krDiag = { data: diagData, flush: diagFlush, event: diagEvent, clear: () => diagClear(), cap: DIAG_CAP };
+(window as unknown as { __krDiag?: unknown }).__krDiag = { data: diagData, flush: diagFlush, event: diagEvent, clear: () => diagClear(), cap: DIAG_CAP, sample: diagSample };

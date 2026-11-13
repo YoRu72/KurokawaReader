@@ -15,6 +15,8 @@ const ms = (n?: number) => (n === undefined ? '-' : n < 1000 ? `${Math.round(n)}
 const dur = (n: number) => (n < 60000 ? `${Math.round(n / 1000)} s` : n < 3600000 ? `${Math.round(n / 60000)} min` : `${(n / 3600000).toFixed(1)} h`);
 const stamp = (at: number) => { const d = new Date(at); const p = (x: number) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const END_EN: Record<string, string> = { left: 'closed normally', bg: 'ended in the background, not seen again', unexpected: 'ENDED UNEXPECTEDLY' };
+/** How an unexpected end is told apart (src/diag.ts `why`). */
+const WHY_EN: Record<string, string> = { 'renderer-crash': 'renderer crashed', 'renderer-killed': 'renderer killed by the system (memory)', 'app-memory': 'app process killed for memory', 'app-crash': 'app process crashed', anr: 'app not responding (ANR)', 'anr?': 'ANR suspected', 'app-killed': 'app process ended by the system', unknown: 'cause unknown' };
 const fields = (e: DiagEvent) => Object.entries(e).filter(([k]) => k !== 't' && k !== 'k').map(([k, v]) => `${k}=${v}`).join(' ');
 
 export function diagReport(d: Data = diagData()): string {
@@ -45,7 +47,7 @@ export function diagReport(d: Data = diagData()): string {
   return L.join('\n') + '\n';
 }
 function sessionLine(s: DiagSession, running: boolean): string {
-  const st = s.st; const how = running ? 'running' : END_EN[s.end ?? ''] ?? '?';
+  const st = s.st; const how = (running ? 'running' : END_EN[s.end ?? ''] ?? '?') + (!running && s.why ? `: ${WHY_EN[s.why] ?? s.why}${s.det ? ` (${s.det})` : ''}` : '');
   const parts = [`${stamp(s.at)} ${how} after ${dur(s.ran)} on ${s.scr}${s.hid && s.end !== 'left' ? ' (in background)' : ''}${s.book && !running ? ' (book open)' : ''}`, `app ${s.env.v} ${s.env.plat}`];
   if (st.js !== undefined) parts.push(`start: script ${ms(st.js)}, library shown ${ms(st.shown)}, usable ${ms(st.usable)}`);
   if (s.opens || s.leaves) parts.push(`opens ${s.opens}, reader left ${s.leaves}`);
@@ -54,6 +56,9 @@ function sessionLine(s: DiagSession, running: boolean): string {
   if (s.worst.length) parts.push(`worst ${s.worst.map(([m, scr, k]) => `${m}ms ${k}@${scr}`).join(', ')}`);
   if (s.ev.slow || s.ev.maxDelay > 50) parts.push(`slow taps ${s.ev.slow}, max input delay ${s.ev.maxDelay} ms, max to paint ${s.ev.maxDur} ms`);
   if (s.mem) parts.push(`heap ${s.mem} MB`);
+  if (s.ms?.length) parts.push(`memory while reading [s: heap MB/elements k/chapters made/pictures] ${s.ms.map(([at, hp, el, ch, pic]) => `${at}: ${hp < 0 ? '-' : hp}/${el}/${ch}/${pic}`).join(', ')}`);
+  if (s.rlt?.length) parts.push(`last long tasks ${s.rlt.map(([m, at]) => `${ms(m)} at ${at} s`).join(', ')}`);
+  if (s.errs && Object.keys(s.errs).length) parts.push(`uncaught ${Object.entries(s.errs).map(([k, n]) => `${k} x${n}`).join(', ')}`);
   return parts.join(' · ');
 }
 
@@ -67,6 +72,7 @@ const KIND: Record<string, keyof Strings> = { text: 'perfKindText', 'web novel':
 const kindName = (k: string) => (KIND[k] ? t(KIND[k]) : k.toUpperCase());
 const WHY: Record<string, keyof Strings> = { 'back-button': 'perfWhyBackButton', 'top-back': 'perfWhyTopBack', link: 'perfWhyLink', missing: 'perfWhyMissing', error: 'perfWhyError', code: 'perfWhyCode', history: 'perfWhyHistory', 'next-book': 'perfWhyNextBook', 'to-caller': 'perfWhyToCaller', key: 'perfWhyKey', 'back-pc': 'perfWhyBackPc', series: 'perfWhySeries' };
 const END: Record<string, keyof Strings> = { left: 'perfEndLeft', bg: 'perfEndBg', unexpected: 'perfEndUnexpected' };
+const CAUSE: Record<string, keyof Strings> = { 'renderer-crash': 'perfCauseRendererCrash', 'renderer-killed': 'perfCauseRendererKilled', 'app-memory': 'perfCauseAppMemory', 'app-crash': 'perfCauseAppCrash', anr: 'perfCauseAnr', 'anr?': 'perfCauseAnrSuspected', 'app-killed': 'perfCauseAppKilled' };
 
 export function perfSheet(): void {
   diagFlush();
@@ -87,7 +93,7 @@ export function perfSheet(): void {
     row(t('perfStartup'), started ? t('perfStartupVal', { shown: fmtMs(started.st.shown), usable: fmtMs(started.st.usable) }) : t('perfNotYet'));
     row(t('perfLastOpen'), lastOpen ? t('perfLastOpenVal', { kind: kindName(String(lastOpen.kind)), first: fmtMs(lastOpen.first as number | undefined), placed: fmtMs(lastOpen.placed as number | undefined) }) : t('perfNoOpen'));
     if (now) row(t('perfSlow'), t('perfSlowVal', { t1: fmtMs(100), a: now.lt[1] + now.laf[1], t2: fmtMs(250), b: now.lt[2] + now.laf[2], t3: fmtMs(1000), c: now.lt[3] + now.laf[3] }), now.ltRead ? t('perfSlowReading', { n: now.ltRead }) : null, now.ev.slow || now.ev.maxDelay ? t('perfSlowTaps', { n: now.ev.slow, ms: fmtMs(now.ev.maxDelay) }) : null);
-    row(t('perfSessions'), ...d.sessions.slice(-6).reverse().map((s) => `${when(s.at)} · ${s === now ? t('perfRunning') : t(END[s.end ?? 'unexpected'])}${s.hid && s !== now && s.end !== 'left' ? ` (${t('perfInBg')})` : ''} · ${t('perfSessionVal', { dur: fmtDur(s.ran), screen: screenName(s.scr) })}`));
+    row(t('perfSessions'), ...d.sessions.slice(-6).reverse().map((s) => `${when(s.at)} · ${s === now ? t('perfRunning') : t(END[s.end ?? 'unexpected'])}${s !== now && s.why && CAUSE[s.why] ? ` — ${t(CAUSE[s.why])}` : ''}${s.hid && s !== now && s.end !== 'left' ? ` (${t('perfInBg')})` : ''} · ${t('perfSessionVal', { dur: fmtDur(s.ran), screen: screenName(s.scr) })}`));
     const leaves = d.events.filter((e) => e.k === 'leave');
     const by = new Map<string, number>(); for (const e of leaves) by.set(String(e.why), (by.get(String(e.why)) ?? 0) + 1);
     const edged = leaves.filter((e) => e.edge && e.edge !== 'none').length;
