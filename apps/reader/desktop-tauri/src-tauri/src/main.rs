@@ -177,6 +177,7 @@ fn main() {
             handover::kr_handover_read,
             handover::kr_handover_mark,
             handover::kr_handover_free,
+            handover::kr_handover_open_old,
             handover::kr_handover_check_progress,
             handover::kr_handover_check_done
         ]))

@@ -74,6 +74,8 @@ async function importFile(p, file, re) {
       meta.put({ cards: { c1: { due: 5 } }, day: 1 }, `anki:${epub}`); meta.put({ k1: 'ترجمة' }, `tr:${epub}`);
       meta.put([{ id: 'myfont', name: 'My Font', family: 'MyFont', file: 'my.ttf' }], 'fonts');
       tx.objectStore('files').put(new File(['FONTDATA'], 'my.ttf', { type: 'font/ttf' }), 'font:myfont');
+      // (A file over two 8 MiB pieces: the Rust build brings it with kr_handover_read's range reads.)
+      { const big = new Uint8Array(17 * 1024 * 1024 + 123); for (let i = 0; i < big.length; i++) big[i] = (i * 7 + (i >>> 20)) & 255; tx.objectStore('files').put(new Blob([big], { type: 'application/octet-stream' }), 'big:pieces'); }
       tx.oncomplete = res; });
     d.close();
     localStorage.setItem('kr.bookVisual', JSON.stringify({ [epub]: { fontSize: 19 } }));

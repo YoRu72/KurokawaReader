@@ -44,6 +44,21 @@ function tauriDataDir(platform = process.platform, env = process.env, home = os.
 function freeBytes(dir) {
   try { const s = fs.statfsSync(dir); return Number(s.bavail) * Number(s.bsize); } catch { return -1; }
 }
+/** Bytes in the files under `dir` (folders named in `skip` left out, links not followed) — the profile's size, for
+ *  an estimate when the free space cannot be read. */
+async function dirSize(dir, skip = []) {
+  let n = 0; const stack = [dir];
+  while (stack.length) {
+    const d = stack.pop(); let list = [];
+    try { list = await fsp.readdir(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of list) {
+      const q = path.join(d, e.name);
+      if (e.isDirectory()) { if (!(d === dir && skip.includes(e.name))) stack.push(q); }
+      else if (e.isFile()) { try { n += (await fsp.stat(q)).size; } catch { /* gone meanwhile */ } }
+    }
+  }
+  return n;
+}
 async function flush(p) {
   // ('r+': Windows flushes only a file opened for writing.)
   const fh = await fsp.open(p, 'r+'); try { await fh.sync(); } finally { await fh.close(); }
@@ -74,12 +89,20 @@ class Writer {
     this.checked = null;      // after verify: [{ rel, size, sha256 }]
   }
   /** A clean part folder, when the disk has room for `need` bytes (and the margin): { ok, part, free, need } or
-   *  { ok: false, reason: 'space', free, need }. */
-  async begin(need) {
-    const want = Math.ceil(Math.max(0, Number(need) || 0) * 1.02) + MARGIN;
+   *  { ok: false, reason: 'space', free, need }. When the free space cannot be read (statfs failed: free -1) nothing
+   *  is begun silently: { ok: false, reason: 'unknown', need, profile } — `need` the larger of the page's figure and
+   *  the profile's size on the disk (+ the margin) — and the page asks the reader; o.unknownOk (they said go on)
+   *  begins it. */
+  async begin(need, o = {}) {
+    let want = Math.ceil(Math.max(0, Number(need) || 0) * 1.02) + MARGIN;
     await fsp.mkdir(this.root, { recursive: true });
     const free = Number.isFinite(this.free) ? this.free : freeBytes(this.root);
     if (free >= 0 && free < want) return { ok: false, reason: 'space', free, need: want };
+    if (free < 0 && !(o && o.unknownOk)) {
+      const profile = await dirSize(this.root, [DIR, PART]);
+      want = Math.max(want, Math.ceil(profile * 1.02) + MARGIN);
+      return { ok: false, reason: 'unknown', free: -1, need: want, profile };
+    }
     await fsp.rm(this.part, { recursive: true, force: true });
     await fsp.mkdir(this.part, { recursive: true });
     this.files.clear(); this.checked = null;
@@ -174,7 +197,7 @@ function install({ ipcMain, app }) {
     if (w) await w.abort();
     const free = process.env.KR_HANDOVER_FREE ? Number(process.env.KR_HANDOVER_FREE) : undefined;
     w = new Writer(root(), { free, pointers: pointers(), from: { version: app.getVersion(), portable: !!process.env.PORTABLE_EXECUTABLE_DIR } });
-    return w.begin(o && o.need);
+    return w.begin(o && o.need, { unknownOk: !!(o && o.unknownOk) });
   });
   ipcMain.handle('kr:handover-write', (_e, rel, data, append) => need().write(String(rel), data, !!append));
   ipcMain.handle('kr:handover-shell', () => need().shellFiles(root()));
@@ -203,4 +226,4 @@ async function prepare({ app, webContents }) {
   return { ok: true, dir: st.dir, id: st.marker.id, counts: st.marker.counts || {} };
 }
 
-module.exports = { install, prepare, Writer, status, safeRel, tauriDataDir, freeBytes, FORMAT, DIR, PART, MARKER, POINTER, PORTABLE_POINTER, IDENTIFIER, MARGIN };
+module.exports = { install, prepare, Writer, status, safeRel, tauriDataDir, freeBytes, dirSize, FORMAT, DIR, PART, MARKER, POINTER, PORTABLE_POINTER, IDENTIFIER, MARGIN };

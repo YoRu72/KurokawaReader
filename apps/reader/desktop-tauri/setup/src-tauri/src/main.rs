@@ -101,6 +101,13 @@ fn find_copy(tmp: &Path) -> logic::Existing {
     logic::find_copy(&text, &env_path("LOCALAPPDATA"), &|p| Path::new(p).exists())
 }
 
+/// The Electron copy's data folder (%APPDATA%\KurokawaReader): whether its library was handed over (a finished
+/// hand-over's marker — written last by the Electron «bridge» build) and whether it has a library at all (IndexedDB).
+fn electron_data() -> (bool, bool) {
+    let d = PathBuf::from(env_path("APPDATA")).join("KurokawaReader");
+    (d.join("handover").join("marker.json").is_file(), d.join("IndexedDB").is_dir())
+}
+
 /// Whether a desktop shortcut to KurokawaReader is there now (the user's desktop, or OneDrive's).
 fn desktop_shortcut() -> bool {
     [env_path("USERPROFILE"), env_path("OneDrive"), env_path("OneDriveConsumer")]
@@ -326,7 +333,7 @@ async fn setup_detect(state: tauri::State<'_, Arc<Shared>>) -> Result<Value, Str
         "lang": state.lang,
         "dark": state.dark,
         "defaultDir": format!("{}\\KurokawaReader", env_path("LOCALAPPDATA")),
-        "existing": { "kind": e.kind, "version": e.version, "dir": e.dir, "desktop": desk },
+        "existing": { "kind": e.kind, "version": e.version, "dir": e.dir, "desktop": desk, "old": old_of(&e) },
         "inner": inner_ok,
     }))
 }
@@ -349,6 +356,12 @@ async fn setup_browse(app: tauri::AppHandle, current: Option<String>) -> Result<
     }
 }
 
+/// The Electron copy's decision (logic::old_decision): "replace" | "keep" | "".
+fn old_of(e: &logic::Existing) -> &'static str {
+    let (handed, library) = electron_data();
+    logic::old_decision(e.kind, handed, library)
+}
+
 #[tauri::command]
 async fn setup_install(state: tauri::State<'_, Arc<Shared>>, options: Value) -> Result<(), String> {
     if state.running.swap(true, Ordering::SeqCst) {
@@ -359,6 +372,8 @@ async fn setup_install(state: tauri::State<'_, Arc<Shared>>, options: Value) -> 
         dir: options.get("dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         desktop: options.get("desktop").and_then(|v| v.as_bool()).unwrap_or(true),
         assoc: options.get("assoc").and_then(|v| v.as_bool()).unwrap_or(true),
+        // (Decided here, from the disk — never by the page: kept unless it is safe to replace.)
+        old: wait_for(&state.found, Duration::from_secs(8)).map(|(e, _)| old_of(&e).to_string()).unwrap_or_else(|| "keep".to_string()),
     };
     let s: Arc<Shared> = state.inner().clone();
     std::thread::spawn(move || {
@@ -378,6 +393,18 @@ async fn setup_open_app(state: tauri::State<'_, Arc<Shared>>) -> Result<(), Stri
     let dir = state.installed_dir.lock().unwrap().clone();
     let exe = Path::new(&dir).join(APP_EXE);
     Command::new(&exe).current_dir(&dir).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// The earlier (Electron) KurokawaReader opened, where it was kept beside this one: it updates itself and hands the
+/// library over (the done screen's button).
+#[tauri::command]
+async fn setup_open_old(state: tauri::State<'_, Arc<Shared>>) -> Result<(), String> {
+    let e = wait_for(&state.found, Duration::from_secs(8)).map(|(e, _)| e).ok_or_else(|| "not found".to_string())?;
+    if e.kind != "electron" || e.dir.is_empty() {
+        return Err("no earlier version".into());
+    }
+    let exe = Path::new(&e.dir).join(APP_EXE);
+    Command::new(&exe).current_dir(&e.dir).spawn().map(|_| ()).map_err(|err| err.to_string())
 }
 
 /// The installer with its own one-page window; this window goes, and the program ends with it.
@@ -483,6 +510,7 @@ fn main() {
             setup_install,
             setup_progress,
             setup_open_app,
+            setup_open_old,
             setup_classic,
             setup_close,
             setup_window

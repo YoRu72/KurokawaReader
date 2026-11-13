@@ -23,6 +23,8 @@
 //                 and the promise ends with the last p, which also has { done: true, ok, code?, reason?, detail?, dir }.
 //                 reason: 'code' | 'cancelled' | 'aborted' | 'extract' | 'missing' | 'start' | 'folder'
 //   openApp()  → starts the installed KurokawaReader
+//   openOld()  → starts the earlier (Electron) KurokawaReader, where it was kept beside this one (existing.old 'keep':
+//                its library not handed over yet — it carries it over once opened and updated)
 //   classic()  → starts the NSIS installer with its own one-page window, and closes the setup
 //   close()    → closes the setup (while installing: the install still finishes, then the program ends)
 //   window:    minimize(), drag() (a press on the title bar's free space), ready() (the page has painted: show the
@@ -55,6 +57,7 @@
         }
       },
       openApp: () => invoke('setup_open_app'),
+      openOld: () => invoke('setup_open_old'),
       classic: () => invoke('setup_classic'),
       close: () => invoke('setup_close'),
       minimize: () => invoke('setup_window', { act: 'minimize' }),
@@ -72,7 +75,7 @@
     const log = (window.__setupLog = window.__setupLog || []);
     let fails = c.fail ? Number(c.failTimes || 1) : 0;
     const existing = c.existing === 'rust' ? { kind: 'rust', version: c.from || '0.71.0', dir: 'C:\\Users\\Hana\\AppData\\Local\\KurokawaReader', desktop: c.desktop !== '0' && c.desktop !== false }
-      : c.existing === 'electron' ? { kind: 'electron', version: c.from || '0.70.2', dir: 'C:\\Users\\Hana\\AppData\\Local\\Programs\\KurokawaReader', desktop: true }
+      : c.existing === 'electron' ? { kind: 'electron', version: c.from || '0.70.2', dir: 'C:\\Users\\Hana\\AppData\\Local\\Programs\\KurokawaReader', desktop: true, old: c.old || 'replace' }
         : { kind: 'none', desktop: false };
     const speed = Number(c.speed || 1);
     return {
@@ -108,6 +111,7 @@
         return r;
       },
       openApp: async () => { log.push(['openApp']); },
+      openOld: async () => { log.push(['openOld']); },
       classic: async () => { log.push(['classic']); },
       close: async () => { log.push(['close']); },
       minimize: async () => { log.push(['minimize']); },
@@ -165,7 +169,8 @@
   const mode = () => {
     const e = S.info && S.info.existing;
     if (!e || e.kind === 'none') return 'install';
-    if (e.kind === 'electron') return 'update';
+    // (An Electron copy whose library was not handed over yet stays beside this one: a new install, not an update.)
+    if (e.kind === 'electron') return e.old === 'keep' ? 'install' : 'update';
     const c = cmpVer(e.version, S.info.version);
     return c < 0 ? 'update' : c === 0 ? 'reinstall' : 'downgrade';
   };
@@ -269,7 +274,10 @@
   const dWhere = h('p', { class: 'where ltr' });
   const openBtn = h('button', { type: 'button', class: 'btn primary big', id: 'open' }, icon('open'), t('open'));
   const closeBtn = h('button', { type: 'button', class: 'btn outlined', id: 'close-done' }, t('close'));
-  const vDone = h('div', { class: 'view v-done' }, t('doneTitle', 'h2', { class: 'title', id: 'title-done' }), dLead, dWhere, h('div', { class: 'grow' }), h('div', { class: 'actions' }, closeBtn, openBtn));
+  // (The earlier KurokawaReader kept beside this one — its library not handed over yet —: what to do, and a button.)
+  const dOld = h('p', { class: 'lead old-note', id: 'old-note', hidden: true });
+  const oldBtn = h('button', { type: 'button', class: 'btn outlined', id: 'open-old', hidden: true }, t('openOld'));
+  const vDone = h('div', { class: 'view v-done' }, t('doneTitle', 'h2', { class: 'title', id: 'title-done' }), dLead, dWhere, dOld, h('div', { class: 'grow' }), h('div', { class: 'actions' }, closeBtn, oldBtn, openBtn));
 
   // Failed.
   const reason = h('p', { class: 'reason', role: 'alert' });
@@ -318,7 +326,7 @@
     goIcon.replaceChildren(icon(m === 'install' ? 'download' : 'refresh'));
     tile.hidden = !e || e.kind === 'none';
     if (e && e.kind !== 'none') {
-      const line = e.kind === 'electron' ? w('electronLine')
+      const line = e.kind === 'electron' ? w(e.old === 'keep' ? 'electronKeepLine' : 'electronLine')
         : m === 'update' ? w('updateLine', { from: iso(e.version), to: iso(info.version) })
           : m === 'reinstall' ? w('sameLine', { v: iso(e.version) })
             : w('newerLine', { from: iso(e.version), to: iso(info.version) });
@@ -341,6 +349,8 @@
     if (S.result) {
       dLead.textContent = S.opening ? w('opening') : m === 'install' ? w('nowDone') : w('doneUpdated', { v: iso(info.version) });
       dWhere.textContent = S.result.dir || S.opts.dir;
+      const keep = !!e && e.kind === 'electron' && e.old === 'keep';
+      dOld.hidden = !keep; oldBtn.hidden = !keep; if (keep) dOld.textContent = w('oldKeepDone');
       reason.textContent = failText(S.result);
     }
     // The question.
@@ -416,6 +426,9 @@
         try { await api.openApp(); } catch { /* the button stays */ }
         await sleep(1400);
         if (leaving) return;
+        // (The earlier copy kept — its library not handed over —: the window stays, so its note and button are read.)
+        const e = S.info && S.info.existing;
+        if (e && e.kind === 'electron' && e.old === 'keep') { S.opening = false; paint(); return; }
         void api.close();
       } else go('done');
     } else go('failed');
@@ -470,6 +483,7 @@
   for (const s of [swDesk, swAssoc, swRun]) s.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); s.input.click(); } });
   // Done, failed, the question.
   openBtn.addEventListener('click', async () => { await api.openApp().catch(() => undefined); leaving = true; void api.close(); });
+  oldBtn.addEventListener('click', async () => { if (api.openOld) await api.openOld().catch(() => undefined); leaving = true; void api.close(); });
   closeBtn.addEventListener('click', () => { leaving = true; void api.close(); });
   retryBtn.addEventListener('click', () => void install());
   classicBtn.addEventListener('click', () => void api.classic());

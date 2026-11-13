@@ -11,7 +11,9 @@
 #      .epub NOT opening with it (/KRASSOC=0);
 #   4. passed straight through (/S, as the app's updater and unattended installs run it): exit 0, the kinds of file
 #      back;
-#   5. uninstalled silently.
+#   5. uninstalled silently;
+#   6. (0.62.0) an installed Electron copy with a library and no hand-over KEPT beside it (/KROLD=keep), then — its
+#      hand-over's marker there — replaced (/KROLD=replace); its data folder kept.
 # Pictures and a summary go to $env:RUNNER_TEMP\kr-install (the workflow's install artifact), with the install trace
 # (setup-trace.log: installer/hooks.nsh's KR_TRACE lines for every install and uninstall the program runs).
 $ErrorActionPreference = 'Stop'
@@ -136,6 +138,40 @@ Row 'temporary folder removed' (-not (Get-ChildItem $env:TEMP -Directory -Filter
 $un = Join-Path $dir 'uninstall.exe'
 Uninstall-Silently $un $dir
 Row 'uninstalled' (-not (Test-Path $exe) -and -not (Test-Path "$UninstKey\KurokawaReader")) $dir
+# 6. (0.62.0) An installed ELECTRON KurokawaReader with a library and NO hand-over: kept beside the new one (the
+# setup program passes /KROLD=keep); then its hand-over's marker there (the bridge build finished it): replaced
+# (/KROLD=replace). Its data folder is never touched.
+$old = Join-Path $env:LOCALAPPDATA 'Programs\KurokawaReader'
+New-Item -ItemType Directory -Force -Path (Join-Path $old 'resources') | Out-Null
+Set-Content (Join-Path $old 'resources\app.asar') 'asar'
+Copy-Item (Join-Path $env:SystemRoot 'System32\where.exe') (Join-Path $old 'KurokawaReader.exe')
+$ek = "$UninstKey\a1b2c3d4-kr-ci-electron-setup"
+New-Item $ek -Force | Out-Null; Set-ItemProperty $ek DisplayName 'KurokawaReader'; Set-ItemProperty $ek InstallLocation $old
+$edata = Join-Path $env:APPDATA 'KurokawaReader'
+New-Item -ItemType Directory -Force -Path (Join-Path $edata 'IndexedDB\app_kurokawa_0.indexeddb.leveldb') | Out-Null
+Remove-Item (Join-Path $edata 'handover') -Recurse -Force -ErrorAction SilentlyContinue
+function Install-Auto($tag) {
+  $p = Start-Process $s -ArgumentList @('--auto', '--no-desktop') -PassThru
+  for ($i = 0; $i -lt 600; $i++) {
+    $v = (Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue).DisplayVersion
+    if ($v -and (Test-Path $exe) -and $i -gt 15) { if (-not (Get-Process | Where-Object { $_.Path -like "*KurokawaReader-setup-*" } -ErrorAction SilentlyContinue)) { break } }
+    Start-Sleep -Milliseconds 100
+  }
+  Start-Sleep -Milliseconds 900; Shot $tag
+  $null = Wait-Installers $dir; Stop-Setup $p
+}
+Install-Auto 'setup-real-6-electron-kept'
+Row 'Electron with a library, no hand-over: kept beside it' ((Test-Path (Join-Path $old 'resources\app.asar')) -and (Test-Path $ek)) $old
+Row '… the setup program passed /KROLD=keep' ((Test-Path $trace) -and ((Get-Content $trace -Raw) -match '/KROLD=keep')) 'setup-trace.log'
+New-Item -ItemType Directory -Force -Path (Join-Path $edata 'handover') | Out-Null
+Set-Content (Join-Path $edata 'handover\marker.json') '{"app":"KurokawaReader","kind":"handover","format":1,"id":"ci-setup","createdAt":0,"bytes":0,"files":[]}'
+Install-Auto 'setup-real-7-electron-replaced'
+Row 'its hand-over finished: replaced' (-not (Test-Path (Join-Path $old 'resources\app.asar')) -and -not (Test-Path $ek)) $old
+Row '… /KROLD=replace passed' ((Get-Content $trace -Raw) -match '/KROLD=replace') 'setup-trace.log'
+Row '… its data folder kept' (Test-Path (Join-Path $edata 'IndexedDB')) $edata
+Uninstall-Silently (Join-Path $dir 'uninstall.exe') $dir
+Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item $ek -Force -ErrorAction SilentlyContinue
+
 Row 'install trace (installer/hooks.nsh)' (Test-Path $trace) $(if (Test-Path $trace) { ((Get-Content $trace) | ForEach-Object { ($_ -split ' tick=')[0] }) -join ' → ' } else { 'not written' }) $false
 Remove-Item Env:KR_INSTALL_TRACE
 

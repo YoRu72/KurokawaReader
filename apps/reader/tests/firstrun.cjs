@@ -64,13 +64,15 @@ const init = (o) => `(function () {
   replies.kr_handover_read = function () { return []; };
   replies.kr_handover_mark = function (a) { hoState = { id: a.o.id, state: a.o.state, at: Date.now() }; localStorage.setItem('kr.test.hostate', JSON.stringify(hoState)); return true; };
   replies.kr_handover_free = function () { return { freed: 1 }; };` : ''}
+  ${o.left ? `replies.kr_handover_find = function () { return { found: false, state: null, looked: [], problems: [], electron: ${JSON.stringify(o.left)} }; };
+  replies.kr_handover_open_old = function () { return true; };` : ''}
   window.__TAURI__ = {
     core: { invoke: function (cmd, args) { window.__calls.push({ cmd: cmd, args: JSON.parse(JSON.stringify(args || {})) }); return replies[cmd] ? Promise.resolve().then(function () { return replies[cmd](args || {}); }) : Promise.reject('unknown command ' + cmd); } },
     event: { listen: function (n, f) { window.__listeners.push([n, f]); return Promise.resolve(function () {}); } }
   };
   window.__KR_BOOT__ = ${JSON.stringify({ os: o.os, arch: 'x64', kind: o.kind || 'nsis' })};
   ${o.firstrunDone ? "try { localStorage.setItem('kr.firstrun.done', '1'); } catch (e) {}" : ''}
-})();\n${BRIDGE}${o.handover ? '\n' + HO_BRIDGE : ''}`;
+})();\n${BRIDGE}${o.handover || o.left ? '\n' + HO_BRIDGE : ''}`;
 
 async function page(br, base, o) {
   const ctx = await br.newContext({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: SHOTS ? 2 : 1, colorScheme: o.scheme || 'dark' });
@@ -101,6 +103,8 @@ const shot = async (p, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { recu
       await shot(p, 'firstrun-en-dark');
       // the hand-over: none on this computer (the shell reads none), and the tile says so
       await p.click('.fr-bring'); await p.waitForFunction(() => /No library from an earlier version/.test(document.querySelector('.fr-tile p').textContent));
+      // …with the way left for a library the earlier version did not hand over: a full backup made there, restored here
+      assert.ok(await p.evaluate(() => /full backup/.test(document.querySelector('.fr-backup-hint')?.textContent || '') && !!document.querySelector('.fr-tile .fr-backup')), 'the backup file offered when none was found');
       // the default-apps page asked for
       await p.click('.fr-default'); await p.waitForFunction(() => window.__calls.some((c) => c.cmd === 'kr_default_apps'));
       // the look: Light
@@ -116,6 +120,35 @@ const shot = async (p, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { recu
       await p.click('.fr-start'); await p.waitForFunction(() => !document.querySelector('.firstrun'));
       await p.reload(); await p.waitForSelector('.library-view'); await p.waitForTimeout(1200);
       assert.equal(await p.$('.firstrun'), null, 'shown once only');
+      assert.deepEqual(errors, []);
+      await ctx.close();
+    }
+    // (No hand-over, but the earlier copy's library still in it — the setup kept its program —: said at once, with a
+    // button that opens it; its program gone: how to get it back. Never «none found».)
+    {
+      const { ctx, p, errors } = await page(br, base, { lang: 'en', os: 'win32', left: { library: true, program: true } });
+      await p.waitForSelector('.firstrun .fr-open-old');
+      const txt = await p.evaluate(() => document.querySelector('.fr-tile p').textContent);
+      assert.ok(/still in the previous KurokawaReader/.test(txt) && /Open it once and let it update/.test(txt), txt);
+      await p.click('.firstrun .fr-open-old'); await p.waitForFunction(() => window.__calls.some((c) => c.cmd === 'kr_handover_open_old'));
+      assert.ok(await p.$('.firstrun .fr-backup'), 'the backup file offered too');
+      assert.deepEqual(errors, []);
+      await ctx.close();
+    }
+    {
+      const { ctx, p, errors } = await page(br, base, { lang: 'ar', os: 'win32', left: { library: true, program: false } });
+      await p.waitForFunction(() => /لم تُنقَلْ بعدُ/.test(document.querySelector('.firstrun .fr-tile p')?.textContent || ''));
+      assert.equal(await p.$('.firstrun .fr-open-old'), null, 'no program: no button to open it');
+      assert.deepEqual(errors, []);
+      await ctx.close();
+    }
+    // («Restore a backup file»: the screen goes — done — and the restore's own sheet opens over the library.)
+    {
+      const { ctx, p, errors } = await page(br, base, { lang: 'en', os: 'win32' });
+      await p.waitForSelector('.firstrun .fr-backup');
+      await p.click('.firstrun .fr-backup');
+      await p.waitForFunction(() => !document.querySelector('.firstrun') && [...document.querySelectorAll(".sheet button, .sheet .dest-row")].some((b) => /From a backup file/.test(b.textContent)), null, { timeout: 10000 });
+      assert.ok(await p.evaluate(() => !!localStorage.getItem('kr.firstrun.done')), 'the screen marked done');
       assert.deepEqual(errors, []);
       await ctx.close();
     }

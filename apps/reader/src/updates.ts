@@ -2,6 +2,7 @@
 // platform allows it — APK on Android (system installer), EXE on Windows
 // (runs the installer), AltStore/SideStore hand-off on iOS, reload on the web.
 import { h, icon, openSheet, toast, pickSheet } from './ui/dom';
+import { brandIcon } from './ui/brandIcon';
 import { t, dateLocale, countConnections, countVersions, formatBytes as fmtSize } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
@@ -349,7 +350,7 @@ export function showUpdateSheet(rel: ReleaseInfo, opts: { rustSwitch?: boolean }
   const date = rel.publishedAt ? new Date(rel.publishedAt).toLocaleDateString(dateLocale(), { dateStyle: 'medium' }) : '';
   // Hero: the app's icon in an expressive shape, the headline, the versions.
   s.body.append(h('div', { class: 'upd-hero' },
-    h('div', { class: 'upd-badge' }, h('img', { src: 'icons/icon.svg', alt: '' })),
+    h('div', { class: 'upd-badge' }, h('img', { src: brandIcon() || 'icons/icon.svg', alt: '', 'data-brand': '' })),
     h('div', { class: 'upd-hero-text' },
       h('h2', null, opts.rustSwitch ? t('updSwitchTitle') : t('updateHeadline')),
       h('p', null, opts.rustSwitch ? t('updSwitchSub') : t('updateReadySub', { v: rel.version })),
@@ -404,7 +405,8 @@ export function showUpdateSheet(rel: ReleaseInfo, opts: { rustSwitch?: boolean }
     // (Each part isolated, so numbers and units keep their order inside Arabic text.)
     status.textContent = parts.filter(Boolean).map((x) => `\u2068${x}\u2069`).join(' · ');
   };
-  const later = h('button', { class: 'btn outlined', type: 'button', onclick: () => s.close() }, t('later'));
+  // (The move to the new engine: «Not now» — asked again at the next update check, not at every start: showRustSwitch.)
+  const later = h('button', { class: 'btn outlined', type: 'button', 'data-act': opts.rustSwitch ? 'switch-later' : undefined, onclick: () => { if (opts.rustSwitch) rustSwitchLater(rel.version); s.close(); } }, opts.rustSwitch ? t('updSwitchLater') : t('later'));
   const install = h('button', { class: 'btn primary upd-go', type: 'button', onclick: async () => {
     if (platform === 'web') { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update(); location.reload(); return; }
     if (!asset) return;
@@ -478,6 +480,7 @@ export function updateErrorText(msg: string): string {
   if (!m) return `${t('updateFailed')} — ${msg}`;
   switch (m[1]) {
     case 'portable': return t('updPortable');
+    case 'portable-ready': return t('updPortableReady');
     case 'bare': case 'unknown': return t('updManual');
     case 'checksum': case 'size': return t('updChecksum');
     case 'nochecksum': return t('updNoChecksum');
@@ -495,5 +498,19 @@ export async function showRustSwitch(): Promise<void> {
   const all = await readerReleases();
   const rel = all[0]; if (!rel) return;
   if (localStorage.getItem('kr.update.skip') === rel.version) return;
+  if (rustSwitchDeclined(rel.version)) return;
   showUpdateSheet(rel, { rustSwitch: true });
+}
+/** «Not now» on the move to the new engine: kept with the version and the time. */
+const SWITCH_LATER = 'kr.rustSwitch.later';
+export function rustSwitchLater(version: string): void { try { localStorage.setItem(SWITCH_LATER, JSON.stringify({ v: version, at: Date.now() })); } catch { /* private mode: asked again */ } }
+/** Declined for this version within the update checks' interval (Settings → updates: a week when weekly, else a day):
+ *  not offered again at the start until then — a newer version is offered at once. */
+export function rustSwitchDeclined(version: string, now = Date.now()): boolean {
+  try {
+    const l = JSON.parse(localStorage.getItem(SWITCH_LATER) || 'null') as { v?: string; at?: number } | null;
+    if (!l || l.v !== version || typeof l.at !== 'number') return false;
+    const every = getSettings().updateEvery === 'weekly' ? 7 * 864e5 : 864e5;
+    return now - l.at < every;
+  } catch { return false; }
 }

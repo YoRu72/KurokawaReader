@@ -39,7 +39,7 @@ const SKIP_LOCAL = /^(kr\.update\.lastCheck|kr\.libraryVisit|kr\.sources\.checke
 let writer = null; const E = { free: undefined, failVerify: false, lastBegin: null };
 async function electronCall(cmd, a) {
   switch (cmd) {
-    case 'begin': if (writer) await writer.abort(); writer = new H.Writer(userData, { free: E.free, pointers: [{ dir: tauriData, name: H.POINTER }], from: { version: 'test' } }); E.lastBegin = await writer.begin(a.need); return E.lastBegin;
+    case 'begin': if (writer) await writer.abort(); writer = new H.Writer(userData, { free: E.free, pointers: [{ dir: tauriData, name: H.POINTER }], from: { version: 'test' } }); E.lastBegin = await writer.begin(a.need, { unknownOk: !!a.unknownOk }); return E.lastBegin;
     case 'write': return writer.write(a.rel, Buffer.from(a.b64, 'base64'), a.append);
     case 'shellFiles': return writer.shellFiles(userData);
     case 'readPart': return Buffer.from(await writer.read(a.rel)).toString('base64');
@@ -54,7 +54,7 @@ const ELECTRON_SHIM = () => {
   const call = (c, a) => window.__krhE(c, a || {});
   const toB64 = (u) => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
   const fromB64 = (b) => { const s = atob(b); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
-  window.kurokawaHandover = Object.freeze({ shell: 'electron', begin: (o) => call('begin', { need: o.need }), write: (rel, data, append) => call('write', { rel, b64: toB64(data), append: !!append }), shellFiles: () => call('shellFiles'), readPart: async (rel) => fromB64(await call('readPart', { rel })), verify: (list) => call('verify', { list }), finish: (info) => call('finish', { info }), abort: () => call('abort'), status: () => call('status') });
+  window.kurokawaHandover = Object.freeze({ shell: 'electron', begin: (o) => call('begin', { need: o.need, unknownOk: !!o.unknownOk }), write: (rel, data, append) => call('write', { rel, b64: toB64(data), append: !!append }), shellFiles: () => call('shellFiles'), readPart: async (rel) => fromB64(await call('readPart', { rel })), verify: (list) => call('verify', { list }), finish: (info) => call('finish', { info }), abort: () => call('abort'), status: () => call('status') });
 };
 
 // ---------- the Rust shell's kr_handover_* — src-tauri/src/handover.rs's rules, in Node ----------
@@ -80,7 +80,14 @@ const rust = {
     return { found: false, state, looked: list, problems };
   },
   kr_handover_verify: ({ p }) => { const c = check(p); if (!c.m) return { ok: false, bad: c.bad }; const bad = c.m.files.filter((f) => sha(path.join(p, ...f.rel.split('/'))) !== f.sha256).map((f) => `${f.rel}: its contents changed`); return { ok: !bad.length, bad }; },
-  kr_handover_read: ({ p, rel }) => { if (!H.safeRel(rel)) throw new Error('not a path in the hand-over: ' + rel); return { b64: fs.readFileSync(path.join(p, ...rel.split('/'))).toString('base64') }; },
+  // (With at/len: that piece only, at most 64 MiB, fewer bytes at the end — handover.rs's range read.)
+  kr_handover_read: ({ p, rel, at, len }) => {
+    if (!H.safeRel(rel)) throw new Error('not a path in the hand-over: ' + rel);
+    const f = path.join(p, ...rel.split('/'));
+    if (at === undefined && len === undefined) return { b64: fs.readFileSync(f).toString('base64') };
+    const want = Math.min(len ?? 8 * 1024 * 1024, 64 * 1024 * 1024); const fd = fs.openSync(f, 'r');
+    try { const b = Buffer.alloc(want); const n = fs.readSync(fd, b, 0, want, at ?? 0); return { b64: b.subarray(0, n).toString('base64') }; } finally { fs.closeSync(fd); }
+  },
   kr_handover_mark: ({ o }) => { if (!o.id || !['restored', 'declined'].includes(o.state)) throw new Error('id and state'); fs.mkdirSync(tauriData, { recursive: true }); fs.writeFileSync(stateFile(), JSON.stringify({ id: o.id, state: o.state, at: Date.now(), counts: o.counts ?? null })); return true; },
   kr_handover_free: ({ p }) => { if (path.basename(p) !== 'handover' || rj(path.join(p, 'marker.json'))?.kind !== 'handover') throw new Error('not a hand-over folder: ' + p); let n = 0; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const q = path.join(d, e.name); if (e.isDirectory()) walk(q); else n += fs.statSync(q).size; } }; walk(p); fs.rmSync(p, { recursive: true, force: true }); return { freed: n }; },
 };
@@ -192,6 +199,8 @@ function compare(a, b) {
       meta.put({ cards: { c1: { due: 5 } }, day: 1 }, `anki:${epub}`); meta.put({ k1: 'ترجمة' }, `tr:${epub}`); meta.put({ s1: 'src' }, `trs:${epub}`);
       meta.put([{ id: 'myfont', name: 'My Font', family: 'MyFont', file: 'my.ttf' }], 'fonts'); meta.put({ when: new Date(NOW), bytes: new Uint8Array([1, 2, 3]), pic: new Blob(['peek'], { type: 'image/jpeg' }), $kr: 'a user key' }, 'peek:odd');
       tx.objectStore('files').put(new File(['FONTDATA'], 'my.ttf', { type: 'font/ttf' }), 'font:myfont'); tx.objectStore('files').put(new Blob(['BG'], { type: 'image/png' }), 'bg-image');
+      // (A file over two 8 MiB pieces: brought piece by piece, never read whole — its bytes checked at the seams.)
+      { const big = new Uint8Array(17 * 1024 * 1024 + 123); for (let i = 0; i < big.length; i++) big[i] = (i * 7 + (i >>> 20)) & 255; tx.objectStore('files').put(new Blob([big], { type: 'application/octet-stream' }), 'big:pieces'); }
       tx.oncomplete = res; });
     d.close();
     const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); localStorage.setItem('kr.visual', JSON.stringify({ ...v, fontSize: 23, theme: 'sepia', aiKey: 'SECRET-aikey' }));
@@ -216,6 +225,27 @@ function compare(a, b) {
   ok('short disk: nothing written', !fs.existsSync(path.join(userData, 'handover')) && !fs.existsSync(path.join(userData, 'handover.part')), fs.readdirSync(userData));
   await A.evaluate(() => document.querySelectorAll('.sheet').forEach((s) => s.__close ? s.__close() : s.remove()));
   E.free = undefined;
+
+  // ================= 2b. free space unknown (statfs failed): asked, never gone on silently =================
+  const askSpace = async (answer) => {
+    E.free = -1;
+    await A.evaluate(() => { window.__bi = window.__KR_HANDOVER__.beforeInstall(); });
+    const sheet = await A.waitForSelector('[data-handover="ask-space"]', { timeout: 30000 }).catch(() => null);
+    const text = sheet ? await sheet.textContent() : '';
+    const madeBefore = fs.existsSync(path.join(userData, 'handover.part')) || fs.existsSync(path.join(userData, 'handover'));
+    if (sheet) await A.click(`[data-act="${answer}"]`);
+    const r = await A.evaluate(() => window.__bi);
+    E.free = undefined;
+    return { asked: !!sheet, text, madeBefore, r };
+  };
+  const unk = await askSpace('space-no');
+  ok('free space unknown: the reader asked, with the estimate', unk.asked && /could not be read/.test(unk.text) && /needs about/.test(unk.text) && /data folder holds/.test(unk.text), unk.text.slice(0, 260));
+  ok('…nothing written before the answer', !unk.madeBefore);
+  ok('…«Cancel»: false for the installer, nothing written', unk.r === false && !fs.existsSync(path.join(userData, 'handover')) && !fs.existsSync(path.join(userData, 'handover.part')));
+  ok('…the estimate is at least the profile on the disk', E.lastBegin && E.lastBegin.reason === 'unknown' && E.lastBegin.need >= E.lastBegin.profile && E.lastBegin.profile > 0, E.lastBegin);
+  await A.evaluate(() => document.querySelectorAll('.sheet').forEach((s) => s.__close ? s.__close() : s.remove()));
+  const unk2 = await askSpace('space-go');
+  ok('…«Continue»: made after all, true for the installer', unk2.asked && unk2.r === true && !!rj(path.join(userData, 'handover', 'marker.json')), unk2);
 
   // ================= 3. the hand-over made =================
   const made = await A.evaluate(() => window.__KR_HANDOVER__.make());
@@ -259,6 +289,19 @@ function compare(a, b) {
   const hlA = snapA.books.reduce((a, b) => a + (b.highlights?.length ?? 0) + (b.pdfHighlights?.length ?? 0) + (b.pins?.length ?? 0), 0);
   ok('…brought: «Done», the counts', new RegExp(`Done\\. Books: 4; highlights and notes: ${hlA}\\.`).test(doneText), doneText.slice(-200));
   ok('…«Free the space» offered', !!(await R.$('[data-handover-free]')));
+  {
+    const bigRel = (rj(path.join(hdir, 'handover', 'files.json')) || []).find((x) => x.key === 'big:pieces')?.rel;
+    const reads = rustCalls.filter((c) => c.cmd === 'kr_handover_read' && c.a.rel === bigRel);
+    ok('a 17 MiB file brought in 8 MiB pieces, never read whole', !!bigRel && reads.length === 3 && reads.every((c) => c.a.at !== undefined && c.a.len <= 8 * 1024 * 1024) && reads.map((c) => c.a.at).join() === `0,${8 << 20},${16 << 20}`, reads.map((c) => c.a));
+    const seams = await R.evaluate(async () => {
+      const d = await new Promise((res) => { const q = indexedDB.open('kurokawa-reader'); q.onsuccess = () => res(q.result); });
+      const b = await new Promise((res) => { const q = d.transaction('files').objectStore('files').get('big:pieces'); q.onsuccess = () => res(q.result); }); d.close();
+      const at = [0, (8 << 20) - 1, 8 << 20, (16 << 20) + 5, b.size - 1]; const out = [];
+      for (const i of at) out.push(new Uint8Array(await b.slice(i, i + 1).arrayBuffer())[0] === ((i * 7 + (i >>> 20)) & 255));
+      return { size: b.size, ok: out.every(Boolean) };
+    });
+    ok('…its bytes right at the seams', seams.size === 17 * 1024 * 1024 + 123 && seams.ok, seams);
+  }
   await Promise.all([R.waitForNavigation({ timeout: 15000 }).catch(() => null), R.click('[data-handover-continue]')]);
   await R.waitForSelector('.library-view'); await R.waitForTimeout(1500);
   const snapR = await snapshot(R);

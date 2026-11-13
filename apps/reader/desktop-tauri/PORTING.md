@@ -1079,3 +1079,53 @@ way between the builds.
   watchdog `KRH_SELFTEST_TIMEOUT`): the screen offers it with the count, brings it; after the reload the same books
   (ids and fields), files (sizes), records, keys, icon; marked restored and not offered again; the text book opens at
   its paragraph (reported). `selftest-report.cjs` prints the table.
+
+## Before the switch-over (after Reader 0.61.2 was merged)
+
+- **Notifications**: the notification plugin puts a script into every page that asks `is_permission_granted` at load;
+  the ACL refused it (a page error on all three systems). `capabilities/default.json` grants `notification:default`
+  to the main window only. The app's own notifications (a job done, a download done: `src/jobs.ts`) go through the
+  shell's `notify` (`kr_notify` here, `kr:notify` in Electron) when it has one, shown when the window is hidden or not
+  in front. The engine test's page errors are **required** on every system (the engine's «ResizeObserver loop» notice
+  only reported).
+- **Zoom on Linux**: WebKitGTK answered `set_zoom` and the page saw no change (run 43490057742: 1072 → 1072 px). The
+  bridge now checks, on Linux, that the page's width moved after the first change of size; when it did not, the web
+  view is put back at 100 % and the page is zoomed with CSS from then on (`__KR_ZOOM_WAY__`). The self-test's row
+  passes only when the page sees the change (its width, or the CSS zoom in force).
+- **Hand-over, large books**: `kr_handover_read` takes `at` / `len` (8 MiB asked, 64 MiB at most); `src/handover.ts`
+  brings a file larger than 8 MiB piece by piece, each piece made a Blob at once, the stored Blob made of them.
+  Electron's Writer, when the free space cannot be read (`statfs` failing), no longer goes on: it answers
+  `reason: 'unknown'` with an estimate (the larger of the page's figure and the profile's size on the disk, + 256 MB),
+  and the progress sheet asks; only «Continue» makes it (`tests/handover.cjs`: a 17 MiB file in three reads; Cancel and
+  Continue).
+- **macOS engine test** (now required): «a highlight added» failed when the test's own scroll (no input) was put back
+  by a re-settle and the selection went off the screen — the toolbar waits for a selection on the screen, as it should;
+  the test now waits for the window to be still and scrolls as a reader does. «The place saved and restored» drifted
+  when the engine moved the offset once more just after a full-screen animation had settled: such a scroll, within
+  1.5 s of a re-settle and with no input and no place set since, is now put back (`src/views/reader.ts`).
+- **Chapters turned by the reader** (`readerTurn`: a swipe, the chapter buttons, keys, a pull) are the place a resize
+  holds — a re-settle never takes the reader back to the chapter they left.
+
+## The switch-over (0.62.0)
+
+- **Released**: `release.yml`'s `rust-desktop` job publishes the Rust build as the main computer download —
+  `KurokawaReader-<v>-windows-x64.exe` (the setup program), `…-windows-x64-setup.exe` (the plain installer: the
+  app's updater and the Electron switch take this one), `…-windows-x64-portable.zip`, `…-macos-universal.DMG` (macOS is
+  optional: when it is missing the Electron DMG stays the Mac download and the notes say so), `…-linux-x64.appimage`,
+  `…-linux-x64.deb`, and `KurokawaReader-<v>-SHA256SUMS.txt` over every file. The Electron jobs still build and
+  publish under the old names (`…-win-x64.exe`, `…-mac-universal.dmg`, `…-linux-x86_64.AppImage`, `latest*.yml`): every
+  installed Electron copy's updater fetches that build — the **bridge build**, `RUST_SWITCH = true` in
+  `desktop/main.cjs` — which makes and checks the hand-over, then installs the Rust build.
+- **The rule for the Electron fallback**: it is built and published for **two versions** after the switch-over
+  (0.62.x and the next minor version), so a copy that updates rarely still meets a bridge build, and anyone can go
+  back. After that the Electron jobs are removed from `release.yml` (keep `desktop/` in the repository).
+- **Declining**: the switch sheet's «Not now» (`src/updates.ts` `rustSwitchLater`) — asked again at the next update
+  check (a day, a week when the checks are weekly), or at once for a newer version; «Skip this version» as before.
+- **Replacing an Electron install only when it is safe** (`installer/hooks.nsh` `KR_OLD_DECISION`, the setup program's
+  `logic::old_decision`): the Electron program is removed only when its library was handed over (a finished
+  hand-over's `marker.json` in its data folder) or it has none (no `IndexedDB` there); otherwise it is **kept** beside
+  the new program, the setup program's last screen says «open the previous KurokawaReader once and let it update» with
+  a button that opens it, and the new app's first-run tile says the same (`kr_handover_find`'s `electron: { library,
+  program }`, `kr_handover_open_old`). `/KROLD=keep|replace` passes the setup program's decision to the installer.
+- **Path filters**: `release-tools.yml` ignores `shared/shell-rs/**` (Tools does not use the crate yet); `release.yml`
+  takes `shared/**`, so a change to the crate releases the Reader.

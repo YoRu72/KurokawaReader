@@ -34,10 +34,14 @@
     verifyDir: function (dir) { return call('kr_handover_verify', { p: String(dir) }); },
     // One file of it → ArrayBuffer.
     read: function (dir, rel) { return call('kr_handover_read', { p: String(dir), rel: String(rel) }).then(toArrayBuffer); },
+    // A piece of one file → ArrayBuffer (`len` bytes from `at`; fewer at its end): a large book brought piece by piece.
+    readRange: function (dir, rel, at, len) { return call('kr_handover_read', { p: String(dir), rel: String(rel), at: Math.max(0, Math.floor(Number(at) || 0)), len: Math.max(1, Math.floor(Number(len) || 0)) }).then(toArrayBuffer); },
     // { id, state: 'restored' | 'declined', counts } kept → true.
     mark: function (o) { return call('kr_handover_mark', { o: o && typeof o === 'object' ? o : {} }); },
     // The hand-over folder deleted (the reader said yes) → { freed }.
     free: function (dir) { return call('kr_handover_free', { p: String(dir) }); },
+    // The earlier (Electron) KurokawaReader started, where it is still installed beside this one → true / false.
+    openOld: function () { return call('kr_handover_open_old', {}); },
   };
   try { Object.defineProperty(window, 'kurokawaHandover', { value: Object.freeze(api), enumerable: true, configurable: false, writable: false }); } catch (e) { /* defined already */ }
 })();

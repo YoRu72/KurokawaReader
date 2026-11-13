@@ -55,7 +55,7 @@ Things to prove early, because they depend on the engine, not on Rust:
 | R5 | **Archives, printing, images, window**: archives through the same 7-Zip program (unchanged), print a PDF, copy an image, full screen, immersive, title bar, tray if any, portable mode. | archive list/extract/create; print to file | medium |
 | R6 | **Carry-over and updater**: on first start, the library, settings, covers and positions are copied from the Electron profile (read with a small bundled exporter if the storage formats differ — nothing is deleted from the old profile); in-app update download, verification and install; the Electron build updates into the Tauri one only at the switch-over. | an Electron profile made in CI opened by the Tauri build: same books, same positions, same highlights | **high — users' libraries** |
 | R7 | **Preview period**: Tauri builds published beside each Electron release; the owner uses it daily on Windows; a list of every difference found. | — | — |
-| R8 | **Switch-over**: Tauri becomes the main download; Electron kept as a fallback download for two versions. Needs the owner's go-ahead. | full suite; size table | low, but hard to undo for users |
+| R8 | **Switch-over** (done in 0.62.0, the owner's go-ahead given): Tauri becomes the main download; Electron kept as a fallback download — the bridge build, under its old file names — for **two versions** (0.62.x and the next minor version), then its jobs leave `release.yml`. | full suite; size table | low, but hard to undo for users |
 
 **R5, as done** (see `apps/reader/desktop-tauri/PORTING.md`, «Archives, the window, the app's icon»): archives as
 `archive.cjs` does them (its own ZIP and tar readers in Rust, the same 7-Zip program shipped beside the app for the

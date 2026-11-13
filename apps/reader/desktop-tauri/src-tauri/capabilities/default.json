@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window. The app's own kr_* commands need no permission; the plugins (dialog, clipboard, opener) are used from Rust only, so none of their JS permissions are granted.",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "The main window. The app's own kr_* commands need no permission; the plugins (dialog, clipboard, opener) are used from Rust only, so none of their JS permissions are granted — except the notification plugin's: its script, put into every page, asks at load whether notifications are allowed (is_permission_granted) and backs the web's Notification; the app's own notifications go through kr_notify.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "notification:default"
+  ]
 }

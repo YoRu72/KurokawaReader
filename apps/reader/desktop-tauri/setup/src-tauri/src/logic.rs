@@ -33,6 +33,8 @@ pub struct Choices {
     pub dir: String,
     pub desktop: bool,
     pub assoc: bool,
+    /// The installed Electron copy: "replace" | "keep" (old_decision) | "" (none found: nothing passed).
+    pub old: String,
 }
 
 /// R6b's installer run silently with the choices: `/S` (NSIS: no window), `/KRDESK=0|1` and `/KRASSOC=0|1` (read by
@@ -40,6 +42,9 @@ pub struct Choices {
 /// NSIS requires. «Open when done» is not passed: the setup program opens the app itself once it shows «done».
 pub fn nsis_args(c: &Choices) -> Vec<String> {
     let mut a = vec!["/S".to_string(), format!("/KRDESK={}", c.desktop as u8), format!("/KRASSOC={}", c.assoc as u8)];
+    if c.old == "replace" || c.old == "keep" {
+        a.push(format!("/KROLD={}", c.old));
+    }
     let d = clean_dir(&c.dir);
     if !d.is_empty() {
         a.push(format!("/D={}", d));
@@ -331,6 +336,22 @@ pub fn find_copy(export: &str, local_appdata: &str, exists: &dyn Fn(&str) -> boo
     Existing { kind: "none", version: String::new(), dir: String::new() }
 }
 
+/// Whether an installed Electron copy may be replaced (installer/hooks.nsh KR_OLD_DECISION, the same rule): only when
+/// its library was handed over — a finished hand-over's marker (%APPDATA%\KurokawaReader\handover\marker.json, written
+/// last by the Electron «bridge» build) — or when it has no library (no IndexedDB in its data folder). Otherwise it is
+/// kept beside the new program, and the person is told to open it once: it updates itself to the bridge build, which
+/// hands the library over and then replaces itself. → "replace" | "keep", or "" when the copy is not Electron's.
+pub fn old_decision(kind: &str, handed_over: bool, has_library: bool) -> &'static str {
+    if kind != "electron" {
+        return "";
+    }
+    if handed_over || !has_library {
+        "replace"
+    } else {
+        "keep"
+    }
+}
+
 /// Windows' display language (GetUserDefaultUILanguage's LANGID) → one of the five, or "".
 pub fn lang_from_langid(id: u16) -> &'static str {
     match id & 0x3ff {
@@ -488,15 +509,19 @@ mod tests {
 
     #[test]
     fn choices_to_nsis() {
-        let c = Choices { dir: r"C:\Users\هناء\AppData\Local\KurokawaReader".into(), desktop: true, assoc: false };
+        let c = Choices { dir: r"C:\Users\هناء\AppData\Local\KurokawaReader".into(), desktop: true, assoc: false, old: String::new() };
         let a = nsis_args(&c);
         assert_eq!(a, s(&["/S", "/KRDESK=1", "/KRASSOC=0", r"/D=C:\Users\هناء\AppData\Local\KurokawaReader"]));
         assert_eq!(command_line(&a), r"/S /KRDESK=1 /KRASSOC=0 /D=C:\Users\هناء\AppData\Local\KurokawaReader");
         // (A folder with spaces: /D= unquoted, last; a trailing backslash and quotes taken off.)
-        let c = Choices { dir: "\"D:\\My Apps\\KurokawaReader\\\"".into(), desktop: false, assoc: true };
+        let c = Choices { dir: "\"D:\\My Apps\\KurokawaReader\\\"".into(), desktop: false, assoc: true, old: String::new() };
         assert_eq!(command_line(&nsis_args(&c)), r"/S /KRDESK=0 /KRASSOC=1 /D=D:\My Apps\KurokawaReader");
         // (No folder: the installer's own.)
-        assert_eq!(nsis_args(&Choices { dir: "  ".into(), desktop: true, assoc: true }), s(&["/S", "/KRDESK=1", "/KRASSOC=1"]));
+        assert_eq!(nsis_args(&Choices { dir: "  ".into(), desktop: true, assoc: true, old: String::new() }), s(&["/S", "/KRDESK=1", "/KRASSOC=1"]));
+        // (The Electron copy's decision passed before /D=, which NSIS needs last.)
+        assert_eq!(nsis_args(&Choices { dir: r"D:\K".into(), desktop: true, assoc: true, old: "keep".into() }), s(&["/S", "/KRDESK=1", "/KRASSOC=1", "/KROLD=keep", r"/D=D:\K"]));
+        assert_eq!(nsis_args(&Choices { dir: "".into(), desktop: false, assoc: false, old: "replace".into() }), s(&["/S", "/KRDESK=0", "/KRASSOC=0", "/KROLD=replace"]));
+        assert_eq!(nsis_args(&Choices { dir: "".into(), desktop: false, assoc: false, old: "maybe".into() }), s(&["/S", "/KRDESK=0", "/KRASSOC=0"]));
         assert_eq!(clean_dir(r"D:\"), r"D:\");
     }
 
@@ -588,6 +613,16 @@ mod tests {
         // Neither location nor uninstaller: the default folder.
         let bare = format!("{}[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\KurokawaReader]\r\n\"DisplayVersion\"=\"0.72.0\"\r\n", EXPORT);
         assert_eq!(find_copy(&bare, la, &|_| false).dir, r"C:\Users\A\AppData\Local\KurokawaReader");
+    }
+
+    #[test]
+    fn old_copy_decision() {
+        // (Replaced only when its library was handed over, or it has none; kept otherwise; nothing for other copies.)
+        assert_eq!(old_decision("electron", true, true), "replace");
+        assert_eq!(old_decision("electron", false, false), "replace");
+        assert_eq!(old_decision("electron", false, true), "keep");
+        assert_eq!(old_decision("rust", false, true), "");
+        assert_eq!(old_decision("none", true, false), "");
     }
 
     #[test]

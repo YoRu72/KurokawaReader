@@ -259,7 +259,10 @@
   }
   function progress() { try { Promise.resolve(invoke('kr_selftest_progress', { results: st.results })).catch(function () {}); } catch (e) { /* none */ } }
   function rec(cs, name, ok, detail, required, ms, max) { st.results.push({ case: cs, name: name, ok: !!ok, detail: short(detail === undefined ? '' : detail, max), required: required !== false, ms: ms === undefined || ms === null ? null : Math.round(ms) }); save(); progress(); return !!ok; }
-  function pageError(what) { note(diag.console, { t: now(), k: 'page', s: short(what, 300) }); if (++st.errors > 15) return; rec('page', 'page error', false, what, false); }
+  // (A page error fails the run — every system: the page must run clean. Only the engine's own «ResizeObserver loop»
+  // notice is reported, not required: it says a size observer's callback changed sizes again in the same frame —
+  // harmless, and the browsers themselves report it as an error event.)
+  function pageError(what) { note(diag.console, { t: now(), k: 'page', s: short(what, 300) }); if (++st.errors > 15) return; rec('page', 'page error', false, what, !/ResizeObserver loop/i.test(String(what))); }
   root.addEventListener('error', function (e) { pageError((e && (e.message || (e.error && e.error.message))) || 'error'); });
   root.addEventListener('unhandledrejection', function (e) { var r = e && e.reason; pageError('unhandled rejection: ' + ((r && r.message) || String(r))); });
 
@@ -644,11 +647,22 @@
         var w = doc.createTreeWalker(blk, NodeFilter.SHOW_TEXT), n, i = -1; while ((n = w.nextNode())) { i = n.data.indexOf('old bell rang'); if (i >= 0) break; }
         must(n, 'the words are not in one text node');
         var r = doc.createRange(); r.setStart(n, i); r.setEnd(n, i + 'old bell rang'.length);
+        // (The window still first: a change of width — the search panel closing, a Mac's full screen settling — makes
+        // the reader put back the place it holds (src/views/reader.ts «re-settled after a resize»), and a scroll of the
+        // test's own, with no input, is not the reader's: macOS run 43483872854 had the words selected in view, then
+        // put back off the screen (1044 px down a 768 px window), and the toolbar waits for a selection on the screen.)
+        var sizeNow = function () { var sc = scroller(); return root.innerWidth + 'x' + root.innerHeight + ':' + (sc ? sc.clientWidth : 0); };
+        var lastSize = sizeNow(), sameSince = now();
+        await waitFor(function () { var z = sizeNow(); if (z !== lastSize) { lastSize = z; sameSince = now(); } return now() - sameSince > 900; }, 8000, 'the window\'s size still').catch(function () { /* go on: the steps below bring the words back */ });
+        // (As the reader scrolls — an input first, then the scroll —, so the place is theirs.)
+        var toWords = function () { try { var sc = scroller(); if (sc) sc.dispatchEvent(new WheelEvent('wheel', { deltaY: 0, bubbles: true })); } catch (e) { /* no WheelEvent */ } blk.scrollIntoView({ block: 'center' }); };
+        var inView = function () { var rr = r.getBoundingClientRect(); return rr.top > 60 && rr.bottom < root.innerHeight - 60; };
         // (In view, and staying there: the search's own scroll to its hit may still be under way.)
-        await waitFor(async function () { blk.scrollIntoView({ block: 'center' }); await sleep(500); var rr = r.getBoundingClientRect(); return rr.top > 60 && rr.bottom < root.innerHeight - 60; }, 8000, 'the words in view');
+        await waitFor(async function () { toWords(); await sleep(500); return inView(); }, 8000, 'the words in view');
         if (doc.activeElement && doc.activeElement !== doc.body && doc.activeElement.blur) doc.activeElement.blur();
         var sel = root.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-        var dot = await waitFor(function () { return $('.sel-toolbar .sel-colors .dot'); }, 6000, 'the selection toolbar').catch(function (e) {
+        // (The selection's toolbar shows once the selection is on the screen: brought back there if the text moved.)
+        var dot = await waitFor(function () { var d = $('.sel-toolbar .sel-colors .dot'); if (d) return d; if (!inView()) toWords(); return null; }, 8000, 'the selection toolbar').catch(function (e) {
           var g = root.getSelection(); var rr = r.getBoundingClientRect(); var scs = $$('.reader-scroll');
           throw new Error(e.message + ' (range ' + Math.round(rr.top) + '..' + Math.round(rr.bottom) + ' of ' + root.innerHeight + ', scrollers ' + scs.length + ' holding it ' + scs.filter(function (x) { return x.contains(r.commonAncestorContainer); }).length + ', selected «' + (g ? g.toString() : '') + '», toolbar ' + ($('.sel-toolbar') ? 'there: ' + $('.sel-toolbar').outerHTML.slice(0, 120) : 'none') + ', focus ' + (doc.activeElement && doc.activeElement.tagName) + ', panel ' + ($('.panel.open') ? 'open' : 'closed') + ')');
         });

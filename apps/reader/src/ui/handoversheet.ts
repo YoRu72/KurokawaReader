@@ -141,10 +141,26 @@ export async function handoverBeforeInstall(): Promise<boolean> {
   const status = h('p', { class: 'src', role: 'status' }, t('handoverMaking'));
   sh.body.append(bar, status);
   const { makeHandover } = await import('../handover');
-  const r: MakeResult = await makeHandover((p) => {
+  const make = (spaceUnknownOk: boolean) => makeHandover((p) => {
     if (p.step === 'files') { bar.value = p.total ? p.done / p.total : 0; status.textContent = t('handoverMakingFiles', { done: p.done, n: p.total }); }
     else if (p.step === 'check') status.textContent = t('handoverVerifying');
-  });
+  }, { spaceUnknownOk });
+  let r: MakeResult = await make(false);
+  // (The free space could not be read: never gone on with silently — the estimate shown, and made only on «Continue».)
+  if (!r.ok && r.reason === 'unknown') {
+    sh.el.setAttribute('data-handover', 'ask-space'); bar.hidden = true;
+    status.textContent = t('handoverSpaceUnknown', { need: formatBytes(r.need ?? 0), profile: formatBytes(r.profile ?? 0) });
+    let answer: (go: boolean) => void = () => undefined;
+    const said = new Promise<boolean>((res) => { answer = res; });
+    const no = h('button', { type: 'button', class: 'btn', 'data-act': 'space-no', onclick: () => answer(false) }, t('cancel'));
+    const yes = h('button', { type: 'button', class: 'btn primary', 'data-act': 'space-go', onclick: () => answer(true) }, t('handoverSpaceGoOn'));
+    sh.actions.append(no, yes);
+    const watch = window.setInterval(() => { if (!sh.el.isConnected) answer(false); }, 300);
+    const go = await said; window.clearInterval(watch); no.remove(); yes.remove();
+    if (!go) { sh.close(); toast(t('handoverNotMade')); return false; }
+    sh.el.setAttribute('data-handover', 'making'); bar.hidden = false; bar.value = 0; status.textContent = t('handoverMaking');
+    r = await make(true);
+  }
   if (r.ok) { sh.close(); toast(t('handoverMadeOk')); return true; }
   sh.el.setAttribute('data-handover', 'failed');
   bar.remove();

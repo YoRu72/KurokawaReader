@@ -2214,6 +2214,7 @@ export const en = {
   myIconHintLinux: "Your picture for the window and the taskbar, and — when the app was installed from its .deb — for its entry in the menus and the dock.",
   // (Stage R6b, the Tauri shell: the updater's refusals and guidance, the Electron → Rust switch, the first-run screen.)
   updPortable: "This is the portable copy, which never changes itself: download the new portable build from the release page and put it in place of this one. Your library stays where it is.",
+  updPortableReady: "Your library is ready for the new version. This copy is portable and installs nothing: download the new portable build (…-windows-x64-portable.zip) from the release page and run it — it brings your library over on its first start. Nothing is deleted.",
   updManual: "This copy cannot update itself. Download the new version from the release page.",
   updChecksum: "The downloaded file does not match the release's checksum, so it was not installed and has been removed. Try again later.",
   updNoChecksum: "The release states no checksum for this file, so it was not installed.",
@@ -2224,6 +2225,7 @@ export const en = {
   updDebOpened: "The new package is open in your software installer: install it there, then start the app again.",
   updSwitchTitle: "A faster KurokawaReader is ready",
   updSwitchSub: "The same app on a new engine: a far smaller download that starts faster. Your books, notes and settings come with you.",
+  updSwitchLater: "Not now",
   frWelcome: "Welcome to KurokawaReader",
   frSub: "Three quick choices — you can change any of them later in Settings.",
   frBringTitle: "Your library from the previous version",
@@ -2231,6 +2233,12 @@ export const en = {
   frBringBtn: "Bring my library",
   frBringBusy: "Bringing your library…",
   frBringNone: "No library from an earlier version was found on this computer.",
+  frBringLeft: "Your library is still in the previous KurokawaReader on this computer: it has not been carried over yet. Open it once and let it update — it will carry your books, notes and settings over to this one. Nothing is deleted.",
+  frBringLeftNoProgram: "Your library is still in the previous KurokawaReader's data on this computer: it has not been carried over yet. Open the previous KurokawaReader once — your portable copy, or the previous build installed again from the release page («previous build») — and let it update: it will carry your library over. Nothing was deleted.",
+  frOpenOld: "Open the previous KurokawaReader",
+  frLookAgain: "Look again",
+  frBackupBtn: "Restore a backup file",
+  frBackupHint: "Made a full backup in the earlier version? Restore it here: books, notes, places and settings.",
   frDefaultTitle: "Open books with KurokawaReader",
   frDefaultBody: "Choose KurokawaReader for EPUB, PDF and other books in the system's settings.",
   frDefaultBtn: "Open the settings",
@@ -2268,6 +2276,9 @@ export const en = {
   handoverNoSpace: "Not enough free space to prepare the update: {need} needed, {free} free. Nothing was changed and this version keeps working. Free some space, then try again.",
   handoverMakeFailed: "Your library could not be prepared for the new version, so the update was not installed. Nothing was changed and this version keeps working.",
   handoverMadeOk: "Your library is ready for the new version.",
+  handoverSpaceUnknown: "The free space on this disk could not be read. Preparing your library needs about {need} (the app's data folder holds {profile}). Make sure that much is free, then continue — or cancel, and this version keeps working as it is.",
+  handoverSpaceGoOn: "Continue",
+  handoverNotMade: "The update was not installed. Nothing was changed.",
 };
 
 export type Strings = typeof en;

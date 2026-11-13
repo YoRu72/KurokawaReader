@@ -137,6 +137,21 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
     ok(`[${mode}] the engine moved the scroll while resizing: the same place, and not saved as the reader's`, same(nudged, left) && same(nudgedLater, left) && kept3 && kept3.block === kept.block, { left, nudged, nudgedLater, kept, kept3 });
     await animate(p, BIG, SMALL, 6, 50); await p.waitForTimeout(1200);
 
+    // 1d. The engine moves the scroll once more just AFTER the resize has settled (a Mac's window ending its full-screen
+    // animation; no input): put back too, not saved. A wheel just after it is the reader's: it stands.
+    await toLibrary(p); await p.waitForTimeout(600);
+    await open(p, book.id); await p.waitForTimeout(300);
+    await animate(p, SMALL, BIG); await p.waitForTimeout(600);
+    await p.evaluate(() => { document.querySelector('.reader-scroll').scrollTop += 900; });
+    await p.waitForTimeout(1500);
+    const lateNudge = await where(p); const kept4 = await saved(p, book.id);
+    ok(`[${mode}] the engine moved the scroll just after the resize settled: put back, not saved`, same(lateNudge, left) && kept4 && kept4.block === kept.block, { left, lateNudge, kept, kept4 });
+    await animate(p, BIG, SMALL, 6, 50); await p.waitForTimeout(600);
+    await p.mouse.move(SMALL.width / 2, SMALL.height / 2); await p.mouse.wheel(0, 1800); await p.waitForTimeout(1500);
+    const wheeled = await where(p);
+    ok(`[${mode}] a wheel just after a resize settled: the reader's place stands`, wheeled && wheeled.n > 352, { left, wheeled });
+    await scrollToPara(p, 347, 0.33); await p.waitForTimeout(1500);
+
     // 3. The reader scrolls while the window is still changing size: their place stands.
     await p.mouse.move(SMALL.width / 2, SMALL.height / 2);
     const steps = [];

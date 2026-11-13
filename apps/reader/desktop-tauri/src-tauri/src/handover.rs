@@ -139,7 +139,54 @@ pub async fn kr_handover_find(app: AppHandle, p: Option<String>) -> Result<Value
             Err(e) => problems.extend(e),
         }
     }
-    Ok(json!({ "found": false, "state": state, "looked": looked, "problems": problems }))
+    Ok(json!({ "found": false, "state": state, "looked": looked, "problems": problems, "electron": electron_left() }))
+}
+
+/// The earlier (Electron) KurokawaReader, when no hand-over was found: whether its data folder holds a library (an
+/// IndexedDB folder — the library is NOT here yet) and whether its program is still installed beside this one (the
+/// setup keeps it until the library is handed over) → { library, program } — for the first-run screen's words.
+fn electron_left() -> Value {
+    let library = logic::electron_app_data(os_name(), &env_get)
+        .map(|d| logic::ELECTRON_NAMES.iter().any(|n| d.join(n).join("IndexedDB").is_dir()))
+        .unwrap_or(false);
+    json!({ "library": library, "program": electron_program().is_some() })
+}
+
+/// The earlier (Electron) KurokawaReader's program where it is still installed: Windows — electron-builder's per-user
+/// folder; a Mac — an Electron bundle (app.asar inside) in /Applications or ~/Applications. (Linux: an AppImage can be
+/// anywhere — not looked for.)
+fn electron_program() -> Option<PathBuf> {
+    if cfg!(target_os = "windows") {
+        let d = PathBuf::from(env_get("LOCALAPPDATA")?).join("Programs").join("KurokawaReader");
+        if d.join("resources").join("app.asar").is_file() && d.join("KurokawaReader.exe").is_file() {
+            return Some(d.join("KurokawaReader.exe"));
+        }
+        None
+    } else if cfg!(target_os = "macos") {
+        let mut c = vec![PathBuf::from("/Applications/KurokawaReader.app")];
+        if let Some(h) = env_get("HOME") {
+            c.push(PathBuf::from(h).join("Applications").join("KurokawaReader.app"));
+        }
+        c.into_iter().find(|a| a.join("Contents").join("Resources").join("app.asar").is_file())
+    } else {
+        None
+    }
+}
+
+/// «Open the previous KurokawaReader» (the first-run screen): the Electron program found above started — nothing the
+/// page names is run — → true, false when there is none.
+#[tauri::command]
+pub async fn kr_handover_open_old() -> Result<bool, String> {
+    let exe = match electron_program() {
+        Some(p) => p,
+        None => return Ok(false),
+    };
+    let r = if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&exe).spawn()
+    } else {
+        std::process::Command::new(&exe).spawn()
+    };
+    r.map(|_| true).map_err(|e| e.to_string())
 }
 
 /// The whole check before a restore: every file the marker lists read and its SHA-256 compared → { ok, bad }.
@@ -175,11 +222,31 @@ pub async fn kr_handover_verify(p: String) -> Result<Value, String> {
     joined.map_err(|e| e.to_string())
 }
 
-/// One file of the hand-over (`rel`, a path the marker may list) → its bytes, as kr_read_file answers.
+/// The most one range read answers (the page asks for 8 MiB pieces).
+const READ_MAX: u64 = 64 * 1024 * 1024;
+
+/// One file of the hand-over (`rel`, a path the marker may list) → its bytes, as kr_read_file answers; with `at`
+/// (and `len`, 8 MiB when not given, at most 64 MiB) only that piece of it — fewer bytes at the file's end, none
+/// past it —, so a book of several GB is brought piece by piece and never held whole in one IPC answer.
 #[tauri::command]
-pub async fn kr_handover_read(p: String, rel: String) -> Result<tauri::ipc::Response, String> {
+pub async fn kr_handover_read(p: String, rel: String, at: Option<u64>, len: Option<u64>) -> Result<tauri::ipc::Response, String> {
     let path = logic::join_rel(Path::new(&p), &rel).ok_or_else(|| format!("not a path in the hand-over: {}", rel))?;
-    shell::read_file_response(&shell::lossy(&path))
+    if at.is_none() && len.is_none() {
+        return shell::read_file_response(&shell::lossy(&path));
+    }
+    let from = at.unwrap_or(0);
+    let want = len.unwrap_or(8 * 1024 * 1024).min(READ_MAX);
+    let joined = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        f.seek(SeekFrom::Start(from)).map_err(|e| e.to_string())?;
+        let mut buf: Vec<u8> = Vec::with_capacity(want as usize);
+        f.take(want).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        Ok(buf)
+    })
+    .await;
+    let bytes: Vec<u8> = joined.map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// What became of a hand-over, kept in this build's data folder: { id, state: 'restored' | 'declined', counts } →

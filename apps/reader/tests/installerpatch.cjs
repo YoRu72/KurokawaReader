@@ -122,6 +122,20 @@ assert.ok(!/RMDir[^\n]*APPDATA/i.test(hooks), 'hooks.nsh never removes a data fo
 // The trace (CI's KR_INSTALL_TRACE only): each install and uninstall step noted, nothing done without the variable.
 for (const h of ['NSIS_HOOK_PREINSTALL', 'NSIS_HOOK_POSTINSTALL', 'NSIS_HOOK_PREUNINSTALL', 'NSIS_HOOK_POSTUNINSTALL']) assert.match(hooks, new RegExp(`!macro ${h}\\s*\\n\\s*!insertmacro KR_TRACE "`), `${h} traced`);
 assert.match(hooks, /ReadEnvStr \$0 KR_INSTALL_TRACE\s*\n\s*\$\{IfNot\} \$\{Errors\}\s*\n\s*\$\{AndIf\} \$0 != ""/, 'the trace only with KR_INSTALL_TRACE');
+// (0.62.0.) The Electron copy replaced ONLY when it is safe: its library handed over (the marker) or none at all; kept
+// otherwise; /KROLD=keep|replace — the setup program's decision — wins; any other value keeps it.
+{
+  const dec = /!macro KR_OLD_DECISION([\s\S]*?)!macroend/.exec(hooks); assert.ok(dec, 'the decision macro');
+  assert.match(dec[1], /\$\{GetOptions\} \$CMDLINE "\/KROLD=" \$0/); assert.match(dec[1], /\$0 == "replace"\s*\n\s*StrCpy \$KrOld "replace"\s*\n\s*\$\{Else\}\s*\n\s*StrCpy \$KrOld "keep"/);
+  assert.match(dec[1], /FileExists\} "\$APPDATA\\KurokawaReader\\handover\\marker\.json"\s*\n\s*StrCpy \$KrOld "replace"/, 'a finished hand-over: replace');
+  assert.match(dec[1], /ElseIfNot\} \$\{FileExists\} "\$APPDATA\\KurokawaReader\\IndexedDB\\\*\.\*"\s*\n\s*StrCpy \$KrOld "replace"\s*\n\s*\$\{Else\}\s*\n\s*StrCpy \$KrOld "keep"/, 'no library: replace; else keep');
+  const rep = /!macro KR_REPLACE_ELECTRON([\s\S]*?)!macroend/.exec(hooks)[1];
+  const at = (re) => rep.search(re);
+  assert.ok(at(/!insertmacro KR_OLD_DECISION/) > at(/!insertmacro KR_FIND_ELECTRON/), 'decided after it is found');
+  const gate = at(/\$\{AndIf\} \$KrOld == "replace"/);
+  for (const step of [/KR_REPOINT_LNK "\$DESKTOP/, /RMDir \/r "\$KrOldDir"/, /DeleteRegKey HKCU "\$\{KR_UNINST\}\\\$KrOldKey"/]) assert.ok(gate > 0 && at(step) > gate, 'only under the replace gate: ' + step);
+  assert.ok(/!include FileFunc\.nsh/.test(hooks), 'GetOptions available to the hooks');
+}
 assert.match(page, /Function KrAfterInstall\s*\n\s*!ifmacrodef KR_TRACE\s*\n\s*!insertmacro KR_TRACE "success"/);
 // (Stage R6c.) The setup program's silent switches, /KRDESK=0|1 and /KRASSOC=0|1, read at the top of KrAfterInstall
 // — before the one screen's choices are applied, only when the screen was not used, never opening the app — and the

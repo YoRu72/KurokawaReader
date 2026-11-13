@@ -242,6 +242,31 @@ async function behaviour() {
   ok(await page.isEnabled('.browse'), 'a new folder can be chosen (the Electron folder is removed)');
   await ctx.close();
 
+  // The Electron build found, its library NOT handed over (no hand-over on the disk): it is kept beside the new one, the
+  // page says so, and the done screen says what to do with a button that opens it.
+  ({ page, ctx } = await open({ lang: 'en', dark: '0', existing: 'electron', old: 'keep', speed: 8, runAfter: false }));
+  eq((await text(page, '#go')).trim(), 'Install', 'kept beside it: a new install, not an update');
+  ok((await text(page, '.tile-line')).startsWith(WORDS.en.electronKeepLine), 'says the earlier one stays until it carried the library over');
+  await page.evaluate(() => { const r = document.getElementById('opt-run'); if (r && r.checked) r.click(); });
+  await page.click('#go');
+  await page.waitForFunction(() => document.getElementById('app').getAttribute('data-view') === 'done', null, { timeout: 8000 });
+  eq((await text(page, '#old-note')).trim(), WORDS.en.oldKeepDone, 'the done screen: open the previous KurokawaReader once');
+  ok(await page.isVisible('#open-old'), '… with its button');
+  await page.click('#open-old');
+  await page.waitForFunction(() => (window.__setupLog || []).some((c) => c[0] === 'openOld'));
+  ok(true, 'the button opens the previous KurokawaReader');
+  await ctx.close();
+  // (With «Open KurokawaReader when done»: the new app opened, and the window stays for the note.)
+  ({ page, ctx } = await open({ lang: 'en', dark: '0', existing: 'electron', old: 'keep', speed: 8 }));
+  await page.click('#go');
+  await page.waitForFunction(() => (window.__setupLog || []).some((c) => c[0] === 'openApp'), null, { timeout: 8000 });
+  await page.waitForTimeout(2200);
+  ok(!(await log(page)).some((c) => c[0] === 'close') && await page.isVisible('#open-old'), 'opened when done, the window kept with the note');
+  await ctx.close();
+  ({ page, ctx } = await open({ lang: 'ar', dark: '1', existing: 'electron', old: 'keep' }));
+  ok((await text(page, '.tile-line')).startsWith(WORDS.ar.electronKeepLine), 'the same in Arabic');
+  await ctx.close();
+
   // Same version: reinstall; fake detect with no language → the browser's.
   ({ page, ctx } = await open({ dark: '1', existing: 'rust', from: '0.72.0' }));
   eq((await text(page, '#go')).trim(), 'Reinstall', 'the same version: Reinstall');

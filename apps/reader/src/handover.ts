@@ -28,11 +28,11 @@ import { backupManifest, readManifest, restoreManifest, type BackupParts } from 
 export interface MarkerFile { rel: string; size: number; sha256: string }
 export interface Counts { books: number; copied: number; linked: number; files: number; meta: number; local: number; highlights: number; bookmarks: number; bytes: number }
 export interface Marker { app: string; kind: 'handover'; format: number; id: string; createdAt: number; from?: { shell?: string; version?: string; platform?: string; portable?: boolean }; counts?: Partial<Counts>; bytes: number; files: MarkerFile[] }
-export interface Found { found: boolean; dir?: string; marker?: Marker; state?: { id: string; state: string; at: number } | null; problems?: string[]; looked?: string[] }
+export interface Found { found: boolean; dir?: string; marker?: Marker; state?: { id: string; state: string; at: number } | null; problems?: string[]; looked?: string[]; /** none found: the earlier (Electron) copy's library still in its data folder, its program still installed */ electron?: { library: boolean; program: boolean } }
 export interface HandoverApi {
   shell: 'electron' | 'tauri';
   // the writing half (the Electron build)
-  begin?(o: { need: number }): Promise<{ ok: boolean; reason?: string; free?: number; need?: number; part?: string }>;
+  begin?(o: { need: number; unknownOk?: boolean }): Promise<{ ok: boolean; reason?: string; free?: number; need?: number; profile?: number; part?: string }>;
   write?(rel: string, data: Uint8Array, append: boolean): Promise<{ size: number }>;
   shellFiles?(): Promise<{ rel: string; size: number }[]>;
   readPart?(rel: string): Promise<ArrayBuffer>;
@@ -44,9 +44,13 @@ export interface HandoverApi {
   find?(dir?: string): Promise<Found>;
   verifyDir?(dir: string): Promise<{ ok: boolean; bad?: string[] }>;
   read?(dir: string, rel: string): Promise<ArrayBuffer>;
+  readRange?(dir: string, rel: string, at: number, len: number): Promise<ArrayBuffer>;
   mark?(o: { id: string; state: 'restored' | 'declined'; counts?: Partial<Counts> }): Promise<boolean>;
   free?(dir: string): Promise<{ freed: number }>;
+  openOld?(): Promise<boolean>;
 }
+/** The piece a large file of a hand-over is brought in (8 MiB), as the Electron build wrote it. */
+export const HANDOVER_PIECE = 8 * 1024 * 1024;
 export const handoverApi = (): HandoverApi | undefined => (window as unknown as { kurokawaHandover?: HandoverApi }).kurokawaHandover;
 
 /** Kept in localStorage: the hand-over brought back here (its id), and one under way (a broken-off restore is taken
@@ -152,7 +156,7 @@ async function opfsPut(path: string, blob: Blob): Promise<void> {
 export interface MakeProgress { step: 'prepare' | 'files' | 'records' | 'check' | 'finish'; done: number; total: number }
 export type MakeResult =
   | { ok: true; dir: string; id: string; counts: Counts; bytes: number }
-  | { ok: false; reason: 'unsupported' | 'space' | 'verify' | 'error'; free?: number; need?: number; detail?: string };
+  | { ok: false; reason: 'unsupported' | 'space' | 'unknown' | 'verify' | 'error'; free?: number; need?: number; profile?: number; detail?: string };
 const CHUNK = 8 * 1024 * 1024;
 const enc8 = new TextEncoder();
 const keyOf = (b: { fileName: string; size: number }) => `${b.fileName}:${b.size}`;
@@ -161,7 +165,7 @@ const remoteKey = (r?: Book['remote']) => (r?.source && r.id ? `${r.source}\u000
 /** The whole library written as a hand-over, read back and checked, and marked: what the bridge build calls before it
  *  installs the Rust build — which it must NOT do unless this answers ok. A failure leaves no hand-over (the shell's
  *  part folder is let go) and changes nothing of the reader's data. */
-export async function makeHandover(onProgress?: (p: MakeProgress) => void): Promise<MakeResult> {
+export async function makeHandover(onProgress?: (p: MakeProgress) => void, o: { spaceUnknownOk?: boolean } = {}): Promise<MakeResult> {
   const api = handoverApi();
   if (!api?.begin || !api.write || !api.verify || !api.finish || !api.readPart) return { ok: false, reason: 'unsupported' };
   const say = (step: MakeProgress['step'], done = 0, total = 0) => { try { onProgress?.({ step, done, total }); } catch { /* the caller's */ } };
@@ -177,8 +181,10 @@ export async function makeHandover(onProgress?: (p: MakeProgress) => void): Prom
     for (const b of books) { if (b.cover instanceof Blob) need += b.cover.size; if (b.coverOrig instanceof Blob) need += b.coverOrig.size; }
     // (The origin's own count — the stores, the caches and the private files together — when it is the larger.)
     try { const u = (await navigator.storage?.estimate?.())?.usage; if (u && u > need) need = u; } catch { /* the sum above */ }
-    const begun = await api.begin({ need });
-    if (!begun.ok) return { ok: false, reason: begun.reason === 'space' ? 'space' : 'error', free: begun.free, need: begun.need };
+    // (The shell could not read the disk's free space: «unknown», with its estimate — the page asks the reader, and
+    // only their «go on» makes it — spaceUnknownOk.)
+    const begun = await api.begin({ need, ...(o.spaceUnknownOk ? { unknownOk: true } : {}) });
+    if (!begun.ok) return { ok: false, reason: begun.reason === 'space' ? 'space' : begun.reason === 'unknown' ? 'unknown' : 'error', free: begun.free, need: begun.need, profile: begun.profile };
     const written: { rel: string; size: number }[] = [];
     const putBlob = async (rel: string, blob: Blob) => {
       if (!blob.size) await api.write!(rel, new Uint8Array(0), false);
@@ -309,7 +315,24 @@ export async function restoreHandover(f: Found, onProgress?: (p: RestoreProgress
   const bytes = (rel: string) => api.read!(dir, rel);
   const text = async (rel: string) => (has.has(rel) ? new TextDecoder().decode(await bytes(rel)) : undefined);
   const lines = async <T>(rel: string): Promise<T[]> => ((await text(rel)) ?? '').split('\n').filter(Boolean).map((l) => JSON.parse(l) as T);
-  const blobAt = async (rel: string, type = '', name?: string): Promise<Blob> => { const ab = await bytes(rel); return name !== undefined ? new File([ab], name, { type }) : new Blob([ab], { type }); };
+  // A file read in pieces (PIECE bytes each, through the shell's range read) and each piece made a Blob at once: the
+  // book is never one buffer in this page, and the Blob put in the store is made of the pieces' Blobs (the browser
+  // keeps their bytes once — Chromium on disk when large —, not a second copy). A file of a shell without the range
+  // read, or no bigger than one piece, is read whole.
+  const sizeOf = new Map(marker.files.map((x) => [x.rel, x.size]));
+  const blobAt = async (rel: string, type = '', name?: string): Promise<Blob> => {
+    const size = sizeOf.get(rel) ?? -1;
+    let parts: BlobPart[];
+    if (api.readRange && size > HANDOVER_PIECE) {
+      parts = [];
+      for (let at = 0; at < size;) {
+        const ab = await api.readRange(dir, rel, at, Math.min(HANDOVER_PIECE, size - at));
+        if (!ab.byteLength) throw new Error(`${rel}: ended at ${at} of ${size} bytes`);
+        parts.push(new Blob([ab])); at += ab.byteLength;
+      }
+    } else parts = [await bytes(rel)];
+    return name !== undefined ? new File(parts, name, { type }) : new Blob(parts, { type });
+  };
   const withPictures = async <T>(v: unknown): Promise<T> => {
     const tags: Tagged[] = []; tagsIn(v, tags); const got = new Map<Tagged, Blob>();
     for (const t of tags) if (typeof t.rel === 'string' && has.has(t.rel)) got.set(t, await blobAt(t.rel, String(t.type ?? ''), typeof t.name === 'string' ? t.name : undefined));

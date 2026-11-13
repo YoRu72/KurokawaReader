@@ -12,12 +12,21 @@
 ;      same class names as Electron's, so they now open the new program);
 ;   3. its program files removed (retried while its processes end; else at the next restart), its uninstall entry and
 ;      install key removed.
+;
+; ONLY WHEN IT IS SAFE (0.62.0, the switch-over): the Electron copy is replaced only when its library has been handed
+; over — a finished hand-over in its data folder (handover\marker.json: written last, after every file was checked, by
+; the Electron «bridge» build) — or when it has no library at all (no IndexedDB in its data folder). Otherwise it is
+; KEPT, untouched, beside the new program: the person opens it once, it updates itself to the bridge build, which
+; makes the hand-over and runs this installer again — then it is replaced. The setup program passes its own decision
+; as /KROLD=keep|replace (setup/src-tauri/src/logic.rs old_decision, the same rule); with no switch the rule is applied
+; here; anything else keeps it. (CI: installtest.ps1 / setuptest.ps1 check both ways.)
 ; Its DATA FOLDER (%APPDATA%\KurokawaReader — the library, settings, the hand-over backup) is never touched, and its
 ; uninstaller is never run (it would take the file types away from the new program). An Electron install for all users
 ; (HKLM, Program Files) needs an administrator to remove: it is left as it is (the new program's per-user
 ; registrations come first anyway).
 !define KR_HOOKS
 !include LogicLib.nsh
+!include FileFunc.nsh
 
 ; (Set by the one-page screen, installer/onepage.nsh, when it is used: 1 = the screen, its choices below.)
 Var KrGui
@@ -26,6 +35,7 @@ Var KrRun
 Var KrAssoc
 Var KrOldDir
 Var KrOldKey
+Var KrOld
 
 !define KR_UNINST "Software\Microsoft\Windows\CurrentVersion\Uninstall"
 
@@ -100,6 +110,33 @@ Var KrOldKey
   ${EndIf}
 !macroend
 
+; Whether the Electron copy found may be replaced → $KrOld = "replace" | "keep". /KROLD=keep|replace (the setup
+; program's decision) wins; else: replace when its library was handed over (a finished hand-over's marker in its data
+; folder) or when it has no library (no IndexedDB there); keep otherwise — and for any other value.
+!macro KR_OLD_DECISION
+  Push $0
+  StrCpy $KrOld ""
+  ClearErrors
+  ${GetOptions} $CMDLINE "/KROLD=" $0
+  ${IfNot} ${Errors}
+    ${If} $0 == "replace"
+      StrCpy $KrOld "replace"
+    ${Else}
+      StrCpy $KrOld "keep"
+    ${EndIf}
+  ${Else}
+    ${If} ${FileExists} "$APPDATA\KurokawaReader\handover\marker.json"
+      StrCpy $KrOld "replace"
+    ${ElseIfNot} ${FileExists} "$APPDATA\KurokawaReader\IndexedDB\*.*"
+      StrCpy $KrOld "replace"
+    ${Else}
+      StrCpy $KrOld "keep"
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  Pop $0
+!macroend
+
 ; A shortcut of the Electron build, where there is one, made anew for the new program.
 !macro KR_REPOINT_LNK LNK
   ${If} ${FileExists} "${LNK}"
@@ -113,7 +150,15 @@ Var KrOldKey
   Push $R8
   Push $R9
   !insertmacro KR_FIND_ELECTRON
+  !insertmacro KR_OLD_DECISION
   ${If} $KrOldDir != ""
+  ${AndIf} $KrOld != "replace"
+    DetailPrint "KurokawaReader: the earlier version in $KrOldDir is kept beside this one: its library has not been handed over yet"
+    !insertmacro KR_TRACE "electron-kept"
+  ${EndIf}
+  ${If} $KrOldDir != ""
+  ${AndIf} $KrOld == "replace"
+    !insertmacro KR_TRACE "electron-replaced"
     DetailPrint "KurokawaReader: replacing the earlier version in $KrOldDir (its data is kept)"
     ; 1. Shortcuts. (The Start menu's: where Tauri made its own in a folder, the old one goes; else it is made anew.)
     !insertmacro KR_REPOINT_LNK "$DESKTOP\KurokawaReader.lnk"

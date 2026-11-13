@@ -84,9 +84,9 @@ assert.deepEqual(RS.expectedSha(`sha256:${h}`, g), { error: 'checksum' });
 assert.deepEqual(RS.expectedSha(null, null), { error: 'nochecksum' });
 assert.equal(RS.cmpVersion('1.0.0-beta.2', '1.0.0'), -1); assert.ok(RS.cmpVersion('0.10.0', '0.9.9') > 0);
 
-// The switch: OFF by default; its hand-over gate there, by its name, and packaged with the app.
+// The switch: ON since 0.62.0 (the bridge build); its hand-over gate there, by its name, and packaged with the app.
 const main = fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
-assert.match(main, /^const RUST_SWITCH = false;$/m, 'RUST_SWITCH is off until the switch-over');
+assert.match(main, /^const RUST_SWITCH = true;$/m, 'RUST_SWITCH is on since the switch-over (0.62.0): the Electron build is the bridge build');
 assert.match(main, /await handover\.prepare\(/); assert.match(main, /const handover = require\('\.\/handover\.cjs'\);/);
 const ho = require(path.join(ROOT, 'desktop', 'handover.cjs'));
 assert.equal(typeof ho.prepare, 'function');

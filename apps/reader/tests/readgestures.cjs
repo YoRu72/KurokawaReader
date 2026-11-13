@@ -186,6 +186,18 @@ const CAP = () => {
       ok(`${tag}: sensitivity low: a slow 130 px drag does`, await turned(drag(206, 450, fw * 130, 1000, 5)) === 1);
       await setVisual({ swipeSensitivity: 'normal' }); await openBook(key); await atMiddle();
 
+      // A turn by a swipe, the phone turned at once (the width changes, the text reflows): the new chapter stays — the
+      // place a re-settle puts back is the one the swipe went to, never the chapter left (src/views/reader.ts readerTurn).
+      {
+        await atMiddle(); const c0 = await chapterNow();
+        await gesture(drag(206, 450, fw * 200));
+        for (let i = 1; i <= 6; i++) { await p.setViewportSize({ width: Math.round(412 + (915 - 412) * i / 6), height: Math.round(915 + (412 - 915) * i / 6) }); await p.waitForTimeout(40); }
+        await p.waitForTimeout(1200); const c1 = await chapterNow();
+        await p.setViewportSize({ width: 412, height: 915 }); await p.waitForTimeout(1200); const c2 = await chapterNow();
+        ok(`${tag}: a swipe turn, the phone turned at once: the new chapter stays (and when turned back)`, c1 === c0 + 1 && c2 === c0 + 1, { c0, c1, c2 });
+        await hideBars();
+      }
+
       /* ---------- 3. Taps in the zone ---------- */
       const top0 = await p.evaluate(() => document.querySelector('.reader-scroll').scrollTop);
       await p.touchscreen.tap(inZone, 820); await p.waitForTimeout(400);

@@ -691,10 +691,16 @@
     await check('setZoom: the interface at 125 %, then 100 %', false, async function () {
       // (Back to the page's own size after: Appearance → size, 110 % unless chosen — src/ui/pcshell.ts.)
       var own = 1.1; try { own = Number(root.localStorage.getItem('kr.uiSize')) || 1.1; } catch (e) { /* the default */ }
-      var w0 = root.innerWidth; kd.setZoom(1.25); await sleep(800); var w1 = root.innerWidth; var css = ''; try { css = root.document.documentElement.style.zoom; } catch (e) { /* no page */ }
-      kd.setZoom(own); await sleep(800); var w2 = root.innerWidth;
-      must(w2 === w0 || Math.abs(w2 - w0) < 2, 'not back: ' + w0 + ' → ' + w2);
-      return (css ? 'CSS zoom (this build\'s Tauri has no set_zoom)' : 'the web view zoomed: ' + w0 + ' → ' + w1 + ' px wide');
+      // (Honest: the page must SEE the change — its width in CSS pixels moved by the web view's zoom, or the page's
+      // own CSS zoom in force where the web view's did nothing: WebKitGTK answered set_zoom and nothing changed.)
+      var cssOf = function () { try { return root.document.documentElement.style.zoom || ''; } catch (e) { return ''; } };
+      var w0 = root.innerWidth; kd.setZoom(1.25);
+      var w1 = w0, css = ''; for (var zi = 0; zi < 30; zi++) { await sleep(100); w1 = root.innerWidth; css = cssOf(); if (Math.abs(w1 - w0) >= 2 || css === '1.25') break; }
+      var way = root.__KR_ZOOM_WAY__ || '?';
+      must(Math.abs(w1 - w0) >= 2 || css === '1.25', 'nothing the page could see: ' + w0 + ' → ' + w1 + ' px wide, CSS zoom «' + css + '», way ' + way);
+      kd.setZoom(own); var w2 = w1; for (var zj = 0; zj < 30; zj++) { await sleep(100); w2 = root.innerWidth; if (Math.abs(w2 - w0) < 2 && cssOf() !== '1.25') break; }
+      must(Math.abs(w2 - w0) < 2 && cssOf() !== '1.25', 'not back: ' + w0 + ' → ' + w2 + ', CSS zoom «' + cssOf() + '»');
+      return Math.abs(w1 - w0) >= 2 ? 'the web view zoomed: ' + w0 + ' → ' + w1 + ' px wide' : 'the page zoomed with CSS (' + css + '; the web view\'s zoom showed nothing here)';
     }, 10000);
     await check('setProgress: the taskbar\'s progress', false, async function () {
       must(kd.setProgress(0.4) === undefined, 'answered');

@@ -3,9 +3,10 @@
 #   0. an ELECTRON KurokawaReader made to look installed (its folder, uninstall entry, data folder, desktop shortcut,
 #      kurokawareader:// link), as electron-builder's per-user installer leaves it;
 #   1. REAL screenshots of the installer's window (options closed, then open) and later of the first-run screen;
-#   2. the installer run silently (/S): its time; files, uninstall entry, Start-menu and desktop shortcuts, file types
-#      and the link checked; the Electron copy's program removed, its data kept, its shortcut and link pointing at the
-#      new program;
+#   2. the installer run silently (/S): its time; files, uninstall entry, Start-menu shortcut, file types checked; the
+#      Electron copy — its library NOT handed over (an IndexedDB folder, no hand-over) — KEPT beside it, untouched;
+#      2b. a finished hand-over's marker put in its data folder and the installer run again (as the bridge build runs
+#      it): the Electron copy's program removed, its data kept, its shortcut and link pointing at the new program;
 #   3. the installed app started twice with KR_BOOTTIME (a cold start, then a warm one: first paint, app ready);
 #   4. the installed app's self-test (KR_SELFTEST);
 #   5. a second build with a higher version made, served as a fake release on 127.0.0.1 (updateserver.cjs: Range, the
@@ -71,6 +72,9 @@ Set-ItemProperty $ek DisplayName 'KurokawaReader'; Set-ItemProperty $ek InstallL
 Set-ItemProperty $ek UninstallString "`"$old\Uninstall KurokawaReader.exe`" /currentuser"
 $edata = Join-Path $env:APPDATA 'KurokawaReader'; New-Item -ItemType Directory -Force -Path $edata | Out-Null
 Set-Content (Join-Path $edata 'kr-ci-electron-data.txt') 'the Electron library'
+# (A library in it — its IndexedDB folder — and no hand-over yet: the first install must KEEP the Electron copy.)
+New-Item -ItemType Directory -Force -Path (Join-Path $edata 'IndexedDB\app_kurokawa_0.indexeddb.leveldb') | Out-Null
+Remove-Item (Join-Path $edata 'handover') -Recurse -Force -ErrorAction SilentlyContinue
 $desk = [Environment]::GetFolderPath('Desktop'); $deskLnk = Join-Path $desk 'KurokawaReader.lnk'
 $l = (New-Object -ComObject WScript.Shell).CreateShortcut($deskLnk); $l.TargetPath = (Join-Path $old 'KurokawaReader.exe'); $l.Save()
 New-Item 'HKCU:\Software\Classes\kurokawareader\shell\open\command' -Force | Out-Null
@@ -96,13 +100,22 @@ Row 'per user, no admin' ($dir -like "$env:LOCALAPPDATA*") $dir
 Row '7-Zip shipped' ((Get-ChildItem $dir -Recurse -Filter '7za.exe' | Measure-Object).Count -gt 0) 'resources\7zip' $false
 $start = Get-ChildItem (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs') -Recurse -Filter 'KurokawaReader.lnk' | Where-Object { (LnkTarget $_.FullName) -eq $exe }
 Row 'Start-menu shortcut' ($start.Count -gt 0) (($start | ForEach-Object { $_.FullName }) -join '; ')
-Row 'desktop shortcut → new program (was Electron''s)' ((LnkTarget $deskLnk) -eq $exe) (LnkTarget $deskLnk)
 $cls = (Get-ItemProperty 'HKCU:\Software\Classes\.epub' -ErrorAction SilentlyContinue).'(default)'
 $cmd = if ($cls) { (Get-ItemProperty "HKCU:\Software\Classes\$cls\shell\open\command" -ErrorAction SilentlyContinue).'(default)' } else { '' }
 Row '.epub opens with it' ($cmd -like "*$exe*") ".epub → $cls → $cmd"
+# (0.62.0: its library not handed over → the Electron copy KEPT beside the new one, untouched.)
+Row 'Electron copy kept (library not handed over)' ((Test-Path (Join-Path $old 'resources\app.asar')) -and (Test-Path (Join-Path $old 'KurokawaReader.exe')) -and (Test-Path $ek)) "$old; entry $(Test-Path $ek)"
+Row 'Electron data kept' (Test-Path (Join-Path $edata 'kr-ci-electron-data.txt')) $edata
+# 2b. The Electron «bridge» build's hand-over finished (its marker, written last, after every file was checked): the
+# installer run again — as the bridge build runs it — now REPLACES the Electron copy.
+New-Item -ItemType Directory -Force -Path (Join-Path $edata 'handover') | Out-Null
+Set-Content (Join-Path $edata 'handover\marker.json') '{"app":"KurokawaReader","kind":"handover","format":1,"id":"ci","createdAt":0,"bytes":0,"files":[]}'
+$t = Measure-Command { $p = Start-Process $setup1 -ArgumentList '/S' -PassThru -Wait }
+Row 'install again after the hand-over' ($p.ExitCode -eq 0) ("{0:N1} s, exit {1}" -f $t.TotalSeconds, $p.ExitCode)
+Row 'desktop shortcut → new program (was Electron''s)' ((LnkTarget $deskLnk) -eq $exe) (LnkTarget $deskLnk)
 $link = (Get-ItemProperty 'HKCU:\Software\Classes\kurokawareader\shell\open\command' -ErrorAction SilentlyContinue).'(default)'
 Row 'kurokawareader:// → new program' ($link -like "*$exe*") $link
-Row 'Electron program removed' (-not (Test-Path (Join-Path $old 'resources\app.asar'))) $old
+Row 'Electron program removed (hand-over found)' (-not (Test-Path (Join-Path $old 'resources\app.asar'))) $old
 Row 'Electron uninstall entry removed' (-not (Test-Path $ek)) $ek
 Row 'Electron data kept' (Test-Path (Join-Path $edata 'kr-ci-electron-data.txt')) $edata
 

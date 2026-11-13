@@ -7,6 +7,7 @@
 // register the kinds of file themselves). Everything here is also in Settings; «Start reading» (or Escape) closes it
 // for good. Not shown under the self-test or the engine test (their own profiles), nor in an automated browser.
 import { h, icon } from './dom';
+import { brandIcon } from './brandIcon';
 import type { Found } from '../handover';
 import { t, LANGS, getLang, setLangPref, onLangChange, type Lang } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
@@ -31,7 +32,11 @@ export async function startScreens(): Promise<void> {
     const el = showFirstRun();
     // (Looked for after the screen is up — it never waits on it —, and put in its tile when there is one to offer.)
     const f = await hs().then((m) => m.handoverToOffer()).catch(() => null);
-    if (f && el.isConnected) (el as FirstRunEl).__offer?.(f, true);
+    if (f && el.isConnected) { (el as FirstRunEl).__offer?.(f, true); return; }
+    // (None to offer: the earlier copy's library may still be in it — never handed over: said at once, truthfully.)
+    const a = (window as unknown as { kurokawaHandover?: { find?(): Promise<Found> } }).kurokawaHandover;
+    const g = a?.find ? await a.find().catch(() => null) : null;
+    if (g && !g.found && g.electron?.library && el.isConnected) (el as FirstRunEl).__left?.(g);
     return;
   }
   // (As before the screens were one: a moment after the start, out of its way.)
@@ -39,7 +44,7 @@ export async function startScreens(): Promise<void> {
   await hs().then((m) => m.handoverAtStart()).catch(() => undefined);
 }
 
-type FirstRunEl = HTMLElement & { __offer?: (f: Found, atStart: boolean) => void };
+type FirstRunEl = HTMLElement & { __offer?: (f: Found, atStart: boolean) => void; __left?: (f: Found) => void };
 
 /** The screen, over whatever is under it; → its element. `find`: how «Bring my library» looks for a hand-over (the
  *  shell's window.kurokawaHandover by default). */
@@ -49,7 +54,8 @@ export function showFirstRun(o: { find?: () => Promise<Found | null> } = {}): HT
   const el: FirstRunEl = h('div', { class: 'firstrun', role: 'dialog', 'aria-modal': 'true' });
   let laterSaid = false;
   // (The library's tile: idle → looking → none, or the hand-over's offer — its own states from there on.)
-  let bring: { state: 'idle' | 'busy' | 'none' } | { state: 'offer'; f: Found; atStart: boolean } = { state: 'idle' };
+  // (left: no hand-over, but the earlier copy's library is still in it — it must be opened once and updated.)
+  let bring: { state: 'idle' | 'busy' | 'none' } | { state: 'left'; program: boolean } | { state: 'offer'; f: Found; atStart: boolean } = { state: 'idle' };
   let offerTile: HTMLElement | null = null; let restoring = false; let restored = false;
   const close = (reload = false) => {
     if (restoring) return;
@@ -92,18 +98,25 @@ export function showFirstRun(o: { find?: () => Promise<Found | null> } = {}): HT
 
   const render = () => {
     const s = getSettings();
-    const bringText = bring.state === 'busy' ? t('frBringBusy') : bring.state === 'none' ? (laterSaid ? t('handoverLaterHint') : t('frBringNone')) : t('frBringBody');
+    const bringText = bring.state === 'busy' ? t('frBringBusy') : bring.state === 'left' ? (bring.program ? t('frBringLeft') : t('frBringLeftNoProgram')) : bring.state === 'none' ? (laterSaid ? t('handoverLaterHint') : t('frBringNone')) : t('frBringBody');
     const canDefault = !!desk?.openDefaultApps && (desk.platform === 'win32' || desk.platform === 'darwin');
     el.replaceChildren(h('div', { class: 'fr-card' },
       h('div', { class: 'fr-hero' },
-        h('div', { class: 'upd-badge fr-badge' }, h('img', { src: 'icons/icon.svg', alt: '', 'data-brand': '' })),
+        h('div', { class: 'upd-badge fr-badge' }, h('img', { src: brandIcon() || 'icons/icon.svg', alt: '', 'data-brand': '' })),
         h('div', { class: 'fr-hero-text' }, h('h1', null, t('frWelcome')), h('p', null, t('frSub')))),
       seg<Lang>(t('language'), LANGS.map(([c, n]) => [c, n]), getLang(), (v) => { setLangPref(v); }, true),
       seg<'system' | 'light' | 'dark'>(t('appearance'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode === 'light' || s.uiMode === 'dark' ? s.uiMode : 'system', (v) => { updateSettings({ uiMode: v }); render(); }),
       bring.state === 'offer' ? offer(bring) : h('section', { class: 'fr-tile' },
         h('span', { class: 'fr-tile-icon' }, icon('library')),
-        h('div', { class: 'fr-tile-text' }, h('b', null, t('frBringTitle')), h('p', { 'aria-live': 'polite' }, bringText)),
-        bring.state === 'idle' || (bring.state === 'none' && laterSaid) ? h('button', { type: 'button', class: 'btn tonal small fr-bring', onclick: () => void doBring() }, icon('download'), t('frBringBtn')) : null),
+        h('div', { class: 'fr-tile-text' }, h('b', null, t('frBringTitle')), h('p', { 'aria-live': 'polite' }, bringText),
+          (bring.state === 'none' && !laterSaid) || bring.state === 'left' ? h('p', { class: 'fr-backup-hint' }, t('frBackupHint')) : null),
+        h('div', { class: 'fr-tile-actions' },
+          bring.state === 'idle' || (bring.state === 'none' && laterSaid) ? h('button', { type: 'button', class: 'btn tonal small fr-bring', onclick: () => void doBring() }, icon('download'), t('frBringBtn')) : null,
+          bring.state === 'left' && bring.program ? h('button', { type: 'button', class: 'btn tonal small fr-open-old', onclick: () => { const a = (window as unknown as { kurokawaHandover?: { openOld?(): Promise<boolean> } }).kurokawaHandover; void a?.openOld?.().catch(() => false); } }, icon('external'), t('frOpenOld')) : null,
+          bring.state === 'left' ? h('button', { type: 'button', class: 'btn outlined small fr-bring', onclick: () => void doBring() }, icon('rotate'), t('frLookAgain')) : null,
+          // (A library the earlier version did not hand over — a copy before the bridge build —: a full backup made
+          // there, restored here; the screen goes first, the restore's own sheet over the library.)
+          bring.state === 'busy' ? null : h('button', { type: 'button', class: 'btn outlined small fr-backup', onclick: () => { close(); void import('./restoresheet').then((m) => m.restoreSheet()); } }, icon('undo'), t('frBackupBtn')))),
       canDefault ? h('section', { class: 'fr-tile' },
         h('span', { class: 'fr-tile-icon' }, icon('books')),
         h('div', { class: 'fr-tile-text' }, h('b', null, t('frDefaultTitle')), h('p', null, t('frDefaultBody'))),
@@ -119,8 +132,9 @@ export function showFirstRun(o: { find?: () => Promise<Found | null> } = {}): HT
       if (o.find) f = await o.find();
       else { const a = (window as unknown as { kurokawaHandover?: { find?(): Promise<Found> } }).kurokawaHandover; f = a?.find ? await a.find() : null; }
     } catch { f = null; }
-    bring = f?.found ? { state: 'offer', f, atStart: false } : { state: 'none' }; render();
+    bring = f?.found ? { state: 'offer', f, atStart: false } : f?.electron?.library ? { state: 'left', program: !!f.electron.program } : { state: 'none' }; render();
   };
+  el.__left = (f) => { if (bring.state !== 'idle' || f.found || !f.electron?.library) return; bring = { state: 'left', program: !!f.electron.program }; render(); };
   el.__offer = (f, atStart) => { if (bring.state === 'offer' || !f.found) return; bring = { state: 'offer', f, atStart }; render(); };
   const off = onLangChange(() => render());
   render();

@@ -211,6 +211,21 @@ async function nodePart() {
   tCalls = []; assert.equal(kd.setZoom(1.25), undefined); assert.equal(kd.setZoom(3), undefined); assert.equal(kd.setZoom('x'), undefined);
   assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_set_zoom', args: { f: 1.25 } }]); sent.kr_set_zoom = ['f'];
   eCalls = []; pre.setZoom(1.25); assert.equal(eCalls.length, 0, 'the preload zooms in its own process');
+  // setZoom on Linux: WebKitGTK answered set_zoom and the page saw nothing (its width the same) → the web view back at
+  // 100 % and the page's CSS zoom from then on; where the width moves, the web view's zoom; elsewhere trusted at once.
+  {
+    const zoomRun = async (os, moves) => {
+      const zc = []; const w = { innerWidth: 1000 };
+      w.__TAURI__ = { core: { invoke: (cmd, args) => { zc.push(`${cmd} ${JSON.stringify(args)}`); if (cmd === 'kr_set_zoom' && moves) w.innerWidth = Math.round(1000 / args.f); return Promise.resolve(cmd === 'kr_set_zoom' ? true : null); } } };
+      loadBridge({ os, arch: 'x64' }, w);
+      w.kurokawaDesktop.setZoom(1.1); await new Promise((r) => setTimeout(r, 1000));
+      w.kurokawaDesktop.setZoom(1.25); await new Promise((r) => setTimeout(r, moves ? 900 : 100));
+      return { calls: zc.filter((c) => c.startsWith('kr_set_zoom')), way: w.__KR_ZOOM_WAY__ };
+    };
+    assert.deepEqual(await zoomRun('linux', false), { calls: ['kr_set_zoom {"f":1.1}', 'kr_set_zoom {"f":1}'], way: 'css' }, 'Linux, nothing seen: CSS zoom from then on');
+    assert.deepEqual(await zoomRun('linux', true), { calls: ['kr_set_zoom {"f":1.1}', 'kr_set_zoom {"f":1.25}'], way: 'native' }, 'Linux, the width moved: the web view\'s zoom');
+    assert.deepEqual(await zoomRun('win32', false), { calls: ['kr_set_zoom {"f":1.1}', 'kr_set_zoom {"f":1.25}'], way: 'native' }, 'Windows: trusted');
+  }
   // setProgress without a number: taken away (-1); setFullscreen with a boolean: as it is.
   tCalls = []; kd.setProgress(); await kd.setFullscreen(false); assert.deepEqual(JSON.parse(JSON.stringify(tCalls.map((c) => c.args))), [{ p: -1 }, { v: false }]);
   // The window's changes one after another (a book closed and another opened: immersive off, then on; the zoom): each
@@ -351,7 +366,10 @@ async function nodePart() {
   assert.match(main, /\.invoke_handler\(main_only\(tauri::generate_handler!\[/, 'the commands guarded (main_only)');
   assert.match(main, /let allowed = label == "main" \|\| \(label\.starts_with\(browser::PREFIX\) && command == browser::DELIVER\);/);
   assert.match(fs.readFileSync(path.join(src, 'browser.rs'), 'utf8'), /pub const DELIVER: &str = "kr_browser_deliver";/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(TAURI, 'src-tauri', 'capabilities', 'default.json'), 'utf8')).windows, ['main'], 'capabilities for the main window only');
+  const caps = JSON.parse(fs.readFileSync(path.join(TAURI, 'src-tauri', 'capabilities', 'default.json'), 'utf8'));
+  assert.deepEqual(caps.windows, ['main'], 'capabilities for the main window only');
+  // (The notification plugin's script asks is_permission_granted at every load: refused by the ACL, a page error.)
+  assert.ok(caps.permissions.includes('notification:default'), 'the notification plugin\'s permissions granted to the main window');
   assert.match(main, /browser::on_event\(window, event\)/, 'browser windows closed with the main one');
   // (Stage R2's plugin, registered first, and the files the system hands the app: the launch's own, a Mac's.)
   assert.match(main, /let mut builder = tauri::Builder::default\(\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if openfile::single_instance_possible\(\) \{\s*builder = builder\.plugin\(tauri_plugin_single_instance::init\(/, 'single-instance registered first');
@@ -639,7 +657,9 @@ async function pagePart(ported) {
         event: { listen: (n, f) => { window.__listeners.push([n, f]); return Promise.resolve(() => {}); } },
       };
     });
-    await p.addInitScript({ content: `window.__KR_BOOT__ = ${JSON.stringify({ os: 'linux', arch: 'x64' })};\n${BRIDGE}` });
+    // (This fake answers kr_set_zoom true and nothing zooms: on Linux the bridge would then take the page's CSS zoom —
+    // nodePart checks that —; here the web view's zoom is trusted, so each setZoom is sent.)
+    await p.addInitScript({ content: `try { sessionStorage.setItem('kr.zoom.native', '1'); } catch (e) { /* none */ }\nwindow.__KR_BOOT__ = ${JSON.stringify({ os: 'linux', arch: 'x64' })};\n${BRIDGE}` });
     await p.goto(base + '#/');
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
@@ -783,7 +803,9 @@ async function pagePart(ported) {
     await p.evaluate(() => { window.__openQueue.file = [{ name: 'Opened From Outside.txt', path: '/x/Opened From Outside.txt' }]; window.__listeners.filter((l) => l[0] === 'kr:openPending').forEach((l) => l[1]({ event: 'kr:openPending', payload: {} })); });
     await p.waitForFunction(() => /^#\/read\//.test(location.hash), null, { timeout: 15000 });
     await p.waitForSelector('.reader-flow', { timeout: 15000 });
-    const inReader = await p.evaluate(() => document.querySelector('.reader-flow').textContent);
+    // (Book formatting, on by default since 0.61.2, may join words with no-break spaces and break them with soft
+    // hyphens: read as plain spaces, without them.)
+    const inReader = await p.evaluate(() => document.querySelector('.reader-flow').textContent.replace(/[\u00a0\u202f]/g, ' ').replace(/\u00ad/g, ''));
     assert.match(inReader, /Opened from outside, a line of text/, 'the file opened in the reader');
     assert.deepEqual(errors, [], 'page errors');
     await ctx.close();

@@ -155,6 +155,40 @@
   }
   // The interface's size where this build's Tauri cannot zoom the web view: the page zoomed with CSS (1: none).
   function cssZoom(v) { try { document.documentElement.style.zoom = v === 1 ? '' : String(v); } catch (e) { /* no page */ } }
+  // Whether the web view's own zoom shows. Linux: WebKitGTK answered set_zoom without any change the page could see
+  // (the page's width in CSS pixels stayed the same — CI run 43490057742: 1072 → 1072 px), so there it is learnt at
+  // the first change of size and kept for this run of the window (sessionStorage outlives a reload, as the web view's
+  // zoom does). WebView2 and WKWebView zoom (935 → 822, 930 → 819 px). `__KR_ZOOM_WAY__`: 'native' or 'css'.
+  var zoomNow = 1, zoomNative = boot.os === 'linux' ? null : true;
+  try { zoomNow = Number(sessionStorage.getItem('kr.zoom.now')) || 1; var zn = sessionStorage.getItem('kr.zoom.native'); if (zoomNative === null) zoomNative = zn === '1' ? true : zn === '0' ? false : null; } catch (e) { /* none */ }
+  function zoomKeep(v, native) {
+    zoomNow = v; if (native !== undefined) zoomNative = native; window.__KR_ZOOM_WAY__ = zoomNative === false ? 'css' : 'native';
+    try { sessionStorage.setItem('kr.zoom.now', String(v)); if (zoomNative !== null) sessionStorage.setItem('kr.zoom.native', zoomNative ? '1' : '0'); } catch (e) { /* none */ }
+  }
+  /** Resolves true once the page's width moved from `w0` (the web view's zoom came through), false after `ms`. */
+  function widthMoved(w0, ms) {
+    if (typeof window.innerWidth !== 'number') return Promise.resolve(true);
+    return new Promise(function (res) {
+      var left = Math.ceil(ms / 40);
+      (function look() { if (Math.abs(window.innerWidth - w0) >= 2) res(true); else if (left-- <= 0) res(false); else setTimeout(look, 40); })();
+    });
+  }
+  function setZoomNow(v) {
+    if (zoomNative === false) { cssZoom(v); zoomKeep(v); return Promise.resolve(false); }
+    var w0 = window.innerWidth, from = zoomNow;
+    return call('kr_set_zoom', { f: v }).then(function (ok) {
+      // (This build's Tauri has no set_zoom: false, asked again each time — cheap —; only the width check is kept.)
+      if (ok !== true) { cssZoom(v); zoomKeep(v); return false; }
+      cssZoom(1);
+      // (Known to work, or no change of size asked: nothing to see.)
+      if (zoomNative === true || Math.abs(v - from) < 0.01) { zoomKeep(v); return true; }
+      return widthMoved(w0, 700).then(function (moved) {
+        if (moved) { zoomKeep(v, true); return true; }
+        // (Said done, nothing changed: the web view back at 100 % and the page zoomed with CSS from now on.)
+        return call('kr_set_zoom', { f: 1 }).catch(function () {}).then(function () { cssZoom(v); zoomKeep(v, false); return false; });
+      });
+    }, function () { cssZoom(v); zoomKeep(v); return false; });
+  }
 
   function notYet(name, stage) { return new Error(name + ' is not in this preview build yet (Tauri stage ' + stage + ')'); }
   function copy(v) { return v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v; }
@@ -343,7 +377,7 @@
     // The interface's size (0.5–2): the web view's zoom, or — where this build cannot — the page's CSS zoom.
     setZoom: function (f) {
       var v = Number(f); if (!(v >= 0.5 && v <= 2)) return undefined;
-      inOrder(function () { return call('kr_set_zoom', { f: v }); }).then(function (ok) { cssZoom(ok === true ? 1 : v); }, function () { cssZoom(v); });
+      inOrder(function () { return setZoomNow(v); }).catch(function () { cssZoom(v); });
       return undefined;
     },
     // Long work's progress (0–1; below 0 takes it away) on the taskbar button.

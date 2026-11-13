@@ -250,7 +250,7 @@ ipcMain.handle('kr:install-update', async (e, url, opts) => {
   return file;
 });
 /* ---------- the move to the Rust (Tauri) build (stage R6b) ---------- */
-// OFF until the switch-over (docs/RUST-PORT-READER.md, R8). The last Electron «bridge» build is made with RUST_SWITCH =
+// ON since the switch-over (0.62.0; docs/RUST-PORT-READER.md, R8). The Electron «bridge» build is made with RUST_SWITCH =
 // true and published under the old file names (…-win-x64.exe, latest.yml…), so every Electron copy's own updater
 // fetches it; from then on, when a release of this version or newer carries the Tauri build for this system
 // (rustswitch.cjs pickRust): the page is asked to offer it (the `rust-switch` command → the update sheet with the
@@ -264,9 +264,10 @@ ipcMain.handle('kr:install-update', async (e, url, opts) => {
 // prompt) puts the new program in place, points the shortcuts and file types at it, and only then removes this
 // program's files — never this app's data folder (desktop-tauri/src-tauri/installer/hooks.nsh) —; Linux — this
 // AppImage replaced by the Tauri one at once and started; a Mac — the disk image opened (drag it to Applications).
-// Any failure leaves this app as it is and the sheet says why («kr-update:…», src/updates.ts). Portable copies are
-// told to download the new portable build by hand; nothing is automatic for them.
-const RUST_SWITCH = false;
+// Any failure leaves this app as it is and the sheet says why («kr-update:…», src/updates.ts). Portable copies make
+// the hand-over too, then are told to download the new portable build by hand (it brings the library over); nothing
+// is installed for them.
+const RUST_SWITCH = true;
 const RustSwitch = require('./rustswitch.cjs');
 const handover = require('./handover.cjs');
 const RELEASES_API = 'https://api.github.com/repos/YoRu72/KurokawaReader/releases?per_page=60';
@@ -300,11 +301,13 @@ async function rustDownload(e, url, name, size) {
 async function rustSwitch(e, opts) {
   const pick = await rustRelease(!!(opts && opts.beta)).catch(() => null);
   if (!pick) return null;
-  if (process.env.PORTABLE_EXECUTABLE_DIR) throw new Error('kr-update:portable');
   // (1) The hand-over: the library made ready for the Tauri build. Nothing is fetched or run unless it says ok.
   let h;
   try { h = await handover.prepare({ app, webContents: e.sender }); } catch (err) { throw new Error('kr-update:handover ' + String((err && err.message) || err)); }
   if (!h || h.ok !== true) throw new Error('kr-update:handover ' + String((h && h.reason) || 'not ready'));
+  // (A portable copy installs nothing: its library is now handed over — the new portable build brings it on its first
+  // start — and the sheet says where to download it.)
+  if (process.env.PORTABLE_EXECUTABLE_DIR) throw new Error('kr-update:portable-ready');
   // (2) The file, checked against the release.
   let sumsLine = null;
   if (pick.sums) { try { const r = await net.fetch(pick.sums.url); if (r.ok) sumsLine = RustSwitch.parseSums(await r.text()).get(pick.asset.name) || null; } catch { /* the digest may do */ } }
@@ -334,7 +337,7 @@ async function rustSwitch(e, opts) {
   return 'kr-update:mac-opened';
 }
 // (The offer: once a while after the start, when a release carries the Tauri build for this system.)
-if (RUST_SWITCH) app.whenReady().then(() => setTimeout(() => { rustRelease(false).then((p) => { if (p && !process.env.PORTABLE_EXECUTABLE_DIR) send('kr:command', 'rust-switch'); }).catch(() => undefined); }, 20000));
+if (RUST_SWITCH) app.whenReady().then(() => setTimeout(() => { rustRelease(false).then((p) => { if (p) send('kr:command', 'rust-switch'); }).catch(() => undefined); }, 20000));
 
 /* ---------- archives (the Tools app's engine, shared): list, extract (in place for ZIP), make a zip ---------- */
 const Archive = require('./archive.cjs'); const archiveJobs = new Map();

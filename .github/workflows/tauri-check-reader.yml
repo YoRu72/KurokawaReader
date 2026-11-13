@@ -347,9 +347,11 @@ jobs:
           "Versions: $(Get-Content (Join-Path $d 'versions.txt'))`n" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           exit $code
 
+      # (Required since the switch-over work: its two unsteady checks were the test's own scroll put back by a re-settle
+      # — «a highlight added» — and the engine's last move after a full-screen animation — «the place saved and
+      # restored» —; both fixed. Page errors are required on every system.)
       - name: Engine test (macOS)
         if: ${{ !cancelled() && runner.os == 'macOS' }}
-        continue-on-error: true
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
           KR_ENGINETEST_TIMEOUT: '560'
