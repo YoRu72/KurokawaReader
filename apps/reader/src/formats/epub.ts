@@ -310,7 +310,10 @@ async function renderChapter(pkg: Package, item: ManifestItem, section: HTMLElem
   sanitize(body, ctx.publisherStyles);
   // Strip empty wrapper structure that EPUB producers love — but not an empty element that is a link's or the
   // contents' target (<span id="…"/>, common in converted books), nor one holding such a target.
-  body.querySelectorAll('div, span').forEach((e) => { if (!e.id && !e.textContent?.trim() && !e.querySelector('img, svg, image, video, audio, hr, [id]')) e.remove(); });
+  body.querySelectorAll('div, span').forEach((e) => { if (!e.id && !e.textContent?.trim() && !(e.localName === 'span' && e.textContent) && !e.querySelector('img, svg, image, video, audio, hr, [id]')) e.remove(); });
+  // (A span holding only a space — or a no-break or thin space — is the space between two words: books made from
+  // InDesign put the space between two differently styled runs in a span of its own. Removed, the words were glued:
+  // «My name’sRudeus». A div is a block: its blank text separates nothing, so an empty-looking div still goes.)
   // Mark inline images so they don't get block layout.
   body.querySelectorAll('p img, span img, a img').forEach((img) => { if (img.parentElement && (img.parentElement.textContent ?? '').trim()) img.classList.add('inline'); });
 
