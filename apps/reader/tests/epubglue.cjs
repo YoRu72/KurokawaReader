@@ -126,7 +126,7 @@ const marks = (p) => p.evaluate(() => { const ms = [...document.querySelectorAll
   for (const [k, l, r] of SEP) truth[k] = await p.evaluate(GAP, ['body', k, l, r]);
 
   await p.goto(`http://127.0.0.1:${port}/`);
-  await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ readingMode: 'continuous', bookPage: 'never' })); localStorage.setItem('kr.searchKeep', '0'); });
+  await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ readingMode: 'continuous', bookPage: 'never', bookFormat: false })); localStorage.setItem('kr.searchKeep', '0'); });
   await p.reload(); await p.waitForSelector('.library-view >> visible=true');
   const bk = await importFile(p, book, 'Glued');
   ok('the book imported', !!bk);

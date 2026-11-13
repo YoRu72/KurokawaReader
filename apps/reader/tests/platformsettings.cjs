@@ -23,6 +23,7 @@ const strings = (lang) => { const src = fs.readFileSync(path.join(__dirname, `..
 const ALL = ['android', 'desktop', 'webpc', 'webphone'];
 const ROWS = {
   tapToTurn: ['android', 'webphone'], tapZones: ['android', 'webphone'], pinchText: ['android', 'webphone'], edgeBrightness: ['android', 'webphone'], orientation: ['android', 'webphone'],
+  swipeTurn: ['android', 'webphone'], swipeSensitivity: ['android', 'webphone'],
   volumeKeys: ['android'], edgeGuard: ['android'], doubleBackExit: ['android'], snapFolder: ['android'],
   hideSystemBars: ['android', 'desktop'], uiSize: ['desktop'], shortcutsEditBody: ['desktop', 'webpc'],
   pdfPinchZoom: ['android', 'webphone'], barItemBattery: ['android', 'desktop', 'webpc'],

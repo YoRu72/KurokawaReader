@@ -289,6 +289,23 @@ export async function setEdgeGuard(on: boolean): Promise<void> {
   try { await kr?.setEdgeGuard?.({ on }); } catch { /* ignore */ }
 }
 
+/** The system's own Back zone at the side edges (Android 10+ with gesture navigation; its width follows "Back
+ *  sensitivity"), in CSS px, and the navigation: 'gesture', 'buttons' (two or three buttons: no side zone) or 'old'
+ *  (before Android 10). Null where there is no Android shell, or it does not tell. */
+export interface GestureInsets { left: number; right: number; nav: string }
+type InsetsPlug = { gestureInsets?(): Promise<Partial<GestureInsets>>; addListener?(ev: 'gestureInsets', fn: (d: Partial<GestureInsets>) => void): Promise<unknown> };
+const insetsPlug = (): InsetsPlug | undefined => (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: InsetsPlug } }) | undefined)?.Plugins?.Kurokawa;
+const asInsets = (d: Partial<GestureInsets> | null | undefined): GestureInsets | null => (d && typeof d === 'object' ? { left: Math.max(0, Number(d.left) || 0), right: Math.max(0, Number(d.right) || 0), nav: String(d.nav ?? 'unknown') } : null);
+export async function getGestureInsets(): Promise<GestureInsets | null> {
+  if (nativePlatform() !== 'android') return null;
+  try { return asInsets(await insetsPlug()?.gestureInsets?.()); } catch { return null; }
+}
+/** Told again whenever the system's zone changes (the sensitivity moved, the phone turned, the navigation changed). */
+export function onGestureInsets(fn: (g: GestureInsets) => void): void {
+  if (nativePlatform() !== 'android') return;
+  try { void insetsPlug()?.addListener?.('gestureInsets', (d) => { const g = asInsets(d); if (g) fn(g); })?.catch?.(() => undefined); } catch { /* none */ }
+}
+
 /** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */
 export async function toggleFullscreen(view?: HTMLElement): Promise<void> {
   const desk = window.kurokawaDesktop as (DesktopBridge & { setFullscreen?(v: 'toggle' | boolean): Promise<boolean> }) | undefined;

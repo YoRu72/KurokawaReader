@@ -120,7 +120,9 @@ const find = (all, text) => all.find((x) => x[1] === text) ?? null;
   ok('a numbered list in a table cell keeps its numbers', find(all, 'Cell item one')?.[3] && m('Cell item one') === '1.' && m('Cell item two') === '2.', all);
   ok('an Arabic numbered list in a table cell, carrying on its list: د. ه.', m('خلية أولى') === 'د.' && m('خلية ثانية') === 'ه.', all);
   const text = await p.evaluate(() => [...document.querySelectorAll('.reader-flow .kr-content')].find((e) => e.offsetParent).textContent);
-  ok('no words lost', ['First step', 'Sub a', 'Deeper i', 'A paragraph between the items.', 'Unknown format two', 'البند الثالث', 'خلية ثانية', 'Cell item two'].every((w) => text.includes(w)));
+  // (Book formatting — on by default since 0.61.2 — keeps a one-letter word with the next by a no-break space; the words are the same.)
+  const textN = text.replace(/\u00a0/g, ' ');
+  ok('no words lost', ['First step', 'Sub a', 'Deeper i', 'A paragraph between the items.', 'Unknown format two', 'البند الثالث', 'خلية ثانية', 'Cell item two'].filter((w) => !textN.includes(w)).length === 0, { missing: ['First step', 'Sub a', 'Deeper i', 'A paragraph between the items.', 'Unknown format two', 'البند الثالث', 'خلية ثانية', 'Cell item two'].filter((w) => !textN.includes(w)), sample: textN.slice(0, 300) });
   ok('no page errors', errors.length === 0, errors);
   await br.close(); server.close();
   console.log(fails ? `\n${fails} FAILED` : '\nall passed');

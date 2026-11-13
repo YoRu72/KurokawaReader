@@ -86,7 +86,7 @@ const marks = (p) => p.evaluate(() => { const ms = [...document.querySelectorAll
     const ctx = await br.newContext({ viewport: { width: 900, height: 900 }, locale: lang });
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
     await p.goto(base);
-    await p.evaluate(([l, v]) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ readingMode: 'continuous', ...v })); }, [lang, visual]);
+    await p.evaluate(([l, v]) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ readingMode: 'continuous', bookFormat: false, ...v })); }, [lang, visual]);
     await p.reload(); await p.waitForSelector('.library-view'); return p;
   };
 
