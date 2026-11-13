@@ -5,13 +5,22 @@
 //     shows a reminder and stays, a second Back within 2 s leaves, one after 2 s shows the reminder again; the press
 //     held is in the app's own record (a "backheld" event); the top bar's arrow leaves at once; the library's
 //     "press Back twice to leave the app" still works.
-//  2. The screen's edges: asked to be kept from the back gesture when a book opens chapter by chapter with the setting
-//     on; let go when a panel or sheet opens and when the book is left; never asked in the continuous mode.
+//  2. The screen's edges: off by default (never asked for); on, asked to be kept only while a book is read chapter by
+//     chapter with its bars hidden; let go when the bars show, a panel or sheet opens, the book is left; never asked in
+//     the continuous mode.
 //  3. The volume keys: setting off, never asked for; on, asked for when a book opens, let go when a panel or sheet
 //     opens, when reading aloud starts, when the book is left; a "volume down" from the shell turns the page forward
 //     in a book read left to right, in an Arabic one (right to left), in the continuous mode and in a PDF; at a
 //     chapter's end it goes to the next chapter; "Swap direction" turns the other way.
 //  4. The settings in English and Arabic (and on a computer: only Back twice).
+//  5. Back in the middle of a page-turn swipe (touches made in the page with exact timings): within 350 ms of a chapter
+//     turned by the same swipe, ignored once (backheld why=swipe), a later or fresh Back leaves; Back with the finger
+//     down waits for the touch (turned → ignored; cancelled, ended without a turn or never ended → leaves); a cancelled
+//     touch turns nothing; with "Back twice" on, a Back the swipe took is not the first of two.
+//  6. Where Back lands: the phone's Back and the top bar's arrow alike — the library where it was scrolled, the book's
+//     page when the book was opened from it.
+//  7. 0.61.0's stored default (edge guard on) turned off once; set on again afterwards, kept.
+//  8. The Performance page and report tell a Back ignored as part of a swipe, and the edge guard on or off, apart.
 // The books are made here.
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
@@ -90,8 +99,14 @@ const CAP = () => {
   const back = async () => { await p.evaluate(() => window.__cap.backButton({ canGoBack: true })); await p.waitForTimeout(250); };
   const toastText = () => p.evaluate(() => [...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' | '));
   const openPanel = async () => { await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'options' }))); await visible(p, '.panel.open'); await p.waitForTimeout(150); };
-  const openInfoSheet = async () => { await p.click('.float-toolbar button[data-icon="more"]'); await visible(p, '.panel.open'); await p.click('.panel.open .plain-list button:has-text("Book info")'); await visible(p, '.sheet'); await p.waitForTimeout(150); };
+  const openInfoSheet = async () => { await p.evaluate(() => document.querySelector('.float-toolbar button[data-icon="more"]').click()); await visible(p, '.panel.open'); await p.click('.panel.open .plain-list button:has-text("Book info")'); await visible(p, '.sheet'); await p.waitForTimeout(150); };
   const diagLast = (k) => p.evaluate((k) => window.__krDiag.data().events.filter((e) => e.k === k).pop(), k);
+  const barsShown = () => p.evaluate(() => !document.querySelector('.reader-view').classList.contains('immersive'));
+  // (A tap in the middle of the page shows or hides the bars, as the reader does it.)
+  const tapMiddle = async () => { await p.touchscreen.tap(206, 420); await p.waitForTimeout(250); };
+  const hideBars = async () => { if (await barsShown()) await tapMiddle(); await p.waitForTimeout(100); };
+  const showBars = async () => { if (!(await barsShown())) await tapMiddle(); await p.waitForTimeout(100); };
+  const leaveBook = async () => { if (await inReader()) { await showBars(); await p.click('.reader-view .topbar button[data-icon="back"]'); } await p.waitForTimeout(300); };
 
   /* ---------- 1. Back twice to leave a book ---------- */
   await openBook('en');
@@ -133,9 +148,23 @@ const CAP = () => {
   ok('library: the second Back puts the app away', await p.evaluate(() => window.__minimized === true));
 
   /* ---------- 2. The screen's edges ---------- */
+  // Off by default (0.61.1): never asked for, in any mode, unless the reader turns it on.
   let m = await mark();
+  ok('edges: the setting is off by default', await p.evaluate(() => JSON.parse(localStorage.getItem('kr.visual') || '{}').edgeGuard !== true));
   await openBook('en');
-  ok('edges: asked to be kept when a book opens chapter by chapter', (await since(m)).some((c) => c[0] === 'edge' && c[1] === true) && await lastOf('edge') === true, await since(m));
+  await hideBars();
+  ok('edges: by default never asked for, even chapter by chapter with the bars hidden', !(await since(m)).some((c) => c[0] === 'edge' && c[1] === true), await since(m));
+  await leaveBook();
+  await setVisual({ edgeGuard: true });
+  m = await mark();
+  await openBook('en');
+  ok('edges on: not asked for while the bars are shown (the book just opened)', !(await since(m)).some((c) => c[0] === 'edge' && c[1] === true), await since(m));
+  await hideBars();
+  ok('edges on: asked to be kept once the bars are hidden (reading chapter by chapter)', await lastOf('edge') === true, await since(m));
+  await showBars();
+  ok('edges on: let go the moment the bars are shown again', await lastOf('edge') === false, await since(m));
+  await hideBars();
+  ok('… kept again when they hide', await lastOf('edge') === true);
   await openPanel();
   ok('edges: let go when a panel opens', await lastOf('edge') === false);
   await back();
@@ -144,19 +173,19 @@ const CAP = () => {
   ok('edges: let go when a sheet opens', await lastOf('edge') === false);
   await back(); await p.waitForTimeout(100);
   ok('edges: kept again when it closes', await lastOf('edge') === true);
-  await p.click('.reader-view .topbar button[data-icon="back"]'); await p.waitForTimeout(300);
+  await leaveBook();
   ok('edges: let go when the book is left', await lastOf('edge') === false);
   ok('volume keys never asked for while the setting is off', !(await calls()).some((c) => c[0] === 'vol' && c[1] === true), await calls());
   await setVisual({ readingMode: 'continuous' });
   m = await mark();
-  await openBook('en');
+  await openBook('en'); await hideBars();
   ok('edges: never asked for in the continuous mode', !(await since(m)).some((c) => c[0] === 'edge' && c[1] === true), await since(m));
-  await p.click('.reader-view .topbar button[data-icon="back"]'); await p.waitForTimeout(300);
+  await leaveBook();
   await setVisual({ readingMode: 'chapters', edgeGuard: false });
   m = await mark();
-  await openBook('en');
+  await openBook('en'); await hideBars();
   ok('edges: never asked for with the setting off', !(await since(m)).some((c) => c[0] === 'edge' && c[1] === true), await since(m));
-  await p.click('.reader-view .topbar button[data-icon="back"]'); await p.waitForTimeout(300);
+  await leaveBook();
 
   /* ---------- 3. The volume keys ---------- */
   await setVisual({ volumeKeys: true, edgeGuard: true, backTwiceLeave: false });
@@ -230,10 +259,145 @@ const CAP = () => {
   await openBook('en'); a = await where(); await vol('down'); b = await where();
   ok('setting off again: never asked for, and a stray press does not turn', !(await since(m)).some((c) => c[0] === 'vol' && c[1] === true) && b.top === a.top && b.chapter === a.chapter, { calls: await since(m), a, b });
 
+  /* ---------- 5. Back in the middle of a page-turn swipe ---------- */
+  // Touches made in the page, with exact timings (the WebView's own: touchstart, touchmove, touchend or touchcancel
+  // when Android's back gesture takes the touch), and Capacitor's backButton called as the shell would.
+  await setVisual({ readingMode: 'chapters', edgeGuard: false, backTwiceLeave: false, volumeKeys: false });
+  // steps: ['s'|'m'|'e'|'c', x, y] touch events; ['b'] the system's Back; ['w', ms] a wait. All in one go in the page.
+  const gesture = (steps) => p.evaluate(async (steps) => {
+    const el = document.querySelector('.reader-scroll'); let last = null;
+    if (!el) { if (steps.some((st) => st[0] === 'b')) window.__cap.backButton({ canGoBack: true }); return; }
+    const fire = (type, x, y) => { const t = new Touch({ identifier: 7, target: el, clientX: x, clientY: y }); last = t; const on = type === 'touchend' || type === 'touchcancel' ? [] : [t]; el.dispatchEvent(new TouchEvent(type, { touches: on, targetTouches: on, changedTouches: [t], bubbles: true, cancelable: type !== 'touchcancel' })); };
+    const T = { s: 'touchstart', m: 'touchmove', e: 'touchend', c: 'touchcancel' };
+    for (const st of steps) {
+      if (st[0] === 'b') window.__cap.backButton({ canGoBack: true });
+      else if (st[0] === 'w') await new Promise((r) => setTimeout(r, st[1]));
+      else if (document.querySelector('.reader-scroll') === el) fire(T[st[0]], st[1], st[2]);
+    }
+  }, steps);
+  const chapterNow = () => p.evaluate(() => [...document.querySelectorAll('.reader-flow .kr-chapter')].findIndex((c) => !c.hidden));
+  const heldSwipes = () => p.evaluate(() => window.__krDiag.data().events.filter((e) => e.k === 'backheld' && e.why === 'swipe').length);
+  const fromRight = [['s', 400, 450], ['m', 330, 452], ['m', 250, 455], ['m', 200, 456]];
+  const clearToasts = () => p.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
+  const toFirst = async () => { for (let i = 0; i < 3; i++) await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'prevChapter' }))); await p.waitForTimeout(300); };
+  await openBook('en'); await toFirst(); await hideBars();
+  let ch0 = await chapterNow(); let h0 = await heldSwipes();
+  // A swipe from the right edge turns the chapter; the Back it fired comes 120 ms after: part of the swipe.
+  await gesture([...fromRight, ['e', 200, 456], ['w', 120], ['b']]); await p.waitForTimeout(300);
+  ok('swipe then Back 120 ms later: the chapter turned and the book stays (the Back ignored once)', await inReader() && await chapterNow() === ch0 + 1, { ch0, now: await chapterNow(), inReader: await inReader() });
+  const hs = await diagLast('backheld');
+  ok('… recorded: backheld why=swipe how=after-turn, the touch began at the right edge', hs && hs.why === 'swipe' && hs.how === 'after-turn' && hs.edge0 === 'right' && hs.ms >= 100 && hs.ms <= 350 && await heldSwipes() === h0 + 1, hs);
+  ok('… with no reminder shown', !/Back again/.test(await toastText()), await toastText());
+  ok('… and no leave recorded for it', (await diagLast('leave'))?.t < hs.t, await diagLast('leave'));
+  // Ignored once only: the next Back (a deliberate one, 400 ms on) leaves.
+  await gesture([['w', 400], ['b']]); await p.waitForTimeout(400);
+  ok('a deliberate Back after that (no new turn) leaves the book at once', await inLibrary() && !(await inReader()));
+  // After the window: a Back 450 ms after the turn is the reader's own.
+  await openBook('en'); await toFirst(); await hideBars(); ch0 = await chapterNow();
+  await gesture([...fromRight, ['e', 200, 456], ['w', 450], ['b']]); await p.waitForTimeout(400);
+  ok('a Back 450 ms after a swipe\'s turn (outside 350 ms) leaves', await inLibrary());
+  // A fresh gesture after the turn: Android's own back swipe (the page sees it start, then cancelled) leaves at once.
+  await openBook('en'); await toFirst(); await hideBars(); ch0 = await chapterNow(); h0 = await heldSwipes();
+  await gesture([...fromRight, ['e', 200, 456], ['w', 60], ['s', 2, 450], ['m', 30, 452], ['c', 30, 452], ['w', 40], ['b']]); await p.waitForTimeout(400);
+  ok('a fresh back swipe right after a turn (touch cancelled by the system) leaves at once, not held', await inLibrary() && await heldSwipes() === h0);
+  // The system took the swipe (touchcancel): no chapter turn as well.
+  await openBook('en'); await toFirst(); await hideBars(); ch0 = await chapterNow();
+  await gesture([...fromRight, ['c', 200, 456]]); await p.waitForTimeout(300);
+  ok('a swipe the system took (touchcancel): the chapter does not turn', await inReader() && await chapterNow() === ch0, { ch0, now: await chapterNow() });
+  await gesture([['b']]); await p.waitForTimeout(400);
+  ok('… and the Back that follows it leaves at once', await inLibrary());
+  // Back while the finger is still down: it waits for the touch; the touch turns the chapter → part of the swipe.
+  await openBook('en'); await toFirst(); await hideBars(); ch0 = await chapterNow(); h0 = await heldSwipes();
+  await gesture([...fromRight, ['b'], ['w', 80], ['e', 200, 456]]); await p.waitForTimeout(400);
+  ok('Back with the finger still down, then the touch turns the chapter: the book stays, the chapter turned', await inReader() && await chapterNow() === ch0 + 1, { ch0, now: await chapterNow() });
+  const hd = await diagLast('backheld');
+  ok('… recorded: backheld why=swipe how=down', hd && hd.why === 'swipe' && hd.how === 'down' && await heldSwipes() === h0 + 1, hd);
+  // …the touch cancelled instead (the system's back gesture): the Back goes on, nothing turns.
+  ch0 = await chapterNow();
+  await gesture([['s', 400, 450], ['m', 380, 452], ['b'], ['w', 60], ['c', 380, 452]]); await p.waitForTimeout(400);
+  ok('Back with the finger down, then the touch cancelled: the book is left', await inLibrary());
+  // …the touch ends without a turn (a tap): the Back goes on.
+  await openBook('en'); await hideBars();
+  await gesture([['s', 200, 450], ['b'], ['w', 60], ['e', 200, 450]]); await p.waitForTimeout(400);
+  ok('Back with a finger down that ends without a turn: the book is left', await inLibrary());
+  // …the touch never ends (a lost touchend): the Back goes on by itself within 350 ms.
+  await openBook('en'); await hideBars();
+  await gesture([['s', 200, 450], ['b'], ['w', 500]]); await p.waitForTimeout(200);
+  ok('Back with a finger down that never ends: the book is left within the wait', await inLibrary());
+  // A Back with no touch at all (the 3-button bar, a key): at once.
+  await openBook('en'); await hideBars();
+  await gesture([['b']]); await p.waitForTimeout(300);
+  ok('a Back with no touch leaves at once', await inLibrary());
+  // "Back twice to leave a book": a Back the swipe took does not count as the first of two.
+  await setVisual({ backTwiceLeave: true });
+  await openBook('en'); await toFirst(); await hideBars(); await clearToasts(); ch0 = await chapterNow();
+  await gesture([...fromRight, ['e', 200, 456], ['w', 100], ['b']]); await p.waitForTimeout(300);
+  ok('Back twice on: a Back that came with a swipe is ignored, no reminder', await inReader() && !/Back again/.test(await toastText()) && (await diagLast('backheld')).why === 'swipe', await toastText());
+  await gesture([['w', 400], ['b']]); await p.waitForTimeout(300);
+  ok('… the next Back is the first of two: the reminder, the book stays', await inReader() && /Press Back again to leave the book/.test(await toastText()), await toastText());
+  await gesture([['b']]); await p.waitForTimeout(400);
+  ok('… and the second leaves', await inLibrary());
+  await setVisual({ backTwiceLeave: false });
+
+  /* ---------- 6. Where Back lands ---------- */
+  // The library scrolled: a book opened from it, then left by the phone's Back or by the top bar's arrow, comes back
+  // to the library where it was.
+  await p.setViewportSize({ width: 412, height: 420 });
+  await p.evaluate(() => { location.hash = '#/'; }); await visible(p, '.library-view'); await p.waitForTimeout(400);
+  const libScroller = () => p.evaluate(() => { const all = [document.scrollingElement, ...document.querySelectorAll('.library-view, .library-view *')]; const el = all.find((e) => e && e.scrollHeight > e.clientHeight + 40 && (e === document.scrollingElement || /auto|scroll/.test(getComputedStyle(e).overflowY))); if (!el) return null; el.scrollTop = el.scrollHeight; return el === document.scrollingElement ? 'doc' : 'el'; });
+  const libTop = () => p.evaluate(() => { const all = [document.scrollingElement, ...document.querySelectorAll('.library-view, .library-view *')]; const el = all.find((e) => e && e.scrollHeight > e.clientHeight + 40 && (e === document.scrollingElement || /auto|scroll/.test(getComputedStyle(e).overflowY))); return el ? Math.round(el.scrollTop) : -1; });
+  const scroller = await libScroller(); await p.waitForTimeout(300);
+  const top0 = await libTop();
+  ok('the library can be scrolled for this check', !!scroller && top0 > 40, { scroller, top0 });
+  for (const how of ['phone Back', 'top bar arrow']) {
+    await p.evaluate((id) => { location.hash = `#/read/${id}`; }, ids.en); await visible(p, '.reader-flow .kr-content p'); await p.waitForTimeout(700);
+    if (how === 'phone Back') await back(); else await p.click('.reader-view .topbar button[data-icon="back"]');
+    await visible(p, '.library-view'); await p.waitForTimeout(900);
+    const top1 = await libTop();
+    ok(`${how}: back in the library where it was scrolled (not its top)`, Math.abs(top1 - top0) <= 2 , { top0, top1, hash: await p.evaluate(() => location.hash) });
+  }
+  await p.setViewportSize({ width: 412, height: 915 });
+  // Opened from the book's page: both ways back go to that page.
+  for (const how of ['phone Back', 'top bar arrow']) {
+    await p.evaluate((id) => { location.hash = `#/book/${id}`; }, ids.en); await p.waitForTimeout(800);
+    await p.evaluate((id) => { location.hash = `#/read/${id}`; }, ids.en); await visible(p, '.reader-flow .kr-content p'); await p.waitForTimeout(700);
+    if (how === 'phone Back') await back(); else await p.click('.reader-view .topbar button[data-icon="back"]');
+    await p.waitForTimeout(700);
+    ok(`${how}: opened from the book's page, back on the book's page`, await p.evaluate((id) => location.hash === `#/book/${id}`, ids.en) && !(await inReader()), await p.evaluate(() => location.hash));
+  }
+  await p.evaluate(() => { location.hash = '#/'; }); await visible(p, '.library-view');
+
+  /* ---------- 7. The default changed: 0.61.0's stored "on" turned off once ---------- */
+  await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); v.edgeGuard = true; localStorage.setItem('kr.visual', JSON.stringify(v)); localStorage.removeItem('kr.edgeGuardOff'); });
+  await p.reload(); await visible(p, '.library-view');
+  ok('an install coming from 0.61.0 (edge guard stored on, the old default): off after the update', await p.evaluate(() => JSON.parse(localStorage.getItem('kr.visual')).edgeGuard === false && localStorage.getItem('kr.edgeGuardOff') === '1'));
+  await setVisual({ edgeGuard: true });
+  await p.reload(); await visible(p, '.library-view');
+  ok('… turned on again by the reader after that: stays on', await p.evaluate(() => JSON.parse(localStorage.getItem('kr.visual')).edgeGuard === true));
+  await setVisual({ edgeGuard: false });
+
+  /* ---------- 8. The Performance report tells these apart ---------- */
+  await p.evaluate(() => { window.__clip = ''; Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (s) => { window.__clip = s; } }, configurable: true }); location.hash = '#/settings'; });
+  await visible(p, '.settings-view .card-title');
+  await p.evaluate(() => { const b = document.querySelector('.perf-entry button'); b.closest('.card').classList.remove('collapsed'); b.scrollIntoView({ block: 'center' }); });
+  await visible(p, '.perf-entry button'); await p.click('.perf-entry button'); await visible(p, '.perf-sheet .perf-row'); await p.waitForTimeout(300);
+  const perfText = await p.evaluate(() => document.querySelector('.perf-sheet').innerText);
+  ok('the page counts the Backs ignored as part of a swipe apart', /Back presses taken as part of a page-turn swipe \(ignored\): \d/.test(perfText), perfText.slice(-500));
+  await p.locator('.perf-sheet .sheet-actions button').first().click(); await p.waitForTimeout(300);
+  const rep = await p.evaluate(() => window.__clip);
+  ok('the report: a Back ignored after a turn, with its timing', /IGNORED AS PART OF A PAGE-TURN SWIPE \(\d+ ms after the chapter turned; the touch began at the right edge\)/.test(rep), rep.slice(rep.indexOf('Back held'), rep.indexOf('Back held') + 600));
+  ok('the report: a Back ignored with the finger down', /IGNORED AS PART OF A PAGE-TURN SWIPE \(came with the finger down; that touch then turned the chapter/.test(rep));
+  ok('the report: the edge guard at the last book open (on/off) and how often it was on', /Edge guard \("Protect page-turn swipes at the screen edges"\) at the last book open: (ON|off); on at \d+ of the last \d+ opens\./.test(rep), (rep.match(/Edge guard.*$/m) || [])[0]);
+  ok('the report: a deliberate Back still shows as the reason the reader was left', /back-button -> library/.test(rep));
+  await p.evaluate(() => document.querySelector('.perf-sheet .sheet-head button').click()); await p.waitForTimeout(200);
+  await openBook('en');
+
   /* ---------- 4. The settings, in English and Arabic ---------- */
   const labels = () => p.evaluate(() => [...document.querySelectorAll('.panel.open .options-grid .label')].map((l) => l.textContent.trim()));
   await openPanel();
   let L = await labels();
+  const hints = await p.evaluate(() => [...document.querySelectorAll('.panel.open .options-grid .hint')].map((l) => l.textContent.trim()));
+  ok('the edge guard\'s hint says plainly it is off by default and takes over Back swipes from the middle of the edge', hints.some((x) => /^Off by default\. When on, Android's Back swipe from the middle of the left or right edge is taken over/.test(x) && /whenever the bars are shown/.test(x)), hints.filter((x) => /edge/.test(x)));
   ok('settings (English): the three toggles with the reader\'s behaviour', ['Volume buttons turn pages', 'Back twice to leave a book', 'Protect page-turn swipes at the screen edges'].every((x) => L.some((l) => l.startsWith(x))), L.filter((l) => /Volume|Back|swipes/.test(l)));
   ok('… "Swap direction" only while the volume buttons turn pages', !L.some((l) => l.startsWith('Swap direction')));
   await p.click('.panel.open .options-grid label.row:has(.label:text-is("Volume buttons turn pages")) .switch'); await p.waitForTimeout(300);
