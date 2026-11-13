@@ -27,7 +27,8 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-perfbudget-'));
 
-const BUDGET = { startJsKB: 340, diagKB: 8, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800, epubParsedFirst: 3, epubTextRead: 100000, pdfNodesKept: 1500, pdfTextReread: 2, syncReadsWhileScrolled: 0 };
+// (diagKB 8 → 9 in 0.61.1: the recorder now also keeps why a session ended and each Back held during a page-turn swipe; it stood at 8.1.)
+const BUDGET = { startJsKB: 340, diagKB: 9, libCards: 130, libImgs: 160, libDom: 2600, pdfPagesBeforeFirst: 4, pdfPagesAfter: 80, epubContains: 200000, txtLaidOut: 800, epubParsedFirst: 3, epubTextRead: 100000, pdfNodesKept: 1500, pdfTextReread: 2, syncReadsWhileScrolled: 0 };
 
 // Counters the app does not know of: pdf.js's page requests to its worker, and Node.contains calls.
 const INIT = () => {

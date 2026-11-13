@@ -21,6 +21,20 @@ import java.util.Map;
  * app cannot make for the page (a form sent, an error on the way) goes the web view's own way.
  */
 class KrDohWeb extends WebViewClient {
+    /**
+     * The renderer is shared by every web view of the app: when it ends, each is told, and one that does not answer
+     * true ends the whole app — the book being read with it. This (hidden) view is let go as Android asks (taken out of
+     * the window, destroyed, never used again); the lane that held it finds it gone and opens a new one when asked.
+     */
+    @Override
+    public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+        if (view != null) {
+            try { android.view.ViewGroup p = (android.view.ViewGroup) view.getParent(); if (p != null) p.removeView(view); } catch (Throwable ignored) {}
+            try { view.destroy(); } catch (Throwable ignored) {}
+        }
+        return true;
+    }
+
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
         if (!KrDoh.on()) return null;

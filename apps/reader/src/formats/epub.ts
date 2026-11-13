@@ -4,6 +4,7 @@
 import JSZip from 'jszip';
 import type { BookMeta, FlowHandler, FlowRender, ImageRef, RenderContext, TocItem } from './types';
 import { titleFromFileName } from './types';
+import { markBookLayout, markChapterTitles } from './titles';
 import { UrlPool, afterFrame, breath, collectImages, markBlockDirections, mimeFor, parseXml, resolveZipPath, safeDecode, sanitize, tocFromHeadings, zipFile, zipText } from './shared';
 
 interface ManifestItem { id: string; href: string; type: string; properties: string }
@@ -159,6 +160,18 @@ function resolvableToc(raw: RawToc[], pkg: Package): RawToc[] {
   return raw.filter((r) => inSpine.has(r.path));
 }
 
+/** The contents' titles that lead into each chapter (by its path), read once per book: what a chapter's title block
+ *  is recognised by (src/formats/titles.ts). */
+const tocTitles = new WeakMap<Package, Promise<Map<string, string[]>>>();
+function tocTitlesByPath(pkg: Package): Promise<Map<string, string[]>> {
+  let p = tocTitles.get(pkg);
+  if (!p) {
+    p = readToc(pkg).then((raw) => { const m = new Map<string, string[]>(); for (const r of resolvableToc(raw, pkg)) m.set(r.path, [...(m.get(r.path) ?? []), r.label]); return m; }).catch(() => new Map());
+    tocTitles.set(pkg, p);
+  }
+  return p;
+}
+
 /** Rewrite a publisher stylesheet so it only applies inside one chapter. */
 async function scopeCss(css: string, cssPath: string, scope: string, pkg: Package, pool: UrlPool): Promise<string> {
   // Resolve url(...) references (fonts, background images) to blob URLs.
@@ -295,6 +308,7 @@ async function renderChapter(pkg: Package, item: ManifestItem, section: HTMLElem
     styleText = (await Promise.all(parts)).join('\n');
   }
 
+  await markBookLayout(doc, item.href, (p) => { const cf = zipFile(pkg.zip, p); return cf ? zipText(cf) : Promise.resolve(null); }, pkg.zip, ctx.publisherStyles);
   const body = doc.body;
   // Internal links: keep them, resolve to our prefixed ids after all chapters render.
   body.querySelectorAll('a[href]').forEach((a) => {
@@ -310,7 +324,10 @@ async function renderChapter(pkg: Package, item: ManifestItem, section: HTMLElem
   sanitize(body, ctx.publisherStyles);
   // Strip empty wrapper structure that EPUB producers love — but not an empty element that is a link's or the
   // contents' target (<span id="…"/>, common in converted books), nor one holding such a target.
-  body.querySelectorAll('div, span').forEach((e) => { if (!e.id && !e.textContent?.trim() && !e.querySelector('img, svg, image, video, audio, hr, [id]')) e.remove(); });
+  body.querySelectorAll('div, span').forEach((e) => { if (!e.id && !e.textContent?.trim() && !(e.localName === 'span' && e.textContent) && !e.querySelector('img, svg, image, video, audio, hr, [id]')) e.remove(); });
+  // (A span holding only a space — or a no-break or thin space — is the space between two words: books made from
+  // InDesign put the space between two differently styled runs in a span of its own. Removed, the words were glued:
+  // «My name’sRudeus». A div is a block: its blank text separates nothing, so an empty-looking div still goes.)
   // Mark inline images so they don't get block layout.
   body.querySelectorAll('p img, span img, a img').forEach((img) => { if (img.parentElement && (img.parentElement.textContent ?? '').trim()) img.classList.add('inline'); });
 
@@ -349,6 +366,7 @@ export const epubHandler: FlowHandler = {
     let gone = false;
     const make = async (i: number) => {
       await renderChapter(pkg, pkg.spine[i], sections[i], ctx, pool, idMap);
+      markChapterTitles(sections[i], (await tocTitlesByPath(pkg)).get(pkg.spine[i].href) ?? []);
       dirs[i] = markBlockDirections(sections[i]);
       sections[i].classList.remove('kr-shell');
     };

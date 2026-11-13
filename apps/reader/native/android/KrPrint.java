@@ -53,6 +53,13 @@ final class KrPrint {
             web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
             web.setWebViewClient(new WebViewClient() {
                 private boolean started = false;
+                // (The app's renderer ended — shared by every web view: unanswered, the whole app would end with it. This
+                // one is let go as Android asks, and the print told it failed.)
+                @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                    try { ViewGroup p = (ViewGroup) view.getParent(); if (p != null) p.removeView(view); } catch (Throwable ignored) {}
+                    fail.at("renderer gone");
+                    return true;
+                }
                 @Override public void onPageFinished(WebView view, String url) {
                     if (started || done[0]) return;
                     started = true;

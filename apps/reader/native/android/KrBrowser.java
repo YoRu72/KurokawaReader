@@ -532,6 +532,7 @@ final class KrBrowser {
         // (The reader is passing the site's check in a window of their own: nothing opened beside it.)
         if (showing.containsKey(siteOf(origin))) { w.failed("challenge", ""); return; }
         Lane had = lanes.get(origin);
+        if (had != null && had.ready && had.web != null && had.web.getParent() == null) { close(had, "renderer gone"); had = null; }
         if (had != null && had.ready && had.web != null) { had.used = SystemClock.uptimeMillis(); w.ready(had); return; }
         if (had != null && had.opening) { had.waiting.add(w); return; }
         final Activity act = plugin.getActivity();
@@ -550,6 +551,14 @@ final class KrBrowser {
                 @SuppressWarnings("deprecation")
                 @Override public void onReceivedError(WebView v, int code, String description, String failingUrl) {
                     settle(lane, "error:" + (description != null ? description : "the page did not load"), "");
+                }
+                // (The app's renderer ended: this view let go as Android asks — KrDohWeb —, and the lane closed with it,
+                // its waiting requests told.)
+                @Override public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail detail) {
+                    boolean r = super.onRenderProcessGone(v, detail);
+                    if (lane.web == v) lane.web = null;
+                    close(lane, "renderer gone");
+                    return r;
                 }
             });
             behind(act, web);
