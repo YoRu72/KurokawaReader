@@ -118,6 +118,9 @@ initNativeBridges();
 void setVolumeKeys(false);
 // (The update checks loaded once the first screen is up: nothing on it needs them.)
 void import('./updates').then((m) => m.scheduleAutoCheck()).catch(() => undefined);
+// (Stage R6b: the Tauri build's first start — one page over the library: language, look, the library from the
+// previous version, opening books with the app. ui/firstrun.ts.)
+if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') void import('./ui/firstrun').then((m) => { if (m.shouldShowFirstRun()) m.showFirstRun(); }).catch(() => undefined);
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
 // (Downloads the app was closed in the middle of: taken up again.)
 setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).catch(() => undefined), 2500);

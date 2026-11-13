@@ -2,12 +2,12 @@
 // page, with the same arguments and results. Run by src-tauri/src/main.rs as the window's initialization script —
 // before the page's own scripts, on every load —, after a line that sets window.__KR_BOOT__ = { os, arch }.
 // Each Electron channel kr:a-b is the Tauri command kr_a_b (src-tauri/src/commands.rs and the files beside it). What
-// is not ported yet (PORTING.md says which stage brings it — R6 only, since R5) is a stub that answers as Electron
+// is not ported yet (PORTING.md says which stage brings it — nothing since R6b) is a stub that answers as Electron
 // answers when it cannot do the thing — or, where Electron has no such answer, rejects with an Error that names the
 // stage; the page already copes with each (PORTING.md says how). The stubs are listed in STUBS below, so
 // tests/tauribridge.cjs and the self-test can tell them from the ported ones. Some names are LEFT OUT instead (LEFT_OUT
 // below): the page tests for those before it uses them, and without them it takes a way that works — its picture PDF
-// (printToPdf: this shell has no silent PDF printing, for good — 'fallback'), its own update sheet (R6).
+// (printToPdf: this shell has no silent PDF printing, for good — 'fallback').
 (function () {
   'use strict';
   if (window.kurokawaDesktop) return;
@@ -84,17 +84,14 @@
   // name → [stage, how it answers]. 'reject': an Error naming the stage; 'none': nothing (undefined, at once — the
   // preload's own answer for these); 'off': a remover function (the preload's subscribe answer); anything else: that
   // value, resolved.
-  var STUBS = {
-    installUpdate: ['R6', 'reject'], onUpdateProgress: ['R6', 'none'],
-  };
+  // (None since R6b: the updater is here — see «updates» below.)
+  var STUBS = {};
   // name → the stage that brings it, or 'fallback': left out for good, the page's own way being this shell's answer.
   // Not defined at all: the page looks for each before using it, and without it does what works here (src/:
   // convert.ts buildPdf → the picture PDF — searchable text over page pictures — where Electron prints a text PDF in
-  // a hidden window: no web view this shell runs on prints a PDF silently through Tauri; updates.ts → no «download
-  // in the background» switch). (The in-app browser's four, R4, and R5's archives, app icon and full screen are
-  // here since their stages.)
+  // a hidden window: no web view this shell runs on prints a PDF silently through Tauri). (The in-app browser's four,
+  // R4, R5's archives, app icon and full screen, and R6b's updater are here since their stages.)
   var LEFT_OUT = {
-    downloadUpdate: 'R6', installDownloadedUpdate: 'R6',
     printToPdf: 'fallback',
   };
   /* ---------- R5: pictures made with the page's canvas ---------- */
@@ -256,8 +253,9 @@
 
     /* the system */
     openDefaultApps: function () { return call('kr_default_apps'); },
-    // (This build is never the portable one: that is Electron's portable .exe.)
-    isPortable: function () { return Promise.resolve(false); },
+    // (The portable zip of this build — R6b: a KurokawaReader.portable file beside the program, update.rs —; never
+    // Electron's portable .exe.)
+    isPortable: function () { return Promise.resolve(boot.kind === 'portable'); },
 
     /* network: web requests without the page's cross-site limits (the shared crate's net.rs). The body comes as
        base64 and is made text here, in the page's charset, as main.cjs does; accept-encoding is left to the shell. */
@@ -357,6 +355,47 @@
     onCommand: function (cb) { subscribe('kr:command', cb); return undefined; },
   };
   Object.keys(STUBS).forEach(function (k) { api[k] = stub(k); });
+
+  /* ---------- updates (stage R6b: src-tauri/src/update.rs, updatelogic.rs) ---------- */
+  // main.cjs's four, the same arguments and answers. installUpdate(url, o) — the release file for this kind of copy
+  // downloaded (resumed if a connection breaks), checked against the release's size and SHA-256 (o.digest: GitHub's;
+  // the release's SHA256SUMS file), installed → 'installing' / 'relaunching' / 'kr-update:deb-opened' /
+  // 'kr-update:mac-opened'; refusals reject with «kr-update:…» codes the page turns into sentences (src/updates.ts).
+  // downloadUpdate({beta}) — fetched and checked in the background → 'downloaded' / 'none' / 'unsupported';
+  // installDownloadedUpdate() → whether there was one to install (installed now, the app started again).
+  // onUpdateProgress(cb) — { pct, got, total, speed } (and { verifying: true }) as the kr:update-progress event; a new
+  // callback replaces the last (the preload's removeAllListeners).
+  var updCb = null; var updListening = false;
+  api.installUpdate = function (url, o) { return call('kr_install_update', { url: str(url), o: obj(o) }); };
+  api.downloadUpdate = function (o) { return call('kr_update_download', { o: obj(o) }); };
+  api.installDownloadedUpdate = function () { return call('kr_update_install'); };
+  api.onUpdateProgress = function (cb) {
+    updCb = typeof cb === 'function' ? cb : null;
+    if (!updListening && listener()) { updListening = true; subscribe('kr:update-progress', function (p) { if (updCb) updCb(p); }); }
+    return undefined;
+  };
+  // The page's start, told to the shell (src-tauri/src/boot.rs): its first paint, its first screen in place (the
+  // start-up times the self-test prints), and its interface's colour — kept for the next start, when the window
+  // opens in it rather than in white.
+  (function bootMarks() {
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+    function colour() { var m = document.querySelector('meta[name="theme-color"]'); return (m && m.getAttribute('content')) || null; }
+    function mark(what) { call('kr_boot_mark', { what: what, bg: colour() }).catch(function () { /* no shell */ }); }
+    var later = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { return setTimeout(f, 16); };
+    function painted() { later(function () { mark('paint'); }); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', painted); else painted();
+    var tries = 0;
+    (function ready() {
+      var app = document.getElementById('app');
+      if (app && app.firstElementChild) { mark('ready'); watchColour(); return; }
+      if (++tries < 600) setTimeout(ready, 25);
+    })();
+    function watchColour() {
+      var m = document.querySelector('meta[name="theme-color"]'); var last = colour(); var t = 0;
+      if (!m || typeof MutationObserver !== 'function') return;
+      new MutationObserver(function () { var c = colour(); if (c === last) return; last = c; clearTimeout(t); t = setTimeout(function () { mark('theme'); }, 500); }).observe(m, { attributes: true });
+    }
+  })();
   // Names this shell has that Electron's has not (EXTRA): scanFolder(root, exts) — the whole-computer scan's walk
   // in one folder the user picked, answered as scanDevice is. The library's «Pick a folder» scan uses it where it is
   // (src/ui/scan.ts), so its books can be linked by path; Electron, which has not, keeps the web view's folder picker.

@@ -58,7 +58,7 @@ export async function listReleases(o: { repo: string; prefix: string; appName: s
 }
 /** The files a release has, by the names the release workflow gives them (sizes unknown). */
 export function conventionalAssets(repo: string, app: string, tag: string, v: string): RelAsset[] {
-  const names = ['arm64-v8a.apk', 'armeabi-v7a.apk', 'x86_64.apk', 'universal.apk', 'win-x64.exe', 'win-x64-portable.exe', 'mac-universal.dmg', 'linux-x86_64.AppImage', 'ios-unsigned.ipa'].map((x) => `${app}-${v}-${x}`).concat(`${app}-web.zip`);
+  const names = ['arm64-v8a.apk', 'armeabi-v7a.apk', 'x86_64.apk', 'universal.apk', 'win-x64.exe', 'win-x64-portable.exe', 'mac-universal.dmg', 'linux-x86_64.AppImage', 'ios-unsigned.ipa', ...(app === 'KurokawaReader' ? RUST_TAILS : [])].map((x) => `${app}-${v}-${x}`).concat(`${app}-web.zip`);
   return names.map((name) => ({ name, url: `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${name}`, size: 0 }));
 }
 const unescapeXml = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
@@ -81,4 +81,23 @@ export const sha256Of = (a: RelAsset): string | undefined => (a.digest && /^sha2
 export function versionChange(key: string, now: string): string | null {
   let before: string | null = null; try { before = localStorage.getItem(key); localStorage.setItem(key, now); } catch { /* no storage */ }
   return before && before !== now && cmpVersion(now, before) > 0 ? before : null;
+}
+
+/* ---------- the Rust (Tauri) build's files (stage R6b) ---------- */
+// The release files of the Reader's Tauri build, by the names the release workflow gives them — the same as
+// desktop-tauri/src-tauri/src/updatelogic.rs (asset_name) and desktop/rustswitch.cjs (tests/updatenames.cjs keeps
+// the three equal): KurokawaReader-<v>-windows-x64-setup.exe, …-windows-x64-portable.zip, …-macos-universal.dmg,
+// …-linux-x64.AppImage, …-linux-x64.deb, and the checksums …-SHA256SUMS.txt. None of them matches the Electron
+// build's own patterns (…-win-x64.exe, …-mac-universal.dmg), so an Electron copy never takes one by mistake.
+export const RUST_TAILS = ['windows-x64-setup.exe', 'windows-x64-portable.zip', 'macos-universal.dmg', 'linux-x64.AppImage', 'linux-x64.deb', 'SHA256SUMS.txt'];
+/** The kinds of copy the Tauri build tells the page (window.__KR_BOOT__.kind: src-tauri/src/update.rs). */
+export type RustKind = 'nsis' | 'portable' | 'appimage' | 'deb' | 'app' | 'bare';
+/** The release file that updates a copy of the Tauri build of this kind (Node's OS and arch names). */
+export function rustAsset(assets: RelAsset[], os: string, arch: string, kind: RustKind | string): RelAsset | undefined {
+  const a = arch === 'arm64' || arch === 'aarch64' ? 'arm64' : 'x64';
+  const tail = os === 'win32' ? (kind === 'portable' ? `-windows-${a}-portable.zip` : `-windows-${a}-setup.exe`)
+    : os === 'darwin' ? '-macos-universal.dmg'
+    : kind === 'deb' ? `-linux-${a}.deb` : `-linux-${a}.AppImage`;
+  return assets.find((x) => x.name.startsWith('KurokawaReader-') && x.name.endsWith(tail))
+    ?? (os === 'darwin' ? assets.find((x) => x.name.startsWith('KurokawaReader-') && x.name.endsWith(`-macos-${a}.dmg`)) : undefined);
 }

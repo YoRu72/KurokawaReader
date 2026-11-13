@@ -73,8 +73,9 @@ async function nodePart() {
   const ported = fns.filter((k) => !(k in stubs) && !(k in leftOut));
   for (const k of Object.keys(stubs)) { assert.ok(fns.includes(k), `stub ${k} is no preload function`); assert.match(stubs[k], /^R[2-6]$/, `${k}: stage`); assert.ok(!(k in leftOut), `${k} both a stub and left out`); }
   for (const k of Object.keys(leftOut)) { assert.ok(fns.includes(k), `left-out ${k} is no preload function`); assert.match(leftOut[k], /^(R6|fallback)$/, `${k}: stage`); }
-  // (Since R5 nothing waits for R5: the stubs and the names left out are R6's, and printToPdf's page fallback.)
-  assert.deepEqual(Object.keys(leftOut).sort(), ['downloadUpdate', 'installDownloadedUpdate', 'printToPdf']);
+  // (Since R6b no stub is left, and only printToPdf is left out — for good: the page's own picture PDF.)
+  assert.deepEqual(Object.keys(leftOut).sort(), ['printToPdf']);
+  assert.deepEqual(Object.keys(stubs), [], 'no stubs since R6b');
   assert.equal(leftOut.printToPdf, 'fallback');
   for (const k of Object.keys(stubs)) assert.equal(stubs[k], 'R6', `${k}: a stub of R6 only`);
   // (Left out only where the page tests for the name before using it — never one it calls straight away.)
@@ -95,8 +96,10 @@ async function nodePart() {
     archiveList: [{ path: '/x/a.zip', password: 'pw' }], archiveExtract: [{ id: 'j1', path: '/x/a.zip', dest: '/x/out', inPlace: true, replace: 'both', keepFree: 0 }], archiveCancel: ['j1'],
     archiveCreate: [{ id: 'j2', out: '/x/b.zip', inputs: ['/x/a.txt', '/x/dir'] }], archiveTest: [{ id: 'j3', path: '/x/a.zip' }], archiveRestore: [{ path: '/x/a.zip' }], archiveFree: [{ dir: '/x' }], archiveExisting: [{ dest: '/x', names: ['a', 'b'] }],
     setFullscreen: ['toggle'], setImmersive: [true], copyImage: ['iVBORw0KGgoAAAANSUhEUg=='], setProgress: [0.5],
+    // (Stage R6b: the updater.)
+    installUpdate: ['https://github.com/x/y/releases/download/v1.0.0/KurokawaReader-1.0.0-windows-x64-setup.exe', { beta: false, plain: false }], downloadUpdate: [{ beta: true }], installDownloadedUpdate: [],
   };
-  const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl', 'onDownloadProgress', 'addDownloadListener', 'appIcon', 'setZoom', 'onCommand', 'onArchiveProgress'];
+  const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl', 'onDownloadProgress', 'addDownloadListener', 'appIcon', 'setZoom', 'onCommand', 'onArchiveProgress', 'onUpdateProgress'];
   assert.deepEqual([...Object.keys(samples), ...special].sort(), [...ported].sort(), 'samples ≠ ported functions');
   const sent = {};
   for (const m of Object.keys(samples)) {
@@ -250,6 +253,19 @@ async function nodePart() {
   sent.kr_scan_folder = ['p', 'exts']; reply = () => null;
   // isPortable: answered here (this build is never Electron's portable .exe), no IPC.
   tCalls = []; assert.equal(await kd.isPortable(), false); assert.equal(tCalls.length, 0);
+  // (R6b: the portable zip of this build says so — window.__KR_BOOT__.kind, from update.rs.)
+  assert.equal(await loadBridge({ os: 'win32', arch: 'x64', kind: 'portable' }).kurokawaDesktop.isPortable(), true);
+  // onUpdateProgress (R6b): the kr:update-progress event's payloads to the callback; a new callback replaces the last
+  // (the preload's removeAllListeners); nothing invoked, nothing answered.
+  {
+    const listeners = []; const heard = [];
+    const uw = loadBridge({ os: 'win32' }, { __TAURI__: { core: { invoke: () => Promise.resolve(null) }, event: { listen: (n, f) => { listeners.push([n, f]); return Promise.resolve(() => {}); } } } });
+    assert.equal(uw.kurokawaDesktop.onUpdateProgress((p) => heard.push(['a', p.pct])), undefined);
+    uw.kurokawaDesktop.onUpdateProgress((p) => heard.push(['b', p.pct]));
+    assert.deepEqual(listeners.filter((l) => l[0] === 'kr:update-progress').length, 1, 'one listening');
+    listeners.find((l) => l[0] === 'kr:update-progress')[1]({ payload: { pct: 40, got: 4, total: 10, speed: 1 } });
+    assert.deepEqual(heard, [['b', 40]]);
+  }
   // writeBinary: append is a boolean, as the preload's !!append.
   tCalls = []; await kd.writeBinary('/p', 'AA'); assert.equal(tCalls[0].args.append, false);
   // archivePickFile with nothing: { multiple: false }.
@@ -292,8 +308,8 @@ async function nodePart() {
   // Stubs: never the IPC; each answers as STUBS says (and the way the page copes with — see PORTING.md).
   tCalls = [];
   const answers = {};
-  const rejecting = ['installUpdate'];
-  const sync = ['onUpdateProgress'];
+  const rejecting = [];
+  const sync = [];
   const removers = [];
   assert.deepEqual([...Object.keys(answers), ...rejecting, ...sync, ...removers].sort(), Object.keys(stubs).sort(), 'every stub is checked');
   for (const [k, v] of Object.entries(answers)) assert.deepEqual(JSON.parse(JSON.stringify({ v: await kd[k]() })), JSON.parse(JSON.stringify({ v })), `${k}()`);
@@ -318,9 +334,9 @@ async function nodePart() {
   // Rust: every command the bridge and the self-test call is registered, with the argument names they send.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile|browser|archives|appicon|winbits|menu)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile|browser|archives|appicon|winbits|menu|update|boot)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs', 'browser.rs', 'archives.rs', 'appicon.rs', 'winbits.rs', 'menu.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs', 'browser.rs', 'archives.rs', 'appicon.rs', 'winbits.rs', 'menu.rs', 'update.rs', 'boot.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
@@ -552,6 +568,9 @@ async function nodePart() {
         if (cmd === 'kr_progress') return Promise.resolve(true);
         if (cmd === 'kr_selftest_clipimage') { const b = Buffer.from(kdFake._clip(), 'base64'); return Promise.resolve({ width: b.readUInt32BE(16), height: b.readUInt32BE(20) }); }
         if (cmd === 'kr_selftest_browser') return Promise.resolve(kdFake._browserAct(args.o));
+        // (Stage R6b: the updater's download — resumed, checked, refused —, the start's times.)
+        if (cmd === 'kr_selftest_updatedl') return Promise.resolve({ size: cfg.largeSize, resumedFrom: Math.floor(cfg.largeSize / 2), ok: true, refused: 'kr-update:checksum', removedWhenRefused: true, noChecksum: 'kr-update:nochecksum', kind: '', file: null });
+        if (cmd === 'kr_boot_times') return Promise.resolve({ paint: 180, ready: 420, now: 900, colourAtStart: true });
         if (cmd === 'kr_selftest_launch') { const [p, link] = args.args; const b = kdFake._disk.get(p); setTimeout(() => { openLog.push({ kind: 'file', name: path.posix.basename(p), size: b.length }, { kind: 'url', url: link }); }, 5); return Promise.resolve({ code: 0, killed: false, ms: 300, singleInstance: true }); }
         return Promise.resolve();
       },
@@ -610,6 +629,8 @@ async function pagePart(ported) {
         kr_archive_free: () => ({ free: 1e9 }), kr_archive_existing: () => ({ existing: [] }),
         kr_app_icon: (a) => ('set' in (a.o || {}) ? true : window.__icon || null), kr_fullscreen: (a) => a.v === 'toggle', kr_immersive: () => true, kr_set_zoom: () => true, kr_progress: () => true, kr_copy_image: () => true,
         kr_menu: () => false, kr_print_file: () => true,
+        // (Stage R6b: the updater, the start's marks.)
+        kr_install_update: () => 'installing', kr_update_download: () => 'none', kr_update_install: () => false, kr_boot_mark: () => ({}),
       };
       window.__openQueue = { file: [], url: [] }; window.__listeners = [];
       window.__TAURI__ = {
@@ -623,7 +644,7 @@ async function pagePart(ported) {
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 47 - shape.leftOut + 4, 'functions in the page (and the extras scanFolder, cancelDownload, menuText, printFile)'); assert.equal(shape.leftOut, 3, 'left out'); assert.equal(shape.platform, 'linux');
+    assert.equal(shape.fns, 47 - shape.leftOut + 4, 'functions in the page (and the extras scanFolder, cancelDownload, menuText, printFile)'); assert.equal(shape.leftOut, 1, 'left out'); assert.equal(shape.platform, 'linux');
     // (Stage R5: the library's Archives button — there now that the archives are.)
     assert.ok(await p.evaluate(() => { const b = [...document.querySelectorAll('.library-tools button, .library-view button')].find((x) => /Archives/.test(x.getAttribute('aria-label') || x.title || x.textContent)); return !!b && !b.hidden; }), 'the Archives button');
     const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));
@@ -671,6 +692,8 @@ async function pagePart(ported) {
         appIcon: () => kd.appIcon(), setFullscreen: () => kd.setFullscreen('toggle'), setImmersive: () => kd.setImmersive(true), copyImage: () => kd.copyImage('iVBORw0KGgoAAAANSUhEUg=='),
         setZoom: async () => { kd.setZoom(1.25); await new Promise((r) => setTimeout(r, 50)); return document.documentElement.style.zoom; },
         setProgress: () => kd.setProgress(0.5),
+        installUpdate: () => kd.installUpdate('https://x/KurokawaReader-1.0.0-linux-x64.AppImage', { beta: false, size: 9, digest: 'sha256:' + 'a'.repeat(64) }), downloadUpdate: () => kd.downloadUpdate({ beta: false }), installDownloadedUpdate: () => kd.installDownloadedUpdate(),
+        onUpdateProgress: () => { let n = 0; kd.onUpdateProgress(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:update-progress').forEach((l) => l[1]({ payload: { pct: 5, got: 1, total: 20, speed: 1 } })); return n; },
         onCommand: () => { const got = []; kd.onCommand((c) => got.push(c)); window.__listeners.filter((l) => l[0] === 'kr:command').forEach((l) => l[1]({ payload: 'search' })); return got.slice(-1); },
       };
       for (const [k, f] of Object.entries(runs)) { const n = window.__calls.length; const r = await f(); out[k] = { r, calls: window.__calls.slice(n) }; }
@@ -695,6 +718,8 @@ async function pagePart(ported) {
       archiveRestore: ['kr_archive_restore', { o: { path: '/x/a.zip' } }, { left: 0 }], archiveFree: ['kr_archive_free', { o: { dir: '/x' } }, { free: 1e9 }], archiveExisting: ['kr_archive_existing', { o: { dest: '/x', names: ['a'] } }, { existing: [] }],
       appIcon: ['kr_app_icon', { o: {} }, null], setFullscreen: ['kr_fullscreen', { v: 'toggle' }, true], setImmersive: ['kr_immersive', { on: true }, true], copyImage: ['kr_copy_image', { b64: 'iVBORw0KGgoAAAANSUhEUg==' }, true],
       setZoom: ['kr_set_zoom', { f: 1.25 }, ''], setProgress: ['kr_progress', { p: 0.5 }, undefined],
+      installUpdate: ['kr_install_update', { url: 'https://x/KurokawaReader-1.0.0-linux-x64.AppImage', o: { beta: false, size: 9, digest: 'sha256:' + 'a'.repeat(64) } }, 'installing'],
+      downloadUpdate: ['kr_update_download', { o: { beta: false } }, 'none'], installDownloadedUpdate: ['kr_update_install', {}, false],
     };
     // (onOpenFile / onOpenUrl: a take of their kind — and, for a file, its bytes read by path.)
     assert.deepEqual(got.onOpenFile.calls.map((c) => [c.cmd, c.args]), [['kr_open_take', { kind: 'file' }], ['kr_read_file', { p: '/x/a.epub' }]]);
@@ -709,7 +734,7 @@ async function pagePart(ported) {
     }
     assert.equal(got.isPortable.r, false); assert.equal(got.isPortable.calls.length, 0);
     assert.equal(got.onTitleBarState.r, 'function'); assert.equal(got.onTitleBarState.calls.length, 0);
-    for (const k of ['onDownloadProgress', 'addDownloadListener', 'onArchiveProgress']) { assert.equal(got[k].r, 1, `${k}: heard the event`); assert.equal(got[k].calls.length, 0, `${k}: no command`); }
+    for (const k of ['onDownloadProgress', 'addDownloadListener', 'onArchiveProgress', 'onUpdateProgress']) { assert.equal(got[k].r, 1, `${k}: heard the event`); assert.equal(got[k].calls.length, 0, `${k}: no command`); }
     assert.deepEqual(got.onCommand.r, ['search']); assert.equal(got.onCommand.calls.length, 0);
     // (Stage R3: Settings shows the DNS-over-HTTPS choice here, with this shell's hint — since R4 saying that the
     // in-app browser keeps the system's DNS.)

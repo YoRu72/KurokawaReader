@@ -30,6 +30,11 @@ on:
       - 'apps/reader/desktop-tauri/**'
       - 'shared/shell-rs/**'
       - '.github/workflows/tauri-check-reader.yml'
+      # (Stage R6b: the Electron side of the switch, and the page's updater and first-run screen.)
+      - 'apps/reader/desktop/rustswitch.cjs'
+      - 'apps/reader/desktop/handover.cjs'
+      - 'apps/reader/src/update*.ts'
+      - 'apps/reader/src/ui/firstrun.ts'
   workflow_dispatch:
 
 permissions:
@@ -63,6 +68,9 @@ jobs:
           node scripts/build.mjs
           node tests/tauribridge.cjs --node-only
           node tests/tauriengine.cjs --node-only
+          # (Stage R6b: the installer's one screen put into Tauri's script; the release files' names alike everywhere.)
+          node tests/installerpatch.cjs
+          node tests/updatenames.cjs
           # (Left out of the computer apps, as the Electron build leaves it out: fetched from the web app when asked.)
           rm -f dist/samples/alice-in-wonderland.epub
 
@@ -81,7 +89,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs apps/reader/desktop-tauri/src-tauri/src/archive.rs apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs; do
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs apps/reader/desktop-tauri/src-tauri/src/archive.rs apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs apps/reader/desktop-tauri/src-tauri/src/updatelogic.rs apps/reader/desktop-tauri/src-tauri/src/bootlogic.rs apps/reader/desktop-tauri/src-tauri/bootdetect.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -129,6 +137,31 @@ jobs:
             npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }}
           fi
 
+      # (Stage R6b.) The installer's one screen: Tauri's rendered installer script given the page of
+      # src-tauri/installer/onepage.nsh in place of its own pages, and compiled again with Tauri's own NSIS (strict here:
+      # a script unlike the one written for fails the job; the release keeps Tauri's own installer instead).
+      - name: One-page installer
+        if: runner.os == 'Windows'
+        working-directory: apps/reader/desktop-tauri
+        run: node src-tauri/installer/onepage.cjs src-tauri --strict
+
+      # (Stage R6b.) The portable build: the program, the shipped 7-Zip beside it, and the marker that makes it say
+      # so (update.rs: a portable copy is never updated by itself).
+      - name: Portable zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        run: |
+          $v = (node -p "require('../../package.json').version").Trim()
+          $s = Join-Path $env:RUNNER_TEMP 'kr-portable'; New-Item -ItemType Directory -Force -Path $s | Out-Null
+          Copy-Item 'target/release/KurokawaReader.exe' $s
+          if (Test-Path 'target/release/7zip') { Copy-Item 'target/release/7zip' (Join-Path $s '7zip') -Recurse }
+          Set-Content (Join-Path $s 'KurokawaReader.portable') 'This copy is portable: it never updates itself. Download the new portable zip from the release page.'
+          New-Item -ItemType Directory -Force -Path 'target/release/bundle/portable' | Out-Null
+          $z = "target/release/bundle/portable/KurokawaReader-$v-windows-x64-portable.zip"
+          Compress-Archive -Path (Join-Path $s '*') -DestinationPath $z -CompressionLevel Optimal -Force
+          "Portable zip: $z, $('{0:N2}' -f ((Get-Item $z).Length / 1MB)) MB"
+
       - name: Sizes
         working-directory: apps/reader/desktop-tauri/src-tauri
         run: |
@@ -137,7 +170,7 @@ jobs:
             echo ""
             echo "| File | Size (MB) |"
             echo "|---|---:|"
-            find target -path '*/release/bundle/*' -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' \) | sort | while read -r f; do
+            find target -path '*/release/bundle/*' -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*-portable.zip' \) | sort | while read -r f; do
               b=$(wc -c < "$f" | tr -d ' ')
               echo "| \`$f\` | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"
             done
@@ -159,6 +192,7 @@ jobs:
             apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/appimage/*.AppImage
             apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/deb/*.deb
             apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/dmg/*.dmg
+            apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/portable/*.zip
 
       # The runtime self-test: the built app started with KR_SELFTEST=<file>; it writes its results there and exits
       # 0 (all required checks passed), 1 (one failed) or 2 (its own watchdog, KR_SELFTEST_TIMEOUT seconds). (Longer
@@ -298,6 +332,31 @@ jobs:
           set -e
           { node ../enginetest-report.cjs "$d/report.json" "$code" "${{ matrix.name }}" "$d/report.md"; echo "Versions: $(tr '\n' ' ' < "$d/versions.txt")"; echo; } | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code
+
+      # (Stage R6b.) The Windows installer end to end (desktop-tauri/installtest.ps1): an Electron install made to look
+      # present; real screenshots of the installer's window and the first-run screen; a silent install — its time, its
+      # files, uninstall entry, shortcuts, file types, the Electron copy replaced and its data kept —; cold and warm
+      # start-up times; the installed app's self-test; a second build with a higher version installed over it by the
+      # app's own updater from a loopback «release» (resumed after a cut, checked by SHA-256) with a marker in the data
+      # folders kept; a silent uninstall that keeps the library.
+      - name: Installer, end to end (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        run: ../installtest.ps1
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        with:
+          name: tauri-reader-install-windows
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/kr-install/*.png
+            ${{ runner.temp }}/kr-install/*.json
+            ${{ runner.temp }}/kr-install/*.md
+            ${{ runner.temp }}/kr-install/*.log
+            ${{ runner.temp }}/kr-install/feed/server.log
 
       # The engine test's report (Markdown and JSON), versions and screenshots, for a person to look at.
       - uses: actions/upload-artifact@v4

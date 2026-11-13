@@ -22,6 +22,11 @@ mod scan;
 mod selftest;
 mod titlebar;
 mod winbits;
+// (Stage R6b: the updater, the start's times and colour.)
+mod boot;
+mod bootlogic;
+mod update;
+mod updatelogic;
 
 use kurokawa_shell::{net, util, winstate};
 #[allow(unused_imports)]
@@ -76,6 +81,8 @@ where
 }
 
 fn main() {
+    // (Stage R6b: the start-up times count from here — boot.rs.)
+    boot::mark_start();
     net::configure(user_agent());
     let mut builder = tauri::Builder::default();
     // (Single instance — main.cjs's requestSingleInstanceLock: a second launch hands its files and links to this
@@ -152,7 +159,15 @@ fn main() {
             winbits::kr_print_file,
             winbits::kr_selftest_clipimage,
             menu::kr_menu,
-            menu::kr_selftest_command
+            menu::kr_selftest_command,
+            // (Stage R6b: the updater — update.rs —, the start's marks — boot.rs.)
+            update::kr_install_update,
+            update::kr_update_download,
+            update::kr_update_install,
+            update::kr_selftest_updatedl,
+            update::kr_updatetest_note,
+            boot::kr_boot_mark,
+            boot::kr_boot_times
         ]))
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -171,7 +186,9 @@ fn main() {
             // (Stage R5: where the shipped 7-Zip is looked for — the resource folder, then the program's own.)
             archives::init(&handle);
             // (What Electron's preload knows before the first call: the OS, in Node's words — its `platform`.)
-            let boot = serde_json::json!({ "os": util::node_platform(), "arch": util::node_arch() });
+            // (Stage R6b: and what kind of copy this is — the installer's, the portable zip, an AppImage, a .deb, a
+            // Mac's .app, a bare program —, which decides which release file updates it: update.rs.)
+            let boot = serde_json::json!({ "os": util::node_platform(), "arch": util::node_arch(), "kind": update::kind_name() });
             let mut script: String = format!("window.__KR_BOOT__ = {};\n{}", boot, BRIDGE_JS);
             // (Only with KR_SELFTEST set: the self-test, after the bridge.)
             if let Some(t) = selftest::script(&handle) {
@@ -180,6 +197,11 @@ fn main() {
             }
             // (Only with KR_ENGINETEST set, and no self-test: the engine test, after the bridge — stage R1.)
             if let Some(t) = enginetest::script(&handle) {
+                script.push('\n');
+                script.push_str(&t);
+            }
+            // (Stage R6b, only with KR_UPDATETEST set — CI —: the page updates the app through its own updater.)
+            if let Some(t) = update::script(&handle) {
                 script.push('\n');
                 script.push_str(&t);
             }
@@ -219,6 +241,13 @@ fn main() {
             if saved.maximized {
                 b = b.maximized(true);
             }
+            // (Stage R6b: the window opens in the interface's own colour — kept from the last run — so nothing flashes
+            // white before the page paints; where this build's Tauri has background_color: boot.rs, bootdetect.rs.)
+            #[cfg(kr_bg_color)]
+            {
+                let (r, g, bl) = boot::splash(&handle);
+                b = b.background_color(tauri::utils::config::Color(r, g, bl, 255));
+            }
             b.build()?;
             // (Stage R5: the icon the user chose, put on the window — and on Windows its shortcuts, on Linux its desktop
             // entry, if an update made them anew — at every start: appicon.rs.)
@@ -243,6 +272,10 @@ fn main() {
                 let list: Vec<String> = urls.iter().map(|u| u.to_string()).collect();
                 openfile::opened(handle, list);
             }
+        }
+        // (Stage R6b: an update downloaded in the background and not installed is installed as the app quits.)
+        if let tauri::RunEvent::Exit = &event {
+            update::at_exit(handle);
         }
         let _ = (handle, event);
     });

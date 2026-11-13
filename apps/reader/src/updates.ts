@@ -5,7 +5,7 @@ import { h, icon, openSheet, toast, pickSheet } from './ui/dom';
 import { t, dateLocale, countConnections, countVersions, formatBytes as fmtSize } from './i18n';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
-import { listReleases, newerThan, whatsNew, sha256Of, versionChange, type FetchText, type Rel } from './updateCore';
+import { listReleases, newerThan, whatsNew, sha256Of, versionChange, rustAsset, type FetchText, type Rel } from './updateCore';
 
 export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
 /** The hosted web app and the AltStore/SideStore source (published by the release workflow to GitHub Pages). */
@@ -169,6 +169,10 @@ export async function suitableAsset(rel: ReleaseInfo): Promise<Asset | undefined
   if (platform === 'ios') return rel.assets.find((a) => a.name.endsWith('.ipa'));
   if (platform === 'desktop') {
     const os = (window.kurokawaDesktop as { platform?: string } | undefined)?.platform ?? 'win32';
+    // (The Tauri build — stage R6b —: its own files, by the kind of copy it is: the installer's, the portable zip, an
+    // AppImage, a .deb, a Mac's .app.)
+    const boot = (window as unknown as { __KR_SHELL__?: string; __KR_BOOT__?: { arch?: string; kind?: string } });
+    if (boot.__KR_SHELL__ === 'tauri') return rustAsset(rel.assets, os, boot.__KR_BOOT__?.arch ?? 'x64', boot.__KR_BOOT__?.kind ?? 'nsis');
     const portable = !!(await (window.kurokawaDesktop as { isPortable?: () => Promise<boolean> } | undefined)?.isPortable?.().catch(() => false));
     return os === 'darwin' ? rel.assets.find((a) => /\.dmg$/.test(a.name))
       : os === 'linux' ? rel.assets.find((a) => /\.AppImage$/.test(a.name))
@@ -287,7 +291,7 @@ function fetchApk(kr: AndroidDl, asset: Asset, onProgress: (p: Progress) => void
 /** Download `asset` and hand it to the platform installer (or save/share it when there is none). */
 /** `alive`: whether the dialog that asked is still open — one closed meanwhile does not start the installer when
  *  the download ends (the update is kept; opening the dialog again installs it, once). */
-export async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, alive: () => boolean = () => true, plain = false): Promise<void> {
+export async function installAsset(asset: Asset, onProgress: (p: Progress) => void, signal?: AbortSignal, alive: () => boolean = () => true, plain = false): Promise<string | void> {
   const platform = nativePlatform();
   if (platform === 'android') {
     const p = androidPlugins(); if (!p) throw new Error('native');
@@ -310,12 +314,13 @@ export async function installAsset(asset: Asset, onProgress: (p: Progress) => vo
     } else toast(t('savedTo', { f: asset.name }));
     return;
   }
-  if (platform === 'desktop' && /\.(exe|dmg|AppImage)$/i.test(asset.name)) {
-    const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installUpdate?(url: string, opts?: { beta: boolean; plain?: boolean }): Promise<void>; onUpdateProgress?(cb: (p: number | Progress) => void): void }) | undefined;
+  if (platform === 'desktop' && /\.(exe|dmg|AppImage|deb|zip)$/i.test(asset.name)) {
+    const d = window.kurokawaDesktop as (typeof window.kurokawaDesktop & { installUpdate?(url: string, opts?: { beta: boolean; plain?: boolean; size?: number; digest?: string; name?: string }): Promise<unknown>; onUpdateProgress?(cb: (p: number | Progress) => void): void }) | undefined;
     if (!d?.installUpdate) throw new Error('desktop');
     d.onUpdateProgress?.((p) => onProgress(typeof p === 'number' ? { pct: p, got: 0, total: asset.size, speed: 0 } : p));
-    await d.installUpdate(asset.url, { beta: getSettings().updateChannel === 'beta', plain });
-    return;
+    // (The Tauri build — R6b — checks the file against the release: its size and GitHub's digest go with it.)
+    const r = await d.installUpdate(asset.url, { beta: getSettings().updateChannel === 'beta', plain, size: asset.size, digest: asset.digest, name: asset.name });
+    return typeof r === 'string' ? r : undefined;
   }
   // Anything else: download in-app and hand the file over (share sheet / Downloads); when the
   // browser blocks the cross-origin download, open it in a tab instead.
@@ -336,7 +341,7 @@ function shortTime(sec: number): string {
 
 /** The update dialog: what is new, the file for this device, and one button to fetch and install it. A
  *  wavy indicator shows the download — speed and time left with it — and the dialog says what happens next. */
-export function showUpdateSheet(rel: ReleaseInfo): void {
+export function showUpdateSheet(rel: ReleaseInfo, opts: { rustSwitch?: boolean } = {}): void {
   const s = openSheet(t('updateAvailable', { v: rel.version }), t('close'));
   s.body.style.fontFamily = 'var(--font-ui)';
   s.el.classList.add('update-sheet');
@@ -346,8 +351,8 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
   s.body.append(h('div', { class: 'upd-hero' },
     h('div', { class: 'upd-badge' }, h('img', { src: 'icons/icon.svg', alt: '' })),
     h('div', { class: 'upd-hero-text' },
-      h('h2', null, t('updateHeadline')),
-      h('p', null, t('updateReadySub', { v: rel.version })),
+      h('h2', null, opts.rustSwitch ? t('updSwitchTitle') : t('updateHeadline')),
+      h('p', null, opts.rustSwitch ? t('updSwitchSub') : t('updateReadySub', { v: rel.version })),
       h('div', { class: 'upd-head' },
         h('span', { class: 'upd-chip', dir: 'ltr' }, APP_VERSION), h('span', { class: 'upd-arrow' }, icon('arrowRight')), h('span', { class: 'upd-chip new', dir: 'ltr' }, rel.version),
         date ? h('span', { class: 'upd-date' }, date) : null))));
@@ -407,12 +412,12 @@ export function showUpdateSheet(rel: ReleaseInfo): void {
     install.hidden = true; choose.disabled = true; later.hidden = true; cancel.hidden = false; ctl = new AbortController();
     status.textContent = t('preparing'); wave.hidden = false; wave.classList.add('indet'); setPct(0);
     try {
-      await installAsset(asset, (p) => { if (s.el.isConnected) onProgress(p); }, ctl.signal, () => s.el.isConnected);
+      const r = await installAsset(asset, (p) => { if (s.el.isConnected) onProgress(p); }, ctl.signal, () => s.el.isConnected);
       setPct(100); wave.classList.remove('indet'); wave.classList.add('done'); dl.classList.add('ok');
-      status.textContent = t('installStarted');
+      status.textContent = installedText(r);
     } catch (err) {
       wave.hidden = true; dl.classList.remove('busy');
-      status.textContent = (err as Error).name === 'AbortError' ? t('cancelled') : `${t('updateFailed')} — ${String((err as Error).message ?? err)}`;
+      status.textContent = (err as Error).name === 'AbortError' ? t('cancelled') : updateErrorText(String((err as Error).message ?? err));
       install.hidden = false; choose.disabled = false;
     } finally { cancel.hidden = true; later.hidden = false; ctl = null; }
   } }, icon('download'), platform === 'web' ? t('reloadToUpdate') : platform === 'ios' ? t('installWithAltStore') : t('downloadInstall')) as HTMLButtonElement;
@@ -458,4 +463,37 @@ export function renderUpdateCard(container: HTMLElement): void {
     ...(nativePlatform() === 'android' ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownloadAndroid'))), h('p', { class: 'hint' }, t('updateAutoDownloadAndroidHint')),
       h('div', { class: 'row', style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('updateInstaller')), installerSeg), installerHint] : []),
     ...(desk?.downloadUpdate ? [h('label', { class: 'row', style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('span', { class: 'switch' }, bg, h('i')), h('span', null, t('updateAutoDownload'))), h('p', { class: 'hint' }, t('updateAutoDownloadHint'))] : []));
+}
+
+/* ---------- the Tauri build's updater, and the switch from Electron (stage R6b) ---------- */
+/** What the sheet says once the installer has the file: the Tauri build's own words for a Mac's disk image and a
+ *  .deb (src-tauri/src/update.rs), else «the installer has been opened». */
+export function installedText(r: string | void): string {
+  return r === 'kr-update:mac-opened' ? t('updMacGuide') : r === 'kr-update:deb-opened' ? t('updDebOpened') : t('installStarted');
+}
+/** A refusal of the desktop updater («kr-update:<code> …»: the Tauri build's update.rs, Electron's switch in
+ *  desktop/main.cjs) in the interface's words; any other error as before. */
+export function updateErrorText(msg: string): string {
+  const m = /kr-update:([a-z-]+)\s*([\s\S]*)$/.exec(msg);
+  if (!m) return `${t('updateFailed')} — ${msg}`;
+  switch (m[1]) {
+    case 'portable': return t('updPortable');
+    case 'bare': case 'unknown': return t('updManual');
+    case 'checksum': case 'size': return t('updChecksum');
+    case 'nochecksum': return t('updNoChecksum');
+    case 'readonly': return t('updReadonly');
+    case 'busy': return t('updBusy');
+    case 'handover': return t('updHandoverFailed', { r: m[2] || '—' });
+    default: return `${t('updateFailed')} — ${msg}`;
+  }
+}
+/** Electron's switch to the Tauri build (desktop/main.cjs RUST_SWITCH): the shell found the Tauri build in a release
+ *  of this version or a newer one and asks the page to offer it (the `rust-switch` command) — the update sheet, with
+ *  the switch's own words, even when the version is the same; «Download and install» then goes through the shell's
+ *  switch (its hand-over first). */
+export async function showRustSwitch(): Promise<void> {
+  const all = await readerReleases();
+  const rel = all[0]; if (!rel) return;
+  if (localStorage.getItem('kr.update.skip') === rel.version) return;
+  showUpdateSheet(rel, { rustSwitch: true });
 }

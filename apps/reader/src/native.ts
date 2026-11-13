@@ -206,6 +206,8 @@ export function initNativeBridges(): void {
       else if (c === 'back') { diagBack('back-pc'); goBack(); }
       else if (c === 'settings') navigate('/settings');
       else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));
+      // (Stage R6b: Electron's shell found the Tauri build — desktop/main.cjs RUST_SWITCH — and offers the switch.)
+      else if (c === 'rust-switch') void import('./updates').then((u) => u.showRustSwitch()).catch(() => undefined);
       else document.dispatchEvent(new CustomEvent('kr:command', { detail: c }));
     });
     if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') initTauriShell();
