@@ -162,6 +162,7 @@ const PATHS: Record<string, string> = {
   ambience: '<circle cx="12" cy="12" r="1"/><circle cx="12" cy="6" r="1"/><circle cx="12" cy="18" r="1"/><circle cx="6" cy="12" r="1"/><circle cx="18" cy="12" r="1"/><circle cx="7.8" cy="7.8" r="1"/><circle cx="16.2" cy="16.2" r="1"/><circle cx="16.2" cy="7.8" r="1"/><circle cx="7.8" cy="16.2" r="1"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
   hq: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9v6M11 9v6M7 12h4"/><path d="M14 9h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2zM16.5 14.5l1.5 1.5"/>',
+  paste: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M12 10v7M9 14l3 3 3-3"/>',
   scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/>',
   chapters: '<path d="M8 3h11v18l-5.5-4L8 21z"/><path d="M5 6v15"/>',
   mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',

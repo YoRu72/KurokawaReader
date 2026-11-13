@@ -157,8 +157,8 @@ final class KtFileJobs {
     }
     static String extOf(String name) { int i = name.lastIndexOf('.'); return i > 0 && i < name.length() - 1 && name.length() - i <= 8 ? name.substring(i + 1).toLowerCase(Locale.ROOT) : ""; }
     static File keepBoth(File to) { return keepBoth(to, false); }
-    /** A free name beside `to`: «name (1).ext» — a folder's whole name numbered, its dots no extension. */
-    static File keepBoth(File to, boolean dir) { String n = to.getName(); String ext = dir ? "" : extOf(n); String stem = ext.isEmpty() ? n : n.substring(0, n.length() - ext.length() - 1); String e = ext.isEmpty() ? "" : n.substring(n.length() - ext.length() - 1); for (int i = 1; i < 10000; i++) { File c = new File(to.getParentFile(), stem + " (" + i + ")" + e); if (!c.exists()) return c; } return to; }
+    /** A free name beside `to`: «name (2).ext» (the second of that name, as other file managers count) — a folder's whole name numbered, its dots no extension. */
+    static File keepBoth(File to, boolean dir) { String n = to.getName(); String ext = dir ? "" : extOf(n); String stem = ext.isEmpty() ? n : n.substring(0, n.length() - ext.length() - 1); String e = ext.isEmpty() ? "" : n.substring(n.length() - ext.length() - 1); for (int i = 2; i < 10000; i++) { File c = new File(to.getParentFile(), stem + " (" + i + ")" + e); if (!c.exists()) return c; } return to; }
     /** `f` and everything in it deleted (a link: the link only — never what it points at). */
     static void deleteTree(File f, Job j, long[] done, long[] total, Events ev, long[] lastTold) throws Exception {
         if (j.cancel.get()) return;

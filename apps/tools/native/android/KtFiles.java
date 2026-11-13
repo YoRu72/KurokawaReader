@@ -66,10 +66,13 @@ final class KtFiles {
     static String mimeOf(String name) { String e = extOf(name); String m = e.isEmpty() ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(e); if (m == null) m = KtStream.mimeOf(name); return m == null || m.isEmpty() ? "application/octet-stream" : m; }
 
     /** One file or folder up close: its size (a folder's counted whole, with how many files and folders), times, kind. */
-    static JSONObject stat(File f, AtomicBoolean cancel) throws Exception {
+    static JSONObject stat(File f, AtomicBoolean cancel) throws Exception { return stat(f, cancel, false); }
+    /** `shallow`: a folder's own facts only (can it be written to?), its contents not walked. */
+    static JSONObject stat(File f, AtomicBoolean cancel, boolean shallow) throws Exception {
         JSONObject o = new JSONObject(); o.put("name", f.getName()); o.put("path", f.getAbsolutePath()); o.put("exists", f.exists()); o.put("dir", f.isDirectory()); o.put("mtime", f.lastModified());
         o.put("readable", f.canRead()); o.put("writable", f.canWrite()); o.put("hidden", f.getName().startsWith("."));
-        if (f.isDirectory()) { long[] t = { 0, 0, 0 }; walkSize(f, t, cancel); o.put("size", t[0]); o.put("files", t[1]); o.put("folders", t[2]); }
+        if (f.isDirectory() && shallow) o.put("size", 0);
+        else if (f.isDirectory()) { long[] t = { 0, 0, 0 }; walkSize(f, t, cancel); o.put("size", t[0]); o.put("files", t[1]); o.put("folders", t[2]); }
         else { o.put("size", f.length()); o.put("ext", extOf(f.getName())); o.put("mime", mimeOf(f.getName())); }
         return o;
     }

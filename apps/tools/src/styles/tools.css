@@ -745,6 +745,41 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-ic.has-img img { width: 100%; height: 100%; object-fit: cover; }
 .files-main { display: flex; flex-direction: column; min-width: 0; }
 .files-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A long name cut in its middle: the head gives way, the tail (the last letters and the extension) always shows. Each part
+   isolated, so an English name's brackets stay where they are in the Arabic page. */
+.mid { display: inline-flex; align-self: flex-start; min-width: 0; max-width: 100%; white-space: nowrap; unicode-bidi: isolate; }
+.mid > .mid-head { flex: 0 1 auto; min-width: 1ch; overflow: hidden; text-overflow: ellipsis; white-space: pre; unicode-bidi: isolate; }
+.mid > .mid-tail { flex: none; white-space: pre; unicode-bidi: isolate; }
+.files-list.grid .files-name.mid { display: inline-flex; align-self: center; white-space: nowrap; overflow: hidden; -webkit-line-clamp: unset; }
+.topbar .files-head > span.files-title.files-title { display: flex; -webkit-line-clamp: unset; min-width: 0; max-width: 100%; }
+.files-crumbs .crumb svg { width: 16px; height: 16px; vertical-align: -3px; }
+.files-title > .mid-head { flex: 0 1 auto; min-width: 1ch; overflow: hidden; text-overflow: ellipsis; white-space: pre; unicode-bidi: isolate; }
+.files-title > .mid-tail { flex: none; white-space: pre; unicode-bidi: isolate; }
+.files-head { min-width: 0; }
+/* The clipboard bar (Material 3 Expressive's floating toolbar): on a phone above the bottom bar, on a computer a strip
+   under the top bar. */
+.files-clipbar { position: fixed; inset-inline: 12px; bottom: calc(var(--nav-h, 64px) + 12px + var(--safe-bottom, 0px)); z-index: 29; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border-radius: 28px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: 0 6px 20px rgba(0,0,0,.28); animation: clip-in var(--dur-medium, .25s) var(--ease-emph-decel, ease-out); }
+[dir='rtl'] .files-clipbar { padding: 6px 14px 6px 6px; }
+.files-clipbar[hidden], .files-view.selecting .files-clipbar { display: none; }
+.files-clip-ic { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.files-clip-ic svg { width: 18px; height: 18px; }
+.files-clip-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.files-clip-name { font-weight: 600; font-size: 14px; }
+.files-clip-why { color: var(--md-on-surface-variant); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-clip-why.blocked { color: var(--md-error); }
+.files-clip-paste { flex: none; border-radius: 20px; min-height: 40px; padding-inline: 14px; gap: 6px; }
+.files-clip-paste:disabled { opacity: .45; }
+.files-clipbar > .icon-btn { flex: none; }
+.files-view.has-clip .files-fab { bottom: calc(var(--nav-h, 64px) + 86px + var(--safe-bottom, 0px)); }
+.files-view.has-clip .files-body { padding-bottom: 168px; }
+html.pc .files-clipbar { position: sticky; top: 0; inset-inline: auto; bottom: auto; margin: 4px 16px 6px; box-shadow: none; background: var(--md-secondary-container); color: var(--md-on-secondary-container); border-radius: 20px; padding-block: 4px; }
+html.pc .files-clipbar .files-clip-ic { background: var(--md-surface-container-lowest, var(--md-surface)); color: var(--md-primary); }
+html.pc .files-clipbar .files-clip-text { flex-direction: row; align-items: baseline; gap: 10px; }
+html.pc .files-view.has-clip .files-body { padding-bottom: 96px; }
+@keyframes clip-in { from { transform: translateY(16px) scale(.96); opacity: 0; } }
+.files-off { opacity: .5; cursor: default; }
+.dest-row.files-off .files-main small { white-space: normal; }
+.files-failed { margin: 8px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
 .files-check { color: var(--md-primary); display: grid; place-items: center; width: 40px; }
 .files-list > .empty { grid-column: 1 / -1; max-width: none; width: 100%; box-sizing: border-box; text-align: center; justify-content: center; padding: 48px 16px; }
 .files-list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
@@ -772,7 +807,7 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-head { display: flex; flex-direction: column; line-height: 1.15; }
 .files-title { font-weight: 600; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-sub { color: var(--md-on-surface-variant); font-size: 12px; font-weight: 400; }
-.files-crumbs .crumb { text-transform: uppercase; letter-spacing: .04em; font-size: 12px; font-weight: 600; color: var(--md-primary); }
+.files-crumbs .crumb { letter-spacing: .02em; font-size: 12px; font-weight: 600; color: var(--md-primary); }
 .files-crumbs .crumb:last-child { background: transparent; color: var(--md-on-surface); }
 .files-section { grid-column: 1 / -1; padding: 10px 8px 4px; font-size: 13px; font-weight: 600; color: var(--md-on-surface-variant); background: var(--md-surface-container-low); border-radius: 10px; margin: 6px 0 2px; }
 .files-list.grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 2px 6px; }

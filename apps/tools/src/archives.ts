@@ -4,7 +4,7 @@
 import { ktPlugin } from './native';
 import { uid } from './db';
 
-export interface ArchiveEntry { path: string; size: number; compressed?: number; dir: boolean }
+export interface ArchiveEntry { path: string; size: number; compressed?: number; dir: boolean; /** When the archive keeps it (epoch ms). */ mtime?: number }
 export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean; largest?: number; free?: number; unsafe?: string; duplicate?: string; sfv?: string; /** How many volumes a split archive has. */ volumes?: number }
 export interface ExtractOptions { path: string; /** A folder, or «cache:» for a look at one file (the app's own cache). */ dest?: string; /** Only these entries (and what is under these folders). */ only?: string[]; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; password?: string; verifyFirst?: boolean; keepFree?: number }
 export type ArchiveProgress = { id: string; done: number; total: number; file: string };
