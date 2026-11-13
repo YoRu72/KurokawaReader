@@ -355,7 +355,12 @@
       '; scrollTop ' + Math.round(sc.scrollTop) + ' of ' + sc.scrollHeight + ' (view ' + sc.clientWidth + '×' + sc.clientHeight + ')' +
       (p ? '; page 250 at ' + p.offsetTop + ', ' + p.offsetWidth + '×' + p.offsetHeight + (p.classList.contains('loading') ? ', loading' : '') + (p.dataset.res ? ', res ' + p.dataset.res : '') + '; canvases [' + cv.join(', ') + ']' : '; no page 250') +
       '; ' + ((($('.pcount') || {}).textContent) || 'no page count') + '; DPR ' + root.devicePixelRatio + ', window ' + root.innerWidth + '×' + root.innerHeight +
-      (win ? '; window full screen ' + !!win.fullscreen + ', maximised ' + !!win.maximized + ', own bar ' + !!win.own : '');
+      (win ? '; window full screen ' + !!win.fullscreen + ', maximised ' + !!win.maximized + ', own bar ' + !!win.own : '') +
+      '; ' + $$('.pdf-scroll').length + ' PDF view(s), ' + $$('.pdf-page').length + ' pages in the page; the view: ' + viewState(sc);
+  }
+  /** The PDF view's own idea of where it is (src/formats/pdf.ts krPdfState): its first/last/current page, its kept page
+   *  places against the laid-out ones, how often it found them stale. */
+  function viewState(sc) { try { return sc && sc.krPdfState ? short(sc.krPdfState()) : '(not told)'; } catch (e) { return '(' + e.message + ')'; }
   }
   function pageInk(page) { return $$('canvas', page).reduce(function (n, c) { try { return n + (c.width && c.height ? ink(c) : 0); } catch (e) { return n; } }, 0); }
   async function shot(cs, name) {
@@ -798,7 +803,7 @@
         var moved = 0;
         try { await waitFor(function () { var p = target(); if (Math.abs(sc.scrollTop - p.offsetTop) > p.offsetHeight) { sc.scrollTop = p.offsetTop; moved++; } return pageInk(p) > 10; }, 60000, 'ink on page 250'); }
         catch (e) { throw new Error(e.message + ' — ' + (await pdfDiag(sc, target())) + '; scroll put back on page 250 ' + moved + ' time(s)'); }
-        return 'in ' + (now() - tGo) + ' ms; ' + ((($('.pcount') || {}).textContent) || '') + (moved ? '; scroll put back ' + moved + ' time(s)' : '');
+        return 'in ' + (now() - tGo) + ' ms; ' + ((($('.pcount') || {}).textContent) || '') + (moved ? '; scroll put back ' + moved + ' time(s)' : '') + '; the view: ' + viewState(sc);
       }, 80000);
     });
   }

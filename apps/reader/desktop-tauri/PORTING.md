@@ -791,3 +791,23 @@ the block's comment there. The hand-over hook is `desktop/handover.cjs` `prepare
 build — its file, size and digest, progress, the refusals in words); `tests/tauribridge.cjs` (the four functions'
 commands and arguments); `selftest.js` (CI): «updater: resume, checksum, refusals» (required) and «start-up times»;
 `installtest.ps1` (CI, Windows): the installer end to end — see the workflow.
+
+**R5, second and third runs** (a8fc6a1, c05ef5c): Windows failed the same check; the new details settled it. In
+run 43461902233: «frames in 1000 ms: 65; visible, focused; scrollTop 347853 of 419232 (view 1012×581); page 250 at
+347853, 988×1383; canvases []; Page 245 of 300; DPR 1, window 1024×768; window full screen true». So the page made
+frames, was visible and had the scroll exactly on page 250, but the PDF view believed itself on page 245: page 250 was
+never even marked «loading» (the view marks the pages around the ones it thinks are in view). The view keeps its pages'
+places (`layoutTops`) between frames; after the window was resized and put full screen as the book opened they were
+those of a wider layout (≈ 2 % taller pages: five pages short at page 250), and nothing let them go. The same drift,
+smaller, is in every earlier Windows and macOS report («Page 247 of 300» there, 250 on Linux, whose window does not
+change): page 250 was drawn only because it fell among the pages drawn ahead. Fixed in `src/formats/pdf.ts`: each frame
+checks the kept places against the layout (the page at the top and the last page, two reads) and reads them again
+when they moved; once a scroll stops they are always read again. The view also tells the engine test what it thinks
+(`krPdfState`: first, last, current page, scale, kept against laid-out places, how often they were found stale),
+shown in the row whether it passes or fails.
+
+**macOS, the text reader** (continue-on-error there): run 1 failed «a highlight added» (the selection 1044 px down a
+768 px window, the toolbar never shown), run 3 «the place saved and restored» (at paragraph 347 when the book opened,
+then moved off and not put back in 12 s). Both are text reader checks taken while the window's native full-screen
+animation, started by opening the book (`setImmersive`, Electron's behaviour), reflows the text; R4 (no full screen)
+passed both. Not fixed here: whether a computer should go full screen at all when a book opens is to be decided.
