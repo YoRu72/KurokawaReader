@@ -39,16 +39,16 @@ public class FilesT {
     { File s = fresh(root, "s"), d = fresh(root, "d"); File f = mk(s, "a.txt", "NEW"); mk(d, "a.txt", "OLD");
       job("move", Arrays.asList(f), d, "ask:replace", null, null); ok("move + replace: replaced, the source gone, no part left", "NEW".equals(read(new File(d, "a.txt"))) && !f.exists() && !parts(d)); }
     { File s = fresh(root, "s"), d = fresh(root, "d"); File f = mk(s, "a.txt", "NEW"); mk(d, "a.txt", "OLD");
-      job("move", Arrays.asList(f), d, "ask:keep", null, null); ok("move + keep both: both there, the source gone", "OLD".equals(read(new File(d, "a.txt"))) && "NEW".equals(read(new File(d, "a (1).txt"))) && !f.exists()); }
+      job("move", Arrays.asList(f), d, "ask:keep", null, null); ok("move + keep both: both there, the source gone", "OLD".equals(read(new File(d, "a.txt"))) && "NEW".equals(read(new File(d, "a (2).txt"))) && !f.exists()); }
     // the same folder: nothing ever deleted
     for (String c : new String[] { "replace", "skip", "keep", "ask:replace" }) {
       File s = fresh(root, "s"); File f = mk(s, "a.txt", "MINE"); List<JSONObject> asked = new ArrayList<>();
       JSONObject e = job("move", Arrays.asList(f), s, c, null, asked);
       ok("cut + paste into the same folder (" + c + "): a no-op, nothing asked", "MINE".equals(read(f)) && asked.isEmpty() && s.list().length == 1 && e.optJSONArray("failed").length() == 0); }
     { File s = fresh(root, "s"); File f = mk(s, "a.txt", "MINE"); List<JSONObject> asked = new ArrayList<>();
-      job("copy", Arrays.asList(f), s, "ask:replace", null, asked); ok("copy + paste into the same folder: a second one beside it, nothing asked", "MINE".equals(read(f)) && "MINE".equals(read(new File(s, "a (1).txt"))) && asked.isEmpty()); }
+      job("copy", Arrays.asList(f), s, "ask:replace", null, asked); ok("copy + paste into the same folder: a second one beside it, nothing asked", "MINE".equals(read(f)) && "MINE".equals(read(new File(s, "a (2).txt"))) && asked.isEmpty()); }
     { File s = fresh(root, "s"); File dd = new File(s, "my.folder"); mk(dd, "x.txt", "X");
-      job("copy", Arrays.asList(dd), s, "ask:replace", null, null); ok("a folder copied into its own folder: «my.folder (1)» beside it", "X".equals(read(new File(s, "my.folder (1)/x.txt"))) && "X".equals(read(new File(dd, "x.txt"))));
+      job("copy", Arrays.asList(dd), s, "ask:replace", null, null); ok("a folder copied into its own folder: «my.folder (2)» beside it", "X".equals(read(new File(s, "my.folder (2)/x.txt"))) && "X".equals(read(new File(dd, "x.txt"))));
       job("move", Arrays.asList(dd), s, "replace", null, null); ok("a folder cut and pasted where it is: untouched", "X".equals(read(new File(dd, "x.txt")))); }
     // folder merge with one file skipped
     { File s = fresh(root, "s"), d = fresh(root, "d"); File dd = new File(s, "D"); mk(dd, "x.txt", "X"); mk(dd, "sub/y.txt", "Y-NEW"); mk(dd, "sub/z.txt", "Z"); mk(d, "D/sub/y.txt", "Y-OLD");

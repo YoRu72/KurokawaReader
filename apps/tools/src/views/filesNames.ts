@@ -30,3 +30,31 @@ export function clashes(names: string[]): Set<number> {
   const seen = new Map<string, number[]>(); names.forEach((n, i) => { const k = n.toLowerCase(); seen.set(k, [...(seen.get(k) ?? []), i]); });
   const bad = new Set<number>(); for (const ix of seen.values()) if (ix.length > 1) for (const i of ix) bad.add(i); return bad;
 }
+/** The way a name reads: right to left when its first strong letter is Arabic, Hebrew, Syriac, Thaana or N'Ko. */
+export function textDir(s: string): 'ltr' | 'rtl' {
+  for (const ch of s) { if (/[֐-ࣿיִ-﷿ﹰ-﻿]/.test(ch)) return 'rtl'; if (/[A-Za-zÀ-ɏͰ-ϿЀ-ӿ぀-ヿ㐀-鿿가-힯]/.test(ch)) return 'ltr'; }
+  return 'ltr';
+}
+/** A name cut in two for a middle ellipsis: the head (which gives way, «HOREMAJO_03_KARAO…») and the tail that always
+ *  shows — the last few letters of the stem and the whole extension («D (1).zip»). */
+export function nameParts(name: string, dir = false): { head: string; tail: string; dir: 'ltr' | 'rtl' } {
+  const [stem, ext] = splitExt(name, dir); const chars = [...stem]; const way = textDir(name); let keep = Math.min(5, Math.floor(chars.length / 2));
+  // (A right-to-left name is cut only between words or at a bracket — never inside a word, whose letters join.)
+  if (way === 'rtl') { keep = 0; for (let i = chars.length - 1; i >= Math.max(1, chars.length - 14); i--) if (/[\s_\-.([{]/.test(chars[i])) { keep = chars.length - i; break; } }
+  return { head: chars.slice(0, chars.length - keep).join(''), tail: chars.slice(chars.length - keep).join('') + (ext ? `.${ext}` : ''), dir: way };
+}
+/** A row's second line: the parts that have something to say, one « · » between them — never one left hanging. */
+export const joinMeta = (parts: (string | null | undefined | false)[]): string => parts.filter((x): x is string => !!x && !!x.trim()).join(' · ');
+/** A place as a person reads it: inside an archive, the archive's own path then the folder inside it («…/a.zip › Fonts»),
+ *  never the encoded form the address carries. */
+export function readablePath(p: string): string {
+  const m = /^arc:\/\/([^/]+)(?:\/(.*))?$/.exec(p); if (!m) return p;
+  let archive = m[1]; try { archive = decodeURIComponent(m[1]); } catch { /* as it is */ }
+  const inner = (m[2] ?? '').replace(/\/+$/, ''); return inner ? `${archive} › ${inner.split('/').join(' › ')}` : archive;
+}
+/** A place's own name, for a title: the last folder, or inside an archive the folder there (the archive's name at its top). */
+export function placeName(p: string): string {
+  const m = /^arc:\/\/([^/]+)(?:\/(.*))?$/.exec(p);
+  if (m) { const inner = (m[2] ?? '').replace(/\/+$/, ''); if (inner) return inner.split('/').pop() ?? inner; let a = m[1]; try { a = decodeURIComponent(m[1]); } catch { /* as it is */ } return a.replace(/\/+$/, '').split('/').pop() ?? a; }
+  return p.replace(/\/+$/, '').split('/').pop() ?? p;
+}

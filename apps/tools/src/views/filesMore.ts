@@ -332,7 +332,7 @@ export async function filesSettingsSheet(at: string, apply: () => void): Promise
   sh.body.append(
     sec(t('filesLook')), h('div', { class: 'chip-row files-filters' }, viewBtn, sortBtn, densBtn, toneBtn),
     tog(t('filesShowThumbs'), prefs.thumbs !== false, (v) => { prefs.thumbs = v; }), tog(t('filesShowCounts'), prefs.counts !== false, (v) => { prefs.counts = v; }, t('filesShowCountsHint')), tog(t('filesShowHiddenSetting'), prefs.hidden, (v) => { prefs.hidden = v; }), tog(t('filesEink'), !!prefs.eink, (v) => { prefs.eink = v; }, t('filesEinkHint')),
-    sec(t('filesBehaviour')), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesBackUp'), !!prefs.backUp, (v) => { prefs.backUp = v; }, t('filesBackUpHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
+    sec(t('filesBehaviour')), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
     sec(t('filesBackup')), h('p', { class: 'hint' }, t('filesBackupHint')));
   sh.actions.append(
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {

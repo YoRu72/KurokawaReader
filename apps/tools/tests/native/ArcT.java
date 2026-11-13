@@ -72,6 +72,14 @@ public class ArcT {
     ok("crafted overlap set up", cd > 0); if (cd > 0) { int off = (ob[cd + 42] & 0xff) | ((ob[cd + 43] & 0xff) << 8) | ((ob[cd + 44] & 0xff) << 16) | ((ob[cd + 45] & 0xff) << 24); int bad = off - 100; ob[cd + 42] = (byte) bad; ob[cd + 43] = (byte) (bad >> 8); ob[cd + 44] = (byte) (bad >> 16); ob[cd + 45] = (byte) (bad >> 24); Files.write(ov.toPath(), ob); }
     org.json.JSONObject oi = KtArchive.list(ov, null); ok("overlapping entries seen, in place refused", oi.has("overlap") && !oi.getBoolean("inPlaceOk"));
     try { KtArchive.Options o2 = new KtArchive.Options(); o2.inPlace = true; KtArchive.extract(ov, new File(d, "ov-out"), o2, P); ok("in place over an overlap refused", false); } catch (IOException e) { ok("in place over an overlap refused: " + e.getMessage(), e.getMessage().startsWith("overlapping")); }
+    // A zip entry's date (its MS-DOS time) listed, to the two-second step: the Files page shows it on the row.
+    File dz = new File(d, "dated.zip"); long when = new java.util.GregorianCalendar(2024, 2, 9, 14, 30, 20).getTimeInMillis();
+    try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(dz))) { java.util.zip.ZipEntry ze = new java.util.zip.ZipEntry("Fonts/a.ttf"); ze.setTime(when); z.putNextEntry(ze); z.write(1); z.closeEntry(); }
+    KtArchive.nameCharset = null; org.json.JSONObject de = KtArchive.list(dz, null).getJSONArray("entries").getJSONObject(0); ok("a zip entry's date listed: " + de.optLong("mtime"), Math.abs(de.optLong("mtime") - when) <= 2000);
+    // Only one folder taken out: no other folder of the archive made beside it.
+    File pz = new File(d, "part.zip"); try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(pz))) { z.putNextEntry(new java.util.zip.ZipEntry("Other/")); z.closeEntry(); z.putNextEntry(new java.util.zip.ZipEntry("Fonts/")); z.closeEntry(); z.putNextEntry(new java.util.zip.ZipEntry("Fonts/Empty/")); z.closeEntry(); z.putNextEntry(new java.util.zip.ZipEntry("Fonts/a.ttf")); z.write(1); z.closeEntry(); }
+    File po = new File(d, "part-out"); KtArchive.Options op = new KtArchive.Options(); op.only = new java.util.HashSet<>(java.util.Arrays.asList("Fonts/")); KtArchive.extract(pz, po, op, P);
+    ok("one folder taken out: it (and its empty folder), not the others", new File(po, "Fonts/a.ttf").isFile() && new File(po, "Fonts/Empty").isDirectory() && !new File(po, "Other").exists());
     System.out.println(fails == 0 ? "all passed" : fails + " failed"); System.exit(fails == 0 ? 0 : 1);
   }
 }
