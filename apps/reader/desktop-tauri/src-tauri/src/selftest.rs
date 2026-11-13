@@ -24,6 +24,7 @@ pub fn script(app: &AppHandle) -> Option<String> {
         Err(_) => String::new(),
     };
     let bin: Vec<u8> = (0..=255u8).collect();
+    let large: Vec<u8> = (0..testserver::LARGE_SIZE).map(testserver::big_byte).collect();
     // (KR_SELFTEST_OPEN: the file CI also gave this launch on its command line — the page must receive it.)
     let open = std::env::var("KR_SELFTEST_OPEN").ok().filter(|p| !p.is_empty());
     let open_size: i64 = open.as_deref().map(files::file_size).unwrap_or(-1);
@@ -48,6 +49,14 @@ pub fn script(app: &AppHandle) -> Option<String> {
         "openDir": open_dir,
         // (KR_SELFTEST_NO_WM: CI's Xvfb has no window manager — nothing there maximises a window.)
         "noWm": std::env::var_os("KR_SELFTEST_NO_WM").map(|v| !v.is_empty()).unwrap_or(false),
+        // (Stage R3: the files /big and /large send, to compare a download with; the cookie /cookie/set gives; the
+        // made-up name /dns-query answers.)
+        "bigSize": testserver::BIG_SIZE,
+        "bigCrc": testserver::crc32(&testserver::big_bytes()),
+        "largeSize": testserver::LARGE_SIZE,
+        "largeCrc": testserver::crc32(&large),
+        "cookie": testserver::COOKIE_VALUE,
+        "dohHost": testserver::DOH_HOST,
     });
     Some(format!("window.__KR_SELFTEST__ = {};\n{}", cfg, SELFTEST_JS))
 }

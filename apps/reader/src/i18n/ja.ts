@@ -337,4 +337,6 @@ export const ja: Partial<Strings> = {
   winRestore: "元のサイズに戻す",
   winClose: "閉じる",
   winControls: "ウィンドウ操作",
+  // (The Tauri shell: its resolver serves the app's own requests.)
+  dohHintApp: "選んだリゾルバーでサイトの名前を引きます(ネットワークの DNS の代わり)。対象はアプリ自身の通信 — ソース、カタログ、ダウンロード、更新の確認です。ウェブページ内の画像はこれまでどおりシステムが引きます。ネットワークがサイトを名前で隠すときに役立ちます。",
 };

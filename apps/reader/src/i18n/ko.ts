@@ -337,4 +337,6 @@ export const ko: Partial<Strings> = {
   winRestore: "이전 크기로 복원",
   winClose: "닫기",
   winControls: "창 조절",
+  // (The Tauri shell: its resolver serves the app's own requests.)
+  dohHintApp: "선택한 리졸버로 사이트 이름을 찾습니다(네트워크의 DNS 대신). 앱 자체의 요청 — 소스, 카탈로그, 다운로드, 업데이트 확인 — 에 적용됩니다. 웹 페이지 안의 이미지는 계속 시스템이 찾습니다. 네트워크가 사이트를 이름으로 막을 때 유용합니다.",
 };

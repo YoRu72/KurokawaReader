@@ -59,8 +59,8 @@ async function nodePart() {
   assert.ok(leftOut && typeof leftOut === 'object', 'bridge lists no left-out names');
 
   // Names: the preload's, less those left out until their stage (the page then takes its own way: see bridge.js),
-  // and this shell's extras (EXTRA: scanFolder), which Electron's has not.
-  assert.deepEqual([...extra], ['scanFolder'], 'the bridge\'s extras');
+  // and this shell's extras (EXTRA: scanFolder, cancelDownload), which Electron's has not.
+  assert.deepEqual([...extra], ['scanFolder', 'cancelDownload'], 'the bridge\'s extras');
   for (const k of extra) assert.ok(!(k in pre), `extra ${k} is a preload name`);
   const want = Object.keys(pre).filter((k) => !(k in leftOut));
   assert.deepEqual(Object.keys(kd).sort(), [...want, ...extra].sort(), 'bridge names ≠ preload names less the left-out ones, and the extras');
@@ -79,8 +79,10 @@ async function nodePart() {
     readFile: ['/x/a.epub'], fileSize: ['/x/a.epub'], readTextFile: ['/x/sync.json'], writeTextFile: ['/x/sync.json', 'نص'],
     writeBinary: ['/x/b.bin', 'AAEC', true], scanDevice: [['epub', 'pdf']], pickFolder: [], archivePickDir: [], archivePickFile: [{ multiple: true }],
     openDefaultApps: [], titleBar: [{ act: 'minimize' }],
+    // (Stage R3.)
+    download: ['https://example.org/a b.epub', 'a b.epub', 'dl-1'], deleteDownload: ['/data/downloads/a.epub'], setDoh: ['cloudflare', 'example.com'], notify: [{ title: 'T', body: 'B', hash: '/read/1' }],
   };
-  const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl'];
+  const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl', 'onDownloadProgress', 'addDownloadListener'];
   assert.deepEqual([...Object.keys(samples), ...special].sort(), [...ported].sort(), 'samples ≠ ported functions');
   const sent = {};
   for (const m of Object.keys(samples)) {
@@ -145,6 +147,33 @@ async function nodePart() {
     for (const k of ['onOpenFile', 'onOpenUrl']) { eCalls = []; pre[k](() => {}); assert.ok(eCalls.every((c) => c.ch === 'kr:ready'), `${k}: preload channels`); }
     sent.kr_open_take = ['kind'];
   }
+  // Stage R3: setDoh's two forms (a provider kept; null and a host to try), download without an id, cancelDownload
+  // (EXTRA) → kr_download_cancel { id }.
+  for (const [a, want] of [[[null], { provider: null, test: null }], [[undefined, 'example.com'], { provider: null, test: 'example.com' }], [['off'], { provider: 'off', test: null }]]) { tCalls = []; await kd.setDoh(...a); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args)), want, 'setDoh ' + JSON.stringify(a)); }
+  tCalls = []; await kd.download('u', 'n'); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args)), { url: 'u', name: 'n', id: null });
+  tCalls = []; await kd.cancelDownload('dl-1'); assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_download_cancel', args: { id: 'dl-1' } }]); sent.kr_download_cancel = ['id'];
+  tCalls = []; await kd.notify(); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args)), { o: {} });
+  // onDownloadProgress / addDownloadListener: main.cjs's kr:download-progress to every listener through one Tauri
+  // listening; onDownloadProgress first removes them all (the preload's removeAllListeners), addDownloadListener's
+  // remover takes away its own; without the event API they are kept and the listening tried again later.
+  {
+    const listeners = [];
+    const dw = loadBridge({ os: 'linux' }, { __TAURI__: { core: { invoke: () => Promise.resolve(null) }, event: { listen: (n, f) => { listeners.push([n, f]); return Promise.resolve(() => {}); } } } });
+    const a = []; const b = []; const c = [];
+    assert.equal(dw.kurokawaDesktop.onDownloadProgress((p) => a.push(p)), undefined);
+    const offB = dw.kurokawaDesktop.addDownloadListener((p) => b.push(p));
+    await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(listeners.map((l) => l[0]), ['kr:download-progress'], 'one listening');
+    const fire = (p) => listeners[0][1]({ event: 'kr:download-progress', payload: p });
+    fire({ id: 'x', pct: 5 }); assert.equal(a.length, 1); assert.equal(b.length, 1);
+    offB(); fire({ id: 'x', pct: 6 }); assert.equal(a.length, 2); assert.equal(b.length, 1, 'heard after its remover');
+    dw.kurokawaDesktop.addDownloadListener((p) => b.push(p));
+    dw.kurokawaDesktop.onDownloadProgress((p) => c.push(p)); fire({ id: '', pct: 7 });
+    assert.deepEqual([a.length, b.length, c.length], [2, 1, 1], 'onDownloadProgress removes every listener first');
+    assert.equal(listeners.length, 1, 'still one listening');
+    assert.equal(typeof kd.addDownloadListener(() => {}), 'function'); assert.equal(typeof kd.addDownloadListener(), 'function');
+    for (const k of ['onDownloadProgress', 'addDownloadListener']) { eCalls = []; pre[k](() => {}); assert.ok(eCalls.length === 0, `${k}: the preload invokes nothing`); }
+  }
   // scanFolder (EXTRA): the scan's walk in one folder → kr_scan_folder { p, exts }.
   tCalls = []; reply = () => ({ root: '/r', files: [], truncated: false });
   assert.deepEqual(JSON.parse(JSON.stringify(await kd.scanFolder('/r', ['EPUB', 3]))), { root: '/r', files: [], truncated: false });
@@ -193,7 +222,7 @@ async function nodePart() {
 
   // Stubs: never the IPC; each answers as STUBS says (and the way the page copes with — see PORTING.md).
   tCalls = [];
-  const answers = { setImmersive: false, copyImage: false, notify: false };
+  const answers = { setImmersive: false, copyImage: false };
   const rejecting = ['installUpdate'];
   const sync = ['setZoom', 'onUpdateProgress', 'onCommand', 'setProgress'];
   const removers = [];
@@ -273,13 +302,20 @@ async function nodePart() {
   assert.equal(lib.join('/tmp/', 'a', 'linux'), '/tmp/a');
   assert.deepEqual([...lib.utf8('a✓ن')], [...Buffer.from('a✓ن')]);
   assert.ok(lib.sameBytes(new Uint8Array([1, 2]).buffer, [1, 2]) && !lib.sameBytes([1], [1, 2]));
-  const cfg = { base: 'http://127.0.0.1:1', temp: '/tmp', home: '/home/u', text: 'T ✓', gzText: 'G', latinText: 'مرحبا بالعالم', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), os: 'linux', version: '0.61.0', minWidth: 420, minHeight: 600 };
+  const bigBytes = Buffer.from([...Array(3000).keys()].map((i) => (i * 7) & 255)); const largeBytes = Buffer.concat([bigBytes, bigBytes]);
+  const cfg = { base: 'http://127.0.0.1:1', temp: '/tmp', home: '/home/u', text: 'T ✓', gzText: 'G', latinText: 'مرحبا بالعالم', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), os: 'linux', version: '0.61.0', minWidth: 420, minHeight: 600, bigSize: bigBytes.length, bigCrc: lib.crc32(bigBytes), largeSize: largeBytes.length, largeCrc: lib.crc32(largeBytes), cookie: 'jar-ok', dohHost: 'kr-doh-selftest.test' };
+  // (testserver.rs's CRC-32 is the self-test's: «123456789» → CBF43926.)
+  assert.equal(lib.crc32(Buffer.from('123456789')), 0xCBF43926); assert.equal(lib.crc32(new Uint8Array([1, 2]).buffer), lib.crc32([1, 2]));
   const releases = JSON.parse(fs.readFileSync(path.join(ROOT, '..', '..', 'shared', 'shell-rs', 'src', 'testserver.rs'), 'utf8').match(/pub const RELEASES: &str = r#"([\s\S]*?)"#;/)[1]);
   assert.equal(releases.length, 5, 'testserver.rs RELEASES parses as five releases');
   function fakeKd(bad) {
     const disk = new Map(); const dirs = new Set();
     const tb = { platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: false, fullscreen: false, focused: true }; const tbSubs = [];
     const fake = loadBridge({ os: 'linux' }, { __TAURI__: { core: { invoke: () => Promise.reject('fake') } } }).kurokawaDesktop;
+    // (Stage R3: a jar, a resolver, the downloads folder and its listeners, as the shell keeps them.)
+    const jar = new Map(); let doh = 'off'; let dnsCount = 0; let dls = []; const running = new Map();
+    const emit = (p) => dls.slice().forEach((f) => f(p));
+    const safe = (n) => String(n).replace(/[\\/:*?"<>|]/g, '_');
     return Object.assign({}, fake, {
       platform: 'linux',
       writeTextFile: async (p, t) => { disk.set(p, Buffer.from(t)); return true; },
@@ -290,7 +326,14 @@ async function nodePart() {
       scanDevice: async (exts) => ({ root: '/home/u', truncated: false, files: [...disk.keys()].filter((p) => exts.some((e) => p.toLowerCase().endsWith('.' + e.toLowerCase()))).map((p) => ({ path: p, name: path.posix.basename(p), size: disk.get(p).length })) }),
       scanFolder: async (root, exts) => { if (!dirs.has(root)) throw new Error('not a folder: ' + root); return { root, truncated: false, files: [...disk.keys()].filter((p) => p.startsWith(root + '/') && exts.some((e) => p.toLowerCase().endsWith('.' + e.toLowerCase()))).map((p) => ({ path: p, name: path.posix.basename(p), size: disk.get(p).length })) }; },
       http: async (o) => {
+        if (o.url.startsWith('http://' + cfg.dohHost + ':1/')) { if (!/^http:\/\/127/.test(doh)) throw new Error('dns error: failed to lookup address'); dnsCount++; return { status: 200, url: o.url, headers: {}, body: cfg.text }; }
         const u = o.url.slice(cfg.base.length);
+        const hs = {}; for (const [k, v] of Object.entries(o.headers || {})) hs[k.toLowerCase()] = v;
+        if (u === '/cookie/set') { jar.set('kr_test', cfg.cookie); return { status: 200, url: o.url, headers: { 'set-cookie': 'kr_test=jar-ok; Path=/, kr_away=1; Path=/elsewhere' }, body: 'set' }; }
+        if (u === '/cookie/echo' || u === '/cookie/hop') { if (u === '/cookie/hop') jar.set('kr_hop', '1'); return { status: 200, url: cfg.base + '/cookie/echo', headers: {}, body: [...jar].map(([k, v]) => k + '=' + v).join('; ') || '-' }; }
+        if (u === '/chain/12') return { status: 200, url: cfg.base + '/text', headers: {}, body: cfg.text };
+        if (u === '/headers') return { status: 200, url: o.url, headers: {}, body: Object.entries({ 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0', ...hs }).map(([k, v]) => k + ': ' + v + '\n').join('') };
+        if (u === '/dns-count') return { status: 200, url: o.url, headers: {}, body: String(dnsCount) };
         if (u === '/text' || u === '/redirect') return { status: 200, url: cfg.base + '/text', headers: { 'x-kt-test': '1', 'x-kt-multi': bad ? 'a' : 'a, b' }, body: cfg.text };
         if (u === '/gzip') return { status: 200, url: o.url, headers: {}, body: cfg.gzText };
         if (u === '/bin') return { status: 200, url: o.url, headers: {}, body: cfg.binB64 };
@@ -302,6 +345,27 @@ async function nodePart() {
       },
       titleBar: async (o) => { o = o || {}; if (o.act === 'maximize') { tb.maximized = !tb.maximized; const st = { ...tb }; setTimeout(() => tbSubs.forEach((f) => f(st)), 3); } return { ...tb }; },
       onTitleBarState: (f) => { tbSubs.push(f); return () => { const i = tbSubs.indexOf(f); if (i >= 0) tbSubs.splice(i, 1); }; },
+      setDoh: async (provider, test) => { if (provider != null) doh = String(provider); if (!test) return { provider: doh }; return { provider: doh, ok: false, error: 'no such host' }; },
+      download: async (url, name, id) => {
+        const p = '/data/downloads/' + safe(name); const u = url.slice(cfg.base.length);
+        if (!/^\/(big|large)\//.test(u)) throw new Error('HTTP 404');
+        const bytes = u.startsWith('/large/') ? largeBytes : bigBytes; const conns = u.startsWith('/large/') ? 6 : 1;
+        let stop = false; running.set(id, () => { stop = true; });
+        try {
+          for (let got = 1000; got <= bytes.length; got += 1000) {
+            await new Promise((r) => setTimeout(r, id === 'kr-st-3' ? 20 : 1));
+            if (stop) throw new Error('cancelled');
+            emit({ id, got, total: bytes.length, pct: Math.round((got / bytes.length) * 100), speed: 1, connections: conns });
+            if (id === 'kr-st-3') got = 0;
+          }
+        } finally { running.delete(id); }
+        disk.set(p, bytes); return p;
+      },
+      cancelDownload: async (id) => { const f = running.get(id); if (f) f(); return !!f; },
+      deleteDownload: async (p) => { if (!/^\/data\/downloads\/[^/]+$/.test(p)) return false; return disk.delete(p); },
+      onDownloadProgress: (f) => { dls = [f]; },
+      addDownloadListener: (f) => { dls.push(f); return () => { dls = dls.filter((x) => x !== f); }; },
+      notify: async () => true,
       _disk: disk, _dirs: dirs,
     });
   }
@@ -362,6 +426,7 @@ async function pagePart(ported) {
         kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_folder_pick: () => '/picked', kr_archive_pick_dir: () => '/picked', kr_archive_pick_file: () => ['/a.zip'],
         kr_default_apps: () => null, kr_scan_folder: (a) => (a.p === '/picked' ? { root: '/picked', files: [{ path: '/picked/sub/Linked Book.epub', name: 'Linked Book.epub', size: 1234 }], truncated: false } : { root: a.p, files: [], truncated: false }),
         // (What the shell keeps of files and links handed to the app: nothing at first; the test puts some in later.)
+        kr_download: (a) => '/data/downloads/' + a.name, kr_delete_download: () => true, kr_set_doh: (a) => ({ provider: a.provider || 'off' }), kr_notify: () => true, kr_download_cancel: () => false,
         kr_open_take: (a) => { const l = window.__openQueue[a.kind] || []; window.__openQueue[a.kind] = []; return l; }, kr_title_bar: (a) => ({ platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: !!(a.o && a.o.act === 'maximize'), fullscreen: false, focused: true }), kr_http: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('ok') }),
       };
       window.__openQueue = { file: [], url: [] }; window.__listeners = [];
@@ -376,7 +441,7 @@ async function pagePart(ported) {
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 47 - shape.leftOut + 1, 'functions in the page (and the extra scanFolder)'); assert.equal(shape.leftOut, 23, 'left out'); assert.equal(shape.platform, 'linux');
+    assert.equal(shape.fns, 47 - shape.leftOut + 2, 'functions in the page (and the extras scanFolder, cancelDownload)'); assert.equal(shape.leftOut, 18, 'left out'); assert.equal(shape.platform, 'linux');
     const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));
     assert.ok(!shape.frameless && !shape.bar, 'Electron\'s title bar (ui/titlebar.ts) in the Tauri shell');
     assert.ok(own.winbar && own.bar && own.buttons === 3, 'the Tauri shell\'s own title bar (ui/winbar.ts): ' + JSON.stringify(own));
@@ -409,6 +474,9 @@ async function pagePart(ported) {
         titleBar: async () => (await kd.titleBar({ act: 'maximize' })).maximized, onTitleBarState: () => { const off = kd.onTitleBarState(() => {}); off(); return typeof off; },
         onOpenFile: async () => { window.__openQueue.file = [{ name: 'x.epub', path: '/x/a.epub' }]; let got = null; kd.onOpenFile((f) => { got = { name: f.name, bytes: [...new Uint8Array(f.data)] }; }); for (let i = 0; i < 50 && !got; i++) await new Promise((r) => setTimeout(r, 10)); return got; },
         onOpenUrl: async () => { window.__openQueue.url = ['kurokawareader://x']; let got = null; kd.onOpenUrl((u) => { got = u; }); for (let i = 0; i < 50 && !got; i++) await new Promise((r) => setTimeout(r, 10)); return got; },
+        download: () => kd.download('https://example.org/b.epub', 'b.epub', 'd1'), deleteDownload: () => kd.deleteDownload('/data/downloads/b.epub'), setDoh: () => kd.setDoh('quad9'), notify: () => kd.notify({ title: 'T', body: 'B', hash: '/' }),
+        onDownloadProgress: () => { let n = 0; kd.onDownloadProgress(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:download-progress').forEach((l) => l[1]({ payload: { id: '', pct: 1 } })); return n; },
+        addDownloadListener: () => { let n = 0; const off = kd.addDownloadListener(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:download-progress').forEach((l) => l[1]({ payload: { id: 'x', pct: 1 } })); off(); return n; },
       };
       for (const [k, f] of Object.entries(runs)) { const n = window.__calls.length; const r = await f(); out[k] = { r, calls: window.__calls.slice(n) }; }
       return out;
@@ -421,6 +489,8 @@ async function pagePart(ported) {
       archivePickFile: ['kr_archive_pick_file', { o: { multiple: true } }, ['/a.zip']], openDefaultApps: ['kr_default_apps', {}, null],
       http: ['kr_http', { o: { url: 'https://example.org/', method: 'GET', headers: {}, binary: true } }, 'ok'],
       titleBar: ['kr_title_bar', { o: { act: 'maximize' } }, true],
+      download: ['kr_download', { url: 'https://example.org/b.epub', name: 'b.epub', id: 'd1' }, '/data/downloads/b.epub'], deleteDownload: ['kr_delete_download', { p: '/data/downloads/b.epub' }, true],
+      setDoh: ['kr_set_doh', { provider: 'quad9', test: null }, { provider: 'quad9' }], notify: ['kr_notify', { o: { title: 'T', body: 'B', hash: '/' } }, true],
     };
     // (onOpenFile / onOpenUrl: a take of their kind — and, for a file, its bytes read by path.)
     assert.deepEqual(got.onOpenFile.calls.map((c) => [c.cmd, c.args]), [['kr_open_take', { kind: 'file' }], ['kr_read_file', { p: '/x/a.epub' }]]);
@@ -435,6 +505,11 @@ async function pagePart(ported) {
     }
     assert.equal(got.isPortable.r, false); assert.equal(got.isPortable.calls.length, 0);
     assert.equal(got.onTitleBarState.r, 'function'); assert.equal(got.onTitleBarState.calls.length, 0);
+    for (const k of ['onDownloadProgress', 'addDownloadListener']) { assert.equal(got[k].r, 1, `${k}: heard the event`); assert.equal(got[k].calls.length, 0, `${k}: no command`); }
+    // (Stage R3: Settings shows the DNS-over-HTTPS choice here without an in-app browser, with this shell's hint.)
+    await p.goto(base + '#/settings'); await p.waitForSelector('.settings-body');
+    const dohHint = await p.evaluate(async () => { for (let i = 0; i < 50; i++) { const h = [...document.querySelectorAll('.settings-body .hint')].map((x) => x.textContent).find((x) => /app’s own requests/.test(x)); if (h) return h; await new Promise((r) => setTimeout(r, 100)); } return null; });
+    assert.ok(dohHint, 'the DNS-over-HTTPS section (with the Tauri hint) is not in Settings');
     // scanFolder (the extra): kr_scan_folder { p, exts }.
     const sf = await p.evaluate(async () => { const n = window.__calls.length; const r = await window.kurokawaDesktop.scanFolder('/books', ['epub']); return { r, calls: window.__calls.slice(n) }; });
     assert.deepEqual(sf, { r: { root: '/books', files: [], truncated: false }, calls: [{ cmd: 'kr_scan_folder', args: { p: '/books', exts: ['epub'] } }] });

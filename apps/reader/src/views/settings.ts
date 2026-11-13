@@ -210,8 +210,10 @@ export function settingsView(): HTMLElement {
   {
     const card = h('section', { class: 'card' }, h('h3', null, t('inAppBrowser')), h('p', null, t('inAppBrowserBody')));
     void import('../sources/http').then(({ hasBrowser, openBrowser, forgetSite, hasDoh, dohProvider, setDoh, testDoh, DOH_PROVIDERS }) => {
-      if (!hasBrowser()) { card.append(h('p', { class: 'hint' }, t('inAppBrowserNone'))); return; }
-      card.append(
+      // (Without an app browser the DNS-over-HTTPS choice still shows where the shell has one — the Tauri shell's,
+      // for its own requests; every other shell with DoH has a browser too.)
+      if (!hasBrowser()) card.append(h('p', { class: 'hint' }, t('inAppBrowserNone')));
+      else card.append(
         h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           h('button', { class: 'btn primary', type: 'button', onclick: () => void openBrowser() }, icon('globe'), t('openBrowser')),
           h('button', { class: 'btn tonal small', type: 'button', onclick: async () => { const n = await forgetSite('https://example.com/', true); toast(t('sitesForgotten', { n: localDigits(n) })); } }, icon('trash'), t('forgetAllSites'))));
@@ -240,7 +242,8 @@ export function settingsView(): HTMLElement {
             if (v === 'custom') { custom.focus(); return; }
             void setDoh(v).then(() => { status.textContent = ''; toast(v === 'off' ? t('dohTurnedOff') : t('dohSet')); });
           }, t('close')), test),
-        customRow, h('span', { class: 'hint' }, t('dohHint')), status));
+        // (The Tauri shell's resolver serves the app's own requests only: the web view's own keep the system's DNS.)
+        customRow, h('span', { class: 'hint' }, t((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri' ? 'dohHintApp' : 'dohHint')), status));
     });
     body.append(card);
   }

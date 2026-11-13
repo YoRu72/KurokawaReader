@@ -6,7 +6,10 @@ name: Tauri check (Reader)
 # library to render and checks its own bridge — files, the whole-computer scan, web requests and charsets, the update
 # check, window state, the clipboard, the stubs — against a loopback test server (desktop-tauri/selftest.js); and
 # (R2) a file given on its command line reaches the page, a picked folder is walked by path, and a second launch
-# with a file and a link hands them over and ends (single instance). Then
+# with a file and a link hands them over and ends (single instance); (R3) cookies kept across requests and
+# redirects, long redirect chains, the headers a page may not set, downloads with progress (whole, in parts,
+# cancelled, deleted only in their folder), DNS over HTTPS through a resolver the test server plays, a notification
+# asked for. Then
 # (R1) it is started again with KR_ENGINETEST set: the web app's key cases run in the system's own web view — books
 # imported, kept over a reload, opened, searched, highlighted, a text book's place kept, PDFs drawn (one of 300
 # pages), the PDF → Word converter, fonts and Arabic, read-aloud, full screen — with screenshots for a person to
@@ -71,7 +74,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs; do
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"

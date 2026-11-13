@@ -337,4 +337,6 @@ export const zh: Partial<Strings> = {
   winRestore: "向下还原",
   winClose: "关闭",
   winControls: "窗口控制",
+  // (The Tauri shell: its resolver serves the app's own requests.)
+  dohHintApp: "通过所选解析器查找网站名称,而不是网络的 DNS——适用于应用自身的请求:来源、书目、下载和更新检查。网页中的图片仍由系统查找。当网络按名称屏蔽网站时很有用。",
 };

@@ -11,7 +11,17 @@
 //   GET  /latin         LATIN_TEXT in windows-1256, the charset named in Content-Type
 //   GET  /meta          an HTML page in windows-1256 whose charset is named only by a <meta> in it
 //   GET  /releases      RELEASES: a canned GitHub releases list (an update check parsed without GitHub)
+// and for the Reader's network stage (R3):
+//   GET  /cookie/set    sets kr_test=COOKIE_VALUE (path /) and kr_away=1 (path /elsewhere: never sent back here)
+//   GET  /cookie/hop    sets kr_hop=1 and redirects (302) to /cookie/echo — a cookie set on a redirect's way
+//   GET  /cookie/echo   the request's Cookie header as the body («-» when none)
+//   GET  /chain/<n>     302 → /chain/<n-1> … /chain/0 → /text (n at most 30)
+//   GET  /headers       the request's headers, «name: value» lines with lowercase names, as the body
+//   GET  /large/<name>  LARGE_SIZE bytes made as /big's are, Range answered, sent slowly (a download in parts)
+//   POST /dns-query     DNS over HTTPS (RFC 8484): DOH_HOST → 127.0.0.1 (A), no AAAA; any other name: «no such
+//                       name»; /dns-count tells how many queries came
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
@@ -20,6 +30,13 @@ pub const TEXT: &str = "kurokawa selftest ✓";
 pub const GZ_TEXT: &str = "kurokawa gzip selftest — the same line again and again";
 /// 2 MiB: twice aria2's --min-split-size, so it may fetch it over two connections.
 pub const BIG_SIZE: usize = 2 * 1024 * 1024;
+/// 3 MiB: over the 2 MiB from which the Reader's downloader fetches a file in parts.
+pub const LARGE_SIZE: usize = 3 * 1024 * 1024;
+/// The value /cookie/set gives (a fixed test string: the self-test may log that it came back).
+pub const COOKIE_VALUE: &str = "jar-ok";
+/// The made-up name /dns-query answers with 127.0.0.1 (.test is reserved: no real resolver knows it).
+pub const DOH_HOST: &str = "kr-doh-selftest.test";
+static DNS_QUERIES: AtomicUsize = AtomicUsize::new(0);
 /// The slow sending: this many bytes, then a pause (≈ 320 KB/s per connection).
 const SLOW_CHUNK: usize = 16 * 1024;
 const SLOW_PAUSE_MS: u64 = 50;
@@ -122,6 +139,8 @@ struct Req {
     method: String,
     path: String,
     range: Option<String>,
+    /// Every header, its name lowercased, in the order sent.
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
@@ -156,10 +175,14 @@ fn read_req(s: &mut TcpStream) -> std::io::Result<Option<Req>> {
     let path = parts.next().unwrap_or("/").to_string();
     let mut cl: usize = 0;
     let mut range: Option<String> = None;
+    let mut headers: Vec<(String, String)> = Vec::new();
     for line in lines {
         let mut it = line.splitn(2, ':');
         let k = it.next().unwrap_or("").trim().to_ascii_lowercase();
         let v = it.next().unwrap_or("").trim().to_string();
+        if !k.is_empty() {
+            headers.push((k.clone(), v.clone()));
+        }
         if k == "content-length" {
             cl = v.parse().unwrap_or(0);
         } else if k == "range" {
@@ -179,6 +202,7 @@ fn read_req(s: &mut TcpStream) -> std::io::Result<Option<Req>> {
         method,
         path,
         range,
+        headers,
         body,
     }))
 }
@@ -268,7 +292,46 @@ fn serve(mut s: TcpStream) -> std::io::Result<()> {
         let h = [("Content-Type", "text/plain; charset=utf-8".to_string())];
         answer(&mut s, "200 OK", &h, &b)
     } else if path.starts_with("/big/") {
-        big(&mut s, req.range.as_deref(), head_only)
+        big(&mut s, req.range.as_deref(), head_only, BIG_SIZE)
+    } else if path.starts_with("/large/") {
+        big(&mut s, req.range.as_deref(), head_only, LARGE_SIZE)
+    } else if path == "/cookie/set" {
+        let h = [
+            ("Content-Type", "text/plain".to_string()),
+            ("Set-Cookie", format!("kr_test={}; Path=/; HttpOnly", COOKIE_VALUE)),
+            ("Set-Cookie", "kr_away=1; Path=/elsewhere".to_string()),
+        ];
+        answer(&mut s, "200 OK", &h, b"set")
+    } else if path == "/cookie/hop" {
+        let h = [
+            ("Set-Cookie", "kr_hop=1; Path=/".to_string()),
+            ("Location", "/cookie/echo".to_string()),
+        ];
+        answer(&mut s, "302 Found", &h, b"")
+    } else if path == "/cookie/echo" {
+        let c = header_of(&req, "cookie").unwrap_or_else(|| "-".to_string());
+        let h = [("Content-Type", "text/plain".to_string())];
+        answer(&mut s, "200 OK", &h, c.as_bytes())
+    } else if let Some(n) = path.strip_prefix("/chain/") {
+        let n: usize = n.parse().unwrap_or(0).min(30);
+        let to = if n == 0 { "/text".to_string() } else { format!("/chain/{}", n - 1) };
+        answer(&mut s, "302 Found", &[("Location", to)], b"")
+    } else if path == "/headers" {
+        let mut b = String::new();
+        for (k, v) in req.headers.iter() {
+            b.push_str(&format!("{}: {}\n", k, v));
+        }
+        let h = [("Content-Type", "text/plain; charset=utf-8".to_string())];
+        answer(&mut s, "200 OK", &h, b.as_bytes())
+    } else if path == "/dns-query" && req.method == "POST" {
+        DNS_QUERIES.fetch_add(1, Ordering::SeqCst);
+        match dns_answer(&req.body) {
+            Some(b) => answer(&mut s, "200 OK", &[("Content-Type", "application/dns-message".to_string())], &b),
+            None => answer(&mut s, "400 Bad Request", &[], b"not a DNS query"),
+        }
+    } else if path == "/dns-count" {
+        let n = DNS_QUERIES.load(Ordering::SeqCst).to_string();
+        answer(&mut s, "200 OK", &[("Content-Type", "text/plain".to_string())], n.as_bytes())
     } else if path == "/latin" {
         let h = [("Content-Type", "text/plain; charset=windows-1256".to_string())];
         answer(&mut s, "200 OK", &h, &LATIN_BYTES)
@@ -283,10 +346,53 @@ fn serve(mut s: TcpStream) -> std::io::Result<()> {
     }
 }
 
-fn big(s: &mut TcpStream, range: Option<&str>, head_only: bool) -> std::io::Result<()> {
-    let (status, start, end) = match range.and_then(|r| parse_range(r, BIG_SIZE)) {
+fn header_of(req: &Req, name: &str) -> Option<String> {
+    req.headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+}
+
+/// A DNS query (RFC 1035 wire format, one question, its name in plain labels) answered as a test resolver: DOH_HOST's
+/// A record → 127.0.0.1; its AAAA → no record; any other name → «no such name». None if it is no query.
+pub fn dns_answer(q: &[u8]) -> Option<Vec<u8>> {
+    if q.len() < 12 || q[2] & 0x80 != 0 || u16::from_be_bytes([q[4], q[5]]) != 1 {
+        return None;
+    }
+    let mut i = 12;
+    let mut labels: Vec<String> = Vec::new();
+    loop {
+        let len = *q.get(i)? as usize;
+        if len == 0 {
+            i += 1;
+            break;
+        }
+        if len > 63 {
+            return None;
+        }
+        labels.push(String::from_utf8_lossy(q.get(i + 1..i + 1 + len)?).to_ascii_lowercase());
+        i += 1 + len;
+    }
+    let qtype = u16::from_be_bytes([*q.get(i)?, *q.get(i + 1)?]);
+    let end = i + 4;
+    if end > q.len() {
+        return None;
+    }
+    let name = labels.join(".");
+    let known = name == DOH_HOST;
+    let mut m: Vec<u8> = q[..end].to_vec();
+    m[2] = 0x81 | (q[2] & 0x01);
+    m[3] = 0x80 | if known { 0 } else { 3 };
+    m[6] = 0;
+    m[7] = if known && qtype == 1 { 1 } else { 0 };
+    m[8..12].copy_from_slice(&[0, 0, 0, 0]);
+    if known && qtype == 1 {
+        m.extend_from_slice(&[0xC0, 0x0C, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1]);
+    }
+    Some(m)
+}
+
+fn big(s: &mut TcpStream, range: Option<&str>, head_only: bool, size: usize) -> std::io::Result<()> {
+    let (status, start, end) = match range.and_then(|r| parse_range(r, size)) {
         Some((a, b)) => ("206 Partial Content", a, b),
-        None => ("200 OK", 0, BIG_SIZE - 1),
+        None => ("200 OK", 0, size - 1),
     };
     let len = end + 1 - start;
     let mut head = format!(
@@ -296,7 +402,7 @@ fn big(s: &mut TcpStream, range: Option<&str>, head_only: bool) -> std::io::Resu
     if status.starts_with("206") {
         head.push_str(&format!(
             "Content-Range: bytes {}-{}/{}\r\n",
-            start, end, BIG_SIZE
+            start, end, size
         ));
     }
     head.push_str("Connection: close\r\n\r\n");
@@ -383,5 +489,66 @@ mod tests {
         assert!(r.contains("application/json") && r.contains("\"v0.62.0\""));
         let n = get(port, "GET /nope HTTP/1.1\r\n\r\n");
         assert!(String::from_utf8_lossy(&n).starts_with("HTTP/1.1 404"));
+    }
+
+    fn body_of(r: &[u8]) -> String {
+        let i = find(r, b"\r\n\r\n").unwrap();
+        String::from_utf8_lossy(&r[i + 4..]).into_owned()
+    }
+
+    #[test]
+    fn network_routes() {
+        let port = start().unwrap();
+        let c = String::from_utf8_lossy(&get(port, "GET /cookie/set HTTP/1.1\r\n\r\n")).into_owned();
+        assert!(c.contains("Set-Cookie: kr_test=jar-ok; Path=/; HttpOnly\r\n") && c.contains("Set-Cookie: kr_away=1; Path=/elsewhere\r\n"));
+        let h = String::from_utf8_lossy(&get(port, "GET /cookie/hop HTTP/1.1\r\n\r\n")).into_owned();
+        assert!(h.starts_with("HTTP/1.1 302") && h.contains("Set-Cookie: kr_hop=1") && h.contains("Location: /cookie/echo"));
+        assert_eq!(body_of(&get(port, "GET /cookie/echo HTTP/1.1\r\nCookie: a=1; b=2\r\n\r\n")), "a=1; b=2");
+        assert_eq!(body_of(&get(port, "GET /cookie/echo HTTP/1.1\r\n\r\n")), "-");
+        assert!(String::from_utf8_lossy(&get(port, "GET /chain/3 HTTP/1.1\r\n\r\n")).contains("Location: /chain/2\r\n"));
+        assert!(String::from_utf8_lossy(&get(port, "GET /chain/0 HTTP/1.1\r\n\r\n")).contains("Location: /text\r\n"));
+        let e = body_of(&get(port, "GET /headers HTTP/1.1\r\nReferer: https://r.example/\r\nUser-Agent: UA ✓\r\n\r\n"));
+        assert!(e.contains("referer: https://r.example/\n") && e.contains("user-agent: UA ✓\n"), "{}", e);
+        let l = get(port, "GET /large/x HTTP/1.1\r\nRange: bytes=0-0\r\n\r\n");
+        assert!(String::from_utf8_lossy(&l).contains(&format!("Content-Range: bytes 0-0/{}", LARGE_SIZE)));
+    }
+
+    #[test]
+    fn dns() {
+        // (A query for DOH_HOST's A record, as doh.rs writes one: id 0, recursion desired.)
+        let mut q: Vec<u8> = vec![0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        for l in DOH_HOST.split('.') {
+            q.push(l.len() as u8);
+            q.extend_from_slice(l.as_bytes());
+        }
+        q.push(0);
+        let mut qa = q.clone();
+        qa.extend_from_slice(&[0, 1, 0, 1]);
+        let a = dns_answer(&qa).unwrap();
+        assert_eq!(&a[2..4], &[0x81, 0x80]);
+        assert_eq!(&a[6..8], &[0, 1]);
+        assert_eq!(&a[a.len() - 4..], &[127, 0, 0, 1]);
+        let mut q6 = q.clone();
+        q6.extend_from_slice(&[0, 28, 0, 1]);
+        let b = dns_answer(&q6).unwrap();
+        assert_eq!((b[3], b[7], b.len()), (0x80, 0, q6.len()));
+        let mut other: Vec<u8> = vec![0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, b'x', 0, 0, 1, 0, 1];
+        let nx = dns_answer(&other).unwrap();
+        assert_eq!(nx[3] & 0x0F, 3);
+        other[2] = 0x80;
+        assert!(dns_answer(&other).is_none());
+        assert!(dns_answer(&[1, 2, 3]).is_none());
+        let port = start().unwrap();
+        let mut req = format!("POST /dns-query HTTP/1.1\r\nContent-Type: application/dns-message\r\nContent-Length: {}\r\n\r\n", qa.len()).into_bytes();
+        req.extend_from_slice(&qa);
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.write_all(&req).unwrap();
+        let mut out = Vec::new();
+        s.read_to_end(&mut out).unwrap();
+        let i = find(&out, b"\r\n\r\n").unwrap();
+        assert!(String::from_utf8_lossy(&out[..i]).contains("application/dns-message"));
+        assert_eq!(&out[i + 4..], &a[..]);
+        let n: usize = body_of(&get(port, "GET /dns-count HTTP/1.1\r\n\r\n")).parse().unwrap();
+        assert!(n >= 1);
     }
 }

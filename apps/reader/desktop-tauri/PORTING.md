@@ -5,7 +5,8 @@ The Electron shell (`../desktop/`) keeps shipping; this Tauri shell grows beside
 Tauri project, the interface opening in it, and the bridge's round trips proven by a self-test in CI. **Stage R1**: the
 engine test — the web app's key cases run in each system's own web view in CI (see «Engine test» below). **Stage R2**:
 files and library — files opened from outside, single instance, file associations, drag and drop, folders by path (see
-«Files and library» below).
+«Files and library» below). **Stage R3**: network — downloads with progress, cookies, DNS over HTTPS, notifications (see
+«Network» below).
 
 ## How it works
 
@@ -17,10 +18,11 @@ files and library — files opened from outside, single instance, file associati
   fills a small screen) saves the size it has, as Electron always saves its normal bounds.
 - `bridge.js` runs before the page's own scripts on every load, after a line that sets `window.__KR_BOOT__ = { os,
   arch }`, and defines the same `window.kurokawaDesktop` the Electron preload does: **all 48 names** (47 functions and
-  `platform`) — except the 23 **left out** until their stage (below) —, and one of its own (`scanFolder`, R2: its
-  `EXTRA`, `window.__KR_BRIDGE_EXTRA__`). Each Electron channel `kr:a-b` is the Tauri
+  `platform`) — except the 18 **left out** until their stage (below) —, and two of its own (`scanFolder`, R2;
+  `cancelDownload`, R3: its `EXTRA`, `window.__KR_BRIDGE_EXTRA__`). Each Electron channel `kr:a-b` is the Tauri
   command `kr_a_b` (`src-tauri/src/commands.rs`); arguments
-  are sent under one-word keys (`p`, `o`, `text`, `b64`, `append`, `exts`), so Tauri's camelCase mapping never matters.
+  are sent under one-word keys (`p`, `o`, `text`, `b64`, `append`, `exts`, `url`, `name`, `id`, `provider`, `test`),
+  so Tauri's camelCase mapping never matters.
 - The commands are thin wrappers over **kurokawa-shell** (`shared/shell-rs`), the Rust both apps' shells share (see
   below). Only `scan.rs` (the whole-computer scan, std only) is the Reader's own.
 - What is not ported yet is a **stub** in `bridge.js` (its `STUBS` table): it never reaches Rust, and answers as
@@ -37,7 +39,8 @@ files and library — files opened from outside, single instance, file associati
   the Content-Type's, else a `<meta>` in the first 2048 bytes, else UTF-8 — with `TextDecoder`, exactly as
   `main.cjs`'s `decodeText` does (an older Arabic site in windows-1256 reads right). `accept-encoding` is dropped
   from the page's headers, as `main.cjs` drops it. The user agent of requests that do not set their own is a plain
-  Chrome's (as Electron's, with its tokens taken out); the sources send the page's own.
+  Chrome's (as Electron's, with its tokens taken out); the sources send the page's own. Since R3 the requests keep
+  cookies, may go through a DNS-over-HTTPS resolver and take the system's proxy — see «Network».
 - Version: `tauri.conf.json` has `"version": "../../package.json"`, so the app's version is `apps/reader/package.json`'s.
   Product name `KurokawaReader`, identifier `app.kurokawa.reader` — the Electron build's own (as Tools' Tauri shell
   reuses its Electron ids). The program is `KurokawaReader` too (`Cargo.toml`'s package name, since R2; it was
@@ -53,7 +56,7 @@ files and library — files opened from outside, single instance, file associati
 
 What differs from Electron in this stage, on purpose: the window's title bar is drawn whole by the page — its buttons
 too — instead of Electron's strip under the system's buttons (see «The window's title bar» below), no application menu (R5; the page's own keyboard shortcuts
-work), no cookies shared between `http` and an in-app browser (R3/R4), and the page's origin is Tauri's
+work), no cookies shared between `http` and an in-app browser (there is none until R4), and the page's origin is Tauri's
 (`tauri://localhost`, `http://tauri.localhost` on Windows), not `app://kurokawa` — so the library starts empty; carrying
 it over from the Electron profile is R6.
 
@@ -69,11 +72,13 @@ its own commands (Tools `kt_*`, the Reader `kr_*`) as wrappers, so no command ma
 | `util.rs` | Node's OS/CPU names, base64, hex, version order, file:// → path, the release asset for an OS (std only) | no |
 | `files.rs` | list, path info, exists, siblings, write text, remove, temp files (std only) | added `write_bytes` (append), `file_size` (-1), `read_text` (null) for the Reader |
 | `hash.rs` | md5 / sha1 / sha256 of a file | no |
-| `net.rs` | `http`, the update check | user agent set by the app (`configure`); the update check split into `check_update_at(url, prefix, current, prereleases)` and a pure `pick_release`; Tools' `check_update(current)` kept, same behaviour |
+| `net.rs` | `http`, the update check | user agent set by the app (`configure`); the update check split into `check_update_at(url, prefix, current, prereleases)` and a pure `pick_release`; Tools' `check_update(current)` kept, same behaviour. R3: a cookie jar (`configure_cookies`, `forget_cookies`), DNS over HTTPS (`set_doh`, `doh_lookup`, `doh_try`; a second client with reqwest's resolver hook), `client()` public; reqwest features `cookies`, `macos-system-configuration`; `pub use reqwest` in `lib.rs` |
+| `cookiejar.rs` | the cookies of the apps' own requests (std only) | new (R3) |
+| `doh.rs` | DNS over HTTPS: providers, RFC 8484 / 1035 wire format, a cache (std only) | new (R3) |
 | `winstate.rs` | window size/place kept between runs | default and smallest sizes given by the app (`Defaults`; were Tools' 1100×780 / 420×560); `save`, `file`, `parse` public |
 | `shell.rs` | system folders, file dialogs, clipboard, opening a path / an address, a file's bytes for the IPC | new file, bodies moved unchanged from Tools' `commands.rs`; added `set_clipboard_text` |
 | `selftest.rs` | the self-tests' frame: `<PREFIX>_SELFTEST`, watchdog, verdict, results file | the app-neutral half of Tools' `selftest.rs`; prefix and exit hook given by the app |
-| `testserver.rs` | loopback test server (std only) | added `/latin`, `/meta`, `/releases` |
+| `testserver.rs` | loopback test server (std only) | added `/latin`, `/meta`, `/releases`; R3: `/cookie/set`, `/cookie/hop`, `/cookie/echo`, `/chain/<n>`, `/headers`, `/large/<name>` (3 MiB), `POST /dns-query` (a resolver: `kr-doh-selftest.test` → 127.0.0.1), `/dns-count` |
 
 Both apps' `Cargo.toml` list `tauri` and the three plugins (dialog, clipboard-manager, opener) at the same versions as
 the crate (`"2"`), so one version of each is resolved; the app registers the plugins (Tauri's build reads their
@@ -104,7 +109,12 @@ With `KR_SELFTEST=<file>` set, `src-tauri/src/selftest.rs` starts the shared loo
 there and `platform` is right; write text → read → size → read bytes → append bytes → overwrite → remove (size -1, read
 null, readFile rejects); the whole-computer scan finds a file put in the home folder; `http` — text and headers (two of
 one name joined), redirect, gzip, binary, POST, POST from base64, the charset from Content-Type and from `<meta>`
-(windows-1256 Arabic), 404; the update check against a canned releases list (stable 0.62.0 with this OS's asset, beta
+(windows-1256 Arabic), 404; (R3) cookies set → sent back (path kept, one set on a redirect), a 12-hop redirect chain,
+Referer / Origin / User-Agent / Cookie sent as the page gives them and a plain Chrome's user agent otherwise, a download
+with progress (2 MiB: whole file by CRC, the name made safe, `deleteDownload` only inside the folder), one in parts
+(3 MiB, several connections), one cancelled by its id, one of a missing file (HTTP 404), DNS over HTTPS through the
+test server's resolver (a made-up name reached, the resolver asked, the try of an unknown name answered `ok: false`,
+then off again; that the name is unknown without it: reported), `notify` answering (reported); the update check against a canned releases list (stable 0.62.0 with this OS's asset, beta
 0.63.0, nothing after 0.62.0); window state saved and read back as the next start would; the clipboard round trip (not
 required); every stub answers as documented. Results go to `kr_selftest_done`, which writes them and exits 0/1; a
 watchdog exits 2 after `KR_SELFTEST_TIMEOUT` (140 in CI) seconds. `.github/workflows/tauri-check-reader.yml` runs it
@@ -121,8 +131,8 @@ sends the right command and arguments from the page.
 
 `docs/RUST-PORT-READER.md` says 38; `desktop/preload.cjs` today gives 47 functions and `platform`. All are here.
 
-**Done: 16** (R0: 12, the title bar: 2, R2: 2; + `platform`) · **stubs: 8** (R3: 1, R5: 5, R6: 2) · **left out: 23** (R3: 5, R4: 4, R5:
-12, R6: 2) · **extra: 1** (`scanFolder`, R2).
+**Done: 22** (R0: 12, the title bar: 2, R2: 2, R3: 6; + `platform`) · **stubs: 7** (R5: 5, R6: 2) · **left out: 18** (R4: 4, R5:
+12, R6: 2) · **extra: 2** (`scanFolder`, R2; `cancelDownload`, R3).
 
 | Function | Electron (`main.cjs`) | R0 | How the page copes with the stub | Stage |
 |---|---|---|---|---|
@@ -137,7 +147,7 @@ sends the right command and arguments from the page.
 | `archivePickDir()` | `kr:archive-pick-dir`: folder dialog → path / null | **done** `kr_archive_pick_dir` | | |
 | `archivePickFile(o)` | `kr:archive-pick-file`: file dialog ({multiple}) → paths / [] | **done** `kr_archive_pick_file` | | |
 | `openDefaultApps()` | `kr:default-apps`: the system's default-apps page (Windows, macOS); false elsewhere | **done** `kr_default_apps` | | |
-| `http(o)` | `kr:http`: request without cross-site limits, session cookies, text in the page's charset | **done** `kr_http` (no cookie jar yet: R3/R4) | | |
+| `http(o)` | `kr:http`: request without cross-site limits, session cookies, text in the page's charset | **done** `kr_http`; R3: cookies kept, DoH, the system's proxy | | |
 | `isPortable()` | `kr:is-portable` | **done**: `false` (this build is never Electron's portable .exe) | | |
 | `appIcon(o)` | `kr:appIcon`: the user's own icon on window, taskbar, shortcuts | **left out** | no app-icon option in Settings (`appIconWay()` is null) | R5 |
 | `titleBar(o)` | `app:titleBar`: the app's own bar's colours, `{platform, height, …}` | **done** `kr_title_bar` (`titlebar.rs`): `o.own` asks for the app's own bar or the system's frame, `o.act` works the window (`minimize`, `maximize` = maximise / restore, `close`, `drag`) → `{platform, height, own, wanted, controls, maximized, fullscreen, focused}` — a different protocol from Electron's (see below) | | |
@@ -161,24 +171,24 @@ sends the right command and arguments from the page.
 | `setImmersive(on)` | `kr:immersive` | stub: `false` | the reader's immersive mode hides the app's bars only | R5 |
 | `copyImage(b64)` | `kr:copy-image`: image to the clipboard | stub: `false` | the page falls back to `navigator.clipboard.write` | R5 |
 | `printToPdf(html, o)` | `kr:print-pdf`: a hidden window prints a text PDF | **left out** | the converter's PDF output is the picture PDF (searchable text over page pictures), as on the web | R5 |
-| `setDoh(provider, test)` | `kr:set-doh`: Chromium's secure DNS | **left out** | no DNS-over-HTTPS section (`hasDoh()` is false) | R3 |
+| `setDoh(provider, test)` | `kr:set-doh`: Chromium's secure DNS | **done** (R3) `kr_set_doh`: DoH for the app's own requests (see «Network») | | |
 | `openWebView(o)` | `kr:open-webview`: a site's check passed in the app's browser window | **left out** | no in-app browser (`hasBrowser()` is false: Settings says there is none); a site behind a check reports it as not passed | R4 |
 | `browserFetch(o)` | `kr:browser-fetch`: a request from the site's own page | **left out** | the sources' requests go the plain way (`http`) | R4 |
 | `browserReset(url)` | `kr:browser-reset` | **left out** | | R4 |
 | `browserForget(url, all)` | `kr:browser-forget` | **left out** | (no in-app browser section) | R4 |
-| `notify(o)` | `kr:notify`: a system notification | stub: `false` | no notification for new chapters | R3 |
-| `download(url, name, id)` | `kr:download`: into the app's data folder (aria2c or ranges), progress events | **left out** | the downloads list and OPDS «Get» use the plain request (`http`), in one piece; starter decks still fail («dk.download is not a function»: decks.ts calls it on every computer without a test) | R3 |
-| `deleteDownload(p)` | `kr:delete-download` | **left out** | | R3 |
-| `onDownloadProgress(cb)` | `kr:download-progress` events | **left out** | | R3 |
-| `addDownloadListener(cb)` | `kr:download-progress` events, per caller | **left out** | | R3 |
+| `notify(o)` | `kr:notify`: a system notification | **done** (R3) `kr_notify` (the notification plugin; no click action) | | |
+| `download(url, name, id)` | `kr:download`: into the app's data folder (aria2c or ranges), progress events | **done** (R3) `kr_download` (`download.rs`: ranges, as main.cjs's built-in downloader) | | |
+| `deleteDownload(p)` | `kr:delete-download` | **done** (R3) `kr_delete_download` | | |
+| `onDownloadProgress(cb)` | `kr:download-progress` events | **done** (R3): the `kr:download-progress` Tauri event | | |
+| `addDownloadListener(cb)` | `kr:download-progress` events, per caller | **done** (R3): the same event | | |
 | `onOpenUrl(cb)` | `kurokawareader://` links (cloud-sync sign-in) | **done** (R2) `kr_open_take`, the `kr:openPending` event; the scheme registered by the installers (see below) | | |
 | `scanFolder(root, exts)` | — (Electron: the web view's folder picker) | **extra** (R2) `kr_scan_folder` | | |
+| `cancelDownload(id)` | — (Electron's downloads cannot be stopped) | **extra** (R3) `kr_download_cancel` | | |
 | `onCommand(cb)` | the application menu's commands | stub: nothing | (no menu; the keyboard shortcuts are the page's own) | R5 |
 | `setProgress(p)` | `kr:progress`: taskbar progress, no background throttling | stub: nothing | no taskbar progress | R5 |
 
 Kept as stubs on purpose: `setZoom` (Appearance → interface size is shown on every computer and has no effect until
 R5 — the page has no fallback either way), `copyImage` (answers false: the page then uses `navigator.clipboard.write`),
-`notify` (no notification either way: the page treats the desktop as allowed and never asks the web's permission),
 `setImmersive`, `onCommand`, `setProgress`, `installUpdate` / `onUpdateProgress`.
 
 ## Files and library (stage R2)
@@ -222,6 +232,68 @@ R5 — the page has no fallback either way), `copyImage` (answers false: the pag
   the command line reaches the page (on Windows from `D:`), a folder made outside the home folder walked and read by
   path, and a second launch with a file and a link hands both over and ends — required on Windows, reported on Linux
   (under `dbus-run-session`) and macOS.
+
+## Network (stage R3)
+
+- **Downloads** (`src-tauri/src/download.rs`, `dlplan.rs`; `main.cjs`'s `kr:download` / `downloadSegmented` /
+  `kr:delete-download`): into `<app data>/downloads/` (Electron: `<userData>/downloads/`), under the name the page
+  gives made safe — `main.cjs`'s `[\/:*?"<>|]` → `_`, and here also control characters; «», «.», «..» → `download`;
+  over 200 bytes cut with the extension kept. A first request asks for one byte: a file over 2 MiB whose server answers
+  ranges is fetched in parts (up to 8 connections, parts of 1–8 MiB, each tried again up to 5 times — the address the
+  redirects led to, then the one given), any other in one stream (from that first answer when the server ignored the
+  range). Progress: the `kr:download-progress` event, `{ id, pct, got, total, speed, connections }`, at most every
+  400 ms, and once at the end (100 %). Result: the file's path; errors as `main.cjs`'s (`HTTP 404`…). The requests are
+  `net.rs`'s: the app's cookies, user agent, DoH. Differences: aria2c (which `main.cjs` prefers when it is installed)
+  is not used — the same file comes; a download can be **cancelled** — `cancelDownload(id)`, an extra of this shell
+  that `src/downloads.ts` uses where it is (Electron's downloads run on) — and it then rejects with `cancelled`; what
+  was written of a download that failed or was cancelled is removed. No resume (Electron has none). `deleteDownload(p)`
+  removes a file only inside that folder («..» worked out first) → true, else false. The page's callers: the downloads
+  list (`downloads.ts`, with ids, `addDownloadListener`), OPDS «Get» (`opds.ts`, `onDownloadProgress`), the starter
+  decks (`decks.ts`, which calls `download` without a test — it works now).
+- **Cookies** (`shared/shell-rs/src/cookiejar.rs` behind reqwest's `CookieStore` hook): what a site sets is sent back
+  (domain, host-only, path, Secure, Max-Age / Expires, deletion; also on each hop of a redirect), as `main.cjs`'s
+  `useSessionCookies`. Cookies with an expiry are kept between runs in `<app data>/cookies.txt` (Chromium keeps the
+  session's on disk too); the others until the app ends. A `Cookie` header the page sets itself goes as given (reqwest
+  adds the jar's only when there is none). `set-cookie` is shown to the page in the response's headers (`ranobe.ts`
+  reads it). Not shared with the web view's own cookies (the in-app browser: R4 — `net::forget_cookies` is ready for
+  its «forget»).
+- **Headers**: any header the page gives is sent — Referer, Origin, User-Agent, Cookie (a browser forbids those) —;
+  redirects followed up to 20; no time limit (Electron's has none); bodies of any size, binary as base64; charsets as
+  before.
+- **Proxy**: the system's, as reqwest finds it — the proxy environment variables everywhere, Windows' Internet
+  settings, a Mac's system settings (reqwest's `macos-system-configuration` feature, which `default-features = false`
+  had taken away). Linux desktop proxy settings (GNOME's) are not read — Chromium reads them. **TLS**: rustls with its
+  own root certificates (as before), not the system's store.
+- **DNS over HTTPS** (`doh.rs`, `net.rs`). Electron sets Chromium's own secure DNS — for the page, its browser and its
+  downloads. This shell cannot give the web view (WebView2, WKWebView, WebKitGTK) a resolver, so its scope is **the
+  app's own requests**: `http` (the sources, the catalogues), downloads, the update check. Pictures inside web pages
+  and (R4) the in-app browser keep the system's DNS; Settings says so in this shell (`dohHintApp`, five languages).
+  The choices are Electron's: off, Cloudflare, Google, Quad9, AdGuard, or an `https://` address (here also an
+  `http://` one on this computer — a local resolver, and the self-test's). With one chosen, a client with reqwest's
+  resolver hook asks it — RFC 8484 POST, `application/dns-message`, A and AAAA at once, answers kept for their time to
+  live (30 s – 1 h) —; strictly, as Electron's `secureDnsMode: 'secure'`: no falling back to the system's DNS when it
+  fails. The resolver's own name is found by the system (a separate plain client), as Chromium does. «Off» is the
+  untouched client (Electron's «automatic»). Kept in `<config>/doh.json` and applied at each start (`main.rs`), as
+  `main.cjs`'s `doh.json`. `setDoh(null, host)` tries `https://host/` (HEAD, 12 s) with the answers forgotten first →
+  `{ provider, ok, status, ms }` / `{ provider, ok: false, error }`. Behind a proxy the proxy finds the sites. Settings
+  shows the choice in this shell though there is no in-app browser yet (`views/settings.ts`: the DoH section no longer
+  waits for one; every other shell that has DoH — Electron, Android — has a browser, so nothing changes there).
+- **Notifications**: `tauri-plugin-notification` (the official plugin, `"2"`, registered in `main.rs`; called from Rust
+  only, so no permission is granted to the page — `capabilities/default.json` unchanged) → true when shown. Chosen over
+  the web's `Notification` API, which WKWebView in an app does not have and WebKitGTK / WebView2 gate behind
+  permission requests the shell would have to answer. Differences: a click on the notification does not open the app at
+  `o.hash` (the plugin gives no click on a computer; and `onCommand`, which carries it in Electron, is R5's); `silent`
+  is not passed (the caller never sets it).
+- **Antivirus scan of a download**: the Reader's Electron shell has none (no `MpCmdRun` or the like in `main.cjs` or
+  its other files; the plan's list named it by mistake) — nothing to port.
+- **Not done here, said plainly**: the PDF converter's lanes on Windows still give up at once (a worker started from a
+  worker fails in WebView2 under `http://tauri.localhost`) and convert on one thread. Starting each lane's pdf.js
+  worker from the page instead needs the page to relay every message between the lane and that worker (pdf.js's
+  worker listens on its own global scope, not on a port it is handed), with transfer lists the relay cannot know —
+  not small, not safe; left as it is.
+- Tests: std-only unit tests (CI) of `cookiejar.rs`, `doh.rs`, `dlplan.rs` and the test server's new routes;
+  `tests/tauribridge.cjs` (the six functions' commands and arguments, the progress listeners' Electron rules, the extra
+  `cancelDownload`, the DoH section in Settings with this shell's hint); `selftest.js` in CI (above).
 
 ## The window's title bar (from R5, done ahead of it)
 

@@ -1,7 +1,7 @@
 // The Reader's Tauri shell, its runtime self-test (CI only). Added after bridge.js to the window's initialization
 // script by src-tauri/src/selftest.rs only when the KR_SELFTEST environment variable is set, after a line that sets
 // window.__KR_SELFTEST__ = { base, temp, home, text, gzText, latinText, binB64, os, version, minWidth, minHeight,
-// openFirst, openFirstSize, openDir, noWm }.
+// openFirst, openFirstSize, openDir, noWm, bigSize, bigCrc, largeSize, largeCrc, cookie, dohHost }.
 // Without that object it does nothing. Once the page has loaded it waits for the library to render, then runs its
 // checks through window.kurokawaDesktop — the same calls the page makes — and a few kr_selftest_* commands (the
 // shared crate's clipboard, window state and update check, which the Reader's bridge does not expose), sends the
@@ -29,6 +29,16 @@
   function sameBytes(buf, want) { var a = bytesOf(buf); if (a.length !== want.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== want[i]) return false; return true; }
   function utf8(s) { var out = []; var b = unescape(encodeURIComponent(s)); for (var i = 0; i < b.length; i++) out.push(b.charCodeAt(i)); return out; }
   function join(dir, name, os) { var sep = os === 'win32' ? '\\' : '/'; return String(dir).replace(/[\\/]+$/, '') + sep + name; }
+  // CRC-32 of bytes (an ArrayBuffer or a list): a downloaded file compared with what the test server sent.
+  var CRC_TABLE = null;
+  function crc32(buf) {
+    if (!CRC_TABLE) { CRC_TABLE = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; CRC_TABLE.push(c >>> 0); } }
+    var u = buf instanceof ArrayBuffer ? new Uint8Array(buf) : (Array.isArray(buf) ? buf : new Uint8Array(buf || []));
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < u.length; i++) crc = CRC_TABLE[(crc ^ u[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function dirOf(p) { var i = Math.max(String(p).lastIndexOf('/'), String(p).lastIndexOf('\\')); return i > 0 ? String(p).slice(0, i) : ''; }
   function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s); }
 
   /**
@@ -170,6 +180,109 @@
     await check('http charset from <meta> (windows-1256)', true, async function () { var r = await kd.http({ url: base + '/meta' }); must(r.body.indexOf(cfg.latinText) >= 0, 'body ' + short(r.body)); return 'decoded'; });
     await check('http 404', true, async function () { var r = await kd.http({ url: base + '/nope' }); must(r.status === 404, 'status ' + r.status); return '404'; });
 
+    /* stage R3 — the app's own requests keep cookies, follow long redirect chains, send the headers browsers forbid a
+       page to set, as Electron's session does (the shared net.rs, cookiejar.rs) */
+    await check('http cookies: set → sent back (path kept), and one set on a redirect', true, async function () {
+      var a = await kd.http({ url: base + '/cookie/set' }); must(a.status === 200, 'status ' + a.status);
+      var shown = /kr_test=/.test(a.headers['set-cookie'] || '');
+      var e = (await kd.http({ url: base + '/cookie/echo' })).body;
+      must(e.indexOf('kr_test=' + cfg.cookie) >= 0, 'kr_test did not come back (sent: ' + (e === '-' ? 'no cookie' : 'other cookies') + ')');
+      must(e.indexOf('kr_away') < 0, 'a cookie of another path was sent');
+      var h = await kd.http({ url: base + '/cookie/hop' });
+      must(/\/cookie\/echo$/.test(h.url), 'url ' + h.url);
+      must(h.body.indexOf('kr_hop=1') >= 0 && h.body.indexOf('kr_test=' + cfg.cookie) >= 0, 'the redirect\'s cookie did not come with the next request');
+      return 'kr_test came back, kr_away (another path) did not, kr_hop set on a redirect came along; set-cookie ' + (shown ? 'shown to the page' : 'not shown to the page');
+    });
+    await check('http redirect chain (12 hops)', true, async function () { var r = await kd.http({ url: base + '/chain/12' }); must(r.status === 200 && r.body === cfg.text, 'status ' + r.status + ' ' + short(r.body)); must(/\/text$/.test(r.url), 'url ' + r.url); return r.url; });
+    await check('http headers a page may not set (Referer, Origin, User-Agent, Cookie) go as given', true, async function () {
+      var r = await kd.http({ url: base + '/headers', headers: { Referer: 'https://ref.example/page', Origin: 'https://ref.example', 'User-Agent': 'KR-Selftest/1', Cookie: 'manual=1' } });
+      var b = r.body; var miss = ['referer: https://ref.example/page', 'origin: https://ref.example', 'user-agent: KR-Selftest/1', 'cookie: manual=1'].filter(function (x) { return b.indexOf(x) < 0; });
+      must(!miss.length, 'not sent: ' + miss.join(', '));
+      var d = (await kd.http({ url: base + '/headers' })).body;
+      must(/user-agent: Mozilla\/5\.0 [^\n]*Chrome\//.test(d), 'the default user agent is not a plain Chrome\'s: ' + short((/user-agent: [^\n]*/.exec(d) || [''])[0]));
+      return 'all four as given; default user agent a plain Chrome\'s';
+    });
+
+    /* downloads (download.rs): into the app's downloads folder, progress events, the name made safe, in parts when
+       large, cancelled by its id, the file deleted only inside that folder */
+    var dlDir = '';
+    await check('download: progress, the whole file, the name made safe; deleteDownload', true, async function () {
+      var only = []; kd.onDownloadProgress(function (p) { only.push(p); });
+      var heard = []; var off = kd.addDownloadListener(function (p) { heard.push(p); });
+      var p;
+      try { p = await kd.download(base + '/big/kr-selftest.bin', 'kr-selftest ../x:y.bin', 'kr-st-1'); } finally { off(); }
+      must(typeof p === 'string' && /kr-selftest \.\._x_y\.bin$/.test(p), 'path ' + p);
+      dlDir = dirOf(p); must(/downloads$/.test(dlDir), 'folder ' + dlDir);
+      must((await kd.fileSize(p)) === cfg.bigSize, 'size ' + (await kd.fileSize(p)));
+      must(crc32(await kd.readFile(p)) === cfg.bigCrc, 'the bytes differ from the server\'s');
+      var mine = heard.filter(function (e) { return e && e.id === 'kr-st-1'; });
+      must(mine.length >= 2, 'progress events ' + heard.length);
+      must(mine.some(function (e) { return e.got > 0 && e.got < cfg.bigSize; }) && mine[mine.length - 1].pct === 100 && mine[mine.length - 1].total === cfg.bigSize, 'events ' + short(mine.slice(-2)));
+      must(typeof mine[0].speed === 'number' && mine[0].connections === 1, 'event fields ' + short(mine[0]));
+      must(only.length === mine.length, 'onDownloadProgress heard ' + only.length + ' ≠ ' + mine.length);
+      must((await kd.deleteDownload(p)) === true, 'deleteDownload did not answer true');
+      must((await kd.fileSize(p)) === -1, 'still there after deleteDownload');
+      var outside = join(cfg.temp, 'kr-selftest-keep-' + env.now() + '.txt', cfg.os);
+      await kd.writeTextFile(outside, 'keep');
+      try {
+        must((await kd.deleteDownload(outside)) === false && (await kd.fileSize(outside)) === 4, 'a file outside the downloads folder was deleted');
+        must((await kd.deleteDownload(join(dlDir, '..', cfg.os) + (cfg.os === 'win32' ? '\\' : '/') + 'x')) === false, '«..» left the folder');
+      } finally { await env.invoke('kr_selftest_remove', { p: outside }); }
+      return mine.length + ' progress events; ' + p;
+    }, 60000);
+    await check('download in parts (3 MiB, several connections)', true, async function () {
+      var heard = []; var off = kd.addDownloadListener(function (p) { if (p && p.id === 'kr-st-2') heard.push(p); });
+      var p;
+      try { p = await kd.download(base + '/large/kr-selftest-large.bin', 'kr-selftest-large.bin', 'kr-st-2'); } finally { off(); }
+      must(crc32(await kd.readFile(p)) === cfg.largeCrc, 'the bytes differ from the server\'s');
+      var conns = heard.reduce(function (n, e) { return Math.max(n, e.connections || 0); }, 0);
+      must(conns > 1, 'connections ' + conns);
+      await kd.deleteDownload(p);
+      return conns + ' connections, ' + heard.length + ' events';
+    }, 60000);
+    await check('download cancelled by its id (cancelDownload)', true, async function () {
+      must(typeof kd.cancelDownload === 'function', 'no cancelDownload');
+      var first = null; var off = kd.addDownloadListener(function (p) { if (p && p.id === 'kr-st-3' && !first) first = p; });
+      var run = kd.download(base + '/big/kr-selftest-cancel.bin', 'kr-selftest-cancel.bin', 'kr-st-3');
+      var outcome = run.then(function () { return null; }, function (e) { return e; });
+      try {
+        await waitFor(function () { return first; }, 15000, 'a progress event');
+        must((await kd.cancelDownload('kr-st-3')) === true, 'cancelDownload did not find it');
+        var e = await outcome;
+        must(e instanceof Error && e.message === 'cancelled', 'the download ' + (e ? 'failed with ' + e.message : 'finished'));
+      } finally { off(); }
+      if (dlDir) must((await kd.fileSize(join(dlDir, 'kr-selftest-cancel.bin', cfg.os))) === -1, 'the part written was left');
+      must((await kd.cancelDownload('kr-st-3')) === false, 'still under way');
+      return 'cancelled after ' + first.got + ' bytes; nothing left';
+    }, 40000);
+    await check('download of a missing file rejects', true, async function () { var e = await rejects(kd.download(base + '/nope', 'kr-selftest-404.bin', 'kr-st-4')); must(e instanceof Error && /HTTP 404/.test(e.message), 'answer ' + (e ? e.message : 'resolved')); return e.message; });
+
+    /* DNS over HTTPS (net.rs, doh.rs): with the test server's resolver chosen, a name no real DNS knows reaches it */
+    var port = String(base).split(':').pop();
+    await check('DNS over HTTPS: a made-up name found through the chosen resolver', true, async function () {
+      var resolver = base + '/dns-query';
+      var before = Number((await kd.http({ url: base + '/dns-count' })).body);
+      var s = await kd.setDoh(resolver); must(s && s.provider === resolver, 'setDoh ' + short(s));
+      try {
+        var r = await kd.http({ url: 'http://' + cfg.dohHost + ':' + port + '/text' });
+        must(r.status === 200 && r.body === cfg.text, 'status ' + r.status + ' ' + short(r.body));
+        var after = Number((await kd.http({ url: base + '/dns-count' })).body);
+        must(after > before, 'the resolver was not asked (' + before + ' → ' + after + ')');
+        var kept = await kd.setDoh(null); must(kept.provider === resolver, 'kept ' + short(kept));
+        var t = await kd.setDoh(null, 'kr-doh-nowhere.test');
+        must(t && t.ok === false && typeof t.error === 'string' && t.provider === resolver, 'test ' + short(t));
+        return cfg.dohHost + ' → 127.0.0.1 (' + (after - before) + ' queries); a name it does not know: ' + short(t.error).slice(0, 80);
+      } finally { var o = await kd.setDoh('off'); must(o && o.provider === 'off', 'off ' + short(o)); }
+    }, 40000);
+    await check('DNS over HTTPS off: the made-up name is the system\'s again (not found)', false, async function () {
+      var e = await rejects(kd.http({ url: 'http://' + cfg.dohHost + ':' + port + '/text' }));
+      must(e instanceof Error, 'found without the resolver');
+      return 'not found: ' + short(e.message).slice(0, 80);
+    }, 25000);
+
+    /* a system notification (the notification plugin): the call answers — a person sees whether one shows */
+    await check('notify answers', false, async function () { var r = await kd.notify({ title: 'KurokawaReader self-test', body: 'A notification ✓', hash: '/' }); must(typeof r === 'boolean', 'answer ' + short(r)); return 'answered ' + r; }, 10000);
+
     /* the update check (the shared net.rs) against a canned releases list */
     await check('update check (canned releases)', true, async function () {
       var list = JSON.parse((await kd.http({ url: base + '/releases' })).body); must(Array.isArray(list) && list.length === 5, 'list ' + short(list));
@@ -260,7 +373,7 @@
     return results;
   }
 
-  var lib = { NAMES: NAMES, ASSET: ASSET, verdict: verdict, sameBytes: sameBytes, utf8: utf8, join: join, run: run };
+  var lib = { NAMES: NAMES, ASSET: ASSET, verdict: verdict, sameBytes: sameBytes, utf8: utf8, join: join, crc32: crc32, run: run };
   try { Object.defineProperty(root, '__KR_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KR_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KR_SELFTEST__;

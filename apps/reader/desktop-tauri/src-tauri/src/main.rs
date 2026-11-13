@@ -6,6 +6,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod dlplan;
+mod download;
 mod enginetest;
 mod openargs;
 mod openfile;
@@ -59,6 +61,8 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        // (Stage R3: system notifications — kr_notify, from Rust only, so no JS permission is granted.)
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::kr_read_file,
             commands::kr_file_size,
@@ -72,6 +76,11 @@ fn main() {
             commands::kr_archive_pick_file,
             commands::kr_default_apps,
             commands::kr_http,
+            commands::kr_download,
+            commands::kr_delete_download,
+            commands::kr_download_cancel,
+            commands::kr_set_doh,
+            commands::kr_notify,
             selftest::kr_selftest_progress,
             selftest::kr_selftest_done,
             selftest::kr_selftest_remove,
@@ -92,6 +101,12 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
+            // (Stage R3, before any request: the cookies kept from the last run — <app data>/cookies.txt — and the
+            // DNS-over-HTTPS resolver chosen in Settings, as main.cjs applies its doh.json at every start.)
+            if let Ok(dir) = handle.path().app_data_dir() {
+                net::configure_cookies(dir.join("cookies.txt"));
+            }
+            net::set_doh(&commands::doh_kept(&handle));
             // (What Electron's preload knows before the first call: the OS, in Node's words — its `platform`.)
             let boot = serde_json::json!({ "os": util::node_platform(), "arch": util::node_arch() });
             let mut script: String = format!("window.__KR_BOOT__ = {};\n{}", boot, BRIDGE_JS);

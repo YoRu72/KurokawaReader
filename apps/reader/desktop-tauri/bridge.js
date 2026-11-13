@@ -7,8 +7,8 @@
 // names the stage; the page already copes with each (PORTING.md says how). The stubs are listed in STUBS below, so
 // tests/tauribridge.cjs and the self-test can tell them from the ported ones. Some names are LEFT OUT instead (LEFT_OUT
 // below): the page tests for those before it uses them, and without them it takes a way that works — its own full
-// screen, its picture PDF, a plain request — or shows no control that could not work (Archives, DNS-over-HTTPS, the
-// in-app browser, the app icon); each comes back with the stage that ports it.
+// screen, its picture PDF — or shows no control that could not work (Archives, the in-app browser, the app icon);
+// each comes back with the stage that ports it.
 (function () {
   'use strict';
   if (window.kurokawaDesktop) return;
@@ -88,19 +88,17 @@
   var STUBS = {
     setZoom: ['R5', 'none'],
     installUpdate: ['R6', 'reject'], onUpdateProgress: ['R6', 'none'],
-    setImmersive: ['R5', false], copyImage: ['R5', false], notify: ['R3', false],
+    setImmersive: ['R5', false], copyImage: ['R5', false],
     onCommand: ['R5', 'none'], setProgress: ['R5', 'none'],
   };
   // name → the stage that brings it. Not defined at all until then: the page looks for each before using it, and
   // without it does what works here (src/: native.ts toggleFullscreen → the HTML full screen; convert.ts buildPdf →
-  // the picture PDF; opds.ts / downloads.ts → a plain request through http; archives.ts canArchive, sources/http.ts
-  // hasBrowser / hasDoh, native.ts appIconWay, updates.ts → no Archives button, no in-app browser or DNS-over-HTTPS
-  // section, no app-icon option, no «download in the background» switch).
+  // the picture PDF; archives.ts canArchive, sources/http.ts hasBrowser, native.ts appIconWay, updates.ts → no
+  // Archives button, no in-app browser, no app-icon option, no «download in the background» switch).
   var LEFT_OUT = {
     appIcon: 'R5', downloadUpdate: 'R6', installDownloadedUpdate: 'R6',
     archiveList: 'R5', archiveExtract: 'R5', archiveCancel: 'R5', archiveCreate: 'R5', archiveTest: 'R5', archiveRestore: 'R5', archiveFree: 'R5', archiveExisting: 'R5', onArchiveProgress: 'R5',
     setFullscreen: 'R5', printToPdf: 'R5',
-    setDoh: 'R3', download: 'R3', deleteDownload: 'R3', onDownloadProgress: 'R3', addDownloadListener: 'R3',
     openWebView: 'R4', browserFetch: 'R4', browserReset: 'R4', browserForget: 'R4',
   };
   function notYet(name, stage) { return new Error(name + ' is not in this preview build yet (Tauri stage ' + stage + ')'); }
@@ -159,6 +157,16 @@
     };
   }
 
+  /* ---------- downloads (stage R3: src-tauri/src/download.rs) ---------- */
+  // main.cjs's kr:download-progress reaches every listener: onDownloadProgress(cb) first removes them all (the
+  // preload's removeAllListeners) and adds cb; addDownloadListener(cb) adds one and answers its remover. One Tauri
+  // listening serves them all (set up once Tauri's event API is there: tried again with each listener added).
+  var dlListeners = []; var dlListening = false;
+  function dlListen() {
+    if (dlListening || !listener()) return; dlListening = true;
+    subscribe('kr:download-progress', function (p) { dlListeners.slice().forEach(function (f) { try { f(p); } catch (e) { /* the page's */ } }); });
+  }
+
   var api = {
     // The OS, in Node's words (process.platform in the preload).
     platform: boot.os || '',
@@ -206,13 +214,35 @@
         return { status: r.status, headers: rh, body: o.binary ? String(r.body || '') : decodeText(fromBase64(r.body), rh['content-type']), url: r.url };
       });
     },
+    // DNS over HTTPS for the app's own requests (the shared net.rs, doh.rs): setDoh(provider) keeps and applies a
+    // provider ('off', a name, an https:// address); setDoh(null, host) tries https://host/ with it → { provider, ok,
+    // status, ms } / { provider, ok: false, error }. (The web view's own requests keep the system's DNS.)
+    setDoh: function (provider, test) { return call('kr_set_doh', { provider: provider === undefined || provider === null ? null : str(provider), test: test ? str(test) : null }); },
+
+    /* downloads: download(url, name, id) → the file's path in the app's downloads folder; progress events as main.cjs's
+       { id, pct, got, total, speed, connections }; deleteDownload(p) → true when it was in that folder */
+    download: function (url, name, id) { return call('kr_download', { url: str(url), name: str(name), id: id === undefined || id === null ? null : str(id) }); },
+    deleteDownload: function (p) { return call('kr_delete_download', { p: str(p) }); },
+    onDownloadProgress: function (cb) { dlListeners.length = 0; if (typeof cb === 'function') { dlListeners.push(cb); dlListen(); } return undefined; },
+    addDownloadListener: function (cb) {
+      if (typeof cb !== 'function') return function () {};
+      dlListeners.push(cb); dlListen();
+      return function () { var i = dlListeners.indexOf(cb); if (i >= 0) dlListeners.splice(i, 1); };
+    },
+
+    // A system notification (the notification plugin): → true when shown. (A click on it does not open the app at
+    // o.hash, as Electron's does: the plugin gives no click on a computer.)
+    notify: function (o) { return call('kr_notify', { o: obj(o) }); },
   };
   Object.keys(STUBS).forEach(function (k) { api[k] = stub(k); });
   // Names this shell has that Electron's has not (EXTRA): scanFolder(root, exts) — the whole-computer scan's walk
   // in one folder the user picked, answered as scanDevice is. The library's «Pick a folder» scan uses it where it is
   // (src/ui/scan.ts), so its books can be linked by path; Electron, which has not, keeps the web view's folder picker.
+  // cancelDownload(id) (R3) — the download started with that id stopped (it rejects with «cancelled») → whether one
+  // was under way; the downloads list cancels with it where it is (src/downloads.ts; Electron's downloads run on).
   var EXTRA = {
     scanFolder: function (root, exts) { return call('kr_scan_folder', { p: str(root), exts: (Array.isArray(exts) ? exts : []).map(str) }); },
+    cancelDownload: function (id) { return call('kr_download_cancel', { id: str(id) }); },
   };
   Object.keys(EXTRA).forEach(function (k) { api[k] = EXTRA[k]; });
 
