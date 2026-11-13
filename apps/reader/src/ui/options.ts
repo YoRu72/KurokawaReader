@@ -170,6 +170,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('arabicFont'), 'arabicFont'], segmented(arabic, s.arabicFont, (v) => { updateSettings({ arabicFont: v }); rerender(); }, true)));
   if (cjkBook || customCjk.length) grid.append(section([t('cjkFont'), 'cjkFont'], segmented(cjk, s.cjkFont, (v) => { updateSettings({ cjkFont: v }); rerender(); })));
   grid.append(toggle([t('headingsFont'), 'headingsFont'], s.headingsFont, (v) => updateSettings({ headingsFont: v })));
+  grid.append(toggle([t('bookSizes'), 'bookSizes'], s.bookSizes, (v) => updateSettings({ bookSizes: v })), h('p', { class: 'hint' }, t('bookSizesHint')));
   grid.append(stepper([t('fontSize'), 'fontSize'], s.fontSize, 12, 40, 1, (v) => updateSettings({ fontSize: v }), (v) => `${v}`));
   grid.append(stepper([t('lineHeight'), 'lineHeight'], s.lineHeight, 1.2, 2.6, 0.1, (v) => updateSettings({ lineHeight: Math.round(v * 10) / 10 }), (v) => v.toFixed(1)));
   grid.append(stepper([t('fontWeight'), 'fontWeight'], s.fontWeight ?? 400, 300, 700, 50, (v) => updateSettings({ fontWeight: Math.round(v / 50) * 50 }), (v) => localDigits(String(v))));
@@ -186,7 +187,12 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('bookFormat'), 'bookFormat'], s.bookFormat, (v) => { updateSettings({ bookFormat: v }); rerender(); }), h('p', { class: 'hint' }, t('bookFormatHint')));
   grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
   grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : '—')));
+  const titlePlaces: [VisualSettings['chapterTitles'], string][] = [['center', t('chapterTitlesCenter')], ['start', t('chapterTitlesStart')], ['book', t('chapterTitlesBook')]];
+  grid.append(section([t('chapterTitles'), 'chapterTitles'], segmented(titlePlaces, s.chapterTitles, (v) => { updateSettings({ chapterTitles: v }); rerender(); })));
+  grid.append(toggle([t('hideChapterWord'), 'hideChapterWord'], s.hideChapterWord, (v) => updateSettings({ hideChapterWord: v })), h('p', { class: 'hint' }, t('hideChapterWordHint')));
   grid.append(toggle([t('dropCap'), 'dropCap'], s.dropCap, (v) => updateSettings({ dropCap: v })));
+  const firstLetters: [VisualSettings['firstLetter'], string][] = [['bold', t('firstLetterBold')], ['book', t('firstLetterBook')], ['plain', t('firstLetterPlain')]];
+  grid.append(section([t('firstLetter'), 'firstLetter'], segmented(firstLetters, s.firstLetter, (v) => { updateSettings({ firstLetter: v }); rerender(); })));
   // The reader's own CSS for the text.
   {
     const ta = h('textarea', { class: 'css-box', rows: '4', spellcheck: 'false', placeholder: 'p { text-indent: 2em; }\nh2 { color: #a0522d; }', dir: 'ltr' }) as HTMLTextAreaElement;

@@ -62,6 +62,14 @@ export interface VisualSettings {
   publisherStyles: boolean;
   dimImages: boolean;
   hyphenate: boolean;
+  /** Chapter titles and heading-like lines: centred, at the start, or as the book places them. */
+  chapterTitles: 'center' | 'start' | 'book';
+  /** The label of a chapter's title («Chapter 1», «الفصل الأول») hidden when the title has more (the name shown too). */
+  hideChapterWord: boolean;
+  /** The book's own relative sizes, bold and italic (its inline styles and stylesheet), under the reader's size. */
+  bookSizes: boolean;
+  /** A paragraph's large first letter (a drop cap the book sets): bold at the text's size, as the book sets it, or plain. */
+  firstLetter: 'bold' | 'book' | 'plain';
   wordSpacing: number;    // em
   letterSpacing: number;  // em
   pdfInvert: boolean;
@@ -268,7 +276,11 @@ export const DEFAULTS: VisualSettings = {
   align: 'start',
   publisherStyles: false,
   dimImages: true,
-  hyphenate: false,
+  hyphenate: true,
+  chapterTitles: 'center',
+  hideChapterWord: false,
+  bookSizes: true,
+  firstLetter: 'bold',
   wordSpacing: 0,
   letterSpacing: 0,
   pdfInvert: false,
@@ -425,6 +437,10 @@ function load(): VisualSettings {
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
     if (!localStorage.getItem('kr.pinchMigrated')) { s.pdfPinchZoom = true; localStorage.setItem('kr.pinchMigrated', '1'); localStorage.setItem(KEY, JSON.stringify(s)); }
+    // 0.62: hyphenation is on by default. It was off by default and the whole settings object is stored at every change,
+    // so a «false» left by the old default cannot be told from one chosen: it is turned on once for everyone; turned off
+    // again after that, it stays off.
+    if (!localStorage.getItem('kr.hyphenMigrated')) { s.hyphenate = true; localStorage.setItem('kr.hyphenMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
     // 0.59.8: the dots and polka textures are gone; a page that had one is plain again.
     if (!['none', 'paper', 'linen', 'parchment'].includes(s.texture as string)) s.texture = 'none';
     // 0.61.1: the edge guard is off by default; 0.61.0 stored the old default (on) with every other setting, so it is
