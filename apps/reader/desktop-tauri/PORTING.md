@@ -1,18 +1,22 @@
 # Porting the Reader's desktop shell to Tauri v2
 
 The Electron shell (`../desktop/`) keeps shipping; this Tauri shell grows beside it, stage by stage
-(`docs/RUST-PORT-READER.md`), until it has every function below, then replaces it. This is **stage R0**: the shared
-crate, the Tauri project, the interface opening in it, and the bridge's round trips proven by a self-test in CI.
+(`docs/RUST-PORT-READER.md`), until it has every function below, then replaces it. **Stage R0**: the shared crate, the
+Tauri project, the interface opening in it, and the bridge's round trips proven by a self-test in CI. **Stage R1**: the
+engine test — the web app's key cases run in each system's own web view in CI (see «Engine test» below).
 
 ## How it works
 
 - `src-tauri/src/main.rs` opens the window — made in Rust (`app.windows` is empty in `tauri.conf.json`) so it can carry
   the initialization script — on the same built web app (`../dist`, from `node scripts/build.mjs`). The window is
   `desktop/main.cjs`'s: titled KurokawaReader, 1180×820 or as it was left, at least 420×600; Tauri's own drag-and-drop
-  handling is off so the page gets the HTML drop events it imports books with.
+  handling is off so the page gets the HTML drop events it imports books with. The window-state file always holds a
+  size: a window that is maximized before any size was saved (macOS calls a window maximized when its default size
+  fills a small screen) saves the size it has, as Electron always saves its normal bounds.
 - `bridge.js` runs before the page's own scripts on every load, after a line that sets `window.__KR_BOOT__ = { os,
   arch }`, and defines the same `window.kurokawaDesktop` the Electron preload does: **all 48 names** (47 functions and
-  `platform`). Each Electron channel `kr:a-b` is the Tauri command `kr_a_b` (`src-tauri/src/commands.rs`); arguments
+  `platform`) — except the 23 **left out** until their stage (below). Each Electron channel `kr:a-b` is the Tauri
+  command `kr_a_b` (`src-tauri/src/commands.rs`); arguments
   are sent under one-word keys (`p`, `o`, `text`, `b64`, `append`, `exts`), so Tauri's camelCase mapping never matters.
 - The commands are thin wrappers over **kurokawa-shell** (`shared/shell-rs`), the Rust both apps' shells share (see
   below). Only `scan.rs` (the whole-computer scan, std only) is the Reader's own.
@@ -20,6 +24,11 @@ crate, the Tauri project, the interface opening in it, and the bridge's round tr
   Electron itself answers when it cannot do the thing (`false`, `null`, `'unsupported'`, `{ cleared: 0 }`…), or —
   where Electron has no such answer — rejects with `Error('<name> is not in this preview build yet (Tauri stage
   Rn)')`. The table below says how the page copes with each. `window.__KR_BRIDGE_STUBS__` lists them with their stage.
+- R0 found that a stub being **present** makes the page skip a fallback that works. So a name the page tests for before
+  it uses it is **left out** of `window.kurokawaDesktop` until its stage (`bridge.js`'s `LEFT_OUT`,
+  `window.__KR_BRIDGE_LEFT_OUT__`): the page then takes its own way, and shows no control that cannot work. A name the
+  page calls without a test (`onOpenFile`), or whose stub answers better than its absence (`installUpdate`: «not in
+  this preview build yet» rather than «desktop»), stays a stub.
 - `kr:http` (web requests without the page's cross-site limits) is the shared `net.rs` (reqwest, rustls, gzip /
   brotli / deflate); the bridge always asks for the body as base64 and makes it text itself, in the page's charset —
   the Content-Type's, else a `<meta>` in the first 2048 bytes, else UTF-8 — with `TextDecoder`, exactly as
@@ -104,7 +113,8 @@ sends the right command and arguments from the page.
 
 `docs/RUST-PORT-READER.md` says 38; `desktop/preload.cjs` today gives 47 functions and `platform`. All are here.
 
-**Done in R0: 12** (+ `platform`) · **stubs: 35** (R2: 2, R3: 6, R4: 4, R5: 19, R6: 4).
+**Done in R0: 12** (+ `platform`) · **stubs: 12** (R2: 2, R3: 1, R5: 7, R6: 2) · **left out: 23** (R3: 5, R4: 4, R5:
+12, R6: 2).
 
 | Function | Electron (`main.cjs`) | R0 | How the page copes with the stub | Stage |
 |---|---|---|---|---|
@@ -121,42 +131,87 @@ sends the right command and arguments from the page.
 | `openDefaultApps()` | `kr:default-apps`: the system's default-apps page (Windows, macOS); false elsewhere | **done** `kr_default_apps` | | |
 | `http(o)` | `kr:http`: request without cross-site limits, session cookies, text in the page's charset | **done** `kr_http` (no cookie jar yet: R3/R4) | | |
 | `isPortable()` | `kr:is-portable` | **done**: `false` (this build is never Electron's portable .exe) | | |
-| `appIcon(o)` | `kr:appIcon`: the user's own icon on window, taskbar, shortcuts | stub: asked → `null`; set → rejects | Settings shows the icon option; «none chosen»; setting one shows the error toast | R5 |
+| `appIcon(o)` | `kr:appIcon`: the user's own icon on window, taskbar, shortcuts | **left out** | no app-icon option in Settings (`appIconWay()` is null) | R5 |
 | `titleBar(o)` | `app:titleBar`: the app's own bar's colours, `{platform, height, …}` | stub: `null` | the page removes its bar: the system frame is used | R5 |
 | `onTitleBarState(cb)` | `app:titleBarState` events | stub: a remover, never called | (no bar) | R5 |
 | `setZoom(f)` | `webFrame.setZoomFactor` | stub: nothing | the interface stays at 100% (Appearance → size has no effect) | R5 |
 | `onOpenFile(cb)` | `kr:open-file` events (double-click, open-with, second instance) + `kr:ready` | stub: nothing | files are added from inside the app only | R2 |
 | `installUpdate(url, o)` | `kr:install-update`: download, then install / swap | stub: rejects | the update sheet shows its error | R6 |
-| `downloadUpdate(o)` | `kr:update-download`: electron-updater in the background | stub: `'unsupported'` | the page falls back to its own check and shows the update sheet | R6 |
-| `installDownloadedUpdate()` | `kr:update-install` | stub: `false` | (never offered: nothing is downloaded) | R6 |
+| `downloadUpdate(o)` | `kr:update-download`: electron-updater in the background | **left out** | no «download in the background» switch; the page's own check and update sheet | R6 |
+| `installDownloadedUpdate()` | `kr:update-install` | **left out** | (never offered: nothing is downloaded) | R6 |
 | `onUpdateProgress(cb)` | `kr:update-progress` events | stub: nothing | | R6 |
-| `archiveList(o)` | `kr:archive-list` (7-Zip) | stub: rejects | the Archives button shows (the page asks for `archiveList`); opening one shows its error | R5 |
-| `archiveExtract(o)` | `kr:archive-extract` | stub: rejects | as above | R5 |
-| `archiveCancel(id)` | `kr:archive-cancel` | stub: `undefined` | | R5 |
-| `archiveCreate(o)` | `kr:archive-create` | stub: rejects | «Create zip» shows its error | R5 |
-| `archiveTest(o)` | `kr:archive-test` | stub: rejects | as above | R5 |
-| `archiveRestore(o)` | `kr:archive-restore` | stub: rejects | as above | R5 |
-| `archiveFree(o)` | `kr:archive-free` | stub: rejects | as above | R5 |
-| `archiveExisting(o)` | `kr:archive-existing` | stub: rejects | as above | R5 |
-| `onArchiveProgress(cb)` | `kr:archive-progress` events | stub: a remover | | R5 |
-| `setFullscreen(v)` | `kr:fullscreen`: the window full screen → new state | stub: `false` | F11 / the reader's full-screen button do nothing (the page does not fall back while the function is there) | R5 |
+| `archiveList(o)` | `kr:archive-list` (7-Zip) | **left out** | no Archives button (`canArchive()` is false) | R5 |
+| `archiveExtract(o)` | `kr:archive-extract` | **left out** | as above | R5 |
+| `archiveCancel(id)` | `kr:archive-cancel` | **left out** | as above | R5 |
+| `archiveCreate(o)` | `kr:archive-create` | **left out** | as above | R5 |
+| `archiveTest(o)` | `kr:archive-test` | **left out** | as above | R5 |
+| `archiveRestore(o)` | `kr:archive-restore` | **left out** | as above | R5 |
+| `archiveFree(o)` | `kr:archive-free` | **left out** | as above | R5 |
+| `archiveExisting(o)` | `kr:archive-existing` | **left out** | as above | R5 |
+| `onArchiveProgress(cb)` | `kr:archive-progress` events | **left out** | as above | R5 |
+| `setFullscreen(v)` | `kr:fullscreen`: the window full screen → new state | **left out** | F11 / the reader's full-screen button use the HTML full screen (`toggleFullscreen`), or the reader's immersive mode where the web view has no Fullscreen API | R5 |
 | `setImmersive(on)` | `kr:immersive` | stub: `false` | the reader's immersive mode hides the app's bars only | R5 |
 | `copyImage(b64)` | `kr:copy-image`: image to the clipboard | stub: `false` | the page falls back to `navigator.clipboard.write` | R5 |
-| `printToPdf(html, o)` | `kr:print-pdf`: a hidden window prints a text PDF | stub: rejects | the converter's PDF output fails with its error (the page does not fall back to its picture PDF while the function is there) | R5 |
-| `setDoh(provider, test)` | `kr:set-doh`: Chromium's secure DNS | stub: asked → `{provider:'off'}`; test → `{ok:false, error}`; set → rejects | Settings shows DNS-over-HTTPS; «Test» says it failed and why; choosing a resolver does nothing | R3 |
-| `openWebView(o)` | `kr:open-webview`: a site's check passed in the app's browser window | stub: `{passed:false, blocked:false, title:''}` | a site behind a check reports the check as not passed; «Open the browser» does nothing | R4 |
-| `browserFetch(o)` | `kr:browser-fetch`: a request from the site's own page | stub: rejects | the sources' request goes the plain way (`http`) | R4 |
-| `browserReset(url)` | `kr:browser-reset` | stub: `true` | | R4 |
-| `browserForget(url, all)` | `kr:browser-forget` | stub: `{cleared:0}` | «Forget all sites» says 0 | R4 |
+| `printToPdf(html, o)` | `kr:print-pdf`: a hidden window prints a text PDF | **left out** | the converter's PDF output is the picture PDF (searchable text over page pictures), as on the web | R5 |
+| `setDoh(provider, test)` | `kr:set-doh`: Chromium's secure DNS | **left out** | no DNS-over-HTTPS section (`hasDoh()` is false) | R3 |
+| `openWebView(o)` | `kr:open-webview`: a site's check passed in the app's browser window | **left out** | no in-app browser (`hasBrowser()` is false: Settings says there is none); a site behind a check reports it as not passed | R4 |
+| `browserFetch(o)` | `kr:browser-fetch`: a request from the site's own page | **left out** | the sources' requests go the plain way (`http`) | R4 |
+| `browserReset(url)` | `kr:browser-reset` | **left out** | | R4 |
+| `browserForget(url, all)` | `kr:browser-forget` | **left out** | (no in-app browser section) | R4 |
 | `notify(o)` | `kr:notify`: a system notification | stub: `false` | no notification for new chapters | R3 |
-| `download(url, name, id)` | `kr:download`: into the app's data folder (aria2c or ranges), progress events | stub: rejects | the downloads list falls back to the sources' own request in one piece; OPDS «Get» and starter decks show the error | R3 |
-| `deleteDownload(p)` | `kr:delete-download` | stub: `false` | | R3 |
-| `onDownloadProgress(cb)` | `kr:download-progress` events | stub: nothing | | R3 |
-| `addDownloadListener(cb)` | `kr:download-progress` events, per caller | stub: a remover | | R3 |
+| `download(url, name, id)` | `kr:download`: into the app's data folder (aria2c or ranges), progress events | **left out** | the downloads list and OPDS «Get» use the plain request (`http`), in one piece; starter decks still fail («dk.download is not a function»: decks.ts calls it on every computer without a test) | R3 |
+| `deleteDownload(p)` | `kr:delete-download` | **left out** | | R3 |
+| `onDownloadProgress(cb)` | `kr:download-progress` events | **left out** | | R3 |
+| `addDownloadListener(cb)` | `kr:download-progress` events, per caller | **left out** | | R3 |
 | `onOpenUrl(cb)` | `kurokawareader://` links (cloud-sync sign-in) | stub: nothing | sign-ins that come back by such a link do not finish | R2 |
 | `onCommand(cb)` | the application menu's commands | stub: nothing | (no menu; the keyboard shortcuts are the page's own) | R5 |
 | `setProgress(p)` | `kr:progress`: taskbar progress, no background throttling | stub: nothing | no taskbar progress | R5 |
 
-Where a present stub hides a fallback the page would take if the function were missing (`printToPdf`: the picture PDF;
-`setFullscreen`: the HTML full screen; `download` for OPDS: the plain request), the stub could be left out of the bridge
-instead — a decision for the stage that ports it, or now if the preview should degrade more gently.
+Kept as stubs on purpose: `setZoom` (Appearance → interface size is shown on every computer and has no effect until
+R5 — the page has no fallback either way), `copyImage` (answers false: the page then uses `navigator.clipboard.write`),
+`notify` (no notification either way: the page treats the desktop as allowed and never asks the web's permission),
+`setImmersive`, `titleBar` / `onTitleBarState`, `onOpenFile` (called without a test), `onOpenUrl`, `onCommand`,
+`setProgress`, `installUpdate` / `onUpdateProgress`.
+
+## Engine test (stage R1)
+
+With `KR_ENGINETEST=<file>` set (and no `KR_SELFTEST`), `src-tauri/src/enginetest.rs` adds `enginetest.js` to the
+initialization script and starts the shared frame's watchdog (`KR_ENGINETEST_TIMEOUT` seconds; `KR_ENGINETEST_BUDGET`
+seconds after which the cases not yet run are written as skipped). The page drives the real web app — a small driver:
+wait for a selector or a condition, click, type, read texts and boxes — and makes every book in code (EPUBs with its
+own stored-zip writer, PDFs with its own PDF writer — Helvetica text, Arabic as letters mapped by a ToUnicode table —,
+plain text). It reloads the page twice (where it stands is kept in `localStorage`, `kr.enginetest.<runId>`) and
+reports through `kr_selftest_progress` / `kr_selftest_done`, as the self-test does. Cases (each check: ok/FAIL, a
+detail, a time; «required» ones fail the job on Linux and Windows):
+
+1. **Environment**: engine and version from the user agent, DPR, `deviceMemory`, screen; about 35 features the app
+   uses, present or not (a module worker tried for real); every script of the app fetched to see the type the shell
+   serves it with, and that none has «%PDF» in its first kilobyte; a blob module with «%PDF» near its start (does the
+   engine sniff a declared type?).
+2. **Storage**: an EPUB imported (through the library's file input) → in IndexedDB → the page reloaded → still there and
+   in the library; where the profile lives (`kr_engine_profile`: the candidate folders, their size, the IndexedDB
+   folder found), `navigator.storage.estimate()`.
+3. **EPUB**: opened, first text shown; contents → Chapter Two at the top; in-book search finds «quick brown» across
+   `<b>` (and whether the hit is marked with `CSS.highlights`); a highlight made from a selection; reopened → back in the
+   same paragraph, kept in IndexedDB. **Arabic** book: right to left; letters joined (a word's width ≠ the sum of its
+   letters set apart, in the reader's font); the digits the app writes through `Intl` (`-nu-arab` ١٢٣, `-nu-latn` 123,
+   percent, Hijri); screenshot. After the second reload, the interface in Arabic (`dir=rtl`) with the book open;
+   screenshot.
+4. **Text book** of 700 paragraphs: opens, `content-visibility: auto` in use, scrolled to 50 %, the place saved and
+   restored (± 2 paragraphs).
+5. **PDF**: page 1 drawn (canvas pixels sampled), text layer, page 2 after a scroll, search finds a word, zoom in;
+   screenshot; a 300-page PDF made, imported, opened and scrolled to page 250 (times reported).
+6. **Converter**: a PDF with English and Arabic → Word; finishes, the saved file (its download link caught) is a zip
+   whose `word/document.xml` holds both texts (read with the test's own inflater); time.
+7. **Read-aloud** (reported): `speechSynthesis`, voices (count, Arabic ones), speak/cancel, the reader's read-aloud.
+8. **Window** (reported): F11 in the reader → HTML full screen or immersive mode; `window.print` present (not called);
+   a file dropped on the library (a DOM drop event).
+9. **Fonts**: each bundled family loads (`document.fonts`); Noto Naskh Arabic renders at a width unlike a fallback's.
+
+Screenshots: `kr_engine_shot` runs the system's tool — `import -window root` (ImageMagick, under Xvfb), `screencapture
+-x` (macOS; without the screen-recording permission it may show only the desktop), PowerShell `CopyFromScreen`
+(Windows) — into `KR_ENGINETEST_SHOTS`. `enginetest-report.cjs` writes the report as Markdown; the workflow keeps the
+report (JSON and Markdown), the versions and the pictures as the `tauri-reader-engine-<os>` artifact.
+`tests/tauriengine.cjs` checks the test's own zip / inflate / PDF / EPUB code in node, and runs the whole test in
+Chromium (the built app, the bridge, a fake IPC): every required check passes there, so a failure in CI is the
+engine's.

@@ -32,7 +32,8 @@
 
   /**
    * The checks. kd: window.kurokawaDesktop. stubs: { name: stage } (window.__KR_BRIDGE_STUBS__).
-   * env: { sleep(ms), invoke(cmd, args), doc (document), now() }. Resolves with the results, after kr_selftest_done.
+   * env: { sleep(ms), invoke(cmd, args), doc (document), now(), leftOut ({ name: stage }: window.__KR_BRIDGE_LEFT_OUT__) }.
+   * Resolves with the results, after kr_selftest_done.
    */
   async function run(kd, stubs, cfg, env, results) {
     results = results || [];
@@ -53,12 +54,16 @@
     async function rejects(p) { try { await p; return null; } catch (e) { return e; } }
     function done() { return Promise.resolve(env.invoke('kr_selftest_done', { results: results })).catch(function () { /* the watchdog writes what there is */ }); }
 
-    await check('bridge: every preload name', true, function () {
+    var leftOut = env.leftOut || {};
+    await check('bridge: every preload name (or left out until its stage)', true, function () {
       must(kd, 'no window.kurokawaDesktop');
-      var missing = NAMES.filter(function (k) { return k === 'platform' ? typeof kd.platform !== 'string' : typeof kd[k] !== 'function'; });
+      var missing = NAMES.filter(function (k) { return !(k in leftOut) && (k === 'platform' ? typeof kd.platform !== 'string' : typeof kd[k] !== 'function'); });
       must(!missing.length, 'missing ' + missing.join(', '));
+      var there = Object.keys(leftOut).filter(function (k) { return k in kd; });
+      must(!there.length, 'left out but there: ' + there.join(', '));
       must(kd.platform === cfg.os, 'platform ' + kd.platform + ' ≠ ' + cfg.os);
-      return (NAMES.length - 1) + ' functions + platform ' + kd.platform + ', ' + Object.keys(stubs || {}).length + ' of them stubs';
+      var n = Object.keys(leftOut).length;
+      return (NAMES.length - 1 - n) + ' functions + platform ' + kd.platform + ', ' + Object.keys(stubs || {}).length + ' of them stubs; ' + n + ' left out';
     });
     if (!kd) { await done(); return results; }
 
@@ -144,10 +149,13 @@
     await check('window state save → restore', true, async function () {
       var w = await env.invoke('kr_selftest_winstate', {});
       must(w && w.file && typeof w.file.width === 'number' && typeof w.file.height === 'number', 'file ' + short(w && w.file));
-      must(Math.abs(w.file.width - w.now.width) < 2 && Math.abs(w.file.height - w.now.height) < 2, 'saved ' + w.file.width + '×' + w.file.height + ' ≠ now ' + w.now.width + '×' + w.now.height);
+      // (A maximized window keeps the size it comes back to, which is not the size it has now — macOS calls a
+      // window maximized when its default size fills a small screen, as on CI's runner.)
+      if (!w.file.maximized) must(Math.abs(w.file.width - w.now.width) < 2 && Math.abs(w.file.height - w.now.height) < 2, 'saved ' + w.file.width + '×' + w.file.height + ' ≠ now ' + w.now.width + '×' + w.now.height);
       if (w.file.width >= cfg.minWidth && w.file.height >= cfg.minHeight) must(w.restored.width === w.file.width && w.restored.height === w.file.height, 'restored ' + short(w.restored));
       must(w.restored.maximized === !!w.file.maximized, 'maximized ' + short(w.restored));
-      return Math.round(w.file.width) + '×' + Math.round(w.file.height) + ' in ' + w.path;
+      var scr = ''; try { scr = ', screen ' + root.screen.availWidth + '×' + root.screen.availHeight; } catch (e) { /* none */ }
+      return Math.round(w.file.width) + '×' + Math.round(w.file.height) + (w.file.maximized ? ' (maximized; the size to come back to)' : '') + ' in ' + w.path + scr;
     });
 
     /* clipboard (the shared shell.rs): not required — a headless desktop may have none */
@@ -159,7 +167,7 @@
       for (var i = 0; i < names.length; i++) {
         var k = names[i];
         try {
-          var v = kd[k](k === 'setDoh' ? null : undefined);
+          var v = kd[k]();
           if (v && typeof v.then === 'function') { try { await within(v, 3000, k); } catch (e) { if (!(e instanceof Error) || !/Tauri stage R\d/.test(e.message)) bad.push(k + ': ' + ((e && e.message) || e)); } }
         } catch (e) { bad.push(k + ' threw ' + ((e && e.message) || e)); }
       }
@@ -193,7 +201,7 @@
   var started = false;
   function start() {
     if (started) return; started = true;
-    var env = { sleep: function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }, invoke: invoke, doc: root.document, now: function () { return Date.now(); } };
+    var env = { sleep: function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }, invoke: invoke, doc: root.document, now: function () { return Date.now(); }, leftOut: root.__KR_BRIDGE_LEFT_OUT__ || {} };
     setTimeout(function () {
       run(root.kurokawaDesktop, root.__KR_BRIDGE_STUBS__ || {}, cfg, env, results).catch(function (e) {
         results.push({ name: 'self-test script', ok: false, detail: short((e && e.message) || String(e)), required: true });

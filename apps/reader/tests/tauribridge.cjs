@@ -52,17 +52,22 @@ async function nodePart() {
   const pre = loadPreload();
   assert.ok(pre, 'preload exposed nothing');
   const win = loadBridge({ os: 'linux', arch: 'x64' });
-  const kd = win.kurokawaDesktop; const stubs = win.__KR_BRIDGE_STUBS__;
+  const kd = win.kurokawaDesktop; const stubs = win.__KR_BRIDGE_STUBS__; const leftOut = win.__KR_BRIDGE_LEFT_OUT__;
   assert.ok(kd, 'bridge defined no window.kurokawaDesktop');
   assert.ok(stubs && typeof stubs === 'object', 'bridge lists no stubs');
+  assert.ok(leftOut && typeof leftOut === 'object', 'bridge lists no left-out names');
 
-  // Names: exactly the preload's.
-  assert.deepEqual(Object.keys(kd).sort(), Object.keys(pre).sort(), 'bridge names ≠ preload names');
+  // Names: the preload's, less those left out until their stage (the page then takes its own way: see bridge.js).
+  const want = Object.keys(pre).filter((k) => !(k in leftOut));
+  assert.deepEqual(Object.keys(kd).sort(), want.sort(), 'bridge names ≠ preload names less the left-out ones');
   assert.equal(kd.platform, 'linux');
-  for (const k of Object.keys(pre)) assert.equal(typeof kd[k], typeof pre[k], `${k}: ${typeof kd[k]} ≠ ${typeof pre[k]}`);
+  for (const k of want) assert.equal(typeof kd[k], typeof pre[k], `${k}: ${typeof kd[k]} ≠ ${typeof pre[k]}`);
   const fns = Object.keys(pre).filter((k) => typeof pre[k] === 'function');
-  const ported = fns.filter((k) => !(k in stubs));
-  for (const k of Object.keys(stubs)) { assert.ok(fns.includes(k), `stub ${k} is no preload function`); assert.match(stubs[k], /^R[2-6]$/, `${k}: stage`); }
+  const ported = fns.filter((k) => !(k in stubs) && !(k in leftOut));
+  for (const k of Object.keys(stubs)) { assert.ok(fns.includes(k), `stub ${k} is no preload function`); assert.match(stubs[k], /^R[2-6]$/, `${k}: stage`); assert.ok(!(k in leftOut), `${k} both a stub and left out`); }
+  for (const k of Object.keys(leftOut)) { assert.ok(fns.includes(k), `left-out ${k} is no preload function`); assert.match(leftOut[k], /^R[2-6]$/, `${k}: stage`); }
+  // (Left out only where the page tests for the name before using it — never one it calls straight away.)
+  for (const k of ['onOpenFile']) assert.ok(!(k in leftOut), `${k} is called by the page without a test: it cannot be left out`);
 
   // Arguments: each ported function sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -125,26 +130,15 @@ async function nodePart() {
 
   // Stubs: never the IPC; each answers as STUBS says (and the way the page copes with — see PORTING.md).
   tCalls = [];
-  const want = {
-    appIcon: null, titleBar: null, downloadUpdate: 'unsupported', installDownloadedUpdate: false, archiveCancel: undefined, setFullscreen: false, setImmersive: false,
-    copyImage: false, openWebView: { passed: false, blocked: false, title: '' }, browserReset: true, browserForget: { cleared: 0 }, notify: false, deleteDownload: false,
-  };
-  const rejecting = ['installUpdate', 'archiveList', 'archiveExtract', 'archiveCreate', 'archiveTest', 'archiveRestore', 'archiveFree', 'archiveExisting', 'printToPdf', 'browserFetch', 'download'];
-  const sync = ['setZoom', 'onOpenFile', 'onUpdateProgress', 'onDownloadProgress', 'onOpenUrl', 'onCommand', 'setProgress'];
-  const removers = ['onTitleBarState', 'onArchiveProgress', 'addDownloadListener'];
-  assert.deepEqual([...Object.keys(want), ...rejecting, ...sync, ...removers, 'setDoh'].sort(), Object.keys(stubs).sort(), 'every stub is checked');
-  for (const [k, v] of Object.entries(want)) assert.deepEqual(JSON.parse(JSON.stringify({ v: await kd[k]() })), JSON.parse(JSON.stringify({ v })), `${k}()`);
+  const answers = { titleBar: null, setImmersive: false, copyImage: false, notify: false };
+  const rejecting = ['installUpdate'];
+  const sync = ['setZoom', 'onOpenFile', 'onUpdateProgress', 'onOpenUrl', 'onCommand', 'setProgress'];
+  const removers = ['onTitleBarState'];
+  assert.deepEqual([...Object.keys(answers), ...rejecting, ...sync, ...removers].sort(), Object.keys(stubs).sort(), 'every stub is checked');
+  for (const [k, v] of Object.entries(answers)) assert.deepEqual(JSON.parse(JSON.stringify({ v: await kd[k]() })), JSON.parse(JSON.stringify({ v })), `${k}()`);
   for (const k of rejecting) await assert.rejects(kd[k]({}), (e) => e instanceof Error && new RegExp(`^${k} is not in this preview build yet \\(Tauri stage ${stubs[k]}\\)$`).test(e.message), k);
   for (const k of sync) assert.equal(kd[k](() => undefined), undefined, k);
   for (const k of removers) { const off = kd[k](() => undefined); assert.equal(typeof off, 'function', k); off(); }
-  await assert.rejects(kd.appIcon({ set: 'data:image/png;base64,AA' }), /Tauri stage R5/);
-  await assert.rejects(kd.appIcon({ set: null }), /Tauri stage R5/);
-  assert.deepEqual(JSON.parse(JSON.stringify(await kd.setDoh())), { provider: 'off' });
-  assert.deepEqual(JSON.parse(JSON.stringify(await kd.setDoh(null))), { provider: 'off' });
-  const tested = await kd.setDoh(null, 'example.com'); assert.equal(tested.ok, false); assert.match(tested.error, /Tauri stage R3/);
-  await assert.rejects(kd.setDoh('cloudflare'), /Tauri stage R3/);
-  // (A stub's answer is a fresh copy: the page changing one changes no later answer.)
-  (await kd.openWebView({})).passed = true; assert.equal((await kd.openWebView({})).passed, false);
   assert.equal(tCalls.length, 0, 'a stub reached the IPC');
 
   // Without IPC at all: a clear rejection, not a TypeError at load.
@@ -163,13 +157,13 @@ async function nodePart() {
   // Rust: every command the bridge and the self-test call is registered, with the argument names they send.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
-  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs define');
+  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs define');
   for (const [cmd, ks] of Object.entries(sent)) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
     assert.deepEqual([...ks].sort(), [...params[cmd]].sort(), `${cmd}: bridge sends ${ks}, Rust takes ${params[cmd]}`);
@@ -232,7 +226,7 @@ async function nodePart() {
   for (const bad of [false, true]) {
     const sent2 = []; const kdFake = fakeKd(bad);
     const env = {
-      sleep: () => new Promise((ok) => setTimeout(ok, 2)), doc, now: () => Date.now(),
+      sleep: () => new Promise((ok) => setTimeout(ok, 2)), doc, now: () => Date.now(), leftOut: loadBridge({ os: 'linux' }).__KR_BRIDGE_LEFT_OUT__,
       invoke: (cmd, args) => {
         sent2.push({ cmd, args });
         if (cmd === 'kr_selftest_remove') { kdFake._disk.delete(args.p); return Promise.resolve(true); }
@@ -252,7 +246,7 @@ async function nodePart() {
     assert.ok(sent2.some((c) => c.cmd === 'kr_selftest_progress'));
     assert.equal(kdFake._disk.size, 0, 'the self-test left files behind');
   }
-  console.log(`tauribridge (node): ok — ${fns.length} functions + platform; ${ported.length} ported, ${Object.keys(stubs).length} stubs; ${registered.length} commands`);
+  console.log(`tauribridge (node): ok — ${fns.length} functions + platform; ${ported.length} ported, ${Object.keys(stubs).length} stubs, ${Object.keys(leftOut).length} left out; ${registered.length} commands`);
   return { ported, stubs: Object.keys(stubs) };
 }
 
@@ -284,8 +278,8 @@ async function pagePart(ported) {
     await p.goto(base + '#/');
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
-    const shape = await p.evaluate(() => ({ fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 47, 'functions in the page'); assert.equal(shape.platform, 'linux');
+    const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
+    assert.equal(shape.fns, 47 - shape.leftOut, 'functions in the page'); assert.equal(shape.leftOut, 23, 'left out'); assert.equal(shape.platform, 'linux');
     assert.ok(!shape.frameless && !shape.bar, 'the app\'s own title bar should be gone (titleBar answers null: the system frame for now)');
     const startup = await p.evaluate(() => window.__calls.map((c) => c.cmd));
     assert.ok(startup.every((c) => /^kr_/.test(c)), 'startup calls ' + startup);

@@ -1,4 +1,4 @@
-// KurokawaReader — the Tauri shell (stage R0 of docs/RUST-PORT-READER.md, beside the Electron one in ../../desktop):
+// KurokawaReader — the Tauri shell (stages R0–R1 of docs/RUST-PORT-READER.md, beside the Electron one in ../../desktop):
 // the same web app (../../dist) in a window made here, with bridge.js run before the page's own scripts on every load
 // so the page finds the same `window.kurokawaDesktop` the Electron preload gives it. The commands are thin wrappers
 // (commands.rs) over the crate both apps' shells share (shared/shell-rs, `kurokawa_shell`); what is not ported yet is
@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod enginetest;
 mod scan;
 mod selftest;
 
@@ -64,7 +65,9 @@ fn main() {
             selftest::kr_selftest_remove,
             selftest::kr_selftest_clipboard,
             selftest::kr_selftest_winstate,
-            selftest::kr_selftest_update
+            selftest::kr_selftest_update,
+            enginetest::kr_engine_shot,
+            enginetest::kr_engine_profile
         ])
         .on_window_event(|window, event| winstate::on_event(window, event))
         .setup(|app| {
@@ -74,6 +77,11 @@ fn main() {
             let mut script: String = format!("window.__KR_BOOT__ = {};\n{}", boot, BRIDGE_JS);
             // (Only with KR_SELFTEST set: the self-test, after the bridge.)
             if let Some(t) = selftest::script(&handle) {
+                script.push('\n');
+                script.push_str(&t);
+            }
+            // (Only with KR_ENGINETEST set, and no self-test: the engine test, after the bridge — stage R1.)
+            if let Some(t) = enginetest::script(&handle) {
                 script.push('\n');
                 script.push_str(&t);
             }

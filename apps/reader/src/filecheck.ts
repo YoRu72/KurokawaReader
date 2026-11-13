@@ -10,6 +10,10 @@ const ZIPS = /\.(epub|kepub|cbz|zip|docx|xlsx|pptx|odt|ods|odp|apkg|3mf)$/i;
 const PAGES = /\.(html?|xhtml|htm|xml|txt|md|svg|json|csv|srt|vtt|ass)$/i;
 
 const ascii = (b: Uint8Array) => { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return s; };
+/** Whether a PDF's first bytes, «%PDF» (25 50 44 46), are among `b` — looked for as bytes, not as that text: this file
+ *  is small, and the text «%PDF» near the start of the script it is bundled into made a web view that guesses a file's
+ *  type from its first kilobyte (the Tauri build's, on macOS) take that script for a PDF and refuse to run it. */
+const hasPdfMagic = (b: Uint8Array) => { for (let i = 0; i + 3 < b.length; i++) if (b[i] === 0x25 && b[i + 1] === 0x50 && b[i + 2] === 0x44 && b[i + 3] === 0x46) return true; return false; };
 
 /** What is wrong with a downloaded file, or null when it looks whole. `size`: the size the site gave, if any. */
 export async function fileFault(file: Blob, name: string, size?: number): Promise<FileFault | null> {
@@ -25,7 +29,7 @@ export async function fileFault(file: Blob, name: string, size?: number): Promis
     for (let i = tail.length - 22; i >= 0; i--) if (tail[i] === 0x50 && tail[i + 1] === 0x4b && tail[i + 2] === 0x05 && tail[i + 3] === 0x06) { found = true; break; }
     if (!found) return 'cut';
   }
-  if (/\.pdf$/i.test(name) && !ascii(head).includes('%PDF')) return start.startsWith('<') ? 'page' : 'cut';
+  if (/\.pdf$/i.test(name) && !hasPdfMagic(head)) return start.startsWith('<') ? 'page' : 'cut';
   // (Smaller than the site said — by more than its rounding.)
   if (size && size > 4096 && file.size < size * 0.97) return 'cut';
   return null;

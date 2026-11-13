@@ -1,6 +1,7 @@
 // The main window's size and place kept between runs (desktop/main.cjs's window-state.json): read when the window
 // is made, written when it moves, is resized or is closed — in logical pixels, the place of its outer frame and the
-// size of its inside; while it is maximized only that flag changes, so the size it comes back to is kept.
+// size of its inside; while it is maximized only that flag changes, so the size it comes back to is kept (unless
+// none was saved yet: then the maximized size is saved too, so the file always holds one).
 // (From Kurokawa Tools' src-tauri/src/winstate.rs, branch work-tauri: the default and smallest sizes, which were
 // Tools' 1100×780 and 420×560, are now each app's to give — Defaults —, and save() is public for the self-tests.)
 use std::path::PathBuf;
@@ -102,7 +103,12 @@ pub fn save(window: &tauri::Window) {
     if !v.is_object() {
         v = json!({});
     }
-    if !maximized {
+    // (Maximized, the size to come back to is the one saved before — kept. A window that was maximized before any
+    // size was saved — a first start on a small screen, which macOS reports as maximized when the default size
+    // fills it — saves the size it has, so the file always holds one, as Electron's always holds its normal bounds.)
+    let has_size = v.get("width").and_then(|x| x.as_f64()).is_some()
+        && v.get("height").and_then(|x| x.as_f64()).is_some();
+    if !maximized || !has_size {
         let scale = window.scale_factor().unwrap_or(1.0);
         let scale = if scale > 0.0 { scale } else { 1.0 };
         if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {

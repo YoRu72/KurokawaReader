@@ -1,12 +1,16 @@
 name: Tauri check (Reader)
 
-# The Reader's Tauri shell (apps/reader/desktop-tauri, stage R0 of docs/RUST-PORT-READER.md) and the crate it shares
-# with Kurokawa Tools' (shared/shell-rs) built on Windows, Linux and macOS beside the Electron one, to see that it
-# builds, how big its bundles are, and that it runs: the built app is started with KR_SELFTEST set, waits for the
+# The Reader's Tauri shell (apps/reader/desktop-tauri, stages R0–R1 of docs/RUST-PORT-READER.md) and the crate it
+# shares with Kurokawa Tools' (shared/shell-rs) built on Windows, Linux and macOS beside the Electron one, to see that
+# it builds, how big its bundles are, and that it runs: the built app is started with KR_SELFTEST set, waits for the
 # library to render and checks its own bridge — files, the whole-computer scan, web requests and charsets, the update
-# check, window state, the clipboard, the stubs — against a loopback test server (desktop-tauri/selftest.js). Linux
-# and Windows must pass; macOS is reported without failing the job for now. Modelled on tauri-check.yml (Tools'). The
-# bundles are kept as workflow artifacts for 7 days; nothing is signed, published or released. Not run on main.
+# check, window state, the clipboard, the stubs — against a loopback test server (desktop-tauri/selftest.js). Then
+# (R1) it is started again with KR_ENGINETEST set: the web app's key cases run in the system's own web view — books
+# imported, kept over a reload, opened, searched, highlighted, a text book's place kept, PDFs drawn (one of 300
+# pages), the PDF → Word converter, fonts and Arabic, read-aloud, full screen — with screenshots for a person to
+# compare (desktop-tauri/enginetest.js); its report and pictures are kept as artifacts. Linux and Windows must pass
+# both; macOS is reported without failing the job for now. Modelled on tauri-check.yml (Tools'). The bundles are kept
+# as workflow artifacts for 7 days; nothing is signed, published or released. Not run on main.
 on:
   push:
     branches: ['work-reader-tauri*']
@@ -46,6 +50,7 @@ jobs:
           for i in 1 2 3; do npm install && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
           node scripts/build.mjs
           node tests/tauribridge.cjs --node-only
+          node tests/tauriengine.cjs --node-only
           # (Left out of the computer apps, as the Electron build leaves it out: fetched from the web app when asked.)
           rm -f dist/samples/alice-in-wonderland.epub
 
@@ -53,7 +58,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev file xvfb xauth at-spi2-core dbus-x11
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev file xvfb xauth at-spi2-core dbus-x11 imagemagick
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -176,3 +181,77 @@ jobs:
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code
+
+      # The engine test (stage R1): the built app started with KR_ENGINETEST=<file>; the web app's key cases run in
+      # this system's web view, screenshots are taken with the system's tool (KR_ENGINETEST_SHOTS), and it exits 0
+      # (every required check passed), 1 (one failed) or 2 (the watchdog, KR_ENGINETEST_TIMEOUT seconds). It runs
+      # even when the self-test failed, to learn as much as one run can. KR_ENGINETEST_BUDGET: the seconds after
+      # which the cases not yet run are written as skipped.
+      - name: Engine test (Linux, under Xvfb)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        env:
+          KR_ENGINETEST_TIMEOUT: '480'
+          KR_ENGINETEST_BUDGET: '420'
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          NO_AT_BRIDGE: '1'
+        run: |
+          d="$RUNNER_TEMP/kr-engine"; mkdir -p "$d"
+          { echo "WebKitGTK $(pkg-config --modversion webkit2gtk-4.1 2>/dev/null)"; echo "$(lsb_release -ds 2>/dev/null)"; echo "ImageMagick: $(command -v import || echo none)"; } | tee "$d/versions.txt"
+          set +e
+          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" timeout 560 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-reader
+          code=$?
+          set -e
+          { node ../enginetest-report.cjs "$d/report.json" "$code" "${{ matrix.name }}" "$d/report.md"; echo "Versions: $(tr '\n' ' ' < "$d/versions.txt")"; echo; } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+      - name: Engine test (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        env:
+          KR_ENGINETEST_TIMEOUT: '480'
+          KR_ENGINETEST_BUDGET: '420'
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'kr-engine'
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          $wv = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+          "WebView2 Runtime $wv; $((Get-CimInstance Win32_OperatingSystem).Caption)" | Tee-Object -FilePath (Join-Path $d 'versions.txt')
+          $env:KR_ENGINETEST = Join-Path $d 'report.json'
+          $env:KR_ENGINETEST_SHOTS = $d
+          $exe = (Resolve-Path 'target/release/kurokawa-reader.exe').Path
+          $p = Start-Process -FilePath $exe -PassThru
+          $null = $p.Handle
+          if ($p.WaitForExit(560000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          node ../enginetest-report.cjs (Join-Path $d 'report.json') $code '${{ matrix.name }}' (Join-Path $d 'report.md') | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Versions: $(Get-Content (Join-Path $d 'versions.txt'))`n" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          exit $code
+
+      - name: Engine test (macOS)
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        continue-on-error: true
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        env:
+          KR_ENGINETEST_TIMEOUT: '480'
+          KR_ENGINETEST_BUDGET: '420'
+        run: |
+          d="$RUNNER_TEMP/kr-engine"; mkdir -p "$d"
+          { echo "macOS $(sw_vers -productVersion)"; echo "Safari $(defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString 2>/dev/null)"; } | tee "$d/versions.txt"
+          if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/kurokawa-reader"; else bin="target/release/kurokawa-reader"; fi
+          [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
+          set +e
+          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" perl -e 'alarm 560; exec @ARGV' "$bin"
+          code=$?
+          set -e
+          { node ../enginetest-report.cjs "$d/report.json" "$code" "${{ matrix.name }}" "$d/report.md"; echo "Versions: $(tr '\n' ' ' < "$d/versions.txt")"; echo; } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+      # The engine test's report (Markdown and JSON), versions and screenshots, for a person to look at.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: tauri-reader-engine-${{ matrix.os }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/kr-engine/

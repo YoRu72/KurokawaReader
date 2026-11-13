@@ -5,7 +5,10 @@
 // (PORTING.md says which stage brings it) is a stub that answers as Electron answers when it cannot do the thing —
 // false, null, 'unsupported', an empty result — or, where Electron has no such answer, rejects with an Error that
 // names the stage; the page already copes with each (PORTING.md says how). The stubs are listed in STUBS below, so
-// tests/tauribridge.cjs and the self-test can tell them from the ported ones.
+// tests/tauribridge.cjs and the self-test can tell them from the ported ones. Some names are LEFT OUT instead (LEFT_OUT
+// below): the page tests for those before it uses them, and without them it takes a way that works — its own full
+// screen, its picture PDF, a plain request — or shows no control that could not work (Archives, DNS-over-HTTPS, the
+// in-app browser, the app icon); each comes back with the stage that ports it.
 (function () {
   'use strict';
   if (window.kurokawaDesktop) return;
@@ -62,16 +65,24 @@
   // preload's own answer for these); 'off': a remover function (the preload's subscribe answer); anything else: that
   // value, resolved.
   var STUBS = {
-    appIcon: ['R5', 'appIcon'], titleBar: ['R5', null], onTitleBarState: ['R5', 'off'], setZoom: ['R5', 'none'],
+    titleBar: ['R5', null], onTitleBarState: ['R5', 'off'], setZoom: ['R5', 'none'],
+    // (Called by the page without a test first: it must be there.)
     onOpenFile: ['R2', 'none'],
-    installUpdate: ['R6', 'reject'], downloadUpdate: ['R6', 'unsupported'], installDownloadedUpdate: ['R6', false], onUpdateProgress: ['R6', 'none'],
-    archiveList: ['R5', 'reject'], archiveExtract: ['R5', 'reject'], archiveCancel: ['R5', undefined], archiveCreate: ['R5', 'reject'], archiveTest: ['R5', 'reject'],
-    archiveRestore: ['R5', 'reject'], archiveFree: ['R5', 'reject'], archiveExisting: ['R5', 'reject'], onArchiveProgress: ['R5', 'off'],
-    setFullscreen: ['R5', false], setImmersive: ['R5', false], copyImage: ['R5', false], printToPdf: ['R5', 'reject'],
-    setDoh: ['R3', 'setDoh'], openWebView: ['R4', { passed: false, blocked: false, title: '' }], browserFetch: ['R4', 'reject'],
-    browserReset: ['R4', true], browserForget: ['R4', { cleared: 0 }], notify: ['R3', false],
-    download: ['R3', 'reject'], deleteDownload: ['R3', false], onDownloadProgress: ['R3', 'none'], addDownloadListener: ['R3', 'off'],
+    installUpdate: ['R6', 'reject'], onUpdateProgress: ['R6', 'none'],
+    setImmersive: ['R5', false], copyImage: ['R5', false], notify: ['R3', false],
     onOpenUrl: ['R2', 'none'], onCommand: ['R5', 'none'], setProgress: ['R5', 'none'],
+  };
+  // name → the stage that brings it. Not defined at all until then: the page looks for each before using it, and
+  // without it does what works here (src/: native.ts toggleFullscreen → the HTML full screen; convert.ts buildPdf →
+  // the picture PDF; opds.ts / downloads.ts → a plain request through http; archives.ts canArchive, sources/http.ts
+  // hasBrowser / hasDoh, native.ts appIconWay, updates.ts → no Archives button, no in-app browser or DNS-over-HTTPS
+  // section, no app-icon option, no «download in the background» switch).
+  var LEFT_OUT = {
+    appIcon: 'R5', downloadUpdate: 'R6', installDownloadedUpdate: 'R6',
+    archiveList: 'R5', archiveExtract: 'R5', archiveCancel: 'R5', archiveCreate: 'R5', archiveTest: 'R5', archiveRestore: 'R5', archiveFree: 'R5', archiveExisting: 'R5', onArchiveProgress: 'R5',
+    setFullscreen: 'R5', printToPdf: 'R5',
+    setDoh: 'R3', download: 'R3', deleteDownload: 'R3', onDownloadProgress: 'R3', addDownloadListener: 'R3',
+    openWebView: 'R4', browserFetch: 'R4', browserReset: 'R4', browserForget: 'R4',
   };
   function notYet(name, stage) { return new Error(name + ' is not in this preview build yet (Tauri stage ' + stage + ')'); }
   function copy(v) { return v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v; }
@@ -80,16 +91,6 @@
     if (how === 'reject') return function () { return Promise.reject(notYet(name, stage)); };
     if (how === 'none') return function () { return undefined; };
     if (how === 'off') return function () { return function () { /* nothing to remove */ }; };
-    // (appIcon(): asked which icon is in use → none chosen (null), as main.cjs answers; asked to set one → not yet.)
-    if (how === 'appIcon') return function (o) { return o && typeof o === 'object' && 'set' in o ? Promise.reject(notYet(name, stage)) : Promise.resolve(null); };
-    // (setDoh(): asked which resolver → 'off'; asked to test it → a failed test, saying why; asked to set one → not yet.)
-    if (how === 'setDoh') {
-      return function (provider, test) {
-        if (provider !== undefined && provider !== null) return Promise.reject(notYet(name, stage));
-        if (!test) return Promise.resolve({ provider: 'off' });
-        return Promise.resolve({ provider: 'off', ok: false, error: notYet(name, stage).message });
-      };
-    }
     return function () { return Promise.resolve(copy(how)); };
   }
 
@@ -131,8 +132,9 @@
   };
   Object.keys(STUBS).forEach(function (k) { api[k] = stub(k); });
 
-  // (For the tests and the self-test: which names are stubs, and at what stage each is due.)
+  // (For the tests and the self-test: which names are stubs, which are left out, and at what stage each is due.)
   var stages = {}; Object.keys(STUBS).forEach(function (k) { stages[k] = STUBS[k][0]; });
   try { Object.defineProperty(window, '__KR_BRIDGE_STUBS__', { value: Object.freeze(stages), configurable: true }); } catch (e) { /* not needed by the page */ }
+  try { Object.defineProperty(window, '__KR_BRIDGE_LEFT_OUT__', { value: Object.freeze(LEFT_OUT), configurable: true }); } catch (e) { /* not needed by the page */ }
   Object.defineProperty(window, 'kurokawaDesktop', { value: api, enumerable: true, configurable: false, writable: false });
 })();
