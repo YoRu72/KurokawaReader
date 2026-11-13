@@ -649,7 +649,30 @@ export async function buildPdfWorker(outFile) {
     } else {
       const cmapTable = readCmapTable(tables.cmap, font, this.isSymbolicFont, properties.hasEncoding);`, 'marks from the font cmap');
 
-  // 5) `for await` over a ReadableStream where the engine lacks it (WebKit): see scripts/pdfjs-stream-iter.js.
+  // 5) A JPEG decoded by the browser as an ImageBitmap (createImageBitmap), not through WebCodecs' ImageDecoder:
+  // the same decoder and the same pixels, but each frame ImageDecoder gave was also kept in Chromium's store of
+  // decoded images (discardable memory, held for the whole renderer) after pdf.js had drawn and closed it — some
+  // 300 MB still there after a PDF of forty photographs had been converted, and as much while a long picture book
+  // is read. An ImageBitmap's pixels are its own and go when pdf.js closes it. (ImageDecoder still where
+  // createImageBitmap is missing.)
+  src = replaceOnce(src, `      decoder = new ImageDecoder({
+        data,
+        type: "image/jpeg",
+        preferAnimation: false
+      });
+      return (await decoder.decode()).image;`, `      if (typeof createImageBitmap === "function") {
+        return await createImageBitmap(new Blob([data], {
+          type: "image/jpeg"
+        }));
+      }
+      decoder = new ImageDecoder({
+        data,
+        type: "image/jpeg",
+        preferAnimation: false
+      });
+      return (await decoder.decode()).image;`, 'jpeg as an ImageBitmap');
+
+  // 6) `for await` over a ReadableStream where the engine lacks it (WebKit): see scripts/pdfjs-stream-iter.js.
   src = (await streamIter()) + src;
 
   const out = await esbuild.transform(src, { minify: !process.env.NOMINIFY, format: 'esm', target: 'es2020', legalComments: 'inline' });

@@ -271,9 +271,16 @@ export class DocxWriter {
   private bodyOut(xml: string): void { if (xml) this.bodyBytes.push(this.enc.encode(this.fixBody(xml))); }
   /** The body's pieces as bytes, to be changed in place (decoded, changed, encoded again) by `fix`; a piece it
    *  returns as it was given stays as it is. */
-  mapBody(fix: (xml: string) => string): void {
+  /** (With `pause`: called between pieces now and then — every 30 ms of work — so that a long book's pass over
+   *  its body is not one task of a second that holds the screen.) */
+  async mapBody(fix: (xml: string) => string, pause?: () => Promise<void>): Promise<void> {
     const dec = new TextDecoder();
-    this.bodyBytes = this.bodyBytes.map((b) => { const x = dec.decode(b); const y = fix(x); return y === x ? b : this.enc.encode(y); });
+    let t = performance.now();
+    for (let i = 0; i < this.bodyBytes.length; i++) {
+      const b = this.bodyBytes[i]; const x = dec.decode(b); const y = fix(x);
+      if (y !== x) this.bodyBytes[i] = this.enc.encode(y);
+      if (pause && performance.now() - t > 30) { await pause(); t = performance.now(); }
+    }
   }
   /** document.xml, whole, as a Blob of its pieces (the bytes leave the script's heap), the pieces let go. */
   documentBlob(): Blob {

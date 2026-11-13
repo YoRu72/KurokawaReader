@@ -138,7 +138,7 @@ self.addEventListener('fetch', (e) => {
 }
 
 const buildOptions = {
-  entryPoints: { app: path.join(root, 'src/main.ts'), scanworker: path.join(root, 'src/scanworker.ts'), pdflayout: path.join(root, 'src/pdflayout.worker.ts'), pdf2docxlane: path.join(root, 'src/pdf2docx.lane.ts'), thumbworker: path.join(root, 'src/sources/thumb.worker.ts'), pdftoolsworker: path.join(root, 'src/pdftools.worker.ts') },
+  entryPoints: { app: path.join(root, 'src/main.ts'), scanworker: path.join(root, 'src/scanworker.ts'), pdflayout: path.join(root, 'src/pdflayout.worker.ts'), pdf2docxlane: path.join(root, 'src/pdf2docx.lane.ts'), pdfjsport: path.join(root, 'src/pdfjsport.worker.ts'), pdf2docxfonts: path.join(root, 'src/pdf2docx.fonts.worker.ts'), thumbworker: path.join(root, 'src/sources/thumb.worker.ts'), pdftoolsworker: path.join(root, 'src/pdftools.worker.ts') },
   bundle: true,
   format: 'esm',
   platform: 'browser',
