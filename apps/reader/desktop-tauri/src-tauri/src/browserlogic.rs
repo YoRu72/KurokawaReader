@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 pub const CHANNEL_HOST: &str = "kr-lane.invalid";
 /// The bytes of a body sent in one message (base64url makes them a third longer in the address).
 pub const CHUNK: usize = 96 * 1024;
+/// Smaller pieces where the web view is slow with long addresses (WKWebView, a Mac: the first CI run's 2 MiB answer
+/// did not come whole in 75 s with CHUNK).
+pub const CHUNK_SMALL: usize = 24 * 1024;
 /// The most messages one answer may have.
 pub const MAX_PARTS: usize = 20_000;
 
@@ -236,6 +239,10 @@ impl Assembly {
         self.got += 1;
         true
     }
+    /// (messages come, messages in all) — for a report when an answer does not come whole.
+    pub fn progress(&self) -> (usize, usize) {
+        (self.got, self.parts.len())
+    }
     pub fn complete(&self) -> bool {
         !self.parts.is_empty() && self.got == self.parts.len()
     }
@@ -414,6 +421,7 @@ mod tests {
         assert!(!a.add(Msg { rid: "r".into(), part: 1, total: 4, data: vec![9] }));
         assert!(a.add(Msg { rid: "r".into(), part: 0, total: 3, data: b"{}".to_vec() }));
         assert!(!a.complete());
+        assert_eq!(a.progress(), (2, 3));
         assert!(a.add(Msg { rid: "r".into(), part: 1, total: 3, data: vec![1, 2] }));
         assert!(a.complete());
         assert_eq!(a.take(), (b"{}".to_vec(), vec![1, 2, 3, 4]));

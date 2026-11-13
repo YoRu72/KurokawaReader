@@ -88,6 +88,17 @@ static VIA: AtomicU8 = AtomicU8::new(0);
 static SWEEPING: AtomicBool = AtomicBool::new(false);
 /// Downloads a site started (for the self-test): { url, path, ok }.
 static DOWNLOADS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+/// Where each download was sent (address, path): a Mac's web view says it finished without its path.
+static DL_DEST: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+/// The last answer that did not come whole, said (for the error and the self-test).
+static LAST_WAIT: Mutex<String> = Mutex::new(String::new());
+/// Cookies a «forget» deleted that the web view still listed after (for the self-test).
+static FORGET_LEFT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Windows: a hidden window kept on the browser's profile while the app runs. WebView2 ends the profile's browser
+/// process when its last window closes, and the session's cookies (a sign-in without an expiry) go with it — the
+/// first CI run: a site signed in by a check window was signed out to the next lane. Electron's session lives as long
+/// as the app.
+static KEEPER: Mutex<Option<Arc<Win>>> = Mutex::new(None);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -235,12 +246,13 @@ setInterval(title,1000);if(document.readyState!=='loading')title();else document
 /// The call that puts the channel in a page (or finds it there).
 fn sender_call(win: &Win) -> String {
     let pref = if VIA.load(Ordering::SeqCst) == 2 { "nav" } else { "" };
+    let chunk = if cfg!(target_os = "macos") { logic::CHUNK_SMALL } else { logic::CHUNK };
     format!(
         "{}({},{},{},{})",
         SENDER_JS,
         js_str(&win.key()),
         js_str(&win.nonce),
-        logic::CHUNK,
+        chunk,
         js_str(pref)
     )
 }
@@ -391,6 +403,12 @@ fn ask(app: &AppHandle, win: &Arc<Win>, rid: &str, js: &str, wait: Duration) -> 
         }
         let now = Instant::now();
         if win.closed.load(Ordering::SeqCst) || now >= until {
+            let said = match g.parts.get(rid).map(|a| a.progress()) {
+                Some((got, all)) => format!("{} of {} messages came by address", got, all),
+                None if win.closed.load(Ordering::SeqCst) => "the window closed".to_string(),
+                None => format!("nothing came (answers so far: {})", via_name()),
+            };
+            *lock(&LAST_WAIT) = said;
             g.parts.remove(rid);
             g.pending.remove(rid);
             g.finished.push_back(rid.to_string());
@@ -450,9 +468,35 @@ struct Spec<'a> {
     browse: Option<Value>,
 }
 
+fn via_name() -> &'static str {
+    match VIA.load(Ordering::SeqCst) {
+        1 => "command",
+        2 => "address",
+        _ => "none yet",
+    }
+}
+
+/// (Windows) the hidden window that keeps the browser's profile — its session cookies — alive (KEEPER).
+fn keep_profile(app: &AppHandle) {
+    static OPENING: AtomicBool = AtomicBool::new(false);
+    // (Never held while a window is made: the main thread, which makes it, takes this lock when a window goes.)
+    if lock(&KEEPER).as_ref().map(|w| !w.closed.load(Ordering::SeqCst)).unwrap_or(false) || OPENING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let spec = Spec { kind: "keep", url: "about:blank", title: "KurokawaReader", visible: false, width: 200.0, height: 200.0, until: None, browse: None };
+    let made = open_window(app, &spec).ok();
+    if made.is_some() {
+        *lock(&KEEPER) = made;
+    }
+    OPENING.store(false, Ordering::SeqCst);
+}
+
 fn open_window(app: &AppHandle, s: &Spec) -> Result<Arc<Win>, String> {
     if SHUTDOWN.load(Ordering::SeqCst) {
         return Err("the app is closing".to_string());
+    }
+    if cfg!(target_os = "windows") && s.kind != "keep" {
+        keep_profile(app);
     }
     let label = format!("{}{}-{}", PREFIX, s.kind, SEQ.fetch_add(1, Ordering::SeqCst));
     let win = Arc::new(Win {
@@ -511,6 +555,12 @@ fn close(app: &AppHandle, win: &Arc<Win>) {
 
 /// A browser window gone (closed by the app or by the reader).
 fn gone(label: &str) {
+    {
+        let mut k = lock(&KEEPER);
+        if k.as_ref().map(|w| w.label == label).unwrap_or(false) {
+            *k = None;
+        }
+    }
     let w = lock(wins()).remove(label);
     if let Some(w) = w {
         w.closed.store(true, Ordering::SeqCst);
@@ -644,6 +694,20 @@ fn forget_in_browser(app: &AppHandle, url: &str, all: bool) -> Vec<String> {
                     }
                 }
             }
+            // (Looked at again, up to 3 s — a store may delete later than it answers: only those gone count; any
+            // left is said to the self-test.)
+            let mut left: Vec<String> = names.clone();
+            let until = Instant::now() + Duration::from_secs(3);
+            while !left.is_empty() && Instant::now() < until {
+                sleep_ms(250);
+                let now: Vec<String> = match url.parse() {
+                    Ok(u) => w.cookies_for_url(u).map(|l| l.iter().map(|c| c.name().to_string()).collect()).unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                };
+                left.retain(|n| now.contains(n));
+            }
+            *lock(&FORGET_LEFT) = left.clone();
+            names.retain(|n| !left.contains(n));
             names
         });
         return out.unwrap_or_default();
@@ -931,7 +995,7 @@ fn browser_fetch(app: &AppHandle, o: &Value) -> Result<Value, String> {
     let answer = ask(app, &lane.win, &rid, &js, Duration::from_millis(timeout + 15_000));
     lane.busy.fetch_sub(1, Ordering::SeqCst);
     *lock(&lane.used) = Instant::now();
-    let a = answer.ok_or_else(|| "Browser request timed out".to_string())?;
+    let a = answer.ok_or_else(|| format!("Browser request timed out ({})", lock(&LAST_WAIT).clone()))?;
     if let Some(e) = a.meta.get("error") {
         return Err(e.as_str().map(|s| s.to_string()).unwrap_or_else(|| e.to_string()));
     }
@@ -1096,10 +1160,23 @@ fn on_download(app: &AppHandle, event: tauri::webview::DownloadEvent<'_>) -> boo
             };
             let _ = std::fs::create_dir_all(&dir);
             *destination = logic::unique_path(&dir, &name, &|p: &std::path::Path| p.exists());
+            let to = destination.to_string_lossy().into_owned();
+            lock(&DOWNLOADS).push(json!({ "url": url.as_str(), "requested": to.as_str() }));
+            let mut d = lock(&DL_DEST);
+            d.push((url.as_str().to_string(), to));
+            if d.len() > 50 {
+                d.remove(0);
+            }
             true
         }
         tauri::webview::DownloadEvent::Finished { url, path, success, .. } => {
-            let p: String = path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            let mut p: String = path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            // (A Mac's web view gives no path: the one it was sent to.)
+            if p.is_empty() && success {
+                if let Some((_, to)) = lock(&DL_DEST).iter().rev().find(|(u, _)| u == url.as_str()) {
+                    p = to.clone();
+                }
+            }
             lock(&DOWNLOADS).push(json!({ "url": url.as_str(), "path": p.as_str(), "ok": success }));
             if success && !p.is_empty() && !frame::active() {
                 use tauri_plugin_notification::NotificationExt;
@@ -1161,6 +1238,22 @@ pub async fn kr_selftest_browser(app: AppHandle, o: Value) -> Result<Value, Stri
     run_blocking(move || selftest_act(&app, &o)).await?
 }
 
+/// The names of the browser's cookies for `url` (None: this build cannot read them).
+fn cookie_names(app: &AppHandle, url: &str) -> Option<Vec<String>> {
+    #[cfg(kr_cookie_read)]
+    {
+        return with_profile(app, None, |w| match url.parse() {
+            Ok(u) => w.cookies_for_url(u).map(|l| l.iter().map(|c| c.name().to_string()).collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        });
+    }
+    #[cfg(not(kr_cookie_read))]
+    {
+        let _ = (app, url);
+        None
+    }
+}
+
 const PROBE_JS: &str = r#"(function(){var S=__S__;var rid=__RID__;var p=__P__;
 function call(cmd,args){return new Promise(function(res){var i=window.__TAURI_INTERNALS__;if(!i||typeof i.invoke!=='function'){res('no ipc');return;}var done=false;
 var t=setTimeout(function(){if(!done){done=true;res('no answer');}},5000);
@@ -1181,14 +1274,9 @@ fn selftest_act(app: &AppHandle, o: &Value) -> Result<Value, String> {
         }
         "close" => Ok(json!({ "closed": close_all(app) })),
         "downloads" => Ok(json!({ "downloads": lock(&DOWNLOADS).clone() })),
-        "via" => {
-            let via = match VIA.load(Ordering::SeqCst) {
-                1 => "command",
-                2 => "address",
-                _ => "none yet",
-            };
-            Ok(json!({ "via": via }))
-        }
+        "forgetLeft" => Ok(json!({ "left": lock(&FORGET_LEFT).clone() })),
+        "cookies" => Ok(json!({ "names": cookie_names(app, &text(o, "url")) })),
+        "via" => Ok(json!({ "via": via_name() })),
         "probe" | "click" => {
             let url = text(o, "url");
             let origin = logic::origin_of(&url).ok_or_else(|| "Bad address".to_string())?;

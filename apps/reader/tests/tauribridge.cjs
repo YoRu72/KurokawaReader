@@ -415,6 +415,8 @@ async function nodePart() {
       },
       _browserAct: (o) => {
         if (o.act === 'via') return { via: 'command' };
+        if (o.act === 'forgetLeft') return { left: [] };
+        if (o.act === 'cookies') return { names: [...bjar.keys()] };
         if (o.act === 'probe') return { tauri: 'object', internals: 'object', bridge: 'undefined', mode: 'ipc', appCommand: 'refused: kr_folder_read may not be called from this window', appCommand2: 'refused: x', browserCommand: 'refused: x', plugin: 'refused: not allowed', event: 'no answer' };
         if (o.act === 'click') { if (o.p === '#dl') { disk.set('/home/u/Downloads/kr-selftest-download.epub', Buffer.alloc(37)); return { found: true, href: cfg.base + '/site/' }; } return { found: true, href: cfg.base + '/site/popup' }; }
         if (o.act === 'downloads') return { downloads: disk.has('/home/u/Downloads/kr-selftest-download.epub') ? [{ url: cfg.base + '/site/file.epub', path: '/home/u/Downloads/kr-selftest-download.epub', ok: true }] : [] };

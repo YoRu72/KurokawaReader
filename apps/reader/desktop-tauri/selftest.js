@@ -364,6 +364,15 @@
        window is left. Required on Windows; reported elsewhere (Xvfb without a window manager, a Mac's runner). */
     var site = cfg.site || {}; var ab = cfg.browser || {}; var onWin = cfg.os === 'win32'; var siteUrl = base + '/site/';
     function browserAct(o) { return env.invoke('kr_selftest_browser', { o: o }); }
+    // (When a signed-in page answers «signed out»: the cookies the browser holds for the site, and those its page's
+    // own request sent — names only —, and how the answers came.)
+    async function whySignedOut() {
+      var held = null; var sent = null; var via = null;
+      try { held = (await browserAct({ act: 'cookies', url: base + '/site/private' })).names; } catch (e) { held = 'error ' + e.message; }
+      try { var ec = await kd.browserFetch({ url: base + '/cookie/echo' }); sent = String(ec.body).split(';').map(function (x) { return x.split('=')[0].trim(); }).join(','); } catch (e) { sent = 'error ' + e.message; }
+      try { via = (await browserAct({ act: 'via' })).via; } catch (e) { via = '?'; }
+      return '; the browser holds ' + short(held) + ' for the site; the page\'s request sent ' + short(sent) + '; answers by ' + via;
+    }
     await check('in-app browser: a site opened out of sight passes and sets its cookies (openWebView hidden)', onWin, async function () {
       must(typeof kd.openWebView === 'function', 'no openWebView');
       var r = await kd.openWebView({ url: siteUrl, hidden: true, timeout: 15000 });
@@ -373,7 +382,7 @@
     }, 40000);
     await check('browserFetch: the signed-in page through the browser\'s session (its HttpOnly cookie, its user agent)', onWin, async function () {
       var r = await kd.browserFetch({ url: base + '/site/private', timeout: 20000, openTimeout: 20000 });
-      must(r && r.status === 200 && /^signed-in;clearance=1;ua=/.test(r.body) && r.via === 'browser', 'answer ' + short(r));
+      if (!(r && r.status === 200 && /^signed-in;clearance=1;ua=/.test(r.body) && r.via === 'browser')) must(false, 'answer ' + r.status + ' ' + short(r.body).slice(0, 40) + (await whySignedOut()));
       var ua = r.body.replace(/^signed-in;clearance=1;ua=/, ''); var mine = env.ua ? env.ua() : '';
       var via = await browserAct({ act: 'via' });
       return 'signed in; the browser\'s user agent ' + (ua === mine ? 'is the app\'s' : 'differs from the app\'s: ' + ua) + '; answers came by ' + (via && via.via);
@@ -415,8 +424,9 @@
       var r = await browserAct({ act: 'click', url: siteUrl, p: '#dl' });
       must(r && r.found === true, 'answer ' + short(r));
       var d = null; var until = env.now() + 15000;
-      while (!d && env.now() < until) { var l = (await browserAct({ act: 'downloads' })).downloads || []; d = l.filter(function (x) { return /\/site\/file\.epub$/.test(x.url); })[0] || null; if (!d) await sleep(300); }
-      must(d && d.ok && d.path, 'download ' + short(d));
+      while (!d && env.now() < until) { var l = (await browserAct({ act: 'downloads' })).downloads || []; d = l.filter(function (x) { return /\/site\/file\.epub$/.test(x.url) && 'ok' in x; })[0] || null; if (!d) await sleep(300); }
+      var all = (await browserAct({ act: 'downloads' })).downloads || [];
+      must(d && d.ok && d.path, 'download ' + short(d) + '; its events ' + short(all));
       var n = await kd.fileSize(d.path); await env.invoke('kr_selftest_remove', { p: d.path });
       must(n === site.fileSize, 'size ' + n + ' ≠ ' + site.fileSize);
       return d.path;
@@ -444,14 +454,16 @@
       var w = await browserAct({ act: 'windows' });
       must(w && w.lanes.indexOf(base) < 0, 'its lane still there: ' + short(w));
       var r = await kd.browserFetch({ url: base + '/site/private' });
-      must(r.status === 200, 'status ' + r.status);
+      if (r.status !== 200) must(false, 'status ' + r.status + (await whySignedOut()));
       return 'set aside; afresh and signed in';
     }, 60000);
     await check('browserForget: the clearance only, then every site\'s data', onWin && !!(ab.cookieDelete || ab.clearAll), async function () {
       var a = await kd.browserForget(siteUrl, false);
       must(a && typeof a.cleared === 'number', 'answer ' + short(a));
       var r1 = await kd.browserFetch({ url: base + '/site/private' });
-      var said = 'the clearance: ' + a.cleared + ' cleared, then ' + r1.status + ' ' + short(r1.body).slice(0, 30);
+      var left = (await browserAct({ act: 'forgetLeft' })).left;
+      var said = 'the clearance: ' + a.cleared + ' cleared' + (left && left.length ? ' (still listed after 3 s: ' + left.join(',') + ')' : '') + ', then ' + r1.status + ' ' + short(r1.body).slice(0, 30);
+      if (r1.status !== 200) said += await whySignedOut();
       if (ab.cookieDelete) must(r1.status === 200 && /clearance=0/.test(r1.body), said);
       var b = await kd.browserForget(siteUrl, true);
       var r2 = await kd.browserFetch({ url: base + '/site/private' });

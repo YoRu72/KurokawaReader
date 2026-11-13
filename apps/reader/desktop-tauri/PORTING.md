@@ -372,6 +372,17 @@ external address; labels `krb-<kind>-<n>`; never the bridge, never the app's tit
   reader closes ends its `openWebView` with what it had seen (polled each 0.6 s).
 - **DNS over HTTPS**: not for the browser (the system's DNS, said in Settings: `dohHintApp`, five languages).
 
+**After the first CI run** (tauri 2.12.5, every function found): on Windows a site signed in by one browser window was
+signed out to the next — WebView2 ends a profile's browser process when its last window closes, and session cookies
+(no expiry) go with it; now a hidden window (`krb-keep-…`, about:blank) keeps the profile open while the app runs, as
+Electron's session lives as long as the app. On a Mac the channel's pieces are 24 KiB (a 2 MiB answer by addresses did
+not come whole in 75 s with 96 KiB); a timed-out request now says how many of its messages came. A Mac's download
+finishes without its path: the path it was sent to is given. A «forget» looks at the browser's cookies again for up to
+3 s and counts only those gone (on a Mac the clearance was still listed and still sent after `delete_cookie`); the
+self-test says which were left, and, when a signed-in page answers «signed out», which cookies the browser holds for
+the site and which its page's request sent. Linux (WebKitGTK) reported a download not saved: the self-test now shows
+the path asked for and the web view's answer.
+
 **Which newer Tauri functions** (`apidetect.rs`, run by `build.rs`: the version in `Cargo.lock`, its source in Cargo's
 registry, each signature found on both `Webview` and `WebviewWindow`): `cookies_for_url` → `kr_cookie_read`, `cookies`
 → `kr_cookie_all`, `delete_cookie` → `kr_cookie_delete`, `clear_all_browsing_data` → `kr_clear_all`, `on_download` →
