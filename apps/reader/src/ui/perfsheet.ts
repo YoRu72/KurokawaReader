@@ -17,6 +17,7 @@ const stamp = (at: number) => { const d = new Date(at); const p = (x: number) =>
 const END_EN: Record<string, string> = { left: 'closed normally', bg: 'ended in the background, not seen again', unexpected: 'ENDED UNEXPECTEDLY' };
 /** How an unexpected end is told apart (src/diag.ts `why`). */
 const WHY_EN: Record<string, string> = { 'renderer-crash': 'renderer crashed', 'renderer-killed': 'renderer killed by the system (memory)', 'app-memory': 'app process killed for memory', 'app-crash': 'app process crashed', anr: 'app not responding (ANR)', 'anr?': 'ANR suspected', 'app-killed': 'app process ended by the system', unknown: 'cause unknown' };
+const NAV_EN: Record<string, string> = { gesture: 'gesture navigation', buttons: 'button navigation (no side zone)', old: 'Android 9 or older (no side zone)', unknown: 'not told by the app shell' };
 const fields = (e: DiagEvent) => Object.entries(e).filter(([k]) => k !== 't' && k !== 'k').map(([k, v]) => `${k}=${v}`).join(' ');
 
 export function diagReport(d: Data = diagData()): string {
@@ -45,7 +46,11 @@ export function diagReport(d: Data = diagData()): string {
   const guards = d.events.filter((e) => e.k === 'edgeguard');
   const g = guards[guards.length - 1];
   L.push('', g ? `Edge guard ("Protect page-turn swipes at the screen edges") at the last book open: ${g.on ? 'ON' : 'off'}${g.on && !g.sideways ? ' (not used: no sideways swipes in that mode)' : ''}; on at ${guards.filter((e) => e.on).length} of the last ${guards.length} opens.` : 'Edge guard: no book opened on Android since the record began.');
-  const rest = d.events.filter((e) => e.k !== 'open' && e.k !== 'leave' && e.k !== 'backheld' && e.k !== 'edgeguard').slice(-25).reverse();
+  // (The phone's own Back zone as each book opened — src/readkeys.ts —, and the touches begun in it, left to the system.)
+  const zones = d.events.filter((e) => e.k === 'syszone'); const z = zones[zones.length - 1];
+  const sysT = d.events.filter((e) => e.k === 'systouch');
+  if (z) L.push(`System Back zone at the last book open: left ${z.l} px, right ${z.r} px, ${NAV_EN[String(z.nav)] ?? z.nav}.`, `Touches begun in it, left to the system: ${sysT.reduce((n, e) => n + Number(e.n || 0), 0)} (in ${sysT.length} of the last ${zones.length} books opened).`);
+  const rest = d.events.filter((e) => !['open', 'leave', 'backheld', 'edgeguard', 'syszone', 'systouch'].includes(e.k)).slice(-25).reverse();
   L.push('', `Other events (last ${rest.length}):`);
   for (const e of rest) L.push(`  ${stamp(e.t)} ${e.k} ${fields(e)}`.trimEnd());
   return L.join('\n') + '\n';

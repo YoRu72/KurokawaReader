@@ -95,11 +95,11 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     [t('presetManuscript'), { theme: 'custom', customBg: '#e9d9b6', customFg: '#3a2a16', texture: 'parchment', textureOpacity: 0.6, warmth: 0.05, dimOverlay: 0, bgImage: false }],
     [t('presetDaylight'), { theme: 'light', texture: 'none', warmth: 0, dimOverlay: 0, bgImage: false }],
     [t('presetEink'), { theme: 'custom', customBg: '#dcdcd8', customFg: '#1a1a1a', texture: 'linen', textureOpacity: 0.25, warmth: 0, dimOverlay: 0, bgImage: false }],
-    [t('presetClassic'), { theme: 'sepia', texture: 'paper', textureOpacity: 0.35, warmth: 0.08, dimOverlay: 0, bgImage: false, align: 'justify', hyphenate: true, fontSize: 19, lineHeight: 1.65, textWidth: 640 }],
-    [t('presetLargePrint'), { fontSize: 26, lineHeight: 1.8, paragraphSpacing: 1.1, textWidth: 820, align: 'start', hyphenate: false }],
-    [t('presetCompact'), { fontSize: 16, lineHeight: 1.45, paragraphSpacing: 0.5, textWidth: 900, margin: 14, align: 'start' }],
+    [t('presetClassic'), { theme: 'sepia', texture: 'paper', textureOpacity: 0.35, warmth: 0.08, dimOverlay: 0, bgImage: false, align: 'justify', bookFormat: true, fontSize: 19, lineHeight: 1.65, textWidth: 640 }],
+    [t('presetLargePrint'), { fontSize: 26, lineHeight: 1.8, paragraphSpacing: 1.1, textWidth: 820, align: 'start', bookFormat: false }],
+    [t('presetCompact'), { fontSize: 16, lineHeight: 1.45, paragraphSpacing: 0.5, textWidth: 900, margin: 14, align: 'start', bookFormat: false }],
     [t('presetFocus'), { theme: 'black', texture: 'none', warmth: 0, dimOverlay: 0.12, bgImage: false, textWidth: 560, margin: 32, lineHeight: 1.9, readingMode: 'chapters', showStatusLine: false }],
-    [t('presetMushaf'), { theme: 'custom', customBg: '#f6efd9', customFg: '#2b2416', texture: 'parchment', textureOpacity: 0.3, warmth: 0.04, dimOverlay: 0, bgImage: false, arabicFont: 'uthman', align: 'justify', lineHeight: 2.1, fontSize: 22 }],
+    [t('presetMushaf'), { theme: 'custom', customBg: '#f6efd9', customFg: '#2b2416', texture: 'parchment', textureOpacity: 0.3, warmth: 0.04, dimOverlay: 0, bgImage: false, arabicFont: 'uthman', align: 'justify', bookFormat: false, lineHeight: 2.1, fontSize: 22 }],
   ];
   grid.append(section(t('presets'), h('div', { class: 'segmented' }, ...presets.map(([label, patch]) => h('button', { type: 'button', onclick: () => { updateSettings(patch); rerender(); } }, label)))));
 
@@ -183,10 +183,12 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(stepper([t('pageWidth'), 'textWidth'], s.textWidth, 420, 1400, 40, (v) => updateSettings({ textWidth: v }), (v) => `${v}`));
   grid.append(stepper([t('margins'), 'margin'], s.margin, 0, 80, 4, (v) => updateSettings({ margin: v }), (v) => `${v}`));
   const aligns: [VisualSettings['align'], string][] = [['start', t('alignStart')], ['justify', t('alignJustify')], ['center', t('alignCenter')]];
-  grid.append(section([t('textAlign'), 'align'], segmented(aligns, s.align, (v) => { updateSettings({ align: v }); rerender(); })));
+  // (Book formatting justifies the lines whatever the alignment says: the row shows what is in force, locked, until it is turned off.)
+  const alignSeg = segmented(aligns, s.bookFormat ? 'justify' : s.align, (v) => { updateSettings({ align: v }); rerender(); });
+  if (s.bookFormat) alignSeg.querySelectorAll('button').forEach((b) => { (b as HTMLButtonElement).disabled = true; });
+  grid.append(section([t('textAlign'), 'align'], alignSeg), ...(s.bookFormat ? [h('p', { class: 'hint' }, t('alignBookHint'))] : []));
   grid.append(toggle([t('bookFormat'), 'bookFormat'], s.bookFormat, (v) => { updateSettings({ bookFormat: v }); rerender(); }), h('p', { class: 'hint' }, t('bookFormatHint')));
-  grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
-  grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : '—')));
+  grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : s.bookFormat ? '2em' : '—')));  // (Book formatting indents by 2em when the reader's own indent is none.)
   const titlePlaces: [VisualSettings['chapterTitles'], string][] = [['center', t('chapterTitlesCenter')], ['start', t('chapterTitlesStart')], ['book', t('chapterTitlesBook')]];
   grid.append(section([t('chapterTitles'), 'chapterTitles'], segmented(titlePlaces, s.chapterTitles, (v) => { updateSettings({ chapterTitles: v }); rerender(); })));
   grid.append(toggle([t('hideChapterWord'), 'hideChapterWord'], s.hideChapterWord, (v) => updateSettings({ hideChapterWord: v })), h('p', { class: 'hint' }, t('hideChapterWordHint')));
@@ -240,6 +242,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   }
   if (fits('notIos')) grid.append(toggle([t('backTwiceLeave'), 'backTwiceLeave'], s.backTwiceLeave, (v) => updateSettings({ backTwiceLeave: v })), h('p', { class: 'hint' }, t('backTwiceLeaveHint')));
   if (fits('android')) grid.append(toggle([t('edgeGuard'), 'edgeGuard'], s.edgeGuard, (v) => updateSettings({ edgeGuard: v })), h('p', { class: 'hint' }, t('edgeGuardHint')));
+  // Sideways swipes that turn chapters (a phone): on or off, and how short or quick a swipe may be (views/reader.ts SWIPE).
+  grid.append(...only('phone', toggle([t('swipeTurn'), 'swipeTurn'], s.swipeTurn, (v) => { updateSettings({ swipeTurn: v }); rerender(); })));
+  if (s.swipeTurn && fits('phone')) grid.append(section([t('swipeSensitivity'), 'swipeSensitivity'], segmented([['low', t('swipeLow')], ['normal', t('swipeNormal')], ['high', t('swipeHigh')]] as [VisualSettings['swipeSensitivity'], string][], s.swipeSensitivity, (v) => { updateSettings({ swipeSensitivity: v }); rerender(); })));
   grid.append(...only('touchScreen', toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v }))));
   grid.append(toggle([t('cropMargins'), 'pdfAutoCrop'], s.pdfAutoCrop, (v) => updateSettings({ pdfAutoCrop: v })), h('p', { class: 'hint' }, t('cropMarginsHint')));
   // The reader's buttons — where each lives, where the toolbar and the PDF's page bar stand, how they look: one sheet

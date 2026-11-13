@@ -1,9 +1,9 @@
-// node tests/chaptertitles.cjs: chapter titles, the book's own layout of its lines, and hyphenation
+// node tests/chaptertitles.cjs: chapter titles, the book's own layout of its lines, and book formatting
 // (src/formats/titles.ts, src/formats/epub.ts, src/styles/reader.css, src/settings.ts, src/views/reader.ts):
 //  1. a title made of styled paragraphs (a «Chapter 1:» paragraph and a title paragraph, as light novels make them), a
 //     heading holding <span>label</span><br/>title, one block «Chapter 3: Title», a title alone, a label alone, Arabic
 //     «الفصل الأول» + title (right to left) and Japanese «第一話　…» are centred on the column, without the first-line
-//     indent, never hyphenated — while the body keeps its indent and is hyphenated (hyphenation on by default, with a
+//     indent, never hyphenated — while the body keeps its indent and is hyphenated (book formatting on by default, with a
 //     language on the text);
 //  2. a long first paragraph that merely begins with «Chapter» is body text (not centred, not marked);
 //  3. the shape of a real light novel: one <p class> holding a bold 1.17em «Chapter 7:<br/>Title», empty spacer
@@ -11,7 +11,7 @@
 //     centred by class: the book's centring honoured, the point-of-view line bold and centred, its sizes at the book's
 //     own scale (the title at 1.17×, the first letter bold at the text's size by default), spacers one modest gap;
 //  4. a book that centres every paragraph: its long paragraphs left to the reader's alignment, a short line centred;
-//  5. «Chapter titles: At the start» / «As the book says»; with hyphenation off the titles are still centred;
+//  5. «Chapter titles: At the start» / «As the book says»; with book formatting off the titles are still centred;
 //  6. «Hide the word Chapter»: the label hidden and the title kept, a title that is a label alone kept; the top bar and
 //     the contents show the name without its label; search still finds text of that chapter; a highlight made in the
 //     chapter comes back on its words; the chapter's text and blocks are those of the build before (KR_OLD_DIST).
@@ -99,14 +99,16 @@ async function setVisual(p, v) {
 }
 /** A block (the first whose text includes `needle`): where its text sits on the column, and how it is set. */
 const block = (p, needle, sel = 'p, h1, h2, h3') => p.evaluate(([needle, sel]) => {
-  const b = [...document.querySelectorAll(`.reader-flow .kr-content :is(${sel})`)].find((x) => x.textContent.includes(needle)); if (!b) return null;
+  // (The text without the furigana's readings: <rt> and <rp> are not part of what the block says.)
+  const plain = (x) => { const c = x.cloneNode(true); c.querySelectorAll('rt, rp').forEach((n) => n.remove()); return c.textContent; };
+  const b = [...document.querySelectorAll(`.reader-flow .kr-content :is(${sel})`)].find((x) => plain(x).includes(needle)); if (!b) return null;
   b.scrollIntoView({ block: 'center' });
   const r = document.createRange(); r.selectNodeContents(b); const rs = [...r.getClientRects()].filter((x) => x.width > 0.5);
   const box = b.getBoundingClientRect(); const cs = getComputedStyle(b);
   const cl = box.left + parseFloat(cs.paddingLeft), cr = box.right - parseFloat(cs.paddingRight);
   const L = rs.length ? Math.min(...rs.map((x) => x.left)) : 0, R = rs.length ? Math.max(...rs.map((x) => x.right)) : 0;
-  const shown = (s) => { const n = [...b.querySelectorAll('*')].filter((e) => e.textContent.includes(s)); return n.length ? n.every((e) => e.getClientRects().length > 0) : rs.length > 0; };
-  return { off: Math.round(Math.abs((L + R) / 2 - (cl + cr) / 2)), startGap: Math.round(cs.direction === 'rtl' ? cr - R : L - cl), endGap: Math.round(cs.direction === 'rtl' ? L - cl : cr - R), indent: cs.textIndent, hyphens: cs.hyphens, align: cs.textAlign, weight: Number(cs.fontWeight), size: parseFloat(cs.fontSize), height: Math.round(box.height), lines: rs.map((x) => x.top + x.height / 2).sort((a, b) => a - b).filter((c, i, a) => i === 0 || c - a[i - 1] > 10).length, mark: b.getAttribute('data-kr-title'), lang: b.closest('[lang]')?.getAttribute('lang') ?? '', dir: cs.direction, text: b.textContent, visibleText: rs.length > 0 && box.height > 1, shownLabel: shown('Chapter') };
+  const shown = (s) => { const n = [...b.querySelectorAll('*')].filter((e) => plain(e).includes(s)); return n.length ? n.every((e) => e.getClientRects().length > 0) : rs.length > 0; };
+  return { off: Math.round(Math.abs((L + R) / 2 - (cl + cr) / 2)), startGap: Math.round(cs.direction === 'rtl' ? cr - R : L - cl), endGap: Math.round(cs.direction === 'rtl' ? L - cl : cr - R), indent: cs.textIndent, hyphens: cs.hyphens, align: cs.textAlign, weight: Number(cs.fontWeight), size: parseFloat(cs.fontSize), height: Math.round(box.height), lines: rs.map((x) => x.top + x.height / 2).sort((a, b) => a - b).filter((c, i, a) => i === 0 || c - a[i - 1] > 10).length, mark: b.getAttribute('data-kr-title'), lang: b.closest('[lang]')?.getAttribute('lang') ?? '', dir: cs.direction, text: plain(b), ruby: !!b.querySelector('ruby'), visibleText: rs.length > 0 && box.height > 1, shownLabel: shown('Chapter') };
 }, [needle, sel]);
 /** The size and weight of the element holding exactly `text` (an inline span). */
 const inline = (p, text) => p.evaluate((text) => { const e = [...document.querySelectorAll('.reader-flow .kr-content span, .reader-flow .kr-content b')].reverse().find((x) => x.textContent.trim() === text); if (!e) return null; const cs = getComputedStyle(e); const pcs = getComputedStyle(e.closest('p')); return { ratio: parseFloat(cs.fontSize) / parseFloat(pcs.fontSize), weight: Number(cs.fontWeight) }; }, text);
@@ -140,7 +142,7 @@ async function session(dist, fn) {
     const bk = await importFile(p, en, 'Lantern'); ok('the English book imported', !!bk); if (!bk) return;
     await openReader(p, bk.id); await p.waitForTimeout(1500);
     const bodyP = await block(p, '[P3]');
-    ok('fresh profile: hyphenation is on and the body is hyphenated (hyphens: auto, with a language)', bodyP && bodyP.hyphens === 'auto' && bodyP.lang === 'en', { bodyP, visual });
+    ok('fresh profile: book formatting is on the body is hyphenated, justified and indented (with a language)', bodyP && bodyP.hyphens === 'auto' && bodyP.align === 'justify' && bodyP.indent !== '0px' && bodyP.lang === 'en', { bodyP, visual });
 
     // ---- 1. the title shapes
     const c1l = await block(p, 'Chapter 1:'), c1t = await block(p, 'The Lantern Road');
@@ -189,13 +191,13 @@ async function session(dist, fn) {
     ok('a highlight made in chapter 3', hlMade);
 
     // ---- 5. hyphenation off: titles still centred
-    await setVisual(p, { hyphenate: false }); await openReader(p, bk.id);
+    await setVisual(p, { bookFormat: false }); await openReader(p, bk.id);
     const offT = await block(p, 'The Lantern Road'), offB = await block(p, '[P3]');
-    ok('hyphenation off: body not hyphenated, titles still centred', offB?.hyphens === 'manual' && isCentred(offT), { offB: offB?.hyphens, offT });
+    ok('book formatting off: body not hyphenated, not indented, titles still centred', offB?.hyphens === 'manual' && offB.indent === '0px' && isCentred(offT), { offB: offB?.hyphens, offT });
     // Book formatting (justified, indented, hyphenated body — the owner's own setup): titles still centred, unindented.
-    await setVisual(p, { hyphenate: true, bookFormat: true }); await openReader(p, bk.id);
+    await setVisual(p, { bookFormat: true }); await openReader(p, bk.id);
     const bfT = await block(p, 'The Lantern Road'), bfL = await block(p, 'Chapter 1:'), bfB = await block(p, '[P3]');
-    ok('book formatting on: body indented and justified, the title block centred with no indent', bfB && bfB.indent !== '0px' && bfB.align === 'justify' && isCentred(bfT) && isCentred(bfL), { bfB: bfB && [bfB.indent, bfB.align], bfT, bfL });
+    ok('book formatting on: body indented, justified and hyphenated, the title block centred with no indent, not hyphenated', bfB && bfB.indent !== '0px' && bfB.align === 'justify' && bfB.hyphens === 'auto' && bfT.hyphens === 'manual' && bfL.hyphens === 'manual' && isCentred(bfT) && isCentred(bfL), { bfB: bfB && [bfB.indent, bfB.align], bfT, bfL });
     await shot(p, 'made-en-c1-bookformat.png', 'Chapter 1:');
     // «At the start», «As the book says»
     await setVisual(p, { bookFormat: false, chapterTitles: 'start' }); await openReader(p, bk.id);
@@ -239,14 +241,16 @@ async function session(dist, fn) {
     const mk = await p.evaluate(() => { const ms = [...document.querySelectorAll('.reader-flow mark.kr-hl')]; return { text: ms.map((m) => m.textContent).join(''), para: ms[0]?.closest('p')?.textContent.slice(0, 5) ?? '', chapter: [...document.querySelectorAll('.reader-flow section.kr-chapter')].indexOf(ms[0]?.closest('section')) }; });
     ok('… the highlight made in chapter 3 comes back on its words, in its paragraph', mk.text === 'extraordinarily methodical' && mk.para.trim() === '[P1]' && mk.chapter === 2, mk);
 
-    // ---- Arabic and Japanese
-    await setVisual(p, { hideChapterWord: false });
+    // ---- Arabic and Japanese (book formatting back on, as by default)
+    await setVisual(p, { hideChapterWord: false, bookFormat: true });
     const ba = await importFile(p, ar, 'القناديل'); ok('the Arabic book imported', !!ba);
     if (ba) {
       await openReader(p, ba.id);
       const al = await block(p, 'الفصل الأول'), at = await block(p, 'عودة الغريب'), a2 = await block(p, 'ليل المدينة');
       ok('Arabic «الفصل الأول» + title, right to left: centred, no indent', isCentred(al) && isCentred(at) && at.dir === 'rtl', { al, at });
       ok('Arabic «الفصل الثاني: …» in one block: centred', isCentred(a2), a2);
+      const abody = await block(p, '[P2]');
+      ok('Arabic body under book formatting (on by default): justified, indented, no hyphen characters inserted (no Arabic hyphenation)', abody && abody.align === 'justify' && abody.indent !== '0px' && abody.dir === 'rtl' && !/[\u00ad-]/.test(abody.text.replace('[P2]', '')), abody);
       await shot(p, 'made-ar.png', 'الفصل الأول');
       await setVisual(p, { hideChapterWord: true }); await openReader(p, ba.id);
       const hal = await block(p, 'الفصل الأول'), ha2 = await block(p, 'ليل المدينة');
@@ -256,15 +260,29 @@ async function session(dist, fn) {
     }
     const bj = await importFile(p, ja, '灯台'); ok('the Japanese book imported', !!bj);
     if (bj) {
+      // The furigana pass (on by default for Japanese text) needs the analyser from a CDN: a stand-in for it is served here, giving each
+      // kanji a reading, so the titles are met with <ruby> in them as on a phone (第だい一いち話わ …).
+      await p.route('**/kuromoji.js', (r) => r.fulfill({ contentType: 'text/javascript', body: `window.kuromoji = { builder: () => ({ build: (cb) => cb(null, { tokenize: (t) => [...t].map((c) => ({ surface_form: c, word_type: 'KNOWN', reading: /[㐀-鿿]/.test(c) ? 'ア' : undefined })) }) }) };` }));
       await openReader(p, bj.id);
-      // (The slower CI machine: the chapter's text may come a moment after the reader opens.)
-      await p.waitForFunction(() => [...document.querySelectorAll('.reader-flow .kr-content p')].some((x) => x.textContent.includes('第一話')), null, { timeout: 15000 }).catch(() => {});
+      await p.waitForFunction(() => document.querySelector('.reader-flow .kr-content ruby'), null, { timeout: 20000 }).catch(() => {});
+      await p.waitForFunction(() => [...document.querySelectorAll('.reader-flow .kr-content p')].some((x) => x.textContent.includes('第')), null, { timeout: 15000 }).catch(() => {});
       const j1 = await block(p, '第一話');
-      // (On CI's newer Chromium (156) the block is not found though the book opens; not reproducible on the engine here.
-      //  Until that is understood the missing block is a printed NOTE with what the page holds; a block that IS found
-      //  and is not centred still fails.)
-      if (j1) ok('Japanese «第一話　帰り道»: centred', isCentred(j1), j1);
-      else console.log('NOTE Japanese title block not found — ' + JSON.stringify(await p.evaluate(() => ({ hash: location.hash, root: document.querySelector('.reader-view, .reader')?.className ?? '', flows: document.querySelectorAll('.reader-flow').length, chapters: [...document.querySelectorAll('.kr-content .kr-chapter')].map((c) => ({ cls: c.className, hidden: getComputedStyle(c).display, kids: c.children.length, text: (c.textContent || '').slice(0, 24) })).slice(0, 4), firstBlocks: [...document.querySelectorAll('.kr-content *')].filter((e) => e.children.length === 0 && (e.textContent || '').trim()).slice(0, 5).map((e) => e.tagName + ':' + (e.textContent || '').slice(0, 16)) }))));
+      ok('Japanese «第一話　帰り道» with furigana: the block is found by its text without the readings, and has ruby in it', !!j1 && j1.ruby && j1.text === '第一話　帰り道', j1);
+      ok('… recognised as a title (data-kr-title), centred, no indent', !!j1 && !!j1.mark && isCentred(j1), j1);
+      const jb = await block(p, '港町の灯台守');
+      ok('Japanese body under book formatting: justified, no first-line indent, no hyphenation to speak of', !!jb && jb.align === 'justify' && jb.indent === '0px', jb);
+      await shot(p, 'made-ja.png', '第一話');
+      await setVisual(p, { hideChapterWord: true }); await openReader(p, bj.id);
+      await p.waitForFunction(() => document.querySelector('.reader-flow .kr-content ruby'), null, { timeout: 20000 }).catch(() => {});
+      const jh = await block(p, '帰り道');
+      const jl = await p.evaluate(() => { const b = [...document.querySelectorAll('.reader-flow .kr-content p')].find((x) => x.querySelector('.kr-title-label')); const l = b?.querySelector('.kr-title-label'); return b ? { labelShown: l.getClientRects().length > 0, rest: [...b.childNodes].filter((n) => n !== l).map((n) => { const c = n.cloneNode(true); c.querySelectorAll?.('rt, rp').forEach((x) => x.remove()); return c.textContent; }).join(''), ruby: !!b.querySelector('ruby') } : null; });
+      ok('Japanese, hide the label, furigana on: «第一話» hidden, «帰り道» shown and centred', !!jl && !jl.labelShown && /帰り道/.test(jl.rest) && !!jh && jh.visibleText && isCentred(jh), { jl, jh });
+      await shot(p, 'made-ja-hidelabel.png', '帰り道');
+      await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'toc' })));
+      await p.waitForSelector('.panel.open .toc-list button >> visible=true'); await p.waitForTimeout(300);
+      const jt = await p.evaluate(() => [...document.querySelectorAll('.panel.open .toc-label')].map((x) => x.textContent));
+      ok('… the contents list «帰り道» and «灯の番» (without the label), no readings in them', jt.includes('帰り道') && jt.includes('灯の番'), jt);
+      await p.click('.panel.open .panel-head button').catch(() => {}); await p.waitForTimeout(200);
     }
     ok('no page errors', errors.length === 0, errors);
   });

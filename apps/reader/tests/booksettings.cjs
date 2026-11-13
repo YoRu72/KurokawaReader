@@ -25,4 +25,16 @@ S.setBookSettings('restored', { lineHeight: 2, aiKey: 'X', anilistClientId: 'c' 
 ok('a book\'s settings put back from a backup keep only what a book may have', bookV().restored.lineHeight === 2 && !('aiKey' in bookV().restored) && !('anilistClientId' in bookV().restored));
 S.setActiveBook('b1'); S.resetSettings();
 ok('«Reset» in a book\'s reading options: the book\'s settings back to the factory\'s, the AI key and sync kept', S.getSettings().aiKey === 'NEW-SECRET' && glob().syncAuto === true && bookV().b1.fontSize !== 30);
+// Book formatting (justified lines, hyphenation and indented paragraphs in one switch) is on by default; an old profile that stored it
+// off (the old default, kept with every other setting) gets it on once; turned off after that, it stays off.
+const fresh = (visual) => { for (const k of Object.keys(store)) delete store[k]; if (visual) store['kr.visual'] = JSON.stringify(visual); return load(); };
+let F = fresh();
+ok('book formatting: on in a fresh profile (and hyphenation follows it: no switch of its own)', F.getSettings().bookFormat === true);
+F = fresh({ bookFormat: false, fontSize: 21 });
+ok('an old profile that stored it off (no migration flag yet): on once, its other settings kept', F.getSettings().bookFormat === true && F.getSettings().fontSize === 21 && store['kr.bookFormatMigrated'] === '1' && glob().bookFormat === true);
+F.updateSettings({ bookFormat: false });
+F = load();
+ok('turned off by the reader: still off after a reload (the migration runs once)', F.getSettings().bookFormat === false);
+F = fresh({ bookFormat: false }); F.setActiveBook('own'); F.setBookScoped(true); F.updateSettings({ bookFormat: false }); F.setActiveBook(null); F = load(); F.setActiveBook('own');
+ok('a book with its own stored value keeps it (the migration touches the app\'s settings only)', F.getSettings().bookFormat === false && JSON.parse(store['kr.bookVisual']).own.bookFormat === false);
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
