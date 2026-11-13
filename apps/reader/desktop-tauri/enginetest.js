@@ -167,7 +167,7 @@
     for (var i = 0; i < results.length; i++) { var r = results[i]; if (r.required !== false && r.ok !== true) return 1; }
     return 0;
   }
-  function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 400 ? s.slice(0, 400) + '…' : String(s); }
+  function short(x, max) { var s, n = max || 400; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > n ? s.slice(0, n) + '…' : String(s); }
 
   /** What the user agent says of the engine. */
   function engineOf(ua) {
@@ -194,6 +194,49 @@
   function save() { try { if (ls) ls.setItem(KEY, JSON.stringify(st)); } catch (e) { /* full: the shell has the progress */ } }
   var now = function () { return Date.now(); };
 
+  // What the engine has of its own, read here — before the app's scripts and the polyfills they carry run.
+  var NATIVE = (function () {
+    var n = {}, T = function (f) { try { return !!f(); } catch (e) { return false; } };
+    n.streamIter = T(function () { return typeof ReadableStream.prototype[Symbol.asyncIterator] === 'function'; });
+    n.ric = T(function () { return typeof root.requestIdleCallback === 'function'; });
+    n.withResolvers = T(function () { return typeof Promise.withResolvers === 'function'; });
+    n.promiseTry = T(function () { return typeof Promise.try === 'function'; });
+    n.urlParse = T(function () { return typeof URL.parse === 'function'; });
+    n.base64 = T(function () { return typeof Uint8Array.fromBase64 === 'function' && typeof Uint8Array.prototype.toBase64 === 'function'; });
+    n.sumPrecise = T(function () { return typeof Math.sumPrecise === 'function'; });
+    n.getOrInsert = T(function () { return typeof Map.prototype.getOrInsertComputed === 'function'; });
+    n.iterHelpers = T(function () { return typeof root.Iterator === 'function' && typeof root.Iterator.prototype.map === 'function'; });
+    n.setMethods = T(function () { return typeof Set.prototype.union === 'function'; });
+    return n;
+  })();
+  // What happens meanwhile, for the checks' details: the page's console errors and warnings, page errors, and every
+  // worker the page starts (its script, kind, messages heard, errors) — the converter's and pdf.js's included.
+  var diag = { console: [], workers: [] };
+  function note(list, x, max) { list.push(x); if (list.length > (max || 40)) list.shift(); }
+  function fmtArg(a) { if (a && a.message !== undefined && a.name !== undefined) return a.name + ': ' + a.message + (a.stack ? ' @ ' + String(a.stack).split('\n').filter(function (l) { return /\S/.test(l) && l.indexOf(a.message) < 0; })[0] : ''); if (typeof a === 'string') return a; try { return JSON.stringify(a); } catch (e) { return String(a); } }
+  ['error', 'warn'].forEach(function (k) {
+    var orig = root.console && root.console[k]; if (typeof orig !== 'function') return;
+    root.console[k] = function () { try { note(diag.console, { t: now(), k: k, s: short(Array.prototype.map.call(arguments, fmtArg).join(' '), 300) }); } catch (e) { /* never in the way */ } return orig.apply(this, arguments); };
+  });
+  try {
+    var NativeWorker = root.Worker;
+    if (typeof NativeWorker === 'function') {
+      var Watched = function Worker(url, opts) {
+        var w = new NativeWorker(url, opts);
+        var r = { t: now(), url: String(url).split('?')[0].split('/').pop().slice(0, 60), type: (opts && opts.type) || 'classic', msgs: 0, errors: [] };
+        note(diag.workers, r);
+        w.addEventListener('error', function (e) { r.errors.push('error: ' + ((e && e.message) || '(no message)') + (e && e.filename ? ' @ ' + String(e.filename).split('/').pop() + ':' + e.lineno : '')); });
+        w.addEventListener('messageerror', function () { r.errors.push('messageerror'); });
+        w.addEventListener('message', function () { r.msgs++; });
+        return w;
+      };
+      Watched.prototype = NativeWorker.prototype;
+      root.Worker = Watched;
+    }
+  } catch (e) { /* workers unwatched */ }
+  /** What went wrong since `t0` (console errors and page errors), for a failed check's detail. */
+  function meanwhile(t0) { return diag.console.filter(function (c) { return c.t >= t0 && c.k !== 'warn'; }).slice(-2).map(function (c) { return c.s; }).join(' ‖ '); }
+
   // (First load of this run: the interface in English — the checks find controls by their English names —, no update
   // check, books scrolled as one flow. Before the page's own scripts read them.)
   var st = load();
@@ -215,8 +258,8 @@
     return Promise.reject(new Error('no IPC'));
   }
   function progress() { try { Promise.resolve(invoke('kr_selftest_progress', { results: st.results })).catch(function () {}); } catch (e) { /* none */ } }
-  function rec(cs, name, ok, detail, required, ms) { st.results.push({ case: cs, name: name, ok: !!ok, detail: short(detail === undefined ? '' : detail), required: required !== false, ms: ms === undefined ? null : Math.round(ms) }); save(); progress(); return !!ok; }
-  function pageError(what) { if (++st.errors > 15) return; rec('page', 'page error', false, what, false); }
+  function rec(cs, name, ok, detail, required, ms, max) { st.results.push({ case: cs, name: name, ok: !!ok, detail: short(detail === undefined ? '' : detail, max), required: required !== false, ms: ms === undefined || ms === null ? null : Math.round(ms) }); save(); progress(); return !!ok; }
+  function pageError(what) { note(diag.console, { t: now(), k: 'page', s: short(what, 300) }); if (++st.errors > 15) return; rec('page', 'page error', false, what, false); }
   root.addEventListener('error', function (e) { pageError((e && (e.message || (e.error && e.error.message))) || 'error'); });
   root.addEventListener('unhandledrejection', function (e) { var r = e && e.reason; pageError('unhandled rejection: ' + ((r && r.message) || String(r))); });
 
@@ -228,8 +271,10 @@
   function visible(el) { if (!el || !el.getClientRects().length) return false; var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
   async function waitFor(fn, ms, what) {
     var until = now() + ms;
-    for (;;) { var v; try { v = await fn(); } catch (e) { v = null; } if (v) return v; if (now() > until) throw new Error('timeout (' + Math.round(ms / 1000) + ' s): ' + what); await sleep(120); }
+    for (;;) { var v; try { v = await fn(); } catch (e) { if (e && e.krFatal) throw e; v = null; } if (v) return v; if (now() > until) throw new Error('timeout (' + Math.round(ms / 1000) + ' s): ' + what); await sleep(120); }
   }
+  /** An error that ends a waitFor at once (the page said it failed), where any other is taken for «not yet». */
+  function fatal(msg) { var e = new Error(msg); e.krFatal = true; return e; }
   function within(p, ms, what) {
     var t = null;
     var limit = new Promise(function (_ok, no) { t = setTimeout(function () { no(new Error('timeout (' + Math.round(ms / 1000) + ' s): ' + what)); }, ms); });
@@ -313,8 +358,8 @@
     if (now() - st.t0 > BUDGET) { rec(id, title + ': skipped', false, 'out of time (the run\'s budget of ' + Math.round(BUDGET / 1000) + ' s is spent)', true); st.done[id] = true; save(); return; }
     var stepper = async function (name, required, fn, stepMs) {
       var t0 = now();
-      try { var d = await within(Promise.resolve().then(fn), stepMs || 30000, name); rec(id, name, true, d, required, now() - t0); return d; }
-      catch (e) { rec(id, name, false, (e && e.message) || String(e), required, now() - t0); if (required) throw new Stop(name); return undefined; }
+      try { var d = await within(Promise.resolve().then(fn), stepMs || 30000, name); rec(id, name, true, d, required, now() - t0, 1200); return d; }
+      catch (e) { var m = meanwhile(t0); rec(id, name, false, ((e && e.message) || String(e)) + (m ? ' — meanwhile: ' + m : ''), required, now() - t0); if (required) throw new Stop(name); return undefined; }
     };
     try { await within(body(stepper), ms, title); }
     catch (e) { if (!(e instanceof Stop)) rec(id, title + ': stopped', false, (e && e.message) || String(e), true); }
@@ -383,7 +428,51 @@
         must(!lack.length, 'missing core: ' + lack.join(', ') + ' (absent: ' + missing.join(', ') + ')');
         return missing.length ? 'absent: ' + missing.join(', ') : 'all ' + Object.keys(feats).length + ' present';
       });
-      // What the shell serves each of the app's files as (a module refused for its type breaks part of the app).
+      // The built-ins the app's bundle uses that not every engine has (a grep of dist/ in R1), each with whether the engine
+      // has it — of its own, read before the app's scripts and their polyfills ran — and whether the app does without
+      // it (from reading the code: [name, here, fallback, where]). One missing with no fallback is a required failure.
+      var nav0 = root.navigator, H = function (f) { try { return !!f(); } catch (e) { return false; } };
+      var B = [
+        ['ReadableStream async iteration (for await)', NATIVE.streamIter, true, 'pdf.js page text and inflate: polyfilled first in pdf.js (scripts/pdfjs-stream-iter.js)'],
+        ['requestIdleCallback', NATIVE.ric, true, 'setTimeout at every use'],
+        ['Promise.withResolvers', NATIVE.withResolvers, true, 'core-js in pdf.js legacy'],
+        ['Promise.try', NATIVE.promiseTry, true, 'core-js in pdf.js legacy'],
+        ['URL.parse', NATIVE.urlParse, true, 'core-js in pdf.js legacy'],
+        ['Uint8Array from/toBase64', NATIVE.base64, true, 'core-js in pdf.js legacy'],
+        ['Math.sumPrecise', NATIVE.sumPrecise, true, 'core-js in pdf.js legacy'],
+        ['Map getOrInsertComputed', NATIVE.getOrInsert, true, 'core-js in pdf.js legacy'],
+        ['Iterator helpers', NATIVE.iterHelpers, true, 'core-js in pdf.js legacy'],
+        ['Set methods (union…)', NATIVE.setMethods, true, 'core-js in pdf.js legacy'],
+        ['Float16Array', H(function () { return typeof Float16Array === 'function'; }), true, 'pdf.js asks first (Float32Array)'],
+        ['Response.prototype.bytes', H(function () { return typeof Response.prototype.bytes === 'function'; }), false, 'pdf.js fetches CMaps, standard fonts, WASM decoders with it'],
+        ['AbortSignal.any', H(function () { return typeof AbortSignal.any === 'function'; }), false, 'pdf.js layers\' listeners'],
+        ['structuredClone', H(function () { return typeof structuredClone === 'function'; }), false, 'pdf.js'],
+        ['OffscreenCanvas 2d + convertToBlob', H(function () { var c = new OffscreenCanvas(1, 1); return c.getContext('2d') && typeof c.convertToBlob === 'function'; }), false, 'the scanner\'s page clean-up (the converter\'s lanes do without)'],
+        ['DecompressionStream deflate', H(function () { return new DecompressionStream('deflate'); }), false, 'MOBI/AZW text'],
+        ['DecompressionStream deflate-raw', H(function () { return new DecompressionStream('deflate-raw'); }), true, 'covers: a zip read by JSZip'],
+        ['CompressionStream deflate-raw', H(function () { return new CompressionStream('deflate-raw'); }), true, 'zips stored'],
+        ['createImageBitmap', H(function () { return typeof createImageBitmap === 'function'; }), false, 'pictures, covers, scanner'],
+        ['Intl.ListFormat', H(function () { return typeof Intl.ListFormat === 'function'; }), false, 'Options: fonts fetched later (phone builds)'],
+        ['CSS.highlights + Highlight', H(function () { return root.CSS && CSS.highlights && typeof root.Highlight === 'function'; }), true, 'search finds, hits listed; words not tinted'],
+        ['navigator.deviceMemory', nav0.deviceMemory !== undefined, true, 'taken as enough (lanes by cores)'],
+        ['performance.memory', H(function () { return root.performance.memory; }), true, 'diagnostics only'],
+        ['navigator.getBattery', H(function () { return typeof nav0.getBattery === 'function'; }), true, 'battery item not offered (platform.ts)'],
+        ['navigator.share', H(function () { return typeof nav0.share === 'function'; }), true, 'save or copy instead'],
+        ['navigator.wakeLock', H(function () { return nav0.wakeLock; }), true, 'screen may dim'],
+        ['navigator.storage', H(function () { return nav0.storage; }), true, 'no quota shown, persist not asked'],
+        ['Notification', H(function () { return root.Notification; }), true, 'jobs: toast only'],
+        ['BroadcastChannel', H(function () { return root.BroadcastChannel; }), true, 'one window: nothing to tell'],
+        ['queryLocalFonts', H(function () { return root.queryLocalFonts; }), true, 'system fonts not listed'],
+        ['ClipboardItem', H(function () { return root.ClipboardItem; }), true, 'text copied, pictures saved'],
+        ['speechSynthesis', H(function () { return root.speechSynthesis; }), true, 'Kitten or AI voices; with none chosen the reader says it cannot read aloud'],
+        ['Fullscreen API', H(function () { return doc.documentElement.requestFullscreen; }), true, 'immersive mode'],
+        ['showDirectoryPicker', H(function () { return root.showDirectoryPicker; }), true, 'the shell scans'],
+      ];
+      var absentOk = B.filter(function (b) { return !b[1] && b[2]; }), absentBad = B.filter(function (b) { return !b[1] && !b[2]; });
+      rec('env', 'built-ins the bundle uses (here / done without)', true, (B.length - absentOk.length - absentBad.length) + ' of ' + B.length + ' here' + (absentOk.length ? '; absent, done without: ' + absentOk.map(function (b) { return b[0] + ' (' + b[3] + ')'; }).join('; ') : ''), false, null, 1500);
+      if (!absentBad.length) rec('env', 'every built-in with no fallback is here', true, B.filter(function (b) { return !b[2]; }).map(function (b) { return b[0]; }).join(', '), true);
+      absentBad.forEach(function (b) { rec('env', 'missing, no fallback: ' + b[0], false, 'used by ' + b[3], true); });
+            // What the shell serves each of the app's files as (a module refused for its type breaks part of the app).
       await step('the app\'s files served with their types', true, async function () {
         var sw = await (await fetch('sw.js')).text();
         var m = /const ASSETS = new Set\((\[[\s\S]*?\])\.map/.exec(sw); must(m, 'no asset list in sw.js');
@@ -621,6 +710,8 @@
         var n = await waitFor(function () { var k = pageInk(pages[0]); return k > 20 ? k : null; }, 20000, 'ink on page 1');
         return pages.length + ' pages; page 1: ' + n + ' dark samples';
       }, 90000);
+      // (pdf.js reads a page's text with `for await` over a stream: the engine's own, or the polyfill put before pdf.js.)
+      rec('pdf', 'pdf.js: for await over a ReadableStream', NATIVE.streamIter || !!root.__krStreamIterPolyfill, NATIVE.streamIter ? 'native' : root.__krStreamIterPolyfill ? 'not native: polyfilled (scripts/pdfjs-stream-iter.js)' : 'not native and not polyfilled: the page\'s text cannot be read', false);
       await step('text layer', true, async function () {
         var t = await waitFor(function () { var x = $('.textLayer', pages[0]); return x && /line 1 of page 1/.test(x.textContent) ? x.textContent : null; }, 15000, 'the text layer of page 1');
         return $$('span', $('.textLayer', pages[0])).length + ' spans';
@@ -675,8 +766,55 @@
     });
   }
 
+  /** What the converter did since `t0`, for the report: the stage and progress the sheet shows, pdf.js's timing marks
+   *  (krTiming, on for the case), the workers started and what they said, console errors, the lane settings. */
+  function convDiag(t0, sheet) {
+    var T = root.krTiming || {}, nav = root.navigator;
+    var marks = Object.keys(T).map(function (k) { return k + ' ' + Math.round(T[k]); }).join(', ');
+    var src = sheet ? $$('.src', sheet).map(function (x) { return x.textContent.trim(); }).filter(Boolean) : [];
+    var bar = sheet && $('.progress-bar span', sheet);
+    var ws = diag.workers.filter(function (w) { return w.t >= t0; }).map(function (w) { return w.url + ' (' + w.type + ', ' + w.msgs + ' msg' + (w.errors.length ? '; ' + w.errors.slice(0, 2).join('; ') : '') + ')'; });
+    var cons = diag.console.filter(function (c) { return c.t >= t0; }).slice(-5).map(function (c) { return c.k + ': ' + c.s; });
+    return {
+      shown: src.slice(-1)[0] || '(no status)', progress: (bar && bar.style.width) || '(none)',
+      timingMs: marks || '(no marks: analysePage never ran)',
+      workers: ws.length ? ws : '(none started)', console: cons.length ? cons : '(nothing)',
+      lanes: { krLanes: root.krLanes === undefined ? 'auto' : root.krLanes, krTwoWorkers: root.krTwoWorkers === undefined ? 'auto' : root.krTwoWorkers, cores: nav.hardwareConcurrency, deviceMemory: nav.deviceMemory === undefined ? 'n/a' : nav.deviceMemory, OffscreenCanvas: typeof root.OffscreenCanvas !== 'undefined' },
+      streamIter: NATIVE.streamIter ? 'native' : root.__krStreamIterPolyfill ? 'polyfilled' : 'MISSING',
+    };
+  }
+  /** One PDF → Word run from the book's menu, as a person does it; never throws: { ok, ms, err, diag }. */
+  async function convertOnce(title, ms) {
+    var t0 = now(), sheet = null;
+    try {
+      closeSheets(); await sleep(300);
+      await toLibrary();
+      var card = await waitFor(function () { return byText('.book-card', title); }, 15000, 'the book\'s card');
+      // (Right-click: on a computer the book's menu; on a touch screen the selection bar, Convert in it or in More.)
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+      var conv = await waitFor(function () { return byText('.sheet .dest-row', /Convert/) || byText('.sel-actions button', /Convert/) || (byText('.sel-actions button', /More/) && 'more'); }, 8000, 'the book\'s menu');
+      if (conv === 'more') { click(byText('.sel-actions button', /More/)); conv = await waitFor(function () { return byText('.sheet button', /Convert/); }, 8000, 'Convert in More'); }
+      click(conv);
+      var word = await waitFor(function () { return $$('.convert-target').filter(function (b) { return visible(b) && /Word/.test(($('b', b) || b).textContent); }).pop(); }, 10000, 'the Word target');
+      sheet = word.closest('.sheet') || doc;
+      root.krTiming = {};
+      t0 = now(); click(word);
+      // (The sheet's status line says when it failed: that ends the wait at once, with what it said.)
+      await waitFor(function () {
+        var r = $('.convert-result:not([hidden]) button', sheet);
+        var s = $$('.src', sheet).filter(function (x) { return /failed|unsupported|memory/i.test(x.textContent); })[0];
+        if (s) throw fatal(s.textContent.trim());
+        return r;
+      }, ms, 'the result');
+      return { ok: true, ms: now() - t0, diag: convDiag(t0, sheet) };
+    } catch (e) {
+      return { ok: false, ms: now() - t0, err: (e && e.message) || String(e), diag: convDiag(t0, sheet) };
+    }
+  }
+  function laneNote(t0) { var w = diag.console.filter(function (c) { return c.t >= t0 && /lanes: reading on this thread/.test(c.s); })[0]; return w ? 'the lanes gave up, read on the page: ' + w.s : ''; }
+
   async function caseConvert() {
-    await runCase('convert', '6 converter', 240000, async function (step) {
+    await runCase('convert', '6 converter', 330000, async function (step) {
       var bk = null;
       await step('a PDF with Arabic and English text imported', true, async function () {
         var f = pdfFile('engine-convert-' + TAG + '.pdf', 'Engine Convert ' + TAG, 2, 595, 842, function (p) { return [
@@ -687,25 +825,24 @@
         bk = await importFile(f, function (x) { return /Engine Convert/.test(x.title || '') || /engine-convert/.test(x.fileName || ''); });
         return bk.title;
       }, 90000);
-      var got = null, t0 = 0;
-      await step('PDF → Word finishes', true, async function () {
-        await toLibrary();
-        var card = await waitFor(function () { return byText('.book-card', /Engine Convert/); }, 15000, 'the book\'s card');
-        // (Right-click: on a computer the book's menu; on a touch screen the selection bar, Convert in it or in More.)
-        card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
-        var conv = await waitFor(function () { return byText('.sheet .dest-row', /Convert/) || byText('.sel-actions button', /Convert/) || (byText('.sel-actions button', /More/) && 'more'); }, 8000, 'the book\'s menu');
-        if (conv === 'more') { click(byText('.sel-actions button', /More/)); conv = await waitFor(function () { return byText('.sheet button', /Convert/); }, 8000, 'Convert in More'); }
-        click(conv);
-        var word = await waitFor(function () { return $$('.convert-target').filter(function (b) { return /Word/.test(($('b', b) || b).textContent); })[0]; }, 10000, 'the Word target');
-        t0 = now(); click(word);
-        await waitFor(function () { var r = $('.convert-result:not([hidden]) button'); var s = $$('.sheet .src').filter(function (x) { return /failed|unsupported|memory/i.test(x.textContent); })[0]; if (s) throw new Error(s.textContent); return r; }, 180000, 'the result');
-        return 'in ' + (now() - t0) + ' ms';
-      }, 200000);
+      // (Two pages: read on the page itself — no lanes, no second document. Those are tried below, on eight pages.)
+      var first = await convertOnce(/Engine Convert/, 120000);
+      rec('convert', 'PDF → Word finishes', first.ok, first.ok ? 'in ' + Math.round(first.ms) + ' ms' : first.err, true, first.ms);
+      rec('convert', 'PDF → Word: what the converter did', first.ok, first.diag, false, null, 1800);
+      if (!first.ok) {
+        // Once more with every extra thread off (no lanes, no second document): whether the plain path works at all.
+        root.krLanes = 0; root.krTwoWorkers = false;
+        var again = await convertOnce(/Engine Convert/, 60000);
+        rec('convert', 'PDF → Word again, lanes and second document off', again.ok, again.ok ? 'finished in ' + Math.round(again.ms) + ' ms' : { err: again.err, diag: again.diag }, false, again.ms, 1800);
+        delete root.krLanes; delete root.krTwoWorkers;
+        closeSheets();
+        return;
+      }
       await step('the .docx holds the text (word/document.xml)', true, async function () {
         var saveBtn = must(byText('.convert-result button', /Save/), 'no Save button');
         var cap = new Promise(function (res) { root.__krEngineCapture = res; });
         click(saveBtn);
-        got = await within(cap, 10000, 'the saved file');
+        var got = await within(cap, 10000, 'the saved file');
         root.__krEngineCapture = null;
         var u = new Uint8Array(await got.blob.arrayBuffer());
         must(u[0] === 0x50 && u[1] === 0x4b, 'not a zip');
@@ -716,6 +853,24 @@
         must(logical || reversed, 'Arabic text missing: ' + text.slice(0, 200));
         return got.name + ', ' + Math.round(got.blob.size / 1024) + ' KB; Arabic ' + (logical ? 'in reading order' : 'REVERSED');
       }, 30000);
+      // The converter's other threads, reported: eight pages read in two lanes (module workers, each with its own
+      // pdf.js and its own worker inside it), then by a second copy of the document in a second pdf.js worker.
+      var lanesBook = await step('eight pages for the lanes imported', false, async function () {
+        var f = pdfFile('engine-lanes-' + TAG + '.pdf', 'Engine Lanes ' + TAG, 8, 595, 842, function (p) { return [{ x: 60, y: 760, size: 18, text: 'Lane page ' + p + ' with a few words.' }, { x: 60, y: 720, size: 18, ar: 'مرحبا بالعالم من صفحة' }]; });
+        return (await importFile(f, function (x) { return /Engine Lanes/.test(x.title || '') || /engine-lanes/.test(x.fileName || ''); })).title;
+      }, 60000);
+      if (lanesBook) {
+        var variants = [['in two lanes (krLanes 2)', { krLanes: 2 }], ['with a second document (krTwoWorkers, no lanes)', { krLanes: 0, krTwoWorkers: true }]];
+        for (var i = 0; i < variants.length; i++) {
+          var set = variants[i][1], k;
+          for (k in set) root[k] = set[k];
+          var tv = now(), r = await convertOnce(/Engine Lanes/, 60000);
+          var gaveUp = laneNote(tv);
+          rec('convert', 'PDF → Word ' + variants[i][0], r.ok && !gaveUp, r.ok ? 'in ' + Math.round(r.ms) + ' ms' + (gaveUp ? ' — but ' + gaveUp : '') + '; workers: ' + short(r.diag.workers, 600) : { err: r.err, diag: r.diag }, false, r.ms, 1800);
+          for (k in set) delete root[k];
+        }
+      }
+      delete root.krTiming;
       closeSheets();
     });
   }
@@ -749,10 +904,14 @@
       await step('the reader\'s read-aloud starts and stops', false, async function () {
         must(st.data.mill, 'no book');
         await openReader(st.data.mill, '.reader-flow p');
-        var e0 = st.errors; command('speak'); await sleep(1500); command('speak'); await sleep(500);
+        var e0 = st.errors; command('speak'); await sleep(1500);
+        // (With no system voices — WebKitGTK has no speechSynthesis — the reader is to say so, not stay silent.)
+        var said = (($('.toast') || {}).textContent || '').trim();
+        command('speak'); await sleep(500);
         if (ss) ss.cancel();
         must(st.errors === e0, 'page errors meanwhile');
-        return 'no errors';
+        if (!ss) must(/not available|غير متاحة/.test(said), 'no speechSynthesis and nothing said (toast: «' + said + '»)');
+        return 'no errors' + (said ? '; the reader said: «' + said + '»' : '');
       }, 45000);
     });
   }

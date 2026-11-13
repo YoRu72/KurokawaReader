@@ -187,7 +187,9 @@ detail, a time; «required» ones fail the job on Linux and Windows):
 1. **Environment**: engine and version from the user agent, DPR, `deviceMemory`, screen; about 35 features the app
    uses, present or not (a module worker tried for real); every script of the app fetched to see the type the shell
    serves it with, and that none has «%PDF» in its first kilobyte; a blob module with «%PDF» near its start (does the
-   engine sniff a declared type?).
+   engine sniff a declared type?). The non-universal built-ins the bundle uses (a grep of `dist/`), each present or not
+   *as the engine has it* (read before the app's scripts and their polyfills run) and whether the app does without it;
+   one missing with no fallback is a required failure named «missing, no fallback: …».
 2. **Storage**: an EPUB imported (through the library's file input) → in IndexedDB → the page reloaded → still there and
    in the library; where the profile lives (`kr_engine_profile`: the candidate folders, their size, the IndexedDB
    folder found), `navigator.storage.estimate()`.
@@ -201,9 +203,16 @@ detail, a time; «required» ones fail the job on Linux and Windows):
    restored (± 2 paragraphs).
 5. **PDF**: page 1 drawn (canvas pixels sampled), text layer, page 2 after a scroll, search finds a word, zoom in;
    screenshot; a 300-page PDF made, imported, opened and scrolled to page 250 (times reported).
-6. **Converter**: a PDF with English and Arabic → Word; finishes, the saved file (its download link caught) is a zip
-   whose `word/document.xml` holds both texts (read with the test's own inflater); time.
-7. **Read-aloud** (reported): `speechSynthesis`, voices (count, Arabic ones), speak/cancel, the reader's read-aloud.
+6. **Converter**: a PDF with English and Arabic → Word; finishes (a «Conversion failed» in the sheet ends the wait at
+   once, with its message), the saved file (its download link caught) is a zip whose `word/document.xml` holds both
+   texts (read with the test's own inflater); time. Reported with it: what the converter did — the stage and progress
+   the sheet shows, pdf.js timing marks (`krTiming`), every worker the page started (script, kind, messages, errors;
+   the test wraps `Worker`), console errors, the lane settings, whether `for await` over a stream is native or
+   polyfilled. On a failure it tries once more with lanes and the second document off (`krLanes = 0`,
+   `krTwoWorkers = false`); on success it converts eight pages in two lanes and then with a second document
+   (reported).
+7. **Read-aloud** (reported): `speechSynthesis`, voices (count, Arabic ones), speak/cancel, the reader's read-aloud
+   (with no `speechSynthesis` — WebKitGTK — the reader must say it cannot read aloud).
 8. **Window** (reported): F11 in the reader → HTML full screen or immersive mode; `window.print` present (not called);
    a file dropped on the library (a DOM drop event).
 9. **Fonts**: each bundled family loads (`document.fonts`); Noto Naskh Arabic renders at a width unlike a fallback's.
@@ -214,4 +223,15 @@ Screenshots: `kr_engine_shot` runs the system's tool — `import -window root` (
 report (JSON and Markdown), the versions and the pictures as the `tauri-reader-engine-<os>` artifact.
 `tests/tauriengine.cjs` checks the test's own zip / inflate / PDF / EPUB code in node, and runs the whole test in
 Chromium (the built app, the bridge, a fake IPC): every required check passes there, so a failure in CI is the
-engine's.
+engine's. With `--webkit` Chromium is first made to lack what CI's WebKit lacked (async iteration of a
+`ReadableStream`, `requestIdleCallback`, `scheduler`, `deviceMemory`, `performance.memory` — in the page and, rewriting
+the scripts as they are served, in the workers), so a missing fallback shows here first.
+
+**R1, first run** (WebKitGTK 2.50.4, macOS 26 / Safari 27.2): everything passed but the PDF's text layer and
+PDF → Word. Both stopped at `PDFPageProxy.getTextContent`, which in pdf.js 6 is `for await (… of readableStream)`;
+WebKit cannot iterate a `ReadableStream` («undefined is not a function (near '...i of e...')», four times). The
+converter in fact failed at once («Conversion failed — …» in its sheet), but the test's wait took the thrown message
+for «not yet» and waited out its 180 s. Fixed: `scripts/pdfjs-stream-iter.js`, put first in pdf.js's main build and its
+worker by `scripts/patch-pdfjs.mjs`, defines `ReadableStream.prototype[Symbol.asyncIterator]` / `values` only where
+missing; the test's waits end on a failure the page states (`fatal`). Reproduced and checked in Chromium with
+`--webkit`.

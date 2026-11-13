@@ -103,7 +103,7 @@ async function pagePart() {
   const web = serve().listen(0); const base = `http://127.0.0.1:${web.address().port}/`;
   const br = await chromium.launch();
   try {
-    const ctx = await br.newContext({ viewport: { width: 1180, height: 820 } }); const p = await ctx.newPage();
+    const ctx = await br.newContext({ viewport: { width: 1180, height: 820 }, ...(process.argv.includes('--webkit') ? { serviceWorkers: 'block' } : {}) }); const p = await ctx.newPage();
     let finished; const done = new Promise((res) => { finished = res; });
     let last = []; const logged = new Set();
     await p.exposeBinding('__krTest', async (_src, cmd, args) => {
@@ -122,6 +122,19 @@ async function pagePart() {
       const replies = { kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_file_size: () => -1, kr_folder_read: () => null, kr_http: (a) => ({ status: 404, url: a.o.url, headers: {}, body: '' }) };
       window.__TAURI__ = { core: { invoke: (cmd, args) => (replies[cmd] ? Promise.resolve(replies[cmd](args)) : window.__krTest(cmd, JSON.parse(JSON.stringify(args || {})))) } };
     });
+    // --webkit: Chromium made to lack what CI's WebKit lacks (found in the R1 reports) — in the page and, by rewriting
+    // the scripts as they are served, in every worker — so that a missing fallback shows here before it shows there.
+    if (process.argv.includes('--webkit')) {
+      const LACK = `(() => { try { delete ReadableStream.prototype[Symbol.asyncIterator]; delete ReadableStream.prototype.values; } catch {}
+        try { delete globalThis.requestIdleCallback; delete globalThis.cancelIdleCallback; } catch {}
+        try { delete globalThis.scheduler; } catch {}
+        try { Object.defineProperty(Object.getPrototypeOf(navigator), 'deviceMemory', { get: undefined, configurable: true }); delete Object.getPrototypeOf(navigator).deviceMemory; } catch {}
+        try { delete Object.getPrototypeOf(performance).memory; } catch {} })();\n`;
+      await p.addInitScript({ content: LACK });
+      await ctx.route(/\/assets\/(pdf\.worker\.min\.mjs|[a-z]*worker\.js|pdf2docxlane\.js|pdflayout\.js|pdftoolsworker\.js|thumbworker\.js)(\?.*)?$/, async (route) => {
+        const res = await route.fetch(); route.fulfill({ response: res, body: LACK + (await res.text()) });
+      });
+    }
     const runId = String(Date.now());
     await p.addInitScript({ content: `window.__KR_BOOT__ = ${JSON.stringify({ os: 'linux', arch: 'x64' })};\n${BRIDGE}\nwindow.__KR_ENGINETEST__ = ${JSON.stringify({ runId, os: 'linux', version: '0.0.0', budgetMs: 900000 })};\n${ENGINE}` });
     const t0 = Date.now();
