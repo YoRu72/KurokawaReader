@@ -16,6 +16,10 @@ export const ko: Partial<Strings> = {
   copySelected: '복사', copied: '복사했습니다', searchSelected: '검색', defineSelected: '뜻', translateSelected: '번역', highlight: '형광펜', highlights: '형광펜', noHighlights: '아직 형광펜이 없습니다', speakSelected: '읽기', define: '뜻풀이', translate: '번역', translateTo: '번역할 언어', translating: '번역 중…', lookingUp: '찾는 중…', offlineService: '인터넷 연결이 필요합니다. 리더 자체는 오프라인으로 작동하며, 뜻풀이와 번역은 연결될 때 웹에서 가져옵니다.', noDefinition: '뜻풀이를 찾지 못했습니다.', openInDictionary: '사전에서 열기', openInTranslator: '번역기에서 열기', serviceFailed: '서비스에 연결할 수 없습니다.',
 
   theme: '테마', themeDark: '다크', themeBlack: '블랙', themeSepia: '세피아', themeLight: '라이트', themePaper: '종이', latinFont: '로마자 글꼴', arabicFont: '아랍 문자 글꼴', fontPublisher: '출판사 지정', fontSystemSerif: '시스템 명조', fontSystemSans: '시스템 고딕', fontSize: '글자 크기', lineHeight: '줄 간격', paragraphSpacing: '문단 간격', pageWidth: '본문 너비', margins: '여백', textAlign: '정렬', alignStart: '기본', alignJustify: '양쪽 정렬', alignCenter: '가운데 정렬', publisherStyles: '출판사 스타일 사용', dimImages: '다크 테마에서 이미지 어둡게', hyphenate: '하이픈 넣기', resetDefaults: '기본값으로 되돌리기', wordSpacing: '단어 간격', letterSpacing: '자간',
+  bookSizes: '책의 글자 크기와 굵기', bookSizesHint: '책이 정한 큰 제목, 굵은 글씨, 기울임, 큰 첫 글자를 내가 고른 글자 크기에 맞춰 보여 줍니다.',
+  chapterTitles: '장 제목', chapterTitlesCenter: '가운데', chapterTitlesStart: '줄 시작', chapterTitlesBook: '책대로',
+  hideChapterWord: '“제N장” 표시 숨기기', hideChapterWordHint: '“제1장: 귀환”은 “귀환”으로 보입니다. “제1장”만 있는 제목은 그대로 둡니다.',
+  firstLetter: '장의 첫 글자', firstLetterBold: '굵게, 본문 크기', firstLetterBook: '책에 정해진 대로', firstLetterPlain: '보통',
 
   galleryTitle: '이미지', galleryEmpty: '열린 책에 이미지가 없습니다', galleryCount: '이미지 {n}개', jumpToImage: '본문에서 보기', saveImage: '이미지 저장', imageFrom: '{title}에서',
 

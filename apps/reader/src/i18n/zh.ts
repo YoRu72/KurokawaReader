@@ -16,6 +16,10 @@ export const zh: Partial<Strings> = {
   copySelected: '复制', copied: '已复制', searchSelected: '搜索', defineSelected: '释义', translateSelected: '翻译', highlight: '高亮', highlights: '高亮', noHighlights: '还没有高亮', speakSelected: '朗读', define: '释义', translate: '翻译', translateTo: '翻译为', translating: '正在翻译…', lookingUp: '正在查询…', offlineService: '需要联网。阅读器本身可完全离线使用，释义和翻译会在联网时从网络获取。', noDefinition: '未找到释义。', openInDictionary: '在词典中打开', openInTranslator: '在翻译器中打开', serviceFailed: '无法连接到服务。',
 
   theme: '主题', themeDark: '深色', themeBlack: '纯黑', themeSepia: '复古', themeLight: '浅色', themePaper: '纸张', latinFont: '西文字体', arabicFont: '阿拉伯文字体', fontPublisher: '出版方', fontSystemSerif: '系统衬线体', fontSystemSans: '系统无衬线体', fontSize: '字号', lineHeight: '行距', paragraphSpacing: '段距', pageWidth: '正文宽度', margins: '边距', textAlign: '对齐', alignStart: '行首对齐', alignJustify: '两端对齐', alignCenter: '居中', publisherStyles: '使用出版方样式', dimImages: '深色主题下调暗图片', hyphenate: '连字符断词', resetDefaults: '恢复默认', wordSpacing: '词距', letterSpacing: '字距',
+  bookSizes: '书中自带的字号与粗体', bookSizesHint: '按书中的设定显示大标题、粗体、斜体和大号首字母，并以你选的字号为基准。',
+  chapterTitles: '章节标题', chapterTitlesCenter: '居中', chapterTitlesStart: '行首', chapterTitlesBook: '按书中设定',
+  hideChapterWord: '隐藏“第N章”字样', hideChapterWordHint: '“第1章：归来”显示为“归来”；只有“第1章”的标题保持不变。',
+  firstLetter: '章节首字母', firstLetterBold: '加粗，正文字号', firstLetterBook: '按书中设定', firstLetterPlain: '普通',
 
   galleryTitle: '图片', galleryEmpty: '打开的书中没有图片', galleryCount: '{n} 张图片', jumpToImage: '在正文中显示', saveImage: '保存图片', imageFrom: '来自 {title}',
 

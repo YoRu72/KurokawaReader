@@ -16,6 +16,10 @@ export const ja: Partial<Strings> = {
   copySelected: 'コピー', copied: 'コピーしました', searchSelected: '検索', defineSelected: '意味', translateSelected: '翻訳', highlight: 'ハイライト', highlights: 'ハイライト', noHighlights: 'ハイライトはまだありません', speakSelected: '読み上げ', define: '意味', translate: '翻訳', translateTo: '翻訳先', translating: '翻訳中…', lookingUp: '調べています…', offlineService: 'インターネット接続が必要です。リーダー自体はオフラインで動作しますが、意味の検索と翻訳はウェブから取得します。', noDefinition: '意味が見つかりません。', openInDictionary: '辞書で開く', openInTranslator: '翻訳サイトで開く', serviceFailed: 'サービスに接続できませんでした。',
 
   theme: 'テーマ', themeDark: 'ダーク', themeBlack: 'ブラック', themeSepia: 'セピア', themeLight: 'ライト', themePaper: '紙', latinFont: '欧文フォント', arabicFont: 'アラビア文字フォント', fontPublisher: '出版社指定', fontSystemSerif: 'システム明朝', fontSystemSans: 'システムゴシック', fontSize: '文字サイズ', lineHeight: '行間', paragraphSpacing: '段落間隔', pageWidth: '本文の幅', margins: '余白', textAlign: '揃え', alignStart: '行頭揃え', alignJustify: '両端揃え', alignCenter: '中央揃え', publisherStyles: '出版社のスタイルを使う', dimImages: 'ダークテーマで画像を暗くする', hyphenate: 'ハイフネーション', resetDefaults: '初期設定に戻す', wordSpacing: '単語間隔', letterSpacing: '字間',
+  bookSizes: '本の文字サイズと太字', bookSizesHint: '本が指定した大きな見出し・太字・斜体・大きな頭文字を、選んだ文字サイズを基準に表示します。',
+  chapterTitles: '章タイトル', chapterTitlesCenter: '中央', chapterTitlesStart: '行頭', chapterTitlesBook: '本のとおり',
+  hideChapterWord: '「第◯章」の表記を隠す', hideChapterWordHint: '「第1章：帰還」は「帰還」と表示します。「第1章」だけのタイトルはそのまま残ります。',
+  firstLetter: '章の最初の文字', firstLetterBold: '太字・本文と同じ大きさ', firstLetterBook: '本の指定どおり', firstLetterPlain: '標準',
 
   galleryTitle: '画像', galleryEmpty: '開いている本に画像はありません', galleryCount: '{n} 枚', jumpToImage: '本文で表示', saveImage: '画像を保存', imageFrom: '{title} より',
 

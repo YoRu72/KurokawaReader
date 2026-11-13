@@ -4,6 +4,7 @@
 import JSZip from 'jszip';
 import type { BookMeta, FlowHandler, FlowRender, ImageRef, RenderContext, TocItem } from './types';
 import { titleFromFileName } from './types';
+import { markBookLayout, markChapterTitles } from './titles';
 import { UrlPool, afterFrame, breath, collectImages, markBlockDirections, mimeFor, parseXml, resolveZipPath, safeDecode, sanitize, tocFromHeadings, zipFile, zipText } from './shared';
 
 interface ManifestItem { id: string; href: string; type: string; properties: string }
@@ -159,6 +160,18 @@ function resolvableToc(raw: RawToc[], pkg: Package): RawToc[] {
   return raw.filter((r) => inSpine.has(r.path));
 }
 
+/** The contents' titles that lead into each chapter (by its path), read once per book: what a chapter's title block
+ *  is recognised by (src/formats/titles.ts). */
+const tocTitles = new WeakMap<Package, Promise<Map<string, string[]>>>();
+function tocTitlesByPath(pkg: Package): Promise<Map<string, string[]>> {
+  let p = tocTitles.get(pkg);
+  if (!p) {
+    p = readToc(pkg).then((raw) => { const m = new Map<string, string[]>(); for (const r of resolvableToc(raw, pkg)) m.set(r.path, [...(m.get(r.path) ?? []), r.label]); return m; }).catch(() => new Map());
+    tocTitles.set(pkg, p);
+  }
+  return p;
+}
+
 /** Rewrite a publisher stylesheet so it only applies inside one chapter. */
 async function scopeCss(css: string, cssPath: string, scope: string, pkg: Package, pool: UrlPool): Promise<string> {
   // Resolve url(...) references (fonts, background images) to blob URLs.
@@ -295,6 +308,7 @@ async function renderChapter(pkg: Package, item: ManifestItem, section: HTMLElem
     styleText = (await Promise.all(parts)).join('\n');
   }
 
+  await markBookLayout(doc, item.href, (p) => { const cf = zipFile(pkg.zip, p); return cf ? zipText(cf) : Promise.resolve(null); }, pkg.zip, ctx.publisherStyles);
   const body = doc.body;
   // Internal links: keep them, resolve to our prefixed ids after all chapters render.
   body.querySelectorAll('a[href]').forEach((a) => {
@@ -349,6 +363,7 @@ export const epubHandler: FlowHandler = {
     let gone = false;
     const make = async (i: number) => {
       await renderChapter(pkg, pkg.spine[i], sections[i], ctx, pool, idMap);
+      markChapterTitles(sections[i], (await tocTitlesByPath(pkg)).get(pkg.spine[i].href) ?? []);
       dirs[i] = markBlockDirections(sections[i]);
       sections[i].classList.remove('kr-shell');
     };

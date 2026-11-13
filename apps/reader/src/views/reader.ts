@@ -21,6 +21,7 @@ import { flowHandlerFor } from '../formats';
 import type { FlowRender, ImageRef, TocItem } from '../formats/types';
 import { normalizeForSearch, searchFormOf } from '../formats/types';
 import { BLOCK_SELECTOR, setLazyRoot } from '../formats/shared';
+import { applyTitleSettings, prepareFlow, stripChapterLabel } from '../formats/titles';
 import { PdfViewer, type PdfSearchHit } from '../formats/pdf';
 import { applySettings, applyChrome, getSettings, onSettingsChange, updateSettings, setActiveBook } from '../settings';
 import { SidePanel } from '../ui/panel';
@@ -131,7 +132,9 @@ export function readerView(ids: string[]): HTMLElement {
 type DiagOpen = ReturnType<typeof diagOpen>;
 async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () => void) => void, gone: () => boolean = () => false, op?: DiagOpen): Promise<void> {
   const reader = h('div', { class: 'reader' });
-  applySettings(reader);
+  applySettings(reader); applyTitleSettings(reader, getSettings());
+  /** A chapter's name as shown (its «Chapter 1:» left out when asked); stored names and matching use the name as it is. */
+  const shownName = (name: string): string => (getSettings().hideChapterWord ? stripChapterLabel(name) : name);
   let programmatic = 0; // when the reader last scrolled by itself (restoring a place), so that is not taken for the person scrolling
   const syncChrome = () => { if (!reader.isConnected) { requestAnimationFrame(syncChrome); return; } const cs = getComputedStyle(reader); root.style.setProperty('--chrome-bg', cs.backgroundColor); root.style.setProperty('--chrome-fg', cs.color); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.backgroundColor); document.body.style.background = cs.backgroundColor; };
   onDispose(() => { document.body.style.background = ''; applyChrome(); });
@@ -313,6 +316,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const el = doc.render!.element;
     if (textRules().length) applyTextRules(el, doc.book.id);
     if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(el);
+    prepareFlow(el, doc.book.language, getLang());
     doc.allBlocks = blocksIn(el);
     const all = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')];
     const sections = all.filter((c) => !c.classList.contains('kr-shell') && hasContent(c));
@@ -694,15 +698,15 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (flowMode()) {
       // Scroll-on mode: no buttons, just a hint that pulling past the end goes on.
       chapterNav.classList.add('flow');
-      chapterNav.append(h('div', { class: 'cn-pull', dir: 'auto' }, h('div', { class: 'spinner small' }), h('span', null, next ? `${t('pullForNext')} · ${chapterTitle(next)}`.replace(/ · $/, '') : t('endOfBook'))));
+      chapterNav.append(h('div', { class: 'cn-pull', dir: 'auto' }, h('div', { class: 'spinner small' }), h('span', null, next ? `${t('pullForNext')} · ${shownName(chapterTitle(next))}`.replace(/ · $/, '') : t('endOfBook'))));
       return;
     }
     chapterNav.classList.remove('flow');
     // (Pressed while the book's later chapters are still being made: done once they are, to the same chapter.)
     const go = (u: Unit, fallback: number) => { if (!early) { showUnit(fallback); return; } void whole.then(() => { const i = units().findIndex((x) => x.doc === u.doc && x.el === u.el); if (i >= 0) showUnit(i); }); };
     chapterNav.append(
-      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), chapterTitle(prev) || t('previousPage'))) : h('span'),
-      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), chapterTitle(next) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
+      prev ? h('button', { type: 'button', class: 'cn-btn', onclick: () => go(prev, k - 1) }, icon('chevronLeft'), h('span', { dir: 'auto' }, h('small', null, t('prevChapter')), shownName(chapterTitle(prev)) || t('previousPage'))) : h('span'),
+      next ? h('button', { type: 'button', class: 'cn-btn primary', onclick: () => go(next, k + 1) }, h('span', { dir: 'auto' }, h('small', null, t('nextChapter')), shownName(chapterTitle(next)) || t('nextPage')), icon('chevronRight')) : h('span', { class: 'end' }, t('endOfBook')),
     );
   }
   function showUnit(k: number, atEnd = false): void {
@@ -1028,7 +1032,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const updateChrome = throttle(() => {
     const cur = currentLocator();
     if (!cur) return;
-    const label = labelFor(cur.doc, cur.loc.block ?? 0);
+    const named = labelFor(cur.doc, cur.loc.block ?? 0);
+    const label = named === cur.doc.book.title ? named : shownName(named);
     const pct = Math.round(cur.loc.pct * 100);
     const block = cur.loc.block ?? 0;
     const unitEl = unitOf(cur.doc, cur.doc.allBlocks[block]);
@@ -1165,7 +1170,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   onDispose(onSettingsChange((s) => {
     // (Where the reading is, read before the change is laid out.)
     const before = reader.isConnected ? currentLocator() : null;
-    applySettings(reader, s); syncChrome(); syncComfort(); geoDirty = true; updateChrome();
+    applySettings(reader, s); applyTitleSettings(reader, s); syncChrome(); syncComfort(); geoDirty = true; updateChrome();
     const want = s.bookFormat || s.smartTypography;
     // (The highlights taken off and put on again: on the text as it is now — a mark cut a changed word in pieces, and
     // turned back the text came out doubled.)
@@ -1458,7 +1463,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           const starts = toc.map((it) => { const el = document.getElementById(it.anchor); return el ? doc.allBlocks.findIndex((b) => b === el || el.contains(b) || (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) : -1; });
           const cum: number[] = [0]; for (const b of doc.allBlocks) cum.push(cum[cum.length - 1] + wordCount(b));
           const lengthOf = (i: number) => { const a = starts[i]; if (a < 0) return 0; let j = i + 1; while (j < starts.length && (starts[j] < 0 || starts[j] <= a)) j++; const b = j < starts.length ? starts[j] : doc.allBlocks.length; return Math.round((cum[b] - cum[a]) / speed); };
-          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.dismiss(); } }, h('span', { class: 'toc-label' }, item.label), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
+          toc.forEach((item, i) => { const mins = lengthOf(i); ul.append(h('li', { class: `depth-${Math.min(3, item.depth)}` }, h('button', { type: 'button', class: cur?.doc === doc && item.label === curLabel ? 'current' : '', dir: 'auto', onclick: () => { back.remember(); scrollToAnchor(item.anchor, false); panel.dismiss(); } }, h('span', { class: 'toc-label' }, shownName(item.label)), mins > 0 ? h('span', { class: 'toc-len' }, getLang() === 'ar' ? `${localDigits(mins)} د` : `${mins} min`) : null))); });
           body.append(ul);
           // (The translation on: each title translated, its original beneath.)
           const labels = toc.map((x) => x.label);
