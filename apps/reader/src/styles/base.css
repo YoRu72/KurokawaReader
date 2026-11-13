@@ -2376,6 +2376,16 @@ html[dir='rtl'] .fr-label, html[lang='ja'] .fr-label, html[lang='zh'] .fr-label,
 .fr-tile-text b { display: block; font-size: 14.5px; font-weight: 650; margin-bottom: 2px; }
 .fr-tile-text p { margin: 0; font-size: 13px; line-height: 1.4; color: var(--md-on-surface-variant); }
 .fr-actions { display: flex; justify-content: flex-end; padding-top: 4px; }
+/* (The hand-over's offer in the library's tile — ui/handoversheet.ts handoverOffer: its words, the folder, the progress,
+   and its buttons on a row of their own under them.) */
+.fr-offer { grid-template-columns: auto 1fr; align-items: start; }
+.fr-offer .fr-tile-text p { margin: 0 0 6px; }
+.fr-offer .fr-tile-text p:empty { display: none; }
+.fr-offer .fr-tile-text code { font-size: 12px; }
+.fr-offer .handover-count b { display: inline; margin: 0; font-size: inherit; }
+.fr-offer progress { margin: 4px 0 6px; }
+.fr-offer[data-handover="failed"] { background: color-mix(in srgb, var(--md-error) 12%, var(--md-surface-container-high)); }
+.fr-tile-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .fr-start { min-width: 200px; }
 html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
 @media (max-width: 520px) { .fr-tile { grid-template-columns: auto 1fr; } .fr-tile > .btn { grid-column: 1 / -1; justify-self: end; } .fr-card { padding: 22px 18px 18px; } .fr-hero h1 { font-size: 23px; } }

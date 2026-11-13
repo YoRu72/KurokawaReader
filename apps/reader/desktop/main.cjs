@@ -255,8 +255,9 @@ ipcMain.handle('kr:install-update', async (e, url, opts) => {
 // fetches it; from then on, when a release of this version or newer carries the Tauri build for this system
 // (rustswitch.cjs pickRust): the page is asked to offer it (the `rust-switch` command → the update sheet with the
 // switch's words), background downloads leave it to that sheet, and «Download and install» — whatever file the page
-// chose — runs the switch: (1) the library made ready by the hand-over (`await handover.prepare()`, stage R6a's
-// handover.cjs) — nothing else happens unless it answers { ok: true } —, (2) the Tauri build's file downloaded with
+// chose — runs the switch: (1) the library made ready by the hand-over (`await handover.prepare()`, handover.cjs: the
+// page that asked writes it with its progress sheet — ui/handoversheet.ts handoverBeforeInstall —, checked and marked
+// on the disk) — nothing else happens unless it answers { ok: true } —, (2) the Tauri build's file downloaded with
 // the sheet's progress and checked against the release (size; SHA-256 from GitHub's digest and/or the release's
 // SHA256SUMS file — refused and removed on any mismatch, or when neither exists), (3) installed: Windows — the Tauri
 // installer run with its progress window (/P) and the app started after it (/R); the installer (per user, no admin
@@ -302,7 +303,7 @@ async function rustSwitch(e, opts) {
   if (process.env.PORTABLE_EXECUTABLE_DIR) throw new Error('kr-update:portable');
   // (1) The hand-over: the library made ready for the Tauri build. Nothing is fetched or run unless it says ok.
   let h;
-  try { h = await handover.prepare({ app, win, version: pick.version }); } catch (err) { throw new Error('kr-update:handover ' + String((err && err.message) || err)); }
+  try { h = await handover.prepare({ app, webContents: e.sender }); } catch (err) { throw new Error('kr-update:handover ' + String((err && err.message) || err)); }
   if (!h || h.ok !== true) throw new Error('kr-update:handover ' + String((h && h.reason) || 'not ready'));
   // (2) The file, checked against the release.
   let sumsLine = null;
@@ -766,3 +767,8 @@ ipcMain.handle('kr:print-pdf', async (_e, html, opts) => {
 });
 ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });
+
+// (Stage R6a: the hand-over to the Rust build — the page writes the whole library into <userData>/handover/,
+// checked and marked, before the Rust build is installed: handover.cjs; preload.cjs window.kurokawaHandover. The
+// switch above waits for it: handover.prepare.)
+handover.install({ ipcMain, app });

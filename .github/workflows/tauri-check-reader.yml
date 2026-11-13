@@ -30,11 +30,15 @@ on:
       - 'apps/reader/desktop-tauri/**'
       - 'shared/shell-rs/**'
       - '.github/workflows/tauri-check-reader.yml'
-      # (Stage R6b: the Electron side of the switch, and the page's updater and first-run screen.)
+      # (Stage R6b: the Electron side of the switch, and the page's updater and first-run screen; stage R6a: the
+      # hand-over's Electron half and the page's, which the «Hand-over» steps run for real.)
       - 'apps/reader/desktop/rustswitch.cjs'
       - 'apps/reader/desktop/handover.cjs'
       - 'apps/reader/src/update*.ts'
       - 'apps/reader/src/ui/firstrun.ts'
+      - 'apps/reader/src/handover.ts'
+      - 'apps/reader/src/ui/handoversheet.ts'
+      - 'apps/reader/tests/handover-electron.cjs'
   workflow_dispatch:
 
 permissions:
@@ -89,7 +93,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs apps/reader/desktop-tauri/src-tauri/src/archive.rs apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs apps/reader/desktop-tauri/src-tauri/src/updatelogic.rs apps/reader/desktop-tauri/src-tauri/src/bootlogic.rs apps/reader/desktop-tauri/src-tauri/bootdetect.rs; do
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs apps/reader/desktop-tauri/src-tauri/src/archive.rs apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs apps/reader/desktop-tauri/src-tauri/src/updatelogic.rs apps/reader/desktop-tauri/src-tauri/src/bootlogic.rs apps/reader/desktop-tauri/src-tauri/bootdetect.rs apps/reader/desktop-tauri/src-tauri/src/handoverlogic.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -366,3 +370,73 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           path: ${{ runner.temp }}/kr-engine/
+
+      # (Stage R6a.) The hand-over, for real — the proof docs/RUST-PORT-READER.md asks for R6: the ELECTRON Reader
+      # (apps/reader/desktop, `electron .`, driven by Playwright) is given a library — an EPUB, a PDF, a long text read
+      # to its 120th paragraph, a book only linked, highlights, notes, bookmarks, a PDF's pins and ink, per-book
+      # settings, folders, tags, a font, a custom icon set through its shell, sign-ins — and makes its hand-over as the
+      # bridge build will before installing the Rust build (tests/handover-electron.cjs; its snapshot of the profile
+      # kept as the expectation). Then the Tauri build starts with an EMPTY web-view profile and KRH_SELFTEST set:
+      # its first-run screen must offer the hand-over with its count, bring it, and after the reload the same books
+      # (ids), files (sizes), places, highlights, bookmarks, covers, per-book settings, keys and icon must be there,
+      # the screen not offered again, the text book open at its place (desktop-tauri/handovercheck.js). Windows must
+      # pass; Linux is reported.
+      - name: Hand-over — Electron makes it (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          # (The Tauri build's web-view profile and its hand-over state emptied: the self-test and the engine test above
+          # filled them, and a user's first start of the Rust build has neither. WebView2's helpers may hold the
+          # profile a moment after the app ended: ended too, and the removal tried until it is gone.)
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $wvdata = Join-Path $env:LOCALAPPDATA 'app.kurokawa.reader'
+          for ($i = 0; $i -lt 10 -and (Test-Path $wvdata); $i++) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $wvdata; if (Test-Path $wvdata) { Start-Sleep -Seconds 3 } }
+          if (Test-Path $wvdata) { "the Tauri build's profile could not be emptied: $wvdata"; exit 1 }
+          foreach ($n in 'handover-state.json', 'handover-from.json') { Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path (Join-Path $env:APPDATA 'app.kurokawa.reader') $n) }
+          Set-Location apps/reader/desktop
+          for ($i = 1; $i -le 3; $i++) { npm install --no-audit --no-fund; if ($LASTEXITCODE -eq 0) { break }; if ($i -eq 3) { exit 1 }; Start-Sleep -Seconds 20 }
+          node prepare.cjs
+          Set-Location ..
+          for ($i = 1; $i -le 3; $i++) { npm install --no-save --no-audit --no-fund playwright-core@1.48.2; if ($LASTEXITCODE -eq 0) { break }; if ($i -eq 3) { exit 1 }; Start-Sleep -Seconds 20 }
+          node tests/handover-electron.cjs (Join-Path $env:RUNNER_TEMP 'kr-handover-expect.json') (Join-Path $env:RUNNER_TEMP 'kr-handover-work')
+          exit $LASTEXITCODE
+
+      - name: Hand-over — the Tauri build brings it (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        env:
+          KRH_SELFTEST_TIMEOUT: '400'
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'kr-handover-check.json'
+          $env:KRH_SELFTEST = $out
+          $env:KRH_EXPECT = Join-Path $env:RUNNER_TEMP 'kr-handover-expect.json'
+          if (-not (Test-Path $env:KRH_EXPECT)) { 'no expectation: the Electron step did not finish'; exit 1 }
+          $exe = (Resolve-Path 'target/release/KurokawaReader.exe').Path
+          $p = Start-Process -FilePath $exe -PassThru
+          $null = $p.Handle
+          if ($p.WaitForExit(460000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          node ../selftest-report.cjs $out $code 'Windows — hand-over (Electron → Tauri)' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          exit $code
+
+      - name: Hand-over — Electron → Tauri (Linux, under Xvfb; reported)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        continue-on-error: true
+        env:
+          KRH_SELFTEST_TIMEOUT: '400'
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          NO_AT_BRIDGE: '1'
+        run: |
+          # (The Tauri build's web-view data — WebKitGTK keeps it under its data folder — emptied first.)
+          rm -rf "$HOME/.local/share/app.kurokawa.reader" "$HOME/.cache/app.kurokawa.reader"
+          (cd apps/reader/desktop && for i in 1 2 3; do npm install --no-audit --no-fund && break; [ $i = 3 ] && exit 1; sleep 20; done && node prepare.cjs)
+          (cd apps/reader && for i in 1 2 3; do npm install --no-save --no-audit --no-fund playwright-core@1.48.2 && break; [ $i = 3 ] && exit 1; sleep 20; done)
+          xvfb-run -a -s '-screen 0 1280x900x24' node apps/reader/tests/handover-electron.cjs "$RUNNER_TEMP/kr-handover-expect.json" "$RUNNER_TEMP/kr-handover-work"
+          cd apps/reader/desktop-tauri/src-tauri
+          set +e
+          KRH_SELFTEST="$RUNNER_TEMP/kr-handover-check.json" KRH_EXPECT="$RUNNER_TEMP/kr-handover-expect.json" timeout 460 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader
+          code=$?
+          set -e
+          node ../selftest-report.cjs "$RUNNER_TEMP/kr-handover-check.json" "$code" "Linux — hand-over (Electron → Tauri)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code
