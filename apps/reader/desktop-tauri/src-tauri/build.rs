@@ -1,6 +1,7 @@
-// Tauri's own build step, and (stage R4) which of Tauri's newer web-view functions the resolved Tauri has
-// (apidetect.rs): each found sets a cfg (kr_cookie_read, kr_cookie_delete, kr_clear_all, kr_download_api) that
-// src/browser.rs uses; the build's log says what was found ("KR build: …").
+// Tauri's own build step, and (stages R4, R5) which of Tauri's newer web-view and window functions the resolved Tauri
+// has (apidetect.rs): each found sets a cfg (kr_cookie_read, kr_cookie_all, kr_cookie_delete, kr_clear_all,
+// kr_download_api — src/browser.rs —; kr_set_icon, kr_default_icon — src/appicon.rs —; kr_zoom, kr_progress —
+// src/winbits.rs) that the code uses; the build's log says what was found ("KR build: …").
 mod apidetect;
 
 fn main() {
@@ -12,11 +13,11 @@ fn main() {
     let dir = std::env::var_os("CARGO_MANIFEST_DIR").map(std::path::PathBuf::from).unwrap_or_default();
     let lock = std::fs::read_to_string(dir.join("Cargo.lock")).unwrap_or_default();
     match apidetect::locked_version(&lock, "tauri") {
-        None => println!("cargo:warning=KR build: no tauri in Cargo.lock; the in-app browser goes without cookies read/deleted, clearing and caught downloads"),
+        None => println!("cargo:warning=KR build: no tauri in Cargo.lock; the in-app browser goes without cookies read/deleted, clearing and caught downloads; the window without its icon set, zoom and taskbar progress"),
         Some(v) => {
             let src = apidetect::cargo_home().and_then(|h| apidetect::crate_src(&h, "tauri", &v));
             match src {
-                None => println!("cargo:warning=KR build: tauri {} — its source not found in Cargo's registry; the in-app browser goes without cookies read/deleted, clearing and caught downloads", v),
+                None => println!("cargo:warning=KR build: tauri {} — its source not found in Cargo's registry; the in-app browser goes without cookies read/deleted, clearing and caught downloads; the window without its icon set, zoom and taskbar progress", v),
                 Some(s) => {
                     let found = apidetect::detect(&apidetect::squeeze_tree(&s));
                     let mut said: Vec<String> = Vec::new();

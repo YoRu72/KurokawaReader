@@ -55,6 +55,9 @@ const FAKE = (os) => `(function () {
   var replies = {
     kr_scan_device: function () { return { root: '/home/u', files: [], truncated: false }; }, kr_file_size: function () { return -1; }, kr_folder_read: function () { return null; },
     kr_http: function (a) { return { status: 404, url: a.o.url, headers: {}, body: '' }; },
+    // (Stage R5: the interface's size is the web view's own zoom — Tauri's set_zoom, which the resolved Tauri has —, so
+    // the page's CSS pixels stay as they are; the bridge zooms with CSS only where it has not.)
+    kr_set_zoom: function () { return true; },
     kr_title_bar: function (a) {
       var o = (a && a.o) || {}; window.__wb.calls.push(JSON.parse(JSON.stringify(o)));
       if (typeof o.own === 'boolean') { st.wanted = o.own; if (os !== 'darwin') st.own = o.own; }

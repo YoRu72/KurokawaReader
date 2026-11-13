@@ -51,6 +51,8 @@ pub fn script(app: &AppHandle) -> Option<String> {
         "os": util::node_platform(),
         "version": app.package_info().version.to_string(),
         "budgetMs": budget * 1000,
+        // (Stage R5: where the archives case makes its files.)
+        "temp": std::env::temp_dir().to_string_lossy().into_owned(),
     });
     Some(format!("window.__KR_ENGINETEST__ = {};\n{}", cfg, ENGINETEST_JS))
 }

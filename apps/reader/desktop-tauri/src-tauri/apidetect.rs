@@ -1,4 +1,5 @@
-// Which of Tauri's newer web-view functions the Tauri this build resolved has (stage R4: the in-app browser), found
+// Which of Tauri's newer web-view and window functions the Tauri this build resolved has (stage R4: the in-app
+// browser; stage R5: the window's icon, zoom and taskbar progress), found
 // by reading that Tauri's own source — the version in Cargo.lock, its files in Cargo's registry — so the code that
 // uses one is compiled only where it exists, with the signature written for it; anything not found (another
 // signature, the source not where Cargo keeps it) leaves that part out and the browser does without it (PORTING.md
@@ -13,7 +14,7 @@ pub struct Found {
 }
 
 /// The cfg names this can set (for `rustc-check-cfg`).
-pub const CFGS: [&str; 5] = ["kr_cookie_read", "kr_cookie_all", "kr_cookie_delete", "kr_clear_all", "kr_download_api"];
+pub const CFGS: [&str; 9] = ["kr_cookie_read", "kr_cookie_all", "kr_cookie_delete", "kr_clear_all", "kr_download_api", "kr_set_icon", "kr_default_icon", "kr_zoom", "kr_progress"];
 
 /// The version of `name` in a Cargo.lock's text.
 pub fn locked_version(lock: &str, name: &str) -> Option<String> {
@@ -62,12 +63,34 @@ pub fn detect(src: &str) -> Vec<Found> {
         && has("pub enum DownloadEvent<'a> {")
         && has("Requested { url: Url, destination: &'a mut PathBuf")
         && has("Finished { url: Url, path: Option<PathBuf>, success: bool");
+    // (Stage R5, on Window / WebviewWindow: the window's icon (appicon.rs), Tauri's own default icon given back on
+    // «reset», the web view's zoom (Appearance → size), the taskbar's progress (setProgress).)
+    let set_icon = twice("pub fn set_icon(&self, icon: Image<'_>) -> crate::Result<()>");
+    let default_icon = has("pub fn default_window_icon(&self) -> Option<&Image<'_>>") && has("pub fn to_owned(self) -> Image<'static>");
+    let zoom = twice("pub fn set_zoom(&self, scale_factor: f64) -> crate::Result<()>");
+    // (winbits.rs makes the state from JSON, as Tauri's own JavaScript API sends it: so its struct must be one Tauri
+    // derives Deserialize for, here in the tauri crate.)
+    let progress = twice("pub fn set_progress_bar(&self, progress_state:")
+        && src
+            .find(&squeeze("pub struct ProgressBarState {"))
+            .map(|i| {
+                let mut a = i.saturating_sub(160);
+                while !src.is_char_boundary(a) {
+                    a -= 1;
+                }
+                src[a..i].contains("Deserialize")
+            })
+            .unwrap_or(false);
     vec![
         Found { cfg: "kr_cookie_read", what: "the browser's cookies of a site read (cookies_for_url)", on: cookie_read },
         Found { cfg: "kr_cookie_all", what: "all the browser's cookies read (cookies)", on: cookie_all },
         Found { cfg: "kr_cookie_delete", what: "a cookie of the browser deleted (delete_cookie)", on: cookie_delete },
         Found { cfg: "kr_clear_all", what: "the browser's data cleared (clear_all_browsing_data)", on: clear_all },
         Found { cfg: "kr_download_api", what: "downloads in the browser caught (on_download)", on: download },
+        Found { cfg: "kr_set_icon", what: "the window's icon set (set_icon)", on: set_icon },
+        Found { cfg: "kr_default_icon", what: "the default icon given back (default_window_icon)", on: default_icon },
+        Found { cfg: "kr_zoom", what: "the web view zoomed (set_zoom)", on: zoom },
+        Found { cfg: "kr_progress", what: "taskbar progress (set_progress_bar)", on: progress },
     ]
 }
 
@@ -140,8 +163,24 @@ mod tests {
   pub fn delete_cookie(&self, cookie: Cookie<'_>) -> crate::Result<()> {
   pub fn clear_all_browsing_data(&self) -> crate::Result<()> {
   pub fn on_download<F: Fn(Webview<R>, DownloadEvent<'_>) -> bool + Send + Sync + 'static>(
+  pub fn set_icon(&self, icon: Image<'_>) -> crate::Result<()> {
+  pub fn set_zoom(&self, scale_factor: f64) -> crate::Result<()> {
+  pub fn set_progress_bar(
+    &self,
+    progress_state: crate::window::ProgressBarState,
+  ) -> crate::Result<()> {
 "#;
         let src = format!("{}{}{}", one, one, r#"
+  pub fn default_window_icon(&self) -> Option<&Image<'_>> {
+  /// Owned.
+  pub fn to_owned(self) -> Image<'static> {
+/// Progress bar state.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressBarState {
+  /// The progress bar status.
+  pub status: Option<ProgressBarStatus>,"#);
+        let src = format!("{}{}", src, r#"
 pub enum DownloadEvent<'a> {
   Requested {
     /// The url being downloaded.
@@ -158,7 +197,7 @@ pub enum DownloadEvent<'a> {
 "#);
         let s = squeeze(&src);
         let f = detect(&s);
-        assert_eq!(f.iter().map(|x| (x.cfg, x.on)).collect::<Vec<_>>(), vec![("kr_cookie_read", true), ("kr_cookie_all", true), ("kr_cookie_delete", true), ("kr_clear_all", true), ("kr_download_api", true)]);
+        assert_eq!(f.iter().map(|x| (x.cfg, x.on)).collect::<Vec<_>>(), vec![("kr_cookie_read", true), ("kr_cookie_all", true), ("kr_cookie_delete", true), ("kr_clear_all", true), ("kr_download_api", true), ("kr_set_icon", true), ("kr_default_icon", true), ("kr_zoom", true), ("kr_progress", true)]);
         // (Only on one of Webview / WebviewWindow: not used.)
         let once = squeeze(&format!("{}{}", one, "pub enum DownloadEvent<'a> { Requested { url: Url, destination: &'a mut PathBuf }, Finished { url: Url, path: Option<PathBuf>, success: bool } }"));
         assert!(detect(&once).iter().all(|x| !x.on));
@@ -169,6 +208,9 @@ pub enum DownloadEvent<'a> {
         let by_ref = squeeze(&by_ref.repeat(2));
         assert_eq!(detect(&by_ref).iter().filter(|x| x.on).map(|x| x.cfg).collect::<Vec<_>>(), vec!["kr_cookie_read"]);
         assert_eq!(CFGS.to_vec(), f.iter().map(|x| x.cfg).collect::<Vec<_>>());
+        // (set_progress_bar without a ProgressBarState Tauri deserializes: not used.)
+        let plain = squeeze(&format!("{}{}", one.repeat(2), "#[derive(Debug, Clone)]\npub struct ProgressBarState {\n  pub status: Option<u8>,\n}"));
+        assert!(!detect(&plain).iter().any(|x| x.cfg == "kr_progress" && x.on));
     }
 
     #[test]

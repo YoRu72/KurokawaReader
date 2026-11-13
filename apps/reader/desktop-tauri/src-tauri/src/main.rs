@@ -1,21 +1,27 @@
-// KurokawaReader — the Tauri shell (stages R0–R4 of docs/RUST-PORT-READER.md, beside the Electron one in ../../desktop):
+// KurokawaReader — the Tauri shell (stages R0–R5 of docs/RUST-PORT-READER.md, beside the Electron one in ../../desktop):
 // the same web app (../../dist) in a window made here, with bridge.js run before the page's own scripts on every load
 // so the page finds the same `window.kurokawaDesktop` the Electron preload gives it. The commands are thin wrappers
 // (commands.rs) over the crate both apps' shells share (shared/shell-rs, `kurokawa_shell`); what is not ported yet is
 // a stub in bridge.js (see ../PORTING.md).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod appicon;
+mod archive;
+mod archives;
 mod browser;
 mod browserlogic;
 mod commands;
 mod dlplan;
 mod download;
 mod enginetest;
+mod iconlogic;
+mod menu;
 mod openargs;
 mod openfile;
 mod scan;
 mod selftest;
 mod titlebar;
+mod winbits;
 
 use kurokawa_shell::{net, util, winstate};
 #[allow(unused_imports)]
@@ -79,6 +85,11 @@ fn main() {
             openfile::second_launch(app, argv, cwd);
         }));
     }
+    // (Stage R5: a Mac's menu bar — menu.rs —, its items' commands to the page.)
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()));
+    }
     let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -121,7 +132,27 @@ fn main() {
             browser::kr_browser_reset,
             browser::kr_browser_forget,
             browser::kr_browser_deliver,
-            browser::kr_selftest_browser
+            browser::kr_selftest_browser,
+            archives::kr_archive_list,
+            archives::kr_archive_extract,
+            archives::kr_archive_test,
+            archives::kr_archive_restore,
+            archives::kr_archive_free,
+            archives::kr_archive_existing,
+            archives::kr_archive_cancel,
+            archives::kr_archive_create,
+            archives::kr_selftest_7z,
+            appicon::kr_app_icon,
+            appicon::kr_selftest_icon,
+            winbits::kr_fullscreen,
+            winbits::kr_immersive,
+            winbits::kr_set_zoom,
+            winbits::kr_progress,
+            winbits::kr_copy_image,
+            winbits::kr_print_file,
+            winbits::kr_selftest_clipimage,
+            menu::kr_menu,
+            menu::kr_selftest_command
         ]))
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -137,6 +168,8 @@ fn main() {
                 net::configure_cookies(dir.join("cookies.txt"));
             }
             net::set_doh(&commands::doh_kept(&handle));
+            // (Stage R5: where the shipped 7-Zip is looked for — the resource folder, then the program's own.)
+            archives::init(&handle);
             // (What Electron's preload knows before the first call: the OS, in Node's words — its `platform`.)
             let boot = serde_json::json!({ "os": util::node_platform(), "arch": util::node_arch() });
             let mut script: String = format!("window.__KR_BOOT__ = {};\n{}", boot, BRIDGE_JS);
@@ -187,6 +220,14 @@ fn main() {
                 b = b.maximized(true);
             }
             b.build()?;
+            // (Stage R5: the icon the user chose, put on the window — and on Windows its shortcuts, on Linux its desktop
+            // entry, if an update made them anew — at every start: appicon.rs.)
+            appicon::at_start(&handle);
+            // (Stage R5: a Mac's menu bar, in English until the page sends its words: menu.rs.)
+            #[cfg(target_os = "macos")]
+            {
+                let _ = menu::set(&handle, &serde_json::Value::Null);
+            }
             // (Files and links on this launch's own command line, kept until the page takes them: openfile.rs.)
             openfile::at_start(&handle);
             Ok(())

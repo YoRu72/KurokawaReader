@@ -1,6 +1,6 @@
 name: Tauri check (Reader)
 
-# The Reader's Tauri shell (apps/reader/desktop-tauri, stages R0–R4 of docs/RUST-PORT-READER.md) and the crate it
+# The Reader's Tauri shell (apps/reader/desktop-tauri, stages R0–R5 of docs/RUST-PORT-READER.md) and the crate it
 # shares with Kurokawa Tools' (shared/shell-rs) built on Windows, Linux and macOS beside the Electron one, to see that
 # it builds, how big its bundles are, and that it runs: the built app is started with KR_SELFTEST set, waits for the
 # library to render and checks its own bridge — files, the whole-computer scan, web requests and charsets, the update
@@ -11,12 +11,16 @@ name: Tauri check (Reader)
 # cancelled, deleted only in their folder), DNS over HTTPS through a resolver the test server plays, a notification
 # asked for; (R4) the in-app browser on the test server's small site — passed out of sight, requests made by the
 # site's own page with its cookies, the site's page refused the app's commands, a check window and a sign-in's end
-# closing by themselves, a refusal, reset and forget, no window left. (The build's log says which of Tauri's newer
-# web-view functions it found: «KR build: …».) Then
+# closing by themselves, a refusal, reset and forget, no window left; (R5) archives — a zip made, listed, tested,
+# extracted (and in place), a hostile zip refused, a 7z with a password and a tar.gz through the 7-Zip shipped with
+# the app —, a menu command reaching the page, full screen, zoom, taskbar progress, an image on the clipboard, the
+# user's own app icon kept, put on the window and reset. (The build's log says which of Tauri's newer web-view and
+# window functions it found: «KR build: …».) Then
 # (R1) it is started again with KR_ENGINETEST set: the web app's key cases run in the system's own web view — books
 # imported, kept over a reload, opened, searched, highlighted, a text book's place kept, PDFs drawn (one of 300
 # pages), the PDF → Word converter, fonts and Arabic, read-aloud, full screen — with screenshots for a person to
-# compare (desktop-tauri/enginetest.js); its report and pictures are kept as artifacts. Linux and Windows must pass
+# compare (desktop-tauri/enginetest.js) — since R5 also the Archives button opening and extracting an archive, and
+# the title bar with a custom icon after a start —; its report and pictures are kept as artifacts. Linux and Windows must pass
 # both; macOS is reported without failing the job for now. Modelled on tauri-check.yml (Tools'). The bundles are kept
 # as workflow artifacts for 7 days; nothing is signed, published or released. Not run on main.
 on:
@@ -77,7 +81,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs; do
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs apps/reader/desktop-tauri/src-tauri/src/archive.rs apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -87,6 +91,28 @@ jobs:
         with:
           workspaces: 'apps/reader/desktop-tauri/src-tauri -> target'
           key: ${{ matrix.target }}
+
+      # (Stage R5.) 7-Zip as the Electron build ships it: the npm package 7zip-bin of desktop/package.json's
+      # dependencies (installed without its devDependencies — electron, electron-builder — and without install
+      # scripts), this system's 7za copied into desktop-tauri/7zip/<plat>/<arch>/ (7zip-bin's own layout) with the
+      # package's licence files; tauri.conf.json bundles that folder as resources/7zip/, and Tauri's build puts it
+      # beside the bare program too (the self-tests run that). The archives that need 7-Zip are then the app's own.
+      - name: 7-Zip for the bundle
+        working-directory: apps/reader/desktop
+        run: |
+          for i in 1 2 3; do npm install --omit=dev --ignore-scripts --no-audit --no-fund && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
+          plat=$(node -p "({ win32: 'win', darwin: 'mac' })[process.platform] || 'linux'"); arch=$(node -p process.arch)
+          src="node_modules/7zip-bin/$plat/$arch"
+          echo "7zip-bin $(node -p "require('./node_modules/7zip-bin/package.json').version"), this system: $plat/$arch"
+          if [ -d "$src" ]; then
+            mkdir -p "../desktop-tauri/7zip/$plat/$arch"
+            cp "$src"/7za* "../desktop-tauri/7zip/$plat/$arch/"
+            chmod +x "../desktop-tauri/7zip/$plat/$arch/"7za* || true
+          else
+            echo "::warning::7zip-bin has no 7za for $plat/$arch — the archives that need 7-Zip will answer «7z missing»"
+          fi
+          find node_modules/7zip-bin -maxdepth 1 -type f \( -iname '*licen*' -o -iname 'copying*' \) -exec cp {} ../desktop-tauri/7zip/ \;
+          find ../desktop-tauri/7zip -type f -exec ls -la {} \;
 
       - name: Icons (from desktop/icon.png)
         working-directory: apps/reader/desktop-tauri
@@ -141,7 +167,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_SELFTEST_TIMEOUT: '260'
+          KR_SELFTEST_TIMEOUT: '330'
           # (Xvfb without a window manager: the title bar's maximise is not tried — the row says «skipped».)
           KR_SELFTEST_NO_WM: '1'
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
@@ -155,7 +181,8 @@ jobs:
           bus=""; command -v dbus-run-session >/dev/null && bus="dbus-run-session --"
           echo "D-Bus: ${bus:-none}"
           set +e
-          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" timeout 330 $bus xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader "$f"
+          find target/release/7zip -type f -exec ls -la {} \; || echo "no 7zip/ beside the executable"
+          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" timeout 400 $bus xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader "$f"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -166,7 +193,7 @@ jobs:
         shell: pwsh
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_SELFTEST_TIMEOUT: '260'
+          KR_SELFTEST_TIMEOUT: '330'
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'kr-selftest.json'
           $env:KR_SELFTEST = $out
@@ -176,10 +203,11 @@ jobs:
           $f = Join-Path $d 'kr open-first.txt'
           [System.IO.File]::WriteAllText($f, "Opened at start, from the command line.`n")
           $env:KR_SELFTEST_OPEN = $f
+          if (Test-Path 'target/release/7zip') { Get-ChildItem 'target/release/7zip' -Recurse -File | Format-Table FullName, Length } else { 'no 7zip/ beside the executable' }
           $exe = (Resolve-Path 'target/release/KurokawaReader.exe').Path
           $p = Start-Process -FilePath $exe -ArgumentList ('"' + $f + '"') -PassThru
           $null = $p.Handle
-          if ($p.WaitForExit(330000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          if ($p.WaitForExit(400000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
           node ../selftest-report.cjs $out $code '${{ matrix.name }}' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           exit $code
 
@@ -188,7 +216,7 @@ jobs:
         continue-on-error: true
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_SELFTEST_TIMEOUT: '260'
+          KR_SELFTEST_TIMEOUT: '330'
         run: |
           out="$RUNNER_TEMP/kr-selftest.json"
           # (The bare executable, as on Linux: the web UI is built into it.)
@@ -198,8 +226,9 @@ jobs:
           # (R2: a file given on the command line — the page must receive it.)
           d="$RUNNER_TEMP/kr-open"; mkdir -p "$d"; f="$d/kr open-first.txt"; printf 'Opened at start, from the command line.\n' > "$f"
           set +e
-          # (No `timeout` on macOS: perl's alarm ends it after 330 s.)
-          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" perl -e 'alarm 330; exec @ARGV' "$bin" "$f"
+          find target/release/7zip -type f -exec ls -la {} \; || echo "no 7zip/ beside the executable"
+          # (No `timeout` on macOS: perl's alarm ends it after 400 s.)
+          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" perl -e 'alarm 400; exec @ARGV' "$bin" "$f"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -214,8 +243,8 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_ENGINETEST_TIMEOUT: '480'
-          KR_ENGINETEST_BUDGET: '420'
+          KR_ENGINETEST_TIMEOUT: '560'
+          KR_ENGINETEST_BUDGET: '500'
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
           NO_AT_BRIDGE: '1'
@@ -223,7 +252,7 @@ jobs:
           d="$RUNNER_TEMP/kr-engine"; mkdir -p "$d"
           { echo "WebKitGTK $(pkg-config --modversion webkit2gtk-4.1 2>/dev/null)"; echo "$(lsb_release -ds 2>/dev/null)"; echo "ImageMagick: $(command -v import || echo none)"; } | tee "$d/versions.txt"
           set +e
-          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" timeout 560 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader
+          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" timeout 640 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader
           code=$?
           set -e
           { node ../enginetest-report.cjs "$d/report.json" "$code" "${{ matrix.name }}" "$d/report.md"; echo "Versions: $(tr '\n' ' ' < "$d/versions.txt")"; echo; } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -234,8 +263,8 @@ jobs:
         shell: pwsh
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_ENGINETEST_TIMEOUT: '480'
-          KR_ENGINETEST_BUDGET: '420'
+          KR_ENGINETEST_TIMEOUT: '560'
+          KR_ENGINETEST_BUDGET: '500'
         run: |
           $d = Join-Path $env:RUNNER_TEMP 'kr-engine'
           New-Item -ItemType Directory -Force -Path $d | Out-Null
@@ -246,7 +275,7 @@ jobs:
           $exe = (Resolve-Path 'target/release/KurokawaReader.exe').Path
           $p = Start-Process -FilePath $exe -PassThru
           $null = $p.Handle
-          if ($p.WaitForExit(560000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          if ($p.WaitForExit(640000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
           node ../enginetest-report.cjs (Join-Path $d 'report.json') $code '${{ matrix.name }}' (Join-Path $d 'report.md') | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "Versions: $(Get-Content (Join-Path $d 'versions.txt'))`n" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           exit $code
@@ -256,15 +285,15 @@ jobs:
         continue-on-error: true
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
-          KR_ENGINETEST_TIMEOUT: '480'
-          KR_ENGINETEST_BUDGET: '420'
+          KR_ENGINETEST_TIMEOUT: '560'
+          KR_ENGINETEST_BUDGET: '500'
         run: |
           d="$RUNNER_TEMP/kr-engine"; mkdir -p "$d"
           { echo "macOS $(sw_vers -productVersion)"; echo "Safari $(defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString 2>/dev/null)"; } | tee "$d/versions.txt"
           if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/KurokawaReader"; else bin="target/release/KurokawaReader"; fi
           [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
           set +e
-          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" perl -e 'alarm 560; exec @ARGV' "$bin"
+          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" perl -e 'alarm 640; exec @ARGV' "$bin"
           code=$?
           set -e
           { node ../enginetest-report.cjs "$d/report.json" "$code" "${{ matrix.name }}" "$d/report.md"; echo "Versions: $(tr '\n' ' ' < "$d/versions.txt")"; echo; } | tee -a "$GITHUB_STEP_SUMMARY"

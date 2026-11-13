@@ -21,7 +21,8 @@ const ROOT = path.join(__dirname, '..');
 const TAURI = path.join(ROOT, 'desktop-tauri');
 const BRIDGE = fs.readFileSync(path.join(TAURI, 'bridge.js'), 'utf8');
 // (Electron's app:titleBar — the channel both apps' shells share — is the Reader's kr_title_bar.)
-const snake = (ch) => (ch === 'app:titleBar' ? 'kr_title_bar' : ch.replace(/^kr:/, 'kr_').replace(/-/g, '_'));
+// (And kr:appIcon, the one channel in camelCase, is kr_app_icon.)
+const snake = (ch) => (ch === 'app:titleBar' ? 'kr_title_bar' : ch === 'kr:appIcon' ? 'kr_app_icon' : ch.replace(/^kr:/, 'kr_').replace(/-/g, '_'));
 
 // --- Electron's preload, with a fake electron that records each invoke / send.
 let eCalls = [];
@@ -43,7 +44,7 @@ let tCalls = []; let reply = () => null;
 function loadBridge(boot, win) {
   const window = win || { __TAURI__: { core: { invoke: (cmd, args) => { tCalls.push({ cmd, args }); return Promise.resolve().then(() => reply(cmd, args)); } } } };
   if (boot) window.__KR_BOOT__ = boot;
-  const ctx = vm.createContext({ window, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, TextDecoder, atob, setTimeout });
+  const ctx = vm.createContext({ window, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, TextDecoder, atob, setTimeout, Number, isFinite, Math });
   vm.runInContext(BRIDGE, ctx, { filename: 'bridge.js' });
   return window;
 }
@@ -59,8 +60,10 @@ async function nodePart() {
   assert.ok(leftOut && typeof leftOut === 'object', 'bridge lists no left-out names');
 
   // Names: the preload's, less those left out until their stage (the page then takes its own way: see bridge.js),
-  // and this shell's extras (EXTRA: scanFolder, cancelDownload), which Electron's has not.
-  assert.deepEqual([...extra], ['scanFolder', 'cancelDownload'], 'the bridge\'s extras');
+  // and this shell's extras (EXTRA: scanFolder, cancelDownload, menuText; printFile on a Mac and Linux), which
+  // Electron's has not.
+  assert.deepEqual([...extra], ['scanFolder', 'cancelDownload', 'menuText', 'printFile'], 'the bridge\'s extras');
+  assert.deepEqual([...loadBridge({ os: 'win32' }).__KR_BRIDGE_EXTRA__], ['scanFolder', 'cancelDownload', 'menuText'], 'no printFile on Windows (WebView2 prints a PDF in a frame)');
   for (const k of extra) assert.ok(!(k in pre), `extra ${k} is a preload name`);
   const want = Object.keys(pre).filter((k) => !(k in leftOut));
   assert.deepEqual(Object.keys(kd).sort(), [...want, ...extra].sort(), 'bridge names ≠ preload names less the left-out ones, and the extras');
@@ -69,7 +72,11 @@ async function nodePart() {
   const fns = Object.keys(pre).filter((k) => typeof pre[k] === 'function');
   const ported = fns.filter((k) => !(k in stubs) && !(k in leftOut));
   for (const k of Object.keys(stubs)) { assert.ok(fns.includes(k), `stub ${k} is no preload function`); assert.match(stubs[k], /^R[2-6]$/, `${k}: stage`); assert.ok(!(k in leftOut), `${k} both a stub and left out`); }
-  for (const k of Object.keys(leftOut)) { assert.ok(fns.includes(k), `left-out ${k} is no preload function`); assert.match(leftOut[k], /^R[2-6]$/, `${k}: stage`); }
+  for (const k of Object.keys(leftOut)) { assert.ok(fns.includes(k), `left-out ${k} is no preload function`); assert.match(leftOut[k], /^(R6|fallback)$/, `${k}: stage`); }
+  // (Since R5 nothing waits for R5: the stubs and the names left out are R6's, and printToPdf's page fallback.)
+  assert.deepEqual(Object.keys(leftOut).sort(), ['downloadUpdate', 'installDownloadedUpdate', 'printToPdf']);
+  assert.equal(leftOut.printToPdf, 'fallback');
+  for (const k of Object.keys(stubs)) assert.equal(stubs[k], 'R6', `${k}: a stub of R6 only`);
   // (Left out only where the page tests for the name before using it — never one it calls straight away.)
   for (const k of ['onOpenFile']) assert.ok(!(k in leftOut), `${k} is called by the page without a test: it cannot be left out`);
   for (const k of ['onOpenFile', 'onOpenUrl']) assert.ok(!(k in stubs), `${k} is ported (R2), not a stub`);
@@ -84,8 +91,12 @@ async function nodePart() {
     // (Stage R4: the in-app browser.)
     openWebView: [{ url: 'https://example.org/', hidden: true, timeout: 25000 }], browserFetch: [{ url: 'https://example.org/a', method: 'POST', body: 'eHl6', bodyBase64: true, binary: true, openTimeout: 20000 }],
     browserReset: ['https://example.org/'], browserForget: ['https://example.org/', true],
+    // (Stage R5: archives, the window, the clipboard's image.)
+    archiveList: [{ path: '/x/a.zip', password: 'pw' }], archiveExtract: [{ id: 'j1', path: '/x/a.zip', dest: '/x/out', inPlace: true, replace: 'both', keepFree: 0 }], archiveCancel: ['j1'],
+    archiveCreate: [{ id: 'j2', out: '/x/b.zip', inputs: ['/x/a.txt', '/x/dir'] }], archiveTest: [{ id: 'j3', path: '/x/a.zip' }], archiveRestore: [{ path: '/x/a.zip' }], archiveFree: [{ dir: '/x' }], archiveExisting: [{ dest: '/x', names: ['a', 'b'] }],
+    setFullscreen: ['toggle'], setImmersive: [true], copyImage: ['iVBORw0KGgoAAAANSUhEUg=='], setProgress: [0.5],
   };
-  const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl', 'onDownloadProgress', 'addDownloadListener'];
+  const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl', 'onDownloadProgress', 'addDownloadListener', 'appIcon', 'setZoom', 'onCommand', 'onArchiveProgress'];
   assert.deepEqual([...Object.keys(samples), ...special].sort(), [...ported].sort(), 'samples ≠ ported functions');
   const sent = {};
   for (const m of Object.keys(samples)) {
@@ -186,6 +197,39 @@ async function nodePart() {
     assert.equal(typeof kd.addDownloadListener(() => {}), 'function'); assert.equal(typeof kd.addDownloadListener(), 'function');
     for (const k of ['onDownloadProgress', 'addDownloadListener']) { eCalls = []; pre[k](() => {}); assert.ok(eCalls.length === 0, `${k}: the preload invokes nothing`); }
   }
+  // Stage R5. appIcon: nothing → the one in force ({ o: {} }); { set: null } → reset; { set: url } → with the .ico's
+  // sizes the page draws ([] where it cannot draw: here) — main.cjs's kr:appIcon; the preload sends the object as it is.
+  for (const [a, want] of [[[], { o: {} }], [[{ set: null }], { o: { set: null } }], [[{ set: '' }], { o: { set: null } }], [[{ set: 'data:image/png;base64,AAAA' }], { o: { set: 'data:image/png;base64,AAAA', sizes: [] } }]]) {
+    tCalls = []; await kd.appIcon(...a); assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_app_icon', args: want }], 'appIcon ' + JSON.stringify(a));
+    eCalls = []; await pre.appIcon(...a); assert.deepEqual(eCalls.map((c) => c.ch), ['kr:appIcon']);
+  }
+  sent.kr_app_icon = ['o'];
+  // setZoom: the preload's range (0.5–2) and nothing to wait for; the web view's zoom asked for (kr_set_zoom { f }).
+  tCalls = []; assert.equal(kd.setZoom(1.25), undefined); assert.equal(kd.setZoom(3), undefined); assert.equal(kd.setZoom('x'), undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_set_zoom', args: { f: 1.25 } }]); sent.kr_set_zoom = ['f'];
+  eCalls = []; pre.setZoom(1.25); assert.equal(eCalls.length, 0, 'the preload zooms in its own process');
+  // setProgress without a number: taken away (-1); setFullscreen with a boolean: as it is.
+  tCalls = []; kd.setProgress(); await kd.setFullscreen(false); assert.deepEqual(JSON.parse(JSON.stringify(tCalls.map((c) => c.args))), [{ p: -1 }, { v: false }]);
+  // onCommand / onArchiveProgress: the kr:command and kr:archive-progress events to the callback (onCommand answers
+  // nothing, onArchiveProgress a remover — the preload's answers).
+  {
+    const listeners = [];
+    const cw = loadBridge({ os: 'darwin' }, { __TAURI__: { core: { invoke: () => Promise.resolve(null) }, event: { listen: (n, f) => { listeners.push([n, f]); return Promise.resolve(() => {}); } } } });
+    const cmds = []; const progs = [];
+    assert.equal(cw.kurokawaDesktop.onCommand((c) => cmds.push(c)), undefined);
+    const off = cw.kurokawaDesktop.onArchiveProgress((p) => progs.push(p)); assert.equal(typeof off, 'function');
+    await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(listeners.map((l) => l[0]).sort(), ['kr:archive-progress', 'kr:command']);
+    listeners.find((l) => l[0] === 'kr:command')[1]({ payload: 'search' }); listeners.find((l) => l[0] === 'kr:archive-progress')[1]({ payload: { id: 'j', done: 1, total: 2, file: 'a' } });
+    off(); listeners.find((l) => l[0] === 'kr:archive-progress')[1]({ payload: { id: 'j', done: 2, total: 2, file: '' } });
+    assert.deepEqual(cmds, ['search']); assert.deepEqual(JSON.parse(JSON.stringify(progs)), [{ id: 'j', done: 1, total: 2, file: 'a' }]);
+    for (const k of ['onCommand', 'onArchiveProgress']) { eCalls = []; pre[k](() => {}); assert.equal(eCalls.length, 0, `${k}: the preload invokes nothing`); }
+  }
+  // menuText (EXTRA): kr_menu { labels }; printFile (EXTRA, a Mac and Linux): kr_print_file { b64, name }.
+  tCalls = []; await kd.menuText({ file: 'File' }); await kd.printFile('JVBERi0=', 'a.pdf');
+  assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_menu', args: { labels: { file: 'File' } } }, { cmd: 'kr_print_file', args: { b64: 'JVBERi0=', name: 'a.pdf' } }]);
+  sent.kr_menu = ['labels']; sent.kr_print_file = ['b64', 'name'];
+
   // scanFolder (EXTRA): the scan's walk in one folder → kr_scan_folder { p, exts }.
   tCalls = []; reply = () => ({ root: '/r', files: [], truncated: false });
   assert.deepEqual(JSON.parse(JSON.stringify(await kd.scanFolder('/r', ['EPUB', 3]))), { root: '/r', files: [], truncated: false });
@@ -234,9 +278,9 @@ async function nodePart() {
 
   // Stubs: never the IPC; each answers as STUBS says (and the way the page copes with — see PORTING.md).
   tCalls = [];
-  const answers = { setImmersive: false, copyImage: false };
+  const answers = {};
   const rejecting = ['installUpdate'];
-  const sync = ['setZoom', 'onUpdateProgress', 'onCommand', 'setProgress'];
+  const sync = ['onUpdateProgress'];
   const removers = [];
   assert.deepEqual([...Object.keys(answers), ...rejecting, ...sync, ...removers].sort(), Object.keys(stubs).sort(), 'every stub is checked');
   for (const [k, v] of Object.entries(answers)) assert.deepEqual(JSON.parse(JSON.stringify({ v: await kd[k]() })), JSON.parse(JSON.stringify({ v })), `${k}()`);
@@ -261,13 +305,19 @@ async function nodePart() {
   // Rust: every command the bridge and the self-test call is registered, with the argument names they send.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile|browser)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile|browser|archives|appicon|winbits|menu)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs', 'browser.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs', 'browser.rs', 'archives.rs', 'appicon.rs', 'winbits.rs', 'menu.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
-  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs + titlebar.rs + openfile.rs + browser.rs define');
+  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ the commands the Rust files define');
+  // (Stage R5: the 7-Zip resources bundled, the PNG reader and deflate crates named.)
+  const confR5 = JSON.parse(fs.readFileSync(path.join(TAURI, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+  assert.deepEqual(confR5.bundle.resources, { '../7zip/': '7zip/' }, '7-Zip bundled as resources/7zip/');
+  assert.ok(fs.existsSync(path.join(TAURI, '7zip', 'README.txt')), 'the 7zip folder kept');
+  const cargoR5 = fs.readFileSync(path.join(TAURI, 'src-tauri', 'Cargo.toml'), 'utf8');
+  assert.match(cargoR5, /^tauri = \{ version = "2", features = \["image-png"\] \}$/m); assert.match(cargoR5, /^flate2 = "1"$/m);
   // (Stage R4: only the main window may call the app's commands; a browser window kr_browser_deliver alone.)
   assert.match(main, /\.invoke_handler\(main_only\(tauri::generate_handler!\[/, 'the commands guarded (main_only)');
   assert.match(main, /let allowed = label == "main" \|\| \(label\.starts_with\(browser::PREFIX\) && command == browser::DELIVER\);/);
@@ -327,6 +377,7 @@ async function nodePart() {
   assert.equal(lib.crc32(Buffer.from('123456789')), 0xCBF43926); assert.equal(lib.crc32(new Uint8Array([1, 2]).buffer), lib.crc32([1, 2]));
   const releases = JSON.parse(fs.readFileSync(path.join(ROOT, '..', '..', 'shared', 'shell-rs', 'src', 'testserver.rs'), 'utf8').match(/pub const RELEASES: &str = r#"([\s\S]*?)"#;/)[1]);
   assert.equal(releases.length, 5, 'testserver.rs RELEASES parses as five releases');
+  const zipOf = (ent) => lib.zipStored(ent.map(([n, b]) => [n, [...b]]));
   function fakeKd(bad) {
     const disk = new Map(); const dirs = new Set();
     const tb = { platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: false, fullscreen: false, focused: true }; const tbSubs = [];
@@ -335,6 +386,21 @@ async function nodePart() {
     const jar = new Map(); let doh = 'off'; let dnsCount = 0; let dls = []; const running = new Map();
     // (Stage R4: the browser's cookies — shared with the jar as the shell shares them —, its lanes and windows.)
     const bjar = new Map(); const lanes = new Set(); const wins = new Set(); let browsePending = null;
+    // (Stage R5: archives as a made-up container — real zips the test writes itself are read from their directory —,
+    // the icon, the window, the clipboard, the shell's commands.)
+    const aListeners = []; const cmdListeners = []; let icon = null; let clip = null;
+    const fakeArc = (format, entries, pw) => Buffer.from('FAKEARC' + JSON.stringify({ format, pw: pw || null, entries: entries.map(([n, b]) => [n, Buffer.from(b).toString('base64')]) }));
+    const under = (root) => [...disk.keys()].filter((k) => k.startsWith(root + '/'));
+    const gather = (inputs) => { const out = []; for (const i of inputs) { if (disk.has(i)) out.push([path.posix.basename(i), disk.get(i)]); else for (const k of under(i)) out.push([path.posix.basename(i) + k.slice(i.length), disk.get(k)]); } return out; };
+    const readArc = (p, password) => {
+      const b = disk.get(p); if (!b) throw new Error('ENOENT');
+      if (b[0] === 0x50 && b[1] === 0x4b) { const e = b.lastIndexOf(Buffer.from([0x50, 0x4b, 5, 6])); const n = b.readUInt16LE(e + 10); let q = b.readUInt32LE(e + 16); const entries = []; for (let i = 0; i < n; i++) { const nl = b.readUInt16LE(q + 28); const name = b.toString('utf8', q + 46, q + 46 + nl); const off = b.readUInt32LE(q + 42); const len = b.readUInt32LE(q + 20); const lnl = b.readUInt16LE(off + 26); entries.push([name, b.subarray(off + 30 + lnl, off + 30 + lnl + len)]); q += 46 + nl; } return { format: 'zip', entries, enc: false }; }
+      const o = JSON.parse(b.toString().slice(7));
+      if (o.pw && o.format === '7z' && password !== o.pw) throw new Error(password ? 'wrongPassword' : 'passwordNeeded');
+      return { format: o.format, entries: o.entries.map(([n, x]) => [n, Buffer.from(x, 'base64')]), enc: !!o.pw };
+    };
+    const outside = (n) => n.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(n);
+    const tell = (p) => aListeners.slice().forEach((f) => f(p));
     const privateAnswer = () => (bjar.get('kr_site') === 'signed-in' ? { status: 200, body: 'signed-in;clearance=' + (bjar.has('cf_clearance') ? 1 : 0) + ';ua=UA' } : { status: 401, body: 'signed out' });
     const share = () => { for (const [k, v] of bjar) jar.set(k, v); };
     const emit = (p) => dls.slice().forEach((f) => f(p));
@@ -424,6 +490,25 @@ async function nodePart() {
         if (o.act === 'close') { const n = wins.size; if (browsePending) { browsePending(); browsePending = null; } return { closed: n }; }
         return { error: 'unknown act' };
       },
+      archiveList: async (o) => { const a = readArc(o.path, o.password); const u = a.entries.find(([n]) => outside(n)); return { format: a.format, entries: a.entries.map(([n, b]) => ({ path: n, size: b.length, dir: false })), total: a.entries.reduce((t, [, b]) => t + b.length, 0), encrypted: a.enc, inPlaceOk: a.format === 'zip' || a.format === 'tar', resumable: false, largest: 0, free: 1e9, ...(u ? { unsafe: u[0] } : {}) }; },
+      archiveTest: async (o) => { const a = readArc(o.path, o.password); return { ok: true, files: a.entries.length, bad: [] }; },
+      archiveExtract: async (o) => {
+        let a; try { a = readArc(o.path, o.password); } catch (e) { throw new Error(o.password ? 'wrongPassword' : e.message); }
+        const u = a.entries.find(([n]) => outside(n)); if (u) throw new Error('unsafePath ' + u[0]);
+        a.entries.forEach(([n, b], i) => { disk.set(o.dest + '/' + n, Buffer.from(b)); tell({ id: o.id, done: i + 1, total: a.entries.length, file: n }); });
+        if (o.inPlace) disk.delete(o.path);
+        return { files: a.entries.length, dest: o.dest };
+      },
+      archiveCreate: async (o) => { const ent = gather(o.inputs); disk.set(o.out, Buffer.from(zipOf(ent))); tell({ id: o.id, done: 1, total: 1, file: '' }); return { files: ent.length, path: o.out, size: disk.get(o.out).length }; },
+      archiveExisting: async (o) => ({ existing: o.names.filter((n) => !outside(n) && disk.has(o.dest + '/' + n)) }),
+      archiveFree: async () => ({ free: 1e9 }), archiveRestore: async () => ({ left: 0 }), archiveCancel: async () => undefined,
+      onArchiveProgress: (f) => { aListeners.push(f); return () => { const i = aListeners.indexOf(f); if (i >= 0) aListeners.splice(i, 1); }; },
+      appIcon: async (o) => { if (!o || !('set' in o)) return icon; if (!o.set) { icon = null; return true; } if (!/^data:image\/png;base64,iVBORw0KGgo/.test(o.set)) throw new Error('not a PNG'); icon = o.set; return true; },
+      onCommand: (f) => { cmdListeners.push(f); },
+      setFullscreen: async (v) => { tb.fullscreen = v === 'toggle' ? !tb.fullscreen : !!v; return tb.fullscreen; },
+      setZoom: () => undefined, setProgress: () => undefined,
+      copyImage: async (b64) => { clip = b64; return true; },
+      _fakeArc: fakeArc, _gather: gather, _icon: () => icon, _clip: () => clip, _cmd: (c) => cmdListeners.forEach((f) => f(c)),
       _disk: disk, _dirs: dirs,
     });
   }
@@ -439,8 +524,20 @@ async function nodePart() {
         if (cmd === 'kr_selftest_update') { const v = args.current === '0.62.0' ? null : { version: args.beta ? '0.63.0' : '0.62.0', url: 'https://example.invalid/v0.62.0', notes: 'notes م', asset: lib.ASSET.linux }; return Promise.resolve(v); }
         if (cmd === 'kr_selftest_winstate') return Promise.resolve({ path: '/c/window-state.json', file: { x: 1, y: 2, width: 1180, height: 820, maximized: false }, restored: { x: 1, y: 2, width: 1180, height: 820, maximized: false }, now: { width: 1180, height: 820 } });
         if (cmd === 'kr_selftest_clipboard') return Promise.resolve(args.text);
-        if (cmd === 'kr_selftest_mkdir') { for (let d = args.p; d.includes('kr-scanfolder-'); d = path.posix.dirname(d)) kdFake._dirs.add(d); return Promise.resolve(true); }
-        if (cmd === 'kr_selftest_rmdir') { for (const d of [...kdFake._dirs]) if (d.startsWith(args.p)) kdFake._dirs.delete(d); return Promise.resolve(true); }
+        if (cmd === 'kr_selftest_mkdir') { for (let d = args.p; /kr-(scanfolder|archive)-/.test(d); d = path.posix.dirname(d)) kdFake._dirs.add(d); return Promise.resolve(true); }
+        if (cmd === 'kr_selftest_rmdir') { for (const d of [...kdFake._dirs]) if (d.startsWith(args.p)) kdFake._dirs.delete(d); for (const k of [...kdFake._disk.keys()]) if (k.startsWith(args.p + '/')) kdFake._disk.delete(k); return Promise.resolve(true); }
+        // (Stage R5: the shipped 7-Zip — making a 7z with a password, a tar, a gzip of it —, the icon's files, a
+        // menu command, the taskbar, the clipboard's picture.)
+        if (cmd === 'kr_selftest_7z') {
+          const a = args.args; if (!a.length) return Promise.resolve({ path: '/app/7zip/linux/x64/7za', own: true });
+          const type = a.find((x) => x.startsWith('-t')).slice(2); const pw = (a.find((x) => /^-p./.test(x)) || '').slice(2); const rest = a.filter((x) => !x.startsWith('-') && x !== 'a');
+          const ent = type === 'gzip' ? JSON.parse(kdFake._disk.get(rest[1]).toString().slice(7)).entries.map(([n, x]) => [n, Buffer.from(x, 'base64')]) : kdFake._gather(rest.slice(1));
+          kdFake._disk.set(rest[0], kdFake._fakeArc(type === '7z' ? '7z' : type === 'tar' ? 'tar' : 'tar.gz', ent, pw)); return Promise.resolve({ code: 0, out: '', err: '' });
+        }
+        if (cmd === 'kr_selftest_icon') { const i = kdFake._icon(); return Promise.resolve({ png: i ? 100 : null, ico: i ? [[16, 16, 1], [24, 24, 1], [32, 32, 1], [48, 48, 1], [64, 64, 1], [128, 128, 1], [256, 256, 1]] : [], dir: '/c', last: { window: i ? true : 'default' }, setIcon: true }); }
+        if (cmd === 'kr_selftest_command') { setTimeout(() => kdFake._cmd(args.c), 5); return Promise.resolve(true); }
+        if (cmd === 'kr_progress') return Promise.resolve(true);
+        if (cmd === 'kr_selftest_clipimage') { const b = Buffer.from(kdFake._clip(), 'base64'); return Promise.resolve({ width: b.readUInt32BE(16), height: b.readUInt32BE(20) }); }
         if (cmd === 'kr_selftest_browser') return Promise.resolve(kdFake._browserAct(args.o));
         if (cmd === 'kr_selftest_launch') { const [p, link] = args.args; const b = kdFake._disk.get(p); setTimeout(() => { openLog.push({ kind: 'file', name: path.posix.basename(p), size: b.length }, { kind: 'url', url: link }); }, 5); return Promise.resolve({ code: 0, killed: false, ms: 300, singleInstance: true }); }
         return Promise.resolve();
@@ -494,6 +591,12 @@ async function pagePart(ported) {
         // (Stage R4: the in-app browser.)
         kr_open_webview: () => ({ passed: true, blocked: false, title: 'T' }), kr_browser_fetch: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('in the browser'), via: 'browser' }),
         kr_browser_reset: () => true, kr_browser_forget: (a) => ({ cleared: a.all ? 3 : 1 }),
+        // (Stage R5.)
+        kr_archive_list: () => ({ format: 'zip', entries: [{ path: 'a.txt', size: 3, dir: false }], total: 3, encrypted: false, inPlaceOk: true, resumable: false, largest: 3, free: 1e9 }), kr_archive_extract: (a) => ({ files: 1, dest: a.o.dest }),
+        kr_archive_cancel: () => null, kr_archive_create: (a) => ({ files: 1, path: a.o.out, size: 9 }), kr_archive_test: () => ({ ok: true, files: 1, bad: [] }), kr_archive_restore: () => ({ left: 0 }),
+        kr_archive_free: () => ({ free: 1e9 }), kr_archive_existing: () => ({ existing: [] }),
+        kr_app_icon: (a) => ('set' in (a.o || {}) ? true : window.__icon || null), kr_fullscreen: (a) => a.v === 'toggle', kr_immersive: () => true, kr_set_zoom: () => true, kr_progress: () => true, kr_copy_image: () => true,
+        kr_menu: () => false, kr_print_file: () => true,
       };
       window.__openQueue = { file: [], url: [] }; window.__listeners = [];
       window.__TAURI__ = {
@@ -507,7 +610,9 @@ async function pagePart(ported) {
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 47 - shape.leftOut + 2, 'functions in the page (and the extras scanFolder, cancelDownload)'); assert.equal(shape.leftOut, 14, 'left out'); assert.equal(shape.platform, 'linux');
+    assert.equal(shape.fns, 47 - shape.leftOut + 4, 'functions in the page (and the extras scanFolder, cancelDownload, menuText, printFile)'); assert.equal(shape.leftOut, 3, 'left out'); assert.equal(shape.platform, 'linux');
+    // (Stage R5: the library's Archives button — there now that the archives are.)
+    assert.ok(await p.evaluate(() => { const b = [...document.querySelectorAll('.library-tools button, .library-view button')].find((x) => /Archives/.test(x.getAttribute('aria-label') || x.title || x.textContent)); return !!b && !b.hidden; }), 'the Archives button');
     const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));
     assert.ok(!shape.frameless && !shape.bar, 'Electron\'s title bar (ui/titlebar.ts) in the Tauri shell');
     assert.ok(own.winbar && own.bar && own.buttons === 3, 'the Tauri shell\'s own title bar (ui/winbar.ts): ' + JSON.stringify(own));
@@ -546,6 +651,14 @@ async function pagePart(ported) {
         addDownloadListener: () => { let n = 0; const off = kd.addDownloadListener(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:download-progress').forEach((l) => l[1]({ payload: { id: 'x', pct: 1 } })); off(); return n; },
         openWebView: () => kd.openWebView({ url: 'https://example.org/', hidden: true }), browserFetch: async () => (await kd.browserFetch({ url: 'https://example.org/p' })).body,
         browserReset: () => kd.browserReset('https://example.org/'), browserForget: () => kd.browserForget('https://example.org/', true),
+        archiveList: () => kd.archiveList({ path: '/x/a.zip' }), archiveExtract: () => kd.archiveExtract({ id: 'j', path: '/x/a.zip', dest: '/x/o' }), archiveCancel: () => kd.archiveCancel('j'),
+        archiveCreate: () => kd.archiveCreate({ id: 'k', out: '/x/b.zip', inputs: ['/x/a.txt'] }), archiveTest: () => kd.archiveTest({ id: 't', path: '/x/a.zip' }), archiveRestore: () => kd.archiveRestore({ path: '/x/a.zip' }),
+        archiveFree: () => kd.archiveFree({ dir: '/x' }), archiveExisting: () => kd.archiveExisting({ dest: '/x', names: ['a'] }),
+        onArchiveProgress: () => { let n = 0; const off = kd.onArchiveProgress(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:archive-progress').forEach((l) => l[1]({ payload: { id: 'j', done: 1, total: 1, file: '' } })); off(); return n; },
+        appIcon: () => kd.appIcon(), setFullscreen: () => kd.setFullscreen('toggle'), setImmersive: () => kd.setImmersive(true), copyImage: () => kd.copyImage('iVBORw0KGgoAAAANSUhEUg=='),
+        setZoom: async () => { kd.setZoom(1.25); await new Promise((r) => setTimeout(r, 50)); return document.documentElement.style.zoom; },
+        setProgress: () => kd.setProgress(0.5),
+        onCommand: () => { const got = []; kd.onCommand((c) => got.push(c)); window.__listeners.filter((l) => l[0] === 'kr:command').forEach((l) => l[1]({ payload: 'search' })); return got.slice(-1); },
       };
       for (const [k, f] of Object.entries(runs)) { const n = window.__calls.length; const r = await f(); out[k] = { r, calls: window.__calls.slice(n) }; }
       return out;
@@ -563,6 +676,12 @@ async function pagePart(ported) {
       openWebView: ['kr_open_webview', { o: { url: 'https://example.org/', hidden: true } }, { passed: true, blocked: false, title: 'T' }],
       browserFetch: ['kr_browser_fetch', { o: { url: 'https://example.org/p' } }, 'in the browser'],
       browserReset: ['kr_browser_reset', { url: 'https://example.org/' }, true], browserForget: ['kr_browser_forget', { url: 'https://example.org/', all: true }, { cleared: 3 }],
+      archiveList: ['kr_archive_list', { o: { path: '/x/a.zip' } }, { format: 'zip', entries: [{ path: 'a.txt', size: 3, dir: false }], total: 3, encrypted: false, inPlaceOk: true, resumable: false, largest: 3, free: 1e9 }],
+      archiveExtract: ['kr_archive_extract', { o: { id: 'j', path: '/x/a.zip', dest: '/x/o' } }, { files: 1, dest: '/x/o' }], archiveCancel: ['kr_archive_cancel', { id: 'j' }, null],
+      archiveCreate: ['kr_archive_create', { o: { id: 'k', out: '/x/b.zip', inputs: ['/x/a.txt'] } }, { files: 1, path: '/x/b.zip', size: 9 }], archiveTest: ['kr_archive_test', { o: { id: 't', path: '/x/a.zip' } }, { ok: true, files: 1, bad: [] }],
+      archiveRestore: ['kr_archive_restore', { o: { path: '/x/a.zip' } }, { left: 0 }], archiveFree: ['kr_archive_free', { o: { dir: '/x' } }, { free: 1e9 }], archiveExisting: ['kr_archive_existing', { o: { dest: '/x', names: ['a'] } }, { existing: [] }],
+      appIcon: ['kr_app_icon', { o: {} }, null], setFullscreen: ['kr_fullscreen', { v: 'toggle' }, true], setImmersive: ['kr_immersive', { on: true }, true], copyImage: ['kr_copy_image', { b64: 'iVBORw0KGgoAAAANSUhEUg==' }, true],
+      setZoom: ['kr_set_zoom', { f: 1.25 }, ''], setProgress: ['kr_progress', { p: 0.5 }, undefined],
     };
     // (onOpenFile / onOpenUrl: a take of their kind — and, for a file, its bytes read by path.)
     assert.deepEqual(got.onOpenFile.calls.map((c) => [c.cmd, c.args]), [['kr_open_take', { kind: 'file' }], ['kr_read_file', { p: '/x/a.epub' }]]);
@@ -577,13 +696,17 @@ async function pagePart(ported) {
     }
     assert.equal(got.isPortable.r, false); assert.equal(got.isPortable.calls.length, 0);
     assert.equal(got.onTitleBarState.r, 'function'); assert.equal(got.onTitleBarState.calls.length, 0);
-    for (const k of ['onDownloadProgress', 'addDownloadListener']) { assert.equal(got[k].r, 1, `${k}: heard the event`); assert.equal(got[k].calls.length, 0, `${k}: no command`); }
+    for (const k of ['onDownloadProgress', 'addDownloadListener', 'onArchiveProgress']) { assert.equal(got[k].r, 1, `${k}: heard the event`); assert.equal(got[k].calls.length, 0, `${k}: no command`); }
+    assert.deepEqual(got.onCommand.r, ['search']); assert.equal(got.onCommand.calls.length, 0);
     // (Stage R3: Settings shows the DNS-over-HTTPS choice here, with this shell's hint — since R4 saying that the
     // in-app browser keeps the system's DNS.)
     await p.goto(base + '#/settings'); await p.waitForSelector('.settings-body');
     const dohHint = await p.evaluate(async () => { for (let i = 0; i < 50; i++) { const h = [...document.querySelectorAll('.settings-body .hint')].map((x) => x.textContent).find((x) => /app’s own requests/.test(x)); if (h) return h; await new Promise((r) => setTimeout(r, 100)); } return null; });
     assert.ok(dohHint, 'the DNS-over-HTTPS section (with the Tauri hint) is not in Settings');
     assert.match(dohHint, /in-app browser/, 'the hint names the in-app browser: ' + dohHint);
+    // (Stage R5: Appearance's «The app's icon» row is there, with what Linux lets this build change.)
+    const iconRow = await p.evaluate(async () => { for (let i = 0; i < 50; i++) { const r = document.querySelector('.settings-body .app-icon-row'); if (r) return r.textContent; await new Promise((ok) => setTimeout(ok, 100)); } return null; });
+    assert.ok(iconRow && /desktop entry|its entry in the menus/.test(iconRow), 'the app icon row with the Linux hint: ' + iconRow);
     // (Stage R4: the in-app browser's card — «Open the browser» opens it as a browser, with the bar's words; «Forget
     // all sites' sign-ins» forgets every site — and no «this platform opens sites in your own browser».)
     const card = await p.evaluate(() => { const b = [...document.querySelectorAll('.settings-body button')]; return { open: b.some((x) => /Open the browser/.test(x.textContent)), forget: b.some((x) => /Forget all sites/.test(x.textContent)), none: /opens sites in your own browser/.test(document.querySelector('.settings-body').textContent) }; });

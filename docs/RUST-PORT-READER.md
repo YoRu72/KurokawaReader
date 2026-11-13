@@ -57,6 +57,15 @@ Things to prove early, because they depend on the engine, not on Rust:
 | R7 | **Preview period**: Tauri builds published beside each Electron release; the owner uses it daily on Windows; a list of every difference found. | — | — |
 | R8 | **Switch-over**: Tauri becomes the main download; Electron kept as a fallback download for two versions. Needs the owner's go-ahead. | full suite; size table | low, but hard to undo for users |
 
+**R5, as done** (see `apps/reader/desktop-tauri/PORTING.md`, «Archives, the window, the app's icon»): archives as
+`archive.cjs` does them (its own ZIP and tar readers in Rust, the same 7-Zip program shipped beside the app for the
+rest); full screen, the interface's size, taskbar progress, an image on the clipboard, a Mac's menu bar; the user's own
+app icon kept outside the program and put on the window, the title bar, Windows' shortcuts and Linux's desktop entry
+(a Mac's Dock refuses it), carried in backups. Printing a text PDF has no Tauri equivalent: the converter keeps its
+picture PDF on every system (WebView2's own `PrintToPdf` would need unsafe COM code, not written); the viewer's Print
+opens the system's PDF program on a Mac and Linux. Portable mode stays Electron's (`isPortable` is false here). No tray:
+Electron's Reader has none.
+
 ## 6. What to expect
 
 - **Size** (from the Tools port's measured figures with the same toolkit): Windows installer about 5–10 MB in place of 82 MB; macOS a few MB in place of 166 MB; Linux .deb small, AppImage stays near 80 MB because it must carry its own engine.

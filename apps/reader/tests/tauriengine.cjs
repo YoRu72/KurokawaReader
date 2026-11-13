@@ -119,7 +119,17 @@ async function pagePart() {
     });
     // (What main.rs puts first: the fake IPC stands for Tauri's own, then the boot line, the bridge and the test.)
     await p.addInitScript(() => {
-      const replies = { kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_file_size: () => -1, kr_folder_read: () => null, kr_http: (a) => ({ status: 404, url: a.o.url, headers: {}, body: '' }),
+      // (Stage R5: files, a made-up archive, the icon — kept over the reloads —, the window's full screen.)
+      const disk = new Map(); const emitWb = () => setTimeout(() => window.__wbSubs.forEach((f) => f({ payload: { ...window.__wbState } })), 5);
+      const replies = { kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_file_size: (a) => (disk.has(a.p) ? atob(disk.get(a.p)).length : -1), kr_folder_read: () => null, kr_http: (a) => ({ status: 404, url: a.o.url, headers: {}, body: '' }),
+        kr_write_binary: (a) => { disk.set(a.p, a.b64); return true; }, kr_selftest_mkdir: () => true, kr_selftest_rmdir: () => true,
+        kr_archive_create: (a) => { disk.set(a.o.out, btoa('FAKE' + JSON.stringify(a.o.inputs.map((i) => [i.split('/').pop(), disk.get(i)])))); return { files: a.o.inputs.length, path: a.o.out, size: atob(disk.get(a.o.out)).length }; },
+        kr_archive_list: (a) => { const e = JSON.parse(atob(disk.get(a.o.path)).slice(4)); return { format: 'zip', entries: e.map(([n, b]) => ({ path: n, size: atob(b).length, compressed: atob(b).length, dir: false })), total: e.reduce((t, [, b]) => t + atob(b).length, 0), encrypted: false, inPlaceOk: true, resumable: false, largest: 0, free: 1e10 }; },
+        kr_archive_extract: (a) => { const e = JSON.parse(atob(disk.get(a.o.path)).slice(4)); for (const [n, b] of e) { let out = a.o.dest + '/' + n; if (disk.has(out) && a.o.replace === 'both') out = out.replace(/(\.[^.]+)$/, ' (2)$1'); disk.set(out, b); } return { files: e.length, dest: a.o.dest }; },
+        kr_archive_free: () => ({ free: 1e10 }), kr_archive_existing: (a) => ({ existing: a.o.names.filter((n) => disk.has(a.o.dest + '/' + n)) }),
+        kr_app_icon: (a) => { const o = a.o || {}; if (!('set' in o)) return localStorage.getItem('__fakeIcon'); if (o.set) localStorage.setItem('__fakeIcon', o.set); else localStorage.removeItem('__fakeIcon'); return true; },
+        kr_set_zoom: () => false, kr_progress: () => false, kr_copy_image: () => false, kr_menu: () => false, kr_immersive: () => true,
+        kr_fullscreen: (a) => { const st = window.__wbState; st.fullscreen = a.v === 'toggle' ? !st.fullscreen : !!a.v; emitWb(); return st.fullscreen; },
         // (The window's own title bar: a window's state kept here, each change told as the kr:titleBarState event.)
         kr_title_bar: (a) => { const o = (a && a.o) || {}; const st = window.__wbState; if (o.act === 'maximize') { st.maximized = !st.maximized; setTimeout(() => window.__wbSubs.forEach((f) => f({ payload: { ...st } })), 5); } if (typeof o.own === 'boolean') st.own = o.own; return { ...st }; } };
       window.__wbState = { platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: false, fullscreen: false, focused: true }; window.__wbSubs = [];
@@ -139,7 +149,7 @@ async function pagePart() {
       });
     }
     const runId = String(Date.now());
-    await p.addInitScript({ content: `window.__KR_BOOT__ = ${JSON.stringify({ os: 'linux', arch: 'x64' })};\n${BRIDGE}\nwindow.__KR_ENGINETEST__ = ${JSON.stringify({ runId, os: 'linux', version: '0.0.0', budgetMs: 900000 })};\n${ENGINE}` });
+    await p.addInitScript({ content: `window.__KR_BOOT__ = ${JSON.stringify({ os: 'linux', arch: 'x64' })};\n${BRIDGE}\nwindow.__KR_ENGINETEST__ = ${JSON.stringify({ runId, os: 'linux', version: '0.0.0', budgetMs: 900000, temp: '/tmp' })};\n${ENGINE}` });
     const t0 = Date.now();
     await p.goto(base + '#/');
     let timer = null;

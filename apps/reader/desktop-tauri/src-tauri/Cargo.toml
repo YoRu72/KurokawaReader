@@ -15,7 +15,8 @@ tauri-build = { version = "2", features = [] }
 # kurokawa-shell (shared/shell-rs) uses the same, so one version of each is resolved.
 [dependencies]
 kurokawa-shell = { path = "../../../../shared/shell-rs" }
-tauri = { version = "2", features = [] }
+# (Stage R5: "image-png" — Image::from_bytes, a PNG read for the window's icon and the clipboard's image.)
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
@@ -24,6 +25,13 @@ tauri-plugin-single-instance = "2"
 # (Stage R3: system notifications — the official plugin, as its documentation adds it; used from Rust only.)
 tauri-plugin-notification = "2"
 serde_json = "1"
+# (Stage R5: raw deflate for the archives' own ZIP reader and writer — archive.rs, archives.rs. Pure Rust
+# (miniz_oxide); already in the build through reqwest's gzip.)
+flate2 = "1"
+
+# (Stage R5: the free space of a disk — statvfs; already in the build through Tauri.)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 opt-level = "s"

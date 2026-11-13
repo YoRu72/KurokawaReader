@@ -1,7 +1,7 @@
 // The Reader's Tauri shell, its engine test (stage R1, CI only): the web app's key cases run inside the built app, in
 // the system's own web view (WebView2, WKWebView, WebKitGTK), to learn what works there. Added after bridge.js to the
 // window's initialization script by src-tauri/src/enginetest.rs only when KR_ENGINETEST is set, after a line that sets
-// window.__KR_ENGINETEST__ = { runId, os, version, budgetMs }. Without that object it does nothing.
+// window.__KR_ENGINETEST__ = { runId, os, version, budgetMs, temp }. Without that object it does nothing.
 //
 // It drives the real page as a person would (a small driver: wait for a selector or a condition, click, type, read
 // texts and boxes), and makes every book it needs here, in code: EPUBs (a zip writer below), PDFs (a PDF writer below,
@@ -942,11 +942,16 @@
         must(st.data.mill, 'no book');
         await openReader(st.data.mill, '.reader-flow p');
         var view = $('.reader-view') || doc.body;
+        // (Since R5 the shell's own: setFullscreen, the window itself — its state read back from the title bar's.)
+        var kd = root.kurokawaDesktop;
+        var win = async function () { try { var st = kd && kd.titleBar ? await kd.titleBar({}) : null; return !!(st && st.fullscreen); } catch (e) { return false; } };
+        var state = async function () { return doc.fullscreenElement ? 'HTML full screen' : $('.immersive') ? 'immersive mode (no Fullscreen API)' : (await win()) ? 'the window full screen (setFullscreen)' : ''; };
         key('F11'); await sleep(1200);
-        var how = doc.fullscreenElement ? 'HTML full screen' : $('.immersive') ? 'immersive mode (no Fullscreen API)' : '';
-        if (!how) { command('fullscreen'); await sleep(1200); how = doc.fullscreenElement ? 'HTML full screen (command)' : $('.immersive') ? 'immersive mode (command)' : ''; }
+        var how = await state();
+        if (!how) { command('fullscreen'); await sleep(1200); how = await state(); if (how) how += ' (command)'; }
+        if (!how && kd && kd.setFullscreen) how = 'setFullscreen asked; the window manager did nothing (Xvfb?)';
         must(how, 'nothing happened' + (doc.documentElement.requestFullscreen ? '' : ' (no Fullscreen API)'));
-        if (doc.fullscreenElement) { try { await doc.exitFullscreen(); } catch (e) { /* none */ } } else key('Escape');
+        if (doc.fullscreenElement) { try { await doc.exitFullscreen(); } catch (e) { /* none */ } } else if (kd && kd.setFullscreen) { try { await kd.setFullscreen(false); } catch (e) { /* none */ } } else key('Escape');
         await sleep(400);
         return how + (view ? '' : '');
       });
@@ -1013,6 +1018,86 @@
     });
   }
 
+  // Archives (stage R5): the library's Archives button there now; an archive the app makes (archiveCreate) opened
+  // from that button's sheet — the file picker answered with it, as a person picking it would — and extracted from
+  // the extraction sheet (its own «Extract»); the file it held is there after, beside the first.
+  function sep() { return cfg.os === 'win32' ? '\\' : '/'; }
+  function pjoin(a, b) { return String(a).replace(/[\\/]+$/, '') + sep() + b; }
+  function b64(u) { var s2 = ''; for (var i = 0; i < u.length; i++) s2 += String.fromCharCode(u[i]); return btoa(s2); }
+  function archivesButton() { return $$('.library-view button').filter(function (b) { return /^Archives$/.test(b.getAttribute('aria-label') || b.title || ''); })[0] || null; }
+  async function caseArchives() {
+    await runCase('archives', '11 archives: the button, an archive opened and extracted', 90000, async function (step) {
+      var kd = root.kurokawaDesktop;
+      await step('the Archives button in the library', true, async function () {
+        await toLibrary();
+        var b = await waitFor(function () { var x = archivesButton(); return x && !x.hidden ? x : null; }, 10000, 'the Archives button (archiveList in the bridge: ' + !!(kd && kd.archiveList) + ')');
+        return 'there' + (visible(b) ? '' : ' (folded into «More tools» on a computer)');
+      });
+      var dir = pjoin(cfg.temp || '/tmp', 'kr-archive-engine-' + TAG); var text = utf8('An archived book ✓ نص.\n'.repeat(50));
+      var src = pjoin(dir, 'archived book.txt'); var zip = pjoin(dir, 'engine archive.zip');
+      await step('an archive made by the app (archiveCreate)', true, async function () {
+        must(await invoke('kr_selftest_mkdir', { p: dir }), 'the folder not made');
+        must(await kd.writeBinary(src, b64(text), false), 'not written');
+        var r = await kd.archiveCreate({ id: 'kr-eng-zip', out: zip, inputs: [src] });
+        must(r && r.files === 1, 'made ' + short(r));
+        return zip + ', ' + r.size + ' bytes';
+      });
+      await step('opened from the Archives button and extracted from its sheet', true, async function () {
+        var orig = kd.archivePickFile;
+        kd.archivePickFile = function () { return Promise.resolve([zip]); };
+        try {
+          await toLibrary();
+          click(must(archivesButton(), 'no Archives button'));
+          var open = await waitFor(function () { return byText('.sheet .dest-row', /Open an archive/); }, 8000, 'the Archives sheet');
+          click(open);
+          var sheet = await waitFor(function () { var sh = $$('.sheet').filter(function (x) { return /ZIP/.test(x.textContent || ''); }).pop(); return sh && $('.sheet-actions .btn.primary, .btn.primary', sh) ? sh : null; }, 15000, 'the extraction sheet (its contents and «Extract»)');
+          var what = ($('.src', sheet) || {}).textContent || '';
+          click($('.sheet-actions .btn.primary, .btn.primary', sheet));
+          var out = pjoin(dir, 'archived book (2).txt');
+          await waitFor(async function () { return (await kd.fileSize(out)) === text.length; }, 20000, 'the file extracted beside the first (' + out + ')');
+          return what.trim() + ' → extracted';
+        } finally { kd.archivePickFile = orig; closeSheets(); }
+      }, 45000);
+      try { await invoke('kr_selftest_rmdir', { p: dir }); } catch (e) { /* the runner's own temp */ }
+    });
+  }
+
+  // The app's icon of the user's choosing (stage R5): chosen before the reload (a picture drawn here), then — after it,
+  // as at a start — the title bar's logo is that picture (the shell's record, taken by the page at its start); a
+  // screenshot of the bar with it; back to the app's own.
+  async function caseIconChoose() {
+    await runCase('icon', '12 the app\'s own icon: chosen', 30000, async function (step) {
+      var kd = root.kurokawaDesktop;
+      await step('a picture chosen as the app\'s icon (appIcon)', false, async function () {
+        must(kd && kd.appIcon, 'no appIcon');
+        var c = doc.createElement('canvas'); c.width = 512; c.height = 512; var g = c.getContext('2d');
+        g.fillStyle = '#e8a33d'; g.fillRect(0, 0, 512, 512); g.fillStyle = '#1b2a4a'; g.beginPath(); g.arc(256, 256, 170, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#ffffff'; g.font = 'bold 220px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('K', 256, 268);
+        var url = c.toDataURL('image/png');
+        must((await kd.appIcon({ set: url })) === true, 'not taken');
+        st.data.icon = url.length; save();
+        return 'a 512 px picture, ' + url.length + ' characters';
+      });
+    });
+  }
+  async function caseIconShown() {
+    await runCase('iconshown', '12 the app\'s own icon: in the title bar after a start', 40000, async function (step) {
+      var kd = root.kurokawaDesktop;
+      if (!st.data.icon) { rec('iconshown', 'no icon was chosen', false, 'skipped', false); return; }
+      await step('the title bar shows it', false, async function () {
+        await toLibrary();
+        var img = await waitFor(function () { var i = $('.kr-winbar img[data-brand]') || $('img[data-brand]'); return i && /^data:image\/png/.test(i.getAttribute('src') || '') ? i : null; }, 10000, 'the bar\'s logo made the chosen picture');
+        return 'the logo is the chosen picture (' + String(img.getAttribute('src')).length + ' characters)';
+      });
+      await shot('iconshown', '09-titlebar-custom-icon');
+      await step('back to the app\'s own icon', false, async function () {
+        must((await kd.appIcon({ set: null })) === true, 'not reset');
+        must((await kd.appIcon()) === null, 'still kept');
+        return 'reset';
+      });
+    });
+  }
+
   async function caseArabicUi() {
     await runCase('arui', '3 Arabic interface', 60000, async function (step) {
       await step('the interface in Arabic, right to left', false, async function () {
@@ -1059,10 +1144,13 @@
       await caseSpeech();
       await caseWindow();
       await caseTitleBar();
+      await caseArchives();
+      await caseIconChoose();
       try { ls.setItem('kr.lang', 'ar'); } catch (e) { /* stays English */ }
       return reload('arabic-ui');
     }
     if (st.phase === 'arabic-ui') {
+      await caseIconShown();
       await caseArabicUi();
       try { ls.setItem('kr.lang', 'en'); } catch (e) { /* none */ }
       return finish();

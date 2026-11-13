@@ -38,6 +38,38 @@
     for (var i = 0; i < u.length; i++) crc = CRC_TABLE[(crc ^ u[i]) & 0xFF] ^ (crc >>> 8);
     return (crc ^ 0xFFFFFFFF) >>> 0;
   }
+  var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  function toB64(u) {
+    var out = ''; var n = u.length; var i = 0;
+    for (; i + 2 < n; i += 3) { var x = (u[i] << 16) | (u[i + 1] << 8) | u[i + 2]; out += B64[x >> 18] + B64[(x >> 12) & 63] + B64[(x >> 6) & 63] + B64[x & 63]; }
+    if (n - i === 1) { var y = u[i] << 16; out += B64[y >> 18] + B64[(y >> 12) & 63] + '=='; }
+    else if (n - i === 2) { var z = (u[i] << 16) | (u[i + 1] << 8); out += B64[z >> 18] + B64[(z >> 12) & 63] + B64[(z >> 6) & 63] + '='; }
+    return out;
+  }
+  function le(n, k) { var a = []; for (var i = 0; i < k; i++) a.push(Math.floor(n / Math.pow(256, i)) & 255); return a; }
+  function be32(n) { return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]; }
+  /** A zip of stored entries, names as given (a hostile one too): [[name, bytes]…] → bytes. */
+  function zipStored(entries) {
+    var out = []; var cd = [];
+    entries.forEach(function (e) {
+      var name = utf8(e[0]); var data = e[1]; var crc = crc32(data); var off = out.length;
+      out = out.concat([0x50, 0x4b, 3, 4, 20, 0, 0, 8, 0, 0, 0, 0, 0, 0], le(crc, 4), le(data.length, 4), le(data.length, 4), le(name.length, 2), [0, 0], name, data);
+      cd = cd.concat([0x50, 0x4b, 1, 2, 20, 0, 20, 0, 0, 8, 0, 0, 0, 0, 0, 0], le(crc, 4), le(data.length, 4), le(data.length, 4), le(name.length, 2), [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], le(off, 4), name);
+    });
+    var start = out.length;
+    return out.concat(cd, [0x50, 0x4b, 5, 6, 0, 0, 0, 0], le(entries.length, 2), le(entries.length, 2), le(cd.length, 4), le(start, 4), [0, 0]);
+  }
+  /** A PNG of w×h made here (RGBA, a pattern; zlib of stored blocks): an icon to choose. */
+  function makePng(w, h) {
+    var raw = [];
+    for (var y = 0; y < h; y++) { raw.push(0); for (var x = 0; x < w; x++) raw.push((x * 4) & 255, (y * 4) & 255, ((x + y) * 2) & 255, 255); }
+    var a = 1, b = 0; for (var i = 0; i < raw.length; i++) { a = (a + raw[i]) % 65521; b = (b + a) % 65521; }
+    var z = [0x78, 0x01];
+    for (var j = 0; j < raw.length; j += 65535) { var n = Math.min(65535, raw.length - j); z.push(j + n >= raw.length ? 1 : 0, n & 255, n >> 8, ~n & 255, (~n >> 8) & 255); for (var k = 0; k < n; k++) z.push(raw[j + k]); }
+    z = z.concat(be32(((b << 16) | a) >>> 0));
+    function chunk(type, data) { var td = utf8(type).concat(data); return be32(data.length).concat(td, be32(crc32(td))); }
+    return [137, 80, 78, 71, 13, 10, 26, 10].concat(chunk('IHDR', be32(w).concat(be32(h), [8, 6, 0, 0, 0])), chunk('IDAT', z), chunk('IEND', []));
+  }
   function fromB64(s) { var bin = atob(String(s || '')); var u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
   function dirOf(p) { var i = Math.max(String(p).lastIndexOf('/'), String(p).lastIndexOf('\\')); return i > 0 ? String(p).slice(0, i) : ''; }
   function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s); }
@@ -491,6 +523,182 @@
       return 'none';
     }, 20000);
 
+    /* stage R5 — archives (archive.rs, archives.rs): the 7-Zip shipped with the app found; a zip made of a folder and
+       a file → listed → tested → extracted, every byte the same, progress heard; extracted in place (the archive gone
+       after); a zip that would write outside its folder refused before anything is written; free space and files
+       already there; with the shipped 7-Zip (required on Windows and Linux; reported on a Mac): a 7z with a password
+       — refused without it, «wrongPassword» with a wrong one, extracted with it — and a tar.gz in two layers. The
+       test's password is a made-up one and appears in no result. */
+    var ownSeven = cfg.os !== 'darwin';
+    await check('archives: the 7-Zip shipped with the app', ownSeven, async function () {
+      var r = await env.invoke('kr_selftest_7z', { args: [] });
+      must(r && r.path, 'no 7-Zip found');
+      must(r.own, 'only the system\'s 7-Zip (' + r.path + '), not the app\'s own');
+      return r.path;
+    }, 15000);
+    var adir = join(cfg.temp, 'kr-archive-' + env.now(), cfg.os);
+    var aSrc = join(adir, 'Book Folder', cfg.os); var aSub = join(aSrc, 'sub ✓', cfg.os);
+    var textBytes = utf8('Alice was beginning to get very tired ✓ نص. '.repeat(400));
+    var binBytes = []; for (var bi = 0; bi < 3000; bi++) binBytes.push((bi * 37 + 11) & 255);
+    var picBytes = makePng(32, 32);
+    var aFiles = [[join(aSrc, 'a.txt', cfg.os), 'Book Folder/a.txt', textBytes], [join(aSub, 'b.bin', cfg.os), 'Book Folder/sub ✓/b.bin', binBytes], [join(adir, 'c.png', cfg.os), 'c.png', picBytes]];
+    var aOk = false;
+    async function sameFiles(dest) {
+      for (var i = 0; i < aFiles.length; i++) {
+        var p2 = join(dest, aFiles[i][1].split('/').join(cfg.os === 'win32' ? '\\' : '/'), cfg.os);
+        var got = await kd.readFile(p2); must(sameBytes(got, aFiles[i][2]), aFiles[i][1] + ': ' + bytesOf(got).length + ' bytes, not the same');
+      }
+    }
+    await check('archives: a zip made → listed → tested → extracted, every byte the same', true, async function () {
+      must(typeof kd.archiveCreate === 'function' && typeof kd.archiveList === 'function', 'no archive functions');
+      must((await env.invoke('kr_selftest_mkdir', { p: aSub })) === true, 'the test folder not made');
+      for (var i = 0; i < aFiles.length; i++) must((await kd.writeBinary(aFiles[i][0], toB64(aFiles[i][2]), false)) === true, 'not written: ' + aFiles[i][0]);
+      var heard = 0; var off = kd.onArchiveProgress(function (pr) { if (pr && pr.id === 'kr-st-zip') heard++; });
+      var zip = join(adir, 'made.zip', cfg.os);
+      try {
+        var c = await kd.archiveCreate({ id: 'kr-st-zip', out: zip, inputs: [aSrc, aFiles[2][0]] });
+        must(c && c.files === 3 && c.size > 0 && c.path === zip, 'made ' + short(c));
+      } finally { await sleep(300); off(); }
+      var info = await kd.archiveList({ path: zip });
+      var names = (info.entries || []).filter(function (e) { return !e.dir; }).map(function (e) { return e.path; }).sort();
+      must(info.format === 'zip' && !info.unsafe && !info.encrypted && info.inPlaceOk, 'listed ' + short(info));
+      must(names.join('|') === aFiles.map(function (f) { return f[1]; }).sort().join('|'), 'entries ' + short(names));
+      must(info.total === textBytes.length + binBytes.length + picBytes.length, 'total ' + info.total);
+      var t = await kd.archiveTest({ id: 'kr-st-test', path: zip }); must(t && t.ok && t.files === 3, 'test ' + short(t));
+      var out = join(adir, 'out', cfg.os);
+      var x = await kd.archiveExtract({ id: 'kr-st-x', path: zip, dest: out, replace: 'replace' });
+      must(x && x.files === 3 && x.dest === out, 'extracted ' + short(x));
+      await sameFiles(out);
+      var ex = await kd.archiveExisting({ dest: out, names: ['c.png', 'nope.txt', '../made.zip'] }); must(short(ex.existing) === '["c.png"]', 'existing ' + short(ex));
+      var fr = await kd.archiveFree({ dir: join(out, 'not made yet', cfg.os) }); must(fr && fr.free > 0, 'free ' + short(fr));
+      aOk = true;
+      return '3 files, ' + c.size + ' bytes; tested; extracted and compared; progress events ' + heard + '; ' + Math.round(fr.free / 1048576) + ' MiB free';
+    }, 60000);
+    await check('archives: extracted in place (the archive gone after)', true, async function () {
+      must(aOk, 'no zip made');
+      var zip2 = join(adir, 'inplace.zip', cfg.os);
+      var c = await kd.archiveCreate({ id: 'kr-st-zip2', out: zip2, inputs: [aSrc, aFiles[2][0]] });
+      var info = await kd.archiveList({ path: zip2 }); must(info.inPlaceOk && !info.resumable, 'listed ' + short(info));
+      var dest = join(adir, 'in place', cfg.os);
+      var x = await kd.archiveExtract({ id: 'kr-st-ip', path: zip2, dest: dest, inPlace: true, replace: 'replace', keepFree: 0 });
+      must(x.files === 3, 'extracted ' + short(x));
+      must((await kd.fileSize(zip2)) === -1, 'the archive is still there');
+      await sameFiles(dest);
+      return c.size + ' bytes taken out in place';
+    }, 60000);
+    await check('archives: a zip that would write outside its folder is refused', true, async function () {
+      var evil = '../kr-evil-' + env.now() + '.txt';
+      var hz = join(adir, 'hostile.zip', cfg.os);
+      must((await kd.writeBinary(hz, toB64(zipStored([['fine.txt', utf8('fine')], [evil, utf8('pwned')]])), false)) === true, 'not written');
+      var info = await kd.archiveList({ path: hz }); must(info.unsafe === evil, 'listed without «unsafe»: ' + short(info));
+      var dest = join(adir, 'hostile out', cfg.os);
+      var e = await rejects(kd.archiveExtract({ id: 'kr-st-evil', path: hz, dest: dest, replace: 'replace' }));
+      must(e instanceof Error && e.message === 'unsafePath ' + evil, 'answer ' + (e ? e.message : 'extracted'));
+      must((await kd.fileSize(join(adir, evil.slice(3), cfg.os))) === -1 && (await kd.fileSize(join(cfg.temp, evil.slice(3), cfg.os))) === -1, 'the file was written outside');
+      must((await kd.fileSize(join(dest, 'fine.txt', cfg.os))) === -1, 'something was written before the refusal');
+      return 'refused: unsafePath ' + evil;
+    }, 30000);
+    var PW = 'kr-made-up-' + (env.now() % 1000);
+    await check('archives: a 7z with a password (the shipped 7-Zip)', ownSeven, async function () {
+      must(aOk, 'no test files');
+      var z7 = join(adir, 'locked.7z', cfg.os);
+      var make7z = ['a', '-t7z', '-mhe=on', '-p' + PW, z7, aSrc, aFiles[2][0]];
+      var mk = await env.invoke('kr_selftest_7z', { args: make7z });
+      must(mk && mk.code === 0, '7-Zip could not make it (exit ' + (mk && mk.code) + ')');
+      var e1 = await rejects(kd.archiveList({ path: z7 })); must(e1 && /password/i.test(e1.message), 'listed without its password: ' + (e1 ? e1.message : 'yes'));
+      var info = await kd.archiveList({ path: z7, password: PW });
+      must(info.format === '7z' && info.encrypted && (info.entries || []).filter(function (x) { return !x.dir; }).length === 3, 'listed ' + short({ format: info.format, encrypted: info.encrypted, n: (info.entries || []).length }));
+      var dest = join(adir, 'from 7z', cfg.os);
+      var e2 = await rejects(kd.archiveExtract({ id: 'kr-st-7w', path: z7, dest: dest, password: PW + 'x', replace: 'replace' }));
+      must(e2 && /password/i.test(e2.message), 'a wrong password: ' + (e2 ? e2.message : 'extracted'));
+      var heard = 0; var off = kd.onArchiveProgress(function (pr) { if (pr && pr.id === 'kr-st-7z') heard++; });
+      try { var x = await kd.archiveExtract({ id: 'kr-st-7z', path: z7, dest: dest, password: PW, replace: 'replace' }); must(x && typeof x.files === 'number', 'extracted ' + short(x)); } finally { await sleep(200); off(); }
+      await sameFiles(dest);
+      var t = await kd.archiveTest({ id: 'kr-st-7t', path: z7, password: PW }); must(t.ok, 'test ' + short(t.bad));
+      return 'listed, refused without it and with a wrong one, extracted (' + x.files + ' named by 7-Zip, ' + heard + ' progress events) and tested';
+    }, 90000);
+    await check('archives: a tar.gz in two layers (the shipped 7-Zip)', ownSeven, async function () {
+      must(aOk, 'no test files');
+      var tar = join(adir, 'set.tar', cfg.os); var tgz = join(adir, 'set.tar.gz', cfg.os);
+      var makeTar = ['a', '-ttar', tar, aSrc, aFiles[2][0]]; var makeGz = ['a', '-tgzip', tgz, tar];
+      var a1 = await env.invoke('kr_selftest_7z', { args: makeTar }); must(a1 && a1.code === 0, 'tar not made (exit ' + (a1 && a1.code) + ')');
+      var a2 = await env.invoke('kr_selftest_7z', { args: makeGz }); must(a2 && a2.code === 0, 'gzip not made (exit ' + (a2 && a2.code) + ')');
+      var lt = await kd.archiveList({ path: tar }); must(lt.format === 'tar' && lt.inPlaceOk && (lt.entries || []).filter(function (x) { return !x.dir; }).length === 3, 'the tar listed ' + short(lt.entries));
+      var info = await kd.archiveList({ path: tgz }); must(info.format === 'tar.gz', 'listed ' + short(info.format));
+      var dest = join(adir, 'from tgz', cfg.os);
+      var x = await kd.archiveExtract({ id: 'kr-st-tgz', path: tgz, dest: dest, replace: 'replace' });
+      await sameFiles(dest);
+      var tdest = join(adir, 'from tar in place', cfg.os);
+      var y = await kd.archiveExtract({ id: 'kr-st-tip', path: tar, dest: tdest, inPlace: true, replace: 'replace', keepFree: 0 });
+      must((await kd.fileSize(tar)) === -1, 'the tar is still there');
+      await sameFiles(tdest);
+      return 'tar.gz: ' + x.files + ' files out; the tar in place: ' + y.files;
+    }, 90000);
+    try { await env.invoke('kr_selftest_rmdir', { p: adir }); } catch (e) { /* gone */ }
+
+    /* stage R5 — the window (winbits.rs, menu.rs): a menu command reaches the page (onCommand; a Mac's menu bar sends
+       it so); full screen of the window and back (reported: Xvfb has no window manager); the interface's size;
+       taskbar progress; a picture on the clipboard (reported: a headless desktop may have none). */
+    await check('onCommand: a command of the shell reaches the page', true, async function () {
+      var got = []; kd.onCommand(function (c) { got.push(c); });
+      await sleep(300);
+      must((await env.invoke('kr_selftest_command', { c: 'search' })) === true, 'not sent');
+      await waitFor(function () { return got.indexOf('search') >= 0; }, 5000, 'the command (heard ' + short(got) + ')');
+      return 'heard ' + short(got);
+    }, 15000);
+    await check('setFullscreen: the window full screen, then back', false, async function () {
+      var on = await kd.setFullscreen(true); must(on === true, 'answer ' + short(on));
+      var st = null; for (var fi = 0; fi < 25 && !st; fi++) { var s1 = await kd.titleBar({}); if (s1 && s1.fullscreen) st = s1; else await sleep(200); }
+      var off = await kd.setFullscreen(false);
+      await sleep(600);
+      var s2 = await kd.titleBar({});
+      return (st ? 'full screen (the title bar told)' : 'asked; the window manager did nothing') + ', then ' + (off === false && !s2.fullscreen ? 'back' : 'still ' + short(s2));
+    }, 20000);
+    await check('setZoom: the interface at 125 %, then 100 %', false, async function () {
+      // (Back to the page's own size after: Appearance → size, 110 % unless chosen — src/ui/pcshell.ts.)
+      var own = 1.1; try { own = Number(root.localStorage.getItem('kr.uiSize')) || 1.1; } catch (e) { /* the default */ }
+      var w0 = root.innerWidth; kd.setZoom(1.25); await sleep(800); var w1 = root.innerWidth; var css = ''; try { css = root.document.documentElement.style.zoom; } catch (e) { /* no page */ }
+      kd.setZoom(own); await sleep(800); var w2 = root.innerWidth;
+      must(w2 === w0 || Math.abs(w2 - w0) < 2, 'not back: ' + w0 + ' → ' + w2);
+      return (css ? 'CSS zoom (this build\'s Tauri has no set_zoom)' : 'the web view zoomed: ' + w0 + ' → ' + w1 + ' px wide');
+    }, 10000);
+    await check('setProgress: the taskbar\'s progress', false, async function () {
+      must(kd.setProgress(0.4) === undefined, 'answered');
+      var r = await env.invoke('kr_progress', { p: 0.5 }); var r2 = await env.invoke('kr_progress', { p: -1 });
+      return r && r2 ? 'set and taken away' : 'this build\'s Tauri has no set_progress_bar';
+    }, 10000);
+    await check('copyImage: a picture on the system clipboard (read back)', false, async function () {
+      var ok = await kd.copyImage(toB64(makePng(40, 24))); must(ok === true, 'answer ' + short(ok));
+      var back = await env.invoke('kr_selftest_clipimage', {});
+      must(back && back.width === 40 && back.height === 24, 'read back ' + short(back));
+      return '40×24 put and read back';
+    }, 15000);
+
+    /* stage R5 — the app's icon of the user's choosing (appicon.rs): a picture chosen → the PNG and the .ico (its
+       sizes drawn by the page) kept, the window's icon set (Windows; Linux under Xvfb; a Mac's windows have none);
+       given back as the one in force; a picture that is no PNG refused; reset → no file, the default icon. (The title
+       bar showing it, after a start: the engine test, with a screenshot.) */
+    await check('app icon: chosen → kept, put on the window; refused when not a PNG; reset', cfg.os !== 'darwin', async function () {
+      must(typeof kd.appIcon === 'function', 'no appIcon');
+      var url = 'data:image/png;base64,' + toB64(makePng(64, 64));
+      must((await kd.appIcon({ set: url })) === true, 'not set');
+      var st = await env.invoke('kr_selftest_icon', {});
+      must(st && st.png > 0, 'no picture kept: ' + short(st));
+      must((await kd.appIcon()) === url, 'not given back as the one in force');
+      var icoN = (st.ico || []).length;
+      var win = st.last && st.last.window;
+      if (cfg.os === 'win32') must(icoN === 7, 'the .ico has ' + icoN + ' sizes');
+      if (st.setIcon) must(win === true, 'the window\'s icon: ' + short(win));
+      var bad = await rejects(kd.appIcon({ set: 'data:image/png;base64,' + toB64(utf8('GIF89a not a png at all, no')) }));
+      must(bad instanceof Error, 'a picture that is no PNG was taken');
+      must((await kd.appIcon()) === url, 'the refused one replaced it');
+      must((await kd.appIcon({ set: null })) === true, 'not reset');
+      var st2 = await env.invoke('kr_selftest_icon', {});
+      must(st2.png === null && !(st2.ico || []).length, 'files left: ' + short(st2));
+      must((await kd.appIcon()) === null, 'still given back after reset');
+      return 'kept in ' + st.dir + '; .ico of ' + icoN + ' sizes; window: ' + short(win) + (st.last && st.last.desktopEntry ? '; desktop entry: ' + short(st.last.desktopEntry) : '') + '; refused a non-PNG; reset (window: ' + short(st2.last && st2.last.window) + ')';
+    }, 30000);
+
     /* clipboard (the shared shell.rs): not required — a headless desktop may have none */
     await check('clipboard write → read', false, async function () { var t = 'kr selftest ✓ نص'; var back = await env.invoke('kr_selftest_clipboard', { text: t }); must(back === t, 'read ' + short(back)); return 'round trip'; });
 
@@ -512,7 +720,7 @@
     return results;
   }
 
-  var lib = { NAMES: NAMES, ASSET: ASSET, verdict: verdict, sameBytes: sameBytes, utf8: utf8, join: join, crc32: crc32, fromB64: fromB64, run: run };
+  var lib = { NAMES: NAMES, ASSET: ASSET, verdict: verdict, sameBytes: sameBytes, utf8: utf8, join: join, crc32: crc32, fromB64: fromB64, toB64: toB64, zipStored: zipStored, makePng: makePng, run: run };
   try { Object.defineProperty(root, '__KR_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KR_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KR_SELFTEST__;

@@ -7,7 +7,11 @@ engine test — the web app's key cases run in each system's own web view in CI 
 files and library — files opened from outside, single instance, file associations, drag and drop, folders by path (see
 «Files and library» below). **Stage R3**: network — downloads with progress, cookies, DNS over HTTPS, notifications (see
 «Network» below). **Stage R4**: the in-app browser the sources use — a site's check passed, a site opened for the
-reader, requests made by the site's own page, its sign-ins forgotten (see «The in-app browser» below).
+reader, requests made by the site's own page, its sign-ins forgotten (see «The in-app browser» below). **Stage R5**:
+archives through the app's own ZIP and tar readers and the 7-Zip program shipped with it, full screen, the interface's
+size, taskbar progress, an image on the clipboard, a Mac's menu bar, and the user's own app icon put on everything the
+system lets the app change (see «Archives, the window, the app's icon» below); the converter's PDF stays the page's
+picture PDF (no silent PDF printing here). Since R5 only R6's functions (the updater) are not real.
 
 ## How it works
 
@@ -19,8 +23,9 @@ reader, requests made by the site's own page, its sign-ins forgotten (see «The 
   fills a small screen) saves the size it has, as Electron always saves its normal bounds.
 - `bridge.js` runs before the page's own scripts on every load, after a line that sets `window.__KR_BOOT__ = { os,
   arch }`, and defines the same `window.kurokawaDesktop` the Electron preload does: **all 48 names** (47 functions and
-  `platform`) — except the 14 **left out** until their stage (below) —, and two of its own (`scanFolder`, R2;
-  `cancelDownload`, R3: its `EXTRA`, `window.__KR_BRIDGE_EXTRA__`). Each Electron channel `kr:a-b` is the Tauri
+  `platform`) — except the 3 **left out** (below: R6's two, and `printToPdf`, whose page fallback is this shell's
+  answer) —, and four of its own (`scanFolder`, R2; `cancelDownload`, R3; `menuText`, R5; `printFile`, R5, a Mac and
+  Linux only: its `EXTRA`, `window.__KR_BRIDGE_EXTRA__`). Each Electron channel `kr:a-b` is the Tauri
   command `kr_a_b` (`src-tauri/src/commands.rs`); arguments
   are sent under one-word keys (`p`, `o`, `text`, `b64`, `append`, `exts`, `url`, `name`, `id`, `provider`, `test`),
   so Tauri's camelCase mapping never matters.
@@ -37,7 +42,8 @@ reader, requests made by the site's own page, its sign-ins forgotten (see «The 
   where Electron has no such answer — rejects with `Error('<name> is not in this preview build yet (Tauri stage
   Rn)')`. The table below says how the page copes with each. `window.__KR_BRIDGE_STUBS__` lists them with their stage.
 - R0 found that a stub being **present** makes the page skip a fallback that works. So a name the page tests for before
-  it uses it is **left out** of `window.kurokawaDesktop` until its stage (`bridge.js`'s `LEFT_OUT`,
+  it uses it is **left out** of `window.kurokawaDesktop` until its stage — or for good, `'fallback'`, where the page's
+  own way is this shell's answer (`printToPdf`) — (`bridge.js`'s `LEFT_OUT`,
   `window.__KR_BRIDGE_LEFT_OUT__`): the page then takes its own way, and shows no control that cannot work. A name the
   page calls without a test (`onOpenFile`), or whose stub answers better than its absence (`installUpdate`: «not in
   this preview build yet» rather than «desktop»), stays a stub.
@@ -62,8 +68,8 @@ reader, requests made by the site's own page, its sign-ins forgotten (see «The 
   (the app fetches it from the web app when asked).
 
 What differs from Electron in this stage, on purpose: the window's title bar is drawn whole by the page — its buttons
-too — instead of Electron's strip under the system's buttons (see «The window's title bar» below), no application menu (R5; the page's own keyboard shortcuts
-work), the in-app browser's cookies reaching `http` only where this build can read them (see «The in-app browser»),
+too — instead of Electron's strip under the system's buttons (see «The window's title bar» below), a menu bar on a Mac only (R5; on Windows and Linux the page's own keyboard shortcuts and buttons, as
+Electron's menu was hidden there), the in-app browser's cookies reaching `http` only where this build can read them (see «The in-app browser»),
 and the page's origin is Tauri's
 (`tauri://localhost`, `http://tauri.localhost` on Windows), not `app://kurokawa` — so the library starts empty; carrying
 it over from the Electron profile is R6.
@@ -124,9 +130,10 @@ with progress (2 MiB: whole file by CRC, the name made safe, `deleteDownload` on
 test server's resolver (a made-up name reached, the resolver asked, the try of an unknown name answered `ok: false`,
 then off again; that the name is unknown without it: reported), `notify` answering (reported); the update check against a canned releases list (stable 0.62.0 with this OS's asset, beta
 0.63.0, nothing after 0.62.0); window state saved and read back as the next start would; (R4) the in-app browser on
-the test server's small site (see «The in-app browser»); the clipboard round trip (not required); every stub answers as
+the test server's small site (see «The in-app browser»); (R5) archives, the window's parts and the app's icon (see
+«Archives, the window, the app's icon»); the clipboard round trip (not required); every stub answers as
 documented. Results go to `kr_selftest_done`, which writes them and exits 0/1; a
-watchdog exits 2 after `KR_SELFTEST_TIMEOUT` (260 in CI since R4) seconds. `.github/workflows/tauri-check-reader.yml` runs it
+watchdog exits 2 after `KR_SELFTEST_TIMEOUT` (330 in CI since R5) seconds. `.github/workflows/tauri-check-reader.yml` runs it
 on Linux under Xvfb and on Windows (both required), and on macOS (reported only). `selftest-report.cjs` prints the
 results as a table. Not tested by the self-test: the file dialogs (they wait for a person) and `openDefaultApps` (it
 opens the system's settings).
@@ -140,8 +147,9 @@ sends the right command and arguments from the page.
 
 `docs/RUST-PORT-READER.md` says 38; `desktop/preload.cjs` today gives 47 functions and `platform`. All are here.
 
-**Done: 26** (R0: 12, the title bar: 2, R2: 2, R3: 6, R4: 4; + `platform`) · **stubs: 7** (R5: 5, R6: 2) · **left out:
-14** (R5: 12, R6: 2) · **extra: 2** (`scanFolder`, R2; `cancelDownload`, R3).
+**Done: 42** (R0: 12, the title bar: 2, R2: 2, R3: 6, R4: 4, R5: 16; + `platform`) · **stubs: 2** (R6) · **left out:
+3** (R6: 2; `printToPdf`: the page's picture PDF, for good) · **extra: 4** (`scanFolder`, R2; `cancelDownload`, R3;
+`menuText`, `printFile` — a Mac and Linux —, R5).
 
 | Function | Electron (`main.cjs`) | R0 | How the page copes with the stub | Stage |
 |---|---|---|---|---|
@@ -158,28 +166,28 @@ sends the right command and arguments from the page.
 | `openDefaultApps()` | `kr:default-apps`: the system's default-apps page (Windows, macOS); false elsewhere | **done** `kr_default_apps` | | |
 | `http(o)` | `kr:http`: request without cross-site limits, session cookies, text in the page's charset | **done** `kr_http`; R3: cookies kept, DoH, the system's proxy | | |
 | `isPortable()` | `kr:is-portable` | **done**: `false` (this build is never Electron's portable .exe) | | |
-| `appIcon(o)` | `kr:appIcon`: the user's own icon on window, taskbar, shortcuts | **left out** | no app-icon option in Settings (`appIconWay()` is null) | R5 |
+| `appIcon(o)` | `kr:appIcon`: the user's own icon on window, taskbar, shortcuts | **done** (R5) `kr_app_icon` (`appicon.rs`, `iconlogic.rs`; see below) | | |
 | `titleBar(o)` | `app:titleBar`: the app's own bar's colours, `{platform, height, …}` | **done** `kr_title_bar` (`titlebar.rs`): `o.own` asks for the app's own bar or the system's frame, `o.act` works the window (`minimize`, `maximize` = maximise / restore, `close`, `drag`) → `{platform, height, own, wanted, controls, maximized, fullscreen, focused}` — a different protocol from Electron's (see below) | | |
 | `onTitleBarState(cb)` | `app:titleBarState` events | **done**: the `kr:titleBarState` Tauri event (the state above, on each change) | | |
-| `setZoom(f)` | `webFrame.setZoomFactor` | stub: nothing | the interface stays at 100% (Appearance → size has no effect) | R5 |
+| `setZoom(f)` | `webFrame.setZoomFactor` | **done** (R5) `kr_set_zoom`: the web view's `set_zoom`, else the page's CSS zoom | | |
 | `onOpenFile(cb)` | `kr:open-file` events (double-click, open-with, second instance) + `kr:ready` | **done** (R2) `kr_open_take` + `kr_read_file`, the `kr:openPending` event (`openfile.rs`) | | |
 | `installUpdate(url, o)` | `kr:install-update`: download, then install / swap | stub: rejects | the update sheet shows its error | R6 |
 | `downloadUpdate(o)` | `kr:update-download`: electron-updater in the background | **left out** | no «download in the background» switch; the page's own check and update sheet | R6 |
 | `installDownloadedUpdate()` | `kr:update-install` | **left out** | (never offered: nothing is downloaded) | R6 |
 | `onUpdateProgress(cb)` | `kr:update-progress` events | stub: nothing | | R6 |
-| `archiveList(o)` | `kr:archive-list` (7-Zip) | **left out** | no Archives button (`canArchive()` is false) | R5 |
-| `archiveExtract(o)` | `kr:archive-extract` | **left out** | as above | R5 |
-| `archiveCancel(id)` | `kr:archive-cancel` | **left out** | as above | R5 |
-| `archiveCreate(o)` | `kr:archive-create` | **left out** | as above | R5 |
-| `archiveTest(o)` | `kr:archive-test` | **left out** | as above | R5 |
-| `archiveRestore(o)` | `kr:archive-restore` | **left out** | as above | R5 |
-| `archiveFree(o)` | `kr:archive-free` | **left out** | as above | R5 |
-| `archiveExisting(o)` | `kr:archive-existing` | **left out** | as above | R5 |
-| `onArchiveProgress(cb)` | `kr:archive-progress` events | **left out** | as above | R5 |
-| `setFullscreen(v)` | `kr:fullscreen`: the window full screen → new state | **left out** | F11 / the reader's full-screen button use the HTML full screen (`toggleFullscreen`), or the reader's immersive mode where the web view has no Fullscreen API | R5 |
-| `setImmersive(on)` | `kr:immersive` | stub: `false` | the reader's immersive mode hides the app's bars only | R5 |
-| `copyImage(b64)` | `kr:copy-image`: image to the clipboard | stub: `false` | the page falls back to `navigator.clipboard.write` | R5 |
-| `printToPdf(html, o)` | `kr:print-pdf`: a hidden window prints a text PDF | **left out** | the converter's PDF output is the picture PDF (searchable text over page pictures), as on the web | R5 |
+| `archiveList(o)` | `kr:archive-list` (its own ZIP and tar readers; 7-Zip for the rest) | **done** (R5) `kr_archive_list` (`archives.rs`, `archive.rs`) | | |
+| `archiveExtract(o)` | `kr:archive-extract` | **done** (R5) `kr_archive_extract` (`archives.rs`, `archive.rs`) | | |
+| `archiveCancel(id)` | `kr:archive-cancel` | **done** (R5) `kr_archive_cancel` (`archives.rs`, `archive.rs`) | | |
+| `archiveCreate(o)` | `kr:archive-create` | **done** (R5) `kr_archive_create` (`archives.rs`, `archive.rs`) | | |
+| `archiveTest(o)` | `kr:archive-test` | **done** (R5) `kr_archive_test` (`archives.rs`, `archive.rs`) | | |
+| `archiveRestore(o)` | `kr:archive-restore` | **done** (R5) `kr_archive_restore` (`archives.rs`, `archive.rs`) | | |
+| `archiveFree(o)` | `kr:archive-free` | **done** (R5) `kr_archive_free` (`archives.rs`, `archive.rs`) | | |
+| `archiveExisting(o)` | `kr:archive-existing` | **done** (R5) `kr_archive_existing` (`archives.rs`, `archive.rs`) | | |
+| `onArchiveProgress(cb)` | `kr:archive-progress` events | **done** (R5): the `kr:archive-progress` Tauri event | | |
+| `setFullscreen(v)` | `kr:fullscreen`: the window full screen → new state | **done** (R5) `kr_fullscreen` (`winbits.rs`) | | |
+| `setImmersive(on)` | `kr:immersive` | **done** (R5) `kr_immersive`: the window full screen → true | | |
+| `copyImage(b64)` | `kr:copy-image`: image to the clipboard | **done** (R5) `kr_copy_image` (the clipboard plugin's `write_image`; any picture made a PNG by the bridge first) | | |
+| `printToPdf(html, o)` | `kr:print-pdf`: a hidden window prints a text PDF | **left out for good** (`'fallback'`) | the converter's PDF output is the picture PDF (searchable text over page pictures), as on the web — see below | — |
 | `setDoh(provider, test)` | `kr:set-doh`: Chromium's secure DNS | **done** (R3) `kr_set_doh`: DoH for the app's own requests (see «Network») | | |
 | `openWebView(o)` | `kr:open-webview`: a site's check passed in the app's browser window | **done** (R4) `kr_open_webview` (`browser.rs`) | | |
 | `browserFetch(o)` | `kr:browser-fetch`: a request from the site's own page | **done** (R4) `kr_browser_fetch` | | |
@@ -193,12 +201,12 @@ sends the right command and arguments from the page.
 | `onOpenUrl(cb)` | `kurokawareader://` links (cloud-sync sign-in) | **done** (R2) `kr_open_take`, the `kr:openPending` event; the scheme registered by the installers (see below) | | |
 | `scanFolder(root, exts)` | — (Electron: the web view's folder picker) | **extra** (R2) `kr_scan_folder` | | |
 | `cancelDownload(id)` | — (Electron's downloads cannot be stopped) | **extra** (R3) `kr_download_cancel` | | |
-| `onCommand(cb)` | the application menu's commands | stub: nothing | (no menu; the keyboard shortcuts are the page's own) | R5 |
-| `setProgress(p)` | `kr:progress`: taskbar progress, no background throttling | stub: nothing | no taskbar progress | R5 |
+| `onCommand(cb)` | the application menu's commands | **done** (R5): the `kr:command` Tauri event — a Mac's menu bar (`menu.rs`) | | |
+| `setProgress(p)` | `kr:progress`: taskbar progress, no background throttling | **done** (R5) `kr_progress`: `set_progress_bar` (no throttling switch in a Tauri web view) | | |
+| `menuText(labels)` | — | **extra** (R5) `kr_menu`: a Mac's menu bar in the interface's words | | |
+| `printFile(b64, name)` | — (Electron prints in its PDF viewer's frame) | **extra** (R5, a Mac and Linux) `kr_print_file`: the system's PDF program opens it to print | | |
 
-Kept as stubs on purpose: `setZoom` (Appearance → interface size is shown on every computer and has no effect until
-R5 — the page has no fallback either way), `copyImage` (answers false: the page then uses `navigator.clipboard.write`),
-`setImmersive`, `onCommand`, `setProgress`, `installUpdate` / `onUpdateProgress`.
+Kept as stubs on purpose: `installUpdate` / `onUpdateProgress` (R6).
 
 ## Files and library (stage R2)
 
@@ -291,7 +299,7 @@ R5 — the page has no fallback either way), `copyImage` (answers false: the pag
   only, so no permission is granted to the page — `capabilities/default.json` unchanged) → true when shown. Chosen over
   the web's `Notification` API, which WKWebView in an app does not have and WebKitGTK / WebView2 gate behind
   permission requests the shell would have to answer. Differences: a click on the notification does not open the app at
-  `o.hash` (the plugin gives no click on a computer; and `onCommand`, which carries it in Electron, is R5's); `silent`
+  `o.hash` (the plugin gives no click on a computer, so there is nothing for `onCommand` to carry); `silent`
   is not passed (the caller never sets it).
 - **Antivirus scan of a download**: the Reader's Electron shell has none (no `MpCmdRun` or the like in `main.cjs` or
   its other files; the plan's list named it by mistake) — nothing to port.
@@ -408,6 +416,128 @@ the app's requests carry the browser's cookies (reported); the site's page refus
 app's, the browser's own, a plugin's, an event); a link aimed at a new window stays (reported); a download saved
 (reported); a check window and a sign-in's end close by themselves; a check that stays answers the refusal; reset;
 forget (the clearance, then everything); the browser as a browser ends when closed (reported); no window left.
+
+## Archives, the window, the app's icon (stage R5)
+
+**Archives** (`src-tauri/src/archive.rs` — std only, unit-tested by the workflow —, `archives.rs` — the commands).
+`desktop/archive.cjs` ported whole, the same approach, the same answers to the same callers (`src/archives.ts`,
+`src/ui/archives.ts`): ZIP read by the app's own parser (deflate by `flate2`, pure Rust) — listed, tested by CRC,
+extracted, or extracted **in place** the HatchZip way (last entry first, the archive cut after each committed batch of
+at most 64 files / 512 MB within the free space less `keepFree`, a journal `<archive>.kurokawa-unzip` beside it so a
+stop or a crash resumes, «give up» making what is left a whole ZIP again); tar listed and extracted in place by its own
+reader (GNU long names, pax `path`); an `.sfv` beside an archive checked before anything is written; «verify first»;
+a zip made by streaming (stored for pictures, video, audio and archives; deflate level 6 otherwise; ZIP64 end
+records, data descriptors, UTF-8 names, as Electron's); 7z, rar (as far as 7za reads it — Electron's limit too),
+encrypted zips, gz/xz/bz2 and tar.gz/xz/bz2 (two layers: the inner tar into a folder of its own, then its files)
+through the **7-Zip program shipped with the app**: 7zip-bin's `7za` (the npm package the Electron build already
+ships), bundled as `resources/7zip/<win|mac|linux>/<arch>/7za[.exe]` (`tauri.conf.json` `bundle.resources`; the
+workflow installs `desktop/`'s dependencies without its devDependencies and copies this system's `7za` and the
+package's licence files into `desktop-tauri/7zip/`; `7zip/README.txt` keeps the folder), found in the resource folder,
+then beside the program (a bare build), then on the PATH (`7za`, `7z`, as `archive.cjs` falls back to `7z`). It runs
+with `std::process::Command` — no shell, the arguments a list, stdin closed, no console window on Windows,
+`-sccUTF-8` on Windows so names that are not ASCII come back right —, its progress lines read (`-bsp1 -bb1`, cut at
+returns and backspaces), a listing given up after 10 minutes, any job stopped by `archiveCancel` (the process
+killed). Progress: the `kr:archive-progress` event `{ id, done, total, file }`, at most every 250 ms and at the end
+(main.cjs's throttle). Errors are `archive.cjs`'s words, which the sheet turns into sentences (`unsafePath …`,
+`duplicateEntry …`, `crcMismatch …`, `damaged …`, `sfvMismatch …`, `noSpace`, `notArchive`, `wrongPassword`,
+`stopped`); a locked 7z listed without its password answers `passwordNeeded` (Electron passed 7-Zip's «Wrong
+password?» either way). Passwords go to 7-Zip as its `-p` switch, as Electron's do, and are never logged or kept.
+**Path safety**, better than Electron: an entry is refused when any part of its name would leave the folder — absolute,
+a `..` part, a drive or stream (`a:b`), a backslash left in it — checked on the name's parts, before anything is
+written (the whole archive is refused at listing, as Electron's); a link in a tar (own reader, or 7-Zip's listing:
+`Symbolic Link`, `Hard Link`) that points out of the folder refuses the archive too (Electron let 7-Zip make it); the
+inner tar of a tar.gz is checked before it is extracted; `archiveExisting` ignores a name that would leave the folder.
+Other differences: the in-place ZIP keeps only the archive's directory beside it (`.kurokawa-tail`, from the
+directory's offset, `tailBase` in the journal) where Electron writes a sparse file as long as the archive — which
+Windows fills with zeros, the space in-place extraction is for; a journal Electron wrote is still read. A zip's times
+are UTC (Electron's local time). Free space: `statvfs` (Unix, `libc`) / `GetDiskFreeSpaceExW` (Windows), as Node's
+`statfs`. **Bundle size**: one `7za` per system — about 1.1 MB (Windows x64), 2.5–3 MB (Linux x64), 2.5 MB (macOS
+arm64), as 7zip-bin ships them —, and `flate2` adds little (it is in the build through reqwest's gzip already).
+
+**Printing a PDF** (`printToPdf`, `printFile`). Electron lays the converter's HTML out in a hidden window and prints a
+text PDF (`webContents.printToPDF`). Tauri has no such function on any system; WebView2 has one (`PrintToPdf`), but it
+is reached only through the web view's COM interface (`with_webview` and the webview2-com crate, unsafe COM code and
+an asynchronous completion handler) — not written here, as it could not be written with certainty without a Windows
+build to try it on. So `printToPdf` stays **left out for good** (`'fallback'`): the converter makes its picture PDF
+(searchable text over page pictures), as on the web, on every system. The PDF viewer's **Print** (`src/ui/share.ts`
+`printPdf`, a PDF in a frame and the frame's `print()`): on Windows WebView2 prints it as Electron does; a Mac's and
+Linux's web views print no PDF in a frame, so there the bridge's `printFile` writes it to the temporary folder and
+opens it in the system's PDF program, to print from there.
+
+**Images**: `copyImage(b64)` — the clipboard plugin's `write_image` (a PNG read by Tauri's `image-png` feature); any
+other picture (JPEG, WebP…) drawn on the page's canvas and made a PNG first by the bridge; false when it is no picture
+(the page then tries the web's clipboard).
+
+**The window** (`winbits.rs`, `menu.rs`): `setFullscreen(v)` / `setImmersive(on)` — the window full screen (the app's
+own title bar hides then, told by `titlebar.rs`'s state); `setZoom(f)` — Tauri's `set_zoom` on the web view (0.5–2,
+as the preload) where the resolved Tauri has it (`apidetect.rs`: `kr_zoom`), else the page zoomed with CSS (the
+bridge); `setProgress(p)` — the taskbar button's progress (`set_progress_bar`, `kr_progress`; Windows' taskbar, a Mac's
+Dock, Linux's where the desktop reads Unity's launcher API), taken away below 0 (Electron also lifts the page's
+background throttling meanwhile: a Tauri web view has no such switch); `onCommand(cb)` — the `kr:command` event. Only a
+Mac gets a **menu bar** (as a Mac app must: without an Edit menu ⌘C / ⌘V do nothing in its web view): the app's menu
+(About, Settings… ⌘,, Hide, Hide Others, Show All, Quit), File (Add books…, Scan this computer…, Library, Close
+Window), Edit (Undo, Redo, Cut, Copy, Paste, Select All), View (Visual options, Search in book, Full screen), Window
+(Minimize, Zoom), Help (Check for updates, Releases on GitHub) — Electron's items, in the interface's language (the
+page sends the words with `menuText` at its start and when the language changes; English before that), its own items
+sent to the page as `kr:command` (`import`, `scan`, `library`, `settings`, `options`, `search`, `update`), as
+`main.cjs`'s `buildMenu` sends them. Windows and Linux have none: the window has the app's own title bar, and
+Electron's menu was hidden there (its items are the page's own keys and buttons). No global shortcuts or tray icon:
+Electron's Reader has none. A notification's click still does not open the app (the plugin gives none on a computer).
+
+**The app's icon of the user's choosing** (`appicon.rs`, `iconlogic.rs` — std only, unit-tested). Electron
+(`desktop/appicon.cjs`): the picture the user crops in Settings (any picture → a 512 px PNG, `src/ui/iconCrop.ts`; no
+built-in alternatives, no custom name on a computer — Android's launcher name is its own option) kept as
+`<userData>/custom-icon.png`, put on every window and the Dock, and on Windows the desktop, Start-menu and pinned
+shortcuts pointed at an `.ico` written beside it; the page shows it in its own logos (`src/ui/brandIcon.ts`). Here:
+- **One choice, kept outside the program's folder** (so it outlives updates): `<config>/custom-icon.png` — the
+  picture, checked as a PNG (signature, header), at most 4 MiB, 16–4096 px a side, and decoded by Tauri before it is
+  taken (a picture that is no PNG is refused with an Error, as Electron's «not a PNG» / «too large») — and
+  `<config>/custom-icon.ico`, made of PNG entries at 16, 24, 32, 48, 64, 128 and 256 px that the bridge draws from the
+  picture with the page's canvas (halved step by step, smoothed) before it hands it over; no file means the app's own
+  icon. The same name as Electron's, so R6's hand-over copies it as it is.
+- **Put on, now and at every start** (`setup` → `appicon::at_start`): the window and its taskbar button (`set_icon`,
+  `apidetect.rs` `kr_set_icon`); the app's own title bar and sidebar — the page asks the shell for the icon in force at
+  its start (`src/native.ts`, Tauri only) and shows it in every `img[data-brand]` (`brandIcon.ts`), so they follow the
+  shell's record even in a fresh profile; on **Windows** the shortcuts the installer made (desktop, Start menu — also in
+  a folder of the app's name —, pinned on the taskbar, the all-users ones where it may write) pointed at the `.ico`, only
+  those whose target is this program, through Windows' own WScript.Shell run by PowerShell with the paths in its
+  environment (no COM code here; about a second, in the background), and again at a start after an update made them
+  anew (their paths and times are kept as a stamp); on **Linux**, where the .deb's desktop entry is
+  (`/usr/share/applications/KurokawaReader.desktop`), a copy of it in `~/.local/share/applications` with its `Icon`
+  pointed at the picture and marked as the app's (`X-KurokawaReader-CustomIcon=true`; one the user made is never
+  touched) — the menus and the dock read that one first; refreshed at each start so an upgraded entry is followed.
+- **Reset to default** (Settings' «Back to the original icon» — `appIcon({ set: null })`): the files removed, the window
+  given Tauri's default icon again, the shortcuts pointed back at the program, the Linux copy removed.
+- **In the backup** (`src/backup.ts`, every shell): the picture as a PNG data URL (`appIcon`, at most 3 MiB of text),
+  brought back by a restore of the settings where the app's own icon can be set (the desktop shells — so it crosses
+  from Electron to this build with a backup, and with R6's hand-over); a phone's icon is a shortcut pinned with the
+  user's consent, so a restore there leaves it to them.
+- **Settings**: the row appears where it acts (`appIconWay()`: the desktop shells and Android), with a hint that says
+  what this system lets it change (`appIconHint()`: on this build a Mac's and Linux's own words, `myIconHintMac`,
+  `myIconHintLinux`, five languages; Windows and Electron keep `myIconHintPc`).
+- **What each system refuses**, said plainly: **macOS** — the Dock and the Finder keep the bundle's icon (Tauri cannot
+  change the Dock's icon at run time; NSApplication's `setApplicationIconImage` needs Objective-C calls this build does
+  not make; a Mac's windows have no icon of their own), so there the title bar and sidebar show it; **Windows** —
+  Explorer may show a shortcut's old picture until its icon cache is refreshed (a sign-out, or `ie4uinit -show`); a
+  shortcut the user made elsewhere is not looked for; notifications show the app's registered icon; **Linux** — under
+  Wayland the dock takes the desktop entry's icon, so the AppImage (which installs no entry) and a bare program show it
+  on the window only; the X11 taskbar shows the window's.
+
+**Tests**: `archive.rs`, `iconlogic.rs`, `apidetect.rs` std-only unit tests (CI): a zip made, listed, tested,
+extracted (`both`, `skip`), a damaged byte named, stopped and cleaned up; zip-slip names and an absolute link refused
+before anything is written; in place stopped mid-batch, given up (a whole ZIP again) and resumed; tar in place, GNU
+long names; an `.sfv` checked; `7z l -slt` output as 7-Zip writes it, its progress lines; the icon's PNG checks, the
+`.ico`, the desktop entry; `tests/tauribridge.cjs` (the sixteen functions' commands and arguments from node and from
+the page, the extras, the Archives button in the library, the 7-Zip resources and crates named); `selftest.js` in CI
+(R5 rows, required on Windows and Linux): the shipped 7-Zip found; a zip of a folder and a file made → listed → tested
+→ extracted, every byte the same, progress heard; extracted in place, the archive gone; a hostile zip refused, nothing
+written; a 7z with a password (refused without it, «wrongPassword» with a wrong one, extracted and tested with it) and
+a tar.gz in two layers, made by the shipped 7-Zip; a menu command reaching the page; the app icon chosen → kept (and its
+`.ico` of seven sizes on Windows), put on the window, refused when no PNG, reset; reported: full screen and back, the
+zoom, taskbar progress, an image on the clipboard read back; `enginetest.js` case 11 (the Archives button → «Open an
+archive» → the extraction sheet → «Extract», the file there after) and case 12 (an icon chosen, the page reloaded, the
+title bar's logo is the picture — screenshot `09-titlebar-custom-icon` —, reset); case 8 reads the window's full screen
+from the shell now.
 
 ## The window's title bar (from R5, done ahead of it)
 

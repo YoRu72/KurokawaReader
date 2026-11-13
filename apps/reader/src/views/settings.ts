@@ -10,7 +10,7 @@ import { colorField } from '../ui/colorpicker';
 import { getSettings, updateSettings, applyOrientation, isDefault, resetSetting, type VisualSettings, type UiMode, type Accent, type Orientation } from '../settings';
 import { listFonts, listSystemFonts, canListSystemFonts, addFontFromFile, addFontFromUrl, removeFont, setFontScript, type FontScript } from '../fonts';
 import { renderUpdateCard, APP_VERSION } from '../updates';
-import { canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon } from '../native';
+import { canSetAppName, setAppName, appIconWay, appIconNow, setAppIcon, appIconHint } from '../native';
 import { decksCard } from '../ui/decks';
 import { fits, only } from '../platform';
 import { titleBarWaits as winBarWaits } from '../ui/winbar';
@@ -492,5 +492,5 @@ function appIconField(): HTMLElement | null {
     const { pickIconImage } = await import('../ui/iconCrop'); const u = await pickIconImage(); if (!u) return;
     try { const ok = await setAppIcon(u, t('appName')); if (way === 'desktop') { show(u); toast(t('myIconSet')); } else { if (ok) show(u); toast(ok ? t('myIconPinned') : t('iconCantRead'), ok ? 'info' : 'error', 5000); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
   };
-  return h('div', { class: 'field app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, way === 'desktop' ? t('myIconHintPc') : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));
+  return h('div', { class: 'field app-icon-row' }, pic, h('div', { class: 'grow' }, h('span', null, t('myIconTitle')), h('small', { class: 'hint' }, way === 'desktop' ? t(appIconHint()) : t('myIconHintAndroid'))), reset, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void choose() }, icon('images'), t('myIconChoose')));
 }

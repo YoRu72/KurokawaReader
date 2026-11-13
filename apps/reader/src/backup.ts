@@ -14,6 +14,7 @@ import { t } from './i18n';
 import { terms as glossTerms, saveTerms, type Term, type Folder as GlossFolder } from './glossary';
 import { textRules, saveTextRules, type TextRule } from './textrules';
 import { whenStill } from './still';
+import { brandIcon, setBrandIcon } from './ui/brandIcon';
 
 type CustomApi = NonNullable<VisualSettings['aiCustomApis']>[number];
 interface BookRecord {
@@ -36,10 +37,17 @@ interface Manifest {
   customApis?: CustomApi[];
   glossary?: { terms: Term[]; folders: GlossFolder[]; links: Record<string, string[]>; dest: Record<string, unknown> };
   textRules?: TextRule[]; vocab?: unknown[];
+  /** The app's icon of the user's choosing (a PNG data URL, at most ICON_CAP long): brought back where the app's own
+   *  icon can be set — the desktop shells —, so it also crosses from one desktop build to another. */
+  appIcon?: string;
 }
 export const BACKUP_VERSION = 2;
 
 const LOCAL_KEYS = ['kr.lang', 'kr.dir', 'kr.sort', 'kr.translateTo'];
+/** The largest app icon a backup carries (characters of its data URL: about 2.2 MB of PNG; the app's own crop makes
+ *  a 512 px PNG of a few hundred kilobytes). */
+export const ICON_CAP = 3 * 1024 * 1024;
+const iconOk = (u: unknown): u is string => typeof u === 'string' && u.length <= ICON_CAP && /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(u);
 const keyOf = (b: { fileName: string; size: number }) => `${b.fileName}:${b.size}`;
 const readLocal = <T>(k: string, d: T): T => { try { return (JSON.parse(localStorage.getItem(k) ?? 'null') as T) ?? d; } catch { return d; } };
 
@@ -89,6 +97,7 @@ async function manifest(full: boolean): Promise<Manifest> {
     textRules: readLocal<TextRule[]>('kr.textRules', []), vocab: readLocal<unknown[]>('kr.vocab', []),
     books: [],
   };
+  const icon = brandIcon(); if (iconOk(icon)) out.appIcon = icon;
   for (const b of books) out.books.push({
     key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
     folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, done: b.done, doneAt: b.doneAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
@@ -200,6 +209,10 @@ export async function restoreBackup(file: File, onProgress?: (msg: string) => vo
   if (want.settings) {
     restoreSettings(m);
     for (const [k, v] of Object.entries(m.local ?? {})) if (LOCAL_KEYS.includes(k)) localStorage.setItem(k, v);
+    // (The app's icon: on a computer's app, made the app's own again — window, taskbar, title bar; a phone's is a
+    // shortcut pinned with the user's consent, so it is left to them there.)
+    const icon = m.appIcon;
+    if (iconOk(icon)) await import('./native').then(async (n) => { if (n.appIconWay() === 'desktop') { await n.setAppIcon(icon, t('appName')); setBrandIcon(icon); } }).catch(() => undefined);
   }
 
   // folders: merge by name

@@ -1,14 +1,13 @@
 // window.kurokawaDesktop for the Tauri shell: every name desktop/preload.cjs (the Electron shell's bridge) gives the
 // page, with the same arguments and results. Run by src-tauri/src/main.rs as the window's initialization script —
 // before the page's own scripts, on every load —, after a line that sets window.__KR_BOOT__ = { os, arch }.
-// Each Electron channel kr:a-b is the Tauri command kr_a_b (src-tauri/src/commands.rs). What is not ported yet
-// (PORTING.md says which stage brings it) is a stub that answers as Electron answers when it cannot do the thing —
-// false, null, 'unsupported', an empty result — or, where Electron has no such answer, rejects with an Error that
-// names the stage; the page already copes with each (PORTING.md says how). The stubs are listed in STUBS below, so
+// Each Electron channel kr:a-b is the Tauri command kr_a_b (src-tauri/src/commands.rs and the files beside it). What
+// is not ported yet (PORTING.md says which stage brings it — R6 only, since R5) is a stub that answers as Electron
+// answers when it cannot do the thing — or, where Electron has no such answer, rejects with an Error that names the
+// stage; the page already copes with each (PORTING.md says how). The stubs are listed in STUBS below, so
 // tests/tauribridge.cjs and the self-test can tell them from the ported ones. Some names are LEFT OUT instead (LEFT_OUT
-// below): the page tests for those before it uses them, and without them it takes a way that works — its own full
-// screen, its picture PDF — or shows no control that could not work (Archives, the app icon); each comes back with
-// the stage that ports it.
+// below): the page tests for those before it uses them, and without them it takes a way that works — its picture PDF
+// (printToPdf: this shell has no silent PDF printing, for good — 'fallback'), its own update sheet (R6).
 (function () {
   'use strict';
   if (window.kurokawaDesktop) return;
@@ -86,20 +85,69 @@
   // preload's own answer for these); 'off': a remover function (the preload's subscribe answer); anything else: that
   // value, resolved.
   var STUBS = {
-    setZoom: ['R5', 'none'],
     installUpdate: ['R6', 'reject'], onUpdateProgress: ['R6', 'none'],
-    setImmersive: ['R5', false], copyImage: ['R5', false],
-    onCommand: ['R5', 'none'], setProgress: ['R5', 'none'],
   };
-  // name → the stage that brings it. Not defined at all until then: the page looks for each before using it, and
-  // without it does what works here (src/: native.ts toggleFullscreen → the HTML full screen; convert.ts buildPdf →
-  // the picture PDF; archives.ts canArchive, native.ts appIconWay, updates.ts → no Archives button, no app-icon
-  // option, no «download in the background» switch). (The in-app browser's four, R4, are here since that stage.)
+  // name → the stage that brings it, or 'fallback': left out for good, the page's own way being this shell's answer.
+  // Not defined at all: the page looks for each before using it, and without it does what works here (src/:
+  // convert.ts buildPdf → the picture PDF — searchable text over page pictures — where Electron prints a text PDF in
+  // a hidden window: no web view this shell runs on prints a PDF silently through Tauri; updates.ts → no «download
+  // in the background» switch). (The in-app browser's four, R4, and R5's archives, app icon and full screen are
+  // here since their stages.)
   var LEFT_OUT = {
-    appIcon: 'R5', downloadUpdate: 'R6', installDownloadedUpdate: 'R6',
-    archiveList: 'R5', archiveExtract: 'R5', archiveCancel: 'R5', archiveCreate: 'R5', archiveTest: 'R5', archiveRestore: 'R5', archiveFree: 'R5', archiveExisting: 'R5', onArchiveProgress: 'R5',
-    setFullscreen: 'R5', printToPdf: 'R5',
+    downloadUpdate: 'R6', installDownloadedUpdate: 'R6',
+    printToPdf: 'fallback',
   };
+  /* ---------- R5: pictures made with the page's canvas ---------- */
+  // The .ico's sizes (src-tauri/src/iconlogic.rs ICO_SIZES) rendered from the 512 px icon the page cropped — halved
+  // step by step down to twice the size, then drawn once, smoothed —, each a PNG in base64: [[16, '…'], …]; [] where
+  // the page cannot draw (the shell then writes no .ico).
+  var ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+  function b64Of(dataUrl) { var i = String(dataUrl).indexOf(','); return i >= 0 ? String(dataUrl).slice(i + 1) : ''; }
+  function iconSizes(url) {
+    return new Promise(function (resolve) {
+      try {
+        if (typeof document === 'undefined' || typeof Image === 'undefined') { resolve([]); return; }
+        var img = new Image();
+        img.onload = function () {
+          var out = [];
+          try {
+            ICO_SIZES.forEach(function (n) {
+              var src = img; var w = img.naturalWidth || img.width; var h = img.naturalHeight || img.height;
+              while (w >= n * 4 && h >= n * 4) {
+                var half = document.createElement('canvas'); half.width = Math.round(w / 2); half.height = Math.round(h / 2);
+                var hg = half.getContext('2d'); hg.imageSmoothingEnabled = true; hg.imageSmoothingQuality = 'high'; hg.drawImage(src, 0, 0, half.width, half.height);
+                src = half; w = half.width; h = half.height;
+              }
+              var c = document.createElement('canvas'); c.width = n; c.height = n;
+              var g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0, n, n);
+              out.push([n, b64Of(c.toDataURL('image/png'))]);
+            });
+          } catch (e) { out = []; }
+          resolve(out);
+        };
+        img.onerror = function () { resolve([]); };
+        img.src = url;
+      } catch (e) { resolve([]); }
+    });
+  }
+  // A picture for the clipboard as a PNG in base64: a PNG as it is; any other (JPEG, WebP…) drawn on a canvas and
+  // made one (the shell reads PNG only); as it came where the page cannot draw (the shell then answers false).
+  function asPng(b64) {
+    b64 = String(b64 || '');
+    if (b64.indexOf('iVBORw0KGgo') === 0) return Promise.resolve(b64);
+    try {
+      if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return Promise.resolve(b64);
+      return createImageBitmap(new Blob([fromBase64(b64)])).then(function (bmp) {
+        var c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+        c.getContext('2d').drawImage(bmp, 0, 0);
+        try { bmp.close(); } catch (e) { /* gone */ }
+        return b64Of(c.toDataURL('image/png'));
+      }).catch(function () { return b64; });
+    } catch (e) { return Promise.resolve(b64); }
+  }
+  // The interface's size where this build's Tauri cannot zoom the web view: the page zoomed with CSS (1: none).
+  function cssZoom(v) { try { document.documentElement.style.zoom = v === 1 ? '' : String(v); } catch (e) { /* no page */ } }
+
   function notYet(name, stage) { return new Error(name + ' is not in this preview build yet (Tauri stage ' + stage + ')'); }
   function copy(v) { return v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v; }
   function stub(name) {
@@ -252,6 +300,50 @@
     },
     browserReset: function (url) { return call('kr_browser_reset', { url: str(url) }); },
     browserForget: function (url, all) { return call('kr_browser_forget', { url: str(url), all: !!all }); },
+
+    /* archives (stage R5: src-tauri/src/archive.rs, archives.rs — desktop/archive.cjs's own ZIP and tar readers, and
+       the 7-Zip program shipped with the app for the rest): the same objects in and out as main.cjs's kr:archive-*;
+       progress as the kr:archive-progress event, { id, done, total, file }. */
+    archiveList: function (o) { return call('kr_archive_list', { o: obj(o) }); },
+    archiveExtract: function (o) { return call('kr_archive_extract', { o: obj(o) }); },
+    archiveCancel: function (id) { return call('kr_archive_cancel', { id: str(id) }); },
+    archiveCreate: function (o) { return call('kr_archive_create', { o: obj(o) }); },
+    archiveTest: function (o) { return call('kr_archive_test', { o: obj(o) }); },
+    archiveRestore: function (o) { return call('kr_archive_restore', { o: obj(o) }); },
+    archiveFree: function (o) { return call('kr_archive_free', { o: obj(o) }); },
+    archiveExisting: function (o) { return call('kr_archive_existing', { o: obj(o) }); },
+    onArchiveProgress: function (cb) { return subscribe('kr:archive-progress', cb); },
+
+    /* the app's icon of the user's choosing (stage R5: src-tauri/src/appicon.rs): appIcon() → the chosen one (a PNG
+       data URL) or null; appIcon({ set: dataUrl }) → chosen — with the .ico's sizes drawn here — and put on the
+       window, the taskbar and (Windows) the shortcuts, (Linux) the desktop entry → true; appIcon({ set: null }) →
+       the app's own again → true. */
+    appIcon: function (o) {
+      o = obj(o);
+      if (!('set' in o)) return call('kr_app_icon', { o: {} });
+      if (!o.set) return call('kr_app_icon', { o: { set: null } });
+      var url = str(o.set);
+      return iconSizes(url).then(function (sizes) { return call('kr_app_icon', { o: { set: url, sizes: sizes } }); });
+    },
+
+    /* the window (stage R5: src-tauri/src/winbits.rs) */
+    // The window full screen ('toggle': the other way) → its new state; the app's own title bar hides meanwhile.
+    setFullscreen: function (v) { return call('kr_fullscreen', { v: v === 'toggle' ? 'toggle' : !!v }); },
+    // The reader's immersive mode: the window full screen → true.
+    setImmersive: function (on) { return call('kr_immersive', { on: !!on }); },
+    // The interface's size (0.5–2): the web view's zoom, or — where this build cannot — the page's CSS zoom.
+    setZoom: function (f) {
+      var v = Number(f); if (!(v >= 0.5 && v <= 2)) return undefined;
+      call('kr_set_zoom', { f: v }).then(function (ok) { cssZoom(ok === true ? 1 : v); }, function () { cssZoom(v); });
+      return undefined;
+    },
+    // Long work's progress (0–1; below 0 takes it away) on the taskbar button.
+    setProgress: function (p) { call('kr_progress', { p: typeof p === 'number' && isFinite(p) ? p : -1 }).catch(function () {}); return undefined; },
+    // A picture on the system clipboard → true; false when it cannot (the page then tries the web's clipboard).
+    copyImage: function (b64) { return asPng(b64).then(function (png) { return call('kr_copy_image', { b64: png }); }); },
+    // The commands of a Mac's menu bar ('import', 'scan', 'library', 'settings', 'options', 'search', 'update'), as
+    // main.cjs's kr:command; on Windows and Linux there is no menu bar (the page's own keys and buttons).
+    onCommand: function (cb) { subscribe('kr:command', cb); return undefined; },
   };
   Object.keys(STUBS).forEach(function (k) { api[k] = stub(k); });
   // Names this shell has that Electron's has not (EXTRA): scanFolder(root, exts) — the whole-computer scan's walk
@@ -259,10 +351,16 @@
   // (src/ui/scan.ts), so its books can be linked by path; Electron, which has not, keeps the web view's folder picker.
   // cancelDownload(id) (R3) — the download started with that id stopped (it rejects with «cancelled») → whether one
   // was under way; the downloads list cancels with it where it is (src/downloads.ts; Electron's downloads run on).
+  // menuText(labels) (R5) — a Mac's menu bar in the interface's words ({ about, settings, file, … }; src/native.ts
+  // sends them) → true on a Mac, false elsewhere. printFile(b64, name) (R5, macOS and Linux only) — a PDF opened in
+  // the system's PDF program to print (share.ts printPdf uses it where it is: a Mac's and Linux's web views print no
+  // PDF in a frame; on Windows WebView2's own print dialog does, as Electron's).
   var EXTRA = {
     scanFolder: function (root, exts) { return call('kr_scan_folder', { p: str(root), exts: (Array.isArray(exts) ? exts : []).map(str) }); },
     cancelDownload: function (id) { return call('kr_download_cancel', { id: str(id) }); },
+    menuText: function (labels) { return call('kr_menu', { labels: obj(labels) }); },
   };
+  if (boot.os && boot.os !== 'win32') EXTRA.printFile = function (b64, name) { return call('kr_print_file', { b64: str(b64), name: str(name || 'document.pdf') }); };
   Object.keys(EXTRA).forEach(function (k) { api[k] = EXTRA[k]; });
 
   // (For the tests and the self-test: which names are stubs, which are left out, and at what stage each is due.)

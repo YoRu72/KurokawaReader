@@ -106,11 +106,13 @@ pub async fn kr_selftest_mkdir(p: String) -> Result<bool, String> {
     Ok(std::path::Path::new(&p).is_dir())
 }
 
-/// The test's folder taken away again, with what is in it (only one the test made: «kr-scanfolder-…»).
+/// The test's folder taken away again, with what is in it (only one the test made: «kr-scanfolder-…», and since R5
+/// the archives' «kr-archive-…»).
 #[tauri::command]
 pub async fn kr_selftest_rmdir(p: String) -> Result<bool, String> {
     only_in_selftest()?;
-    if !crate::openargs::name_of(&p).starts_with("kr-scanfolder-") {
+    let name = crate::openargs::name_of(&p);
+    if !name.starts_with("kr-scanfolder-") && !name.starts_with("kr-archive-") {
         return Err("not the test's folder".to_string());
     }
     let _ = std::fs::remove_dir_all(&p);

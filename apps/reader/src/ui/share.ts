@@ -210,6 +210,10 @@ export async function openWith(blob: Blob, filename: string, mime: string): Prom
 /** Print a PDF: the system's print dialogue (desktop and browsers); on phones the file is handed to another app. */
 export async function printPdf(blob: Blob, filename: string): Promise<void> {
   if (platform() === 'android' || platform() === 'ios') { await openWith(blob, filename, 'application/pdf'); return; }
+  // (The Tauri shell on a Mac and Linux, whose web views print no PDF in a frame: the system's PDF program opens it,
+  // to print from there — desktop-tauri/bridge.js printFile.)
+  const pf = (window as unknown as { kurokawaDesktop?: { printFile?(b64: string, name: string): Promise<boolean> } }).kurokawaDesktop?.printFile;
+  if (pf) { try { if (await pf(await blobToBase64(blob), filename)) return; } catch (e) { console.warn('[kurokawa] the PDF program could not be opened', e); } }
   const url = URL.createObjectURL(blob);
   const frame = h('iframe', { src: url, style: { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' } }) as HTMLIFrameElement;
   document.body.append(frame);
