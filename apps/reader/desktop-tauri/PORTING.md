@@ -3,7 +3,9 @@
 The Electron shell (`../desktop/`) keeps shipping; this Tauri shell grows beside it, stage by stage
 (`docs/RUST-PORT-READER.md`), until it has every function below, then replaces it. **Stage R0**: the shared crate, the
 Tauri project, the interface opening in it, and the bridge's round trips proven by a self-test in CI. **Stage R1**: the
-engine test — the web app's key cases run in each system's own web view in CI (see «Engine test» below).
+engine test — the web app's key cases run in each system's own web view in CI (see «Engine test» below). **Stage R2**:
+files and library — files opened from outside, single instance, file associations, drag and drop, folders by path (see
+«Files and library» below).
 
 ## How it works
 
@@ -15,7 +17,8 @@ engine test — the web app's key cases run in each system's own web view in CI 
   fills a small screen) saves the size it has, as Electron always saves its normal bounds.
 - `bridge.js` runs before the page's own scripts on every load, after a line that sets `window.__KR_BOOT__ = { os,
   arch }`, and defines the same `window.kurokawaDesktop` the Electron preload does: **all 48 names** (47 functions and
-  `platform`) — except the 23 **left out** until their stage (below). Each Electron channel `kr:a-b` is the Tauri
+  `platform`) — except the 23 **left out** until their stage (below) —, and one of its own (`scanFolder`, R2: its
+  `EXTRA`, `window.__KR_BRIDGE_EXTRA__`). Each Electron channel `kr:a-b` is the Tauri
   command `kr_a_b` (`src-tauri/src/commands.rs`); arguments
   are sent under one-word keys (`p`, `o`, `text`, `b64`, `append`, `exts`), so Tauri's camelCase mapping never matters.
 - The commands are thin wrappers over **kurokawa-shell** (`shared/shell-rs`), the Rust both apps' shells share (see
@@ -37,7 +40,12 @@ engine test — the web app's key cases run in each system's own web view in CI 
   Chrome's (as Electron's, with its tokens taken out); the sources send the page's own.
 - Version: `tauri.conf.json` has `"version": "../../package.json"`, so the app's version is `apps/reader/package.json`'s.
   Product name `KurokawaReader`, identifier `app.kurokawa.reader` — the Electron build's own (as Tools' Tauri shell
-  reuses its Electron ids).
+  reuses its Electron ids). The program is `KurokawaReader` too (`Cargo.toml`'s package name, since R2; it was
+  `kurokawa-reader`): a Mac shows the program's name in the menu bar when it runs outside its bundle (as CI runs it),
+  and keys the web view's data by it there — `~/Library/WebKit/KurokawaReader/WebsiteData/` (was
+  `…/kurokawa-reader/…`); inside the .app the bundle's name and identifier are used (`~/Library/WebKit/app.kurokawa.reader/`
+  expected; the engine test lists both). Windows (`%LOCALAPPDATA%\app.kurokawa.reader\EBWebView`) and Linux
+  (`~/.local/share/app.kurokawa.reader`) key it by the identifier: unchanged. Nothing was released with the old name.
 - Icons: not committed; CI runs `npx @tauri-apps/cli icon ../desktop/icon.png` first (it writes `src-tauri/icons/`).
   Do the same once before a local `tauri build` / `tauri dev`.
 - `samples/alice-in-wonderland.epub` is taken out of `dist/` before the build in CI, as the Electron build leaves it out
@@ -113,8 +121,8 @@ sends the right command and arguments from the page.
 
 `docs/RUST-PORT-READER.md` says 38; `desktop/preload.cjs` today gives 47 functions and `platform`. All are here.
 
-**Done: 14** (R0: 12, the title bar: 2; + `platform`) · **stubs: 10** (R2: 2, R3: 1, R5: 5, R6: 2) · **left out: 23** (R3: 5, R4: 4, R5:
-12, R6: 2).
+**Done: 16** (R0: 12, the title bar: 2, R2: 2; + `platform`) · **stubs: 8** (R3: 1, R5: 5, R6: 2) · **left out: 23** (R3: 5, R4: 4, R5:
+12, R6: 2) · **extra: 1** (`scanFolder`, R2).
 
 | Function | Electron (`main.cjs`) | R0 | How the page copes with the stub | Stage |
 |---|---|---|---|---|
@@ -135,7 +143,7 @@ sends the right command and arguments from the page.
 | `titleBar(o)` | `app:titleBar`: the app's own bar's colours, `{platform, height, …}` | **done** `kr_title_bar` (`titlebar.rs`): `o.own` asks for the app's own bar or the system's frame, `o.act` works the window (`minimize`, `maximize` = maximise / restore, `close`, `drag`) → `{platform, height, own, wanted, controls, maximized, fullscreen, focused}` — a different protocol from Electron's (see below) | | |
 | `onTitleBarState(cb)` | `app:titleBarState` events | **done**: the `kr:titleBarState` Tauri event (the state above, on each change) | | |
 | `setZoom(f)` | `webFrame.setZoomFactor` | stub: nothing | the interface stays at 100% (Appearance → size has no effect) | R5 |
-| `onOpenFile(cb)` | `kr:open-file` events (double-click, open-with, second instance) + `kr:ready` | stub: nothing | files are added from inside the app only | R2 |
+| `onOpenFile(cb)` | `kr:open-file` events (double-click, open-with, second instance) + `kr:ready` | **done** (R2) `kr_open_take` + `kr_read_file`, the `kr:openPending` event (`openfile.rs`) | | |
 | `installUpdate(url, o)` | `kr:install-update`: download, then install / swap | stub: rejects | the update sheet shows its error | R6 |
 | `downloadUpdate(o)` | `kr:update-download`: electron-updater in the background | **left out** | no «download in the background» switch; the page's own check and update sheet | R6 |
 | `installDownloadedUpdate()` | `kr:update-install` | **left out** | (never offered: nothing is downloaded) | R6 |
@@ -163,15 +171,57 @@ sends the right command and arguments from the page.
 | `deleteDownload(p)` | `kr:delete-download` | **left out** | | R3 |
 | `onDownloadProgress(cb)` | `kr:download-progress` events | **left out** | | R3 |
 | `addDownloadListener(cb)` | `kr:download-progress` events, per caller | **left out** | | R3 |
-| `onOpenUrl(cb)` | `kurokawareader://` links (cloud-sync sign-in) | stub: nothing | sign-ins that come back by such a link do not finish | R2 |
+| `onOpenUrl(cb)` | `kurokawareader://` links (cloud-sync sign-in) | **done** (R2) `kr_open_take`, the `kr:openPending` event; the scheme registered by the installers (see below) | | |
+| `scanFolder(root, exts)` | — (Electron: the web view's folder picker) | **extra** (R2) `kr_scan_folder` | | |
 | `onCommand(cb)` | the application menu's commands | stub: nothing | (no menu; the keyboard shortcuts are the page's own) | R5 |
 | `setProgress(p)` | `kr:progress`: taskbar progress, no background throttling | stub: nothing | no taskbar progress | R5 |
 
 Kept as stubs on purpose: `setZoom` (Appearance → interface size is shown on every computer and has no effect until
 R5 — the page has no fallback either way), `copyImage` (answers false: the page then uses `navigator.clipboard.write`),
 `notify` (no notification either way: the page treats the desktop as allowed and never asks the web's permission),
-`setImmersive`, `onOpenFile` (called without a test), `onOpenUrl`, `onCommand`,
-`setProgress`, `installUpdate` / `onUpdateProgress`.
+`setImmersive`, `onCommand`, `setProgress`, `installUpdate` / `onUpdateProgress`.
+
+## Files and library (stage R2)
+
+- **Opened from outside** (`openfile.rs`, `openargs.rs`; `main.cjs`'s `queueFile` / `handleUrl` / `kr:ready`): what a
+  launch carries is sorted as `main.cjs` sorts it — `kurokawareader:` links for `onOpenUrl`; files with one of its
+  `DOC_EXT` extensions that are there for `onOpenFile` (relative paths from the launch's folder; switches, missing
+  files and other kinds left alone; `file://` addresses made paths) — and kept in the shell until the page takes them.
+  Sources: this launch's command line (Windows and Linux double-click / «Open with», a file given in a terminal — read
+  in `setup`, after the window is made), a second launch's (below), and a Mac's Apple Events (`RunEvent::Opened`, at a
+  cold start too: `main.rs` now builds the app and runs it with an event handler). The bridge's `onOpenFile(cb)` /
+  `onOpenUrl(cb)` take what is kept (`kr_open_take { kind: 'file' | 'url' }`) when the page sets them up — so a file
+  that came before the page was ready waits, as `main.cjs`'s `pending` until `kr:ready` — and again on each
+  `kr:openPending` event; a file is `{ name, path }`, its bytes read by path (`kr_read_file`) and handed to the page as
+  `main.cjs` hands them, `{ name, data: ArrayBuffer }` (`src/native.ts` then imports it and opens it in the reader).
+  Each one handed over is noted in `window.__KR_OPEN_LOG__` (for the self-test).
+- **Single instance**: `tauri-plugin-single-instance` (the official plugin, `"2"`, a new dependency — registered first, as
+  its documentation asks): a second launch hands its arguments to the running window (restored, shown, focused) and
+  ends. On Linux it needs a D-Bus session bus; without one (a bare X server, CI's runner unless the workflow starts one)
+  it is not registered and each launch is its own window, as before (`openfile::single_instance_possible`).
+- **File associations**: `tauri.conf.json` `bundle.fileAssociations` — Electron's list (`desktop/package.json`
+  `build.fileAssociations`: epub, pdf, docx, xlsx, pptx, txt, md, fb2, cbz, otf, ttf, odt; names, role Viewer, the two
+  MIME types), written by the installers (NSIS / .deb / the .app's Info.plist). The `kurokawareader://` scheme:
+  `plugins.deep-link.desktop.schemes` in `tauri.conf.json` — config only, read by Tauri's bundler for the installers'
+  registrations (the deep-link plugin crate itself is not used: the links come as launch arguments / Apple Events, which
+  `openfile.rs` already handles). The bare program and the AppImage register nothing (Electron registers the scheme
+  itself at start: `setAsDefaultProtocolClient`; not ported). `openDefaultApps` opens the system's default-apps page.
+- **Drag and drop**: Tauri's own handler is off on the window (`disable_drag_drop_handler`, since R0), so the page gets
+  the HTML drop events it already imports books with — files dropped from the system included, as in Electron
+  (engine test case 8 simulates one; a real drop needs a person).
+- **Folders by path**: reading and writing go through the app's own commands (`std::fs`, as the user who runs the app):
+  no Tauri scope or capability is involved, so any folder works — another drive, outside the home folder. Linked books
+  (from the whole-computer scan, or moved out to a folder with `pickFolder` + `writeBinary`) are read by `readFile(path)`
+  (`src/db.ts`). The scan sheet's «Choose folder» uses the bridge's own `scanFolder` where it is (this shell): the
+  folder dialog, then the scan's walk of that folder by path (`kr_scan_folder`, `scan.rs`), so its books can be linked
+  where they are — on every system (WebKit has no `showDirectoryPicker`, which Electron's «Choose folder» uses; its books
+  there are copied in, unchanged).
+- Tests: `tests/tauribridge.cjs` (the take-and-read protocol, the event, a file handed over opened in the reader in
+  Chromium, «Choose folder» → `kr_folder_pick` + `kr_scan_folder`, the single-instance registration, Electron's file
+  associations and `DOC_EXT` kept equal), `openargs.rs`'s std-only unit tests (CI), `selftest.js` in CI: a file given on
+  the command line reaches the page (on Windows from `D:`), a folder made outside the home folder walked and read by
+  path, and a second launch with a file and a link hands both over and ends — required on Windows, reported on Linux
+  (under `dbus-run-session`) and macOS.
 
 ## The window's title bar (from R5, done ahead of it)
 
@@ -212,7 +262,9 @@ reports through `kr_selftest_progress` / `kr_selftest_done`, as the self-test do
 detail, a time; «required» ones fail the job on Linux and Windows):
 
 1. **Environment**: engine and version from the user agent, DPR, `deviceMemory`, screen; about 35 features the app
-   uses, present or not (a module worker tried for real); every script of the app fetched to see the type the shell
+   uses, present or not (a module worker tried for real; a worker started from a worker — the app's
+   `pdf.worker.min.mjs` from inside a blob worker, as the converter's lanes start pdf.js's —, and a worker's own
+   `fetch` of the app's file, reported); every script of the app fetched to see the type the shell
    serves it with, and that none has «%PDF» in its first kilobyte; a blob module with «%PDF» near its start (does the
    engine sniff a declared type?). The non-universal built-ins the bundle uses (a grep of `dist/`), each present or not
    *as the engine has it* (read before the app's scripts and their polyfills run) and whether the app does without it;
@@ -265,3 +317,15 @@ for «not yet» and waited out its 180 s. Fixed: `scripts/pdfjs-stream-iter.js`,
 worker by `scripts/patch-pdfjs.mjs`, defines `ReadableStream.prototype[Symbol.asyncIterator]` / `values` only where
 missing; the test's waits end on a failure the page states (`fatal`). Reproduced and checked in Chromium with
 `--webkit`.
+
+**R1, Windows** (WebView2 156, `http://tauri.localhost`): PDF → Word in two lanes (`krLanes = 2`) never finished — both
+lane workers started and said nothing (0 messages, no error), and the converter waited for ever (the test's 60 s ran
+out). Everything else of the converter passed. Reproduced in Chromium by making pdf.js's own worker inside a lane fail
+to load: pdf.js listens to none of its worker's errors when it is handed the worker, so the document waits for ever —
+the same picture. Likely cause (to be confirmed by the next run): the worker a lane starts from inside itself is not
+served under `http://tauri.localhost` on WebView2. Fixed so it cannot hang anywhere: the lane says each step it reaches
+(`started`, `pdf.js loaded`, `its worker made`, `opening the document`) and reports its pdf.js worker's `error`; the
+page gives lanes up when one fails, or when one is silent 20 s before it is ready (`krLaneWait` to change it), and
+reads the pages itself — with the reason, and where each lane stopped, in the console (the engine test's row shows
+it). `tests/pdf2docxlanes.cjs`: silent lanes (given up after 20 s, same text), lanes whose pdf.js worker cannot start
+(given up at once), working lanes (not given up); the old code hangs on the second.

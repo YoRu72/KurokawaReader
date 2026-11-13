@@ -2308,32 +2308,42 @@ function lanesForMemory(): number {
  * have read otherwise, read again. Null when the lanes could not do it (the caller reads the pages itself).
  */
 async function readInLanes(bytes: Uint8Array, nPages: number, nLanes: number, fonts: Map<string, FontInfo>, store: UseStore, progress: Progress): Promise<PageModel[] | null> {
-  type Lane = { w: Worker; out: number };
+  type Lane = { w: Worker; out: number; ready: boolean; heard: number; said: string };
   const lanes: Lane[] = [];
   const done = new Map<number, import('./pdf2docx.lane').LanePage>();
   const defs = new Map<string, FontInfo>();
   let next = 1, failed: string | null = null, wake: (() => void) | null = null, heard = Date.now();
   const poke = () => { const w = wake; wake = null; w?.(); };
   const QUEUE = 3;
+  // (A lane that says nothing for this long before it is ready — its script, pdf.js or pdf.js's worker never
+  // started — is given up, and the pages are read here: a conversion never waits on lanes that cannot answer.)
+  const OPEN_WAIT = Number((globalThis as { krLaneWait?: number }).krLaneWait ?? 20000);
   // (Never far ahead of the page being put together: pages done early wait here, pictures and all.)
   let at = 1; const AHEAD = 8 * nLanes;
   const feed = (l: Lane) => { while (l.out < QUEUE && next <= nPages && next < at + AHEAD) { l.w.postMessage({ t: 'page', n: next++ }); l.out++; } };
   const redoing = new Set<number>(), redone = new Set<number>();
   try {
-    await Promise.all(Array.from({ length: nLanes }, (_, i) => new Promise<void>((ready, fail) => {
+    for (let i = 0; i < nLanes; i++) {
       const w = new Worker(new URL('./pdf2docxlane.js', import.meta.url), { type: 'module' });
-      const l: Lane = { w, out: 0 }; lanes.push(l);
-      w.onerror = (e) => { failed = e.message || 'lane failed'; fail(new Error(failed)); poke(); };
+      const l: Lane = { w, out: 0, ready: false, heard: Date.now(), said: 'nothing' }; lanes.push(l);
+      w.onerror = (e) => { failed = failed ?? `lane ${i}: ${e.message || 'its script did not start'}`; poke(); };
       w.onmessage = (e: MessageEvent<import('./pdf2docx.lane').LaneOut>) => {
-        const m = e.data; heard = Date.now();
-        if (m.t === 'ready') { if (m.pages !== nPages) { failed = 'pages'; fail(new Error(failed)); } else ready(); }
-        else if (m.t === 'error') { failed = m.message; fail(new Error(m.message)); poke(); }
+        const m = e.data; heard = l.heard = Date.now();
+        if (m.t === 'step') l.said = m.s;
+        else if (m.t === 'ready') { if (m.pages !== nPages) failed = failed ?? 'pages'; else l.ready = true; poke(); }
+        else if (m.t === 'error') { failed = failed ?? m.message; poke(); }
         else { l.out--; done.set(m.n, m); redoing.delete(m.n); feed(l); poke(); }
       };
       // (Each lane its own copy, the last the bytes themselves: none kept here while the lanes read.)
       const copy = i === nLanes - 1 && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer as ArrayBuffer : bytes.slice().buffer;
       w.postMessage({ t: 'open', bytes: copy, lane: i }, [copy]);
-    })));
+    }
+    while (!lanes.every((l) => l.ready)) {
+      if (failed) throw new Error(failed);
+      const t = Date.now();
+      if (lanes.some((l) => !l.ready && t - l.heard > OPEN_WAIT)) throw new Error(`lanes silent ${Math.round(OPEN_WAIT / 1000)} s before they were ready; last heard: ${lanes.map((l, i) => `lane ${i} «${l.ready ? 'ready' : l.said}»`).join(', ')}`);
+      await new Promise<void>((r) => { wake = r; setTimeout(r, Math.min(1000, OPEN_WAIT)); });
+    }
     for (const l of lanes) feed(l);
     const pages: PageModel[] = [];
     const words = new Set<string>();

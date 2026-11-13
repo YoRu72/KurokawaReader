@@ -24,6 +24,13 @@ pub fn script(app: &AppHandle) -> Option<String> {
         Err(_) => String::new(),
     };
     let bin: Vec<u8> = (0..=255u8).collect();
+    // (KR_SELFTEST_OPEN: the file CI also gave this launch on its command line — the page must receive it.)
+    let open = std::env::var("KR_SELFTEST_OPEN").ok().filter(|p| !p.is_empty());
+    let open_size: i64 = open.as_deref().map(files::file_size).unwrap_or(-1);
+    let open_dir: String = open
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_string_lossy().into_owned()))
+        .unwrap_or_default();
     let cfg = json!({
         "base": base,
         "temp": std::env::temp_dir().to_string_lossy().into_owned(),
@@ -36,6 +43,11 @@ pub fn script(app: &AppHandle) -> Option<String> {
         "version": app.package_info().version.to_string(),
         "minWidth": WINDOW.min_width,
         "minHeight": WINDOW.min_height,
+        "openFirst": open.as_deref().map(crate::openargs::name_of),
+        "openFirstSize": open_size,
+        "openDir": open_dir,
+        // (KR_SELFTEST_NO_WM: CI's Xvfb has no window manager — nothing there maximises a window.)
+        "noWm": std::env::var_os("KR_SELFTEST_NO_WM").map(|v| !v.is_empty()).unwrap_or(false),
     });
     Some(format!("window.__KR_SELFTEST__ = {};\n{}", cfg, SELFTEST_JS))
 }
@@ -66,6 +78,25 @@ pub async fn kr_selftest_remove(p: String) -> Result<bool, String> {
     only_in_selftest()?;
     files::remove_file(&p);
     Ok(files::file_size(&p) < 0)
+}
+
+/// A folder made for the test (scanFolder's): true when it is there.
+#[tauri::command]
+pub async fn kr_selftest_mkdir(p: String) -> Result<bool, String> {
+    only_in_selftest()?;
+    std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    Ok(std::path::Path::new(&p).is_dir())
+}
+
+/// The test's folder taken away again, with what is in it (only one the test made: «kr-scanfolder-…»).
+#[tauri::command]
+pub async fn kr_selftest_rmdir(p: String) -> Result<bool, String> {
+    only_in_selftest()?;
+    if !crate::openargs::name_of(&p).starts_with("kr-scanfolder-") {
+        return Err("not the test's folder".to_string());
+    }
+    let _ = std::fs::remove_dir_all(&p);
+    Ok(!std::path::Path::new(&p).exists())
 }
 
 /// The shared clipboard functions: `text` put on the clipboard and read back.
@@ -109,4 +140,47 @@ pub async fn kr_selftest_update(
 ) -> Result<Value, String> {
     only_in_selftest()?;
     net::check_update_at(&url, "v", &current, beta).await
+}
+
+/// This program started again with `args` — as a second launch from «Open with» would be —, without the test's
+/// settings (it must not run a test of its own): with the single-instance plugin it hands its arguments to this
+/// process and ends at once. Its exit code, and whether it had to be ended after 12 s (then nothing handed it over).
+#[tauri::command]
+pub async fn kr_selftest_launch(args: Vec<String>) -> Result<Value, String> {
+    only_in_selftest()?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    let mut child = std::process::Command::new(&exe)
+        .args(&args)
+        .env_remove("KR_SELFTEST")
+        .env_remove("KR_SELFTEST_OPEN")
+        .env_remove("KR_ENGINETEST")
+        .env_remove("KR_ENGINE_SELFTEST")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let joined = tauri::async_runtime::spawn_blocking(move || loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return (status.code(), false),
+            Ok(None) => {
+                if started.elapsed() > std::time::Duration::from_secs(12) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return (None, true);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(_) => return (None, false),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "code": joined.0,
+        "killed": joined.1,
+        "ms": started.elapsed().as_millis() as u64,
+        "singleInstance": crate::openfile::single_instance_possible(),
+    }))
 }

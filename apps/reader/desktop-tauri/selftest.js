@@ -1,6 +1,7 @@
 // The Reader's Tauri shell, its runtime self-test (CI only). Added after bridge.js to the window's initialization
 // script by src-tauri/src/selftest.rs only when the KR_SELFTEST environment variable is set, after a line that sets
-// window.__KR_SELFTEST__ = { base, temp, home, text, gzText, latinText, binB64, os, version, minWidth, minHeight }.
+// window.__KR_SELFTEST__ = { base, temp, home, text, gzText, latinText, binB64, os, version, minWidth, minHeight,
+// openFirst, openFirstSize, openDir, noWm }.
 // Without that object it does nothing. Once the page has loaded it waits for the library to render, then runs its
 // checks through window.kurokawaDesktop — the same calls the page makes — and a few kr_selftest_* commands (the
 // shared crate's clipboard, window state and update check, which the Reader's bridge does not expose), sends the
@@ -32,7 +33,8 @@
 
   /**
    * The checks. kd: window.kurokawaDesktop. stubs: { name: stage } (window.__KR_BRIDGE_STUBS__).
-   * env: { sleep(ms), invoke(cmd, args), doc (document), now(), leftOut ({ name: stage }: window.__KR_BRIDGE_LEFT_OUT__) }.
+   * env: { sleep(ms), invoke(cmd, args), doc (document), now(), leftOut ({ name: stage }: window.__KR_BRIDGE_LEFT_OUT__),
+   * openLog() (window.__KR_OPEN_LOG__: what the bridge handed the page), home() (the library shown again), inReader() }.
    * Resolves with the results, after kr_selftest_done.
    */
   async function run(kd, stubs, cfg, env, results) {
@@ -67,9 +69,26 @@
     });
     if (!kd) { await done(); return results; }
 
+    /* opened from outside (stage R2): the file CI gave this launch on its command line reaches the page (its name
+       and every byte, read by path — on Windows from another drive, D:) through onOpenFile, as a double-click or
+       «Open with» hands one over. Required on Windows; reported elsewhere. (The page then opens it in the reader:
+       the library is shown again after.) */
+    var opened = function () { return (env.openLog && env.openLog()) || []; };
+    if (cfg.openFirst) {
+      await check('open with: the file given at start reaches the page', cfg.os === 'win32', async function () {
+        var hit = await waitFor(function () { return opened().filter(function (x) { return x.kind === 'file' && x.name === cfg.openFirst; })[0]; }, 20000, cfg.openFirst + ' handed to the page (heard ' + short(opened()) + ')');
+        must(!hit.error, 'not read: ' + hit.error);
+        must(hit.size === cfg.openFirstSize, hit.size + ' bytes ≠ ' + cfg.openFirstSize);
+        // (The page then imports it and opens it in the reader, as a double-click does: said, not required here.)
+        var read = false; try { await waitFor(function () { return env.inReader && env.inReader(); }, 8000, 'the reader'); read = true; } catch (e) { /* said below */ }
+        return hit.name + ', ' + hit.size + ' bytes; ' + (read ? 'opened in the reader' : 'not opened in the reader within 8 s');
+      }, 35000);
+      if (env.home) env.home();
+    }
+
     await check('library rendered', true, async function () {
       var d = env.doc;
-      await waitFor(function () { return d && d.querySelector && d.querySelector('.library-view'); }, 30000, 'the library view');
+      await waitFor(function () { var v = d && d.querySelector && d.querySelector('.library-view'); if (!v && env.home) env.home(); return v; }, 30000, 'the library view');
       // (The computer's sidebar comes with a window 720 px wide or more — the bridge's presence is what makes it a
       // computer.)
       await sleep(300);
@@ -103,6 +122,26 @@
       var e = await rejects(kd.readFile(txt)); must(e instanceof Error, 'readFile of a missing file did not reject with an Error');
       return 'gone';
     });
+
+    /* a folder picked by the user, walked by path (the Tauri shell's scanFolder: the library's «Pick a folder»), its
+       file read by path — outside the home folder where CI's temp folder is (Linux /tmp; Windows' runner on D:) */
+    await check('scanFolder: a picked folder walked by path, its file read by path', true, async function () {
+      must(typeof kd.scanFolder === 'function', 'no scanFolder');
+      var dir = join(cfg.openDir || cfg.temp, 'kr-scanfolder-' + env.now(), cfg.os);
+      var sub = join(dir, 'sub ✓', cfg.os);
+      var p = join(sub, 'book ✓.krselftest', cfg.os);
+      must((await env.invoke('kr_selftest_mkdir', { p: sub })) === true, 'the test folder not made');
+      try {
+        await kd.writeTextFile(p, 'folder ✓');
+        var r = await kd.scanFolder(dir, ['KRSELFTEST']);
+        must(r && Array.isArray(r.files) && r.root === dir, 'answer ' + short(r));
+        var f = r.files.filter(function (x) { return x.path === p; })[0];
+        must(f && f.size === utf8('folder ✓').length, 'not found: ' + short(r.files.slice(0, 5)));
+        var b = await kd.readFile(f.path); must(sameBytes(b, utf8('folder ✓')), 'read ' + short(bytesOf(b)));
+        var e = await rejects(kd.scanFolder(join(dir, 'no-such-folder', cfg.os), ['x'])); must(e instanceof Error, 'a missing folder did not reject');
+        return f.path + ' (' + r.files.length + ' found)';
+      } finally { await env.invoke('kr_selftest_remove', { p: p }); await env.invoke('kr_selftest_rmdir', { p: dir }); }
+    }, 60000);
 
     /* the whole-computer scan finds a file put in the home folder */
     await check('scanDevice', true, async function () {
@@ -164,6 +203,9 @@
     await check('title bar: state, maximise → state event → restore', cfg.os === 'win32', async function () {
       must(typeof kd.titleBar === 'function' && typeof kd.onTitleBarState === 'function', 'no titleBar / onTitleBarState');
       var s0 = await kd.titleBar({});
+      // (CI's Linux runs under Xvfb with no window manager — the workflow says so with KR_SELFTEST_NO_WM —: nothing
+      // there maximises a window, so the toggle is not tried.)
+      if (cfg.noWm) { must(s0 && typeof s0.maximized === 'boolean' && s0.platform === cfg.os, 'state ' + short(s0)); return 'skipped: no window manager (state read: own bar ' + s0.own + ', ' + (s0.maximized ? 'maximised' : 'not maximised') + ')'; }
       must(s0 && typeof s0.own === 'boolean' && typeof s0.maximized === 'boolean' && s0.platform === cfg.os && s0.height > 0, 'state ' + short(s0));
       var heard = []; var off = kd.onTitleBarState(function (st) { heard.push(st); });
       try {
@@ -177,6 +219,25 @@
       } finally { off(); }
       return 'own bar ' + s0.own + ' (' + s0.controls + ' buttons), ' + (s0.maximized ? 'maximised' : 'not maximised') + ' → toggled → back; ' + heard.length + ' event(s)';
     });
+
+    /* a second launch with a file and a link (single instance, stage R2): it hands them to this window and ends at
+       once; the page receives both. Required on Windows; reported elsewhere (Linux needs a D-Bus session bus, which
+       the workflow starts; a Mac's runner is reported). */
+    await check('second launch: hands its file and link over, and ends', cfg.os === 'win32', async function () {
+      var name = 'kr-open-second-' + env.now() + '.txt';
+      var p = join(cfg.openDir || cfg.temp, name, cfg.os);
+      var link = 'kurokawareader://open?to=%2F&selftest=' + env.now();
+      await kd.writeTextFile(p, 'second ✓');
+      try {
+        var argv = [p, link];
+        var r = await env.invoke('kr_selftest_launch', { args: argv });
+        must(r && !r.killed && r.code === 0, 'the second launch ' + (r && r.killed ? 'was still running after 12 s (nothing took its file; single instance ' + (r.singleInstance ? 'on' : 'off: no D-Bus session bus') + ')' : 'ended with ' + short(r)));
+        var f = await waitFor(function () { return opened().filter(function (x) { return x.kind === 'file' && x.name === name; })[0]; }, 10000, name + ' handed to the page (heard ' + short(opened()) + ')');
+        must(!f.error && f.size === utf8('second ✓').length, 'file ' + short(f));
+        await waitFor(function () { return opened().some(function (x) { return x.kind === 'url' && x.url === link; }); }, 5000, 'the link handed to the page (heard ' + short(opened()) + ')');
+        return 'ended in ' + r.ms + ' ms; ' + name + ' (' + f.size + ' bytes) and the link received';
+      } finally { await env.invoke('kr_selftest_remove', { p: p }); if (env.home) env.home(); }
+    }, 40000);
 
     /* clipboard (the shared shell.rs): not required — a headless desktop may have none */
     await check('clipboard write → read', false, async function () { var t = 'kr selftest ✓ نص'; var back = await env.invoke('kr_selftest_clipboard', { text: t }); must(back === t, 'read ' + short(back)); return 'round trip'; });
@@ -221,7 +282,13 @@
   var started = false;
   function start() {
     if (started) return; started = true;
-    var env = { sleep: function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }, invoke: invoke, doc: root.document, now: function () { return Date.now(); }, leftOut: root.__KR_BRIDGE_LEFT_OUT__ || {} };
+    var env = {
+      sleep: function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }, invoke: invoke, doc: root.document, now: function () { return Date.now(); }, leftOut: root.__KR_BRIDGE_LEFT_OUT__ || {},
+      openLog: function () { return root.__KR_OPEN_LOG__ || []; },
+      // (Back to the library: a file opened from outside opens in the reader.)
+      home: function () { try { if (root.location.hash !== '#/') root.location.hash = '#/'; } catch (e) { /* stays */ } },
+      inReader: function () { try { return /^#\/read\//.test(root.location.hash); } catch (e) { return false; } },
+    };
     setTimeout(function () {
       run(root.kurokawaDesktop, root.__KR_BRIDGE_STUBS__ || {}, cfg, env, results).catch(function (e) {
         results.push({ name: 'self-test script', ok: false, detail: short((e && e.message) || String(e)), required: true });

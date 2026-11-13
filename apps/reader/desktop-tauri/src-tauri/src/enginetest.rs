@@ -232,12 +232,22 @@ pub async fn kr_engine_profile(app: AppHandle) -> Result<Value, String> {
     }
     let lib = home.join("Library").join("WebKit");
     dirs.push(("~/Library/WebKit/<identifier>".to_string(), lib.join(&id)));
+    // (Outside a bundle — CI runs the bare program — a Mac keys it by the program's name: KurokawaReader since R2,
+    // kurokawa-reader before.)
+    dirs.push((
+        "~/Library/WebKit/KurokawaReader".to_string(),
+        lib.join("KurokawaReader"),
+    ));
     dirs.push((
         "~/Library/WebKit/kurokawa-reader".to_string(),
         lib.join("kurokawa-reader"),
     ));
     let share = home.join(".local").join("share");
     dirs.push(("~/.local/share/<identifier>".to_string(), share.join(&id)));
+    dirs.push((
+        "~/.local/share/KurokawaReader".to_string(),
+        share.join("KurokawaReader"),
+    ));
     dirs.push((
         "~/.local/share/kurokawa-reader".to_string(),
         share.join("kurokawa-reader"),

@@ -7,6 +7,8 @@
 
 mod commands;
 mod enginetest;
+mod openargs;
+mod openfile;
 mod scan;
 mod selftest;
 mod titlebar;
@@ -45,7 +47,15 @@ fn user_agent() -> String {
 
 fn main() {
     net::configure(user_agent());
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // (Single instance — main.cjs's requestSingleInstanceLock: a second launch hands its files and links to this
+    // window and ends. Registered first, as its documentation asks. On Linux only with a D-Bus session bus.)
+    if openfile::single_instance_possible() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            openfile::second_launch(app, argv, cwd);
+        }));
+    }
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
@@ -56,6 +66,7 @@ fn main() {
             commands::kr_folder_write,
             commands::kr_write_binary,
             commands::kr_scan_device,
+            commands::kr_scan_folder,
             commands::kr_folder_pick,
             commands::kr_archive_pick_dir,
             commands::kr_archive_pick_file,
@@ -67,6 +78,10 @@ fn main() {
             selftest::kr_selftest_clipboard,
             selftest::kr_selftest_winstate,
             selftest::kr_selftest_update,
+            selftest::kr_selftest_launch,
+            selftest::kr_selftest_mkdir,
+            selftest::kr_selftest_rmdir,
+            openfile::kr_open_take,
             titlebar::kr_title_bar,
             enginetest::kr_engine_shot,
             enginetest::kr_engine_profile
@@ -127,8 +142,22 @@ fn main() {
                 b = b.maximized(true);
             }
             b.build()?;
+            // (Files and links on this launch's own command line, kept until the page takes them: openfile.rs.)
+            openfile::at_start(&handle);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running KurokawaReader");
+        .build(tauri::generate_context!())
+        .expect("error while building KurokawaReader");
+    app.run(|handle, event| {
+        // (A Mac hands files opened with the app — double-click, «Open with», dropped on its icon — and the app's
+        // own links as Apple Events, at a cold start too.)
+        #[cfg(target_os = "macos")]
+        {
+            if let tauri::RunEvent::Opened { urls } = &event {
+                let list: Vec<String> = urls.iter().map(|u| u.to_string()).collect();
+                openfile::opened(handle, list);
+            }
+        }
+        let _ = (handle, event);
+    });
 }

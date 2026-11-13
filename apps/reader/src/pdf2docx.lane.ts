@@ -32,7 +32,9 @@ export type LanePage = {
   gaps: [string, number[]][];
   wordFound: string[]; stickyMiss: string[];
 };
-export type LaneOut = { t: 'ready'; pages: number } | LanePage | { t: 'error'; n?: number; message: string };
+/** `step`: how far the lane has gone in opening the document — for the app's thread, which gives up on a lane that
+ *  falls silent before it is ready, and says where it stopped. */
+export type LaneOut = { t: 'ready'; pages: number } | { t: 'step'; s: string } | LanePage | { t: 'error'; n?: number; message: string };
 
 let pdfjs: typeof import('pdfjs-dist/legacy/build/pdf.mjs');
 let doc: import('pdfjs-dist').PDFDocumentProxy | null = null;
@@ -60,14 +62,23 @@ const force = (ids: string[]) => {
 async function open(bytes: ArrayBuffer): Promise<void> {
   // (Text kept as drawn is drawn with the PDF's own fonts, which pdf.js loads into the worker's font set.)
   if (!(self as unknown as { fonts?: unknown }).fonts || typeof (OffscreenCanvas.prototype as unknown as { convertToBlob?: unknown }).convertToBlob !== 'function') throw new Error('no fonts or canvas in workers here');
+  const step = (s: string) => post({ t: 'step', s });
+  step('started');
   const { loadPdfjs } = await import('./pdfjsload');
   pdfjs = await loadPdfjs();
+  step('pdf.js loaded');
   const RES = new URL('./pdfjs/', import.meta.url).href;
   // (pdf.js's own worker, made here: in a worker it would otherwise read the file on this thread.)
   const port = new Worker(pdfjs.GlobalWorkerOptions.workerSrc, { type: 'module' });
+  // (pdf.js listens to none of its worker's failures when given the worker: one that cannot start would leave the
+  // document waiting for ever. Told instead, so the app's thread reads the pages itself at once.)
+  port.addEventListener('error', (e) => { e.preventDefault?.(); post({ t: 'error', message: `pdf.js's worker in a lane did not start (${(e as ErrorEvent).message || 'no message'}; ${String(pdfjs.GlobalWorkerOptions.workerSrc).split('/').pop()})` }); });
+  port.addEventListener('messageerror', () => post({ t: 'error', message: 'pdf.js\'s worker in a lane: a message could not be read' }));
+  step('its worker made');
   const worker = new pdfjs.PDFWorker({ port } as unknown as ConstructorParameters<typeof pdfjs.PDFWorker>[0]);
   const t = pdfjs.getDocument({ worker, data: new Uint8Array(bytes), fontExtraProperties: true, useSystemFonts: false, cMapUrl: `${RES}cmaps/`, cMapPacked: true, standardFontDataUrl: `${RES}standard_fonts/`, wasmUrl: `${RES}wasm/`, iccUrl: `${RES}iccs/` } as Parameters<typeof pdfjs.getDocument>[0]);
   task = t;
+  step('opening the document');
   const d = await t.promise; doc = d;
   post({ t: 'ready', pages: d.numPages });
 }

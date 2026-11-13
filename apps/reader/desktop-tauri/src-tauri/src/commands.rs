@@ -68,6 +68,32 @@ pub async fn kr_scan_device(app: AppHandle, exts: Vec<String>) -> Result<Value, 
     Ok(json!({ "root": s.root, "files": list, "truncated": s.truncated }))
 }
 
+/// The same walk in one folder the user picked (Tauri only: the bridge's scanFolder — the library's «Pick a folder»
+/// scan by path, so its books can be linked where they are; Electron uses the web view's folder picker instead,
+/// which WebKit has not). Any folder: another drive, outside the home folder — read as the user who runs the app.
+#[tauri::command]
+pub async fn kr_scan_folder(p: String, exts: Vec<String>) -> Result<Value, String> {
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let root = std::path::PathBuf::from(&p);
+        if !root.is_dir() {
+            return Err(format!("not a folder: {}", p));
+        }
+        Ok(scan::scan(&[root], &exts))
+    })
+    .await;
+    let s = match joined {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => return Err(e),
+        Err(e) => return Err(e.to_string()),
+    };
+    let list: Vec<Value> = s
+        .files
+        .iter()
+        .map(|f| json!({ "path": f.path, "name": f.name, "size": f.size }))
+        .collect();
+    Ok(json!({ "root": s.root, "files": list, "truncated": s.truncated }))
+}
+
 /* ---------- dialogs ---------- */
 
 /// kr:folder-pick: a folder chosen, null when cancelled.

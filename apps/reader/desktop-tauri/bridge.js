@@ -87,11 +87,9 @@
   // value, resolved.
   var STUBS = {
     setZoom: ['R5', 'none'],
-    // (Called by the page without a test first: it must be there.)
-    onOpenFile: ['R2', 'none'],
     installUpdate: ['R6', 'reject'], onUpdateProgress: ['R6', 'none'],
     setImmersive: ['R5', false], copyImage: ['R5', false], notify: ['R3', false],
-    onOpenUrl: ['R2', 'none'], onCommand: ['R5', 'none'], setProgress: ['R5', 'none'],
+    onCommand: ['R5', 'none'], setProgress: ['R5', 'none'],
   };
   // name → the stage that brings it. Not defined at all until then: the page looks for each before using it, and
   // without it does what works here (src/: native.ts toggleFullscreen → the HTML full screen; convert.ts buildPdf →
@@ -115,6 +113,52 @@
     return function () { return Promise.resolve(copy(how)); };
   }
 
+  /* ---------- files and links the system hands the app (src-tauri/src/openfile.rs) ---------- */
+  // What a launch carried — this one's command line, a second launch's (handed over), a Mac's Apple Events — is kept
+  // in the shell until taken: on onOpenFile / onOpenUrl, and again on each kr:openPending event. A file comes as
+  // { name, path }; its bytes are read here by path (kr_read_file) and given to the page as main.cjs gives them,
+  // { name, data: ArrayBuffer }. (Each handed over is noted in window.__KR_OPEN_LOG__ for the self-test.)
+  var openLog = [];
+  try { Object.defineProperty(window, '__KR_OPEN_LOG__', { value: openLog, configurable: true }); } catch (e) { /* the self-test then says so */ }
+  function note(x) { openLog.push(x); if (openLog.length > 50) openLog.shift(); }
+  function takeFiles(cb) {
+    return call('kr_open_take', { kind: 'file' }).then(function (list) {
+      var chain = Promise.resolve();
+      (Array.isArray(list) ? list : []).forEach(function (f) {
+        chain = chain.then(function () {
+          return call('kr_read_file', { p: str(f.path) }).then(toArrayBuffer).then(function (data) {
+            note({ kind: 'file', name: str(f.name), size: data.byteLength });
+            try { cb({ name: str(f.name), data: data }); } catch (e) { /* the page's */ }
+          }, function (e) { note({ kind: 'file', name: str(f.name), error: asError(e).message }); });
+        });
+      });
+      return chain;
+    }).catch(function () { /* nothing kept, or no shell */ });
+  }
+  function takeLinks(cb) {
+    return call('kr_open_take', { kind: 'url' }).then(function (list) {
+      (Array.isArray(list) ? list : []).forEach(function (u) {
+        note({ kind: 'url', url: str(u) });
+        try { cb(str(u)); } catch (e) { /* the page's */ }
+      });
+    }).catch(function () { /* nothing kept, or no shell */ });
+  }
+  // (Taken one at a time: an event that comes while a take is under way takes again after it.)
+  function opener(take) {
+    return function (cb) {
+      if (typeof cb !== 'function') return undefined;
+      var busy = false, again = false;
+      function run() {
+        if (busy) { again = true; return; }
+        busy = true;
+        take(cb).then(function () { busy = false; if (again) { again = false; run(); } });
+      }
+      subscribe('kr:openPending', run);
+      run();
+      return undefined;
+    };
+  }
+
   var api = {
     // The OS, in Node's words (process.platform in the preload).
     platform: boot.os || '',
@@ -126,6 +170,10 @@
     writeTextFile: function (p, text) { return call('kr_folder_write', { p: str(p), text: str(text) }); },
     writeBinary: function (p, b64, append) { return call('kr_write_binary', { p: str(p), b64: str(b64), append: !!append }); },
     scanDevice: function (exts) { return call('kr_scan_device', { exts: (Array.isArray(exts) ? exts : []).map(str) }); },
+
+    /* opened from outside (stage R2): main.cjs's kr:open-file (+ kr:ready) and kr:open-url */
+    onOpenFile: opener(takeFiles),
+    onOpenUrl: opener(takeLinks),
 
     /* dialogs */
     pickFolder: function () { return call('kr_folder_pick'); },
@@ -160,6 +208,13 @@
     },
   };
   Object.keys(STUBS).forEach(function (k) { api[k] = stub(k); });
+  // Names this shell has that Electron's has not (EXTRA): scanFolder(root, exts) — the whole-computer scan's walk
+  // in one folder the user picked, answered as scanDevice is. The library's «Pick a folder» scan uses it where it is
+  // (src/ui/scan.ts), so its books can be linked by path; Electron, which has not, keeps the web view's folder picker.
+  var EXTRA = {
+    scanFolder: function (root, exts) { return call('kr_scan_folder', { p: str(root), exts: (Array.isArray(exts) ? exts : []).map(str) }); },
+  };
+  Object.keys(EXTRA).forEach(function (k) { api[k] = EXTRA[k]; });
 
   // (For the tests and the self-test: which names are stubs, which are left out, and at what stage each is due.)
   var stages = {}; Object.keys(STUBS).forEach(function (k) { stages[k] = STUBS[k][0]; });
@@ -167,5 +222,6 @@
   try { Object.defineProperty(window, '__KR_SHELL__', { value: 'tauri', configurable: true }); } catch (e) { /* the page then keeps the system's frame */ }
   try { Object.defineProperty(window, '__KR_BRIDGE_STUBS__', { value: Object.freeze(stages), configurable: true }); } catch (e) { /* not needed by the page */ }
   try { Object.defineProperty(window, '__KR_BRIDGE_LEFT_OUT__', { value: Object.freeze(LEFT_OUT), configurable: true }); } catch (e) { /* not needed by the page */ }
+  try { Object.defineProperty(window, '__KR_BRIDGE_EXTRA__', { value: Object.freeze(Object.keys(EXTRA)), configurable: true }); } catch (e) { /* not needed by the page */ }
   Object.defineProperty(window, 'kurokawaDesktop', { value: api, enumerable: true, configurable: false, writable: false });
 })();

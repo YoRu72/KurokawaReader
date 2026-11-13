@@ -1,8 +1,10 @@
 [package]
-name = "kurokawa-reader"
+# (The program's name is the product's: a Mac shows it in the menu bar and keys the web view's data by it when run
+# outside its bundle; Windows and Linux show it in the task manager.)
+name = "KurokawaReader"
 # (Not the app's version: Tauri takes that from tauri.conf.json, which reads apps/reader/package.json.)
 version = "0.0.0"
-description = "KurokawaReader — the Tauri shell (stage R0)"
+description = "KurokawaReader — the Tauri shell"
 edition = "2021"
 publish = false
 
@@ -17,6 +19,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
+# (Stage R2: a second launch hands its files to the running window — the official plugin, as its documentation adds it.)
+tauri-plugin-single-instance = "2"
 serde_json = "1"
 
 [profile.release]

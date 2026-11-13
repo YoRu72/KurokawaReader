@@ -53,14 +53,17 @@ async function nodePart() {
   const pre = loadPreload();
   assert.ok(pre, 'preload exposed nothing');
   const win = loadBridge({ os: 'linux', arch: 'x64' });
-  const kd = win.kurokawaDesktop; const stubs = win.__KR_BRIDGE_STUBS__; const leftOut = win.__KR_BRIDGE_LEFT_OUT__;
+  const kd = win.kurokawaDesktop; const stubs = win.__KR_BRIDGE_STUBS__; const leftOut = win.__KR_BRIDGE_LEFT_OUT__; const extra = win.__KR_BRIDGE_EXTRA__;
   assert.ok(kd, 'bridge defined no window.kurokawaDesktop');
   assert.ok(stubs && typeof stubs === 'object', 'bridge lists no stubs');
   assert.ok(leftOut && typeof leftOut === 'object', 'bridge lists no left-out names');
 
-  // Names: the preload's, less those left out until their stage (the page then takes its own way: see bridge.js).
+  // Names: the preload's, less those left out until their stage (the page then takes its own way: see bridge.js),
+  // and this shell's extras (EXTRA: scanFolder), which Electron's has not.
+  assert.deepEqual([...extra], ['scanFolder'], 'the bridge\'s extras');
+  for (const k of extra) assert.ok(!(k in pre), `extra ${k} is a preload name`);
   const want = Object.keys(pre).filter((k) => !(k in leftOut));
-  assert.deepEqual(Object.keys(kd).sort(), want.sort(), 'bridge names ≠ preload names less the left-out ones');
+  assert.deepEqual(Object.keys(kd).sort(), [...want, ...extra].sort(), 'bridge names ≠ preload names less the left-out ones, and the extras');
   assert.equal(kd.platform, 'linux');
   for (const k of want) assert.equal(typeof kd[k], typeof pre[k], `${k}: ${typeof kd[k]} ≠ ${typeof pre[k]}`);
   const fns = Object.keys(pre).filter((k) => typeof pre[k] === 'function');
@@ -69,6 +72,7 @@ async function nodePart() {
   for (const k of Object.keys(leftOut)) { assert.ok(fns.includes(k), `left-out ${k} is no preload function`); assert.match(leftOut[k], /^R[2-6]$/, `${k}: stage`); }
   // (Left out only where the page tests for the name before using it — never one it calls straight away.)
   for (const k of ['onOpenFile']) assert.ok(!(k in leftOut), `${k} is called by the page without a test: it cannot be left out`);
+  for (const k of ['onOpenFile', 'onOpenUrl']) assert.ok(!(k in stubs), `${k} is ported (R2), not a stub`);
 
   // Arguments: each ported function sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -76,7 +80,7 @@ async function nodePart() {
     writeBinary: ['/x/b.bin', 'AAEC', true], scanDevice: [['epub', 'pdf']], pickFolder: [], archivePickDir: [], archivePickFile: [{ multiple: true }],
     openDefaultApps: [], titleBar: [{ act: 'minimize' }],
   };
-  const special = ['http', 'isPortable', 'onTitleBarState'];
+  const special = ['http', 'isPortable', 'onTitleBarState', 'onOpenFile', 'onOpenUrl'];
   assert.deepEqual([...Object.keys(samples), ...special].sort(), [...ported].sort(), 'samples ≠ ported functions');
   const sent = {};
   for (const m of Object.keys(samples)) {
@@ -106,6 +110,46 @@ async function nodePart() {
     const none = kd.onTitleBarState(() => {}); assert.equal(typeof none, 'function'); none();
     assert.equal(win.__KR_SHELL__, 'tauri', 'the bridge marks the Tauri shell');
   }
+  // onOpenFile / onOpenUrl (R2): what the shell keeps is taken at once (kr_open_take, kind file / url) and again on
+  // each kr:openPending event; each file's bytes read by path (kr_read_file) and handed over as main.cjs's
+  // kr:open-file payload, { name, data: ArrayBuffer }; links as their text; a take that fails is quiet; each noted in
+  // __KR_OPEN_LOG__. Without the event API, the first take alone.
+  {
+    const queue = { file: [{ name: 'a ✓.epub', path: '/x/a ✓.epub' }], url: ['kurokawareader://open?to=%2F'] }; const sent3 = []; const listeners = [];
+    const ow = loadBridge({ os: 'linux' }, { __TAURI__: {
+      core: { invoke: (cmd, args) => { sent3.push({ cmd, args: JSON.parse(JSON.stringify(args)) }); if (cmd === 'kr_open_take') { const l = queue[args.kind]; queue[args.kind] = []; return Promise.resolve(l); } if (cmd === 'kr_read_file') return Promise.resolve(args.p.includes('bad') ? Promise.reject('ENOENT') : new Uint8Array([7, 8, 9])); return Promise.resolve(null); } },
+      event: { listen: (n, f) => { listeners.push([n, f]); return Promise.resolve(() => {}); } },
+    } });
+    const files = []; const links = [];
+    assert.equal(ow.kurokawaDesktop.onOpenFile((p) => files.push(p)), undefined);
+    assert.equal(ow.kurokawaDesktop.onOpenUrl((u) => links.push(u)), undefined);
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+    await settle();
+    assert.deepEqual(listeners.map((l) => l[0]), ['kr:openPending', 'kr:openPending']);
+    assert.equal(files.length, 1); assert.equal(files[0].name, 'a ✓.epub');
+    assert.ok(Object.prototype.toString.call(files[0].data) === '[object ArrayBuffer]'); assert.deepEqual([...new Uint8Array(files[0].data)], [7, 8, 9]);
+    assert.deepEqual(links, ['kurokawareader://open?to=%2F']);
+    assert.deepEqual(sent3.filter((c) => c.cmd === 'kr_open_take').map((c) => c.args.kind).sort(), ['file', 'url']);
+    assert.deepEqual(sent3.find((c) => c.cmd === 'kr_read_file').args, { p: '/x/a ✓.epub' });
+    // (A second launch's file: the event → taken again; a file that cannot be read is noted, not handed over.)
+    queue.file = [{ name: 'b.pdf', path: '/x/b.pdf' }, { name: 'bad.pdf', path: '/x/bad.pdf' }];
+    listeners.forEach((l) => l[1]({ event: 'kr:openPending', payload: {} }));
+    await settle();
+    assert.deepEqual(files.map((f) => f.name), ['a ✓.epub', 'b.pdf']);
+    const byText = (l) => l.map((x) => JSON.stringify(x)).sort();
+    assert.deepEqual(byText(JSON.parse(JSON.stringify(ow.__KR_OPEN_LOG__))), byText([{ kind: 'file', name: 'a ✓.epub', size: 3 }, { kind: 'url', url: 'kurokawareader://open?to=%2F' }, { kind: 'file', name: 'b.pdf', size: 3 }, { kind: 'file', name: 'bad.pdf', error: 'ENOENT' }]));
+    // (No shell: quiet.)
+    const quiet = loadBridge({ os: 'linux' }, { __TAURI__: { core: { invoke: () => Promise.reject('no') } } });
+    assert.equal(quiet.kurokawaDesktop.onOpenFile(() => { throw new Error('called'); }), undefined); await settle();
+    assert.equal(quiet.kurokawaDesktop.onOpenFile(), undefined);
+    for (const k of ['onOpenFile', 'onOpenUrl']) { eCalls = []; pre[k](() => {}); assert.ok(eCalls.every((c) => c.ch === 'kr:ready'), `${k}: preload channels`); }
+    sent.kr_open_take = ['kind'];
+  }
+  // scanFolder (EXTRA): the scan's walk in one folder → kr_scan_folder { p, exts }.
+  tCalls = []; reply = () => ({ root: '/r', files: [], truncated: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(await kd.scanFolder('/r', ['EPUB', 3]))), { root: '/r', files: [], truncated: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_scan_folder', args: { p: '/r', exts: ['EPUB', '3'] } }]);
+  sent.kr_scan_folder = ['p', 'exts']; reply = () => null;
   // isPortable: answered here (this build is never Electron's portable .exe), no IPC.
   tCalls = []; assert.equal(await kd.isPortable(), false); assert.equal(tCalls.length, 0);
   // writeBinary: append is a boolean, as the preload's !!append.
@@ -151,7 +195,7 @@ async function nodePart() {
   tCalls = [];
   const answers = { setImmersive: false, copyImage: false, notify: false };
   const rejecting = ['installUpdate'];
-  const sync = ['setZoom', 'onOpenFile', 'onUpdateProgress', 'onOpenUrl', 'onCommand', 'setProgress'];
+  const sync = ['setZoom', 'onUpdateProgress', 'onCommand', 'setProgress'];
   const removers = [];
   assert.deepEqual([...Object.keys(answers), ...rejecting, ...sync, ...removers].sort(), Object.keys(stubs).sort(), 'every stub is checked');
   for (const [k, v] of Object.entries(answers)) assert.deepEqual(JSON.parse(JSON.stringify({ v: await kd[k]() })), JSON.parse(JSON.stringify({ v })), `${k}()`);
@@ -176,13 +220,29 @@ async function nodePart() {
   // Rust: every command the bridge and the self-test call is registered, with the argument names they send.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
-  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs + titlebar.rs define');
+  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs + selftest.rs + enginetest.rs + titlebar.rs + openfile.rs define');
+  // (Stage R2's plugin, registered first, and the files the system hands the app: the launch's own, a Mac's.)
+  assert.match(main, /let mut builder = tauri::Builder::default\(\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if openfile::single_instance_possible\(\) \{\s*builder = builder\.plugin\(tauri_plugin_single_instance::init\(/, 'single-instance registered first');
+  assert.match(main, /openfile::at_start\(&handle\)/); assert.match(main, /RunEvent::Opened \{ urls \}/);
+  const cargo = fs.readFileSync(path.join(TAURI, 'src-tauri', 'Cargo.toml'), 'utf8');
+  assert.match(cargo, /^tauri-plugin-single-instance = "2"$/m); assert.match(cargo, /^name = "KurokawaReader"$/m);
+  // (The kinds of file the system opens with the app: Electron's list, desktop/package.json's build.fileAssociations.)
+  const conf = JSON.parse(fs.readFileSync(path.join(TAURI, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+  const eAssoc = JSON.parse(fs.readFileSync(path.join(ROOT, 'desktop', 'package.json'), 'utf8')).build.fileAssociations;
+  assert.deepEqual(conf.bundle.fileAssociations.map((a) => [a.ext.join(','), a.name, a.role, a.mimeType || null]), eAssoc.map((a) => [a.ext, a.name, a.role, a.mimeType || null]), 'file associations ≠ Electron\'s');
+  assert.deepEqual(conf.plugins['deep-link'].desktop.schemes, ['kurokawareader']);
+  // (openargs.rs's DOC_EXT is main.cjs's.)
+  const docExt = /const DOC_EXT = \/\\\.\(([^)]*)\)\$\/i/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'))[1];
+  const expand = (alt) => alt.split('|').flatMap((x) => (x === 'jpe?g' ? ['jpg', 'jpeg'] : x === 'html?' ? ['html', 'htm'] : x === 'woff2?' ? ['woff', 'woff2'] : [x]));
+  const rsExt = [...fs.readFileSync(path.join(src, 'openargs.rs'), 'utf8').match(/pub const DOC_EXT: \[&str; \d+\] = \[([\s\S]*?)\];/)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  assert.deepEqual([...rsExt].sort(), expand(docExt).sort(), 'openargs.rs DOC_EXT ≠ main.cjs DOC_EXT');
+  assert.equal(Number(/DOC_EXT: \[&str; (\d+)\]/.exec(fs.readFileSync(path.join(src, 'openargs.rs'), 'utf8'))[1]), rsExt.length);
   for (const [cmd, ks] of Object.entries(sent)) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
     assert.deepEqual([...ks].sort(), [...params[cmd]].sort(), `${cmd}: bridge sends ${ks}, Rust takes ${params[cmd]}`);
@@ -217,7 +277,7 @@ async function nodePart() {
   const releases = JSON.parse(fs.readFileSync(path.join(ROOT, '..', '..', 'shared', 'shell-rs', 'src', 'testserver.rs'), 'utf8').match(/pub const RELEASES: &str = r#"([\s\S]*?)"#;/)[1]);
   assert.equal(releases.length, 5, 'testserver.rs RELEASES parses as five releases');
   function fakeKd(bad) {
-    const disk = new Map();
+    const disk = new Map(); const dirs = new Set();
     const tb = { platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: false, fullscreen: false, focused: true }; const tbSubs = [];
     const fake = loadBridge({ os: 'linux' }, { __TAURI__: { core: { invoke: () => Promise.reject('fake') } } }).kurokawaDesktop;
     return Object.assign({}, fake, {
@@ -228,6 +288,7 @@ async function nodePart() {
       readFile: async (p) => { if (!disk.has(p)) throw new Error('ENOENT'); const b = disk.get(p); return b.buffer.slice(b.byteOffset, b.byteOffset + b.length); },
       writeBinary: async (p, s, append) => { const add = Buffer.from(s, 'base64'); disk.set(p, append && disk.has(p) ? Buffer.concat([disk.get(p), add]) : add); return true; },
       scanDevice: async (exts) => ({ root: '/home/u', truncated: false, files: [...disk.keys()].filter((p) => exts.some((e) => p.toLowerCase().endsWith('.' + e.toLowerCase()))).map((p) => ({ path: p, name: path.posix.basename(p), size: disk.get(p).length })) }),
+      scanFolder: async (root, exts) => { if (!dirs.has(root)) throw new Error('not a folder: ' + root); return { root, truncated: false, files: [...disk.keys()].filter((p) => p.startsWith(root + '/') && exts.some((e) => p.toLowerCase().endsWith('.' + e.toLowerCase()))).map((p) => ({ path: p, name: path.posix.basename(p), size: disk.get(p).length })) }; },
       http: async (o) => {
         const u = o.url.slice(cfg.base.length);
         if (u === '/text' || u === '/redirect') return { status: 200, url: cfg.base + '/text', headers: { 'x-kt-test': '1', 'x-kt-multi': bad ? 'a' : 'a, b' }, body: cfg.text };
@@ -241,13 +302,14 @@ async function nodePart() {
       },
       titleBar: async (o) => { o = o || {}; if (o.act === 'maximize') { tb.maximized = !tb.maximized; const st = { ...tb }; setTimeout(() => tbSubs.forEach((f) => f(st)), 3); } return { ...tb }; },
       onTitleBarState: (f) => { tbSubs.push(f); return () => { const i = tbSubs.indexOf(f); if (i >= 0) tbSubs.splice(i, 1); }; },
-      _disk: disk,
+      _disk: disk, _dirs: dirs,
     });
   }
   const doc = { querySelector: (s) => (/library-view/.test(s) ? {} : null), querySelectorAll: (s) => (/rail-item/.test(s) ? [1, 2, 3] : []) };
   for (const bad of [false, true]) {
-    const sent2 = []; const kdFake = fakeKd(bad);
+    const sent2 = []; const kdFake = fakeKd(bad); const openLog = [{ kind: 'file', name: 'kr-open-first.txt', size: 5 }];
     const env = {
+      openLog: () => openLog, home: () => {}, inReader: () => true,
       sleep: () => new Promise((ok) => setTimeout(ok, 2)), doc, now: () => Date.now(), leftOut: loadBridge({ os: 'linux' }).__KR_BRIDGE_LEFT_OUT__,
       invoke: (cmd, args) => {
         sent2.push({ cmd, args });
@@ -255,16 +317,22 @@ async function nodePart() {
         if (cmd === 'kr_selftest_update') { const v = args.current === '0.62.0' ? null : { version: args.beta ? '0.63.0' : '0.62.0', url: 'https://example.invalid/v0.62.0', notes: 'notes م', asset: lib.ASSET.linux }; return Promise.resolve(v); }
         if (cmd === 'kr_selftest_winstate') return Promise.resolve({ path: '/c/window-state.json', file: { x: 1, y: 2, width: 1180, height: 820, maximized: false }, restored: { x: 1, y: 2, width: 1180, height: 820, maximized: false }, now: { width: 1180, height: 820 } });
         if (cmd === 'kr_selftest_clipboard') return Promise.resolve(args.text);
+        if (cmd === 'kr_selftest_mkdir') { for (let d = args.p; d.includes('kr-scanfolder-'); d = path.posix.dirname(d)) kdFake._dirs.add(d); return Promise.resolve(true); }
+        if (cmd === 'kr_selftest_rmdir') { for (const d of [...kdFake._dirs]) if (d.startsWith(args.p)) kdFake._dirs.delete(d); return Promise.resolve(true); }
+        if (cmd === 'kr_selftest_launch') { const [p, link] = args.args; const b = kdFake._disk.get(p); setTimeout(() => { openLog.push({ kind: 'file', name: path.posix.basename(p), size: b.length }, { kind: 'url', url: link }); }, 5); return Promise.resolve({ code: 0, killed: false, ms: 300, singleInstance: true }); }
         return Promise.resolve();
       },
     };
-    const res = JSON.parse(JSON.stringify(await lib.run(kdFake, loadBridge({ os: 'linux' }).__KR_BRIDGE_STUBS__, cfg, env)));
+    const res = JSON.parse(JSON.stringify(await lib.run(kdFake, loadBridge({ os: 'linux' }).__KR_BRIDGE_STUBS__, { ...cfg, openFirst: 'kr-open-first.txt', openFirstSize: 5, openDir: '/runner/temp', noWm: !bad }, env)));
     assert.equal(sent2[sent2.length - 1].cmd, 'kr_selftest_done');
     const failed = res.filter((x) => x.required && !x.ok).map((x) => `${x.name}: ${x.detail}`);
     if (!bad) assert.deepEqual(failed, [], 'self-test against a good fake');
     else assert.deepEqual(res.filter((x) => x.required && !x.ok).map((x) => x.name), ['http text + headers']);
     assert.equal(lib.verdict(res), bad ? 1 : 0);
     assert.ok(res.some((x) => x.name === 'scanDevice' && x.ok) && res.some((x) => x.name === 'stubs answer as documented' && x.ok));
+    for (const n of ['open with: the file given at start reaches the page', 'scanFolder: a picked folder walked by path, its file read by path', 'second launch: hands its file and link over, and ends']) assert.ok(res.some((x) => x.name === n && x.ok), n + ': ' + JSON.stringify(res.find((x) => x.name === n)));
+    const tbRow = res.find((x) => /^title bar/.test(x.name)); assert.ok(tbRow.ok && (bad ? /toggled/ : /^skipped: no window manager/).test(tbRow.detail), 'title bar row: ' + tbRow.detail);
+    assert.equal(kdFake._dirs.size, 0, 'the self-test left folders behind');
     assert.ok(sent2.some((c) => c.cmd === 'kr_selftest_progress'));
     assert.equal(kdFake._disk.size, 0, 'the self-test left files behind');
   }
@@ -290,23 +358,34 @@ async function pagePart(ported) {
       try { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); } catch (e) { /* first load */ }
       window.__calls = [];
       const replies = {
-        kr_read_file: () => new Uint8Array([1, 2, 3]), kr_file_size: () => 3, kr_folder_read: () => 'text', kr_folder_write: () => true, kr_write_binary: () => true,
+        kr_read_file: (a) => (a.p === '/x/Opened From Outside.txt' ? new TextEncoder().encode('Opened from outside, a line of text.\n') : new Uint8Array([1, 2, 3])), kr_file_size: () => 3, kr_folder_read: () => 'text', kr_folder_write: () => true, kr_write_binary: () => true,
         kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_folder_pick: () => '/picked', kr_archive_pick_dir: () => '/picked', kr_archive_pick_file: () => ['/a.zip'],
-        kr_default_apps: () => null, kr_title_bar: (a) => ({ platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: !!(a.o && a.o.act === 'maximize'), fullscreen: false, focused: true }), kr_http: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('ok') }),
+        kr_default_apps: () => null, kr_scan_folder: (a) => (a.p === '/picked' ? { root: '/picked', files: [{ path: '/picked/sub/Linked Book.epub', name: 'Linked Book.epub', size: 1234 }], truncated: false } : { root: a.p, files: [], truncated: false }),
+        // (What the shell keeps of files and links handed to the app: nothing at first; the test puts some in later.)
+        kr_open_take: (a) => { const l = window.__openQueue[a.kind] || []; window.__openQueue[a.kind] = []; return l; }, kr_title_bar: (a) => ({ platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: !!(a.o && a.o.act === 'maximize'), fullscreen: false, focused: true }), kr_http: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('ok') }),
       };
-      window.__TAURI__ = { core: { invoke: (cmd, args) => { window.__calls.push({ cmd, args: JSON.parse(JSON.stringify(args || {})) }); return replies[cmd] ? Promise.resolve(replies[cmd](args)) : Promise.reject('unknown command ' + cmd); } } };
+      window.__openQueue = { file: [], url: [] }; window.__listeners = [];
+      window.__TAURI__ = {
+        core: { invoke: (cmd, args) => { window.__calls.push({ cmd, args: JSON.parse(JSON.stringify(args || {})) }); return replies[cmd] ? Promise.resolve(replies[cmd](args)) : Promise.reject('unknown command ' + cmd); } },
+        // (Tauri's event API: the shell's kr:openPending, sent by the test below.)
+        event: { listen: (n, f) => { window.__listeners.push([n, f]); return Promise.resolve(() => {}); } },
+      };
     });
     await p.addInitScript({ content: `window.__KR_BOOT__ = ${JSON.stringify({ os: 'linux', arch: 'x64' })};\n${BRIDGE}` });
     await p.goto(base + '#/');
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 47 - shape.leftOut, 'functions in the page'); assert.equal(shape.leftOut, 23, 'left out'); assert.equal(shape.platform, 'linux');
+    assert.equal(shape.fns, 47 - shape.leftOut + 1, 'functions in the page (and the extra scanFolder)'); assert.equal(shape.leftOut, 23, 'left out'); assert.equal(shape.platform, 'linux');
     const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));
     assert.ok(!shape.frameless && !shape.bar, 'Electron\'s title bar (ui/titlebar.ts) in the Tauri shell');
     assert.ok(own.winbar && own.bar && own.buttons === 3, 'the Tauri shell\'s own title bar (ui/winbar.ts): ' + JSON.stringify(own));
     const startup = await p.evaluate(() => window.__calls.map((c) => c.cmd));
     assert.ok(startup.every((c) => /^kr_/.test(c)), 'startup calls ' + startup);
+    // (The page takes what the shell kept at its start — onOpenFile and onOpenUrl, as main.cjs's kr:ready —, and
+    // listens for more.)
+    const took = await p.evaluate(() => ({ kinds: window.__calls.filter((c) => c.cmd === 'kr_open_take').map((c) => c.args.kind).sort(), listens: window.__listeners.map((l) => l[0]) }));
+    assert.deepEqual(took.kinds, ['file', 'url'], 'the page took the kept files and links at start'); assert.deepEqual(took.listens.filter((n) => n === 'kr:openPending').length, 2);
 
     // A book: imported from the samples, opened in the reader.
     await p.setInputFiles('input[type=file]', path.join(DIST, 'samples', 'maqamat-al-hariri.epub'));
@@ -328,6 +407,8 @@ async function pagePart(ported) {
         pickFolder: () => kd.pickFolder(), archivePickDir: () => kd.archivePickDir(), archivePickFile: () => kd.archivePickFile({ multiple: true }), openDefaultApps: () => kd.openDefaultApps(),
         http: async () => (await kd.http({ url: 'https://example.org/', headers: { 'accept-encoding': 'br' } })).body, isPortable: () => kd.isPortable(),
         titleBar: async () => (await kd.titleBar({ act: 'maximize' })).maximized, onTitleBarState: () => { const off = kd.onTitleBarState(() => {}); off(); return typeof off; },
+        onOpenFile: async () => { window.__openQueue.file = [{ name: 'x.epub', path: '/x/a.epub' }]; let got = null; kd.onOpenFile((f) => { got = { name: f.name, bytes: [...new Uint8Array(f.data)] }; }); for (let i = 0; i < 50 && !got; i++) await new Promise((r) => setTimeout(r, 10)); return got; },
+        onOpenUrl: async () => { window.__openQueue.url = ['kurokawareader://x']; let got = null; kd.onOpenUrl((u) => { got = u; }); for (let i = 0; i < 50 && !got; i++) await new Promise((r) => setTimeout(r, 10)); return got; },
       };
       for (const [k, f] of Object.entries(runs)) { const n = window.__calls.length; const r = await f(); out[k] = { r, calls: window.__calls.slice(n) }; }
       return out;
@@ -341,6 +422,11 @@ async function pagePart(ported) {
       http: ['kr_http', { o: { url: 'https://example.org/', method: 'GET', headers: {}, binary: true } }, 'ok'],
       titleBar: ['kr_title_bar', { o: { act: 'maximize' } }, true],
     };
+    // (onOpenFile / onOpenUrl: a take of their kind — and, for a file, its bytes read by path.)
+    assert.deepEqual(got.onOpenFile.calls.map((c) => [c.cmd, c.args]), [['kr_open_take', { kind: 'file' }], ['kr_read_file', { p: '/x/a.epub' }]]);
+    assert.deepEqual(got.onOpenFile.r, { name: 'x.epub', bytes: [1, 2, 3] });
+    assert.deepEqual(got.onOpenUrl.calls.map((c) => [c.cmd, c.args]), [['kr_open_take', { kind: 'url' }]]);
+    assert.equal(got.onOpenUrl.r, 'kurokawareader://x');
     for (const [k, [cmd, args, r]] of Object.entries(want)) {
       assert.equal(got[k].calls.length, 1, `${k}: one call`);
       assert.equal(got[k].calls[0].cmd, cmd, `${k}: command`);
@@ -349,9 +435,36 @@ async function pagePart(ported) {
     }
     assert.equal(got.isPortable.r, false); assert.equal(got.isPortable.calls.length, 0);
     assert.equal(got.onTitleBarState.r, 'function'); assert.equal(got.onTitleBarState.calls.length, 0);
+    // scanFolder (the extra): kr_scan_folder { p, exts }.
+    const sf = await p.evaluate(async () => { const n = window.__calls.length; const r = await window.kurokawaDesktop.scanFolder('/books', ['epub']); return { r, calls: window.__calls.slice(n) }; });
+    assert.deepEqual(sf, { r: { root: '/books', files: [], truncated: false }, calls: [{ cmd: 'kr_scan_folder', args: { p: '/books', exts: ['epub'] } }] });
+
+    // The scan sheet's «Choose folder» (src/ui/scan.ts): the folder dialog (kr_folder_pick), then the shell's walk of
+    // it by path (kr_scan_folder) — its books listed, to be linked where they are —, not the web view's picker.
+    await p.goto(base + '#/'); await p.waitForSelector('.library-view');
+    await p.click('.book-card.device-card'); await p.waitForSelector('.sheet .btn:has-text("Choose folder")');
+    await p.waitForTimeout(400);
+    let n0 = await p.evaluate(() => window.__calls.length);
+    await p.click('.sheet .btn:has-text("Choose folder")');
+    await p.waitForSelector('.scan-row:not(.head) .name:has-text("Linked Book.epub")', { timeout: 10000 });
+    const pickCalls = await p.evaluate((n) => window.__calls.slice(n).map((c) => [c.cmd, c.args]), n0);
+    assert.deepEqual(pickCalls.slice(0, 2), [['kr_folder_pick', {}], ['kr_scan_folder', { p: '/picked', exts: pickCalls[1][1].exts }]], 'Choose folder: ' + JSON.stringify(pickCalls));
+    assert.ok(pickCalls[1][1].exts.includes('epub') && pickCalls[1][1].exts.includes('pdf'));
+    assert.match(await p.textContent('.sheet .scan-status, .sheet .hint, .sheet') , /picked/);
+    await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+
+    // A file handed to the running app (a second launch, «Open with»): the shell keeps it and sends kr:openPending;
+    // the page takes it, reads it by path, imports it into the library and opens it in the reader — main.cjs's
+    // kr:open-file path, through the page's own onOpenFile (src/native.ts).
+    await p.goto(base + '#/'); await p.waitForSelector('.library-view');
+    await p.evaluate(() => { window.__openQueue.file = [{ name: 'Opened From Outside.txt', path: '/x/Opened From Outside.txt' }]; window.__listeners.filter((l) => l[0] === 'kr:openPending').forEach((l) => l[1]({ event: 'kr:openPending', payload: {} })); });
+    await p.waitForFunction(() => /^#\/read\//.test(location.hash), null, { timeout: 15000 });
+    await p.waitForSelector('.reader-flow', { timeout: 15000 });
+    const inReader = await p.evaluate(() => document.querySelector('.reader-flow').textContent);
+    assert.match(inReader, /Opened from outside, a line of text/, 'the file opened in the reader');
     assert.deepEqual(errors, [], 'page errors');
     await ctx.close();
-    console.log('tauribridge (page): ok — library, a book in the reader, settings; ' + Object.keys(want).length + ' ported calls checked from the page');
+    console.log('tauribridge (page): ok — library, a book in the reader, settings; ' + (Object.keys(want).length + 2) + ' ported calls and scanFolder checked from the page; a file handed over opened in the reader');
   } finally { await br.close(); web.close(); }
 }
 

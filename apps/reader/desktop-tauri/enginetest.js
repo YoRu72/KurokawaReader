@@ -498,6 +498,26 @@
         must(mod && mod.default === 7, 'not run');
         return 'runs (the engine does not sniff a declared type)';
       }, 10000);
+      // The converter's lanes are workers that start a worker of their own (pdf.js's): whether a worker can — the
+      // app's own pdf.worker.min.mjs started from inside a worker answers «ready» —, and whether a worker's own
+      // request for the app's file reaches the shell (Windows R1: lanes never answered, nothing said why).
+      await step('a worker started from a worker (as the converter\'s lanes start pdf.js\'s)', false, async function () {
+        var abs = new URL('assets/pdf.worker.min.mjs', root.location.href).href;
+        var src = 'var A=' + JSON.stringify(abs) + ',out={};' +
+          'var f=fetch(A).then(function(r){out.fetch=r.status+" "+(r.headers.get("content-type")||"(no type)");},function(e){out.fetch="failed: "+(e&&e.message||e);});' +
+          'var n=new Promise(function(res){var t=setTimeout(function(){res("silent 8 s");},8000);try{var w=new Worker(A,{type:"module"});' +
+          'w.onmessage=function(e){clearTimeout(t);res("answered: "+JSON.stringify(e.data).slice(0,80));w.terminate();};' +
+          'w.onerror=function(e){clearTimeout(t);res("error: "+((e&&e.message)||"(no message)"));};}catch(e){clearTimeout(t);res("threw: "+(e&&e.message||e));}});' +
+          'Promise.all([f,n]).then(function(r){out.nested=r[1];postMessage(out);});';
+        var u = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+        var got = await within(new Promise(function (res, rej) {
+          var w = new NativeWorker(u, { type: 'module' });
+          w.onmessage = function (e) { res(e.data); w.terminate(); };
+          w.onerror = function (e) { rej(new Error('the outer worker: ' + ((e && e.message) || '(no message)'))); };
+        }), 15000, 'the outer worker\'s answer');
+        must(/^answered/.test(got.nested) && /^200/.test(got.fetch), 'fetch from a worker: ' + got.fetch + '; worker in a worker: ' + got.nested);
+        return 'fetch from a worker: ' + got.fetch + '; worker in a worker: ' + got.nested;
+      }, 20000);
     });
   }
 

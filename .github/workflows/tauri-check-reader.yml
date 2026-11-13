@@ -1,10 +1,12 @@
 name: Tauri check (Reader)
 
-# The Reader's Tauri shell (apps/reader/desktop-tauri, stages R0–R1 of docs/RUST-PORT-READER.md) and the crate it
+# The Reader's Tauri shell (apps/reader/desktop-tauri, stages R0–R2 of docs/RUST-PORT-READER.md) and the crate it
 # shares with Kurokawa Tools' (shared/shell-rs) built on Windows, Linux and macOS beside the Electron one, to see that
 # it builds, how big its bundles are, and that it runs: the built app is started with KR_SELFTEST set, waits for the
 # library to render and checks its own bridge — files, the whole-computer scan, web requests and charsets, the update
-# check, window state, the clipboard, the stubs — against a loopback test server (desktop-tauri/selftest.js). Then
+# check, window state, the clipboard, the stubs — against a loopback test server (desktop-tauri/selftest.js); and
+# (R2) a file given on its command line reaches the page, a picked folder is walked by path, and a second launch
+# with a file and a link hands them over and ends (single instance). Then
 # (R1) it is started again with KR_ENGINETEST set: the web app's key cases run in the system's own web view — books
 # imported, kept over a reload, opened, searched, highlighted, a text book's place kept, PDFs drawn (one of 300
 # pages), the PDF → Word converter, fonts and Arabic, read-aloud, full screen — with screenshots for a person to
@@ -69,7 +71,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs; do
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -107,7 +109,7 @@ jobs:
               b=$(wc -c < "$f" | tr -d ' ')
               echo "| \`$f\` | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"
             done
-            find target -maxdepth 3 -path '*/release/*' -type f \( -name 'kurokawa-reader' -o -name 'kurokawa-reader.exe' \) | sort | while read -r f; do
+            find target -maxdepth 3 -path '*/release/*' -type f \( -name 'KurokawaReader' -o -name 'KurokawaReader.exe' \) | sort | while read -r f; do
               b=$(wc -c < "$f" | tr -d ' ')
               echo "| \`$f\` (bare executable) | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"
             done
@@ -134,13 +136,20 @@ jobs:
         working-directory: apps/reader/desktop-tauri/src-tauri
         env:
           KR_SELFTEST_TIMEOUT: '140'
+          # (Xvfb without a window manager: the title bar's maximise is not tried — the row says «skipped».)
+          KR_SELFTEST_NO_WM: '1'
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
           NO_AT_BRIDGE: '1'
         run: |
           out="$RUNNER_TEMP/kr-selftest.json"
+          # (R2: a file given on the command line, as «Open with» gives one — the page must receive it; the second
+          # launch the self-test makes needs a D-Bus session bus for the single-instance plugin: dbus-run-session.)
+          d="$RUNNER_TEMP/kr-open"; mkdir -p "$d"; f="$d/kr open-first.txt"; printf 'Opened at start, from the command line.\n' > "$f"
+          bus=""; command -v dbus-run-session >/dev/null && bus="dbus-run-session --"
+          echo "D-Bus: ${bus:-none}"
           set +e
-          KR_SELFTEST="$out" timeout 200 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-reader
+          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" timeout 200 $bus xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader "$f"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -155,8 +164,14 @@ jobs:
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'kr-selftest.json'
           $env:KR_SELFTEST = $out
-          $exe = (Resolve-Path 'target/release/kurokawa-reader.exe').Path
-          $p = Start-Process -FilePath $exe -PassThru
+          # (R2: a file given on the command line, as a double-click or «Open with» gives one — on D:, another drive.)
+          $d = Join-Path $env:RUNNER_TEMP 'kr-open'
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          $f = Join-Path $d 'kr open-first.txt'
+          [System.IO.File]::WriteAllText($f, "Opened at start, from the command line.`n")
+          $env:KR_SELFTEST_OPEN = $f
+          $exe = (Resolve-Path 'target/release/KurokawaReader.exe').Path
+          $p = Start-Process -FilePath $exe -ArgumentList ('"' + $f + '"') -PassThru
           $null = $p.Handle
           if ($p.WaitForExit(200000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
           node ../selftest-report.cjs $out $code '${{ matrix.name }}' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
@@ -171,12 +186,14 @@ jobs:
         run: |
           out="$RUNNER_TEMP/kr-selftest.json"
           # (The bare executable, as on Linux: the web UI is built into it.)
-          if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/kurokawa-reader"; else bin="target/release/kurokawa-reader"; fi
+          if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/KurokawaReader"; else bin="target/release/KurokawaReader"; fi
           [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
           echo "running $bin"
+          # (R2: a file given on the command line — the page must receive it.)
+          d="$RUNNER_TEMP/kr-open"; mkdir -p "$d"; f="$d/kr open-first.txt"; printf 'Opened at start, from the command line.\n' > "$f"
           set +e
           # (No `timeout` on macOS: perl's alarm ends it after 200 s.)
-          KR_SELFTEST="$out" perl -e 'alarm 200; exec @ARGV' "$bin"
+          KR_SELFTEST="$out" KR_SELFTEST_OPEN="$f" perl -e 'alarm 200; exec @ARGV' "$bin" "$f"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -200,7 +217,7 @@ jobs:
           d="$RUNNER_TEMP/kr-engine"; mkdir -p "$d"
           { echo "WebKitGTK $(pkg-config --modversion webkit2gtk-4.1 2>/dev/null)"; echo "$(lsb_release -ds 2>/dev/null)"; echo "ImageMagick: $(command -v import || echo none)"; } | tee "$d/versions.txt"
           set +e
-          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" timeout 560 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-reader
+          KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" timeout 560 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/KurokawaReader
           code=$?
           set -e
           { node ../enginetest-report.cjs "$d/report.json" "$code" "${{ matrix.name }}" "$d/report.md"; echo "Versions: $(tr '\n' ' ' < "$d/versions.txt")"; echo; } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -220,7 +237,7 @@ jobs:
           "WebView2 Runtime $wv; $((Get-CimInstance Win32_OperatingSystem).Caption)" | Tee-Object -FilePath (Join-Path $d 'versions.txt')
           $env:KR_ENGINETEST = Join-Path $d 'report.json'
           $env:KR_ENGINETEST_SHOTS = $d
-          $exe = (Resolve-Path 'target/release/kurokawa-reader.exe').Path
+          $exe = (Resolve-Path 'target/release/KurokawaReader.exe').Path
           $p = Start-Process -FilePath $exe -PassThru
           $null = $p.Handle
           if ($p.WaitForExit(560000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
@@ -238,7 +255,7 @@ jobs:
         run: |
           d="$RUNNER_TEMP/kr-engine"; mkdir -p "$d"
           { echo "macOS $(sw_vers -productVersion)"; echo "Safari $(defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString 2>/dev/null)"; } | tee "$d/versions.txt"
-          if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/kurokawa-reader"; else bin="target/release/kurokawa-reader"; fi
+          if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/KurokawaReader"; else bin="target/release/KurokawaReader"; fi
           [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
           set +e
           KR_ENGINETEST="$d/report.json" KR_ENGINETEST_SHOTS="$d" perl -e 'alarm 560; exec @ARGV' "$bin"
