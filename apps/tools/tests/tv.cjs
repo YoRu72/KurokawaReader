@@ -69,7 +69,11 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   check('marked watched up to it', (await p.$$('.ep-row.seen')).length === 3);
   // Schedule: the week's episodes from TVmaze, day by day; a show on your list first and under «Yours».
   {
-    const inH = (h) => new Date(Date.now() + h * 3600e3).toISOString();
+    // (The three episodes must air TODAY by the UTC date the schedule is asked for: late in the UTC day «in 2–4 hours»
+    //  is tomorrow, and the check then failed by the clock. The step shrinks so that all three stay inside today.)
+    const left = new Date().setUTCHours(24, 0, 0, 0) - Date.now();
+    const step = Math.min(3600e3, Math.max(1000, (left - 60e3) / 5));
+    const inH = (h) => new Date(Date.now() + h * step).toISOString();
     const show = (id, name, imdb) => ({ id, name, image: { medium: 'https://static.tvmaze.com/s.jpg' }, externals: { imdb }, webChannel: { name: 'Netflix' } });
     let asked = 0;
     await p.route('https://api.tvmaze.com/schedule**', (r) => { asked++; const today = r.request().url().includes(new Date().toISOString().slice(0, 10)) && r.request().url().includes('/web');
