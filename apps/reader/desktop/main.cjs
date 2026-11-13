@@ -156,6 +156,7 @@ function updaterOrNull() {
 // when the app quits; the window is told when it is ready so it can offer a restart.
 let downloadedVersion = null;
 ipcMain.handle('kr:update-download', async (e, o) => {
+  if (RUST_SWITCH && await rustRelease(!!(o && o.beta)).catch(() => null)) return 'unsupported'; // (R6b: the page offers the switch.)
   const updater = updaterOrNull(); if (!updater) return 'unsupported';
   if (downloadedVersion) return 'downloaded';
   updater.allowPrerelease = !!(o && o.beta);
@@ -188,6 +189,7 @@ async function differentialUpdate(e, beta) {
 }
 
 ipcMain.handle('kr:install-update', async (e, url, opts) => {
+  if (RUST_SWITCH) { const r = await rustSwitch(e, opts); if (r) return r; } // (R6b: the move to the Tauri build, when a release carries it.)
   if (!(opts && opts.plain) && await differentialUpdate(e, opts && opts.beta)) return 'differential';
   const res = await net.fetch(url);
   if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
@@ -247,6 +249,92 @@ ipcMain.handle('kr:install-update', async (e, url, opts) => {
   setTimeout(() => app.quit(), 1500);
   return file;
 });
+/* ---------- the move to the Rust (Tauri) build (stage R6b) ---------- */
+// OFF until the switch-over (docs/RUST-PORT-READER.md, R8). The last Electron «bridge» build is made with RUST_SWITCH =
+// true and published under the old file names (…-win-x64.exe, latest.yml…), so every Electron copy's own updater
+// fetches it; from then on, when a release of this version or newer carries the Tauri build for this system
+// (rustswitch.cjs pickRust): the page is asked to offer it (the `rust-switch` command → the update sheet with the
+// switch's words), background downloads leave it to that sheet, and «Download and install» — whatever file the page
+// chose — runs the switch: (1) the library made ready by the hand-over (`await handover.prepare()`, stage R6a's
+// handover.cjs) — nothing else happens unless it answers { ok: true } —, (2) the Tauri build's file downloaded with
+// the sheet's progress and checked against the release (size; SHA-256 from GitHub's digest and/or the release's
+// SHA256SUMS file — refused and removed on any mismatch, or when neither exists), (3) installed: Windows — the Tauri
+// installer run with its progress window (/P) and the app started after it (/R); the installer (per user, no admin
+// prompt) puts the new program in place, points the shortcuts and file types at it, and only then removes this
+// program's files — never this app's data folder (desktop-tauri/src-tauri/installer/hooks.nsh) —; Linux — this
+// AppImage replaced by the Tauri one at once and started; a Mac — the disk image opened (drag it to Applications).
+// Any failure leaves this app as it is and the sheet says why («kr-update:…», src/updates.ts). Portable copies are
+// told to download the new portable build by hand; nothing is automatic for them.
+const RUST_SWITCH = false;
+const RustSwitch = require('./rustswitch.cjs');
+const handover = require('./handover.cjs');
+const RELEASES_API = 'https://api.github.com/repos/YoRu72/KurokawaReader/releases?per_page=60';
+async function rustRelease(beta) {
+  const res = await net.fetch(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } });
+  if (!res.ok) return null;
+  return RustSwitch.pickRust(await res.json(), app.getVersion(), process.platform, process.arch, { beta: !!beta });
+}
+async function rustDownload(e, url, name, size) {
+  const file = path.join(app.getPath('temp'), `KurokawaReader-switch-${name.replace(/[^\w.+-]/g, '_')}`);
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await net.fetch(url);
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      const total = Number(res.headers.get('content-length') || size || 0);
+      const out = fs.createWriteStream(file); let streamError = null; out.on('error', (err) => { streamError = err; });
+      const reader = res.body.getReader(); let got = 0, lastT = Date.now(), lastGot = 0, speed = 0, told = 0;
+      for (;;) {
+        const { done, value } = await reader.read(); if (done) break;
+        out.write(Buffer.from(value)); got += value.length;
+        const now = Date.now(); if (now - lastT > 400) { speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; }
+        if (now - told > 250) { told = now; try { e.sender.send('kr:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); } catch { /* window gone */ } }
+      }
+      await new Promise((r) => out.end(r)); if (streamError) throw streamError;
+      return file;
+    } catch (err) { lastErr = err; await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); }
+  }
+  throw lastErr || new Error('download failed');
+}
+async function rustSwitch(e, opts) {
+  const pick = await rustRelease(!!(opts && opts.beta)).catch(() => null);
+  if (!pick) return null;
+  if (process.env.PORTABLE_EXECUTABLE_DIR) throw new Error('kr-update:portable');
+  // (1) The hand-over: the library made ready for the Tauri build. Nothing is fetched or run unless it says ok.
+  let h;
+  try { h = await handover.prepare({ app, win, version: pick.version }); } catch (err) { throw new Error('kr-update:handover ' + String((err && err.message) || err)); }
+  if (!h || h.ok !== true) throw new Error('kr-update:handover ' + String((h && h.reason) || 'not ready'));
+  // (2) The file, checked against the release.
+  let sumsLine = null;
+  if (pick.sums) { try { const r = await net.fetch(pick.sums.url); if (r.ok) sumsLine = RustSwitch.parseSums(await r.text()).get(pick.asset.name) || null; } catch { /* the digest may do */ } }
+  const want = RustSwitch.expectedSha(pick.asset.digest, sumsLine);
+  if (want.error) throw new Error('kr-update:' + want.error);
+  const file = await rustDownload(e, pick.asset.url, pick.asset.name, pick.asset.size);
+  try { e.sender.send('kr:update-progress', { pct: 100, got: 0, total: 0, speed: 0, verifying: true }); } catch { /* window gone */ }
+  const st = fs.statSync(file);
+  const sha = await new Promise((ok, bad) => { const hs = require('node:crypto').createHash('sha256'); fs.createReadStream(file).on('data', (d) => hs.update(d)).on('end', () => ok(hs.digest('hex'))).on('error', bad); });
+  if ((pick.asset.size && st.size !== pick.asset.size) || sha !== want.sha) { try { fs.unlinkSync(file); } catch { /* gone */ } throw new Error('kr-update:checksum'); }
+  // (3) Installed.
+  const { spawn } = require('child_process');
+  if (process.platform === 'win32') {
+    spawn(file, ['/P', '/R'], { detached: true, stdio: 'ignore' }).unref();
+    setTimeout(() => app.quit(), 800);
+    return 'rust';
+  }
+  if (process.platform === 'linux' && process.env.APPIMAGE) {
+    const current = process.env.APPIMAGE; fs.chmodSync(file, 0o755);
+    const script = path.join(app.getPath('temp'), 'kr-switch.sh');
+    fs.writeFileSync(script, `#!/bin/sh\nsleep 2\nmv -f "${file}" "${current}" && chmod +x "${current}" && ("${current}" >/dev/null 2>&1 &)\nrm -f "$0"\n`, { mode: 0o755 });
+    spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref();
+    setTimeout(() => app.quit(), 500);
+    return 'rust';
+  }
+  const err = await shell.openPath(file); if (err) throw new Error(err);
+  return 'kr-update:mac-opened';
+}
+// (The offer: once a while after the start, when a release carries the Tauri build for this system.)
+if (RUST_SWITCH) app.whenReady().then(() => setTimeout(() => { rustRelease(false).then((p) => { if (p && !process.env.PORTABLE_EXECUTABLE_DIR) send('kr:command', 'rust-switch'); }).catch(() => undefined); }, 20000));
+
 /* ---------- archives (the Tools app's engine, shared): list, extract (in place for ZIP), make a zip ---------- */
 const Archive = require('./archive.cjs'); const archiveJobs = new Map();
 ipcMain.handle('kr:archive-list', (_e, o) => Archive.list(String(o.path), o.password));

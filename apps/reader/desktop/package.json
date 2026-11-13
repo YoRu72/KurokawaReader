@@ -39,7 +39,9 @@
         ]
       },
       "archive.cjs",
-      "prepare.cjs"
+      "prepare.cjs",
+      "rustswitch.cjs",
+      "handover.cjs"
     ],
     "win": {
       "target": [

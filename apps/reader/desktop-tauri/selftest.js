@@ -331,6 +331,35 @@
       return 'stable 0.62.0, beta 0.63.0, none after 0.62.0';
     });
 
+    /* (R6b) the updater (src-tauri/src/update.rs): the test server's 3 MiB file fetched as an update is — broken off
+       after 1 MiB and resumed from there —, kept against its SHA-256 and refused (and removed) against a wrong one; a
+       file no checksum names is refused. On a bare program (CI's) installing is refused before anything is fetched
+       and there is no background download; an installed copy (the workflow's second run) skips those. */
+    await check('updater: resume, checksum, refusals', true, async function () {
+      var kind = (root.__KR_BOOT__ && root.__KR_BOOT__.kind) || '';
+      var r = await env.invoke('kr_selftest_updatedl', { url: base + '/large/kr-update.bin' });
+      must(r && r.size === cfg.largeSize, 'size ' + short(r));
+      must(r.resumedFrom > 0 && r.resumedFrom < r.size, 'resumed from ' + r.resumedFrom);
+      must(r.ok === true, 'its checksum ' + short(r));
+      must(r.refused === 'kr-update:checksum' && r.removedWhenRefused === true, 'a wrong checksum ' + short(r));
+      must(r.noChecksum === 'kr-update:nochecksum', 'no checksum ' + short(r));
+      must(r.kind === kind, 'kind ' + r.kind + ' ≠ boot ' + kind);
+      if (kind === 'bare') {
+        var refused = null; try { await kd.installUpdate('https://example.invalid/KurokawaReader-9.9.9-windows-x64-setup.exe', {}); } catch (e) { refused = e && e.message; }
+        must(refused === 'kr-update:bare', 'installing on a bare program ' + short(refused));
+        var bg = await kd.downloadUpdate({ beta: false }); must(bg === 'unsupported', 'background ' + short(bg));
+        must((await kd.installDownloadedUpdate()) === false, 'nothing downloaded');
+      }
+      return 'resumed at ' + r.resumedFrom + ' of ' + r.size + ' B; its sha256 kept, a wrong one refused; kind ' + r.kind + (r.file ? ' (updates from ' + r.file + ')' : '');
+    }, 90000);
+
+    /* (R6b) the start (src-tauri/src/boot.rs): first paint and app ready, in ms from the program's start */
+    await check('start-up times', false, async function () {
+      var t = await env.invoke('kr_boot_times', {});
+      must(t && typeof t.paint === 'number' && typeof t.ready === 'number', 'times ' + short(t));
+      return 'first paint ' + t.paint + ' ms, app ready ' + t.ready + ' ms after the program started' + (t.colourAtStart ? '; the window opens in the interface\'s colour' : '; background_color not found: no window colour before the first paint');
+    });
+
     /* window state (the shared winstate.rs): saved now, read back as the next start would */
     await check('window state save → restore', true, async function () {
       var w = await env.invoke('kr_selftest_winstate', {});

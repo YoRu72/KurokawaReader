@@ -11,7 +11,8 @@ reader, requests made by the site's own page, its sign-ins forgotten (see «The 
 archives through the app's own ZIP and tar readers and the 7-Zip program shipped with it, full screen, the interface's
 size, taskbar progress, an image on the clipboard, a Mac's menu bar, and the user's own app icon put on everything the
 system lets the app change (see «Archives, the window, the app's icon» below); the converter's PDF stays the page's
-picture PDF (no silent PDF printing here). Since R5 only R6's functions (the updater) are not real.
+picture PDF (no silent PDF printing here). **Stage R6b**: the updater, the Windows installer, the first start and the
+Electron → Rust switch (see «Updates, the installer, the first start» below); since R6b every function is real.
 
 ## How it works
 
@@ -23,8 +24,8 @@ picture PDF (no silent PDF printing here). Since R5 only R6's functions (the upd
   fills a small screen) saves the size it has, as Electron always saves its normal bounds.
 - `bridge.js` runs before the page's own scripts on every load, after a line that sets `window.__KR_BOOT__ = { os,
   arch }`, and defines the same `window.kurokawaDesktop` the Electron preload does: **all 48 names** (47 functions and
-  `platform`) — except the 3 **left out** (below: R6's two, and `printToPdf`, whose page fallback is this shell's
-  answer) —, and four of its own (`scanFolder`, R2; `cancelDownload`, R3; `menuText`, R5; `printFile`, R5, a Mac and
+  `platform`) — except the one **left out** (`printToPdf`, whose page fallback is this shell's answer; R6b's two
+  updater names are in since then) —, and four of its own (`scanFolder`, R2; `cancelDownload`, R3; `menuText`, R5; `printFile`, R5, a Mac and
   Linux only: its `EXTRA`, `window.__KR_BRIDGE_EXTRA__`). Each Electron channel `kr:a-b` is the Tauri
   command `kr_a_b` (`src-tauri/src/commands.rs`); arguments
   are sent under one-word keys (`p`, `o`, `text`, `b64`, `append`, `exts`, `url`, `name`, `id`, `provider`, `test`),
@@ -147,8 +148,8 @@ sends the right command and arguments from the page.
 
 `docs/RUST-PORT-READER.md` says 38; `desktop/preload.cjs` today gives 47 functions and `platform`. All are here.
 
-**Done: 42** (R0: 12, the title bar: 2, R2: 2, R3: 6, R4: 4, R5: 16; + `platform`) · **stubs: 2** (R6) · **left out:
-3** (R6: 2; `printToPdf`: the page's picture PDF, for good) · **extra: 4** (`scanFolder`, R2; `cancelDownload`, R3;
+**Done: 46** (R0: 12, the title bar: 2, R2: 2, R3: 6, R4: 4, R5: 16, R6b: 4; + `platform`) · **stubs: 0** · **left out:
+1** (`printToPdf`: the page's picture PDF, for good) · **extra: 4** (`scanFolder`, R2; `cancelDownload`, R3;
 `menuText`, `printFile` — a Mac and Linux —, R5).
 
 | Function | Electron (`main.cjs`) | R0 | How the page copes with the stub | Stage |
@@ -171,10 +172,10 @@ sends the right command and arguments from the page.
 | `onTitleBarState(cb)` | `app:titleBarState` events | **done**: the `kr:titleBarState` Tauri event (the state above, on each change) | | |
 | `setZoom(f)` | `webFrame.setZoomFactor` | **done** (R5) `kr_set_zoom`: the web view's `set_zoom`, else the page's CSS zoom | | |
 | `onOpenFile(cb)` | `kr:open-file` events (double-click, open-with, second instance) + `kr:ready` | **done** (R2) `kr_open_take` + `kr_read_file`, the `kr:openPending` event (`openfile.rs`) | | |
-| `installUpdate(url, o)` | `kr:install-update`: download, then install / swap | stub: rejects | the update sheet shows its error | R6 |
-| `downloadUpdate(o)` | `kr:update-download`: electron-updater in the background | **left out** | no «download in the background» switch; the page's own check and update sheet | R6 |
-| `installDownloadedUpdate()` | `kr:update-install` | **left out** | (never offered: nothing is downloaded) | R6 |
-| `onUpdateProgress(cb)` | `kr:update-progress` events | stub: nothing | | R6 |
+| `installUpdate(url, o)` | `kr:install-update`: download, then install / swap | **done** (R6b) `kr_install_update` (`update.rs`, `updatelogic.rs`) | | |
+| `downloadUpdate(o)` | `kr:update-download`: electron-updater in the background | **done** (R6b) `kr_update_download` | | |
+| `installDownloadedUpdate()` | `kr:update-install` | **done** (R6b) `kr_update_install` | | |
+| `onUpdateProgress(cb)` | `kr:update-progress` events | **done** (R6b): the `kr:update-progress` Tauri event | | |
 | `archiveList(o)` | `kr:archive-list` (its own ZIP and tar readers; 7-Zip for the rest) | **done** (R5) `kr_archive_list` (`archives.rs`, `archive.rs`) | | |
 | `archiveExtract(o)` | `kr:archive-extract` | **done** (R5) `kr_archive_extract` (`archives.rs`, `archive.rs`) | | |
 | `archiveCancel(id)` | `kr:archive-cancel` | **done** (R5) `kr_archive_cancel` (`archives.rs`, `archive.rs`) | | |
@@ -206,7 +207,7 @@ sends the right command and arguments from the page.
 | `menuText(labels)` | — | **extra** (R5) `kr_menu`: a Mac's menu bar in the interface's words | | |
 | `printFile(b64, name)` | — (Electron prints in its PDF viewer's frame) | **extra** (R5, a Mac and Linux) `kr_print_file`: the system's PDF program opens it to print | | |
 
-Kept as stubs on purpose: `installUpdate` / `onUpdateProgress` (R6).
+No stubs are left (R6b). `isPortable()` answers true in the portable zip of this build (R6b).
 
 ## Files and library (stage R2)
 
@@ -645,3 +646,87 @@ page gives lanes up when one fails, or when one is silent 20 s before it is read
 reads the pages itself — with the reason, and where each lane stopped, in the console (the engine test's row shows
 it). `tests/pdf2docxlanes.cjs`: silent lanes (given up after 20 s, same text), lanes whose pdf.js worker cannot start
 (given up at once), working lanes (not given up); the old code hangs on the second.
+
+## Updates, the installer, the first start (stage R6b)
+
+**The updater** (`src-tauri/src/update.rs`; the decisions in `updatelogic.rs`, std only, unit-tested by the workflow).
+The kind of copy is worked out at start and told to the page (`__KR_BOOT__.kind`): `nsis` (an uninstall.exe beside
+the program), `portable` (a `KurokawaReader.portable` file beside it — the portable zip), `appimage` ($APPIMAGE), `deb`
+(the program under /usr), `app` (inside a Mac's .app), `bare` (a built program, CI's). The release files of this
+build never take the Electron build's names: `KurokawaReader-<v>-windows-x64-setup.exe`, `…-windows-x64-portable.zip`,
+`…-macos-universal.dmg`, `…-linux-x64.AppImage`, `…-linux-x64.deb`, and `KurokawaReader-<v>-SHA256SUMS.txt` (the same in
+`updatelogic.rs`, `desktop/rustswitch.cjs` and `src/updateCore.ts` — `tests/updatenames.cjs`).
+- `installUpdate(url, o)` (the update sheet): the page sends the file it chose (`suitableAsset` picks this build's file
+  by the kind) with the release's `size` and GitHub's `digest`; a file of another build (an Electron name) is taken as
+  «this copy's file of the same release». Downloaded into `<temp>/KurokawaReader-update/` with progress (the
+  `kr:update-progress` event, `{ pct, got, total, speed }`, then `{ verifying: true }`); a connection that breaks off
+  is resumed with Range from where it stopped (up to six tries; a server that ignores the range starts it again). The
+  file must match the release: its size when stated, and its SHA-256 — GitHub's digest and/or the release's
+  SHA256SUMS line (both: they must agree); a file neither names, or that does not match, is refused and removed
+  (`kr-update:checksum`, `kr-update:nochecksum`, `kr-update:size`). Then: **Windows** — the new installer run with
+  `/P /R /UPDATE` (Tauri's NSIS: a progress window, the app started again after, as an update — data and shortcuts
+  kept) and the app leaves; **AppImage** — the new file written beside the running one, made runnable, renamed over
+  it (atomic on the same disk), started, the app leaves (a read-only folder: `kr-update:readonly`); **.deb** — the
+  package opened in the system's software installer (`kr-update:deb-opened`); **a Mac** — the disk image opened, as
+  Electron does (`kr-update:mac-opened`: the sheet says to drag the app to Applications; the app is not signed, and a
+  file this app downloads itself carries no quarantine mark, so Gatekeeper usually does not ask — if it does,
+  Control-click → Open). The portable zip and a bare program refuse before anything is fetched (`kr-update:portable`,
+  `kr-update:bare`: download the new build by hand). The page turns each code into a sentence (`updates.ts`
+  `updateErrorText`, `installedText`; five languages).
+- `downloadUpdate({beta})` (background updates): the release list read from GitHub's API (the app's own requests:
+  its proxy, DoH; a test's `KR_UPDATE_FEED` — only an address on this computer is taken), the newest release with
+  this copy's file, newer than the running version, fetched and checked quietly → `downloaded` / `none` /
+  `unsupported` (a copy that cannot install itself, or the list could not be read: the page's own check then).
+  `installDownloadedUpdate()` installs it now and restarts; otherwise it is installed silently (`/S /UPDATE`) when the
+  app quits — electron-updater's autoInstallOnAppQuit. No differential updates (the installer is ~10 MB).
+
+**The Windows installer** (Tauri's NSIS bundle; `tauri.conf.json` `bundle.windows`): per user, no admin prompt
+(`installMode: currentUser` — `%LOCALAPPDATA%\KurokawaReader`); WebView2 only if missing (`downloadBootstrapper`,
+silent: nothing added to the installer; ~1.8 MB fetched on the rare Windows 10 without it, so that case needs the
+network); LZMA solid (`compression: lzma` — the smallest; it unpacks at tens of MB/s, so the ~15 MB of program
+installs in about a second: zlib would be ~30 % larger and barely faster, bzip2 neither smaller nor faster); the
+installer's texts in English, Arabic (right to left: NSIS lays it out itself), Japanese, Korean and Simplified
+Chinese, chosen from Windows' language (no picker). **One screen** (`installer/onepage.nsh`): the icon and name, what
+it does, «Install» («Update» over an installed copy), and an «Options» disclosure — the folder, a desktop shortcut,
+«Open EPUB, PDF and other books with KurokawaReader», «Open KurokawaReader when done». Tauri renders its own installer
+script; `installer/onepage.cjs` (run after `tauri build`) puts this page before Tauri's first page, gives each of
+Tauri's clicked-through pages (welcome, licence, folder, Start-menu folder, components, finish) a PRE function that
+skips it once the screen was used (calling the page's own PRE after), calls `KrAfterInstall` first in
+`.onInstSuccess`, appends the words (`installer/onepage-lang.nsh`), and compiles it again with Tauri's own NSIS —
+every file, registry entry, file type, shortcut and the uninstaller stay Tauri's. After «Install» the install runs as
+Tauri's passive mode does (progress only, the window closes by itself). A rendered script unlike the one written for
+(no `PassiveMode`, no `.onInstSuccess`…) is left as it is: Tauri's own installer is kept (a warning; `--strict` in
+this workflow fails instead). `tests/installerpatch.cjs` checks the change on a script laid out as Tauri's.
+**Upgrades** go in place (the same folder, data folders `%APPDATA%\app.kurokawa.reader` and
+`%LOCALAPPDATA%\app.kurokawa.reader` untouched, shortcuts made again — `appicon.rs` puts the user's own icon back on
+them at the next start, as since R5). **Replacing the Electron Reader** (`installer/hooks.nsh`,
+`NSIS_HOOK_POSTINSTALL`, after the new program is in place): the Electron install is found by its uninstall entry
+(HKCU, `DisplayName` KurokawaReader, its `InstallLocation` holding `KurokawaReader.exe` and `resources\app.asar`), else
+electron-builder's default folder; its desktop, Start-menu and pinned shortcuts are pointed at the new program, the
+`kurokawareader://` link too (the file types are the same class names, now Tauri's); then its program folder is
+removed (retried while its processes end, else at the next restart) with its uninstall entry — its uninstaller is
+never run (it would take the file types away) and its data folder (`%APPDATA%\KurokawaReader`) is never touched. An
+Electron install for all users (HKLM) is left (it needs an administrator). **Uninstall**: Tauri's own confirmation, its
+«Delete the application data» box unticked by default — the library is kept unless the person ticks it.
+**Portable**: `KurokawaReader-<v>-windows-x64-portable.zip` (the program, the 7-Zip folder, the portable marker).
+
+**The first start** (`src/ui/firstrun.ts`, this shell only, once per profile — not under the self-test, the engine test
+or a test driver): one page over the library — the language (the five), the look (System / Light / Dark), «Bring my
+library» (calls `src/handover.ts` `restore()` — a placeholder here, stage R6a's to replace — and says what it
+answered), «Open books with KurokawaReader» (the system's default-apps page, Windows and macOS), «Start reading».
+**Start-up** (`src-tauri/src/boot.rs`): the bridge tells the shell its first paint and its first screen
+(`kr_boot_mark`), timed from `main()`; the self-test prints them (row «start-up times»), and with `KR_BOOTTIME=<file>`
+the app writes them and ends (the workflow's cold and warm starts of the installed app). The page's interface colour
+(its `theme-color`) is kept in `<config>/boot.json` and given to the window before the page paints where the resolved
+Tauri has `background_color` (`bootdetect.rs` + `build.rs`, cfg `kr_bg_color`, «KR build (R6b): …» in the log) — no
+white flash.
+
+**The Electron → Rust switch** (`desktop/main.cjs`, behind `RUST_SWITCH = false`; `desktop/rustswitch.cjs`): see
+the block's comment there. The hand-over hook is `desktop/handover.cjs` `prepare()` (R6a's; a placeholder answering
+`{ ok: true }` here). Portable Electron copies are told to download the new build by hand.
+
+**Tests**: `updatelogic.rs`, `bootlogic.rs`, `bootdetect.rs` (std only, CI); `tests/updatenames.cjs`,
+`tests/installerpatch.cjs` (node, CI); `tests/firstrun.cjs` (Chromium: the first-run screen, the update sheet of this
+build — its file, size and digest, progress, the refusals in words); `tests/tauribridge.cjs` (the four functions'
+commands and arguments); `selftest.js` (CI): «updater: resume, checksum, refusals» (required) and «start-up times»;
+`installtest.ps1` (CI, Windows): the installer end to end — see the workflow.

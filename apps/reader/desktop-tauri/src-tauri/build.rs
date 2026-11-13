@@ -3,6 +3,8 @@
 // kr_download_api — src/browser.rs —; kr_set_icon, kr_default_icon — src/appicon.rs —; kr_zoom, kr_progress —
 // src/winbits.rs) that the code uses; the build's log says what was found ("KR build: …").
 mod apidetect;
+// (Stage R6b: whether the window can be given its colour before the page paints — bootdetect.rs.)
+mod bootdetect;
 
 fn main() {
     for c in apidetect::CFGS.iter() {
@@ -32,5 +34,22 @@ fn main() {
             }
         }
     }
+    // (Stage R6b: the window's colour before the page paints — bootdetect.rs, src/boot.rs —, where Tauri's
+    // background_color and tauri-utils' Color are as written for.)
+    println!("cargo:rustc-check-cfg=cfg({})", bootdetect::CFG);
+    println!("cargo:rerun-if-changed=bootdetect.rs");
+    let bg = apidetect::locked_version(&lock, "tauri")
+        .zip(apidetect::locked_version(&lock, "tauri-utils"))
+        .and_then(|(tv, uv)| {
+            let home = apidetect::cargo_home()?;
+            let t = apidetect::crate_src(&home, "tauri", &tv)?;
+            let u = apidetect::crate_src(&home, "tauri-utils", &uv)?;
+            Some(bootdetect::bg_color(&apidetect::squeeze_tree(&t), &apidetect::squeeze_tree(&u)))
+        })
+        .unwrap_or(false);
+    if bg {
+        println!("cargo:rustc-cfg={}", bootdetect::CFG);
+    }
+    println!("cargo:warning=KR build (R6b): {} the window's colour before the page paints (background_color)", if bg { "yes" } else { "no" });
     tauri_build::build()
 }
