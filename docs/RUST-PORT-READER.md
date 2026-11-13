@@ -66,6 +66,15 @@ picture PDF on every system (WebView2's own `PrintToPdf` would need unsafe COM c
 opens the system's PDF program on a Mac and Linux. Portable mode stays Electron's (`isPortable` is false here). No tray:
 Electron's Reader has none.
 
+**R6a, as done** (the data; see `apps/reader/desktop-tauri/PORTING.md`, «The hand-over»): the last Electron build writes
+a hand-over — the stores copied whole (ids kept), every localStorage key, the local AI's models, its own icon, window
+and DNS files; linked books as links — into `<userData>/handover/`, streamed, hashed, read back and checked, marked
+last and only then renamed into place; a full disk or any failure means no install and a plain message. The Rust build
+offers it on its first start (count, size, «your old data is untouched at …»), copies it into its empty profile (or
+merges it into one with books), never twice, and frees its space only when asked. Backups read every format version in
+both builds and on the phones. Proved by `tests/handover.cjs` here and, in CI, the real Electron app handing over to
+the Tauri build (Windows required). The updater and installer half is R6b.
+
 ## 6. What to expect
 
 - **Size** (from the Tools port's measured figures with the same toolkit): Windows installer about 5–10 MB in place of 82 MB; macOS a few MB in place of 166 MB; Linux .deb small, AppImage stays near 80 MB because it must carry its own engine.

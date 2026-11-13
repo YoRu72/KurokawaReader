@@ -25,12 +25,15 @@ const archWord = (arch) => (arch === 'arm64' || arch === 'aarch64' ? 'arm64' : '
 
 /** The Tauri build's file that replaces an Electron copy on this system: the installer on Windows (never the
  *  portable zip: portable copies move by hand), the universal disk image on a Mac, the AppImage on Linux (Electron's
- *  Linux build is an AppImage). */
+ *  Linux build is an AppImage). (The disk image ends «.DMG» and the AppImage «.appimage»: every Electron copy's own
+ *  page takes «the first /\.dmg$/» and «the first /\.AppImage$/» of a release — case-sensitive, and frozen in the
+ *  copies out there —, so none can take the Rust build's file and skip the hand-over; macOS and Linux go by the
+ *  extension whatever its case.) */
 function rustAssetName(version, os, arch) {
   const a = archWord(arch);
   if (os === 'win32') return `${APP}-${version}-windows-${a}-setup.exe`;
-  if (os === 'darwin') return `${APP}-${version}-macos-universal.dmg`;
-  if (os === 'linux') return `${APP}-${version}-linux-${a}.AppImage`;
+  if (os === 'darwin') return `${APP}-${version}-macos-universal.DMG`;
+  if (os === 'linux') return `${APP}-${version}-linux-${a}.appimage`;
   return null;
 }
 const sumsName = (version) => `${APP}-${version}-SHA256SUMS.txt`;

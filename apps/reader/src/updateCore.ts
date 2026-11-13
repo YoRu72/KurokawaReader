@@ -86,18 +86,21 @@ export function versionChange(key: string, now: string): string | null {
 /* ---------- the Rust (Tauri) build's files (stage R6b) ---------- */
 // The release files of the Reader's Tauri build, by the names the release workflow gives them — the same as
 // desktop-tauri/src-tauri/src/updatelogic.rs (asset_name) and desktop/rustswitch.cjs (tests/updatenames.cjs keeps
-// the three equal): KurokawaReader-<v>-windows-x64-setup.exe, …-windows-x64-portable.zip, …-macos-universal.dmg,
-// …-linux-x64.AppImage, …-linux-x64.deb, and the checksums …-SHA256SUMS.txt. None of them matches the Electron
-// build's own patterns (…-win-x64.exe, …-mac-universal.dmg), so an Electron copy never takes one by mistake.
-export const RUST_TAILS = ['windows-x64-setup.exe', 'windows-x64-portable.zip', 'macos-universal.dmg', 'linux-x64.AppImage', 'linux-x64.deb', 'SHA256SUMS.txt'];
+// the three equal): KurokawaReader-<v>-windows-x64-setup.exe, …-windows-x64-portable.zip, …-macos-universal.DMG,
+// …-linux-x64.appimage, …-linux-x64.deb, and the checksums …-SHA256SUMS.txt. None of them matches the patterns every
+// Electron copy's page picks its file by (updates.ts suitableAsset: /win-x64.*\.exe$/, the first /\.dmg$/, the first
+// /\.AppImage$/ — case-sensitive, and frozen in the copies out there), so an Electron copy never takes one and skips
+// the hand-over, whatever order a release lists its files in. (The case of «.DMG» and «.appimage» changes nothing for
+// macOS or Linux, which go by the extension whatever its case.)
+export const RUST_TAILS = ['windows-x64-setup.exe', 'windows-x64-portable.zip', 'macos-universal.DMG', 'linux-x64.appimage', 'linux-x64.deb', 'SHA256SUMS.txt'];
 /** The kinds of copy the Tauri build tells the page (window.__KR_BOOT__.kind: src-tauri/src/update.rs). */
 export type RustKind = 'nsis' | 'portable' | 'appimage' | 'deb' | 'app' | 'bare';
 /** The release file that updates a copy of the Tauri build of this kind (Node's OS and arch names). */
 export function rustAsset(assets: RelAsset[], os: string, arch: string, kind: RustKind | string): RelAsset | undefined {
   const a = arch === 'arm64' || arch === 'aarch64' ? 'arm64' : 'x64';
   const tail = os === 'win32' ? (kind === 'portable' ? `-windows-${a}-portable.zip` : `-windows-${a}-setup.exe`)
-    : os === 'darwin' ? '-macos-universal.dmg'
-    : kind === 'deb' ? `-linux-${a}.deb` : `-linux-${a}.AppImage`;
+    : os === 'darwin' ? '-macos-universal.DMG'
+    : kind === 'deb' ? `-linux-${a}.deb` : `-linux-${a}.appimage`;
   return assets.find((x) => x.name.startsWith('KurokawaReader-') && x.name.endsWith(tail))
-    ?? (os === 'darwin' ? assets.find((x) => x.name.startsWith('KurokawaReader-') && x.name.endsWith(`-macos-${a}.dmg`)) : undefined);
+    ?? (os === 'darwin' ? assets.find((x) => x.name.startsWith('KurokawaReader-') && x.name.endsWith(`-macos-${a}.DMG`)) : undefined);
 }

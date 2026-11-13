@@ -318,6 +318,11 @@ export function settingsView(): HTMLElement {
       h('button', { class: 'btn small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const { backupFull } = await import('../backup'); await backupFull((d, n) => { bkStatus.textContent = `${d}/${n}`; }); bkStatus.textContent = ''; } finally { b.disabled = false; } } }, icon('books'), t('backupFull')),
       h('button', { class: 'btn small outlined', onclick: () => void import('../ui/restoresheet').then((m) => m.restoreSheet()) }, icon('import'), t('restore')), restoreInput),
     bkStatus, autoBackupRow()));
+  // (Stage R6a, the Rust build only — where the shell reads a hand-over: the library from the previous version.)
+  if ((window as unknown as { kurokawaHandover?: { find?: unknown } }).kurokawaHandover?.find) {
+    const bkCard = body.lastElementChild;
+    void import('../ui/handoversheet').then((m) => { const rows = m.handoverRows(); if (rows && bkCard) bkCard.append(rows); });
+  }
 
   // Keyboard shortcuts: every computer, the desktop app or a browser (touch-screen laptops included); phones and
   // tablets — a phone's browser too — skip it.

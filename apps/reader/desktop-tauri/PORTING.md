@@ -715,8 +715,12 @@ The kind of copy is worked out at start and told to the page (`__KR_BOOT__.kind`
 the program), `portable` (a `KurokawaReader.portable` file beside it — the portable zip), `appimage` ($APPIMAGE), `deb`
 (the program under /usr), `app` (inside a Mac's .app), `bare` (a built program, CI's). The release files of this
 build never take the Electron build's names: `KurokawaReader-<v>-windows-x64-setup.exe`, `…-windows-x64-portable.zip`,
-`…-macos-universal.dmg`, `…-linux-x64.AppImage`, `…-linux-x64.deb`, and `KurokawaReader-<v>-SHA256SUMS.txt` (the same in
-`updatelogic.rs`, `desktop/rustswitch.cjs` and `src/updateCore.ts` — `tests/updatenames.cjs`).
+`…-macos-universal.DMG`, `…-linux-x64.appimage`, `…-linux-x64.deb`, and `KurokawaReader-<v>-SHA256SUMS.txt` (the same in
+`updatelogic.rs`, `desktop/rustswitch.cjs` and `src/updateCore.ts` — `tests/updatenames.cjs`). No name of them can be
+taken by an Electron copy's own updater: its page picks `/win-x64.*\.exe$/`, **the first** `/\.dmg$/` and **the first**
+`/\.AppImage$/` of a release (case-sensitive, and frozen in every copy out there), hence the disk image's `.DMG` and
+the AppImage's `.appimage` — macOS and Linux go by the extension whatever its case — so an Electron copy can only reach
+the Rust build through the bridge build and its hand-over, in whatever order the release lists its files.
 - `installUpdate(url, o)` (the update sheet): the page sends the file it chose (`suitableAsset` picks this build's file
   by the kind) with the release's `size` and GitHub's `digest`; a file of another build (an Electron name) is taken as
   «this copy's file of the same release». Downloaded into `<temp>/KurokawaReader-update/` with progress (the
@@ -773,8 +777,13 @@ Electron install for all users (HKLM) is left (it needs an administrator). **Uni
 
 **The first start** (`src/ui/firstrun.ts`, this shell only, once per profile — not under the self-test, the engine test
 or a test driver): one page over the library — the language (the five), the look (System / Light / Dark), «Bring my
-library» (calls `src/handover.ts` `restore()` — a placeholder here, stage R6a's to replace — and says what it
-answered), «Open books with KurokawaReader» (the system's default-apps page, Windows and macOS), «Start reading».
+library» — the hand-over's offer (stage R6a, below): when the previous version left a hand-over to offer, the tile
+IS the offer (`ui/handoversheet.ts` `handoverOffer`: the count, the size, where the old data stays, «Bring it now» with
+its progress, «Free the space», «Continue» — which closes the screen and reloads), else a button that looks for one
+(also one declined before: then it merges) and says when none is there —, «Open books with KurokawaReader» (the
+system's default-apps page, Windows and macOS), «Start reading» (not while the library is coming). ONE screen:
+`ui/firstrun.ts` `startScreens()` shows this page, and the hand-over's own sheet (`handoverAtStart`) only when the
+first run was done before. Closing the page without bringing the library leaves the offer for the next start.
 **Start-up** (`src-tauri/src/boot.rs`): the bridge tells the shell its first paint and its first screen
 (`kr_boot_mark`), timed from `main()`; the self-test prints them (row «start-up times»), and with `KR_BOOTTIME=<file>`
 the app writes them and ends (the workflow's cold and warm starts of the installed app). The page's interface colour
@@ -783,8 +792,11 @@ Tauri has `background_color` (`bootdetect.rs` + `build.rs`, cfg `kr_bg_color`, �
 white flash.
 
 **The Electron → Rust switch** (`desktop/main.cjs`, behind `RUST_SWITCH = false`; `desktop/rustswitch.cjs`): see
-the block's comment there. The hand-over hook is `desktop/handover.cjs` `prepare()` (R6a's; a placeholder answering
-`{ ok: true }` here). Portable Electron copies are told to download the new build by hand.
+the block's comment there. The hand-over gate is `desktop/handover.cjs` `prepare({ app, webContents })`: it runs the
+asking page's `window.__KR_HANDOVER__.beforeInstall()` (R6a's `handoverBeforeInstall`: the hand-over made with its
+progress sheet, over the update sheet) and answers `{ ok: true, dir, id }` only when the page said true and a hand-over
+marked since is on the disk; anything else stops the switch (`kr-update:handover <why>`) before anything is
+downloaded. Portable Electron copies are told to download the new build by hand.
 
 **Tests**: `updatelogic.rs`, `bootlogic.rs`, `bootdetect.rs` (std only, CI); `tests/updatenames.cjs`,
 `tests/installerpatch.cjs` (node, CI); `tests/firstrun.cjs` (Chromium: the first-run screen, the update sheet of this
@@ -811,3 +823,141 @@ shown in the row whether it passes or fails.
 then moved off and not put back in 12 s). Both are text reader checks taken while the window's native full-screen
 animation, started by opening the book (`setImmersive`, Electron's behaviour), reflows the text; R4 (no full screen)
 passed both. Not fixed here: whether a computer should go full screen at all when a book opens is to be decided.
+
+## The hand-over (stage R6a)
+
+The owner's decision: the Rust build becomes the main download, an update «rebuilds the app and keeps the user's data
+intact», and backups of either build restore in the other. The web view's profile cannot be shared — Electron's page
+lives at `app://kurokawa` in its own Chromium, the Rust build's at `http://tauri.localhost` / `tauri://localhost` in
+the system's web view —, so the data is handed over: the LAST Electron build (the bridge build, R6b: published under
+the old asset names so existing users' updaters fetch it) writes everything into a folder before it installs the Rust
+build; the Rust build brings it back on its first start. Nothing is deleted from the old profile, ever, by either
+build; the hand-over folder goes only when the reader asks. (Downloading and running the Rust installer, the installer
+itself and the Rust build's updater are R6b's; R6a owns the data.)
+
+### What the Electron Reader keeps for a user, and how each part crosses
+
+Electron's data folder (`userData`): installed — `%APPDATA%\KurokawaReader`, `~/Library/Application Support/KurokawaReader`,
+`~/.config/KurokawaReader`; the portable .exe uses the same (electron-builder's portable does not move it); `electron .`
+(CI) — `…/kurokawa-reader-desktop`. Its Chromium profile (IndexedDB, localStorage, cookies…) is inside it. The Rust
+build's web-view profile: WebView2 `%LOCALAPPDATA%\app.kurokawa.reader\EBWebView`; WKWebView
+`~/Library/WebKit/app.kurokawa.reader/WebsiteData` (`…/KurokawaReader/…` for the bare program); WebKitGTK
+`~/.local/share/app.kurokawa.reader`. Its own files: `<app data>` = `%APPDATA%\app.kurokawa.reader`,
+`~/Library/Application Support/app.kurokawa.reader`, `~/.local/share/app.kurokawa.reader`.
+
+| What (from the code) | Electron | Rust build | How it crosses |
+|---|---|---|---|
+| Book records — IndexedDB `kurokawa-reader`, store `books`: title, file name and size, place (`progress`, `progressAt`), bookmarks, highlights and notes, PDF highlights, pins and ink, tags, folder, rating, review, chapter marks and stars, reading stats (`stats`, `statsSync`), series, online source, per-book `prefs`, covers (`cover`, `coverOrig` as Blobs) | its profile | its profile | `handover/books.jsonl`, record by record, **ids kept**; covers `books/<n>/cover`, `cover-orig` |
+| Book files — store `files`, keyed by the book's id | its profile | its profile | `books/<n>/file`, read and written 8 MiB at a time |
+| Linked books — the record's `source.path`; the file stays in the reader's folder | the record | the record | **the link crosses, the file is not copied** |
+| Fonts (`font:<id>`), the reader's background picture (`bg-image`) — store `files` | its profile | its profile | `fonts/<n>`, `files/<n>` |
+| Every other record — store `meta`: folders, tags, the fonts list, translations (`tr:`, `trs:`), Anki progress, audiobook places, PDF crops and passwords, sources' repositories, indexes and caches, sync state, the automatic backups… | its profile | its profile | `handover/meta.jsonl`, every key; Blobs, bytes, dates kept by tagged stand-ins |
+| Search text — store `texts` | its profile | — | not carried: a cache, rebuilt when a book is searched |
+| localStorage: settings `kr.visual` (sync's WebDAV account in it), per-book `kr.bookVisual`, language, direction, sort, glossary (`kr.glossary*`), text rules, kept words, the reading queue, migration flags, sources' filters and extension stores (`kr.ext.store.*`), sign-ins (`kr.dbx.*`, `kr.anilist.*`, `kr.shamelalink.*`), the icon's picture (`app.icon`), scan folders (`kr.scan`)… | its profile | its profile | `handover/local.json`: **every key** but `kr.diag` (the old shell's diagnostics) and `kr.handover.*`. Keys and tokens included: unlike a backup the reader shares, the hand-over stays in the user's own data folder — they stay signed in |
+| sessionStorage (a jump in progress) | per window | — | not carried: lives for one run |
+| Local AI models (wllama: the origin's private files, OPFS) | its profile | its profile | `opfs/<n>` + `handover/opfs.json`; a web view that cannot write them gets the models list emptied (shown as not downloaded, never as there and broken) |
+| Cache Storage (voices, the local AI's engine, dictionaries, sources' covers) | its profile | its profile | not carried: both shells (and the phones) empty it at every start (`src/main.ts`); fetched again when used |
+| `custom-icon.png` (+ `.ico`, Windows) | userData | `appicon.rs`'s file | `shell/custom-icon.png` kept; restored through `appIcon({ set })` from `app.icon` |
+| `window-state.json` | userData | `<app config>/window-state.json`, the same format | `shell/window-state.json` kept; not applied (the first window opens at the default size once) |
+| `doh.json` (DNS over HTTPS) | userData | `doh.json` (commands.rs) | `shell/doh.json` → `setDoh(provider)` |
+| `downloads/` (files in flight) | userData | its downloads folder | not carried: a book that arrived is in the library; an unfinished download starts again |
+| Cookies and sessions: the app's requests and the in-app browser (one `defaultSession`; encrypted by the system's key store) | its profile | `cookies.txt` (R3), the browser's profile (R4) | not carried: a site the sources use asks to sign in again (sync and AniList are tokens in localStorage and cross) |
+
+### The folder
+
+`<userData>/handover/` — written by `desktop/handover.cjs` (Writer) for the page (`src/handover.ts` makeHandover):
+
+    kurokawa-backup.json      a full backup's manifest (src/backup.ts, credentials left out) — the folder is also a
+    paths.json                full backup, its files at safe names: { "books/<id>/<fileName>": "books/3/file", … }
+    books/<n>/file, cover, cover-orig, translations.json
+    fonts/<n>, files/<n>, blobs/<n>, opfs/<n>
+    handover/books.jsonl, meta.jsonl, files.json, local.json, opfs.json
+    shell/custom-icon.png, window-state.json, doh.json
+    marker.json               written last: { app, kind: 'handover', format: 1, id, createdAt, from, counts, bytes,
+                              files: [{ rel, size, sha256 }] }
+
+- **Streamed**: each file is written in 8 MiB pieces through the shell (Electron's IPC carries the bytes as they
+  are); the record files are written a few megabytes at a time. Nothing holds the library as one string or one Blob.
+- **Atomic**: everything goes into `<userData>/handover.part/`; each file is hashed as it arrives, then read back from
+  the disk and hashed again, its size checked, flushed (`fsync`); the page reads the records back and compares them
+  with its stores (ids, places, highlights, counts); then the marker is written (temp file, flush, rename) and only
+  then `handover.part` becomes `handover` (an older hand-over is replaced only at that moment). A run broken off at any
+  point leaves no folder with a marker, so nothing half-written is taken for a hand-over. Not resumable: a new run
+  starts again.
+- **Space**: before writing, the shell checks the disk's free space (`fs.statfs`) against the library's size (the
+  stores' Blobs, or the origin's own usage figure when larger) + 2 % + 256 MB; short → nothing is written.
+- **Pointers**: `<Rust app data>/handover-from.json` and, for the portable .exe, `KurokawaReader-handover.json`
+  beside it: `{ dir, id }`.
+
+### What each side does
+
+**Electron (bridge build)**: `window.kurokawaHandover` (`preload.cjs`; `main.cjs` installs `handover.cjs`):
+`begin({need})`, `write(rel, bytes, append)`, `shellFiles()`, `readPart(rel)`, `verify(list)`, `finish({counts})`,
+`abort()`, `status()`. The page's `makeHandover()` answers `{ ok, dir, id, counts }` or `{ ok: false, reason:
+'space' | 'verify' | 'error' | 'unsupported', … }`; `ui/handoversheet.ts` `handoverBeforeInstall()` shows its
+progress and, on failure, says why plainly («Not enough free space… Nothing was changed and this version keeps
+working») and answers **false: R6b must not install the Rust build then**. (`window.__KR_HANDOVER__.beforeInstall()`
+reaches it without an import.) `KR_HANDOVER_FREE=<bytes>` makes the shell assume that much free space (tests).
+
+**Rust build**: `window.kurokawaHandover` (`handover-bridge.js`, injected after `bridge.js`) over `handover.rs`:
+`kr_handover_find { p }` (a folder the reader picked — it, or its `handover` folder —, else `KR_HANDOVER_FROM`, the
+pointers, then Electron's default folders: every marker checked, every listed file's size), `kr_handover_verify { p }`
+(every file's SHA-256), `kr_handover_read { p, rel }` (bytes), `kr_handover_mark { o }` (`<app data>/handover-state.json`:
+`{ id, state: restored | declined, at, counts }`), `kr_handover_free { p }` (only a folder named `handover` holding a
+hand-over's marker). The pure parts are `handoverlogic.rs` (std only; CI's std-only tests run it).
+On the first start the offer «Your library from the previous version» shows — in the first-run page's library tile
+(R6b's `ui/firstrun.ts`), or, when the first run was done before, as a sheet of its own (`handoverAtStart`, 1.5 s
+after the start) — when a whole hand-over is found, it was neither restored nor declined here, and this profile is
+empty (no book, folder or tag — the settings are not a sign: the app writes them at its first start) or a restore of it
+was broken off: how many books («Books: n», «العدد: n»), its size, «Your old data is untouched, at: <folder>», and
+«Bring it now» / «Not now». Bringing it: the SHA-256 of every file checked, then into an empty profile everything is
+**copied** — each book's file before its record, every record and key as it was, the icon put on the window, the DNS
+choice applied —, the books checked to be there, the hand-over marked `restored` (and `kr.handover.done` set), and
+«Free the space» (asks first; deletes the copy only — never Electron's profile) and «Continue» (the page reloads with
+its settings). «Not now» marks it `declined`: not asked at the start again. Settings → Backup (the Rust build only:
+the rows appear where the shell reads a hand-over, never on a phone or the web): «Bring my library from the previous
+version», «Import from the previous version's hand-over folder» (a folder picked: Electron's data folder or the
+`handover` folder), «Import from the previous version's backup file» (the usual restore), and «Free the space» once it
+came. Into a library that already has books the hand-over is **merged**: the books it lacks added as they were (with
+their files, covers, notes, places; linked ones linked; their folder found by name), then the full backup's rules
+(`restoreManifest`: notes merged by id, the later place kept, settings the backup's, credentials the device's). Never
+twice: a restored or declined hand-over is not offered at the start again (`handover-state.json` and
+`kr.handover.done`); a restore broken off is taken up again as a copy at the next start (`kr.handover.progress`).
+
+### Backups between the builds and the phones
+
+The same code makes and reads backups everywhere (`src/backup.ts`), so a backup made by the Rust build restores in the
+Electron build (an older user, a rollback) and on the phones, and the reverse. `readManifest` now names the format's
+rule: any version is read — a field this app does not know is passed by, one it misses left as the device has it, a
+NEWER version's backup restored as far as it goes —; only a file that is not a KurokawaReader backup is refused; one
+without a version is read as version 1. The PC-only part of a backup — the app's icon — is applied only where a
+desktop shell sets icons (`appIconWay() === 'desktop'`); the window state and linked folders are not in a backup (a
+full backup copies a linked book's file in, read from where it lives). What a backup did NOT carry, and the hand-over
+does: every localStorage key beyond the backup's (sources' filters and stores, sign-ins, the queue, flags), every
+`meta` record beyond folders, tags, fonts, translations, Anki and audio places, the original covers, linked books' own
+records (a backup restores a linked book only where its file is), the local AI's models. A full backup is built in
+memory by JSZip and read whole by it: fine for most libraries, not for many GBs — the hand-over, not a backup, is the
+way between the builds.
+
+### Tests
+
+- `tests/handover.cjs` (Playwright, the built app; here): an Electron-shaped profile (desktop/handover.cjs's real
+  Writer in a temp folder) with an EPUB, a PDF, a long text read to its 120th paragraph, a linked book, notes of every
+  kind, per-book settings, a font, translations, Anki, folders, tags, a custom icon, sign-ins, a model in the private
+  files → a full disk refused (nothing written, the reader told, false for the installer) → the hand-over made
+  (marker, hashes, pointer, the linked file not copied, no part folder) → a run broken off and a killed write leave no
+  hand-over (the older one stands), a damaged copy refused by hash, a truncated one not even offered → a Rust-shaped
+  page (the real bridge.js and handover-bridge.js over a fake IPC doing handover.rs's rules) offers it with the count
+  and the folder, brings it, and after the reload every store and key is the same (deep compare), the icon and DNS
+  applied, the text book opens at the same paragraph; the second start neither offers nor reads it; «Free the space»
+  deletes only the copy → a library with a book gets the missing ones and merged notes, folders by name → «Not now»
+  is kept; a picked folder is found → CI's own check script (`handovercheck.js`) passes here → backups: a phone's full
+  backup restores on the computer and the reverse, the icon left off the phone, a newer version's backup read, a
+  stranger's refused.
+- CI (`tauri-check-reader.yml`, «Hand-over» steps; Windows required, Linux reported): the real Electron app
+  (`electron .`, Playwright's `_electron`, `tests/handover-electron.cjs`) is given a library and makes its hand-over;
+  its snapshot is the expectation (`KRH_EXPECT`); the Tauri build then starts with an emptied web-view profile and
+  `KRH_SELFTEST=<file>` (`handover.rs` adds `handovercheck.js`; the shared self-test frame writes the verdict, its
+  watchdog `KRH_SELFTEST_TIMEOUT`): the screen offers it with the count, brings it; after the reload the same books
+  (ids and fields), files (sizes), records, keys, icon; marked restored and not offered again; the text book opens at
+  its paragraph (reported). `selftest-report.cjs` prints the table.

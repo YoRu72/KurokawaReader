@@ -163,14 +163,18 @@ fn arch_word(arch: &str) -> &str {
 }
 
 /// The release file this kind of copy updates from, for a version (Node's OS and arch names). None where there is
-/// none (a bare program).
+/// none (a bare program). (The disk image ends «.DMG» and the AppImage «.appimage»: every Electron copy's page takes
+/// «the first file matching /\.dmg$/» on a Mac and «/\.AppImage$/» on Linux — case-sensitive, frozen in the copies
+/// out there —, so none can take this build's file and skip the hand-over, whatever order a release lists its files
+/// in; macOS and Linux go by the extension whatever its case. The same names in desktop/rustswitch.cjs and
+/// src/updateCore.ts: tests/updatenames.cjs.)
 pub fn asset_name(version: &str, os: &str, arch: &str, kind: Kind) -> Option<String> {
     let a = arch_word(arch);
     let tail = match (os, kind) {
         ("win32", Kind::Nsis) => format!("windows-{}-setup.exe", a),
         ("win32", Kind::Portable) => format!("windows-{}-portable.zip", a),
-        ("darwin", Kind::MacApp) => "macos-universal.dmg".to_string(),
-        ("linux", Kind::AppImage) => format!("linux-{}.AppImage", a),
+        ("darwin", Kind::MacApp) => "macos-universal.DMG".to_string(),
+        ("linux", Kind::AppImage) => format!("linux-{}.appimage", a),
         ("linux", Kind::Deb) => format!("linux-{}.deb", a),
         _ => return None,
     };
@@ -183,7 +187,7 @@ pub fn asset_fits(name: &str, version: &str, os: &str, arch: &str, kind: Kind) -
     if asset_name(version, os, arch, kind).as_deref() == Some(name) {
         return true;
     }
-    os == "darwin" && kind == Kind::MacApp && name == format!("{}-{}-macos-{}.dmg", APP, version, arch_word(arch))
+    os == "darwin" && kind == Kind::MacApp && name == format!("{}-{}-macos-{}.DMG", APP, version, arch_word(arch))
 }
 
 /// The release's checksum file (sha256sum's format: «<64 hex>  <name>» a line).
@@ -552,16 +556,22 @@ mod tests {
     fn names() {
         assert_eq!(asset_name("0.71.0", "win32", "x64", Kind::Nsis).as_deref(), Some("KurokawaReader-0.71.0-windows-x64-setup.exe"));
         assert_eq!(asset_name("0.71.0", "win32", "arm64", Kind::Portable).as_deref(), Some("KurokawaReader-0.71.0-windows-arm64-portable.zip"));
-        assert_eq!(asset_name("0.71.0", "darwin", "arm64", Kind::MacApp).as_deref(), Some("KurokawaReader-0.71.0-macos-universal.dmg"));
-        assert_eq!(asset_name("0.71.0", "linux", "x64", Kind::AppImage).as_deref(), Some("KurokawaReader-0.71.0-linux-x64.AppImage"));
+        assert_eq!(asset_name("0.71.0", "darwin", "arm64", Kind::MacApp).as_deref(), Some("KurokawaReader-0.71.0-macos-universal.DMG"));
+        assert_eq!(asset_name("0.71.0", "linux", "x64", Kind::AppImage).as_deref(), Some("KurokawaReader-0.71.0-linux-x64.appimage"));
         assert_eq!(asset_name("0.71.0", "linux", "x86_64", Kind::Deb).as_deref(), Some("KurokawaReader-0.71.0-linux-x64.deb"));
         assert_eq!(asset_name("0.71.0", "linux", "x64", Kind::Bare), None);
         assert_eq!(asset_name("0.71.0", "win32", "x64", Kind::Bare), None);
-        assert!(asset_fits("KurokawaReader-0.71.0-macos-arm64.dmg", "0.71.0", "darwin", "arm64", Kind::MacApp));
-        assert!(!asset_fits("KurokawaReader-0.71.0-macos-x64.dmg", "0.71.0", "darwin", "arm64", Kind::MacApp));
+        assert!(asset_fits("KurokawaReader-0.71.0-macos-arm64.DMG", "0.71.0", "darwin", "arm64", Kind::MacApp));
+        assert!(!asset_fits("KurokawaReader-0.71.0-macos-x64.DMG", "0.71.0", "darwin", "arm64", Kind::MacApp));
         // (The Electron build's names never fit the Rust build, nor its own the Electron one's.)
         assert!(!asset_fits("KurokawaReader-0.71.0-win-x64.exe", "0.71.0", "win32", "x64", Kind::Nsis));
         assert!(!asset_fits("KurokawaReader-0.71.0-mac-universal.dmg", "0.71.0", "darwin", "x64", Kind::MacApp));
+        // (Nor does any Electron copy's own pattern take one of this build's files: «win-x64…exe», «…dmg», «…AppImage».)
+        for (os, arch, k) in [("win32", "x64", Kind::Nsis), ("win32", "x64", Kind::Portable), ("darwin", "arm64", Kind::MacApp), ("darwin", "x64", Kind::MacApp), ("linux", "x64", Kind::AppImage), ("linux", "x64", Kind::Deb)] {
+            let n = asset_name("0.71.0", os, arch, k).unwrap();
+            assert!(!n.ends_with(".dmg") && !n.ends_with(".AppImage") && !(n.contains("win-x64") && n.ends_with(".exe")), "{}", n);
+        }
+        assert!(!format!("{}-0.71.0-macos-arm64.DMG", APP).ends_with(".dmg"));
         assert_eq!(sums_name("0.71.0"), "KurokawaReader-0.71.0-SHA256SUMS.txt");
         assert_eq!(version_of_asset("KurokawaReader-0.71.0-beta.1-windows-x64-setup.exe").as_deref(), Some("0.71.0-beta.1"));
         assert_eq!(version_of_asset("KurokawaReader-0.61.0-win-x64.exe").as_deref(), Some("0.61.0"));
@@ -613,7 +623,7 @@ mod tests {
     fn picking() {
         let list = vec![
             rel("v0.70.0", false, &["KurokawaReader-0.70.0-win-x64.exe", "latest.yml"]),
-            rel("v0.71.0", false, &["KurokawaReader-0.71.0-win-x64.exe", "KurokawaReader-0.71.0-windows-x64-setup.exe", "KurokawaReader-0.71.0-SHA256SUMS.txt", "KurokawaReader-0.71.0-linux-x64.AppImage"]),
+            rel("v0.71.0", false, &["KurokawaReader-0.71.0-win-x64.exe", "KurokawaReader-0.71.0-windows-x64-setup.exe", "KurokawaReader-0.71.0-SHA256SUMS.txt", "KurokawaReader-0.71.0-linux-x64.appimage"]),
             rel("v0.72.0-beta.1", true, &["KurokawaReader-0.72.0-beta.1-windows-x64-setup.exe"]),
             rel("tools-v9.0.0", true, &["KurokawaTools-9.0.0-windows-x64-setup.exe"]),
             Release { draft: true, ..rel("v0.99.0", false, &["KurokawaReader-0.99.0-windows-x64-setup.exe"]) },

@@ -14,6 +14,9 @@ mod commands;
 mod dlplan;
 mod download;
 mod enginetest;
+// (Stage R6a: the hand-over from the Electron build — handover.rs, its pure parts handoverlogic.rs.)
+mod handover;
+mod handoverlogic;
 mod iconlogic;
 mod menu;
 mod openargs;
@@ -167,7 +170,15 @@ fn main() {
             update::kr_selftest_updatedl,
             update::kr_updatetest_note,
             boot::kr_boot_mark,
-            boot::kr_boot_times
+            boot::kr_boot_times,
+            // (Stage R6a: the hand-over — handover.rs.)
+            handover::kr_handover_find,
+            handover::kr_handover_verify,
+            handover::kr_handover_read,
+            handover::kr_handover_mark,
+            handover::kr_handover_free,
+            handover::kr_handover_check_progress,
+            handover::kr_handover_check_done
         ]))
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -202,6 +213,14 @@ fn main() {
             }
             // (Stage R6b, only with KR_UPDATETEST set — CI —: the page updates the app through its own updater.)
             if let Some(t) = update::script(&handle) {
+                script.push('\n');
+                script.push_str(&t);
+            }
+            // (Stage R6a: window.kurokawaHandover — the hand-over's reading half, handover.rs —, and, only with
+            // KRH_SELFTEST set and no other test, CI's check that an Electron profile's hand-over arrived.)
+            script.push('\n');
+            script.push_str(handover::BRIDGE_JS);
+            if let Some(t) = handover::check_script(&handle) {
                 script.push('\n');
                 script.push_str(&t);
             }

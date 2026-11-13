@@ -29,7 +29,7 @@ let eCalls = [];
 function loadPreload() {
   let exposed = null;
   const fake = {
-    contextBridge: { exposeInMainWorld: (_n, o) => { exposed = o; } },
+    contextBridge: { exposeInMainWorld: (n, o) => { if (n === 'kurokawaDesktop') exposed = o; /* (R6a: kurokawaHandover is tests/handover.cjs's) */ } },
     ipcRenderer: { invoke: (ch, ...a) => { eCalls.push({ ch, a }); return Promise.resolve(null); }, send: (ch, ...a) => { eCalls.push({ ch, a, send: true }); }, on() {}, removeListener() {}, removeAllListeners() {} },
     webFrame: { setZoomFactor() {} },
   };
@@ -692,7 +692,7 @@ async function pagePart(ported) {
         appIcon: () => kd.appIcon(), setFullscreen: () => kd.setFullscreen('toggle'), setImmersive: () => kd.setImmersive(true), copyImage: () => kd.copyImage('iVBORw0KGgoAAAANSUhEUg=='),
         setZoom: async () => { kd.setZoom(1.25); await new Promise((r) => setTimeout(r, 50)); return document.documentElement.style.zoom; },
         setProgress: () => kd.setProgress(0.5),
-        installUpdate: () => kd.installUpdate('https://x/KurokawaReader-1.0.0-linux-x64.AppImage', { beta: false, size: 9, digest: 'sha256:' + 'a'.repeat(64) }), downloadUpdate: () => kd.downloadUpdate({ beta: false }), installDownloadedUpdate: () => kd.installDownloadedUpdate(),
+        installUpdate: () => kd.installUpdate('https://x/KurokawaReader-1.0.0-linux-x64.appimage', { beta: false, size: 9, digest: 'sha256:' + 'a'.repeat(64) }), downloadUpdate: () => kd.downloadUpdate({ beta: false }), installDownloadedUpdate: () => kd.installDownloadedUpdate(),
         onUpdateProgress: () => { let n = 0; kd.onUpdateProgress(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:update-progress').forEach((l) => l[1]({ payload: { pct: 5, got: 1, total: 20, speed: 1 } })); return n; },
         onCommand: () => { const got = []; kd.onCommand((c) => got.push(c)); window.__listeners.filter((l) => l[0] === 'kr:command').forEach((l) => l[1]({ payload: 'search' })); return got.slice(-1); },
       };
@@ -718,7 +718,7 @@ async function pagePart(ported) {
       archiveRestore: ['kr_archive_restore', { o: { path: '/x/a.zip' } }, { left: 0 }], archiveFree: ['kr_archive_free', { o: { dir: '/x' } }, { free: 1e9 }], archiveExisting: ['kr_archive_existing', { o: { dest: '/x', names: ['a'] } }, { existing: [] }],
       appIcon: ['kr_app_icon', { o: {} }, null], setFullscreen: ['kr_fullscreen', { v: 'toggle' }, true], setImmersive: ['kr_immersive', { on: true }, true], copyImage: ['kr_copy_image', { b64: 'iVBORw0KGgoAAAANSUhEUg==' }, true],
       setZoom: ['kr_set_zoom', { f: 1.25 }, ''], setProgress: ['kr_progress', { p: 0.5 }, undefined],
-      installUpdate: ['kr_install_update', { url: 'https://x/KurokawaReader-1.0.0-linux-x64.AppImage', o: { beta: false, size: 9, digest: 'sha256:' + 'a'.repeat(64) } }, 'installing'],
+      installUpdate: ['kr_install_update', { url: 'https://x/KurokawaReader-1.0.0-linux-x64.appimage', o: { beta: false, size: 9, digest: 'sha256:' + 'a'.repeat(64) } }, 'installing'],
       downloadUpdate: ['kr_update_download', { o: { beta: false } }, 'none'], installDownloadedUpdate: ['kr_update_install', {}, false],
     };
     // (onOpenFile / onOpenUrl: a take of their kind — and, for a file, its bytes read by path.)
