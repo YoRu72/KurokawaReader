@@ -29,7 +29,12 @@ interface KrScan {
 }
 interface Cap { getPlatform?(): string; Plugins?: { Kurokawa?: Partial<KrScan> } }
 const cap = (): Cap | undefined => (window as unknown as { Capacitor?: Cap }).Capacitor;
-interface DesktopScan { scanDevice?(exts: string[]): Promise<{ root: string; files: { path: string; name: string; size: number }[]; truncated: boolean }>; readFile?(path: string): Promise<ArrayBuffer> }
+type DesktopFound = { root: string; files: { path: string; name: string; size: number }[]; truncated: boolean };
+interface DesktopScan {
+  scanDevice?(exts: string[]): Promise<DesktopFound>; readFile?(path: string): Promise<ArrayBuffer>;
+  /** The Tauri shell's: the same walk in one folder, by path (Electron has it not: the web view's folder picker). */
+  scanFolder?(root: string, exts: string[]): Promise<DesktopFound>; pickFolder?(): Promise<string | null>;
+}
 const desktop = (): DesktopScan | undefined => (window as unknown as { kurokawaDesktop?: DesktopScan }).kurokawaDesktop;
 
 /** Groups shown as filter chips, in display order. */
@@ -113,6 +118,18 @@ async function scanDesktopWhole(exts: string[]): Promise<ScanResult | null> {
   if (!d?.scanDevice || !d.readFile) return null;
   const res = await d.scanDevice(exts);
   return { folderName: res.root, truncated: res.truncated, files: res.files.map((f) => ({ name: f.name, path: f.path, size: f.size, format: detectFormat(f.name), source: { path: f.path }, read: async () => new File([await d.readFile!(f.path)], f.name) })) };
+}
+
+/** A folder the user picks, walked by the desktop shell (where it can: the Tauri shell's scanFolder) — its files
+ *  read by path, so they can be linked where they are, as the whole-computer scan's are. */
+async function scanDesktopFolder(exts: string[]): Promise<ScanResult | null> {
+  const d = desktop();
+  if (!d?.scanFolder || !d.pickFolder || !d.readFile) return null;
+  const root = await d.pickFolder();
+  if (!root) return null;
+  const res = await d.scanFolder(root, exts);
+  const name = root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || root;
+  return { folderName: name, truncated: res.truncated, files: res.files.map((f) => ({ name: f.name, path: f.path, size: f.size, format: detectFormat(f.name), source: { path: f.path }, read: async () => new File([await d.readFile!(f.path)], f.name) })) };
 }
 
 async function scanAndroid(exts: string[]): Promise<ScanResult | null> {
@@ -233,7 +250,7 @@ export function openScanSheet(o: ScanSheetOptions): void {
       let r: ScanResult | 'denied' | null;
       if (mode === 'downloads') r = await scanAndroidWhole(exts, 'Download');
       else if (mode === 'whole') r = plat === 'android' ? await scanAndroidWhole(exts) : await scanDesktopWhole(exts);
-      else r = mobile ? await scanAndroid(exts) : await scanWeb(exts);
+      else r = mobile ? await scanAndroid(exts) : desktop()?.scanFolder ? await scanDesktopFolder(exts) : await scanWeb(exts);
       if (r === 'denied') { status.textContent = t('storageDenied'); result = null; return; }
       result = r;
       if (!result) { status.textContent = t('scanBody'); return; }

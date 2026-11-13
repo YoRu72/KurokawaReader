@@ -10,7 +10,9 @@ const KEY = 'kr.glossary';
 let cache: Term[] | null = null;
 const lower = (s: string) => s.toLocaleLowerCase().trim();
 // (A place and a language: the same name may be kept for Arabic and for English renderings side by side.)
-const scopeOf = (x: Term) => `${x.folder ? `f:${x.folder}` : x.book ? `b:${x.book}` : 'all'}|${x.lang ? SCRIPT_OF_LANG(x.lang) : scriptOf(x.to)}`;
+// (Kept apart by language, not by script: an English and a French rendering of one name, or an Arabic and a Persian
+// one, are two terms — the one made later no longer takes the other's place.)
+const scopeOf = (x: Term) => `${x.folder ? `f:${x.folder}` : x.book ? `b:${x.book}` : 'all'}|${termLang(x) || `script:${scriptOf(x.to)}`}`;
 /** One term for each name in each place (a book, a folder, every book): the one written by hand kept over one the
  *  translator added, else the latest. */
 export function dedupe(list: Term[]): Term[] {
@@ -24,7 +26,7 @@ export function dedupe(list: Term[]): Term[] {
 }
 export function terms(): Term[] {
   if (cache) return cache;
-  try { const raw = (JSON.parse(localStorage.getItem(KEY) ?? '[]') as Term[]).filter((x) => x && x.from && x.to); cache = dedupe(raw); if (cache.length !== raw.length) saveTerms(cache); } catch { cache = []; }
+  try { legacyLang(); const raw = (JSON.parse(localStorage.getItem(KEY) ?? '[]') as Term[]).filter((x) => x && x.from && x.to); cache = dedupe(raw); if (cache.length !== raw.length) saveTerms(cache); } catch { cache = []; }
   return cache;
 }
 export function saveTerms(list: Term[]): void { cache = dedupe(list.filter((x) => x.from.trim() && x.to.trim())); try { if (cache.length) localStorage.setItem(KEY, JSON.stringify(cache)); else localStorage.removeItem(KEY); } catch { /* full */ } }
@@ -34,9 +36,28 @@ export function addTerms(add: Omit<Term, 'id'>[]): number {
   const list = terms().slice(); const have = new Map(list.map((x, i) => [`${scopeOf(x)}|${lower(x.from)}`, i])); let n = 0;
   for (const a of add) {
     const x = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, ...a } as Term; const k = `${scopeOf(x)}|${lower(x.from)}`; const i = have.get(k);
-    if (i === undefined) { have.set(k, list.length); list.push(x); n++; } else if (list[i].auto && !x.auto) list[i] = { ...list[i], to: x.to, kind: x.kind ?? list[i].kind, auto: undefined };
+    if (i === undefined) { have.set(k, list.length); list.push(x); n++; }
+    else if (list[i].auto && !x.auto) list[i] = { ...list[i], to: x.to, kind: x.kind ?? list[i].kind, auto: undefined };
+    // (One the translator had put in the wrong script for its language — «Keyaru» kept as Arabic — made right by a
+    // rendering that is in it; one written by hand is left as it is.)
+    else if (list[i].auto && misScripted(list[i]) && !misScripted(x)) { list[i] = { ...list[i], to: x.to, kind: x.kind ?? list[i].kind }; n++; }
   }
   saveTerms(list); return n;
+}
+
+/** A glossary as text, one term to a line — `name = rendering`, then after a tab its kind and its language —, to paste
+ *  into another tool or back (parseTerms reads it). */
+const flat = (s: string) => s.replace(/[\t\r\n]+/g, ' ').trim();
+export const termLine = (x: Pick<Term, 'from' | 'to' | 'kind' | 'lang'>, extra = true): string => `${flat(x.from)} = ${flat(x.to)}` + (extra && (x.kind || x.lang) ? `\t${x.kind ?? ''}\t${x.lang ?? ''}` : '');
+export const termsText = (list: Term[]): string => list.map((x) => termLine(x)).join('\n');
+export function parseTerms(text: string): { from: string; to: string; kind?: TermKind; lang?: string }[] {
+  const out: { from: string; to: string; kind?: TermKind; lang?: string }[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const [pair, kind, lang] = line.split('\t'); const i = pair.includes(' = ') ? pair.indexOf(' = ') : pair.indexOf('=');
+    if (i < 0) continue; const from = pair.slice(0, i).trim(), to = pair.slice(i + (pair.includes(' = ') ? 3 : 1)).trim(); if (!from || !to) continue;
+    out.push({ from, to, ...(['person', 'place', 'group', 'term'].includes(kind?.trim()) ? { kind: kind.trim() as TermKind } : {}), ...(lang?.trim() ? { lang: lang.trim() } : {}) });
+  }
+  return out;
 }
 
 /* ---------- folders: glossaries of their own, for any book ---------- */
@@ -48,25 +69,105 @@ export const folders = (): Folder[] => read<Folder[]>(FKEY, []);
 export function addFolder(name: string): Folder { const f = { id: Math.random().toString(36).slice(2, 10), name: name.trim() }; write(FKEY, [...folders(), f]); return f; }
 export function renameFolder(id: string, name: string): void { write(FKEY, folders().map((f) => (f.id === id ? { ...f, name: name.trim() } : f))); }
 export function removeFolder(id: string): void { write(FKEY, folders().filter((f) => f.id !== id)); saveTerms(terms().filter((x) => x.folder !== id)); const l = read<Record<string, string[]>>(LKEY, {}); for (const k of Object.keys(l)) l[k] = l[k].filter((x) => x !== id); write(LKEY, l); }
+/** Books taken out of the library: their own terms, folder links and destination let go (a folder's terms and
+ *  every book's stay — other books use them). */
+export function forgetBooks(ids: Iterable<string>): void {
+  const gone = new Set(ids); if (!gone.size) return;
+  if (terms().some((x) => x.book && gone.has(x.book))) saveTerms(terms().filter((x) => !x.book || !gone.has(x.book)));
+  for (const k of [LKEY, 'kr.glossaryDest']) { const m = read<Record<string, unknown>>(k, {}); if ([...gone].some((id) => id in m)) { for (const id of gone) if (id !== '*') delete m[id]; write(k, m); } }
+}
 /** The folders a book uses. */
 export const linkedFolders = (bookId?: string): string[] => (bookId ? read<Record<string, string[]>>(LKEY, {})[bookId] ?? [] : []);
 export function setLinked(bookId: string, ids: string[]): void { const l = read<Record<string, string[]>>(LKEY, {}); l[bookId] = [...new Set(ids)]; write(LKEY, l); }
-/** The script a rendering is written in, and the one a language is written in: a term renders into the language
- *  it was made for (or, made before languages were kept, the one its script fits) — so a name kept in English
- *  letters is not forced into an Arabic translation. */
-const SCRIPT_OF_LANG = (l: string): string => (/^(ar|fa|ur|ps|ku|sd|ug)/.test(l) ? 'arabic' : /^(ru|uk|bg|sr|mk|be|kk)/.test(l) ? 'cyrillic' : /^(zh|ja)/.test(l) ? 'cjk' : /^ko/.test(l) ? 'hangul' : /^he/.test(l) ? 'hebrew' : /^(th)/.test(l) ? 'thai' : /^(hi|mr|ne)/.test(l) ? 'devanagari' : 'latin');
+/* ---------- languages and scripts: every term for the language it renders into ---------- */
+// The letters of each script (marks, digits, spaces and punctuation are not counted).
+const SCRIPTS: Record<string, RegExp> = {
+  arabic: /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/gu,
+  cyrillic: /[Ѐ-ԯ]/gu, greek: /[Ͱ-Ͽἀ-῿]/gu, hebrew: /[֐-׿יִ-ﭏ]/gu,
+  thai: /[฀-๿]/gu, devanagari: /[ऀ-ॿ]/gu, armenian: /[԰-֏]/gu, georgian: /[Ⴀ-ჿ]/gu,
+  hangul: /[가-힯ᄀ-ᇿ㄰-㆏]/gu, kana: /[぀-ヿㇰ-ㇿｦ-ﾟ]/gu, han: /[㐀-䶿一-鿿豈-﫿]/gu,
+  latin: /[a-zA-ZÀ-ɏḀ-ỿ]/gu,
+};
+/** The script each language is written in ('japanese': kana and kanji; 'chinese': Han alone). A language written
+ *  in more than one (Serbian, Kurdish…) or not listed has none: its renderings cannot be told apart by script. */
+const LANG_SCRIPT: Record<string, string> = {};
+for (const [sc, ls] of Object.entries({
+  arabic: 'ar fa ur ps sd ug ckb', cyrillic: 'ru uk bg mk be kk ky tg mn', greek: 'el', hebrew: 'he iw yi', thai: 'th', devanagari: 'hi mr ne sa',
+  armenian: 'hy', georgian: 'ka', hangul: 'ko', japanese: 'ja', chinese: 'zh',
+  latin: 'en fr de es it pt nl id ms tr vi pl cs sk ro sv da no nb nn fi hu tl fil sw ca eu gl et lv lt sl hr bs sq is ga cy af az uz eo la mt so ha yo ig zu xh jv su',
+})) for (const l of ls.split(' ')) LANG_SCRIPT[l] = sc;
+const base = (l?: string) => (l ?? '').trim().split(/[-_]/)[0].toLowerCase();
+export const scriptOfLang = (lang: string): string => LANG_SCRIPT[base(lang)] ?? '';
+const lettersOf = (text: string) => text.replace(/[\s\d\p{P}\p{S}\p{M}]/gu, '');
+const countIn = (x: string, sc: string) => x.match(SCRIPTS[sc])?.length ?? 0;
+/** The script a rendering is mostly written in ('cjk' for kana and Han), or '' when it holds no letters. */
 export function scriptOf(text: string): string {
-  const x = text.replace(/[\s\d\p{P}\p{S}]/gu, ''); if (!x) return '';
-  const count = (re: RegExp) => (x.match(re)?.length ?? 0);
-  const tally: [string, number][] = [['arabic', count(/[\u0600-\u06ff\u0750-\u077f\ufb50-\ufdff\ufe70-\ufeff]/g)], ['cyrillic', count(/[\u0400-\u04ff]/g)], ['cjk', count(/[\u3040-\u30ff\u4e00-\u9fff]/g)], ['hangul', count(/[\uac00-\ud7af]/g)], ['hebrew', count(/[\u0590-\u05ff]/g)], ['thai', count(/[\u0e00-\u0e7f]/g)], ['devanagari', count(/[\u0900-\u097f]/g)], ['latin', count(/[a-zA-Z\u00c0-\u024f]/g)]];
-  return tally.sort((a, b) => b[1] - a[1])[0][1] ? tally[0][0] : '';
+  const x = lettersOf(text); if (!x) return '';
+  const tally: [string, number][] = Object.keys(SCRIPTS).filter((k) => k !== 'kana' && k !== 'han').map((k) => [k, countIn(x, k)] as [string, number]);
+  tally.push(['cjk', countIn(x, 'kana') + countIn(x, 'han')]);
+  tally.sort((a, b) => b[1] - a[1]); return tally[0][1] ? tally[0][0] : '';
 }
-export const langOfTerm = (x: Term): string => (x.lang ? x.lang.split('-')[0] : '');
-/** Whether a term is for translations into `target`. */
+/** Whether a rendering is written in the script of `lang`: 'ok', 'bad' (plainly another script — «Keyaru» for
+ *  Arabic, Japanese, Russian…), or 'unknown' (a language whose script is not known, or no letters). Two languages
+ *  of one script (English and French) cannot be told apart this way: their terms rely on the language kept with
+ *  each. */
+export function scriptVerdict(text: string, lang: string): 'ok' | 'bad' | 'unknown' {
+  const sc = scriptOfLang(lang); const x = lettersOf(text); if (!sc || !x) return 'unknown';
+  const n = [...x].length;
+  const hit = sc === 'japanese' ? countIn(x, 'kana') + countIn(x, 'han') : sc === 'chinese' ? (countIn(x, 'kana') ? 0 : countIn(x, 'han')) : countIn(x, sc);
+  return hit / n >= 0.6 ? 'ok' : 'bad';
+}
+/** The language guessed from a rendering's script alone, where only one language is written in it (Korean, Thai,
+ *  Greek, Hebrew, Japanese kana…); '' for the scripts many languages share (Latin, Arabic, Cyrillic, Han…). */
+export function langFromScript(text: string): string {
+  const x = lettersOf(text); if (!x) return ''; const n = [...x].length;
+  if (countIn(x, 'kana') / n >= 0.3 && (countIn(x, 'kana') + countIn(x, 'han')) / n >= 0.6) return 'ja';
+  const one: [string, string][] = [['hangul', 'ko'], ['thai', 'th'], ['greek', 'el'], ['hebrew', 'he'], ['armenian', 'hy'], ['georgian', 'ka']];
+  for (const [sc, l] of one) if (countIn(x, sc) / n >= 0.6) return l;
+  return '';
+}
+/* Terms made before each was kept with its language. They are never rewritten: the language they were made for is
+   taken, where it can be, from the language being translated into when this version first met them (kept once, on
+   this device), and only when the rendering is in that language's script; else from a script only one language
+   uses; else it is not known — the term is then used for no language and shown as «language not set», for the
+   reader to set. */
+const LEGACY = 'kr.glossaryLegacyLang';
+let legacy: string | undefined;
+export function legacyLang(): string {
+  if (legacy) return legacy;
+  try {
+    const kept = localStorage.getItem(LEGACY); if (kept) return (legacy = kept);
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]') as Term[];
+    if (Array.isArray(raw) && raw.some((x) => x && x.from && !x.lang)) {
+      let tg = 'ar'; try { tg = (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as { aiTarget?: string }).aiTarget || 'ar'; } catch { /* the default */ }
+      legacy = base(tg); localStorage.setItem(LEGACY, legacy); return legacy;
+    }
+  } catch { /* storage unreadable */ }
+  return '';
+}
+/** (Tests: the kept language read again.) */
+export const _forgetLegacy = (): void => { legacy = undefined; };
+/** The language a term renders into: its own; for one made before languages were kept, the one it can be known
+ *  to have been made for; else ''. */
+export function termLang(x: Pick<Term, 'lang' | 'to'>): string {
+  if (x.lang) return base(x.lang);
+  const one = langFromScript(x.to); if (one) return one;
+  const l = legacyLang(); return l && scriptVerdict(x.to, l) === 'ok' ? l : '';
+}
+export const langOfTerm = (x: Term): string => termLang(x);
+/** A term whose rendering is plainly not in its language's script («Keyaru» kept as Arabic): not used — the name
+ *  is then as if it had no rendering yet — and shown for the reader to put right. */
+export const misScripted = (x: Pick<Term, 'lang' | 'to'>): boolean => { const l = termLang(x); return !!l && scriptVerdict(x.to, l) === 'bad'; };
+/** The language a term given without one is kept under: the one translated into when its rendering can be in it;
+ *  else the one its script alone tells; else none (shown as «language not set»). */
+export function langForNew(to: string, target: string): string {
+  const tl = base(target); if (!to.trim() || scriptVerdict(to, tl) !== 'bad') return tl;
+  return langFromScript(to);
+}
+/** Whether a term is for translations into `target`: made for that language, and written in its script. */
 export function fitsTarget(x: Term, target?: string): boolean {
-  if (!target) return true; const tl = target.split('-')[0];
-  if (x.lang) return x.lang.split('-')[0] === tl;
-  const sc = scriptOf(x.to); return !sc || sc === SCRIPT_OF_LANG(tl);
+  if (!target) return true;
+  return termLang(x) === base(target) && !misScripted(x);
 }
 /** Every term that applies to a book (into `target`, when given): its own first, then its folders', then the
  *  general ones (one per name). */
@@ -87,16 +188,34 @@ export function termsIn(texts: string[], bookId?: string, target?: string): Term
   return list.filter((x) => hay.includes(lower(x.from)));
 }
 /** The lines the model is given with a passage. */
-export function glossaryPrompt(list: Term[]): string {
+export function glossaryPrompt(list: Term[], langLabel?: string): string {
   if (!list.length) return '';
-  return `Glossary — translate these names and terms exactly as given, every time:\n${list.map((x) => `- ${JSON.stringify(x.from)} → ${JSON.stringify(x.to)}`).join('\n')}`;
+  return `Glossary${langLabel ? ` (renderings in ${langLabel})` : ''} — translate these names and terms exactly as given, every time:\n${list.map((x) => `- ${JSON.stringify(x.from)} → ${JSON.stringify(x.to)}`).join('\n')}`;
 }
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** A term the model left untranslated put right. */
+// (Letters of the scripts written with spaces between words and nothing joined to them: a term whose edge is one
+// of these is only a whole word there — «Lin» is not put right inside «Linda». Arabic and Hebrew (letters joined
+// before a name: و، بـ، لـ، الـ), Korean (particles after one), Japanese, Chinese and Thai (no spaces at all) are
+// matched anywhere, as before.)
+const WORDY = '\\p{Script=Latin}\\p{Script=Cyrillic}\\p{Script=Greek}\\p{Script=Armenian}\\p{Script=Georgian}';
+const wordyEdge = new RegExp(`^[${WORDY}\\p{N}]$`, 'u');
+/** A term the model left untranslated put right: in one pass over the text (what was put in is not looked at
+ *  again), the longest term first where two begin at the same place, the rendering written as it is (a «$&» in it
+ *  is not read as a pattern). A term the same in both languages still holds its place, so a shorter one inside it
+ *  is not put in. */
 export function applyGlossary(text: string, list: Term[]): string {
-  let s = text;
-  for (const x of list) { if (lower(x.from) === lower(x.to)) continue; s = s.replace(new RegExp(esc(x.from), 'gi'), x.to); }
-  return s;
+  const to = new Map<string, string>();
+  for (const x of list) { const k = lower(x.from); if (k && !to.has(k)) to.set(k, x.to); }
+  if (!to.size) return text;
+  const parts = [...list.reduce((m, x) => { const f = x.from.trim(); if (f && !m.has(lower(f))) m.set(lower(f), f); return m; }, new Map<string, string>()).values()]
+    .sort((a, b) => b.length - a.length)
+    .map((f) => {
+      const chars = [...f]; const head = wordyEdge.test(chars[0]), tail = wordyEdge.test(chars[chars.length - 1]);
+      return `${head ? `(?<![${WORDY}\\p{N}\\p{M}_])` : ''}${esc(f)}${tail ? `(?![${WORDY}\\p{N}\\p{M}_])` : ''}`;
+    });
+  let re: RegExp;
+  try { re = new RegExp(parts.join('|'), 'giu'); } catch { return text; }
+  return text.replace(re, (m) => { const r = to.get(lower(m)); if (r !== undefined) return lower(m) === lower(r) ? m : r; for (const [k, v] of to) if (new RegExp(`^${esc(k)}$`, 'iu').test(m)) return lower(k) === lower(v) ? m : v; return m; });
 }
 
 /* ---------- where the names the translator finds go, for each book ---------- */

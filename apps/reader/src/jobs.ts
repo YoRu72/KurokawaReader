@@ -21,13 +21,15 @@ const android = (): Plugin | null => {
   const cap = (window as unknown as { Capacitor?: { getPlatform?(): string; Plugins?: { Kurokawa?: Plugin } } }).Capacitor;
   return cap?.getPlatform?.() === 'android' ? cap.Plugins?.Kurokawa ?? null : null;
 };
-const desktop = () => window.kurokawaDesktop as (typeof window.kurokawaDesktop & { setProgress?(p: number): void }) | undefined;
+const desktop = () => window.kurokawaDesktop as (typeof window.kurokawaDesktop & { setProgress?(p: number): void; notify?(o: { title: string; body: string; hash?: string }): Promise<unknown> }) | undefined;
 
 /** Whether notifications may be shown; with `ask`, the system is asked (once) when it has not been. */
 export async function notificationsAllowed(ask: boolean): Promise<boolean> {
   if (!getSettings().jobNotify) return false;
   const a = android();
   if (a?.notifyPermission) return (await a.notifyPermission({ ask }).catch(() => ({ granted: false }))).granted;
+  // (A computer's shell shows them itself — the system's notifications, no permission asked of the page.)
+  if (desktop()?.notify) return true;
   if (!('Notification' in window)) return false;
   if (Notification.permission === 'default' && ask) {
     try { return (await Notification.requestPermission()) === 'granted'; } catch { return false; }
@@ -47,12 +49,16 @@ function noteProgress(j: Job): void {
 }
 function noteDone(j: Job): void {
   const others = jobs.some((x) => x.state === 'running');
-  const text = j.state === 'done' ? (j.doneText ? j.doneText() : j.quiet ? t('jobDoneQuiet', { name: j.out!.name }) : t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) })) : `${t(j.quiet ? 'downloadFailed' : 'convertFailed')} — ${j.error ?? ''}`;
+  const text = j.state === 'done' ? (j.doneText ? j.doneText() : j.quiet ? t('jobDoneQuiet', { name: j.out!.name }) : t('jobDoneText', { name: j.out!.name, size: formatBytes(j.out!.blob.size) })) : `${t(j.quiet ? 'downloadFailed' : 'convertFailed')} — ${j.error === 'memory' ? t('convertNoMemory') : j.error ?? ''}`;
   const a = android();
   // (Seen in the app as it ends: nothing to announce, the service only stops.)
   const quiet = j.watched() && document.visibilityState === 'visible';
   if (a?.jobDone) void a.jobDone({ title: j.title, text: quiet ? '' : text, ok: j.state === 'done', stop: !others }).catch(() => undefined);
-  else if ('Notification' in window && Notification.permission === 'granted' && getSettings().jobNotify && document.visibilityState === 'hidden') {
+  // (A computer: through the shell — Electron's and the Rust build's own notifications; the web's Notification is not
+  // there in every system web view. Shown when the window is hidden or another app is in front.)
+  else if (desktop()?.notify) {
+    if (getSettings().jobNotify && (document.visibilityState === 'hidden' || !document.hasFocus())) void desktop()!.notify!({ title: j.title, body: text }).catch(() => undefined);
+  } else if ('Notification' in window && Notification.permission === 'granted' && getSettings().jobNotify && document.visibilityState === 'hidden') {
     try { const n = new Notification(j.title, { body: text, icon: 'icons/icon-192.png', tag: `kr-job-${j.id}` }); n.onclick = () => { window.focus(); jobsSheet(); n.close(); }; } catch { /* not allowed here */ }
   }
   if (!others) { desktop()?.setProgress?.(-1); document.title = t('appName'); }

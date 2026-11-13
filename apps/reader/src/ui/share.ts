@@ -90,6 +90,17 @@ export async function shareFile(blob: Blob, filename: string, title?: string): P
   return 'saved';
 }
 
+/** Put text on the clipboard (the async API; a hidden field and the old command where a web view refuses it) and say "Copied". */
+export async function copyText(text: string): Promise<boolean> {
+  let done = false;
+  try { await navigator.clipboard.writeText(text); done = true; } catch { /* a web view without the async API */ }
+  if (!done) {
+    const ta = h('textarea', { style: { position: 'fixed', opacity: '0', top: '0', insetInlineStart: '0' }, readonly: '' }) as HTMLTextAreaElement; ta.value = text; document.body.append(ta); ta.select();
+    try { done = document.execCommand('copy'); } catch { /* none */ } ta.remove();
+  }
+  toast(done ? t('copied') : t('copyTextFailed'), done ? 'info' : 'error'); return done;
+}
+
 export async function shareText(text: string, title?: string): Promise<boolean> {
   const c = cap();
   if (c?.isNativePlatform?.() && c.Plugins?.Share) {
@@ -199,6 +210,10 @@ export async function openWith(blob: Blob, filename: string, mime: string): Prom
 /** Print a PDF: the system's print dialogue (desktop and browsers); on phones the file is handed to another app. */
 export async function printPdf(blob: Blob, filename: string): Promise<void> {
   if (platform() === 'android' || platform() === 'ios') { await openWith(blob, filename, 'application/pdf'); return; }
+  // (The Tauri shell on a Mac and Linux, whose web views print no PDF in a frame: the system's PDF program opens it,
+  // to print from there — desktop-tauri/bridge.js printFile.)
+  const pf = (window as unknown as { kurokawaDesktop?: { printFile?(b64: string, name: string): Promise<boolean> } }).kurokawaDesktop?.printFile;
+  if (pf) { try { if (await pf(await blobToBase64(blob), filename)) return; } catch (e) { console.warn('[kurokawa] the PDF program could not be opened', e); } }
   const url = URL.createObjectURL(blob);
   const frame = h('iframe', { src: url, style: { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' } }) as HTMLIFrameElement;
   document.body.append(frame);

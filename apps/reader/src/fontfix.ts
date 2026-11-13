@@ -164,7 +164,31 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   const pdfAdv = new Map<number, number[]>();
   for (const l of lines) for (const u of l) if (u[0] && u[5] > 0 && u[5] < 4) { const a = pdfAdv.get(u[0]); if (a) { if (a.length < 24) a.push(u[5]); } else pdfAdv.set(u[0], [u[5]]); }
   const medianOf = (a: number[]) => { const v = [...a].sort((x, y) => x - y); return v[v.length >> 1]; };
-  const tally = <K>(m: Map<K, Map<number, number>>, k: K, g: number) => { let x = m.get(k); if (!x) m.set(k, x = new Map()); x.set(g, (x.get(g) ?? 0) + 1); };
+  // How far the page really moves on after a glyph, inside a word (em): its width, unless the page always moves
+  // by something else — a ligature drawn with its ink before its origin that the original font's positioning
+  // pulls back over (Word draws "هي" so: the next letter starts where it starts). Such a glyph takes the step the
+  // page gives it, or the rebuilt word comes out wider than the page's, with a hole in it. (Only a step the page
+  // keeps to: kerning that changes with the neighbour stays the font's affair.)
+  const stepAdv = new Map<number, number[]>();
+  for (const l of lines) {
+    const sp = l.filter((u) => u[0] && u[5] > 0);
+    if (sp.length < 2) continue;
+    let fwd = 0; for (let i = 1; i < sp.length; i++) fwd += Math.sign(sp[i][2] - sp[i - 1][2]);
+    for (let i = 0; i + 1 < sp.length; i++) {
+      const a = fwd >= 0 ? sp[i] : sp[i + 1], b = fwd >= 0 ? sp[i + 1] : sp[i];
+      if (Math.abs(a[4] - b[4]) > 0.01 || Math.abs(a[3] - b[3]) > a[4] * 0.05) continue;
+      const step = (b[2] - a[2]) / a[4];
+      const s = stepAdv.get(a[0]); if (s) { if (s.length < 40) s.push(step); } else stepAdv.set(a[0], [step]);
+    }
+  }
+  for (const [g, steps] of stepAdv) {
+    const w = pdfAdv.get(g); if (!w || steps.length < 2) continue;
+    const st = medianOf(steps), wd = medianOf(w);
+    if (Math.abs(st - wd) < 0.05 || st < -0.05) continue;
+    if (steps.filter((x) => Math.abs(x - st) < 0.01).length < steps.length * 0.8) continue;
+    pdfAdv.set(g, [Math.max(0, st)]);
+  }
+  const tally =<K>(m: Map<K, Map<number, number>>, k: K, g: number) => { let x = m.get(k); if (!x) m.set(k, x = new Map()); x.set(g, (x.get(g) ?? 0) + 1); };
   const top = (x: Map<number, number>) => [...x.entries()].sort((a, b) => b[1] - a[1])[0][0];
   const letterForm = new Map<string, Map<number, number>>(); // `${char}|${form}` → glyph uses
   const markGlyph = new Map<number, Map<number, number>>(); // mark char → glyph uses
@@ -190,8 +214,10 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     for (const [gid, text, x, y, em, w, span] of line) {
       if (!gid) continue;
       allGids.add(gid);
-      // (A code with no real text comes as a control or private-use character.)
-      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && !(c >= 0xe000 && c <= 0xf8ff) && c !== 0xfffd && !(c >= 0x200b && c <= 0x200f) && c !== 0x2060 && c !== 0xfeff);
+      // (A code with no real text comes as a control character.) A private-use character stays: a sign font's
+      // codes are kept as such in the text (see analysePage), and the font must draw them as the page does —
+      // dropped, a subset of AGA Arabesque merged with another lost every sign it drew.
+      const cps = [...(meta.raw ? text : norm(text))].map((c) => c.codePointAt(0)!).filter((c) => c >= 0x20 && c !== 0xfffd && !(c >= 0x200b && c <= 0x200f) && c !== 0x2060 && c !== 0xfeff);
       if (text === '\uffff') { cls.push({ gid, cps: [], marks: [], x, y, em, adv: w * em, mpos: [], bad: true }); continue; }
       if (w > 0 && !(cps.length && cps.every(isMark))) cls.push({ gid, cps, marks: [], x, y, em, adv: w * em, mpos: [], span: span || undefined });
       else loose.push({ gid, x, y, cps, span: span || undefined });
@@ -345,7 +371,9 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     }
   }
   const nominal = new Map<number, number>();
-  for (const [c, uses] of plain) nominal.set(c, top(uses));
+  // (A private-use code drawn with two different glyphs — codes a viewer made up, a font each — stands for
+  // nothing certain: it gets none.)
+  for (const [c, uses] of plain) if (!(c >= 0xe000 && c <= 0xf8ff) || uses.size === 1) nominal.set(c, top(uses));
   // A bracket's glyph goes by the shape it draws, not by the name the PDF gave it: a font set for Arabic may
   // name a bracket by its shape or by the character it stands for (and two pages of one book can differ).
   // The cmap's "(" must draw "(" — the shaper mirrors it on a right-to-left line — or every bracket of the
@@ -528,7 +556,7 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
     const src = sources[Math.floor(g / 65536)]; if (!src) { outlines.push({ contours: [], adv: 0 }); continue; }
     const o = src.outline(g % 65536); const k = upem / src.upem;
     const out = k === 1 ? { adv: o.adv, contours: o.contours } : { adv: o.adv * k, contours: o.contours.map((c) => c.map((q) => ({ x: Math.round(q.x * k), y: Math.round(q.y * k), on: q.on }))) };
-    const pw = pdfAdv.get(g0); if (pw && out.contours.length) { const w = Math.round(medianOf(pw) * upem); if (w > 0 && Math.abs(w - out.adv) > upem * 0.004) out.adv = w; }
+    const pw = pdfAdv.get(g0); if (pw && out.contours.length) { const w = Math.round(medianOf(pw) * upem); if (w >= 0 && Math.abs(w - out.adv) > upem * 0.004) out.adv = w; }
     outlines.push(out);
   }
   // Marks take no room (a legacy font may give them an advance; the PDF placed them itself) — unless the glyph
@@ -540,6 +568,23 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   const extra = new Map<string, Uint8Array>();
   extra.set('cmap', buildCmap(nominalN));
   extra.set('GSUB', buildGsub(singlesN, [{ rules: mapRules(absorbRules), flag: 0 }, { rules: mapRules(markRules), flag: 0 }, ...ligLevels.map((l) => ({ rules: mapRules(l.rules), flag: l.flag }))], variantsN));
+  // A mark the PDF moved into place itself (Word draws a haraka of its own colour so, at its letter) has its
+  // outline at the baseline, where the original font's positioning took it from. Its outline moves to where it
+  // usually stands on a letter, and its anchors by as much back: positioned by the font nothing changes, and
+  // where a renderer draws the mark unattached (a mark in a run of its own colour) it is over its letter, not
+  // a blot on the baseline.
+  {
+    const offs = new Map<number, [number, number][]>();
+    for (const row of anchorsN.values()) for (const [mk, o] of row) (offs.get(mk) ?? offs.set(mk, []).get(mk)!).push(o);
+    for (const [mk, list] of offs) {
+      const o = outlines[mk]; if (!o || !o.contours.length || list.length < 2 || !marksN.has(mk)) continue;
+      const dx = medianOf(list.map((v) => v[0])), dy = medianOf(list.map((v) => v[1]));
+      if (Math.abs(dy) < upem * 0.15) continue;
+      const sx = Math.round(dx), sy = Math.round(dy);
+      outlines[mk] = { ...o, contours: o.contours.map((c) => c.map((q) => ({ x: q.x + sx, y: q.y + sy, on: q.on }))) };
+      for (const row of anchorsN.values()) { const v = row.get(mk); if (v) row.set(mk, [v[0] - sx, v[1] - sy]); }
+    }
+  }
   // Where the PDF never showed a mark on a letter, it sits centred over (or under) the letter's ink.
   const box = outlines.map((o) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const c of o.contours) for (const q of c) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); } return x0 <= x1 ? [x0, y0, x1, y1] : null; });
   const markChar = new Map<number, number>(); for (const [c, g] of nominalN) if (isMark(c)) markChar.set(g, c);
@@ -559,6 +604,15 @@ export function buildFont(sources: GlyphSource[], lines: Use[][], meta: { family
   const asc = sources[0].asc !== undefined ? sources[0].asc * k0 : undefined, desc = sources[0].desc !== undefined ? sources[0].desc * k0 : undefined;
   return writeTrueType({ family: meta.family, bold: meta.bold, italic: meta.italic, upem, asc, desc }, outlines, extra,
     (box, avg) => buildOs2(upem, box, avg, nominalN, { asc: asc ?? box[3], desc: desc ?? box[1], bold: !!meta.bold, italic: !!meta.italic }));
+}
+
+/** A font of glyphs drawn as they are, no shaping: each under its code (`map`: code → glyph index in
+ *  `outlines`, 0 the empty .notdef), its OS/2 table given (a copy of the fonts it was made from), its first and
+ *  last character set to what it holds. */
+export function plainFont(meta: { family: string; upem: number; asc: number; desc: number }, outlines: Outline[], map: Map<number, number>, os2: Uint8Array): Uint8Array {
+  const o = os2.slice(); const cs = [...map.keys()].filter((c) => c <= 0xffff);
+  if (o.length >= 68 && cs.length) { const d = dvOf(o); d.setUint16(64, Math.min(...cs)); d.setUint16(66, Math.max(...cs)); }
+  return writeTrueType(meta, outlines, new Map([['cmap', buildCmap(map)], ['OS/2', o]]), () => o);
 }
 
 function buildCmap(map: Map<number, number>): Uint8Array {

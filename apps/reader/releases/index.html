@@ -209,6 +209,8 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
       androidHint: 'لا تعرف أيّها يناسبك؟ اختر الأول، فإن لم يُثبَّت فالعامّ.',
       installer: 'المثبِّت', installerSub: 'يثبّت التطبيق ويحدّثه تلقائيًا', portable: 'نسخة محمولة لا تحتاج إلى تثبيت',
       dmg: 'غير موقَّع: انقر عليه بالزر الأيمن ثم «فتح» في أول مرة', appimage: 'اجعله قابلًا للتشغيل ثم شغّله',
+      classic: 'المثبِّت التقليدي', classicSub: 'للتثبيت الصامت، وبه يحدِّث التطبيقُ نفسَه', deb: 'حزمةٌ لدبيان وأوبونتو',
+      oldBuild: 'الإصدار السابق (المحرّك القديم)', oldSub: 'يبقى متاحًا إصدارَين احتياطًا',
       ipa: 'غير موقَّع: ثبّته بـ AltStore أو SideStore أو TrollStore', altstore: 'مصدر AltStore وSideStore — أضفه فتصلك التحديثات:',
       webApp: 'يعمل في المتصفح، ويمكن تثبيته على الشاشة الرئيسية.', webZip: 'لمن أراد استضافته بنفسه',
       packs: 'حزم إضافية (تُنزَّل من داخل التطبيق)', other: 'ملفات أخرى',
@@ -229,6 +231,8 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
       androidHint: 'Not sure? Take the first; if it won’t install, the universal one.',
       installer: 'Installer', installerSub: 'Installs the app and keeps it updated', portable: 'Portable, no install needed',
       dmg: 'Unsigned: right-click → Open the first time', appimage: 'Make it executable, then run it',
+      classic: 'Classic installer', classicSub: 'For silent installs; the app updates itself with it', deb: 'Package for Debian and Ubuntu',
+      oldBuild: 'Previous build (old engine)', oldSub: 'Kept for two versions as a fallback',
       ipa: 'Unsigned: install with AltStore, SideStore or TrollStore', altstore: 'AltStore / SideStore source — add it for updates:',
       webApp: 'Runs in the browser; install it to your home screen.', webZip: 'To host it yourself',
       packs: 'Add-on packs (downloaded from inside the app)', other: 'Other files',
@@ -272,20 +276,32 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
   };
 
   // ── Which file is which ─────────────────────────────────────────────────────────────────────────────────
-  const kindOf = (name) => {
+  const kindOf = (name, r = {}) => {
     const n = name.toLowerCase();
     if (/^latest.*\.yml$|\.blockmap$|mac-universal\.zip$/.test(n)) return ['updater'];
     if (/-pack-|packs\.json$/.test(n)) return ['packs'];
     if (n.endsWith('.apk')) return ['android', n.includes('arm64') ? 'arm64' : n.includes('armeabi') ? 'v7a' : n.includes('x86') ? 'x86' : 'universal'];
     if (n.endsWith('.ipa')) return ['ios', 'ipa'];
-    if (n.endsWith('-portable.exe')) return ['windows', 'portable'];
-    if (n.endsWith('.exe')) return ['windows', 'installer'];
-    if (n.endsWith('.dmg')) return ['mac', 'dmg'];
-    if (n.endsWith('.appimage')) return ['linux', 'appimage'];
+    if (/-sha256sums\.txt$/.test(n)) return ['updater'];
+    // (From 0.62.0 the computer app is the new, far smaller build: its files are named «windows-…», «.DMG» (upper
+    // case), «.appimage» (lower case), «.deb»; the previous engine's — kept for two versions — «win-x64», «.dmg»,
+    // «.AppImage».)
+    if (/-windows-x64\.exe$/.test(n)) return ['windows', 'installer'];
+    if (/-windows-x64-setup\.exe$/.test(n)) return ['windows', 'classic'];
+    if (/-windows-x64-portable\.zip$/.test(n)) return ['windows', 'portable'];
+    // (The Tools app's files keep their Electron names and meaning: only the Reader has a previous engine.)
+    const old = app === 'reader' && r.assets && r.assets.some((a) => /-windows-x64|\.DMG$|\.appimage$/.test(a.name));
+    if (n.endsWith('-portable.exe')) return ['windows', old ? 'oldPortable' : 'portable'];
+    if (n.endsWith('.exe')) return ['windows', old ? 'oldInstaller' : 'installer'];
+    if (name.endsWith('.DMG')) return ['mac', 'dmg'];
+    if (n.endsWith('.dmg')) return ['mac', old ? 'oldDmg' : 'dmg'];
+    if (name.endsWith('.appimage')) return ['linux', 'appimage'];
+    if (n.endsWith('.appimage')) return ['linux', old ? 'oldAppimage' : 'appimage'];
+    if (n.endsWith('.deb')) return ['linux', 'deb'];
     if (n.endsWith('web.zip')) return ['web', 'webZip'];
     return ['other'];
   };
-  const ORDER = { arm64: 0, v7a: 1, x86: 2, universal: 3, installer: 0, portable: 1 };
+  const ORDER = { arm64: 0, v7a: 1, x86: 2, universal: 3, installer: 0, classic: 1, portable: 2, dmg: 0, appimage: 0, deb: 1, oldInstaller: 10, oldPortable: 11, oldDmg: 10, oldAppimage: 10 };
   const PLATS = [['android', 'phone'], ['ios', 'tablet'], ['windows', 'monitor'], ['mac', 'laptop'], ['linux', 'terminal'], ['web', 'globe']];
   const ua = navigator.userAgent; const mine = /android/i.test(ua) ? 'android' : /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1) ? 'ios' : /windows/i.test(ua) ? 'windows' : /mac os x|macintosh/i.test(ua) ? 'mac' : /linux|x11|cros/i.test(ua) ? 'linux' : 'web';
 
@@ -361,7 +377,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
   function platforms() {
     const rs = list(); const r = rs.find((x) => !x.pre) ?? rs[0];
     if (!r) { $('plats').innerHTML = ''; return; }
-    const by = {}; for (const a of r.assets) { const [p, k] = kindOf(a.name); (by[p] ??= []).push([k, a]); }
+    const by = {}; for (const a of r.assets) { const [p, k] = kindOf(a.name, r); (by[p] ??= []).push([k, a]); }
     let html = '';
     for (const [p, ic] of PLATS) {
       const files = (by[p] ?? []).sort((x, y) => (ORDER[x[0]] ?? 9) - (ORDER[y[0]] ?? 9));
@@ -371,7 +387,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
       if (p === 'android') body = files.map(([k, a], i) => fileLink(a, a.name.replace(/^.*?-\d[\d.]*-/, '').replace(/\.apk$/, ''), t(k))).join('') + `<p class="hint">${esc(t('androidHint'))}</p>`;
       else if (p === 'ios') body = files.map(([k, a]) => fileLink(a, 'IPA', t(k))).join('') + (app === 'reader' ? `<p class="hint">${esc(t('altstore'))}</p><div class="copy"><code>${esc(ALTSTORE)}</code><button type="button" data-copy="${esc(ALTSTORE)}">${esc(t('copy'))}</button></div>` : '');
       else if (p === 'web') body = `<a class="file" href="${app === 'reader' ? SITE : SITE + 'tools/'}">${I.open}<span class="t"><b>${esc(t('openWeb'))}</b><span>${esc(t('webApp'))}</span></span></a>` + files.map(([k, a]) => fileLink(a, a.name, t(k))).join('');
-      else body = files.map(([k, a]) => fileLink(a, k === 'installer' ? t('installer') : k === 'portable' ? (lang === 'ar' ? 'محمولة' : 'Portable') : k === 'appimage' ? 'AppImage' : k === 'dmg' ? 'DMG' : a.name.replace(/^.*?-\d[\d.]*-/, ''), k === 'portable' ? t('portable') : k === 'installer' ? t('installerSub') : t(k))).join('');
+      else body = files.map(([k, a]) => fileLink(a, k === 'installer' ? t('installer') : k === 'classic' ? t('classic') : k === 'portable' ? (lang === 'ar' ? 'محمولة' : 'Portable') : k === 'appimage' ? 'AppImage' : k === 'deb' ? '.deb' : k === 'dmg' ? 'DMG' : k.startsWith('old') ? t('oldBuild') : a.name.replace(/^.*?-\d[\d.]*-/, ''), k === 'portable' ? t('portable') : k === 'installer' ? t('installerSub') : k === 'classic' ? t('classicSub') : k.startsWith('old') ? `${t('oldSub')} · ${a.name.replace(/^.*?-\d[\d.]*-/, '')}` : t(k))).join('');
       html += `<section class="plat${p === mine ? ' mine' : ''}"><div class="plat-h"><div class="plat-ic">${I[ic]}</div><div><h3>${esc(t(p))}</h3>${p === mine ? `<div class="you">${esc(t('thisDevice'))}</div>` : ''}</div></div>${body}</section>`;
     }
     $('plats').innerHTML = html; $('plats').id = 'plats';

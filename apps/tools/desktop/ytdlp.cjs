@@ -66,13 +66,30 @@ const JS_SINCE = '2025.11.12';
 async function checkJs() { const v = await version(); jsOk = !v || !olderThan(v, JS_SINCE); }
 const jsArgs = () => (jsOk ? ['--js-runtimes', `node:${process.execPath}`] : []);
 const ENV = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+// (The page builds the argument list — src/downloads/videoArgs.ts —; this side only refuses what that builder never writes: a flag outside the list
+// below, a value that is a flag, a file name pattern that leaves the download folder. The folder itself (-P), the ffmpeg location, the progress template
+// and a sign-in are put beside it here, never taken from the page's list.)
+const ALLOWED = new Set(['-f', '-S', '--merge-output-format', '--remux-video', '-x', '--audio-format', '--audio-quality', '--embed-thumbnail', '--convert-thumbnails', '--embed-metadata', '--parse-metadata', '--embed-chapters', '--split-chapters', '--write-subs', '--write-auto-subs', '--sub-langs', '--embed-subs', '--convert-subs', '--sub-format', '-k', '--write-thumbnail', '--write-info-json', '--no-clean-info-json', '--write-comments', '--sponsorblock-remove', '--sponsorblock-mark', '--download-sections', '--add-header', '--no-playlist', '--yes-playlist', '--playlist-items', '-o', '-N', '--http-chunk-size', '--retries', '--fragment-retries', '--throttled-rate', '--buffer-size']);
+const ALONE = new Set(['-x', '-k', '--embed-thumbnail', '--embed-metadata', '--embed-chapters', '--split-chapters', '--write-subs', '--write-auto-subs', '--embed-subs', '--write-thumbnail', '--write-info-json', '--no-clean-info-json', '--write-comments', '--no-playlist', '--yes-playlist']);
+function vetArgs(args) {
+  if (!Array.isArray(args) || args.length > 200 || !args.every((a) => typeof a === 'string' && a.length <= 4000 && !a.includes('\0'))) return null;
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]; if (!a.startsWith('-') || !ALLOWED.has(a)) return null; out.push(a); if (ALONE.has(a)) continue;
+    const v = args[++i]; if (v === undefined || v.startsWith('-')) return null;
+    if (a === '-o') { const t = v.replace(/^(?:chapter|thumbnail|subtitle|infojson|description|pl_thumbnail|pl_infojson|pl_description|default):/, ''); if (/^[\\/~]|^[A-Za-z]:|\.\.|[$\x00]/.test(t)) return null; }
+    out.push(v);
+  }
+  return out;
+}
 const common = () => { const ff = Ffmpeg.binary(); return ['--no-warnings', '--no-playlist-reverse', ...jsArgs(), ...(fs.existsSync(ff) ? ['--ffmpeg-location', ff] : [])]; };
 
 /** What a page offers: title, thumbnail, duration, formats; a playlist's entries (flat). */
 async function info(url, opts = {}) {
   await ensure();
   await checkJs();
-  const args = ['-J', '--no-warnings', ...jsArgs(), ...(opts.playlist ? ['--flat-playlist'] : ['--no-playlist']), ...(opts.cookiesFromBrowser ? ['--cookies-from-browser', opts.cookiesFromBrowser] : []), url];
+  // (-J reads the page once and prints everything; a playlist only flat — its entries, not each video —; one video never walks its list; a page that does not answer is let go of after 20 s a try.)
+  const args = ['-J', '--no-warnings', '--skip-download', '--socket-timeout', '20', ...jsArgs(), ...(opts.playlist ? ['--flat-playlist'] : ['--no-playlist']), ...(opts.cookiesFromBrowser ? ['--cookies-from-browser', opts.cookiesFromBrowser] : []), url];
   const out = await new Promise((res, rej) => execFile(binPath(), args, { maxBuffer: 64 << 20, timeout: 90000, env: ENV }, (e, so, se) => (e ? rej(new Error(String(se || e.message).trim().split('\n').pop())) : res(so))));
   const j = JSON.parse(out);
   return normalise(j);
@@ -89,6 +106,31 @@ function normalise(j) {
   return { kind: 'video', id: j.id, title: j.title, thumbnail: j.thumbnail, duration: j.duration, site: j.extractor_key, url: j.webpage_url || j.original_url, uploader: j.uploader || j.channel, choices, audio, subtitles: Object.keys(j.subtitles || {}), live: !!j.is_live, chapters: (j.chapters || []).length };
 }
 
+/** What one line of yt-dlp's output says, kept on the task: bytes over all the streams (video, then audio — the bar does not start again),
+ *  speed and time left of the stream running, its pieces (fragment i of n), and the phase — video, audio, merging, converting, embedding, finishing.
+ *  The page is told at most every 400 ms, and at once when the phase changes. */
+function lineReader(t, m, emit) {
+  let dests = 0, offset = 0, last = 0, streamTotal = 0; const fmt = String(m.audioFmt || '').toUpperCase(); const meta = () => (t.meta = t.meta || {});
+  const phaseOf = (p) => { const x = meta(); if (x.phase === p) return false; x.phase = p; return true; };
+  return (l) => {
+    let force = false;
+    if (l.startsWith('KT|')) {
+      const [, done, total, est, speed, eta, fi, fc, ...rest] = l.split('|'); const file = rest.join('|'); const cur = Number(done) || 0; const tot = Number(total) || Number(est) || 0; streamTotal = tot || streamTotal;
+      t.done = offset + cur; t.total = Math.max(Number(m.expect) || 0, offset + tot); t.downSpeed = Number(speed) || 0; t.eta = Number(eta) || undefined;
+      const x = meta(); if (fc && fc !== 'NA' && Number(fc) > 1) { x.frag = Number(fi) || 0; x.frags = Number(fc); } else { delete x.frag; delete x.frags; }
+      if (!x.phase || x.phase === 'info') force = phaseOf(m.audioOnly || dests > 1 ? 'audio' : 'video');
+      if (file && file !== 'NA') { const base = path.basename(file).replace(/\.f\d+\.(\w+)$/, '.$1').replace(/\.part$/, ''); t.files = [{ index: 0, path: base, size: t.total, done: t.done, priority: 1 }]; t.name = base.replace(/\.[^.]+$/, '') || t.name; }
+    } else if (/^\[download\] Destination:/.test(l)) { dests++; if (dests > 1) { offset += streamTotal; streamTotal = 0; } force = phaseOf(m.audioOnly || dests > 1 ? 'audio' : 'video'); }
+    else if (/^\[(Merger)\]/.test(l)) { force = phaseOf('merge'); t.downSpeed = 0; t.eta = undefined; delete meta().frag; delete meta().frags; }
+    else if (/^\[ExtractAudio\]/.test(l)) { force = phaseOf(`convert ${fmt}`.trim()); t.downSpeed = 0; t.eta = undefined; }
+    else if (/^\[(EmbedThumbnail|Metadata|EmbedSubtitle|ThumbnailsConvertor|SubtitlesConvertor)\]/.test(l)) { force = phaseOf('embed'); t.downSpeed = 0; t.eta = undefined; }
+    else if (/^\[(SponsorBlock|ModifyChapters|SplitChapters|VideoRemuxer|VideoConvertor|Fixup\w*)\]/.test(l)) { force = phaseOf('finish'); t.downSpeed = 0; t.eta = undefined; }
+    else if (/^\[(info|youtube|generic)\]/.test(l) && !meta().phase) force = phaseOf('info');
+    if (/\[(Merger|ExtractAudio|EmbedSubtitle|Metadata|ffmpeg)\]/.test(l)) { t.detail = l.replace(/^\[\w+\]\s*/, '').slice(0, 120); if (/Merging formats into "(.+)"/.test(l)) { const f = /Merging formats into "(.+)"/.exec(l)[1]; t.files = [{ index: 0, path: path.basename(f), size: t.total, done: t.total, priority: 1 }]; t.name = path.basename(f).replace(/\.[^.]+$/, ''); } }
+    const now = Date.now(); if (force || now - last > 400) { last = now; emit(); }
+  };
+}
+
 /** Video jobs: each a task like the others, run by yt-dlp with its progress read from the progress template. */
 class VideoJobs {
   has(id) { return this.tasks.has(id); }
@@ -99,7 +141,7 @@ class VideoJobs {
   emit() { this.send(); }
   async add(o) {
     const id = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const t = { id, kind: 'video', name: o.title || o.url, source: { url: o.url }, dir: o.dir, state: 'queued', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), meta: { ...(o.meta || {}), kind: 'video', site: o.site, quality: o.label, format: o.format, audioOnly: !!o.audioOnly, container: o.container, headers: o.headers, outName: o.outName, subs: o.subs, embedThumb: o.embedThumb, embedMeta: o.embedMeta, sponsorblock: o.sponsorblock, playlistIndex: o.playlistIndex, cookiesFromBrowser: o.cookies || o.cookiesFromBrowser, chapters: o.chapters, template: o.template, section: o.section }, engine: 'native' };
+    const t = { id, kind: 'video', name: o.title || o.url, source: { url: o.url }, dir: o.dir, state: 'queued', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), meta: { ...(o.meta || {}), kind: 'video', site: o.site, quality: o.label, format: o.format, audioOnly: !!o.audioOnly, container: o.container, headers: o.headers, outName: o.outName, subs: o.subs, embedThumb: o.embedThumb, embedMeta: o.embedMeta, sponsorblock: o.sponsorblock, args: Array.isArray(o.args) ? o.args : undefined, expect: o.expect || undefined, audioFmt: o.audioFmt, playlistIndex: o.playlistIndex, cookiesFromBrowser: o.cookies || o.cookiesFromBrowser, chapters: o.chapters, template: o.template, section: o.section }, engine: 'native' };
     this.tasks.set(id, t); this.save(); this.emit(); if (!o.paused) void this.start(id); return t;
   }
   async start(id) {
@@ -109,18 +151,26 @@ class VideoJobs {
     await checkJs();
     const m = t.meta || {}; const safe = (x) => String(x).replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().slice(0, 180); const tpl = m.template && !/[\\/]|\.\./.test(m.template) ? m.template : '%(title)s [%(id)s]';
     const outTpl = m.outName ? path.join(t.dir, `${safe(m.outName)}.%(ext)s`) : m.template ? path.join(t.dir, `${m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - ` : ''}${tpl}.%(ext)s`) : path.join(t.dir, m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - %(title)s [%(id)s].%(ext)s` : '%(title)s [%(id)s].%(ext)s');
-    const args = [...common(), '--newline', '--no-playlist', '--continue', '--no-mtime', '--progress-template', 'download:KT|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.filename)s', '-o', outTpl];
+    // (A list the page built — src/downloads/videoArgs.ts — runs as it is, vetted, in the download folder (-P); a task from before it, or one the local API added, runs the older way below.)
+    const vetted = Array.isArray(m.args) ? vetArgs(m.args) : null;
+    if (Array.isArray(m.args) && !vetted) { t.state = 'failed'; t.error = 'invalid options'; this.emit(); this.save(); return; }
+    const args = [...common(), '--newline', ...(vetted ? [] : ['--no-playlist']), '--continue', '--no-mtime', '--progress-template', 'download:KT|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.fragment_index)s|%(progress.fragment_count)s|%(info.filename)s', ...(vetted ? ['-P', t.dir, ...vetted] : ['-o', outTpl])];
+    if (!vetted) {
     if (m.audioOnly) args.push('-f', m.format || 'bestaudio/best', '-x', ...(m.container ? ['--audio-format', m.container] : [])); else args.push('-f', m.format ? `${m.format}/best` : 'bestvideo+bestaudio/best', ...(m.container ? ['--merge-output-format', m.container] : ['--merge-output-format', 'mp4']));
     if (m.subs) { args.push('--write-subs', '--sub-langs', m.subs, '--embed-subs'); if (m.bilingual) args.push('--sub-format', 'srt/best', '--convert-subs', 'srt', '-k'); } if (m.embedThumb) args.push('--embed-thumbnail'); if (m.infoJson) args.push('--write-info-json', '--no-clean-info-json'); if (m.comments) args.push('--write-comments'); if (m.liveChat) args.push('--write-subs', '--sub-langs', (m.subs ? m.subs + ',' : '') + 'live_chat'); if (m.cover) args.push('--write-thumbnail', '--convert-thumbnails', 'jpg', '-o', `thumbnail:${path.join(t.dir, `${m.outName ? safe(m.outName) : tpl}.%(ext)s`)}`); if (m.embedMeta !== false) args.push('--embed-metadata'); { const mode = m.sponsorMode || (m.sponsorblock ? 'remove' : 'off'); const cats = m.sponsorCats || 'sponsor'; if (mode === 'remove') args.push('--sponsorblock-remove', cats); else if (mode === 'mark') args.push('--sponsorblock-mark', cats, '--embed-chapters'); }
+    }
     if (m.cookiesFromBrowser) args.push('--cookies-from-browser', m.cookiesFromBrowser);
+    if (!vetted) {
     if (m.chapters) args.push('--embed-chapters');
     if (m.section) for (const sec of String(m.section).split(/\s*[,;]\s*/)) if (/^[\d:.]+-[\d:.]+$/.test(sec)) args.push('--download-sections', `*${sec}`);
     if (m.chapterMatch) args.push('--download-sections', String(m.chapterMatch));
     if (m.splitChapters) args.push('--split-chapters', '-o', `chapter:${path.join(t.dir, `${m.outName ? safe(m.outName) : tpl} - %(section_number)02d %(section_title)s.%(ext)s`)}`);
     for (const [k, v] of Object.entries(m.headers || {})) if (k && v) args.push('--add-header', `${k}:${v}`);
+    }
     args.push(t.source.url);
-    const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: ENV }); this.procs.set(id, p); let err = ''; let buf = ''; let last = 0;
-    p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop() || ''; for (const l of lines) { if (l.startsWith('KT|')) { const [, done, total, est, speed, eta, file] = l.split('|'); t.done = Number(done) || 0; t.total = Number(total) || Number(est) || 0; t.downSpeed = Number(speed) || 0; t.eta = Number(eta) || undefined; if (file && file !== 'NA') { const base = path.basename(file).replace(/\.f\d+\.(\w+)$/, '.$1').replace(/\.part$/, ''); t.files = [{ index: 0, path: base, size: t.total, done: t.done, priority: 1 }]; t.name = base.replace(/\.[^.]+$/, '') || t.name; } } else if (/\[(Merger|ExtractAudio|EmbedSubtitle|Metadata|ffmpeg)\]/.test(l)) { t.detail = l.replace(/^\[\w+\]\s*/, '').slice(0, 120); if (/Merging into "(.+)"/.test(l)) { const f = /Merging into "(.+)"/.exec(l)[1]; t.files = [{ index: 0, path: path.basename(f), size: t.total, done: t.total, priority: 1 }]; t.name = path.basename(f).replace(/\.[^.]+$/, ''); } } const now = Date.now(); if (now - last > 300) { last = now; this.emit(); } } });
+    const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: ENV }); this.procs.set(id, p); let err = ''; let buf = '';
+    const read = lineReader(t, m, () => this.emit());
+    p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop() || ''; for (const l of lines) read(l); });
     p.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-10000); });
     p.on('close', (code) => { this.procs.delete(id); const tt = this.tasks.get(id); if (!tt) return; if (tt.state === 'paused' || tt.state === 'removed') { /* asked */ } else if (code === 0) { tt.state = 'done'; tt.done = tt.total || tt.done; tt.doneAt = Date.now(); tt.downSpeed = 0; if (m.bilingual && tt.files && tt.files[0]) { try { bilingual(path.join(tt.dir, tt.files[0].path || tt.files[0].name || ''), String(m.bilingual)); } catch (e) { /* the two files stay */ } } } else { tt.state = 'failed'; tt.error = (err.trim().split('\n').filter((l) => /ERROR/.test(l)).pop() || err.trim().split('\n').pop() || `yt-dlp ${code}`).replace(/^ERROR:\s*/, '').slice(0, 300); } this.save(); this.emit(); });
   }
@@ -131,7 +181,7 @@ class VideoJobs {
   stop() { for (const p of this.procs.values()) p.kill(); }
 }
 const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv)$/i;
-module.exports = { ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION };
+module.exports = { vetArgs, ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION };
 
 /* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
 const TIMES = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/;

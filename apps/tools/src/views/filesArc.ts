@@ -4,7 +4,7 @@
 // through the archive's pictures), videos and music in the app's player straight from the archive (the stream
 // server reads the entry; nothing is unpacked), the rest taken out to the cache and opened by its kind. Copying out
 // of an archive extracts; nothing is written into one from here.
-import { listArchiveAuto, entryUrl, entryThumb, extractArchiveJob, savePassword, type ArchiveEntry, type ArchiveInfo } from '../archives';
+import { listArchiveAuto, entryUrl, entryThumb, extractArchiveJob, savePassword, type ArchiveEntry, type ArchiveInfo, type ArchiveProgress } from '../archives';
 import { kindOfFile } from './taskFiles';
 import { t } from '../i18n';
 import type { Entry } from './files';
@@ -15,15 +15,16 @@ export const parseArc = (p: string): { archive: string; inner: string } => { con
 /** A browsable archive by its name (volumes' first part included). */
 export const looksArchive = (name: string): boolean => /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|cbr|jar|apk|apks|xapk|apkm|epub|001)$/i.test(name) || kindOfFile(name) === 'archive';
 
-interface Dir { name: string; path: string; dirs: Map<string, Dir>; files: ArchiveEntry[]; size: number; count: number }
+/** A folder inside: its size and count are of all below it; `mtime` its own date, else the newest below it (0: none kept). */
+interface Dir { name: string; path: string; dirs: Map<string, Dir>; files: ArchiveEntry[]; size: number; count: number; mtime: number }
 interface Opened { info: ArchiveInfo; root: Dir; password?: string; mtime: number; at: number }
 const opened = new Map<string, Opened>();
 function treeOf(entries: ArchiveEntry[]): Dir {
-  const root: Dir = { name: '', path: '', dirs: new Map(), files: [], size: 0, count: 0 };
-  const dirAt = (parts: string[]): Dir => { let d = root; for (const p of parts) { let n = d.dirs.get(p); if (!n) { n = { name: p, path: d.path ? `${d.path}/${p}` : p, dirs: new Map(), files: [], size: 0, count: 0 }; d.dirs.set(p, n); } d = n; } return d; };
+  const root: Dir = { name: '', path: '', dirs: new Map(), files: [], size: 0, count: 0, mtime: 0 };
+  const dirAt = (parts: string[]): Dir => { let d = root; for (const p of parts) { let n = d.dirs.get(p); if (!n) { n = { name: p, path: d.path ? `${d.path}/${p}` : p, dirs: new Map(), files: [], size: 0, count: 0, mtime: 0 }; d.dirs.set(p, n); } d = n; } return d; };
   for (const e of entries) {
     const clean = e.path.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, ''); if (!clean) continue; const parts = clean.split('/');
-    if (e.dir) dirAt(parts); else { const name = parts.pop()!; const d = dirAt(parts); d.files.push({ ...e, path: [...parts, name].join('/') }); let up: Dir | undefined = d; const chain = [root]; let acc: Dir = root; for (const p of parts) { acc = acc.dirs.get(p)!; chain.push(acc); } for (up of chain) { up.size += e.size; up.count++; } }
+    if (e.dir) { const d = dirAt(parts); if (e.mtime) d.mtime = Math.max(d.mtime, e.mtime); } else { const name = parts.pop()!; const d = dirAt(parts); d.files.push({ ...e, path: [...parts, name].join('/') }); let up: Dir | undefined = d; const chain = [root]; let acc: Dir = root; for (const p of parts) { acc = acc.dirs.get(p)!; chain.push(acc); } for (up of chain) { up.size += Math.max(0, e.size); up.count++; if (e.mtime && e.mtime > up.mtime) up.mtime = e.mtime; } }
   }
   return root;
 }
@@ -42,13 +43,13 @@ export const forgetArc = (archive: string): void => { opened.delete(archive); };
 /** The listing of a place inside an archive, as the Files browser wants it. */
 export async function arcList(path: string, askPassword?: (wrong: boolean) => Promise<string | null>): Promise<{ exists: boolean; entries: Entry[] }> {
   const { archive, inner } = parseArc(path); const o = await openArc(archive, askPassword); const d = dirOf(o.root, inner); if (!d) return { exists: false, entries: [] };
-  const entries: Entry[] = [...[...d.dirs.values()].map((x) => ({ name: x.name, path: arcPath(archive, x.path), dir: true, size: x.size, mtime: 0, count: x.count })), ...d.files.map((f) => { const name = f.path.split('/').pop() ?? f.path; return { name, path: arcPath(archive, f.path), dir: false, size: f.size, mtime: 0, ext: (name.split('.').pop() ?? '').toLowerCase() }; })];
+  const entries: Entry[] = [...[...d.dirs.values()].map((x) => ({ name: x.name, path: arcPath(archive, x.path), dir: true, size: x.size, mtime: x.mtime, count: x.count })), ...d.files.map((f) => { const name = f.path.split('/').pop() ?? f.path; return { name, path: arcPath(archive, f.path), dir: false, size: f.size, mtime: f.mtime ?? 0, ext: (name.split('.').pop() ?? '').toLowerCase() }; })];
   return { exists: true, entries };
 }
 /** The pictures of the whole archive (for the viewer's swiping), in the archive's order. */
 export function arcPictures(archive: string): Entry[] {
   const o = opened.get(archive); if (!o) return []; const out: Entry[] = [];
-  const walk = (d: Dir) => { for (const f of d.files) if (kindOfFile(f.path) === 'image') out.push({ name: f.path.split('/').pop() ?? f.path, path: arcPath(archive, f.path), dir: false, size: f.size, mtime: 0 }); for (const s of d.dirs.values()) walk(s); };
+  const walk = (d: Dir) => { for (const f of d.files) if (kindOfFile(f.path) === 'image') out.push({ name: f.path.split('/').pop() ?? f.path, path: arcPath(archive, f.path), dir: false, size: f.size, mtime: f.mtime ?? 0 }); for (const s of d.dirs.values()) walk(s); };
   walk(o.root); return out;
 }
 /** A URL that reads the entry straight from the archive (phone), or null. */
@@ -60,12 +61,15 @@ export async function arcFetch(path: string): Promise<string> {
   const job = extractArchiveJob({ path: archive, dest: 'cache:', only: [inner], replace: 'replace', password: o?.password });
   const r = await job.done; return `${r.dest.replace(/[\\/]$/, '')}/${inner}`;
 }
-/** Entries (files or folders inside) taken out to a folder, their paths inside kept. */
-export function arcExtract(paths: string[], dest: string): { id: string; done: Promise<unknown> } {
-  const { archive } = parseArc(paths[0]); const o = opened.get(archive);
-  const only = paths.map((p) => parseArc(p).inner).map((inner) => { const d = o ? dirOf(o.root, inner) : null; return d ? `${inner}/` : inner; });
-  const job = extractArchiveJob({ path: archive, dest, only, replace: 'ask' as never, password: o?.password });
-  return { id: job.id, done: job.done };
+/** Entries (files or folders inside) taken out to a folder, their paths inside kept (the Files page takes them out to
+ *  a hidden folder beside where they go, then moves them in as a paste does: the name-taken question and all). */
+export function arcExtract(paths: string[], dest: string, onProgress?: (p: ArchiveProgress) => void): { id: string; done: Promise<unknown>; bytes: number } {
+  const { archive } = parseArc(paths[0]); const o = opened.get(archive); let bytes = 0;
+  const only = paths.map((p) => parseArc(p).inner).map((inner) => { const d = o ? dirOf(o.root, inner) : null; if (d) { bytes += d.size; return `${inner}/`; } bytes += Math.max(0, o?.info.entries.find((e) => e.path === inner)?.size ?? 0); return inner; });
+  const job = extractArchiveJob({ path: archive, dest, only, replace: 'replace', password: o?.password }, onProgress);
+  return { id: job.id, done: job.done, bytes };
 }
-/** The name shown at the root crumb: the archive's file name. */
+/** Whether a place inside an archive is a folder there. */
+export function arcIsDir(path: string): boolean { const { archive, inner } = parseArc(path); const o = opened.get(archive); return !!o && !!dirOf(o.root, inner); }
+/** The name shown at the root crumb: the archive's file name (decoded — never «%2Fstorage%2F…»). */
 export const arcName = (path: string): string => parseArc(path).archive.split('/').pop() ?? '';

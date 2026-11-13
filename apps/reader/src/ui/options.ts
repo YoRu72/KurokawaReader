@@ -1,15 +1,22 @@
 // Visual Options panel: theme & custom colours, background systems (texture,
 // picture), comfort filters (warmth, dimming), type and layout.
 import { ttsAvailable } from '../tts';
+import { kittenSupported } from '../kittentts';
 import { slimNow } from '../slim';
 import { aiTtsSupported } from '../ai';
-import { h, clear, icon, toast, pickButton, pickSheet } from './dom';
+import { h, clear, icon, toast, pickButton, pickSheet, askText } from './dom';
 import { colorField } from './colorpicker';
-import { isTouchDevice, t, countMinutes, localDigits, dateLocale } from '../i18n';
-import { keepAwake, setVolumeKeys, nativePlatform } from '../native';
+import { t, countMinutes, localDigits, dateLocale } from '../i18n';
+import { keepAwake } from '../native';
+import { fits, only } from '../platform';
 import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
 import { fontsSync } from '../fonts';
+import { placedItemsEditor } from './placeditems';
+import { buttonsField } from './buttonsheet';
+import { barItems, barText, BAR_ITEM_LABEL, type BarItem, type BarValues } from './readbar';
+/** The reading bar's items as the editor shows them, each with an example. */
+const BAR_SAMPLE: BarValues = { chapter: '', title: '', page: 12, pages: 34, chapterPct: 35, bookPage: 120, bookPages: 410, bookPct: 29, minsChapter: 9, minsBook: 135 };
 
 type Section = 'theme' | 'background' | 'comfort' | 'type' | 'layout' | 'behaviour';
 
@@ -37,9 +44,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   // The reader's own saved themes: colours of text, page, links and selection, by name.
   const mine = s.myThemes;
   const applyMine = (m: (typeof mine)[number]) => updateSettings({ theme: 'custom', myTheme: m.id, customBg: m.bg, customFg: m.fg, linkOverride: m.link, selOverride: m.sel, fgOverride: '', bgOverride: '' });
-  const saveMine = () => {
+  const saveMine = async () => {
+    const name = (await askText({ title: t('saveTheme'), label: t('themeName'), ok: t('save'), cancel: t('cancel') })) ?? ''; if (!name.trim()) return;
     const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
-    const name = prompt(t('themeName'), '') ?? ''; if (!name.trim()) return;
     const m = { id: String(Date.now()), name: name.trim(), bg: toHex(s.bgOverride || cur.getPropertyValue('--r-bg').trim() || s.customBg), fg: toHex(s.fgOverride || cur.getPropertyValue('--r-fg').trim() || s.customFg), link: toHex(s.linkOverride || cur.getPropertyValue('--r-link').trim() || '#8ec8e8'), sel: s.selOverride || toHex(cur.getPropertyValue('--r-sel').trim() || '#7fb4e5') };
     updateSettings({ myThemes: [...mine, m] }); applyMine(m); rerender();
   };
@@ -89,11 +96,11 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     [t('presetManuscript'), { theme: 'custom', customBg: '#e9d9b6', customFg: '#3a2a16', texture: 'parchment', textureOpacity: 0.6, warmth: 0.05, dimOverlay: 0, bgImage: false }],
     [t('presetDaylight'), { theme: 'light', texture: 'none', warmth: 0, dimOverlay: 0, bgImage: false }],
     [t('presetEink'), { theme: 'custom', customBg: '#dcdcd8', customFg: '#1a1a1a', texture: 'linen', textureOpacity: 0.25, warmth: 0, dimOverlay: 0, bgImage: false }],
-    [t('presetClassic'), { theme: 'sepia', texture: 'paper', textureOpacity: 0.35, warmth: 0.08, dimOverlay: 0, bgImage: false, align: 'justify', hyphenate: true, fontSize: 19, lineHeight: 1.65, textWidth: 640 }],
-    [t('presetLargePrint'), { fontSize: 26, lineHeight: 1.8, paragraphSpacing: 1.1, textWidth: 820, align: 'start', hyphenate: false }],
-    [t('presetCompact'), { fontSize: 16, lineHeight: 1.45, paragraphSpacing: 0.5, textWidth: 900, margin: 14, align: 'start' }],
+    [t('presetClassic'), { theme: 'sepia', texture: 'paper', textureOpacity: 0.35, warmth: 0.08, dimOverlay: 0, bgImage: false, align: 'justify', bookFormat: true, fontSize: 19, lineHeight: 1.65, textWidth: 640 }],
+    [t('presetLargePrint'), { fontSize: 26, lineHeight: 1.8, paragraphSpacing: 1.1, textWidth: 820, align: 'start', bookFormat: false }],
+    [t('presetCompact'), { fontSize: 16, lineHeight: 1.45, paragraphSpacing: 0.5, textWidth: 900, margin: 14, align: 'start', bookFormat: false }],
     [t('presetFocus'), { theme: 'black', texture: 'none', warmth: 0, dimOverlay: 0.12, bgImage: false, textWidth: 560, margin: 32, lineHeight: 1.9, readingMode: 'chapters', showStatusLine: false }],
-    [t('presetMushaf'), { theme: 'custom', customBg: '#f6efd9', customFg: '#2b2416', texture: 'parchment', textureOpacity: 0.3, warmth: 0.04, dimOverlay: 0, bgImage: false, arabicFont: 'uthman', align: 'justify', lineHeight: 2.1, fontSize: 22 }],
+    [t('presetMushaf'), { theme: 'custom', customBg: '#f6efd9', customFg: '#2b2416', texture: 'parchment', textureOpacity: 0.3, warmth: 0.04, dimOverlay: 0, bgImage: false, arabicFont: 'uthman', align: 'justify', bookFormat: false, lineHeight: 2.1, fontSize: 22 }],
   ];
   grid.append(section(t('presets'), h('div', { class: 'segmented' }, ...presets.map(([label, patch]) => h('button', { type: 'button', onclick: () => { updateSettings(patch); rerender(); } }, label)))));
 
@@ -103,6 +110,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     grid.append(stepper([t('warmth'), 'warmth'], s.warmth, 0, 0.6, 0.05, (v) => updateSettings({ warmth: round2(v) }), pct));
     grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['device', t('brightnessDevice')], ['app', t('brightnessApp')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); rerender(); })));
     if (s.brightnessMode === 'app') grid.append(stepper([t('dimScreen'), 'dimOverlay'], s.dimOverlay, 0, 0.7, 0.05, (v) => updateSettings({ dimOverlay: round2(v) }), pct));
+    grid.append(buttonsField('pdf'));
     container.append(grid, footer());
     return;
   }
@@ -142,7 +150,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['device', t('brightnessDevice')], ['app', t('brightnessApp')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); rerender(); })));
   if (s.brightnessMode === 'app') {
     grid.append(stepper([t('dimScreen'), 'dimOverlay'], s.dimOverlay, 0, 0.7, 0.05, (v) => updateSettings({ dimOverlay: round2(v) }), pct));
-  if (isTouchDevice()) grid.append(toggle([t('edgeBrightness'), 'edgeBrightness'], s.edgeBrightness, (v) => updateSettings({ edgeBrightness: v })));
+  grid.append(...only('phone', toggle([t('edgeBrightness'), 'edgeBrightness'], s.edgeBrightness, (v) => updateSettings({ edgeBrightness: v }))));
   }
   grid.append(toggle([t('dimImages'), 'dimImages'], s.dimImages, (v) => updateSettings({ dimImages: v })));
   grid.append(toggle([t('invertLineArt'), 'invertLineArt'], s.invertLineArt, (v) => updateSettings({ invertLineArt: v })));
@@ -163,6 +171,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('arabicFont'), 'arabicFont'], segmented(arabic, s.arabicFont, (v) => { updateSettings({ arabicFont: v }); rerender(); }, true)));
   if (cjkBook || customCjk.length) grid.append(section([t('cjkFont'), 'cjkFont'], segmented(cjk, s.cjkFont, (v) => { updateSettings({ cjkFont: v }); rerender(); })));
   grid.append(toggle([t('headingsFont'), 'headingsFont'], s.headingsFont, (v) => updateSettings({ headingsFont: v })));
+  grid.append(toggle([t('bookSizes'), 'bookSizes'], s.bookSizes, (v) => updateSettings({ bookSizes: v })), h('p', { class: 'hint' }, t('bookSizesHint')));
   grid.append(stepper([t('fontSize'), 'fontSize'], s.fontSize, 12, 40, 1, (v) => updateSettings({ fontSize: v }), (v) => `${v}`));
   grid.append(stepper([t('lineHeight'), 'lineHeight'], s.lineHeight, 1.2, 2.6, 0.1, (v) => updateSettings({ lineHeight: Math.round(v * 10) / 10 }), (v) => v.toFixed(1)));
   grid.append(stepper([t('fontWeight'), 'fontWeight'], s.fontWeight ?? 400, 300, 700, 50, (v) => updateSettings({ fontWeight: Math.round(v / 50) * 50 }), (v) => localDigits(String(v))));
@@ -175,11 +184,18 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(stepper([t('pageWidth'), 'textWidth'], s.textWidth, 420, 1400, 40, (v) => updateSettings({ textWidth: v }), (v) => `${v}`));
   grid.append(stepper([t('margins'), 'margin'], s.margin, 0, 80, 4, (v) => updateSettings({ margin: v }), (v) => `${v}`));
   const aligns: [VisualSettings['align'], string][] = [['start', t('alignStart')], ['justify', t('alignJustify')], ['center', t('alignCenter')]];
-  grid.append(section([t('textAlign'), 'align'], segmented(aligns, s.align, (v) => { updateSettings({ align: v }); rerender(); })));
+  // (Book formatting justifies the lines whatever the alignment says: the row shows what is in force, locked, until it is turned off.)
+  const alignSeg = segmented(aligns, s.bookFormat ? 'justify' : s.align, (v) => { updateSettings({ align: v }); rerender(); });
+  if (s.bookFormat) alignSeg.querySelectorAll('button').forEach((b) => { (b as HTMLButtonElement).disabled = true; });
+  grid.append(section([t('textAlign'), 'align'], alignSeg), ...(s.bookFormat ? [h('p', { class: 'hint' }, t('alignBookHint'))] : []));
   grid.append(toggle([t('bookFormat'), 'bookFormat'], s.bookFormat, (v) => { updateSettings({ bookFormat: v }); rerender(); }), h('p', { class: 'hint' }, t('bookFormatHint')));
-  grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
-  grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : '—')));
+  grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : s.bookFormat ? '2em' : '—')));  // (Book formatting indents by 2em when the reader's own indent is none.)
+  const titlePlaces: [VisualSettings['chapterTitles'], string][] = [['center', t('chapterTitlesCenter')], ['start', t('chapterTitlesStart')], ['book', t('chapterTitlesBook')]];
+  grid.append(section([t('chapterTitles'), 'chapterTitles'], segmented(titlePlaces, s.chapterTitles, (v) => { updateSettings({ chapterTitles: v }); rerender(); })));
+  grid.append(toggle([t('hideChapterWord'), 'hideChapterWord'], s.hideChapterWord, (v) => updateSettings({ hideChapterWord: v })), h('p', { class: 'hint' }, t('hideChapterWordHint')));
   grid.append(toggle([t('dropCap'), 'dropCap'], s.dropCap, (v) => updateSettings({ dropCap: v })));
+  const firstLetters: [VisualSettings['firstLetter'], string][] = [['bold', t('firstLetterBold')], ['book', t('firstLetterBook')], ['plain', t('firstLetterPlain')]];
+  grid.append(section([t('firstLetter'), 'firstLetter'], segmented(firstLetters, s.firstLetter, (v) => { updateSettings({ firstLetter: v }); rerender(); })));
   // The reader's own CSS for the text.
   {
     const ta = h('textarea', { class: 'css-box', rows: '4', spellcheck: 'false', placeholder: 'p { text-indent: 2em; }\nh2 { color: #a0522d; }', dir: 'ltr' }) as HTMLTextAreaElement;
@@ -195,29 +211,46 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(head('behaviour', t('behaviourSection')));
   const modes: [VisualSettings['readingMode'], string][] = [['chapters', t('modeChapters')], ['flow', t('modeFlow')], ['continuous', t('modeContinuous')]];
   grid.append(section([t('readingMode'), 'readingMode'], segmented(modes, s.readingMode, (v) => { updateSettings({ readingMode: v }); rerender(); bump(); })));
-  grid.append(toggle([t('hideSystemBars'), 'hideSystemBars'], s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v })));
+  // (Where each option shows, and why: src/platform.ts.)
+  grid.append(...only('shell', toggle([t('hideSystemBars'), 'hideSystemBars'], s.hideSystemBars, (v) => updateSettings({ hideSystemBars: v }))));
   grid.append(toggle([t('pictureZoom'), 'pictureZoom'], s.pictureZoom, (v) => updateSettings({ pictureZoom: v })));
-  grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => { updateSettings({ tapToTurn: v }); rerender(); }));
-  if (s.tapToTurn) {
+  // (Tap zones, and the turn they show, on a touch-first screen only: the reader acts on them there alone.)
+  if (fits('phone')) grid.append(toggle([t('tapToTurn'), 'tapToTurn'], s.tapToTurn, (v) => { updateSettings({ tapToTurn: v }); rerender(); }));
+  if (s.tapToTurn && fits('phone')) {
     // The nine zones: each a button naming its action; tapping one picks another.
-    const acts: [TapAction, string][] = [['menu', t('tapMenu')], ['next', t('tapNext')], ['prev', t('tapPrev')], ['nextChapter', t('nextChapter')], ['prevChapter', t('prevChapter')], ['bookmark', t('addBookmark')], ['toc', t('contents')], ['search', t('search')], ['options', t('visualOptions')], ['speak', t('speechScope')], ['autoScroll', t('autoScroll')], ['fullscreen', t('fullscreen')], ['dayNight', t('tapDayNight')], ['none', t('tapNone')]];
+    const acts: [TapAction, string][] = [['menu', t('tapMenu')], ['next', t('tapNext')], ['prev', t('tapPrev')], ['nextChapter', t('nextChapter')], ['prevChapter', t('prevChapter')], ['bookmark', t('addBookmark')], ['toc', t('contents')], ['search', t('search')], ['options', t('visualOptions')], ['speak', t('speechScope')], ['autoScroll', t('autoScroll')], ['fullscreen', t('fullscreen')], ['dayNight', t('tapDayNight')], ['statusLine', t('tapStatusLine')], ['none', t('tapNone')]];
     const zones = [...(s.tapZones ?? DEFAULT_TAP_ZONES)];
     const gridEl = h('div', { class: 'tap-grid' }, ...zones.map((z, i) => h('button', { type: 'button', onclick: () => { pickSheet(t('tapZoneAction'), acts, zones[i], (v) => { zones[i] = v; updateSettings({ tapZones: [...zones] }); rerender(); }, t('close')); } }, acts.find((a) => a[0] === z)?.[1] ?? z)));
     grid.append(section([t('tapZones'), 'tapZones'], gridEl));
     grid.append(section([t('turnAnimation'), 'turnAnimation'], segmented([['none', t('turnNone')], ['slide', t('turnSlide')], ['fade', t('turnFade')]] as [VisualSettings['turnAnimation'], string][], s.turnAnimation, (v) => { updateSettings({ turnAnimation: v }); rerender(); })));
   }
-  grid.append(toggle([t('showStatusLine'), 'showStatusLine'], s.showStatusLine, (v) => updateSettings({ showStatusLine: v })));
-  if (s.showStatusLine) grid.append(toggle([t('showTimeLeft'), 'showTimeLeft'], s.showTimeLeft, (v) => updateSettings({ showTimeLeft: v })));
+  // The reading bar: shown or not (off until chosen), kept in immersive reading or not, and what it shows, where.
+  grid.append(toggle([t('showStatusLine'), 'showStatusLine'], s.showStatusLine, (v) => { updateSettings({ showStatusLine: v }); rerender(); }));
+  if (s.showStatusLine) {
+    grid.append(toggle([t('statusImmersive'), 'statusImmersive'], s.statusImmersive, (v) => updateSettings({ statusImmersive: v })), h('p', { class: 'hint' }, t('statusImmersiveHint')));
+    const ed = placedItemsEditor(barItems(s), (id) => t(BAR_ITEM_LABEL[id as BarItem]), (items) => updateSettings({ statusItems: items }), { sample: (id) => barText(id as BarItem, BAR_SAMPLE, new Date(), 87), hidden: (id) => id === 'battery' && !fits('battery') });
+    grid.append(h('div', { class: 'field readbar-items' }, labelEl([t('barItems'), 'statusItems']), h('p', { class: 'hint' }, t('barItemsHint')), ed));
+  }
   grid.append(stepper([t('eyeRest'), 'eyeRestMinutes'], s.eyeRestMinutes, 0, 120, 5, (v) => updateSettings({ eyeRestMinutes: v }), (v) => v ? countMinutes(v) : t('goalOff')));
   grid.append(stepper([t('dailyGoal'), 'readingGoalMinutes'], s.readingGoalMinutes, 0, 240, 15, (v) => updateSettings({ readingGoalMinutes: v }), (v) => v ? t('goalValue', { n: v }) : t('goalOff')));
-  if (isTouchDevice()) grid.append(toggle([t('pinchText'), 'pinchText'], s.pinchText, (v) => updateSettings({ pinchText: v })));
+  grid.append(...only('phone', toggle([t('pinchText'), 'pinchText'], s.pinchText, (v) => updateSettings({ pinchText: v }))));
   grid.append(toggle([t('keepAwake'), 'keepAwake'], s.keepAwake, (v) => { updateSettings({ keepAwake: v }); keepAwake(v); }));
-  if (nativePlatform() === 'android') grid.append(toggle([t('volumeKeys'), 'volumeKeys'], s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); void setVolumeKeys(v); }));
-  grid.append(toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v })));
+  // The phone's keys and edges while reading (Android; Back also on a computer — its mouse's back button, Alt+←). They
+  // reach the shell through src/readkeys.ts, only while a book is open.
+  if (fits('android')) {
+    grid.append(toggle([t('volumeKeys'), 'volumeKeys'], s.volumeKeys, (v) => { updateSettings({ volumeKeys: v }); rerender(); }), h('p', { class: 'hint' }, t('volumeKeysHint')));
+    if (s.volumeKeys) grid.append(toggle([t('volumeSwap'), 'volumeSwap'], s.volumeSwap, (v) => updateSettings({ volumeSwap: v })), h('p', { class: 'hint' }, t('volumeSwapHint')));
+  }
+  if (fits('notIos')) grid.append(toggle([t('backTwiceLeave'), 'backTwiceLeave'], s.backTwiceLeave, (v) => updateSettings({ backTwiceLeave: v })), h('p', { class: 'hint' }, t('backTwiceLeaveHint')));
+  if (fits('android')) grid.append(toggle([t('edgeGuard'), 'edgeGuard'], s.edgeGuard, (v) => updateSettings({ edgeGuard: v })), h('p', { class: 'hint' }, t('edgeGuardHint')));
+  // Sideways swipes that turn chapters (a phone): on or off, and how short or quick a swipe may be (views/reader.ts SWIPE).
+  grid.append(...only('phone', toggle([t('swipeTurn'), 'swipeTurn'], s.swipeTurn, (v) => { updateSettings({ swipeTurn: v }); rerender(); })));
+  if (s.swipeTurn && fits('phone')) grid.append(section([t('swipeSensitivity'), 'swipeSensitivity'], segmented([['low', t('swipeLow')], ['normal', t('swipeNormal')], ['high', t('swipeHigh')]] as [VisualSettings['swipeSensitivity'], string][], s.swipeSensitivity, (v) => { updateSettings({ swipeSensitivity: v }); rerender(); })));
+  grid.append(...only('touchScreen', toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v }))));
   grid.append(toggle([t('cropMargins'), 'pdfAutoCrop'], s.pdfAutoCrop, (v) => updateSettings({ pdfAutoCrop: v })), h('p', { class: 'hint' }, t('cropMarginsHint')));
-  grid.append(section([t('pdfBar'), 'pdfBar'], segmented([['auto', t('pdfBarAuto')], ['rows', t('pdfBarRows')], ['row', t('pdfBarRow')], ['side', t('pdfBarSide')]] as [VisualSettings['pdfBar'], string][], s.pdfBar, (v) => { updateSettings({ pdfBar: v }); rerender(); })));
-  if (s.pdfBar !== 'row' && s.pdfBar !== 'rows') grid.append(section([t('pdfBarSidePlace'), 'pdfBarSide'], segmented([['right', t('sideRight')], ['left', t('sideLeft')]] as [VisualSettings['pdfBarSide'], string][], s.pdfBarSide, (v) => { updateSettings({ pdfBarSide: v }); rerender(); })));
-  if (s.pdfBar !== 'side') grid.append(section([t('pdfBarRowPlace'), 'pdfBarRow'], segmented([['bottom', t('posBottom')], ['top', t('posTop')]] as [VisualSettings['pdfBarRow'], string][], s.pdfBarRow, (v) => { updateSettings({ pdfBarRow: v }); rerender(); })));
+  // The reader's buttons — where each lives, where the toolbar and the PDF's page bar stand, how they look: one sheet
+  // (src/ui/buttonsheet.ts), for books and PDFs.
+  grid.append(buttonsField('flow'));
   grid.append(toggle([t('pdfPageNumbers'), 'pdfPageNumbers'], s.pdfPageNumbers, (v) => updateSettings({ pdfPageNumbers: v })));
   const pinStyles: [VisualSettings['pdfNoteStyle'], string][] = [['badge', t('pinBadge')], ['pin', t('pinIcon')], ['dot', t('pinDot')]];
   grid.append(section([t('pdfNoteStyle'), 'pdfNoteStyle'], segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));
@@ -228,7 +261,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('translatorChoice'), 'translator'], segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));
 
   /* ----- Read aloud ----- */
-  if (ttsAvailable() || aiTtsSupported()) {
+  // (Shown wherever some voice can be had: a system without voices of its own — WebKitGTK has no speechSynthesis —
+  // can still read aloud with KittenTTS, made here, or an AI voice; the system engine then says it has none.)
+  if (ttsAvailable() || aiTtsSupported() || kittenSupported()) {
     grid.append(head('behaviour', t('readAloud')));
     grid.append(stepper([t('speechRate'), 'speechRate'], s.speechRate, 0.5, 2, 0.1, (v) => updateSettings({ speechRate: round2(v) }), (v) => `${v.toFixed(1)}×`));
   grid.append(section([t('speechScope'), 'speechScope'], segmented([['chapter', t('speechChapter')], ['book', t('speechBook')]], s.speechScope, (v) => updateSettings({ speechScope: v }))));
@@ -270,7 +305,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('snapStyle'), 'snapStyle'], segmented(snaps, s.snapStyle, (v) => { updateSettings({ snapStyle: v }); rerender(); })));
   grid.append(toggle([t('snapWatermark'), 'snapWatermark'], s.snapWatermark, (v) => updateSettings({ snapWatermark: v })));
   const folderInput = h('input', { type: 'text', value: s.snapFolder, spellcheck: 'false', dir: 'ltr', placeholder: 'Screenshots', onchange: () => updateSettings({ snapFolder: folderInput.value.trim() || 'Screenshots' }) }) as HTMLInputElement;
-  grid.append(section(t('snapFolder'), folderInput));
+  // (The gallery's folder: the phone apps save a snapshot there; elsewhere it is downloaded as a file.)
+  grid.append(...only('phoneApp', section(t('snapFolder'), folderInput)));
 
   container.append(grid, footer());
 

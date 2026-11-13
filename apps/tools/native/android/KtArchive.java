@@ -134,7 +134,9 @@ public final class KtArchive {
     }
 
     /* ---------- the ZIP parser (central directory) ---------- */
-    public static final class ZipItem { public String name; public int method; public long csize, usize, crc, offset; public boolean dir, encrypted; public byte[] raw; }
+    public static final class ZipItem { public String name; public int method; public long csize, usize, crc, offset, mtime; public boolean dir, encrypted; public byte[] raw; }
+    /** A zip entry's MS-DOS time and date (local time, two-second steps) as epoch milliseconds; 0 when unset. */
+    static long dosTime(int time, int date) { if (date == 0) return 0; java.util.Calendar c = java.util.Calendar.getInstance(); c.clear(); c.set(1980 + ((date >> 9) & 0x7f), ((date >> 5) & 0x0f) - 1, date & 0x1f, (time >> 11) & 0x1f, (time >> 5) & 0x3f, (time & 0x1f) * 2); return c.getTimeInMillis(); }
     public static final class ZipIndex { public final List<ZipItem> items = new ArrayList<>(); public long cdStart, length; }
 
     static long u32(ByteBuffer b, int at) { return b.getInt(at) & 0xffffffffL; }
@@ -159,7 +161,7 @@ public final class KtArchive {
         for (long i = 0; i < count && p + 46 <= cd.length; i++) {
             if (c.getInt(p) != 0x02014b50) throw new IOException("badCentralDirectory");
             ZipItem it = new ZipItem();
-            int flags = u16(c, p + 8); it.method = u16(c, p + 10); it.crc = u32(c, p + 16); it.csize = u32(c, p + 20); it.usize = u32(c, p + 24);
+            int flags = u16(c, p + 8); it.method = u16(c, p + 10); it.mtime = dosTime(u16(c, p + 12), u16(c, p + 14)); it.crc = u32(c, p + 16); it.csize = u32(c, p + 20); it.usize = u32(c, p + 24);
             int nl = u16(c, p + 28), xl = u16(c, p + 30), cl = u16(c, p + 32); it.offset = u32(c, p + 42);
             boolean utf8 = (flags & 0x800) != 0; it.name = new String(cd, p + 46, nl, utf8 ? StandardCharsets.UTF_8 : legacyCharset(cd, p + 46, nl));
             it.encrypted = (flags & 1) != 0;
@@ -186,22 +188,22 @@ public final class KtArchive {
     public static JSONObject list(File f, String password) throws Exception {
         JSONArray arr = new JSONArray(); long total = 0; boolean enc = false; String fmt;
         if (hasJournal(f) && isTar(f)) {
-            fmt = "tar"; try (Rnd r = Rnd.open(f, "r")) { for (TarItem it : scanTar(r)) { arr.put(item(it.name, it.size, 0, it.type == '5')); total += it.size; } }
+            fmt = "tar"; try (Rnd r = Rnd.open(f, "r")) { for (TarItem it : scanTar(r)) { arr.put(item(it.name, it.size, 0, it.type == '5', it.mtime)); total += it.size; } }
         } else if (hasJournal(f)) {
             // Half extracted in place: the directory lives in the tail file; what is left starts below the journal's mark.
             fmt = "zip"; long committed = new JSONObject(new String(readFile(new File(f.getPath() + ".kurokawa-unzip")), StandardCharsets.UTF_8)).getLong("committed");
-            try (RandomAccessFile t = new RandomAccessFile(new File(f.getPath() + ".kurokawa-tail"), "r")) { for (ZipItem it : readZip(Rnd.of(t)).items) if (it.offset < committed) { arr.put(item(it.name, it.usize, it.csize, it.dir)); total += it.usize; } }
+            try (RandomAccessFile t = new RandomAccessFile(new File(f.getPath() + ".kurokawa-tail"), "r")) { for (ZipItem it : readZip(Rnd.of(t)).items) if (it.offset < committed) { arr.put(item(it.name, it.usize, it.csize, it.dir, it.mtime)); total += it.usize; } }
         } else if ((fmt = formatOf(f)).equals("zip") && splitZip(f)) {
-            net.lingala.zip4j.ZipFile z = zip4j(f, password); for (net.lingala.zip4j.model.FileHeader h : z.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getUncompressedSize(), h.getCompressedSize(), h.isDirectory())); total += h.getUncompressedSize(); enc |= h.isEncrypted(); }
+            net.lingala.zip4j.ZipFile z = zip4j(f, password); for (net.lingala.zip4j.model.FileHeader h : z.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getUncompressedSize(), h.getCompressedSize(), h.isDirectory(), h.getLastModifiedTimeEpoch())); total += h.getUncompressedSize(); enc |= h.isEncrypted(); }
         } else if (fmt.equals("zip")) {
-            try (Rnd r = Rnd.open(f, "r")) { for (ZipItem it : readZip(r).items) { arr.put(item(it.name, it.usize, it.csize, it.dir)); total += it.usize; enc |= it.encrypted; } }
+            try (Rnd r = Rnd.open(f, "r")) { for (ZipItem it : readZip(r).items) { arr.put(item(it.name, it.usize, it.csize, it.dir, it.mtime)); total += it.usize; enc |= it.encrypted; } }
         } else if (fmt.equals("7z")) {
-            try (SevenZFile z = open7z(f, password == null ? null : password.toCharArray())) { SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
+            try (SevenZFile z = open7z(f, password == null ? null : password.toCharArray())) { SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getHasLastModifiedDate() ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
         } else if (fmt.equals("rar")) {
-            try (com.github.junrar.Archive a = password != null && !password.isEmpty() ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) { for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), h.getFullPackSize(), h.isDirectory())); total += h.getFullUnpackSize(); enc |= h.isEncrypted(); } }
+            try (com.github.junrar.Archive a = password != null && !password.isEmpty() ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) { for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), h.getFullPackSize(), h.isDirectory(), h.getMTime() != null ? h.getMTime().getTime() : 0)); total += h.getFullUnpackSize(); enc |= h.isEncrypted(); } }
         } else if (fmt.startsWith("tar")) {
-            try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, rawStream(f)))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory())); total += e.getSize(); } }
-        } else { String inner = f.getName().replaceAll("\\.(gz|xz|bz2)$", ""); arr.put(item(inner, -1, f.length(), false)); }
+            try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, rawStream(f)))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getLastModifiedDate() != null ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
+        } else { String inner = f.getName().replaceAll("\\.(gz|xz|bz2)$", ""); arr.put(item(inner, -1, f.length(), false, f.lastModified())); }
         long largest = 0; java.util.Set<String> seen = new java.util.HashSet<>(); String dup = null, bad = null;
         for (int i = 0; i < arr.length(); i++) { JSONObject e = arr.getJSONObject(i); if (!e.getBoolean("dir")) largest = Math.max(largest, e.optLong("size")); String n = e.getString("path"); if (unsafe(n) && bad == null) bad = n; if (!e.getBoolean("dir") && !seen.add(n.toLowerCase(java.util.Locale.ROOT)) && dup == null) dup = n; }
         JSONObject o = new JSONObject(); o.put("format", fmt); o.put("entries", arr); o.put("total", total); o.put("encrypted", enc);
@@ -234,7 +236,9 @@ public final class KtArchive {
         for (File v : vols) { try { Object st = Class.forName("android.system.Os").getMethod("stat", String.class).invoke(null, v.getAbsolutePath()); long n = ((Number) st.getClass().getField("st_nlink").get(st)).longValue(); if (n > 1) return true; } catch (Throwable ignored) { /* not Android: no way to know */ } }
         return false;
     }
-    static JSONObject item(String name, long size, long csize, boolean dir) throws Exception { JSONObject o = new JSONObject(); o.put("path", name); o.put("size", size); if (csize > 0) o.put("compressed", csize); o.put("dir", dir); return o; }
+    static JSONObject item(String name, long size, long csize, boolean dir) throws Exception { return item(name, size, csize, dir, 0); }
+    /** An entry as the page lists it; `mtime` (epoch ms) left out when the archive does not keep one. */
+    static JSONObject item(String name, long size, long csize, boolean dir, long mtime) throws Exception { JSONObject o = new JSONObject(); o.put("path", name); o.put("size", size); if (csize > 0) o.put("compressed", csize); o.put("dir", dir); if (mtime > 0) o.put("mtime", mtime); return o; }
     static InputStream decompressor(String fmt, InputStream in) throws IOException {
         if (fmt.endsWith(".gz") || fmt.equals("gz")) return new GzipCompressorInputStream(in, true);
         if (fmt.endsWith(".xz") || fmt.equals("xz")) return new XZCompressorInputStream(in, true);
@@ -293,7 +297,7 @@ public final class KtArchive {
             ZipIndex ix = readZip(r); long total = 0; for (ZipItem it : ix.items) total += it.usize;
             for (ZipItem it : ix.items) {
                 if (pr.stopped()) throw new IOException("stopped");
-                if (it.dir) { if (o.only != null) continue; File d = new File(dest, it.name); if (unsafe(it.name)) throw new IOException("unsafePath"); d.mkdirs(); continue; }
+                if (it.dir) { if (!wanted(o, it.name)) continue; File d = new File(dest, it.name); if (unsafe(it.name)) throw new IOException("unsafePath"); d.mkdirs(); continue; }
                 File out = target(dest, it.name, o); if (out == null) { done += it.usize; continue; }
                 pr.on(done, total, it.name);
                 try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total); }
@@ -512,19 +516,19 @@ public final class KtArchive {
     /* tar in place: headers scanned (GNU long names, pax paths), the last entry first, the file cut back to the
      * first header of each entry once it is written; resuming is a fresh scan of what is left. */
     static boolean isTar(File f) { String n = f.getName().toLowerCase(java.util.Locale.ROOT); return n.endsWith(".tar"); }
-    static final class TarItem { String name; long head, data, size; char type; }
+    static final class TarItem { String name; long head, data, size, mtime; char type; }
     static List<TarItem> scanTar(Rnd r) throws IOException {
         List<TarItem> out = new ArrayList<>(); long pos = 0, len = r.length(); byte[] h = new byte[512]; String longName = null; long groupStart = -1;
         while (pos + 512 <= len) {
             r.seek(pos); r.readFully(h); boolean zero = true; for (byte b : h) if (b != 0) { zero = false; break; } if (zero) break;
             if (groupStart < 0) groupStart = pos;
-            String name = cstr(h, 0, 100); long size = octal(h, 124, 12); char type = (char) (h[156] == 0 ? '0' : h[156]);
+            String name = cstr(h, 0, 100); long size = octal(h, 124, 12), mtime = octal(h, 136, 12) * 1000; char type = (char) (h[156] == 0 ? '0' : h[156]);
             String magic = cstr(h, 257, 6); if (magic.startsWith("ustar")) { String pre = cstr(h, 345, 155); if (!pre.isEmpty()) name = pre + "/" + name; }
             long data = pos + 512; long next = data + ((size + 511) / 512) * 512;
             if (type == 'L') { byte[] b = new byte[(int) size]; r.seek(data); r.readFully(b); longName = new String(b, StandardCharsets.UTF_8).replace("\0", ""); pos = next; continue; }
             if (type == 'x') { byte[] b = new byte[(int) size]; r.seek(data); r.readFully(b); for (String rec : new String(b, StandardCharsets.UTF_8).split("\n")) { int eq = rec.indexOf(" path="); if (eq > 0) longName = rec.substring(eq + 6); } pos = next; continue; }
             if (type == 'g') { pos = next; continue; }
-            TarItem it = new TarItem(); it.name = longName != null ? longName : name; it.head = groupStart; it.data = data; it.size = size; it.type = type; out.add(it);
+            TarItem it = new TarItem(); it.name = longName != null ? longName : name; it.head = groupStart; it.data = data; it.size = size; it.mtime = mtime; it.type = type; out.add(it);
             longName = null; groupStart = -1; pos = next;
         }
         return out;

@@ -16,6 +16,11 @@ function krFontUnicode(bytes) {
     tables[tag] = u32(r + 8);
   }
   const map = new Map(); // gid → text
+  // Every text the font gives a glyph (a glyph shared by several characters — Arial's medial yeh draws both ي and
+  // Persian ی — has them all): a name the PDF gives that is one of them is right, whatever the first one says.
+  const all = new Map(); // gid → Set of texts
+  map.krAll = all;
+  const addAll = (g, t) => { let x = all.get(g); if (!x) all.set(g, x = new Set()); if (x.has(t)) return false; x.add(t); return true; };
   // cmap: Unicode → glyph, inverted (first code point wins, so a letter is not replaced by a variant).
   const cm = tables.cmap;
   if (cm !== undefined) {
@@ -35,13 +40,13 @@ function krFontUnicode(bytes) {
             let g;
             if (ro === 0) g = (c + delta) & 0xffff;
             else { const gp = ros + k * 2 + ro + (c - start) * 2; if (gp + 2 > bytes.length) continue; g = u16(gp); if (g) g = (g + delta) & 0xffff; }
-            if (g && !map.has(g) && !(c >= 0xe000 && c <= 0xf8ff)) map.set(g, String.fromCodePoint(c)); // (a symbol font's private codes say nothing)
+            if (g && !(c >= 0xe000 && c <= 0xf8ff)) { addAll(g, String.fromCodePoint(c)); if (!map.has(g)) map.set(g, String.fromCodePoint(c)); } // (a symbol font's private codes say nothing)
           }
         }
       } else if (fmt === 12) {
         for (let k = 0, ng = u32(s + 12); k < ng; k++) {
           const st = u32(s + 16 + k * 12), en = u32(s + 20 + k * 12), sg = u32(s + 24 + k * 12);
-          for (let c = st; c <= en && c - st < 0x10000; c++) if (!map.has(sg + c - st) && !(c >= 0xe000 && c <= 0xf8ff) && c < 0xf0000) map.set(sg + c - st, String.fromCodePoint(c));
+          for (let c = st; c <= en && c - st < 0x10000; c++) if (!(c >= 0xe000 && c <= 0xf8ff) && c < 0xf0000) { addAll(sg + c - st, String.fromCodePoint(c)); if (!map.has(sg + c - st)) map.set(sg + c - st, String.fromCodePoint(c)); }
         }
       }
     }
@@ -68,6 +73,8 @@ function krFontUnicode(bytes) {
     }
   }
   const set = (g, s) => { if (s && !map.has(g)) { map.set(g, s); return true; } return false; };
+  // (Each reading of a glyph goes on to the glyph a rule makes of it.)
+  const spread = (from, to) => { let ch = false; const x = all.get(from); if (x) for (const t of [...x]) ch = addAll(to, t) || ch; return ch; };
   const ligs = new Set();
   for (let pass = 0; pass < 6; pass++) {
     let changed = false;
@@ -75,15 +82,15 @@ function krFontUnicode(bytes) {
       try {
         if (t === 1) {
           const cov = coverage(st + u16(st + 2));
-          if (u16(st) === 1) { const d = i16(st + 4); for (const g of cov) if (map.has(g)) changed = set((g + d) & 0xffff, map.get(g)) || changed; }
-          else cov.forEach((g, i) => { if (map.has(g)) changed = set(u16(st + 6 + i * 2), map.get(g)) || changed; });
+          if (u16(st) === 1) { const d = i16(st + 4); for (const g of cov) if (map.has(g)) { changed = set((g + d) & 0xffff, map.get(g)) || changed; changed = spread(g, (g + d) & 0xffff) || changed; } }
+          else cov.forEach((g, i) => { if (map.has(g)) { changed = set(u16(st + 6 + i * 2), map.get(g)) || changed; changed = spread(g, u16(st + 6 + i * 2)) || changed; } });
         } else if (t === 2 || t === 3) {
           const cov = coverage(st + u16(st + 2));
           cov.forEach((g, i) => {
             if (!map.has(g)) return;
             const seq = st + u16(st + 6 + i * 2);
             const cnt = u16(seq);
-            for (let k = 0; k < cnt; k++) changed = set(u16(seq + 2 + k * 2), t === 3 || k === 0 ? map.get(g) : "\u200c") || changed;
+            for (let k = 0; k < cnt; k++) { changed = set(u16(seq + 2 + k * 2), t === 3 || k === 0 ? map.get(g) : "\u200c") || changed; if (t === 3 || k === 0) changed = spread(g, u16(seq + 2 + k * 2)) || changed; }
           });
         } else if (t === 4) {
           const cov = coverage(st + u16(st + 2));
@@ -98,6 +105,7 @@ function krFontUnicode(bytes) {
               const str = parts.map((p) => map.get(p)).join("").replace(/\u200c/g, "");
               // One glyph can close several ligatures ("لله" and "الله"): the shortest reading is the glyph's own.
               const had = map.get(lg);
+              changed = addAll(lg, str) || changed;
               if (had === undefined) changed = set(lg, str) || changed;
               else if (ligs.has(lg) && str.length < had.length) { map.set(lg, str); changed = true; }
               ligs.add(lg);
@@ -106,13 +114,14 @@ function krFontUnicode(bytes) {
         } else if (t === 8) {
           const cov = coverage(st + u16(st + 2));
           const bc = u16(st + 4), la = st + 6 + bc * 2, lc = u16(la), gcAt = la + 2 + lc * 2;
-          cov.forEach((g, i) => { if (map.has(g)) changed = set(u16(gcAt + 2 + i * 2), map.get(g)) || changed; });
+          cov.forEach((g, i) => { if (map.has(g)) { changed = set(u16(gcAt + 2 + i * 2), map.get(g)) || changed; changed = spread(g, u16(gcAt + 2 + i * 2)) || changed; } });
         }
       } catch { /* malformed subtable: skip */ }
     }
     if (!changed) break;
   }
   for (const [g, s] of map) if (s === "\u200c") map.delete(g);
+  for (const x of all.values()) x.delete("\u200c");
   return map;
 }
 
@@ -175,11 +184,116 @@ function krLegacyLayout(font, raw, properties) {
 }
 
 function krRepairToUnicode(font, raw, properties) {
+  let derived = null;
+  try { if (raw && raw.length >= 12 && properties.composite && font.toUnicode) derived = krFontUnicode(raw); } catch { derived = null; }
+  if (!derived) return;
+  krRepairToUnicodeMap(font, raw, properties, derived);
+  krWordLigatures(font, raw, properties, derived);
+}
+
+/** A composite TrueType glyph's components: [{ g, x, y }] in the order the glyph lists them (null for a simple
+ *  glyph or one that cannot be read). */
+function krComponents(raw) {
+  const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  const tables = {};
+  for (let i = 0, n = dv.getUint16(4); i < n; i++) { const r = 12 + i * 16; tables[String.fromCharCode(raw[r], raw[r + 1], raw[r + 2], raw[r + 3])] = dv.getUint32(r + 8); }
+  if (tables.head === undefined || tables.loca === undefined || tables.glyf === undefined || tables.maxp === undefined) return () => null;
+  const long = dv.getInt16(tables.head + 50) === 1, n = dv.getUint16(tables.maxp + 4);
+  const cache = new Map();
+  return (gid) => {
+    if (cache.has(gid)) return cache.get(gid);
+    let out = null;
+    try {
+      if (gid >= 0 && gid < n) {
+        const off = long ? dv.getUint32(tables.loca + gid * 4) : dv.getUint16(tables.loca + gid * 2) * 2;
+        const next = long ? dv.getUint32(tables.loca + gid * 4 + 4) : dv.getUint16(tables.loca + gid * 2 + 2) * 2;
+        let p = tables.glyf + off;
+        if (next > off && dv.getInt16(p) < 0) {
+          out = []; p += 10;
+          for (let more = true; more && out.length < 64; ) {
+            const flags = dv.getUint16(p), g = dv.getUint16(p + 2); p += 4;
+            let x, y;
+            if (flags & 1) { x = dv.getInt16(p); y = dv.getInt16(p + 2); p += 4; } else { x = dv.getInt8(p); y = dv.getInt8(p + 1); p += 2; }
+            if (!(flags & 2)) { x = 0; y = 0; } // (points matched, not an offset: placed by the outline itself)
+            p += flags & 8 ? 2 : flags & 0x40 ? 4 : flags & 0x80 ? 8 : 0;
+            out.push({ g, x, y });
+            more = !!(flags & 0x20);
+          }
+        }
+      }
+    } catch { out = null; }
+    cache.set(gid, out);
+    return out;
+  };
+}
+
+/**
+ * Word's /ToUnicode for a ligature with a haraka between its letters ("جُم" drawn as the "جم" ligature and a
+ * damma of its own) gives the ligature the cluster's first characters, as many as it has letters — the mark
+ * takes the place of the letter after it ("جُ" for "جم"). The text loses that letter, and the mark, drawn as
+ * a glyph of its own too, comes twice.
+ * The font tells the letter: its ligatures are built of a letter-shape and dots, and another ligature of the
+ * same parts that differs from this one by where one dot stands — on the letter whose name both maps give, so
+ * the PDF tells which — has the same letter in that place ("خم", built as "جم" with the dot above, gives "م").
+ * The ligature's text becomes its letters; its marks, drawn by glyphs of their own, are theirs. Where no such
+ * ligature settles it, the PDF's name stays, and the glyph is noted (`krPartial`): its text is short of a letter,
+ * so a font rebuilt from the page's glyphs must not learn it as the letter it names.
+ */
+function krWordLigatures(font, raw, properties, derived) {
+  try {
+    const tu = font.toUnicode;
+    if (!raw || !tu || !Array.isArray(tu._map) || !properties.composite) return;
+    const MARK = /^[\u064b-\u065f\u0670\u06d6-\u06ed]$/, LETTER = /^[\u0621-\u063a\u0641-\u064a\u066e\u066f\u0671-\u06d3\u06d5]$/;
+    const gidOf = (code) => { const m = properties.cidToGidMap; return m && m.length ? m[code] ?? code : code; };
+    const suspects = [];
+    for (const code in tu._map) {
+      const cur = tu._map[code]; if (!cur || cur.length < 2) continue;
+      const ch = [...cur];
+      if (LETTER.test(ch[0]) && ch.some((c) => MARK.test(c)) && ch.every((c) => MARK.test(c) || LETTER.test(c))) suspects.push(+code);
+    }
+    if (!suspects.length) return;
+    const comps = krComponents(raw);
+    // The marks the font draws as glyphs of their own, and those glyphs.
+    const markGlyphs = new Set(), ownMarks = new Set();
+    for (const [g, t] of derived) if (MARK.test(t)) { markGlyphs.add(g); ownMarks.add(t); }
+    for (const code in tu._map) { const t = tu._map[code]; if (t && MARK.test(t)) { markGlyphs.add(gidOf(+code)); ownMarks.add(t); } }
+    // Ligatures the map names in letters only, by their parts.
+    const byParts = new Map();
+    for (const code in tu._map) {
+      const t = tu._map[code]; if (!t || t.length < 2 || ![...t].every((c) => LETTER.test(c))) continue;
+      const g = gidOf(+code); const cs = comps(g); if (!cs || cs.length < 2) continue;
+      const key = cs.map((c) => c.g).join(",");
+      (byParts.get(key) || byParts.set(key, []).get(key)).push({ g, t: [...t], cs });
+    }
+    const partial = []; let fixed = 0;
+    for (const code of suspects) {
+      const g = gidOf(code); const cs = comps(g);
+      // (A glyph of one outline, or one that draws a mark itself, may well be named whole.)
+      if (!cs || cs.length < 2 || cs.some((c) => markGlyphs.has(c.g))) continue;
+      const cur = [...tu._map[code]];
+      let fill = null, clash = false;
+      for (const h of byParts.get(cs.map((c) => c.g).join(",")) || []) {
+        if (h.g === g || h.t.length !== cur.length) continue;
+        const moved = cs.filter((c, i) => c.x !== h.cs[i].x || c.y !== h.cs[i].y).length;
+        if (moved !== 1 || cs[0].x !== h.cs[0].x || cs[0].y !== h.cs[0].y) continue;
+        if (cur.filter((c, i) => !MARK.test(c) && c !== h.t[i]).length !== 1) continue;
+        const f = cur.map((c, i) => (MARK.test(c) ? h.t[i] : c)).join("");
+        if (fill === null) fill = f; else if (fill !== f) clash = true;
+      }
+      if (fill && !clash && cur.every((c) => !MARK.test(c) || ownMarks.has(c))) { tu._map[code] = fill; fixed++; }
+      else partial.push(code);
+    }
+    // (Not "repaired" as a whole: the rest of the map, brackets among them, is still the PDF's own.)
+    if (partial.length) font.krPartial = new Set(partial);
+    if (globalThis.KR_FONT_DEBUG) console.log("KRF ligatures", properties.loadedName, properties.name, "fixed", fixed, "partial", partial.join(","));
+  } catch { /* leave the map as it is */ }
+}
+
+function krRepairToUnicodeMap(font, raw, properties, derived) {
   try {
     let tu = font.toUnicode;
     if (!raw || raw.length < 12 || !properties.composite || !tu) return;
     const gidOf = (code) => { const m = properties.cidToGidMap; return m && m.length ? m[code] ?? code : code; };
-    const derived = krFontUnicode(raw);
     if (derived.size < 4) { krLegacyLayout(font, raw, properties); return; }
     const plainOf = (d) => d.replace(/[\ufb50-\ufdff\ufe70-\ufefc]+/g, (m) => m.normalize("NFKC"));
     // No /ToUnicode at all (an identity map stands in): the text is whatever the font says its glyphs are.
@@ -196,11 +310,14 @@ function krRepairToUnicode(font, raw, properties) {
     }
     let compared = 0, agree = 0;
     const norm = (s) => (s || "").normalize("NFKC").replace(/\s+/g, "");
+    // (The PDF's name is one of the font's own readings of the glyph: right, even where the font's first reading
+    // differs — Arial draws ي and Persian ی, ه and Urdu ھ with one medial glyph.)
+    const reads = (code, cur) => { const x = derived.krAll && derived.krAll.get(gidOf(+code)); if (!x || !cur) return false; const c = norm(cur); for (const t of x) if (norm(t) === c) return true; return false; };
     for (const code in tu._map) {
       const d = derived.get(gidOf(+code));
       if (d === undefined) continue;
       compared++;
-      if (norm(d) === norm(tu._map[code])) agree++;
+      if (norm(d) === norm(tu._map[code]) || reads(code, tu._map[code])) agree++;
     }
     // Presentation forms (the font's shaped glyphs) become plain letters.
     const plain = (d) => d.replace(/[\ufb50-\ufdff\ufe70-\ufefc]+/g, (m) => m.normalize("NFKC"));
@@ -211,6 +328,7 @@ function krRepairToUnicode(font, raw, properties) {
         const cur = tu._map[code] || "";
         // The PDF names this glyph as the tail of what the font says ("لله" for the "الله" ligature): the PDF is precise here.
         if (cur.length > 1 && /^[\u0600-\u06ff]+$/.test(cur) && norm(d) !== norm(cur) && norm(d).endsWith(norm(cur))) continue;
+        if (reads(code, cur)) continue;
         tu._map[code] = plain(d);
       }
       font.krToUnicodeRepaired = true;
@@ -231,7 +349,7 @@ function krRepairToUnicode(font, raw, properties) {
       if (nothing.test(cur)) { tu._map[code] = plain(d); fixed++; continue; }
       if (markOnly.test(cur) && !markOnly.test(plain(d))) { tu._map[code] = plain(d); fixed++; continue; }
       if (!ar.test(cur)) continue;
-      if (norm(d) !== norm(cur) && norm(d).length === norm(cur).length) { tu._map[code] = plain(d); fixed++; }
+      if (norm(d) !== norm(cur) && norm(d).length === norm(cur).length && !reads(code, cur)) { tu._map[code] = plain(d); fixed++; }
     }
     // Glyphs the PDF's map leaves out altogether (a ligature it has no name for) take the font's word.
     const m = properties.cidToGidMap; let codesOf = null;

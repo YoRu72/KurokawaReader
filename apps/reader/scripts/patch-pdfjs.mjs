@@ -18,6 +18,9 @@ function replaceOnce(src, find, repl, label) {
   return src.slice(0, i) + repl + src.slice(i + find.length);
 }
 
+/** The polyfill put before pdf.js's own code (main build and worker): a ReadableStream iterable with `for await`. */
+const streamIter = () => fs.readFile(new URL('./pdfjs-stream-iter.js', import.meta.url), 'utf8').then((s) => s + '\n');
+
 export async function buildPdfWorker(outFile) {
   let src = await fs.readFile(require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'), 'utf8');
 
@@ -32,13 +35,13 @@ export async function buildPdfWorker(outFile) {
       if (!krPending.length) return;
       const keep = [];
       for (const m of krPending) {
-        if (krAttachMark(m.mark, m.x, m.y)) continue;
-        if (final || ++m.age > 3) { m.item.transform[4] = m.x; textContent.items.push(m.item); } else keep.push(m);
+        if (krAttachMark(m.mark, m.x, m.y, m)) continue;
+        if (final || ++m.age > 3) { m.item.transform[4] = m.x; if (m.inked) m.item.krInked = true; textContent.items.push(m.item); } else keep.push(m);
       }
       krPending = keep;
     }
     /** Put a haraka drawn at x right after the glyph under it, in an item of this batch; false when no item fits. */
-    function krAttachMark(mark, x, y) {
+    function krAttachMark(mark, x, y, m) {
       // The run whose line the mark belongs to: marks sit just above their baseline (kasra just below),
       // so the best fit is the smallest distance from the mark to a point a third of a line above the baseline.
       let best = null, bestD = Infinity;
@@ -54,8 +57,10 @@ export async function buildPdfWorker(outFile) {
       }
       if (!best) return false;
       const { it, g, hit } = best;
-      // A fatha stroke drawn well below the baseline is a kasra (legacy fonts have one stroke for both).
-      if (y < it.transform[5] - (it.height || 10) * 0.15) mark = mark.replace(/\u064e/g, "\u0650").replace(/\u064b/g, "\u064d");
+      // A fatha stroke whose ink stands below the baseline is a kasra (legacy fonts have one stroke for both). (By
+      // its ink when the font tells: a font may draw its fatha from an origin set below the baseline, ink high
+      // above it — not a kasra. Without it, by its origin drawn well below.)
+      if (m && m.inkY !== undefined && m.inkY !== null ? m.inkY < it.transform[5] : y < it.transform[5] - (it.height || 10) * 0.15) mark = mark.replace(/\u064e/g, "\u0650").replace(/\u064b/g, "\u064d");
       const visual = g.visual.join("");
       // Only when the item is exactly its drawing order turned round (pure right-to-left) can positions be mapped.
       if (it.str !== [...visual].reverse().join("")) return false;
@@ -75,14 +80,33 @@ export async function buildPdfWorker(outFile) {
         at = letters[Math.floor(f * letters.length)] + 1;
       }
       while (at < chars.length && krMark.test(chars[at])) at++;
-      chars.splice(at, 0, mark);
-      it.str = chars.join("");
-      // The glyph map follows the change (the mark is part of that glyph now).
-      g.visual[hit[0]] = mark + g.visual[hit[0]];
+      let b = at - 1; while (b >= 0 && krMark.test(chars[b])) b--;
+      // (A letter never carries one haraka twice: the map may already name the mark this glyph draws — Word's
+      // map of a ligature with a haraka between its letters does — and then the drawn mark is that one.)
+      const twice = chars.slice(b + 1, at).includes(mark);
+      if (!twice) {
+        chars.splice(at, 0, mark);
+        it.str = chars.join("");
+        // The glyph map follows the change (the mark is part of that glyph now).
+        g.visual[hit[0]] = mark + g.visual[hit[0]];
+      }
+      // What the mark was, kept for the reader: its colour when not its letter's (a red haraka on a black word —
+      // the reason the page drew it apart), and its glyph, after its letter's, so a font rebuilt from the
+      // glyphs the page draws learns the mark and where it sits on that letter.
+      if (m && m.item && m.item.color !== it.color && !m.item.hidden) (it.krTints ||= []).push({ base: chars[b] || "", mark, color: m.item.color || "000000" });
+      if (m && m.code !== undefined && it.krCodes && m.item && m.item.fontName === it.fontName) {
+        const cs = it.krCodes; let k = -1, bd = Infinity;
+        for (let i = 0; i < cs.length; i += 6) { if (!(cs[i + 5] > 0) || !cs[i + 1]) continue; const x0 = cs[i + 2], x1 = cs[i + 2] + cs[i + 5] * cs[i + 4]; const d = x < Math.min(x0, x1) ? Math.min(x0, x1) - x : x > Math.max(x0, x1) ? x - Math.max(x0, x1) : 0; if (d < bd) { bd = d; k = i; } }
+        if (k >= 0) { if (!twice && cs[k + 1] !== "\uffff") cs[k + 1] += mark; cs.splice(k + 6, 0, m.code, "", m.ox, m.y, m.em, 0); }
+      }
       return true;
     }
     /** Where a mark glyph's ink stands, left and right in em from its origin (null when the font cannot tell). */
-    function krInkX(font, glyph) {
+    function krInkX(font, glyph) { const b = krInkBox(font, glyph); return b && b[1] - b[0] < 2 ? [b[0], b[1]] : null; }
+    /** The middle of a glyph's ink, up from its origin (em; null when the font cannot tell). */
+    function krInkMidY(font, glyph) { const b = krInkBox(font, glyph); return b && b[3] - b[2] < 2 ? (b[2] + b[3]) / 2 : null; }
+    /** A glyph's ink box in em from its origin: [left, right, bottom, top] (null when the font cannot tell). */
+    function krInkBox(font, glyph) {
       if (!font || glyph.fontChar === undefined || glyph.fontChar === null) return null;
       const cache = (font.krInkCache ||= new Map());
       if (cache.has(glyph.fontChar)) return cache.get(glyph.fontChar);
@@ -91,13 +115,13 @@ export async function buildPdfWorker(outFile) {
         const r = font.renderer;
         const { glyphId } = lookupCmap(r.cmap, glyph.fontChar);
         const p = r.compileGlyph(r.glyphs[glyphId], glyphId);
-        let lo = Infinity, hi = -Infinity;
+        let lo = Infinity, hi = -Infinity, ylo = Infinity, yhi = -Infinity;
         for (let i = 0; i < p.length; ) {
           const op = p[i++]; const n = op === 0 || op === 1 ? 2 : op === 2 ? 6 : op === 3 ? 4 : 0;
-          for (let k = 0; k < n; k += 2) { const x = p[i + k]; if (x < lo) lo = x; if (x > hi) hi = x; }
+          for (let k = 0; k < n; k += 2) { const x = p[i + k], y = p[i + k + 1]; if (x < lo) lo = x; if (x > hi) hi = x; if (y < ylo) ylo = y; if (y > yhi) yhi = y; }
           i += n;
         }
-        if (lo < hi && hi - lo < 2) res = [lo, hi];
+        if (lo < hi && ylo < yhi) res = [lo, hi, ylo, yhi];
       } catch { res = null; }
       cache.set(glyph.fontChar, res);
       return res;
@@ -309,14 +333,17 @@ export async function buildPdfWorker(outFile) {
           const em = Math.hypot(mtr[0], mtr[1]);
           const tol = em * 0.15;
           if (!textContentItem.initialized || mx < textContentItem.krMinX - tol || mx > textContentItem.krMaxX + tol) {
-            krAfterSpace = false;
+            // (A mark drawn right after one held so is no run's either: Word draws a word's harakat one after
+            // another, each moved over its letter — the second must not start a run of marks of its own.)
+            krAfterSpace = !krPageAT;
             flushTextContentItem();
             const t0 = getCurrentTextTransform();
             // Where the mark shows: its origin plus the centre of its outline (when the font tells).
             const ik = krInkX(font, glyph);
             const cx = ik ? mx + ((ik[0] + ik[1]) / 2) * em * textState.textHScale : null;
             // Word draws a line's harakat before its letters: hold the mark until the letters are in.
-            krPending.push({ mark: glyph.unicode, x: cx ?? mx, y: t0[5], age: 0, item: { str: glyph.unicode, dir: "rtl", width: 0, height: Math.hypot(t0[2], t0[3]), transform: t0, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, hidden: (textState.krTr === 3 || textState.krTr === 7 || textState.krCa === 0) || undefined, krMark: true } });
+            const iy = krInkMidY(font, glyph);
+            krPending.push({ mark: glyph.unicode, x: cx ?? mx, inked: cx !== null, y: t0[5], inkY: iy === null ? null : t0[5] + iy * Math.hypot(t0[2], t0[3]), age: 0, ...(font.krNeedsUse ? { code: glyph.originalCharCode, ox: mx, em } : {}), item: { str: glyph.unicode, dir: "rtl", width: 0, height: Math.hypot(t0[2], t0[3]), transform: t0, fontName: textState.loadedName, hasEOL: false, color: textState.krFill || null, hidden: (textState.krTr === 3 || textState.krTr === 7 || textState.krCa === 0) || undefined, krMark: true } });
             continue;
           }
         }
@@ -367,9 +394,10 @@ export async function buildPdfWorker(outFile) {
           // The glyph's code and text, for rebuilding a subset font that has no Unicode map.
           // A fatha stroke drawn well below the last letter's baseline is a kasra (legacy fonts have one stroke for both).
           krGlyphLow = false;
-          if (/^[\u064b\u064e]/.test(glyph.unicode || "")) krGlyphLow = krLastBaseY !== null && gtr[5] < krLastBaseY - Math.hypot(gtr[2], gtr[3]) * 0.15;
+          if (/^[\u064b\u064e]/.test(glyph.unicode || "")) { const iy = textState.font?.vertical ? null : krInkMidY(textState.font, glyph); krGlyphLow = krLastBaseY !== null && (iy !== null ? gtr[5] + iy * Math.hypot(gtr[2], gtr[3]) < krLastBaseY : gtr[5] < krLastBaseY - Math.hypot(gtr[2], gtr[3]) * 0.15); }
           else if (glyph.width > 0 && !krMark.test(glyph.unicode || "")) krLastBaseY = gtr[5];
-          if (textState.font?.krNeedsUse) (textChunk.krCodes ||= []).push(glyph.originalCharCode, glyph.unicode || "", gx, gtr[5], Math.hypot(gtr[2], gtr[3]), glyph.width * textState.fontMatrix[0]);
+          // (A glyph whose text the map gives short of a letter — see krWordLigatures — is not learnt by its text.)
+          if (textState.font?.krNeedsUse) (textChunk.krCodes ||= []).push(glyph.originalCharCode, textState.font.krPartial?.has(glyph.originalCharCode) ? "\uffff" : glyph.unicode || "", gx, gtr[5], Math.hypot(gtr[2], gtr[3]), glyph.width * textState.fontMatrix[0]);
         }
         if (category.isZeroWidthDiacritic) {
           scaledDim = 0;
@@ -414,7 +442,8 @@ export async function buildPdfWorker(outFile) {
         fakeBold: textChunk.krBold,
         hidden: textChunk.krHidden || undefined,
         strokeEm: textChunk.krStrokeEm,
-        krCodes: textChunk.krCodes || undefined
+        krCodes: textChunk.krCodes || undefined,
+        krTints: undefined
       };
     }`, 'bidi item');
 
@@ -620,6 +649,32 @@ export async function buildPdfWorker(outFile) {
     } else {
       const cmapTable = readCmapTable(tables.cmap, font, this.isSymbolicFont, properties.hasEncoding);`, 'marks from the font cmap');
 
+  // 5) A JPEG decoded by the browser as an ImageBitmap (createImageBitmap), not through WebCodecs' ImageDecoder:
+  // the same decoder and the same pixels, but each frame ImageDecoder gave was also kept in Chromium's store of
+  // decoded images (discardable memory, held for the whole renderer) after pdf.js had drawn and closed it — some
+  // 300 MB still there after a PDF of forty photographs had been converted, and as much while a long picture book
+  // is read. An ImageBitmap's pixels are its own and go when pdf.js closes it. (ImageDecoder still where
+  // createImageBitmap is missing.)
+  src = replaceOnce(src, `      decoder = new ImageDecoder({
+        data,
+        type: "image/jpeg",
+        preferAnimation: false
+      });
+      return (await decoder.decode()).image;`, `      if (typeof createImageBitmap === "function") {
+        return await createImageBitmap(new Blob([data], {
+          type: "image/jpeg"
+        }));
+      }
+      decoder = new ImageDecoder({
+        data,
+        type: "image/jpeg",
+        preferAnimation: false
+      });
+      return (await decoder.decode()).image;`, 'jpeg as an ImageBitmap');
+
+  // 6) `for await` over a ReadableStream where the engine lacks it (WebKit): see scripts/pdfjs-stream-iter.js.
+  src = (await streamIter()) + src;
+
   const out = await esbuild.transform(src, { minify: !process.env.NOMINIFY, format: 'esm', target: 'es2020', legalComments: 'inline' });
   await fs.writeFile(outFile, out.code);
 }
@@ -631,6 +686,8 @@ export const pdfjsMainPlugin = {
   setup(build) {
     build.onLoad({ filter: /pdfjs-dist[\\/]legacy[\\/]build[\\/]pdf\.mjs$/ }, async (args) => {
       let src = await fs.readFile(args.path, 'utf8');
+      // (First: `for await` over a ReadableStream where the engine lacks it — WebKit; see scripts/pdfjs-stream-iter.js.)
+      src = (await streamIter()) + src;
       src = replaceOnce(src, '  showText(opIdx, glyphs) {\n', '  showText(opIdx, glyphs) {\n    if (this.ctx?.canvas?.krNoText && !this.ctx.canvas.krKeepFonts?.has(this.current.font?.loadedName)) return undefined;\n', 'showText');
       // Text layer: a one-letter piece gets its true width too (pdf.js leaves it at the browser font's width,
       // so in PDFs set letter by letter — Arabic with harakat, legacy fonts — the boxes overlap their

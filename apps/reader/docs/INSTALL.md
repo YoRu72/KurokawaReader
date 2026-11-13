@@ -5,17 +5,21 @@
 2. Open the file. If Android asks, allow installing from this source (Settings → Apps → Special access → Install unknown apps).
 3. Updates install over the previous version and keep your library; the app offers them itself (*Settings → App updates*).
 
-### Updates on Windows and Linux
-The installed app updates itself from *Settings → App updates*: it downloads only the parts of the new version that changed (a few MB rather than the whole program) and installs them when you restart. The portable EXE and the macOS app download the full file instead.
+### Windows
+Run `KurokawaReader-<version>-windows-x64.exe` (about 13 MB): one screen — **Install**, with *Options* for the folder, a desktop shortcut, opening EPUB, PDF and other books with KurokawaReader, and opening it when done. It installs for you only, in a few seconds, with no administrator prompt. `…-windows-x64-setup.exe` is the classic installer (silent installs: `/S`); `…-windows-x64-portable.zip` runs from any folder and never updates itself. SmartScreen may warn because the build is not code‑signed — choose *More info → Run anyway*.
+**Coming from the previous KurokawaReader?** Update it from inside the app (*Settings → App updates*): it prepares your library, checks it, then installs the new app, which brings everything over on its first start. Nothing is deleted from your library. If you install the new app by hand while the previous one is still there, the previous one is kept beside it until you open it once and let it update.
 
 ### macOS
-Open the `.dmg` and drag KurokawaReader to Applications. The build is not notarized, so the first launch needs **right-click → Open** (or *System Settings → Privacy & Security → Open Anyway*).
+Open `KurokawaReader-<version>-macos-universal.DMG` and drag KurokawaReader to Applications. The build is not notarized, so the first launch needs **right-click → Open** (or *System Settings → Privacy & Security → Open Anyway*). Update the previous KurokawaReader from inside it first, so your library is prepared before it is replaced.
 
 ### Linux
-`chmod +x KurokawaReader-<version>-linux-x64.AppImage` and run it; file associations are registered on first launch if you accept the prompt.
+`chmod +x KurokawaReader-<version>-linux-x64.appimage` and run it, or install `KurokawaReader-<version>-linux-x64.deb`.
 
-### Windows
-Run `KurokawaReader-<version>-win-x64.exe` to install (it registers the file types so double-clicking an EPUB or PDF opens the reader), or use the portable `.exe` with no installation. SmartScreen may warn because the build is not code‑signed — choose *More info → Run anyway*.
+### Updates
+The app updates itself from *Settings → App updates*: it downloads the new version, checks it against the release's SHA-256, and installs it in place (Windows, AppImage) or opens it for you (macOS disk image, .deb). The portable zip is updated by hand.
+
+### The previous build (old engine)
+For two versions the release also carries the previous build (`…-win-x64.exe`, `…-mac-universal.dmg`, `…-linux-x86_64.AppImage`), for anyone who needs to go back. Its library stays in its own data folder.
 
 ### iOS
 Apple only lets an app run if it is signed, so there are three routes; pick the one that fits your device. The app itself helps with all of them (*Settings → App updates*).

@@ -1,7 +1,7 @@
 // The live line of a stream or video download: what it is, where it is, and whether it has stalled.
 import { t, localDigits, formatBytes } from '../i18n';
 import type { Task } from '../engine/types';
-export const phaseLabel = (p: string): string => p.startsWith('variant ') ? t('hlsVariant', { q: p.slice(8) }) : p === 'pieces' ? t('hlsPhasePieces') : p === 'join' ? t('hlsPhaseJoin') : p === 'remux' ? t('hlsPhaseRemux') : p === 'info' ? t('phaseInfo') : p === 'video' ? t('phaseVideo') : p === 'audio' ? t('phaseAudio') : p === 'merge' ? t('phaseMerge') : p === 'finish' ? t('phaseFinish') : p;
+export const phaseLabel = (p: string): string => p.startsWith('variant ') ? t('hlsVariant', { q: p.slice(8) }) : p === 'pieces' ? t('hlsPhasePieces') : p === 'join' ? t('hlsPhaseJoin') : p === 'remux' ? t('hlsPhaseRemux') : p === 'info' ? t('phaseInfo') : p === 'video' ? t('phaseVideo') : p === 'audio' ? t('phaseAudio') : p === 'merge' ? t('phaseMerge') : p === 'finish' ? t('phaseFinish') : p.startsWith('convert') ? t('phaseConvert', { f: p.slice(8) || '…' }) : p === 'embed' ? t('phaseEmbed') : p;
 /** The live line of a stream or video download: what it is (1080p · avc1/mp4a · mp4 · ~512 MB), where it is (piece i/n, the phase), and whether it has stalled. */
 export function liveLine(x: Task): string {
   const m = x.meta ?? {}; const parts: string[] = [];

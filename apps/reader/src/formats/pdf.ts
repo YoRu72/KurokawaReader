@@ -5,7 +5,7 @@ import { cmapsUrl } from '../slim';
 import { buildTextLayer } from '../pdflayer';
 import type { BookMeta, TocItem } from './types';
 import { titleFromFileName, normalizeForSearch } from './types';
-import { h } from '../ui/dom';
+import { h, askPassword } from '../ui/dom';
 import { t } from '../i18n';
 
 import { loadPdfjs, offscreen } from '../pdfjsload';
@@ -32,7 +32,7 @@ async function openDoc(file: Blob): Promise<{ doc: PDFDocumentProxy; close: () =
     standardFontDataUrl: `${RES}standard_fonts/`,
     wasmUrl: `${RES}wasm/`,
     iccUrl: `${RES}iccs/`,
-  }, { ask: (wrong) => window.prompt(wrong ? t('pdfPasswordWrong') : t('pdfPasswordPrompt')) }).catch((e) => {
+  }, { ask: (wrong) => askPassword({ title: t('pdfProtected'), hint: wrong ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'), wrong, label: t('password'), open: t('open'), cancel: t('cancel') }) }).catch((e) => {
     if ((e as Error).message === 'cancelled' || (e as Error).message === 'password') throw new Error(t('cancelled'));
     throw e;
   });
@@ -157,6 +157,19 @@ export function inkBox(img: ImageData): CropBox {
 }
 const isBox = (c: unknown): c is CropBox => Array.isArray(c) && c.length === 4 && c.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1);
 
+/** The device's memory in GB as the browser tells it (rounded down; none told: taken as plenty). With 4 or less, less
+ *  is kept of pages gone by; with 2 or less, the pages' text is not read ahead. */
+const deviceMemory = (): number => (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
+
+/** What is taken off pages, taken off with them drawn for the moment (content-visibility visible), then laid out once:
+ *  elements taken out of a page the browser is skipping — off the screen — were kept by it until the page next came
+ *  into view, which a page far back never does: a long book's every word element (its text layers) was kept, about
+ *  20 MB of the page's memory for each stretch scrolled through, never given back. */
+function takeOff(pages: HTMLElement[], fn: () => void): void {
+  for (const el of pages) el.style.contentVisibility = 'visible';
+  try { fn(); } finally { if (pages.length) void pages[0].offsetHeight; for (const el of pages) el.style.contentVisibility = ''; }
+}
+
 export class PdfViewer {
   private doc!: PDFDocumentProxy;
   private pages: HTMLElement[] = [];      // the windows: sized to what is shown of each page
@@ -171,6 +184,10 @@ export class PdfViewer {
   private scale = 1;
   private baseWidths: number[] = [];
   private baseHeights: number[] = [];
+  /** Which pages' sizes are their own (read from the file), not page 1's taken for them. */
+  private sized = new Uint8Array(0);
+  /** The first page's picture is on the screen (the sizes of the others are read after it, not before). */
+  private firstPic!: Promise<void>; private firstPicDone: () => void = () => undefined;
   readonly scroll: HTMLElement;
   private inner: HTMLElement;
   pinchZoom = true;
@@ -223,6 +240,8 @@ export class PdfViewer {
     const w1 = vp1?.width ?? 612, h1 = vp1?.height ?? 792;
     this.baseWidths = new Array<number>(this.total).fill(w1);
     this.baseHeights = new Array<number>(this.total).fill(h1);
+    this.sized = new Uint8Array(this.total); if (first) this.sized[0] = 1;
+    this.firstPic = new Promise<void>((r) => { this.firstPicDone = r; });
     this.crops = new Array<CropBox | null>(this.total).fill(null); this.cropShownAs = this.crops.slice();
     // (Margins cropped: what was found before is read first, so the pages are laid out cropped from the start.)
     this.cropWanted = !!this.opts.crop?.enabled();
@@ -279,40 +298,73 @@ export class PdfViewer {
       this.lastFit = fit;
     });
     this.resizeObs.observe(this.scroll);
+    // (What the view thinks, for the desktop shells' engine test when a page is not drawn.)
+    (this.scroll as HTMLElement & { krPdfState?: () => unknown }).krPdfState = () => ({ first: this.first, last: this.last, current: this.current, scale: Math.round(this.scale * 1000) / 1000, fit: this.fitWidth, busy: this.busy, scrolling: this.scrolling, running: this.running?.n ?? null, shown: [...this.shown.keys()].slice(-8), topsStale: this.topsStale, tops: this.tops ? [this.tops[0], this.tops[this.first - 1], this.tops[this.tops.length - 1]] : null, laid: [this.pages[0]?.offsetTop, this.pages[this.first - 1]?.offsetTop, this.pages[this.pages.length - 1]?.offsetTop] });
     this.opts.onPageChange(this.current, this.total);
     this.frame();
   }
 
-  /** Fetch real page sizes in the background and correct the placeholders. */
+  /** Page sizes read from the file, correcting page 1's taken for them. Not every page at open — a thousand-page
+   *  book asked pdf.js for a thousand pages, ahead of the page being drawn: the first pages and a sample spread
+   *  through the book, after the first picture is up; when they all have page 1's size (most books), the rest are
+   *  read as they are met (drawn, measured for cropping, made into thumbnails); else all of them, as before. */
   private async measurePages(): Promise<void> {
-    let changed: number[] = [];
-    const apply = () => {
-      if (!changed.length) return;
-      // Keep what the reader is looking at where it is when earlier pages change size (worked out from the sizes,
-      // not by asking the page for its height — that would lay the whole book out again each time).
-      let shift = 0;
-      for (const i of changed) {
-        const el = this.pages[i - 1]; const before = parseFloat(el.style.height) || 0;
-        this.sizePage(el, i);
-        if (i < this.current) shift += (parseFloat(el.style.height) || 0) - before;
-        const s = this.shown.get(i); if (s) { s.level = Math.min(s.level, 1) as 0 | 1; this.dropTiles(s); }
-      }
-      changed = [];
-      this.tops = null;
-      if (shift) this.scroll.scrollTop += shift;
-      this.pump();
-    };
-    for (let i = 2; i <= this.total; i++) {
+    await Promise.race([this.firstPic, new Promise((r) => setTimeout(r, 1500))]);
+    const N = this.total; if (N <= 1 || this.destroyed) return;
+    const sample = new Set<number>();
+    for (let i = 2; i <= Math.min(N, 8); i++) sample.add(i);
+    if (N > 8) for (let k = 0; k < 24; k++) sample.add(Math.min(N, 9 + Math.round(((k + 0.5) * (N - 9)) / 24)));
+    let uniform = true;
+    for (const i of sample) {
+      const page = await this.doc.getPage(i).catch(() => null);
       if (this.destroyed) return;
+      if (page && this.noteSize(i, page, true)) uniform = false;
+    }
+    this.applySizes();
+    if (uniform) return;
+    for (let i = 2; i <= N; i++) {
+      if (this.destroyed) return;
+      if (this.sized[i - 1]) continue;
       const page = await this.doc.getPage(i).catch(() => null);
       if (this.destroyed || !page) continue;
-      const vp = page.getViewport({ scale: 1 });
-      if (Math.abs(vp.width - this.baseWidths[i - 1]) >= 0.5 || Math.abs(vp.height - this.baseHeights[i - 1]) >= 0.5) {
-        this.baseWidths[i - 1] = vp.width; this.baseHeights[i - 1] = vp.height; changed.push(i);
-      }
-      if (i % 40 === 0 || i === this.total) { apply(); await new Promise((r) => setTimeout(r, 0)); }
+      this.noteSize(i, page, true);
+      if (i % 40 === 0 || i === N) { this.applySizes(); await new Promise((r) => setTimeout(r, 0)); }
     }
-    apply();
+    this.applySizes();
+  }
+  /** Page `n`'s own size, from pdf.js's page: true when it differs from what it was laid out with. Applied at once,
+   *  or with the others waiting (`later`) by applySizes. */
+  private sizesWaiting: number[] = [];
+  private noteSize(n: number, page: PDFPageProxy, later = false): boolean {
+    if (this.sized[n - 1]) return false;
+    this.sized[n - 1] = 1;
+    const vp = page.getViewport({ scale: 1 });
+    if (Math.abs(vp.width - this.baseWidths[n - 1]) < 0.5 && Math.abs(vp.height - this.baseHeights[n - 1]) < 0.5) return false;
+    this.baseWidths[n - 1] = vp.width; this.baseHeights[n - 1] = vp.height; this.sizesWaiting.push(n);
+    if (!later) this.applySizes();
+    return true;
+  }
+  /** Page `n`'s own size known (read from the file when it is not yet). */
+  private async ensureSize(n: number): Promise<void> {
+    if (this.sized[n - 1]) return;
+    const page = await this.doc.getPage(n).catch(() => null);
+    if (page && !this.destroyed) this.noteSize(n, page);
+  }
+  private applySizes(): void {
+    const changed = this.sizesWaiting; if (!changed.length || this.destroyed) return;
+    this.sizesWaiting = [];
+    // Keep what the reader is looking at where it is when earlier pages change size (worked out from the sizes,
+    // not by asking the page for its height — that would lay the whole book out again each time).
+    let shift = 0;
+    for (const i of changed) {
+      const el = this.pages[i - 1]; const before = parseFloat(el.style.height) || 0;
+      this.sizePage(el, i);
+      if (i < this.current) shift += (parseFloat(el.style.height) || 0) - before;
+      const s = this.shown.get(i); if (s) { s.level = Math.min(s.level, 1) as 0 | 1; this.dropTiles(s); }
+    }
+    this.tops = null;
+    if (shift) this.scroll.scrollTop += shift;
+    this.pump();
   }
 
   /** The part of page `n` that is shown, in page points, and `k`: how much the page is shrunk so that it is no wider
@@ -450,9 +502,10 @@ export class PdfViewer {
     const ctx = c.getContext('2d', { willReadFrequently: true })!;
     const fitIn = (w: number, hh: number) => { const k = Math.min(320 / w, 480 / hh); c.width = Math.max(16, Math.round(w * k)); c.height = Math.max(16, Math.round(hh * k)); };
     let ok = false;
-    if (this.native) { fitIn(this.baseWidths[n - 1], this.baseHeights[n - 1]); ok = await this.nativeDraw(n, c, { width: c.width }).catch(() => false); }
+    if (this.native) { await this.ensureSize(n); fitIn(this.baseWidths[n - 1], this.baseHeights[n - 1]); ok = await this.nativeDraw(n, c, { width: c.width }).catch(() => false); }
     if (!ok) {
       const page = await this.doc.getPage(n);
+      this.noteSize(n, page);
       try {
         const vp1 = page.getViewport({ scale: 1 }); fitIn(vp1.width, vp1.height);
         ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
@@ -571,8 +624,21 @@ export class PdfViewer {
     this.settleTimer = window.setTimeout(() => this.settle(), 220);
   }
 
+  /** The pages' places kept between frames, checked against the layout (the page at the top and the last one): the
+   *  window resized, the web view zoomed or put full screen as a book opens moved them on WebView2 without the kept
+   *  list being let go (a 300-page book drawn five pages short of where it was scrolled), so they are read again. */
+  private topsStale = 0;
+  private checkTops(): void {
+    const t = this.tops; if (!t || t.length !== this.pages.length) return;
+    const base = this.pages[0]?.offsetParent === this.inner ? this.inner.offsetTop : 0;
+    for (const i of [Math.min(this.pages.length, Math.max(1, this.first)) - 1, this.pages.length - 1]) {
+      if (Math.abs(this.pages[i].offsetTop + base - t[i]) > 1) { this.tops = null; this.topsStale++; return; }
+    }
+  }
+
   private frame(): void {
     if (this.destroyed || !this.pages.length) return;
+    this.checkTops();
     const top = this.scroll.scrollTop, hgt = this.scroll.clientHeight;
     const now = performance.now();
     if (now - this.lastAt < 400 && now > this.lastAt) this.speed = (top - this.lastTop) / (now - this.lastAt); else if (now - this.lastAt >= 400) this.speed = 0;
@@ -590,6 +656,7 @@ export class PdfViewer {
   private settle(): void {
     this.scrolling = false; this.speed = 0;
     if (this.destroyed) return;
+    this.tops = null;   // (read again once still: whatever moved the pages meanwhile)
     this.frame();
     for (const n of [...this.shown.keys()]) if (n < this.first - 3 || n > this.last + 3) this.releasePage(n);
     this.applyWaiting();
@@ -653,7 +720,7 @@ export class PdfViewer {
           // (A frame between two drawings, so the page keeps moving under the finger.)
           await new Promise((r) => requestAnimationFrame(() => r(null)));
         }
-      } finally { this.busy = false; this.pumpThumbs(); this.pumpCrops(); }
+      } finally { this.busy = false; this.pumpThumbs(); this.pumpCrops(); this.cleanDoc(); }
     })();
   }
 
@@ -665,7 +732,7 @@ export class PdfViewer {
   }
   private give(c?: HTMLCanvasElement): void {
     if (!c) return; c.remove();
-    if (this.pool.length < 6) this.pool.push(c); else { c.width = c.height = 0; }
+    if (this.pool.length < (deviceMemory() <= 4 ? 3 : 6)) this.pool.push(c); else { c.width = c.height = 0; }
   }
 
   /** A whole page's picture at `level`; the old one stays until the new one is ready. */
@@ -674,10 +741,11 @@ export class PdfViewer {
     let s = this.shown.get(n);
     if (!s) { s = { level: 0, at: 0 }; this.shown.set(n, s); }
     const scale = this.scale;
-    const { px } = this.sizeFor(n, level);
     let page: PDFPageProxy;
     try { page = await this.doc.getPage(n); } catch { s.level = level; s.at = scale; return; }
     if (this.destroyed || this.shown.get(n) !== s) return;
+    this.noteSize(n, page);
+    const { px } = this.sizeFor(n, level);
     const vp1 = page.getViewport({ scale: 1 });
     const k = px / vp1.width;
     const W = Math.max(1, Math.round(px)), H = Math.max(1, Math.round(vp1.height * k));
@@ -702,6 +770,7 @@ export class PdfViewer {
     el.classList.remove('loading');
     el.dataset.res = level === 2 && !this.sizeFor(n, 2).tiled ? 'full' : 'low';
     if (!s.seen) { s.seen = true; this.opts.onPageRender?.(n); }
+    this.firstPicDone();
   }
 
   /** Draw with Android's renderer: written to a file by it and read here as bytes (no text encoding, no bridge
@@ -809,12 +878,30 @@ export class PdfViewer {
     if (this.running?.n === n) this.running.cancel();
     s.textCancel?.();
     const el = this.pages[n - 1];
-    this.give(s.pic); this.dropTiles(s); s.tileLayer?.remove();
-    el.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    // (A page far off the screen is skipped by the browser: what is taken off it is taken off as takeOff says.)
+    const off = () => { this.give(s.pic); this.dropTiles(s); s.tileLayer?.remove(); el.querySelectorAll('.textLayer').forEach((c) => c.remove()); };
+    if (this.destroyed) off(); else takeOff([el], off);
     el.classList.remove('loading'); delete el.dataset.res;
-    this.shown.delete(n);
+    this.shown.delete(n); this.released++;
     // (pdf.js lets go of what it kept to draw the page.)
-    void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined);
+    this.letGo(n);
+  }
+
+  /** pdf.js lets go of what it kept for page n (not once the book is closed: its worker is gone, and asking threw). */
+  private letGo(n: number): void {
+    if (this.destroyed && !this.doc) return;
+    try { void this.doc.getPage(n).then((p) => p.cleanup()).catch(() => undefined); } catch { /* closed */ }
+  }
+  /** Pages let go of since pdf.js was last asked to clean up. */
+  private released = 0;
+  /** After a good many pages let go of (a long scroll, far jumps), pdf.js lets go of what it keeps for the whole book —
+   *  its worker's fonts, shared pictures and page dictionaries — when nothing is being drawn or read: a long reading
+   *  keeps a ceiling, lower on a device with little memory. The pictures on the screen stay as they are. */
+  private cleanDoc(): void {
+    if (this.released < (deviceMemory() <= 4 ? 24 : 64)) return;
+    if (this.destroyed || this.busy || this.running || this.thumbBusy || this.cropBusy || this.textPending.size || !this.doc) return;
+    this.released = 0;
+    try { void this.doc.cleanup().catch(() => undefined); } catch { /* closed */ }
   }
 
   private rescale(scale: number): void {
@@ -831,8 +918,10 @@ export class PdfViewer {
 
   /** The zoom changed: pictures stay (stretched) until redrawn; tiles and text layers belong to the old size. */
   private dropForScale(): void {
-    for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
-    this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    takeOff([...this.shown.keys()].map((n) => this.pages[n - 1]), () => {
+      for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
+      this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
+    });
     // (Spare canvases are the old size: of no use again.)
     this.pool.forEach((c) => { c.width = c.height = 0; }); this.pool = [];
     this.running?.cancel();
@@ -1113,14 +1202,35 @@ export class PdfViewer {
   }
 
   /** Read every page's text a little at a time while the reader is idle, so a search later starts with all of
-   *  it at hand; `done` gets the texts once all are read. Stops when the book is closed. */
-  async readAllWhenIdle(done: (texts: string[]) => void): Promise<void> {
+   *  it at hand; `done` gets the texts once all are read. Stops when the book is closed. `keep`: the pages read on an
+   *  earlier opening (`from`, page n at n − 1) — gone on from, not read again — and where what is read is kept as it
+   *  goes (`save`, every few pages, when the app is hidden and when the book is closed). It waits while the pages are
+   *  scrolled, drawn or zoomed and while the app is hidden; each page read is let go of by pdf.js unless it is shown;
+   *  on a device with little memory (2 GB or less) nothing is read ahead — a search reads the pages then. */
+  async readAllWhenIdle(done: (texts: string[]) => void, keep?: { from?: (string | null)[] | null; save(texts: (string | null)[]): void }): Promise<void> {
+    if (deviceMemory() <= 2) return;
+    keep?.from?.forEach((x, i) => { if (typeof x === 'string' && i < this.total && !this.textCache.has(i + 1)) this.textCache.set(i + 1, x); });
     const idle = () => new Promise<void>((r) => { const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (ric) ric(() => r(), { timeout: 1500 }); else setTimeout(r, 60); });
+    let fresh = 0;
+    const save = () => { if (!fresh || !keep) return; fresh = 0; keep.save(Array.from({ length: this.total }, (_, i) => this.textCache.get(i + 1) ?? null)); };
+    const calm = async () => {
+      while (!this.destroyed && (document.hidden || this.scrolling || this.busy || this.pinching || this.zoomAnim)) {
+        if (document.hidden) save();
+        await new Promise((r) => setTimeout(r, document.hidden ? 1000 : 250));
+      }
+    };
     for (let n = 1; n <= this.total; n++) {
-      if (this.destroyed) return;
-      if (!this.textCache.has(n)) { await idle(); if (this.destroyed) return; await this.pageText(n); }
+      if (this.destroyed) break;
+      if (this.textCache.has(n)) continue;
+      await idle(); await calm(); if (this.destroyed) break;
+      if (this.textCache.has(n)) continue;
+      await this.pageText(n);
+      if (this.textCache.has(n)) fresh++;
+      if (!this.shown.has(n)) this.letGo(n);
+      if (fresh >= 20) save();
     }
-    const all = this.allTexts(); if (all && !this.destroyed) done(all);
+    if (this.destroyed) { save(); return; }
+    const all = this.allTexts(); if (all) done(all); else save();
   }
 
   /** Search every page; reports progress; returns hits with excerpts. */
@@ -1199,6 +1309,25 @@ export class PdfViewer {
     return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), type, 0.92));
   }
 
+  /** Page n's size in points (as the viewer lays it: the page's own turn included). */
+  pageSize(n: number): { width: number; height: number } { return { width: this.baseWidths[n - 1] ?? 0, height: this.baseHeights[n - 1] ?? 0 }; }
+
+  /** A part of page n — `box` as fractions of the whole page (x, y, w, h) — drawn afresh `width` pixels across, from
+   *  the file (not the screen's picture, which may be small or in tiles). The caller lets the canvas go when done. */
+  async renderRegion(n: number, box: [number, number, number, number], width: number): Promise<HTMLCanvasElement> {
+    const page = await this.doc.getPage(n);
+    const base = page.getViewport({ scale: 1 });
+    const k = width / Math.max(1e-6, box[2] * base.width);
+    const W = Math.max(1, Math.round(width)), H = Math.max(1, Math.round(box[3] * base.height * k));
+    const x = Math.round(box[0] * base.width * k), y = Math.round(box[1] * base.height * k);
+    const canvas = offscreen(document.createElement('canvas')); canvas.width = W; canvas.height = H;
+    // (The device's renderer draws the part as it draws a tile: the whole page's width, and where the part lies in it.)
+    if (this.native && await this.nativeDraw(n, canvas, { width: Math.round(base.width * k), tileX: x, tileY: y, tileW: W, tileH: H }).catch(() => false)) return canvas;
+    const ctx = canvas.getContext('2d', { alpha: false })!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    await page.render({ canvas, canvasContext: ctx, viewport: page.getViewport({ scale: k, offsetX: -x, offsetY: -y }) }).promise;
+    return canvas;
+  }
+
   /** Small thumbnails for the pages grid and the strip: drawn two at a time, the ones asked for last (those on
    *  the screen now) first, by the device's own renderer where there is one, each kept once drawn. */
   private thumbs = new Map<string, Promise<string>>();
@@ -1206,9 +1335,11 @@ export class PdfViewer {
   private thumbBusy = 0;
   thumbnail(n: number, width = 180): Promise<string> {
     const key = `${n}:${width}`;
-    const had = this.thumbs.get(key); if (had) return had;
+    const had = this.thumbs.get(key); if (had) { this.thumbs.delete(key); this.thumbs.set(key, had); return had; }
     const p = new Promise<string>((ok, fail) => { this.thumbQueue.push({ key, n, width, ok, fail }); this.pumpThumbs(); });
     this.thumbs.set(key, p);
+    // (The ones seen longest ago let go of: a grid scrolled through a long book kept every page's picture.)
+    for (const k of this.thumbs.keys()) { if (this.thumbs.size <= (deviceMemory() <= 4 ? 150 : 400)) break; this.thumbs.delete(k); }
     p.catch(() => this.thumbs.delete(key));
     return p;
   }
@@ -1230,6 +1361,7 @@ export class PdfViewer {
     const px = Math.round(width * Math.min(2, this.device()));
     const canvas = offscreen(document.createElement('canvas'));
     if (this.native) {
+      await this.ensureSize(n);
       canvas.width = px; canvas.height = Math.round(px * (this.baseHeights[n - 1] / this.baseWidths[n - 1] || 1.4));
       if (await this.nativeDraw(n, canvas, { width: px }).catch(() => false)) return canvas.toDataURL('image/jpeg', 0.7);
     }
@@ -1238,8 +1370,10 @@ export class PdfViewer {
     const viewport = page.getViewport({ scale: px / base.width });
     canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
     const ctx = canvas.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvas, canvasContext: ctx, viewport }).promise;
-    return canvas.toDataURL('image/jpeg', 0.7);
+    try { await page.render({ canvas, canvasContext: ctx, viewport }).promise; }
+    finally { if (!this.shown.has(n)) page.cleanup(); }
+    const url = canvas.toDataURL('image/jpeg', 0.7); canvas.width = canvas.height = 0;
+    return url;
   }
 
   destroy(): void {

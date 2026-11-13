@@ -17,6 +17,8 @@ async function formatOf(file) {
 }
 
 /* ---------- ZIP: the central directory ---------- */
+/** An entry's MS-DOS time and date (local time, two-second steps) as epoch milliseconds; 0 when unset. */
+const dosTime = (time, date) => (date ? new Date(1980 + ((date >> 9) & 0x7f), ((date >> 5) & 0x0f) - 1, date & 0x1f, (time >> 11) & 0x1f, (time >> 5) & 0x3f, (time & 0x1f) * 2).getTime() : 0);
 async function readZip(fd, length) {
   const tail = Math.min(length, 65557 + 22); const buf = Buffer.alloc(tail); await fd.read(buf, 0, tail, length - tail);
   let eocd = -1; for (let i = tail - 22; i >= 0; i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
@@ -29,7 +31,7 @@ async function readZip(fd, length) {
   const cd = Buffer.alloc(cdSize); await fd.read(cd, 0, cdSize, cdOff); const items = []; let p = 0;
   for (let i = 0; i < count && p + 46 <= cd.length; i++) {
     if (cd.readUInt32LE(p) !== 0x02014b50) throw new Error('badCentralDirectory');
-    const flags = cd.readUInt16LE(p + 8); const it = { method: cd.readUInt16LE(p + 10), crc: cd.readUInt32LE(p + 16), csize: cd.readUInt32LE(p + 20), usize: cd.readUInt32LE(p + 24), offset: cd.readUInt32LE(p + 42), encrypted: !!(flags & 1) };
+    const flags = cd.readUInt16LE(p + 8); const it = { mtime: dosTime(cd.readUInt16LE(p + 12), cd.readUInt16LE(p + 14)), method: cd.readUInt16LE(p + 10), crc: cd.readUInt32LE(p + 16), csize: cd.readUInt32LE(p + 20), usize: cd.readUInt32LE(p + 24), offset: cd.readUInt32LE(p + 42), encrypted: !!(flags & 1) };
     const nl = cd.readUInt16LE(p + 28), xl = cd.readUInt16LE(p + 30), cl = cd.readUInt16LE(p + 32);
     it.name = cd.toString(flags & 0x800 ? 'utf8' : 'latin1', p + 46, p + 46 + nl).replace(/\\/g, '/');
     let xp = p + 46 + nl; const xe = xp + xl;
@@ -49,14 +51,14 @@ async function list(file, password) {
   if (hasJournal(file) && isTar(file)) { format = 'tar'; const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
   else if (hasJournal(file)) {
     format = 'zip'; const j = JSON.parse(await fsp.readFile(journalOf(file), 'utf8')); const t = await fsp.open(tailOf(file), 'r');
-    try { const ix = await readZip(t, (await t.stat()).size); for (const it of ix.items) if (it.offset < j.committed) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir }); total += it.usize; } } finally { await t.close(); }
+    try { const ix = await readZip(t, (await t.stat()).size); for (const it of ix.items) if (it.offset < j.committed) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir, ...(it.mtime ? { mtime: it.mtime } : {}) }); total += it.usize; } } finally { await t.close(); }
   } else if ((format = await formatOf(file)) === 'zip') {
-    const fd = await fsp.open(file, 'r'); try { const ix = await readZip(fd, (await fd.stat()).size); for (const it of ix.items) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir }); total += it.usize; encrypted ||= it.encrypted; } } finally { await fd.close(); }
+    const fd = await fsp.open(file, 'r'); try { const ix = await readZip(fd, (await fd.stat()).size); for (const it of ix.items) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir, ...(it.mtime ? { mtime: it.mtime } : {}) }); total += it.usize; encrypted ||= it.encrypted; } } finally { await fd.close(); }
   } else if (format === 'tar') { const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
   else if (format === 'gz' || format === 'xz' || format === 'bz2') { entries.push({ path: path.basename(file).replace(/\.(gz|xz|bz2)$/i, ''), size: -1, dir: false }); }
   else {
     const out = await run7z(['l', '-slt', '-ba', ...(password ? [`-p${password}`] : ['-p']), file]);
-    let cur = null; for (const line of out.split(/\r?\n/)) { const m = /^(\w[\w ]*) = (.*)$/.exec(line); if (!m) { if (cur) { entries.push(cur); cur = null; } continue; } if (m[1] === 'Path') cur = { path: m[2].replace(/\\/g, '/'), size: 0, dir: false }; else if (!cur) continue; else if (m[1] === 'Size') { cur.size = Number(m[2]) || 0; total += cur.size; } else if (m[1] === 'Packed Size' && m[2]) cur.compressed = Number(m[2]); else if (m[1] === 'Folder' || m[1] === 'Attributes') { if (m[2] === '+' || /^D/.test(m[2])) cur.dir = true; } else if (m[1] === 'Encrypted' && m[2] === '+') encrypted = true; }
+    let cur = null; for (const line of out.split(/\r?\n/)) { const m = /^(\w[\w ]*) = (.*)$/.exec(line); if (!m) { if (cur) { entries.push(cur); cur = null; } continue; } if (m[1] === 'Path') cur = { path: m[2].replace(/\\/g, '/'), size: 0, dir: false }; else if (!cur) continue; else if (m[1] === 'Size') { cur.size = Number(m[2]) || 0; total += cur.size; } else if (m[1] === 'Packed Size' && m[2]) cur.compressed = Number(m[2]); else if (m[1] === 'Modified' && m[2]) { const t = Date.parse(m[2].replace(' ', 'T').replace(/\.\d+$/, '')); if (t > 0) cur.mtime = t; } else if (m[1] === 'Folder' || m[1] === 'Attributes') { if (m[2] === '+' || /^D/.test(m[2])) cur.dir = true; } else if (m[1] === 'Encrypted' && m[2] === '+') encrypted = true; }
     if (cur) entries.push(cur);
   }
   let largest = 0; const seen = new Set(); let duplicate, bad;
@@ -107,7 +109,7 @@ async function extractZip(file, dest, o, pr) {
     const ctl = { stopped: pr.stopped, tick: (k) => { done += k; pr.on(done, total, cur); } }; let cur = '';
     for (const it of ix.items) {
       if (pr.stopped()) throw new Error('stopped');
-      if (it.dir) { if (unsafe(it.name)) throw new Error('unsafePath'); await fsp.mkdir(path.join(dest, it.name), { recursive: true }); continue; }
+      if (it.dir) { if (unsafe(it.name)) throw new Error('unsafePath'); if (wanted(o.only, it.name)) await fsp.mkdir(path.join(dest, it.name), { recursive: true }); continue; }
       const out = await targetFor(dest, it.name, o.replace, o.only); if (!out) { done += it.usize; continue; }
       cur = it.name; pr.on(done, total, cur); await writeEntry(fd, it, out, ctl); n++;
     }

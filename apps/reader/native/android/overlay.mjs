@@ -122,6 +122,9 @@ if (!manifest.includes('android.intent.action.PROCESS_TEXT')) {
 }
 manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
 if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
+// The text size or the display size changed in the system's settings (Samsung's font and screen zoom): handled by
+// the WebView as it is — not the activity made again, which loaded the app afresh, in the library, a book closed.
+manifest = manifest.replace(/android:configChanges="([^"]*)"/, (_m, v) => `android:configChanges="${[...new Set([...v.split('|'), 'fontScale', 'density'])].join('|')}"`);
 // Launcher name the reader can choose: the MAIN/LAUNCHER filter moves off MainActivity onto
 // activity-aliases — one that follows the system language, and one per supported language —
 // and the plugin enables exactly one of them (setAppName).
@@ -148,6 +151,12 @@ if (!manifest.includes('android:name=".LauncherAuto"')) {
 // or in Download — the folder Android's picker refuses to hand out.
 if (!manifest.includes('MANAGE_EXTERNAL_STORAGE')) manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />\n    <application`);
 if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
+// Back: Capacitor's App plugin takes it through AndroidX's OnBackPressedDispatcher (a callback that is always on) and
+// hands it to the page as `backButton`; the page decides (src/ui/backstack.ts, "Back twice to leave a book"). The
+// template leaves predictive back off (its targetSdk is below 36, where it would become the default); it is said
+// here, so the Back the page receives stays the same when the template's targetSdk is raised: the press arrives when
+// the gesture is let go, never a system animation back to the launcher half-way through a book.
+if (!manifest.includes('enableOnBackInvokedCallback')) manifest = manifest.replace(/<application\b/, '<application android:enableOnBackInvokedCallback="false"');
 await fs.writeFile(manifestPath, manifest);
 
 // App name follows the system language: KurokawaReader by default, قارئ كروكاوا on Arabic devices.

@@ -85,4 +85,50 @@ tb = d.add_table(rows=5, cols=6); tb.style = 'Table Grid'
 for i in range(5):
     for j in range(6): tb.cell(i, j).text = f'R{i}C{j}' if i else f'Column {j+1}'
 d.save('landscape.docx')
+
+# 6) Tables with merged cells (a header over two columns: gridSpan; a first column down two rows: vMerge), left to
+# right and right to left; coloured runs and harakat coloured apart from their letters.
+def merged_table(d, rows, rtl_table):
+    tb = d.add_table(rows=4, cols=4); tb.style = 'Table Grid'
+    if rtl_table:
+        tblPr = tb._tbl.tblPr; b = OxmlElement('w:bidiVisual'); tblPr.append(b)
+    for i, row in enumerate(rows):
+        for j, v in enumerate(row):
+            if v is None: continue
+            c = tb.cell(i, j); c.text = v
+            if rtl_table: rtl(c.paragraphs[0])
+    tb.cell(0, 1).merge(tb.cell(0, 2))   # gridSpan
+    tb.cell(1, 0).merge(tb.cell(2, 0))   # vMerge
+    for (i, j) in [(0, 1), (1, 0)]:
+        c = tb.cell(i, j)
+        for p in c.paragraphs[1:]: p._p.getparent().remove(p._p)
+    return tb
+d = docx.Document()
+para(d, 'Merged cells', 14, bold=True)
+merged_table(d, [['Name', 'Scores', None, 'Note'], ['Group A', 'alpha', 'beta', 'first'], [None, 'gamma', 'delta', 'second'], ['Group B', 'epsilon', 'zeta', 'third']], False)
+para(d, '')
+p = para(d, 'الجدول المدمج', 14, bold=True, font='DejaVu Sans'); rtl(p)
+merged_table(d, [['الاسم', 'الدرجات', None, 'ملاحظة'], ['الفريق الأول', 'سبب', 'وتد', 'أولى'], [None, 'فاصلة', 'خفيف', 'ثانية'], ['الفريق الثاني', 'ثقيل', 'مجموع', 'ثالثة']], True)
+for tc in d.tables[1]._tbl.iter(qn('w:r')):
+    rPr = tc.find(qn('w:rPr'))
+    if rPr is None: rPr = OxmlElement('w:rPr'); tc.insert(0, rPr)
+    f = OxmlElement('w:rFonts'); f.set(qn('w:ascii'), 'DejaVu Sans'); f.set(qn('w:hAnsi'), 'DejaVu Sans'); f.set(qn('w:cs'), 'DejaVu Sans'); rPr.insert(0, f)
+para(d, '')
+p = para(d, 'Plain text, ', 12); r = p.add_run('red words'); r.font.color.rgb = RGBColor(0xC0, 0, 0); r.font.size = Pt(12); r = p.add_run(' and '); r.font.size = Pt(12)
+r = p.add_run('blue words'); r.font.color.rgb = RGBColor(0, 0, 0xC0); r.font.size = Pt(12); r = p.add_run('.'); r.font.size = Pt(12)
+# Harakat in red over black letters (each mark a run of its own colour, as Word users colour them).
+p = d.add_paragraph(); p.paragraph_format.space_after = Pt(6)
+for base, mark in [('ك', '\u064e'), ('ت', '\u064e'), ('ب', '\u064e'), (' ', ''), ('د', '\u064e'), ('ر', '\u064e'), ('س', '\u064f'), ('ن', '\u0652')]:
+    for t, col in [(base, None), (mark, 'C00000')]:
+        if not t: continue
+        r = p.add_run(t); r.font.size = Pt(18); r.font.name = 'DejaVu Sans'
+        rPr = r._r.get_or_add_rPr(); f = rPr.find(qn('w:rFonts')); f.set(qn('w:cs'), 'DejaVu Sans')
+        if col: r.font.color.rgb = RGBColor.from_string(col)
+rtl(p)
+d.save('merged.docx')
+
+# 7) Pages filled to their last line (the converter must keep each page on one page).
+d = docx.Document()
+for i in range(28): para(d, f'{i+1}. ' + LOREM * 2, 11, align=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=4)
+d.save('fullpage.docx')
 print('ok')

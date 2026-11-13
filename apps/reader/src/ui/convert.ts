@@ -1,9 +1,9 @@
 // The converter sheet: pick a target, watch the progress, then save / share /
 // add the result to the library or send it to a Kindle.
-import { h, icon, openSheet, toast, pickSheet } from './dom';
+import { h, icon, openSheet, toast, pickSheet, askPassword } from './dom';
 import { t, formatBytes } from '../i18n';
 import { TARGETS, convertBook, convertible, type Target, type ConvOptions, type PdfPaper } from '../convert';
-import { db, type Book } from '../db';
+import { db, stampAfter, type Book } from '../db';
 import { importFiles } from '../library';
 import { shareFile, downloadBlob, fileNameField } from './share';
 import { runJob } from '../jobs';
@@ -99,7 +99,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       result.replaceChildren(
         h('button', { class: 'btn small primary', type: 'button', onclick: () => void shareFile(blob, name(), book.title) }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),
         h('button', { class: 'btn small', type: 'button', onclick: () => downloadBlob(blob, name()) }, icon('download'), t('saveFile')),
-        h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name(), { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
+        h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name(), { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; b.folderAt = stampAfter(b.folderAt); }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
       );
       result.hidden = false;
       if (target === 'kindle') result.append(h('p', { class: 'hint', style: { marginTop: '8px' } }, t('kindleHint')));
@@ -107,10 +107,11 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       const msg = String((err as Error).message ?? err);
       if (msg === 'password') {
         // Asked again (with the right wording) when a password was given and was wrong.
-        const pw = prompt(password ? t('pdfPasswordWrong') : t('pdfPasswordPrompt')) ?? '';
+        const pw = (await askPassword({ title: t('pdfProtected'), hint: password ? t('pdfPasswordWrong') : t('pdfPasswordPrompt'), wrong: !!password, label: t('password'), open: t('open'), cancel: t('cancel') })) ?? '';
         if (pw) { busy = false; queueMicrotask(() => void run(target, pw)); return; }
         status.textContent = t('cancelled');
       } else if (msg === 'unsupported') status.textContent = t('convertUnsupported');
+      else if (msg === 'memory') status.textContent = t('convertNoMemory');
       else { status.textContent = `${t('convertFailed')} — ${msg}`; console.error(err); }
     } finally { busy = false; grid.querySelectorAll('button').forEach((b) => { b.disabled = false; }); }
   };

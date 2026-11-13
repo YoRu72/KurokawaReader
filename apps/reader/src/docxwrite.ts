@@ -76,6 +76,12 @@ export function textRun(text: string, p: RunProps, opts: { br?: boolean; tab?: b
   return `<w:r>${rPr(p)}${inner}</w:r>`;
 }
 export const tabRun = (): string => '<w:r><w:tab/></w:r>';
+/** A field (PAGE, …): its code, then `result` — the runs that show its last value until Word works it out
+ *  again — each mark in the look `p` gives (Word takes a field's look from its code's first character). */
+export function field(instr: string, result: string, p: RunProps): string {
+  const r = rPr(p);
+  return `<w:r>${r}<w:fldChar w:fldCharType="begin"/></w:r><w:r>${r}<w:instrText xml:space="preserve"> ${esc(instr)} </w:instrText></w:r><w:r>${r}<w:fldChar w:fldCharType="separate"/></w:r>${result}<w:r>${r}<w:fldChar w:fldCharType="end"/></w:r>`;
+}
 export const columnBreak = (): string => '<w:r><w:br w:type="column"/></w:r>';
 export const footnoteRef = (id: number): string => `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="${id}"/></w:r>`;
 
@@ -120,7 +126,7 @@ const borderXml = (name: string, b: Border) => `<w:${name} w:val="${b.style}" w:
 export function table(p: TableProps, rows: string): string {
   const b = p.borders;
   const borders = `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((n) => borderXml(n, b)).join('')}</w:tblBorders>`;
-  return `<w:tbl><w:tblPr>${p.rtl ? '<w:bidiVisual/>' : ''}<w:tblW w:type="dxa" w:w="${Math.round(p.width)}"/>${p.indent !== undefined ? `<w:tblInd w:type="dxa" w:w="${Math.round(p.indent)}"/>` : ''}${borders}${p.layoutFixed !== false ? '<w:tblLayout w:type="fixed"/>' : ''}</w:tblPr><w:tblGrid>${p.columns.map((w) => `<w:gridCol w:w="${Math.round(w)}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
+  return `<w:tbl><w:tblPr>${p.rtl ? '<w:bidiVisual/>' : '<w:bidiVisual w:val="0"/>'}<w:tblW w:type="dxa" w:w="${Math.round(p.width)}"/>${p.indent !== undefined ? `<w:tblInd w:type="dxa" w:w="${Math.round(p.indent)}"/>` : ''}${borders}${p.layoutFixed !== false ? '<w:tblLayout w:type="fixed"/>' : ''}</w:tblPr><w:tblGrid>${p.columns.map((w) => `<w:gridCol w:w="${Math.round(w)}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
 }
 export const tableRow = (p: RowProps, cells: string): string => `<w:tr>${p.height ? `<w:trPr><w:trHeight w:val="${Math.round(p.height.value)}" w:hRule="${p.height.rule}"/></w:trPr>` : ''}${cells}</w:tr>`;
 export function tableCell(p: CellProps, content: string): string {
@@ -186,17 +192,42 @@ export type Section = {
   type: 'nextPage' | 'continuous'; page: PageSetup; columns?: Columns;
   /** The header's and footer's paragraphs (their own parts). */
   header?: { xml: string; part: Part }; footer?: { xml: string; part: Part };
+  /** How its PAGE fields count: the number of its first page (else on from the section before) and the digits. */
+  pageNumbers?: { start?: number; fmt?: 'decimal' | 'hindiNumbers' | 'lowerRoman' | 'upperRoman' };
   children: string[];
 };
 
 /* ---------- the document ---------- */
 
-export type EmbeddedFont = { name: string; data: Uint8Array; arabic?: boolean };
+/** A font of the document's font table: its file when the document carries it, and what Word goes by to
+ *  substitute it when it cannot use that file (or there is none): another name to look for, its PANOSE
+ *  classification, character set, family kind, pitch and Unicode / code-page signature. */
+export type FontDecl = { alt?: string; panose?: string; charset?: string; family?: 'roman' | 'swiss' | 'modern' | 'script' | 'decorative' | 'auto'; pitch?: 'variable' | 'fixed'; sig?: { usb: number[]; csb: number[] } };
+export type EmbeddedFont = FontDecl & { name: string; data: Uint8Array; arabic?: boolean };
+
+const hex8 = (v: number) => (v >>> 0).toString(16).toUpperCase().padStart(8, '0');
+/** A w:font entry (children in the schema's order: altName, panose1, charset, family, pitch, sig, embeds). */
+export function fontEntry(name: string, d: FontDecl & { arabic?: boolean }, embeds = ''): string {
+  const sig = d.sig ?? { usb: [0, 0, 0, 0], csb: [0, 0] };
+  return `<w:font w:name="${att(name)}">${d.alt && d.alt !== name ? `<w:altName w:val="${att(d.alt)}"/>` : ''}${d.panose && /^[0-9A-F]{20}$/.test(d.panose) && d.panose !== '0'.repeat(20) ? `<w:panose1 w:val="${d.panose}"/>` : ''}<w:charset w:val="${d.charset ?? (d.arabic ? 'B2' : '00')}"/><w:family w:val="${d.family ?? 'auto'}"/><w:pitch w:val="${d.pitch ?? 'variable'}"/><w:sig w:usb0="${hex8(sig.usb[0])}" w:usb1="${hex8(sig.usb[1])}" w:usb2="${hex8(sig.usb[2])}" w:usb3="${hex8(sig.usb[3])}" w:csb0="${hex8(sig.csb[0])}" w:csb1="${hex8(sig.csb[1])}"/>${embeds}</w:font>`;
+}
 
 export class DocxWriter {
   nextRel = 100; nextDrawing = 1;
   readonly media = new Map<string, Uint8Array>();
   readonly body = new Part(this);
+  /** What each piece of the body is passed through before it is turned to bytes (the finishing pass's changes
+   *  to the document's own XML — each local to a run or a section's properties). */
+  fixBody: (xml: string) => string = (x) => x;
+  // The body as it is written, section by section (see addSection), as UTF-8: a book's text is never one string
+  // (a thousand pages of Arabic made one of 130 MB, and each pass over it — the finishing pass's, the encoder's —
+  // another as big, which a phone's WebView could not hold).
+  private bodyBytes: Uint8Array[] = [];
+  private lastSect: string | null = null;
+  private readonly enc = new TextEncoder();
+  private readonly hfParts: { name: string; xml: string; part: Part; kind: 'header' | 'footer' }[] = [];
+  private readonly hfRels: { id: string; type: string; target: string }[] = [];
+  private nHeaders = 0; private nFooters = 0;
   constructor(readonly opts: { title?: string; creator?: string; rtl: boolean; defaultFont: Fonts | string }) {}
   newPart(): Part { return new Part(this); }
   mediaName(data: Uint8Array, kind: 'png' | 'jpg'): string {
@@ -215,36 +246,64 @@ export class DocxWriter {
     x += `<w:type w:val="${s.type}"/>`;
     x += `<w:pgSz w:w="${Math.round(pg.width)}" w:h="${Math.round(pg.height)}" w:orient="${pg.width > pg.height ? 'landscape' : 'portrait'}"/>`;
     x += `<w:pgMar w:top="${Math.round(m.top)}" w:right="${Math.round(m.right)}" w:bottom="${Math.round(m.bottom)}" w:left="${Math.round(m.left)}" w:header="${Math.round(m.header)}" w:footer="${Math.round(m.footer)}" w:gutter="${Math.round(m.gutter ?? 0)}"/>`;
+    // (In the order the schema has them: page numbering, columns, text direction, grid.)
+    const pn = s.pageNumbers;
+    x += `<w:pgNumType${pn?.fmt ? ` w:fmt="${pn.fmt}"` : ''}${pn?.start !== undefined ? ` w:start="${Math.max(0, Math.round(pn.start))}"` : ''}/>`;
     if (s.columns) { const c = s.columns; x += `<w:cols w:space="${Math.round(c.space)}" w:num="${c.widths.length}" w:equalWidth="false">${c.widths.map((w, i) => `<w:col w:w="${Math.round(w)}"${i < c.widths.length - 1 ? ` w:space="${Math.round(c.space)}"` : ''}/>`).join('')}</w:cols>`; }
-    x += '<w:pgNumType/><w:docGrid w:linePitch="360"/>';
     if (pg.textDirection) x += `<w:textDirection w:val="${pg.textDirection}"/>`;
+    x += '<w:docGrid w:linePitch="360"/>';
     x += '</w:sectPr>';
     return x;
   }
 
-  /** The package as a JSZip (its parts and pictures in place), ready for the finishing pass and the zip. */
-  async pack(sections: Section[], fonts: EmbeddedFont[] = []): Promise<JSZip> {
+  /** A section of the body, written now: its paragraphs (passed through fixBody) turned to bytes, its header and
+   *  footer filed. Sections are added in order; pack closes the body. */
+  addSection(s: Section): void {
+    const refs: { header?: string; footer?: string } = {};
+    if (s.header) { const n = ++this.nHeaders; const id = `rIdH${n}`; this.hfParts.push({ name: `header${n}.xml`, xml: s.header.xml, part: s.header.part, kind: 'header' }); this.hfRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', target: `header${n}.xml` }); refs.header = id; }
+    if (s.footer) { const n = ++this.nFooters; const id = `rIdF${n}`; this.hfParts.push({ name: `footer${n}.xml`, xml: s.footer.xml, part: s.footer.part, kind: 'footer' }); this.hfRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', target: `footer${n}.xml` }); refs.footer = id; }
+    // (The section's properties ride in a paragraph of their own at its end, as Word writes them — written with
+    // the next section's text, once it is known not to be the last; the last section's close the body.)
+    const before = this.lastSect !== null ? `<w:p><w:pPr>${this.lastSect}</w:pPr></w:p>` : '';
+    this.lastSect = this.sectPrXml(s, refs);
+    this.bodyOut(before + s.children.join(''));
+  }
+  private bodyOut(xml: string): void { if (xml) this.bodyBytes.push(this.enc.encode(this.fixBody(xml))); }
+  /** The body's pieces as bytes, to be changed in place (decoded, changed, encoded again) by `fix`; a piece it
+   *  returns as it was given stays as it is. */
+  /** (With `pause`: called between pieces now and then — every 30 ms of work — so that a long book's pass over
+   *  its body is not one task of a second that holds the screen.) */
+  async mapBody(fix: (xml: string) => string, pause?: () => Promise<void>): Promise<void> {
+    const dec = new TextDecoder();
+    let t = performance.now();
+    for (let i = 0; i < this.bodyBytes.length; i++) {
+      const b = this.bodyBytes[i]; const x = dec.decode(b); const y = fix(x);
+      if (y !== x) this.bodyBytes[i] = this.enc.encode(y);
+      if (pause && performance.now() - t > 30) { await pause(); t = performance.now(); }
+    }
+  }
+  /** document.xml, whole, as a Blob of its pieces (the bytes leave the script's heap), the pieces let go. */
+  documentBlob(): Blob {
+    const blob = new Blob([this.enc.encode(`${XML_HEAD}<w:document ${NS_ALL}><w:body>`), ...(this.bodyBytes as Uint8Array<ArrayBuffer>[]), this.enc.encode('</w:body></w:document>')]);
+    this.bodyBytes = [];
+    return blob;
+  }
+
+  /** The package as a JSZip (its parts and pictures in place), ready for the finishing pass and the zip. Its
+   *  word/document.xml is a placeholder: the body, written as the sections were added, is documentBlob(). */
+  async pack(fonts: EmbeddedFont[] = []): Promise<JSZip> {
     const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
-    const parts: { name: string; xml: string; part: Part; kind: 'header' | 'footer' }[] = [];
+    const parts = this.hfParts;
     const bodyRels: { id: string; type: string; target: string }[] = [
       { id: 'rId1', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles', target: 'styles.xml' },
       { id: 'rId2', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings', target: 'settings.xml' },
       { id: 'rId3', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable', target: 'fontTable.xml' },
+      ...this.hfRels,
     ];
-    const out: string[] = [];
-    sections.forEach((s, i) => {
-      const refs: { header?: string; footer?: string } = {};
-      if (s.header) { const n = parts.filter((p) => p.kind === 'header').length + 1; const id = `rIdH${n}`; parts.push({ name: `header${n}.xml`, xml: s.header.xml, part: s.header.part, kind: 'header' }); bodyRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', target: `header${n}.xml` }); refs.header = id; }
-      if (s.footer) { const n = parts.filter((p) => p.kind === 'footer').length + 1; const id = `rIdF${n}`; parts.push({ name: `footer${n}.xml`, xml: s.footer.xml, part: s.footer.part, kind: 'footer' }); bodyRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', target: `footer${n}.xml` }); refs.footer = id; }
-      const sect = this.sectPrXml(s, refs);
-      out.push(...s.children);
-      // (The section's properties ride in a paragraph of their own at its end, as Word writes them; the last
-      // section's close the body.)
-      if (i < sections.length - 1) out.push(`<w:p><w:pPr>${sect}</w:pPr></w:p>`); else out.push(sect);
-    });
-    const docXml = `${XML_HEAD}<w:document ${NS_ALL}><w:body>${out.join('')}</w:body></w:document>`;
-    zip.file('word/document.xml', docXml);
+    if (this.lastSect !== null) { this.bodyOut(this.lastSect); this.lastSect = null; }
+    // (First among the parts, where the whole document was put before.)
+    zip.file('word/document.xml', '');
     for (const r of this.body.rels) bodyRels.push(r);
     zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${bodyRels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${att(r.target)}"/>`).join('')}</Relationships>`);
     for (const p of parts) {
@@ -269,7 +328,7 @@ export class DocxWriter {
       const id = `rId${i + 1}`;
       zip.file(`word/fonts/font${i + 1}.odttf`, ob);
       fontRels.push(`<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font${i + 1}.odttf"/>`);
-      fontsXmlOut += `<w:font w:name="${att(f.name)}"><w:charset w:val="${f.arabic ? 'B2' : '00'}"/><w:family w:val="auto"/><w:pitch w:val="variable"/><w:sig w:usb0="00000000" w:usb1="00000000" w:usb2="00000000" w:usb3="00000000" w:csb0="00000000" w:csb1="00000000"/><w:embedRegular r:id="${id}" w:fontKey="${key}"/></w:font>`;
+      fontsXmlOut += fontEntry(f.name, f, `<w:embedRegular r:id="${id}" w:fontKey="${key}"/>`);
     });
     zip.file('word/fontTable.xml', `${XML_HEAD}<w:fonts xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ${NS_W} mc:Ignorable="w14 w15">${fontsXmlOut}</w:fonts>`);
     zip.file('word/_rels/fontTable.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${fontRels.join('')}</Relationships>`);

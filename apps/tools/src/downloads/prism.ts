@@ -9,6 +9,7 @@ import { request } from '../http';
 import { getEngine, parseSources } from '../engine';
 import { getSettings } from '../settings';
 import { categoryOf } from './categories';
+import { safeDecode } from './probe';
 import { canBrowse, openBrowser } from '../browser';
 
 /* ---------- checksums ---------- */
@@ -142,7 +143,7 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
         if (seen.has(bare) || bare === page.split('#')[0]) continue;
         // (Pages followed are not offered as files; with no depth, everything the page links to is, as before.)
         if (depth > 0 && !FILE_RE.test(bare)) continue;
-        seen.add(bare); links.push({ href: bare, text: (el.textContent ?? '').trim() || decodeURIComponent(bare.split('?')[0].split('/').pop() ?? bare) });
+        seen.add(bare); links.push({ href: bare, text: (el.textContent ?? '').trim() || safeDecode(bare.split('?')[0].split('/').pop() ?? bare) });
       }
     }
     if (firstErr && !links.length) { list.replaceChildren(h('p', { class: 'empty small' }, String((firstErr as Error).message ?? firstErr))); return; }
@@ -176,7 +177,7 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
         h('button', { type: 'button', class: 'btn text small', disabled: picked === xs.length, onclick: () => { xs.forEach((x) => chosen.add(x.href)); draw(); } }, t('grabSelectAll', { n: localDigits(xs.length) })),
         h('button', { type: 'button', class: 'btn text small', disabled: !picked, onclick: () => { xs.forEach((x) => chosen.delete(x.href)); draw(); } }, t('grabSelectNone')),
         h('span', { class: 'grab-count' }, t('grabSelectedN', { n: localDigits(picked) }))),
-      ...xs.slice(0, 600).map((x) => { const nm = x.name ?? decodeURIComponent(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
+      ...xs.slice(0, 600).map((x) => { const nm = x.name ?? safeDecode(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
         x.thumb ? h('img', { class: 'grab-thumb', src: x.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null,
         h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href), x.size ? (x.est ? '~' : '') + formatBytes(x.size) : '', x.type && !/octet-stream/.test(x.type) ? x.type.replace(/^application\//, '') : '', x.status ? `HTTP ${x.status}` : ''].filter(Boolean).join(' · ')))); }));
     sync();

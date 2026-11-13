@@ -25,6 +25,11 @@ const png = (() => { const w = 64, hh = 40; const raw = Buffer.alloc((w * 4 + 1)
     const inApp = () => p.evaluate(() => ({ logo: (document.querySelector('.rail-brand img')?.getAttribute('src') || '').slice(0, 22), fav: (document.querySelector('link[rel="icon"]')?.getAttribute('href') || '').slice(0, 22) }));
     let ia = await inApp(); check('a computer: the sidebar\'s logo and the window\'s icon are the new one', ia.logo === 'data:image/png;base64,' && ia.fav === 'data:image/png;base64,', ia);
     await p.reload(); await p.waitForSelector('.rail-brand img'); await p.waitForTimeout(300); ia = await inApp(); check('a computer: … and still after a restart', ia.logo === 'data:image/png;base64,' && ia.fav === 'data:image/png;base64,', ia);
+    // (A narrow window: the library's own header carries the logo — data-brand there too.)
+    await p.setViewportSize({ width: 560, height: 800 }); await p.goto(base + '#/'); await p.waitForSelector('.library-view .brand.title img', { state: 'attached' }); await p.waitForTimeout(300);
+    const narrow = await p.evaluate(() => (document.querySelector('.library-view .brand.title img')?.getAttribute('src') || '').slice(0, 22));
+    check('a computer, narrow window: the library header\'s logo is the new one', narrow === 'data:image/png;base64,', narrow);
+    await p.setViewportSize({ width: 1280, height: 800 });
     await p.goto(base + '#/settings'); await p.waitForSelector('.app-icon-row', { state: 'attached' }); await p.waitForTimeout(300);
     await p.evaluate(() => [...document.querySelectorAll('.app-icon-row button')].find((b) => /original/.test(b.textContent)).click()); await p.waitForTimeout(200);
     check('a computer: the original icon back', (await p.evaluate(() => window.__icon.at(-1))) === null);

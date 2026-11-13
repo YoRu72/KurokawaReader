@@ -295,6 +295,7 @@ html[dir='rtl'] .switch input:checked + i::after { transform: translateX(-20px);
 .segmented button:hover { background: var(--md-surface-container-highest); }
 .segmented button:active { transform: scale(.95); }
 .segmented button[aria-pressed='true'] { background: var(--md-primary); color: var(--md-on-primary); border-radius: var(--sh-full); font-weight: 600; }
+.segmented button:disabled { opacity: .55; pointer-events: none; }
 
 /* ---------- Library ---------- */
 .library-body { flex: 1; overflow: auto; padding: 8px 20px 0; padding-bottom: calc(110px + var(--safe-bottom)); }
@@ -342,8 +343,14 @@ html[style*='--lib-cols'] .book-grid { grid-template-columns: repeat(var(--lib-c
 .book-card:active .cover { transform: scale(.97); border-radius: var(--sh-xl); }
 .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cover .gen { position: absolute; inset: 0; padding: 16px 14px; display: flex; flex-direction: column; justify-content: space-between; background: linear-gradient(160deg, var(--c1), var(--c2)); color: #f6edd9; }
-.cover .gen .t { padding-right: 44px; font-family: var(--font-read); font-size: 16px; line-height: 1.25; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.cover .gen .t { font-family: var(--font-read); font-size: 16px; line-height: 1.25; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
 .cover .gen .a { font-size: 11.5px; opacity: .85; }
+/* (The title of a made cover starts below the marks on the cover's top — its format, «New», the favourite's heart, a
+   «read» mark at the top — whatever their number, the card's size or the writing's direction; a mark set «below» the
+   others takes a second row. A cover in the list look is too small for a title of its own: the row beside it has it.) */
+.cover .gen { padding-top: 42px; }
+.cover.mark-below .gen { padding-top: 70px; }
+html[data-card-look='list'] .book-card .cover .gen { padding-top: 16px; }
 .cover .badge { position: absolute; top: 10px; right: 10px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: 4px 8px; border-radius: var(--sh-full); background: var(--md-inverse-surface); color: var(--md-inverse-on-surface); }
 .cover .progress { position: absolute; left: 10px; right: 10px; bottom: 10px; height: 6px; border-radius: var(--sh-full); background: rgba(0,0,0,.45); overflow: hidden; }
 .cover .progress i { display: block; height: 100%; border-radius: var(--sh-full); background: var(--md-primary); }
@@ -756,6 +763,7 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .notes-head .sub { font-size: 13px; color: var(--md-on-surface-variant); }
 .notes-view .plain-list li { display: flex; align-items: center; }
 .notes-view .plain-list li .del { flex: 0 0 auto; }
+.notes-view .plain-list li > .icon-btn { width: 40px; height: 40px; padding: 0; border-radius: var(--sh-full); display: inline-grid; flex: 0 0 auto; }
 .pick-btn { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 52px; padding: 0 16px 0 18px; border-radius: var(--sh-lg); background: var(--md-surface-container-high); color: var(--md-on-surface); font: 500 15px var(--font-ui); text-align: start; }
 .pick-btn:hover { background: var(--md-surface-container-highest); }
 .pick-btn svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; color: var(--md-on-surface-variant); }
@@ -1471,6 +1479,16 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 }
 .chip.check input[type=number] { width: 64px; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container); color: var(--text); font: inherit; }
 .snap-holder { margin-top: 10px; }
+.snap-kind { margin-top: 6px; }
+/* (The options of a page cut: long labels wrap rather than run out of a phone's width.) */
+.snap-options { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.snap-options .segmented button { white-space: normal; height: auto; min-height: 40px; padding: 6px 10px; line-height: 1.25; }
+/* The tool that cuts a part of a page by hand: over the pages, a frame dragged out, its corners to adjust. */
+.pdf-cutter { position: fixed; inset: 0; z-index: 60; touch-action: none; cursor: crosshair; background: rgba(0,0,0,.18); }
+.pdf-cutter-bar { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 8px; padding: 10px 12px; padding-top: calc(10px + env(safe-area-inset-top)); background: var(--md-surface-container-high); color: var(--md-on-surface); font: 14px var(--font-ui); cursor: default; }
+.pdf-cutter-bar span { flex: 1; min-width: 0; }
+.pdf-cut-rect { position: absolute; border: 2px solid var(--md-primary, #4a8df8); box-shadow: 0 0 0 9999px rgba(0,0,0,.35); cursor: move; }
+.pdf-cut-h { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; background: var(--md-primary, #4a8df8); border: 3px solid #fff; }
 
 /* Controls and lists are not text to copy: a hold selects an item, not its letters. */
 .book-card, .book-tile, .chapter-list, .plain-list, .dest-row, .chip, .sel-act, .selection-bar, .sheet-actions, .segmented, .tool-bar, .stars, .track-hit, .page-tile, .strip-cell, .library-tools, .folder-chips, .settings-nav, .topbar, .pdf-bar, .ink-bar { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
@@ -2222,3 +2240,154 @@ html.frameless.rail-mini .rail-brand { justify-content: center; }
 html.frameless body { position: fixed; top: var(--tb); left: 0; right: 0; bottom: 0; height: auto; transform: translateZ(0); overflow: hidden; }
 html.frameless.tb-hidden { --tb: 0px; }
 html.frameless.tb-hidden .win-titlebar { display: none; }
+
+/* The window's title bar, the app's own, drawn whole by the page where the shell asks it to (ui/winbar.ts — the Tauri
+   shell): a slim strip in the theme's colours (the sidebar's surface; the page's own colour in the reader), the icon
+   and name at its start, the window's buttons at its end — Expressive state layers, rounded, that open out on hover
+   and square up a little when pressed; close turns the error colour. The page sits below it; transparent, it has no
+   surface and the page keeps room for its buttons instead. Full screen and immersive reading hide it. */
+.kr-winbar { display: none; }
+html.winbar { --wb-ctl: 46px; }
+html.winbar .kr-winbar {
+  display: flex; align-items: stretch; position: fixed; top: 0; left: 0; right: 0; height: var(--wb-h, 32px); z-index: 2147483000; box-sizing: border-box;
+  background: var(--wb-bg, var(--md-surface-container-low)); color: var(--wb-fg, var(--md-on-surface));
+  font: 600 12px/1 var(--font-ui, system-ui); letter-spacing: .01em; user-select: none; -webkit-user-select: none; cursor: default;
+  transition: background var(--dur-med) var(--ease-emph), color var(--dur-med) var(--ease-emph);
+}
+html.winbar:not(.wb-clear):not(.wb-hide) body { position: fixed; top: var(--wb-h, 32px); left: 0; right: 0; bottom: 0; height: auto; transform: translateZ(0); overflow: hidden; }
+.kr-winbar .wb-brand { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding-inline: 12px 8px; pointer-events: none; }
+.kr-winbar .wb-brand img { width: 16px; height: 16px; border-radius: 5px; object-fit: cover; flex: none; transition: opacity var(--dur-med); }
+.kr-winbar .wb-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; transition: opacity var(--dur-med); }
+html.winbar:not(.wb-named) .kr-winbar .wb-brand > * { display: none; }
+html.winbar[dir='rtl'] .kr-winbar .wb-name { letter-spacing: 0; font-size: 12.5px; }
+.kr-winbar .wb-controls { display: flex; flex: none; }
+.wb-btn { all: unset; box-sizing: border-box; position: relative; display: grid; place-items: center; width: var(--wb-ctl); height: 100%; color: inherit; cursor: default; -webkit-tap-highlight-color: transparent; }
+.wb-btn::before {
+  content: ''; position: absolute; inset: 3px 4px; border-radius: 11px; background: currentColor; opacity: 0; transform: scale(.7);
+  transition: opacity var(--dur-short) var(--ease-emph), transform var(--dur-med) var(--spring), border-radius var(--dur-med) var(--spring), background-color var(--dur-short);
+}
+.wb-btn:hover::before { opacity: .1; transform: none; }
+.wb-btn:active::before { opacity: .16; transform: scale(.94); border-radius: 7px; transition-duration: 90ms, 160ms, 160ms, 90ms; }
+.wb-btn svg { grid-area: 1 / 1; position: relative; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; overflow: visible;
+  transition: transform var(--dur-long) var(--spring), opacity var(--dur-short), scale var(--dur-med) var(--spring); }
+.wb-btn:active svg { scale: .86; }
+.wb-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -4px; border-radius: 12px; }
+.wb-close { transition: color var(--dur-short); }
+.wb-close::before { background: var(--md-error); }
+.wb-close:hover { color: var(--md-on-error); }
+.wb-close:hover::before { opacity: 1; }
+.wb-close:active::before { opacity: 1; background: color-mix(in srgb, var(--md-error) 80%, var(--md-on-error)); }
+.wb-close:hover svg { transform: rotate(90deg); }
+/* (Maximise ↔ restore: one square turns into two with a spring, as the window's state changes.) */
+.wb-max .g-restore { opacity: 0; transform: scale(.5) rotate(-45deg); }
+html.wb-maxed .wb-max .g-max { opacity: 0; transform: scale(.5) rotate(45deg); }
+html.wb-maxed .wb-max .g-restore { opacity: 1; transform: none; }
+/* The window not in front: the bar quietens. */
+html.wb-blur .kr-winbar { color: color-mix(in srgb, var(--wb-fg, var(--md-on-surface)) 52%, transparent); }
+html.wb-blur .kr-winbar .wb-brand img { opacity: .5; }
+/* (The bar carries the icon and the name: the sidebar's top keeps only its fold button.) */
+html.winbar.wb-named:not(.wb-hide) .rail-brand > img, html.winbar.wb-named:not(.wb-hide) .rail-brand > .rail-name { display: none; }
+html.winbar.wb-named:not(.wb-hide) .rail-brand { justify-content: flex-end; min-height: 0; margin-bottom: -6px; }
+html.winbar.wb-named.rail-mini:not(.wb-hide) .rail-brand { justify-content: center; }
+/* A Mac: the system's lights at the bar's left (no buttons of the page's), the name in the middle as a Mac has it. */
+html.wb-mac .kr-winbar .wb-controls { display: none; }
+html.wb-mac .kr-winbar { padding-left: 78px; }
+html.wb-mac .kr-winbar .wb-brand { justify-content: center; padding-inline: 8px 86px; }
+/* Hidden: full screen, immersive reading. A mouse at the top shows it over the page until it leaves. */
+html.winbar.wb-hide .kr-winbar { display: none; }
+html.winbar.wb-hide.wb-peek .kr-winbar { display: flex; background: var(--wb-bg, var(--md-surface-container-low)); box-shadow: var(--el-2); animation: wb-peek var(--dur-med) var(--ease-emph-decel); }
+html.winbar.wb-hide.wb-peek .kr-winbar .wb-brand > * { display: revert; }
+@keyframes wb-peek { from { transform: translateY(-100%); } }
+/* Transparent: no surface; the buttons float over the page's top edge. The page's top bars keep room for them —
+   --wb-end at the interface's end (the app's own buttons), --wb-start / --wb-end at the window's left (a Mac's
+   lights) — as a transparent border, so their own padding stays as it is; a docked or opened side panel starts below
+   them; a Mac's sidebar starts below its lights. */
+html.winbar.wb-clear .kr-winbar { background: none; pointer-events: none; }
+html.winbar.wb-clear .kr-winbar .wb-controls { pointer-events: auto; }
+html.winbar.wb-clear .kr-winbar .wb-brand > * { display: none; }
+html.winbar.wb-clear:not(.wb-hide) :is(.reader-view .topbar, .view:not(.reader-view) > .topbar) { border-inline-start: var(--wb-start, 0px) solid transparent; border-inline-end: var(--wb-end, 0px) solid transparent; }
+html.winbar.wb-clear:not(.wb-hide) .reader-view[data-tb='inline'] .float-toolbar { inset-inline-end: calc(var(--te-w, 56px) + var(--wb-end, 0px)); max-width: calc(100% - 364px - var(--te-w, 56px) - var(--ts-w, 0px) - var(--wb-start, 0px) - var(--wb-end, 0px)); }
+@media (max-width: 1180px) { html.winbar.wb-clear:not(.wb-hide) .reader-view[data-tb='inline'] .float-toolbar { max-width: calc(100% - 244px - var(--te-w, 56px) - var(--ts-w, 0px) - var(--wb-start, 0px) - var(--wb-end, 0px)); } }
+html.winbar.wb-clear:not(.wb-hide):not(.wb-mac) .reader-view.panel-docked .topbar { border-inline-end-width: 0; }
+html.winbar.wb-clear:not(.wb-hide):not(.wb-mac).pc .reader-view.panel-docked[data-tb='inline'] .float-toolbar { inset-inline-end: calc(360px + var(--te-w, 56px)); max-width: calc(100% - 360px - 364px - var(--te-w, 56px) - var(--ts-w, 0px)); }
+html.winbar.wb-clear:not(.wb-hide):not(.wb-mac) .panel { padding-top: calc(var(--safe-top) + var(--wb-h, 32px)); }
+html.winbar.wb-clear.wb-mac:not(.wb-hide):not([dir='rtl']) .nav-rail { padding-top: calc(14px + var(--wb-h, 28px)); }
+
+/* The glossary's Retranslate: the bar over the list, the floating box with the instructions, its progress. */
+.gloss-retr-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gloss-retr-bar .btn { gap: 6px; }
+.gloss-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; background: var(--md-primary); color: var(--md-on-primary); font: 700 11.5px var(--font-ui); }
+.gloss-sel { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--md-primary); }
+.gloss-row.wrong { box-shadow: inset 0 0 0 1px var(--md-error); }
+.gloss-warn { margin: 0; display: flex; align-items: center; gap: 6px; font: 12.5px/1.4 var(--font-ui); color: var(--md-error); }
+.gloss-warn svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.gloss-retr-sheet .sheet-body { display: flex; flex-direction: column; gap: 12px; }
+.sheet.stacked.gloss-retr-sheet { max-height: 88vh; max-height: 88dvh; }
+.gloss-retr-info { margin: 0; align-self: flex-start; padding: 6px 14px; border-radius: var(--sh-full); background: var(--md-secondary-container); color: var(--md-on-secondary-container); font: 600 13.5px var(--font-ui); }
+.gloss-retr-sheet .field { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.gloss-retr-prompt { width: 100%; box-sizing: border-box; min-height: 13.5em; resize: none; font: 14.5px/1.65 var(--font-ui); padding: 12px 16px; border-radius: 20px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.gloss-retr-prompt:focus { outline: 2px solid var(--md-primary); outline-offset: -1px; border-color: transparent; }
+.gloss-retr-prompt:disabled { opacity: .7; }
+.gloss-retr-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.gloss-retr-tools .hint { flex: 1 1 12em; color: var(--md-on-surface-variant); font: 12.5px/1.45 var(--font-ui); }
+.gloss-retr-status { margin: 0; }
+.gloss-retr-sheet .progress-bar { margin: 0; }
+.gloss-retr-report { display: flex; flex-direction: column; gap: 6px; } .gloss-retr-report:empty { display: none; }
+.gloss-retr-report p { margin: 0; font: 14px/1.5 var(--font-ui); }
+.gloss-retr-error { color: var(--md-error); font-weight: 600; }
+.gloss-retr-report .btn { align-self: flex-start; }
+
+/* The Performance page (Settings → About; ui/perfsheet.ts). */
+.perf-entry { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.perf-entry .grow { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
+.perf-entry .grow small { color: var(--md-on-surface-dim); font-size: 12.5px; line-height: 1.4; }
+.perf-sheet .sheet-body { font-family: var(--font-ui); }
+.perf-sheet .perf-note { margin: 0 0 12px; line-height: 1.5; }
+.perf-sheet .perf-tiles { margin-bottom: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.perf-sheet .stats-tile { background: var(--md-surface-container-high); }
+.perf-sheet .stats-tile b { overflow-wrap: anywhere; }
+.perf-row { padding: 12px 14px; margin-top: 8px; border-radius: 16px; background: var(--md-surface-container-high); }
+.perf-row h4 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--md-primary); }
+.perf-row p { margin: 4px 0 0; font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.perf-sheet .sheet-actions { flex-wrap: wrap; }
+.perf-entry > .btn { width: auto; flex: 0 0 auto; }
+
+/* ---------- The first-run screen of the computer app's Tauri build (stage R6b: ui/firstrun.ts) ---------- */
+.firstrun { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px; overflow: auto; background: color-mix(in srgb, var(--md-surface) 82%, transparent); backdrop-filter: blur(14px); animation: fr-in var(--dur-med) var(--ease-emph); font-family: var(--font-ui); }
+.firstrun.leaving { opacity: 0; transform: scale(.985); transition: opacity .2s, transform .2s var(--ease-emph); }
+@keyframes fr-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.fr-card { width: min(560px, 100%); background: var(--md-surface-container-low); color: var(--md-on-surface); border-radius: var(--sh-xxl); padding: 28px 28px 22px; box-shadow: var(--el-2); display: grid; gap: 18px; }
+.fr-hero { display: flex; align-items: center; gap: 18px; }
+.fr-badge { width: 72px; height: 72px; }
+.fr-badge img { width: 46px; height: 46px; }
+.fr-hero h1 { margin: 0 0 4px; font-size: 28px; font-weight: 680; letter-spacing: -.02em; line-height: 1.12; }
+html[dir='rtl'] .fr-hero h1 { letter-spacing: 0; }
+.fr-hero p { margin: 0; color: var(--md-on-surface-variant); font-size: 14.5px; line-height: 1.45; }
+.fr-field { display: grid; gap: 8px; }
+.fr-label { font-size: 12.5px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--md-on-surface-variant); }
+html[dir='rtl'] .fr-label, html[lang='ja'] .fr-label, html[lang='zh'] .fr-label, html[lang='ko'] .fr-label { text-transform: none; letter-spacing: 0; }
+.fr-seg button { height: 40px; padding: 0 10px; font-size: 13.5px; }
+.fr-tile { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; padding: 14px 16px; border-radius: var(--sh-xl); background: var(--md-surface-container-high); }
+.fr-tile.ok { background: color-mix(in srgb, var(--md-primary-container) 70%, var(--md-surface-container-high)); }
+.fr-tile.bad { background: color-mix(in srgb, var(--md-error) 12%, var(--md-surface-container-high)); }
+.fr-tile-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 42% 58% 55% 45% / 48% 42% 58% 52%; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fr-tile.ok .fr-tile-icon { background: var(--md-primary); color: var(--md-on-primary); }
+.fr-tile-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fr-tile-text { min-width: 0; }
+.fr-tile-text b { display: block; font-size: 14.5px; font-weight: 650; margin-bottom: 2px; }
+.fr-tile-text p { margin: 0; font-size: 13px; line-height: 1.4; color: var(--md-on-surface-variant); }
+.fr-actions { display: flex; justify-content: flex-end; padding-top: 4px; }
+/* (The hand-over's offer in the library's tile — ui/handoversheet.ts handoverOffer: its words, the folder, the progress,
+   and its buttons on a row of their own under them.) */
+.fr-offer { grid-template-columns: auto 1fr; align-items: start; }
+.fr-offer .fr-tile-text p { margin: 0 0 6px; }
+.fr-offer .fr-tile-text p:empty { display: none; }
+.fr-offer .fr-tile-text code { font-size: 12px; }
+.fr-offer .handover-count b { display: inline; margin: 0; font-size: inherit; }
+.fr-offer progress { margin: 4px 0 6px; }
+.fr-offer[data-handover="failed"] { background: color-mix(in srgb, var(--md-error) 12%, var(--md-surface-container-high)); }
+.fr-tile-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.fr-start { min-width: 200px; }
+html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
+@media (max-width: 520px) { .fr-tile { grid-template-columns: auto 1fr; } .fr-tile > .btn { grid-column: 1 / -1; justify-self: end; } .fr-card { padding: 22px 18px 18px; } .fr-hero h1 { font-size: 23px; } }
+@media (prefers-reduced-motion: reduce) { .firstrun { animation: none; } }

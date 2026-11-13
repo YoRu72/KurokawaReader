@@ -4,7 +4,8 @@
 import JSZip from 'jszip';
 import type { BookMeta, FlowHandler, FlowRender, ImageRef, RenderContext, TocItem } from './types';
 import { titleFromFileName } from './types';
-import { UrlPool, collectImages, markDirections, mimeFor, parseXml, resolveZipPath, sanitize, tocFromHeadings, zipFile } from './shared';
+import { markBookLayout, markChapterTitles } from './titles';
+import { UrlPool, afterFrame, breath, collectImages, markBlockDirections, mimeFor, parseXml, resolveZipPath, safeDecode, sanitize, tocFromHeadings, zipFile, zipText } from './shared';
 
 interface ManifestItem { id: string; href: string; type: string; properties: string }
 
@@ -35,7 +36,8 @@ function cachedPackage(file: Blob, bookId: string): Promise<Package> {
 /** What a book's page shows before the book is opened: its blurb and its contents (labels and depths). */
 export async function epubOutline(file: Blob, bookId: string): Promise<{ description?: string; language?: string; toc: { label: string; depth: number }[] }> {
   const pkg = await cachedPackage(file, bookId);
-  const raw = await readToc(pkg);
+  // (Only the entries the reader keeps — tocOf — so the n-th chapter here is the n-th the reader opens.)
+  const raw = resolvableToc(await readToc(pkg), pkg);
   const desc = pkg.meta.description ? pkg.meta.description.replace(/<[^>]+>/g, '').replace(/\s+\n/g, '\n').trim() : undefined;
   return { description: desc, language: pkg.meta.language, toc: raw.map((r) => ({ label: r.label, depth: r.depth })) };
 }
@@ -120,7 +122,7 @@ async function readToc(pkg: Package): Promise<RawToc[]> {
           const label = (a?.textContent ?? '').replace(/\s+/g, ' ').trim();
           if (label) {
             const [p, frag = ''] = href.split('#');
-            out.push({ label, depth, path: resolveZipPath(pkg.navItem!.href, p), frag });
+            out.push({ label, depth, path: resolveZipPath(pkg.navItem!.href, p), frag: safeDecode(frag) });
           }
           walk(li.querySelector(':scope > ol'), depth + 1);
         }
@@ -139,7 +141,7 @@ async function readToc(pkg: Package): Promise<RawToc[]> {
           const label = np.querySelector('navLabel > text')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
           const src = np.querySelector('content')?.getAttribute('src') ?? '';
           const [p, frag = ''] = src.split('#');
-          if (label) out.push({ label, depth, path: resolveZipPath(pkg.ncxItem!.href, p), frag });
+          if (label) out.push({ label, depth, path: resolveZipPath(pkg.ncxItem!.href, p), frag: safeDecode(frag) });
           walk(np, depth + 1);
         }
       };
@@ -148,6 +150,26 @@ async function readToc(pkg: Package): Promise<RawToc[]> {
     }
   }
   return out;
+}
+
+/** The contents entries that lead into the book: those pointing at a chapter of its spine (every chapter gets an
+ *  anchor, and an entry whose fragment is missing falls back to its chapter's start). The reader's contents and
+ *  the book's page are both built from this list, so their indexes agree. */
+function resolvableToc(raw: RawToc[], pkg: Package): RawToc[] {
+  const inSpine = new Set(pkg.spine.map((s) => s.href));
+  return raw.filter((r) => inSpine.has(r.path));
+}
+
+/** The contents' titles that lead into each chapter (by its path), read once per book: what a chapter's title block
+ *  is recognised by (src/formats/titles.ts). */
+const tocTitles = new WeakMap<Package, Promise<Map<string, string[]>>>();
+function tocTitlesByPath(pkg: Package): Promise<Map<string, string[]>> {
+  let p = tocTitles.get(pkg);
+  if (!p) {
+    p = readToc(pkg).then((raw) => { const m = new Map<string, string[]>(); for (const r of resolvableToc(raw, pkg)) m.set(r.path, [...(m.get(r.path) ?? []), r.label]); return m; }).catch(() => new Map());
+    tocTitles.set(pkg, p);
+  }
+  return p;
 }
 
 /** Rewrite a publisher stylesheet so it only applies inside one chapter. */
@@ -200,16 +222,20 @@ async function scopeCss(css: string, cssPath: string, scope: string, pkg: Packag
   return out.join('\n');
 }
 
-async function renderChapter(pkg: Package, item: ManifestItem, index: number, ctx: RenderContext, pool: UrlPool, idMap: Map<string, string>): Promise<HTMLElement> {
+/** A chapter's section, empty: its id and path known before its text is read (the contents and links point at it). */
+function chapterShell(item: ManifestItem, index: number, ctx: RenderContext, idMap: Map<string, string>): HTMLElement {
   const section = document.createElement('section');
   section.className = 'kr-chapter';
   section.id = ctx.id(`c${index}`);
   section.dataset.path = item.href;
   idMap.set(item.href, section.id);
+  return section;
+}
 
+async function renderChapter(pkg: Package, item: ManifestItem, section: HTMLElement, ctx: RenderContext, pool: UrlPool, idMap: Map<string, string>): Promise<HTMLElement> {
   const f = zipFile(pkg.zip, item.href);
   if (!f) return section;
-  const raw = await f.async('text');
+  const raw = await zipText(f);
   let doc = new DOMParser().parseFromString(raw, 'application/xhtml+xml');
   if (doc.querySelector('parsererror') || !doc.body) doc = new DOMParser().parseFromString(raw, 'text/html');
 
@@ -276,26 +302,32 @@ async function renderChapter(pkg: Package, item: ManifestItem, index: number, ct
     doc.querySelectorAll('link[rel~="stylesheet"][href]').forEach((l) => {
       const path = resolveZipPath(item.href, l.getAttribute('href')!);
       const cf = zipFile(pkg.zip, path);
-      if (cf) parts.push(cf.async('text').then((css) => scopeCss(css, path, `#${section.id}`, pkg, pool)));
+      if (cf) parts.push(zipText(cf).then((css) => scopeCss(css, path, `#${section.id}`, pkg, pool)));
     });
     doc.querySelectorAll('style').forEach((s) => parts.push(scopeCss(s.textContent ?? '', item.href, `#${section.id}`, pkg, pool)));
     styleText = (await Promise.all(parts)).join('\n');
   }
 
+  await markBookLayout(doc, item.href, (p) => { const cf = zipFile(pkg.zip, p); return cf ? zipText(cf) : Promise.resolve(null); }, pkg.zip, ctx.publisherStyles);
   const body = doc.body;
   // Internal links: keep them, resolve to our prefixed ids after all chapters render.
   body.querySelectorAll('a[href]').forEach((a) => {
     const href = a.getAttribute('href')!;
     if (/^(https?:|mailto:|tel:)/i.test(href)) { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener'); return; }
-    const [p, frag] = href.split('#');
+    const [p, rawFrag] = href.split('#');
+    const frag = rawFrag ? safeDecode(rawFrag) : rawFrag;
     const path = p ? resolveZipPath(item.href, p) : item.href;
     a.setAttribute('data-kr-link', frag ? `${path}#${frag}` : path);
     a.removeAttribute('href');
   });
 
   sanitize(body, ctx.publisherStyles);
-  // Strip empty wrapper structure that EPUB producers love.
-  body.querySelectorAll('div, span').forEach((e) => { if (!e.textContent?.trim() && !e.querySelector('img, svg, image, video, audio, hr')) e.remove(); });
+  // Strip empty wrapper structure that EPUB producers love — but not an empty element that is a link's or the
+  // contents' target (<span id="…"/>, common in converted books), nor one holding such a target.
+  body.querySelectorAll('div, span').forEach((e) => { if (!e.id && !e.textContent?.trim() && !(e.localName === 'span' && e.textContent) && !e.querySelector('img, svg, image, video, audio, hr, [id]')) e.remove(); });
+  // (A span holding only a space — or a no-break or thin space — is the space between two words: books made from
+  // InDesign put the space between two differently styled runs in a span of its own. Removed, the words were glued:
+  // «My name’sRudeus». A div is a block: its blank text separates nothing, so an empty-looking div still goes.)
   // Mark inline images so they don't get block layout.
   body.querySelectorAll('p img, span img, a img').forEach((img) => { if (img.parentElement && (img.parentElement.textContent ?? '').trim()) img.classList.add('inline'); });
 
@@ -325,40 +357,76 @@ export const epubHandler: FlowHandler = {
     const root = document.createElement('div');
     root.className = 'kr-content kr-epub';
     if (pkg.meta.language) root.setAttribute('lang', pkg.meta.language.split('-')[0]);
-
-    // Render chapters a few at a time to keep the UI responsive.
-    const sections: HTMLElement[] = new Array(pkg.spine.length);
-    const CONCURRENCY = 4;
-    let next = 0;
-    const worker = async () => {
-      while (next < pkg.spine.length) {
-        const i = next++;
-        sections[i] = await renderChapter(pkg, pkg.spine[i], i, ctx, pool, idMap);
-        // (A breath every few chapters: the opening spinner turns, a tap answers, on a book of hundreds.)
-        if (i % 8 === 7) await new Promise((r) => setTimeout(r, 0));
+    const n = pkg.spine.length;
+    // Every chapter's section first, empty: its id is known to the contents and to links before its text is read.
+    const sections = pkg.spine.map((item, i) => chapterShell(item, i, ctx, idMap));
+    // Each chapter's blocks weighed for the book's direction as it is made (markBlockDirections): the whole book's
+    // share once the last is made, as markDirections took it over the whole.
+    const dirs: [number, number][] = new Array(n);
+    let gone = false;
+    const make = async (i: number) => {
+      await renderChapter(pkg, pkg.spine[i], sections[i], ctx, pool, idMap);
+      markChapterTitles(sections[i], (await tocTitlesByPath(pkg)).get(pkg.spine[i].href) ?? []);
+      dirs[i] = markBlockDirections(sections[i]);
+      sections[i].classList.remove('kr-shell');
+    };
+    // Chapters made in slices of a few milliseconds with a breath between: the spinner turns, a tap answers. Those made
+    // while the book is already shown (rest) take a slice a frame, after it is drawn: the reader scrolls on smoothly.
+    const makeAll = async (list: number[], paced = false): Promise<void> => {
+      let since = performance.now();
+      for (const i of list) {
+        if (gone) return;
+        await make(i);
+        if (performance.now() - since > (paced ? 8 : 12)) { await (paced ? afterFrame() : breath()); since = performance.now(); }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pkg.spine.length) }, worker));
-    sections.forEach((s) => root.appendChild(s));
-
-    // Resolve internal links now that every id is known.
-    root.querySelectorAll<HTMLElement>('[data-kr-link]').forEach((a) => {
-      const key = a.dataset.krLink!;
-      const target = idMap.get(key) ?? idMap.get(key.split('#')[0]);
-      if (target) { a.setAttribute('href', `#${target}`); a.setAttribute('data-kr-anchor', target); }
-      a.removeAttribute('data-kr-link');
-    });
-
-    // TOC
-    const raw = await readToc(pkg);
-    let toc: TocItem[] = raw
-      .map((r) => ({ label: r.label, depth: r.depth, anchor: idMap.get(r.frag ? `${r.path}#${r.frag}` : r.path) ?? idMap.get(r.path) ?? '' }))
-      .filter((t) => t.anchor);
-    if (!toc.length) toc = tocFromHeadings(root, ctx, 'epub', 2);
-
-    const rtl = markDirections(root) || pkg.rtlProgression || /^(ar|he|fa|ur)/i.test(pkg.meta.language ?? '');
-    if (rtl) root.setAttribute('dir', 'rtl');
-    const images: ImageRef[] = collectImages(root, ctx, 'epub', pool, pkg.zip);
-    return { element: root, toc, images, rtl, dispose: () => pool.dispose(), resolveImages: () => pool.resolveAll(root) };
+    const out: FlowRender = { element: root, toc: [], images: [], rtl: false, dispose: () => { gone = true; pool.dispose(); }, resolveImages: () => pool.resolveAll(root) };
+    const rtlOf = (blocksRtl: number, blocks: number) => (blocks > 0 && blocksRtl / blocks > 0.5) || pkg.rtlProgression || /^(ar|he|fa|ur)/i.test(pkg.meta.language ?? '');
+    // The whole book's parts once every chapter is made: links resolved (every id known), the contents, the direction,
+    // the pictures numbered in their order — as they were when the book was made in one go.
+    const finish = async (): Promise<void> => {
+      root.querySelectorAll<HTMLElement>('[data-kr-link]').forEach((a) => {
+        const key = a.dataset.krLink!;
+        const target = idMap.get(key) ?? idMap.get(key.split('#')[0]);
+        if (target) { a.setAttribute('href', `#${target}`); a.setAttribute('data-kr-anchor', target); }
+        a.removeAttribute('data-kr-link');
+      });
+      const raw = resolvableToc(await readToc(pkg), pkg);
+      let toc: TocItem[] = raw
+        .map((r) => ({ label: r.label, depth: r.depth, anchor: idMap.get(r.frag ? `${r.path}#${r.frag}` : r.path) ?? idMap.get(r.path) ?? '' }))
+        .filter((t) => t.anchor);
+      if (!toc.length) toc = tocFromHeadings(root, ctx, 'epub', 2);
+      let r = 0, b = 0; for (const d of dirs) if (d) { r += d[0]; b += d[1]; }
+      const byText = b > 0 && r / b > 0.5;
+      const rtl = rtlOf(r, b);
+      root.setAttribute('dir', rtl || byText ? 'rtl' : 'ltr');
+      out.toc = toc; out.rtl = rtl;
+      out.images = collectImages(root, ctx, 'epub', pool, pkg.zip);
+    };
+    const first = ctx.first;
+    if (first === undefined || n <= 6) {
+      await makeAll(sections.map((_, i) => i));
+      sections.forEach((s) => root.appendChild(s));
+      await finish();
+      return out;
+    }
+    // Asked for one chapter first (the one the reader is at): it and its neighbours are made now, the others stay empty
+    // sections (class kr-shell) until rest() — the book shows at once, not after every chapter has been read.
+    const k = Math.max(0, Math.min(n - 1, first));
+    const now = [k - 1, k, k + 1].filter((i) => i >= 0 && i < n);
+    sections.forEach((s, i) => { if (!now.includes(i)) s.classList.add('kr-shell'); root.appendChild(s); });
+    await makeAll(now);
+    { let r = 0, b = 0; for (const i of now) { r += dirs[i][0]; b += dirs[i][1]; }
+      // (The direction the book was found to have last time, else that of the chapters made: the rest may change it.)
+      const rtl = ctx.rtl ?? rtlOf(r, b); out.rtl = rtl; root.setAttribute('dir', rtl ? 'rtl' : 'ltr'); }
+    out.rest = async () => {
+      // (Outward from the chapter read, the ones ahead first: what a scroll reaches next is made next.)
+      const order: number[] = []; for (let d = 2; d < n; d++) for (const i of [k + d, k - d]) if (i >= 0 && i < n) order.push(i);
+      await makeAll(order, true);
+      if (gone) return false;
+      await finish();
+      return !gone;
+    };
+    return out;
   },
 };

@@ -907,6 +907,8 @@ export async function convertBook(book: Book, target: Target, progress: Progress
       return { blob, name: `${slug(book.title)}.${tg.ext}` };
     } catch (err) {
       if ((err as Error).message === 'password') throw err;
+      // (Out of memory: the reflowed route would read the whole book again, and fail the same way minutes later.)
+      if (/allocation failed|out of memory|Invalid (string|array|typed array) length/i.test(String((err as Error)?.message ?? err))) { console.warn('[kurokawa] PDF → DOCX: out of memory', err); throw new Error('memory'); }
       console.warn('[kurokawa] layout PDF → DOCX failed, using the reflowed route', err);
     }
   }

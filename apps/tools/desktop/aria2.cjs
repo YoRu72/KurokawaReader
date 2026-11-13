@@ -8,6 +8,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { Aria2Rpc } = require('./aria2rpc.cjs');
 const Sniff = require('./sniff.cjs');
+const { nativePath, relPath } = require('./paths.cjs');
 
 const num = (s) => Number(s ?? 0) || 0;
 
@@ -20,7 +21,8 @@ function piecesToSegments(st) {
 }
 class Aria2Engine {
   constructor(o) {
-    this.userData = o.userData; this.resources = o.resources; this.defaultDir = o.defaultDir;
+    this.userData = o.userData; this.resources = o.resources; this.platform = o.platform || process.platform; this.defaultDir = nativePath(o.defaultDir, this.platform);
+    this.np = (p) => nativePath(p, this.platform); this.rel = (f, d) => relPath(f, d, this.platform);
     this.keepFile = path.join(this.userData, 'tasks.json');
     try { this.keep = JSON.parse(fs.readFileSync(this.keepFile, 'utf8')); } catch { this.keep = {}; }
     this.config = Object.assign({ seed: false, listenPort: 0, maxConnections: 8 }, this.readConfig());
@@ -91,12 +93,12 @@ class Aria2Engine {
     const w = st.infoHash && this.watching ? this.watching(st.infoHash) : null;
     if (w) st = { ...st, status: 'active', downloadSpeed: String(Math.round(w.down)), uploadSpeed: String(Math.round(w.up)), connections: String(w.peers) };
     const extra = this.keep[st.gid] || {}; const total = num(st.totalLength), done = num(st.completedLength), speed = num(st.downloadSpeed);
-    const dir = (st.dir || '').replace(/[\\/]+$/, '');
+    const dir = this.np(st.dir || '').replace(/[\\/]+$/, '');
     return {
       id: st.gid, kind: st.bittorrent ? 'torrent' : 'http', name: extra.name || this.nameOf(st), source: extra.source || (st.bittorrent ? (st.infoHash ? { magnet: `magnet:?xt=urn:btih:${st.infoHash}` } : {}) : { url: st.files?.[0]?.uris?.[0]?.uri }),
       dir, state: this.stateOf(st), done, total, downSpeed: speed, upSpeed: num(st.uploadSpeed), eta: speed > 0 && total > done ? Math.round((total - done) / speed) : undefined,
       peers: st.bittorrent ? num(st.connections) : undefined, seeds: st.numSeeders !== undefined ? num(st.numSeeders) : undefined, connections: st.bittorrent ? undefined : num(st.connections), infoHash: st.infoHash,
-      files: (st.files || []).map((f, i) => { const fp = i === 0 && extra.renamed ? extra.renamed : f.path; return { index: Number(f.index) - 1, path: (fp || '').startsWith(dir) ? fp.slice(dir.length).replace(/^[\\/]+/, '') : fp, size: num(f.length), done: num(f.completedLength), priority: f.selected === 'true' ? 1 : 0 }; }),
+      files: (st.files || []).map((f, i) => { const fp = i === 0 && extra.renamed ? extra.renamed : f.path; return { index: Number(f.index) - 1, path: this.rel(fp || '', dir), size: num(f.length), done: num(f.completedLength), priority: f.selected === 'true' ? 1 : 0 }; }),
       segments: st.status === 'active' && !st.bittorrent ? piecesToSegments(st) : undefined,
       error: st.status === 'error' ? `${st.errorMessage || ''} (${st.errorCode})` : undefined, addedAt: extra.addedAt || Date.now(), doneAt: st.status === 'complete' ? extra.doneAt || Date.now() : undefined, meta: extra.meta, engine: 'native',
     };
@@ -108,7 +110,7 @@ class Aria2Engine {
     for (const st of all) if (st.status === 'complete' && this.keep[st.gid] && !this.keep[st.gid].doneAt) {
       this.keep[st.gid].doneAt = Date.now();
       // (A file whose name said nothing — «.bin», no extension, a «.php» — named for what it is, now that it is here.)
-      if (!st.bittorrent && st.files?.length === 1 && st.files[0].path) { const to = Sniff.fixName(st.files[0].path); if (to) { this.keep[st.gid].renamed = to; this.keep[st.gid].name = path.basename(to); } }
+      if (!st.bittorrent && st.files?.length === 1 && st.files[0].path) { const to = Sniff.fixName(st.files[0].path); if (to) { this.keep[st.gid].renamed = this.np(to); this.keep[st.gid].name = path.basename(to); } }
       this.saveKeep();
     }
     // (A magnet's metadata task followed by the real download: the keep goes to the follower.)
@@ -119,7 +121,7 @@ class Aria2Engine {
   async add(o) {
     if (!this.available) throw new Error(this.reason || 'aria2c missing');
     const opts = {};
-    if (o.dir) opts.dir = o.dir; if (o.name && o.source.url) opts.out = o.name; if (o.paused) opts.pause = 'true';
+    if (o.dir) opts.dir = this.np(o.dir); if (o.name && o.source.url) opts.out = o.name; if (o.paused) opts.pause = 'true';
     if (o.connections) { opts.split = String(o.connections); opts['max-connection-per-server'] = String(Math.min(16, o.connections)); }
     if (o.files?.length) opts['select-file'] = o.files.map((i) => i + 1).join(',');
     // (Watched while it comes: its pieces fetched in order, its start and end first — a player reads both.)
@@ -127,7 +129,7 @@ class Aria2Engine {
     if (o.source.headers) opts.header = Object.entries(o.source.headers).map(([k, v]) => `${k}: ${v}`);
     if (o.meta?.noRetry) opts['max-tries'] = '1';
     // A file of that name there already, with «Skip» chosen: not downloaded again.
-    if (this.config.net?.conflict === 'skip' && o.name && o.source.url && fs.existsSync(path.join(o.dir || this.defaultDir, o.name))) throw new Error('exists');
+    if (this.config.net?.conflict === 'skip' && o.name && o.source.url && fs.existsSync(path.join(this.np(o.dir) || this.defaultDir, o.name))) throw new Error('exists');
     const gid = o.source.torrent ? await this.rpc.call('addTorrent', o.source.torrent, [], opts) : await this.rpc.call('addUri', [o.source.magnet || o.source.url], opts);
     this.keep[gid] = { name: o.name, source: o.source, addedAt: Date.now(), meta: o.meta }; this.saveKeep();
     const st = await this.rpc.call('tellStatus', gid); this.tick();
@@ -145,7 +147,7 @@ class Aria2Engine {
     }
     // (Stopped with an error: added again over the same file, which aria2 continues.)
     const f = st.files?.[0]?.path || ''; const k = this.keep[id] || {};
-    const opts = { dir: st.dir, continue: 'true' }; if (f) opts.out = path.basename(f); if (k.source?.headers) opts.header = Object.entries(k.source.headers).map(([a, b]) => `${a}: ${b}`);
+    const opts = { dir: this.np(st.dir), continue: 'true' }; if (f) opts.out = path.basename(f); if (k.source?.headers) opts.header = Object.entries(k.source.headers).map(([a, b]) => `${a}: ${b}`);
     const gid = await this.rpc.call('addUri', [url], opts);
     await this.rpc.call('removeDownloadResult', id).catch(() => {});
     this.keep[gid] = { ...k, source: { ...(k.source || {}), url } }; delete this.keep[id]; this.saveKeep(); this.tick(); return gid;
@@ -156,7 +158,7 @@ class Aria2Engine {
     const st = await this.rpc.call('tellStatus', id).catch(() => null);
     if (st && ['active', 'waiting', 'paused'].includes(st.status)) await this.rpc.call('forceRemove', id).catch(() => {});
     await this.rpc.call('removeDownloadResult', id).catch(() => {});
-    if (deleteFiles && st) for (const f of st.files || []) { try { if (f.path && fs.existsSync(f.path)) fs.rmSync(f.path, { force: true }); if (f.path && fs.existsSync(f.path + '.aria2')) fs.rmSync(f.path + '.aria2', { force: true }); } catch { /* busy */ } }
+    if (deleteFiles && st) for (const f of st.files || []) { try { const fp = this.np(f.path); if (fp && fs.existsSync(fp)) fs.rmSync(fp, { force: true }); if (fp && fs.existsSync(fp + '.aria2')) fs.rmSync(fp + '.aria2', { force: true }); } catch { /* busy */ } }
     delete this.keep[id]; this.saveKeep(); this.tick();
   }
   async setFiles(id, priorities) { await this.rpc.call('changeOption', id, { 'select-file': priorities.map((p, i) => (p ? i + 1 : 0)).filter(Boolean).join(',') }); this.tick(); }
@@ -168,22 +170,22 @@ class Aria2Engine {
     try {
       for (;;) {
         const st = await this.rpc.call('tellStatus', gid);
-        if (st.bittorrent?.info?.name && num(st.totalLength) > 0) { const dir = (st.dir || '').replace(/[\\/]+$/, ''); return { name: st.bittorrent.info.name, infoHash: st.infoHash || '', total: num(st.totalLength), files: (st.files || []).map((f) => ({ index: Number(f.index) - 1, path: (f.path || '').startsWith(dir) ? f.path.slice(dir.length).replace(/^[\\/]+/, '') : f.path, size: num(f.length) })) }; }
+        if (st.bittorrent?.info?.name && num(st.totalLength) > 0) { const dir = this.np(st.dir || '').replace(/[\\/]+$/, ''); return { name: st.bittorrent.info.name, infoHash: st.infoHash || '', total: num(st.totalLength), files: (st.files || []).map((f) => ({ index: Number(f.index) - 1, path: this.rel(f.path || '', dir), size: num(f.length) })) }; }
         if (st.status === 'error') throw new Error(st.errorMessage || 'aria2');
         if (Date.now() > until) throw new Error('timeout');
         await new Promise((r) => setTimeout(r, 700));
       }
     } finally { await this.rpc.call('forceRemove', gid).catch(() => {}); await this.rpc.call('removeDownloadResult', gid).catch(() => {}); }
   }
-  async fileOf(id, fileIndex) { const st = await this.rpc.call('tellStatus', id); const i = Math.max(0, fileIndex || 0); const k = this.keep[id]; if (i === 0 && k?.renamed && fs.existsSync(k.renamed)) return k.renamed; const f = (st.files || [])[i]; return f ? f.path : st.dir; }
+  async fileOf(id, fileIndex) { const st = await this.rpc.call('tellStatus', id); const i = Math.max(0, fileIndex || 0); const k = this.keep[id]; if (i === 0 && k?.renamed && fs.existsSync(k.renamed)) return this.np(k.renamed); const f = (st.files || [])[i]; return this.np(f ? f.path : st.dir); }
   /** A finished download renamed on disk (its extension included) and in the list. */
   async rename(id, name) {
     const nm = String(name).replace(/[\\/:*?"<>|\0]/g, '_').trim(); if (!nm || nm === '.' || nm === '..') throw new Error('badName');
     const st = await this.rpc.call('tellStatus', id); if (st.status !== 'complete') throw new Error('notDone');
-    const k = this.keep[id] || {}; const cur = (k.renamed && fs.existsSync(k.renamed)) ? k.renamed : (st.files || [])[0]?.path;
+    const k = this.keep[id] || {}; const cur = this.np((k.renamed && fs.existsSync(k.renamed)) ? k.renamed : (st.files || [])[0]?.path);
     if (!cur || !fs.existsSync(cur)) { k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm; }
-    if (st.bittorrent && (st.files || []).length > 1) { const dir = path.dirname(cur); const top = path.join(st.dir, (st.files[0].path.slice((st.dir || '').length).replace(/^[\\/]+/, '').split(/[\\/]/)[0])); const to = path.join(path.dirname(top), nm); if (fs.existsSync(to)) throw new Error('exists'); fs.renameSync(top, to); void dir; k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm; }
-    const to = path.join(path.dirname(cur), nm); if (fs.existsSync(to) && to !== cur) throw new Error('exists'); fs.renameSync(cur, to); k.renamed = to; k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm;
+    if (st.bittorrent && (st.files || []).length > 1) { const dir = path.dirname(cur); const top = path.join(this.np(st.dir), this.rel(st.files[0].path, this.np(st.dir).replace(/[\\/]+$/, '')).split(/[\\/]/)[0]); const to = path.join(path.dirname(top), nm); if (fs.existsSync(to)) throw new Error('exists'); fs.renameSync(top, to); void dir; k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm; }
+    const to = path.join(path.dirname(cur), nm); if (fs.existsSync(to) && to !== cur) throw new Error('exists'); fs.renameSync(cur, to); k.renamed = this.np(to); k.name = nm; this.keep[id] = k; this.saveKeep(); this.tick(); return nm;
   }
   onTasks(fn) { this.subs.add(fn); this.tick(); return () => this.subs.delete(fn); }
   tick() { clearTimeout(this.timer); this.timer = setTimeout(() => this.loop(), 50); }

@@ -46,7 +46,7 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
   const rels = await readRels(zip, docPath);
 
   // Styles: map style ids to heading levels / names.
-  const styleMap = new Map<string, { name: string; outline?: number; bold?: boolean }>();
+  const styleMap = new Map<string, { name: string; outline?: number; bold?: boolean; numId?: string; ilvl?: number }>();
   const stylesFile = zipFile(zip, 'word/styles.xml');
   if (stylesFile) {
     const sd = parseXml(await stylesFile.async('text'));
@@ -54,9 +54,13 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
       const id = attr(s, W, 'styleId') ?? '';
       const name = attr(child(s, W, 'name'), W, 'val') ?? id;
       const outline = attr(child(child(s, W, 'pPr'), W, 'outlineLvl'), W, 'val');
-      styleMap.set(id, { name, outline: outline != null ? Number(outline) : undefined, bold: !!child(child(s, W, 'rPr'), W, 'b') });
+      const sNum = child(child(s, W, 'pPr'), W, 'numPr');
+      const numId = attr(child(sNum, W, 'numId'), W, 'val');
+      const ilvl = attr(child(sNum, W, 'ilvl'), W, 'val');
+      styleMap.set(id, { name, outline: outline != null ? Number(outline) : undefined, bold: !!child(child(s, W, 'rPr'), W, 'b'), numId: numId ?? undefined, ilvl: ilvl != null ? Number(ilvl) : undefined });
     });
   }
+  const numbering = await readNumbering(zip);
 
   // Footnotes.
   const footnotes = new Map<string, Element>();
@@ -164,26 +168,64 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
     }
   };
 
-  let currentList: HTMLElement | null = null;
-  let currentListLevel = -1;
+  // Lists: each container (the body, a table cell, a footnote) keeps the lists open in it, one per level, nested
+  // as Word shows them; the numbers are counted per list (numId) and level, as Word counts them — on across a
+  // paragraph between items, a deeper level starting again under each new item above it.
+  type Open = { list: HTMLElement; ilvl: number; key: string };
+  const openLists = new Map<HTMLElement, Open[]>();
+  const counters = new Map<string, number[]>();
+  const endLists = (target: HTMLElement) => openLists.delete(target);
+
+  const listItem = (target: HTMLElement, numId: string, ilvl: number, lv: NumLevel | undefined): HTMLElement => {
+    const ordered = !!lv && lv.fmt !== 'bullet';
+    const key = `${ordered ? 'ol' : 'ul'}:${numId}`;
+    let stack = openLists.get(target);
+    if (!stack) { stack = []; openLists.set(target, stack); }
+    while (stack.length && stack[stack.length - 1].ilvl > ilvl) stack.pop();
+    if (stack.length && stack[stack.length - 1].ilvl === ilvl && stack[stack.length - 1].key !== key) stack.pop();
+    if (!stack.length || stack[stack.length - 1].ilvl < ilvl) {
+      const list = el(ordered ? 'ol' : 'ul');
+      if (ordered) list.className = 'kr-wnum';
+      const parentLi = stack.length ? (stack[stack.length - 1].list.lastElementChild as HTMLElement | null) : null;
+      (parentLi ?? target).appendChild(list);
+      stack.push({ list, ilvl, key });
+    }
+    const li = el('li');
+    if (ordered && lv) {
+      const def = numbering.get(numId);
+      const c = counters.get(numId) ?? []; counters.set(numId, c);
+      const startOf = (l: number) => def?.levels.get(l)?.start ?? 1;
+      c[ilvl] = c[ilvl] === undefined ? startOf(ilvl) : c[ilvl] + 1;
+      c.length = ilvl + 1;
+      // "%1." or "%1.%2." — each %n the count of that level in its own format.
+      const text = (lv.text ?? `%${ilvl + 1}.`).replace(/%([1-9])/g, (_m, d: string) => {
+        const l = Number(d) - 1; const n = c[l] ?? startOf(l);
+        return formatNumber(n, l === ilvl ? lv.fmt : def?.levels.get(l)?.fmt ?? 'decimal');
+      });
+      li.setAttribute('value', String(c[ilvl]));
+      li.dataset.krNum = text;
+    }
+    stack[stack.length - 1].list.appendChild(li);
+    return li;
+  };
 
   const renderParagraph = (p: Element, target: HTMLElement) => {
     const pPr = child(p, W, 'pPr');
     const numPr = child(pPr, W, 'numPr');
-    const styleName = styleMap.get(attr(child(pPr, W, 'pStyle'), W, 'val') ?? '')?.name ?? '';
-    const isList = !!numPr || /\blist\b/i.test(styleName);
+    const style = styleMap.get(attr(child(pPr, W, 'pStyle'), W, 'val') ?? '');
+    const styleName = style?.name ?? '';
+    const numId = attr(child(numPr, W, 'numId'), W, 'val') ?? style?.numId;
+    const ilvl = Math.max(0, Math.min(8, Number(attr(child(numPr, W, 'ilvl'), W, 'val') ?? style?.ilvl ?? 0) || 0));
+    // (numId 0 takes a paragraph out of a list its style would put it in.)
+    const isList = numId != null ? numId !== '0' : /\blist\b/i.test(styleName);
     const level = headingLevel(p);
     let elNode: HTMLElement;
-    if (isList && target === root) {
-      const ilvl = Number(attr(child(numPr, W, 'ilvl'), W, 'val') ?? 0);
-      if (!currentList || ilvl !== currentListLevel) {
-        currentList = el('ul'); currentListLevel = ilvl;
-        root.appendChild(currentList);
-      }
-      elNode = el('li');
-      currentList.appendChild(elNode);
+    if (isList && !level) {
+      // (A list numbering.xml does not describe is shown with bullets, as before; a format this reader does not
+      // draw comes out in plain digits — formatNumber.)
+      elNode = listItem(target, numId ?? '', ilvl, numId != null ? numbering.get(numId)?.levels.get(ilvl) : undefined);
     } else {
-      currentList = null; currentListLevel = -1;
+      endLists(target);
       elNode = el(level ? (`h${level}` as 'h1') : 'p');
       if (child(pPr, W, 'pageBreakBefore') || child(pPr, W, 'sectPr')) elNode.dataset.pageBreak = '1';
       const jc = attr(child(pPr, W, 'jc'), W, 'val');
@@ -192,7 +234,14 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
       target.appendChild(elNode);
     }
     renderInline(p, elNode);
-    if (!elNode.textContent?.trim() && !elNode.querySelector('img')) elNode.remove();
+    if (!elNode.textContent?.trim() && !elNode.querySelector('img, ol, ul')) {
+      const list = elNode.parentElement;
+      elNode.remove();
+      if (list && (list.tagName === 'OL' || list.tagName === 'UL') && !list.children.length) {
+        list.remove();
+        const stack = openLists.get(target); if (stack) { const i = stack.findIndex((o) => o.list === list); if (i >= 0) stack.splice(i); }
+      }
+    }
   };
 
   const renderTable = (tbl: Element, target: HTMLElement) => {
@@ -224,7 +273,7 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
   const renderBlocks = (parent: Element, target: HTMLElement) => {
     for (const c of parent.children) {
       if (c.localName === 'p') renderParagraph(c, target);
-      else if (c.localName === 'tbl') { currentList = null; renderTable(c, target); }
+      else if (c.localName === 'tbl') { endLists(target); renderTable(c, target); }
       else if (c.localName === 'sdt') renderBlocks(child(c, W, 'sdtContent') ?? c, target);
       else if (c.localName === 'sectPr') continue;
     }
@@ -238,7 +287,7 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
     const kids = Array.from(body.children); let n = 0;
     for (const c of kids) {
       if (c.localName === 'p') renderParagraph(c, root);
-      else if (c.localName === 'tbl') { currentList = null; renderTable(c, root); }
+      else if (c.localName === 'tbl') { endLists(root); renderTable(c, root); }
       else if (c.localName === 'sdt') renderBlocks(child(c, W, 'sdtContent') ?? c, root);
       if (++n % 400 === 0) await new Promise((r) => setTimeout(r, 0));
     }
@@ -250,6 +299,82 @@ export async function docxToHtml(file: Blob, ctx: RenderContext, pool: UrlPool):
   await Promise.all(imageTasks);
   chapterize(root, ctx);
   return { root, meta, zip };
+}
+
+/** One level of a Word list: its number format, its text ("%1.", "(%2)"), and where it starts. */
+type NumLevel = { fmt: string; text?: string; start?: number };
+type NumDef = { levels: Map<number, NumLevel> };
+
+/** word/numbering.xml: each list (w:num) with its levels, from its abstract definition and its overrides. */
+async function readNumbering(zip: JSZip): Promise<Map<string, NumDef>> {
+  const out = new Map<string, NumDef>();
+  const f = zipFile(zip, 'word/numbering.xml');
+  if (!f) return out;
+  let nd: Document;
+  try { nd = parseXml(await f.async('text')); } catch { return out; }
+  const levelOf = (lvl: Element): NumLevel => {
+    const start = attr(child(lvl, W, 'start'), W, 'val');
+    return { fmt: attr(child(lvl, W, 'numFmt'), W, 'val') ?? 'decimal', text: attr(child(lvl, W, 'lvlText'), W, 'val') ?? undefined, start: start != null && !Number.isNaN(Number(start)) ? Number(start) : undefined };
+  };
+  const levelsOf = (parent: Element, into: Map<number, NumLevel>) => {
+    for (const lvl of parent.children) if (lvl.localName === 'lvl') into.set(Number(attr(lvl, W, 'ilvl') ?? 0), levelOf(lvl));
+  };
+  const abstracts = new Map<string, Element>();
+  for (const c of nd.documentElement?.children ?? []) if (c.localName === 'abstractNum') abstracts.set(attr(c, W, 'abstractNumId') ?? '', c);
+  const abstractLevels = (id: string, seen = new Set<string>()): Map<number, NumLevel> => {
+    const levels = new Map<number, NumLevel>();
+    const a = abstracts.get(id); if (!a || seen.has(id)) return levels; seen.add(id);
+    levelsOf(a, levels);
+    // (A definition that only points at a numbering style takes that style's levels.)
+    if (!levels.size) {
+      const link = attr(child(a, W, 'numStyleLink'), W, 'val');
+      if (link) for (const [aid, other] of abstracts) if (attr(child(other, W, 'styleLink'), W, 'val') === link && aid !== id) return abstractLevels(aid, seen);
+    }
+    return levels;
+  };
+  for (const c of nd.documentElement?.children ?? []) {
+    if (c.localName !== 'num') continue;
+    const levels = new Map(abstractLevels(attr(child(c, W, 'abstractNumId'), W, 'val') ?? ''));
+    for (const o of c.children) {
+      if (o.localName !== 'lvlOverride') continue;
+      const il = Number(attr(o, W, 'ilvl') ?? 0);
+      const lvl = child(o, W, 'lvl'); if (lvl) levels.set(il, levelOf(lvl));
+      const so = attr(child(o, W, 'startOverride'), W, 'val');
+      if (so != null && !Number.isNaN(Number(so))) levels.set(il, { ...(levels.get(il) ?? { fmt: 'decimal' }), start: Number(so) });
+    }
+    out.set(attr(c, W, 'numId') ?? '', { levels });
+  }
+  return out;
+}
+
+const ABJAD = 'أبجدهوزحطيكلمنسعفصقرشتثخذضظغ';
+const ALPHA = 'أبتثجحخدذرزسشصضطظعغفقكلمنهوي';
+const roman = (n: number): string => {
+  let out = ''; for (const [v, r] of [[1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'], [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']] as [number, string][]) while (n >= v) { out += r; n -= v; }
+  return out;
+};
+/** Word's letters: a…z, then aa…zz, aaa… */
+const letters = (n: number): string => String.fromCharCode(97 + ((n - 1) % 26)).repeat(Math.floor((n - 1) / 26) + 1);
+const digitsIn = (n: number, zero: number): string => String(n).replace(/[0-9]/g, (d) => String.fromCodePoint(zero + Number(d)));
+
+/** A list number in a Word number format; one this reader does not draw is written in plain digits. */
+export function formatNumber(n: number, fmt: string): string {
+  if (fmt === 'none') return '';
+  if (fmt === 'bullet') return '•';
+  if (n < 1 && fmt !== 'decimal' && fmt !== 'decimalZero') return String(n);
+  switch (fmt) {
+    case 'decimalZero': return n < 10 ? `0${n}` : String(n);
+    case 'lowerLetter': return letters(n);
+    case 'upperLetter': return letters(n).toUpperCase();
+    case 'lowerRoman': return n < 4000 ? roman(n) : String(n);
+    case 'upperRoman': return n < 4000 ? roman(n).toUpperCase() : String(n);
+    case 'arabicAbjad': return n <= ABJAD.length ? ABJAD[n - 1] : String(n);
+    case 'arabicAlpha': return n <= ALPHA.length ? ALPHA[n - 1] : String(n);
+    // (Word calls the Arabic-Indic digits ١٢٣ "Hindi numbers".)
+    case 'hindiNumbers': return digitsIn(n, 0x660);
+    case 'decimalFullWidth': case 'decimalFullWidth2': return digitsIn(n, 0xff10);
+    default: return String(n);
+  }
 }
 
 /**

@@ -53,8 +53,13 @@ export interface PdfHighlight { id: string; page: number; rects: [number, number
 export interface Highlight {
   id: string;
   text: string;
-  /** Anchor of the chapter / block the highlight lives in. */
+  /** Anchor of the chapter / block the highlight lives in (none: the whole book — one across chapters). */
   anchor?: string;
+  /** Where it is among the places its words have there (ui/selection TextPlace): which of them, counted from 0, and a
+   *  little of the text before and after it. Missing on highlights made before 0.60.25 (found at the first place). */
+  at?: number;
+  before?: string;
+  after?: string;
   color: 'amber' | 'rose' | 'mint' | 'sky' | 'violet';
   note?: string;
   noteAt?: number;
@@ -63,6 +68,14 @@ export interface Highlight {
 
 export interface ReadingDay { ms: number; pct: number; words: number; sessions?: number; pages?: number }
 export interface ReadingStats { ms: number; words: number; pages?: number; sessions?: number; sessionAt?: number; days: Record<string, ReadingDay>; bookWords?: number; bookChars?: number }
+/** Reading counted by one device (or before devices kept theirs apart): the counters of ReadingStats only. */
+export type StatsPart = Pick<ReadingStats, 'ms' | 'words' | 'pages' | 'sessions' | 'days'>;
+/** How a book's statistics are made up across devices (sync): `stats` is base + own + every other device's part,
+ *  each part only ever growing, so a merge takes the larger of each and never counts one twice.
+ *  `dev`: this device (its `own` counted since); `base`: what all devices had counted before they kept parts
+ *  apart (the larger of theirs); `by`: the other devices' parts, as last seen; `floor`: the whole statistics
+ *  an earlier version wrote (the total is never less). */
+export interface StatsSync { dev: string; own: StatsPart; base: StatsPart; by: Record<string, StatsPart>; floor?: StatsPart }
 
 export interface Folder { id: string; name: string; createdAt: number }
 /** A tag the user created; kept even while no book carries it (meta 'tags'). */
@@ -71,9 +84,12 @@ export interface TagDef { name: string; createdAt: number }
 export interface Book {
   id: string;
   folderId?: string;
+  /** When the book was last put in a folder or taken out of one (sync: the later move wins). */
+  folderAt?: number;
   tags?: string[];
   tagsAt?: number;
   stats?: ReadingStats;
+  statsSync?: StatsSync;
   title: string;
   author?: string;
   language?: string;
@@ -176,6 +192,22 @@ function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) 
   );
 }
 
+/** Get, change, put in one readwrite transaction (out-of-line keys when `outKey`). */
+function rmw<T>(store: string, key: string, fn: (cur: T | undefined) => T | undefined, outKey = false): Promise<T | undefined> {
+  return openDb().then((d) => new Promise<T | undefined>((resolve, reject) => {
+    const t = d.transaction(store, 'readwrite'); const s = t.objectStore(store);
+    let out: T | undefined; let failed: unknown;
+    const g = s.get(key);
+    g.onsuccess = () => {
+      try { out = fn(g.result as T | undefined); } catch (e) { failed = e; t.abort(); return; }
+      if (out === undefined) { if (outKey) s.delete(key); } else if (outKey) s.put(out, key); else s.put(out);
+    };
+    t.oncomplete = () => resolve(out);
+    t.onerror = () => reject(failed ?? t.error);
+    t.onabort = () => reject(failed ?? t.error);
+  }));
+}
+
 // Small cache so re-opening a linked book, or re-rendering it, does not re-read it from storage.
 const linkedCache = new Map<string, { size: number; blob: Blob }>();
 async function readLinked(src: FileSource, name: string, mime?: string): Promise<Blob | undefined> {
@@ -223,11 +255,12 @@ export const db = {
     await tx('books', 'readwrite', (s) => s.put(book));
     booksCache?.set(book.id, { ...book }); told();
   },
+  /** Read, change and write a book in ONE transaction (two changes made at once — a position saved while a
+   *  bookmark is added — both kept; read and written apart, the later write lost the other's change). The patch
+   *  must be synchronous: a transaction ends at the first await. */
   async updateBook(id: string, patch: (b: Book) => void): Promise<Book | undefined> {
-    const b = await this.getBook(id);
-    if (!b) return undefined;
-    patch(b);
-    await this.putBook(b);
+    const b = await rmw<Book>('books', id, (cur) => { if (cur) patch(cur); return cur; });
+    if (b) { booksCache?.set(b.id, { ...b }); told(); }
     return b;
   },
   async deleteBook(id: string): Promise<void> {
@@ -263,6 +296,15 @@ export const db = {
   async setMeta<T>(key: string, value: T): Promise<void> {
     await tx('meta', 'readwrite', (s) => s.put(value, key));
   },
+  /** A meta value read, changed and written in one transaction (lists and counters kept there: two changes at
+   *  once both kept). `fn` is synchronous and returns the new value (undefined: deleted). */
+  async updateMeta<T>(key: string, fn: (cur: T | undefined) => T | undefined): Promise<T | undefined> {
+    return rmw<T>('meta', key, fn, true);
+  },
+  /** Every meta key (for clean-ups that find what belongs to no book). */
+  async metaKeys(): Promise<string[]> {
+    return (await tx<IDBValidKey[]>('meta', 'readonly', (s) => s.getAllKeys())).map(String);
+  },
   async deleteMeta(key: string): Promise<void> {
     await tx('meta', 'readwrite', (s) => s.delete(key)).catch(() => undefined);
   },
@@ -273,6 +315,12 @@ export const db = {
     await tx('texts', 'readwrite', (s) => s.clear()).catch(() => undefined);
   },
 };
+
+/** A time for a change that replaces one stamped `prev`: now, or just after `prev` when that is later (a stamp
+ *  that came from a device whose clock runs ahead) — so a change made after seeing another always wins over it. */
+export function stampAfter(prev?: number): number {
+  return Math.max(Date.now(), (prev ?? 0) + 1);
+}
 
 export function uid(): string {
   return (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/-/g, '').slice(0, 20);

@@ -65,6 +65,24 @@ final class KtVideo {
      *  resolution, codecs, container and approximate size — read by the engine on each progress call. */
     static final java.util.Map<String, JSONObject> live = new java.util.concurrent.ConcurrentHashMap<>();
     static final Pattern FRAG = Pattern.compile("\\(frag (\\d+)/(\\d+)\\)");
+    /** The audio format a download converts to (for the phase's words), by download id. */
+    static final java.util.Map<String, String> audioFmt = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The flags the page's argument builder (src/downloads/videoArgs.ts) writes, and those that take no value: a list with any other is refused. */
+    private static final java.util.Set<String> ALLOWED = new java.util.HashSet<>(java.util.Arrays.asList("-f", "-S", "--merge-output-format", "--remux-video", "-x", "--audio-format", "--audio-quality", "--embed-thumbnail", "--convert-thumbnails", "--embed-metadata", "--parse-metadata", "--embed-chapters", "--split-chapters", "--write-subs", "--write-auto-subs", "--sub-langs", "--embed-subs", "--convert-subs", "--sub-format", "-k", "--write-thumbnail", "--write-info-json", "--no-clean-info-json", "--write-comments", "--sponsorblock-remove", "--sponsorblock-mark", "--download-sections", "--add-header", "--no-playlist", "--yes-playlist", "--playlist-items", "-o", "-N", "--http-chunk-size", "--retries", "--fragment-retries", "--throttled-rate", "--buffer-size"));
+    private static final java.util.Set<String> ALONE = new java.util.HashSet<>(java.util.Arrays.asList("-x", "-k", "--embed-thumbnail", "--embed-metadata", "--embed-chapters", "--split-chapters", "--write-subs", "--write-auto-subs", "--embed-subs", "--write-thumbnail", "--write-info-json", "--no-clean-info-json", "--write-comments", "--no-playlist", "--yes-playlist"));
+    /** The page's finished argument list checked: only known flags, values that are not flags, «-o» patterns inside the download folder. Null when it fails. */
+    static java.util.List<String> vet(org.json.JSONArray a) {
+        if (a == null || a.length() > 200) return null;
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (int i = 0; i < a.length(); i++) {
+            String f = a.optString(i, null); if (f == null || !f.startsWith("-") || !ALLOWED.contains(f)) return null; out.add(f);
+            if (ALONE.contains(f)) continue;
+            i++; String v = i < a.length() ? a.optString(i, null) : null; if (v == null || v.length() > 4000 || v.startsWith("-") || v.indexOf('\0') >= 0) return null;
+            if (f.equals("-o")) { String t = v.replaceFirst("^(chapter|thumbnail|subtitle|infojson|description|pl_thumbnail|pl_infojson|pl_description|default):", ""); if (t.matches("(?s)^[\\\\/~].*|^[A-Za-z]:.*") || t.contains("..") || t.indexOf('$') >= 0) return null; }
+            out.add(v);
+        }
+        return out;
+    }
     private static void note(String id, String line, String[] dest, int[] dests) {
         try {
             JSONObject o = live.get(id); if (o == null) { o = new JSONObject(); live.put(id, o); }
@@ -72,7 +90,9 @@ final class KtVideo {
             if (l.startsWith("KT|")) { String[] p = l.split("\\|", -1); if (p.length >= 7) { if (!"NA".equals(p[1])) o.put("res", p[1]); if (!"NA".equals(p[2]) && !"none".equals(p[2])) o.put("vcodec", p[2].replaceAll("\\..*$", "")); if (!"NA".equals(p[3]) && !"none".equals(p[3])) o.put("acodec", p[3].replaceAll("\\..*$", "")); if (!"NA".equals(p[4])) o.put("ext", p[4]); try { o.put("sizeApprox", Long.parseLong(p[5])); } catch (Exception ignored) {} try { o.put("duration", (long) Double.parseDouble(p[6])); } catch (Exception ignored) {} } return; }
             if (l.startsWith("[download] Destination:")) { dests[0]++; String f = l.substring(24).trim(); boolean audio = dests[0] > 1 || f.matches(".*\\.(m4a|opus|webm|mp3|ogg|aac)$") && dest[0] == null; o.put("phase", audio && dests[0] > 1 ? "audio" : "video"); o.remove("frag"); o.remove("frags"); return; }
             if (l.startsWith("[Merger]")) { o.put("phase", "merge"); return; }
-            if (l.startsWith("[EmbedThumbnail]") || l.startsWith("[Metadata]") || l.startsWith("[ExtractAudio]") || l.startsWith("[SponsorBlock]") || l.startsWith("[ModifyChapters]") || l.startsWith("[FixupM3u8]") || l.startsWith("[VideoRemuxer]") || l.startsWith("[VideoConvertor]") || l.startsWith("[EmbedSubtitle]")) { o.put("phase", "finish"); return; }
+            if (l.startsWith("[ExtractAudio]")) { o.put("phase", "convert " + audioFmt.getOrDefault(id, "")); return; }
+            if (l.startsWith("[EmbedThumbnail]") || l.startsWith("[Metadata]") || l.startsWith("[EmbedSubtitle]") || l.startsWith("[ThumbnailsConvertor]")) { o.put("phase", "embed"); return; }
+            if (l.startsWith("[SponsorBlock]") || l.startsWith("[ModifyChapters]") || l.startsWith("[FixupM3u8]") || l.startsWith("[VideoRemuxer]") || l.startsWith("[VideoConvertor]") || l.startsWith("[EmbedSubtitle]")) { o.put("phase", "finish"); return; }
             if (l.startsWith("[info]") || l.startsWith("[youtube]") || l.startsWith("[generic]") || l.startsWith("[hlsnative]") || l.startsWith("[dashsegments]")) { if (!o.has("phase")) o.put("phase", "info"); }
             Matcher f = FRAG.matcher(l); if (f.find()) { o.put("frag", Integer.parseInt(f.group(1))); o.put("frags", Integer.parseInt(f.group(2))); }
         } catch (Exception ignored) {}
@@ -142,6 +162,14 @@ final class KtVideo {
         r.addOption("--no-warnings"); r.addOption("--no-playlist"); r.addOption("--continue"); r.addOption("--no-mtime"); r.addOption("--newline");
         String outName = meta != null ? meta.optString("outName", "").replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]+", " ").trim() : "";
         String tpl = meta != null ? meta.optString("template", "") : ""; if (tpl.isEmpty() || tpl.contains("/") || tpl.contains("\\") || tpl.contains("..")) tpl = "%(title)s [%(id)s]";
+        // (A list the page built is run as it is, vetted, in the download folder (-P); a task from before it runs the older way below.)
+        org.json.JSONArray ya = meta != null ? meta.optJSONArray("args") : null; java.util.List<String> vetted = ya != null ? vet(ya) : null;
+        if (ya != null && vetted == null) throw new Exception("invalid options");
+        if (meta != null && !meta.optString("audioFmt", "").isEmpty()) audioFmt.put(id, meta.optString("audioFmt")); else audioFmt.remove(id);
+        if (vetted != null) {
+            r.addOption("-P", dir.getAbsolutePath());
+            for (int i = 0; i < vetted.size(); i++) { String a0 = vetted.get(i); if (ALONE.contains(a0) || i + 1 >= vetted.size()) r.addOption(a0); else r.addOption(a0, vetted.get(++i)); }
+        } else {
         r.addOption("-o", new File(dir, !outName.isEmpty() ? outName + ".%(ext)s" : (idx > 0 ? String.format("%02d - ", idx) : "") + tpl + ".%(ext)s").getAbsolutePath());
         if (meta != null && meta.optBoolean("chapters", false)) r.addOption("--embed-chapters");
         // Parts: time ranges (several, «1:30-2:00»), or chapters whose names match; the file split by its chapters when asked.
@@ -162,6 +190,7 @@ final class KtVideo {
         // SponsorBlock: segments cut out, or only marked as chapters (the player skips them), of the categories chosen.
         String sbMode = meta != null ? meta.optString("sponsorMode", meta.optBoolean("sponsorblock", false) ? "remove" : "off") : "off"; String sbCats = meta != null ? meta.optString("sponsorCats", "sponsor") : "sponsor"; if (sbCats.isEmpty()) sbCats = "sponsor";
         if ("remove".equals(sbMode)) r.addOption("--sponsorblock-remove", sbCats); else if ("mark".equals(sbMode)) { r.addOption("--sponsorblock-mark", sbCats); r.addOption("--embed-chapters"); }
+        }
         // The step of the ladder, then the reader's own arguments («edit and try again»: whole words, split on spaces, quotes kept together).
         { String[] st = LADDER[step]; for (int i = 0; i < st.length; i++) { if (st[i].startsWith("-") && i + 1 < st.length && !st[i + 1].startsWith("-")) r.addOption(st[i], st[++i]); else r.addOption(st[i]); } }
         String extra = meta != null ? meta.optString("extraArgs", "") : "";

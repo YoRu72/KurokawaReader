@@ -3,7 +3,7 @@
 // sleep timer, and lock-screen / headset controls through the Media Session API.
 import { h, icon, iconButton, toast, clear, pickSheet } from '../ui/dom';
 import { t, localDigits } from '../i18n';
-import { db, type Book } from '../db';
+import { db, stampAfter, type Book } from '../db';
 import { navigate, back } from '../router';
 import { coverUrl } from '../library';
 import { scheduleSync } from '../sync';
@@ -106,7 +106,7 @@ export async function mountAudio(root: HTMLElement, books: Book[], onDispose: (f
     const pct = total ? Math.min(1, (before + audio.currentTime) / total) : 0;
     tracker.advance(0, pct);
     void db.setMeta(`audio:${books[0].id}`, { track: ti, time: audio.currentTime, rate: audio.playbackRate });
-    void db.updateBook(track().book.id, (b) => { b.progress = { bookId: b.id, pct: (audio.duration ? audio.currentTime / audio.duration : 0) }; b.progressAt = now; if (!getSettings().incognito) b.lastOpenedAt = now; });
+    void db.updateBook(track().book.id, (b) => { b.progress = { bookId: b.id, pct: (audio.duration ? audio.currentTime / audio.duration : 0) }; b.progressAt = stampAfter(b.progressAt); if (!getSettings().incognito) b.lastOpenedAt = now; });
     if (books.length > 1) void db.updateBook(books[0].id, (b) => { b.progress = { bookId: b.id, pct }; });
     scheduleSync();
   };

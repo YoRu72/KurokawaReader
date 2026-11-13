@@ -1,3 +1,5 @@
+// (First: the recorder's clock and observers start before anything else is run — src/diag.ts.)
+import { diagScreen, diagMark, diagReaderLeft, diagBookClosed, diagEvent } from './diag';
 import { normalizeForSearch } from './formats/types';
 import { cmapsUrl, loadSlim } from './slim';
 import './styles/fonts.css';
@@ -15,6 +17,7 @@ import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
 import { initPcShell } from './ui/pcshell';
+import { takeResume } from './resume';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
@@ -69,7 +72,10 @@ function restore(view: HTMLElement, s: ViewState): void {
 function mount(route: Route): void {
   const key = JSON.stringify(route);
   if (key === currentKey && current) return;
+  // (The reader left — for another screen, or another book: why, for the Performance page.)
+  if (currentKey.startsWith('{"name":"read"')) { diagReaderLeft(route.name, lastMove()); diagBookClosed(); }
   currentKey = key;
+  diagScreen(route.name);
   if (current && currentPath && !currentPath.startsWith('/read/')) { try { states.set(currentPath, snapshot(current)); } catch { /* not kept */ } }
   current?.dispose?.();
   current?.remove();
@@ -97,33 +103,61 @@ registerNativePlugins();
 applyDocumentLang();
 applyChrome();
 initPcShell();
-void import('./ui/titlebar').then((m) => m.startTitleBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop, t('appName')));
+// (The window's own title bar on a computer: drawn whole by the page in the Tauri shell, which marks itself —
+// ui/winbar.ts —; Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
+if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop));
+else void import('./ui/titlebar').then((m) => m.startTitleBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop, t('appName')));
 setTimeout(() => void import('./ui/share').then((m) => m.clearShareCache()), 8000);
 void loadFonts();
 // (A slim package: what it left out, and the chosen font fetched before the first book opens.)
 void loadSlim().then((sl) => { if (sl.fonts) warmFonts(); });
 window.addEventListener('kr:font-missing', () => void import('./ui/dom').then((m) => m.toast(t('fontFetchFailed'), 'info', 5000)));
 initNativeBridges();
-void setVolumeKeys(getSettings().volumeKeys);
+// (The volume keys are taken only while a book is open — src/readkeys.ts —: let go at the start, whatever an
+// older version left asked for.)
+void setVolumeKeys(false);
 // (The update checks loaded once the first screen is up: nothing on it needs them.)
 void import('./updates').then((m) => m.scheduleAutoCheck()).catch(() => undefined);
+// (Stage R6b + R6a: the Tauri build's first start — ONE screen: the first-run page over the library (language, look,
+// the library from the previous version, opening books with the app), which carries the hand-over's offer when the
+// previous (Electron) version left one; when the first run was done before, that offer alone. ui/firstrun.ts
+// startScreens; the offer itself ui/handoversheet.ts.)
+if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') void import('./ui/firstrun').then((m) => m.startScreens()).catch(() => undefined);
 setTimeout(() => void import('./sources/updates').then((m) => m.scheduleUpdateChecks()).catch(() => undefined), 4000);
 // (Downloads the app was closed in the middle of: taken up again.)
 setTimeout(() => void import('./downloads').then((m) => m.resumeDownloads()).catch(() => undefined), 2500);
 // (The app lock, Android: asked for at once when on.)
 void import('./applock').then((m) => m.initAppLock()).catch(() => undefined);
 // (The automatic backup, when due — well after the start, out of its way.)
-setTimeout(() => void import('./backup').then((m) => m.autoBackupIfDue()).catch(() => undefined), 30000);
+// (Once after the update: the keys earlier versions put into the automatic backups taken out of them, and the data
+// deleted books left behind let go.)
+setTimeout(() => void import('./backup').then(async (m) => { await m.scrubAutoBackups().catch(() => undefined); await m.autoBackupIfDue(); }).catch(() => undefined), 30000);
+setTimeout(() => void import('./library').then((m) => m.cleanOrphansOnce()).catch(() => undefined), 35000);
 // AniList changes made while it could not be reached, sent now (and when the network comes back).
 setTimeout(() => { try { if (localStorage.getItem('kr.al.pending')) void import('./ui/track').then((m) => { m.watchPending(); void m.flushTracking(); }).catch(() => undefined); } catch { /* private mode */ } }, 5000);
 import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
 void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
+// (Stage R6a, the computer's apps only — the shells that give window.kurokawaHandover: both give the tests and the
+// update their way in — src/handover.ts; the Electron bridge build's switch (desktop/handover.cjs prepare) runs
+// beforeInstall() and installs the Rust build only on true. The Rust build's offer at the start: above, startScreens.)
+if ((window as unknown as { kurokawaHandover?: { find?: unknown } }).kurokawaHandover) {
+  const ho = () => import('./handover'); const hs = () => import('./ui/handoversheet');
+  Object.defineProperty(window, '__KR_HANDOVER__', { configurable: true, value: Object.freeze({
+    make: () => ho().then((m) => m.makeHandover()), beforeInstall: () => hs().then((m) => m.handoverBeforeInstall()),
+    snapshot: () => ho().then((m) => m.profileSnapshot()), atStart: () => hs().then((m) => m.handoverAtStart()) }) });
+}
 onSettingsChange((s) => applyChrome(s));
 onLangChange(() => { currentKey = ''; mount(parseRoute()); });
 onRoute(mount);
-mount(parseRoute());
+const route0 = parseRoute();
+mount(route0);
+// A book the app was ended under (by the system, for its memory) opened again where it was — not the library.
+const startsOnLibrary = location.hash === '' || location.hash === '#/' || location.hash === '#';
+const resumed = startsOnLibrary ? takeResume() : null;
+if (resumed) { diagEvent('resume'); navigate(`/read/${resumed.join(',')}`); }
+else if (current && route0.name === 'library') diagMark('shown');
 // Optionally resume the last book on a cold start.
-if (getSettings().openLastOnLaunch && (location.hash === '' || location.hash === '#/' || location.hash === '#')) {
+else if (getSettings().openLastOnLaunch && startsOnLibrary) {
   void import('./db').then(({ db }) => db.allBooks()).then((books) => {
     const last = books.filter((b) => b.lastOpenedAt).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0];
     if (last) navigate(`/read/${last.id}`);

@@ -4,6 +4,8 @@ EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · Fiction
 
 **Download:** [Releases](../../releases) — Android · Windows · macOS · Linux · iOS (web app, TrollStore, AltStore/SideStore source) · **[Web app](https://yoru72.github.io/KurokawaReader/)** (install from the browser, no signing) · [install notes](docs/INSTALL.md)
 
+**Computer (from 0.62.0): a new, far smaller app** — Windows `KurokawaReader-<v>-windows-x64.exe` (about 13 MB, installs in seconds, no administrator prompt; also a portable zip), macOS `…-macos-universal.DMG`, Linux `…-linux-x64.appimage` or `.deb` (about 11 MB). The previous build (old engine, about 82 MB) stays on the release page for two versions as a fallback. Updating from the previous version brings your whole library over; nothing is deleted.
+
 <p align="center">
   <img src="docs/screenshots/library-m3.png" width="48%" alt="Library" />
   <img src="docs/screenshots/manuscript-preset.png" width="48%" alt="Reading" />

@@ -20,7 +20,9 @@ export const VIRAMA_END = /[\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D
 /** Control characters (glyphs with no Unicode) are not text. */
 export function cleanPdfText(s: string): string {
   // (A kasratan never stands before an alef: a font's map that says so meant the fathatan of «ـًا».)
-  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD\u200B]/g, '').replace(/\u00A0/g, ' ').replace(/\u064D(?=\u0627)/g, '\u064B');
+  // (Nor does a letter carry one haraka twice: a map that names a ligature with its mark, the mark drawn apart
+  // too, gives it twice.)
+  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD\u200B]/g, '').replace(/\u00A0/g, ' ').replace(/\u064D(?=\u0627)/g, '\u064B').replace(/[\u064B-\u0652\u0670]{2,}/g, (m) => [...new Set(m)].join(''));
 }
 
 export function isRtlText(s: string): boolean {
@@ -36,9 +38,31 @@ export function logicalNeutral(s: string, rtlLine: boolean): string {
 
 /** A drawn space lying inside a word's own box (a writer that draws the space and then sets the word back
  *  over it) separates nothing: such markers go. `isSpace` tells the markers. */
-export function dropBuriedSpaces<T extends { l: number; r: number; text: string }>(line: T[], isSpace: (p: T) => boolean): T[] {
+export function dropBuriedSpaces<T extends { l: number; r: number; text: string; h?: number }>(line: T[], isSpace: (p: T) => boolean): T[] {
   const words = line.filter((p) => !isSpace(p) && p.text.trim());
-  return line.filter((p) => !isSpace(p) || !words.some((q) => Math.min(q.r, p.r) - Math.max(q.l, p.l) > (p.r - p.l) * 0.5));
+  // (A space of no width — a writer that moves the next word along itself — drawn at a word's very edge stands
+  // between words, not in one: a hair inside the box, as rounding leaves it, does not bury it, when the next
+  // word stands clear of that edge (a space of no width where two pieces of a word touch is no word break). It
+  // is set just outside that edge, so that it is read on the side of the word it stands on.)
+  const out: T[] = [];
+  for (const p of line) {
+    if (!isSpace(p)) { out.push(p); continue; }
+    let at: T | null = p;
+    for (const q of words) {
+      if (Math.min(q.r, p.r) - Math.max(q.l, p.l) <= (p.r - p.l) * 0.5) continue;
+      const h = p.h ?? q.h ?? 10, edge = Math.max(0.3, h * 0.05), cx = (p.l + p.r) / 2;
+      if (p.r - p.l > edge || (cx > q.l + edge && cx < q.r - edge)) { at = null; break; }
+      const left = cx - q.l < q.r - cx;
+      // (How far the nearest word on that side stands from the edge.)
+      let clear = Infinity;
+      for (const w of words) if (w !== q) clear = Math.min(clear, left ? (w.l < q.l ? q.l - w.r : Infinity) : (w.r > q.r ? w.l - q.r : Infinity));
+      if (!(clear > h * 0.1 && clear < Infinity)) { at = null; break; }
+      const x = left ? q.l - 0.01 : q.r + 0.01;
+      at = { ...at!, l: x, r: x };
+    }
+    if (at) out.push(at);
+  }
+  return out;
 }
 
 /** Inside one piece, a bracket type written one way only ("[النور: ٤٥[" — a PDF that names both by one
@@ -173,11 +197,27 @@ export function numberRunsForward<T extends { text: string; l: number; r: number
   for (let i = 0; i < out.length; i++) {
     if (!NUM.test(out[i].text.trim())) continue;
     let j = i;
-    // (Number, separator, number…: each next piece just to the left of the one before.)
-    while (j + 2 < out.length && SEP.test(out[j + 1].text.trim()) && NUM.test(out[j + 2].text.trim())
-      && out[j].l - out[j + 1].r < out[j].h * 0.25 && out[j + 1].l - out[j + 2].r < out[j].h * 0.25) j += 2;
-    // (Made one piece, read as it stands from the left: its place on the line the number's whole width.)
-    if (j > i) { const run = out.slice(i, j + 1); const merged = { ...run[0], text: [...run].reverse().map((p) => p.text.trim()).join(''), l: Math.min(...run.map((p) => p.l)), r: Math.max(...run.map((p) => p.r)) }; out.splice(i, run.length, merged); }
+    // (Number, separator, number…: each next piece just to the left of the one before. Or digits and digits: a
+    // number the page draws in two pieces — "١٤٤" and "٣" of "١٤٤٣" — is one number all the same, read from its left.)
+    // (In one look: a number in another font or colour beside it is another number.)
+    const look = (p: T) => { const q = p as { font?: string; color?: string; size?: number }; return `${q.font ?? ''}|${q.color ?? ''}`; };
+    // (Touching: digit groups set a space apart — a telephone number's — stay apart.)
+    const near = (a: T, b: T) => a.l - b.r < a.h * 0.08 && b.r <= a.l + a.h * 0.25 && Math.abs(a.h - b.h) < a.h * 0.15 && look(a) === look(b);
+    for (;;) {
+      if (j + 2 < out.length && SEP.test(out[j + 1].text.trim()) && NUM.test(out[j + 2].text.trim())
+        && out[j].l - out[j + 1].r < out[j].h * 0.25 && out[j + 1].l - out[j + 2].r < out[j].h * 0.25) j += 2;
+      else if (j + 1 < out.length && NUM.test(out[j + 1].text.trim()) && near(out[j], out[j + 1])) j += 1;
+      else break;
+    }
+    // (Made one piece, read as it stands from the left: its place on the line the number's whole width; the
+    // glyphs it was drawn with are all its own.)
+    if (j > i) {
+      const run = out.slice(i, j + 1);
+      const merged = { ...run[0], text: [...run].reverse().map((p) => p.text.trim()).join(''), l: Math.min(...run.map((p) => p.l)), r: Math.max(...run.map((p) => p.r)) };
+      const cs = run.map((p) => (p as { codes?: unknown[] }).codes);
+      if (cs.every((c) => Array.isArray(c))) (merged as { codes?: unknown[] }).codes = [...run].reverse().flatMap((p) => (p as { codes?: unknown[] }).codes!);
+      out.splice(i, run.length, merged);
+    }
   }
   return out;
 }
@@ -258,18 +298,21 @@ export function joinLine<T extends LinePiece>(line: T[], base?: boolean): { text
 const MARK_ONLY = /^[\u064B-\u065F\u0670\u06D6-\u06ED\s]+$/;
 /** Harakat reported on their own (drawn apart from their run, or high above the line) go back into the word
  *  they sit on, after the letter beneath them. Returns the pieces without the attached marks. */
-export function attachMarks<T extends { text: string; l: number; r: number; y: number; h: number }>(pieces: T[]): T[] {
+export function attachMarks<T extends { text: string; l: number; r: number; y: number; h: number }>(pieces: T[], onAttach?: (mark: T, host: T, base: string) => void): T[] {
   const marks = pieces.filter((p) => MARK_ONLY.test(p.text) && p.text.trim());
   if (!marks.length) return pieces;
   const hosts = pieces.filter((p) => !MARK_ONLY.test(p.text) && /[\u0600-\u06FF]/.test(p.text));
   const placed = new Set<T>();
   for (const m of marks) {
     const cx = (m.l + m.r) / 2;
-    let host: T | null = null, best = Infinity;
+    let host: T | null = null, best = Infinity, bestIn = false;
     for (const q of hosts) {
       const dy = Math.abs(q.y - m.y);
       if (dy > q.h * 1.3 || cx < q.l - 1 || cx > q.r + 1) continue;
-      if (dy < best) { best = dy; host = q; }
+      // (A mark placed by where its ink stands ("inked") at the very edge of two letters drawn apart on one
+      // baseline is the one's whose box it stands in. A mark placed by its origin may well stand in the next one's.)
+      const inside = !!(m as { inked?: boolean }).inked && cx >= q.l && cx <= q.r;
+      if (dy < best - 0.05 || (Math.abs(dy - best) <= 0.05 && inside && !bestIn)) { best = dy; host = q; bestIn = inside; }
     }
     if (!host) continue;
     const chars = [...host.text];
@@ -279,9 +322,13 @@ export function attachMarks<T extends { text: string; l: number; r: number; y: n
     const f = Math.min(0.999, Math.max(0, (host.r - cx) / Math.max(1, host.r - host.l)));
     let at = bases[Math.min(bases.length - 1, Math.floor(f * bases.length))];
     while (at + 1 < chars.length && COMBINING.test(chars[at + 1])) at++;
-    chars.splice(at + 1, 0, m.text.trim());
+    // (The letter has that haraka already — named with its ligature by the font's map — : the drawn one is it.)
+    let b0 = at; while (b0 > 0 && COMBINING.test(chars[b0])) b0--;
+    if (!chars.slice(b0 + 1, at + 1).includes(m.text.trim())) chars.splice(at + 1, 0, m.text.trim());
     host.text = chars.join('');
     placed.add(m);
+    // (The caller may keep what the mark was: its glyph, its own colour — "base" is the letter it went on.)
+    onAttach?.(m, host, chars[bases.filter((k) => k <= at).pop() ?? at] ?? '');
   }
   return pieces.filter((p) => !placed.has(p));
 }

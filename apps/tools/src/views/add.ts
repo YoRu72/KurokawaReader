@@ -196,7 +196,10 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const sources = (): TaskSource[] => { const ref = referer.value.trim(); const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)).map((x) => (ref && x.url ? { ...x, headers: { ...(x.headers ?? {}), Referer: ref } } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
   let typeTimer = 0; ta.addEventListener('input', () => { clear.hidden = !ta.value; clearTimeout(typeTimer); typeTimer = window.setTimeout(() => { void metadata(); void refreshJar(); }, 600); check.hidden = parseSources(ta.value).length < 2; });
   if (initial) { void metadata(); void refreshJar(); check.hidden = parseSources(ta.value).length < 2; }
-  go.addEventListener('click', async () => {
+  // (One run at a time: the button off before the first wait — a double tap added everything twice, two downloads into one .part.)
+  let going = false;
+  go.addEventListener('click', async () => { if (going) return; going = true; go.disabled = true; try { await goOnce(); } finally { going = false; go.disabled = false; } });
+  const goOnce = async () => {
     const srcs = sources();
     if (!srcs.length) { toast(t('invalidLink'), 'error'); ta.focus(); return; }
     // (A post read here: what is ticked of it, each at full quality — never the post's page saved as a file.)
@@ -222,6 +225,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     const videoDir = dirChosen ? (getSettings().downloadDir || undefined) : (categoryDir(categoryOf('x.mp4')) ?? (getSettings().downloadDir || undefined));
     try {
       await video.busy();
+      // (A choice that needs ffmpeg and it is not here: the same card as everywhere offers it; declined, nothing is added — an «as is» audio choice needs none.)
+      if (!(await video.gate())) { toast(t('vcNeedsFfmpeg'), 'error', 6000); go.disabled = false; return; }
       const picks = video.picks();
       // (A video site's page is never what was wanted: unread, it is said so and nothing is added.)
       if (!picks && (video.unread() || srcs.some((x) => x.url && isVideoHost(x.url) && !videoEnabled() && videoSupported()))) { toast(t('videoCantRead'), 'error', 6000); go.disabled = false; return; }
@@ -232,25 +237,30 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         const how2 = await askPage(srcs[0].url ?? ''); if (!how2) { go.disabled = false; return; }
         if (how2 === 'grab') { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(srcs[0].url ?? '')); return; }
       }
-      if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(cookieJar ? { cookieJar } : {}), ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
+      if (picks) { const { match } = await import('../downloads/rules'); for (const p of picks) { const rule = match({ url: p.url }, 'video'); await eng.add({ source: { url: p.url }, dir: dirChosen ? videoDir : (rule?.then.dir || videoDir), paused: paused.checked, video: { ...p.video, ...(cookieJar ? { cookieJar } : {}), ...(rule?.then.audioOnly ? { audioOnly: true, format: undefined, container: undefined } : {}), ...(rule?.then.subs ? { subs: rule.then.subs } : {}), ...(rule?.then.audioOnly || rule?.then.subs ? { args: undefined } : {}) }, ...(rule?.then.wifiOnly || rule?.then.later ? { meta: { ...(rule.then.wifiOnly ? { wifiOnly: true } : {}), ...(rule.then.later ? { later: true } : {}) } } : {}) }); } toast(t('taskAdded', { name: picks.length === 1 ? (picks[0].video.title ?? picks[0].url) : picks[0].video.title ?? '' })); sh.close(); return; }
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; return; }
-    try {
-      for (const src of srcs) {
+    // (A batch goes on past a link that fails — the others added, the failed ones said at the end and left alone in
+    // the box —; a link that comes twice in it is added once.)
+    const { safeDecode } = await import('../downloads/probe'); const { duplicateOf } = await import('../downloads/extras');
+    const added: Task[] = []; const failed: [TaskSource, string][] = [];
+    for (const src of srcs) {
+      if (srcs.length > 1 && duplicateOf(src, added)) continue;
+      try {
         // (A cloud's link — MEGA, Google Drive: its chosen files, each a download of its own.)
         { const C = await import('../downloads/cloud'); const cloud = await C.cloudOf(src.url); if (cloud && src.url) {
           const info = mega?.url === src.url ? mega.info : await cloud.info(src.url); const files = mega?.url === src.url ? info.files.filter((f) => mega!.chosen.has(f.id)) : info.files;
           if (!files.length) { toast(t('pickNoneChosen'), 'error'); go.disabled = false; return; }
           if (!info.folder && srcs.length === 1 && name.value.trim()) files[0] = { ...files[0], name: `${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim().replace(/^\.+/, '')}` : ''}` };
           const meta: NonNullable<Task['meta']> = {}; if (later.checked) meta.later = true; if (wifi.checked) meta.wifiOnly = true;
-          const r = await cloud.add(eng, info, files, { dir: getSettings().downloadDir || undefined, paused: paused.checked, meta }, src.url);
+          const r = await cloud.add(eng, info, files, { dir: getSettings().downloadDir || undefined, paused: paused.checked, meta }, src.url); added.push({ source: src } as Task);
           if (!r.tasks.length) { const m = r.error ?? 'driveErrGone'; throw new Error(C.cloudErrKey(m) ? t(m as 'megaErrGone') : m); }
           toast(r.tasks.length === 1 && !r.failed ? t('taskAdded', { name: r.tasks[0].name }) : t('cloudAdded', { service: cloud.service, n: localDigits(r.tasks.length), name: info.name }) + (r.failed ? ` · ${t('cloudSomeFailed', { n: localDigits(r.failed) })}${r.error && C.cloudErrKey(r.error) ? ` (${t(r.error as 'megaErrGone')})` : ''}` : ''), r.failed ? 'error' : undefined, r.failed ? 6000 : undefined); continue;
         } }
-        if (srcs.length > 1 && src.url && videoEnabled() && isVideoHost(src.url)) { const tk = await eng.add({ source: src, dir: videoDir, paused: paused.checked, video: { ...preferredFormat(), container: preferredFormat().audioOnly ? undefined : getSettings().videoContainer, embedThumb: getSettings().videoEmbedThumb, sponsorblock: getSettings().videoSponsor } }); toast(t('taskAdded', { name: tk.name || src.url })); continue; }
+        if (srcs.length > 1 && src.url && videoEnabled() && isVideoHost(src.url)) { const tk = await eng.add({ source: src, dir: videoDir, paused: paused.checked, video: { ...preferredFormat(), container: preferredFormat().audioOnly ? undefined : getSettings().videoContainer, embedThumb: getSettings().videoEmbedThumb, sponsorblock: getSettings().videoSponsor } }); added.push({ source: src } as Task); toast(t('taskAdded', { name: tk.name || src.url })); continue; }
         const videoish = !!src.magnet || !!src.torrent || isVideo(src.url ?? '');
         if (info && srcs.length === 1 && !chosen.size) { toast(t('pickNoneChosen'), 'error'); go.disabled = false; return; }
         const files = info && srcs.length === 1 && chosen.size < info.files.length ? [...chosen] : undefined;
-        const catDir = !getSettings().downloadDir ? undefined : categoryDir(categoryOf(src.url ? decodeURIComponent(src.url.split('?')[0].split('/').pop() ?? '') : magnetName(src.magnet ?? '') ?? '', src.magnet || src.torrent ? 'torrent' : 'http'));
+        const catDir = !getSettings().downloadDir ? undefined : categoryDir(categoryOf(src.url ? safeDecode(src.url.split('?')[0].split('/').pop() ?? '') : magnetName(src.magnet ?? '') ?? '', src.magnet || src.torrent ? 'torrent' : 'http'));
         const wait = later.checked && !(await import('../downloads/background')).inWindow();
         const fullName = srcs.length === 1 && name.value.trim() ? `${hidden.checked && !name.value.trim().startsWith('.') ? '.' : ''}${name.value.trim()}${ext.value.trim() ? `.${ext.value.trim().replace(/^\.+/, '')}` : ''}` : undefined;
         const meta: NonNullable<Task['meta']> = {}; if (later.checked) meta.later = true; if (wifi.checked) meta.wifiOnly = true; if (!retry.checked) meta.noRetry = true; if (hidden.checked) meta.hidden = true;
@@ -259,12 +269,17 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         if (rule?.then.later) meta.later = true; if (rule?.then.wifiOnly) meta.wifiOnly = true;
         if (cookieJar) meta.cookieJar = cookieJar;
         if (src.url && nativeHls(src.url)) { meta.hls = true; const q = rule?.then.quality || getSettings().videoQuality; if (/^\d+/.test(q)) meta.quality = `${parseInt(q, 10)}p`; }
-        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (rule?.then.dir || catDir || getSettings().downloadDir || undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || wait || (!!rule?.then.later && !(await import('../downloads/background')).inWindow()), connections: rule?.then.connections || Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
-        toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
-      }
-      sh.close();
-    } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); go.disabled = false; }
-  });
+        // (Added paused only to wait for the «later» window: marked, so the scheduler starts it — not one paused by choice.)
+        const waitWin = wait || (!!rule?.then.later && !(await import('../downloads/background')).inWindow()); if (waitWin && !paused.checked) meta.schedPaused = true;
+        const tk = await eng.add({ source: src, dir: dirChosen ? (getSettings().downloadDir || undefined) : (rule?.then.dir || catDir || getSettings().downloadDir || undefined), name: fullName, sequential: videoish && seq.checked, paused: paused.checked || waitWin, connections: rule?.then.connections || Number(conn.value) || 8, files, ...(Object.keys(meta).length ? { meta } : {}) });
+        added.push({ source: src } as Task); toast(t('taskAdded', { name: tk.name || magnetName(src.magnet ?? '') || src.url || '' }));
+      } catch (e) { failed.push([src, String((e as Error).message ?? e)]); }
+    }
+    if (!failed.length) { sh.close(); return; }
+    if (srcs.length === 1) { toast(t('taskFailed', { error: failed[0][1] }), 'error', 5000); return; }
+    ta.value = failed.map(([s]) => s.url ?? s.magnet ?? '').filter(Boolean).join('\n'); if (!failed.some(([s]) => s.torrent)) torrentFile = null; clear.hidden = !ta.value; check.hidden = parseSources(ta.value).length < 2;
+    toast(t('batchSomeFailed', { n: localDigits(failed.length), error: failed[0][1] }), 'error', 8000);
+  };
   if (how.video) ta.placeholder = t('fabVideoHint');
   if (how.torrent) { const f = how.torrent; void f.arrayBuffer().then((b) => { if (!isTorrentBytes(new Uint8Array(b))) { toast(t('notATorrentName', { name: f.name }), 'error', 6000); return; } torrentFile = { name: f.name, b64: toBase64(b) }; fileNote.textContent = f.name; fileNote.hidden = false; void metadata(); }); }
   else if (how.pickTorrent) fileIn.click(); else setTimeout(() => ta.focus(), 60);

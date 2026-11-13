@@ -2,11 +2,13 @@
 // with a note and every PDF pin, grouped by book; tap to open the book there.
 import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, formatDate, localDigits, countItems } from '../i18n';
-import { db, type Book } from '../db';
+import { db, stampAfter, type Book } from '../db';
 import { listBooks, coverUrl } from '../library';
 import { navigate, back } from '../router';
 import { setJump } from '../jump';
-import { markDeleted } from '../sync';
+import { markDeleted, scheduleSync } from '../sync';
+import { copyText } from '../ui/share';
+import { markLines, pdfMarkLines, pinLines, listedNotesMarkdown } from '../ui/exportnotes';
 
 export function notesView(): HTMLElement {
   const body = h('div', { class: 'library-body notes-view' });
@@ -48,20 +50,23 @@ export function notesView(): HTMLElement {
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => go('hl', hl.id) },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = b.highlights.find((y) => y.id === hl.id); if (x) x.note = undefined; }); void render(); } }, icon('trash'))));
+          iconButton('copy', t('copy'), () => void copyText(markLines(hl).join('\n').trim())),
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = b.highlights.find((y) => y.id === hl.id); if (x) { x.note = undefined; x.noteAt = stampAfter(x.noteAt); } }); scheduleSync(); void render(); } }, icon('trash'))));
       });
       (book.pdfHighlights ?? []).filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt).forEach((hl, i) => {
         items.append(h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => go('hl', hl.id) },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) x.note = undefined; }); void render(); } }, icon('trash'))));
+          iconButton('copy', t('copy'), () => void copyText(pdfMarkLines(book, hl).join('\n').trim())),
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) { x.note = undefined; x.noteAt = stampAfter(x.noteAt); } }); scheduleSync(); void render(); } }, icon('trash'))));
       });
       (book.pins ?? []).sort((a, b) => a.createdAt - b.createdAt).forEach((pin, i) => {
         items.append(h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => go('pin', pin.id) },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: pin.page, total: book.pageCount ?? pin.page }))),
             h('span', { dir: 'auto' }, pin.note)),
+          iconButton('copy', t('copy'), () => void copyText(pinLines(book, pin).join('\n').trim())),
           h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); await db.updateBook(book.id, (b) => { b.pins = (b.pins ?? []).filter((x) => x.id !== pin.id); }); void render(); } }, icon('trash'))));
       });
     }
@@ -72,7 +77,7 @@ export function notesView(): HTMLElement {
       const now = !open.has(book.id); if (now) open.add(book.id); else open.delete(book.id);
       section.classList.toggle('folded', !now); head.setAttribute('aria-expanded', String(now));
     } }, cover, h('div', { class: 'grow' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'sub' }, [book.author, countItems(n)].filter(Boolean).join(' · '))), icon('chevronDown'));
-    section.append(h('div', { class: 'notes-head-row' }, head, iconButton('library', t('continueReading'), () => navigate(`/read/${book.id}`))), items);
+    section.append(h('div', { class: 'notes-head-row' }, head, iconButton('library', t('continueReading'), () => navigate(`/read/${book.id}`)), iconButton('copy', t('copyAllNotes'), () => void copyText(listedNotesMarkdown(book, filter)))), items);
     return section;
   }
 

@@ -5,6 +5,7 @@ import { h, icon, openSheet, toast } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { ktPlugin } from '../native';
 import type { Task } from '../engine/types';
+import { localPathOf } from '../engine/localPath';
 
 type Api = { shareWifi(o: { paths: string[]; names: string[] }): Promise<{ url: string | null; files: number }>; shareWifiStop(): Promise<void>; shareWifiStatus(): Promise<{ running: boolean; url: string | null; sent: number; hits: number }> };
 const api = (): Api | null => { const d = window.kurokawaTools as unknown as Partial<Api> | undefined; if (d?.shareWifi) return d as Api; const p = ktPlugin() as unknown as Partial<Api> | null; return p?.shareWifi ? (p as Api) : null; };
@@ -17,7 +18,8 @@ export function filesOf(tasks: Task[]): { paths: string[]; names: string[] } {
     if (x.state !== 'done' || !x.dir || x.dir.startsWith('content:')) continue; const dir = x.dir.replace(/[\\/]$/, '');
     const picked = x.files.filter((f) => f.priority > 0); const list = picked.length ? picked : x.files;
     if (!list.length) { paths.push(`${dir}/${x.name}`); names.push(x.name); continue; }
-    for (const f of list) { const p = x.kind === 'torrent' && x.files.length > 1 ? `${dir}/${x.name}/${f.path}` : `${dir}/${f.path || x.name}`; paths.push(p.replace(/\/+/g, '/')); names.push(f.path.split(/[\\/]/).pop() || x.name); }
+    // (The same path the app opens the file by: a torrent's files already carry its folder — it was put in twice.)
+    for (const f of list) { const p = localPathOf(x, f.index) ?? `${dir}/${f.path || x.name}`; paths.push(/^[\\/]{2}/.test(p) ? p : p.replace(/\/+/g, '/')); names.push(f.path.split(/[\\/]/).pop() || x.name); }
   }
   return { paths, names };
 }

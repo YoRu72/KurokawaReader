@@ -30,7 +30,10 @@ export function inWindow(now = new Date()): boolean {
   const dayOk = !s.days.length || s.days.includes(now.getDay()); return dayOk && (a <= b ? m >= a && m < b : m >= a || m < b);
 }
 let schedTimer = 0;
-/** Downloads added «later» start when the window opens and pause when it closes. */
+/** Downloads added «later» start when the window opens and pause when it closes — only those the scheduler paused
+ *  itself (marked `schedPaused`; the add sheet marks those it adds paused to wait for the window): one the reader
+ *  paused stays paused, one held (Wi‑Fi only, the battery) is left to its hold. One the reader starts by hand
+ *  while the window is shut (still marked) is left running until the window has opened and shut again. */
 export function startScheduler(): void {
   window.clearInterval(schedTimer);
   const tick = async () => {
@@ -38,8 +41,19 @@ export function startScheduler(): void {
     try { const { tickClocks } = await import('./rules'); await tickClocks(); } catch { /* none */ }
     try { if (getSettings().addons.includes('video')) { const { tick } = await import('../video/follow'); await tick(); } } catch { /* none */ }
     if (!getSettings().schedule.enabled) return; const eng = getEngine(); let tasks; try { tasks = await eng.list(); } catch { return; }
-    const open = inWindow();
-    for (const x of tasks) { const later = (x.meta as { later?: boolean } | undefined)?.later; if (!later || x.state === 'done') continue; try { if (open && x.state === 'paused') await eng.resume(x.id); else if (!open && (x.state === 'downloading' || x.state === 'queued' || x.state === 'metadata')) await eng.pause(x.id); } catch { /* the next */ } }
+    const open = inWindow(); const { setTaskMeta, metaOf } = await import('./rules');
+    for (const x of tasks) {
+      const m = metaOf(x) as { later?: boolean; schedPaused?: boolean; schedSkip?: boolean }; if (!m.later || x.state === 'done' || x.state === 'seeding') continue;
+      const active = x.state === 'downloading' || x.state === 'queued' || x.state === 'metadata' || x.state === 'checking';
+      try {
+        if (open) { if (m.schedSkip) await setTaskMeta(x.id, { schedSkip: undefined }); if (x.state === 'paused' && m.schedPaused && !x.heldBy) { await eng.resume(x.id); await setTaskMeta(x.id, { schedPaused: undefined }); } }
+        else if (active && !m.schedSkip) {
+          // (Running though the scheduler paused it: the reader started it by hand — left alone this time.)
+          if (m.schedPaused) await setTaskMeta(x.id, { schedPaused: undefined, schedSkip: true });
+          else { await eng.pause(x.id); await setTaskMeta(x.id, { schedPaused: true }); }
+        }
+      } catch { /* the next */ }
+    }
   };
   schedTimer = window.setInterval(() => void tick(), 60000); void tick();
 }

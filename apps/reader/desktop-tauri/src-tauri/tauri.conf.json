@@ -1,0 +1,149 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "KurokawaReader",
+  "version": "../../package.json",
+  "identifier": "app.kurokawa.reader",
+  "build": {
+    "frontendDist": "../../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Kurokawa",
+    "category": "Productivity",
+    "shortDescription": "An offline reader for EPUB, PDF, DOCX, XLSX, PPTX, TXT and more",
+    "resources": {
+      "../7zip/": "7zip/"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "English",
+          "Arabic",
+          "Japanese",
+          "Korean",
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "installerHooks": "./installer/hooks.nsh"
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "epub"
+        ],
+        "name": "EPUB book",
+        "role": "Viewer",
+        "mimeType": "application/epub+zip"
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF document",
+        "role": "Viewer",
+        "mimeType": "application/pdf"
+      },
+      {
+        "ext": [
+          "docx"
+        ],
+        "name": "Word document",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "xlsx"
+        ],
+        "name": "Excel workbook",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "pptx"
+        ],
+        "name": "PowerPoint presentation",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "txt"
+        ],
+        "name": "Text",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "md"
+        ],
+        "name": "Markdown",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "fb2"
+        ],
+        "name": "FictionBook",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "cbz"
+        ],
+        "name": "Comic archive",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "otf"
+        ],
+        "name": "OpenType font",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "ttf"
+        ],
+        "name": "TrueType font",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "odt"
+        ],
+        "name": "OpenDocument text",
+        "role": "Viewer"
+      }
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "kurokawareader"
+        ]
+      }
+    }
+  }
+}

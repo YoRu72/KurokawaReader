@@ -6,11 +6,13 @@ import { goBack, wirePcBack } from './ui/backstack';
 import { importFiles } from './library';
 import { navigate } from './router';
 import { toast } from './ui/dom';
-import { t } from './i18n';
+import { t, onLangChange } from './i18n';
+import { brandIcon, setBrandIcon } from './ui/brandIcon';
 import { getSettings } from './settings';
 import { actionFor } from './shortcuts';
+import { diagBack, diagLeaveIntent, diagAppState } from './diag';
 
-interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton', fn: (d: { url: string; canGoBack?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
+interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton' | 'appStateChange', fn: (d: { url: string; canGoBack?: boolean; isActive?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
 interface CapFs { readFile(o: { path: string }): Promise<{ data: string | Blob }> }
 interface CapGlobal { isNativePlatform?(): boolean; getPlatform?(): string; Plugins?: { App?: CapApp; Filesystem?: CapFs } }
 interface DesktopBridge { onOpenFile(cb: (p: { name: string; data: ArrayBuffer }) => void): void; platform: string }
@@ -65,6 +67,7 @@ export function leaveToCaller(bookId: string): boolean {
   externalBook = null;
   const app = window.Capacitor?.Plugins?.App as { minimizeApp?(): Promise<void> } | undefined;
   if (!app?.minimizeApp) return false;
+  diagLeaveIntent('to-caller');
   navigate('/', true);
   void app.minimizeApp();
   return true;
@@ -174,6 +177,7 @@ export function initNativeBridges(): void {
     const cmd = actionFor(e);
     if (!cmd) return;
     e.preventDefault();
+    if (cmd === 'library' || cmd === 'settings' || cmd === 'notes') diagLeaveIntent('key');
     if (cmd === 'library') navigate('/'); else if (cmd === 'settings') navigate('/settings'); else if (cmd === 'notes') navigate('/notes');
     else document.dispatchEvent(new CustomEvent('kr:command', { detail: cmd }));
   });
@@ -185,7 +189,14 @@ export function initNativeBridges(): void {
     // at the library's top the app is put away.
     // (ReadEra's «exit only by double-clicking Back», when it is on: the first press at the library's top warns.)
     let backAt = 0;
-    void cap.Plugins.App.addListener('backButton', () => { if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); });
+    // (The app sent to the background and back: the Performance page's record of how a session ended.)
+    // (Also told to the reader's keys — src/readkeys.ts —, which let the volume keys and the screen's edges go meanwhile.)
+    void cap.Plugins.App.addListener('appStateChange', (d) => { diagAppState(!!d.isActive); document.dispatchEvent(new CustomEvent('kr:appstate', { detail: !!d.isActive })); });
+    // (Each press kept for the Performance page, with where the last touch began: src/diag.ts.)
+    // (A Back that comes in the middle of a page-turn swipe is first offered to the open reader — src/readkeys.ts —,
+    // which may take it as part of the swipe, or let it go on a moment later: `backGate`.)
+    const press = (): void => { if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); };
+    void cap.Plugins.App.addListener('backButton', () => { diagBack('back-button'); if (backGate?.(press)) return; press(); });
   }
   wirePcBack();
   if (window.kurokawaDesktop) {
@@ -195,13 +206,36 @@ export function initNativeBridges(): void {
     (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string | { open: string }) => void): void }).onCommand?.((c) => {
       if (typeof c === 'object') { if (c?.open) navigate(c.open); return; }
       if (c === 'library') navigate('/');
-      else if (c === 'back') goBack();
+      else if (c === 'back') { diagBack('back-pc'); goBack(); }
       else if (c === 'settings') navigate('/settings');
       else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));
+      // (Stage R6b: Electron's shell found the Tauri build — desktop/main.cjs RUST_SWITCH — and offers the switch.)
+      else if (c === 'rust-switch') void import('./updates').then((u) => u.showRustSwitch()).catch(() => undefined);
       else document.dispatchEvent(new CustomEvent('kr:command', { detail: c }));
     });
+    if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') initTauriShell();
   }
 }
+
+/** The Tauri shell (desktop-tauri/bridge.js): the icon it keeps is the one in force — the page's logos (title bar,
+ *  sidebar) follow it from the start, whatever this profile's storage holds —, and a Mac's menu bar speaks the
+ *  interface's language (bridge menuText → src-tauri/src/menu.rs; English until told). */
+function initTauriShell(): void {
+  void appIconNow().then((u) => { if (u !== brandIcon()) setBrandIcon(u); });
+  const kd = window.kurokawaDesktop as (DesktopBridge & { platform?: string; menuText?(l: Record<string, string>): Promise<boolean> }) | undefined;
+  if (kd?.menuText && kd.platform === 'darwin') {
+    const send = () => { void kd.menuText!(menuWords()).catch(() => undefined); };
+    send(); onLangChange(send);
+  }
+}
+/** The words of a Mac's menu bar (menu.rs's keys). */
+export const menuWords = (): Record<string, string> => ({
+  about: t('menuAbout'), settings: t('menuSettings'), hide: t('menuHide'), hideOthers: t('menuHideOthers'), showAll: t('menuShowAll'), quit: t('menuQuit'),
+  file: t('menuFile'), addBooks: t('menuAddBooks'), scan: t('menuScan'), library: t('library'), closeWindow: t('menuCloseWindow'),
+  edit: t('menuEdit'), undo: t('menuUndo'), redo: t('menuRedo'), cut: t('menuCut'), copy: t('menuCopy'), paste: t('menuPaste'), selectAll: t('menuSelectAll'),
+  view: t('menuView'), options: t('visualOptions'), search: t('searchInBook'), fullscreen: t('menuFullscreen'),
+  window: t('menuWindow'), minimize: t('menuMinimize'), zoom: t('menuZoom'), help: t('menuHelp'), update: t('checkUpdates'), releases: t('menuReleases'),
+});
 
 interface ImmersivePlugin { setImmersive(o: { on: boolean }): Promise<void> }
 interface StatusBarPlugin { hide(): Promise<void>; show(): Promise<void> }
@@ -224,6 +258,14 @@ type IconDesk = { appIcon?(o?: { set: string | null }): Promise<string | boolean
 type IconPlug = { pinIcon?(o: { png: string; label: string }): Promise<{ ok: boolean }> };
 const iconPlug = (): IconPlug | undefined => (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: IconPlug } }) | undefined)?.Plugins?.Kurokawa;
 export const appIconWay = (): 'desktop' | 'android' | null => ((window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon ? 'desktop' : nativePlatform() === 'android' && iconPlug()?.pinIcon ? 'android' : null);
+/** Which hint the app-icon row shows: what this computer lets the app change. The Tauri shell on a Mac changes only
+ *  the app's own title bar and sidebar (no Dock), on Linux the window and the .deb's menu entry; Windows, and the
+ *  Electron shell everywhere, the window, the taskbar and the shortcuts. */
+export const appIconHint = (): 'myIconHintPc' | 'myIconHintMac' | 'myIconHintLinux' => {
+  const w = window as unknown as { __KR_SHELL__?: string; kurokawaDesktop?: { platform?: string } };
+  if (w.__KR_SHELL__ !== 'tauri') return 'myIconHintPc';
+  return w.kurokawaDesktop?.platform === 'darwin' ? 'myIconHintMac' : w.kurokawaDesktop?.platform === 'linux' ? 'myIconHintLinux' : 'myIconHintPc';
+};
 export async function appIconNow(): Promise<string | null> { const u = await Promise.resolve((window.kurokawaDesktop as unknown as IconDesk | undefined)?.appIcon?.()).catch(() => null); return typeof u === 'string' && u ? u : null; }
 export async function setAppIcon(png: string | null, label: string): Promise<boolean> {
   if (appIconWay() === 'desktop') { await (window.kurokawaDesktop as unknown as IconDesk).appIcon!({ set: png }); return true; }
@@ -262,10 +304,38 @@ export function keepAwake(on: boolean): void {
   else if (wakeLock) { void wakeLock.release().catch(() => undefined); wakeLock = null; }
 }
 
-/** Tell the Android shell whether volume keys should turn pages (they then stop changing the volume). */
+/** Tell the Android shell whether volume keys should turn pages (they then stop changing the volume). Asked for by
+ *  src/readkeys.ts only while a book is open and the setting is on. */
 export async function setVolumeKeys(on: boolean): Promise<void> {
   const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setVolumeKeys?(o: { on: boolean }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await kr?.setVolumeKeys?.({ on }); } catch { /* ignore */ }
+}
+/** The open reader's say over a Back press (src/readkeys.ts): returns true when it takes the press — held as part of
+ *  a page-turn swipe, or kept until the touch under way ends, `go` then called if it is to go on after all. */
+let backGate: ((go: () => void) => boolean) | null = null;
+export function setBackGate(fn: ((go: () => void) => boolean) | null): void { backGate = fn; }
+/** Tell the Android shell whether to keep a band of each side edge from the system's back gesture (Android 10+;
+ *  older versions answer without doing anything). See src/readkeys.ts. */
+export async function setEdgeGuard(on: boolean): Promise<void> {
+  const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setEdgeGuard?(o: { on: boolean }): Promise<unknown> } } }) | undefined)?.Plugins?.Kurokawa;
+  try { await kr?.setEdgeGuard?.({ on }); } catch { /* ignore */ }
+}
+
+/** The system's own Back zone at the side edges (Android 10+ with gesture navigation; its width follows "Back
+ *  sensitivity"), in CSS px, and the navigation: 'gesture', 'buttons' (two or three buttons: no side zone) or 'old'
+ *  (before Android 10). Null where there is no Android shell, or it does not tell. */
+export interface GestureInsets { left: number; right: number; nav: string }
+type InsetsPlug = { gestureInsets?(): Promise<Partial<GestureInsets>>; addListener?(ev: 'gestureInsets', fn: (d: Partial<GestureInsets>) => void): Promise<unknown> };
+const insetsPlug = (): InsetsPlug | undefined => (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: InsetsPlug } }) | undefined)?.Plugins?.Kurokawa;
+const asInsets = (d: Partial<GestureInsets> | null | undefined): GestureInsets | null => (d && typeof d === 'object' ? { left: Math.max(0, Number(d.left) || 0), right: Math.max(0, Number(d.right) || 0), nav: String(d.nav ?? 'unknown') } : null);
+export async function getGestureInsets(): Promise<GestureInsets | null> {
+  if (nativePlatform() !== 'android') return null;
+  try { return asInsets(await insetsPlug()?.gestureInsets?.()); } catch { return null; }
+}
+/** Told again whenever the system's zone changes (the sensitivity moved, the phone turned, the navigation changed). */
+export function onGestureInsets(fn: (g: GestureInsets) => void): void {
+  if (nativePlatform() !== 'android') return;
+  try { void insetsPlug()?.addListener?.('gestureInsets', (d) => { const g = asInsets(d); if (g) fn(g); })?.catch?.(() => undefined); } catch { /* none */ }
 }
 
 /** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */

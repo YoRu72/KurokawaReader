@@ -1,13 +1,15 @@
 import { readPending, writePending, onPendingChanged } from '../sources/pending';
+import { diagMark } from '../diag';
 import { busyNow, onBusy } from '../busy';
-import { h, icon, iconButton, toast, clear, coverColors, openSheet } from '../ui/dom';
+import { h, icon, iconButton, toast, clear, coverColors, openSheet, askText } from '../ui/dom';
 import { onBack } from '../ui/backstack';
+import { brandIcon } from '../ui/brandIcon';
 import { onHoldOrContext } from '../ui/tags';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
 import { searchFormOf } from '../formats/types';
-import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks } from '../library';
-import { db, uid, FAV_TAG, TOREAD_TAG, type Book, type Folder, type TagDef } from '../db';
+import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks, moveToFolder, deleteFolder, renameFolder } from '../library';
+import { db, uid, stampAfter, FAV_TAG, TOREAD_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats/detect';
 import { navigate } from '../router';
 import { readContentUri } from '../native';
@@ -127,7 +129,7 @@ export function libraryView(): HTMLElement {
   const importTopBtn = iconButton('import', t('importBooks'), () => importMenu());
   const syncTopBtn = iconButton('cloud', t('sync'), () => void import('../ui/syncsheet').then((m) => m.syncSheet()));
   const topbar = h('header', { class: 'topbar' },
-    h('div', { class: 'brand title' }, h('img', { src: 'icons/icon.svg', alt: '' }), h('span', { class: 'brand-name' }, t('appName'))),
+    h('div', { class: 'brand title' }, h('img', { src: brandIcon() || 'icons/icon.svg', alt: '', 'data-brand': '' }), h('span', { class: 'brand-name' }, t('appName'))),
     importTopBtn,
     syncTopBtn,
     iconButton('chart', t('readingStats'), () => void import('../ui/stats').then((m) => m.showStats())),
@@ -290,7 +292,8 @@ export function libraryView(): HTMLElement {
       ['folder', t('moveToFolder'), () => moveSheet([...selected])],
       ['external', t('shareFile'), () => void shareBooks([...selected])],
       ['trash', t('delete'), async () => {
-        if (!confirm(t('deleteConfirm', { n }))) return;
+        // (Many at once: said that it cannot be undone.)
+        if (!confirm(t(n > 3 ? 'deleteConfirmMany' : 'deleteConfirm', { n }))) return;
         await removeBooks([...selected]);
         selected.forEach(forgetCover);
         setSelecting(false);
@@ -309,6 +312,7 @@ export function libraryView(): HTMLElement {
     sh.body.append(h('div', { class: 'dest-list' }, ...rows));
     for (const [ic, label, fn] of acts.filter(([, , , cls]) => cls === 'danger')) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { acted = true; sh.close(); fn(); } }, icon(ic), label));
   }
+  const allShown = (shown: Book[]) => shown.length > 0 && shown.every((b) => selected.has(b.id));
   function renderSelBar() {
     clear(selBar);
     selBar.hidden = !selecting;
@@ -318,7 +322,8 @@ export function libraryView(): HTMLElement {
     selBar.append(
       h('div', { class: 'sel-head' },
         h('span', { class: 'sel-count' }, t('selectedCount', { n })),
-        h('button', { class: 'btn small', type: 'button', onclick: () => { if (selected.size === books.length) selected.clear(); else books.forEach((b) => selected.add(b.id)); renderGrid(); } }, selected.size === books.length && n ? t('selectNone') : t('selectAll')),
+        // (All of what is listed now — a folder's, a tag's, a search's books — never the books the view hides.)
+        h('button', { class: 'btn small', type: 'button', onclick: () => { const shown = sorted(); if (allShown(shown)) selected.clear(); else shown.forEach((b) => selected.add(b.id)); renderGrid(); } }, allShown(sorted()) && n ? t('selectNone') : t('selectAll')),
         h('span', { class: 'spacer' }),
         iconButton('close', t('close'), () => setSelecting(false))),
       h('div', { class: 'sel-actions' }, ...actions()),
@@ -430,7 +435,7 @@ export function libraryView(): HTMLElement {
     // The mark: how far the book is read, and «read» once it is (the one takes the other's place).
     const isNew = book.addedAt > lastVisit && !book.lastOpenedAt;
     const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : !done && pct > 0 && getSettings().showProgress ? h('span', { class: `badge done pct at-${doneAt}` }, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : null;
-    const cover = h('div', { class: 'cover' },
+    const cover = h('div', { class: 'cover' + (!url && doneBadge && doneAt === 'below' ? ' mark-below' : '') },
       url ? h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
       h('span', { class: 'badges' }, book.remote?.newChapters ? h('span', { class: 'badge alert', title: countChapters(book.remote.newChapters) }, '!', h('small', null, localDigits(book.remote.newChapters))) : null, h('span', { class: 'badge' }, formatLabel(book.format)), book.remote?.online ? h('span', { class: 'badge online', title: t('onlineBook') }, icon('cloud')) : null, doneBadge && doneAt === 'beside' ? doneBadge : null, isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
@@ -580,8 +585,8 @@ export function libraryView(): HTMLElement {
       onHoldOrContext(chip, () => { if (confirm(t('shelfRemoveConfirm', { name: sh.name }))) { updateSettings({ shelves: getSettings().shelves.filter((x) => x.id !== sh.id) }); renderGrid(); } });
       fmtChips.prepend(chip);
     }
-    if ((active.size || st.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => {
-      const name = (prompt(t('shelfName'), '') ?? '').trim(); if (!name) return;
+    if ((active.size || st.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: async () => {
+      const name = ((await askText({ title: t('saveShelf'), label: t('shelfName'), ok: t('save'), cancel: t('cancel') })) ?? '').trim(); if (!name) return;
       updateSettings({ shelves: [...getSettings().shelves, { id: String(Date.now()), name, ...current }] }); toast(t('shelfSaved', { name })); renderGrid();
     } }, icon('plus'), h('span', null, t('saveShelf'))));
   }
@@ -859,7 +864,8 @@ export function libraryView(): HTMLElement {
   }
 
   async function moveBooks(ids: string[], folderId: string | null): Promise<void> {
-    for (const id of ids) { await db.updateBook(id, (b) => { if (folderId) b.folderId = folderId; else delete b.folderId; }); const bk = books.find((b) => b.id === id); if (bk) { if (folderId) bk.folderId = folderId; else delete bk.folderId; } }
+    await moveToFolder(ids, folderId);
+    for (const id of ids) { const bk = books.find((b) => b.id === id); if (bk) { if (folderId) bk.folderId = folderId; else delete bk.folderId; } }
     setSelecting(false);
     renderGrid();
   }
@@ -883,8 +889,8 @@ export function libraryView(): HTMLElement {
       const s = openSheet(f.name, t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
-        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const name = await askName(t('renameFolder'), f.name); if (name) { f.name = name; await db.setMeta('folders', folders); renderChips(); renderGrid(); } } }, icon('type'), t('renameFolder'))),
-        h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteFolderConfirm', { name: f.name }))) return; folders = folders.filter((x) => x.id !== id); await db.setMeta('folders', folders); for (const b of books) if (b.folderId === id) { delete b.folderId; await db.updateBook(b.id, (bb) => { delete bb.folderId; }); } if (activeFolder === id) { activeFolder = null; localStorage.removeItem('kr.folder'); } renderChips(); renderGrid(); s.close(); } }, icon('trash'), t('deleteFolder')))));
+        h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const name = await askName(t('renameFolder'), f.name); if (name) { folders = await renameFolder(id, name); renderChips(); renderGrid(); } } }, icon('type'), t('renameFolder'))),
+        h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteFolderConfirm', { name: f.name }))) return; folders = await deleteFolder(id); for (const b of books) if (b.folderId === id) delete b.folderId; if (activeFolder === id) { activeFolder = null; localStorage.removeItem('kr.folder'); } renderChips(); renderGrid(); s.close(); } }, icon('trash'), t('deleteFolder')))));
     });
   }
 
@@ -912,7 +918,7 @@ export function libraryView(): HTMLElement {
 
   function renderGoal() {
     const goal = getSettings().readingGoalMinutes;
-    const today = books.reduce((a, b) => a + ((liveStatsOf(b.id) ?? b.stats)?.days[todayKey()]?.ms ?? 0), 0);
+    const today = books.reduce((a, b) => a + ((liveStatsOf(b.id) ?? b.stats)?.days?.[todayKey()]?.ms ?? 0), 0);
     clear(heroGoal);
     heroGoal.hidden = !goal;
     if (!goal) return;
@@ -954,6 +960,9 @@ export function libraryView(): HTMLElement {
   }
 
   function renderGrid() {
+    // (What is chosen is what is listed: a book the folder, tag, search or filter now hides is let go, so no action
+    // reaches a book the reader cannot see.)
+    if (selecting && selected.size) { const shown = new Set(sorted().map((b) => b.id)); for (const id of [...selected]) if (!shown.has(id)) selected.delete(id); }
     clear(grid);
     renderResume();
     renderGoal();
@@ -1101,7 +1110,7 @@ export function libraryView(): HTMLElement {
     let ok = 0;
     const target = folderId;
     await importFiles(files, (book, file, err) => {
-      if (book) { ok++; if (target) void db.updateBook(book.id, (b) => { b.folderId = target; }); } else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
+      if (book) { ok++; if (target) void db.updateBook(book.id, (b) => { b.folderId = target; b.folderAt = stampAfter(b.folderAt); }); } else toast(t('importFailed', { name: file.name, error: String((err as Error)?.message ?? err) }), 'error', 5000);
     });
     if (ok) toast(t('imported', { n: countBooks(ok) }));
     await refresh();
@@ -1124,6 +1133,7 @@ export function libraryView(): HTMLElement {
 
   // Back from a book opened from the search across books: that search opens again, as it was.
   void refresh().then(async () => {
+    diagMark('usable');
     try { if (!sessionStorage.getItem('kr.searchReturn')) return; } catch { return; }
     const { takeReturn } = await import('../booksearch');
     const back = takeReturn();

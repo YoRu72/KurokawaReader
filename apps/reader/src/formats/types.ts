@@ -36,6 +36,12 @@ export interface RenderContext {
   id(suffix: string): string;
   publisherStyles: boolean;
   bookTitle: string;
+  /** A book of many chapters (EPUB): the chapter (its place in the spine) to make first, with its neighbours — the rest
+   *  are left as empty sections, made by `rest()` (the reader shows the first ones meanwhile). Ignored by the others. */
+  first?: number;
+  /** Whether the book reads right to left, as found on its last opening (kept with the chapters' sizes by the reader):
+   *  the direction of the first chapters made before the rest are seen. */
+  rtl?: boolean;
 }
 
 export interface FlowRender {
@@ -48,6 +54,10 @@ export interface FlowRender {
   dispose(): void;
   /** Load every lazily resolved picture now (export / conversion). */
   resolveImages?(): Promise<void>;
+  /** Asked for some chapters first (RenderContext.first): make the others, in slices between frames, into their empty
+   *  sections (the same elements); `toc`, `images` and `rtl` are then those of the whole book. Resolves false when the
+   *  render was disposed first. */
+  rest?(): Promise<boolean>;
 }
 
 export interface FlowHandler {

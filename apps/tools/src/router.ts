@@ -46,6 +46,10 @@ const current = () => location.hash.replace(/^#/, '') || '/';
 const stack: string[] = [current()];
 let pushing: string | null = null; let move: 'push' | 'pop' | 'replace' | 'start' = 'start';
 export const lastMove = () => move;
+/** The place before this one in the app's own history (what the browser's Back would show), if any. */
+export const previousPath = (): string | undefined => stack[stack.length - 2];
+/** The latest place in the history outside `section` — where the reader came from before it — else the downloads. */
+export function cameFrom(section: string): string { for (let i = stack.length - 1; i >= 0; i--) if (sectionOf(stack[i]) !== section) return stack[i]; return '/'; }
 export function navigate(path: string, replace = false): void {
   const target = `#${path}`;
   if (replace) { move = 'replace'; stack[stack.length - 1] = path; location.replace(target); return; }

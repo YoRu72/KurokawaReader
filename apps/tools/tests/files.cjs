@@ -92,7 +92,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   }
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-select.png' });
   // copy, go to Phone, paste: the job, the conflict, replace
-  await p.click('.files-selbar button[aria-label="Copy"]'); await p.waitForTimeout(200); await p.click('.files-roots .chip:nth-child(2)'); await p.waitForTimeout(300); await p.click('.topbar-actions button[aria-label="Paste here"]'); await p.waitForSelector('.files-compare', { timeout: 3000 });
+  await p.click('.files-selbar button[aria-label="Copy"]'); await p.waitForTimeout(200); await p.click('.files-roots .chip:nth-child(2)'); await p.waitForTimeout(300); await p.click('.files-clipbar .files-clip-paste'); await p.waitForSelector('.files-compare', { timeout: 3000 });
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-conflict.png' });
   await p.click('.sheet .btn:has-text("Replace")'); await p.waitForTimeout(300);
   ok('copied then pasted as a job, the name taken answered', (await p.evaluate(() => window.__calls.join(','))).includes('copy:1>/storage/emulated/0') && (await p.evaluate(() => window.__calls.join(','))).includes('answer:replace'));
@@ -125,7 +125,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.click('.sheet .btn.primary'); await p.waitForSelector('.files-row:has-text("iso.img")'); ok('the server is listed after the trust', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'backup,iso.img');
   await p.click('.files-row:has-text("iso.img") button[aria-label="More"]'); await p.click('.sheet .dest-row:nth-child(2)'); await p.waitForTimeout(200);
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.click('.files-drawer .files-drawer-row:has-text("Kurokawa")'); await p.waitForSelector('.files-row:has-text("Movie.mkv")');
-  await p.click('.topbar button[aria-label="Paste here"]'); await p.waitForTimeout(400);
+  await p.click('.files-clipbar .files-clip-paste'); await p.waitForTimeout(400);
   ok('pasting a remote file here is a download job', (await p.evaluate(() => window.__calls)).includes('down:nas:/iso.img>/storage/emulated/0/Download/Kurokawa'), await p.evaluate(() => window.__calls.slice(-2)));
   // two panes on a wide screen: turned on from the menu, each with its own place; a selection sent across as a copy job
   await p.click('.sheet-head button[aria-label="Close"]').catch(() => {});

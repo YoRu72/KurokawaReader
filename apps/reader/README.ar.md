@@ -6,6 +6,8 @@ EPUB · PDF · Word · Excel · PowerPoint · نصوص وMarkdown · HTML · Fic
 
 **التنزيل:** [الإصدارات](../../releases) — أندرويد · ويندوز · ماك · لينكس · iOS (تطبيق الويب، أو TrollStore، أو مصدر AltStore/SideStore) · **[تطبيق الويب](https://yoru72.github.io/KurokawaReader/)** (يُثبَّت من المتصفح بلا توقيع) · [ملاحظات التثبيت](docs/INSTALL.md)
 
+**الحاسوب (منذ الإصدار 0.62.0): تطبيقٌ جديدٌ أصغرُ بكثير** — ويندوز `KurokawaReader-<v>-windows-x64.exe` (نحوُ 13 ميغابايت، يُثبَّت في ثوانٍ بلا صلاحيات المدير، ومعه نسخةٌ محمولة)، وماك `…-macos-universal.DMG`، ولينكس `…-linux-x64.appimage` أو `.deb` (نحوُ 11 ميغابايت). ويبقى الإصدارُ السابق (المحرّكُ القديم، نحوُ 82 ميغابايت) في صفحة الإصدار احتياطًا إصدارَين. والتحديثُ من الإصدار السابق ينقل مكتبتَك كلَّها، ولا يُحذَف منها شيء.
+
 <p align="center">
   <img src="docs/screenshots/library-m3.png" width="48%" alt="المكتبة" />
   <img src="docs/screenshots/manuscript-preset.png" width="48%" alt="القراءة" />

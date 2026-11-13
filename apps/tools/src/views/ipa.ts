@@ -7,6 +7,7 @@
 import { h, icon, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, getLang } from '../i18n';
 import type { IpaInfo } from '../ipa/read';
+import { safeDecode } from '../downloads/probe';
 
 export const IPA_RE = /\.ipa$/i;
 export const isIpaName = (n: string): boolean => IPA_RE.test(n);
@@ -32,7 +33,7 @@ export function pickIpa(): void {
 /** An IPA, from a file, a link, or both: looked into, then installed. */
 export async function ipaSheet(src: { file?: Blob; url?: string; name?: string }): Promise<void> {
   const sh = openSheet(t('ipaTitle'), t('close')); sh.el.classList.add('ipa-sheet');
-  const name = src.name ?? (src.url ? decodeURIComponent(src.url.split('?')[0].split('/').pop() ?? '') : 'app.ipa');
+  const name = src.name ?? (src.url ? safeDecode(src.url.split('?')[0].split('/').pop() ?? '') : 'app.ipa');
   let info: IpaInfo | null = null;
   if (src.file) {
     sh.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), h('p', { class: 'src small' }, t('ipaReading'))));
