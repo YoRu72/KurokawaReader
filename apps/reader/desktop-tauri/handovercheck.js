@@ -33,7 +33,15 @@
       (function tick() { var v; try { v = fn(); } catch (e) { v = null; } if (v) resolve(v); else if (Date.now() > end) resolve(null); else setTimeout(tick, 200); })();
     });
   }
-  var same = function (a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); };
+  // (Compared by content, not by the order of an object's keys: the Electron side's snapshot comes out with its keys
+  // sorted, the records brought here keep the order they were written in — run 43483872854 failed four books on that
+  // alone. Arrays keep their order.)
+  var canon = function (x) {
+    if (Array.isArray(x)) return x.map(canon);
+    if (x && typeof x === 'object') { var o = {}; Object.keys(x).sort().forEach(function (k) { o[k] = canon(x[k]); }); return o; }
+    return x;
+  };
+  var same = function (a, b) { return JSON.stringify(canon(a === undefined ? null : a)) === JSON.stringify(canon(b === undefined ? null : b)); };
   var FIELDS = ['title', 'author', 'fileName', 'size', 'format', 'progress', 'progressAt', 'highlights', 'bookmarks', 'pdfHighlights', 'pins', 'ink', 'tags', 'folderId', 'source', 'remote', 'rating', 'review', 'prefs', 'coverSize', 'addedAt'];
   // (Keys the app itself rewrites at each start — times of its own checks — are only required to be there.)
   var KEYS = ['kr.visual', 'kr.bookVisual', 'kr.lang', 'app.icon', 'kr.glossary', 'kr.glossaryFolders', 'kr.vocab', 'kr.textRules', 'kr.dbx.access', 'kr.anilist.token'];

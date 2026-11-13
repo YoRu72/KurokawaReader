@@ -38,6 +38,19 @@ const mixed = [...tails.map((t) => `KurokawaReader-${v}-${t}`), `KurokawaReader-
 assert.equal(electronPick(mixed, 'darwin').name, `KurokawaReader-${v}-mac-universal.dmg`);
 assert.equal(electronPick(mixed, 'linux').name, `KurokawaReader-${v}-linux-x86_64.AppImage`);
 assert.equal(electronPick(mixed, 'win32').name, `KurokawaReader-${v}-win-x64.exe`);
+// (Stage R6c.) The designed setup program, published beside them as KurokawaReader-<v>-windows-x64.exe (the download
+// people take; setup/INTEGRATION.md), is never chosen by any updater: not by an Electron copy's pattern, not by the
+// tails of this build's (the updater keeps the plain NSIS «-setup.exe»), not by the switch — whatever the order.
+{
+  const setupProgram = `KurokawaReader-${v}-windows-x64.exe`;
+  for (const re of [/win-x64.*\.exe$/, /\.dmg$/, /\.AppImage$/]) assert.ok(!re.test(setupProgram), `${setupProgram} ~ ${re}`);
+  for (const t of tails) assert.ok(!setupProgram.endsWith(t), `${setupProgram} ends with ${t}`);
+  assert.equal(electronPick([setupProgram, ...mixed], 'win32').name, `KurokawaReader-${v}-win-x64.exe`);
+  const both = [{ tag_name: `v${v}`, html_url: '', draft: false, prerelease: false, assets: [setupProgram, `KurokawaReader-${v}-windows-x64-setup.exe`, `KurokawaReader-${v}-SHA256SUMS.txt`].map((name) => ({ name, browser_download_url: `https://github.com/o/r/releases/download/v${v}/${name}`, size: 9 })) }];
+  assert.equal(RS.pickRust(both, '0.70.0', 'win32', 'x64').asset.name, `KurokawaReader-${v}-windows-x64-setup.exe`, 'the switch takes the plain installer');
+  const ci = fs.readFileSync(path.join(ROOT, '..', '..', '.github', 'workflows', 'tauri-check-reader.yml'), 'utf8');
+  assert.ok(ci.includes('KurokawaReader-$v-windows-x64.exe'), 'the CI build names the setup program so');
+}
 // (The installer gate of the page — /\.(exe|dmg|AppImage|deb|zip)$/i — lets the Tauri build's own files through.)
 for (const t of tails.slice(0, 5)) assert.ok(/\.(exe|dmg|AppImage|deb|zip)$/i.test(t), t);
 

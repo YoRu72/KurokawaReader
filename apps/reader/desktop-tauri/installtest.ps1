@@ -50,7 +50,7 @@ function Installers($instDir) {
 }
 function LnkTarget($p) { if (-not (Test-Path $p)) { return $null }; return (New-Object -ComObject WScript.Shell).CreateShortcut($p).TargetPath }
 function MB($f) { '{0:N2} MB' -f ((Get-Item $f).Length / 1MB) }
-$UN = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+$UninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
 $setup = Get-ChildItem 'target/release/bundle/nsis/*-setup.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $setup) { throw 'no NSIS installer built' }
@@ -65,7 +65,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $old 'resources') | Out-Nul
 Set-Content (Join-Path $old 'resources\app.asar') 'asar'
 Copy-Item (Join-Path $env:SystemRoot 'System32\where.exe') (Join-Path $old 'KurokawaReader.exe')
 Set-Content (Join-Path $old 'Uninstall KurokawaReader.exe') 'x'
-$ek = "$UN\a1b2c3d4-kr-ci-electron"
+$ek = "$UninstKey\a1b2c3d4-kr-ci-electron"
 New-Item $ek -Force | Out-Null
 Set-ItemProperty $ek DisplayName 'KurokawaReader'; Set-ItemProperty $ek InstallLocation $old
 Set-ItemProperty $ek UninstallString "`"$old\Uninstall KurokawaReader.exe`" /currentuser"
@@ -88,7 +88,7 @@ Row 'installer window screenshots' (Test-Path (Join-Path $d 'installer-real-1.pn
 # 2. Installed silently.
 $t = Measure-Command { $p = Start-Process $setup1 -ArgumentList '/S' -PassThru -Wait }
 Row 'silent install' ($p.ExitCode -eq 0) ("{0:N1} s, exit {1}" -f $t.TotalSeconds, $p.ExitCode)
-$e = Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue
+$e = Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue
 Row 'uninstall entry (HKCU, per user)' ($null -ne $e) ("$($e.DisplayName) $($e.DisplayVersion) — $($e.UninstallString)")
 $un = ($e.UninstallString -replace '"', '').Trim(); $dir = Split-Path $un; $exe = Join-Path $dir 'KurokawaReader.exe'
 Row 'files' ((Test-Path $exe) -and (Test-Path $un)) "$dir — $((Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Count) files, $('{0:N1}' -f ((Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)) MB"
@@ -170,8 +170,8 @@ if ($setup2) {
   if ($left.Count) { Shot 'update-installer-stuck' }
   $waited = $sw.Elapsed.TotalSeconds
   $now = $null
-  for ($i = 0; $i -lt 10; $i++) { $now = (Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue).DisplayVersion; if ($now -eq $v2) { break }; Start-Sleep -Seconds 1 }
-  $entry = Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue
+  for ($i = 0; $i -lt 10; $i++) { $now = (Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue).DisplayVersion; if ($now -eq $v2) { break }; Start-Sleep -Seconds 1 }
+  $entry = Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue
   $entryText = if ($entry) { ($entry.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' } else { 'the uninstall entry HKCU\...\Uninstall\KurokawaReader is gone' }
   # (Started again by the installer, /R: the new program running from the install folder.)
   $again = @(Get-CimInstance Win32_Process -Filter "Name='KurokawaReader.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $exe })
@@ -200,7 +200,7 @@ if ($setup2) {
 if (Test-Path $un) {
   Start-Process $un -ArgumentList '/S' -Wait
   for ($i = 0; $i -lt 60 -and (Test-Path $exe); $i++) { Start-Sleep -Seconds 1 }
-  Row 'uninstalled' (-not (Test-Path $exe) -and -not (Test-Path "$UN\KurokawaReader")) $dir
+  Row 'uninstalled' (-not (Test-Path $exe) -and -not (Test-Path "$UninstKey\KurokawaReader")) $dir
 } else { Row 'uninstalled' $false "no uninstaller at $un" }
 Row 'library (data folders) kept after uninstall' ((Test-Path (Join-Path $env:APPDATA 'app.kurokawa.reader\kr-ci-marker.txt')) -and (Test-Path (Join-Path $env:LOCALAPPDATA 'app.kurokawa.reader'))) 'app.kurokawa.reader in Roaming and Local'
 Row 'Electron data still kept' (Test-Path (Join-Path $edata 'kr-ci-electron-data.txt')) $edata

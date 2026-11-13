@@ -39,6 +39,8 @@ on:
       - 'apps/reader/src/handover.ts'
       - 'apps/reader/src/ui/handoversheet.ts'
       - 'apps/reader/tests/handover-electron.cjs'
+      # (Stage R6c: the setup program's page test.)
+      - 'apps/reader/tests/setupui.cjs'
   workflow_dispatch:
 
 permissions:
@@ -93,7 +95,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs apps/reader/desktop-tauri/src-tauri/src/archive.rs apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs apps/reader/desktop-tauri/src-tauri/src/updatelogic.rs apps/reader/desktop-tauri/src-tauri/src/bootlogic.rs apps/reader/desktop-tauri/src-tauri/bootdetect.rs apps/reader/desktop-tauri/src-tauri/src/handoverlogic.rs; do
+          for f in shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs apps/reader/desktop-tauri/src-tauri/src/scan.rs apps/reader/desktop-tauri/src-tauri/src/openargs.rs apps/reader/desktop-tauri/src-tauri/src/dlplan.rs apps/reader/desktop-tauri/src-tauri/src/browserlogic.rs apps/reader/desktop-tauri/src-tauri/apidetect.rs apps/reader/desktop-tauri/src-tauri/src/archive.rs apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs apps/reader/desktop-tauri/src-tauri/src/updatelogic.rs apps/reader/desktop-tauri/src-tauri/src/bootlogic.rs apps/reader/desktop-tauri/src-tauri/bootdetect.rs apps/reader/desktop-tauri/src-tauri/src/handoverlogic.rs apps/reader/desktop-tauri/setup/src-tauri/src/logic.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -149,6 +151,32 @@ jobs:
         working-directory: apps/reader/desktop-tauri
         run: node src-tauri/installer/onepage.cjs src-tauri --strict
 
+      # (Stage R6c.) The designed setup program (desktop-tauri/setup): a small Tauri window over R6b's installer, which
+      # is embedded in it (KR_SETUP_INNER) and run silently underneath with the choices made. Built in the app's own
+      # target folder, so the Tauri crates compiled for the app are reused where their features match. Here, before
+      # installtest.ps1, whose step 5 rebuilds the app as the next version in the same folder: the installer embedded
+      # is this version's, with its one screen. (A failed build here does not stop the steps after it — the
+      # self-tests, the engine test, the installer's own end-to-end run —; the job still fails, in «Setup program, end
+      # to end», which finds no program.)
+      - name: Setup program
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        run: |
+          $inner = Get-ChildItem 'target/release/bundle/nsis/*-setup.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $inner) { throw 'no NSIS installer to embed' }
+          $v = (node -p "require('../../package.json').version").Trim()
+          $env:KR_SETUP_INNER = $inner.FullName
+          $env:KR_SETUP_APP_BYTES = "$((Get-Item 'target/release/KurokawaReader.exe').Length)"
+          $env:CARGO_TARGET_DIR = (Resolve-Path 'target').Path
+          $t = Measure-Command { cargo build --release --manifest-path ../setup/src-tauri/Cargo.toml 2>&1 | Write-Host }
+          if ($LASTEXITCODE) { throw "setup program: cargo build failed ($LASTEXITCODE)" }
+          New-Item -ItemType Directory -Force -Path 'target/release/bundle/setup' | Out-Null
+          $out = "target/release/bundle/setup/KurokawaReader-$v-windows-x64.exe"
+          Copy-Item 'target/release/KurokawaReaderSetup.exe' $out -Force
+          "Setup program: $out, $('{0:N2}' -f ((Get-Item $out).Length / 1MB)) MB (embedded installer $('{0:N2}' -f ($inner.Length / 1MB)) MB), built in $('{0:N0}' -f $t.TotalSeconds) s" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
       # (Stage R6b.) The portable build: the program, the shipped 7-Zip beside it, and the marker that makes it say
       # so (update.rs: a portable copy is never updated by itself).
       - name: Portable zip
@@ -197,6 +225,7 @@ jobs:
             apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/deb/*.deb
             apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/dmg/*.dmg
             apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/portable/*.zip
+            apps/reader/desktop-tauri/src-tauri/target/**/release/bundle/setup/*.exe
 
       # The runtime self-test: the built app started with KR_SELFTEST=<file>; it writes its results there and exits
       # 0 (all required checks passed), 1 (one failed) or 2 (its own watchdog, KR_SELFTEST_TIMEOUT seconds). (Longer
@@ -349,6 +378,18 @@ jobs:
         working-directory: apps/reader/desktop-tauri/src-tauri
         run: ../installtest.ps1
 
+      # (Stage R6c.) The designed setup program end to end (desktop-tauri/setup/setuptest.ps1), after installtest.ps1
+      # has uninstalled the app (its data folders kept): REAL screenshots of its window (welcome, options, installing,
+      # done, update), how soon it shows; installed through the window with the desktop shortcut off, again over it
+      # with the kinds of file off (the /KRDESK and /KRASSOC switches of onepage.nsh), straight through with /S, then
+      # uninstalled — so the hand-over steps below start, as before, with nothing installed. Its pictures, summary and
+      # install trace go to the install artifact below.
+      - name: Setup program, end to end (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: apps/reader/desktop-tauri/src-tauri
+        run: ../setup/setuptest.ps1
+
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         with:
@@ -441,3 +482,14 @@ jobs:
           set -e
           node ../selftest-report.cjs "$RUNNER_TEMP/kr-handover-check.json" "$code" "Linux — hand-over (Electron → Tauri)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code
+
+      # (Stage R6c.) The setup program's page (desktop-tauri/setup/ui) in Chromium with its fake of the Rust side: every
+      # state in English and Arabic, light and dark, 100 % and 125 %, keyboard, right to left (tests/setupui.cjs). It
+      # needs no build. Last, and on Linux only, so it never keeps a build or a run above from happening.
+      - name: Setup program's page (Linux, Chromium)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        working-directory: apps/reader
+        run: |
+          for i in 1 2 3; do npm install --no-save --no-audit --no-fund playwright@1.48.2 && break; [ $i = 3 ] && exit 1; sleep 20; done
+          npx playwright install --with-deps chromium
+          node tests/setupui.cjs

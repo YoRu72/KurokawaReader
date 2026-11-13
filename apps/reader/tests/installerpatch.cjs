@@ -123,6 +123,21 @@ assert.ok(!/RMDir[^\n]*APPDATA/i.test(hooks), 'hooks.nsh never removes a data fo
 for (const h of ['NSIS_HOOK_PREINSTALL', 'NSIS_HOOK_POSTINSTALL', 'NSIS_HOOK_PREUNINSTALL', 'NSIS_HOOK_POSTUNINSTALL']) assert.match(hooks, new RegExp(`!macro ${h}\\s*\\n\\s*!insertmacro KR_TRACE "`), `${h} traced`);
 assert.match(hooks, /ReadEnvStr \$0 KR_INSTALL_TRACE\s*\n\s*\$\{IfNot\} \$\{Errors\}\s*\n\s*\$\{AndIf\} \$0 != ""/, 'the trace only with KR_INSTALL_TRACE');
 assert.match(page, /Function KrAfterInstall\s*\n\s*!ifmacrodef KR_TRACE\s*\n\s*!insertmacro KR_TRACE "success"/);
+// (Stage R6c.) The setup program's silent switches, /KRDESK=0|1 and /KRASSOC=0|1, read at the top of KrAfterInstall
+// — before the one screen's choices are applied, only when the screen was not used, never opening the app — and the
+// same names the setup program passes (setup/src-tauri/src/logic.rs, nsis_args).
+{
+  const fn = page.slice(page.indexOf('Function KrAfterInstall'), page.indexOf('FunctionEnd', page.indexOf('Function KrAfterInstall')));
+  const sw = fn.indexOf('${If} $KrGui != 1');
+  const apply = fn.indexOf('${If} $KrGui = 1');
+  assert.ok(sw > 0 && apply > sw, 'the switches are read before the choices are applied');
+  const block = fn.slice(sw, apply);
+  for (const s of ['/KRDESK=', '/KRASSOC=']) assert.ok(block.includes('${GetOptions} $CMDLINE "' + s + '" $0'), `${s} read`);
+  assert.match(block, /StrCpy \$KrGui 1/); assert.match(block, /StrCpy \$KrRun 0/); assert.ok(!/\bExec\b/.test(block), 'never opens the app');
+  assert.match(block, /\$\{If\} \$1 == "0"\s*\n\s*StrCpy \$KrDesk 0/); assert.match(block, /\$\{If\} \$2 == "0"\s*\n\s*StrCpy \$KrAssoc 0/);
+  const logic = fs.readFileSync(path.join(DIR, '..', '..', 'setup', 'src-tauri', 'src', 'logic.rs'), 'utf8');
+  assert.ok(logic.includes('"/KRDESK={}"') && logic.includes('"/KRASSOC={}"'), 'logic.rs passes the same switches');
+}
 // The compiled installer copied only over this version's bundle file (installtest.ps1 builds a second version beside
 // the first): the one named with the script's version, else the newest alone.
 {

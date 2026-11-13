@@ -205,6 +205,43 @@ Function KrAfterInstall
   !ifmacrodef KR_TRACE
     !insertmacro KR_TRACE "success"
   !endif
+  ; (Stage R6c: the designed setup program — setup/ — runs this installer silently with the choices as switches:
+  ; /KRDESK=0|1 /KRASSOC=0|1. Read here, so they are applied as the one screen's are: no desktop shortcut, the kinds
+  ; of file taken back. «Open when done» is the setup program's own. Without either switch nothing changes: the
+  ; updater's /P /R /UPDATE, /S /UPDATE, CI's /S and the one screen behave as in R6b.)
+  ${If} $KrGui != 1
+    StrCpy $1 ""
+    StrCpy $2 ""
+    ClearErrors
+    ${GetOptions} $CMDLINE "/KRDESK=" $0
+    ${IfNot} ${Errors}
+      StrCpy $1 $0 1
+    ${EndIf}
+    ClearErrors
+    ${GetOptions} $CMDLINE "/KRASSOC=" $0
+    ${IfNot} ${Errors}
+      StrCpy $2 $0 1
+    ${EndIf}
+    ClearErrors
+    ${If} "$1$2" != ""
+      ; (Either switch alone: the other choice left as Tauri's silent install made it.)
+      StrCpy $KrGui 1
+      StrCpy $KrRun 0
+      StrCpy $KrDesk 1
+      StrCpy $KrAssoc 1
+      ${If} $1 == "0"
+        StrCpy $KrDesk 0
+      ${EndIf}
+      ${If} $2 == "0"
+        StrCpy $KrAssoc 0
+      ${EndIf}
+      ; (Asked for and not there — an update, where Tauri's silent install makes none: made here.)
+      ${If} $1 == "1"
+      ${AndIfNot} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
+        CreateShortCut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
   ${If} $KrGui = 1
     ${If} $KrDesk = 0
       Delete "$DESKTOP\${PRODUCTNAME}.lnk"

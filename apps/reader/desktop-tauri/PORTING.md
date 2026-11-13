@@ -869,6 +869,79 @@ self-test and the engine test passed, three steps failed — none of them had ru
   version (else the newest alone). NSIS's warnings are harmless: `KrPre_2` (the licence page's wrapper, inside
   Tauri's `!ifdef LICENSE`) unreferenced, and `choowHowToInstall` — Tauri's own misspelt LangString.
 
+**R6, second CI run** (43483872854, 2344600). Linux and macOS passed (macOS's engine test is reported: «a highlight
+added» — the selection toolbar not shown, as in R5's first run —; «the place saved and restored» passed, paragraph
+347). Windows: the build, self-test, engine test and «Hand-over — Electron makes it» passed; two checks failed, and
+**neither is a product defect**:
+- *«installed version 0.61.0 → 0.61.1»* — **settled by the install trace: a fault of installtest.ps1.** The trace
+  (`install-trace.log`) shows the update's installer (`/P /R /UPDATE`) writing the entry (`postinstall v0.61.1
+  entry=[0.61.1]`, `success … entry=[0.61.1]`), no uninstaller running during the update, and the uninstaller of step
+  6 — run after the check — finding it still there (`preuninstall v0.61.1 entry=[0.61.1]`, `postuninstall entry=[]`).
+  Tauri's rendered script agrees (`nsis-0.61.1/installer.nsi`: in update mode `PageLeaveReinstall` goes straight to
+  `reinst_done`; the uninstall entry is written in `Section Install` before `NSIS_HOOK_POSTINSTALL`). The key was never
+  gone: PowerShell's variables are case-insensitive, so step 2's `$un = <uninstall.exe>` replaced `$UN` (the registry
+  path), and every later `"$UN\KurokawaReader"` named a file — the check could not have passed (nor «uninstalled» fail).
+  Renamed `$UninstKey` in installtest.ps1 and setup/setuptest.ps1 (which had the same clash); no installer change.
+- *«Hand-over — the Tauri build brings it»*: every book's progress, highlights, PDF highlights and pins differed only
+  in **the order of their keys** (the Electron snapshot's sorted, the brought records' as written) — the same values.
+  `handovercheck.js` now compares by content (keys sorted, arrays in order). Everything else passed: the offer with
+  its count (4 books, 3.3 MB) and the old data's folder, «Bring it now» (done in 0 s: 4 books, 6 highlights and notes),
+  «Free the space», the same ids, files and sizes, records, keys, settings, the custom icon, marked restored, the
+  screen not shown again, the text book at paragraph 120. (Linux, reported: the same four rows, and «the local AI's
+  models» missing — not required.)
+- Start-up, the installed app on Windows: cold paint 511 ms · ready 509 ms, warm paint 657 ms · ready 604 ms (the
+  paint mark now arrives). Self-test start-up rows (first paint): Windows 3303 ms for the bare program's first start (a new WebView2
+  profile), 537 ms for the installed one; Linux 1525 ms; macOS 4282 ms.
+
+## The setup program (stage R6c)
+
+**What it is** (`setup/`: its own small crate, `setup/src-tauri`, and its page, `setup/ui`): the Windows download,
+`KurokawaReader-<v>-windows-x64.exe` — a 720 × 480 frameless Tauri window (the app's Tauri/wry stack), Material 3
+Expressive like the app (its tokens, wavy progress, title-bar buttons; the icon's blue), in five languages (Windows'
+display language by default, a picker in the title bar; Arabic right to left), light or dark as Windows is. R6b's
+tested NSIS installer is embedded (build.rs: `KR_SETUP_INNER`) and run **silently underneath** with the choices made
+— `/S /KRDESK=0|1 /KRASSOC=0|1 /D=<folder>` (`logic.rs`; the two switches are read by `onepage.nsh`'s
+`KrAfterInstall`) — so files, registry, uninstaller, kinds of file, shortcuts and the Electron replacement are R6b's.
+**One screen**: the icon and name, «Install» («Update» over an earlier copy — this build's, updated where it is, or
+the Electron build's, replaced — with «Your library is kept»), a summary of what will happen, «Options» opening in
+place (folder through Windows' folder dialog, desktop shortcut, opening books with it, opening it when done); then the
+progress — preparing → copying files → shortcuts and file types → done, from what is really seen (the installer
+written out; KurokawaReader.exe's size growing against the build's size; uninstall.exe and the Start-menu shortcut
+written; the installer's exit) and never going back —; then «Open KurokawaReader» / «Close», or, on a failure, what
+failed in words (the installer's exit code: 1 cancelled, 2 stopped — the app running, a folder locked —, others by
+number; the folder not writable; the installer not written out) with «Try again» and «Use the classic installer».
+Enter installs; Esc closes (while installing it asks; closed, the install still finishes and the program ends after).
+**Without a window**: `/S`, `/P`, `--silent` pass straight through to the installer (its exit code returned); no
+WebView2 (its Evergreen runtime's registry keys, a rare Windows 10) or `--classic` → the installer's own one screen,
+which fetches WebView2 — never a blank window. **Start**: WebView2 and the app mode read (four reg.exe queries at
+once, tens of ms), the window shown in its colour before the page paints where Tauri has `background_color` (R6b's
+`bootdetect.rs`, read by `setup/src-tauri/build.rs`), else when the page says it has painted; the installer is
+written out and the installed copy found (`reg export`, UTF-16: paths in any script) while the person reads.
+**The page ⇄ Rust contract** is at the top of `setup/ui/setup.js` (`setup_detect`, `setup_browse`, `setup_install`,
+`setup_progress` polled, `setup_open_app`, `setup_classic`, `setup_close`, `setup_window`), with a fake of it in the
+page. **Tests**: `setup/src-tauri/src/logic.rs` (std only, CI); `tests/setupui.cjs` (Chromium: every state in English
+and Arabic, light and dark, at 100 % and 125 %; options → install(); update wording; failure and retry; keyboard;
+right to left; `--shots <dir>` for pictures; CI runs it last on Linux); `setup/setuptest.ps1` (CI, Windows: real
+screenshots, installed through the window with the shortcut off, over it with the kinds of file off — the uninstall
+entry checked after —, /S straight through, uninstalled; its install trace `setup-trace.log`); `tests/installerpatch.cjs`
+checks that `KrAfterInstall` reads the two switches the setup program passes.
+
+**Release files** (`release.yml`): the setup program is the Windows download people take,
+`KurokawaReader-<v>-windows-x64.exe`; R6b's plain NSIS installer stays `KurokawaReader-<v>-windows-x64-setup.exe` —
+the file the app's updater picks (`updatelogic.rs`, `desktop/rustswitch.cjs`, `src/updateCore.ts`; never the setup
+program), for unattended installs and as «the classic installer»; both are in `KurokawaReader-<v>-SHA256SUMS.txt`.
+**CI** (`tauri-check-reader.yml`, Windows): «Setup program» is built right after «One-page installer» (the installer
+embedded is this version's, before installtest.ps1 rebuilds the app as the next version; a failed build lets the
+steps after it run) and «Setup program, end to end» runs after «Installer, end to end» (which leaves the app
+uninstalled) and before the install artifact is uploaded and the hand-over steps start.
+
+**Unverified until CI compiles it**: `main.rs` against the resolved Tauri 2 and tauri-plugin-dialog 2 — the calls the
+app's own code does not make (`WebviewWindowBuilder::{resizable, maximizable, center}`, `WebviewWindow::is_visible`,
+`FileDialogBuilder::set_directory` — used by shell-rs —, `State::inner`), the `tauri/custom-protocol` feature as the
+crate's default (a plain `cargo build --release` embeds the page). **Until a real PC**: Win11's rounded corners and
+shadow on the frameless window, how soon it shows, SmartScreen's prompt for an unsigned download,
+`GetUserDefaultUILanguage` picking Arabic on an Arabic Windows.
+
 ## The hand-over (stage R6a)
 
 The owner's decision: the Rust build becomes the main download, an update «rebuilds the app and keeps the user's data

@@ -12,10 +12,12 @@
 #   4. passed straight through (/S, as the app's updater and unattended installs run it): exit 0, the kinds of file
 #      back;
 #   5. uninstalled silently.
-# Pictures and a summary go to $env:RUNNER_TEMP\kr-install (the workflow's install artifact).
+# Pictures and a summary go to $env:RUNNER_TEMP\kr-install (the workflow's install artifact), with the install trace
+# (setup-trace.log: installer/hooks.nsh's KR_TRACE lines for every install and uninstall the program runs).
 $ErrorActionPreference = 'Stop'
 $d = Join-Path $env:RUNNER_TEMP 'kr-install'
 New-Item -ItemType Directory -Force -Path $d | Out-Null
+$trace = Join-Path $d 'setup-trace.log'; $env:KR_INSTALL_TRACE = $trace
 $fails = New-Object System.Collections.ArrayList
 $rows = New-Object System.Collections.ArrayList
 function Row($name, $ok, $detail, $required = $true) {
@@ -34,6 +36,24 @@ function Shot($name) {
     $bmp.Save((Join-Path $d "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
   } catch { Write-Host "screenshot $name failed: $_" }
 }
+# The embedded installer (written out to %TEMP%\KurokawaReader-setup-<pid>\) and any uninstaller NSIS runs from a copy
+# in the temp folder (Un_*.exe, Au_*.exe), waited for until they have ended (60 s at most): the next step must not
+# start while one still runs.
+function Wait-Installers($instDir) {
+  for ($i = 0; $i -lt 240; $i++) {
+    $ps = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -like '*\KurokawaReader-setup-*' -or $_.Name -like 'Un_*.exe' -or $_.Name -like 'Au_*.exe' -or $_.ExecutablePath -eq (Join-Path $instDir 'uninstall.exe')) })
+    if (-not $ps.Count) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+# The uninstaller run silently and waited for (it starts a copy of itself from the temp folder and returns at once).
+function Uninstall-Silently($un, $instDir) {
+  if (-not (Test-Path $un)) { return }
+  Start-Process $un -ArgumentList '/S' -Wait
+  for ($i = 0; $i -lt 60 -and (Test-Path (Join-Path $instDir 'KurokawaReader.exe')); $i++) { Start-Sleep -Seconds 1 }
+  $null = Wait-Installers $instDir
+}
 function MB($f) { '{0:N2} MB' -f ((Get-Item $f).Length / 1MB) }
 function Stop-Setup($p) { try { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } } catch {}; Start-Sleep -Milliseconds 500 }
 function Epub-Opens-With-Us($exe) {
@@ -41,7 +61,7 @@ function Epub-Opens-With-Us($exe) {
   $cmd = if ($cls) { (Get-ItemProperty "HKCU:\Software\Classes\$cls\shell\open\command" -ErrorAction SilentlyContinue).'(default)' } else { '' }
   return ($cmd -like "*$exe*")
 }
-$UN = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+$UninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 $desk = [Environment]::GetFolderPath('Desktop'); $deskLnk = Join-Path $desk 'KurokawaReader.lnk'
 $dir = Join-Path $env:LOCALAPPDATA 'KurokawaReader'; $exe = Join-Path $dir 'KurokawaReader.exe'
 
@@ -52,8 +72,8 @@ $plain = Get-ChildItem 'target/release/bundle/nsis/*-setup.exe' | Sort-Object Le
 Row 'setup program size' $true "$(MB $s) ($($setup.Name)); the plain installer: $(if ($plain) { MB $plain.FullName } else { '?' })"
 
 # (A clean start: no copy, no shortcut.)
-$e0 = Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue
-if ($e0) { $un0 = ($e0.UninstallString -replace '"', '').Trim(); if (Test-Path $un0) { Start-Process $un0 -ArgumentList '/S' -Wait } ; Start-Sleep -Seconds 2 }
+$e0 = Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue
+if ($e0) { $un0 = ($e0.UninstallString -replace '"', '').Trim(); Uninstall-Silently $un0 (Split-Path $un0) }
 Remove-Item $deskLnk -ErrorAction SilentlyContinue
 
 # 1. Its window, for real: how soon it is there, welcome, then the options open.
@@ -73,7 +93,7 @@ $mid = $false; $done = $null
 for ($i = 0; $i -lt 600; $i++) {
   $el = ((Get-Date) - $t0).TotalMilliseconds
   if (-not $mid -and $el -gt 1300) { Shot 'setup-real-3-installing'; $mid = $true }
-  $v = (Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue).DisplayVersion
+  $v = (Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue).DisplayVersion
   if ($v -and (Test-Path $exe) -and (Test-Path (Join-Path $dir 'uninstall.exe')) -and ($el -gt 1500)) {
     # (The installer's own process gone: the install has ended.)
     $inner = Get-Process | Where-Object { $_.Path -like "*KurokawaReader-setup-*" } -ErrorAction SilentlyContinue
@@ -83,13 +103,14 @@ for ($i = 0; $i -lt 600; $i++) {
 }
 Start-Sleep -Milliseconds 900; Shot 'setup-real-4-done'
 Row 'install through the window' ($null -ne $done) $(if ($done) { "{0:N1} s from start to installed (window included)" -f ($done / 1000) } else { 'not installed in 60 s' })
-Row 'files and uninstall entry' ((Test-Path $exe) -and $null -ne (Get-ItemProperty "$UN\KurokawaReader" -ErrorAction SilentlyContinue)) $dir
+Row 'files and uninstall entry' ((Test-Path $exe) -and $null -ne (Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue)) $dir
 Row 'still running (shows «done», not closed: --auto keeps the app closed)' (-not $p.HasExited) "pid $($p.Id)" $false
 Row 'no desktop shortcut (chosen off: /KRDESK=0)' (-not (Test-Path $deskLnk)) $deskLnk
 Row '.epub opens with it (chosen on)' (Epub-Opens-With-Us $exe) '.epub'
 $start = Get-ChildItem (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs') -Recurse -Filter 'KurokawaReader.lnk' -ErrorAction SilentlyContinue
 Row 'Start-menu shortcut' ($start.Count -gt 0) (($start | ForEach-Object { $_.FullName }) -join '; ')
 Row 'the app not opened (open when done off)' (-not (Get-Process KurokawaReader -ErrorAction SilentlyContinue)) '' $false
+$null = Wait-Installers $dir
 Stop-Setup $p
 Get-Process KurokawaReader -ErrorAction SilentlyContinue | Stop-Process -Force
 
@@ -97,9 +118,12 @@ Get-Process KurokawaReader -ErrorAction SilentlyContinue | Stop-Process -Force
 $p = Start-Process $s -ArgumentList @('--auto', '--no-assoc') -PassThru
 Start-Sleep -Milliseconds 500; Shot 'setup-real-5-update'
 for ($i = 0; $i -lt 300 -and -not (Test-Path $deskLnk); $i++) { Start-Sleep -Milliseconds 100 }
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 1
+Row 'over it: the installer ended' (Wait-Installers $dir) 'the embedded installer and any uninstaller it ran'
 Row 'over an installed copy: desktop shortcut made (/KRDESK=1)' (Test-Path $deskLnk) $deskLnk
 Row '.epub no longer opens with it (/KRASSOC=0)' (-not (Epub-Opens-With-Us $exe)) '.epub'
+$e3 = Get-ItemProperty "$UninstKey\KurokawaReader" -ErrorAction SilentlyContinue
+Row 'over it: the uninstall entry kept' ($null -ne $e3 -and $e3.DisplayVersion) $(if ($e3) { "$($e3.DisplayName) $($e3.DisplayVersion) — $($e3.UninstallString)" } else { 'HKCU\...\Uninstall\KurokawaReader is gone' })
 Stop-Setup $p
 
 # 4. Straight through: /S.
@@ -110,8 +134,10 @@ Row 'temporary folder removed' (-not (Get-ChildItem $env:TEMP -Directory -Filter
 
 # 5. Uninstalled.
 $un = Join-Path $dir 'uninstall.exe'
-if (Test-Path $un) { Start-Process $un -ArgumentList '/S' -Wait; Start-Sleep -Seconds 3 }
-Row 'uninstalled' (-not (Test-Path $exe)) $dir
+Uninstall-Silently $un $dir
+Row 'uninstalled' (-not (Test-Path $exe) -and -not (Test-Path "$UninstKey\KurokawaReader")) $dir
+Row 'install trace (installer/hooks.nsh)' (Test-Path $trace) $(if (Test-Path $trace) { ((Get-Content $trace) | ForEach-Object { ($_ -split ' tick=')[0] }) -join ' → ' } else { 'not written' }) $false
+Remove-Item Env:KR_INSTALL_TRACE
 
 $md = @('### Windows — the designed setup program (setup/setuptest.ps1)', '', '| Check | Result | Detail |', '|---|---|---|') + $rows
 $md -join "`n" | Out-File (Join-Path $d 'setuptest.md') -Encoding utf8
