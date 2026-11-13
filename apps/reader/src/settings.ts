@@ -437,7 +437,7 @@ function load(): VisualSettings {
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
     if (!localStorage.getItem('kr.pinchMigrated')) { s.pdfPinchZoom = true; localStorage.setItem('kr.pinchMigrated', '1'); localStorage.setItem(KEY, JSON.stringify(s)); }
-    // 0.62: hyphenation is on by default. It was off by default and the whole settings object is stored at every change,
+    // 0.61.1: hyphenation is on by default. It was off by default and the whole settings object is stored at every change,
     // so a «false» left by the old default cannot be told from one chosen: it is turned on once for everyone; turned off
     // again after that, it stays off.
     if (!localStorage.getItem('kr.hyphenMigrated')) { s.hyphenate = true; localStorage.setItem('kr.hyphenMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
