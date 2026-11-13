@@ -303,13 +303,17 @@ pub fn check_script(app: &AppHandle) -> Option<String> {
     if !frame::begin("KRH") {
         return None;
     }
-    let expect = env_get("KRH_EXPECT").and_then(|p| read_json(Path::new(&p))).unwrap_or(Value::Null);
-    let cfg = json!({
-        "expect": expect,
-        "os": util::node_platform(),
-        "dataDir": app.path().app_data_dir().ok().map(|d| shell::lossy(&d)),
-    });
-    Some(format!("window.__KRH_CHECK__ = {};\n{}", cfg, CHECK_JS))
+    // (The expectation is put in the page AS WRITTEN — JSON is JavaScript —, only checked to be JSON: parsed into a
+    // serde_json Value and written again, a float can come back one unit in the last place off (serde_json's default
+    // float parsing is not exact: CI run 43514013594 compared a book's `pct` 0.4649031833359958 the page wrote with
+    // 0.46490318333599573 and failed the check). The page compares numbers as the Electron profile wrote them.)
+    let expect = env_get("KRH_EXPECT")
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .filter(|t| serde_json::from_str::<Value>(t).is_ok())
+        .unwrap_or_else(|| "null".to_string());
+    let os = json!(util::node_platform());
+    let data_dir = json!(app.path().app_data_dir().ok().map(|d| shell::lossy(&d)));
+    Some(format!("window.__KRH_CHECK__ = {{ \"expect\": {}, \"os\": {}, \"dataDir\": {} }};\n{}", expect.trim(), os, data_dir, CHECK_JS))
 }
 
 fn only_in_check() -> Result<(), String> {

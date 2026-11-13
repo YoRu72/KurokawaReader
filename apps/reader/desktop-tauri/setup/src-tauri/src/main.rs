@@ -88,7 +88,7 @@ fn env_path(k: &str) -> String {
 
 /// The installed copy: a `reg export` of HKCU\…\Uninstall (UTF-16: names and folders in any script come through
 /// whole), read by logic::find_copy.
-fn find_copy(tmp: &Path) -> logic::Existing {
+fn find_copy(tmp: &Path) -> (logic::Existing, logic::Existing) {
     let f = tmp.join("uninstall.reg");
     let ok = quiet(Command::new("reg").arg("export").arg(logic::UNINSTALL_KEY).arg(&f).arg("/y"))
         .stdout(Stdio::null())
@@ -98,7 +98,10 @@ fn find_copy(tmp: &Path) -> logic::Existing {
         .unwrap_or(false);
     let text = if ok { std::fs::read(&f).map(|b| logic::decode_reg_file(&b)).unwrap_or_default() } else { String::new() };
     let _ = std::fs::remove_file(&f);
-    logic::find_copy(&text, &env_path("LOCALAPPDATA"), &|p| Path::new(p).exists())
+    let la = env_path("LOCALAPPDATA");
+    let exists = |p: &str| Path::new(p).exists();
+    // (The copy installed now, and the Electron copy on its own: after an install that kept it, both are there.)
+    (logic::find_copy(&text, &la, &exists), logic::find_electron(&text, &la, &exists))
 }
 
 /// The Electron copy's data folder (%APPDATA%\KurokawaReader): whether its library was handed over (a finished
@@ -182,7 +185,7 @@ struct Shared {
     dark: Option<bool>,
     /// The installer written out (or found), or why not: ("missing" | "extract", detail).
     inner: Mutex<Option<Result<PathBuf, (String, String)>>>,
-    found: Mutex<Option<(logic::Existing, bool)>>,
+    found: Mutex<Option<(logic::Existing, bool, logic::Existing)>>,
     prog: Mutex<Prog>,
     running: AtomicBool,
     installed_dir: Mutex<String>,
@@ -325,15 +328,15 @@ fn run_inner_blocking(shared: &Shared, args: &[String]) -> i32 {
 
 #[tauri::command]
 async fn setup_detect(state: tauri::State<'_, Arc<Shared>>) -> Result<Value, String> {
-    let (e, desk) = wait_for(&state.found, Duration::from_secs(8))
-        .unwrap_or((logic::Existing { kind: "none", version: String::new(), dir: String::new() }, false));
+    let none = || logic::Existing { kind: "none", version: String::new(), dir: String::new() };
+    let (e, desk, el) = wait_for(&state.found, Duration::from_secs(8)).unwrap_or_else(|| (none(), false, none()));
     let inner_ok = matches!(wait_for(&state.inner, Duration::from_secs(30)), Some(Ok(_)));
     Ok(json!({
         "version": VERSION,
         "lang": state.lang,
         "dark": state.dark,
         "defaultDir": format!("{}\\KurokawaReader", env_path("LOCALAPPDATA")),
-        "existing": { "kind": e.kind, "version": e.version, "dir": e.dir, "desktop": desk, "old": old_of(&e) },
+        "existing": { "kind": e.kind, "version": e.version, "dir": e.dir, "desktop": desk, "old": old_of(&el) },
         "inner": inner_ok,
     }))
 }
@@ -356,7 +359,7 @@ async fn setup_browse(app: tauri::AppHandle, current: Option<String>) -> Result<
     }
 }
 
-/// The Electron copy's decision (logic::old_decision): "replace" | "keep" | "".
+/// The Electron copy's decision (logic::old_decision), from the Electron copy found on its own: "replace" | "keep" | "".
 fn old_of(e: &logic::Existing) -> &'static str {
     let (handed, library) = electron_data();
     logic::old_decision(e.kind, handed, library)
@@ -373,7 +376,7 @@ async fn setup_install(state: tauri::State<'_, Arc<Shared>>, options: Value) -> 
         desktop: options.get("desktop").and_then(|v| v.as_bool()).unwrap_or(true),
         assoc: options.get("assoc").and_then(|v| v.as_bool()).unwrap_or(true),
         // (Decided here, from the disk — never by the page: kept unless it is safe to replace.)
-        old: wait_for(&state.found, Duration::from_secs(8)).map(|(e, _)| old_of(&e).to_string()).unwrap_or_else(|| "keep".to_string()),
+        old: wait_for(&state.found, Duration::from_secs(8)).map(|(_, _, el)| old_of(&el).to_string()).unwrap_or_else(|| "keep".to_string()),
     };
     let s: Arc<Shared> = state.inner().clone();
     std::thread::spawn(move || {
@@ -399,7 +402,7 @@ async fn setup_open_app(state: tauri::State<'_, Arc<Shared>>) -> Result<(), Stri
 /// library over (the done screen's button).
 #[tauri::command]
 async fn setup_open_old(state: tauri::State<'_, Arc<Shared>>) -> Result<(), String> {
-    let e = wait_for(&state.found, Duration::from_secs(8)).map(|(e, _)| e).ok_or_else(|| "not found".to_string())?;
+    let e = wait_for(&state.found, Duration::from_secs(8)).map(|(_, _, el)| el).ok_or_else(|| "not found".to_string())?;
     if e.kind != "electron" || e.dir.is_empty() {
         return Err("no earlier version".into());
     }
@@ -487,8 +490,8 @@ fn main() {
         let s = shared.clone();
         std::thread::spawn(move || {
             let _ = std::fs::create_dir_all(&s.tmp);
-            let e = find_copy(&s.tmp);
-            *s.found.lock().unwrap() = Some((e, desktop_shortcut()));
+            let (e, el) = find_copy(&s.tmp);
+            *s.found.lock().unwrap() = Some((e, desktop_shortcut(), el));
         });
     }
     // (CI's switches, for its real screenshots and its end-to-end run: --options opens the options; --auto installs at

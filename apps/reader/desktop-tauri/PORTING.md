@@ -1129,3 +1129,10 @@ way between the builds.
   program }`, `kr_handover_open_old`). `/KROLD=keep|replace` passes the setup program's decision to the installer.
 - **Path filters**: `release-tools.yml` ignores `shared/shell-rs/**` (Tools does not use the crate yet); `release.yml`
   takes `shared/**`, so a change to the crate releases the Reader.
+- **CI run 43514013594 (Windows)**: two faults. (1) A small product defect — setuptest step 6's second install
+  passed no `/KROLD`: the setup program decided from «the copy installed now», which by then was this build's (the
+  first install had kept Electron beside it), so the Electron copy's decision was never made (the installer's own rule
+  still replaced it, correctly). The setup program now finds the Electron copy on its own (`logic::find_electron`),
+  whatever else is installed, and decides from it. (2) The hand-over check compared a book's `pct` one unit in the last
+  place off: `KRH_EXPECT` went through serde_json (its default float parsing is not exact) before reaching the page;
+  it is now put in the page as written, only checked to be JSON.

@@ -11,7 +11,8 @@
 //     lang:       'en' | 'ar' | 'ja' | 'ko' | 'zh' | ''   Windows' display language ('' = unknown)
 //     dark:       boolean                        Windows' app mode
 //     defaultDir: 'C:\\Users\\…\\AppData\\Local\\KurokawaReader'
-//     existing:   { kind: 'none' | 'rust' | 'electron', version?: '0.71.0', dir?: '…', desktop: boolean }
+//     existing:   { kind: 'none' | 'rust' | 'electron', version?: '0.71.0', dir?: '…', desktop: boolean, old: 'keep' | 'replace' | '' }
+//                 (`old`: the Electron copy's fate, found on its own — also beside an installed copy of this build)
 //                 an installed copy: this build's (rust — updated where it is) or the Electron build (replaced; its
 //                 library kept); `desktop`: whether it has a desktop shortcut now
 //     inner:      boolean                        whether the NSIS installer is there (embedded) — false: install fails
@@ -349,7 +350,7 @@
     if (S.result) {
       dLead.textContent = S.opening ? w('opening') : m === 'install' ? w('nowDone') : w('doneUpdated', { v: iso(info.version) });
       dWhere.textContent = S.result.dir || S.opts.dir;
-      const keep = !!e && e.kind === 'electron' && e.old === 'keep';
+      const keep = !!e && e.old === 'keep';
       dOld.hidden = !keep; oldBtn.hidden = !keep; if (keep) dOld.textContent = w('oldKeepDone');
       reason.textContent = failText(S.result);
     }
@@ -428,7 +429,7 @@
         if (leaving) return;
         // (The earlier copy kept — its library not handed over —: the window stays, so its note and button are read.)
         const e = S.info && S.info.existing;
-        if (e && e.kind === 'electron' && e.old === 'keep') { S.opening = false; paint(); return; }
+        if (e && e.old === 'keep') { S.opening = false; paint(); return; }
         void api.close();
       } else go('done');
     } else go('failed');

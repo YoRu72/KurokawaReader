@@ -320,6 +320,14 @@ pub fn find_copy(export: &str, local_appdata: &str, exists: &dyn Fn(&str) -> boo
             .unwrap_or_else(|| format!("{}\\{}", local_appdata.trim_end_matches('\\'), PRODUCT));
         return Existing { kind: "rust", version: k.get("DisplayVersion").unwrap_or("").to_string(), dir };
     }
+    find_electron(export, local_appdata, exists)
+}
+
+/// The Electron build's install alone, whether or not this build is installed too (after a first install that KEPT
+/// it, both are there): an entry whose DisplayName is KurokawaReader under another key, its folder holding
+/// resources\app.asar, else electron-builder's default folder → kind "electron", or "none".
+pub fn find_electron(export: &str, local_appdata: &str, exists: &dyn Fn(&str) -> bool) -> Existing {
+    let keys = parse_reg(export);
     for k in keys.iter() {
         if k.name().eq_ignore_ascii_case(PRODUCT) || !k.get("DisplayName").map(|n| n == PRODUCT).unwrap_or(false) {
             continue;
@@ -610,6 +618,9 @@ mod tests {
         // Both: this build first. InstallLocation preferred to the uninstaller's folder.
         let both = format!("{}[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\KurokawaReader]\r\n\"DisplayVersion\"=\"0.72.0\"\r\n\"InstallLocation\"=\"E:\\\\KR\\\\\"\r\n", el);
         assert_eq!(find_copy(&both, la, &|_| true), Existing { kind: "rust", version: "0.72.0".into(), dir: r"E:\KR".into() });
+        // (…and the Electron copy still found beside it — kept by an earlier install: its decision is still made.)
+        assert_eq!(find_electron(&both, la, &|p| p == r"D:\Old\KurokawaReader\resources\app.asar").dir, r"D:\Old\KurokawaReader");
+        assert_eq!(find_electron(EXPORT, la, &|_| false).kind, "none");
         // Neither location nor uninstaller: the default folder.
         let bare = format!("{}[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\KurokawaReader]\r\n\"DisplayVersion\"=\"0.72.0\"\r\n", EXPORT);
         assert_eq!(find_copy(&bare, la, &|_| false).dir, r"C:\Users\A\AppData\Local\KurokawaReader");
