@@ -89,6 +89,32 @@ export class UrlPool {
     const url = await this.fromZip(p.zip, p.path);
     if (url) el.setAttribute(p.attr, url);
     el.removeAttribute('data-kr-lazy');
+    if (url && p.attr === 'src' && el instanceof HTMLImageElement && this.root) { this.live.set(el, p); this.farObserver().observe(el); }
+  }
+  /**
+   * A picture shown once keeps its decoded pixels (megabytes each) for as long as it holds its source — a book of
+   * hundreds of pictures read through grew the page's memory by the size of every picture passed until the system
+   * ended it (the renderer killed: the app "crashed", or since 0.61.0 started again). So a picture far from the place
+   * read (beyond FAR screens, or in a chapter not shown) is let go: its source swapped for an empty picture of the same
+   * size (its box does not change — the text does not move) and made lazy again; near again, it is read back from the
+   * pool (the book's bytes are kept: no unzipping again). Only where the pictures are read near a scroller (the reader).
+   */
+  private live = new Map<Element, { zip: JSZip; path: string; attr: string }>();
+  private far: IntersectionObserver | null = null;
+  private farObserver(): IntersectionObserver {
+    this.far ??= new IntersectionObserver((entries) => { for (const e of entries) if (!e.isIntersecting) this.park(e.target); }, { root: this.root, rootMargin: `${UrlPool.FAR * 100}% 0px` });
+    return this.far;
+  }
+  static FAR = 5;
+  private park(el: Element): void {
+    const p = this.live.get(el); const img = el as HTMLImageElement;
+    // (Not yet decoded — its size unknown —: kept; it is looked at again when it next leaves.)
+    if (!p || !img.isConnected || !img.complete || !img.naturalWidth) return;
+    this.live.delete(el); this.far?.unobserve(el);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    img.setAttribute('src', `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'/%3E`);
+    img.setAttribute('data-kr-lazy', p.path); img.dataset.krParked = '1';
+    this.pending.set(el, p); this.observer().observe(el);
   }
   fromBlob(key: string, blob: Blob): string {
     if (this.urls.has(key)) return this.urls.get(key)!;
@@ -98,6 +124,7 @@ export class UrlPool {
   }
   dispose(): void {
     this.io?.disconnect(); this.io = null; this.pending.clear();
+    this.far?.disconnect(); this.far = null; this.live.clear();
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
     this.urls.clear();
   }

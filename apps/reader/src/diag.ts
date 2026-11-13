@@ -248,7 +248,7 @@ export function diagApplyNative(info: NativeCrashInfo): void {
       const s = x.main === false ? undefined : sessionAt(x.at);
       const quiet = s ? Math.round((x.at - s.at - s.ran) / 1000) : undefined;
       // (A session already told apart by its renderer's end keeps that; one closed normally or by the user is left so.)
-      if (s && !s.why && s.end !== 'left' && x.reason !== 10 && x.reason !== 11 && x.reason !== 16) {
+      if (s && (!s.why || s.why === 'unknown' || s.why === 'anr?') && s.end !== 'left' && x.reason !== 10 && x.reason !== 11 && x.reason !== 16) {
         s.why = x.reason === 6 ? 'anr' : x.reason === 3 ? 'app-memory' : x.reason === 4 || x.reason === 5 ? 'app-crash' : 'app-killed';
         s.det = [name, x.imp !== undefined ? `importance ${x.imp}` : '', x.pss ? `pss ${x.pss} MB` : '', x.rss ? `rss ${x.rss} MB` : '', quiet !== undefined ? `last record ${quiet} s before` : ''].filter(Boolean).join(', ');
       }
@@ -295,7 +295,7 @@ cost(() => {
   if (nav) { const dcl = () => { cur.st.dcl = Math.round(nav.domContentLoadedEventEnd) || undefined; }; if (nav.domContentLoadedEventEnd) dcl(); else document.addEventListener('DOMContentLoaded', () => setTimeout(dcl, 0), { once: true }); }
 });
 observe('longtask', (e) => { bucket(cur.lt, e.duration); if (screenNow === 'read') cur.ltRead += e.duration > 50 ? 1 : 0; if (e.duration > 100) worst(e.duration, 'task'); if (e.duration > 200) recentLong(e.duration, e.startTime); });
-observe('long-animation-frame', (e) => { bucket(cur.laf, e.duration); if (e.duration > 100) worst(e.duration, 'frame'); });
+observe('long-animation-frame', (e) => { bucket(cur.laf, e.duration); if (e.duration > 100) worst(e.duration, 'frame'); if (e.duration > 200 && !(cur.rlt ?? []).some(([, at]) => Math.abs(at - Math.round(e.startTime / 1000)) <= 1)) recentLong(e.duration, e.startTime); });
 observe('event', (e) => {
   const ev = e as PerformanceEventTiming; if (!/^(pointer|touch|click|key|mouse)/.test(ev.name)) return;
   cur.ev.slow++; cur.ev.maxDur = Math.max(cur.ev.maxDur, Math.round(ev.duration)); cur.ev.maxDelay = Math.max(cur.ev.maxDelay, Math.round(ev.processingStart - ev.startTime));

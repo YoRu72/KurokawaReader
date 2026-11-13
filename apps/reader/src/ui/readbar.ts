@@ -102,8 +102,12 @@ export function createReadBar(view: HTMLElement, onDispose: (fn: () => void) => 
   onDispose(onSettingsChange(build));
   // The clock, each quarter-minute; the battery, when it changes (where the device tells it — not every WebView does).
   const tick = window.setInterval(() => { if (shown) paint('clock'); }, 15000); onDispose(() => window.clearInterval(tick));
-  (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void }> }).getBattery?.()
-    .then((b) => { const on = () => { battery = Math.round(b.level * 100); paint('battery'); }; on(); b.addEventListener('levelchange', on); }).catch(() => undefined);
+  // (Its listener taken off with the reader: the battery object lives as long as the page, and a listener left on it
+  // kept the whole reader — the book's every element and picture with it — after the book was closed: each book
+  // opened stayed in memory until the system ended the page.)
+  let left = false; onDispose(() => { left = true; });
+  (navigator as Navigator & { getBattery?: () => Promise<{ level: number; addEventListener(t: string, f: () => void): void; removeEventListener(t: string, f: () => void): void }> }).getBattery?.()
+    .then((b) => { if (left) return; const on = () => { battery = Math.round(b.level * 100); paint('battery'); }; on(); b.addEventListener('levelchange', on); onDispose(() => b.removeEventListener('levelchange', on)); }).catch(() => undefined);
   return {
     el,
     set(v) { values = v; if (shown) spans.forEach((_, id) => { if (id !== 'clock' && id !== 'battery') paint(id); }); },

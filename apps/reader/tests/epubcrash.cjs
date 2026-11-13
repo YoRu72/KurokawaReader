@@ -14,7 +14,7 @@
 //     place read does not move — (src/formats/shared.ts UrlPool);
 //  5. reported, not required (NOTE lines — the engine decides when it lets go; see tests/perfbudget.cjs): elements
 //     kept after a big EPUB is opened and closed three times in each reading mode, and the memory's shape while it is
-//     read through in continuous mode.
+//     read through in continuous mode; chapter by chapter, nothing of a closed book may be kept (required).
 // (The books are made here: no fixtures. Elements waited for are visible ones.)
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os'); const zlib = require('zlib');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
@@ -142,7 +142,7 @@ async function importFile(p, file, re) {
 
   // ---- the app not responding: the system's exit record (ApplicationExitInfo REASON_ANR) for the main process.
   await p.evaluate((id) => { location.hash = `#/read/${id}`; }, bk.id); await visible(p, '.reader-flow .kr-content p'); await p.waitForTimeout(1500);
-  k = await kill(p); let exitAt = Date.now() + 9000;
+  k = await kill(p); await new Promise((r) => setTimeout(r, 9500)); let exitAt = Date.now() - 300;
   p = await page({ gone: [], exits: [{ at: exitAt, reason: 6, status: 0, imp: 100, pss: 412, rss: 610, main: true }, { at: exitAt - 1, reason: 2, main: false }] }, k.kept);
   await p.goto(base); await visible(p, '.library-view, .reader-view'); await p.waitForTimeout(3000);
   d = await data(p); prev = d.sessions.find((x) => x.at === k.at);
@@ -153,7 +153,7 @@ async function importFile(p, file, re) {
 
   // ---- killed for memory (REASON_LOW_MEMORY).
   await p.evaluate((id) => { location.hash = `#/read/${id}`; }, bk.id); await visible(p, '.reader-flow .kr-content p'); await p.waitForTimeout(1500);
-  k = await kill(p); exitAt = Date.now() + 500;
+  k = await kill(p); await new Promise((r) => setTimeout(r, 800)); exitAt = Date.now() - 300;
   p = await page({ gone: [], exits: [{ at: exitAt, reason: 3, imp: 400, pss: 900, main: true }] }, k.kept);
   await p.goto(base); await visible(p, '.library-view, .reader-view'); await p.waitForTimeout(3000);
   d = await data(p); prev = d.sessions.find((x) => x.at === k.at);
@@ -162,7 +162,7 @@ async function importFile(p, file, re) {
   // ---- no word from the native app: a task of 5 s in the last minute → ANR suspected; else "cause unknown".
   await p.evaluate(() => { location.hash = '#/'; }); await visible(p, '.library-view'); await p.waitForTimeout(500);
   await p.evaluate((id) => { location.hash = `#/read/${id}`; }, bk.id); await visible(p, '.reader-flow .kr-content p'); await p.waitForTimeout(1200);
-  await p.evaluate(() => { const t = performance.now(); while (performance.now() - t < 5200) { /* the main thread held */ } });
+  await p.evaluate(() => new Promise((res) => setTimeout(() => { const t = performance.now(); while (performance.now() - t < 5200) { /* the main thread held */ } setTimeout(res, 50); }, 0)));
   await p.waitForTimeout(1500);
   const sawLong = await p.evaluate(() => { const s = window.__krDiag.data().sessions.slice(-1)[0]; return (s.rlt ?? []).some(([ms]) => ms >= 5000); });
   k = await kill(p);
@@ -181,4 +181,68 @@ async function importFile(p, file, re) {
   await br.close(); server.close(); fs.rmSync(TMP, { recursive: true, force: true }); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
 
-async function partTwo() { /* filled in below */ }
+async function partTwo(br, base) {
+  const ctxFor = async (mode) => {
+    const c = await br.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, serviceWorkers: 'block', locale: 'en' });
+    const p = await c.newPage(); p.on('pageerror', (e) => console.log('page error: ' + e.message));
+    await p.goto(base); await p.evaluate((m) => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ readingMode: m })); }, mode);
+    await p.reload(); await visible(p, '.library-view');
+    const cdp = await c.newCDPSession(p); await cdp.send('Performance.enable'); return { c, p, cdp };
+  };
+  // ---- 4. Pictures far from the place read are let go, and come back near — the place read not moved.
+  const PICS = path.join(TMP, 'pictures.epub'); await makeEpub(PICS, { title: 'Picture Walk', chapters: 40, paras: 12, pictureEvery: 1 });
+  for (const mode of ['continuous', 'chapters']) {
+    const { c, p } = await ctxFor(mode);
+    const bk = await importFile(p, PICS, 'Picture Walk');
+    await p.evaluate((id) => { location.hash = `#/read/${id}`; }, bk.id); await visible(p, '.reader-flow .kr-content p');
+    await p.waitForFunction(() => !document.querySelector('.kr-content .kr-shell'), null, { timeout: 60000 }); await p.waitForTimeout(1500);
+    const loaded = () => p.evaluate(() => document.querySelectorAll('.kr-content img[src^="blob:"]').length);
+    const step = async () => { await p.evaluate((mode) => { const sc = document.querySelector('.reader-scroll'); if (mode === 'chapters' && sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) document.dispatchEvent(new CustomEvent('kr:command', { detail: 'nextChapter' })); else sc.scrollTop += sc.clientHeight * 0.9; }, mode); await p.waitForTimeout(120); };
+    let most = 0; for (let i = 0; i < 160; i++) { await step(); if (i % 10 === 9) most = Math.max(most, await loaded()); }
+    await p.waitForTimeout(800); const after = await loaded();
+    ok(`[${mode}] pictures far from the place read are let go: at most ${most} loaded at once while 40 were passed (now ${after})`, most > 0 && most <= 14 && after <= 14, { most, after });
+    // Back to a picture passed long ago: it is shown again, and the place does not move while it comes back.
+    // (Chapter by chapter: back to the third chapter; continuous: the paragraph is on the page all along.)
+    if (mode === 'chapters') for (let i = 0; i < 60 && !(await p.evaluate(() => { const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('[C3-P10]')); return !!el && !el.closest('[hidden]'); })); i++) { await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'prevChapter' }))); await p.waitForTimeout(150); }
+    const at = await p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('[C3-P10]')); sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top; return Math.round(el.getBoundingClientRect().top); });
+    await p.waitForTimeout(1500);
+    const now = await p.evaluate(() => { const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('[C3-P10]')); const img = el.closest('.kr-chapter').querySelector('img'); return { top: Math.round(el.getBoundingClientRect().top), img: img ? { blob: img.getAttribute('src')?.startsWith('blob:'), w: img.naturalWidth, h: Math.round(img.getBoundingClientRect().height) } : null }; });
+    ok(`[${mode}] a picture passed long ago comes back (its own picture, at its size), the paragraph read not moved`, now.img && now.img.blob && now.img.w === 600 && now.img.h > 100 && Math.abs(now.top - at) <= 2, { at, now });
+    await c.close();
+  }
+
+  // ---- 5. Reported, not required: elements kept after a big EPUB opened and closed three times; the memory's shape.
+  const BIG = path.join(TMP, 'big.epub'); await makeEpub(BIG, { title: 'Big Walk', chapters: 240, paras: 40, pictureEvery: 6 });
+  for (const mode of ['continuous', 'chapters']) {
+    const { c, p, cdp } = await ctxFor(mode);
+    const nodes = async () => { await cdp.send('HeapProfiler.collectGarbage'); await cdp.send('HeapProfiler.collectGarbage'); return (await cdp.send('Memory.getDOMCounters')).nodes; };
+    const bk = await importFile(p, BIG, 'Big Walk'); await p.waitForTimeout(1000);
+    const n0 = await nodes(); const kept = [];
+    for (let i = 0; i < 3; i++) {
+      await p.evaluate((id) => { location.hash = `#/read/${id}`; }, bk.id); await visible(p, '.reader-flow .kr-content p');
+      await p.waitForFunction(() => !document.querySelector('.kr-content .kr-shell'), null, { timeout: 90000 }); await p.waitForTimeout(800);
+      for (let j = 0; j < 40; j++) { await p.evaluate((mode) => { const sc = document.querySelector('.reader-scroll'); if (mode === 'chapters' && sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) document.dispatchEvent(new CustomEvent('kr:command', { detail: 'nextChapter' })); else sc.scrollTop += sc.clientHeight * 3; }, mode); await p.waitForTimeout(60); }
+      await p.evaluate(() => { location.hash = '#/'; }); await visible(p, '.library-view'); await p.waitForTimeout(1500);
+      kept.push((await nodes()) - n0);
+    }
+    const grow = kept[2] - kept[0];
+    // (Chapter by chapter, nothing of a closed book may stay: before 0.61.1 the reading bar's battery listener kept the
+    // whole reader — ~20,000 elements of this book — at each close. Continuous reading: reported, not required — the
+    // engine decides when it lets go of chapters laid out with content-visibility; see tests/perfbudget.cjs.)
+    if (mode === 'chapters') ok(`[${mode}] a 240-chapter EPUB opened, read and closed three times: nothing of it kept (elements beyond the library's after each close ${kept.join(' / ')})`, grow <= 3000 && kept[0] <= 3000, kept);
+    else console.log(Math.abs(grow) <= 3000 && kept[0] <= 3000 ? 'ok  ' : 'NOTE', `[${mode}] a 240-chapter EPUB opened, read and closed three times: elements kept beyond the library's after each close ${kept.join(' / ')} (aim: none; growth ${grow})`);
+    if (mode === 'continuous') {
+      await p.evaluate((id) => { location.hash = `#/read/${id}`; }, bk.id); await visible(p, '.reader-flow .kr-content p');
+      await p.waitForFunction(() => !document.querySelector('.kr-content .kr-shell'), null, { timeout: 90000 });
+      const shape = [];
+      for (let t = 0; t < 6; t++) {
+        for (let j = 0; j < 50; j++) { await p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); sc.scrollTop += sc.clientHeight * 2; }); await p.waitForTimeout(40); }
+        await cdp.send('HeapProfiler.collectGarbage');
+        const m = Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
+        shape.push(`${Math.round(m.JSHeapUsedSize / 1048576)}MB/${Math.round(m.Nodes / 1000)}k/${m.LayoutObjects}lo/${await p.evaluate(() => document.querySelectorAll('.kr-content img[src^="blob:"]').length)}pic`);
+      }
+      console.log('NOTE', `[continuous] memory while read through (JS heap / nodes / layout objects / pictures loaded, every 100 screens): ${shape.join(' · ')}`);
+    }
+    await c.close();
+  }
+}

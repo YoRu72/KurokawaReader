@@ -62,16 +62,23 @@ public class MainActivity extends BridgeActivity {
     }
 
     /** The renderer's end kept (its time, whether it crashed, its priority then, the app on screen or not), the last
-     *  few only. Returns how many ends fall within GONE_WINDOW_MS, this one counted. */
+     *  few only. Returns how many ends in this process fall within GONE_WINDOW_MS, this one counted. */
+    /** The renderer's ends in this process (it outlives the activity made again): the loop guard's count — the record
+     *  in the preferences is handed to the page and let go at each start, so it cannot count them. */
+    private static final java.util.ArrayDeque<Long> GONE_TIMES = new java.util.ArrayDeque<>();
+
     static synchronized int noteGone(Context ctx, boolean crashed, int prio, boolean fg) {
-        long now = System.currentTimeMillis(); int recent = 1;
+        long now = System.currentTimeMillis();
+        GONE_TIMES.addLast(now);
+        while (!GONE_TIMES.isEmpty() && now - GONE_TIMES.peekFirst() > GONE_WINDOW_MS) GONE_TIMES.pollFirst();
+        int recent = GONE_TIMES.size();
         try {
             SharedPreferences sp = ctx.getSharedPreferences(CRASH_PREFS, Context.MODE_PRIVATE);
             org.json.JSONArray was = new org.json.JSONArray(sp.getString("gone", "[]"));
             org.json.JSONArray all = new org.json.JSONArray();
             for (int i = Math.max(0, was.length() - 9); i < was.length(); i++) {
                 org.json.JSONObject o = was.optJSONObject(i); if (o == null) continue;
-                all.put(o); if (now - o.optLong("at", 0) <= GONE_WINDOW_MS) recent++;
+                all.put(o);
             }
             org.json.JSONObject o = new org.json.JSONObject();
             o.put("at", now); o.put("crashed", crashed); o.put("prio", prio); o.put("fg", fg);
