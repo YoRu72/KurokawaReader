@@ -38,7 +38,7 @@ export interface DiagSession {
   /** Memory while reading, every half minute (the last few): [s from the start, JS heap MB (-1: not told), DOM elements
    *  (thousands), chapters made, pictures loaded]. */
   ms?: number[][];
-  /** The last long tasks (over 200 ms): [ms, s from the start]. */
+  /** The last long frames (over 200 ms; a long task is one): [ms, s from the start]. */
   rlt?: number[][];
   /** Errors nothing caught, by name only (TypeError: 2…), and promises rejected with none to hear. */
   errs?: Record<string, number>;
@@ -217,48 +217,10 @@ export function diagError(x: unknown, how: 'error' | 'rejection'): void {
   if (first) diagEvent('jserr', { name: key, scr: screenNow }); else later();
 }
 
-/* ---- why an end came: the native app's word ---- */
-/** What the Android app kept (KurokawaPlugin.takeCrashInfo): its renderer's ends, the last memory warning, and why its
- *  earlier processes ended (ApplicationExitInfo: reason, importance, memory). */
-export interface NativeCrashInfo {
-  gone?: { at: number; crashed?: boolean; prio?: number; fg?: boolean; trim?: number; trimAgo?: number }[];
-  exits?: { at: number; reason: number; status?: number; imp?: number; pss?: number; rss?: number; main?: boolean }[];
-  trim?: number; trimAt?: number; sdk?: number; error?: string;
-}
-/** ApplicationExitInfo's reasons (their numbers), named. */
-const EXIT: Record<number, string> = { 0: 'unknown', 1: 'exit self', 2: 'signaled', 3: 'low memory', 4: 'crash', 5: 'native crash', 6: 'anr', 7: 'init failure', 8: 'permission change', 9: 'excessive resource use', 10: 'user requested', 11: 'user stopped', 12: 'dependency died', 13: 'other', 14: 'freezer', 15: 'package state change', 16: 'package updated' };
-/** The renderer's priority at its end (WebView.RENDERER_PRIORITY_*). */
-const PRIO: Record<number, string> = { 0: 'waived', 1: 'bound', 2: 'important' };
-/** The session (not the running one) whose time holds `at`: begun before it, the next begun after it. */
-function sessionAt(at: number): DiagSession | undefined {
-  const s = store.s; for (let i = s.length - 2; i >= 0; i--) if (s[i] !== cur && s[i].at <= at && s[i + 1].at > at) return s[i];
-  return undefined;
-}
-/** The native app's word on how earlier sessions ended, put on them and into the events. */
-export function diagApplyNative(info: NativeCrashInfo): void {
-  cost(() => {
-    for (const g of info.gone ?? []) {
-      const s = sessionAt(g.at); const quiet = s ? Math.round((g.at - s.at - s.ran) / 1000) : undefined;
-      const det = [g.crashed ? 'crashed' : 'killed', g.prio !== undefined && g.prio >= 0 ? `priority ${PRIO[g.prio] ?? g.prio}` : '', g.fg === false ? 'app in background' : g.fg ? 'app on screen' : '', g.trim ? `memory warning ${g.trim} ${Math.round((g.trimAgo ?? 0) / 1000)} s before` : '', quiet !== undefined ? `last record ${quiet} s before` : ''].filter(Boolean).join(', ');
-      if (s) { s.why = g.crashed ? 'renderer-crash' : 'renderer-killed'; s.det = det; if (!s.end || s.end === 'bg') s.end = 'unexpected'; }
-      store.e.push({ t: g.at, k: 'gone', how: g.crashed ? 'renderer crashed' : 'renderer killed', ...(g.prio !== undefined && g.prio >= 0 ? { prio: PRIO[g.prio] ?? g.prio } : {}), fg: g.fg, ...(g.trim ? { trim: g.trim } : {}), ...(quiet !== undefined ? { quiet } : {}) });
-    }
-    for (const x of info.exits ?? []) {
-      const name = EXIT[x.reason] ?? `reason ${x.reason}`;
-      const s = x.main === false ? undefined : sessionAt(x.at);
-      const quiet = s ? Math.round((x.at - s.at - s.ran) / 1000) : undefined;
-      // (A session already told apart by its renderer's end keeps that; one closed normally or by the user is left so.)
-      if (s && (!s.why || s.why === 'unknown' || s.why === 'anr?') && s.end !== 'left' && x.reason !== 10 && x.reason !== 11 && x.reason !== 16) {
-        s.why = x.reason === 6 ? 'anr' : x.reason === 3 ? 'app-memory' : x.reason === 4 || x.reason === 5 ? 'app-crash' : 'app-killed';
-        s.det = [name, x.imp !== undefined ? `importance ${x.imp}` : '', x.pss ? `pss ${x.pss} MB` : '', x.rss ? `rss ${x.rss} MB` : '', quiet !== undefined ? `last record ${quiet} s before` : ''].filter(Boolean).join(', ');
-      }
-      store.e.push({ t: x.at, k: 'exit', reason: name, ...(x.main === false ? { proc: 'other' } : {}), ...(x.imp !== undefined ? { imp: x.imp } : {}), ...(x.pss ? { pss: x.pss } : {}), ...(x.rss ? { rss: x.rss } : {}), ...(quiet !== undefined ? { quiet } : {}) });
-    }
-    if (info.trimAt && !store.e.some((e) => e.k === 'trim' && e.t === info.trimAt)) store.e.push({ t: info.trimAt, k: 'trim', level: info.trim, src: 'native' });
-    store.e.sort((a, b) => a.t - b.t);
-  });
-  diagFlush();
-}
+/* ---- why an end came: the native app's word (src/diagnative.ts, loaded when there is one) ---- */
+export type { NativeCrashInfo } from './diagnative';
+/** The record itself and the session running, for diagnative.ts. */
+export function diagStore(): { s: DiagSession[]; e: DiagEvent[]; cur: DiagSession } { return { s: store.s, e: store.e, cur }; }
 
 /** The record as it is now (the page reads it; the current session last). */
 export function diagData(): { sessions: DiagSession[]; events: DiagEvent[]; overhead: number; since: number } {
@@ -284,7 +246,7 @@ cost(() => {
     prev.end = prev.book || readingMark ? 'unexpected' : prev.hid ? 'bg' : 'unexpected';
     // (A guess until the native app says more: a task of 5 s or longer in its last minute, on screen — the system's
     // "not responding" comes at 5 s.)
-    if (prev.end === 'unexpected' && !prev.hid && (prev.rlt ?? []).some(([ms, at]) => ms >= 5000 && at >= prev.ran / 1000 - 60)) { prev.why = 'anr?'; prev.det = 'a task of 5 s or more in its last minute'; }
+    if (prev.end === 'unexpected' && !prev.hid && (prev.rlt ?? []).some(([ms, at]) => ms >= 5000 && at >= prev.ran / 1000 - 60)) { prev.why = 'anr?'; prev.det = 'task >= 5 s in last min'; }
     else if (prev.end === 'unexpected') prev.why = 'unknown';
     store.e.push({ t: Date.now(), k: 'ended', how: prev.end, scr: prev.scr, bg: prev.hid, book: prev.book || readingMark, ran: Math.round(prev.ran / 1000) });
   }
@@ -294,8 +256,8 @@ cost(() => {
   const nav = performance.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined;
   if (nav) { const dcl = () => { cur.st.dcl = Math.round(nav.domContentLoadedEventEnd) || undefined; }; if (nav.domContentLoadedEventEnd) dcl(); else document.addEventListener('DOMContentLoaded', () => setTimeout(dcl, 0), { once: true }); }
 });
-observe('longtask', (e) => { bucket(cur.lt, e.duration); if (screenNow === 'read') cur.ltRead += e.duration > 50 ? 1 : 0; if (e.duration > 100) worst(e.duration, 'task'); if (e.duration > 200) recentLong(e.duration, e.startTime); });
-observe('long-animation-frame', (e) => { bucket(cur.laf, e.duration); if (e.duration > 100) worst(e.duration, 'frame'); if (e.duration > 200 && !(cur.rlt ?? []).some(([, at]) => Math.abs(at - Math.round(e.startTime / 1000)) <= 1)) recentLong(e.duration, e.startTime); });
+observe('longtask', (e) => { bucket(cur.lt, e.duration); if (screenNow === 'read') cur.ltRead += e.duration > 50 ? 1 : 0; if (e.duration > 100) worst(e.duration, 'task'); });
+observe('long-animation-frame', (e) => { bucket(cur.laf, e.duration); if (e.duration > 100) worst(e.duration, 'frame'); if (e.duration > 200) recentLong(e.duration, e.startTime); });
 observe('event', (e) => {
   const ev = e as PerformanceEventTiming; if (!/^(pointer|touch|click|key|mouse)/.test(ev.name)) return;
   cur.ev.slow++; cur.ev.maxDur = Math.max(cur.ev.maxDur, Math.round(ev.duration)); cur.ev.maxDelay = Math.max(cur.ev.maxDelay, Math.round(ev.processingStart - ev.startTime));
@@ -322,22 +284,22 @@ let beats = 0;
 setInterval(() => {
   if (document.visibilityState !== 'visible') return;
   beats++;
-  if (cur.book && beats % 3 === 0) { const w = window as Window & { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }; if (w.requestIdleCallback) w.requestIdleCallback(() => { if (cur.book) diagSample(); }, { timeout: 5000 }); else diagSample(); }
+  if (cur.book && beats % 3 === 0) setTimeout(() => { if (cur.book) diagSample(); }, 0);
   if (cur.book || beats % 3 === 0) later();
 }, 10000);
 // Errors nothing caught, by name; the system's memory warnings (MainActivity.onTrimMemory → `kr:trim`).
 // (The browser's own notice that a ResizeObserver went round in a loop comes as an error with no error object: named so —
 // its message is only looked at, never kept.)
-addEventListener('error', (e) => { const ev = e as ErrorEvent; if (ev.error === undefined && !ev.message) return; diagError(ev.error ?? { name: /^ResizeObserver loop/.test(ev.message ?? '') ? 'ResizeObserverLoop' : 'Error' }, 'error'); });
+addEventListener('error', (e) => { const ev = e as ErrorEvent; diagError(ev.error ?? { name: /^ResizeObserver loop/.test(ev.message ?? '') ? 'ResizeObserverLoop' : 'Error' }, 'error'); });
 addEventListener('unhandledrejection', (e) => diagError((e as PromiseRejectionEvent).reason, 'rejection'));
 document.addEventListener('kr:trim', (e) => diagEvent('trim', { level: Number((e as CustomEvent).detail) || 0, scr: screenNow, book: cur.book }));
 // The native app's word on how the last sessions ended (Android), a moment after the start.
 setTimeout(() => {
-  const k = (window as unknown as { Capacitor?: { Plugins?: { Kurokawa?: { takeCrashInfo?(): Promise<NativeCrashInfo> } } } }).Capacitor?.Plugins?.Kurokawa;
-  if (k?.takeCrashInfo) void k.takeCrashInfo().then((info) => { if (info) diagApplyNative(info); }).catch(() => undefined);
+  const k = (window as unknown as { Capacitor?: { Plugins?: { Kurokawa?: { takeCrashInfo?(): Promise<import('./diagnative').NativeCrashInfo> } } } }).Capacitor?.Plugins?.Kurokawa;
+  if (k?.takeCrashInfo) void k.takeCrashInfo().then((info) => (info ? import('./diagnative').then((m) => m.diagApplyNative(info)) : undefined)).catch(() => undefined);
 }, 1500);
 // The storage's size, once, well after the start.
 setTimeout(() => void navigator.storage?.estimate?.().then((s) => { cur.env.sto = `${Math.round((s.usage ?? 0) / 1048576)}/${Math.round((s.quota ?? 0) / 1048576)} MB`; later(); }).catch(() => undefined), 8000);
 diagFlush();
 // (For tests and for a look from the WebView's inspector.)
-(window as unknown as { __krDiag?: unknown }).__krDiag = { data: diagData, flush: diagFlush, event: diagEvent, clear: () => diagClear(), cap: DIAG_CAP, sample: diagSample, native: diagApplyNative };
+(window as unknown as { __krDiag?: unknown }).__krDiag = { data: diagData, flush: diagFlush, event: diagEvent, clear: () => diagClear(), cap: DIAG_CAP, sample: diagSample };
