@@ -255,6 +255,10 @@ export interface VisualSettings {
   /** Android: a band in the middle of each side edge kept from the system's back gesture while sideways swipes
    *  turn chapters and the bars are hidden, so a swipe begun there reaches the page. Off by default (0.61.1). */
   edgeGuard: boolean;
+  /** A sideways swipe turns the chapter while a book is read chapter by chapter (a phone). */
+  swipeTurn: boolean;
+  /** How short or quick a sideways swipe may be and still turn (views/reader.ts SWIPE). */
+  swipeSensitivity: 'low' | 'normal' | 'high';
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -423,6 +427,8 @@ export const DEFAULTS: VisualSettings = {
   volumeSwap: false,
   backTwiceLeave: false,
   edgeGuard: false,
+  swipeTurn: true,
+  swipeSensitivity: 'normal',
 };
 
 const KEY = 'kr.visual';
@@ -475,7 +481,7 @@ const GLOBAL_ONLY = new Set<string>([
   // updates, jobs, the app on the device
   'autoUpdateCheck', 'updateChannel', 'updateEvery', 'updateAutoDownload', 'updateInstaller', 'jobNotify', 'appName', 'importMode', 'importButton', 'openLastOnLaunch', 'bookPage',
   // the device's keys and gestures while reading
-  'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard',
+  'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library
   'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
   // lists the reader builds up for every book

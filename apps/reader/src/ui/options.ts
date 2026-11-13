@@ -240,6 +240,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   }
   if (fits('notIos')) grid.append(toggle([t('backTwiceLeave'), 'backTwiceLeave'], s.backTwiceLeave, (v) => updateSettings({ backTwiceLeave: v })), h('p', { class: 'hint' }, t('backTwiceLeaveHint')));
   if (fits('android')) grid.append(toggle([t('edgeGuard'), 'edgeGuard'], s.edgeGuard, (v) => updateSettings({ edgeGuard: v })), h('p', { class: 'hint' }, t('edgeGuardHint')));
+  // Sideways swipes that turn chapters (a phone): on or off, and how short or quick a swipe may be (views/reader.ts SWIPE).
+  grid.append(...only('phone', toggle([t('swipeTurn'), 'swipeTurn'], s.swipeTurn, (v) => { updateSettings({ swipeTurn: v }); rerender(); })));
+  if (s.swipeTurn && fits('phone')) grid.append(section([t('swipeSensitivity'), 'swipeSensitivity'], segmented([['low', t('swipeLow')], ['normal', t('swipeNormal')], ['high', t('swipeHigh')]] as [VisualSettings['swipeSensitivity'], string][], s.swipeSensitivity, (v) => { updateSettings({ swipeSensitivity: v }); rerender(); })));
   grid.append(...only('touchScreen', toggle([t('pdfPinchZoom'), 'pdfPinchZoom'], s.pdfPinchZoom, (v) => updateSettings({ pdfPinchZoom: v }))));
   grid.append(toggle([t('cropMargins'), 'pdfAutoCrop'], s.pdfAutoCrop, (v) => updateSettings({ pdfAutoCrop: v })), h('p', { class: 'hint' }, t('cropMarginsHint')));
   // The reader's buttons — where each lives, where the toolbar and the PDF's page bar stand, how they look: one sheet

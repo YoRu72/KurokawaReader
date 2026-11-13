@@ -1152,6 +1152,73 @@ public class KurokawaPlugin extends Plugin {
         try { v.setSystemGestureExclusionRects(rects); } catch (Exception ignored) {}
     }
 
+    /*
+     * The system's own Back zone at the side edges, for the page (src/native.ts getGestureInsets, src/readkeys.ts): the
+     * left and right system gesture insets (WindowInsets.getSystemGestureInsets, Android 10 / API 29+; their width
+     * follows "Back sensitivity") in CSS px (device px / density), and the navigation: "gesture" when a side has a zone
+     * (or the system's navigation_mode says 2), "buttons" otherwise, "old" below Android 10 (0 and 0). Told again as
+     * the event "gestureInsets" when they change: looked at after each layout of the window (once the page has asked)
+     * and when the app comes back to the screen (the sensitivity is changed in the system's Settings).
+     */
+    private String lastInsets = "";
+    private android.view.ViewTreeObserver.OnGlobalLayoutListener insetsWatch = null;
+
+    @PluginMethod
+    public void gestureInsets(PluginCall call) {
+        if (getActivity() == null) { call.resolve(gestureInsetsNow(null)); return; }
+        getActivity().runOnUiThread(() -> {
+            View v = getBridge() != null ? getBridge().getWebView() : null;
+            JSObject r = gestureInsetsNow(v);
+            lastInsets = r.toString();
+            if (v != null && insetsWatch == null) {
+                insetsWatch = () -> checkGestureInsets();
+                try { v.getViewTreeObserver().addOnGlobalLayoutListener(insetsWatch); } catch (Exception e) { insetsWatch = null; }
+            }
+            call.resolve(r);
+        });
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        View v = getBridge() != null ? getBridge().getWebView() : null;
+        if (v != null && insetsWatch != null) v.postDelayed(() -> checkGestureInsets(), 300);
+    }
+
+    private void checkGestureInsets() {
+        View v = getBridge() != null ? getBridge().getWebView() : null;
+        if (v == null || insetsWatch == null) return;
+        JSObject r = gestureInsetsNow(v);
+        String now = r.toString();
+        if (now.equals(lastInsets)) return;
+        lastInsets = now;
+        notifyListeners("gestureInsets", r);
+    }
+
+    private JSObject gestureInsetsNow(View v) {
+        JSObject r = new JSObject();
+        double left = 0, right = 0;
+        String nav = "old";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            int mode = -1;
+            try { mode = android.provider.Settings.Secure.getInt(getContext().getContentResolver(), "navigation_mode", -1); } catch (Exception ignored) {}
+            try {
+                android.view.WindowInsets wi = v != null ? v.getRootWindowInsets() : null;
+                if (wi != null) {
+                    android.graphics.Insets g = wi.getSystemGestureInsets();
+                    float d = v.getResources().getDisplayMetrics().density;
+                    if (g != null && d > 0) { left = Math.round(g.left / d * 10) / 10.0; right = Math.round(g.right / d * 10) / 10.0; }
+                }
+            } catch (Exception ignored) {}
+            nav = left > 0 || right > 0 || mode == 2 ? "gesture" : "buttons";
+            r.put("navMode", mode);
+        }
+        r.put("left", left);
+        r.put("right", right);
+        r.put("nav", nav);
+        return r;
+    }
+
     @PluginMethod
     public void setImmersive(PluginCall call) {
         final boolean on = Boolean.TRUE.equals(call.getBoolean("on", true));

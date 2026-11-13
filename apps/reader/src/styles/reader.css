@@ -187,8 +187,10 @@
 /* (A chapter not made yet — a book opened at a chapter, the others made just after: views/reader.ts firstChapter —
    takes the room an unlaid chapter takes, near the screen or not, so the place does not move when it is made.) */
 .reader-continuous .kr-content .kr-chapter.kr-shell { min-height: 3000px; }
-.kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
-.kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
+/* (The rule between two chapters: continuous reading only — chapter by chapter the one before is hidden, and the
+   chapter opened at its top would start under an empty band.) */
+.reader-continuous .kr-content .kr-chapter + .kr-chapter { margin-top: 2.5em; }
+.reader-continuous .kr-content .kr-chapter + .kr-chapter::before { content: ''; display: block; width: 36px; border-top: 1px solid var(--r-rule); margin: 0 auto 2.5em; }
 .kr-content mark.kr-hl { background: color-mix(in srgb, var(--hl-amber, #e5c56b) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
 .kr-content mark.kr-hl[data-color='rose'] { background: color-mix(in srgb, var(--hl-rose, #e58a8a) 45%, transparent); }
 .kr-content mark.kr-hl[data-color='mint'] { background: color-mix(in srgb, var(--hl-mint, #7fcfa5) 45%, transparent); }

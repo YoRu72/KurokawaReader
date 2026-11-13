@@ -12,10 +12,14 @@
 // as part of the swipe — ignored once — when the reader turned a chapter with that very swipe 350 ms or less before,
 // or when it comes while the finger is still down and that touch then turns a chapter; a Back with no turn (a fresh
 // gesture, the system's own swipe the page saw cancelled, the button) leaves as ever. See swipeBack below.
+// And the phone's own Back zone (Android 10+ with gesture navigation: a strip at each side edge, as wide as "Back
+// sensitivity" makes it — told by the shell, src/native.ts getGestureInsets): a touch that begins in it is the
+// phone's — the reader starts no swipe from it (src/views/reader.ts), a Back during it goes on at once —, except in the
+// band the edge guard keeps, when the guard is on. Two or three buttons: no zone, the whole width is the reader's.
 // Everything is let go when the reader closes, something opens over it, or the app goes to the background
 // (MainActivity also lets the keys go by itself when it is paused).
 import { getSettings, onSettingsChange } from './settings';
-import { nativePlatform, setVolumeKeys, setEdgeGuard, setBackGate } from './native';
+import { nativePlatform, setVolumeKeys, setEdgeGuard, setBackGate, getGestureInsets, onGestureInsets, type GestureInsets } from './native';
 import { diagBackHeld, diagEvent } from './diag';
 
 export interface ReadingKeys {
@@ -77,7 +81,7 @@ const onVolume = (e: Event): void => {
   const down = (e as CustomEvent<string>).detail !== 'up';
   reader.turn(getSettings().volumeSwap ? !down : down);
 };
-const onAppState = (e: Event): void => { active = (e as CustomEvent<boolean>).detail !== false; if (active) { sentVol = sentEdge = null; } refreshReadingKeys(); };
+const onAppState = (e: Event): void => { active = (e as CustomEvent<boolean>).detail !== false; if (active) { sentVol = sentEdge = null; askZone(); } else noteSystemTouches(); refreshReadingKeys(); };
 const onVisible = (): void => { if (document.visibilityState === 'visible') sentVol = sentEdge = null; refreshReadingKeys(); };
 
 function wire(): void {
@@ -92,7 +96,30 @@ function wire(): void {
   window.addEventListener('touchend', onTouchEnd, { passive: true });
   window.addEventListener('touchcancel', onTouchCancel, { passive: true });
   setBackGate(swipeBack);
+  onGestureInsets((g) => { sys = g; });
 }
+
+/* ---------- The phone's own Back zone ---------- */
+let sys: GestureInsets = { left: 0, right: 0, nav: 'none' };
+/** Touches begun in the phone's zone while a book was open, not yet in the record. */
+let leftToSystem = 0;
+/** The edge guard's band (KurokawaPlugin.java layEdgeGuard: 40 % of the height, 200 dp at most, centred). */
+const guardBand = (y: number): boolean => { const h = innerHeight; const band = Math.min(Math.floor(h * 0.4), 200); const top = (h - band) / 2; return y >= top && y < top + band; };
+/** The zone as last told: its widths at the left and right edges (CSS px) and the navigation. */
+export function systemZone(): GestureInsets { return sys; }
+/** Whether a touch that begins at (x, y) is the phone's (its Back zone, outside the guarded band when the guard is on). */
+export function inSystemZone(x: number, y: number): boolean {
+  if (!(sys.left > 0 && x < sys.left) && !(sys.right > 0 && x >= innerWidth - sys.right)) return false;
+  return !(sentEdge && guardBand(y));
+}
+function askZone(open = false): void {
+  void getGestureInsets().then((g) => {
+    if (g) sys = g;
+    // (For the Performance page: the zone and the navigation as the book opened.)
+    if (open) diagEvent('syszone', { l: Math.round(sys.left), r: Math.round(sys.right), nav: g ? sys.nav : 'unknown', guard: getSettings().edgeGuard });
+  });
+}
+function noteSystemTouches(): void { if (leftToSystem) { diagEvent('systouch', { n: leftToSystem }); leftToSystem = 0; } }
 
 /* ---------- Back in the middle of a page-turn swipe ---------- */
 /** How long after a chapter turned by a swipe a Back is still taken as that swipe's (ms); also how long a Back that
@@ -103,6 +130,8 @@ export const EDGE_PX = 32;
 let touchDown = false;
 let touchAt = -1e9;
 let touchEdge = '';
+/** The touch under way began in the phone's Back zone. */
+let touchSys = false;
 /** When the reader last turned a chapter by a swipe (of the touch that began at `touchAt`); -1e9 when none since. */
 let turnAt = -1e9;
 let waiting: { go: () => void; timer: number } | null = null;
@@ -111,6 +140,8 @@ function onTouchStart(e: TouchEvent): void {
   if (e.touches.length > 1) return;
   const p = e.touches[0]; touchDown = true; touchAt = performance.now(); turnAt = -1e9;
   touchEdge = p && p.clientX <= EDGE_PX ? 'left' : p && p.clientX >= innerWidth - EDGE_PX ? 'right' : '';
+  touchSys = !!p && !!reader && inSystemZone(p.clientX, p.clientY);
+  if (touchSys) leftToSystem++;
 }
 function onTouchEnd(e: TouchEvent): void {
   if (e.touches.length) return;
@@ -144,7 +175,8 @@ function swipeBack(go: () => void): boolean {
   if (waiting) { settle('go', 'again'); return false; }
   const ago = performance.now() - turnAt;
   if (ago <= SWIPE_BACK_MS) { turnAt = -1e9; diagBackHeld('swipe', { how: 'after-turn', ms: Math.round(ago), edge0: touchEdge || 'none' }); return true; }
-  if (touchDown) { waiting = { go, timer: window.setTimeout(() => { touchDown = false; settle('go', 'timeout'); }, SWIPE_BACK_MS) }; return true; }
+  // (A touch begun in the phone's own zone turns nothing: its Back goes on at once.)
+  if (touchDown && !touchSys) { waiting = { go, timer: window.setTimeout(() => { touchDown = false; settle('go', 'timeout'); }, SWIPE_BACK_MS) }; return true; }
   return false;
 }
 
@@ -163,6 +195,7 @@ export function readingKeys(r: ReadingKeys): () => void {
   turnAt = -1e9;
   // (For the Performance page: whether the edges were to be kept in this book — the setting, as the book opened.)
   diagEvent('edgeguard', { on: getSettings().edgeGuard, sideways: r.sideways() });
+  askZone(true);
   refreshReadingKeys();
   return () => {
     if (reader !== r) return;
@@ -172,6 +205,7 @@ export function readingKeys(r: ReadingKeys): () => void {
     // (A Back still waiting for its touch when the book is left some other way: not done on the next screen.)
     if (waiting) { window.clearTimeout(waiting.timer); waiting = null; }
     turnAt = -1e9;
+    noteSystemTouches();
     evaluate();
   };
 }
