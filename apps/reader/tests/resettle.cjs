@@ -10,18 +10,55 @@
 //  2. the width changed again later (a zoom change, full screen left), no scrolling: the same place;
 //  3. the reader scrolls (the wheel) while the window is still changing size: their place stands, not put back;
 //  4. a selection's toolbar is placed over the selection again after a resize, and a selection made while the text was
-//     off the screen gets its toolbar once it is on the screen.
+//     off the screen gets its toolbar once it is on the screen;
+//  5. layout changes the reader did not cause, late — after restore's own passes (2.5 s) —, the place held by its own
+//     anchor (src/views/reader.ts, «held through layout changes»): the runs of the long text above the place taking
+//     their real height (a WebKit learning their sizes as they are measured: the macOS engine test's drift, 347 → 418),
+//     a font's metrics changing, pictures above decoding, the engine moving the offset just before the window starts
+//     to grow, and while it grows in height only (full screen entering) — the same paragraph at the same offset, the
+//     saved place unchanged; after a wheel, the reader's own place is the one held;
+//  6. a book of many chapters opened at a chapter first (formats/epub.ts first/rest), the reader scrolling while the
+//     rest is made slowly: the chapters made above their place (taller or shorter than the 3000 px kept) do not move it.
 // Each as Chromium is, and as WebKit is (no scroll anchoring: the drift a Mac's text reader showed in CI).
 // (The book is made here: no fixtures.)
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
-const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
+// (A picture that comes late: served after SLOW_MS — a picture above the place decoding after the book has settled.)
+const SLOW_MS = 4500;
+const server = http.createServer((req, res) => { if (req.url.startsWith('/__slow.svg')) { setTimeout(() => { res.setHeader('Content-Type', 'image/svg+xml'); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="360"><rect width="240" height="360" fill="#88a"/></svg>'); }, SLOW_MS); return; } let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x).slice(0, 700))); if (!c) fails++; };
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-resettle-'));
 // (Paragraphs of different lengths: a change of width moves each by a different amount, as a real book's do.)
 const BOOK = path.join(TMP, 'Resettle Book.txt');
 fs.writeFileSync(BOOK, ['Resettle Book', ...Array.from({ length: 700 }, (_, i) => `[P${i + 1}] ` + `Words of paragraph ${i + 1}, a line to read on and on. `.repeat(2 + (i * 7) % 9))].join('\n\n') + '\n');
+
+// A book of many chapters (an EPUB), for 6.
+const EPUB = path.join(TMP, 'Resettle Chapters.epub');
+async function makeEpub(file, chapters) {
+  const JSZip = require(path.resolve(__dirname, '../node_modules/jszip')); const z = new JSZip();
+  z.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+  z.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
+  const items = [], spine = [], nav = [];
+  for (let c = 1; c <= chapters; c++) {
+    const paras = Array.from({ length: 30 + (c * 7) % 25 }, (_, q) => `<p>[C${c}-P${q}] ${'The river ran past the old city and the people read their books. '.repeat(1 + (q * 5) % 6)}</p>`).join('');
+    z.file(`OEBPS/c${c}.xhtml`, `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>C${c}</title></head><body><h1>Chapter ${c}</h1>${paras}</body></html>`);
+    items.push(`<item id="c${c}" href="c${c}.xhtml" media-type="application/xhtml+xml"/>`); spine.push(`<itemref idref="c${c}"/>`); nav.push(`<li><a href="c${c}.xhtml">Chapter ${c}</a></li>`);
+  }
+  z.file('OEBPS/nav.xhtml', `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol>${nav.join('')}</ol></nav></body></html>`);
+  z.file('OEBPS/content.opf', `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">kr-resettle-chapters</dc:identifier><dc:title>Resettle Chapters</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>${items.join('')}</manifest><spine>${spine.join('')}</spine></package>`);
+  fs.writeFileSync(file, await z.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+}
+/** The paragraph of the EPUB at the top of the reading area, and how far into it. */
+// (Found by what is drawn there — elementFromPoint —: a paragraph of a chapter not laid out is measured as if it were,
+// past its chapter's reckoned box, over the text below.)
+const whereE = (p) => p.evaluate(() => {
+  const sc = document.querySelector('.reader-scroll'); const sr = sc.getBoundingClientRect(); const y = sr.top + 8;
+  let hit = null; for (const dy of [0, 8, 16, 28, 40]) { hit = document.elementFromPoint(sr.left + sr.width / 2, y + dy)?.closest('p'); if (hit) break; }
+  if (!hit) return null;
+  const r = hit.getBoundingClientRect();
+  return { n: /^\[(C\d+-P\d+)\]/.exec(hit.textContent)?.[1] ?? '?', offset: Math.min(1, Math.max(0, (y - r.top) / Math.max(1, r.height))) };
+});
 
 const allBooks = (p) => p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result); }; }));
 const bookBy = async (p, re) => (await allBooks(p)).find((b) => new RegExp(re).test(b.title) || new RegExp(re).test(b.fileName ?? ''));
@@ -81,7 +118,8 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
   if (css) ok(`[${engine}] the page has no scroll anchoring`, await p.evaluate(() => getComputedStyle(document.querySelector('body')).overflowAnchor === 'none'));
   const book = await importFile(p, BOOK, 'Resettle Book|Resettle');
 
-  for (const m of ['continuous', 'chapters']) {
+  // (KR_RESETTLE_ONLY=6: the book of many chapters alone — a quick run while working on it.)
+  for (const m of process.env.KR_RESETTLE_ONLY === '6' ? [] : ['continuous', 'chapters']) {
     const mode = `${engine}, ${m}`;
     await p.setViewportSize(SMALL);
     await toLibrary(p); await p.evaluate((m) => { const s = JSON.parse(localStorage.getItem('kr.visual') ?? '{}'); s.readingMode = m; localStorage.setItem('kr.visual', JSON.stringify(s)); }, m);
@@ -166,10 +204,118 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
     steps.push(mine);
     ok(`[${mode}] scrolled during a resize: the reader's place stands (not put back at 347)`, mine && mine.n > 352, { left, mine });
     await p.setViewportSize(SMALL); await p.waitForTimeout(1200);
+
+    // 5. Layout changes the reader did not cause, late: the place held, the saved place unchanged. (Each case from its
+    // own place read and saved: a drift one case saved is not the next one's start.)
+    const lateCase = async (name, change, { settle = 1800, extra } = {}) => {
+      await toLibrary(p); await p.waitForTimeout(600);
+      await open(p, book.id); await p.waitForTimeout(2600);
+      await scrollToPara(p, 347, 0.33); await p.waitForTimeout(1500);
+      const left5 = await where(p); const kept5 = await saved(p, book.id);
+      await toLibrary(p); await p.waitForTimeout(600);
+      await open(p, book.id); await p.waitForTimeout(3300);
+      const before = await where(p);
+      const info = await change();
+      await p.waitForTimeout(settle);
+      const after = await where(p); await p.waitForTimeout(1200); const after2 = await where(p);
+      const keptNow = await saved(p, book.id);
+      const log = await p.evaluate(() => (window.__krPlaceLog || []).slice(-6));
+      ok(`[${mode}] ${name}: the same paragraph at the same offset`, same(before, left5) && same(after, left5) && same(after2, left5), { left: left5, before, after, after2, info, log });
+      ok(`[${mode}] ${name}: the saved place unchanged`, keptNow && keptNow.block === kept5.block && Math.abs((keptNow.offset ?? 0) - (kept5.offset ?? 0)) <= 0.06, { kept: kept5, keptNow });
+      if (extra) await extra();
+      await p.evaluate(() => document.getElementById('kr-test-late')?.remove());
+    };
+    // (a) The runs of the long text above the place take their real height — laid out, and their reckoned height put
+    // right — with no event: what a WebKit does as it learns their sizes.
+    await lateCase('the runs above take their real height late', () => p.evaluate(() => {
+      const el = document.querySelector('.reader-flow .kr-content'); const runs = [...el.querySelectorAll(':scope > .kr-run')];
+      const sc = document.querySelector('.reader-scroll'); const y = sc.getBoundingClientRect().top;
+      const above = runs.filter((r) => r.getBoundingClientRect().bottom < y - 50);
+      const h0 = above.map((r) => Math.round(r.getBoundingClientRect().height));
+      const cpx = parseFloat(el.style.getPropertyValue('--kr-cpx')) || 0.45;
+      el.style.setProperty('--kr-cpx', `${(cpx * 0.7).toFixed(4)}px`);
+      above.slice(-2).forEach((r) => { r.style.contentVisibility = 'visible'; });
+      return { runsAbove: above.length, before: h0, after: above.map((r) => Math.round(r.getBoundingClientRect().height)) };
+    }));
+    // (b) A font's metrics change (a font swapped in late: the lines wider, the paragraphs taller).
+    await lateCase('a font swapped in late', () => p.evaluate(() => { const st = document.createElement('style'); st.id = 'kr-test-late'; st.textContent = '.reader-flow p { letter-spacing: .09em; word-spacing: .2em; }'; document.head.appendChild(st); return 'letter-spacing'; }));
+    // (c) Pictures above the place decode late (served after SLOW_MS), in the place's own run.
+    await lateCase('pictures above decode late', () => p.evaluate(() => {
+      const sc = document.querySelector('.reader-scroll'); const y = sc.getBoundingClientRect().top;
+      const ps = [...document.querySelectorAll('.reader-flow p')].filter((x) => x.getBoundingClientRect().bottom < y - 20).slice(-6, -1);
+      ps.forEach((x, i) => { const img = document.createElement('img'); img.src = `/__slow.svg?${Date.now()}-${i}`; img.alt = ''; x.prepend(img); });
+      return `${ps.length} pictures`;
+    }), { settle: 6000 });
+    // (d) The engine moves the offset (no input) just before the window starts to grow — the resize told after it.
+    await lateCase('the engine moved the offset just before the window grew', async () => { await p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); sc.scrollTop = Math.round(sc.scrollTop * 1.2); }); await animate(p, SMALL, BIG); return 'scrollTop × 1.2, then the window grew'; }, { extra: () => animate(p, BIG, SMALL, 6, 50) });
+    // (e) The window grows in height only (full screen entering) while the engine keeps the offset in proportion.
+    await lateCase('the window grew in height only, the engine moving the offset', async () => { await animate(p, SMALL, { width: SMALL.width, height: 900 }, 8, 60, 90); return 'height 700 → 900, +90 px a step'; }, { extra: () => p.setViewportSize(SMALL) });
+    // (f) After a wheel, the reader's own place is the one held: a font swapped in after it leaves them there.
+    {
+      await toLibrary(p); await p.waitForTimeout(600);
+      await open(p, book.id); await p.waitForTimeout(2600);
+      await scrollToPara(p, 347, 0.33); await p.waitForTimeout(1500);
+      const left5 = await where(p);
+      await toLibrary(p); await p.waitForTimeout(600);
+      await open(p, book.id); await p.waitForTimeout(3300);
+      await p.mouse.move(SMALL.width / 2, SMALL.height / 2); await p.mouse.wheel(0, 1500); await p.waitForTimeout(1500);
+      const mine5 = await where(p); const keptMine = await saved(p, book.id);
+      await p.evaluate(() => { const st = document.createElement('style'); st.id = 'kr-test-late'; st.textContent = '.reader-flow p { letter-spacing: .09em; word-spacing: .2em; }'; document.head.appendChild(st); });
+      await p.waitForTimeout(1800);
+      const after = await where(p); const keptAfter = await saved(p, book.id);
+      ok(`[${mode}] a wheel, then a font swapped in: the reader's own place held (and saved)`, mine5 && mine5.n > left5.n + 5 && same(after, mine5) && keptMine && keptAfter && keptAfter.block === keptMine.block, { left: left5, mine: mine5, after, keptMine, keptAfter });
+      await p.evaluate(() => document.getElementById('kr-test-late')?.remove());
+      await scrollToPara(p, 347, 0.33); await p.waitForTimeout(1500);
+    }
+  }
+
+  // 6. A book of many chapters opened at a chapter first, its other chapters made slowly (the CPU slowed): the reader
+  // scrolls while they are made; then the chapters above take their real height (a WebKit learning their sizes). Their
+  // place stands — continuous reading, where the chapters above are in the same page.
+  {
+    const m6 = `${engine}, continuous, chapters made late`;
+    await p.setViewportSize(SMALL); await toLibrary(p);
+    await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kr.visual') ?? '{}'); s.readingMode = 'continuous'; localStorage.setItem('kr.visual', JSON.stringify(s)); });
+    await p.reload(); await p.waitForSelector('.library-view');
+    if (!fs.existsSync(EPUB)) await makeEpub(EPUB, 24);
+    const eb = await importFile(p, EPUB, 'Resettle Chapters');
+    // (Opened whole once — the chapters' sizes kept —, read to chapter 14.)
+    await open(p, eb.id); await p.waitForTimeout(3000);
+    await p.evaluate(() => { const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith('[C14-P12]')); const sc = document.querySelector('.reader-scroll'); el.scrollIntoView({ block: 'start' }); sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 8 + 0.3 * el.getBoundingClientRect().height; });
+    await p.waitForTimeout(1500);
+    const left = await whereE(p);
+    await toLibrary(p); await p.waitForTimeout(600);
+    const cdp = await ctx.newCDPSession(p); await cdp.send('Emulation.setCPUThrottlingRate', { rate: 25 });
+    await p.evaluate((id) => { location.hash = `#/read/${id}`; }, eb.id);
+    await p.waitForFunction(() => [...document.querySelectorAll('.reader-flow p')].some((e) => e.offsetParent !== null), null, { timeout: 60000 });
+    const shellsAtOpen = await p.evaluate(() => document.querySelectorAll('.kr-chapter.kr-shell').length);
+    const atOpen = await whereE(p);
+    await p.mouse.move(SMALL.width / 2, SMALL.height / 2); await p.mouse.wheel(0, 500); await p.waitForTimeout(900);
+    const mine = await whereE(p);
+    await p.waitForFunction(() => !document.querySelector('.kr-chapter.kr-shell'), null, { timeout: 90000 });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 }); await p.waitForTimeout(1500);
+    const whole = await whereE(p);
+    const dbg = async () => p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const r = sc.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + 12); return { pt: e?.closest('p')?.textContent.slice(0, 10) ?? e?.tagName, top: sc.scrollTop, chapters: [...document.querySelectorAll('.reader-flow .kr-chapter')].map((c) => Math.round(c.getBoundingClientRect().top)).slice(10, 16) }; });
+    if (process.env.KR_RESETTLE_DEBUG) console.log('dbg whole', JSON.stringify(await dbg()));
+    // (The chapters above laid out at their real height, with no event.)
+    const sizes = await p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const y = sc.getBoundingClientRect().top; const above = [...document.querySelectorAll('.reader-flow .kr-chapter')].filter((c) => c.getBoundingClientRect().bottom < y - 50); const h0 = above.map((c) => Math.round(c.getBoundingClientRect().height)); above.forEach((c) => { c.style.contentVisibility = 'visible'; }); return { above: above.length, before: h0.slice(-4), after: above.map((c) => Math.round(c.getBoundingClientRect().height)).slice(-4) }; });
+    await p.waitForTimeout(1500);
+    const end = await whereE(p);
+    if (process.env.KR_RESETTLE_DEBUG) console.log('dbg end', JSON.stringify(await dbg()));
+    const kept = (await allBooks(p)).find((b) => b.id === eb.id)?.progress;
+    const log = await p.evaluate(() => (window.__krPlaceLog || []).slice(-6));
+    const near = (a, b) => !!a && !!b && a.n === b.n && Math.abs(a.offset - b.offset) <= 0.08;
+    ok(`[${m6}] opened at its place with chapters still to make`, near(atOpen, left) && shellsAtOpen > 0, { left, atOpen, shellsAtOpen });
+    ok(`[${m6}] scrolled while they were made: the reader's place stands once the book is whole, and after the chapters above take their real height`, mine && mine.n !== left.n && near(whole, mine) && near(end, mine), { left, mine, whole, end, sizes, log });
+    await cdp.detach();
+    await toLibrary(p); await p.waitForTimeout(600);
+    await open(p, eb.id); await p.waitForTimeout(2500);
+    const again = await whereE(p);
+    ok(`[${m6}] … and it is the place saved: opened again, there`, near(again, mine), { mine, again, kept });
   }
 
   // 4. The selection's toolbar over the selection after a resize; one made off the screen comes once it is on it.
-  {
+  if (process.env.KR_RESETTLE_ONLY !== '6') {
     const e4 = engine;
     await p.setViewportSize(SMALL);
     await open(p, book.id); await p.waitForTimeout(3200);

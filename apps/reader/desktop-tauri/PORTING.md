@@ -1136,3 +1136,36 @@ way between the builds.
   whatever else is installed, and decides from it. (2) The hand-over check compared a book's `pct` one unit in the last
   place off: `KRH_EXPECT` went through serde_json (its default float parsing is not exact) before reaching the page;
   it is now put in the page as written, only checked to be JSON.
+
+## The text reader's place, held through layout changes (after 0.62.0)
+
+- **The macOS drift again** (run 43538814972, `work-tauri`, the Reader's code as 0.62.0): «the place saved and restored»
+  — at paragraph 347 at the open, 418 at the end of the 12 s, window 1024×768, DPR 1.1 at the start. The text column is
+  capped (676 px: the same paragraph heights at 930 and 1024 px wide, measured), so neither the zoom (1.1 → 1) nor full
+  screen reflows the text: the place moved 5265 px (25614 → 30879) with no reflow and no input. A long text is laid out
+  in runs of 64 paragraphs (`.kr-run`, `content-visibility: auto`, a reckoned height until laid out — sizeRuns); 71
+  paragraphs is one run's worth of the difference between reckoned and real heights over the runs above. A WebKit takes
+  a run's real height late — when it is laid out or measured (the reader's own measuring, the test's) — and has no
+  scroll anchoring; nothing put the place back after restore's passes (0.4, 1.2, 2.5 s and fonts.ready), and a run
+  changing size raises no event the reader listened to. Two more faults on the way: a scroll with no input before a
+  resize event (or during a change of height alone) was taken for the reader's — the place then held was the drift, and
+  saved —; and the place read (`currentLocator`) could be a paragraph of a run or chapter not laid out, measured past
+  its reckoned box over the text below (the saved place of a book of chapters then a chapter off).
+- **Fixed** (`src/views/reader.ts`, «held through layout changes»): the place is held by its own anchor — the block
+  element and the offset within it, and its locator — wherever the reader put the text (restore, a chapter turned, a
+  note or bookmark) and where a scroll of the reader's settles. Until the reader scrolls again, a ResizeObserver on the
+  text and on each run and chapter, `document.fonts` `loadingdone` (runs re-reckoned), pictures loading, and the window
+  or zoom changing put the text back at it; a scroll with no input within 1.5 s of the window or zoom changing (height
+  alone included), or just before a resize starts, is the engine's (put back, not saved); the place saved while it is
+  held is the held one; the reader's own actions that scroll (search hits, read-aloud, the auto-scroll, page keys,
+  taps) are theirs (`readerMoves`), as are a pointer held down and a fling still going (300 ms between its scrolls). A
+  book still being made a chapter first holds the reader's place once their scroll stops (`holdAtProbe`). The block at
+  the probe is no lower than its run's or chapter's box. The engine test's row now gives, at the open and at the end,
+  the paragraph drawn and the one measured, the runs/chapters above (sizes), `--kr-cpx`, fonts, DPR, zoom, window and
+  the last put-backs (`window.__krPlaceLog`), and fails if the saved place was overwritten.
+- **Tests**: `tests/resettle.cjs` 5 (each case from its own saved place; both reading modes, with and without scroll
+  anchoring): the runs above taking their real height late (the old build: 347 → 420, the Mac's line), a font's metrics
+  changing, pictures above decoding after 4.5 s, the engine moving the offset just before the window grows, the window
+  growing in height only while the engine moves the offset, and a wheel then a font (the reader's place held); 6: an
+  EPUB opened a chapter first with the CPU slowed, scrolled while the rest is made, then the chapters above at their real
+  height (the old build ends six chapters back and saved a place a chapter off). The build before fails 26 of them.
