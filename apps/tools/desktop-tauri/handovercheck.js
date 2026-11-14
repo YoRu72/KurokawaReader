@@ -114,6 +114,27 @@
     // The engine, now up: the downloads in its list (reported: aria2c may be missing on the runner's system build).
     var tasks = await window.kurokawaTools.list().catch(function () { return []; });
     rec('the downloads in the engine\'s list', Array.isArray(tasks) && cfg.expect.engine.gids.every(function (g) { return tasks.some(function (t) { return t.id === g; }); }), (tasks || []).map(function (t) { return t.id + ' ' + t.state; }), false);
+    // 4. The downloads for real (required where the Electron step had aria2c: Windows): this app owns them
+    //    (downloads-owner.json, ownerlock.rs), the one that was moving goes on to its end from the same partial file —
+    //    every byte the server's (its pattern's SHA-256) —, the one the person paused stays paused.
+    var eng = cfg.expect.engine || {}; var req = !!eng.available && eng.gids.length > 0;
+    if (eng.gids && eng.gids.length) {
+      var own = await window.kurokawaHandover.owner().catch(function (e) { return 'error: ' + (e && e.message); });
+      rec('the handed-over downloads\' owner is this app (downloads-owner.json)', own && own.status === 'mine' && own.held === false && own.count >= eng.gids.length, own, req);
+      var end = Date.now() + 240000, last = null;
+      while (Date.now() < end) {
+        var ts = await window.kurokawaTools.list().catch(function () { return []; });
+        last = (ts || []).filter(function (t) { return eng.gids.indexOf(t.id) >= 0; });
+        var slow = last.filter(function (t) { return t.id === eng.slow; })[0];
+        if (slow && (slow.state === 'done' || slow.state === 'failed')) break;
+        await sleep(500);
+      }
+      var sl = (last || []).filter(function (t) { return t.id === eng.slow; })[0];
+      var h = sl && sl.state === 'done' ? await window.kurokawaTools.hashFile(eng.slowFile).catch(function (e) { return { error: String(e && e.message || e) }; }) : null;
+      rec('the download that was moving went on to its end here, every byte the same', !!h && h.sha256 === eng.server.sha256 && h.size === eng.server.size, { task: sl && { state: sl.state, done: sl.done, total: sl.total }, hash: h && (h.sha256 || h.error), size: h && h.size, want: eng.server && eng.server.size }, req);
+      var pz = (last || []).filter(function (t) { return eng.pausedByUser.indexOf(t.id) >= 0; });
+      rec('the download the person paused is still paused', pz.length === eng.pausedByUser.length && pz.every(function (t) { return t.state === 'paused'; }), pz.map(function (t) { return t.id + ' ' + t.state; }), req);
+    }
     return done();
   }
 

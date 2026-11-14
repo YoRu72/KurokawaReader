@@ -249,6 +249,9 @@
       // (Where this shell can look at the screen, «draw» waits until the window is painted and says how: a window that
       // never paints is the failure itself — in run 43549144577 Linux's showed only its grey.)
       must(drawn.painted !== false, 'the test window: ' + drawn.how);
+      // (Its size as asked: in run 43559071568 GTK kept the window at its built 800×600 — set_size ignored on a window
+      // that is not resizable — and the bars came out taller than the capture.)
+      if (Array.isArray(drawn.actual) && kt.os === 'linux') must(Math.abs(drawn.actual[0] - drawn.w) <= 2 && Math.abs(drawn.actual[1] - drawn.h) <= 2, 'the window is ' + drawn.actual.join('×') + ', not ' + drawn.w + '×' + drawn.h);
       var g = await S({ act: 'grab', x: drawn.x, y: drawn.y, w: drawn.w, h: drawn.h });
       must(g && /^data:image\/png;base64,/.test(g.png) && g.w > 0, short(g));
       var got = await compare(g.png, 0, 0, { w: g.w, h: g.h });

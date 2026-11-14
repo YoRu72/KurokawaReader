@@ -642,6 +642,12 @@ fn window_script(hash: &str) -> String {
     )
 }
 
+/// The screen translator's windows (frozen screen, caption, the self-test's) are made resizable on Linux only: GTK keeps
+/// a window that is NOT resizable at the size it was built with (tao fixes its size request), so `set_size` was ignored
+/// there — in run 43559071568 the test window stayed 800×600 and the frozen screen would not have covered a monitor nor
+/// the caption followed its text. Frameless, they offer the person no edge to drag either way.
+const LINUX_RESIZABLE: bool = cfg!(target_os = "linux");
+
 fn place(w: &tauri::WebviewWindow, r: &Rect) {
     let _ = w.set_position(tauri::PhysicalPosition::new(r.x, r.y));
     let _ = w.set_size(tauri::PhysicalSize::new(r.w.max(1), r.h.max(1)));
@@ -670,7 +676,7 @@ fn open_overlay(app: &AppHandle, m: &Mon, go: bool) -> Result<(), String> {
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .resizable(false)
+        .resizable(LINUX_RESIZABLE)
         .visible(false)
         .disable_drag_drop_handler()
         .initialization_script(script.as_str());
@@ -776,7 +782,7 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .resizable(false)
+        .resizable(LINUX_RESIZABLE)
         .focused(false)
         .visible(false)
         .disable_drag_drop_handler()
@@ -1389,7 +1395,7 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
                 };
                 let url = address.parse().map(tauri::WebviewUrl::External).map_err(|_| "the test page's address".to_string())?;
                 // (Made hidden, then placed and shown — as the frozen screen, the caption and the clipboard's window are.)
-                let w = tauri::WebviewWindowBuilder::new(&app, TEST_WIN, url).title("kt screen test").decorations(false).always_on_top(true).skip_taskbar(true).resizable(false).visible(false).build().map_err(|e| e.to_string())?;
+                let w = tauri::WebviewWindowBuilder::new(&app, TEST_WIN, url).title("kt screen test").decorations(false).always_on_top(true).skip_taskbar(true).resizable(LINUX_RESIZABLE).visible(false).build().map_err(|e| e.to_string())?;
                 place(&w, &at);
                 let _ = w.show();
                 // (Where the screen can be taken — Windows, X11 —: waited for until it is painted (a red pixel in the
@@ -1436,7 +1442,9 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
                         std::thread::sleep(Duration::from_millis(400));
                     }
                 }
-                Ok(json!({ "x": r.x, "y": r.y, "w": r.w, "h": r.h, "monitor": m.id, "scale": m.scale, "mx": m.x, "my": m.y, "painted": painted, "how": how }))
+                // (The window's own size as the system made it: GTK kept a non-resizable one at its built size.)
+                let actual = w.outer_size().ok().map(|z| json!([z.width, z.height]));
+                Ok(json!({ "x": r.x, "y": r.y, "w": r.w, "h": r.h, "monitor": m.id, "scale": m.scale, "mx": m.x, "my": m.y, "painted": painted, "how": how, "actual": actual }))
             }
             "grab" => {
                 let m = monitor_under_mouse(&app).ok_or("no monitor")?;

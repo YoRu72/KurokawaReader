@@ -417,10 +417,25 @@ jobs:
           $env:KTH_EXPECT = Join-Path $env:RUNNER_TEMP 'kt-handover-expect.json'
           if (-not (Test-Path $env:KTH_EXPECT)) { 'no expectation: the Electron step did not finish'; exit 1 }
           $exe = (Resolve-Path 'target/release/kurokawa-tools.exe').Path
+          # (The download that was moving at the hand-over goes on from the Electron step's loopback server, at full speed
+          # now — tests/handover-dlserver.cjs.)
+          $work = Join-Path $env:RUNNER_TEMP 'kt-handover-work'
+          Remove-Item (Join-Path $work 'slow.flag') -ErrorAction SilentlyContinue
+          $exp = Get-Content $env:KTH_EXPECT -Raw | ConvertFrom-Json
           $p = Start-Process -FilePath $exe -PassThru
           $null = $p.Handle
+          # (While it runs them: the Electron side's own rule, against the real owner file and process, must find them held
+          # and refuse to resume them — tests/ownerprobe.cjs. Only when the Electron step had downloads to hand over.)
+          $probe = 0
+          if ($exp.engine.gids.Count -gt 0) {
+            node ../../tests/ownerprobe.cjs $exp.handover.userData $env:KTH_EXPECT (Join-Path $env:RUNNER_TEMP 'kt-owner-probe.json')
+            $probe = $LASTEXITCODE
+          } else { 'no downloads were handed over (no aria2c in the Electron step): the owner probe not run' }
           if ($p.WaitForExit(460000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          New-Item -ItemType File -Force (Join-Path $work 'dlserver.stop') | Out-Null
           node ../selftest-report.cjs $out $code 'Windows — hand-over (Electron → Tauri)' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if (Test-Path (Join-Path $env:RUNNER_TEMP 'kt-owner-probe.json')) { "`nOwner probe (a second Electron while the Tauri app runs them): $(Get-Content (Join-Path $env:RUNNER_TEMP 'kt-owner-probe.json') -Raw)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append }
+          if ($code -eq 0 -and $probe -ne 0) { $code = 1 }
           exit $code
 
       - name: Hand-over — Electron → Tauri (Linux, under Xvfb; reported, stage P9)
@@ -437,12 +452,14 @@ jobs:
           (cd apps/tools/desktop && for i in 1 2 3; do npm install --no-audit --no-fund && break; [ $i = 3 ] && exit 1; sleep 20; done)
           (cd apps/tools && for i in 1 2 3; do npm install --no-save --no-audit --no-fund playwright-core@1.48.2 && break; [ $i = 3 ] && exit 1; sleep 20; done)
           xvfb-run -a -s '-screen 0 1280x900x24' node apps/tools/tests/handover-electron.cjs "$RUNNER_TEMP/kt-handover-expect.json" "$RUNNER_TEMP/kt-handover-work"
+          rm -f "$RUNNER_TEMP/kt-handover-work/slow.flag"
           cd apps/tools/desktop-tauri/src-tauri
           bus=""; if command -v dbus-run-session >/dev/null; then bus="dbus-run-session --"; fi
           set +e
           KTH_SELFTEST="$RUNNER_TEMP/kt-handover-check.json" KTH_EXPECT="$RUNNER_TEMP/kt-handover-expect.json" $bus timeout 460 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
           code=$?
           set -e
+          touch "$RUNNER_TEMP/kt-handover-work/dlserver.stop"
           node ../selftest-report.cjs "$RUNNER_TEMP/kt-handover-check.json" "$code" "Linux — hand-over (Electron → Tauri)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code
 

@@ -465,6 +465,23 @@ lettering, the words taken off the picture, the region drawn, the caption's text
 - «Hand-over — Electron makes it» (Windows) passed in 55 s; its `app.close()` never returned and the 20 s bound let it
   go on — the cause of run 43551417003's half-hour hang (its log stops right after «hand-over: …ok»).
 
+### CI run 43559071568 (cca1d24)
+
+- Windows and both Macs green; everything compiled («KT build (start-up): yes … background_color»).
+- Linux part 2: the loopback-served test window painted at once («painted shown (300 ms)» — the app's hidden-then-
+  shown windows need no help) but its bars came out taller than the capture: GTK keeps a window that is NOT resizable
+  at the size it was built with (tao fixes its size request), so `set_size` was ignored and the window stayed 800×600 —
+  a product defect too (the frozen screen would not cover a monitor, the caption not follow its text). The screen
+  translator's windows are now resizable on Linux only (frameless: no edge to drag); «draw» reports the window's real
+  size and the row checks it on Linux.
+- The installed app's ffmpeg cancel passed only after a second cancel (10.1 s): a cancel arriving before the run's pid
+  is known is now kept for 5 s and applied when it is.
+- The Electron hand-over ran without aria2c («no aria2c here»): the fetched aria2c is now first on its PATH, the
+  download server (tests/handover-dlserver.cjs) outlives the step, and the Tauri step requires: this app named owner,
+  the moving download finished with every byte the server's, the paused one still paused, and — while it runs — the
+  Electron side's rule against the real file and process finding them held and refusing to resume them
+  (tests/ownerprobe.cjs).
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of

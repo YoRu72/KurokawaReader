@@ -133,13 +133,41 @@ pub fn run<F: FnMut(Value) + Send + 'static>(id: &str, args: &[String], mut on_p
         Err(e) => return json!({ "code": 127, "log": if e.starts_with("ENOENT") { "pack:ffmpeg".to_string() } else { e } }),
     };
     jobs_put(id, Some(p.pid));
+    // (A cancel that came while the program was being started — before its pid was known — ends it now: in run
+    // 43559071568 the installed app's first cancel did not end the run, a second one 10 s later did.)
+    if early_cancel_take(id) {
+        cancel(id);
+    }
     let (code, log) = p.wait();
     jobs_put(id, None);
     json!({ "code": code.unwrap_or(1), "log": log })
 }
 
+static EARLY_CANCEL: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+/// A cancel noted for a run whose pid is not known yet (kept 5 s: a cancel of a run already ended must not stop a later one of the same id) → taken once.
+fn early_cancel_take(id: &str) -> bool {
+    let mut g = match EARLY_CANCEL.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    g.retain(|(_, at)| at.elapsed() < Duration::from_secs(5));
+    let had = g.iter().any(|(x, _)| x == id);
+    g.retain(|(x, _)| x != id);
+    had
+}
+
 /// ffmpeg.cjs cancel(id).
 pub fn cancel(id: &str) {
+    if job_pid(id).is_none() {
+        if let Ok(mut g) = EARLY_CANCEL.lock() {
+            g.push((id.to_string(), Instant::now()));
+        }
+        // (Started meanwhile: ended now.)
+        if job_pid(id).is_some() && early_cancel_take(id) {
+            cancel(id);
+        }
+        return;
+    }
     if let Some(pid) = job_pid(id) {
         vtproc::interrupt(pid);
         std::thread::spawn(move || {

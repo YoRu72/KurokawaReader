@@ -26,24 +26,34 @@ const at = (s) => { stage = s; log('stage:', s); };
 let appProc = null;
 setTimeout(() => { console.error(`[handover-electron] WATCHDOG: still in «${stage}» after 8 minutes`); try { if (appProc) appProc.kill(); } catch { /* gone */ } process.exit(3); }, 8 * 60 * 1000).unref();
 
-// A loopback server: /slow.bin — 64 MiB sent 64 KiB at a time, slowly (the download stays moving); /small.bin.
-const SLOW = 64 * 1024 * 1024; const chunk = Buffer.alloc(64 * 1024, 0x5a);
-const server = http.createServer((req, res) => {
-  const total = req.url.startsWith('/slow') ? SLOW : 3 * 1024 * 1024;
-  const m = /bytes=(\d+)-/.exec(req.headers.range || ''); const from = m ? Number(m[1]) : 0;
-  res.writeHead(m ? 206 : 200, { 'content-length': total - from, 'accept-ranges': 'bytes', ...(m ? { 'content-range': `bytes ${from}-${total - 1}/${total}` } : {}), 'content-type': 'application/octet-stream' });
-  let sent = from;
-  const tick = () => { if (res.destroyed || sent >= total) return res.end(); const n = Math.min(chunk.length, total - sent); res.write(chunk.subarray(0, n)); sent += n; setTimeout(tick, req.url.startsWith('/slow') ? 40 : 0); };
-  tick();
-});
+// The loopback download server (tests/handover-dlserver.cjs), started DETACHED so it outlives this step: the Tauri
+// build's step finishes the moving download from it. /slow.bin is sent slowly while <work>/slow.flag exists.
+function startServer() {
+  const { spawn } = require('child_process');
+  const info = path.join(WORK, 'dlserver.json'); try { fs.unlinkSync(info); } catch { /* none */ }
+  fs.writeFileSync(path.join(WORK, 'slow.flag'), 'slow');
+  const c = spawn(process.execPath, [path.join(__dirname, 'handover-dlserver.cjs'), WORK], { detached: true, stdio: 'ignore', windowsHide: true }); c.unref();
+  const pause = new Int32Array(new SharedArrayBuffer(4)); for (let i = 0; i < 600 && !fs.existsSync(info); i++) Atomics.wait(pause, 0, 0, 50);
+  if (!fs.existsSync(info)) throw new Error('the download server did not start (no ' + info + ')');
+  return JSON.parse(fs.readFileSync(info, 'utf8'));
+}
+// (The aria2c the workflow fetched for the bundle — desktop/aria2/<plat>-<arch>/ — first on the Electron app's PATH:
+// `electron .` looks in Electron's own resources folder, then on the PATH — desktop/aria2.cjs binary().)
+function aria2Dir() {
+  const root = path.join(DESK, 'aria2'); const exe = process.platform === 'win32' ? 'aria2c.exe' : 'aria2c';
+  const walk = (d, n) => { if (n > 3) return null; let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return null; } for (const e of es) { if (e.isFile() && e.name === exe) return d; } for (const e of es) if (e.isDirectory()) { const r = walk(path.join(d, e.name), n + 1); if (r) return r; } return null; };
+  return walk(root, 0);
+}
 
 (async () => {
-  await new Promise((r) => server.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${server.address().port}`;
+  at('server'); const srv = startServer(); const base = `http://127.0.0.1:${srv.port}`; log('download server', base, 'pid', srv.pid);
+  const a2 = aria2Dir(); log('aria2c for Electron:', a2 || 'none fetched');
+  const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '1' }; if (a2) { const k = Object.keys(env).find((x) => x.toUpperCase() === 'PATH') || 'PATH'; env[k] = a2 + path.delimiter + (env[k] || ''); }
   const exe = require(path.join(DESK, 'node_modules', 'electron'));
   const args = [...(process.platform === 'linux' ? ['--no-sandbox'] : []), DESK];
   log('electron', exe, args.join(' '));
   at('launch');
-  const app = await pw._electron.launch({ executablePath: exe, args, cwd: DESK, env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' }, timeout: 120000 });
+  const app = await pw._electron.launch({ executablePath: exe, args, cwd: DESK, env, timeout: 120000 });
   try { appProc = app.process(); } catch { /* older playwright */ }
   const userData = await app.evaluate(({ app }) => app.getPath('userData'));
   log('userData', userData);
@@ -78,14 +88,15 @@ const server = http.createServer((req, res) => {
 
   at('downloads');
   // Downloads, where aria2c runs: one moving, one paused by the person.
-  const engine = { gids: [], moving: [], pausedByUser: [], available: false };
+  const engine = { gids: [], moving: [], pausedByUser: [], available: false, dir: '', slow: null, server: { base, size: srv.size, sha256: srv.sha256, work: WORK } };
   engine.available = await p.evaluate(async () => { const kt = window.kurokawaTools; await kt.ready(); for (let i = 0; i < 100 && !kt.available; i++) await new Promise((r) => setTimeout(r, 300)); return kt.available; });
   if (engine.available) {
     const dir = path.join(WORK, 'Downloads'); fs.mkdirSync(dir, { recursive: true });
     const add = (url, name) => p.evaluate(({ url, name, dir }) => window.kurokawaTools.add({ source: { url }, name, dir }), { url, name, dir });
+    engine.dir = dir; engine.slowFile = path.join(dir, 'slow.bin');
     const a = await add(`${base}/slow.bin`, 'slow.bin'); const b = await add(`${base}/small.bin?2`, 'paused.bin');
     const idOf = (x) => (typeof x === 'string' ? x : x && (x.id || x.gid));
-    engine.gids = [idOf(a), idOf(b)].filter(Boolean);
+    engine.gids = [idOf(a), idOf(b)].filter(Boolean); engine.slow = idOf(a);
     await p.evaluate((id) => window.kurokawaTools.pause(id), idOf(b));
     for (let i = 0; i < 100; i++) { const t = await p.evaluate(() => window.kurokawaTools.list()); const s = t.find((x) => x.id === idOf(a)); if (s && s.state === 'downloading' && s.done > 1024 * 1024) break; await p.waitForTimeout(200); }
     const tasks = await p.evaluate(() => window.kurokawaTools.list());
@@ -111,7 +122,7 @@ const server = http.createServer((req, res) => {
   // (Closed, or — the app not ending within 20 s — its process killed: its downloads are paused and saved already.)
   await Promise.race([app.close(), new Promise((r) => setTimeout(r, 20000))]).catch(() => undefined);
   try { if (appProc && appProc.exitCode === null) { log('the app did not end in 20 s: killed'); appProc.kill(); } } catch { /* gone */ }
-  server.close(); at('checks');
+  at('checks');
   const fails = [];
   if (!made.ok) fails.push('the hand-over was not made: ' + JSON.stringify(made));
   if (!status || status.marker.id !== made.id) fails.push('no marker after it: ' + JSON.stringify(status));
