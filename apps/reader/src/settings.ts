@@ -177,6 +177,10 @@ export interface VisualSettings {
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
   calendar: 'gregory' | 'hijri' | 'both';
+  /** The interface's style (src/readertheme/, over the shared src/theme/): 'classic' (the app as it always was), or a frosted-glass style's id;
+   *  and how much it blurs ('auto': as this device can afford — src/theme/themes.ts resolveBlur). */
+  uiStyle: string;
+  glassBlur: 'auto' | 'full' | 'reduced' | 'off';
   darkTone: 'dim' | 'grey' | 'black'; // the dark interface's surfaces: near-black, Material grey, or pure black (OLED)
   arDigits: 'auto' | 'western' | 'eastern'; // digits in the Arabic interface: 123 for data and ١٢٣ in prose, or one of them throughout
   sizeUnits: 'latin' | 'arabic'; // KB/MB/GB, or كيلوبايت/ميغابايت/قيقابايت in Arabic
@@ -373,6 +377,8 @@ export const DEFAULTS: VisualSettings = {
   readingGoalMinutes: 0,
   calendar: 'gregory',
   darkTone: 'dim',
+  uiStyle: 'classic',
+  glassBlur: 'auto',
   arDigits: 'auto',
   sizeUnits: 'latin',
   bookPage: 'chaptered',
@@ -499,7 +505,7 @@ const GLOBAL_ONLY = new Set<string>([
   // the device's keys and gestures while reading
   'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library
-  'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
+  'uiStyle', 'glassBlur', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
   // lists the reader builds up for every book
   'myThemes', 'systemFonts', 'shortcuts', 'snapFolder',
 ]);
@@ -680,9 +686,12 @@ export function pageIsLight(s: VisualSettings = current): boolean {
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
 mql?.addEventListener?.('change', () => applyChrome());
 
+// (An interface style other than Classic: its code and CSS fetched the first time it is in force — src/readertheme/.)
+let styleMod: typeof import('./readertheme/index') | null = null;
 /** Interface mode (system / light / dark / follow the page) and accent colour. */
 export function applyChrome(s: VisualSettings = current): void {
-  const light = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : s.uiMode === 'page' ? pageIsLight(s) : !!mql?.matches;
+  const f = styleMod?.forced(s);
+  const light = f !== undefined ? f : s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : s.uiMode === 'page' ? pageIsLight(s) : !!mql?.matches;
   const html = document.documentElement;
   html.dataset.ui = light ? 'light' : 'dark';
   html.dataset.dark = s.darkTone;
@@ -695,6 +704,7 @@ export function applyChrome(s: VisualSettings = current): void {
   else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', light ? '#f7f8fa' : s.darkTone === 'black' ? '#000000' : s.darkTone === 'grey' ? '#1c1b1f' : '#121314');
+  if (styleMod) styleMod.applyStyle(s, light); else if (s.uiStyle !== 'classic') void import('./readertheme/index').then((m) => { styleMod = m; applyChrome(); });
 }
 
 function hexToHsl(hex: string): [number, number, number] {

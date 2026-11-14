@@ -137,6 +137,11 @@ self.addEventListener('fetch', (e) => {
   await fs.writeFile(path.join(dist, 'sw.js'), sw);
 }
 
+// A stylesheet named *.lazy.css, and the shared theme module's (src/theme/*.css), is not part of app.css: it comes into the code that imports it as minified text, put
+// in the page only when that code wants it (the interface styles' glass, src/theme/ — nothing of it in the page with
+// the Classic style).
+const lazyCss = { name: 'lazy-css', setup(b) { b.onLoad({ filter: /(\.lazy\.css|[\\/]src[\\/]theme[\\/][a-z]+\.css)$/ }, async (a) => ({ contents: (await esbuild.transform(await fs.readFile(a.path, 'utf8'), { loader: 'css', minify: !watch && !process.env.NOMINIFY, target: ['chrome100', 'safari16'] })).code, loader: 'text' })); } };
+
 const buildOptions = {
   entryPoints: { app: path.join(root, 'src/main.ts'), scanworker: path.join(root, 'src/scanworker.ts'), pdflayout: path.join(root, 'src/pdflayout.worker.ts'), pdf2docxlane: path.join(root, 'src/pdf2docx.lane.ts'), pdfjsport: path.join(root, 'src/pdfjsport.worker.ts'), pdf2docxfonts: path.join(root, 'src/pdf2docx.fonts.worker.ts'), thumbworker: path.join(root, 'src/sources/thumb.worker.ts'), pdftoolsworker: path.join(root, 'src/pdftools.worker.ts') },
   bundle: true,
@@ -154,7 +159,7 @@ const buildOptions = {
   sourcemap: watch || !!process.env.KR_MAPS,
   loader: { '.ttf': 'file', '.woff2': 'file', '.svg': 'file' },
   logLevel: 'info',
-  plugins: [(await import('./patch-pdfjs.mjs')).pdfjsMainPlugin],
+  plugins: [(await import('./patch-pdfjs.mjs')).pdfjsMainPlugin, lazyCss],
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"', __APP_VERSION__: JSON.stringify(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version), __REPO_SLUG__: JSON.stringify(process.env.GITHUB_REPOSITORY || 'YoRu72/KurokawaReader') },
 };
 

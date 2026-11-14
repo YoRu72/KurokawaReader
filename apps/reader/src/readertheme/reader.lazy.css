@@ -1,0 +1,72 @@
+/* ------------------------------------------------------------------
+   The Reader's part of the glass (the shared part: src/theme/glass.css; its tokens: src/theme/themes.ts). Only
+   under html[data-glass], which only a style other than Classic sets: with Classic none of this is in the page.
+   The reading surface — .reader and what is inside it — keeps the reading theme; glass never sits behind running
+   text (the reader keeps the text clear of its bars, tests/readbar.cjs).
+   ------------------------------------------------------------------ */
+
+/* (A book open: the page covers the screen — the background is not drawn nor kept.) */
+html[data-glass].g-reading body::before { display: none; }
+
+/* ---- the reader's bars: frosted glass floating over the page ----
+   Their tint: the page's own colours when the interface follows the page (html.g-page-bars — the reading theme's
+   paper and ink, frosted); the style's ground, lighter where the style's light or dark is the page's
+   (html[data-g-match]); the style's solid where they differ (a dark style over a light page), so their text stays
+   readable over any page. The progress strip under the top bar is the same pane: one surface, one hairline. */
+html[data-glass] .reader-view { --g-rbar: var(--th-solid-low); --g-rline: var(--g-edge); }
+html[data-glass][data-g-match] .reader-view { --g-rbar: color-mix(in srgb, var(--th-ground) 66%, transparent); }
+html[data-glass].g-page-bars .reader-view { --g-rbar: color-mix(in srgb, var(--chrome-bg) 66%, transparent); --g-rline: color-mix(in srgb, var(--chrome-fg) 13%, transparent); }
+html[data-glass='off'] .reader-view.reader-view { --g-rbar: var(--th-solid-low); }
+html[data-glass='off'].g-page-bars .reader-view.reader-view { --g-rbar: var(--chrome-bg); }
+/* (Classic gives the bars the page's own colours, --chrome-bg/--chrome-fg on the view; when the page is not followed,
+   the style's.) */
+html[data-glass]:not(.g-page-bars) .reader-view :is(.topbar, .float-toolbar, .read-footer, .read-status, .pdf-bar, .pdf-strip, .jump-back) { --chrome-bg: var(--th-ground); --chrome-fg: var(--md-on-surface); }
+html[data-glass] .reader-view :is(.topbar, .float-toolbar, .read-footer, .read-status, .pdf-bar, .pdf-strip) {
+  background: var(--g-rbar); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter); color: var(--chrome-fg, var(--md-on-surface));
+}
+html[data-glass] .reader-view .topbar { box-shadow: none; }
+html[data-glass] .reader-view .read-footer { box-shadow: inset 0 -1px 0 var(--g-rline); }
+html[data-glass] .reader-view .read-status { box-shadow: inset 0 1px 0 var(--g-rline); }
+html[data-glass] .reader-view :is(.float-toolbar, .pdf-bar) { box-shadow: var(--g-sheen), inset 0 0 0 1px var(--g-rline), var(--g-shadow); }
+html[data-glass] .reader-view[data-tblook='docked'] .float-toolbar, html[data-glass] .reader-view .pdf-bar[data-look='docked'] {
+  background: var(--chrome-bg); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: inset 0 1px 0 var(--g-rline);
+}
+/* (The PDF's bar floats over the pages themselves — white paper, pictures —: denser, and a wider frost, so the dark
+   gap between two pages passing behind it spreads out instead of reading as a stripe.) */
+html[data-glass='full'] .reader-view:not(.immersive) .pdf-bar {
+  --g-rbar: color-mix(in srgb, var(--chrome-bg) 90%, transparent);
+  -webkit-backdrop-filter: blur(calc(var(--g-blur) * 2)) saturate(var(--g-sat)); backdrop-filter: blur(calc(var(--g-blur) * 2)) saturate(var(--g-sat));
+}
+/* Reading with the bars hidden: no frost anywhere — turning and scrolling cost what they cost with Classic. */
+html[data-glass] .reader-view.immersive :is(.topbar, .float-toolbar, .read-footer, .read-status, .pdf-bar, .pdf-strip, .jump-back) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-glass].g-reading .kr-winbar, html.pc.rail-off[data-glass] :is(.nav-rail, .nav-rail *) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ---- what floats over the library: the selection bar, side panels (frosted only while open), the first run ---- */
+html[data-glass] .selection-bar { background: var(--g-sheet); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter); box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow); }
+html[data-glass] .panel { background: var(--g-sheet); color: var(--md-on-surface); box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow); }
+html[data-glass] .panel.open { -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter); }
+html[data-glass] .firstrun { background: color-mix(in srgb, var(--th-ground) 55%, transparent); }
+html[data-glass] :is(.sheet, .panel) .card { background: var(--md-surface-container-high); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+
+/* ---- the library: books on glass plates, the tools as one row of glyphs ---- */
+html[data-glass] .library-view > .topbar { background: color-mix(in srgb, var(--g-pane) 60%, transparent); box-shadow: none; }
+html[data-glass] .book-card { isolation: isolate; }
+html[data-glass] .book-card::before { content: ''; position: absolute; inset: -7px -7px -8px; z-index: -1; border-radius: calc(var(--sh-lg) + 6px); background: var(--g-card); pointer-events: none; }
+html[data-glass][data-card-look='list'] .book-card::before { inset: -5px -8px; }
+html[data-glass] .library-tools .tool-btn { background: transparent; box-shadow: none; color: var(--md-on-surface-variant); }
+html[data-glass] .library-tools .tool-btn:hover { background: var(--md-surface-container-high); color: var(--md-on-surface); }
+html[data-glass] :is(.library-tools input, .library-tools select, .sort-btn, .pick-btn, .settings-search) { box-shadow: inset 0 0 0 1px var(--g-edge); }
+@media (max-width: 699px) {
+  html[data-glass] .library-tools { gap: 6px 2px; }
+  html[data-glass] .library-tools .tool-btn { width: 42px; height: 42px; flex: 0 0 42px; }
+  html[data-glass] .library-tools .filter-btn { background: var(--md-surface-container-high); box-shadow: inset 0 0 0 1px var(--g-edge); margin-inline-start: 4px; }
+}
+/* (One shape for every choice in a row: pills, the chosen one filled.) */
+html[data-glass] .segmented { gap: 6px; }
+html[data-glass] .segmented button, html[data-glass] .segmented button:is(:first-child, :last-child) { border-radius: var(--sh-full); }
+html[data-glass] .segmented button:not([aria-pressed='true']) { box-shadow: inset 0 0 0 1px var(--g-edge); }
+
+/* ---- the window's own title bar (Tauri) ---- */
+html.winbar[data-glass] .kr-winbar { background: var(--g-pane); color: var(--md-on-surface); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter); box-shadow: inset 0 -1px 0 var(--g-edge); }
+html.winbar.wb-clear[data-glass] .kr-winbar { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+
