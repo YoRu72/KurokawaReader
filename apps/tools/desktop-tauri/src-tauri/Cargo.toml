@@ -33,6 +33,18 @@ flate2 = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# (Stage P4: torrent streaming with librqbit — OFF. The main build never names librqbit, so it never even resolves it:
+# an API or a version that moved can never break it, and aria2 streams meanwhile (src/stream_engine.rs). To build with
+# it, make this feature `rqbit = ["dep:librqbit", "dep:tokio"]` and add at the end
+#   [dependencies.librqbit]  version = "8", optional = true
+#   [dependencies.tokio]     version = "1", optional = true, features = ["io-util", "time"]
+# — what the non-required CI step «librqbit try» (tauri-check.yml, Linux) does before `cargo check --features rqbit`,
+# printing the compiler's errors. librqbit: the BitTorrent engine with file streams that fetch the pieces under the
+# reader first (std cannot be a BitTorrent client); several MB and tokio-based (tokio is already in the build through
+# Tauri).)
+[features]
+rqbit = []
+
 [profile.release]
 opt-level = "s"
 lto = true

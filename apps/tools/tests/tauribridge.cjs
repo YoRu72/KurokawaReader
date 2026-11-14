@@ -15,7 +15,9 @@ const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
-  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon'];
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
+  // (Stage P4.)
+  'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl'];
 // (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
@@ -72,7 +74,7 @@ function loadBridge(boot) {
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
-  for (const k of ['streamUrl', 'streamDone', 'mini', 'screenStatus', 'videoInfo', 'shareWifi', 'browse', 'avScan']) assert.ok(!(k in kt), `${k} should be absent`);
+  for (const k of ['mini', 'screenStatus', 'videoInfo', 'shareWifi', 'browse', 'avScan']) assert.ok(!(k in kt), `${k} should be absent`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -88,6 +90,7 @@ function loadBridge(boot) {
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
     appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
+    streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};

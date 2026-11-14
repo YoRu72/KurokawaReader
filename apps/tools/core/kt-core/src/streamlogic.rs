@@ -16,6 +16,9 @@
 //! - `audio_args`, `remux_args`, `transcode_args`, `encoder_args`, `encoder_candidates`, `encoder_probe_args`:
 //!   streamproxy.cjs's and transcode.cjs's ffmpeg arguments, word for word.
 //! - `magnet_of`, `is_playlist`, `PROXY_UA`, `PASS_HEADERS`.
+//! - `STREAM_OPTIONS`, `finished`, `stopped`, `buffered`: watching a download aria2 has (torrentstream.cjs).
+//! - `Route`, `route`, `torrent_address`, `file_address`, `proxy_address`: the server's addresses, each under the run's
+//!   token (and a torrent file's under its session's).
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -601,9 +604,168 @@ pub fn magnet_of(info_hash: &str, trackers: &[String]) -> String {
     m
 }
 
+/* ---------- watching a download aria2 has ---------- */
+
+/// torrentstream.cjs's url(): the options a download being watched is changed to (fetched in order, its head and
+/// tail first). aria2 may refuse them on a download that cannot change now: then it goes on as it was.
+pub const STREAM_OPTIONS: [(&str, &str); 2] = [("stream-piece-selector", "inorder"), ("bt-prioritize-piece", "head=16M,tail=4M")];
+
+/// torrentstream.cjs's «done»: aria2 says complete, or every byte is in.
+pub fn finished(status: &str, completed: u64, total: u64) -> bool {
+    status == "complete" || (total > 0 && completed >= total)
+}
+
+/// A download that will bring nothing more (the reader stops waiting).
+pub fn stopped(status: &str) -> bool {
+    status == "error" || status == "removed"
+}
+
+/// The parts of a file lying at `file_off` (`file_len` bytes) whose pieces are in, as (first byte, last byte) of the
+/// file, joined where they touch; at most `max` of them (the rest left out). For the player's «buffered» line.
+pub fn buffered(bitfield: Option<&str>, file_off: u64, file_len: u64, piece_len: u64, max: usize) -> Vec<(u64, u64)> {
+    let mut out: Vec<(u64, u64)> = Vec::new();
+    if file_len == 0 {
+        return out;
+    }
+    let pl = if piece_len == 0 { 1 << 20 } else { piece_len };
+    let (first, last) = pieces_of(file_off, 0, file_len, pl);
+    let mut run: Option<u64> = None;
+    for p in first..=last + 1 {
+        let inp = p <= last && have(bitfield, p, p);
+        match (inp, run) {
+            (true, None) => run = Some(p),
+            (false, Some(a)) => {
+                let from = (a * pl).max(file_off) - file_off;
+                let to = (((p * pl).min(file_off + file_len)) - file_off).saturating_sub(1);
+                out.push((from, to));
+                run = None;
+                if out.len() >= max {
+                    return out;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/* ---------- the server's addresses ---------- */
+
+/// What an address of the stream server asks for. Every address starts with the run's token («/<token>/…»); a torrent
+/// file's also carries its own session token («/<token>/t/<session>/<name>»), which kt:streamDone withdraws.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Route {
+    /// A file of a torrent being watched (kt:streamUrl).
+    Torrent { session: String },
+    /// A file on this computer (kt:fileUrl): `p` its path.
+    File { path: String },
+    /// One audio track as AAC (kt:audioUrl).
+    Audio,
+    /// The picture converted as it plays (kt:videoUrl).
+    Video,
+    /// An online source with its headers (kt:proxyUrl).
+    Proxy,
+    /// No such address (404).
+    NotFound,
+    /// Not this run's token (403).
+    Forbidden,
+}
+
+/// The route of a request's path and query under the run's `token`.
+pub fn route(path: &str, query: &str, token: &str) -> Route {
+    let rest = match path.strip_prefix('/') {
+        Some(r) => r,
+        None => return Route::NotFound,
+    };
+    let mut parts = rest.splitn(2, '/');
+    let tok = parts.next().unwrap_or("");
+    let tail = parts.next().unwrap_or("");
+    if !same_token(&decode_component(tok, false), token) {
+        return Route::Forbidden;
+    }
+    match tail {
+        "f" => match query_get(query, "p") {
+            Some(p) if !p.is_empty() => Route::File { path: p },
+            _ => Route::NotFound,
+        },
+        "audio" => Route::Audio,
+        "video" => Route::Video,
+        "p" => Route::Proxy,
+        _ => {
+            if let Some(t) = tail.strip_prefix("t/") {
+                let session = t.split('/').next().unwrap_or("");
+                if !session.is_empty() {
+                    return Route::Torrent { session: decode_component(session, false) };
+                }
+            }
+            Route::NotFound
+        }
+    }
+}
+
+/// The address of a torrent file: «http://127.0.0.1:port/<token>/t/<session>/<its name>» (the name for players that go
+/// by the extension).
+pub fn torrent_address(port: u16, token: &str, session: &str, name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    format!("http://127.0.0.1:{}/{}/t/{}/{}", port, token, session, encode_component(if base.is_empty() { "file" } else { base }))
+}
+
+/// kt:fileUrl's address.
+pub fn file_address(port: u16, token: &str, path: &str) -> String {
+    format!("http://127.0.0.1:{}/{}/f?p={}", port, token, encode_component(path))
+}
+
+/// kt:proxyUrl's address: the source and its headers (JSON), as streamproxy.cjs's url() writes them.
+pub fn proxy_address(port: u16, token: &str, url: &str, headers_json: &str) -> String {
+    format!("http://127.0.0.1:{}/{}/p?u={}&h={}", port, token, encode_component(url), encode_component(headers_json))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watching() {
+        assert!(finished("complete", 0, 0));
+        assert!(finished("active", 10, 10));
+        assert!(!finished("active", 0, 0));
+        assert!(!finished("paused", 9, 10));
+        assert!(stopped("error") && stopped("removed") && !stopped("paused"));
+        // (Pieces of 10 bytes; the file at 15, 40 bytes long → pieces 1..=5; «5c» = 0101 1100: pieces 1, 3, 4, 5 in.)
+        assert_eq!(buffered(Some("5c"), 15, 40, 10, 9), vec![(0, 4), (15, 39)]);
+        assert_eq!(buffered(Some("5c"), 15, 40, 10, 1), vec![(0, 4)]);
+        assert_eq!(buffered(Some("00"), 0, 40, 10, 9), vec![]);
+        assert_eq!(buffered(Some("ff"), 0, 35, 10, 9), vec![(0, 34)]);
+        assert_eq!(buffered(None, 0, 0, 10, 9), vec![]);
+        assert_eq!(STREAM_OPTIONS[1].1, "head=16M,tail=4M");
+    }
+
+    #[test]
+    fn routes() {
+        let tok = "0123456789abcdef0123456789abcdef";
+        assert_eq!(route(&format!("/{}/f", tok), "p=%2Fa%2Fb.mkv", tok), Route::File { path: "/a/b.mkv".into() });
+        assert_eq!(route(&format!("/{}/f", tok), "", tok), Route::NotFound);
+        assert_eq!(route(&format!("/{}/audio", tok), "src=x", tok), Route::Audio);
+        assert_eq!(route(&format!("/{}/video", tok), "", tok), Route::Video);
+        assert_eq!(route(&format!("/{}/p", tok), "u=x", tok), Route::Proxy);
+        assert_eq!(route(&format!("/{}/t/s1/a%20b.mkv", tok), "", tok), Route::Torrent { session: "s1".into() });
+        assert_eq!(route(&format!("/{}/t/s1", tok), "", tok), Route::Torrent { session: "s1".into() });
+        assert_eq!(route(&format!("/{}/t/", tok), "", tok), Route::NotFound);
+        assert_eq!(route(&format!("/{}/zzz", tok), "", tok), Route::NotFound);
+        assert_eq!(route("/wrong/f", "p=x", tok), Route::Forbidden);
+        assert_eq!(route("/", "", tok), Route::Forbidden);
+        assert_eq!(route("f", "", tok), Route::NotFound);
+        let a = torrent_address(5, tok, "s1", "dir/Ep 1.mkv");
+        assert_eq!(a, format!("http://127.0.0.1:5/{}/t/s1/Ep%201.mkv", tok));
+        let f = file_address(5, tok, "C:\\v\\ü.mkv");
+        let (p, q) = split_target(&f["http://127.0.0.1:5".len()..]);
+        assert_eq!(route(p, q, tok), Route::File { path: "C:\\v\\ü.mkv".into() });
+        let x = proxy_address(5, tok, "https://h/a.m3u8?x=1&y=2", "{\"Referer\":\"https://h/\"}");
+        let (p, q) = split_target(&x["http://127.0.0.1:5".len()..]);
+        assert_eq!(route(p, q, tok), Route::Proxy);
+        assert_eq!(query_get(q, "u").as_deref(), Some("https://h/a.m3u8?x=1&y=2"));
+        assert_eq!(query_get(q, "h").as_deref(), Some("{\"Referer\":\"https://h/\"}"));
+    }
 
     #[test]
     fn spans_as_electron() {
