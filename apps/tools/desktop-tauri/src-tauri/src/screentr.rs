@@ -58,6 +58,8 @@ struct St {
     last_error: String,
     /// Why «auto» last stopped (the self-test says it when a run ends unasked).
     auto_stop_why: String,
+    /// The front window before and after the caption was shown (Windows), for the self-test.
+    caption_fg: String,
     caption_click_through: Option<bool>,
     asked_permission: bool,
     login_set: bool,
@@ -780,7 +782,7 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
     }
     let script = window_script("#/overlay?caption=1");
     let mut b = tauri::WebviewWindowBuilder::new(app, CAPTION, tauri::WebviewUrl::App("index.html".into()))
-        .title(APP)
+        .title(CAPTION_TITLE)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
@@ -805,23 +807,44 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
     }
     let w = b.build().map_err(|e| e.to_string())?;
     place(&w, &logic::caption_rect(&m, &rd));
-    // (Windows: showing a window activates it whatever its builder said — in run 43549144577 the caption took the
-    // focus —; the window that had it gets it back, as Electron's focusable:false caption never took it.)
+    // (The run is ON from here — before the caption is shown. kt:screenAction answers at once and the run starts on a
+    // thread of its own (act_later): in runs 43563414074 and 43575071966 the page saw the caption on the screen while
+    // this thread was still between the show and `auto = true` (the focus being given back waits up to 300 ms), read
+    // «auto false» with no reason, and the caption still focused. Nothing had stopped it: it had not been marked yet.)
+    let gen = AUTO_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    {
+        let mut s = st();
+        s.auto = true;
+        s.auto_stop_why = String::new();
+        s.auto_text = logic::AutoText::default();
+    }
+    // (Windows: the caption never takes the focus — made a no-activate tool window at the Win32 level before it is
+    // shown, and shown without activation (SW_SHOWNOACTIVATE): a game or the page in front keeps the keyboard; nothing
+    // to give back. Where its window cannot be found, the show and the give-back as before.)
     #[cfg(windows)]
     let before = fg::foreground();
-    let _ = w.show();
     #[cfg(windows)]
-    fg::give_back(before);
+    let shown_quietly = noact::show_no_activate(CAPTION_TITLE);
+    #[cfg(not(windows))]
+    let shown_quietly = false;
+    if !shown_quietly {
+        let _ = w.show();
+    }
+    #[cfg(windows)]
+    {
+        if !shown_quietly {
+            fg::give_back(before);
+        }
+        let after = fg::foreground();
+        st().caption_fg = format!("front window before {:#x}, after {:#x}{}", before, after, if shown_quietly { ", shown without activation" } else { ", shown (focus given back)" });
+    }
     // (Clicks go through it to what is under it — Electron's setIgnoreMouseEvents(true).)
     #[cfg(kt_ignore_cursor)]
     let through = Some(w.set_ignore_cursor_events(true).is_ok());
     #[cfg(not(kt_ignore_cursor))]
     let through: Option<bool> = None;
-    let gen = AUTO_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     {
         let mut s = st();
-        s.auto = true;
-        s.auto_text = logic::AutoText::default();
         s.caption_click_through = through;
     }
     tray_refresh(app);
@@ -952,6 +975,49 @@ mod fg {
             }
             std::thread::sleep(Duration::from_millis(30));
         }
+    }
+}
+
+/// The caption's own title (it has no frame, so no one reads it): how its Win32 window is found.
+const CAPTION_TITLE: &str = "Kurokawa Tools \u{2014} caption";
+
+#[cfg(windows)]
+mod noact {
+    use std::ffi::c_void;
+    #[link(name = "user32")]
+    extern "system" {
+        fn FindWindowW(class: *const u16, title: *const u16) -> *mut c_void;
+        fn GetWindowLongPtrW(h: *mut c_void, i: i32) -> isize;
+        fn SetWindowLongPtrW(h: *mut c_void, i: i32, v: isize) -> isize;
+        fn ShowWindow(h: *mut c_void, cmd: i32) -> i32;
+        fn SetWindowPos(h: *mut c_void, after: *mut c_void, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+    }
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_NOACTIVATE: isize = 0x0800_0000;
+    const WS_EX_TOOLWINDOW: isize = 0x0000_0080;
+    const SW_SHOWNOACTIVATE: i32 = 4;
+    const HWND_TOPMOST: isize = -1;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+    const SWP_SHOWWINDOW: u32 = 0x0040;
+    /// The window titled `title` (this program's, hidden) made a no-activate tool window and shown without activation,
+    /// kept on top → whether it was found.
+    pub fn show_no_activate(title: &str) -> bool {
+        let t: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let h = FindWindowW(std::ptr::null(), t.as_ptr());
+            if h.is_null() {
+                return false;
+            }
+            let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+            SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+            SetWindowPos(h, HWND_TOPMOST as *mut c_void, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            ShowWindow(h, SW_SHOWNOACTIVATE);
+            SetWindowPos(h, HWND_TOPMOST as *mut c_void, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+        true
     }
 }
 
@@ -1379,7 +1445,7 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
                     "under": monitor_under_mouse(&app).map(|m| m.id),
                     "ocr": logic::ocr_kind(os(), false, has_tesseract()),
                     "windows": wins, "ocrRunning": ocr_running(), "auto": s.auto, "sent": s.auto_sent, "lastError": s.last_error,
-                    "clickThrough": s.caption_click_through, "autoStopWhy": s.auto_stop_why, "ignoreApi": cfg!(kt_ignore_cursor), "focusableApi": cfg!(kt_focusable), "emitTo": cfg!(kt_emit_to),
+                    "clickThrough": s.caption_click_through, "autoStopWhy": s.auto_stop_why, "captionFg": s.caption_fg, "ignoreApi": cfg!(kt_ignore_cursor), "focusableApi": cfg!(kt_focusable), "emitTo": cfg!(kt_emit_to),
                     "cursorApi": cfg!(kt_cursor), "shortcuts": cfg!(kt_shortcuts) && crate::desktop::shortcuts_possible(),
                     "bound": s.bound.iter().map(|(w, a)| json!([w, a])).collect::<Vec<_>>(), "tray": s.tray_on, "trayWhy": s.tray_why,
                     "permission": screencap::permission(), "keepInTray": enabled(&s) && truthy(pc(&s.cfg).get("tray")) && s.tray_on,

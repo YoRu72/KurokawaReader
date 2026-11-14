@@ -304,31 +304,42 @@
       return r.kind + ': ' + t;
     }, 90000);
     await check('screen: OCR languages', false, async function () { var l = await kt.screenOcrLangs(); must(l && typeof l.kind === 'string', short(l)); return short(l); }, 60000);
+    // (Five rounds of start → caption seen → stop → no window: in runs 43563414074 and 43575071966 this failed one run
+    // in three in the installed app — «auto false», the caption focused — so one round could not show a fault that
+    // comes and goes. Every failure says why «auto» stopped, the last error, the front window before and after the
+    // caption was shown, and the time since «auto» was asked.)
     await check('screen: auto — the caption opens click-through, and stopping leaves no window or helper', can, async function () {
       if (noPerm) return noPerm;
       await kt.screenConfig({ config: conf(true, { ocr: 'system' }) });
-      await kt.screenAction('auto');
-      var c, st, sent, focus = [];
-      try {
-        c = await waitA(shown('kts-caption'), 15000, 'the caption window');
-        st = (await S({ act: 'state' })) || {};
-        must(st.auto === true, 'auto ' + st.auto + (st.autoStopWhy ? ' — stopped: ' + st.autoStopWhy : '') + (st.lastError ? ' — last error: ' + st.lastError : '') + ' — caption ' + short(c));
-        must(st.clickThrough !== false, 'not click-through');
-        // (Never focused on Windows — looked at again for a second: the focus is given back once the show is done —;
-        // an X server without a window manager — CI's Xvfb — gives the focus by the pointer.)
-        for (var i = 0; i < 5; i++) { await env.sleep(250); var cc = await shown('kts-caption')(); focus.push(cc ? cc.focused : null); }
-        await env.sleep(1250);
-        st = (await S({ act: 'state' })) || {};
-        sent = st.sent;
-      } finally {
-        // (Stopped whatever failed above, so the rows after this one do not run beside a caption and its helper.)
-        var now = (await S({ act: 'state' })) || {};
-        if (now.auto) await kt.screenAction('auto');
+      var why = function (st, t0, c) { st = st || {}; return ' [round ' + round + ', ' + (env.now() - t0) + ' ms; stopped: ' + (st.autoStopWhy || '—') + '; last error: ' + (st.lastError || '—') + '; ' + (st.captionFg || 'front window not known') + '; caption ' + short(c) + ']'; };
+      var round = 0, sentAll = 0, focusAll = [], st = {}, clickThrough = null;
+      for (round = 1; round <= 5; round++) {
+        var t0 = env.now(), c = null, focus = [];
+        await kt.screenAction('auto');
+        try {
+          c = await waitA(shown('kts-caption'), 15000, 'the caption window');
+          // (Marked on before the caption is shown: read at once, it must already say so.)
+          st = (await S({ act: 'state' })) || {};
+          must(st.auto === true, 'auto ' + st.auto + why(st, t0, c));
+          must(st.clickThrough !== false, 'not click-through' + why(st, t0, c));
+          clickThrough = st.clickThrough;
+          // (Never focused on Windows; an X server without a window manager — CI's Xvfb — gives the focus by the pointer.)
+          for (var i = 0; i < 4; i++) { await env.sleep(200); var cc = await shown('kts-caption')(); focus.push(cc ? cc.focused : null); }
+          if (round === 1) await env.sleep(1250);
+          st = (await S({ act: 'state' })) || {};
+          must(st.auto === true, 'auto ended by itself: ' + st.auto + why(st, t0, c));
+          sentAll += st.sent || 0;
+          if (win) must(focus.every(function (f) { return f === false; }), 'the caption took the focus: ' + short(focus) + why(st, t0, c));
+          focusAll = focusAll.concat(focus);
+        } finally {
+          // (Stopped whatever failed above, so the rows after this one do not run beside a caption and its helper.)
+          var now = (await S({ act: 'state' })) || {};
+          if (now.auto) await kt.screenAction('auto');
+        }
+        await waitA(async function () { var x = (await S({ act: 'state' })) || {}; return !x.auto && x.ocrRunning === 0 && (await gone('kts-caption')()) ? x : null; }, 15000, 'auto stopped, no caption, no helper (round ' + round + ')');
       }
-      await waitA(async function () { var x = (await S({ act: 'state' })) || {}; return !x.auto && x.ocrRunning === 0 && (await gone('kts-caption')()) ? x : null; }, 15000, 'auto stopped, no caption, no helper');
-      if (win) must(focus.length === 5 && focus.every(function (f) { return f === false; }), 'the caption took the focus: ' + short(focus));
-      return 'click-through ' + (st.clickThrough === null ? 'not in this build' : st.clickThrough) + ', focused ' + short(focus) + ', captions sent ' + sent + (st.lastError ? ', last error: ' + st.lastError : '');
-    }, 60000);
+      return '5 rounds; click-through ' + (clickThrough === null ? 'not in this build' : clickThrough) + ', focused ' + (focusAll.every(function (f) { return f === false; }) ? 'never' : short(focusAll)) + ', captions sent ' + sentAll + (st.captionFg ? '; ' + st.captionFg : '') + (st.lastError ? ', last error: ' + st.lastError : '');
+    }, 150000);
     await check('screen: the clipboard\'s translation opens by the mouse and closes', can, async function () {
       await S({ act: 'popup', text: 'Good night' });
       await waitA(shown('kts-popup'), 15000, 'the popup');
