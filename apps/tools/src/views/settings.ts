@@ -3,7 +3,8 @@
 import { brandIcon, setBrandIcon } from '../ui/brandIcon';
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
-import { BUILT_IN, getSettings, updateSettings, type Accent, type UiMode, type DarkTone } from '../settings';
+import { BUILT_IN, getSettings, updateSettings } from '../settings';
+import { appearanceCard } from './appearance';
 import { back, navigate } from '../router';
 import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
@@ -11,6 +12,7 @@ import { Aria2Rpc } from '../engine/aria2';
 import { getEngine } from '../engine';
 import { animeSettingsCard, anilistCard } from './animeSettings';
 import { tvSettingsCard } from './tvSettings';
+import { advancedCard } from './engineSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
 import { updateRows } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
@@ -20,6 +22,27 @@ const langName = (code: string): string => { try { return new Intl.DisplayNames(
 const card = (id: string, title: string, ...kids: (Node | null)[]) => h('section', { class: 'card', id }, h('h3', null, title), ...kids);
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
+/** The window's title bar — offered only where the shell has the page draw it (the Tauri shell on a computer:
+ *  ui/winbar.ts, the Reader's too): the app's own or the system's frame (at once on Windows and Linux, on a Mac at the
+ *  next start); the app's own transparent or not, its name shown or not. */
+function titleBarRows(rerender: () => void): HTMLElement[] {
+  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ !== 'tauri' || nativePlatform() !== 'desktop') return [];
+  const s = getSettings();
+  const waits = document.documentElement.classList.contains('wb-mac') || /Mac/.test(navigator.platform);
+  const sw = (label: string, on: boolean, set: (v: boolean) => void, cls: string, hint?: string): HTMLElement => {
+    const c = h('input', { type: 'checkbox', class: cls, checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) });
+    return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c);
+  };
+  return [
+    h('div', { class: 'field title-bar-field' }, h('span', { class: 'label' }, t('titleBar')),
+      h('div', { class: 'segmented' }, ...([['own', t('titleBarOwn')], ['system', t('titleBarSystem')]] as ['own' | 'system', string][]).map(([id, label]) => h('button', { type: 'button', 'data-tb-kind': id, 'aria-pressed': String(s.titleBarKind === id), onclick: () => { updateSettings({ titleBarKind: id }); rerender(); } }, label))),
+      h('p', { class: 'hint' }, t('titleBarHint') + (waits ? ` ${t('titleBarNextStart')}` : ''))),
+    ...(s.titleBarKind !== 'system' ? [
+      sw(t('titleBarClear'), s.titleBarClear, (v) => { updateSettings({ titleBarClear: v }); rerender(); }, 'wb-clear-switch', t('titleBarClearHint')),
+      ...(s.titleBarClear ? [] : [sw(t('titleBarName'), s.titleBarName !== false, (v) => updateSettings({ titleBarName: v }), 'wb-name-switch')]),
+    ] : []),
+  ];
+}
 const numberField = (value: number, set: (v: number) => void, o: { min?: number; max?: number; step?: number; width?: string } = {}) => h('input', { type: 'number', value: String(value), min: String(o.min ?? 0), max: o.max !== undefined ? String(o.max) : undefined, step: String(o.step ?? 1), style: { width: o.width ?? '6em' }, onchange: (e: Event) => set(Number((e.target as HTMLInputElement).value) || 0) });
 
 export function settingsView(section?: string): HTMLElement & { dispose?: () => void } {
@@ -92,6 +115,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     }
   };
   search.addEventListener('input', applySearch);
+  // (The sticky head's height, so a card scrolled to lands below it, not under it.)
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => body.style.setProperty('--head-h', `${head.offsetHeight}px`)).observe(head);
   const rerender = () => { const all = sections(); drawTabs(all); body.replaceChildren(head, ...inTab(all)); decorate(); };
 
   const sections = (): HTMLElement[] => {
@@ -105,10 +130,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       row(t('navCustomize'), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./navCustomize').then((m) => m.navCustomizeSheet()) }, icon('layout'), t('customizeBtn')), t('navCustomizeHint')),
       toggle(t('swipeTabs'), s.swipeTabs !== false, (v) => updateSettings({ swipeTabs: v }), t('swipeTabsHint')),
       row(t('uiScale'), pickButton(t('uiScale'), [['75', '75%'], ['85', '85%'], ['90', '90%'], ['100', '100%'], ['110', '110%'], ['125', '125%']], String(s.uiScale), (v) => { updateSettings({ uiScale: Number(v) }); rerender(); }, t('close')), t('uiScaleHint')),
-      row(t('uiMode'), pickButton(t('uiMode'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode, (v) => { updateSettings({ uiMode: v as UiMode }); rerender(); }, t('close'))),
-      row(t('darkTone'), pickButton(t('darkTone'), [['default', t('darkToneDefault')], ['grey', t('darkToneGrey')], ['black', t('darkToneBlack')]], s.darkTone, (v) => { updateSettings({ darkTone: v as DarkTone }); rerender(); }, t('close'))),
-      row(t('accent'), h('div', { class: 'accent-swatches' }, ...(['graphite', 'mono', 'teal', 'aqua', 'mint', 'olive', 'gold', 'sand', 'coral', 'rose', 'violet'] as Accent[]).map((a) => h('button', { type: 'button', class: 'swatch' + (s.accent === a ? ' on' : ''), 'data-accent': a, 'aria-label': a, onclick: () => { updateSettings({ accent: a }); rerender(); } })),
-        h('label', { class: 'swatch custom' + (s.accent === 'custom' ? ' on' : ''), title: 'custom' }, h('input', { type: 'color', value: s.accentCustom, oninput: (e: Event) => updateSettings({ accent: 'custom', accentCustom: (e.target as HTMLInputElement).value }) })))));
+      ...titleBarRows(rerender),
+    );
+    const appearance = appearanceCard(rerender);
     const eng = getEngine();
     const dirLabel = h('span', { class: 'src', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
     const canPick = !!(window.kurokawaTools?.pickDir || ktPlugin());
@@ -193,7 +217,10 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
           const ok = !a.platforms || a.platforms.includes(plat === 'ios' ? 'ios' : plat);
           // (The player is part of the app now: said so, nothing to install or remove.)
           const builtIn = BUILT_IN.includes(a.id); const on = builtIn || installed(a.id); const btn = h('button', { type: 'button', class: `btn small ${on ? 'tonal' : 'primary'}`, disabled: !ok || (builtIn && !upd.includes(a.id)) }, icon(on ? (upd.includes(a.id) ? 'refresh' : builtIn ? 'check' : 'trash') : 'download'), on ? (upd.includes(a.id) ? t('addonUpdate') : builtIn ? t('addonBuiltIn') : t('addonRemove')) : t('addonInstall')) as HTMLButtonElement;
-          btn.addEventListener('click', async () => { btn.disabled = true; try { if (on && !upd.includes(a.id)) { await uninstall(a.id); toast(t('addonRemovedToast', { name: nameOf(a, lang) })); } else { await install(a.id); toast(t('addonInstalledToast', { name: nameOf(a, lang) })); } await drawAddons(); } catch (e) { if ((e as Error).name !== 'AbortError') toast(String((e as Error).message ?? e), 'error'); btn.disabled = false; } });
+          btn.addEventListener('click', async () => { btn.disabled = true; try { if (on && !upd.includes(a.id)) {
+            // (undo-redo) Turned off at once, its files and packs deleted only when the Undo is over (and not if it is back by then).
+            const fam = [a.id, ...(a.children ?? [])]; const was = [...getSettings().addons]; const off = () => { updateSettings({ addons: getSettings().addons.filter((x) => !fam.includes(x)) }); void drawAddons(); }; off();
+            void import('../ui/undo').then((u) => u.offerUndo(t('addonRemovedToast', { name: nameOf(a, lang) }), () => { updateSettings({ addons: was }); void drawAddons(); }, off, { commit: async () => { if (!getSettings().addons.includes(a.id)) await uninstall(a.id); } })); return; } else { await install(a.id); toast(t('addonInstalledToast', { name: nameOf(a, lang) })); } await drawAddons(); } catch (e) { if ((e as Error).name !== 'AbortError') toast(String((e as Error).message ?? e), 'error'); btn.disabled = false; } });
           const kids = (a.children ?? []).map((id) => ix.addons.find((x) => x.id === id)).filter(Boolean) as AddonEntry[];
           const withSettings = [a, ...kids].filter((x) => x.settings?.length && installed(x.id));
           const gear = withSettings.length ? iconButton('settings', t('addonSettings'), () => addonSettingsSheet(withSettings, lang)) : null;
@@ -211,10 +238,15 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const updates = card('updates', t('updates'), ...updateRows(row, toggle, (label, opts, value, set) => row(label, pickButton(label, opts, value, (v) => { set(v); rerender(); }, t('close')))));
     const backupRow = h('div', { class: 'row-actions wrap' },
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../backup').then((m) => m.saveBackup()).then((p) => { if (p) toast(t('backupSaved')); }).catch((e) => toast(String((e as Error).message ?? e), 'error')) }, icon('upload'), t('backupSettings')),
-      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const f = h('input', { type: 'file', accept: '.json', onchange: async () => { const file = f.files?.[0]; if (!file) return; try { const m = await import('../backup'); const n = m.restoreBackup(await file.text()); toast(t('backupRestored', { n: localDigits(n) })); setTimeout(() => location.reload(), 1200); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }) as HTMLInputElement; f.click(); } }, icon('download'), t('restoreSettings')));
-    const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), backupRow, h('div', { class: 'row-actions' },
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const f = h('input', { type: 'file', accept: '.json', onchange: async () => { const file = f.files?.[0]; if (!file) return; try { const m = await import('../backup'); /* (undo-redo) asked first, the values replaced kept for «Undo restore» */ const n = await m.restoreAsked(m.parseBackup(await file.text())); if (n === null) return; toast(t('backupRestored', { n: localDigits(n) })); setTimeout(() => location.reload(), 1200); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }) as HTMLInputElement; f.click(); } }, icon('download'), t('restoreSettings')));
+    // (Stage P9, the Tauri build only: the data the previous (Electron) version handed over — brought again, from a
+    // folder, or its space freed; ui/handoversheet.ts. Nothing on a phone, the web or the Electron build.)
+    const handoverBox = h('div', { class: 'handover-box' });
+    if ((window as unknown as { kurokawaHandover?: { shell?: string } }).kurokawaHandover?.shell === 'tauri') void import('../ui/handoversheet').then((m) => { const r = m.handoverRows(); if (r) handoverBox.append(r); }).catch(() => undefined);
+    const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), backupRow, handoverBox, h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue')),
+      h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void import('../downloads/recorder').then((m) => recorderSheet(m)) }, icon('history'), t('recorderTitle'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
     const anilist = s.addons.includes('anime') ? anilistCard(rerender) : null;
@@ -256,8 +288,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       ...(ktPlugin() ? [toggle(t('secureScreen'), s.secureScreen, (v) => { updateSettings({ secureScreen: v }); void (ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: v }); }, t('secureScreenHint'))] : []),
       ...(getLang() === 'ar' ? [row(t('digitsPref'), pickButton(t('digitsPref'), [['auto', t('digitsAuto')], ['western', '123'], ['eastern', '١٢٣']], digitsPref(), (v) => { try { const o = JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as Record<string, string>; o.arDigits = v; localStorage.setItem('kr.visual', JSON.stringify(o)); } catch { /* none */ } location.reload(); }, t('close')))] : []));
     const backup = card('backup', t('backup'), h('p', { class: 'hint' }, t('backupHint')), h('div', { class: 'row-actions wrap' },
-      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const data: Record<string, string> = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i)!; if (/^(kt\.|kr\.)/.test(k)) data[k] = localStorage.getItem(k) ?? ''; } const b = new Blob([JSON.stringify({ kurokawa: 'tools-backup', version: APP_VERSION, at: new Date().toISOString(), data }, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `kurokawa-tools-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('backupMade')); } }, icon('download'), t('backupSave')),
-      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const fi = h('input', { type: 'file', accept: '.json,application/json' }) as HTMLInputElement; fi.onchange = async () => { const f = fi.files?.[0]; if (!f) return; try { const j = JSON.parse(await f.text()) as { kurokawa?: string; data?: Record<string, string> }; if (j.kurokawa !== 'tools-backup' || !j.data) throw new Error(t('backupNotOurs')); for (const [k, v] of Object.entries(j.data)) if (/^(kt\.|kr\.)/.test(k)) localStorage.setItem(k, v); toast(t('backupRestored')); setTimeout(() => location.reload(), 800); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }; fi.click(); } }, icon('upload'), t('backupRestore'))));
+      h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { /* (undo-redo) no secrets in the file: the same keys as the other backup, kr.* besides */ const { backupKey } = await import('../backup'); const data: Record<string, string> = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i)!; if (backupKey(k, true)) data[k] = localStorage.getItem(k) ?? ''; } const b = new Blob([JSON.stringify({ kurokawa: 'tools-backup', version: APP_VERSION, at: new Date().toISOString(), data }, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `kurokawa-tools-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('backupMade')); } }, icon('download'), t('backupSave')),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const fi = h('input', { type: 'file', accept: '.json,application/json' }) as HTMLInputElement; fi.onchange = async () => { const f = fi.files?.[0]; if (!f) return; try { const j = JSON.parse(await f.text()) as { kurokawa?: string; data?: Record<string, string> }; if (j.kurokawa !== 'tools-backup' || !j.data) throw new Error(t('backupNotOurs')); /* (undo-redo) asked first; only the keys the other restore takes (never a secret), the values replaced kept for «Undo restore» */ const m = await import('../backup'); if (await m.restoreAsked(j.data, true) === null) return; toast(t('backupRestored')); setTimeout(() => location.reload(), 800); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }; fi.click(); } }, icon('upload'), t('backupRestore'))));
     // The Archives add-on (HatchZip): unpacking downloads, the space margin, verify first, closing when done.
     let archives: HTMLElement | null = null;
     if (s.addons.includes('archives')) { archives = card('archives', t('archivesSection'), toggle(t('autoUnpackSubs'), s.autoUnpackSubs, (v) => updateSettings({ autoUnpackSubs: v })), toggle(t('autoUnpackAll'), s.autoUnpackAll, (v) => updateSettings({ autoUnpackAll: v }), t('autoUnpackAllHint'))); void import('./extract').then((m) => archives!.append(...m.archiveSettingsRows(row, toggle))); }
@@ -344,7 +376,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
     // Translate on screen (the add-on, Android): its own page.
     const screen = (plat === 'android' || plat === 'desktop') && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
-    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    // Advanced (phones that carry the Rust core): the download engine — views/engineSettings.ts.
+    const advanced = advancedCard(rerender);
+    return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
@@ -416,7 +450,7 @@ function fontRows(desktop: boolean): HTMLElement[] {
   const file = h('input', { type: 'file', multiple: true, accept: '.ttf,.otf,.ttc,.otc,.woff,.woff2', hidden: true, onchange: async (e: Event) => { const fs = Array.from((e.target as HTMLInputElement).files ?? []); if (!fs.length) return; const n = await (await import('../player/fonts')).addFonts(fs); toast(t('fontsAdded', { n: localDigits(n) })); void count(); } }) as HTMLInputElement;
   const manage = async () => {
     const f = await import('../player/fonts'); const sh = openSheet(t('fontsTitle'), t('close'));
-    const draw = async () => { const lib = await f.library(); sh.body.replaceChildren(...(lib.length ? lib.map((x) => h('div', { class: 'dest-row' }, icon('type'), h('span', { class: 'grow' }, h('span', { dir: 'auto' }, x.families[0] ?? x.file), h('small', { class: 'src', dir: 'ltr' }, ` ${x.file} · ${formatBytes(x.size)}`)), iconButton('trash', t('remove'), () => void f.removeFont(x.id).then(draw).then(count)))) : [h('p', { class: 'empty small' }, t('fontsNone'))])); };
+    const draw = async () => { const lib = await f.library(); sh.body.replaceChildren(...(lib.length ? lib.map((x) => h('div', { class: 'dest-row' }, icon('type'), h('span', { class: 'grow' }, h('span', { dir: 'auto' }, x.families[0] ?? x.file), h('small', { class: 'src', dir: 'ltr' }, ` ${x.file} · ${formatBytes(x.size)}`)), iconButton('trash', t('remove'), () => void f.removeFontWithUndo(x, () => { void draw(); void count(); })))) : [h('p', { class: 'empty small' }, t('fontsNone'))])); };
     void draw();
   };
   return [

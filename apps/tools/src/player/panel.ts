@@ -3,6 +3,7 @@
 import { fontRows as subFontRows } from './subFont';
 import { h, pickButton } from '../ui/dom';
 import { t, localDigits } from '../i18n';
+import { offerUndo } from '../ui/undo';
 import { getPrefs, updatePrefs, resetPrefs, DEFAULT_PREFS, type PlayerPrefs, type TapAction } from './prefs';
 import { getSettings, updateSettings } from '../settings';
 import { nativePlatform } from '../native';
@@ -18,7 +19,14 @@ export function playerPrefsPanel(onChange: (keys: K[]) => void = () => undefined
   const langList = (label: string, hint: string, get: () => string[], put: (v: string[]) => void) => h('div', { class: 'row' }, h('span', null, label, h('small', { class: 'src' }, hint)), h('input', { type: 'text', dir: 'ltr', value: get().join(', '), placeholder: 'ar, en, ja', style: { width: '10em' }, onchange: (e: Event) => put((e.target as HTMLInputElement).value.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter((x) => /^[a-z]{2,3}$/.test(x))) }));
   const taps: [TapAction, string][] = [['seek', t('tapSeek')], ['playpause', t('tapPlayPause')], ['chapter', t('tapChapter')], ['none', t('tapNothing')]];
   const group = (title: string, keys: K[], ...rows: HTMLElement[]) => h('details', { class: 'pp-group' }, h('summary', null, h('b', null, title)), ...rows,
-    h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small', onclick: (e: Event) => { resetPrefs(keys); onChange(keys); const d = (e.currentTarget as HTMLElement).closest('.pp-group') as HTMLDetailsElement; const fresh = playerPrefsPanel(onChange); d.closest('.pp-panel')?.replaceWith(fresh); } }, t('reset'))));
+    h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small', onclick: (e: Event) => {
+      // (undo-redo) The group's values as they were kept: Undo puts them back, Redo resets again.
+      const was = JSON.parse(JSON.stringify(Object.fromEntries(keys.map((k) => [k, getPrefs()[k]])))) as Partial<PlayerPrefs>;
+      let shown = (e.currentTarget as HTMLElement).closest('.pp-panel') as HTMLElement | null;
+      const redraw = () => { const fresh = playerPrefsPanel(onChange); if (shown?.isConnected) shown.replaceWith(fresh); shown = fresh; };
+      const reset = () => { resetPrefs(keys); onChange(keys); redraw(); };
+      reset(); offerUndo(t('groupReset', { name: title }), () => { updatePrefs(JSON.parse(JSON.stringify(was)) as Partial<PlayerPrefs>); onChange(keys); redraw(); }, reset);
+    } }, t('reset'))));
   // (The bar's tools — REX Player's Layout page —: ticked on or off, moved up or down, as in the player's own sheet.)
   const TOOL_NAMES: [string, string][] = [['chapters', t('toolChaptersBookmarks')], ['speed', t('playbackSpeed')], ['decoder', t('toolDecoder')], ['rotation', t('toolScreenRotation')], ['frames', t('toolFrames')], ['zoom', t('toolZoom')], ['pip', t('pip')], ['aspect', t('toolAspect')], ['lock', t('lockScreen')], ['audio', t('audioTracks')], ['subs', t('navSubs')], ['chapter', t('toolCurrentChapter')], ['repeat', t('repeatMode')], ['shuffle', t('toolShuffle')], ['flipH', t('toolFlipH')], ['flipV', t('toolFlipV')], ['ab', t('toolAbLoop')], ['skip', t('toolCustomSkip')], ['background', t('backgroundPlay')], ['ambient', t('ambientMode')], ['sleep', t('sleepTimer')], ['quality', t('toolQuality')], ['cut', t('toolCut')], ['shot', t('screenshot')], ['bookmark', t('addBookmark')], ['jump', t('jumpToTime')], ['info', t('mediaInfo')], ['stats', t('statsOverlay')], ['keys', t('shortcutsTitle')], ['copyTime', t('copyTime')]];
   const layoutList = h('div', { class: 'dest-list pp-layout' });

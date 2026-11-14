@@ -1,0 +1,100 @@
+[package]
+name = "kurokawa-tools"
+# (Not the app's version: Tauri takes that from tauri.conf.json, which reads apps/tools/package.json.)
+version = "0.0.0"
+description = "Kurokawa Tools — the Tauri shell"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# (Stage P3: what both apps' shells share — files, dialogs, clipboard, web requests with their cookies and DNS over
+# HTTPS, the update check, window state, hashes, the self-tests' frame and test server — comes from shared/shell-rs,
+# with the versions it names; Tools' engine rules from apps/tools/core/kt-core (std only). Tools lists tauri and the
+# three plugins itself: it registers the plugins, and Tauri's build reads their permissions from its direct
+# dependencies.)
+[dependencies]
+kurokawa-shell = { path = "../../../../shared/shell-rs" }
+kt-core = { path = "../../core/kt-core" }
+# ("image-png", stage P6 part: a PNG read for the app icon of the user's choosing — the shared appicon.rs. "tray-icon",
+# stage P6: the downloads' tray icon — Tauri's own, behind its feature; it brings the tray-icon crate (muda is already in
+# through the menus), which on Linux loads libayatana-appindicator3 / libappindicator3 at run time: desktop.rs makes no
+# tray where neither is installed.)
+tauri = { version = "2", features = ["image-png", "tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
+# (Stage P6, desktop.rs — the official plugins. single-instance and notification: the Reader's shell resolves and builds
+# them already (its Cargo.toml, "2"). global-shortcut: new here (it brings global-hotkey — x11-dl on Linux, the
+# Windows and macOS system bindings the tray already brings); used only where build.rs finds its API (kt_shortcuts).
+# std has none of these: a second launch's hand-over, system notifications, keys grabbed system-wide.)
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+serde_json = "1"
+# (The self-test's digest of the test server's file; the same version as kurokawa-shell's, so one copy.)
+sha2 = "0.10"
+# (Stage P7: raw deflate for the archives' own ZIP reader and writer — archives.rs over the shared archive.rs. Pure Rust
+# (miniz_oxide); already in the build through reqwest's gzip; the Reader's shell names it the same way.)
+flate2 = "1"
+# (The hybrid, ../PORTING.md «Closed by the hybrid»: mediawatch.rs's header probe builds its own client — no redirect
+# to another host, no cookie jar — so it names reqwest itself: the shared crate's "0.12", no feature of its own, no new
+# crate.)
+reqwest = { version = "0.12", default-features = false }
+
+# (Stage P3: the free space of a disk — statvfs; already in the build through Tauri.)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# (The hybrid, Linux: notify-rust — the notification plugin's own crate — for a notice's default action and its
+# ActionInvoked (notifier.rs); webkit2gtk — wry's own — for each response's MIME type (mediawatch.rs). Both resolve to
+# the version already in the build ("4", "2": one semver slot each); build.rs uses them only when the lock holds that
+# ONE version and their calls are found (kt_notify_wait, kt_wk_resources).)
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = "4"
+webkit2gtk = "2"
+
+# (The original system, Windows: wry's own webview2-com and windows — the versions CI run 43599725459 resolved through
+# wry 0.57.2, in their semver slot, so Cargo unifies them with wry's —, for the `wv2` and `native-toast` features.)
+[target.'cfg(windows)'.dependencies]
+webview2-com = { version = "0.39.1", optional = true }
+windows = { version = "0.62.2", optional = true }
+
+# (Stage P4: the hybrid torrent engine's librqbit half — stream_rqbit.rs, the far seeks aria2 cannot do. This file never
+# names librqbit: the feature below is empty, so a plain build neither resolves nor compiles it and a librqbit that moved
+# can never break it (aria2 then serves every stream, as before). `node ../rqbit-feature.cjs on` makes the feature real
+# and a default (added to the list below, `wv2` kept) in the copy it runs on — librqbit pinned to =8.1.1 (what CI resolved and checked) and tokio (already
+# in the build through Tauri) with io-util and time —; `off` puts this text back. CI's builds turn it on and Linux also
+# builds and self-tests without it (tauri-check.yml «stage P4, hybrid engine»); the release's fallback is in
+# switch-over/NOTES.md. librqbit: the BitTorrent engine whose file streams fetch the pieces under the reader first (std
+# cannot be a BitTorrent client); its weight is printed by CI's «librqbit: what it adds» step.)
+[features]
+rqbit = []
+# (The original system — ../PORTING.md «The original Rust system — piece by piece». Each native piece is a feature, so
+# a compile failure of one can never break the main build; on by default only once CI has proven it.)
+#  - wv2 (Windows): WebView2's WebResourceResponseReceived — mediawatch.rs wv2_watch. ON since CI run 43599725459
+#    checked `--features wv2` clean with webview2-com 0.39.1 and windows 0.62.2, the versions wry resolved; its code is
+#    also kept to the build where the lock holds one of each (build.rs: kt_wv2_single), else the header probe.
+#  - native-toast (Windows): a toast from Rust through WinRT, its click in-process (wintoast.rs); PowerShell's stays
+#    the fallback at run time. OFF until the self-test proves it: CI's «Original system — compile try» builds it in when
+#    it compiles on the runner. The windows crate's WinRT parts it needs (the same 0.62 copy wry's webview2-com uses;
+#    tauri-winrt-notification, in the build already through the notification plugin, turns most of them on).
+#  - wkgtk (Linux): WebKitGTK's resource-load-started → each response's MIME type (mediawatch.rs) — webkit2gtk, wry's
+#    own, named above. OFF the same way.
+#  - mac-unc (macOS): UNUserNotificationCenter with a delegate for the click (macnotice.rs). OFF, and its crates
+#    (objc2-user-notifications 0.3 — not in the lock through tauri/wry/tao —, objc2 0.6, objc2-foundation 0.3, block2
+#    0.6) are not named here: only the not-required CI step «Hybrid and original try» adds them in its runner's copy and
+#    prints the compiler's word, as for librqbit.
+default = ["wv2"]
+wv2 = ["dep:webview2-com", "dep:windows"]
+native-toast = ["dep:windows", "windows/UI_Notifications", "windows/Data_Xml_Dom", "windows/Foundation", "windows/Foundation_Collections", "windows/Win32_UI_Shell"]
+wkgtk = []
+mac-unc = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

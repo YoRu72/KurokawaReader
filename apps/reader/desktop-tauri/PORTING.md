@@ -462,6 +462,10 @@ forget (the clearance, then everything); the browser as a browser ends when clos
 ## Archives, the window, the app's icon (stage R5)
 
 **Archives** (`src-tauri/src/archive.rs` — std only, unit-tested by the workflow —, `archives.rs` — the commands).
+(Since Kurokawa Tools' stage P7 `archive.rs` is the shared crate's — `shared/shell-rs/src/archive.rs`, moved unchanged,
+both apps using it; Tools' additions there are off unless asked, so the Reader's answers are as they were. Likewise
+since Tools' P6 `iconlogic.rs` and appicon's steps — `shared/shell-rs/src/iconlogic.rs`, `appicon.rs`; the Reader's
+`appicon.rs` keeps its names, its two window calls and its commands. The workflow's std-only tests point there.)
 `desktop/archive.cjs` ported whole, the same approach, the same answers to the same callers (`src/archives.ts`,
 `src/ui/archives.ts`): ZIP read by the app's own parser (deflate by `flate2`, pure Rust) — listed, tested by CRC,
 extracted, or extracted **in place** the HatchZip way (last entry first, the archive cut after each committed batch of

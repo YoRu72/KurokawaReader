@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The setup window. Its own setup_* commands need no permission (app commands are allowed); the dialog plugin is used from Rust only, so none of its JS permissions are granted.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

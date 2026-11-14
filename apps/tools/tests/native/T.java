@@ -4,26 +4,48 @@
 import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import java.util.*; import java.util.concurrent.atomic.*; import java.security.*;
 public class T {
   static byte[] data; static String etag = "\"v1\""; static AtomicInteger busy = new AtomicInteger(); static int limit = 2; static AtomicLong served = new AtomicLong(); static AtomicInteger refusals = new AtomicInteger(); static volatile boolean slowFirst = false; static AtomicInteger splits = new AtomicInteger(); static volatile boolean rotating = false; static volatile boolean apk = false; static volatile int deny = 0; static volatile boolean capped = false; static volatile long cutAfter = 0; static AtomicInteger tag = new AtomicInteger(); static volatile int resetOver = 0; static byte[] small = new byte[24000];
+  /** A request being answered: its range, how far it has sent, where a later request took over its tail, whether it
+   *  has sent all it will (only its end is left). */
+  static final class Live { long from = Long.MAX_VALUE, pos = -1, to = -1, cutoff = Long.MAX_VALUE; volatile boolean ending; Runnable release; }
+  static final List<Live> live = new ArrayList<>();
   public static void main(String[] a) throws Exception {
     data = new byte[20 << 20]; new Random(1).nextBytes(data);
     HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 50); s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
     s.createContext("/f", ex -> {
       String range = ex.getRequestHeaders().getFirst("Range"); String ir = ex.getRequestHeaders().getFirst("If-Range");
       boolean probe = "bytes=0-0".equals(range);
+      // (A request holds its slot until its handler ends, as before. Two races are closed, both seen on busy machines before
+      // stage M2 as after — a connection asking for its next range at once found its own last request still counted and
+      // was refused, which cut «a server taking 3» to 2, or 1: a newcomer that finds the server full waits for the
+      // handlers that have sent all they will send (the end of their range, a cut, a 403) to end — they are ending — and
+      // a request that takes over the tail of a running one (the downloader's split at the end) frees that one once it
+      // has sent up to where the tail begins, where its client stops reading. A full server with none ending refuses
+      // at once, as before.)
+      long rf = -1; if (!probe && range != null) rf = Long.parseLong(range.substring(6).split("-")[0]);
+      if (!probe) synchronized (live) {
+        if (rf >= 0) for (Live l : live) if (l.from < rf && rf <= l.to) l.cutoff = Math.min(l.cutoff, rf);
+        for (Live l : new ArrayList<>(live)) if (l.pos >= l.cutoff) l.release.run();
+        long until = System.currentTimeMillis() + 5000;
+        while (busy.get() >= limit && live.stream().anyMatch(l -> l.ending) && System.currentTimeMillis() < until) try { live.wait(20); } catch (InterruptedException e) { break; }
+      }
       if (!probe && busy.incrementAndGet() > limit) { busy.decrementAndGet(); refusals.incrementAndGet(); ex.sendResponseHeaders(503, -1); ex.close(); return; }
+      final AtomicBoolean held = new AtomicBoolean(!probe); final Live me = new Live();
+      final Runnable release = () -> { if (held.getAndSet(false)) { busy.decrementAndGet(); synchronized (live) { live.remove(me); live.notifyAll(); } } }; me.release = release;
+      if (!probe) synchronized (live) { live.add(me); }
       try {
         if (apk) ex.getResponseHeaders().add("Content-Type", "application/vnd.android.package-archive");
         // (A server that drops the connection — no answer at all — beyond `resetOver` at once.)
-        if (resetOver > 0 && !probe && busy.get() > resetOver) { refusals.incrementAndGet(); throw new IOException("reset"); }
-        if (deny > 0 && !probe && busy.get() > 1) { deny--; ex.sendResponseHeaders(403, -1); ex.close(); return; }
+        if (resetOver > 0 && !probe && busy.get() > resetOver) { refusals.incrementAndGet(); me.ending = true; throw new IOException("reset"); }
+        if (deny > 0 && !probe && busy.get() > 1) { deny--; me.ending = true; ex.sendResponseHeaders(403, -1); ex.close(); return; }
         ex.getResponseHeaders().add("ETag", rotating ? "\"r" + tag.incrementAndGet() + "\"" : etag); ex.getResponseHeaders().add("Accept-Ranges", "bytes");
         if (range == null || (ir != null && !ir.equals(etag))) { ex.sendResponseHeaders(200, data.length); try (OutputStream o = ex.getResponseBody()) { o.write(data); } served.addAndGet(data.length); return; }
         String[] p = range.substring(6).split("-"); long f = Long.parseLong(p[0]), t = p.length > 1 && !p[1].isEmpty() ? Long.parseLong(p[1]) : data.length - 1;
+        synchronized (live) { me.from = f; me.pos = f; me.to = t; }
         ex.getResponseHeaders().add("Content-Range", "bytes " + f + "-" + t + "/" + data.length); ex.sendResponseHeaders(206, t - f + 1);
         if (slowFirst && f % (1310720) != 0) splits.incrementAndGet();
         final boolean slow = slowFirst && f == 0; long sent = 0;
-        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); o.write(data, (int) i, n); served.addAndGet(n); sent += n; if (cutAfter > 0 && sent >= cutAfter) { ex.getResponseBody().flush(); throw new java.io.IOException("cut"); } Thread.sleep(slow ? 150 : capped ? 40 : 2); } } catch (InterruptedException e) {}
-      } finally { if (!probe) busy.decrementAndGet(); }
+        try (OutputStream o = ex.getResponseBody()) { for (long i = f; i <= t; i += 65536) { int n = (int) Math.min(65536, t - i + 1); boolean cutNow = cutAfter > 0 && sent + n >= cutAfter; if (i + n > t || cutNow) me.ending = true; o.write(data, (int) i, n); served.addAndGet(n); sent += n; synchronized (live) { me.pos = i + n; if (me.pos >= me.cutoff) release.run(); } if (cutNow) { ex.getResponseBody().flush(); throw new java.io.IOException("cut"); } Thread.sleep(slow ? 150 : capped ? 40 : 2); } } catch (InterruptedException e) {}
+      } finally { release.run(); }
     });
     s.createContext("/s", ex -> {
       String range = ex.getRequestHeaders().getFirst("Range"); ex.getResponseHeaders().add("Accept-Ranges", "bytes");

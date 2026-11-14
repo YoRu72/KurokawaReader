@@ -55,6 +55,11 @@ Android Java is about 10,700 lines. The parts already written as plain logic wit
 - Stage 2 — the aria2 download engine driven from Rust; window size remembered; a self-test that starts the built
   app in CI and exercises the bridge, including a real download paused and resumed: 26 of 26 checks on Windows,
   Linux and macOS.
+- Stage P3 (written 2026-11-14, waiting for CI): the shell moved onto the shared crate `shared/shell-rs` (the
+  Reader's), the core crate `apps/tools/core/kt-core` created (engine rules moved in; the file job engine — the Android
+  rules —, font names, MEGA's AES-128-CTR; std only, tested with rustc alone), the recycle bin, free space, fonts, MEGA
+  decrypt, screen fonts, the Files page's copy / move / delete on the PC (Tauri shell only), the Reader's own title bar
+  with its settings, API detection in build.rs. 43 of the 98 channels done (table in the shell's PORTING.md).
 - Measured sizes with the engine bundled: Windows installer 4.8 MB, macOS 3.5 MB, Linux .deb 9.4 MB,
   Linux AppImage 83.6 MB (it must carry its own browser engine, so no gain there).
 
@@ -77,7 +82,7 @@ on, and becomes the main download at P9.
 |---|---|---|---|
 | P1 ✔ | Shell, files, dialogs, clipboard, web requests, update check | bridge round-trips | done |
 | P2 ✔ | aria2 engine, tasks, events, window state | real download, pause, resume, hash | done |
-| P3 | **Shared core crate** `kt-core` created (see §6): engine rules, path rules, task mapping moved into it from the shell. Remaining small file functions (trash, fonts index, MEGA decrypt). **Preview builds published** beside each Electron release. | existing checks still pass through the core | low |
+| P3 (written) | **Shared core crate** `kt-core` created (see §6): engine rules, path rules, task mapping moved into it from the shell. Remaining small file functions (trash, fonts index, MEGA decrypt), free space, screen fonts; the Files page's file jobs (copy / move / delete, the Android rules); the shared title bar. **Preview builds published** beside each Electron release (not yet). | existing checks still pass through the core; the file jobs on temp folders (across disks where CI has two) | low |
 | P4 | **Torrent streaming in Rust** (librqbit) with the local stream server the player reads from; aria2 kept for torrent *downloads* and as the fallback for streaming. | a small test torrent served by a local tracker/peer in CI: add, stream, seek to the middle, bytes match | **high** — the largest unknown |
 | P5 | Video tools: yt-dlp and gallery-dl (fetch, verify, run, progress, update, rollback), ffmpeg packs, probe, transcode stream | a fake yt-dlp/ffmpeg program in CI answering as the real ones do; pack download from the loopback server | low |
 | P6 | Desktop integration: tray, global shortcuts, notifications, single instance, magnet and .torrent handling, deep links, title bar, mini window, taskbar progress, keep-awake | second-instance hand-off, deep link, window flags (what CI can observe); the rest by owner on Windows | medium (differs per system) |
@@ -117,6 +122,17 @@ problems, the Java version is removed.
 | M5 | File jobs (copy/move/delete rules) and remote-storage logic from the core | the file-job tests on temp folders | medium |
 | M6 | Remove the replaced Java and libtorrent4j; final size and speed measurements | full suite; size table | low |
 
+**Status (Android).** M0 and M1 written 2026-11-14 (branch `work-tt-p5`), waiting for CI
+(`.github/workflows/android-rust-check.yml`): the crate `apps/tools/core/kt-android` (one hand-written JNI function,
+no crates.io dependency), Java's `KtCore` (absent → Java as today), the download rules and the translator's cache key
+in kt-core with Java's cases, shadow mode in debuggable builds, the release switch-over as a patch not yet applied.
+M0+M1's first CI run (43596554460) passed: the three libraries built with the NDK and packed, +193 KB arm64-v8a,
++183 KB armeabi-v7a, +200 KB x86_64, +576 KB universal. **M2 written 2026-11-14** (same branch, waiting for CI): the
+HTTP downloader's decisions in kt-core (`httpdl.rs`), Java moving the bytes (`KrDownloaderRs`), the downloader's runs
+1–19 passing through the Rust engine on the host beside Java's; «Download engine: Java / Rust» under Settings →
+Advanced on phones with the core, default Java until the owner's phone run on Wi-Fi and mobile data. M3 re-planned
+for P4's hybrid engine. Details, sizes and the plans: `apps/tools/core/kt-android/ANDROID-PORT.md`.
+
 **What Rust on Android will and will not give.**
 - One engine to fix instead of two: a download or torrent bug is fixed once for PC and phone.
 - Size: unknown until M0 and M3 measure it. The Rust library adds a few MB per processor type; removing
@@ -128,9 +144,10 @@ problems, the Java version is removed.
 ## 6. The shared core
 
 ```
-apps/tools/core/            Rust workspace
+apps/tools/core/            Rust crates (not yet a Cargo workspace: the shell takes kt-core by path)
   kt-core/                  pure logic, no platform code, unit-tested locally with plain rustc
-    paths, names, task model, engine rules, limits, host memory
+    engine_core (P3: paths, names, task model, engine rules), filejobs (P3), fontnames (P3), mega (P3)
+    limits, host memory
     downloader (M2), torrent glue (P4), subtitle matching, tracking, lettering, inpaint, hls
   kt-desktop/               the Tauri shell (today apps/tools/desktop-tauri/src-tauri)
   kt-android/               the JNI layer: thin functions Java calls

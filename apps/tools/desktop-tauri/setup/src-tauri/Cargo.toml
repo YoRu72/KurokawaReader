@@ -1,0 +1,38 @@
+[package]
+# Kurokawa Tools Setup — the designed Windows setup program (setup/INTEGRATION.md). Its own small crate, beside the
+# app's (../../src-tauri), with the same version requirements as the app's Cargo.toml where the same crates are used
+# (tauri 2 with "image-png", tauri-plugin-dialog 2, serde_json 1, tauri-build 2): resolved together in one CI run they
+# land on the same versions, and with CARGO_TARGET_DIR set to the app's target folder the compiled crates are reused.
+name = "kurokawatools-setup"
+version = "0.0.0"
+description = "Kurokawa Tools Setup — a designed window over the NSIS installer"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "KurokawaToolsSetup"
+path = "src/main.rs"
+
+# (Its own root: never taken into a workspace above it.)
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["image-png"] }
+tauri-plugin-dialog = "2"
+serde_json = "1"
+
+[features]
+# (The page served from the program itself, as `tauri build` does, also under a plain `cargo build --release`.)
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# (The app's own release profile: small, one unit — and the same, so the shared crates' builds are reused.)
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

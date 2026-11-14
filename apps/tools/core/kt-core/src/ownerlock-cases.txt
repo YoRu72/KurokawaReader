@@ -1,0 +1,22 @@
+# The downloads' owner rule (ownerlogic.rs, desktop/ownerlock.cjs): one table both are tested against.
+# name | now | rec (- or owner,pid,startedAt,heartbeat[,released]) | me (owner,pid,startedAt) | pid alive | status | may take | may take, asked | tick
+no record | 100000 | - | tauri,10,1000 | no | free | yes | yes | take
+released by the old app | 100000 | electron,20,500,99000,released | tauri,10,1000 | yes | free | yes | yes | take
+my own record | 100000 | tauri,10,1000,95000 | tauri,10,1000 | yes | mine | yes | yes | renew
+my own record, heartbeat late | 100000 | tauri,10,1000,1000 | tauri,10,1000 | no | mine | yes | yes | renew
+the old app, alive, fresh | 100000 | electron,20,500,95000 | tauri,10,1000 | yes | held | no | yes | yield
+the old app, gone, fresh heartbeat | 100000 | electron,20,500,95000 | tauri,10,1000 | no | held | no | yes | yield
+the old app, gone, heartbeat at the limit | 145000 | electron,20,500,100000 | tauri,10,1000 | no | held | no | yes | yield
+the old app, gone, heartbeat past the limit | 145001 | electron,20,500,100000 | tauri,10,1000 | no | stale | yes | yes | take
+the old app, alive, heartbeat old | 400000 | electron,20,500,100000 | tauri,10,1000 | yes | held | no | yes | yield
+pid alive but reused (heartbeat past reuse) | 700001 | electron,20,500,100000 | tauri,10,1000 | yes | stale | yes | yes | take
+the new app holds, the old one asks | 100000 | tauri,10,1000,99000 | electron,20,500 | yes | held | no | yes | yield
+the new app crashed, the old one asks | 200000 | tauri,10,1000,99000 | electron,20,500 | no | stale | yes | yes | take
+clock moved back an hour, owner alive | 6400000 | tauri,10,1000,10000000 | electron,20,500 | yes | held | no | yes | yield
+clock moved back an hour, owner gone | 6400000 | tauri,10,1000,10000000 | electron,20,500 | no | stale | yes | yes | take
+clock moved back within the skew, owner gone | 9880000 | tauri,10,1000,10000000 | electron,20,500 | no | held | no | yes | yield
+clock moved forward 5 min, owner alive | 10300000 | tauri,10,1000,10000000 | electron,20,500 | yes | held | no | yes | yield
+clock moved forward 5 min, owner gone | 10300000 | tauri,10,1000,10000000 | electron,20,500 | no | stale | yes | yes | take
+same kind, same pid, another start (restarted) | 100000 | tauri,10,1000,99000 | tauri,10,5000 | yes | held | no | yes | yield
+same kind, same pid, another start, old | 200000 | tauri,10,1000,99000 | tauri,10,5000 | yes | stale | yes | yes | take
+pid 0 never counts as alive | 200000 | electron,0,500,99000 | tauri,10,1000 | yes | stale | yes | yes | take

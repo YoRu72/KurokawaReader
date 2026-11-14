@@ -1,3 +1,14 @@
+// Archives — shared by both apps' Tauri shells since Tools' stage P7 (moved here unchanged from the Reader's
+// apps/reader/desktop-tauri/src-tauri/src/archive.rs, stage R5; each app keeps its own commands: the Reader's
+// archives.rs, Tools' archives.rs). Tools' Electron archive.cjs has a few things the Reader's has not; they are here
+// too, each off unless asked, so the Reader's answers stay exactly as they were:
+//  - entry dates (`Entry::mtime`: a zip's DOS time, 7-Zip's «Modified»; the Reader's commands do not send them),
+//    read as local time with the offset the app gives (`set_local_offset`, 0 — UTC — unless set);
+//  - a partial extraction (`ExtractOpts::only`: just these entries and what is under these folders; folders made only
+//    for what is taken out; never in place; None — all — unless given);
+//  - split volumes («x.7z.001», «x.zip.001», «x.zip» beside «x.z01») handed to 7-Zip, which joins them
+//    (`route_split_volumes(true)`; off unless set).
+//
 // Archives (stage R5), desktop/archive.cjs in Rust — the same approach, the same answers: ZIP read by the app's own
 // parser (and extracted in place the HatchZip way — last entry first, the archive cut after each committed batch, a
 // journal beside it for resuming, «give up» making what is left a whole ZIP again); tar listed and extracted in place
@@ -18,7 +29,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -50,6 +61,92 @@ pub struct Ctx<'a> {
     /// The 7-Zip program (None: not shipped and not on the PATH — the formats that need it then fail «7z missing»).
     pub seven: Option<PathBuf>,
     pub free: &'a dyn Fn(&Path) -> u64,
+}
+
+/* ---------- the app's choices (Tools'; the Reader leaves them as they are) ---------- */
+
+static SPLIT_VOLUMES: AtomicBool = AtomicBool::new(false);
+static LOCAL_OFFSET: AtomicI64 = AtomicI64::new(0);
+
+/// Split volumes («x.7z.001», «x.zip.001», «x.zip» beside «x.z01») to 7-Zip, as Tools' archive.cjs does.
+pub fn route_split_volumes(on: bool) {
+    SPLIT_VOLUMES.store(on, Ordering::SeqCst);
+}
+/// The local clock's offset from UTC, seconds east (the entry dates zip and 7-Zip give are local times).
+pub fn set_local_offset(secs: i64) {
+    LOCAL_OFFSET.store(secs, Ordering::SeqCst);
+}
+/// A first or later volume of a split 7z or zip, by its name (and, for «x.zip», an «x.z01» beside it).
+pub fn split_volume(file: &Path) -> bool {
+    let n = lower_name(file);
+    let numbered = |ext: &str| -> bool {
+        n.len() > ext.len() + 4 && {
+            let (head, num) = n.split_at(n.len() - 4);
+            num.starts_with('.') && num[1..].chars().all(|c| c.is_ascii_digit()) && head.ends_with(ext)
+        }
+    };
+    if numbered(".7z") || numbered(".zip") {
+        return true;
+    }
+    if n.ends_with(".zip") {
+        let s = file.to_string_lossy();
+        let z01 = PathBuf::from(format!("{}z01", &s[..s.len() - 3]));
+        return z01.exists();
+    }
+    false
+}
+
+/// Days since 1970 of a civil date (Howard Hinnant's days_from_civil).
+pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m as i64 + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+/// A local date and time → milliseconds since 1970 (UTC), with the app's offset.
+fn local_ms(y: i64, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> u64 {
+    if !(1..=12).contains(&mo) || d == 0 || d > 31 || h > 23 || mi > 59 || s > 61 {
+        return 0;
+    }
+    let secs = days_from_civil(y, mo, d) * 86_400 + (h * 3600 + mi * 60 + s) as i64 - LOCAL_OFFSET.load(Ordering::SeqCst);
+    if secs <= 0 {
+        0
+    } else {
+        secs as u64 * 1000
+    }
+}
+/// An entry's MS-DOS time and date (local time, two-second steps) as epoch milliseconds; 0 when unset — archive.cjs's
+/// dosTime.
+pub fn dos_ms(time: u16, date: u16) -> u64 {
+    if date == 0 {
+        return 0;
+    }
+    let (t, d) = (time as u32, date as u32);
+    local_ms(1980 + ((d >> 9) & 0x7f) as i64, (d >> 5) & 0x0f, d & 0x1f, (t >> 11) & 0x1f, (t >> 5) & 0x3f, (t & 0x1f) * 2)
+}
+/// 7-Zip's «Modified = 2024-05-01 10:00:00[.1234567]» (local time) → epoch milliseconds; 0 when it is not that.
+pub fn seven_ms(v: &str) -> u64 {
+    let v = v.trim();
+    let b = v.as_bytes();
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || b[10] != b' ' || b[13] != b':' || b[16] != b':' {
+        return 0;
+    }
+    let n = |a: usize, z: usize| -> Option<i64> { v.get(a..z).filter(|x| x.chars().all(|c| c.is_ascii_digit())).and_then(|x| x.parse().ok()) };
+    match (n(0, 4), n(5, 7), n(8, 10), n(11, 13), n(14, 16), n(17, 19)) {
+        (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(s)) => local_ms(y, mo as u32, d as u32, h as u32, mi as u32, s as u32),
+        _ => 0,
+    }
+}
+/// archive.cjs's `wanted`: with `only`, just these entries and what is under these folders («dir/»).
+pub fn wanted(only: Option<&[String]>, name: &str) -> bool {
+    match only {
+        None => true,
+        Some(w) if w.is_empty() => true,
+        Some(w) => w.iter().any(|x| name == x || (x.ends_with('/') && name.starts_with(x.as_str()))),
+    }
 }
 
 /// Number.MAX_SAFE_INTEGER: archive.cjs's «unknown» free space.
@@ -158,7 +255,14 @@ pub fn link_stays(entry: &str, target: &str) -> bool {
 /// Where an entry goes: refused if it would leave `dest`; its folder made; an existing file kept («skip» → None),
 /// beside it under a new name («both»: `name (2).ext`…), or replaced.
 pub fn target_for(dest: &Path, name: &str, replace: &str) -> Result<Option<PathBuf>, String> {
+    target_for_only(dest, name, replace, None)
+}
+/// target_for, and with `only` an entry not chosen → None (its folder not made: nothing that is not taken out).
+pub fn target_for_only(dest: &Path, name: &str, replace: &str, only: Option<&[String]>) -> Result<Option<PathBuf>, String> {
     let out = safe_join(dest, name)?;
+    if !wanted(only, name) {
+        return Ok(None);
+    }
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir).map_err(es)?;
     }
@@ -208,6 +312,9 @@ pub fn format_of(file: &Path) -> Result<&'static str, String> {
         got += n;
     }
     let n = lower_name(file);
+    if SPLIT_VOLUMES.load(Ordering::SeqCst) && split_volume(file) {
+        return Ok("7z");
+    }
     let is = |s: &[u8]| b.starts_with(s);
     if is(&[0x50, 0x4b]) {
         return Ok("zip");
@@ -347,6 +454,8 @@ pub struct ZipItem {
     pub offset: u64,
     pub encrypted: bool,
     pub dir: bool,
+    /// Its date (epoch ms, local time read with the app's offset; 0 when unset).
+    pub mtime: u64,
     /// The record as it stands in the directory (written again by `restore`).
     pub raw: Vec<u8>,
 }
@@ -427,6 +536,7 @@ pub fn read_zip(src: &mut Src) -> Result<ZipIndex, String> {
             offset: le32(&cd, p + 42),
             encrypted: flags & 1 != 0,
             dir: false,
+            mtime: dos_ms(le16(&cd, p + 12) as u16, le16(&cd, p + 14) as u16),
             raw: Vec::new(),
         };
         let mut xp = p + 46 + nl;
@@ -529,7 +639,7 @@ fn write_entry(f: &mut File, it: &ZipItem, out: &Path, ctx: &Ctx, pr: &Pr, done:
     fs::rename(&part, out).map_err(es)
 }
 
-fn extract_zip(file: &Path, dest: &Path, replace: &str, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+fn extract_zip(file: &Path, dest: &Path, replace: &str, only: Option<&[String]>, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
     let ix = read_zip(&mut Src::open(file, 0)?)?;
     let mut f = File::open(file).map_err(es)?;
     let total: u64 = ix.items.iter().map(|x| x.usize).sum();
@@ -540,10 +650,13 @@ fn extract_zip(file: &Path, dest: &Path, replace: &str, ctx: &Ctx, pr: &Pr) -> R
             return Err(STOPPED.to_string());
         }
         if it.dir {
-            fs::create_dir_all(safe_join(dest, &it.name)?).map_err(es)?;
+            let at = safe_join(dest, &it.name)?;
+            if wanted(only, &it.name) {
+                fs::create_dir_all(at).map_err(es)?;
+            }
             continue;
         }
-        let out = match target_for(dest, &it.name, replace)? {
+        let out = match target_for_only(dest, &it.name, replace, only)? {
             Some(o) => o,
             None => {
                 done += it.usize;
@@ -882,6 +995,8 @@ pub struct SltEntry {
     pub compressed: Option<u64>,
     pub dir: bool,
     pub link: Option<String>,
+    /// «Modified», epoch ms (0 when not given).
+    pub modified: u64,
 }
 /// `7z l -slt -ba`'s records, as archive.cjs reads them (`Key = value` lines; any other ends the entry) → the entries
 /// and whether one is encrypted. Links (`Symbolic Link`, `Hard Link`) noted.
@@ -930,6 +1045,7 @@ pub fn parse_slt(out: &str) -> (Vec<SltEntry>, bool) {
             }
             "Encrypted" if v == "+" => encrypted = true,
             "Symbolic Link" | "Hard Link" | "Link" if !v.is_empty() => c.link = Some(v.to_string()),
+            "Modified" if !v.is_empty() => c.modified = seven_ms(v),
             _ => {}
         }
     }
@@ -1101,6 +1217,13 @@ fn extract_7z(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr, sca
         pw_arg(o.password.as_deref()),
         path_arg(file),
     ];
+    // (Just the chosen entries: their names after the archive's — a folder's without its «/», 7-Zip takes all in it.)
+    let mut args = args;
+    if let Some(only) = o.only.as_ref() {
+        for w in only.iter() {
+            args.push(w.trim_end_matches('/').to_string());
+        }
+    }
     let mut n = 0u64;
     let (from, span) = scale;
     let mut on_line = |l: &str| {
@@ -1131,6 +1254,8 @@ pub struct Entry {
     pub size: i64,
     pub compressed: Option<u64>,
     pub dir: bool,
+    /// Its date (epoch ms) where the archive keeps one: a zip's, 7-Zip's «Modified» (Tools sends it; the Reader not).
+    pub mtime: Option<u64>,
 }
 #[derive(Debug, Clone)]
 pub struct ListInfo {
@@ -1163,7 +1288,7 @@ pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, 
         let mut f = File::open(file).map_err(es)?;
         for it in scan_tar(&mut f)? {
             total += it.size;
-            entries.push(Entry { path: it.name, size: it.size as i64, compressed: None, dir: it.kind == '5' });
+            entries.push(Entry { path: it.name, size: it.size as i64, compressed: None, dir: it.kind == '5', mtime: None });
         }
     } else if has_journal(file) {
         format = "zip".to_string();
@@ -1173,7 +1298,8 @@ pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, 
         let ix = read_zip(&mut Src::open(&tail_of(file), base)?)?;
         for it in ix.items.into_iter().filter(|x| x.offset < committed) {
             total += it.usize;
-            entries.push(Entry { path: it.name, size: it.usize as i64, compressed: Some(it.csize), dir: it.dir });
+            let mt = Some(it.mtime).filter(|x| *x > 0);
+            entries.push(Entry { path: it.name, size: it.usize as i64, compressed: Some(it.csize), dir: it.dir, mtime: mt });
         }
     } else {
         let fmt = format_of(file)?;
@@ -1183,7 +1309,8 @@ pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, 
             for it in ix.items.into_iter() {
                 total += it.usize;
                 encrypted |= it.encrypted;
-                entries.push(Entry { path: it.name, size: it.usize as i64, compressed: Some(it.csize), dir: it.dir });
+                let mt = Some(it.mtime).filter(|x| *x > 0);
+                entries.push(Entry { path: it.name, size: it.usize as i64, compressed: Some(it.csize), dir: it.dir, mtime: mt });
             }
         } else if fmt == "tar" {
             let mut f = File::open(file).map_err(es)?;
@@ -1198,13 +1325,13 @@ pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, 
                         bad_link = Some(it.name.clone());
                     }
                 }
-                entries.push(Entry { path: it.name, size: it.size as i64, compressed: None, dir: it.kind == '5' });
+                entries.push(Entry { path: it.name, size: it.size as i64, compressed: None, dir: it.kind == '5', mtime: None });
             }
         } else if fmt == "gz" || fmt == "xz" || fmt == "bz2" {
             let n = file.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             let l = n.to_lowercase();
             let cut = [".gz", ".xz", ".bz2"].iter().find(|e| l.ends_with(*e)).map(|e| n.len() - e.len()).unwrap_or(n.len());
-            entries.push(Entry { path: n[..cut].to_string(), size: -1, compressed: None, dir: false });
+            entries.push(Entry { path: n[..cut].to_string(), size: -1, compressed: None, dir: false, mtime: None });
         } else {
             let seven = seven_of(ctx)?;
             let args = vec!["l".to_string(), "-slt".to_string(), "-ba".to_string(), pw_arg(password), path_arg(file)];
@@ -1226,7 +1353,8 @@ pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, 
                         bad_link = Some(e.path.clone());
                     }
                 }
-                entries.push(Entry { path: e.path, size: e.size as i64, compressed: e.compressed, dir: e.dir });
+                let mt = Some(e.modified).filter(|x| *x > 0);
+                entries.push(Entry { path: e.path, size: e.size as i64, compressed: e.compressed, dir: e.dir, mtime: mt });
             }
         }
     }
@@ -1278,10 +1406,21 @@ pub struct ExtractOpts {
     pub password: Option<String>,
     pub verify_first: bool,
     pub keep_free: Option<u64>,
+    /// Just these entries and what is under these folders («dir/») — Tools' partial extraction; None: all. Never in
+    /// place.
+    pub only: Option<Vec<String>>,
 }
 
 /// archive.cjs's extract → the files written.
 pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    // (A partial extraction is never in place: main.cjs's `inPlace: !!o.inPlace && !o.only`.)
+    let partial;
+    let o = if o.only.is_some() && o.in_place {
+        partial = ExtractOpts { in_place: false, ..o.clone() };
+        &partial
+    } else {
+        o
+    };
     fs::create_dir_all(dest).map_err(es)?;
     if has_journal(file) {
         return if is_tar(file) { tar_in_place(file, dest, o, ctx, pr) } else { zip_in_place(file, dest, o, ctx, pr) };
@@ -1321,7 +1460,7 @@ pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) ->
         } else if o.in_place {
             zip_in_place(file, dest, o, ctx, pr)?
         } else {
-            extract_zip(file, dest, &o.replace, ctx, pr)?
+            extract_zip(file, dest, &o.replace, o.only.as_deref(), ctx, pr)?
         };
     } else if fmt == "tar.gz" || fmt == "tar.xz" || fmt == "tar.bz2" {
         // Two layers: 7-Zip gives the inner tar first (into a folder of its own beside the files), then its files.
@@ -1330,7 +1469,8 @@ pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) ->
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).map_err(es)?;
         let r = (|| -> Result<u64, String> {
-            let outer = ExtractOpts { replace: "replace".to_string(), ..o.clone() };
+            // (The outer layer whole — the chosen names are the inner tar's.)
+            let outer = ExtractOpts { replace: "replace".to_string(), only: None, ..o.clone() };
             extract_7z(file, &tmp, &outer, ctx, pr, (0, 50))?;
             let inner = fs::read_dir(&tmp)
                 .map_err(es)?
@@ -2042,6 +2182,74 @@ mod tests {
         assert_eq!(w("a.TAR", b"x").unwrap(), "tar");
         assert_eq!(w("a.txt", b"hello").unwrap_err(), "notArchive");
         assert_eq!(w("e", b"").unwrap_err(), "notArchive");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// Tools' additions (off for the Reader): split volumes, entry dates, a partial extraction.
+    #[test]
+    fn tools_additions() {
+        let d = tmp("tools");
+        // split volumes, by name; routed to 7-Zip only when asked
+        for (n, yes) in [("x.7z.001", true), ("x.zip.002", true), ("x.ZIP.001", true), ("x.7z", false), ("x.001", false), ("x.zip.1", false), ("a.7z.00x", false)] {
+            assert_eq!(split_volume(&d.join(n)), yes, "{}", n);
+        }
+        let z = d.join("set.zip");
+        fs::write(&z, zip_store(&[("a.txt", b"A")])).unwrap();
+        assert!(!split_volume(&z));
+        fs::write(d.join("set.z01"), b"part").unwrap();
+        assert!(split_volume(&z));
+        assert_eq!(format_of(&z).unwrap(), "zip", "off: the Reader's answer");
+        route_split_volumes(true);
+        assert_eq!(format_of(&z).unwrap(), "7z");
+        route_split_volumes(false);
+        assert_eq!(format_of(&z).unwrap(), "zip");
+        // dates: DOS and 7-Zip's text, local time with the app's offset (0 here: UTC)
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
+        for secs in [0i64, 951_782_400, 1_700_000_000, 4_102_444_800] {
+            let (y, m, dd, ..) = civil(secs);
+            assert_eq!(days_from_civil(y, m, dd), secs.div_euclid(86_400));
+        }
+        let (t, dt) = dos_time(1_700_000_000);
+        assert_eq!(dos_ms(t, dt), 1_700_000_000_000);
+        assert_eq!(dos_ms(0, 0), 0);
+        assert_eq!(seven_ms("2023-11-14 22:13:20"), 1_700_000_000_000);
+        assert_eq!(seven_ms("2023-11-14 22:13:20.1234567"), 1_700_000_000_000);
+        assert_eq!(seven_ms(""), 0);
+        assert_eq!(seven_ms("yesterday"), 0);
+        let (e, _) = parse_slt("Path = a.txt\nSize = 1\nModified = 2023-11-14 22:13:20\n\n");
+        assert_eq!(e[0].modified, 1_700_000_000_000);
+        // a zip made here keeps its files' times: listed with them
+        let src = d.join("dated.txt");
+        fs::write(&src, b"D").unwrap();
+        let made = d.join("dated.zip");
+        let stop = AtomicBool::new(false);
+        let pr = Pr { on: &quiet, stop: &stop };
+        create_zip(&made, &[src.clone()], &ctx(), &pr).unwrap();
+        let info = list(&made, None, &ctx()).unwrap();
+        let mt = info.entries[0].mtime.unwrap_or(0) as i64;
+        let real = fs::metadata(&src).unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        assert!((mt - real).abs() <= 2000, "zip date {} vs file {}", mt, real);
+        // a partial extraction: only what was chosen, no other folder made; never in place
+        let parts = d.join("parts.zip");
+        fs::write(&parts, zip_store(&[("D1/", b""), ("D1/x.txt", b"X"), ("D1/in/", b""), ("D1/in/z.txt", b"Z"), ("D2/", b""), ("D2/y.txt", b"Y"), ("top.txt", b"T")])).unwrap();
+        assert!(wanted(None, "a") && wanted(Some(&[]), "a") && wanted(Some(&["D1/".to_string()]), "D1/x") && !wanted(Some(&["D1/".to_string()]), "D10/x") && !wanted(Some(&["D1".to_string()]), "D1/x"));
+        let out = d.join("p1");
+        let o = ExtractOpts { replace: "replace".to_string(), only: Some(vec!["D1/".to_string()]), in_place: true, ..Default::default() };
+        assert_eq!(extract(&parts, &out, &o, &ctx(), &pr).unwrap(), 2);
+        assert_eq!(fs::read(out.join("D1").join("in").join("z.txt")).unwrap(), b"Z");
+        assert!(!out.join("D2").exists() && !out.join("top.txt").exists(), "nothing else made");
+        assert!(parts.exists() && !has_journal(&parts), "not in place");
+        let out2 = d.join("p2");
+        let o2 = ExtractOpts { replace: "replace".to_string(), only: Some(vec!["top.txt".to_string()]), ..Default::default() };
+        assert_eq!(extract(&parts, &out2, &o2, &ctx(), &pr).unwrap(), 1);
+        let made2: Vec<String> = fs::read_dir(&out2).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(made2, vec!["top.txt".to_string()]);
+        // the chosen names are checked as every name is: a hostile one refuses the archive
+        let evil = d.join("evil.zip");
+        fs::write(&evil, zip_store(&[("ok.txt", b"1"), ("../x.txt", b"2")])).unwrap();
+        let o3 = ExtractOpts { replace: "replace".to_string(), only: Some(vec!["ok.txt".to_string()]), ..Default::default() };
+        assert!(extract(&evil, &d.join("p3"), &o3, &ctx(), &pr).unwrap_err().starts_with("unsafePath"));
         let _ = fs::remove_dir_all(&d);
     }
 
