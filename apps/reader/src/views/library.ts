@@ -39,6 +39,8 @@ export function libraryView(): HTMLElement {
   let tagFilter: string | null = localStorage.getItem('kr.tag') || null;
   let selecting = false;
   const selected = new Set<string>();
+  /** The view's element once made (its level marked on it: renderGrid). */
+  let levelHost: HTMLElement | null = null;
 
   const input = h('input', { type: 'file', multiple: true, accept: SUPPORTED_ACCEPT, hidden: true }) as HTMLInputElement;
   input.addEventListener('change', async () => {
@@ -248,6 +250,7 @@ export function libraryView(): HTMLElement {
   const onCommand = (e: Event) => { const c = (e as CustomEvent<string>).detail; if (!root.isConnected) return; if (c === 'import') void pickFiles(); else if (c === 'scan') openScan(); };
   document.addEventListener('kr:command', onCommand);
   const root = h('div', { class: 'view library-view' }, topbar, body, selBar, fab, input);
+  levelHost = root;
   // The PC's navigation rail asks for an import or a search across books.
   const onAsk = (e: Event) => {
     if (!root.isConnected) { window.removeEventListener('kr:library', onAsk); return; }
@@ -259,14 +262,50 @@ export function libraryView(): HTMLElement {
   const endDrag = () => root.classList.remove('dragging-book');
   for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.addEventListener(ev, endDrag, { passive: true });
 
-  // Back (Android's gesture, a mouse's back button, Alt+←): the books selected let go, then a series opened in
-  // the library closed — not the app put away from inside a series.
+  // Back (Android's gesture or button, a mouse's back button, Alt+←), one level up each time — the rule of
+  // src/native.ts and src/ui/backstack.ts, inside the library: the books selected let go; the search emptied and put
+  // away; out of a series (to the folder or the page it was opened on); out of a folder; out of a tag or a saved shelf
+  // entered as a place — each back to the main page where it was scrolled. Only on the main page, nothing of these,
+  // does Back go on (to the app's "press again to leave", or leaving it).
   const offBack = onBack(() => {
     if (!root.isConnected) { offBack(); return false; }
     if (selecting) { setSelecting(false); renderSelBar(); return true; }
-    if (activeSeries) { activeSeries = null; localStorage.removeItem('kr.series'); renderGrid(); return true; }
+    if (query || search.value) { clearTimeout(searchTimer); search.value = ''; query = ''; queryWords = []; search.blur(); renderGrid(); return true; }
+    if (document.activeElement === search) { search.blur(); return true; }
+    if (activeSeries) { openSeriesHere(null); return true; }
+    if (activeFolder) { openFolder(null); return true; }
+    if (tagFilter || onSavedShelf()) { if (onSavedShelf()) updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); return true; }
     return false;
   });
+
+  /* The places inside the library — a folder, a series, a tag (a saved shelf) — each a level of its own: where the
+   * list was scrolled is kept for the level left and given back on coming back to it (a level entered anew starts at
+   * its top). The level is also on the view's element (data-level), for Back's check that a press changed something. */
+  const levelKey = () => `${activeFolder ?? ''}|${activeSeries ?? ''}|${tagFilter ?? ''}`;
+  const levelScroll = new Map<string, number>();
+  function moveLevel(change: () => void): void {
+    levelScroll.set(levelKey(), body.scrollTop);
+    change();
+    const top = levelScroll.get(levelKey()) ?? 0;
+    // (The grid comes in batches: scrolled again as it grows, until it is there or a touch comes.)
+    let tries = 0; let stop = false;
+    body.addEventListener('touchstart', () => { stop = true; }, { once: true, passive: true });
+    const put = () => { if (stop || !body.isConnected) return; body.scrollTop = top; if (Math.abs(body.scrollTop - top) > 1 && ++tries < 30) window.setTimeout(put, 50); };
+    put(); requestAnimationFrame(put);
+  }
+  function openFolder(id: string | null): void {
+    moveLevel(() => { activeFolder = id; if (id) localStorage.setItem('kr.folder', id); else localStorage.removeItem('kr.folder'); renderChips(); renderGrid(); });
+  }
+  function openSeriesHere(key: string | null): void {
+    moveLevel(() => { activeSeries = key; if (key) localStorage.setItem('kr.series', key); else localStorage.removeItem('kr.series'); renderGrid(); });
+  }
+  /** A saved shelf (src/views/library.ts shelves: formats, statuses and a tag kept under a name) is the one in force. */
+  function onSavedShelf(): boolean {
+    const s0 = getSettings(); const f = s0.formatFilter ?? [], st = s0.statusFilter ?? [];
+    if (!f.length && !st.length) return false;
+    const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
+    return (s0.shelves ?? []).some((sh) => same(sh.formats, f) && same(sh.statuses, st) && (sh.tag ?? null) === (tagFilter ?? null));
+  }
 
   function setSelecting(v: boolean) {
     selecting = v;
@@ -381,7 +420,7 @@ export function libraryView(): HTMLElement {
     const el = h('button', { class: 'book-card folder-card', type: 'button', title: f.name, dataset: { folder: f.id } },
       h('div', { class: 'cover folder' }, h('div', { class: 'stack' }, ...covers.map((u, i) => u ? h('img', { src: u, alt: '' }) : h('div', { class: 'ph', style: { background: coverColors(inside[i].title)[0] } }))), icon('folder')),
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, f.name), h('div', { class: 'ba' }, t('booksInFolder', { n: inside.length }))));
-    el.addEventListener('click', () => { activeFolder = f.id; localStorage.setItem('kr.folder', f.id); renderChips(); renderGrid(); });
+    el.addEventListener('click', () => openFolder(f.id));
     el.addEventListener('contextmenu', (e) => { e.preventDefault(); folderSheet(f.id); });
     let pt: number | undefined; el.addEventListener('pointerdown', () => { pt = window.setTimeout(() => folderSheet(f.id), 560); }); const cancel = () => window.clearTimeout(pt); el.addEventListener('pointerup', cancel); el.addEventListener('pointerleave', cancel);
     el.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('text/kr-book')) { e.preventDefault(); el.classList.add('drop'); } });
@@ -409,7 +448,7 @@ export function libraryView(): HTMLElement {
     // beside each one not yet fetched, all of them with one button — as Mihon opens a title on its source page;
     // the volumes alone otherwise.)
     const from = vols.find((b) => b.series?.source && b.series.shelf !== undefined)?.series;
-    const openSeries = () => { if (from?.source) navigate(`/sources/${from.source}?shelf=${encodeURIComponent(from.shelf ?? '')}`); else { activeSeries = key; localStorage.setItem('kr.series', key); renderGrid(); } };
+    const openSeries = () => { if (from?.source) navigate(`/sources/${from.source}?shelf=${encodeURIComponent(from.shelf ?? '')}`); else openSeriesHere(key); };
     el.addEventListener('click', () => {
       if (selecting) { const all = vols.every((b) => selected.has(b.id)); for (const b of vols) { if (all) selected.delete(b.id); else selected.add(b.id); } renderGrid(); return; }
       openSeries();
@@ -420,7 +459,7 @@ export function libraryView(): HTMLElement {
       sh.body.append(h('p', { class: 'src' }, t('seriesCardVolumes', { n: countVolumes(vols.length), read: localDigits(read) })));
       sh.body.append(h('div', { class: 'dest-list' },
         next ? h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); navigate(`/read/${next.id}`); } }, icon('play'), h('span', { class: 'name' }, `${t('continueReading')} · `, h('bdi', null, next.title))) : null,
-        h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); activeSeries = key; localStorage.setItem('kr.series', key); renderGrid(); } }, icon('books'), h('span', { class: 'name' }, t('seriesVolumes'))),
+        h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); openSeriesHere(key); } }, icon('books'), h('span', { class: 'name' }, t('seriesVolumes'))),
         from?.source ? h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); openSeries(); } }, icon('globe'), h('span', { class: 'name' }, t('seriesInSource'))) : null,
         h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); setSelecting(true); for (const b of vols) selected.add(b.id); renderGrid(); } }, icon('check'), h('span', { class: 'name' }, t('select')))));
     });
@@ -599,9 +638,11 @@ export function libraryView(): HTMLElement {
   }
 
   function setTagFilter(name: string | null) {
-    tagFilter = name;
-    if (name) localStorage.setItem('kr.tag', name); else localStorage.removeItem('kr.tag');
-    renderGrid();
+    moveLevel(() => {
+      tagFilter = name;
+      if (name) localStorage.setItem('kr.tag', name); else localStorage.removeItem('kr.tag');
+      renderGrid();
+    });
   }
 
   function renderTagChips() {
@@ -819,7 +860,7 @@ export function libraryView(): HTMLElement {
     const importChip = getSettings().importButton === 'chips' ? h('button', { type: 'button', class: 'chip add import-chip', 'aria-label': t('importBooks'), title: t('importBooks'), onclick: () => importMenu() }, icon('import'), h('span', null, t('importBooks'))) : null;
     if (!books.length) { if (importChip) chips.append(importChip); else chips.hidden = true; return; }
     const chip = (label: string, id: string | null, iconName?: string) => {
-      const c = h('button', { type: 'button', class: 'chip' + (activeFolder === id ? ' on' : ''), role: 'tab', 'aria-selected': String(activeFolder === id), dataset: { folder: id ?? '' }, onclick: () => { activeFolder = id; if (id) localStorage.setItem('kr.folder', id); else localStorage.removeItem('kr.folder'); renderChips(); renderGrid(); } }, iconName ? icon(iconName) : null, h('span', null, label));
+      const c = h('button', { type: 'button', class: 'chip' + (activeFolder === id ? ' on' : ''), role: 'tab', 'aria-selected': String(activeFolder === id), dataset: { folder: id ?? '' }, onclick: () => openFolder(id) }, iconName ? icon(iconName) : null, h('span', null, label));
       // Drop target for dragged books
       c.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('text/kr-book')) { e.preventDefault(); c.classList.add('drop'); } });
       c.addEventListener('dragleave', () => c.classList.remove('drop'));
@@ -964,6 +1005,8 @@ export function libraryView(): HTMLElement {
     // reaches a book the reader cannot see.)
     if (selecting && selected.size) { const shown = new Set(sorted().map((b) => b.id)); for (const id of [...selected]) if (!shown.has(id)) selected.delete(id); }
     clear(grid);
+    // (The level shown, for Back's check that a press changed something: src/native.ts.)
+    if (levelHost) levelHost.dataset.level = `${levelKey()}|${selecting ? 's' : ''}|${query ? 'q' : ''}`;
     renderResume();
     renderGoal();
     renderQuote();
@@ -1016,7 +1059,7 @@ export function libraryView(): HTMLElement {
       const name = list.length ? partOf(list[0])?.name ?? '' : '';
       if (!list.length) { activeSeries = null; localStorage.removeItem('kr.series'); renderGrid(); return; }
       grid.append(h('div', { class: 'series-bar', style: { gridColumn: '1 / -1' } },
-        h('button', { type: 'button', class: 'chip on', onclick: () => { activeSeries = null; localStorage.removeItem('kr.series'); renderGrid(); } }, icon('back'), h('span', { dir: 'auto' }, name)),
+        h('button', { type: 'button', class: 'chip on', onclick: () => openSeriesHere(null) }, icon('back'), h('span', { dir: 'auto' }, name)),
         h('span', { class: 'src' }, countVolumes(list.length))));
     }
     const BATCH = 60;

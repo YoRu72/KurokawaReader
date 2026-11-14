@@ -1087,6 +1087,14 @@ public class KurokawaPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** The page heard a Back (src/native.ts, first thing in its listener): MainActivity's watchdog stands down. */
+    public static volatile long backAckAt = 0;
+    @PluginMethod
+    public void backAck(PluginCall call) {
+        backAckAt = android.os.SystemClock.uptimeMillis();
+        call.resolve();
+    }
+
     @PluginMethod
     public void setVolumeKeys(PluginCall call) {
         volumeKeys = Boolean.TRUE.equals(call.getBoolean("on", false));

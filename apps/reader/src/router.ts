@@ -46,7 +46,14 @@ export function navigate(path: string, replace = false): void {
   if (replace) { history.replaceState(null, '', url); stack[stack.length - 1] = path; move = 'replace'; emit(); return; }
   if (location.hash === url || (path === '/' && (location.hash === '' || location.hash === '#'))) return;
   pushing = path;
-  location.hash = path;
+  // (An entry of its own, always: a `location.hash` set by the app itself before the page has finished loading — the
+  // book opened again at a start, src/resume.ts — REPLACES the entry it is on (the browser's rule for navigations no
+  // tap asked for), so the reader had nothing beneath it to go back to: Back did nothing, again and again (0.62.1, a
+  // phone). pushState always adds one; the hashchange the address change owes is said here, as the browser would.)
+  const oldURL = location.href;
+  try { history.pushState(null, '', url); } catch { location.hash = path; return; }
+  const newURL = location.href;
+  window.setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL, newURL })), 0);
 }
 
 /** Whether a view was opened from another in this session (there is something to go back to). */
@@ -54,8 +61,47 @@ export function canGoBack(): boolean { return stack.length > 1; }
 
 /** Back to the view this one was opened from; `fallback` when it was the first (a cold start, a link). */
 export function back(fallback = '/'): void {
-  if (stack.length > 1) { history.back(); return; }
+  if (stack.length > 1 && entryBelow()) {
+    // (Watched: a step back the browser did not take — nothing beneath after all, or the step lost — is taken here.)
+    const from = current(); const depth = stack.length;
+    history.back();
+    window.clearTimeout(backCheck);
+    backCheck = window.setTimeout(() => { if (current() === from && stack.length === depth) up(stack[depth - 2] ?? fallback, 'lost'); }, BACK_CHECK_MS);
+    return;
+  }
+  // (The view believed to be beneath, though the browser has no entry for it — or none at all: put in place of this one.)
+  if (stack.length > 1) { up(stack[stack.length - 2], 'none'); return; }
   navigate(fallback, true);
+}
+
+/** How long a step back may take before it is taken another way (ms). */
+export const BACK_CHECK_MS = 600;
+let backCheck = 0;
+/** Whether the browser has an entry of this app just beneath the one shown (the Navigation API, where there is one;
+ *  without it, believed). */
+function entryBelow(): boolean {
+  const nav = (window as unknown as { navigation?: { currentEntry?: { index: number } | null; entries?(): { url: string | null }[] } }).navigation;
+  const cur = nav?.currentEntry;
+  if (!nav || !cur || typeof nav.entries !== 'function') return true;
+  if (cur.index <= 0) return false;
+  const prev = nav.entries()[cur.index - 1];
+  try { const u = new URL(prev?.url ?? ''); return u.origin === location.origin && u.pathname === location.pathname; } catch { return false; }
+}
+/** One view up without the browser's history: `path` put in place of the view shown, which is forgotten. */
+function up(path: string, why: string): void {
+  window.clearTimeout(backCheck);
+  if (stack.length > 1) stack.pop();
+  stack[stack.length - 1] = path;
+  try { history.replaceState(null, '', `#${path}`); } catch { /* the address stays; the view changes */ }
+  move = 'pop';
+  window.dispatchEvent(new CustomEvent('kr:backfix', { detail: why }));
+  emit();
+}
+/** Leave the view on screen for the one beneath it (the library when none), whatever the browser's history holds: the
+ *  safety net's way out (src/native.ts) when Back has not worked. */
+export function leaveView(fallback = '/'): void {
+  const below = stack.length > 1 ? stack[stack.length - 2] : fallback;
+  up(below === current() ? '/' : below, 'forced');
 }
 
 function emit() {
@@ -68,6 +114,7 @@ export function onRoute(fn: (r: Route) => void): void {
 }
 
 window.addEventListener('hashchange', () => {
+  window.clearTimeout(backCheck);
   const p = current();
   if (pushing === p) { stack.push(p); move = 'push'; }
   else if (stack.length > 1 && stack[stack.length - 2] === p) { stack.pop(); move = 'pop'; }
