@@ -8,6 +8,7 @@ import { applyBrandIcon } from './ui/brandIcon';
 applyBrandIcon();
 import './styles/base.css';
 import './styles/reader.css';
+import './styles/pins.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, lastMove, type Route } from './router';
 import { h, closeSheets } from './ui/dom';

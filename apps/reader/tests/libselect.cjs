@@ -32,10 +32,16 @@ const files = names.map((n) => { const f = path.join(dir, `${n}.txt`); fs.writeF
   await p.click('.sel-head .btn:has-text("Select all")'); await p.waitForTimeout(200);
   // Delete: the five, said with their number, and that it cannot be undone.
   await p.evaluate(() => { const b = [...document.querySelectorAll('.sel-act, .dest-row')].find((x) => /Delete/.test(x.textContent)); if (b) b.click(); else [...document.querySelectorAll('.sel-act')].find((x) => /More/.test(x.textContent)).click(); });
-  await p.waitForTimeout(300);
-  if (!dialogs.length) { await p.evaluate(() => [...document.querySelectorAll('.sheet .dest-row')].find((x) => /Delete/.test(x.textContent)).click()); await p.waitForTimeout(300); }
-  await p.waitForTimeout(1200);
-  ok('the confirmation says five and that it cannot be undone', dialogs.length === 1 && /\b5\b/.test(dialogs[0]) && /undone/i.test(dialogs[0]), dialogs);
+  // (The app's own dialog — src/ui/deletebooks.ts —, behind «More» on a narrow bar.)
+  if (!(await p.$('.del-sheet'))) { await p.waitForSelector('.sheet .dest-row'); await p.evaluate(() => [...document.querySelectorAll('.sheet .dest-row')].find((x) => /Delete/.test(x.textContent)).click()); }
+  await p.waitForSelector('.del-sheet .del-go');
+  const said = await p.$eval('.del-sheet .sheet-body', (e) => e.textContent);
+  ok('the confirmation says five and that it cannot be undone', dialogs.length === 0 && /\b5\b/.test(said) && /undone/i.test(said), said);
+  await p.click('.del-sheet .del-go');
+  // (Held for «Undo» a few seconds; put away, the deletion is made at once.)
+  await p.waitForFunction(() => !document.querySelector('.del-sheet'));
+  await p.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  for (let i = 0; i < 200; i++) { const n = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').count(); q.onsuccess = () => res(q.result); }; })); if (n <= 2) break; await p.evaluate(() => new Promise((r) => requestAnimationFrame(r))); }
   const left = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result.map((b) => b.title).sort()); }; }));
   ok('only the five listed were deleted: the pear and the plum are still there', left.join() === 'pear,plum', left);
   ok('no page errors', errors.length === 0, errors);

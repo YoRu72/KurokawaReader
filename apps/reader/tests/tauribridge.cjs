@@ -88,7 +88,7 @@ async function nodePart() {
     writeBinary: ['/x/b.bin', 'AAEC', true], scanDevice: [['epub', 'pdf']], pickFolder: [], archivePickDir: [], archivePickFile: [{ multiple: true }],
     openDefaultApps: [], titleBar: [{ act: 'minimize' }],
     // (Stage R3.)
-    download: ['https://example.org/a b.epub', 'a b.epub', 'dl-1'], deleteDownload: ['/data/downloads/a.epub'], setDoh: ['cloudflare', 'example.com'], notify: [{ title: 'T', body: 'B', hash: '/read/1' }],
+    download: ['https://example.org/a b.epub', 'a b.epub', 'dl-1'], deleteDownload: ['/data/downloads/a.epub'], trashFile: ['/x/linked book.epub'], setDoh: ['cloudflare', 'example.com'], notify: [{ title: 'T', body: 'B', hash: '/read/1' }],
     // (Stage R4: the in-app browser.)
     openWebView: [{ url: 'https://example.org/', hidden: true, timeout: 25000 }], browserFetch: [{ url: 'https://example.org/a', method: 'POST', body: 'eHl6', bodyBase64: true, binary: true, openTimeout: 20000 }],
     browserReset: ['https://example.org/'], browserForget: ['https://example.org/', true],
