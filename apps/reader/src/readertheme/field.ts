@@ -4,8 +4,8 @@
 // the shared editor behind Customise (src/theme/editor.ts), the Reader's words, storage, preview and Back handed to
 // them; the glass's blur under it (Full, Reduced, Off; left to the device, the one it was given shows, and why); the
 // licences.
-import GALLERY_CSS from '../theme/gallery.css';
-import EDITOR_CSS from '../theme/editor.css';
+import GALLERY_CSS from '../theme/gallery.css' with { type: 'text' };
+import EDITOR_CSS from '../theme/editor.css' with { type: 'text' };
 import { themeGallery, themeName, type GalleryDeps } from '../theme/gallery';
 import type { EditorDeps } from '../theme/editor';
 import { THEMES, type Mode } from '../theme/themes';

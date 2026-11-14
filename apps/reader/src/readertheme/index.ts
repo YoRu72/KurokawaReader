@@ -8,8 +8,8 @@
 // floating over the page, tinted with the page's own colours when the interface follows the page (reader.lazy.css);
 // no frost anywhere while reading with the bars hidden; the selection colour of the page kept as Classic has it; the
 // storage of packs in the app's IndexedDB with pictures made the screen's size (io.ts).
-import GLASS_CSS from '../theme/glass.css';
-import READER_CSS from './reader.lazy.css';
+import GLASS_CSS from '../theme/glass.css' with { type: 'text' };
+import READER_CSS from './reader.lazy.css' with { type: 'text' };
 import { THEMES, applyTheme, readEnv, resolveBlur, upsertTheme, removeTheme, type ThemeDef, type Blur, type DarkTone, type Mode } from '../theme/themes';
 import { loadMine, toDef, pictureKey, pictureAsset } from '../theme/custom';
 import { installed, pictureUrls } from '../theme/packs';

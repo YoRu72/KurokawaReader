@@ -80,7 +80,6 @@ html.te-editing:not(.pc) .bottom-nav, html.te-editing:not(.pc) .fab { visibility
 /* (Under the miniature, beside the download or remove button — never over the miniature.) */
 .tg-edit { top: auto; bottom: 10px; }
 .tg-card[data-pack] .tg-edit { inset-inline-end: 52px; }
-.tg-card:has(.tg-edit) .tg-meta { padding-inline-end: 44px; }
-.tg-card[data-pack]:has(.tg-edit) .tg-meta { padding-inline-end: 88px; }
+.tg-card:has(.tg-edit) .tg-meta, .tg-card[data-pack]:has(.tg-edit) .tg-meta { padding-inline-end: 4px; padding-bottom: 40px; }
 .tg-edit svg { width: 15px; height: 15px; }
 .te-body > * { flex-shrink: 0; }

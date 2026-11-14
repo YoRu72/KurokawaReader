@@ -296,7 +296,10 @@ async function makePacks() {
     await p.context().setOffline(false);
     const said = await tap(p, '.tg-card[data-theme="frosted-glass-dark"] .tg-rm');
     ok('removed: the space it freed said', said.startsWith(en('styleRemoved').split('{')[0]) && /KB/.test(said), said);
-    ok('… nothing of it left, the drawn background back', !(await meta(p)).includes('frosted-glass') && (await picture(p, 'theme:frosted-glass:bg-dark')) === null && !/blob:/.test(await bgOf(p)));
+    // (Removed for good once its snackbar's Undo has passed.)
+    await p.waitForFunction(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('meta').objectStore('meta').get('themes.installed'); q.onsuccess = () => res(!('frosted-glass' in (q.result ?? {}))); q.onerror = () => res(false); }; }), null, { timeout: 20000, polling: 250 });
+    await p.waitForFunction(() => !/blob:/.test(getComputedStyle(document.body, '::before').backgroundImage), null, { timeout: 15000 }).catch(() => undefined);
+    ok('… nothing of it left once its Undo has passed, the drawn background back', !(await meta(p)).includes('frosted-glass') && (await picture(p, 'theme:frosted-glass:bg-dark')) === null && !/blob:/.test(await bgOf(p)));
     await p.context().setOffline(true);
     await p.click('.tg-card[data-theme="frosted-glass-dark"] .tg-dl');
     await p.waitForSelector('.tg-card[data-theme="frosted-glass-dark"] .tg-state.err');

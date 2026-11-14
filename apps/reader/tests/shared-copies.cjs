@@ -1,8 +1,8 @@
 // The files kept the same in both apps (each app builds on its own): a change to one has to go to the other.
 const fs = require('node:fs'); const path = require('node:path');
 const A = path.join(__dirname, '..', '..'); const pairs = [['tools/desktop/appicon.cjs', 'reader/desktop/appicon.cjs'], ['tools/src/ui/iconCrop.ts', 'reader/src/ui/iconCrop.ts'], ['tools/src/ui/brandIcon.ts', 'reader/src/ui/brandIcon.ts'], ['tools/src/ui/titlebar.ts', 'reader/src/ui/titlebar.ts'], ['tools/desktop/titlebar.cjs', 'reader/desktop/titlebar.cjs'],
-  // The interface styles' shared module (themes, packs, gallery, their CSS): the Reader's src/readertheme/ and the Tools app's own files build on it.
-  ...['themes.ts', 'packs.ts', 'gallery.ts', 'glass.css', 'gallery.css'].map((f) => [`tools/src/theme/${f}`, `reader/src/theme/${f}`])];
+  // The interface styles' shared module (themes, packs, gallery, the editor, their CSS): the Reader's src/readertheme/ and the Tools app's own files build on it.
+  ...['themes.ts', 'packs.ts', 'gallery.ts', 'glass.css', 'gallery.css', 'custom.ts', 'editor.ts', 'editor.css', 'history.ts'].map((f) => [`tools/src/theme/${f}`, `reader/src/theme/${f}`])];
 const bad = pairs.filter(([a, b]) => !fs.existsSync(path.join(A, b)) || fs.readFileSync(path.join(A, a), 'utf8') !== fs.readFileSync(path.join(A, b), 'utf8'));
 if (bad.length) { console.error('not the same in both apps:', bad.map((x) => x.join(' / ')).join(', ')); process.exit(1); }
 console.log(`shared files the same in both apps (${pairs.length})`);
