@@ -39,7 +39,7 @@ async function openReader(p, id) {
 }
 /** Search the open book; the hits as listed (the words matched, and the line). */
 async function search(p, q) {
-  if (await p.$('.panel.open')) { await p.click('.panel.open .panel-head button'); await p.waitForTimeout(200); }
+  if (await p.$('.panel.open')) { await p.click('.panel.open .panel-head > button[data-icon="close"]'); await p.waitForTimeout(200); }
   await p.evaluate(() => { document.dispatchEvent(new CustomEvent('kr:command', { detail: 'search' })); });
   await p.waitForSelector('.panel.open input[type=search]');
   await p.fill('.panel.open input[type=search]', q);

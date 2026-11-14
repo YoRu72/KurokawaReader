@@ -13,6 +13,8 @@ EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · Fiction
 
 - Chapters or continuous scrolling, bookmarks, highlights with notes, search, read-aloud, furigana, gestures, rebindable shortcuts
 - 27 themes, custom colours, textures and background pictures, your own fonts
+- Interface styles for the app itself — Classic (the default), Paper & Ink, Midnight Stacks, Reading Room, Obsidian and the Frosted Glass trio — chosen beside the book page, customised and saved as your own
+- Pins at the head of each shelf, deleting a book's file from the device too, and Undo / Redo throughout
 - Snapshots of selected text, built-in / device / AI translation, PNG export
 - A converter: PDF → Word keeping each page's layout (Arabic and CJK, tables, formulas, the PDF's own fonts); books to EPUB, Word, PDF (printed by the system on phones and the desktop: real text), HTML, Markdown, text, FB2, ODT, RTF and comics — going on in the background
 - Cloud sync (Dropbox · WebDAV · a Drive folder), portable backups, in-app updates on every platform

@@ -2,12 +2,15 @@
 // term — for one book or every book — to change or remove.
 import { h, iconButton, openSheet, toast, icon, pickButton, askText } from './dom';
 import { t, localDigits } from '../i18n';
-import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, termLang, misScripted, langForNew, scriptVerdict, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, type Term, type TermKind } from '../glossary';
+import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, termLang, misScripted, langForNew, scriptVerdict, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, glossarySnapshot, glossaryRestore, type Term, type TermKind } from '../glossary';
+import { offerUndo } from './undo';
 import { getSettings, updateSettings } from '../settings';
 import { aiReady, retranslateTerms } from '../ai';
 import { copyText } from './share';
 
 const newId = () => Math.random().toString(36).slice(2, 10);
+// (The last retranslation's Undo: kept for the session — the sheet closed and opened again still offers it.)
+let undo: (() => void) | null = null;
 const baseLang = (c: string) => (c || '').split('-')[0];
 /** A language's name in the interface's language («العربية», "Japanese"). */
 export const langLabel = (c: string): string => { try { return new Intl.DisplayNames([document.documentElement.lang || 'en'], { type: 'language' }).of(c) ?? c; } catch { return c; } };
@@ -50,7 +53,7 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
   const langOf = (x: Term) => termLang(x) || '-';
   const langName = (c: string) => (c === '-' ? t('glossLangUnset') : langLabel(c));
   // (Ticked for Retranslate.)
-  const picked = new Set<string>(); let undo: (() => void) | null = null;
+  const picked = new Set<string>();
   const langs = h('div', { class: 'chip-row gloss-langs' });
   const KINDS: [Tab, string][] = [['all', t('glossAll')], ['person', t('glossPeople')], ['place', t('glossPlaces')], ['group', t('glossGroups')], ['term', t('glossTerms')]];
   const places = h('div', { class: 'chip-row gloss-places' }); const tabs = h('div', { class: 'chip-row gloss-tabs' }); const folderBar = h('div', { class: 'gloss-folder-bar' });
@@ -99,7 +102,9 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
       h('div', { class: 'gloss-meta' }, ...(fresh ? [] : [sel]), kind, lang, x.auto ? h('span', { class: 'gloss-badge' }, t('glossAutoBadge')) : null, moveTo,
         ...(fresh ? [] : [iconButton('rotate', t('glossRetrOne'), () => { const now = terms().find((y) => y.id === x.id); if (now) retranslate([now]); })]),
         iconButton('copy', t('copy'), () => void copyText(termLine({ from: from.value, to: to.value }, false))),
-        iconButton('trash', t('delete'), () => { saveTerms(terms().filter((y) => y.id !== x.id)); picked.delete(x.id); el.remove(); drawTabs(); drawRetr(); })));
+        iconButton('trash', t('delete'), () => { const gone = terms().find((y) => y.id === x.id) ?? x; saveTerms(terms().filter((y) => y.id !== x.id)); picked.delete(x.id); el.remove(); drawTabs(); drawRetr();
+          // (Undo: the term back as it was; the list drawn again if it is still open.)
+          offerUndo(t('termDeleted', { name: gone.from }), () => { saveTerms([...terms().filter((y) => y.id !== gone.id), gone]); if (sh.el.isConnected) draw(); }, () => { saveTerms(terms().filter((y) => y.id !== gone.id)); if (sh.el.isConnected) draw(); }); })));
     void placeOf;
     return el;
   };
@@ -114,7 +119,9 @@ export function glossarySheet(book?: { id: string; title: string }, o: { scan?: 
       const used = book ? linkedFolders(book.id).includes(f.id) : false;
       folderBar.replaceChildren(...(book ? [h('label', { class: 'row gloss-use' }, h('span', null, t('glossUseFolder', { book: book.title })), h('input', { type: 'checkbox', checked: used, onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; setLinked(book.id, v ? [...linkedFolders(book.id), f.id] : linkedFolders(book.id).filter((x) => x !== f.id)); toast(v ? t('glossFolderOn') : t('glossFolderOff')); } }))] : []),
         h('div', { class: 'row-btns' }, h('button', { type: 'button', class: 'btn text small', onclick: async () => { const n = (await askText({ title: t('glossRename'), label: t('glossFolderName'), value: f.name, ok: t('save'), cancel: t('cancel') }))?.trim(); if (n) { renameFolder(f.id, n); draw(); } } }, icon('pen'), t('glossRename')),
-          h('button', { type: 'button', class: 'btn text small danger', onclick: () => { if (!confirm(t('glossFolderDeleteAsk', { name: f.name }))) return; removeFolder(f.id); where = book ? 'book' : 'all'; draw(); } }, icon('trash'), t('delete'))));
+          h('button', { type: 'button', class: 'btn text small danger', onclick: () => { if (!confirm(t('glossFolderDeleteAsk', { name: f.name }))) return; const before = glossarySnapshot(); removeFolder(f.id); const after = glossarySnapshot(); where = book ? 'book' : 'all'; draw();
+            // (Undo: the folder back whole — its terms, the books that used it.)
+            offerUndo(t('glossFolderDeleted', { name: f.name }), () => { glossaryRestore(before); if (sh.el.isConnected) draw(); }, () => { glossaryRestore(after); if (sh.el.isConnected) draw(); }); } }, icon('trash'), t('delete'))));
     } else if (where === 'book' && book && terms().some((x) => !x.folder && x.book === book.id)) {
       folderBar.replaceChildren(h('button', { type: 'button', class: 'btn text small', onclick: async () => { const name = (await askText({ title: t('glossBookToFolder'), label: t('glossFolderName'), value: book.title, ok: t('create'), cancel: t('cancel') }))?.trim(); if (!name) return; const nf = addFolder(name); saveTerms(terms().map((x) => (!x.folder && x.book === book.id ? { ...x, book: undefined, folder: nf.id } : x))); setLinked(book.id, [...linkedFolders(book.id), nf.id]); where = nf.id; draw(); toast(t('glossFolderMade', { name })); } }, icon('folderPlus'), t('glossBookToFolder')));
     } else folderBar.replaceChildren();

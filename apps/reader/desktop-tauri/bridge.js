@@ -313,6 +313,8 @@
        { id, pct, got, total, speed, connections }; deleteDownload(p) → true when it was in that folder */
     download: function (url, name, id) { return call('kr_download', { url: str(url), name: str(name), id: id === undefined || id === null ? null : str(id) }); },
     deleteDownload: function (p) { return call('kr_delete_download', { p: str(p) }); },
+    // (A linked book's original moved to the Recycle Bin / Trash: kr_trash_file → { ok, gone, error }.)
+    trashFile: function (p) { return call('kr_trash_file', { p: str(p) }); },
     onDownloadProgress: function (cb) { dlListeners.length = 0; if (typeof cb === 'function') { dlListeners.push(cb); dlListen(); } return undefined; },
     addDownloadListener: function (cb) {
       if (typeof cb !== 'function') return function () {};

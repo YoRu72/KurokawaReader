@@ -16,6 +16,8 @@ import { decksCard } from '../ui/decks';
 import { fits, only } from '../platform';
 import { titleBarWaits as winBarWaits } from '../ui/winbar';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
+import { offerOptionsUndo, stepCount, onApplied } from '../ui/optionsundo';
+import { pairField, licencesSheet } from '../readertheme/field';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
 
@@ -66,9 +68,11 @@ export function settingsView(): HTMLElement {
         barSwitch(t('titleBarClear'), cur.titleBarClear, (v) => { updateSettings({ titleBarClear: v }); renderAppearance(); }, 'wb-clear-switch', t('titleBarClearHint')),
         ...(cur.titleBarClear ? [] : [barSwitch(t('titleBarName'), cur.titleBarName, (v) => updateSettings({ titleBarName: v }), 'wb-name-switch')]),
       ] : []));
-    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), appIconField(), sizeField, ...titleBarFields,
+    // (The interface's style — Classic or frosted glass — first: the largest choice of the section. src/readertheme/field.ts.)
+    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), pairField(renderAppearance), appIconField(), sizeField, ...titleBarFields,
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
-      document.documentElement.dataset.ui !== 'light' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
+      // (The dark surfaces' tone is Classic's; a glass style brings its own.)
+      document.documentElement.dataset.ui !== 'light' && cur.uiStyle === 'classic' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,
       h('div', { class: 'field' }, resettable(t('accent'), 'accent', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'theme-swatches' }, ...accents.map(([id, label, color]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(cur.accent === id), style: { background: color, color: '#111' }, onclick: () => { updateSettings({ accent: id }); renderAppearance(); } }, id === 'custom' ? icon('type') : '')))),
       cur.accent === 'custom' ? h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('span', null, t('accentCustom')), colorField(cur.accentCustom, (v) => updateSettings({ accentCustom: v }), t('accentCustom'))) : null,
       // (Where each row shows, and why: src/platform.ts. A computer's screen does not turn.)
@@ -92,6 +96,9 @@ export function settingsView(): HTMLElement {
   };
   renderAppearance();
   body.append(appearance);
+  // (An Undo or Redo of the options' history — the bar atop the reader options below, Ctrl+Z — may take back a style or
+  // a book page chosen here: drawn again as they now are.)
+  const offApplied = onApplied(() => { if (!appearance.isConnected) { offApplied(); return; } renderAppearance(); });
 
   // Fonts: samples + custom fonts
   const fontsCard = h('section', { class: 'card' });
@@ -340,7 +347,7 @@ export function settingsView(): HTMLElement {
             if (e.key === 'Escape') { window.removeEventListener('keydown', onKey, true); renderKeys(); return; }
             const c = comboOf(e); if (!c) return;
             window.removeEventListener('keydown', onKey, true);
-            setBinding(sc.id, c); renderKeys();
+            const n = stepCount(); setBinding(sc.id, c); renderKeys(); offerOptionsUndo(t('shortcutChanged'), renderKeys, n);
           };
           window.addEventListener('keydown', onKey, true);
         });
@@ -349,7 +356,7 @@ export function settingsView(): HTMLElement {
     };
     renderKeys();
     body.append(h('section', { class: 'card' }, h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsEditBody')), list,
-      h('div', null, h('button', { class: 'btn small outlined', onclick: () => { resetBindings(); renderKeys(); } }, t('resetDefaults')))));
+      h('div', null, h('button', { class: 'btn small outlined', onclick: () => { const n = stepCount(); resetBindings(); renderKeys(); offerOptionsUndo(t('shortcutsResetDone'), renderKeys, n); } }, t('resetDefaults')))));
   }
 
   // Learning decks: optional downloads, nothing installed by default
@@ -404,6 +411,9 @@ export function settingsView(): HTMLElement {
     // (What the app measured of itself on this device, to copy and send: ui/perfsheet.ts.)
     h('div', { class: 'field perf-entry' }, h('div', { class: 'grow' }, h('span', null, t('perfTitle')), h('small', { class: 'hint' }, t('perfAbout'))),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/perfsheet').then((m) => m.perfSheet()) }, icon('chart'), t('perfTitle'))),
+    // (What the app carries from others, with its licence: the ported glass styles' MIT notice, a pack's own.)
+    h('div', { class: 'field licences-entry' }, h('div', { class: 'grow' }, h('span', null, t('licences'))),
+      h('button', { type: 'button', class: 'btn tonal small', onclick: () => licencesSheet() }, icon('info'), t('licences'))),
     h('h3', null, t('supportedFormats')),
     h('ul', null, ...(['fmtEpub', 'fmtPdf', 'fmtDocx', 'fmtXlsx', 'fmtPptx', 'fmtText', 'fmtFb2', 'fmtOdt', 'fmtCbz', 'fmtImages'] as const).map((k) => h('li', null, t(k)))),
     ...only('computer', h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsBody')))));

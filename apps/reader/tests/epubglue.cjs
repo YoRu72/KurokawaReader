@@ -103,7 +103,7 @@ async function openReader(p, id) {
   await p.waitForFunction(() => !document.querySelector('.reader-flow .kr-shell'), null, { timeout: 30000 }); await p.waitForTimeout(900);
 }
 async function search(p, q) {
-  if (await p.$('.panel.open')) { await p.click('.panel.open .panel-head button'); await p.waitForTimeout(200); }
+  if (await p.$('.panel.open')) { await p.click('.panel.open .panel-head > button[data-icon="close"]'); await p.waitForTimeout(200); }
   await p.evaluate(() => { document.dispatchEvent(new CustomEvent('kr:command', { detail: 'search' })); });
   await p.waitForSelector('.panel.open input[type=search] >> visible=true');
   await p.fill('.panel.open input[type=search]', q);
@@ -163,7 +163,7 @@ const marks = (p) => p.evaluate(() => { const ms = [...document.querySelectorAll
     // 4. search and copy
     const hits = await search(p, 'name’s Sylvan');
     ok('a search for «name’s Sylvan» finds both chapters\' lines', hits.length === 2, hits);
-    if (await p.$('.panel.open')) { await p.click('.panel.open .panel-head button'); await p.waitForTimeout(200); }
+    if (await p.$('.panel.open')) { await p.click('.panel.open .panel-head > button[data-icon="close"]'); await p.waitForTimeout(200); }
     const copied = await p.evaluate(() => { const el = document.querySelector('.reader-flow p.own'); el.scrollIntoView({ block: 'center' }); const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); const t = s.toString(); s.removeAllRanges(); return t; });
     ok('copied, the line is spaced', copied === 'My name’s Sylvan Brightwood.', copied);
     // 3b. a highlight made now across the space comes back after reopening

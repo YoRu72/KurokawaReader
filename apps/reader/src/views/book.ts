@@ -74,10 +74,16 @@ export function bookView(id: string): HTMLElement {
   /** A picture of the reader's own for the cover, or the original back — the page drawn again either way. */
   function coverEdit(book: Book): import('../ui/coverview').CoverEdit {
     const after = (b: Book | undefined): string | null => { forgetCover(book.id); blurs.delete(book.id); if (b) { Object.assign(book, { cover: b.cover, coverOrig: b.coverOrig }); if (!('coverOrig' in b) || b.coverOrig === undefined) delete book.coverOrig; render(book); } return b ? coverUrl(b) : null; };
+    // (The cover before the last change — a picture of the reader's own replaced keeps it here — for its Undo.)
+    type Was = { cover?: Blob; coverOrig?: Blob | null; had: boolean };
+    let was: Was | null = null;
+    const keep = (b: Book): Was => ({ cover: b.cover, coverOrig: b.coverOrig, had: 'coverOrig' in b && b.coverOrig !== undefined });
+    const put = (b: Book, w: Was) => { if (w.cover) b.cover = w.cover; else delete b.cover; if (w.had) b.coverOrig = w.coverOrig ?? null; else delete b.coverOrig; };
     return {
       custom: () => book.coverOrig !== undefined,
-      set: async (picture) => { const small = await shrinkCover(picture); return after(await db.updateBook(book.id, (b) => { if (b.coverOrig === undefined) b.coverOrig = b.cover ?? null; b.cover = small; })) ?? ''; },
-      restore: async () => after(await db.updateBook(book.id, (b) => { b.cover = b.coverOrig ?? undefined; delete b.coverOrig; })),
+      set: async (picture) => { const small = await shrinkCover(picture); return after(await db.updateBook(book.id, (b) => { was = keep(b); if (b.coverOrig === undefined) b.coverOrig = b.cover ?? null; b.cover = small; })) ?? ''; },
+      restore: async () => after(await db.updateBook(book.id, (b) => { was = keep(b); b.cover = b.coverOrig ?? undefined; delete b.coverOrig; })),
+      swap: async () => after(await db.updateBook(book.id, (b) => { const now = keep(b); if (was) put(b, was); was = now; })),
     };
   }
 

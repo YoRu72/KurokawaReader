@@ -1,0 +1,24 @@
+/* ---------- Pins in the library (src/pins.ts, src/views/library.ts) and the delete dialog (src/ui/deletebooks.ts).
+ * Kept in this file of its own, after base.css: it only adds rules. ---------- */
+.cover .badge.pin-mark { display: inline-grid; place-items: center; padding: 3px 5px; background: var(--md-primary); color: var(--md-on-primary); box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+.cover .badge.pin-mark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.cover.folder .badges { z-index: 2; }
+.sel-act svg, .dest-row svg { flex: none; }
+
+/* The delete dialog */
+.del-sheet .sheet-body { font-size: 15px; line-height: 1.5; }
+.del-sheet .del-lead { margin: 4px 0 2px; font-size: 16px; font-weight: 600; color: var(--md-on-surface); }
+.del-sheet .hint { margin: 4px 0; }
+.del-sheet .del-count { display: flex; align-items: flex-start; gap: 8px; }
+.del-sheet .del-count svg { width: 16px; height: 16px; margin-top: 2px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.del-opt { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; margin: 12px 0 6px; padding: 12px 14px; border-radius: var(--sh-lg, 16px); background: color-mix(in srgb, var(--md-error) 8%, var(--md-surface-container-high, transparent)); border: 1px solid color-mix(in srgb, var(--md-error) 28%, transparent); cursor: pointer; }
+.del-opt input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--md-error); }
+.del-opt-text { display: flex; flex-direction: column; gap: 2px; }
+.del-opt-text b { font-weight: 600; color: var(--md-on-surface); }
+.del-opt-text small { font-size: 13px; color: var(--md-on-surface-variant); line-height: 1.45; }
+.del-sheet .sheet-actions { justify-content: flex-end; }
+.del-sheet .btn.danger.primary { background: var(--md-error); color: var(--md-on-error, #fff); }
+.del-where { margin: 6px 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.del-where code { display: block; font-size: 12px; color: var(--md-on-surface-variant); word-break: break-all; }
+
+/* (The snackbar with an action — «Undo», «Show» — is styled once, for every snackbar: src/styles/undo.css.) */

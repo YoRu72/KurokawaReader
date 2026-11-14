@@ -8,7 +8,9 @@ import type { Strings } from '../i18n/en';
 import { getSettings, updateSettings, defaultOf, type VisualSettings } from '../settings';
 import { groupedPlacesEditor, type PlaceChoice } from './placeditems';
 import { fits } from '../platform';
-import { normalizeButtons, toolbarOf, isSep, idsAt, FLOW_ACTIONS, PDF_ACTIONS, DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, type ButtonPlace, type PlacedButton, type BarAt } from '../readbuttons';
+import { historyButtons, offerOptionsUndo, stepCount } from './optionsundo';
+import { isSep, FLOW_ACTIONS, DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, type ButtonPlace, type PlacedButton, type BarAt } from '../readbuttons';
+import { normalizeButtons, toolbarOf, idsAt, PDF_ACTIONS } from '../readbuttonlists';
 
 type Kind = 'flow' | 'pdf';
 const rtl = () => document.documentElement.dir === 'rtl' || getLang() === 'ar';
@@ -46,6 +48,8 @@ export function buttonSheet(start: Kind = 'flow'): void {
     ...(['flow', 'pdf'] as Kind[]).map((k) => h('button', { type: 'button', role: 'tab', dataset: { kind: k }, 'aria-pressed': String(k === kind), 'aria-selected': String(k === kind), onclick: (e: Event) => { kind = k; (e.currentTarget as HTMLElement).parentElement!.querySelectorAll('button').forEach((b) => { const on = b.dataset.kind === k; b.setAttribute('aria-pressed', String(on)); b.setAttribute('aria-selected', String(on)); }); draw(); } }, t(k === 'flow' ? 'buttonsBooks' : 'buttonsPdfs')))), body);
   const draw = () => body.replaceChildren(...editorFor(kind, draw));
   draw();
+  // (Undo / Redo of the changes made here — part of the reading options' history: src/ui/optionsundo.ts.)
+  sh.el.querySelector('.sheet-head')?.insertBefore(historyButtons(draw), sh.el.querySelector('.sheet-head > .icon-btn'));
 }
 
 function editorFor(kind: Kind, redraw: () => void): HTMLElement[] {
@@ -107,9 +111,10 @@ function editorFor(kind: Kind, redraw: () => void): HTMLElement[] {
     onChange: save,
   });
   const reset = h('button', { type: 'button', class: 'btn small outlined', onclick: () => {
+    const n = stepCount();
     if (kind === 'pdf') updateSettings({ pdfButtons: DEFAULT_PDF_BUTTONS.map((x) => ({ ...x })), pdfBar: defaultOf('pdfBar'), pdfBarSide: defaultOf('pdfBarSide'), pdfBarRow: defaultOf('pdfBarRow'), pdfBarLook: 'pill' });
     else updateSettings({ readerButtons: DEFAULT_FLOW_BUTTONS.map((x) => ({ ...x })), readerToolbar: defaultOf('readerToolbar'), toolbarAt: 'auto', toolbarLook: 'pill' });
-    redraw();
+    redraw(); offerOptionsUndo(t('buttonsReset'), redraw, n);
   } }, icon('undo'), t('resetDefaults'));
   return [preview, where, look, ...(rows ? [rows] : []), h('p', { class: 'hint' }, t('buttonsHidden')), editor, h('div', { class: 'buttons-foot' }, reset)];
 }

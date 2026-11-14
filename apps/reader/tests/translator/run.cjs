@@ -71,10 +71,11 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
   await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translation glossary' }).click(); await p.waitForSelector('.gloss-sheet .gloss-row');
   // (The folder's name asked in the app's own dialog — window.prompt does not exist in the desktop app.)
-  let native = false; p.once('dialog', (d) => { native = true; void d.accept('Gate series'); }); await p.locator('.gloss-folder-bar button').click();
+  let native = false; const onNative = (d) => { native = true; void d.accept('Gate series'); }; p.once('dialog', onNative); await p.locator('.gloss-folder-bar button').click();
   if (!native) { await p.waitForSelector('.text-ask-sheet input', { state: 'visible', timeout: 5000 }); await p.fill('.text-ask-sheet input', 'Gate series'); await p.click('.text-ask-sheet .text-ask-ok'); }
   await p.waitForTimeout(300);
   ok('the folder\'s name asked in the app\'s dialog, not the browser\'s', !native);
+  p.off('dialog', onNative); // (Not left to answer a later dialog of the browser's own.)
   const g2 = await p.evaluate(() => ({ t: JSON.parse(localStorage.getItem('kr.glossary') || '[]'), f: JSON.parse(localStorage.getItem('kr.glossaryFolders') || '[]'), l: JSON.parse(localStorage.getItem('kr.glossaryLinks') || '{}') })); console.log('folder:', JSON.stringify(g2));
   ok('the book\'s names made a folder, the book using it', g2.f.length === 1 && g2.f[0].name === 'Gate series' && g2.t.every((x) => x.folder === g2.f[0].id && !x.book) && Object.values(g2.l).some((v) => v.includes(g2.f[0].id)));
   await p.locator('.gloss-sheet .gloss-scan').click(); await p.waitForSelector('.job-chip', { timeout: 8000 }).catch(() => undefined); await p.waitForFunction(() => !document.querySelector('.job-chip') || /ready|added/i.test(document.querySelector('.job-chip').textContent), null, { timeout: 20000 }).catch(() => undefined); await p.waitForTimeout(800);
@@ -101,7 +102,11 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   // The bar fits the screen; turned off, every paragraph keeps the direction the book gave it.
   ok('the bar within the screen', await p.$eval('.tr-pill', (e) => e.getBoundingClientRect().right <= innerWidth + 1 && e.getBoundingClientRect().left >= -1));
   daily = false; slow = true;
-  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Clear' }).click(); await p.waitForTimeout(300);
+  // (Clearing asks first, with how many: accepted; then it is offered for Undo — src/ui/translator.ts clearCache.)
+  let clearAsk = ''; p.once('dialog', (d) => { clearAsk = d.message(); void d.accept(); });
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Clear' }).click();
+  await p.waitForFunction(() => /cleared/.test(document.querySelector('.toast')?.textContent ?? ''), null, { timeout: 6000 }).catch(() => undefined);
+  ok('clearing the saved translations asks first, saying how many', /Clear \d+ saved translations\?/.test(clearAsk), clearAsk);
   await p.click('.tr-pill .tr-toggle'); await p.waitForTimeout(300);
   const dirs = await p.$$eval('.kr-chapter p', (e) => e.map((x) => x.getAttribute('dir'))); console.log('directions after:', dirs.join(','));
   ok('turned off: the paragraphs\' own directions back (none taken from the chapter)', dirs.every((d) => d === 'ltr' || d === 'rtl') && dirs.filter((d) => d === 'rtl').length === 1);
@@ -112,7 +117,11 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   ok('the whole book goes on as a job, its progress shown', /Translating «Gate Story»/.test(chip) && /Paragraphs: \d/.test(chip));
   await p.waitForSelector('.job-chip', { state: 'detached', timeout: 20000 }); ok('the job ends by itself', true);
   // This chapter and the whole book side by side: each its own job in the background, its own line and progress.
-  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Clear' }).click(); await p.waitForTimeout(300);
+  // (Clearing asks first, with how many: accepted; then it is offered for Undo — src/ui/translator.ts clearCache.)
+  let clearAsk2 = ''; p.once('dialog', (d) => { clearAsk2 = d.message(); void d.accept(); });
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Clear' }).click();
+  await p.waitForFunction(() => /cleared/.test(document.querySelector('.toast')?.textContent ?? ''), null, { timeout: 6000 }).catch(() => undefined);
+  ok('clearing the saved translations asks first, saying how many', /Clear \d+ saved translations\?/.test(clearAsk2), clearAsk2);
   await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translate ahead' }).click();
   await p.locator('.sheet button', { hasText: 'Translate in the background' }).click(); await p.locator('.sheet button', { hasText: 'Translate the whole book' }).click();
   await p.waitForFunction(() => document.querySelectorAll('.sheet .tr-job').length === 2, null, { timeout: 6000 }).catch(() => undefined);

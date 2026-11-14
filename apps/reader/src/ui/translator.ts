@@ -525,7 +525,23 @@ export function attachTranslator(host: TranslatorHost): Translator {
     if (on) void run(); else { generation++; running = false; restoreAll(); }
     paint();
   }
-  function clearCache() { void (async () => { for (const { bookId } of host.blocks()) { bySource.set(bookId, {}); void db.setMeta(`trs:${bookId}`, {}); caches.set(bookId, {}); await db.setMeta(`tr:${bookId}`, {}); } restoreAll(); if (on) void run(); toast(t('done')); })(); }
+  // Clearing the saved translations costs time — and, with a paid service, money — to undo by translating again: asked
+  // first (how many), then kept until the snackbar's time is over; its Undo brings them back as they were.
+  function clearCache() { void (async () => {
+    const ids = [...new Set(host.blocks().map((b) => b.bookId))];
+    let n = 0; for (const id of ids) n += Object.keys({ ...((await db.getMeta<Record<string, string>>(`tr:${id}`)) ?? {}), ...(caches.get(id) ?? {}) }).length;
+    if (!n) { toast(t('done')); return; }
+    if (!confirm(t('trCacheClearAsk', { n: localDigits(n) }))) return;
+    const kept = new Map(ids.map((id) => [id, { tr: caches.get(id), src: bySource.get(id) }]));
+    for (const id of ids) { bySource.set(id, {}); caches.set(id, {}); }
+    restoreAll();
+    let gone = false;
+    const { offerUndo } = await import('./undo');
+    offerUndo(t('trCacheCleared', { n: localDigits(n) }), () => { for (const [id, k] of kept) { if (k.tr) caches.set(id, k.tr); else caches.delete(id); if (k.src) bySource.set(id, k.src); else bySource.delete(id); } if (on) void run(); }, undefined, {
+      alive: () => !gone, ms: 8000,
+      onEnd: (undone) => { if (undone) return; gone = true; void (async () => { for (const id of ids) { await db.setMeta(`trs:${id}`, {}); await db.setMeta(`tr:${id}`, {}); } if (on) void run(); })(); },
+    });
+  })(); }
   function moreSheet() {
     const sh = openSheet(t('aiTranslate'), t('close')); sh.body.style.fontFamily = 'var(--font-ui)';
     const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label));

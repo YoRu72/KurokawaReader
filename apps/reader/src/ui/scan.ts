@@ -19,7 +19,7 @@ import type { SourcedFile } from '../library';
 export type { Destination };
 
 interface ScanFile { uri: string; tree?: string; name: string; path: string; mime: string; size: number }
-interface KrScan {
+export interface KrScan {
   storageAccess(): Promise<{ granted: boolean; needsSettings: boolean }>;
   requestStorageAccess(): Promise<{ granted: boolean }>;
   scanDevice(o: { exts: string[]; root?: string }): Promise<{ files: ScanFile[]; truncated: boolean }>;
@@ -27,48 +27,9 @@ interface KrScan {
   listTree(o: { uri: string; exts: string[] }): Promise<{ files: ScanFile[]; truncated: boolean }>;
   readDocument(o: { uri: string; tree?: string }): Promise<{ data: string }>;
 }
-interface Cap { getPlatform?(): string; Plugins?: { Kurokawa?: Partial<KrScan> } }
-const cap = (): Cap | undefined => (window as unknown as { Capacitor?: Cap }).Capacitor;
-type DesktopFound = { root: string; files: { path: string; name: string; size: number }[]; truncated: boolean };
-interface DesktopScan {
-  scanDevice?(exts: string[]): Promise<DesktopFound>; readFile?(path: string): Promise<ArrayBuffer>;
-  /** The Tauri shell's: the same walk in one folder, by path (Electron has it not: the web view's folder picker). */
-  scanFolder?(root: string, exts: string[]): Promise<DesktopFound>; pickFolder?(): Promise<string | null>;
-}
-const desktop = (): DesktopScan | undefined => (window as unknown as { kurokawaDesktop?: DesktopScan }).kurokawaDesktop;
-
-/** Groups shown as filter chips, in display order. */
-export const FORMAT_GROUPS: { id: string; label: string; formats: Format[]; exts: string[] }[] = [
-  { id: 'epub', label: 'EPUB', formats: ['epub'], exts: ['epub'] },
-  { id: 'pdf', label: 'PDF', formats: ['pdf'], exts: ['pdf'] },
-  { id: 'docx', label: 'Word', formats: ['docx'], exts: ['docx', 'docm', 'dotx'] },
-  { id: 'sheet', label: 'Excel · CSV', formats: ['xlsx', 'csv'], exts: ['xlsx', 'xlsm', 'csv', 'tsv'] },
-  { id: 'pptx', label: 'PowerPoint', formats: ['pptx'], exts: ['pptx', 'ppsx'] },
-  { id: 'text', label: 'TXT · MD · HTML', formats: ['txt', 'md', 'html'], exts: ['txt', 'text', 'log', 'md', 'markdown', 'html', 'htm', 'xhtml'] },
-  { id: 'fb2', label: 'FB2', formats: ['fb2'], exts: ['fb2'] },
-  { id: 'odt', label: 'ODT', formats: ['odt'], exts: ['odt'] },
-  { id: 'cbz', label: 'CBZ', formats: ['cbz'], exts: ['cbz'] },
-  { id: 'mobi', label: 'Kindle', formats: ['mobi'], exts: ['mobi', 'azw', 'azw3', 'kf8', 'prc'] },
-  { id: 'anki', label: 'Anki', formats: ['anki'], exts: ['apkg', 'colpkg'] },
-  { id: 'audio', label: t('audiobooks'), formats: ['audio'], exts: ['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'flac', 'wav'] },
-  { id: 'image', label: t('images'), formats: ['image'], exts: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg', 'bmp'] },
-];
-export const groupOf = (f: Format): string => FORMAT_GROUPS.find((g) => g.formats.includes(f))?.id ?? 'text';
-
-export function canScan(): boolean {
-  const c = cap();
-  if (c?.getPlatform?.() === 'android' || c?.getPlatform?.() === 'ios') return !!c.Plugins?.Kurokawa?.pickTree;
-  return 'showDirectoryPicker' in window || !!desktop()?.scanDevice;
-}
-/** Whole-device scanning: Android with storage access, or the desktop app. */
+import { FORMAT_GROUPS, groupOf, canScan, canScanWhole, cap, desktop, type Cap, type DesktopScan, type DesktopFound } from './scangroups';
+export { FORMAT_GROUPS, groupOf, canScan, canScanWhole };
 let androidSdk = 0;
-/** Whole device (and Download): Android with storage access — "All files access" from Android 11, granted by the
- *  reader in settings when they ask for it — or the desktop app. */
-export function canScanWhole(): boolean {
-  const c = cap();
-  if (c?.getPlatform?.() === 'android') return !!c.Plugins?.Kurokawa?.scanDevice;
-  return !!desktop()?.scanDevice;
-}
 void androidSdk;
 
 function base64ToBlob(b64: string, mime: string): Blob {

@@ -6,7 +6,8 @@ import { h, icon, iconButton } from './dom';
 import { t } from '../i18n';
 import type { Strings } from '../i18n/en';
 import { getSettings } from '../settings';
-import { normalizeButtons, isSep, FLOW_ACTIONS, PDF_ACTIONS, type PlacedButton, type ButtonPlace } from '../readbuttons';
+import { isSep, FLOW_ACTIONS, type PlacedButton, type ButtonPlace } from '../readbuttons';
+import { normalizeButtons, PDF_ACTIONS } from '../readbuttonlists';
 
 /** What an action does in the open book; its name and icon when they change (read aloud / stop…), and whether it
  *  can be done here at all (a PDF with no ink has nothing to export with it). `bar`: its own control on the toolbar

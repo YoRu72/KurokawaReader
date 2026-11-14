@@ -177,6 +177,12 @@ export interface VisualSettings {
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
   calendar: 'gregory' | 'hijri' | 'both';
+  /** The interface's style (src/readertheme/, over the shared src/theme/): 'classic' (the app as it always was), or a frosted-glass style's id;
+   *  and how much it blurs ('auto': as this device can afford — src/theme/themes.ts resolveBlur). */
+  uiStyle: string;
+  glassBlur: 'auto' | 'full' | 'reduced' | 'off';
+  /** The book page kept matched to the interface's style: a style chosen brings its page theme (readertheme/pagetheme.ts). */
+  pageFollowsStyle: boolean;
   darkTone: 'dim' | 'grey' | 'black'; // the dark interface's surfaces: near-black, Material grey, or pure black (OLED)
   arDigits: 'auto' | 'western' | 'eastern'; // digits in the Arabic interface: 123 for data and ١٢٣ in prose, or one of them throughout
   sizeUnits: 'latin' | 'arabic'; // KB/MB/GB, or كيلوبايت/ميغابايت/قيقابايت in Arabic
@@ -373,6 +379,9 @@ export const DEFAULTS: VisualSettings = {
   readingGoalMinutes: 0,
   calendar: 'gregory',
   darkTone: 'dim',
+  uiStyle: 'classic',
+  glassBlur: 'auto',
+  pageFollowsStyle: false,
   arDigits: 'auto',
   sizeUnits: 'latin',
   bookPage: 'chaptered',
@@ -499,7 +508,7 @@ const GLOBAL_ONLY = new Set<string>([
   // the device's keys and gestures while reading
   'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library
-  'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
+  'uiStyle', 'glassBlur', 'pageFollowsStyle', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
   // lists the reader builds up for every book
   'myThemes', 'systemFonts', 'shortcuts', 'snapFolder',
 ]);
@@ -543,6 +552,7 @@ const merged = (): VisualSettings => (activeBook && overrides()[activeBook] ? { 
 export function setActiveBook(id: string | null): void {
   if (id === activeBook) return;
   activeBook = id; current = merged();
+  undoWatcher?.book(id);
   listeners.forEach((fn) => fn(current));
 }
 export const activeBookId = (): string | null => activeBook;
@@ -551,8 +561,11 @@ export const bookScoped = (): boolean => !!activeBook && !!overrides()[activeBoo
 /** Give the open book settings of its own (starting from the global ones), or take them away. */
 export function setBookScoped(on: boolean): void {
   if (!activeBook) return;
+  const was = undoWatcher ? beforeChange(activeBook, []) : null;
   if (on) overrides()[activeBook] = overrides()[activeBook] ?? {}; else delete overrides()[activeBook];
-  saveOverrides(); current = merged(); listeners.forEach((fn) => fn(current));
+  saveOverrides(); current = merged();
+  if (was) afterChange(was);
+  listeners.forEach((fn) => fn(current));
 }
 /** The library's own settings (not a book's on top of them): what a backup keeps. */
 export const globalSettings = (): VisualSettings => globals;
@@ -568,15 +581,69 @@ export function updateSettings(patch: Partial<VisualSettings>): VisualSettings {
   const scoped = !!activeBook && !!overrides()[activeBook];
   const toBook = scoped ? bookPart(patch) : {};
   const toApp = scoped ? Object.fromEntries(Object.entries(patch).filter(([k]) => isGlobalOnly(k))) as Partial<VisualSettings> : patch;
+  const was = undoWatcher ? beforeChange(scoped ? activeBook : null, Object.keys(toApp)) : null;
   if (scoped && Object.keys(toBook).length) { overrides()[activeBook!] = { ...overrides()[activeBook!], ...toBook }; saveOverrides(); }
   if (Object.keys(toApp).length || !scoped) {
     globals = { ...globals, ...toApp };
     localStorage.setItem(KEY, JSON.stringify(globals));
   }
   current = merged();
+  if (was) afterChange(was);
   listeners.forEach((fn) => fn(current));
   return current;
 }
+
+/* ---------- Undo (src/ui/optionsundo.ts): every change told to one watcher, with what it replaced ---------- */
+/** One change, as stored: the book's own settings whole (null: it had none), and the app's keys written. */
+export interface SettingsChange {
+  book: string | null; bookBefore: Partial<VisualSettings> | null; bookAfter: Partial<VisualSettings> | null;
+  appBefore: Record<string, unknown>; appAfter: Record<string, unknown>;
+  /** What the reader saw before (the merged settings). */
+  seen: VisualSettings;
+  /** The background picture replaced (setBgImage): the one before and after (null: none). */
+  file?: { before: Blob | null; after: Blob | null };
+}
+/** (setBgImage: the picture replaced, joined to its bgImage change.) */
+let pendingFile: SettingsChange['file'] | null = null;
+let undoWatcher: { change(c: SettingsChange): void; book(id: string | null): void } | null = null;
+export function watchSettings(w: typeof undoWatcher): void { undoWatcher = w; }
+const copyOf = <T>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));
+function beforeChange(book: string | null, appKeys: string[]): SettingsChange {
+  const g = globals as unknown as Record<string, unknown>;
+  return { book, bookBefore: book ? copyOf(overrides()[book] ?? null) : null, bookAfter: null, appBefore: Object.fromEntries(appKeys.map((k) => [k, copyOf(g[k])])), appAfter: {}, seen: current };
+}
+function afterChange(c: SettingsChange): void {
+  const g = globals as unknown as Record<string, unknown>;
+  if (c.book) c.bookAfter = copyOf(overrides()[c.book] ?? null);
+  for (const k of Object.keys(c.appBefore)) c.appAfter[k] = copyOf(g[k]);
+  if (pendingFile) c.file = pendingFile;
+  const same = !c.file && JSON.stringify([c.bookBefore, c.appBefore]) === JSON.stringify([c.bookAfter, c.appAfter]);
+  if (!same) undoWatcher?.change(c);
+}
+/** A change put back as it was (`before`) or done again (`after`) — where it was stored, whatever book is open now. */
+export function putSettingsBack(c: SettingsChange, which: 'before' | 'after'): void {
+  if (c.book) { const v = which === 'before' ? c.bookBefore : c.bookAfter; if (v) overrides()[c.book] = copyOf(v); else delete overrides()[c.book]; saveOverrides(); }
+  const app = which === 'before' ? c.appBefore : c.appAfter;
+  if (Object.keys(app).length) { const next = { ...globals } as unknown as Record<string, unknown>; for (const [k, v] of Object.entries(app)) { if (v === undefined) delete next[k]; else next[k] = copyOf(v); } globals = next as unknown as VisualSettings; localStorage.setItem(KEY, JSON.stringify(globals)); }
+  current = merged();
+  listeners.forEach((fn) => fn(current));
+}
+/** The background picture stored as it was (an undo): no setting written. */
+export async function putBgFile(blob: Blob | null): Promise<void> {
+  const { db } = await import('./db');
+  if (bgImageUrl) { URL.revokeObjectURL(bgImageUrl); bgImageUrl = null; }
+  if (blob) await db.putFile('bg-image', blob); else await db.deleteFile('bg-image');
+  listeners.forEach((fn) => fn(current));
+}
+/** Every setting as stored — the app's and each book's own —, to be put back whole (a backup's restore undone). */
+export interface SettingsSnapshot { globals: VisualSettings; books: Record<string, Partial<VisualSettings>> }
+export const settingsSnapshot = (): SettingsSnapshot => ({ globals: copyOf(globals), books: allBookSettings() });
+export function putSettingsSnapshot(s: SettingsSnapshot): void {
+  globals = copyOf(s.globals); localStorage.setItem(KEY, JSON.stringify(globals));
+  bookOverrides = copyOf(s.books); saveOverrides();
+  current = merged(); listeners.forEach((fn) => fn(current));
+}
+export async function bgFile(): Promise<Blob | null> { const { db } = await import('./db'); return (await db.getFile('bg-image')) ?? null; }
 
 /** The reading options back to their factory values (the app's own — the AI key, sync, the library — left as they
  *  are: the reading options' «Reset» is not a sign-out). */
@@ -643,9 +710,12 @@ export async function loadBgImage(): Promise<string | null> {
 }
 export async function setBgImage(blob: Blob | null): Promise<void> {
   const { db } = await import('./db');
+  const old = undoWatcher ? (await db.getFile('bg-image')) ?? null : null;
   if (bgImageUrl) { URL.revokeObjectURL(bgImageUrl); bgImageUrl = null; }
   if (blob) await db.putFile('bg-image', blob); else await db.deleteFile('bg-image');
+  if (undoWatcher) pendingFile = { before: old, after: blob };
   updateSettings({ bgImage: !!blob });
+  pendingFile = null;
 }
 
 /** Is a hex colour light? Used to flip the interface chrome. */
@@ -680,9 +750,12 @@ export function pageIsLight(s: VisualSettings = current): boolean {
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
 mql?.addEventListener?.('change', () => applyChrome());
 
+// (An interface style other than Classic: its code and CSS fetched the first time it is in force — src/readertheme/.)
+let styleMod: typeof import('./readertheme/index') | null = null;
 /** Interface mode (system / light / dark / follow the page) and accent colour. */
 export function applyChrome(s: VisualSettings = current): void {
-  const light = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : s.uiMode === 'page' ? pageIsLight(s) : !!mql?.matches;
+  const f = styleMod?.forced(s);
+  const light = f !== undefined ? f : s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : s.uiMode === 'page' ? pageIsLight(s) : !!mql?.matches;
   const html = document.documentElement;
   html.dataset.ui = light ? 'light' : 'dark';
   html.dataset.dark = s.darkTone;
@@ -695,6 +768,7 @@ export function applyChrome(s: VisualSettings = current): void {
   else ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'].forEach((v) => html.style.removeProperty(v));
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', light ? '#f7f8fa' : s.darkTone === 'black' ? '#000000' : s.darkTone === 'grey' ? '#1c1b1f' : '#121314');
+  if (styleMod) styleMod.applyStyle(s, light); else if (s.uiStyle !== 'classic') void import('./readertheme/index').then((m) => { styleMod = m; applyChrome(); });
 }
 
 function hexToHsl(hex: string): [number, number, number] {

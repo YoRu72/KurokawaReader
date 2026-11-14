@@ -24,6 +24,7 @@ mod openfile;
 mod scan;
 mod selftest;
 mod titlebar;
+mod trash;
 mod winbits;
 // (Stage R6b: the updater, the start's times and colour.)
 mod boot;
@@ -121,6 +122,7 @@ fn main() {
             commands::kr_http,
             commands::kr_download,
             commands::kr_delete_download,
+            commands::kr_trash_file,
             commands::kr_download_cancel,
             commands::kr_set_doh,
             commands::kr_notify,

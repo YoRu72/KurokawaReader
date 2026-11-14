@@ -549,7 +549,8 @@ public class KurokawaPlugin extends Plugin {
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        // (Writing asked too: a provider that grants it lets the library delete the original later, when asked.)
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(call, intent, "documentsResult");
     }
 
@@ -563,7 +564,7 @@ public class KurokawaPlugin extends Plugin {
         else if (data.getData() != null) uris.add(data.getData());
         com.getcapacitor.JSArray files = new com.getcapacitor.JSArray();
         for (Uri u : uris) {
-            try { getContext().getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {}
+            try { getContext().getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION); } catch (Exception e) { try { getContext().getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {} }
             JSObject f = new JSObject();
             f.put("uri", u.toString());
             f.put("name", displayName(u));
@@ -805,6 +806,69 @@ public class KurokawaPlugin extends Plugin {
             ret.put("name", displayName(Uri.parse(uriStr)));
             call.resolve(ret);
         } catch (Exception e) { call.reject("read failed: " + e.getMessage(), e); }
+    }
+
+    /* ---------- A linked book's original deleted (the library's «Also delete the file from the device»: src/devicefiles.ts) ---------- */
+
+    /** Whether this app holds a lasting WRITE grant on the URI, or on the tree it was found in. */
+    private boolean mayWrite(Uri uri, String tree) {
+        for (android.content.UriPermission p : getContext().getContentResolver().getPersistedUriPermissions()) {
+            if (!p.isWritePermission()) continue;
+            if (p.getUri().equals(uri) || (tree != null && p.getUri().toString().equals(tree))) return true;
+        }
+        return false;
+    }
+
+    /** { can, gone }: a file:// path where the app may write (All files access); a document whose provider can delete it,
+     *  with a lasting write grant on it or on its tree. Anything else (a read-only grant from another app): false. */
+    @PluginMethod
+    public void canDeleteDocument(PluginCall call) {
+        String uriStr = call.getString("uri");
+        if (uriStr == null) { call.reject("uri required"); return; }
+        Uri uri = Uri.parse(uriStr);
+        JSObject ret = new JSObject();
+        boolean can = false, gone = false;
+        try {
+            if ("file".equals(uri.getScheme())) {
+                File f = new File(uri.getPath());
+                gone = !f.exists();
+                File dir = f.getParentFile();
+                can = !gone && allFilesAccess() && Build.VERSION.SDK_INT >= 30 && dir != null && dir.canWrite();
+            } else if ("content".equals(uri.getScheme())) {
+                try (Cursor c = getContext().getContentResolver().query(uri, new String[]{ DocumentsContract.Document.COLUMN_FLAGS }, null, null, null)) {
+                    if (c == null || !c.moveToFirst()) gone = true;
+                    else can = (c.getInt(0) & DocumentsContract.Document.FLAG_SUPPORTS_DELETE) != 0 && mayWrite(uri, call.getString("tree"));
+                } catch (Exception e) { can = false; }
+            }
+        } catch (Exception ignored) { can = false; }
+        ret.put("can", can);
+        ret.put("gone", gone);
+        call.resolve(ret);
+    }
+
+    /** { deleted, gone }: the document (DocumentsContract.deleteDocument) or the file (File.delete) deleted for good. */
+    @PluginMethod
+    public void deleteDocument(PluginCall call) {
+        String uriStr = call.getString("uri");
+        if (uriStr == null) { call.reject("uri required"); return; }
+        Uri uri = Uri.parse(uriStr);
+        JSObject ret = new JSObject();
+        try {
+            if ("file".equals(uri.getScheme())) {
+                File f = new File(uri.getPath());
+                if (!f.exists()) { ret.put("deleted", false); ret.put("gone", true); call.resolve(ret); return; }
+                ret.put("deleted", f.delete());
+                ret.put("gone", false);
+            } else {
+                boolean ok = DocumentsContract.deleteDocument(getContext().getContentResolver(), uri);
+                ret.put("deleted", ok);
+                ret.put("gone", false);
+                if (ok) { try { getContext().getContentResolver().releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION); } catch (Exception ignored) {} }
+            }
+            call.resolve(ret);
+        } catch (java.io.FileNotFoundException e) {
+            ret.put("deleted", false); ret.put("gone", true); call.resolve(ret);
+        } catch (Exception e) { call.reject("delete failed: " + e.getMessage(), e); }
     }
 
     /** Name, size and whether the app may keep reading this URI later (so it can be linked instead of copied). */

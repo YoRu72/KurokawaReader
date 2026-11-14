@@ -40,6 +40,8 @@ export interface Manifest {
   /** The app's icon of the user's choosing (a PNG data URL, at most ICON_CAP long): brought back where the app's own
    *  icon can be set — the desktop shells —, so it also crosses from one desktop build to another. */
   appIcon?: string;
+  /** The library's pins, by place (src/pins.ts PortablePins: folders by name, books by this backup's ids). */
+  libraryPins?: unknown;
 }
 export const BACKUP_VERSION = 2;
 
@@ -101,6 +103,7 @@ async function manifest(full: boolean): Promise<Manifest> {
     books: [],
   };
   const icon = brandIcon(); if (iconOk(icon)) out.appIcon = icon;
+  { const { loadPins } = await import('./pins'); const { pinsForBackup } = await import('./pinedit'); const pins = pinsForBackup(await loadPins(), folders); if (pins) out.libraryPins = pins; }
   for (const b of books) out.books.push({
     key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
     folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, done: b.done, doneAt: b.doneAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
@@ -288,6 +291,8 @@ export async function restoreManifest(m: Manifest, zip: BackupParts, onProgress?
     applied++;
   }
   if (want.reading) restoreShared(m, idMap);
+  // (The pins, as the folders: merged — the device's first, the backup's it lacks after them.)
+  if (m.libraryPins) await (await import('./pinedit')).restorePins(m.libraryPins, folders, idMap);
   return applied;
 }
 

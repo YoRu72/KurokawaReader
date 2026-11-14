@@ -4,16 +4,17 @@ import { ttsAvailable } from '../tts';
 import { kittenSupported } from '../kittentts';
 import { slimNow } from '../slim';
 import { aiTtsSupported } from '../ai';
-import { h, clear, icon, toast, pickButton, pickSheet, askText } from './dom';
+import { h, clear, icon, pickButton, pickSheet, askText } from './dom';
 import { colorField } from './colorpicker';
 import { t, countMinutes, localDigits, dateLocale } from '../i18n';
 import { keepAwake } from '../native';
 import { fits, only } from '../platform';
 import { AI_VOICES, aiReady } from '../ai';
-import { getSettings, updateSettings, resetSettings, isDefault, resetSetting, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
+import { getSettings, updateSettings, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
 import { fontsSync } from '../fonts';
 import { placedItemsEditor } from './placeditems';
 import { buttonsField } from './buttonsheet';
+import { historyButtons, arrowFor, arrowAct, resetAllOptions, offerOptionsUndo, stepCount, onHistory, scopeOrigin } from './optionsundo';
 import { barItems, barText, BAR_ITEM_LABEL, type BarItem, type BarValues } from './readbar';
 /** The reading bar's items as the editor shows them, each with an example. */
 const BAR_SAMPLE: BarValues = { chapter: '', title: '', page: 12, pages: 34, chapterPct: 35, bookPage: 120, bookPages: 410, bookPct: 29, minsChapter: 9, minsBook: 135 };
@@ -27,54 +28,51 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const rerender = () => renderOptions(container, opts);
   grid.addEventListener('kr-options-rerender', (e) => { e.stopPropagation(); rerender(); bump(); });
   const bump = () => container.dispatchEvent(new CustomEvent('kr-rerender', { bubbles: true }));
+  // Undo / Redo of every change made here (src/ui/optionsundo.ts): in the panel's head, or atop the options in
+  // Settings. (The text laid out again only when what was undone needs it — as the controls themselves do.)
+  const relayout = (x: VisualSettings) => JSON.stringify([x.readingMode, x.furigana, x.publisherStyles, bookScoped()]);
+  const historyAfter = () => { const was = relayoutSeen; rerender(); if (relayout(getSettings()) !== was) bump(); };
+  const relayoutSeen = relayout(s);
+  {
+    const hist = historyButtons(historyAfter);
+    const head = container.closest('.panel')?.querySelector('.panel-head');
+    head?.querySelector('.opt-history')?.remove();
+    if (head) head.insertBefore(hist, head.lastElementChild); else grid.prepend(h('div', { class: 'opt-history-bar' }, hist));
+  }
 
   if (activeBookId()) {
-    grid.append(h('div', { class: 'book-scope' + (bookScoped() ? ' on' : '') }, toggle(t('bookOnly'), bookScoped(), (v) => { setBookScoped(v); rerender(); bump(); }), h('p', { class: 'hint' }, t(bookScoped() ? 'bookOnlyOn' : 'bookOnlyHint'))));
+    const scopeRow = toggle(t('bookOnly'), bookScoped(), (v) => { setBookScoped(v); rerender(); bump(); });
+    // (Its arrow, once changed here: back as it was — src/ui/optionsundo.ts.)
+    const was = scopeOrigin();
+    if (was !== undefined && was !== bookScoped()) scopeRow.querySelector('.label')?.append(h('button', { type: 'button', class: 'reset-one', 'data-act': 'undo', title: t('undoThisChange'), 'aria-label': t('undoThisChange'), onclick: (e: Event) => { e.preventDefault(); e.stopPropagation(); setBookScoped(was); rerender(); bump(); } }, icon('undo')));
+    grid.append(h('div', { class: 'book-scope' + (bookScoped() ? ' on' : '') }, scopeRow, h('p', { class: 'hint' }, t(bookScoped() ? 'bookOnlyOn' : 'bookOnlyHint'))));
   }
 
   /* ----- Theme ----- */
-  const themes: [Theme, string, string, string][] = [
-    ['grey', t('themeGrey'), '#1b1b1b', '#d2d2d2'], ['dark', t('themeDark'), '#141414', '#cfcbc4'], ['black', t('themeBlack'), '#000', '#c9c9c9'], ['slate', t('themeSlate'), '#1e2228', '#d3d8de'], ['night', t('themeNight'), '#0f1626', '#cfd8e8'],
-    ['sepia', t('themeSepia'), '#f3e8d2', '#3b2f21'], ['moon', t('themeMoon'), '#f0dec6', '#634d35'], ['paper', t('themePaper'), '#ebe5da', '#27221d'], ['mintpaper', t('themeMintPaper'), '#e6efe6', '#1f2a22'], ['rosepaper', t('themeRosePaper'), '#f3e6e6', '#2c1e20'], ['light', t('themeLight'), '#fbfaf7', '#1d1a16'], ['sand', t('themeSand'), '#efe4cf', '#3a3024'],
-    ['olive', t('themeOlive'), '#1d2017', '#d6d8c6'], ['amber', t('themeAmber'), '#1f1a12', '#e3cfa8'], ['forest', t('themeForest'), '#10201a', '#cbd9cf'], ['plum', t('themePlum'), '#1e1520', '#ddd0dc'], ['ink', t('themeInk'), '#0b1120', '#dfe6f3'], ['coffee', t('themeCoffee'), '#1c1512', '#d9c9b8'], ['lavender', t('themeLavender'), '#efeaf6', '#2b2436'], ['sky', t('themeSky'), '#e9f1f7', '#1f2a33'],
-    ['charcoal', t('themeCharcoal'), '#232323', '#dcdcdc'], ['nord', t('themeNord'), '#2e3440', '#d8dee9'], ['dracula', t('themeDracula'), '#282a36', '#f8f8f2'], ['solardark', t('themeSolarizeddark'), '#002b36', '#a9b7b8'], ['gruvbox', t('themeGruvbox'), '#282828', '#ebdbb2'], ['solarlight', t('themeSolarizedlight'), '#fdf6e3', '#586e75'], ['cream', t('themeCream'), '#fff8e7', '#2d2a26'], ['peach', t('themePeach'), '#fbeee4', '#3a2a22'], ['custom', t('themeCustom'), s.customBg, s.customFg],
-  ];
-  grid.append(head('theme', t('theme')), h('div', { class: 'theme-swatches' }, ...themes.map(([id, label, bg, fg]) =>
-    h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '', myTheme: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
-  // The reader's own saved themes: colours of text, page, links and selection, by name.
-  const mine = s.myThemes;
-  const applyMine = (m: (typeof mine)[number]) => updateSettings({ theme: 'custom', myTheme: m.id, customBg: m.bg, customFg: m.fg, linkOverride: m.link, selOverride: m.sel, fgOverride: '', bgOverride: '' });
-  const saveMine = async () => {
-    const name = (await askText({ title: t('saveTheme'), label: t('themeName'), ok: t('save'), cancel: t('cancel') })) ?? ''; if (!name.trim()) return;
-    const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
-    const m = { id: String(Date.now()), name: name.trim(), bg: toHex(s.bgOverride || cur.getPropertyValue('--r-bg').trim() || s.customBg), fg: toHex(s.fgOverride || cur.getPropertyValue('--r-fg').trim() || s.customFg), link: toHex(s.linkOverride || cur.getPropertyValue('--r-link').trim() || '#8ec8e8'), sel: s.selOverride || toHex(cur.getPropertyValue('--r-sel').trim() || '#7fb4e5') };
-    updateSettings({ myThemes: [...mine, m] }); applyMine(m); rerender();
-  };
-  grid.append(h('div', { class: 'row', style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('myThemes')),
-    h('div', { class: 'theme-swatches small' }, ...mine.map((m) => h('button', { type: 'button', title: m.name, 'aria-label': m.name, 'aria-pressed': String(s.theme === 'custom' && s.myTheme === m.id), style: { background: m.bg, color: m.fg }, onclick: () => { applyMine(m); rerender(); } }, 'A'))),
-    h('button', { class: 'btn small outlined', type: 'button', onclick: saveMine }, icon('plus'), t('saveTheme')),
-    s.theme === 'custom' && s.myTheme ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ myThemes: mine.filter((m) => m.id !== s.myTheme), myTheme: '' }); rerender(); } }, icon('trash'), t('delete')) : null));
+  // (The same choice is offered in Settings → Appearance beside the interface's style: readingThemePicker.)
+  const themes = readingThemes();
+  grid.append(h('h4', null, labelEl([t('theme'), 'theme'], 'head-label')), ...readingThemePicker(rerender));
   // A night theme between two hours.
   grid.append(toggle([t('nightSchedule'), 'nightSchedule'], s.nightSchedule, (v) => { updateSettings({ nightSchedule: v }); rerender(); }));
   if (s.nightSchedule) {
     const timeIn = (v: string, on: (v: string) => void) => { const i = h('input', { type: 'time', value: v, class: 'tool-range', style: { width: '110px' } }) as HTMLInputElement; i.addEventListener('change', () => { if (i.value) on(i.value); }); return i; };
-    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('nightFrom')), timeIn(s.nightFrom, (v) => updateSettings({ nightFrom: v })), h('span', { class: 'label' }, t('nightTo')), timeIn(s.nightTo, (v) => updateSettings({ nightTo: v }))));
+    grid.append(h('div', { class: 'row' }, labelEl([t('nightFrom'), 'nightFrom']), timeIn(s.nightFrom, (v) => updateSettings({ nightFrom: v })), labelEl([t('nightTo'), 'nightTo']), timeIn(s.nightTo, (v) => updateSettings({ nightTo: v }))));
     const dark = themes.filter(([id]) => !['sepia', 'paper', 'light', 'mintpaper', 'rosepaper', 'sand', 'lavender', 'sky', 'solarlight', 'cream', 'peach'].includes(id));
-    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('nightTheme')), h('div', { class: 'theme-swatches small' }, ...dark.map(([id, label, bg, fg]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.nightTheme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ nightTheme: id }); rerender(); } }, 'A')))));
+    grid.append(h('div', { class: 'row' }, labelEl([t('nightTheme'), 'nightTheme']), h('div', { class: 'theme-swatches small' }, ...dark.map(([id, label, bg, fg]) => h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.nightTheme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ nightTheme: id }); rerender(); } }, 'A')))));
   }
   // (Colours set while one of the saved themes is in force are kept in it.)
   const keepMine = (patch: Partial<{ bg: string; fg: string; link: string; sel: string }>) => { const cur = getSettings(); if (cur.theme === 'custom' && cur.myTheme) updateSettings({ myThemes: cur.myThemes.map((m) => (m.id === cur.myTheme ? { ...m, ...patch } : m)) }); };
   if (s.theme === 'custom') {
-    grid.append(h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColor')), colorInput(s.customFg, (v) => { updateSettings({ customFg: v }); keepMine({ fg: v }); })),
-      h('div', { class: 'row' }, h('span', { class: 'label' }, t('backgroundColor')), colorInput(s.customBg, (v) => { updateSettings({ customBg: v }); keepMine({ bg: v }); })));
+    grid.append(h('div', { class: 'row' }, labelEl([t('textColor'), 'customFg']), colorInput(s.customFg, (v) => { updateSettings({ customFg: v }); keepMine({ fg: v }); })),
+      h('div', { class: 'row' }, labelEl([t('backgroundColor'), 'customBg']), colorInput(s.customBg, (v) => { updateSettings({ customBg: v }); keepMine({ bg: v }); })));
   } else {
     // Colour overrides on top of the chosen theme
     const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
     const fgNow = s.fgOverride || cur.getPropertyValue('--r-fg').trim() || '#d2d2d2';
     const bgNow = s.bgOverride || cur.getPropertyValue('--r-bg').trim() || '#1b1b1b';
     grid.append(
-      h('div', { class: 'row' }, h('span', { class: 'label' }, t('textColorOverride')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.fgOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ fgOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(fgNow), (v) => updateSettings({ fgOverride: v })))),
-      h('div', { class: 'row' }, h('span', { class: 'label' }, t('pageColorOverride')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.bgOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ bgOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(bgNow), (v) => updateSettings({ bgOverride: v })))),
+      h('div', { class: 'row' }, labelEl([t('textColorOverride'), 'fgOverride']), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.fgOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ fgOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(fgNow), (v) => updateSettings({ fgOverride: v })))),
+      h('div', { class: 'row' }, labelEl([t('pageColorOverride'), 'bgOverride']), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.bgOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ bgOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(bgNow), (v) => updateSettings({ bgOverride: v })))),
     );
   }
 
@@ -83,8 +81,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     const linkNow = s.linkOverride || cur.getPropertyValue('--r-link').trim() || '#8ec8e8';
     const selNow = s.selOverride || '#7fb4e5';
     grid.append(
-      h('div', { class: 'row' }, h('span', { class: 'label' }, t('linkColor')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.linkOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ linkOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(linkNow), (v) => { updateSettings({ linkOverride: v }); keepMine({ link: v }); }))),
-      h('div', { class: 'row' }, h('span', { class: 'label' }, t('selectionColor')), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.selOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ selOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(selNow), (v) => { updateSettings({ selOverride: v }); keepMine({ sel: v }); }))));
+      h('div', { class: 'row' }, labelEl([t('linkColor'), 'linkOverride']), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.linkOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ linkOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(linkNow), (v) => { updateSettings({ linkOverride: v }); keepMine({ link: v }); }))),
+      h('div', { class: 'row' }, labelEl([t('selectionColor'), 'selOverride']), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, s.selOverride ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { updateSettings({ selOverride: '' }); rerender(); } }, t('useThemeColor')) : null, colorInput(toHex(selNow), (v) => { updateSettings({ selOverride: v }); keepMine({ sel: v }); }))));
   }
   // Highlight colours (also used by notes and PDF pins)
   grid.append(section([t('highlightColors'), 'highlightPalette'], h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, ...(Object.keys(s.highlightPalette) as (keyof typeof s.highlightPalette)[]).map((k) => colorField(s.highlightPalette[k], (v) => updateSettings({ highlightPalette: { ...getSettings().highlightPalette, [k]: v } }), k)))));
@@ -102,7 +100,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     [t('presetFocus'), { theme: 'black', texture: 'none', warmth: 0, dimOverlay: 0.12, bgImage: false, textWidth: 560, margin: 32, lineHeight: 1.9, readingMode: 'chapters', showStatusLine: false }],
     [t('presetMushaf'), { theme: 'custom', customBg: '#f6efd9', customFg: '#2b2416', texture: 'parchment', textureOpacity: 0.3, warmth: 0.04, dimOverlay: 0, bgImage: false, arabicFont: 'uthman', align: 'justify', bookFormat: false, lineHeight: 2.1, fontSize: 22 }],
   ];
-  grid.append(section(t('presets'), h('div', { class: 'segmented' }, ...presets.map(([label, patch]) => h('button', { type: 'button', onclick: () => { updateSettings(patch); rerender(); } }, label)))));
+  grid.append(section(t('presets'), h('div', { class: 'segmented' }, ...presets.map(([label, patch]) => h('button', { type: 'button', onclick: () => { const n = stepCount(); updateSettings(patch); rerender(); offerOptionsUndo(t('presetApplied', { name: label }), historyAfter, n); } }, label)))));
 
   if (opts.pdf) {
     grid.append(toggle([t('invertColors'), 'pdfInvert'], s.pdfInvert, (v) => updateSettings({ pdfInvert: v })));
@@ -129,7 +127,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     await setBgImage(await downscale(f));
     rerender();
   } }) as HTMLInputElement;
-  grid.append(h('div', { class: 'field' }, h('span', { class: 'label' }, t('backgroundImage')), preview,
+  grid.append(h('div', { class: 'field' }, labelEl([t('backgroundImage'), 'bgImage']), preview,
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
       h('button', { class: 'btn small', type: 'button', onclick: () => file.click() }, icon('images'), t('chooseImage')),
       s.bgImage ? h('button', { class: 'btn small danger', type: 'button', onclick: async () => { await setBgImage(null); rerender(); } }, icon('trash'), t('removeImage')) : null), file));
@@ -306,25 +304,70 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(toggle([t('snapWatermark'), 'snapWatermark'], s.snapWatermark, (v) => updateSettings({ snapWatermark: v })));
   const folderInput = h('input', { type: 'text', value: s.snapFolder, spellcheck: 'false', dir: 'ltr', placeholder: 'Screenshots', onchange: () => updateSettings({ snapFolder: folderInput.value.trim() || 'Screenshots' }) }) as HTMLInputElement;
   // (The gallery's folder: the phone apps save a snapshot there; elsewhere it is downloaded as a file.)
-  grid.append(...only('phoneApp', section(t('snapFolder'), folderInput)));
+  grid.append(...only('phoneApp', section([t('snapFolder'), 'snapFolder'], folderInput)));
 
   container.append(grid, footer());
 
   function footer() {
-    return h('div', { style: { marginTop: '24px' } }, h('button', { class: 'btn small outlined', onclick: async () => { resetSettings(); await setBgImage(null); rerender(); bump(); toast(t('done')); } }, t('resetDefaults')));
+    return h('div', { style: { marginTop: '24px' } }, h('button', { class: 'btn small outlined', onclick: () => void resetAllOptions(() => { rerender(); bump(); }) }, t('resetDefaults')));
   }
 }
 
+/** The reading themes, as the picker shows them: id, name, page colour, text colour. */
+export function readingThemes(): [Theme, string, string, string][] {
+  const s = getSettings();
+  return [
+    ['grey', t('themeGrey'), '#1b1b1b', '#d2d2d2'], ['dark', t('themeDark'), '#141414', '#cfcbc4'], ['black', t('themeBlack'), '#000', '#c9c9c9'], ['slate', t('themeSlate'), '#1e2228', '#d3d8de'], ['night', t('themeNight'), '#0f1626', '#cfd8e8'],
+    ['sepia', t('themeSepia'), '#f3e8d2', '#3b2f21'], ['moon', t('themeMoon'), '#f0dec6', '#634d35'], ['paper', t('themePaper'), '#ebe5da', '#27221d'], ['mintpaper', t('themeMintPaper'), '#e6efe6', '#1f2a22'], ['rosepaper', t('themeRosePaper'), '#f3e6e6', '#2c1e20'], ['light', t('themeLight'), '#fbfaf7', '#1d1a16'], ['sand', t('themeSand'), '#efe4cf', '#3a3024'],
+    ['olive', t('themeOlive'), '#1d2017', '#d6d8c6'], ['amber', t('themeAmber'), '#1f1a12', '#e3cfa8'], ['forest', t('themeForest'), '#10201a', '#cbd9cf'], ['plum', t('themePlum'), '#1e1520', '#ddd0dc'], ['ink', t('themeInk'), '#0b1120', '#dfe6f3'], ['coffee', t('themeCoffee'), '#1c1512', '#d9c9b8'], ['lavender', t('themeLavender'), '#efeaf6', '#2b2436'], ['sky', t('themeSky'), '#e9f1f7', '#1f2a33'],
+    ['charcoal', t('themeCharcoal'), '#232323', '#dcdcdc'], ['nord', t('themeNord'), '#2e3440', '#d8dee9'], ['dracula', t('themeDracula'), '#282a36', '#f8f8f2'], ['solardark', t('themeSolarizeddark'), '#002b36', '#a9b7b8'], ['gruvbox', t('themeGruvbox'), '#282828', '#ebdbb2'], ['solarlight', t('themeSolarizedlight'), '#fdf6e3', '#586e75'], ['cream', t('themeCream'), '#fff8e7', '#2d2a26'], ['peach', t('themePeach'), '#fbeee4', '#3a2a22'], ['custom', t('themeCustom'), s.customBg, s.customFg],
+  ];
+}
+/** The reading theme's choice — the themes, then the reader's own saved ones — as Visual Options shows it; Settings →
+ *  Appearance shows the same beside the interface's style. `rerender`: drawn again after a choice, and after the
+ *  Undo of a saved theme deleted. Every choice here is a step of the options' history in both places (written through
+ *  updateSettings while the options are on the page: src/ui/optionsundo.ts). */
+export function readingThemePicker(rerender: () => void): HTMLElement[] {
+  const s = getSettings(); const themes = readingThemes();
+  const out: HTMLElement[] = [];
+  out.push(h('div', { class: 'theme-swatches' }, ...themes.map(([id, label, bg, fg]) =>
+    h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(s.theme === id), style: { background: bg, color: fg }, onclick: () => { updateSettings({ theme: id, fgOverride: '', bgOverride: '', myTheme: '' }); rerender(); } }, id === 'custom' ? icon('type') : 'Aa'))));
+  // The reader's own saved themes: colours of text, page, links and selection, by name.
+  const mine = s.myThemes;
+  const applyMine = (m: (typeof mine)[number]) => updateSettings({ theme: 'custom', myTheme: m.id, customBg: m.bg, customFg: m.fg, linkOverride: m.link, selOverride: m.sel, fgOverride: '', bgOverride: '' });
+  const saveMine = async () => {
+    const name = (await askText({ title: t('saveTheme'), label: t('themeName'), ok: t('save'), cancel: t('cancel') })) ?? ''; if (!name.trim()) return;
+    const cur = getComputedStyle(document.querySelector('.reader') ?? document.body);
+    const m = { id: String(Date.now()), name: name.trim(), bg: toHex(s.bgOverride || cur.getPropertyValue('--r-bg').trim() || s.customBg), fg: toHex(s.fgOverride || cur.getPropertyValue('--r-fg').trim() || s.customFg), link: toHex(s.linkOverride || cur.getPropertyValue('--r-link').trim() || '#8ec8e8'), sel: s.selOverride || toHex(cur.getPropertyValue('--r-sel').trim() || '#7fb4e5') };
+    updateSettings({ myThemes: [...mine, m] }); applyMine(m); rerender();
+  };
+  out.push(h('div', { class: 'row', style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('span', { class: 'label' }, t('myThemes')),
+    h('div', { class: 'theme-swatches small' }, ...mine.map((m) => h('button', { type: 'button', title: m.name, 'aria-label': m.name, 'aria-pressed': String(s.theme === 'custom' && s.myTheme === m.id), style: { background: m.bg, color: m.fg }, onclick: () => { applyMine(m); rerender(); } }, 'A'))),
+    h('button', { class: 'btn small outlined', type: 'button', onclick: saveMine }, icon('plus'), t('saveTheme')),
+    s.theme === 'custom' && s.myTheme ? h('button', { class: 'btn small outlined', type: 'button', onclick: () => { const gone = mine.find((m) => m.id === s.myTheme); const n = stepCount(); updateSettings({ myThemes: mine.filter((m) => m.id !== s.myTheme), myTheme: '' }); rerender(); offerOptionsUndo(t('themeDeleted', { name: gone?.name ?? '' }), rerender, n); } }, icon('trash'), t('delete')) : null));
+  return out;
+}
 function head(_id: Section, label: string): HTMLElement { return h('h4', null, label); }
 type Label = string | [string, keyof VisualSettings];
 /** A field label, with a small "back to default" button once the setting differs from the factory value. */
 function labelEl(label: Label, cls = 'label'): HTMLElement {
   if (typeof label === 'string') return h('span', { class: cls }, label);
   const [text, key] = label;
-  const span = h('span', { class: cls }, text);
-  if (!isDefault(key)) span.append(h('button', { type: 'button', class: 'reset-one', title: t('resetThis'), 'aria-label': t('resetThis'), onclick: (e: Event) => { e.preventDefault(); e.stopPropagation(); resetSetting(key); span.closest('.options-grid')?.dispatchEvent(new CustomEvent('kr-options-rerender', { bubbles: true })); } }, icon('undo')));
+  const span = h('span', { class: cls, 'data-key': key }, text);
+  // (The arrow: the value before this session's change, then the default, then the reader's own value again — src/ui/optionsundo.ts;
+  // drawn again whenever the history moves, so it is there as soon as the option is changed.)
+  paintArrow(span, key); arrows.add(span);
   return span;
 }
+const arrows = new Set<HTMLElement>();
+function paintArrow(span: HTMLElement, key: keyof VisualSettings): void {
+  const act = arrowFor(key); const old = span.querySelector(':scope > .reset-one') as HTMLElement | null;
+  if (old?.dataset.act === (act ?? '')) return;
+  old?.remove(); if (!act) return;
+  const tip = act === 'undo' ? t('undoThisChange') : act === 'mine' ? t('restoreMine') : t('resetThis');
+  span.append(h('button', { type: 'button', class: 'reset-one', 'data-act': act, 'data-key': key, title: tip, 'aria-label': tip, onclick: (e: Event) => { e.preventDefault(); e.stopPropagation(); arrowAct(key); span.closest('.options-grid')?.dispatchEvent(new CustomEvent('kr-options-rerender', { bubbles: true })); } }, icon('undo')));
+}
+onHistory(() => { for (const sp of arrows) { if (!sp.isConnected) { arrows.delete(sp); continue; } const k = sp.dataset.key as keyof VisualSettings; if (k) paintArrow(sp, k); } });
 function section(label: Label, control: HTMLElement): HTMLElement { return h('div', { class: 'field' }, labelEl(label), control); }
 function pct(v: number): string { return `${Math.round(v * 100)}%`; }
 function toHex(c: string): string {

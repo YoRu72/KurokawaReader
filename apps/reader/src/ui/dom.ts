@@ -114,6 +114,9 @@ const PATHS: Record<string, string> = {
   rotate: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   minus: '<path d="M5 12h14"/>',
   keyboard: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>',
+  // (Pins in the library: src/pins.ts.)
+  pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
+  pinOff: '<path d="M12 17v5"/><path d="M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89"/><path d="m2 2 20 20"/><path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11"/>',
 };
 
 export function icon(name: keyof typeof PATHS | string): SVGElement {
@@ -134,12 +137,21 @@ export function iconButton(name: string, label: string, onClick?: (e: MouseEvent
 }
 
 let toastTimer: number | undefined;
-export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200): void {
-  document.querySelectorAll('.toast').forEach((t) => t.remove());
-  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : ''), role: 'status' }, msg);
+/** A snackbar's one action («Undo», «Redo»…): `run` when tapped (the snackbar then goes). */
+export interface ToastAction { label: string; run: () => void }
+/** The snackbar: one at a time (a new one replaces it), said aloud (role=status). The third argument is its time,
+ *  or { action, ms, onEnd }: a button on it, and longer to read (6.5 s unless said); `onEnd(acted)` once it goes —
+ *  by its time, replaced, or its action taken (acted). */
+export function toast(msg: string, kind: 'info' | 'error' = 'info', ms: number | { action?: ToastAction; ms?: number; onEnd?: (acted: boolean) => void } = 2200): void {
+  const o = typeof ms === 'number' ? { ms } : ms;
+  document.querySelectorAll<HTMLElement & { __end?: (acted: boolean) => void }>('.toast').forEach((x) => { x.__end?.(false); x.remove(); });
+  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : '') + (o.action ? ' has-action' : ''), role: 'status', 'aria-live': 'polite' }, h('span', { class: 'toast-text' }, msg)) as HTMLElement & { __end?: (acted: boolean) => void };
+  let ended = false;
+  el.__end = (acted) => { if (ended) return; ended = true; o.onEnd?.(acted); };
+  if (o.action) { const a = o.action; el.append(h('button', { type: 'button', class: 'toast-action', onclick: () => { window.clearTimeout(toastTimer); el.__end?.(true); el.remove(); a.run(); } }, a.label)); }
   document.body.appendChild(el);
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.remove(), ms);
+  toastTimer = window.setTimeout(() => { el.__end?.(false); el.remove(); }, o.ms ?? (o.action ? 6500 : 2200));
 }
 
 /** A bottom sheet. Returns the body element and a close function. */
