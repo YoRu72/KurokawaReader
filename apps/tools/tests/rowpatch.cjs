@@ -56,6 +56,13 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
     ok('under 15 pushes a second the main thread stays under 150 ms busy a second (was ~400: an eased width laid out the list each frame)', perSec < 150, perSec);
     ok('at most 4 paints a second under 15 pushes a second', rate.paints <= 4.5 * 4.3 + 2, rate);
     ok('nothing drawn while hidden, drawn when shown again', hid.hiddenN === 0 && hid.after > 0, hid);
+    // (A transition inside the list's paint window is never lost to the page: a download that finishes between two
+    // paints still brings its «done» card, and its row ends «done».)
+    await p.evaluate(async () => { const base = window.__tasks.map((x) => ({ ...x })); base[1] = { ...base[1], state: 'downloading' }; window.__push(base); await new Promise((r) => setTimeout(r, 20)); const fin = base.map((x) => ({ ...x })); fin[1] = { ...fin[1], state: 'done', done: fin[1].total, downSpeed: 0 }; Object.assign(window.__tasks[1], fin[1]); window.__push(fin); window.__push(fin.map((x) => ({ ...x }))); });
+    const card = await p.waitForSelector('.done-card', { timeout: 3000 }).then(() => true, () => false);
+    ok('a «done» between two paints: its card shown', card);
+    await p.evaluate(() => { location.hash = '#/'; });
+    ok('…and its row ends «done»', await p.waitForFunction(() => document.querySelector('.task-card[data-id="t1"]')?.className.includes('state-done'), null, { timeout: 2000 }).then(() => true, () => false));
     ok('no page errors', !errs.length, errs);
   }
   await br.close(); web.close(); process.exit(fails ? 1 : 0);

@@ -103,19 +103,38 @@ pub fn emit_tasks(app: &AppHandle, aria: Value) {
 }
 
 /// A video task changed: the whole list sent.
-/// A push asked for while one is waiting: the video jobs' changes go out at most four times a second, together (five
-/// jobs each telling every 400 ms sent the whole list up to a dozen times a second).
-static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-fn push(app: &AppHandle) {
-    if PENDING.swap(true, Ordering::SeqCst) {
-        return;
+/// The video jobs' pushes: a transition (a phase, a state, an error, a file's name, a queue place) goes out at once;
+/// progress numbers at most four times a second, merged (kt-core PushGate) — five jobs each telling every 400 ms sent
+/// the whole list up to a dozen times a second, and no phase is ever lost to the merging.
+static GATE: Mutex<vt::PushGate> = Mutex::new(vt::PushGate { last_ms: None, pending: false });
+const EVERY_MS: u64 = 250;
+fn gate() -> std::sync::MutexGuard<'static, vt::PushGate> {
+    match GATE.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
     }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(250));
-        PENDING.store(false, Ordering::SeqCst);
-        push_now(&app);
-    });
+}
+/// A transition: sent now.
+fn push(app: &AppHandle) {
+    let _ = gate().offer(true, now_ms(), EVERY_MS);
+    push_now(app);
+}
+/// Progress only: sent now, or merged into one push a moment later.
+fn push_progress(app: &AppHandle) {
+    let action = gate().offer(false, now_ms(), EVERY_MS);
+    match action {
+        vt::PushAction::Now => push_now(app),
+        vt::PushAction::Merged => {}
+        vt::PushAction::After(ms) => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(ms));
+                if gate().fire(now_ms()) {
+                    push_now(&app);
+                }
+            });
+        }
+    }
 }
 fn push_now(app: &AppHandle) {
     let _g = EMIT.lock();
@@ -413,9 +432,13 @@ impl Jobs {
             }
             let p = rd.p.clone();
             let changed = me.edit(&idl, |m| apply(m, &p, seen_bytes));
-            if changed && (force || last.elapsed() > Duration::from_millis(400)) {
+            // (A phase change at once, always; progress through the gate.)
+            if changed && force {
                 last = Instant::now();
                 push(&me.app);
+            } else if changed && last.elapsed() > Duration::from_millis(400) {
+                last = Instant::now();
+                push_progress(&me.app);
             }
         });
         let lines = match spawned {

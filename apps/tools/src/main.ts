@@ -176,36 +176,18 @@ else {
   // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
   if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
   else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
-  onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
-  onRoute(mount);
-  mount(parseRoute());
-  // (Everything that works in the background starts once the first screen is drawn — not before it: the list is
-  // usable sooner. A window that opens hidden — no frames — starts it all the same, a moment later.)
-  afterFirstPaint(() => {
-  void import('./downloads/relink').then((m) => m.startAutoRelink());
+  // (At the start, before the first screen — each a listener or a setting another flow reads at once: a key, a
+  // download's «done» or a shell's event in the first moments must find someone listening; the network and power
+  // choices are in force before any download moves; the hand-over's hooks are there for the shell and the tests.)
   wirePcBack();
   wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
-  void import('./ui/gestures').then((g) => g.pageSwipe({
-    enabled: () => getSettings().swipeTabs !== false,
-    view: () => current,
-    step: (dir) => { const ds = DESTS(); const i = ds.findIndex((d) => d[0] === destOf(parseRoute())); const nx = ds[i + dir]; if (i < 0 || !nx) return false; nx[3](); return true; },
-  }));
   onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
-  if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
-  if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
   void import('./downloads/power').then((m) => m.applyPower());
-  // (The Player add-on comes with ffmpeg — for the sound a web view cannot play, clips and chapters —: one installed
-  // before it came with it gets it now, offered once, a while after the app opens.)
-  if (getSettings().addons.includes('player')) window.setTimeout(() => void (async () => { const pk = await import('./packs'); if (!pk.packsHere()) return; const want = pk.packNames().filter((n) => n === 'ffmpeg' || n === 'mpv'); const need = await pk.packsToFetch(want).catch(() => []); if (!need.length) return; try { if (localStorage.getItem('kt.playerPacksAsked') === need.map((x) => x.n).join()) return; localStorage.setItem('kt.playerPacksAsked', need.map((x) => x.n).join()); } catch { /* none */ } const { t } = await import('./i18n'); await pk.ensurePacks(need.map((x) => x.n), t('packWhyPlayer'), { start: true }); })().catch(() => undefined), 8000);
-  if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
-  setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).
   { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined);
     // (The phone: the app's Settings alone decide the app's DNS over HTTPS — «off» sent as much as a resolver, so the old
     // browser switch, which wrote the app's choice, cannot keep it on unseen. The browser has its own switch now.)
     void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
-  void import('./ui/imgRetry').then((m) => m.startImgRetry());
-  void import('./desktopStarter').then((m) => m.startDesktopStarter());
   // (Stage P9: the computer's two builds. The Tauri build: its first-run screen once — carrying the offer of the data the
   // previous (Electron) version handed over —, else that offer alone when there is one (ui/firstrun.ts startScreens).
   // The Electron build: the hand-over's maker reachable by the shell without an import (desktop/handover.cjs prepare
@@ -223,21 +205,45 @@ else {
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());
   void import('./downloads/hotkeys').then((m) => m.startHotkeys());
+  void import('./downloads/done').then((m) => m.startDoneWatch());
+  void import('./browser').then((m) => m.startBrowserEvents());
+  void import('./downloads/net').then((m) => m.applyNet());
+  void import('./ui/dropzone').then((m) => m.startDropAndKeys());
+  // (A download finishing in the first moments still unpacked, an episode still marked watched; the video limit in force before a job can start.)
+  if (getSettings().addons.includes('anime')) void import('./anime/progress').then((m) => m.watchProgress());
+  if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
+  if (getSettings().addons.includes('video')) void import('./video/queue').then((m) => m.applyVideoQueue());
+  onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
+  onRoute(mount);
+  mount(parseRoute());
+  // (The rest — heavy or periodic work nobody waits for — once the first screen is drawn.)
+  afterFirstPaint(() => {
+  void import('./downloads/relink').then((m) => m.startAutoRelink());
+  void import('./ui/gestures').then((g) => g.pageSwipe({
+    enabled: () => getSettings().swipeTabs !== false,
+    view: () => current,
+    step: (dir) => { const ds = DESTS(); const i = ds.findIndex((d) => d[0] === destOf(parseRoute())); const nx = ds[i + dir]; if (i < 0 || !nx) return false; nx[3](); return true; },
+  }));
+  // (The Player add-on comes with ffmpeg — for the sound a web view cannot play, clips and chapters —: one installed
+  // before it came with it gets it now, offered once, a while after the app opens.)
+  if (getSettings().addons.includes('player')) window.setTimeout(() => void (async () => { const pk = await import('./packs'); if (!pk.packsHere()) return; const want = pk.packNames().filter((n) => n === 'ffmpeg' || n === 'mpv'); const need = await pk.packsToFetch(want).catch(() => []); if (!need.length) return; try { if (localStorage.getItem('kt.playerPacksAsked') === need.map((x) => x.n).join()) return; localStorage.setItem('kt.playerPacksAsked', need.map((x) => x.n).join()); } catch { /* none */ } const { t } = await import('./i18n'); await pk.ensurePacks(need.map((x) => x.n), t('packWhyPlayer'), { start: true }); })().catch(() => undefined), 8000);
+  if (getSettings().addons.includes('debrid')) void import('./debrid/transfers');
+  setTimeout(() => void import('./addons').then((m) => m.autoUpdate()).catch(() => undefined), 8000);
+  void import('./ui/imgRetry').then((m) => m.startImgRetry());
+  void import('./desktopStarter').then((m) => m.startDesktopStarter());
   void import('./downloads/background').then((m) => { m.startScheduler(); m.startClipboardWatch((text) => void import('./views/add').then((a) => a.addSheet(text))); });
   if (getSettings().addons.includes('anime')) void import('./anime/auto').then((m) => m.startAuto());
   if (getSettings().addons.includes('tv')) void import('./tv/auto').then((m) => m.startTvAuto());
-  void import('./downloads/done').then((m) => m.startDoneWatch());
   void import('./downloads/trash').then((m) => m.startTrash());
-  void import('./browser').then((m) => m.startBrowserEvents());
   void import('./ui/crash').then((m) => m.showLastCrash());
-  void import('./downloads/net').then((m) => m.applyNet());
   // (Public trackers for torrents, refreshed daily, handed to the phone's engine.)
   void import('./downloads/trackers').then((m) => m.startTrackers());
   // (Watched episodes let go after the days chosen.)
   if (getSettings().addons.includes('anime') || getSettings().addons.includes('tv')) void import('./downloads/episodeCache').then((m) => m.startEpisodeCache());
-  void import('./ui/dropzone').then((m) => m.startDropAndKeys());
-  if (getSettings().addons.includes('video')) { void import('./video/ytdlp').then((m) => m.autoUpdateVideo()); void import('./video/queue').then((m) => m.applyVideoQueue()); }
+  if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
   });
+  // (Everything that works in the background starts once the first screen is drawn — not before it: the list is
+  // usable sooner. A window that opens hidden — no frames — starts it all the same, a moment later.)
   // (The app's update check: its code fetched after the first screen — it waits 3 s before it asks anyway.)
   void import('./updates').then((m) => m.scheduleAutoCheck());
   document.documentElement.dataset.platform = nativePlatform();

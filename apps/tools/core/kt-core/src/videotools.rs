@@ -1406,6 +1406,53 @@ pub fn healable(err: &str) -> bool {
     ["unable to extract", "failed to extract", "failed to parse", "nsig extraction failed", "player response", "please report this issue", "update yt-dlp", "yt-dlp -u", "signature solving failed", "n challenge solving failed"].iter().any(|k| e.contains(k))
 }
 
+/* ---------- the video jobs' pushes to the page: progress merged, transitions never ---------- */
+
+/// What a push asked for does: go out now, go out after a wait (progress, merged with what follows), or nothing (a
+/// push is already waiting and will carry this change).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PushAction {
+    Now,
+    After(u64),
+    Merged,
+}
+/// The gate of the video jobs' pushes: progress numbers go out at most every `every_ms`, merged; a transition — a
+/// phase, a state, an error, a file's name, a queue place — always at once (a waiting progress push is then carried by
+/// it), so a phase that begins and ends inside one window is still seen, in order.
+#[derive(Clone, Debug, Default)]
+pub struct PushGate {
+    pub last_ms: Option<u64>,
+    pub pending: bool,
+}
+impl PushGate {
+    pub fn offer(&mut self, transition: bool, now_ms: u64, every_ms: u64) -> PushAction {
+        if transition {
+            self.pending = false;
+            self.last_ms = Some(now_ms);
+            return PushAction::Now;
+        }
+        if self.pending {
+            return PushAction::Merged;
+        }
+        let since = self.last_ms.map(|l| now_ms.saturating_sub(l)).unwrap_or(u64::MAX);
+        if since >= every_ms {
+            self.last_ms = Some(now_ms);
+            return PushAction::Now;
+        }
+        self.pending = true;
+        PushAction::After(every_ms - since)
+    }
+    /// The waiting push went out (unless a transition already carried it: then nothing is sent).
+    pub fn fire(&mut self, now_ms: u64) -> bool {
+        if !self.pending {
+            return false;
+        }
+        self.pending = false;
+        self.last_ms = Some(now_ms);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1746,5 +1793,29 @@ mod tests {
         assert_eq!(queue_place(&t, "c"), None);
         assert!(healable("ERROR: [youtube] abc: Unable to extract uploader id; please report this issue") && healable("nsig extraction failed") && !healable("HTTP Error 429: Too Many Requests") && !healable("Private video"));
         assert!(is_video_host("https://www.youtube-nocookie.com/embed/x") && is_video_host("https://m.youtube.com/shorts/x") && is_video_host("https://music.youtube.com/watch?v=x") && is_video_host("https://kick.com/a"));
+    }
+
+    #[test]
+    fn pushes_keep_every_transition() {
+        // A burst video → audio → embed inside one 250 ms window: three pushes, each at once, in order.
+        let mut g = PushGate::default();
+        let mut sent: Vec<&str> = Vec::new();
+        for (t, phase) in [(0u64, "video"), (40, "audio"), (90, "embed")] {
+            if g.offer(true, t, 250) == PushAction::Now {
+                sent.push(phase);
+            }
+        }
+        assert_eq!(sent, vec!["video", "audio", "embed"]);
+        // Progress: the first at once, the next ones merged into one waiting push.
+        let mut g = PushGate::default();
+        assert_eq!(g.offer(false, 0, 250), PushAction::Now);
+        assert_eq!(g.offer(false, 100, 250), PushAction::After(150));
+        assert_eq!(g.offer(false, 120, 250), PushAction::Merged);
+        assert!(g.fire(250));
+        assert_eq!(g.offer(false, 600, 250), PushAction::Now);
+        // A transition while progress waits: sent at once, and the waiting push has nothing left to send.
+        assert_eq!(g.offer(false, 700, 250), PushAction::After(150));
+        assert_eq!(g.offer(true, 710, 250), PushAction::Now);
+        assert!(!g.fire(850));
     }
 }

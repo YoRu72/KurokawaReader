@@ -64,6 +64,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('an extractor error → a newer yt-dlp fetched → tried again once', spawned.length === 2 && ht.meta.healTried === true && !!ht.meta.healed, { n: spawned.length, meta: ht.meta, was });
   spawned[1].p.stderr.emit('data', 'ERROR: [youtube] h: Unable to extract nsig function code\n'); spawned[1].p.emit('close', 1); await sleep(100);
   ok('…and only once: the second failure is said', ht.state === 'failed' && spawned.length === 2 && /Unable to extract/.test(ht.error), [ht.state, ht.error]);
+  // The pushes: a burst of phases inside one 250 ms window — each phase still sent, in order; progress merged.
+  { spawned.length = 0; const seen = []; let sends = 0; const pj = new Y.VideoJobs(Y.pusher(() => { sends++; const x = pj.list().find((y) => y.source.url === 'https://www.youtube.com/watch?v=p'); if (x && x.meta && x.meta.phase && seen[seen.length - 1] !== x.meta.phase) seen.push(x.meta.phase); }));
+    await pj.add({ url: 'https://www.youtube.com/watch?v=p', dir, title: 'P', args }); await sleep(30); const pp = spawned[0].p; const say = (l) => pp.stdout.emit('data', l + '\n');
+    sends = 0; say('[download] Destination: /x/P.f137.mp4'); for (let i = 1; i < 30; i++) say(`KT|${i * 1000}|100000|NA|1000|5|${i}|40|/x/P.f137.mp4`); say('[download] Destination: /x/P.f140.m4a'); say('[Merger] Merging formats into "/x/P.mp4"'); say('[EmbedThumbnail] x');
+    ok('a burst of phases in one window: video, audio, merge, embed — each sent, in order', JSON.stringify(seen.slice(-4)) === JSON.stringify(['video', 'audio', 'merge', 'embed']), seen);
+    ok('…progress merged, not one push a line', sends <= 6, sends); pp.emit('close', 0); await sleep(300); }
   ok('removed sign-in: overwritten and gone', Y.removeCookies('youtube.com') && !fs.existsSync(f));
   console.log(fails ? `${fails} failed` : 'all passed'); fs.rmSync(tmp, { recursive: true, force: true }); process.exit(fails ? 1 : 0);
 })();

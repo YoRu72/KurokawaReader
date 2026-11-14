@@ -153,9 +153,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
         if (!sh.el.isConnected || sources()[0]?.url !== u) return;
         if (isVideoHost(u)) { video.check(u); await video.busy(); if (!sh.el.isConnected || sources()[0]?.url !== u) return; }
         const read = !!video.picks(); if (read) post.quiet();
-        // (A profile — not a post — goes to the grabber, which reads a whole feed; a post neither could read stays here, its reasons said.)
-        if (!read && !S.socialOf(u) && getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; }
-        if (!read && S.socialOf(u)) return;
+        // (Neither read it — a photo post yt-dlp has no video in, a profile —: the grabber, at once, as before; it tries the
+        // computer's gallery-dl too, and says why when nothing can be read.)
+        if (!read && getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; }
         hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen')));
       })(); }); return; }
     void post.read(null); hfBox.hidden = false; hfBox.replaceChildren(icon('puzzle'), h('span', { class: 'grow' }, t('hfOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('./models').then((m) => m.modelsSheet(u)); } }, t('hfOpen')));

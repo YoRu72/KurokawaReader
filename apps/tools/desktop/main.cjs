@@ -150,9 +150,10 @@ else {
     // (Not waited for: the window opens at once; the page is told when aria2c is up — it may take a while on a
     // first start under Windows' antivirus.)
     void engine.ensure();
-    // (The video jobs' changes sent at most four times a second, together: five jobs each telling every 400 ms sent the
+    // (The video jobs' progress sent at most four times a second, together: five jobs each telling every 400 ms sent the
     // whole list up to a dozen times a second.)
-    let pushT = null; videos = new Ytdlp.VideoJobs(() => { if (pushT) return; pushT = setTimeout(() => { pushT = null; send('kt:tasks', allTasks()); }, 250); });
+    // (A transition — a phase, a state, an error — goes at once and carries any waiting progress with it: none is ever lost to the merging.)
+    videos = new Ytdlp.VideoJobs(Ytdlp.pusher(() => send('kt:tasks', allTasks())));
     Ytdlp.setBusy(() => videos.running() > 0);
     // (Stage P9, the bridge build only: the downloads handed over to the Rust build kept paused here while it runs them.)
     if (RUST_SWITCH) ownerAtStart(userData);

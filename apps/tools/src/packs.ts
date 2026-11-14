@@ -23,9 +23,9 @@ export const packsHere = (): boolean => !!(plug() || desk());
 export const packNames = (): PackName[] => (desk() ? ['ffmpeg', ...((window.kurokawaTools as unknown as { videoJsRuntime?: unknown })?.videoJsRuntime ? ['deno' as PackName] : [])] : plug() ? ['python', 'ffmpeg', 'mpv'] : []);
 
 export async function status(): Promise<Status | null> { const d = desk(); if (d) return d.packStatus(); const p = plug(); return p ? p.packStatus() : null; }
-// (What is here, kept a minute for the questions asked on every link — «is ffmpeg here?» —; forgotten when a pack comes or goes.)
+// (What is here, kept 3 s for the questions asked together on a link change — «is ffmpeg here?» twice —; forgotten when a pack comes or goes. Short: a pack can come by another way than this page.)
 let kept: { at: number; p: Promise<Status | null> } | null = null;
-export function statusKept(): Promise<Status | null> { if (kept && Date.now() - kept.at < 60000) return kept.p; const p = status(); kept = { at: Date.now(), p }; p.catch(() => { kept = null; }); return p; }
+export function statusKept(): Promise<Status | null> { if (kept && Date.now() - kept.at < 3000) return kept.p; const p = status(); kept = { at: Date.now(), p }; p.catch(() => { kept = null; }); return p; }
 export function forgetStatus(): void { kept = null; }
 
 type Entry = { file: string; size: number; sha256: string };

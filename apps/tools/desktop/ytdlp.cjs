@@ -189,7 +189,7 @@ function lineReader(t, m, emit) {
     else if (/^\[(SponsorBlock|ModifyChapters|SplitChapters|VideoRemuxer|VideoConvertor|Fixup\w*)\]/.test(l)) { force = phaseOf('finish'); t.downSpeed = 0; t.eta = undefined; }
     else if (/^\[(info|youtube|generic)\]/.test(l) && !meta().phase) force = phaseOf('info');
     if (/\[(Merger|ExtractAudio|EmbedSubtitle|Metadata|ffmpeg)\]/.test(l)) { t.detail = l.replace(/^\[\w+\]\s*/, '').slice(0, 120); if (/Merging formats into "(.+)"/.test(l)) { const f = /Merging formats into "(.+)"/.exec(l)[1]; t.files = [{ index: 0, path: path.basename(f), size: t.total, done: t.total, priority: 1 }]; t.name = path.basename(f).replace(/\.[^.]+$/, ''); } }
-    const now = Date.now(); if (force || now - last > 400) { last = now; emit(); }
+    const now = Date.now(); if (force || now - last > 400) { last = now; emit(!force); }
   };
 }
 
@@ -205,7 +205,8 @@ class VideoJobs {
   load() { try { for (const t of JSON.parse(fs.readFileSync(this.statePath, 'utf8'))) { if (t.state === 'downloading' || t.state === 'queued') t.state = 'paused'; this.tasks.set(t.id, t); } } catch { /* none */ } }
   save() { try { fs.writeFileSync(this.statePath, JSON.stringify([...this.tasks.values()])); } catch { /* ignore */ } }
   list() { return [...this.tasks.values()]; }
-  emit() { this.send(); }
+  /** Told to the page: `progress` — only numbers moved — may be merged by the shell; anything else (a phase, a state, an error) goes at once. */
+  emit(progress = false) { this.send(progress); }
   async add(o) {
     const id = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const t = { id, kind: 'video', name: o.title || o.url, source: { url: o.url }, dir: o.dir, state: 'queued', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), meta: { ...(o.meta || {}), kind: 'video', site: o.site, quality: o.label, format: o.format, audioOnly: !!o.audioOnly, container: o.container, headers: o.headers, outName: o.outName, subs: o.subs, embedThumb: o.embedThumb, embedMeta: o.embedMeta, sponsorblock: o.sponsorblock, args: Array.isArray(o.args) ? o.args : undefined, expect: o.expect || undefined, audioFmt: o.audioFmt, playlistIndex: o.playlistIndex, cookiesFromBrowser: o.cookies || o.cookiesFromBrowser, chapters: o.chapters, template: o.template, section: o.section, infoId: infoIdOk(o.infoId) ? o.infoId : undefined }, engine: 'native' };
@@ -242,7 +243,7 @@ class VideoJobs {
     const run = withShellInputs(args, cookieFileFor(t.source.url), infoFile);
     if (t.state !== 'downloading') { this.active.delete(id); this.pump(); return; }
     const p = spawn(binPath(), run, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: ENV }); this.procs.set(id, p); let err = ''; let buf = '';
-    const read = lineReader(t, m, () => this.emit());
+    const read = lineReader(t, m, (progress) => this.emit(progress));
     p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop() || ''; for (const l of lines) read(l); });
     p.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-10000); });
     p.on('close', (code) => { this.procs.delete(id); this.active.delete(id); const tt = this.tasks.get(id); if (!tt) { this.pump(); return; }
@@ -263,9 +264,15 @@ class VideoJobs {
 }
 // (A copy of src/video/ytdlp.ts's list — tests/videohosts.cjs keeps the three equal.)
 const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|bilibili\.tv|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|vkvideo\.ru|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv|tver\.jp|kick\.com|archive\.org|ted\.com|bitchute\.com|mixcloud\.com|vlive\.tv|weibo\.com|douyin\.com|ixigua\.com|youku\.com|zhihu\.com|naver\.com|kakao\.com|aparat\.com|shahid\.mbc\.net)$/i;
+/** The video jobs' pushes (kt-core PushGate): a transition — a phase, a state, an error — sent at once (carrying any
+ *  waiting progress); progress numbers at most every `every` ms, merged. No phase is ever lost to the merging. */
+function pusher(sendNow, every = 250) {
+  let timer = null; let at = 0; const now = () => { clearTimeout(timer); timer = null; at = Date.now(); sendNow(); };
+  return (progress) => { if (!progress) { now(); return; } if (timer) return; const wait = every - (Date.now() - at); if (wait <= 0) now(); else timer = setTimeout(now, wait); };
+}
 /** kt-core videotools.rs healable: a failure a newer yt-dlp often mends. */
 const healable = (line) => /unable to extract|failed to extract|failed to parse|nsig extraction failed|player response|please report this issue|update yt-dlp|yt-dlp -u|signature solving failed|n challenge solving failed/i.test(line);
-module.exports = { vetArgs, ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, setBusy, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION, cookieSite, cookieFileFor, saveCookies, listCookies, removeCookies, withShellInputs, infoId, freshInfo, healable };
+module.exports = { pusher, vetArgs, ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, setBusy, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION, cookieSite, cookieFileFor, saveCookies, listCookies, removeCookies, withShellInputs, infoId, freshInfo, healable };
 
 /* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
 const TIMES = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/;
