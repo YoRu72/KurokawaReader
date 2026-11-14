@@ -2146,6 +2146,11 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   vcAuto: "Auto",
   phaseConvert: "converting to {f}",
   phaseEmbed: "embedding cover and tags",
+  filesPlaceDownloads: "Downloads",
+  filesPlaceDesktop: "Desktop",
+  filesPlaceDocuments: "Documents",
+  updateByHand: "This copy can't replace itself: download the new version from the release page.",
+  filesBadName: "A name can't hold / or \\ (nor < > : \" | ? * on Windows).",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

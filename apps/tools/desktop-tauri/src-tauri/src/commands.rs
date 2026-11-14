@@ -316,6 +316,35 @@ pub async fn kt_http(o: Value) -> Result<Value, String> {
     net::http(&o).await
 }
 
+/// kt:setDoh({ provider }) → { provider }: the resolver the app's own requests use (stage P8; a name of main.cjs's
+/// table — kt-core's dohnames —, «auto», an https:// address, or «off» for the system's DNS). As Electron, the page
+/// sets it again at each start. (What the page's web view fetches itself keeps the system's DNS: ../PORTING.md.)
+#[tauri::command]
+pub async fn kt_set_doh(o: Value) -> Result<Value, String> {
+    let p = text_of(&o, "provider");
+    let p = if p.is_empty() { "off".to_string() } else { p };
+    net::set_doh(&kt_core::dohnames::resolver_for(&p));
+    Ok(json!({ "provider": p }))
+}
+
+/// kt:dohProbe() → { ok, ms, ips, resolver } or { ok: false, ms, why }: example.com's addresses asked of the resolver
+/// in force (its answers forgotten first), and timed — main.cjs's probe.
+#[tauri::command]
+pub async fn kt_doh_probe() -> Result<Value, String> {
+    net::clear_doh_cache();
+    let started = std::time::Instant::now();
+    let resolver = kt_core::dohnames::probe_label(&net::doh_server().unwrap_or_else(|| "off".to_string()));
+    let r = net::doh_lookup("example.com").await;
+    let ms = started.elapsed().as_millis() as u64;
+    Ok(match r {
+        Ok(ips) => {
+            let list: Vec<String> = ips.iter().map(|ip| ip.to_string()).collect();
+            json!({ "ok": !list.is_empty(), "ms": ms, "ips": list, "resolver": resolver })
+        }
+        Err(e) => json!({ "ok": false, "ms": ms, "why": e }),
+    })
+}
+
 /// kt:checkUpdate: the newest tools-v* release (they are all pre-releases) newer than this one.
 #[tauri::command]
 pub async fn kt_check_update(app: AppHandle, o: Value) -> Result<Value, String> {

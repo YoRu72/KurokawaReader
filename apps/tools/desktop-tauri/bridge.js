@@ -3,12 +3,13 @@
 // Run by src-tauri/src/main.rs as the window's initialization script — before the page's own scripts, on every
 // load —, after a line that sets window.__KT_BOOT__ = { os, arch }.
 // Only the ported slice is here (../PORTING.md: stage 1 files/dialogs/clipboard/http, stage 2 the download engine,
-// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts): the page asks for each feature by
+// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts, P7 the archives): the page asks for each feature by
 // its method (d?.dohProbe, …), so whatever is not ported yet is absent, not a stub. Events (kt:tasks, kt:engineState,
 // kt:files) come as Tauri events, listened to with window.__TAURI__.event.listen.
-// Four methods are this shell's own, not the preload's: filesJob, filesCancel, filesAnswer and onFilesJob — the Files
+// Some methods are this shell's own, not the preload's: filesJob, filesCancel, filesAnswer and onFilesJob — the Files
 // page's copy / move / delete jobs with the phone's shapes (src/views/files.ts uses them where they are; the Electron
-// shell has none, so there Copy, Cut and Paste stay hidden).
+// shell has none, so there Copy, Cut and Paste stay hidden) —, and homeDir, filesRoots, filesStat, filesMkdir and
+// filesRename (the storages, new folder, rename — again the phone plugin's shapes).
 (function () {
   'use strict';
   if (window.kurokawaTools) return;
@@ -38,6 +39,38 @@
     return new ArrayBuffer(0);
   }
   var str = function (x) { return String(x); };
+  /* (Stage P6 part: the .ico's sizes — the shared iconlogic.rs ICO_SIZES — drawn with the page's canvas from the
+     512 px icon the page cropped, halved step by step down to twice the size, then drawn once, smoothed; each a PNG in
+     base64: [[16, '…'], …]; [] where the page cannot draw (the shell then writes no .ico). The Reader's bridge's.) */
+  var ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+  function b64Of(dataUrl) { var i = String(dataUrl).indexOf(','); return i >= 0 ? String(dataUrl).slice(i + 1) : ''; }
+  function iconSizes(url) {
+    return new Promise(function (resolve) {
+      try {
+        if (typeof document === 'undefined' || typeof Image === 'undefined') { resolve([]); return; }
+        var img = new Image();
+        img.onload = function () {
+          var out = [];
+          try {
+            ICO_SIZES.forEach(function (n) {
+              var src = img; var w = img.naturalWidth || img.width; var h = img.naturalHeight || img.height;
+              while (w >= n * 4 && h >= n * 4) {
+                var half = document.createElement('canvas'); half.width = Math.round(w / 2); half.height = Math.round(h / 2);
+                var hg = half.getContext('2d'); hg.imageSmoothingEnabled = true; hg.imageSmoothingQuality = 'high'; hg.drawImage(src, 0, 0, half.width, half.height);
+                src = half; w = half.width; h = half.height;
+              }
+              var c = document.createElement('canvas'); c.width = n; c.height = n;
+              var g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0, n, n);
+              out.push([n, b64Of(c.toDataURL('image/png'))]);
+            });
+          } catch (e) { out = []; }
+          resolve(out);
+        };
+        img.onerror = function () { resolve([]); };
+        img.src = url;
+      } catch (e) { resolve([]); }
+    });
+  }
   var obj = function (o) { return o && typeof o === 'object' ? o : {}; };
   var orNull = function (x) { return x === undefined ? null : x; };
 
@@ -131,6 +164,18 @@
     hashFile: function (p) { return call('kt_hash_file', { p: str(p) }); },
     deletePath: function (p) { return call('kt_delete_path', { p: str(p) }); },
     archiveFree: function (o) { return call('kt_archive_free', { o: obj(o) }); },
+    /* archives (stage P7: src-tauri/src/archives.rs over the shared crate's archive.rs — zip and tar read by the app,
+       the rest by the 7-Zip it ships): list, extract (whole, in place, or `only` some entries; «cache:» the temp
+       folder), test, make a zip, restore an extraction in place given up, the names already there, cancel; progress
+       { id, done, total, file } as kt:archiveProgress (at most every 250 ms). */
+    archiveList: function (o) { return call('kt_archive_list', { o: obj(o) }); },
+    archiveExtract: function (o) { return call('kt_archive_extract', { o: obj(o) }); },
+    archiveTest: function (o) { return call('kt_archive_test', { o: obj(o) }); },
+    archiveCreate: function (o) { return call('kt_archive_create', { o: obj(o) }); },
+    archiveRestore: function (o) { return call('kt_archive_restore', { o: obj(o) }); },
+    archiveExisting: function (o) { return call('kt_archive_existing', { o: obj(o) }); },
+    archiveCancel: function (id) { return call('kt_archive_cancel', { id: str(id) }); },
+    onArchiveProgress: function (cb) { return subscribe('kt:archiveProgress', cb); },
     fontDirs: function () { return call('kt_font_dirs'); },
     fontIndex: function (dirs) { return call('kt_font_index', { dirs: (Array.isArray(dirs) ? dirs : []).map(str) }); },
     megaDecrypt: function (o) { return call('kt_mega_decrypt', { o: obj(o) }); },
@@ -146,6 +191,16 @@
       fileSubs.push(cb);
       return function () { var k = fileSubs.indexOf(cb); if (k >= 0) fileSubs.splice(k, 1); };
     },
+    /* the Files page's storages and single-item changes (this shell's own, the phone plugin's shapes):
+       homeDir() → the home folder; filesRoots() → { allFiles, roots: [{ kind: home | downloads | desktop | documents |
+       drive, path, name, readable, free?, total? }] }; filesStat({ path }) → { exists, name, path, dir, size, mtime,
+       readable, writable, hidden } (shallow); filesMkdir({ path }) / filesRename({ path, name }) → { ok, path } (a name
+       taken: rejected with «exists»). */
+    homeDir: function () { return call('kt_home_dir'); },
+    filesRoots: function () { return call('kt_files_roots'); },
+    filesStat: function (o) { return call('kt_files_stat', { o: obj(o) }); },
+    filesMkdir: function (o) { return call('kt_files_mkdir', { o: obj(o) }); },
+    filesRename: function (o) { return call('kt_files_rename', { o: obj(o) }); },
     openPath: function (p) { return call('kt_open_path', { p: str(p) }); },
     openExternal: function (u) { return call('kt_open_external', { u: str(u) }); },
 
@@ -161,11 +216,34 @@
        onTitleBarState(cb) — each change of it (the kt:titleBarState event). The page draws the bar, its buttons too
        (src/ui/winbar.ts). */
     titleBar: function (o) { return call('kt_title_bar', { o: obj(o) }); },
+
+    /* the app's icon of the user's choosing (stage P6 part: src-tauri/src/appicon.rs over the shared appicon.rs):
+       appIcon() → the chosen one (a PNG data URL) or null; appIcon({ set: dataUrl }) → chosen — with the .ico's sizes
+       drawn here — and put on the window, the taskbar and (Windows) the shortcuts, (Linux) the desktop entry → true;
+       appIcon({ set: null }) → the app's own again → true. */
+    appIcon: function (o) {
+      o = obj(o);
+      if (!('set' in o)) return call('kt_app_icon', { o: {} });
+      if (!o.set) return call('kt_app_icon', { o: { set: null } });
+      var url = str(o.set);
+      return iconSizes(url).then(function (sizes) { return call('kt_app_icon', { o: { set: url, sizes: sizes } }); });
+    },
     onTitleBarState: function (cb) { return subscribe('kt:titleBarState', cb); },
 
     /* network */
     http: function (o) { return call('kt_http', { o: obj(o) }); },
     checkUpdate: function (o) { return call('kt_check_update', { o: obj(o) }); },
+    /* stage P8: DNS over HTTPS for the app's own requests (the shared crate's resolver; kt-core's dohnames for Tools'
+       names), the probe; the updater (src-tauri/src/update.rs over kt-core's updatelogic: this build's own release
+       file, resumed, its size and SHA-256 checked, installed per system) and its progress as kt:update-progress.
+       updateDownload({ beta }) / updateInstall() are this shell's own: a background download, installed now or silently
+       when the app quits. */
+    setDoh: function (o) { return call('kt_set_doh', { o: obj(o) }); },
+    dohProbe: function () { return call('kt_doh_probe'); },
+    installUpdate: function (u) { return call('kt_install_update', { url: str(u) }); },
+    onUpdateProgress: function (cb) { return subscribe('kt:update-progress', cb); },
+    updateDownload: function (o) { return call('kt_update_download', { o: obj(o) }); },
+    updateInstall: function () { return call('kt_update_install'); },
   };
   // (Which shell this is: the page draws the window's whole title bar here — src/ui/winbar.ts —, and the Files page
   // has its jobs.)

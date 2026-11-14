@@ -14,12 +14,14 @@ const Module = require('node:module');
 const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
-const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar'];
+const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon'];
 // (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
-const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']] };
-const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState'];
+const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
+  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']] };
+const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
 // --- Electron's preload, with a fake electron that records each invoke.
@@ -70,7 +72,7 @@ function loadBridge(boot) {
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
-  for (const k of ['dohProbe', 'installUpdate', 'streamUrl', 'streamDone', 'mini', 'screenStatus', 'videoInfo', 'archiveList', 'shareWifi']) assert.ok(!(k in kt), `${k} should be absent`);
+  for (const k of ['streamUrl', 'streamDone', 'mini', 'screenStatus', 'videoInfo', 'shareWifi', 'browse', 'avScan']) assert.ok(!(k in kt), `${k} should be absent`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -83,6 +85,9 @@ function loadBridge(boot) {
     saveText: [{ name: 'a.txt', text: 't' }], clipboardText: [], http: [{ url: 'https://example.org/', method: 'POST', headers: { a: 'b' }, body: 'x', binary: true }], checkUpdate: [{ beta: false }],
     deletePath: ['/x/a.mkv'], archiveFree: [{ dir: '/x' }], fontDirs: [], fontIndex: [['/usr/share/fonts', '/home/u/.fonts']], megaDecrypt: [{ path: '/x/a.mp4', key: 'abc_-' }],
     screenFontAdd: [{ name: 'a.ttf', b64: 'AAEC' }], screenFontRemove: [{ path: '/d/screen-fonts/1-a.ttf' }], titleBar: [{ own: true, act: 'maximize' }],
+    archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
+    archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
+    appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};
@@ -98,12 +103,13 @@ function loadBridge(boot) {
   }
 
   // The shell's own methods: each one command, its object under «o».
-  const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' } };
+  const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' },
+    updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');
     assert.equal(tCalls.length, 1, `${m}: bridge calls`); assert.equal(tCalls[0].cmd, cmd, `${m} → ${cmd}`);
-    assert.deepEqual(Object.keys(tCalls[0].args), ks); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args.o)), ownSamples[m]);
+    assert.deepEqual(Object.keys(tCalls[0].args), ks); if (ks.length) assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args.o)), ownSamples[m]);
     sent[cmd] = ks;
   }
 
@@ -145,6 +151,11 @@ function loadBridge(boot) {
   off();
   listeners['kt:tasks'][0]({ event: 'kt:tasks', payload: [] });
   assert.equal(seen.length, 2, 'unsubscribed');
+  // kt:archiveProgress: to each onArchiveProgress callback until it is removed.
+  const prog = []; const offP = fresh.onArchiveProgress((p) => prog.push(p)); await new Promise((ok) => setTimeout(ok, 5));
+  listeners['kt:archiveProgress'][0]({ event: 'kt:archiveProgress', payload: { id: 'a1', done: 1, total: 2, file: 'x' } });
+  offP(); assert.equal((listeners['kt:archiveProgress'] || []).length <= 1, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(prog)), [{ id: 'a1', done: 1, total: 2, file: 'x' }]);
   // kt:engineState: the state merged and the page told with the kt:engine-state DOM event, as the preload does.
   dispatched = [];
   listeners['kt:engineState'][0]({ event: 'kt:engineState', payload: { available: true, reason: '', os: 'win32', arch: 'x64' } });
@@ -204,19 +215,21 @@ function loadBridge(boot) {
   const crypto = require('node:crypto');
   const megaPlain = Buffer.from('mega ✓ '.repeat(20)); const megaEnc = Buffer.from(megaPlain.map((b) => b ^ 0x5a));
   assert.deepEqual(JSON.parse(JSON.stringify(lib.b64bytes(megaPlain.toString('base64')))), [...megaPlain]);
-  const cfg = { otherTemp: '/other', megaKey: 'k', megaPlainB64: megaPlain.toString('base64'), megaEncB64: megaEnc.toString('base64'), base: 'http://127.0.0.1:1', temp: '/tmp', aria2Bin: '/r/aria2/linux-x64/aria2c', aria2Bundled: true, wantBundled: true, text: 'T ✓', gzText: 'G', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), bigSize: 2097152, bigSha256: 'ab', os: 'linux' };
+  const cfg = { otherTemp: '/other', megaKey: 'k', megaPlainB64: megaPlain.toString('base64'), megaEncB64: megaEnc.toString('base64'), base: 'http://127.0.0.1:1', temp: '/tmp', aria2Bin: '/r/aria2/linux-x64/aria2c', aria2Bundled: true, wantBundled: true, text: 'T ✓', gzText: 'G', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), bigSize: 2097152, bigSha256: 'ab', os: 'linux', dohHost: 'kr-doh-selftest.test', largeSize: 3145728 };
   for (const k of ['md5', 'sha1', 'sha256']) assert.equal(lib.ABC[k], crypto.createHash(k).update('abc').digest('hex'), `known ${k} of abc`);
   // (A pretend disk for the P3 checks: files by path, folders implied by them; the jobs with the phone's rules, enough
   // for the script's checks — questions, apply-to-all, skip, into itself, pace + cancel, moves, deletes.)
   function fakeDisk() {
-    const files = new Map(); const fileSubs = []; const jobs = {};
+    const files = new Map(); const fileSubs = []; const jobs = {}; const early = new Set(); const zips = new Map(); const arcSubs = [];
+    // (A stored zip's names, from its central directory.)
+    const zipNames = (raw) => { const b = Buffer.from(raw, 'latin1'); const e = b.lastIndexOf(Buffer.from([0x50, 0x4b, 5, 6])); if (e < 0) return []; const out = []; let p = b.readUInt32LE(e + 16); for (let k = 0; k < b.readUInt16LE(e + 10); k++) { const nl = b.readUInt16LE(p + 28); out.push(b.subarray(p + 46, p + 46 + nl).toString('utf8')); p += 46 + nl + b.readUInt16LE(p + 30) + b.readUInt16LE(p + 32); } return out; };
     const under = (d) => [...files.keys()].filter((k) => k.startsWith(d + '/'));
     const isDir = (p) => under(p).length > 0;
     const base = (p) => p.split('/').pop();
     const emit = (e) => setTimeout(() => fileSubs.slice().forEach((f) => f(JSON.parse(JSON.stringify(e)))), 1);
     const keepBoth = (to) => { const m = /^(.*?)(\.[^./]*)?$/.exec(to); for (let i = 2; ; i++) { const c = `${m[1]} (${i})${m[2] || ''}`; if (!files.has(c) && !isDir(c)) return c; } };
     const run = async (o) => {
-      const j = (jobs[o.id] = { cancel: false, standing: o.conflict || 'ask', answer: null, wake: null }); const end = { id: o.id, failed: [], skipped: 0, files: 0 }; const remaining = []; let left = 0;
+      const j = (jobs[o.id] = { cancel: early.delete(o.id), standing: o.conflict || 'ask', answer: null, wake: null }); const end = { id: o.id, failed: [], skipped: 0, files: 0 }; const remaining = []; let left = 0;
       const ask = (from, to) => new Promise((ok) => { if (j.standing !== 'ask') return ok(j.standing); j.wake = ok; emit({ id: o.id, status: 'conflict', from, to, size: (files.get(from) || '').length, existingSize: (files.get(to) || '').length, dir: false }); });
       for (const p of o.paths) {
         if (j.cancel) { if (o.op === 'move') { left++; remaining.push(p); } continue; }
@@ -240,13 +253,27 @@ function loadBridge(boot) {
       archiveFree: async () => ({ free: 5e9 }), fontDirs: async () => ['/usr/share/fonts'], fontIndex: async () => [{ path: '/usr/share/fonts/a.ttf', size: 9, mtime: 1, families: ['A'] }],
       megaDecrypt: async (o) => { const b = files.get(o.path); files.set(o.path, Buffer.from(b, 'latin1').map((x) => x ^ 0x5a).toString('latin1')); return true; },
       filesJob: async (o) => { void run(o); return { id: o.id }; },
-      filesCancel: async (o) => { const j = jobs[o.id]; if (j) { j.cancel = true; if (j.wake) j.wake('skip'); } },
+      filesCancel: async (o) => { const j = jobs[o.id]; if (j) { j.cancel = true; if (j.wake) j.wake('skip'); } else early.add(o.id); },
+      homeDir: async () => '/home/u',
+      filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'home', path: '/home/u', name: 'u', readable: true }, { kind: 'drive', path: '/', name: '/', readable: true, free: 5e9, total: 9e9 }] }),
+      filesStat: async (o) => { const d = isDir(o.path); const f = files.has(o.path); const p = o.path; return { exists: d || f, name: base(p), path: p, dir: d, size: f ? files.get(p).length : 0, mtime: d || f ? 1 : 0, readable: d || f, writable: d || f, hidden: false }; },
+      filesMkdir: async (o) => { files.set(o.path + '/.dir', ''); return { ok: true, path: o.path }; },
+      filesRename: async (o) => { if (/[\\/]/.test(o.name)) throw new Error('bad name'); const to = o.path.replace(/[^/]*$/, o.name); if (files.has(to) || isDir(to)) throw new Error('exists'); for (const k of [o.path, ...under(o.path)]) { const v = files.get(k); files.delete(k); files.set(to + k.slice(o.path.length), v); } return { ok: true, path: to }; },
       filesAnswer: async (o) => { const j = jobs[o.id]; if (!j) return; if (/All$/.test(o.answer)) j.standing = o.answer.replace(/All$/, ''); const w = j.wake; j.wake = null; if (w) w(o.answer.replace('All', '')); },
       onFilesJob: (cb) => { fileSubs.push(cb); return () => { const i = fileSubs.indexOf(cb); if (i >= 0) fileSubs.splice(i, 1); }; },
+      // (Archives, stage P7: a zip made here is its entries kept by path; one written as bytes — the hostile one — is
+      // read for its names; extracting writes the entries chosen, refuses a name that leaves the folder.)
+      __write: (o) => { files.set(o.p, Buffer.from(o.b64, 'base64').toString('latin1')); return true; },
+      archiveCreate: async (o) => { const ents = []; for (const inp of o.inputs) { const b = base(inp); if (files.has(inp)) ents.push([b, files.get(inp)]); for (const k of under(inp).sort()) ents.push([b + k.slice(inp.length), files.get(k)]); } zips.set(o.out, ents); files.set(o.out, 'PK'); arcSubs.forEach((f) => f({ id: o.id, done: 1, total: 1, file: '' })); return { files: ents.length, path: o.out, size: 2 }; },
+      archiveList: async (o) => { const z = zips.get(o.path) || zipNames(files.get(o.path) || '').map((n) => [n, '']); const evil = z.map((e) => e[0]).find((n) => n.startsWith('../')); return { format: 'zip', entries: z.map(([p, d]) => ({ path: p, size: Buffer.from(d, 'latin1').length, dir: false, mtime: Date.now() })), total: 0, encrypted: false, inPlaceOk: true, resumable: false, largest: 0, free: 5e9, ...(evil ? { unsafe: evil } : {}) }; },
+      archiveExtract: async (o) => { const z = zips.get(o.path) || zipNames(files.get(o.path) || '').map((n) => [n, '']); const evil = z.map((e) => e[0]).find((n) => n.startsWith('../')); if (evil) throw new Error('unsafePath ' + evil); const want = (n) => !o.only || o.only.some((w) => n === w || (w.endsWith('/') && n.startsWith(w))); let n = 0; for (const [p, d] of z) if (want(p)) { files.set(o.dest + '/' + p, d); n++; } if (o.inPlace) { files.delete(o.path); zips.delete(o.path); } return { files: n, dest: o.dest }; },
+      archiveTest: async (o) => ({ ok: true, files: (zips.get(o.path) || []).length, bad: [] }),
+      archiveExisting: async (o) => ({ existing: o.names.filter((n) => !n.startsWith('..') && files.has(o.dest + '/' + n)) }),
+      onArchiveProgress: (cb) => { arcSubs.push(cb); return () => { const i = arcSubs.indexOf(cb); if (i >= 0) arcSubs.splice(i, 1); }; },
     };
   }
   function fakeKt(bad) {
-    let subs = []; let task = null; const disk = fakeDisk();
+    let subs = []; let task = null; const disk = fakeDisk(); let doh = 'off'; let dnsCount = 0; let icon = null;
     const push = () => subs.forEach((f) => f(task ? [JSON.parse(JSON.stringify(task))] : []));
     const later = (f) => setTimeout(f, 5);
     return {
@@ -256,10 +283,18 @@ function loadBridge(boot) {
       writeTemp: async () => '/tmp/kt-selftest.txt', pathInfo: async () => ({ exists: true, dir: false, size: 3 }),
       readFile: async (p) => (disk.files.has(p) ? new Uint8Array(Buffer.from(disk.files.get(p), 'latin1')).buffer : p.endsWith('.txt') ? new Uint8Array([97, 98, 99]).buffer : new Uint8Array([0, 1, 2, 255]).buffer),
       writeTempBytes: async (o) => { if (/mega/.test(o.name)) { disk.files.set('/tmp/kt-selftest/' + o.name, Buffer.from(o.b64, 'base64').toString('latin1')); return '/tmp/kt-selftest/' + o.name; } return '/tmp/kt-selftest/kt-selftest.bin'; },
-      ...Object.fromEntries(['writeText', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'filesJob', 'filesCancel', 'filesAnswer', 'onFilesJob'].map((k) => [k, disk[k]])),
+      ...Object.fromEntries(['writeText', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'filesJob', 'filesCancel', 'filesAnswer', 'onFilesJob', 'homeDir', 'filesRoots', 'filesStat', 'filesMkdir', 'filesRename', '__write', 'archiveCreate', 'archiveList', 'archiveExtract', 'archiveTest', 'archiveExisting', 'onArchiveProgress'].map((k) => [k, disk[k]])),
       hashFile: async (p) => (p.endsWith('.txt') ? { ...lib.ABC, size: 3 } : { sha256: cfg.bigSha256, size: cfg.bigSize }),
       removeFile: async (p) => { disk.files.delete(p); }, exists: async (ps) => ps.map((p) => disk.has(p) || p.includes('renamed')),
+      // (Stage P8: the pretend resolver — the made-up name found while it is chosen —, the probe, the updater.)
+      setDoh: async (o) => { doh = o.provider; dnsCount++; return { provider: o.provider }; },
+      dohProbe: async () => ({ ok: false, ms: 3, why: 'no such name' }),
+      installUpdate: async () => { throw new Error('kt-update:bare'); }, updateDownload: async () => 'unsupported', updateInstall: async () => false,
+      onUpdateProgress: () => () => undefined, __icon: () => icon,
+      appIcon: async (o) => { if (!o || !('set' in o)) return icon; if (o.set && !/^data:image\/png;base64,iVBOR/.test(o.set)) throw new Error('not a PNG'); icon = o.set || null; return true; },
       http: async (o) => {
+        if (o.url.includes(cfg.dohHost)) { if (doh === 'off') throw new Error('dns error'); return { status: 200, url: o.url, headers: {}, body: cfg.text }; }
+        if (o.url.endsWith('/dns-count')) return { status: 200, url: o.url, headers: {}, body: String(dnsCount) };
         const u = o.url.slice(cfg.base.length);
         if (u === '/text' || u === '/redirect') return { status: 200, url: cfg.base + '/text', headers: { 'x-kt-test': '1', 'x-kt-multi': bad ? 'a' : 'a, b' }, body: cfg.text };
         if (u === '/gzip') return { status: 200, url: o.url, headers: {}, body: cfg.gzText };
@@ -281,8 +316,9 @@ function loadBridge(boot) {
   const doc = { querySelector: () => ({ className: 'nav-rail' }), querySelectorAll: () => [1, 2, 3] };
   for (const bad of [false, true]) {
     const sent2 = [];
-    const env = { sleep: () => new Promise((ok) => setTimeout(ok, 2)), invoke: (cmd, args) => { sent2.push({ cmd, args }); return Promise.resolve(); }, doc, now: () => Date.now() };
-    const res = JSON.parse(JSON.stringify(await lib.run(fakeKt(bad), cfg, env)));
+    const kt2 = fakeKt(bad);
+    const env = { sleep: () => new Promise((ok) => setTimeout(ok, 2)), invoke: (cmd, args) => { sent2.push({ cmd, args }); return Promise.resolve(cmd === 'kt_selftest_icon' ? { png: kt2.__icon() ? 9 : null, ico: [], dir: '/c', last: { window: true }, setIcon: true } : cmd === 'kt_selftest_write' ? kt2.__write(args) : cmd === 'kt_selftest_updatedl' ? { size: cfg.largeSize, resumedFrom: 1048576, ok: true, refused: 'kt-update:checksum', removedWhenRefused: true, noChecksum: 'kt-update:nochecksum', kind: 'bare', file: null } : undefined); }, doc, now: () => Date.now() };
+    const res = JSON.parse(JSON.stringify(await lib.run(kt2, cfg, env)));
     const last = sent2[sent2.length - 1];
     assert.equal(last.cmd, 'kt_selftest_done');
     const failed = res.filter((r) => r.required && !r.ok).map((r) => `${r.name}: ${r.detail}`);
@@ -290,6 +326,8 @@ function loadBridge(boot) {
     else assert.deepEqual(res.filter((r) => r.required && !r.ok).map((r) => r.name), ['http text + headers']);
     assert.equal(lib.verdict(res), bad ? 1 : 0);
     assert.ok(res.some((r) => r.name === 'remove' && r.ok) && res.some((r) => r.name === 'kt:tasks events' && r.ok));
+    const p7 = res.filter((r) => /^archives:/.test(r.name));
+    assert.ok(p7.length === 8 && p7.filter((r) => r.required).every((r) => r.ok) && p7.filter((r) => !r.required).length === 3, 'the P7 checks against the pretend disk (the 7-Zip ones not required without wantSeven): ' + JSON.stringify(p7.filter((r) => r.required && !r.ok)));
     const p3 = res.filter((r) => /^(files|deletePath|archiveFree|font|megaDecrypt)/.test(r.name));
     assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_progress'));

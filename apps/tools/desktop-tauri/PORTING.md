@@ -42,7 +42,13 @@ skipped move, a folder into itself, cancel mid-copy with the file it replaced ke
 disk and a cancelled move there, where the machine has a second disk — /dev/shm on Linux, the runner's D: on Windows —,
 else reported as skipped with the reason), and — where aria2c is found — a 2 MiB download from the test
 server through the engine (paused mid-way, resumed, its hash checked, renamed, removed), then hands the results to
-`kt_selftest_done`, which writes them and exits 0/1; a watchdog exits 2 after `KT_SELFTEST_TIMEOUT` (100) s.
+`kt_selftest_done`, which writes them and exits 0/1; a watchdog exits 2 after `KT_SELFTEST_TIMEOUT` (170 in CI) s.
+Since the P3 gaps, P7, P8 and P6's icon also: the storages, new folder / rename / stat, a cancel sent at once and one sent
+before its job; the archives (the shipped 7-Zip found — required on Windows and Linux —, a zip made → listed with
+dates → tested → extracted byte for byte, a part of it taken out with no other folder made, entries copied out through
+a hidden staging folder and a file job, extracted in place, a zip-slip refused, a 7z with a made-up password, a
+tar.gz in two layers); DNS over HTTPS against the test server's resolver; the updater's resumed download and its
+checksum refusals, a bare program refusing to install; the app icon chosen, kept, put on the window, reset.
 `tauri-check.yml` runs it on Linux under Xvfb and on Windows (both required), and on macOS (the bare executable,
 reported only).
 
@@ -85,13 +91,67 @@ Do the same once before a local `tauri build` / `tauri dev`.
   and offers its settings (the app's own / the system's, transparent, the name) in Settings on the Tauri shell only.
   Electron keeps `ui/titlebar.ts`. The custom app icon system (`kt:appIcon`) is P6.
 
+## After P3: the Files page's gaps, P7 archives, P8 DoH and updater, P6 app icon
+
+- **Files on a computer** (`filecmds.rs`, kt-core `places.rs`): the shell's own `homeDir`, `filesRoots` (home, Downloads,
+  Desktop, Documents where they exist, then the disks — Linux's mount table without pseudo file systems, a Mac's
+  /Volumes, Windows' drive letters that answer — each with `free`/`total`), `filesStat` (shallow: exists, dir, size,
+  mtime, readable, writable — a folder's writability tried with a probe file), `filesMkdir`, `filesRename` (kt-core's
+  rename: «exists» when taken) — the phone plugin's shapes, so src/views/files.ts takes them through one helper
+  (`fsx()`): storages named in the page's language by kind, New folder, Rename (F2), Properties, Paste's «read-only
+  here». Electron's bridge has none of them: its Files page is as it was (tests/filestauri.cjs checks both).
+- **Cancel never lost**: kt-core `filejobs::prepare` registers a job before its thread exists, and a cancel for an id
+  no job has yet is kept a minute for the job that starts under it (the same for archive jobs).
+- **The Linux recycle bin** writes DeletionDate in local time (localtime_r's offset), as the specification says.
+- **Archives (P7)**: `archive.rs` moved from the Reader into the shared crate (`shared/shell-rs/src/archive.rs`, its unit
+  tests with it; the Reader's workflow points there) — one copy for both apps. Tools' additions to archive.cjs are in
+  it, each off unless the app asks, so the Reader's answers are unchanged: entry dates (zip DOS times, 7-Zip's
+  «Modified», local time with the offset Tools sets at start), a partial extraction `only` (folders made only for what
+  is taken out; never in place), split volumes routed to 7-Zip. Path safety as the Reader's: no absolute names, «..»,
+  drive letters or stream names, links that leave the folder refuse the archive. Tools' commands are `archives.rs`
+  (the Reader's with Tools' names; progress `kt:archiveProgress` at most every 250 ms; «cache:» the temp folder's
+  kurokawa-archive-view; passwords only on 7-Zip's command line). 7-Zip: CI installs the npm package 7zip-bin at the
+  version desktop/package.json names and copies this system's 7za into `7zip/<plat>/<arch>/` (bundled as resources).
+  The Files page on this shell: an archive's sheet offers Extract here / Extract to… / Compress; an archive is browsed
+  as a folder; its entries copied out the phone's way (into a hidden `.kurokawa-extract-*` folder at the destination,
+  moved in by a file job — the name-taken question, Cancel —, the hidden folder always removed); a zip made of the
+  chosen. Electron's Files page offers none of it (it has no file jobs).
+- **DNS over HTTPS (P8)**: `setDoh` / `dohProbe` over the shared resolver (`net::set_doh`, `net::doh_lookup`), Tools'
+  provider names from kt-core `dohnames.rs` (main.cjs's table; «auto» is its first). What the web view fetches itself
+  keeps the system's DNS (see «DoH» below).
+- **The updater (P8)**: `update.rs` + kt-core `updatelogic.rs` — the Reader's (download resumed up to six tries, size and
+  SHA-256 against GitHub's digest and/or the release's SHA256SUMS, refused and removed on a mismatch or with neither,
+  NSIS run as an update / AppImage replaced in place / .deb and .dmg opened, a background download installed silently
+  when the app quits) with Tools' names and tags (`tools-v<v>`; every Tools release is marked a pre-release on GitHub,
+  so the beta channel is a «-» in the version). `installUpdate(url)` takes the file the page picked by the Electron
+  patterns and fetches this build's own file of the same release; `updateDownload` / `updateInstall` are this shell's
+  own (the page does not call them yet). The page turns «kt-update:checksum|size|nochecksum» into its «damaged»
+  sentence and a copy that cannot replace itself into «updateByHand». Nothing publishes these files yet (P9).
+  The release files this shell will look for (P9's release job must name them so; none matches the Electron Tools'
+  patterns /win-x64\.exe$/, /\.dmg$/, /\.AppImage$/ — tests/updatenames.cjs):
+  `KurokawaTools-<v>-windows-x64-setup.exe` (NSIS), `KurokawaTools-<v>-windows-x64-portable.zip`,
+  `KurokawaTools-<v>-macos-universal.DMG` (or `-macos-arm64.DMG` / `-macos-x64.DMG`),
+  `KurokawaTools-<v>-linux-x64.appimage`, `KurokawaTools-<v>-linux-x64.deb`, and `KurokawaTools-<v>-SHA256SUMS.txt`
+  (sha256sum's format). A portable copy carries `KurokawaTools.portable` beside the program.
+  **Duplication**: kt-core's updatelogic.rs is an adapted copy of the Reader's (the decisions are the same, the names
+  are not); tests/shared-copies.cjs fails when any function both have (all but the two that read tags) drifts apart.
+- **The app icon of the user's choosing (P6 part)**: the Reader's `appicon.rs` steps and `iconlogic.rs` moved into the
+  shared crate (`appicon::Spec` gives each app's names — shortcuts, desktop entries, the entry's marker — and its two
+  window calls; the cfg detection of those calls stays in each app's build.rs/apidetect.rs, since the calls stay in the
+  app). The Reader's `appicon.rs` is now a thin wrapper with the same command names, files and answers. Tools:
+  `kt:appIcon` (the page's existing Settings row on a computer, the title bar's logo, the window and taskbar, Windows'
+  «Kurokawa Tools.lnk» shortcuts, Linux's desktop entry copy marked `X-KurokawaTools-CustomIcon=true`; the backup
+  already carries the icon), the .ico's sizes drawn by bridge.js's canvas as the Reader's.
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
 docs/RUST-PORT.md that brings it. **done**: in bridge.js and a Rust command; **missing**: absent from bridge.js (the page
-asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 · P5 17 · P6 6 ·
-P7 16 · P8 9 missing — **43 of 98 done**. Besides these, the shell has four of its own (no Electron channel): the Files
-page's jobs `filesJob` / `filesCancel` / `filesAnswer` / `onFilesJob` (P3).
+asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 missing · P5 17
+missing · P6 1 done, 5 missing · P7 7 done, 9 missing (`kt:archiveFree` counted in P3) · P8 3 done, 6 missing — **54 of 98
+done**. Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
+`filesAnswer` / `onFilesJob` (P3), `homeDir` / `filesRoots` / `filesStat` / `filesMkdir` / `filesRename` (after P3),
+`updateDownload` / `updateInstall` (P8).
 
 ### P1–P2 — done before this pass (35)
 
@@ -180,28 +240,28 @@ page's jobs `filesJob` / `filesCancel` / `filesAnswer` / `onFilesJob` (P3).
 | `kt:packCancel` | missing |  |
 | `kt:packRemove` | missing |  |
 
-### P6 — desktop integration (6 missing)
+### P6 — desktop integration (1 done, 5 missing)
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:appIcon` | missing | the Reader's `appicon.rs` + `iconlogic.rs` with Tools' names (cfgs `kt_set_icon`/`kt_default_icon` already detected) |
+| `kt:appIcon` | done (P6 part) | the shared crate's `appicon.rs` + `iconlogic.rs` (the Reader's, moved) with Tools' Spec (`appicon.rs`); cfgs `kt_set_icon`/`kt_default_icon` |
 | `kt:mini` | missing | second always-on-top window on `#/mini` |
 | `kt:desktopPrefs` | missing | tray, notifications, keep-awake, when-done, global shortcuts |
 | `kt:registerMagnet` | missing | deep links + single instance (the Reader's `openfile.rs`/`openargs.rs`) |
 | `kt:captureUrl` | missing | second window (the Reader's `browser.rs`) |
 | `kt:siteWindow` | missing | same |
 
-### P7 — archives, the in-app browser, the screen translator (16 missing)
+### P7 — archives, the in-app browser, the screen translator (7 done, 9 missing; `kt:archiveFree` in P3)
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:archiveList` | missing | the Reader's `archive.rs` + `archives.rs` (zip/tar/7-Zip in Rust) — no JS helper needed |
-| `kt:archiveExtract` | missing |  |
-| `kt:archiveTest` | missing |  |
-| `kt:archiveCreate` | missing |  |
-| `kt:archiveCancel` | missing |  |
-| `kt:archiveRestore` | missing |  |
-| `kt:archiveExisting` | missing |  |
+| `kt:archiveList` | done (P7) | the shared `archive.rs` (zip/tar read here, 7-Zip for the rest) + `archives.rs`; entry dates |
+| `kt:archiveExtract` | done (P7) | whole, in place, or `only` some entries; «cache:» |
+| `kt:archiveTest` | done (P7) |  |
+| `kt:archiveCreate` | done (P7) | zip |
+| `kt:archiveCancel` | done (P7) | a cancel before its job starts is kept for it |
+| `kt:archiveRestore` | done (P7) |  |
+| `kt:archiveExisting` | done (P7) |  |
 | `kt:browse` | missing | the Reader's `browser.rs` + `browserlogic.rs` (caught downloads, cookies), plus media sniffing |
 | `kt:screenConfig` | missing | screen capture + OCR helpers |
 | `kt:screenStatus` | missing |  |
@@ -212,7 +272,7 @@ page's jobs `filesJob` / `filesCancel` / `filesAnswer` / `onFilesJob` (P3).
 | `kt:screenOcrLangs` | missing |  |
 | `kt:screenCaption` | missing |  |
 
-### P8 — servers, DoH, antivirus, update install (9 missing)
+### P8 — servers, DoH, antivirus, update install (3 done, 6 missing)
 
 | Channel | Status | Notes |
 |---|---|---|
@@ -220,11 +280,11 @@ page's jobs `filesJob` / `filesCancel` / `filesAnswer` / `onFilesJob` (P3).
 | `kt:shareWifiStop` | missing |  |
 | `kt:shareWifiStatus` | missing |  |
 | `kt:localApi` | missing | same routes and token |
-| `kt:setDoh` | missing | the shared crate already has the resolver (`net::set_doh`, `doh.rs`, the Reader's `kr_set_doh`): a thin wrapper |
-| `kt:dohProbe` | missing | `net::doh_try` |
+| `kt:setDoh` | done (P8) | `net::set_doh` with kt-core `dohnames` (Tools' names) |
+| `kt:dohProbe` | done (P8) | example.com asked of the resolver in force (`net::doh_lookup`), timed |
 | `kt:avScan` | missing | the system's scanner |
 | `kt:avAvailable` | missing |  |
-| `kt:installUpdate` | missing | the Reader's `update.rs`/`updatelogic.rs` + installer |
+| `kt:installUpdate` | done (P8) | `update.rs` + kt-core `updatelogic.rs` (the Reader's, Tools' names); progress `kt:update-progress` |
 
 ### What the Reader's port gives each stage
 
@@ -234,7 +294,7 @@ page's jobs `filesJob` / `filesCancel` / `filesAnswer` / `onFilesJob` (P3).
 | P4 | `testserver` (Range answers) for the stream tests | `download.rs`/`dlplan.rs` for `proxyUrl` | librqbit, the stream server, the WebTorrent hand-over |
 | P5 | — | `download.rs` + `updatelogic.rs` (fetch, SHA-256, replace, roll back) for packs and yt-dlp | yt-dlp / gallery-dl / ffmpeg running and parsing |
 | P6 | the notification plugin, single instance, `winbits.rs` (taskbar progress), `menu.rs` (a Mac's menu) | `appicon.rs` + `iconlogic.rs`, `openfile.rs` + `openargs.rs` (magnet, .torrent) | tray, global shortcuts, mini window, keep-awake, when-done |
-| P7 | `archive.rs` + `archives.rs` (and the 7-Zip resources step of its workflow) | `browser.rs` + `browserlogic.rs` | the screen translator (capture, OCR, overlays) |
+| P7 | `archive.rs` (moved into the shared crate) + `archives.rs` (and the 7-Zip resources step of its workflow) | `browser.rs` + `browserlogic.rs` | the screen translator (capture, OCR, overlays) |
 | P8 | `doh.rs` + `net::set_doh` / `doh_try` | `update.rs` + `installer/*` + `setup/` | Wi-Fi share, local API, antivirus |
 | P9 | release.yml's rust-desktop job, SHA256SUMS, asset names | `handover.rs` + `handoverlogic.rs` (settings, download list, library) | — |
 
@@ -299,6 +359,11 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
 1. **P1 done**: window, bridge, files, dialogs, clipboard, `kt:http`, `kt:checkUpdate`; CI builds and sizes.
 2. **P2 done**: the aria2 engine (bundled aria2c, tasks, `kt:tasks` / `kt:engineState` events), `kt:open`, the window's
    size and place kept (`window-state.json` in the app's config folder), the runtime self-test in CI.
-3. **P3 written, waiting for CI**: the shared crate, kt-core, API detection, the recycle bin, free space, fonts, MEGA,
-   screen fonts, the Files page's jobs, the title bar. Left of P3: the preview builds beside each Electron release.
-4. P4–P8 as the table above; P9 the switch-over with the hand-over.
+3. **P3 done** (CI run 43533929457 green on all four builds; the self-test passed on Linux, Windows and both macOS
+   builds): the shared crate, kt-core, API detection, the recycle bin, free space, fonts, MEGA, screen fonts, the Files
+   page's jobs, the title bar; then its gaps (storages, new folder, rename, stat, a cancel never lost, local trash
+   dates). Left of P3: the preview builds beside each Electron release.
+4. **P7 archives, P8 DoH + updater, P6 app icon — written, waiting for CI.** Left of P6: `kt:mini`, `kt:desktopPrefs`,
+   `kt:registerMagnet`, `kt:captureUrl`, `kt:siteWindow`; of P7: the in-app browser and the screen translator; of P8:
+   Wi-Fi share, the local API, antivirus. P4, P5; P9 the switch-over with the hand-over (and the release job that
+   publishes the file names above).

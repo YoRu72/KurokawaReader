@@ -32,6 +32,33 @@
     return out;
   }
   function latin(buf) { var a = bytesOf(buf); var s = ''; for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return s; }
+  function utf8(s) { var out = []; var b = unescape(encodeURIComponent(s)); for (var i = 0; i < b.length; i++) out.push(b.charCodeAt(i)); return out; }
+  var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  function toB64(u) {
+    var out = ''; var n = u.length; var i = 0;
+    for (; i + 2 < n; i += 3) { var x = (u[i] << 16) | (u[i + 1] << 8) | u[i + 2]; out += B64[x >> 18] + B64[(x >> 12) & 63] + B64[(x >> 6) & 63] + B64[x & 63]; }
+    if (n - i === 1) { var y = u[i] << 16; out += B64[y >> 18] + B64[(y >> 12) & 63] + '=='; }
+    else if (n - i === 2) { var z = (u[i] << 16) | (u[i + 1] << 8); out += B64[z >> 18] + B64[(z >> 12) & 63] + B64[(z >> 6) & 63] + '='; }
+    return out;
+  }
+  var CRC_TABLE = null;
+  function crc32(u) {
+    if (!CRC_TABLE) { CRC_TABLE = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; CRC_TABLE.push(c >>> 0); } }
+    var crc = 0xFFFFFFFF; for (var i = 0; i < u.length; i++) crc = CRC_TABLE[(crc ^ u[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function le(n, k) { var a = []; for (var i = 0; i < k; i++) a.push(Math.floor(n / Math.pow(256, i)) & 255); return a; }
+  /** A zip of stored entries, names as given (a hostile one too): [[name, bytes]…] → bytes. */
+  function zipStored(entries) {
+    var out = []; var cd = [];
+    entries.forEach(function (e) {
+      var name = utf8(e[0]); var data = e[1]; var crc = crc32(data); var off = out.length;
+      out = out.concat([0x50, 0x4b, 3, 4, 20, 0, 0, 8, 0, 0, 0, 0, 0, 0], le(crc, 4), le(data.length, 4), le(data.length, 4), le(name.length, 2), [0, 0], name, data);
+      cd = cd.concat([0x50, 0x4b, 1, 2, 20, 0, 20, 0, 0, 8, 0, 0, 0, 0, 0, 0], le(crc, 4), le(data.length, 4), le(data.length, 4), le(name.length, 2), [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], le(off, 4), name);
+    });
+    var start = out.length;
+    return out.concat(cd, [0x50, 0x4b, 5, 6, 0, 0, 0, 0], le(entries.length, 2), le(entries.length, 2), le(cd.length, 4), le(start, 4), [0, 0]);
+  }
   function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s); }
 
   /**
@@ -91,6 +118,12 @@
     /* stage P3: the recycle bin, free space, fonts, MEGA; the Files page's jobs */
     await runP3(kt, cfg, env, check, must, waitFor);
 
+    /* stage P7: archives */
+    await runP7(kt, cfg, env, check, must);
+    /* stage P8: DNS over HTTPS, the updater */
+    await runP8(kt, cfg, env, check, must);
+    /* stage P6 part: the app's icon */
+    await runIcon(kt, cfg, env, check, must);
     /* the engine */
     var engine = !!cfg.aria2Bin;
     rec('aria2c binary', cfg.wantBundled ? !!cfg.aria2Bundled : true, (cfg.aria2Bin || 'none found') + (cfg.aria2Bundled ? ' (bundled)' : ''), !!cfg.wantBundled);
@@ -214,6 +247,42 @@
     } else {
       await check('files: moves across disks', false, function () { throw new Error('skipped: ' + (cfg.otherWhy || 'no second disk')); });
     }
+    /* the storages, new folder, rename, stat (the phone plugin's shapes), and a cancel sent at once */
+    await check('files: storages (filesRoots)', true, async function () {
+      must(typeof kt.filesRoots === 'function' && typeof kt.homeDir === 'function', 'no filesRoots / homeDir');
+      var r = await kt.filesRoots(); var roots = (r && r.roots) || [];
+      var home = await kt.homeDir(); must(typeof home === 'string' && home.length > 0, 'homeDir ' + short(home));
+      must(roots.length > 0 && roots[0].kind === 'home' && roots[0].path === home, 'home first ' + short(roots[0]));
+      var drives = roots.filter(function (x) { return x.kind === 'drive'; });
+      must(drives.length > 0, 'no disk listed');
+      for (var i = 0; i < roots.length; i++) { var x = roots[i]; must(typeof x.path === 'string' && x.path && typeof x.name === 'string' && typeof x.readable === 'boolean', short(x)); }
+      must(drives.every(function (d) { return typeof d.free === 'number' && typeof d.total === 'number' && d.total > 0 && d.free <= d.total; }), 'space ' + short(drives));
+      return roots.map(function (x) { return x.kind + ' ' + x.name; }).join(', ');
+    });
+    await check('files: new folder, rename, stat', true, async function () {
+      var made = J(base, 'New folder'); var r = await kt.filesMkdir({ path: made }); must(r && r.ok === true, 'mkdir ' + short(r));
+      var st = await kt.filesStat({ path: made }); must(st.exists === true && st.dir === true && st.writable === true && st.readable === true && st.name === 'New folder', 'stat ' + short(st));
+      var rn = await kt.filesRename({ path: made, name: 'Renamed' }); must(rn && rn.ok === true && rn.path === J(base, 'Renamed'), 'rename ' + short(rn));
+      var taken = ''; try { await kt.filesRename({ path: J(base, 'Renamed'), name: 'src' }); } catch (e) { taken = e.message; }
+      must(taken === 'exists', 'a name taken: «' + taken + '»');
+      var bad = ''; try { await kt.filesRename({ path: J(base, 'Renamed'), name: 'a/b' }); } catch (e) { bad = e.message; }
+      must(bad, 'a name with a separator accepted');
+      var f = await kt.filesStat({ path: J(src, 'a.txt') }); must(f.exists && !f.dir && f.size === 1 && f.mtime > 0, 'file ' + short(f));
+      var none = await kt.filesStat({ path: J(base, 'none') }); must(none.exists === false, 'none ' + short(none));
+      return 'made, renamed, «exists» refused, stat';
+    });
+    await check('files: a cancel sent at once is not lost', true, async function () {
+      // (filesJob and filesCancel sent together, neither awaited: the shell registers the job before its thread.)
+      var j1 = id(); var p1 = fileJob(kt, { id: j1, op: 'copy', paths: [J(src, 'big.bin')], dest: J(base, 'Renamed'), conflict: 'ask', pace: 50 });
+      kt.filesCancel({ id: j1 });
+      var r1 = await p1; must(r1.end.status === 'cancelled', 'together: ' + short(r1.end));
+      // (A Cancel that came even before the job: kept for it.)
+      var j2 = id(); await kt.filesCancel({ id: j2 });
+      var r2 = await fileJob(kt, { id: j2, op: 'copy', paths: [J(src, 'big.bin')], dest: J(base, 'Renamed'), conflict: 'ask', pace: 50 });
+      must(r2.end.status === 'cancelled', 'before: ' + short(r2.end));
+      must((await has([J(J(base, 'Renamed'), 'big.bin')]))[0] === false, 'copied anyway');
+      return 'both cancelled';
+    });
     await check('files: delete a folder and all in it', true, async function () {
       var r = await fileJob(kt, { id: id(), op: 'delete', paths: [base] });
       must(r.end.status === 'done' && r.end.failed.length === 0, short(r.end)); must((await has([base]))[0] === false, 'still there');
@@ -221,6 +290,203 @@
     });
   }
 
+  /* stage P7 — archives (archives.rs over the shared archive.rs): the 7-Zip shipped with the app found; a zip made of a
+     folder and a file → listed (with its entries' dates) → tested → extracted, every byte the same; a part of it taken
+     out (only what was chosen, no other folder made); entries copied out the Files page's way (extracted into a hidden
+     «.kurokawa-extract-*» folder at the destination, moved in by a file job, the hidden folder removed); extracted in
+     place; a zip that would write outside its folder refused before anything is written; with the shipped 7-Zip
+     (required where CI bundles it: Windows and Linux): a 7z with a made-up password — refused without it and with a
+     wrong one, extracted with it — and a tar.gz in two layers. */
+  async function runP7(kt, cfg, env, check, must) {
+    var os = cfg.os; var J = function (d, n) { return join(d, n, os); }; var sep = os === 'win32' ? '\\' : '/';
+    var write = function (p, bytes) { return env.invoke('kt_selftest_write', { p: p, b64: toB64(bytes) }); };
+    var gone = async function (p) { return (await kt.exists([p]))[0] === false; };
+    var rejects = async function (p) { try { await p; return null; } catch (e) { return e; } };
+    var wantSeven = !!cfg.wantSeven;
+    await check('archives: the 7-Zip shipped with the app', wantSeven, async function () {
+      var r = await env.invoke('kt_selftest_7z', { args: [] });
+      must(r && r.path, 'no 7-Zip found'); must(r.own, 'only the system\'s 7-Zip (' + r.path + '), not the app\'s own');
+      return r.path;
+    }, 15000);
+    var adir = J(cfg.temp, 'kt-archive-' + env.now()); var aSrc = J(adir, 'Book Folder'); var aSub = J(aSrc, 'sub ✓');
+    var textBytes = utf8('Alice was beginning to get very tired ✓ نص. '.repeat(300));
+    var binBytes = []; for (var bi = 0; bi < 3000; bi++) binBytes.push((bi * 37 + 11) & 255);
+    var aFiles = [[J(aSrc, 'a.txt'), 'Book Folder/a.txt', textBytes], [J(aSub, 'b.bin'), 'Book Folder/sub ✓/b.bin', binBytes], [J(adir, 'c.dat'), 'c.dat', utf8('c ✓')]];
+    var at = function (dest, rel) { return J(dest, rel.split('/').join(sep)); };
+    async function same(dest, which) {
+      for (var i = 0; i < aFiles.length; i++) {
+        if (which && which.indexOf(i) < 0) continue;
+        var got = await kt.readFile(at(dest, aFiles[i][1])); must(sameBytes(got, aFiles[i][2]), aFiles[i][1] + ': ' + bytesOf(got).length + ' bytes, not the same');
+      }
+    }
+    var zip = J(adir, 'made.zip'); var aOk = false;
+    await check('archives: a zip made → listed (with dates) → tested → extracted, every byte the same', true, async function () {
+      must(typeof kt.archiveCreate === 'function' && typeof kt.archiveList === 'function' && typeof kt.onArchiveProgress === 'function', 'no archive functions');
+      for (var i = 0; i < aFiles.length; i++) must((await write(aFiles[i][0], aFiles[i][2])) === true, 'not written: ' + aFiles[i][0]);
+      var heard = 0; var off = kt.onArchiveProgress(function (pr) { if (pr && pr.id === 'kt-st-zip') heard++; });
+      var c;
+      try { c = await kt.archiveCreate({ id: 'kt-st-zip', out: zip, inputs: [aSrc, aFiles[2][0]] }); } finally { await env.sleep(300); off(); }
+      must(c && c.files === 3 && c.size > 0 && c.path === zip, 'made ' + short(c));
+      var info = await kt.archiveList({ path: zip });
+      var files = (info.entries || []).filter(function (e) { return !e.dir; });
+      must(info.format === 'zip' && !info.unsafe && !info.encrypted && info.inPlaceOk, 'listed ' + short(info));
+      must(files.map(function (e) { return e.path; }).sort().join('|') === aFiles.map(function (f) { return f[1]; }).sort().join('|'), 'entries ' + short(files));
+      var now = env.now(); must(files.every(function (e) { return typeof e.mtime === 'number' && Math.abs(e.mtime - now) < 86400000; }), 'dates ' + short(files.map(function (e) { return e.mtime; })));
+      var t = await kt.archiveTest({ id: 'kt-st-test', path: zip }); must(t && t.ok && t.files === 3, 'test ' + short(t));
+      var out = J(adir, 'out'); var x = await kt.archiveExtract({ id: 'kt-st-x', path: zip, dest: out, replace: 'replace' });
+      must(x && x.files === 3 && x.dest === out, 'extracted ' + short(x));
+      await same(out);
+      var ex = await kt.archiveExisting({ dest: out, names: ['c.dat', 'nope.txt', '../made.zip'] }); must(short(ex.existing) === '["c.dat"]', 'existing ' + short(ex));
+      aOk = true;
+      return '3 files, ' + c.size + ' bytes; dated; tested; extracted and compared; ' + heard + ' progress events';
+    }, 60000);
+    await check('archives: part of a zip taken out — only what was chosen, no other folder made', true, async function () {
+      must(aOk, 'no zip made');
+      var out = J(adir, 'part'); var x = await kt.archiveExtract({ id: 'kt-st-part', path: zip, dest: out, only: ['Book Folder/sub ✓/'], replace: 'replace' });
+      must(x && x.files === 1, 'extracted ' + short(x));
+      await same(out, [1]);
+      must(await gone(at(out, 'Book Folder/a.txt')) && await gone(J(out, 'c.dat')), 'more than was chosen');
+      var x2 = await kt.archiveExtract({ id: 'kt-st-part2', path: zip, dest: J(adir, 'part2'), only: ['c.dat'], replace: 'replace' });
+      must(x2.files === 1 && await gone(J(J(adir, 'part2'), 'Book Folder')), 'a folder made for nothing');
+      return 'a folder and a file, each alone';
+    }, 30000);
+    await check('archives: copied out the Files page\'s way (a hidden folder at the destination, a file job, the folder removed)', true, async function () {
+      must(aOk, 'no zip made'); must(typeof kt.filesJob === 'function', 'no file jobs');
+      var dest = J(adir, 'pasted'); await kt.filesMkdir({ path: dest });
+      var stage = J(dest, '.kurokawa-extract-st' + env.now());
+      await kt.archiveExtract({ id: 'kt-st-stage', path: zip, dest: stage, only: ['Book Folder/'], replace: 'replace' });
+      var r = await fileJob(kt, { id: 'kt-st-in-' + env.now(), op: 'move', paths: [J(stage, 'Book Folder')], dest: dest, conflict: 'ask' });
+      must(r.end.status === 'done' && r.end.left === 0, 'moved in ' + short(r.end));
+      var d = await fileJob(kt, { id: 'kt-st-rm-' + env.now(), op: 'delete', paths: [stage] });
+      must(d.end.status === 'done' && await gone(stage), 'the hidden folder left');
+      await same(dest, [0, 1]);
+      return 'in place, the hidden folder gone';
+    }, 30000);
+    await check('archives: extracted in place (the archive gone after)', true, async function () {
+      must(aOk, 'no zip made');
+      var zip2 = J(adir, 'inplace.zip'); var c = await kt.archiveCreate({ id: 'kt-st-zip2', out: zip2, inputs: [aSrc, aFiles[2][0]] });
+      var dest = J(adir, 'in place'); var x = await kt.archiveExtract({ id: 'kt-st-ip', path: zip2, dest: dest, inPlace: true, replace: 'replace', keepFree: 0 });
+      must(x.files === 3, 'extracted ' + short(x)); must(await gone(zip2), 'the archive is still there');
+      await same(dest);
+      return c.size + ' bytes taken out in place';
+    }, 60000);
+    await check('archives: a zip that would write outside its folder is refused', true, async function () {
+      var evil = '../kt-evil-' + env.now() + '.txt'; var hz = J(adir, 'hostile.zip');
+      must((await write(hz, zipStored([['fine.txt', utf8('fine')], [evil, utf8('pwned')]]))) === true, 'not written');
+      var info = await kt.archiveList({ path: hz }); must(info.unsafe === evil, 'listed without «unsafe»: ' + short(info));
+      var dest = J(adir, 'hostile out');
+      var e = await rejects(kt.archiveExtract({ id: 'kt-st-evil', path: hz, dest: dest, replace: 'replace' }));
+      must(e instanceof Error && e.message === 'unsafePath ' + evil, 'answer ' + (e ? e.message : 'extracted'));
+      must(await gone(J(adir, evil.slice(3))) && await gone(J(dest, 'fine.txt')), 'something was written');
+      return 'refused: unsafePath ' + evil;
+    }, 30000);
+    var PW = 'kt-made-up-' + (env.now() % 1000);
+    await check('archives: a 7z with a password (the shipped 7-Zip)', wantSeven, async function () {
+      must(aOk, 'no test files');
+      var z7 = J(adir, 'locked.7z');
+      var mk = await env.invoke('kt_selftest_7z', { args: ['a', '-t7z', '-mhe=on', '-p' + PW, z7, aSrc, aFiles[2][0]] }); must(mk && mk.code === 0, '7-Zip could not make it (exit ' + (mk && mk.code) + ')');
+      var e1 = await rejects(kt.archiveList({ path: z7 })); must(e1 && /password/i.test(e1.message), 'listed without its password: ' + (e1 ? e1.message : 'yes'));
+      var info = await kt.archiveList({ path: z7, password: PW });
+      must(info.format === '7z' && info.encrypted && (info.entries || []).filter(function (x) { return !x.dir; }).length === 3, 'listed ' + short({ format: info.format, encrypted: info.encrypted, n: (info.entries || []).length }));
+      var dest = J(adir, 'from 7z');
+      var e2 = await rejects(kt.archiveExtract({ id: 'kt-st-7w', path: z7, dest: dest, password: PW + 'x', replace: 'replace' })); must(e2 && /password/i.test(e2.message), 'a wrong password: ' + (e2 ? e2.message : 'extracted'));
+      var x = await kt.archiveExtract({ id: 'kt-st-7z', path: z7, dest: dest, password: PW, replace: 'replace' }); must(x && typeof x.files === 'number', 'extracted ' + short(x));
+      await same(dest);
+      return 'refused without it and with a wrong one, extracted with it';
+    }, 90000);
+    await check('archives: a tar.gz in two layers (the shipped 7-Zip)', wantSeven, async function () {
+      must(aOk, 'no test files');
+      var tar = J(adir, 'set.tar'); var tgz = J(adir, 'set.tar.gz');
+      var a1 = await env.invoke('kt_selftest_7z', { args: ['a', '-ttar', tar, aSrc, aFiles[2][0]] }); must(a1 && a1.code === 0, 'tar not made (exit ' + (a1 && a1.code) + ')');
+      var a2 = await env.invoke('kt_selftest_7z', { args: ['a', '-tgzip', tgz, tar] }); must(a2 && a2.code === 0, 'gzip not made (exit ' + (a2 && a2.code) + ')');
+      var info = await kt.archiveList({ path: tgz }); must(info.format === 'tar.gz', 'listed ' + short(info.format));
+      var dest = J(adir, 'from tgz'); var x = await kt.archiveExtract({ id: 'kt-st-tgz', path: tgz, dest: dest, replace: 'replace' });
+      await same(dest);
+      return 'tar.gz: ' + x.files + ' files out';
+    }, 90000);
+    await fileJob(kt, { id: 'kt-st-clean-' + env.now(), op: 'delete', paths: [adir] }).catch(function () {});
+  }
+  /* stage P8 — DNS over HTTPS (the shared resolver under Tools' names): with the test server's resolver chosen, a name no
+     real DNS knows reaches the test server, the probe answers in its shape, «off» gives the system's DNS back; the
+     updater (update.rs over kt-core's updatelogic): the test server's 3 MiB file fetched as an update — broken off after
+     1 MiB and resumed —, checked against its SHA-256 (kept) and a wrong one (refused, removed), no checksum refused;
+     this bare program refuses to install before fetching anything. */
+  async function runP8(kt, cfg, env, check, must) {
+    var base = cfg.base; var port = String(base).split(':').pop();
+    var rejects = async function (p) { try { await p; return null; } catch (e) { return e; } };
+    await check('DNS over HTTPS: a made-up name found through the chosen resolver', true, async function () {
+      must(typeof kt.setDoh === 'function' && typeof kt.dohProbe === 'function', 'no setDoh / dohProbe');
+      var resolver = base + '/dns-query';
+      var before = Number((await kt.http({ url: base + '/dns-count' })).body);
+      var s = await kt.setDoh({ provider: resolver }); must(s && s.provider === resolver, 'setDoh ' + short(s));
+      try {
+        var r = await kt.http({ url: 'http://' + cfg.dohHost + ':' + port + '/text' });
+        must(r.status === 200 && r.body === cfg.text, 'status ' + r.status + ' ' + short(r.body));
+        var after = Number((await kt.http({ url: base + '/dns-count' })).body);
+        must(after > before, 'the resolver was not asked (' + before + ' → ' + after + ')');
+        var p = await kt.dohProbe();
+        must(p && p.ok === false && typeof p.ms === 'number' && typeof p.why === 'string', 'probe (example.com is not the test resolver\'s) ' + short(p));
+        return cfg.dohHost + ' → 127.0.0.1 (' + (after - before) + ' queries); probe: ' + short(p.why).slice(0, 60);
+      } finally { var o = await kt.setDoh({ provider: 'off' }); must(o && o.provider === 'off', 'off ' + short(o)); }
+    }, 40000);
+    await check('DNS over HTTPS off: the made-up name is the system\'s again (not found)', false, async function () {
+      var e = await rejects(kt.http({ url: 'http://' + cfg.dohHost + ':' + port + '/text' }));
+      must(e instanceof Error, 'found without the resolver');
+      return 'not found: ' + short(e.message).slice(0, 80);
+    }, 25000);
+    await check('updater: resume, checksum, refusals', true, async function () {
+      must(typeof kt.installUpdate === 'function' && typeof kt.onUpdateProgress === 'function', 'no installUpdate / onUpdateProgress');
+      var r = await env.invoke('kt_selftest_updatedl', { url: base + '/large/kt-update.bin' });
+      must(r && r.size === cfg.largeSize, 'size ' + short(r));
+      must(r.resumedFrom > 0 && r.resumedFrom < r.size, 'resumed from ' + r.resumedFrom);
+      must(r.ok === true, 'its checksum ' + short(r));
+      must(r.refused === 'kt-update:checksum' && r.removedWhenRefused === true, 'a wrong checksum ' + short(r));
+      must(r.noChecksum === 'kt-update:nochecksum', 'no checksum ' + short(r));
+      if (r.kind === 'bare') {
+        var refused = null; try { await kt.installUpdate('https://example.invalid/KurokawaTools-9.9.9-win-x64.exe'); } catch (e) { refused = e && e.message; }
+        must(refused === 'kt-update:bare', 'installing on a bare program ' + short(refused));
+        must((await kt.updateDownload({ beta: false })) === 'unsupported', 'a background download on a bare program');
+        must((await kt.updateInstall()) === false, 'nothing downloaded');
+      }
+      return 'resumed from ' + r.resumedFrom + ' of ' + r.size + '; refused: ' + r.refused + '; kind ' + r.kind + (r.file ? ', its file ' + r.file : '');
+    }, 60000);
+  }
+  /* stage P6 part — the app's icon of the user's choosing (appicon.rs over the shared appicon.rs): a picture chosen →
+     the PNG and the .ico (its sizes drawn by the page) kept, the window's icon set (Windows; Linux under Xvfb; a Mac's
+     windows have none); given back as the one in force; a picture that is no PNG refused; reset → no file. */
+  function makePng(w, h) {
+    var be32 = function (n) { return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]; };
+    var raw = [];
+    for (var y = 0; y < h; y++) { raw.push(0); for (var x = 0; x < w; x++) raw.push((x * 4) & 255, (y * 4) & 255, ((x + y) * 2) & 255, 255); }
+    var a = 1, b = 0; for (var i = 0; i < raw.length; i++) { a = (a + raw[i]) % 65521; b = (b + a) % 65521; }
+    var z = [0x78, 0x01];
+    for (var j = 0; j < raw.length; j += 65535) { var n = Math.min(65535, raw.length - j); z.push(j + n >= raw.length ? 1 : 0, n & 255, n >> 8, ~n & 255, (~n >> 8) & 255); for (var k = 0; k < n; k++) z.push(raw[j + k]); }
+    z = z.concat(be32(((b << 16) | a) >>> 0));
+    function chunk(type, data) { var td = utf8(type).concat(data); return be32(data.length).concat(td, be32(crc32(td))); }
+    return [137, 80, 78, 71, 13, 10, 26, 10].concat(chunk('IHDR', be32(w).concat(be32(h), [8, 6, 0, 0, 0])), chunk('IDAT', z), chunk('IEND', []));
+  }
+  async function runIcon(kt, cfg, env, check, must) {
+    var rejects = async function (p) { try { await p; return null; } catch (e) { return e; } };
+    await check('app icon: chosen → kept, put on the window; refused when not a PNG; reset', cfg.os !== 'darwin', async function () {
+      must(typeof kt.appIcon === 'function', 'no appIcon');
+      var url = 'data:image/png;base64,' + toB64(makePng(64, 64));
+      must((await kt.appIcon({ set: url })) === true, 'not set');
+      var st = await env.invoke('kt_selftest_icon', {});
+      must(st && st.png > 0, 'no picture kept: ' + short(st));
+      must((await kt.appIcon()) === url, 'not given back as the one in force');
+      var icoN = (st.ico || []).length; var win = st.last && st.last.window;
+      if (cfg.os === 'win32') must(icoN === 7, 'the .ico has ' + icoN + ' sizes');
+      if (st.setIcon) must(win === true, 'the window\'s icon: ' + short(win));
+      var bad = await rejects(kt.appIcon({ set: 'data:image/png;base64,' + toB64(utf8('GIF89a not a png at all, no')) }));
+      must(bad instanceof Error, 'a picture that is no PNG was taken');
+      must((await kt.appIcon()) === url, 'the refused one replaced it');
+      must((await kt.appIcon({ set: null })) === true, 'not reset');
+      var st2 = await env.invoke('kt_selftest_icon', {});
+      must(st2.png === null && !(st2.ico || []).length, 'files left: ' + short(st2));
+      must((await kt.appIcon()) === null, 'still given back after reset');
+      return 'kept in ' + st.dir + '; .ico of ' + icoN + ' sizes; window: ' + short(win) + (st.last && st.last.desktopEntry ? '; desktop entry: ' + short(st.last.desktopEntry) : '') + '; refused a non-PNG; reset';
+    }, 30000);
+  }
   async function runDownload(kt, cfg, env, check, must, waitFor, required) {
     var latest = null; var pushes = 0; var id = '';
     var dir = join(cfg.temp, 'kt-selftest-dl', cfg.os);

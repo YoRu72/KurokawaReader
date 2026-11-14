@@ -1,5 +1,6 @@
 // Archives (stage R5): desktop/main.cjs's kr:archive-* channels as Tauri commands, over archive.rs (std only — the
-// port of desktop/archive.cjs). Here: the raw-deflate codec (flate2, pure Rust), the free space of a disk (the OS's
+// port of desktop/archive.cjs; in the shared crate since Tools' stage P7, shared/shell-rs/src/archive.rs, unchanged for
+// the Reader: what Tools added there is off unless asked). Here: the raw-deflate codec (flate2, pure Rust), the free space of a disk (the OS's
 // own call), the 7-Zip program the app ships (7zip-bin's 7za, bundled as resources/7zip/<plat>/<arch>/7za[.exe] —
 // tauri.conf.json's bundle.resources, filled in CI from desktop/node_modules/7zip-bin; then the PATH, as archive.cjs
 // falls back to «7z»), the jobs that can be cancelled, and their progress as the kr:archive-progress event
@@ -17,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use kurokawa_shell::{shell, util};
 
-use crate::archive::{self, Codec, Ctx, ExtractOpts, Pr, MAX_SAFE};
+use kurokawa_shell::archive::{self, Codec, Ctx, ExtractOpts, Pr, MAX_SAFE};
 
 /// Raw deflate by flate2 (miniz_oxide, pure Rust).
 struct Flate;
@@ -252,6 +253,8 @@ pub async fn kr_archive_extract(app: AppHandle, o: Value) -> Result<Value, Strin
         password: opt_s(&o, "password"),
         verify_first: o.get("verifyFirst").and_then(|v| v.as_bool()).unwrap_or(false),
         keep_free: o.get("keepFree").and_then(|v| v.as_f64()).filter(|x| *x >= 0.0).map(|x| x as u64),
+        // (Tools' partial extraction; the Reader extracts whole archives.)
+        only: None,
     };
     let stop = job(&id);
     let on = emitter(app, id.clone());

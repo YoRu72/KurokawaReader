@@ -132,6 +132,8 @@ pub struct Job {
     ask: Mutex<Ask>,
     cv: Condvar,
     pace_ms: u64,
+    /// Taken by the run that works it (a job registered by prepare() is worked once).
+    claimed: AtomicBool,
 }
 
 impl Job {
@@ -140,7 +142,7 @@ impl Job {
             "skip" | "replace" | "keep" => conflict.to_string(),
             _ => "ask".to_string(),
         };
-        Job { id: id.to_string(), cancel: AtomicBool::new(false), ask: Mutex::new(Ask { standing, answer: None }), cv: Condvar::new(), pace_ms: 0 }
+        Job { id: id.to_string(), cancel: AtomicBool::new(false), ask: Mutex::new(Ask { standing, answer: None }), cv: Condvar::new(), pace_ms: 0, claimed: AtomicBool::new(false) }
     }
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::SeqCst)
@@ -170,7 +172,59 @@ pub fn running(id: &str) -> bool {
     job_of(id).is_some()
 }
 
-/// The job stopped: what is under way is left as the rules say, and a question waiting is answered «skip».
+/// Cancels that came for an id no job had yet (the page's own id, its Cancel sent before the shell had the job), kept
+/// a minute so the job that then starts under that id starts cancelled — a cancel is never lost to that race.
+fn early() -> &'static Mutex<Vec<(String, Instant)>> {
+    static E: OnceLock<Mutex<Vec<(String, Instant)>>> = OnceLock::new();
+    E.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Whether a cancel came early for `id` (taken off the list when so); old ones dropped.
+fn take_early(id: &str) -> bool {
+    let mut g = match early().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    g.retain(|(_, t)| t.elapsed() < Duration::from_secs(60));
+    match g.iter().position(|(x, _)| x == id) {
+        Some(i) => {
+            g.remove(i);
+            true
+        }
+        None => false,
+    }
+}
+
+/// A job registered before its thread runs (the shell calls this before it spawns the thread, and then run_paced()
+/// with the same id works that very job): a cancel that comes at once finds it. Err when a job of that id is under way.
+pub fn prepare(id: &str, conflict: &str, pace_ms: u64) -> Result<(), String> {
+    let mut m = match registry().lock() {
+        Ok(m) => m,
+        Err(p) => p.into_inner(),
+    };
+    if m.contains_key(id) {
+        return Err(format!("a job {} is already running", id));
+    }
+    let mut j = Job::new(id, conflict);
+    j.pace_ms = pace_ms;
+    if take_early(id) {
+        j.cancel.store(true, Ordering::SeqCst);
+    }
+    m.insert(id.to_string(), Arc::new(j));
+    Ok(())
+}
+
+/// A job prepared but never run (its thread could not be made): taken off again.
+pub fn unprepare(id: &str) {
+    if let Ok(mut m) = registry().lock() {
+        if m.get(id).map(|j| !j.claimed.load(Ordering::SeqCst)).unwrap_or(false) {
+            m.remove(id);
+        }
+    }
+}
+
+/// The job stopped: what is under way is left as the rules say, and a question waiting is answered «skip». A cancel
+/// for an id with no job yet is kept a minute for the job that starts under it.
 pub fn cancel(id: &str) {
     if let Some(j) = job_of(id) {
         j.cancel.store(true, Ordering::SeqCst);
@@ -178,6 +232,15 @@ pub fn cancel(id: &str) {
             g.answer = Some("skip".to_string());
         }
         j.cv.notify_all();
+    } else if !id.is_empty() {
+        let mut g = match early().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        g.retain(|(_, t)| t.elapsed() < Duration::from_secs(60));
+        if !g.iter().any(|(x, _)| x == id) {
+            g.push((id.to_string(), Instant::now()));
+        }
     }
 }
 
@@ -467,12 +530,27 @@ pub fn run(id: &str, op: &str, paths: &[PathBuf], dest: Option<&Path>, conflict:
 /// run(), each piece of a file copied (256 KiB) followed by a pause of `pace_ms` — only for the shells' self-tests,
 /// which must catch a copy mid-way to try Cancel; 0 is no pause.
 pub fn run_paced(id: &str, op: &str, paths: &[PathBuf], dest: Option<&Path>, conflict: &str, pace_ms: u64, on: &dyn Fn(&Event)) -> Event {
-    let mut j0 = Job::new(id, conflict);
-    j0.pace_ms = pace_ms;
-    let j = Arc::new(j0);
-    if let Ok(mut m) = registry().lock() {
-        m.insert(id.to_string(), j.clone());
-    }
+    // (The job prepare() registered, when there is one not yet worked; else one made here.)
+    let j = {
+        let mut m = match registry().lock() {
+            Ok(m) => m,
+            Err(p) => p.into_inner(),
+        };
+        match m.get(id).filter(|x| !x.claimed.swap(true, Ordering::SeqCst)).cloned() {
+            Some(j) => j,
+            None => {
+                let mut j0 = Job::new(id, conflict);
+                j0.pace_ms = pace_ms;
+                j0.claimed.store(true, Ordering::SeqCst);
+                if take_early(id) {
+                    j0.cancel.store(true, Ordering::SeqCst);
+                }
+                let j = Arc::new(j0);
+                m.insert(id.to_string(), j.clone());
+                j
+            }
+        }
+    };
     let end = run_job(j.clone(), op, paths, dest, on);
     if let Ok(mut m) = registry().lock() {
         if m.get(id).map(|x| Arc::ptr_eq(x, &j)).unwrap_or(false) {
@@ -1253,6 +1331,48 @@ mod tests {
         if let Some(o) = other {
             let _ = fs::remove_dir_all(o);
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cancel_before_the_thread_is_never_lost() {
+        let (root, _) = roots();
+        let src = fresh(&root, "src");
+        let dst = fresh(&root, "dst");
+        let a = mk(&src, "a.txt", "A");
+        // (prepare → cancel → run: the job ends cancelled, nothing copied.)
+        let id = format!("early{}", SEQ.fetch_add(1, Ordering::SeqCst));
+        prepare(&id, "ask", 0).unwrap();
+        assert!(running(&id));
+        assert!(prepare(&id, "ask", 0).is_err(), "a second job under the same id refused");
+        cancel(&id);
+        let e = run(&id, "copy", &[a.clone()], Some(&dst), "ask", &|_e: &Event| {});
+        assert_eq!(e.status, "cancelled");
+        assert!(!dst.join("a.txt").exists() && !running(&id));
+        // (cancel before even prepare: kept for the job that starts under that id.)
+        let id2 = format!("early{}", SEQ.fetch_add(1, Ordering::SeqCst));
+        cancel(&id2);
+        prepare(&id2, "ask", 0).unwrap();
+        let e = run(&id2, "copy", &[a.clone()], Some(&dst), "ask", &|_e: &Event| {});
+        assert_eq!(e.status, "cancelled");
+        // (… and without prepare too.)
+        let id3 = format!("early{}", SEQ.fetch_add(1, Ordering::SeqCst));
+        cancel(&id3);
+        let e = run(&id3, "copy", &[a.clone()], Some(&dst), "ask", &|_e: &Event| {});
+        assert_eq!(e.status, "cancelled");
+        // (A prepared job's pace and conflict are the ones it runs with; unprepare takes one never run away.)
+        let id4 = format!("early{}", SEQ.fetch_add(1, Ordering::SeqCst));
+        prepare(&id4, "skip", 0).unwrap();
+        unprepare(&id4);
+        assert!(!running(&id4));
+        let id5 = format!("early{}", SEQ.fetch_add(1, Ordering::SeqCst));
+        mk(&dst, "a.txt", "OLD");
+        prepare(&id5, "skip", 0).unwrap();
+        let e = run(&id5, "copy", &[a.clone()], Some(&dst), "ask", &|_e: &Event| {});
+        assert!(e.status == "done" && e.skipped == Some(1) && read(&dst.join("a.txt")).as_deref() == Some("OLD"), "{:?}", e);
+        // (A normal job after all that: copied.)
+        let e = job("copy", &[&a], Some(&dst), "replace", None, &none());
+        assert!(e.status == "done" && read(&dst.join("a.txt")).as_deref() == Some("A"));
         let _ = fs::remove_dir_all(&root);
     }
 

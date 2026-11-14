@@ -8,7 +8,13 @@
 //! - filejobs: copy / move / delete with the Files page's rules — the same as the Android KtFileJobs (P3)
 //! - fontnames: a font file's family names from its «name» table (kt:fontIndex, P3)
 //! - mega: AES-128-CTR for a MEGA file fetched whole (kt:megaDecrypt, P3; the Android downloader's at M2)
+//! - places: a computer's storages for the Files page (home, Downloads, Desktop, Documents, disks), shallow stat, names
+//! - updatelogic: the PC updater's decisions — the Reader's updatelogic.rs with Tools' names (P8)
+//! - dohnames: the DNS-over-HTTPS resolvers Tools' settings name (desktop/main.cjs's DOH table) (P8)
 pub mod engine_core;
 pub mod filejobs;
 pub mod fontnames;
 pub mod mega;
+pub mod places;
+pub mod updatelogic;
+pub mod dohnames;

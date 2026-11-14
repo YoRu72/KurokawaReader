@@ -2141,4 +2141,9 @@ export const ar: Partial<Strings> = {
   winRestore: "استعادة الحجم",
   winClose: "إغلاق",
   winControls: "أزرار النافذة",
+  filesPlaceDownloads: "التنزيلات",
+  filesPlaceDesktop: "سطح المكتب",
+  filesPlaceDocuments: "المستندات",
+  updateByHand: "لا تستطيع هذه النسخة أن تحلّ محلّ نفسها؛ فنزّل الإصدار الجديد من صفحة الإصدار.",
+  filesBadName: "لا يصحّ أن يتضمّن الاسم / أو \\ (ولا < > : \" | ? * في ويندوز).",
 };

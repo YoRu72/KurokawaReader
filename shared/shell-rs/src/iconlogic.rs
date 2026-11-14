@@ -1,4 +1,7 @@
-// The user's own app icon (stage R5): the rules that need no crate — appicon.rs does the rest. A picture is taken
+// The user's own app icon — both apps' since Tools' stage P6 (moved here unchanged from the Reader's
+// apps/reader/desktop-tauri/src-tauri/src/iconlogic.rs, stage R5; the desktop entry's marker is now the app's to give:
+// desktop_override_with / is_ours_with — desktop_override / is_ours keep the Reader's MARK). The rules that need no
+// crate — appicon.rs (this crate's) does the rest. A picture is taken
 // only as a PNG of sensible size (its signature, its header's dimensions; the full decoding is Tauri's); an .ico is
 // made of PNG entries (Windows Vista and later read PNG inside an .ico; the page renders the sizes with its canvas);
 // a Linux desktop entry is copied with its icon pointed at the picture and marked as the app's own; the state of the
@@ -9,7 +12,8 @@
 pub const MAX_BYTES: usize = 4 << 20;
 /// The sizes the page renders for the .ico (each ≤ 256: an .ico's own limit).
 pub const ICO_SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
-/// The marker a desktop entry made by the app carries (one the user made is never touched).
+/// The marker a desktop entry made by the Reader carries (one the user made is never touched); Tools' is
+/// «X-KurokawaTools-CustomIcon=true» (its appicon Spec).
 pub const MARK: &str = "X-KurokawaReader-CustomIcon=true";
 
 /// A PNG's width and height from its header (signature, then IHDR first) — None when it is not a PNG.
@@ -95,6 +99,10 @@ pub fn ico_entries(b: &[u8]) -> Vec<(u32, u32, usize)> {
 /// A desktop entry's text with its own icon pointed at `icon` (the [Desktop Entry] group only — an action keeps its
 /// own), and the app's marker added: the user's copy that overrides the system's while the custom icon is chosen.
 pub fn desktop_override(system: &str, icon: &str) -> String {
+    desktop_override_with(system, icon, MARK)
+}
+/// desktop_override with the app's own marker.
+pub fn desktop_override_with(system: &str, icon: &str, mark: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut in_main = false;
     let mut seen_icon = false;
@@ -110,11 +118,11 @@ pub fn desktop_override(system: &str, icon: &str) -> String {
             out.push(line.to_string());
             if in_main {
                 header_at = Some(out.len());
-                out.push(MARK.to_string());
+                out.push(mark.to_string());
             }
             continue;
         }
-        if in_main && t == MARK {
+        if in_main && t == mark {
             continue;
         }
         if in_main && (t.starts_with("Icon=") || t.starts_with("Icon =")) {
@@ -127,7 +135,7 @@ pub fn desktop_override(system: &str, icon: &str) -> String {
         out.push(line.to_string());
     }
     if header_at.is_none() {
-        out.insert(0, MARK.to_string());
+        out.insert(0, mark.to_string());
         out.insert(0, "[Desktop Entry]".to_string());
         in_main = true;
     }
@@ -141,7 +149,11 @@ pub fn desktop_override(system: &str, icon: &str) -> String {
 
 /// Whether a desktop entry is one the app made (its marker in it).
 pub fn is_ours(text: &str) -> bool {
-    text.lines().any(|l| l.trim() == MARK)
+    is_ours_with(text, MARK)
+}
+/// is_ours with the app's own marker.
+pub fn is_ours_with(text: &str, mark: &str) -> bool {
+    text.lines().any(|l| l.trim() == mark)
 }
 
 /// The Windows shortcuts' state: each existing one's path and modification time (seconds), one a line.
@@ -243,5 +255,16 @@ mod tests {
         assert_eq!(stamp(&[("b".to_string(), 2), ("a".to_string(), 1)]), "a\t1\nb\t2");
         assert_ne!(stamp(&[("a".to_string(), 1)]), stamp(&[("a".to_string(), 3)]));
         assert!(SHORTCUT_PS.contains("$env:KR_LNKS") && !SHORTCUT_PS.contains("KR_PASSWORD"));
+    }
+
+    #[test]
+    fn another_apps_marker() {
+        let sys = "[Desktop Entry]\nName=Kurokawa Tools\nIcon=kurokawa-tools\n";
+        let m = "X-KurokawaTools-CustomIcon=true";
+        let o = desktop_override_with(sys, "/i.png", m);
+        assert_eq!(o, "[Desktop Entry]\nX-KurokawaTools-CustomIcon=true\nName=Kurokawa Tools\nIcon=/i.png\n");
+        assert!(is_ours_with(&o, m) && !is_ours(&o), "the Reader's marker is not Tools'");
+        assert_eq!(desktop_override_with(&o, "/i.png", m), o);
+        assert_eq!(desktop_override(sys, "/i.png"), desktop_override_with(sys, "/i.png", MARK));
     }
 }

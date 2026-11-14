@@ -15,7 +15,8 @@ path = "src/lib.rs"
 # the three plugins itself (it registers the plugins; Tauri's build reads their permissions from its direct
 # dependencies).
 [dependencies]
-tauri = { version = "2", features = [] }
+# ("image-png": a PNG read for the app icon of the user's choosing — appicon.rs; the Reader's shell names it too.)
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"

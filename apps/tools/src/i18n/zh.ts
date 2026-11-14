@@ -1049,4 +1049,9 @@ export const zh: Partial<Strings> = {
   winRestore: "向下还原",
   winClose: "关闭",
   winControls: "窗口控制",
+  filesPlaceDownloads: "下载",
+  filesPlaceDesktop: "桌面",
+  filesPlaceDocuments: "文档",
+  updateByHand: "此副本无法自行替换：请从发布页面下载新版本。",
+  filesBadName: "名称不能包含 / 或 \\（在 Windows 上也不能包含 < > : \" | ? *）。",
 };

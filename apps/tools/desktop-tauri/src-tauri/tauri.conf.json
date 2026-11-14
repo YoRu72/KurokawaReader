@@ -20,7 +20,8 @@
     "category": "Utility",
     "shortDescription": "Downloads, torrents, streaming and the tools around them",
     "resources": {
-      "../aria2/": "aria2/"
+      "../aria2/": "aria2/",
+      "../7zip/": "7zip/"
     },
     "icon": [
       "icons/32x32.png",

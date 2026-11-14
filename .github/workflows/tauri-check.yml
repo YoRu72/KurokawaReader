@@ -4,9 +4,12 @@ name: Tauri check
 # the Electron one, to see that it builds, how big its bundles are, and that it runs: the built app is started with
 # KT_SELFTEST set and checks its own bridge, files, http, the recycle bin, free space, fonts, MEGA, the Files page's
 # copy / move / delete jobs (on temp folders, across disks where the machine has two) and the download engine against
-# a loopback test server (desktop-tauri/selftest.js). Linux and Windows must pass; macOS is reported without failing
+# a loopback test server, and (stage P7) the archives with the 7-Zip the app ships (desktop-tauri/selftest.js). Linux
+# and Windows must pass; macOS is reported without failing
 # the job for now. Since P3 the shell is built on the shared crate (shared/shell-rs, the Reader's too) and Tools' own
-# kt-core (apps/tools/core/kt-core), so a change to either runs this. Nothing is signed or released.
+# kt-core (apps/tools/core/kt-core), so a change to either runs this. Since P6–P8 also the app icon of the user's
+# choosing, DNS over HTTPS and the updater's download and checks (against the test server). Nothing is signed or
+# released: no workflow publishes this shell's builds yet (stage P9).
 on:
   push:
     branches: ['work-tauri*']
@@ -65,7 +68,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs; do
+          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohnames.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -85,6 +88,32 @@ jobs:
           mkdir -p aria2 ../desktop-tauri/aria2
           for d in aria2/*/; do [ -d "$d" ] && cp -R "${d%/}" ../desktop-tauri/aria2/; done
           find ../desktop-tauri/aria2 -type f -exec ls -la {} \;
+
+      # (Stage P7.) 7-Zip as the Electron build ships it: the npm package 7zip-bin at the version desktop/package.json
+      # names, installed alone (no install scripts) into a folder of the runner's, this system's 7za copied into
+      # desktop-tauri/7zip/<plat>/<arch>/ (7zip-bin's own layout) with the package's licence files; tauri.conf.json
+      # bundles that folder as resources/7zip/, and Tauri's build puts it beside the bare program too (the self-test
+      # runs that). The Reader's workflow does the same from its desktop project.
+      - name: 7-Zip for the bundle
+        working-directory: apps/tools/desktop
+        run: |
+          v=$(node -p "require('./package.json').dependencies['7zip-bin']")
+          # (A relative folder of the checkout — apps/tools/.ci-7zip-bin, never committed —: the same spelling for bash and
+          # node on every runner, Windows' too.)
+          d="../.ci-7zip-bin"; mkdir -p "$d"
+          for i in 1 2 3; do npm install --prefix "$d" --ignore-scripts --no-audit --no-fund --no-save "7zip-bin@$v" && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
+          pkg="$d/node_modules/7zip-bin"
+          plat=$(node -p "({ win32: 'win', darwin: 'mac' })[process.platform] || 'linux'"); arch=$(node -p process.arch)
+          echo "7zip-bin $(node -p "require(require('path').resolve(process.argv[1], 'package.json')).version" "$pkg"), this system: $plat/$arch"
+          if [ -d "$pkg/$plat/$arch" ]; then
+            mkdir -p "../desktop-tauri/7zip/$plat/$arch"
+            cp "$pkg/$plat/$arch"/7za* "../desktop-tauri/7zip/$plat/$arch/"
+            chmod +x "../desktop-tauri/7zip/$plat/$arch/"7za* || true
+          else
+            echo "::warning::7zip-bin has no 7za for $plat/$arch — the archives that need 7-Zip will answer «7z missing»"
+          fi
+          find "$pkg" -maxdepth 1 -type f \( -iname '*licen*' -o -iname 'copying*' \) -exec cp {} ../desktop-tauri/7zip/ \;
+          find ../desktop-tauri/7zip -type f -exec ls -la {} \;
 
       - name: Icons (from desktop/icon.png)
         working-directory: apps/tools/desktop-tauri
@@ -136,7 +165,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
-          KT_SELFTEST_TIMEOUT: '100'
+          KT_SELFTEST_TIMEOUT: '170'
           KT_SELFTEST_BUNDLED: '1'
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
@@ -144,8 +173,9 @@ jobs:
         run: |
           out="$RUNNER_TEMP/kt-selftest.json"
           find target/release/aria2 -type f -exec ls -la {} \; || echo "no aria2/ beside the executable"
+          find target/release/7zip -type f -exec ls -la {} \; || echo "no 7zip/ beside the executable"
           set +e
-          KT_SELFTEST="$out" timeout 150 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
+          KT_SELFTEST="$out" timeout 220 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -156,7 +186,7 @@ jobs:
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
-          KT_SELFTEST_TIMEOUT: '100'
+          KT_SELFTEST_TIMEOUT: '170'
           KT_SELFTEST_BUNDLED: '1'
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'kt-selftest.json'
@@ -165,7 +195,7 @@ jobs:
           $exe = (Resolve-Path 'target/release/kurokawa-tools.exe').Path
           $p = Start-Process -FilePath $exe -PassThru
           $null = $p.Handle
-          if ($p.WaitForExit(150000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          if ($p.WaitForExit(220000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
           node ../selftest-report.cjs $out $code '${{ matrix.name }}' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           exit $code
 
@@ -174,7 +204,7 @@ jobs:
         continue-on-error: true
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
-          KT_SELFTEST_TIMEOUT: '100'
+          KT_SELFTEST_TIMEOUT: '170'
         run: |
           out="$RUNNER_TEMP/kt-selftest.json"
           # (The bare executable, as on Linux: the web UI is built into it; macOS bundles no aria2c.)
@@ -182,8 +212,8 @@ jobs:
           [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
           echo "running $bin"
           set +e
-          # (No `timeout` on macOS: perl's alarm ends it after 150 s.)
-          KT_SELFTEST="$out" perl -e 'alarm 150; exec @ARGV' "$bin"
+          # (No `timeout` on macOS: perl's alarm ends it after 220 s.)
+          KT_SELFTEST="$out" perl -e 'alarm 220; exec @ARGV' "$bin"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"

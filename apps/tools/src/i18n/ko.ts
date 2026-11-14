@@ -1049,4 +1049,9 @@ export const ko: Partial<Strings> = {
   winRestore: "이전 크기로 복원",
   winClose: "닫기",
   winControls: "창 조절",
+  filesPlaceDownloads: "다운로드",
+  filesPlaceDesktop: "바탕 화면",
+  filesPlaceDocuments: "문서",
+  updateByHand: "이 사본은 스스로 교체할 수 없습니다. 릴리스 페이지에서 새 버전을 내려받으세요.",
+  filesBadName: "이름에 / 또는 \\를 넣을 수 없습니다(Windows에서는 < > : \" | ? *도 안 됩니다).",
 };

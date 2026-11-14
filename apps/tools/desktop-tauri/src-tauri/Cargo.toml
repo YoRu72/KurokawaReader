@@ -17,13 +17,17 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 kurokawa-shell = { path = "../../../../shared/shell-rs" }
 kt-core = { path = "../../core/kt-core" }
-tauri = { version = "2", features = [] }
+# ("image-png", stage P6 part: a PNG read for the app icon of the user's choosing — the shared appicon.rs.)
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
 serde_json = "1"
 # (The self-test's digest of the test server's file; the same version as kurokawa-shell's, so one copy.)
 sha2 = "0.10"
+# (Stage P7: raw deflate for the archives' own ZIP reader and writer — archives.rs over the shared archive.rs. Pure Rust
+# (miniz_oxide); already in the build through reqwest's gzip; the Reader's shell names it the same way.)
+flate2 = "1"
 
 # (Stage P3: the free space of a disk — statvfs; already in the build through Tauri.)
 [target.'cfg(unix)'.dependencies]

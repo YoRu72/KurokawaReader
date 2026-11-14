@@ -1,6 +1,9 @@
 # Build output and files generated in CI (icons come from ../desktop/icon.png via `tauri icon`; aria2c from
-# ../desktop/fetch-aria2.mjs, copied into aria2/<plat>-<arch>/).
+# ../desktop/fetch-aria2.mjs, copied into aria2/<plat>-<arch>/; 7-Zip likewise, stage P7).
 src-tauri/target/
 src-tauri/gen/
 src-tauri/icons/
 aria2/*/
+# (Stage P7: 7-Zip from the npm package 7zip-bin, copied into 7zip/<plat>/<arch>/ with its licence files.)
+7zip/*
+!7zip/README.txt

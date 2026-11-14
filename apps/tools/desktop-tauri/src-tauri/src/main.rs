@@ -5,6 +5,10 @@
 // the shared crate's (shared/shell-rs, `kurokawa_shell`); Tools' engine rules are kt-core's (apps/tools/core/kt-core).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// (Stage P6 part: the app's icon of the user's choosing — the shared crate's appicon.rs.)
+mod appicon;
+// (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
+mod archives;
 mod commands;
 mod engine;
 // (Stage P3: the recycle bin, free space, fonts, MEGA, the Files page's jobs.)
@@ -14,6 +18,8 @@ mod selftest;
 // (Stage P3: the window's own title bar, the Reader's — the page draws it, src/ui/winbar.ts.)
 mod titlebar;
 mod trash;
+// (Stage P8: the in-app updater — kt-core's updatelogic.rs decides.)
+mod update;
 
 use std::path::PathBuf;
 
@@ -72,6 +78,12 @@ fn main() {
             commands::kt_clipboard_text,
             commands::kt_http,
             commands::kt_check_update,
+            commands::kt_set_doh,
+            commands::kt_doh_probe,
+            update::kt_install_update,
+            update::kt_update_download,
+            update::kt_update_install,
+            update::kt_selftest_updatedl,
             filecmds::kt_delete_path,
             filecmds::kt_archive_free,
             filecmds::kt_font_dirs,
@@ -82,6 +94,22 @@ fn main() {
             filecmds::kt_files_job,
             filecmds::kt_files_cancel,
             filecmds::kt_files_answer,
+            filecmds::kt_home_dir,
+            filecmds::kt_files_roots,
+            filecmds::kt_files_stat,
+            filecmds::kt_files_mkdir,
+            filecmds::kt_files_rename,
+            appicon::kt_app_icon,
+            appicon::kt_selftest_icon,
+            archives::kt_archive_list,
+            archives::kt_archive_extract,
+            archives::kt_archive_test,
+            archives::kt_archive_restore,
+            archives::kt_archive_existing,
+            archives::kt_archive_cancel,
+            archives::kt_archive_create,
+            archives::kt_selftest_7z,
+            archives::kt_selftest_write,
             titlebar::kt_title_bar,
             selftest::kt_selftest_progress,
             selftest::kt_selftest_done
@@ -103,6 +131,8 @@ fn main() {
             // The engine: its files in the app's data folder, aria2c looked for in the resource folder (then beside
             // the executable, then on the PATH), started in the background.
             let handle = app.handle().clone();
+            // (Stage P7: where the shipped 7-Zip is; Tools' parts of the shared archive code switched on.)
+            archives::init(&handle);
             let data_dir = match app.path().app_data_dir() {
                 Ok(d) => d,
                 Err(_) => std::env::temp_dir().join("kurokawa-tools"),
@@ -169,16 +199,20 @@ fn main() {
                 b = b.maximized(true);
             }
             b.build()?;
+            // (Stage P6 part: the icon of the user's choosing put on again — window, taskbar, shortcuts, entry.)
+            appicon::at_start(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building Kurokawa Tools")
-        .run(|_app, event| {
-            // (Quitting: aria2c's session saved and aria2c stopped.)
+        .run(|app, event| {
+            // (Quitting: aria2c's session saved and aria2c stopped; an update downloaded in the background and not
+            // installed is installed quietly — update.rs, as electron-updater's autoInstallOnAppQuit.)
             if let tauri::RunEvent::Exit = event {
                 if let Some(e) = engine::get() {
                     e.stop();
                 }
+                update::at_exit(app);
             }
         });
 }

@@ -4,8 +4,11 @@
 //  - Linux and the other Unixes: the freedesktop.org Trash specification 1.0 — the file renamed into the home's
 //    trash ($XDG_DATA_HOME/Trash, else ~/.local/share/Trash) when it is on the same disk, else into its disk's own
 //    ($topdir/.Trash/$uid when an administrator made one, else $topdir/.Trash-$uid), with its «.trashinfo» written
-//    first (created exclusively, so two deletes never take the same name), as file managers read them back.
+//    first (created exclusively, so two deletes never take the same name), its DeletionDate in local time as the
+//    specification says, as file managers read them back.
 // Std only (the system calls declared here), the Linux part checked alone: `rustc --edition 2021 --test trash.rs`.
+// (The specification's helpers are used on Linux only: on Windows and macOS they stay for the tests — no warnings.)
+#![allow(dead_code, unused_imports)]
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -149,7 +152,8 @@ mod imp {
 
     pub fn trash(p: &Path) -> Result<(), String> {
         let home_trash = super::home_trash().ok_or_else(|| "no home folder".to_string())?;
-        super::trash_into(p, &home_trash, super::now_utc_secs())
+        // (The specification's DeletionDate is the local time, as file managers show it.)
+        super::trash_into(p, &home_trash, super::local_secs(super::now_utc_secs()))
     }
 }
 
@@ -176,6 +180,41 @@ pub fn home_trash() -> Option<PathBuf> {
 #[allow(dead_code)]
 pub fn now_utc_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// The local clock's reading at `utc` (seconds since 1970), as seconds since 1970 again — what date_text() then writes
+/// as the local date and time (the Trash specification's DeletionDate is in local time). The C library's localtime_r
+/// gives the offset (its `tm_gmtoff`, which glibc, musl and the BSDs have, right after the nine ints); unknown → UTC.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn local_secs(utc: u64) -> u64 {
+    #[repr(C)]
+    struct Tm {
+        ints: [std::os::raw::c_int; 9],
+        gmtoff: std::os::raw::c_long,
+        zone: *const std::os::raw::c_char,
+    }
+    extern "C" {
+        fn tzset();
+        fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
+    }
+    // (time_t is 64 bits on the 64-bit systems this is built for; elsewhere UTC is kept rather than guessed.)
+    if std::mem::size_of::<usize>() != 8 {
+        return utc;
+    }
+    let t: i64 = utc as i64;
+    let mut tm = Tm { ints: [0; 9], gmtoff: 0, zone: std::ptr::null() };
+    let r = unsafe {
+        tzset();
+        localtime_r(&t, &mut tm)
+    };
+    if r.is_null() {
+        return utc;
+    }
+    let off = tm.gmtoff as i64;
+    if off.abs() > 18 * 3600 {
+        return utc;
+    }
+    (t + off).max(0) as u64
 }
 
 /// A path as the specification writes it in «Path=»: each byte outside the URI's unreserved set and «/» as %XX.
@@ -335,6 +374,25 @@ mod tests {
         assert_eq!(nth_name("a.txt", 2), "a (2).txt");
         assert_eq!(nth_name(".hidden", 3), ".hidden (3)");
         assert_eq!(nth_name("Folder", 2), "Folder (2)");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn local_time() {
+        // (The offset localtime_r gives: within a day of UTC, a whole number of minutes; with TZ=UTC none.)
+        let t = 1_700_000_000u64;
+        let l = local_secs(t) as i64 - t as i64;
+        assert!(l.abs() <= 18 * 3600 && l % 60 == 0, "offset {}", l);
+        let was = std::env::var_os("TZ");
+        std::env::set_var("TZ", "UTC");
+        assert_eq!(local_secs(t), t);
+        std::env::set_var("TZ", "UTC-3");
+        assert_eq!(local_secs(t), t + 3 * 3600, "TZ=UTC-3 is three hours ahead");
+        assert_eq!(date_text(local_secs(t)), "2023-11-15T01:13:20");
+        match was {
+            Some(v) => std::env::set_var("TZ", v),
+            None => std::env::remove_var("TZ"),
+        }
     }
 
     #[cfg(unix)]

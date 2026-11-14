@@ -1049,4 +1049,9 @@ export const ja: Partial<Strings> = {
   winRestore: "元のサイズに戻す",
   winClose: "閉じる",
   winControls: "ウィンドウ操作",
+  filesPlaceDownloads: "ダウンロード",
+  filesPlaceDesktop: "デスクトップ",
+  filesPlaceDocuments: "ドキュメント",
+  updateByHand: "このコピーは自分で置き換えられません。リリースページから新しいバージョンをダウンロードしてください。",
+  filesBadName: "名前に / や \\ は使えません（Windows では < > : \" | ? * も使えません）。",
 };

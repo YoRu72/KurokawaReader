@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use kurokawa_shell::shell::{lossy, text_of};
 use kurokawa_shell::{selftest, util};
-use kt_core::{filejobs, fontnames, mega};
+use kt_core::{filejobs, fontnames, mega, places};
 
 use crate::trash;
 
@@ -57,23 +57,26 @@ pub async fn kt_delete_path(p: String) -> Result<Value, String> {
 /* ---------- free space ---------- */
 
 /// Bytes free for this user on the disk holding `p` (Node's statfs bavail × bsize); 2^53 − 1 when unknown.
-#[cfg(unix)]
 pub fn free_space(p: &Path) -> u64 {
+    disk_space(p).map(|(free, _)| free).unwrap_or(MAX_SAFE)
+}
+
+/// (free for this user, total) bytes of the disk holding `p`; None when the system will not say.
+#[cfg(unix)]
+pub fn disk_space(p: &Path) -> Option<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt;
-    let c = match std::ffi::CString::new(p.as_os_str().as_bytes()) {
-        Ok(c) => c,
-        Err(_) => return MAX_SAFE,
-    };
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     let r = unsafe { libc::statvfs(c.as_ptr(), &mut st) };
     if r != 0 {
-        return MAX_SAFE;
+        return None;
     }
-    (st.f_bavail as u64).saturating_mul(st.f_frsize as u64)
+    let unit = st.f_frsize as u64;
+    Some(((st.f_bavail as u64).saturating_mul(unit), (st.f_blocks as u64).saturating_mul(unit)))
 }
 
 #[cfg(windows)]
-pub fn free_space(p: &Path) -> u64 {
+pub fn disk_space(p: &Path) -> Option<(u64, u64)> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     extern "system" {
@@ -85,15 +88,15 @@ pub fn free_space(p: &Path) -> u64 {
     let mut free: u64 = 0;
     let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), &mut avail, &mut total, &mut free) };
     if ok != 0 {
-        avail
+        Some((avail, total))
     } else {
-        MAX_SAFE
+        None
     }
 }
 
 #[cfg(not(any(unix, windows)))]
-pub fn free_space(_p: &Path) -> u64 {
-    MAX_SAFE
+pub fn disk_space(_p: &Path) -> Option<(u64, u64)> {
+    None
 }
 
 /// JavaScript's largest exact integer: «unknown» (the page treats anything ≥ 1e15 as unknown).
@@ -221,9 +224,6 @@ pub async fn kt_files_job(app: AppHandle, o: Value) -> Result<Value, String> {
     if id.is_empty() {
         id = format!("fj-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
     }
-    if filejobs::running(&id) {
-        return Err(format!("a job {} is already running", id));
-    }
     let paths: Vec<PathBuf> = match o.get("paths") {
         Some(Value::Array(xs)) => xs.iter().filter_map(|x| x.as_str()).map(PathBuf::from).collect(),
         _ => Vec::new(),
@@ -242,6 +242,9 @@ pub async fn kt_files_job(app: AppHandle, o: Value) -> Result<Value, String> {
     }
     // (Only in a self-test run: each piece of a copy followed by a pause, so the test can catch it mid-way.)
     let pace = if selftest::active() { o.get("pace").and_then(|x| x.as_u64()).unwrap_or(0).min(500) } else { 0 };
+    // (Registered here, before the thread exists: a Cancel that comes at once — even before the thread runs — finds
+    // the job; a Cancel that came before this call is kept for it by kt-core.)
+    filejobs::prepare(&id, &conflict, pace)?;
     let jid = id.clone();
     let spawned = std::thread::Builder::new().name(format!("files-{}", id)).spawn(move || {
         let on = |e: &filejobs::Event| {
@@ -250,7 +253,10 @@ pub async fn kt_files_job(app: AppHandle, o: Value) -> Result<Value, String> {
         };
         filejobs::run_paced(&jid, &op, &paths, dest.as_deref(), &conflict, pace, &on);
     });
-    spawned.map_err(|e| e.to_string())?;
+    if let Err(e) = spawned {
+        filejobs::unprepare(&id);
+        return Err(e.to_string());
+    }
     Ok(json!({ "id": id }))
 }
 
@@ -266,6 +272,135 @@ pub async fn kt_files_cancel(o: Value) -> Result<(), String> {
 pub async fn kt_files_answer(o: Value) -> Result<(), String> {
     filejobs::answer(&text_of(&o, "id"), &text_of(&o, "answer"));
     Ok(())
+}
+
+/* ---------- the Files page's storages, stat, new folder, rename (the phone plugin's shapes) ---------- */
+
+/// The disks worth showing: Linux's mount table, a Mac's /Volumes, Windows' drive letters.
+fn disks() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetLogicalDrives() -> u32;
+        }
+        let mask = unsafe { GetLogicalDrives() };
+        // (Only drives that answer — an empty card reader or DVD drive does not.)
+        places::windows_drives(mask).into_iter().filter(|d| disk_space(d).is_some()).collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut names: Vec<String> = Vec::new();
+        let mut root_links: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir("/Volumes") {
+            for e in rd.flatten() {
+                let n = e.file_name().to_string_lossy().into_owned();
+                if std::fs::canonicalize(e.path()).map(|t| t == Path::new("/")).unwrap_or(false) {
+                    root_links.push(n.clone());
+                }
+                names.push(n);
+            }
+        }
+        names.sort();
+        places::mac_volumes(&names, &root_links)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let t = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        places::linux_mounts(&t).into_iter().filter(|p| p.is_dir()).collect()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Vec::new()
+    }
+}
+
+/// homeDir() → the home folder (the page's first storage where it has no filesRoots).
+#[tauri::command]
+pub async fn kt_home_dir(app: AppHandle) -> Result<String, String> {
+    Ok(lossy(&kurokawa_shell::shell::home_dir(&app)))
+}
+
+/// filesRoots() → { allFiles: true, roots: [{ kind, path, name, readable, free, total }] }: home, Downloads, Desktop,
+/// Documents (those that exist), then the disks with their space. The page names the first four in its language.
+#[tauri::command]
+pub async fn kt_files_roots(app: AppHandle) -> Result<Value, String> {
+    let pr = app.path();
+    let some = |r: Result<PathBuf, tauri::Error>| r.ok().filter(|p| p.is_dir());
+    let home = Some(kurokawa_shell::shell::home_dir(&app)).filter(|p| p.is_dir());
+    let downloads = some(pr.download_dir());
+    let desktop = some(pr.desktop_dir());
+    let documents = some(pr.document_dir());
+    blocking(move || {
+        let list = places::places(home, downloads, desktop, documents, &disks(), cfg!(any(windows, target_os = "macos")));
+        let roots: Vec<Value> = list
+            .into_iter()
+            .map(|p| {
+                let mut v = json!({ "kind": p.kind, "path": lossy(&p.path), "name": p.name, "readable": std::fs::read_dir(&p.path).is_ok() });
+                if let Some((free, total)) = disk_space(&p.path) {
+                    v["free"] = json!(free);
+                    v["total"] = json!(total);
+                }
+                v
+            })
+            .collect();
+        Ok(json!({ "allFiles": true, "roots": roots }))
+    })
+    .await
+}
+
+/// filesStat({ path }) → { exists, name, path, dir, size, mtime, readable, writable, hidden } — shallow (a folder's
+/// size is not added up: the page asks it only for its writability and dates).
+#[tauri::command]
+pub async fn kt_files_stat(o: Value) -> Result<Value, String> {
+    let p = PathBuf::from(text_of(&o, "path"));
+    blocking(move || {
+        let (exists, dir, size, mtime, writable, hidden) = places::stat(&p);
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| lossy(&p));
+        let readable = exists && if dir { std::fs::read_dir(&p).is_ok() } else { std::fs::File::open(&p).is_ok() };
+        Ok(json!({ "exists": exists, "name": name, "path": lossy(&p), "dir": dir, "size": size, "mtime": mtime, "readable": readable, "writable": writable, "hidden": hidden }))
+    })
+    .await
+}
+
+/// filesMkdir({ path }) → { ok, path }: the folder made (its parents too); «exists» when a file has that name.
+#[tauri::command]
+pub async fn kt_files_mkdir(o: Value) -> Result<Value, String> {
+    let p = PathBuf::from(text_of(&o, "path"));
+    blocking(move || {
+        if !p.is_absolute() {
+            return Err("path: a whole path wanted".to_string());
+        }
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if !places::good_name(&name, cfg!(windows)) {
+            return Err("bad name".to_string());
+        }
+        if p.exists() && !p.is_dir() {
+            return Err("exists".to_string());
+        }
+        let ok = std::fs::create_dir_all(&p).is_ok() && p.is_dir();
+        Ok(json!({ "ok": ok, "path": lossy(&p) }))
+    })
+    .await
+}
+
+/// filesRename({ path, name }) → { ok, path }: kt-core's rename (the phone's rules: «exists» when the name is taken,
+/// a change of letter case alone by way of a passing name).
+#[tauri::command]
+pub async fn kt_files_rename(o: Value) -> Result<Value, String> {
+    let p = PathBuf::from(text_of(&o, "path"));
+    let name = text_of(&o, "name");
+    blocking(move || {
+        if !p.is_absolute() {
+            return Err("path: a whole path wanted".to_string());
+        }
+        if !places::good_name(&name, cfg!(windows)) {
+            return Err("bad name".to_string());
+        }
+        let to = filejobs::rename(&p, &name)?;
+        Ok(json!({ "ok": true, "path": lossy(&to) }))
+    })
+    .await
 }
 
 /* ---------- show in folder ---------- */

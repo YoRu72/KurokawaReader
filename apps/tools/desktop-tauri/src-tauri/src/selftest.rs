@@ -89,6 +89,8 @@ pub fn script(aria2: Option<(String, bool)>) -> Option<String> {
         "aria2Bin": aria2_bin,
         "aria2Bundled": aria2_bundled,
         "wantBundled": want_bundled,
+        // (Stage P7: the shipped 7-Zip must be found and work where CI bundles it — Windows and Linux; a Mac's reported.)
+        "wantSeven": want_bundled && !cfg!(target_os = "macos"),
         "text": testserver::TEXT,
         "gzText": testserver::GZ_TEXT,
         "binB64": util::b64_encode(&bin),
@@ -98,6 +100,9 @@ pub fn script(aria2: Option<(String, bool)>) -> Option<String> {
         "megaPlainB64": util::b64_encode(&mega_plain),
         "megaEncB64": util::b64_encode(&mega_enc),
         "os": util::node_platform(),
+        // (Stage P8: the made-up name the test server's DNS-over-HTTPS resolver answers, and its 3 MiB file.)
+        "dohHost": testserver::DOH_HOST,
+        "largeSize": testserver::LARGE_SIZE,
     });
     Some(format!("window.__KT_SELFTEST__ = {};\n{}", cfg, SELFTEST_JS))
 }

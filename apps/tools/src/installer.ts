@@ -5,6 +5,7 @@
 // installer opened (Android — asking for the right to install first, and carrying on once it is given), the
 // installer run (Windows), or the release page opened where nothing can be installed from here.
 import { nativePlatform, ktPlugin } from './native';
+import { t } from './i18n';
 import { REPO } from './repo';
 import { request } from './http';
 import { listReleases, cmpVersion as cmpV, sha256Of, type Rel, type RelAsset, type FetchText } from './updateCore';
@@ -138,6 +139,13 @@ export async function fetchAndInstall(asset: Asset, onProgress: (p: Progress) =>
     }
     return 'installing';
   }
-  if (platform === 'desktop' && window.kurokawaTools?.installUpdate) { await window.kurokawaTools.installUpdate(asset.url); return 'installing'; }
+  if (platform === 'desktop' && window.kurokawaTools?.installUpdate) {
+    // (The Tauri shell's updater checks its file against the release and says why it refused: «kt-update:<code>» —
+    // a damaged download, or a copy that cannot replace itself (the portable one, a program run where it was built).
+    // Electron's never answers so.)
+    try { await window.kurokawaTools.installUpdate(asset.url); }
+    catch (e) { const m = String((e as Error)?.message ?? e); if (/^kt-update:(checksum|size|nochecksum)/.test(m)) throw new InstallError('damaged'); if (/^kt-update:(portable|bare|unknown|app|deb)\b/.test(m)) throw new InstallError('network', t('updateByHand')); throw e; }
+    return 'installing';
+  }
   const { openExternal } = await import('./native'); await openExternal(asset.url); return 'opened';
 }

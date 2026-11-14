@@ -6,7 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod appicon;
-mod archive;
+// (archive.rs — std only — lives in the shared crate since Tools' stage P7: kurokawa_shell::archive.)
 mod archives;
 mod browser;
 mod browserlogic;
@@ -17,7 +17,7 @@ mod enginetest;
 // (Stage R6a: the hand-over from the Electron build — handover.rs, its pure parts handoverlogic.rs.)
 mod handover;
 mod handoverlogic;
-mod iconlogic;
+// (iconlogic.rs — std only — lives in the shared crate since Tools' stage P6, beside appicon's steps.)
 mod menu;
 mod openargs;
 mod openfile;
