@@ -239,7 +239,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // picture decoded, a run of a long text laid out, the window or the zoom changed — puts the text back at it, and a
   // scroll with no input from the reader (the engine's) is neither taken for the reader's nor saved: put back too.
   // (Declared here, before the first restore.)
-  interface Hold { el: HTMLElement | null; offset: number; loc: Locator | null; at: number }
+  // (`gap`: when the probe is above the block — in the room before a chapter's first block, between two paragraphs —, how
+  // far above it, in pixels: a margin does not grow with the paragraph's height.)
+  interface Hold { el: HTMLElement | null; offset: number; loc: Locator | null; at: number; gap?: number }
   let hold: Hold | null = null;
   // (When the window or the zoom last changed size — a window of SETTLE_GRACE ms after it in which a scroll with no
   // input is the engine's: a WKWebView moves the offset itself as it resizes —, when the reader last gave input — a
@@ -255,7 +257,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
    *  theirs within 300 ms (a fling goes on after the finger has left). */
   const recentInput = (now: number): boolean => now - lastInputAt < 1000 || pointerHeld || now - lastUserScrollAt < 300;
   let pointerHeld = false;
-  let noteStableNow: () => void = () => undefined;
   /** Whether the place held still stands: the reader has not scrolled since it was held. */
   const holdValid = (): boolean => !!hold && lastUserScrollAt <= hold.at;
   /** Whether a scroll with no input now is the engine's: the place held, within SETTLE_GRACE of the window or the zoom
@@ -265,7 +266,25 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const heldLoc = (): Locator | null => (holdValid() && !early && hold?.loc ? hold.loc : null);
   /** An action of the reader's that scrolls the text (a search hit, read-aloud following, the auto-scroll, a page
    *  turned): its scroll is theirs — not put back, saved —, and their place is held where it settles. */
-  const readerMoves = (): void => { lastInputAt = performance.now(); lastUserScrollAt = lastInputAt; noteStableNow(); };
+  // (Not held anew until its scroll has settled — the scroll events to come do that: a smooth scroll may not have
+  // started yet. And it is the reader's own: restore's later passes at the open no longer take the text back.)
+  const readerMoves = (): void => { lastInputAt = performance.now(); lastUserScrollAt = lastInputAt; userScrolled = true; };
+  // Every scroll of the text this view makes goes through one of these two (tests/scrollsites.cjs checks it):
+  /** A scroll on the reader's behalf — a page turned (a key, a volume key, a tap zone), a contents entry or a search hit
+   *  gone to, read-aloud following, the auto-scroll —: theirs, never put back, saved. */
+  const readerScroll = (to: { by?: number; top?: number; smooth?: boolean }): void => {
+    readerMoves();
+    if (to.top !== undefined) scroll.scrollTop = to.top;
+    else if (to.smooth) scroll.scrollBy({ top: to.by ?? 0, behavior: 'smooth' });
+    else scroll.scrollTop += to.by ?? 0;
+  };
+  /** The reader's own placing — a place restored or held, a chapter shown from its top or end —: not a scroll of the
+   *  reader's (`programmatic`; the offset it left, `ownTop`). */
+  const placeScroll = (to: { by?: number; top?: number }): void => {
+    programmatic = performance.now();
+    if (to.top !== undefined) scroll.scrollTop = to.top; else scroll.scrollTop += to.by ?? 0;
+    ownTop = scroll.scrollTop;
+  };
   const openedAt = performance.now();
   // (A scroll with no input taken for the reader's, and what was held before it: when the window starts changing size
   // just after it — the engine moved the offset before telling of the resize —, it was the engine's after all.)
@@ -445,7 +464,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (!target || plan.block === undefined) return;
     programmatic = performance.now();
     const sr = scroll.getBoundingClientRect(); const r = target.getBoundingClientRect();
-    scroll.scrollTop += r.top - sr.top - 8 + (plan.offset ?? 0) * r.height; ownTop = scroll.scrollTop;
+    placeScroll({ by: r.top - sr.top - 8 + (plan.offset ?? 0) * r.height });
     hold = { el: target, offset: plan.offset ?? 0, loc: null, at: performance.now() };
   }
   /** Hold the block at the top of the reading area (the reader's probe, 8 px down), found by its place on the screen —
@@ -454,13 +473,18 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const sr = scroll.getBoundingClientRect(); const y = sr.top + 8;
     for (const dy of [0, 10, 20, 32]) for (const x of [0.5, 0.25, 0.75]) {
       const hit = document.elementFromPoint(sr.left + sr.width * x, y + dy)?.closest<HTMLElement>(`${BLOCK_SELECTOR}, img`);
-      if (hit && within.contains(hit)) { const r = hit.getBoundingClientRect(); hold = { el: hit, offset: (y - r.top) / Math.max(1, r.height), loc: null, at: performance.now() }; return; }
+      if (hit && within.contains(hit)) { const r = hit.getBoundingClientRect(); hold = y < r.top ? { el: hit, offset: 0, gap: r.top - y, loc: null, at: performance.now() } : { el: hit, offset: (y - r.top) / Math.max(1, r.height), loc: null, at: performance.now() }; return; }
     }
   }
   /** Hold the place being read now (its block and offset, and its locator). */
   function holdHere(): void {
-    const c = currentLocator(); if (!c) return;
-    hold = { el: c.doc.allBlocks[c.loc.block ?? -1] ?? null, offset: c.loc.offset ?? 0, loc: c.loc, at: performance.now() };
+    const c = currentLocator(true); if (!c) return;
+    const el = c.doc.allBlocks[c.loc.block ?? -1] ?? null;
+    // (The offset as it is, not kept within the block: a chapter shown from its top has room above its first block —
+    // the probe above it, a negative offset — and held at 0 it would be scrolled down into that room.)
+    let offset = c.loc.offset ?? 0, gap: number | undefined;
+    if (el) { const r = el.getBoundingClientRect(); const y = scroll.getBoundingClientRect().top + 8; if (y < r.top) { offset = 0; gap = r.top - y; } else if (r.height > 0) offset = (y - r.top) / r.height; }
+    hold = { el, offset, loc: c.loc, at: performance.now(), gap };
   }
   /** The text put back at the place held — the same block at the same offset — when it has moved (false: it had not, or
    *  its chapter is not the one shown). */
@@ -470,9 +494,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (el) {
       if (!el.getClientRects().length) return false;
       const sr = scroll.getBoundingClientRect(); const r = el.getBoundingClientRect();
-      const d = r.top - sr.top - 8 + hd.offset * r.height;
+      const d = r.top - sr.top - 8 - (hd.gap ?? 0) + hd.offset * r.height;
       if (Math.abs(d) < 1) return false;
-      const from = scroll.scrollTop; programmatic = performance.now(); scroll.scrollTop += d; ownTop = scroll.scrollTop;
+      const from = scroll.scrollTop; placeScroll({ by: d });
       logPlace(why, { by: Math.round(d), from: Math.round(from), held: hd.loc?.block ?? (el.textContent ?? '').trim().slice(0, 14) });
       return true;
     }
@@ -629,7 +653,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       layDoc(e.doc, shown);
       unwatch();
       early = null;
-      if (e.scrolled) { userScrolled = true; const c = currentLocator(); if (c) { c.doc.book.progress = c.loc; saveSoon = true; } }
+      if (e.scrolled) { userScrolled = true; const c = currentLocator(true); if (c) { c.doc.book.progress = c.loc; saveSoon = true; } }
     }
     op?.size('paras', e.doc.allBlocks.length);
     { const d = e.doc, size = e.size; window.setTimeout(() => { if (d.render?.element.isConnected) writeMap(d, size); }, 2000); }
@@ -818,7 +842,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     u.doc.chapter = u.index;
     for (const doc of docs) { doc.wrapper.hidden = docs.length > 1 && doc !== u.doc; doc.chapters.forEach((c, i) => { c.hidden = doc.chapters.length > 1 && i !== doc.chapter; }); doc.blocks = doc.chapters.length > 1 ? doc.allBlocks.filter((b) => doc.chapters[doc.chapter].contains(b)) : doc.allBlocks; }
     renderChapterNav();
-    scroll.scrollTop = atEnd ? scroll.scrollHeight : 0;
+    placeScroll({ top: atEnd ? scroll.scrollHeight : 0 });
     lastTracked = null;
     hooks.update(); hooks.save();
     chapterListeners.forEach((fn) => fn());
@@ -952,21 +976,30 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     return docs[docs.length - 1];
   }
 
-  function currentLocator(): { doc: OpenDoc; loc: Locator } | null {
+  /** The place being read. `exact`: also checked against the box of a run or chapter not laid out (one layout read
+   *  more) — for a place held or saved; the reading bar, refreshed as the reader scrolls, does without. */
+  function currentLocator(exact = false): { doc: OpenDoc; loc: Locator } | null {
     const probeY = 8;
     const sr = scroll.getBoundingClientRect();
     if (!reader.isConnected || sr.height < 40 || sr.width < 40) return null;
     const doc = docAt(probeY);
     if (!doc) return null;
     const blocks = doc.blocks;
-    // Binary search for the first block whose bottom is below the probe line. (A block in a chapter or a run not laid
-    // out — content-visibility — is measured as if it were, from the top of a box only as tall as reckoned: one taller
-    // than that reaches past its box's bottom, over the text below it. It is no lower than its box's bottom.)
-    const bottomOf = (b: HTMLElement): number => { const r = b.getBoundingClientRect(); const box = b.closest('.kr-run, .kr-chapter'); return box ? Math.min(r.bottom, box.getBoundingClientRect().bottom) : r.bottom; };
+    // Binary search for the first block whose bottom is below the probe line.
     let lo = 0, hi = blocks.length - 1;
     while (lo < hi) {
       const m = (lo + hi) >> 1;
-      if (bottomOf(blocks[m]) - sr.top <= probeY) lo = m + 1; else hi = m;
+      const r = blocks[m].getBoundingClientRect();
+      if (r.bottom - sr.top <= probeY) lo = m + 1; else hi = m;
+    }
+    // (A block in a chapter or a run not laid out — content-visibility — is measured as if it were, from the top of a box
+    // only as tall as reckoned: one taller than that reaches past its box's bottom, over the text below it. When the box
+    // of the block found ends above the probe, the block read is the first after that box — one read more, not two a
+    // step of the search.)
+    for (let guard = 0; exact && guard < 4 && blocks[lo]; guard++) {
+      const box = blocks[lo].closest('.kr-run, .kr-chapter'); if (!box || box.getBoundingClientRect().bottom - sr.top > probeY) break;
+      let j = lo + 1; while (j < blocks.length && box.contains(blocks[j])) j++;
+      if (j >= blocks.length) break; lo = j;
     }
     const block = blocks[lo];
     const rect = block?.getBoundingClientRect();
@@ -1008,10 +1041,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const block = target ?? doc.blocks[loc.block ?? 0];
     if (block) {
       const r = block.getBoundingClientRect();
-      scroll.scrollTop += r.top - sr.top - 8 + (loc.offset ?? 0) * r.height;
+      placeScroll({ by: r.top - sr.top - 8 + (loc.offset ?? 0) * r.height });
     } else {
       const wr = doc.wrapper.getBoundingClientRect();
-      scroll.scrollTop += wr.top - sr.top + (loc.pct ?? 0) * wr.height;
+      placeScroll({ by: wr.top - sr.top + (loc.pct ?? 0) * wr.height });
     }
     placed = loc; placedAt = performance.now(); ownTop = scroll.scrollTop;
     if (block && block === doc.allBlocks[loc.block ?? -1]) hold = { el: block, offset: loc.offset ?? 0, loc, at: placedAt }; else holdHere();
@@ -1040,7 +1073,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     el.dispatchEvent(new CustomEvent('kr-reveal', { bubbles: true, detail: anchor }));
     const sr = scroll.getBoundingClientRect();
     const r = el.getBoundingClientRect();
-    scroll.scrollTop += r.top - sr.top - 12;
+    readerScroll({ by: r.top - sr.top - 12 });
     { const c = currentLocator(); if (c) { placed = c.loc; placedAt = performance.now(); } }
     holdHere();
     if (flash) { el.classList.add('kr-flash'); setTimeout(() => el.classList.remove('kr-flash'), 1600); }
@@ -1265,7 +1298,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (Until the reader scrolls again, the place saved is the one held — never where a layout change or the engine left
     // the text for a moment.)
     const held = heldLoc(); const heldDoc = held ? docs.find((d) => d.book.id === held.bookId) : undefined;
-    const cur = held && heldDoc ? { doc: heldDoc, loc: held } : currentLocator();
+    const cur = held && heldDoc ? { doc: heldDoc, loc: held } : currentLocator(true);
     if (!cur) return;
     await db.updateBook(cur.doc.book.id, (b) => { b.progress = cur.loc; b.progressAt = stampAfter(b.progressAt); });
     if (cur.doc.book.track && cur.loc.toc !== undefined) void import('../ui/track').then((m) => m.pushProgress(cur.doc.book, cur.loc.toc! + 1));
@@ -1317,7 +1350,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // at the same offset — unless the reader has scrolled since (a wheel, a touch, a press on the text or a reading key,
   // then a scroll). Only when the width changed: a change of height alone — the chrome, the system's bars, a phone's
   // keyboard — does not reflow the text, which is left where it is on the screen.
-  let stableTimer = 0; let lastW = scroll.clientWidth; let lastH = scroll.clientHeight; let settledW = lastW; let resizing = false;
+  let stableTimer = 0; let lastW = scroll.clientWidth; let settledW = lastW; let resizing = false;
   let lastScrollAt = 0;
   {
     const onInput = () => { lastInputAt = performance.now(); suspect = null; };
@@ -1395,8 +1428,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (The offset moved since the scroll handler last saw it: a scroll of the reader's not yet told — left to that
     // handler —, or the layout change's own (Chromium's scroll anchoring, a clamp at the end): the place put back
     // regardless, and the scroll event to come is the reader's own placing.)
+    // (Never within the reader's own input — a scroll of theirs may be under way, a smooth one not started yet.)
     const moved = Math.abs(scroll.scrollTop - seenTop) > 1;
-    if (moved && recentInput(performance.now())) return;
+    if (recentInput(performance.now())) return;
     putHold(why);
     if (moved) { programmatic = performance.now(); ownTop = scroll.scrollTop; }
   };
@@ -1417,7 +1451,6 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   // (A scroll of the reader's settled: their place is the one held from now on.)
   const noteStable = () => { lastScrollAt = performance.now(); if (resizing) return; window.clearTimeout(stableTimer); stableTimer = window.setTimeout(() => { if (resizing) return; if (!hold || lastUserScrollAt > hold.at) holdHere(); layAhead(); }, 250); };
-  noteStableNow = noteStable;
   // Continuous reading keeps chapters away from the screen unlaid (content-visibility), and laying one out when
   // it comes near takes a frame or three on a phone — a page of Arabic, shaped, is slow work — which showed as
   // a catch in every fling that reached a new chapter. So once the scrolling has settled, the chapters within
@@ -1446,8 +1479,9 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   window.setTimeout(layAhead, 900);
   const sizeObs = new ResizeObserver(() => {
     geoDirty = true; updateChrome();
-    const w = scroll.clientWidth, hh = scroll.clientHeight;
-    if (Math.abs(hh - lastH) >= 2) { lastH = hh; layoutAt = performance.now(); }
+    // (The scroller's height alone — the chrome or the reading bar shown or hidden — opens no window for the engine's
+    // scroll: only the window's own resize does, below.)
+    const w = scroll.clientWidth;
     // (Only the height changed — the chrome or the reading bar shown or hidden, the system's bars: the text does not
     // flow again, and is left where it is on the screen; put back at the scroller's new top, it jumped.)
     if (Math.abs(w - lastW) < 2) return;
@@ -1465,7 +1499,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (Where the reading is, read before the change is laid out.)
     // (The place held, while the reader has not scrolled since: not where a layout change may have left the text.)
     const held = heldLoc(); const heldDoc = held ? docs.find((d) => d.book.id === held.bookId) : undefined;
-    const before = reader.isConnected ? (held && heldDoc ? { doc: heldDoc, loc: held } : currentLocator()) : null;
+    const before = reader.isConnected ? (held && heldDoc ? { doc: heldDoc, loc: held } : currentLocator(true)) : null;
     applySettings(reader, s); applyTitleSettings(reader, s); syncChrome(); syncComfort(); geoDirty = true; updateChrome();
     const want = s.bookFormat || s.smartTypography;
     // (The highlights taken off and put on again: on the text as it is now — a mark cut a changed word in pieces, and
@@ -1573,8 +1607,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const page = scroll.getBoundingClientRect().height * 0.88;
     const anim = getSettings().turnAnimation;
     if (anim !== 'none') { flow.classList.remove('turn-next', 'turn-prev', 'turn-fade'); void flow.offsetWidth; flow.classList.add(anim === 'fade' ? 'turn-fade' : dir > 0 ? 'turn-next' : 'turn-prev'); }
-    readerMoves();
-    scroll.scrollBy({ top: page * dir, behavior: anim === 'none' ? 'smooth' : 'auto' });
+    readerScroll({ by: page * dir, smooth: anim === 'none' });
   }
   function tapAction(a: string): void {
     if (a === 'next') turnScreen(1); else if (a === 'prev') turnScreen(-1);
@@ -1884,7 +1917,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
   function goToPair(hit: PairHit): void {
     back.remember(); revealElement(hit.block); readerMoves();
-    requestAnimationFrame(() => { const sr = scroll.getBoundingClientRect(); const r = hit.block.getBoundingClientRect(); scroll.scrollTop += r.top - sr.top - sr.height * 0.3; hit.block.classList.add('kr-flash'); setTimeout(() => hit.block.classList.remove('kr-flash'), 1600); scheduleSave(); });
+    requestAnimationFrame(() => { const sr = scroll.getBoundingClientRect(); const r = hit.block.getBoundingClientRect(); readerScroll({ by: r.top - sr.top - sr.height * 0.3 }); hit.block.classList.add('kr-flash'); setTimeout(() => hit.block.classList.remove('kr-flash'), 1600); scheduleSave(); });
   }
   async function searchFlow(query: string, onHits?: (hits: SearchHit[]) => void, live?: () => boolean): Promise<SearchHit[]> {
     const q = normalizeForSearch(query.trim());
@@ -1962,7 +1995,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       const sr = scroll.getBoundingClientRect();
       const r = hit.range.getBoundingClientRect();
       const rect = r.height ? r : block.getBoundingClientRect();
-      scroll.scrollTop += rect.top - sr.top - sr.height * 0.3;
+      readerScroll({ by: rect.top - sr.top - sr.height * 0.3 });
       const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
       const HL = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
       if (reg && HL) reg.set('kr-search-current', new HL(hit.range));
@@ -2113,8 +2146,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     let speed = getSettings().autoScrollSpeed;
     let last = performance.now();
     const step = (now: number) => {
-      readerMoves();
-      scroll.scrollTop += (speed * (now - last)) / 1000;
+      readerScroll({ by: (speed * (now - last)) / 1000 });
       last = now;
       if (scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2) { stopAutoScroll(); return; }
       autoScrollRaf = requestAnimationFrame(step);
@@ -2176,7 +2208,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         revealElement(block);
         const sr = scroll.getBoundingClientRect();
         const r = block.getBoundingClientRect();
-        if (r.bottom > sr.bottom || r.top < sr.top) { readerMoves(); scroll.scrollTop += r.top - sr.top - 40; }
+        if (r.bottom > sr.bottom || r.top < sr.top) readerScroll({ by: r.top - sr.top - 40 });
         block.classList.add('kr-flash'); setTimeout(() => block.classList.remove('kr-flash'), 1200);
       }
       if (text === undefined) { stopSpeaking(); return; }
@@ -2246,7 +2278,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           shown = bi;
           revealElement(block);
           const sr = scroll.getBoundingClientRect(); const r = block.getBoundingClientRect();
-          if (r.bottom > sr.bottom || r.top < sr.top) { readerMoves(); scroll.scrollTop += r.top - sr.top - 40; }
+          if (r.bottom > sr.bottom || r.top < sr.top) readerScroll({ by: r.top - sr.top - 40 });
           block.classList.add('kr-flash'); setTimeout(() => block.classList.remove('kr-flash'), 1200);
         }
         // (Topped up well before the end: a page asleep cannot hand the next batch over in time.)
@@ -2290,8 +2322,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // (Both chapter modes: a page-turn key — or a volume button, src/readkeys.ts — at a chapter's very end goes on to the
     // next, as a swipe does; only scrolling past the end is the "scroll into the next chapter" mode's own.)
     if (chapterMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { readerTurn(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { readerTurn(k - 1, true); return; } }
-    readerMoves();
-    scroll.scrollBy({ top: back ? -page : page, behavior: 'smooth' });
+    readerScroll({ by: back ? -page : page, smooth: true });
   }
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else if (autoScrollRaf) stopAutoScroll(); else if (speaking) stopSpeaking(); else void leaveFullscreen(root); return; }
@@ -2299,12 +2330,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {
       case 'ArrowRight': case 'ArrowLeft': { if (!chapterMode()) return; const rtl = docs.find((d) => !d.wrapper.hidden)?.render?.rtl ?? false; const fwd = (e.key === 'ArrowRight') !== rtl; const k = currentUnitIndex(); readerTurn(fwd ? k + 1 : k - 1, !fwd); break; }
-      case 'j': case 'ArrowDown': scroll.scrollBy({ top: 80 }); break;
-      case 'k': case 'ArrowUp': scroll.scrollBy({ top: -80 }); break;
+      case 'j': case 'ArrowDown': readerScroll({ by: 80 }); break;
+      case 'k': case 'ArrowUp': readerScroll({ by: -80 }); break;
       case ' ': case 'PageDown': { e.preventDefault(); turnPage(e.shiftKey); break; }
       case 'PageUp': { e.preventDefault(); turnPage(true); break; }
-      case 'Home': scroll.scrollTop = 0; break;
-      case 'End': scroll.scrollTop = scroll.scrollHeight; break;
+      case 'Home': readerScroll({ top: 0 }); break;
+      case 'End': readerScroll({ top: scroll.scrollHeight }); break;
       case '/': e.preventDefault(); openSearch(); break;
       case '+': case '=': updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); break;
       case '-': case '_': updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) }); break;

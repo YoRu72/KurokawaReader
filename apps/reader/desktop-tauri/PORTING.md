@@ -1169,3 +1169,18 @@ way between the builds.
   growing in height only while the engine moves the offset, and a wheel then a font (the reader's place held); 6: an
   EPUB opened a chapter first with the CPU slowed, scrolled while the rest is made, then the chapters above at their real
   height (the old build ends six chapters back and saved a place a chapter off). The build before fails 26 of them.
+- **0.62.1's two regressions** (the full local suite): (1) `tests/backkeys.cjs` — a volume key's page turn (a smooth
+  scroll, no DOM input) put back: when it had not begun by the time `noteStable` re-held the place (250 ms) or one of
+  restore's passes ran, the keeper or the pass took the text back. Every scroll of the text now goes through one of two
+  helpers in `src/views/reader.ts`: `readerScroll` (on the reader's behalf: theirs, `userScrolled`, never put back) and
+  `placeScroll` (the reader's own placing: `programmatic`, `ownTop`); the keeper does nothing within the reader's input
+  window; `tests/scrollsites.cjs` (in release.yml) fails on any scroll written to the scroller outside them. (2)
+  `tests/readbar.cjs` — layout reads per scroll: `currentLocator` measured each searched block's box (two reads a step);
+  it now checks only the block found, and only for a place held or saved (`currentLocator(true)`), and a change of the
+  scroller's height (the bar shown or hidden) no longer opens the engine-scroll window (it took the test's scroll steps
+  for the engine's and put them back). Over 30 steps: 563 reads, as 0.62.0. `tests/perfbudget.cjs` 10 checks it on the
+  320-chapter EPUB and the multi-megabyte text (30 steps: within 3 reads of `KR_OLD_DIST` when given — equal, 538 and
+  840; a fling: ceilings and no long task more, its reads reported — they vary ±15 % run to run on either build). Also:
+  a place held from a chapter's top keeps the room above its first block in pixels (`gap`) — held as offset 0 it was
+  scrolled 72 px into it (backkeys: volume down into the next chapter) —; `tests/resettle.cjs` runs 1–4, and
+  `node tests/resettle.cjs late` 5–6 as WebKit is, each under five minutes.

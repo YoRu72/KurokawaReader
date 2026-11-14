@@ -19,11 +19,14 @@
 //     saved place unchanged; after a wheel, the reader's own place is the one held;
 //  6. a book of many chapters opened at a chapter first (formats/epub.ts first/rest), the reader scrolling while the
 //     rest is made slowly: the chapters made above their place (taller or shorter than the 3000 px kept) do not move it.
-// Each as Chromium is, and as WebKit is (no scroll anchoring: the drift a Mac's text reader showed in CI).
+// Each as Chromium is, and as WebKit is (no scroll anchoring: the drift a Mac's text reader showed in CI); 5 and 6 as
+// WebKit is only, run apart: `node tests/resettle.cjs late`.
 // (The book is made here: no fixtures.)
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
+// `node tests/resettle.cjs` runs 1–4, `node tests/resettle.cjs late` runs 5 and 6.
+const PART = process.argv[2] === 'late' ? 'late' : 'main';
 // (A picture that comes late: served after SLOW_MS — a picture above the place decoding after the book has settled.)
 const SLOW_MS = 4500;
 const server = http.createServer((req, res) => { if (req.url.startsWith('/__slow.svg')) { setTimeout(() => { res.setHeader('Content-Type', 'image/svg+xml'); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="360"><rect width="240" height="360" fill="#88a"/></svg>'); }, SLOW_MS); return; } let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
@@ -108,7 +111,9 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
   const SMALL = { width: 800, height: 700 }, BIG = { width: 1440, height: 900 }, ZOOM = { width: 1040, height: 900 };
   // Twice: as Chromium is (WebView2, Electron: scroll anchoring keeps a place through a reflow by itself), and as
   // WebKit is (a Mac's WKWebView, Linux's WebKitGTK: no scroll anchoring — `overflow-anchor: none` everywhere).
-  for (const [engine, css] of [['scroll anchoring', ''], ['as WebKit: no scroll anchoring', '*, *::before, *::after { overflow-anchor: none !important; }']]) {
+  // (`late`: 5 and 6 only, as WebKit is — the engine they guard; each part kept under five minutes.)
+  const ENGINES = [['scroll anchoring', ''], ['as WebKit: no scroll anchoring', '*, *::before, *::after { overflow-anchor: none !important; }']];
+  for (const [engine, css] of PART === 'late' ? ENGINES.slice(1) : ENGINES) {
   const ctx = await br.newContext({ viewport: SMALL });
   if (css) await ctx.addInitScript((css) => { const add = () => { const st = document.createElement('style'); st.textContent = css; document.documentElement.appendChild(st); }; if (document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); }, css);
   const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
@@ -118,12 +123,12 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
   if (css) ok(`[${engine}] the page has no scroll anchoring`, await p.evaluate(() => getComputedStyle(document.querySelector('body')).overflowAnchor === 'none'));
   const book = await importFile(p, BOOK, 'Resettle Book|Resettle');
 
-  // (KR_RESETTLE_ONLY=6: the book of many chapters alone — a quick run while working on it.)
-  for (const m of process.env.KR_RESETTLE_ONLY === '6' ? [] : ['continuous', 'chapters']) {
+  for (const m of ['continuous', 'chapters']) {
     const mode = `${engine}, ${m}`;
     await p.setViewportSize(SMALL);
     await toLibrary(p); await p.evaluate((m) => { const s = JSON.parse(localStorage.getItem('kr.visual') ?? '{}'); s.readingMode = m; localStorage.setItem('kr.visual', JSON.stringify(s)); }, m);
     await p.reload(); await p.waitForSelector('.library-view');
+    if (PART === 'main') {
     // The place to come back to: a paragraph in the middle, a third of the way into it.
     await open(p, book.id); await p.waitForTimeout(3200);
     await scrollToPara(p, 347, 0.33); await p.waitForTimeout(1500);
@@ -205,6 +210,8 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
     ok(`[${mode}] scrolled during a resize: the reader's place stands (not put back at 347)`, mine && mine.n > 352, { left, mine });
     await p.setViewportSize(SMALL); await p.waitForTimeout(1200);
 
+    }
+    if (PART === 'late') {
     // 5. Layout changes the reader did not cause, late: the place held, the saved place unchanged. (Each case from its
     // own place read and saved: a drift one case saved is not the next one's start.)
     const lateCase = async (name, change, { settle = 1800, extra } = {}) => {
@@ -267,12 +274,13 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
       await p.evaluate(() => document.getElementById('kr-test-late')?.remove());
       await scrollToPara(p, 347, 0.33); await p.waitForTimeout(1500);
     }
+    }
   }
 
   // 6. A book of many chapters opened at a chapter first, its other chapters made slowly (the CPU slowed): the reader
   // scrolls while they are made; then the chapters above take their real height (a WebKit learning their sizes). Their
   // place stands — continuous reading, where the chapters above are in the same page.
-  {
+  if (PART === 'late') {
     const m6 = `${engine}, continuous, chapters made late`;
     await p.setViewportSize(SMALL); await toLibrary(p);
     await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kr.visual') ?? '{}'); s.readingMode = 'continuous'; localStorage.setItem('kr.visual', JSON.stringify(s)); });
@@ -295,13 +303,10 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
     await p.waitForFunction(() => !document.querySelector('.kr-chapter.kr-shell'), null, { timeout: 90000 });
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 }); await p.waitForTimeout(1500);
     const whole = await whereE(p);
-    const dbg = async () => p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const r = sc.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + 12); return { pt: e?.closest('p')?.textContent.slice(0, 10) ?? e?.tagName, top: sc.scrollTop, chapters: [...document.querySelectorAll('.reader-flow .kr-chapter')].map((c) => Math.round(c.getBoundingClientRect().top)).slice(10, 16) }; });
-    if (process.env.KR_RESETTLE_DEBUG) console.log('dbg whole', JSON.stringify(await dbg()));
     // (The chapters above laid out at their real height, with no event.)
     const sizes = await p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const y = sc.getBoundingClientRect().top; const above = [...document.querySelectorAll('.reader-flow .kr-chapter')].filter((c) => c.getBoundingClientRect().bottom < y - 50); const h0 = above.map((c) => Math.round(c.getBoundingClientRect().height)); above.forEach((c) => { c.style.contentVisibility = 'visible'; }); return { above: above.length, before: h0.slice(-4), after: above.map((c) => Math.round(c.getBoundingClientRect().height)).slice(-4) }; });
     await p.waitForTimeout(1500);
     const end = await whereE(p);
-    if (process.env.KR_RESETTLE_DEBUG) console.log('dbg end', JSON.stringify(await dbg()));
     const kept = (await allBooks(p)).find((b) => b.id === eb.id)?.progress;
     const log = await p.evaluate(() => (window.__krPlaceLog || []).slice(-6));
     const near = (a, b) => !!a && !!b && a.n === b.n && Math.abs(a.offset - b.offset) <= 0.08;
@@ -315,7 +320,7 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
   }
 
   // 4. The selection's toolbar over the selection after a resize; one made off the screen comes once it is on it.
-  if (process.env.KR_RESETTLE_ONLY !== '6') {
+  if (PART === 'main') {
     const e4 = engine;
     await p.setViewportSize(SMALL);
     await open(p, book.id); await p.waitForTimeout(3200);
@@ -347,6 +352,6 @@ const same = (a, b, tol = 0.06) => !!a && !!b && a.n === b.n && Math.abs(a.offse
 
   ok('no page errors', !errors.length, errors.slice(0, 5));
   await br.close(); server.close(); fs.rmSync(TMP, { recursive: true, force: true });
-  console.log(fails ? `resettle: ${fails} failed` : 'resettle: ok');
+  console.log(fails ? `resettle ${PART}: ${fails} failed` : `resettle ${PART}: ok`);
   process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
