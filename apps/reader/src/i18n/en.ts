@@ -2279,6 +2279,28 @@ export const en = {
   handoverSpaceUnknown: "The free space on this disk could not be read. Preparing your library needs about {need} (the app's data folder holds {profile}). Make sure that much is free, then continue — or cancel, and this version keeps working as it is.",
   handoverSpaceGoOn: "Continue",
   handoverNotMade: "The update was not installed. Nothing was changed.",
+  // Undo and redo (src/ui/undo.ts, src/ui/optionsundo.ts)
+  undoneThing: "Undone: {what}",
+  optionsHistory: "Changes made here",
+  optionsReset: "Reading options reset",
+  undoThisChange: "Undo this change",
+  restoreMine: "Back to my value",
+  themeDeleted: "Theme “{name}” deleted",
+  presetApplied: "“{name}” applied",
+  hlRemoved: "Highlight removed",
+  noteDeleted: "Note deleted",
+  bookmarkDeleted: "Bookmark deleted",
+  pageNoteDeleted: "Page note deleted",
+  termDeleted: "Term “{name}” deleted",
+  glossFolderDeleted: "Folder “{name}” deleted",
+  ruleDeleted: "Rule deleted",
+  buttonsReset: "Buttons reset",
+  shortcutChanged: "Shortcut changed",
+  shortcutsResetDone: "Shortcuts reset",
+  trCacheClearAsk: "Clear {n} saved translations? Translating them again takes time — and, with a paid service, money.",
+  trCacheCleared: "{n} saved translations cleared",
+  restoreSettingsAsk: "The backup’s settings will replace your current ones — the reading options, the app’s preferences and each book’s own settings. (Books, notes and highlights are merged, not replaced.) Restore?",
+  restoredSettingsUndo: "Restored {n} item(s) — settings replaced",
 };
 
 export type Strings = typeof en;

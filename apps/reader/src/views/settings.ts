@@ -16,6 +16,7 @@ import { decksCard } from '../ui/decks';
 import { fits, only } from '../platform';
 import { titleBarWaits as winBarWaits } from '../ui/winbar';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
+import { offerOptionsUndo, stepCount } from '../ui/optionsundo';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
 
@@ -340,7 +341,7 @@ export function settingsView(): HTMLElement {
             if (e.key === 'Escape') { window.removeEventListener('keydown', onKey, true); renderKeys(); return; }
             const c = comboOf(e); if (!c) return;
             window.removeEventListener('keydown', onKey, true);
-            setBinding(sc.id, c); renderKeys();
+            const n = stepCount(); setBinding(sc.id, c); renderKeys(); offerOptionsUndo(t('shortcutChanged'), renderKeys, n);
           };
           window.addEventListener('keydown', onKey, true);
         });
@@ -349,7 +350,7 @@ export function settingsView(): HTMLElement {
     };
     renderKeys();
     body.append(h('section', { class: 'card' }, h('h3', null, t('keyboardShortcuts')), h('p', null, t('shortcutsEditBody')), list,
-      h('div', null, h('button', { class: 'btn small outlined', onclick: () => { resetBindings(); renderKeys(); } }, t('resetDefaults')))));
+      h('div', null, h('button', { class: 'btn small outlined', onclick: () => { const n = stepCount(); resetBindings(); renderKeys(); offerOptionsUndo(t('shortcutsResetDone'), renderKeys, n); } }, t('resetDefaults')))));
   }
 
   // Learning decks: optional downloads, nothing installed by default

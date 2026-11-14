@@ -134,12 +134,21 @@ export function iconButton(name: string, label: string, onClick?: (e: MouseEvent
 }
 
 let toastTimer: number | undefined;
-export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200): void {
-  document.querySelectorAll('.toast').forEach((t) => t.remove());
-  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : ''), role: 'status' }, msg);
+/** A snackbar's one action («Undo», «Redo»…): `run` when tapped (the snackbar then goes). */
+export interface ToastAction { label: string; run: () => void }
+/** The snackbar: one at a time (a new one replaces it), said aloud (role=status). The third argument is its time,
+ *  or { action, ms, onEnd }: a button on it, and longer to read (6.5 s unless said); `onEnd(acted)` once it goes —
+ *  by its time, replaced, or its action taken (acted). */
+export function toast(msg: string, kind: 'info' | 'error' = 'info', ms: number | { action?: ToastAction; ms?: number; onEnd?: (acted: boolean) => void } = 2200): void {
+  const o = typeof ms === 'number' ? { ms } : ms;
+  document.querySelectorAll<HTMLElement & { __end?: (acted: boolean) => void }>('.toast').forEach((x) => { x.__end?.(false); x.remove(); });
+  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : '') + (o.action ? ' has-action' : ''), role: 'status', 'aria-live': 'polite' }, h('span', { class: 'toast-text' }, msg)) as HTMLElement & { __end?: (acted: boolean) => void };
+  let ended = false;
+  el.__end = (acted) => { if (ended) return; ended = true; o.onEnd?.(acted); };
+  if (o.action) { const a = o.action; el.append(h('button', { type: 'button', class: 'toast-action', onclick: () => { window.clearTimeout(toastTimer); el.__end?.(true); el.remove(); a.run(); } }, a.label)); }
   document.body.appendChild(el);
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.remove(), ms);
+  toastTimer = window.setTimeout(() => { el.__end?.(false); el.remove(); }, o.ms ?? (o.action ? 6500 : 2200));
 }
 
 /** A bottom sheet. Returns the body element and a close function. */

@@ -69,6 +69,11 @@ export const folders = (): Folder[] => read<Folder[]>(FKEY, []);
 export function addFolder(name: string): Folder { const f = { id: Math.random().toString(36).slice(2, 10), name: name.trim() }; write(FKEY, [...folders(), f]); return f; }
 export function renameFolder(id: string, name: string): void { write(FKEY, folders().map((f) => (f.id === id ? { ...f, name: name.trim() } : f))); }
 export function removeFolder(id: string): void { write(FKEY, folders().filter((f) => f.id !== id)); saveTerms(terms().filter((x) => x.folder !== id)); const l = read<Record<string, string[]>>(LKEY, {}); for (const k of Object.keys(l)) l[k] = l[k].filter((x) => x !== id); write(LKEY, l); }
+/** The whole glossary as stored (terms, folders, which books use which) — taken before a folder is deleted, written
+ *  back by its Undo (src/ui/glossarysheet.ts). */
+export interface GlossarySnapshot { terms: Term[]; folders: Folder[]; links: Record<string, string[]> }
+export const glossarySnapshot = (): GlossarySnapshot => JSON.parse(JSON.stringify({ terms: terms(), folders: folders(), links: read<Record<string, string[]>>(LKEY, {}) })) as GlossarySnapshot;
+export function glossaryRestore(s: GlossarySnapshot): void { write(FKEY, s.folders); saveTerms(s.terms); write(LKEY, s.links); }
 /** Books taken out of the library: their own terms, folder links and destination let go (a folder's terms and
  *  every book's stay — other books use them). */
 export function forgetBooks(ids: Iterable<string>): void {

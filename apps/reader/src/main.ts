@@ -18,6 +18,8 @@ import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
 import { initPcShell } from './ui/pcshell';
 import { takeResume } from './resume';
+// (Undo / redo, and Ctrl+Z on a computer, from the start: src/ui/undo.ts.)
+import './ui/undo';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;
