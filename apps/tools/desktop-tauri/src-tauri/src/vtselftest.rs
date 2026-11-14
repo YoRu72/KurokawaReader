@@ -139,6 +139,8 @@ pub async fn kt_selftest_vt(o: Value) -> Result<Value, String> {
                 let v: Vec<bool> = o.get("pids").and_then(|p| p.as_array()).map(|xs| xs.iter().map(|x| x.as_u64().map(|p| p > 0 && vtproc::alive(p as u32)).unwrap_or(false)).collect()).unwrap_or_default();
                 Ok(json!(v))
             }
+            // (How the last tree kill went — vtproc.rs: the job, each process ended by hand, taskkill, and what survived.)
+            "lastKill" => Ok(json!(vtproc::LAST_KILL.lock().map(|g| g.clone()).unwrap_or_default())),
             "seen" => with_lab(|lab| json!(lab.server.seen.lock().map(|g| g.clone()).unwrap_or_default())),
             "sha" => {
                 let p = s(&o, "path");

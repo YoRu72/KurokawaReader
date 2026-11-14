@@ -1070,8 +1070,10 @@
           if (!r) { again = true; await kt.ffmpegCancel('vt-cancel'); }
         }
         must(r && r.code !== 0, 'ended ' + short(r) + ' (' + phase + ')');
-        phase = 'the tree gone'; await gone(ps, 12000);
-        return 'code ' + r.code + ' after ' + (env.now() - t0) + ' ms' + (again ? ' (a second cancel was needed)' : '') + '; ffmpeg ' + ps[0] + ' and its child ' + ps[1] + ' ended';
+        phase = 'the tree gone';
+        try { await gone(ps, 12000); } catch (e) { var lk = await op({ op: 'lastKill' }).catch(function () { return '?'; }); throw new Error(String(e && e.message || e) + ' (ffmpeg ' + ps[0] + ', its child ' + ps[1] + '; the kill: ' + lk + ')'); }
+        var how = await op({ op: 'lastKill' }).catch(function () { return ''; });
+        return 'code ' + r.code + ' after ' + (env.now() - t0) + ' ms' + (again ? ' (a second cancel was needed)' : '') + '; ffmpeg ' + ps[0] + ' and its child ' + ps[1] + ' ended' + (how ? ' — ' + how : '');
       }, 75000);
       await check('ffprobe: its JSON (ffprobe beside the pack\'s ffmpeg)', true, async function () {
         await op({ op: 'probeBeside' });

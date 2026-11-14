@@ -392,7 +392,7 @@ jobs:
         run: |
           # (The Tauri build's web-view profile and hand-over state emptied: the self-tests above filled them, and a
           # user's first start of the Rust build has neither. WebView2's helpers may hold the profile a moment.)
-          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process msedgewebview2, aria2c, kurokawa-tools -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           foreach ($w in (Join-Path $env:LOCALAPPDATA 'app.kurokawa.tools'), (Join-Path $env:APPDATA 'app.kurokawa.tools')) {
             for ($i = 0; $i -lt 10 -and (Test-Path $w); $i++) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $w; if (Test-Path $w) { Start-Sleep -Seconds 3 } }
             if (Test-Path $w) { "the Tauri build's data could not be emptied: $w"; exit 1 }
@@ -449,6 +449,10 @@ jobs:
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
           NO_AT_BRIDGE: '1'
         run: |
+          # (An earlier step's app — or the aria2c it started — may still run and write its session again into the data
+          # folder emptied below: in run 43581873419 the self-test's part 2 ended in a crash, its aria2c went on, and the
+          # Tauri build then found «downloads of its own» (kept-own). Ended first, as a person's old app is closed.)
+          pkill -x aria2c || true; pkill -f 'target/release/kurokawa-tools' || true; sleep 1
           rm -rf "$HOME/.local/share/app.kurokawa.tools" "$HOME/.cache/app.kurokawa.tools"
           (cd apps/tools && [ -d desktop/dist ] || cp -R dist desktop/dist)
           (cd apps/tools/desktop && for i in 1 2 3; do npm install --no-audit --no-fund && break; [ $i = 3 ] && exit 1; sleep 20; done)

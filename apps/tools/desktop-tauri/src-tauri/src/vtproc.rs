@@ -73,14 +73,40 @@ pub fn command(bin: &Path, args: &[String]) -> Command {
 
 /// The process and everything it started, ended at once.
 pub fn kill_tree(pid: u32) {
+    let how = kill_tree_report(pid);
+    if let Ok(mut g) = LAST_KILL.lock() {
+        *g = how;
+    }
+}
+
+/// How the last tree kill went (the self-test prints it when a process survived).
+pub static LAST_KILL: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// The tree ended → what was done and what, if anything, survived.
+pub fn kill_tree_report(pid: u32) -> String {
     #[cfg(unix)]
     unsafe {
+        // (Its own process group: the whole tree, a grandchild whose parent has already ended included.)
         let _ = kill(-(pid as i32), SIGKILL);
         let _ = kill(pid as i32, SIGKILL);
+        let _ = Instant::now();
+        return format!("killpg {}", pid);
     }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        // (1) Every descendant noted BEFORE anything is ended — a child whose parent is gone no longer hangs under it.
+        let mut tree = winjob::descendants(pid);
+        tree.insert(0, pid);
+        let mut how: Vec<String> = Vec::new();
+        // (2) Its job object (made at its start, kill-on-close): everything ever started inside it.
+        if winjob::terminate(pid) {
+            how.push("job".into());
+        }
+        // (3) Each one noted, ended by hand.
+        let ended = tree.iter().filter(|p| winjob::terminate_pid(**p)).count();
+        how.push(format!("TerminateProcess {}/{}", ended, tree.len()));
+        // (4) The system's own tree kill as well.
         let tk = std::env::var_os("SystemRoot")
             .map(|r| Path::new(&r).join("System32").join("taskkill.exe"))
             .filter(|p| p.is_file())
@@ -96,6 +122,253 @@ pub fn kill_tree(pid: u32) {
                     Ok(None) => thread::sleep(Duration::from_millis(50)),
                 }
             }
+            how.push("taskkill /T".into());
+        }
+        // (5) Checked: every one noted gone within 5 s, else named.
+        let until = Instant::now() + Duration::from_secs(5);
+        let mut left: Vec<u32> = tree.iter().copied().filter(|p| alive(*p)).collect();
+        while !left.is_empty() && Instant::now() < until {
+            for p in left.iter() {
+                winjob::terminate_pid(*p);
+            }
+            thread::sleep(Duration::from_millis(100));
+            left = tree.iter().copied().filter(|p| alive(*p)).collect();
+        }
+        winjob::forget(pid);
+        let mut out = format!("{} of {:?}", how.join(" + "), tree);
+        if !left.is_empty() {
+            out.push_str(&format!("; STILL RUNNING: {}", left.iter().map(|p| format!("{} ({})", p, winjob::image(*p))).collect::<Vec<_>>().join(", ")));
+        }
+        return out;
+    }
+    #[allow(unreachable_code)]
+    String::new()
+}
+
+/// A program's job let go once it has ended by itself (Windows; nothing elsewhere).
+pub fn forget_job(pid: u32) {
+    #[cfg(windows)]
+    winjob::forget(pid);
+    let _ = pid;
+}
+
+/// A program started for the video tools: on Windows started suspended, put into a job object of its own (ended
+/// with it, kill-on-close) before its first instruction runs, then let go — so nothing it starts can slip out of a
+/// cancel. Where the job cannot be had (an outer job that forbids it), it runs anyway and the tree is walked at the
+/// kill. Elsewhere as `c.spawn()` (command() gave it a process group of its own).
+pub fn spawn(c: &mut Command) -> std::io::Result<Child> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000 | 0x0000_0004);
+        let child = c.spawn()?;
+        winjob::adopt(&child);
+        return Ok(child);
+    }
+    #[allow(unreachable_code)]
+    c.spawn()
+}
+
+#[cfg(windows)]
+#[allow(non_snake_case, non_camel_case_types, dead_code)]
+mod winjob {
+    use std::collections::HashMap;
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+    use std::sync::Mutex;
+
+    #[repr(C)]
+    struct BASIC {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+    #[repr(C)]
+    struct IO {
+        a: u64,
+        b: u64,
+        c: u64,
+        d: u64,
+        e: u64,
+        f: u64,
+    }
+    #[repr(C)]
+    struct EXTENDED {
+        basic: BASIC,
+        io: IO,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+    #[repr(C)]
+    struct THREADENTRY32 {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_thread_id: u32,
+        th32_owner_process_id: u32,
+        tp_base_pri: i32,
+        tp_delta_pri: i32,
+        dw_flags: u32,
+    }
+    #[repr(C)]
+    struct PROCESSENTRY32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateJobObjectW(attr: *mut c_void, name: *const u16) -> isize;
+        fn SetInformationJobObject(job: isize, class: i32, info: *mut c_void, len: u32) -> i32;
+        fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
+        fn TerminateJobObject(job: isize, code: u32) -> i32;
+        fn CloseHandle(h: isize) -> i32;
+        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> isize;
+        fn Thread32First(snap: isize, te: *mut THREADENTRY32) -> i32;
+        fn Thread32Next(snap: isize, te: *mut THREADENTRY32) -> i32;
+        fn Process32FirstW(snap: isize, pe: *mut PROCESSENTRY32W) -> i32;
+        fn Process32NextW(snap: isize, pe: *mut PROCESSENTRY32W) -> i32;
+        fn OpenThread(access: u32, inherit: i32, tid: u32) -> isize;
+        fn ResumeThread(h: isize) -> u32;
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+        fn TerminateProcess(h: isize, code: u32) -> i32;
+    }
+    const INVALID: isize = -1;
+    static JOBS: Mutex<Option<HashMap<u32, isize>>> = Mutex::new(None);
+
+    /// The suspended child put into a job of its own (kill-on-close), then its threads resumed.
+    pub fn adopt(child: &Child) {
+        let pid = child.id();
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+            if job != 0 {
+                let mut info: EXTENDED = std::mem::zeroed();
+                info.basic.limit_flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                SetInformationJobObject(job, 9, &mut info as *mut EXTENDED as *mut c_void, std::mem::size_of::<EXTENDED>() as u32);
+                if AssignProcessToJobObject(job, child.as_raw_handle() as isize) != 0 {
+                    if let Ok(mut g) = JOBS.lock() {
+                        g.get_or_insert_with(HashMap::new).insert(pid, job);
+                    }
+                } else {
+                    CloseHandle(job);
+                }
+            }
+        }
+        resume(pid);
+    }
+    /// Every thread of `pid` resumed (it was started suspended); the process list asked again if none was found yet.
+    fn resume(pid: u32) {
+        for _ in 0..20 {
+            if resume_once(pid) > 0 {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    fn resume_once(pid: u32) -> u32 {
+        let mut n = 0u32;
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(0x4, 0);
+            if snap == INVALID || snap == 0 {
+                return 0;
+            }
+            let mut te: THREADENTRY32 = std::mem::zeroed();
+            te.dw_size = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut ok = Thread32First(snap, &mut te) != 0;
+            while ok {
+                if te.th32_owner_process_id == pid {
+                    let h = OpenThread(0x0002, 0, te.th32_thread_id); // THREAD_SUSPEND_RESUME
+                    if h != 0 {
+                        ResumeThread(h);
+                        CloseHandle(h);
+                        n += 1;
+                    }
+                }
+                ok = Thread32Next(snap, &mut te) != 0;
+            }
+            CloseHandle(snap);
+        }
+        n
+    }
+    fn table() -> Vec<(u32, u32, String)> {
+        let mut out = Vec::new();
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(0x2, 0);
+            if snap == INVALID || snap == 0 {
+                return out;
+            }
+            let mut pe: PROCESSENTRY32W = std::mem::zeroed();
+            pe.dw_size = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let mut ok = Process32FirstW(snap, &mut pe) != 0;
+            while ok {
+                let n = pe.sz_exe_file.iter().position(|c| *c == 0).unwrap_or(260);
+                out.push((pe.th32_process_id, pe.th32_parent_process_id, String::from_utf16_lossy(&pe.sz_exe_file[..n])));
+                ok = Process32NextW(snap, &mut pe) != 0;
+            }
+            CloseHandle(snap);
+        }
+        out
+    }
+    /// Every process below `pid` (children, theirs, …), by the system's process list.
+    pub fn descendants(pid: u32) -> Vec<u32> {
+        let t = table();
+        let mut out: Vec<u32> = Vec::new();
+        let mut front = vec![pid];
+        while let Some(p) = front.pop() {
+            for (c, parent, _) in t.iter() {
+                if *parent == p && *c != pid && *c != 0 && !out.contains(c) {
+                    out.push(*c);
+                    front.push(*c);
+                }
+            }
+        }
+        out
+    }
+    /// A process's image name (for a report).
+    pub fn image(pid: u32) -> String {
+        table().into_iter().find(|(p, _, _)| *p == pid).map(|(_, _, n)| n).unwrap_or_else(|| "?".into())
+    }
+    /// Its job ended (everything in it) → whether it had one.
+    pub fn terminate(pid: u32) -> bool {
+        let job = JOBS.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(&pid).copied()));
+        match job {
+            Some(j) => unsafe { TerminateJobObject(j, 1) != 0 },
+            None => false,
+        }
+    }
+    /// The job's handle let go (kill-on-close ends what is left in it).
+    pub fn forget(pid: u32) {
+        let job = JOBS.lock().ok().and_then(|mut g| g.as_mut().and_then(|m| m.remove(&pid)));
+        if let Some(j) = job {
+            unsafe {
+                CloseHandle(j);
+            }
+        }
+    }
+    pub fn terminate_pid(pid: u32) -> bool {
+        unsafe {
+            let h = OpenProcess(0x0001, 0, pid); // PROCESS_TERMINATE
+            if h == 0 {
+                return false;
+            }
+            let ok = TerminateProcess(h, 1) != 0;
+            CloseHandle(h);
+            ok
         }
     }
 }
@@ -174,7 +447,7 @@ fn reader<R: Read + Send + 'static>(mut r: R, max: usize) -> thread::JoinHandle<
 /// execFile: `bin` run to its end (or ended, its tree too, after `limit`) → its output; Err only when it could not
 /// start («ENOENT» when there is no such program).
 pub fn run(bin: &Path, args: &[String], limit: Duration, max_out: usize) -> Result<Ran, String> {
-    let mut child = command(bin, args).spawn().map_err(spawn_error)?;
+    let mut child = spawn(&mut command(bin, args)).map_err(spawn_error)?;
     let so = reader(child.stdout.take().ok_or("no stdout")?, max_out);
     let se = reader(child.stderr.take().ok_or("no stderr")?, 1 << 20);
     let started = Instant::now();
@@ -193,6 +466,8 @@ pub fn run(bin: &Path, args: &[String], limit: Duration, max_out: usize) -> Resu
             Err(_) => break None,
         }
     };
+    // (Ended: its job let go — on Windows whatever it left running in it ends with it.)
+    forget_job(child.id());
     let out = so.join().unwrap_or_default();
     let err = se.join().unwrap_or_default();
     Ok(Ran { code: status.and_then(|s| s.code()), out, err: String::from_utf8_lossy(&err).into_owned(), timed_out })
@@ -218,7 +493,7 @@ pub struct Lines {
 /// `bin` started; each stdout line (split on \n, a \r before it dropped) to `on_line` on a thread of its own.
 /// stderr's last `max_err` bytes or so are kept (an error's last lines are what is shown).
 pub fn spawn_lines<F: FnMut(&str) + Send + 'static>(bin: &Path, args: &[String], max_err: usize, mut on_line: F) -> Result<Lines, String> {
-    let mut child = command(bin, args).spawn().map_err(spawn_error)?;
+    let mut child = spawn(&mut command(bin, args)).map_err(spawn_error)?;
     let pid = child.id();
     let mut so = child.stdout.take().ok_or("no stdout")?;
     let se = child.stderr.take().ok_or("no stderr")?;
@@ -253,6 +528,7 @@ impl Lines {
     /// Waits for the end (and for every line read) → (exit code, stderr's tail).
     pub fn wait(mut self) -> (Option<i32>, String) {
         let st = self.child.wait().ok();
+        forget_job(self.pid);
         if let Some(t) = self.out.take() {
             let _ = t.join();
         }
@@ -356,3 +632,41 @@ mod path_tests {
         assert_eq!(super::path_with_front(front, None).unwrap().to_string_lossy(), front.display().to_string());
     }
 }
+
+#[cfg(all(test, unix))]
+mod orphan_tests {
+    /// A child that starts a grandchild and ends at once: the grandchild — orphaned, no longer under it — is still ended
+    /// by the tree kill (its process group).
+    #[test]
+    fn orphaned_grandchild_killed() {
+        let dir = std::env::temp_dir().join(format!("kt-orphan-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let pidf = dir.join("gc.pid");
+        let script = format!("sleep 30 & echo $! > '{}'; exit 0", pidf.display());
+        let mut c = super::command(std::path::Path::new("/bin/sh"), &["-c".to_string(), script]);
+        let mut child = super::spawn(&mut c).unwrap();
+        let root = child.id();
+        let _ = child.wait();
+        let mut gc: u32 = 0;
+        for _ in 0..100 {
+            if let Ok(t) = std::fs::read_to_string(&pidf) {
+                if let Ok(p) = t.trim().parse() {
+                    gc = p;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(gc > 0 && super::alive(gc), "grandchild not running");
+        let how = super::kill_tree_report(root);
+        for _ in 0..100 {
+            if !super::alive(gc) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!super::alive(gc), "the orphaned grandchild survived: {}", how);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+

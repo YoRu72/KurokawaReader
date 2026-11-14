@@ -858,29 +858,37 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
         s.auto_stop_why = String::new();
         s.auto_text = logic::AutoText::default();
     }
-    // (Clicks go through it to what is under it — Electron's setIgnoreMouseEvents(true). Set while it is still hidden:
-    // tao re-derives the window's styles from its own flags at every such change — after the raw show below it took the
-    // no-activate style off and hid the window it believed hidden (run 43579061871: the caption seen, then gone).)
-    #[cfg(kt_ignore_cursor)]
+    // (Clicks go through it to what is under it — Electron's setIgnoreMouseEvents(true).
+    // Windows: set while it is still hidden — tao re-derives the window's styles from its own flags at every such change,
+    // and after the raw no-activate show below it took that style off and hid the window it believed hidden (run
+    // 43579061871: the caption seen, then gone). Elsewhere: after the ordinary show — on Linux tao reaches the GTK
+    // window's GdkWindow, which a window never shown has not got yet (run 43581873419: tao's event loop panicked at
+    // event_loop.rs:459, `unwrap()` on None, and the self-test ended with SIGABRT).)
+    #[cfg(windows)]
+    let before = fg::foreground();
+    #[cfg(all(windows, kt_ignore_cursor))]
+    let through = Some(w.set_ignore_cursor_events(true).is_ok());
+    // (Windows: the caption never takes the focus — made a no-activate tool window at the Win32 level and shown without
+    // activation (SW_SHOWNOACTIVATE): a game or the page in front keeps the keyboard; nothing to give back. No call that
+    // changes tao's flags follows. Where its window cannot be found, the show and the give-back as before.)
+    #[cfg(windows)]
+    let shown_quietly = noact::show_no_activate(&title);
+    #[cfg(windows)]
+    {
+        st().caption_title = title.clone();
+    }
+    #[cfg(not(windows))]
+    let shown_quietly = false;
+    if !shown_quietly {
+        let _ = w.show();
+    }
+    #[cfg(all(not(windows), kt_ignore_cursor))]
     let through = Some(w.set_ignore_cursor_events(true).is_ok());
     #[cfg(not(kt_ignore_cursor))]
     let through: Option<bool> = None;
     {
         let mut s = st();
         s.caption_click_through = through;
-    }
-    // (Windows: the caption never takes the focus — made a no-activate tool window at the Win32 level and shown without
-    // activation (SW_SHOWNOACTIVATE): a game or the page in front keeps the keyboard; nothing to give back. No call that
-    // changes tao's flags follows. Where its window cannot be found, the show and the give-back as before.)
-    #[cfg(windows)]
-    let before = fg::foreground();
-    #[cfg(windows)]
-    let shown_quietly = noact::show_no_activate(&title);
-    st().caption_title = title.clone();
-    #[cfg(not(windows))]
-    let shown_quietly = false;
-    if !shown_quietly {
-        let _ = w.show();
     }
     #[cfg(windows)]
     {
