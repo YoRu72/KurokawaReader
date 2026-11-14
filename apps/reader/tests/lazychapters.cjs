@@ -85,7 +85,7 @@ async function placeAt(p, chapterLabel, mark) {
   await p.waitForSelector('.panel.open .toc-list button'); await p.waitForTimeout(200);
   await p.evaluate((l) => { const b = [...document.querySelectorAll('.panel.open .toc-list button')].find((x) => x.querySelector('.toc-label')?.textContent.trim() === l || x.textContent.trim().startsWith(l + ' ') || x.textContent.trim() === l); b.click(); }, chapterLabel);
   await p.waitForTimeout(500);
-  await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head button'); if (c) c.click(); });
+  await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head > button[data-icon="close"]'); if (c) c.click(); });
   await p.waitForTimeout(300);
   await p.evaluate((m) => { const sc = document.querySelector('.reader-scroll'); const el = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.startsWith(`[${m}]`)); sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 2; }, mark);
   await p.waitForTimeout(1400);
@@ -120,7 +120,7 @@ async function run(dist, label) {
       await p.waitForSelector('.panel.open .toc-list button', { state: 'visible', timeout: 20000 });
       await p.evaluate(() => [...document.querySelectorAll('.panel.open .toc-list button')].find((x) => x.textContent.trim().startsWith('Chapter 300')).click());
       await p.waitForTimeout(900);
-      await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head button'); if (c) c.click(); }); await p.waitForTimeout(300);
+      await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head > button[data-icon="close"]'); if (c) c.click(); }); await p.waitForTimeout(300);
       out.tocTop = await topMark(p);
     }
     out.toolbarToc = asked;
@@ -135,7 +135,7 @@ async function run(dist, label) {
       await p.evaluate(() => document.querySelector('.panel.open .hit button').click()); await p.waitForTimeout(900);
       out.hitShown = await p.evaluate(() => { const hl = CSS.highlights?.get('kr-search-current'); const r = hl && [...hl][0]; if (!r) return null; const rect = r.getBoundingClientRect(); const para = r.startContainer.parentElement.closest('p'); return { text: r.toString(), inView: rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight, para: /\[(C\d+-P\d+)\]/.exec(para?.textContent ?? '')?.[1] }; });
     }
-    await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head button'); if (c) c.click(); }); await p.waitForTimeout(300);
+    await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head > button[data-icon="close"]'); if (c) c.click(); }); await p.waitForTimeout(300);
     out.marks = await p.evaluate(() => ({ far: [...document.querySelectorAll('mark[data-hl="hl-far"]')].map((m) => m.textContent).join(''), near: [...document.querySelectorAll('mark[data-hl="hl-near"]')].map((m) => m.textContent).join(''), badges: document.querySelectorAll('.kr-note-badge').length }));
     // Three places, and what is saved there.
     for (const [ch, m] of [['Chapter 5', 'C5-P10'], ['Chapter 160', 'C160-P3'], ['Chapter 300', 'C300-P30']]) {
@@ -197,7 +197,7 @@ async function run(dist, label) {
     await p.waitForTimeout(500);
     out.ar.hits = await p.evaluate(() => document.querySelectorAll('.panel.open .hit').length);
     if (out.ar.hits) { await p.evaluate(() => document.querySelector('.panel.open .hit button').click()); await p.waitForTimeout(900); out.ar.hitPara = await p.evaluate(() => { const hl = CSS.highlights?.get('kr-search-current'); const r = hl && [...hl][0]; return r ? /\[(C\d+-P\d+)\]/.exec(r.startContainer.parentElement.closest('p')?.textContent ?? '')?.[1] : null; }); }
-    await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head button'); if (c) c.click(); }); await p.waitForTimeout(300);
+    await p.evaluate(() => { const c = document.querySelector('.panel.open .panel-head > button[data-icon="close"]'); if (c) c.click(); }); await p.waitForTimeout(300);
     await placeAt(p, 'الفصل 33', 'C33-P7');
     const b = (await allBooks(p)).find((x) => x.id === bk.id);
     out.ar.place = { block: b.progress?.block, chapter: b.progress?.chapter, toc: b.progress?.toc, pct: b.progress?.pct, top: await topMark(p) };

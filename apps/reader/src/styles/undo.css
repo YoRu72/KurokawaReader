@@ -2,6 +2,11 @@
 /* The snackbar on the app's own surfaces (no light slab over a dark page), and rising straight up — centred all the
    way (the shared «rise» moved it in from the side: its transform replaced the centring one). */
 .toast:not(.error) { background: var(--md-surface-container-highest); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); }
+/* Under an interface style (src/theme/glass.css, shared with the Tools app, frosts it on the inverse surface): the same
+   surface as everywhere here, the style's own — its highest surface frosted, its text and edge —, so the words and the
+   action stay readable in every style, dark or light. (body: above the shared sheet's rule, which loads later.) */
+html[data-glass] body .toast:not(.error) { background: color-mix(in srgb, var(--md-surface-container-highest) 90%, transparent); color: var(--md-on-surface); border-color: var(--g-edge, var(--md-outline-variant)); }
+html[data-glass='off'] body .toast:not(.error) { background: var(--md-surface-container-highest); }
 .toast { animation-name: kr-snack-rise; }
 @keyframes kr-snack-rise { from { transform: translate(-50%, 40px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
 .toast.has-action { display: flex; align-items: center; gap: 4px 12px; padding: 6px 8px 6px 16px; min-height: 48px; width: max-content; max-width: min(560px, calc(100vw - 32px)); pointer-events: auto; }

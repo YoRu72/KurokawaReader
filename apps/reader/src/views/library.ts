@@ -14,7 +14,7 @@ import { SUPPORTED_ACCEPT } from '../formats/detect';
 import { navigate } from '../router';
 import { readContentUri } from '../native';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
-import { openScanSheet, FORMAT_GROUPS, groupOf, canScan, canScanWhole } from '../ui/scan';
+import { FORMAT_GROUPS, groupOf, canScan, canScanWhole } from '../ui/scangroups';
 import { pickDestination, type Destination } from '../ui/destination';
 import { todayKey, liveStatsOf } from '../statscore';
 import * as P from '../pins';
@@ -236,13 +236,14 @@ export function libraryView(): HTMLElement {
     if (!list.length) return;
     const b = list[Math.floor(Math.random() * list.length)]; navigate(`/read/${b.id}`);
   }
+  // (The scan's sheet and its code come when a scan is asked for: src/ui/scan.ts.)
   function openScan(auto = false) {
-    openScanSheet({
+    void import('../ui/scan').then(({ openScanSheet }) => openScanSheet({
       folders, activeFolder, auto,
       existing: new Set(books.map((b) => `${b.fileName}:${b.size}`)),
       fallbackPick: () => void pickFiles(),
       onImport: async (files, dest) => { await doImport(files, await resolveDestination(dest)); },
-    });
+    }));
   }
   /** The device's own shelf on the library page: the books lying in its Download folder (Android) or on it,
    *  browsed and opened from here — as Mihon's local source. */

@@ -231,13 +231,13 @@ async function session(dist, fn) {
     await p.waitForSelector('.panel.open .toc-list button >> visible=true'); await p.waitForTimeout(300);
     const tocLabels = await p.evaluate(() => [...document.querySelectorAll('.panel.open .toc-label')].map((x) => x.textContent));
     ok('… the contents list «The Lantern Road», «The Quiet Mill», and «Chapter 5» as it is', tocLabels.includes('The Lantern Road') && tocLabels.includes('The Quiet Mill') && tocLabels.includes('Chapter 5') && !tocLabels.some((l) => /^Chapter [137]:/.test(l)), tocLabels);
-    await p.click('.panel.open .panel-head button').catch(() => {}); await p.waitForTimeout(200);
+    await p.click('.panel.open .panel-head > button[data-icon="close"]').catch(() => {}); await p.waitForTimeout(200);
     // Search finds the chapter's text — its hidden label too.
     await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'search' })));
     await p.waitForSelector('.panel.open input[type=search]'); await p.fill('.panel.open input[type=search]', 'Chapter 3: The Quiet'); await p.waitForTimeout(1800);
     const hits = await p.evaluate(() => [...document.querySelectorAll('.panel.open .hit')].length);
     ok('… search still finds «Chapter 3: The Quiet» in the chapter', hits >= 1, hits);
-    await p.click('.panel.open .panel-head button').catch(() => {}); await p.waitForTimeout(200);
+    await p.click('.panel.open .panel-head > button[data-icon="close"]').catch(() => {}); await p.waitForTimeout(200);
     const mk = await p.evaluate(() => { const ms = [...document.querySelectorAll('.reader-flow mark.kr-hl')]; return { text: ms.map((m) => m.textContent).join(''), para: ms[0]?.closest('p')?.textContent.slice(0, 5) ?? '', chapter: [...document.querySelectorAll('.reader-flow section.kr-chapter')].indexOf(ms[0]?.closest('section')) }; });
     ok('… the highlight made in chapter 3 comes back on its words, in its paragraph', mk.text === 'extraordinarily methodical' && mk.para.trim() === '[P1]' && mk.chapter === 2, mk);
 
@@ -282,7 +282,7 @@ async function session(dist, fn) {
       await p.waitForSelector('.panel.open .toc-list button >> visible=true'); await p.waitForTimeout(300);
       const jt = await p.evaluate(() => [...document.querySelectorAll('.panel.open .toc-label')].map((x) => x.textContent));
       ok('… the contents list «帰り道» and «灯の番» (without the label), no readings in them', jt.includes('帰り道') && jt.includes('灯の番'), jt);
-      await p.click('.panel.open .panel-head button').catch(() => {}); await p.waitForTimeout(200);
+      await p.click('.panel.open .panel-head > button[data-icon="close"]').catch(() => {}); await p.waitForTimeout(200);
     }
     ok('no page errors', errors.length === 0, errors);
   });

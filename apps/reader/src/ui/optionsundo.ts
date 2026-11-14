@@ -81,12 +81,17 @@ export const stepCount = (): number => past.length;
 export const canRedo = (): boolean => future.length > 0;
 export async function undoOptions(): Promise<boolean> {
   merging = null; const s = past.pop(); if (!s) return false;
-  await apply(s, 'before'); future.push(s); s.afterUndo?.(); changed(); return true;
+  await apply(s, 'before'); future.push(s); s.afterUndo?.(); changed(); appliedNow(); return true;
 }
 export async function redoOptions(): Promise<boolean> {
   merging = null; const s = future.pop(); if (!s) return false;
-  await apply(s, 'after'); past.push(s); changed(); return true;
+  await apply(s, 'after'); past.push(s); changed(); appliedNow(); return true;
 }
+/** Told after an Undo or a Redo was applied — for what shows settings outside the options themselves (Settings →
+ *  Appearance's style and page pair: src/views/settings.ts), so that it is drawn as they now are. */
+const applied = new Set<() => void>();
+const appliedNow = () => applied.forEach((f) => f());
+export function onApplied(fn: () => void): () => void { applied.add(fn); return () => applied.delete(fn); }
 /** The last step (to name it, or attach what its undo also does). */
 export const lastStep = (): Step | undefined => past[past.length - 1];
 export function onHistory(fn: () => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }

@@ -67,7 +67,7 @@ async function longBook(b, port, errors) {
   await p.fill('.panel.open input[type=search]', 'line 3:'); await p.waitForSelector('.panel.open .hit', { timeout: 30000 }); await p.waitForTimeout(2500);
   const n = (await p.$$('.panel.open .hit')).length; console.log('hits:', n);
   await p.click('.panel.open .hit >> nth=0'); await p.waitForTimeout(300);
-  if (await p.$('.panel.open')) await p.click('.panel.open .panel-head button');
+  if (await p.$('.panel.open')) await p.click('.panel.open .panel-head > button[data-icon="close"]');
   await p.waitForSelector('.search-nav'); const t1 = await p.$eval('.search-nav-text', (e) => e.textContent); console.log('nav:', t1);
   ok('a hit opened: the bar over the page, the first of all', /^1 \/ \d+/.test(t1) && n > 1);
   await p.click('.search-nav button[aria-label="Next result"]'); await p.waitForTimeout(200);
@@ -78,7 +78,7 @@ async function longBook(b, port, errors) {
   await p.click('.search-nav button[aria-label="Search in book"]'); await p.waitForSelector('.panel.open .hit');
   ok('opened again: the last search as it was', (await p.inputValue('.panel.open input[type=search]')) === 'line 3:' && (await p.$$('.panel.open .hit')).length === n && !!(await p.$('.panel.open .hit.current')));
   await p.waitForTimeout(150); await p.keyboard.type('Z'); const typed = await p.inputValue('.panel.open input[type=search]'); ok('opened again: what is typed next goes after the words, not before them', typed === 'line 3:Z', typed); await p.keyboard.press('Backspace'); await p.waitForTimeout(500);
-  await p.click('.panel.open .search-keep input'); await p.click('.panel.open .panel-head button'); await p.keyboard.press('/'); await p.waitForSelector('.panel.open input[type=search]');
+  await p.click('.panel.open .search-keep input'); await p.click('.panel.open .panel-head > button[data-icon="close"]'); await p.keyboard.press('/'); await p.waitForSelector('.panel.open input[type=search]');
   ok('the switch off: a new search each time', (await p.inputValue('.panel.open input[type=search]')) === '');
   await longBook(b, port, errors);
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
