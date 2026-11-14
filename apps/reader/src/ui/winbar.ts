@@ -1,3 +1,4 @@
+// (The same file is in both apps' src/ui: a change to one goes to both — tests/shared-copies.cjs.)
 // The window's title bar, the app's own, where the desktop shell has the page draw all of it — its buttons too (the
 // Tauri shell: desktop-tauri/bridge.js → src-tauri/src/titlebar.rs; Electron's keeps the system's buttons over its
 // bar, ui/titlebar.ts). Material 3 Expressive, in the colours of whatever theme is on (the sidebar's surface in the
@@ -10,7 +11,7 @@
 // mouse at the very top shows it for a moment). Transparent (a setting): no surface of its own — the buttons float
 // over the top of the page, whose own top bars keep room for them, and any free spot of the top strip drags the
 // window. The system's frame (a setting): no bar here at all.
-import { getSettings, onSettingsChange, type VisualSettings } from '../settings';
+import { getSettings, onSettingsChange } from '../settings';
 import { t, onLangChange } from '../i18n';
 import { brandIcon } from './brandIcon';
 
@@ -122,7 +123,7 @@ export function startWinBar(bridge: WinBridge | undefined): void {
     root.style.setProperty('--wb-end', `${mac ? (rtl ? w : 0) : w}px`);
   };
 
-  const paint = (s: VisualSettings = getSettings()): void => {
+  const paint = (s: ReturnType<typeof getSettings> = getSettings()): void => {
     if (!state?.own) {
       bar.remove();
       root.classList.remove('winbar', 'wb-mac', 'wb-clear', 'wb-named', 'wb-maxed', 'wb-blur', 'wb-hide', 'wb-peek');

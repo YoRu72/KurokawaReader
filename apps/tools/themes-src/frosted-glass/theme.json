@@ -1,0 +1,13 @@
+{
+  "id": "frosted-glass",
+  "name": "Frosted Glass",
+  "by": "Wessam Lauf",
+  "version": "1.4.0",
+  "source": "homeassistant-frosted-glass-themes, commit 320583a",
+  "license": { "spdx": "MIT", "file": "LICENSE" },
+  "assets": [
+    { "name": "bg-dark", "file": "frosted-glass-dark-background.jpg", "type": "image/jpeg" },
+    { "name": "bg-light", "file": "frosted-glass-light-background.jpg", "type": "image/jpeg" }
+  ],
+  "preview": { "dark": ["#02060b", "rgb(2 6 11 / .38)", "#7aa2be"], "light": ["#fef4f2", "rgb(254 244 242 / .42)", "#4e58b8"] }
+}

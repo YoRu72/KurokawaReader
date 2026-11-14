@@ -51,6 +51,7 @@ async function booru(u: string, max: number): Promise<Gallery> {
 export async function gallery(u: string, opts: { max?: number; cookies?: string; range?: string } = {}): Promise<Gallery> {
   const g = galleryOf(u); if (!g) return { title: '', items: [] };
   if (g.kind === 'booru') return booru(u, opts.max ?? 400);
-  const r = await desk()!.galleryList!({ url: u, range: opts.range, cookies: opts.cookies });
+  const { toolError } = await import('../video/ytdlp');
+  const r = await toolError(desk()!.galleryList!({ url: u, range: opts.range, cookies: opts.cookies }));
   return { title: r.title || g.name, items: r.items.map((x) => ({ href: x.url, kind: /\.(mp4|webm|mkv|mov|gif)$/i.test(x.name) ? 'video' : 'image', text: x.name, name: x.name })) };
 }

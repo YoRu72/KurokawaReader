@@ -1,6 +1,7 @@
 // The bottom bar as the reader wants it: which places are on it and in what order (Settings is always there, last).
 import { h, icon, iconButton, openSheet } from '../ui/dom';
 import { t } from '../i18n';
+import { offerUndo } from '../ui/undo';
 import { getSettings, updateSettings } from '../settings';
 import { navPlacesAll } from '../ui/navPlaces';
 
@@ -19,6 +20,6 @@ export function navCustomizeSheet(): void {
       h('div', { class: 'dest-row' }, h('input', { type: 'checkbox', checked: true, disabled: true, 'aria-label': t('navSettings') }), icon('settings'), h('span', { class: 'grow' }, t('navSettings')), h('small', { class: 'src' }, t('navAlways'))));
   };
   sh.body.append(h('p', { class: 'hint' }, t('navCustomizeHint')), list);
-  sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { updateSettings({ navOrder: [], navHidden: [] }); draw(); } }, icon('refresh'), t('reset')));
+  sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { /* (undo-redo) */ const s0 = getSettings(); const was = { navOrder: [...(s0.navOrder ?? [])], navHidden: [...(s0.navHidden ?? [])] }; const reset = () => { updateSettings({ navOrder: [], navHidden: [] }); draw(); }; reset(); offerUndo(t('barReset'), () => { updateSettings({ navOrder: [...was.navOrder], navHidden: [...was.navHidden] }); draw(); }, reset); } }, icon('refresh'), t('reset')));
   draw();
 }

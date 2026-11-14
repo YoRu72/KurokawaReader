@@ -52,7 +52,9 @@ export class DesktopEngine implements Engine {
   list() { return this.b.list(); }
   async add(o: AddOptions) { const { withVideoArgs } = await import('../video/choice'); return this.b.add(await withVideoArgs(o)).catch((e: Error) => { if (/\bexists$/.test(String(e?.message ?? ''))) throw new Error(t('existsSkipped', { name: o.name ?? '' })); throw e; }); }
   pause(id: string) { return this.b.pause(id); }
-  resume(id: string) { return this.b.resume(id); }
+  // (Stage P9: a download the other version of the app runs now — after the hand-over — is refused by the shell
+  // («kt-owner:held»); the page says so, with «Take them back», ui/ownersheet.ts. Never with the Electron switch off.)
+  resume(id: string) { return this.b.resume(id).catch((e: unknown) => { if (/kt-owner:held/.test(String((e as Error)?.message ?? e))) { void import('../ui/ownersheet').then((m) => m.ownerSheet(id)); throw new Error(t('ownerHeldShort')); } throw e; }); }
   remove(id: string, del: boolean) { return this.b.remove(id, del); }
   setFiles(id: string, p: (0 | 1 | 2)[]) { return this.b.setFiles(id, p); }
   setLimits(l: Limits) { return this.b.setLimits(l); }

@@ -41,9 +41,17 @@ export function familyNames(b: Uint8Array): string[] {
 const byFileName = (file: string) => [file.replace(/\.[^.]+$/, '').replace(/[-_](regular|bold|italic|medium|light|semibold|black|thin)$/i, '').replace(/[-_]+/g, ' ')];
 
 /* ---------- the app's own fonts ---------- */
-export async function library(): Promise<FontEntry[]> { return (await db.getMeta<FontEntry[]>(LIB)) ?? []; }
+// (undo-redo) A font removed with an Undo is only held out of the library (lists, the player) until it is over; then deleted.
+const heldFonts = new Set<string>();
+const stored = async (): Promise<FontEntry[]> => (await db.getMeta<FontEntry[]>(LIB)) ?? [];
+export async function library(): Promise<FontEntry[]> { return (await stored()).filter((x) => !heldFonts.has(x.id)); }
+export async function removeFontWithUndo(x: FontEntry, redraw: () => void): Promise<void> {
+  const [{ offerUndo }, { t }] = await Promise.all([import('../ui/undo'), import('../i18n')]);
+  const hide = () => { heldFonts.add(x.id); redraw(); }; hide();
+  offerUndo(t('fontRemoved', { name: x.families[0] ?? x.file }), () => { heldFonts.delete(x.id); redraw(); }, hide, { commit: async () => { await removeFont(x.id); heldFonts.delete(x.id); } });
+}
 export async function addFonts(files: File[]): Promise<number> {
-  const lib = await library(); let n = 0;
+  const lib = await stored(); let n = 0;
   for (const f of files) {
     if (!FONT_RE.test(f.name) || lib.some((x) => x.file === f.name && x.size === f.size)) continue;
     const bytes = new Uint8Array(await f.arrayBuffer()); const fam = /\.woff2?$/i.test(f.name) ? byFileName(f.name) : familyNames(bytes);
@@ -52,7 +60,7 @@ export async function addFonts(files: File[]): Promise<number> {
   }
   await db.setMeta(LIB, lib); return n;
 }
-export async function removeFont(id: string): Promise<void> { await db.deleteFile(`font:${id}`).catch(() => undefined); await db.setMeta(LIB, (await library()).filter((x) => x.id !== id)); }
+export async function removeFont(id: string): Promise<void> { await db.deleteFile(`font:${id}`).catch(() => undefined); await db.setMeta(LIB, (await stored()).filter((x) => x.id !== id)); }
 
 /* ---------- the folder ---------- */
 type Lister = { listDir?(p: string): Promise<{ entries: { name: string; path: string; dir: boolean; size: number; mtime: number }[] }> };

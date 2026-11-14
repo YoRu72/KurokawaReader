@@ -1,5 +1,6 @@
 package app.kurokawa.tools;
 
+import app.kurokawa.tools.KtCore;   // (the same package; named so tests/native/screen.sh compiles this file outside it)
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -62,7 +63,18 @@ final class KtTranslate {
      *  (line breaks kept: a subtitle's two lines stay two). */
     static String norm(String t) { if (t == null) return ""; String s = java.text.Normalizer.normalize(t, java.text.Normalizer.Form.NFC); return s.replaceAll("[ \\t\\u00A0\\u3000]+", " ").replaceAll(" ?\\n ?", "\n").trim(); }
     /** The translation already known for `text`, or null (nothing asked). */
-    static String peek(String text, Config c) { if (text == null || !hasLetters(text)) return text; synchronized (cache) { return cache.get(c.id() + "\u0000" + norm(text)); } }
+    static String peek(String text, Config c) { if (text == null || !hasLetters(text)) return text; synchronized (cache) { return cache.get(cacheKey(c, text)); } }
+    /** The cache's key for `t`: what translates, a NUL, the text evened out. (Stage M1: on a debuggable build with the
+     *  Rust core present, also asked of Rust — kt-core's translatekey.rs — and a difference recorded; the text goes
+     *  there already composed (NFC), which needs Unicode tables Rust's std does not carry. This answer is the one used.) */
+    static String cacheKey(Config c, String t) {
+        String k = c.id() + "\u0000" + norm(t);
+        if (KtCore.shadowing() && t != null) {
+            List<Object> g = new ArrayList<>(); for (KtLettering.Entry e : c.glossary) { List<Object> p = new ArrayList<>(); p.add(e.from); p.add(e.to); g.add(p); }
+            KtCore.shadow("tr.cacheKey", k, "engine", c.engine, "source", c.source, "target", c.target, "style", c.style, "base", c.base, "model", c.model, "prompt", c.prompt, "glossary", g, "text", java.text.Normalizer.normalize(t, java.text.Normalizer.Form.NFC));
+        }
+        return k;
+    }
     static int cached() { synchronized (cache) { return cache.size(); } }
 
     /** The translations of `texts`, in order (empty lines and lines with no letters come back as they are). */
@@ -72,7 +84,7 @@ final class KtTranslate {
         for (int k = 0; k < texts.size(); k++) {
             String t = texts.get(k) == null ? "" : texts.get(k);
             if (!hasLetters(t)) { out[k] = t; continue; }
-            String key = norm(t), hit; synchronized (cache) { hit = cache.get(c.id() + "\u0000" + key); }
+            String key = norm(t), hit; synchronized (cache) { hit = cache.get(cacheKey(c, t)); }
             if (hit != null) { out[k] = hit; continue; }
             todo.add(k); if (!firstOf.containsKey(key)) { firstOf.put(key, ask.size()); ask.add(t); }
         }
@@ -82,7 +94,7 @@ final class KtTranslate {
             Map<Integer, String> used = new java.util.HashMap<>(); List<String> sent = c.engine.equals("ai") ? ask : KtLettering.protect(ask, c.glossary, used);
             switch (c.engine) { case "deepl": got = deepl(sent, c); break; case "ai": got = ai(sent, c); break; case "microsoft": got = keyless(sent, c, "microsoft"); break; default: got = keyless(sent, c, "google"); }
             got = KtLettering.restore(got, used);
-            synchronized (cache) { for (int k = 0; k < ask.size(); k++) cache.put(c.id() + "\u0000" + norm(ask.get(k)), got.get(k)); }
+            synchronized (cache) { for (int k = 0; k < ask.size(); k++) cache.put(cacheKey(c, ask.get(k)), got.get(k)); }
             for (int k : todo) out[k] = got.get(firstOf.get(norm(texts.get(k))));
         }
         List<String> l = new ArrayList<>(); for (String s : out) l.add(s); return l;

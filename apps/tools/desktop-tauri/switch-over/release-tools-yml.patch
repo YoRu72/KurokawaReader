@@ -1,0 +1,186 @@
+--- a/.github/workflows/release-tools.yml
++++ b/.github/workflows/release-tools.yml
+@@ -3,10 +3,13 @@
+ # Every push to main that touches Kurokawa Tools builds it for Android, Windows, macOS and Linux and publishes
+ # (or refreshes) the pre-release tools-v<version> (apps/tools/package.json). Pre-releases, so the reader's own
+ # updater — which asks GitHub for the latest release — never mistakes a Tools release for one of its own.
++# From the switch-over (Tools' stage P9) the computer's main download is the Rust (Tauri) build (the rust-desktop job);
++# the Electron jobs still publish under their old names — the bridge build, RUST_SWITCH on — for two versions, as the
++# «previous build» (apps/tools/desktop-tauri/PORTING.md «Stage P9»).
+ on:
+   push:
+     branches: [main]
+-    paths: ['apps/tools/**', 'shared/**', '!shared/shell-rs/**', '.github/workflows/release-tools.yml']
++    paths: ['apps/tools/**', 'shared/**', '.github/workflows/release-tools.yml']
+   workflow_dispatch:
+ 
+ permissions:
+@@ -41,7 +44,7 @@
+       # (The runner's package server is sometimes unreachable: tried twice with its system packages, then without
+       # them — the runner already has what Chromium needs.)
+       - run: npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium
+-      - run: npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3 && node tests/desktop-files.cjs && node tests/ytdlp-js.cjs && node tests/aria2-start.cjs && node tests/shared-copies.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/files.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/av.cjs && node tests/tv.cjs && node tests/tvsearch.cjs && node tests/torrentstream.cjs && node tests/soundbeside.cjs && node tests/transcode.cjs && node tests/lettering.cjs && node tests/subfont.cjs && node tests/speedtest.cjs && node tests/inpaint.cjs && node tests/swipe.cjs && node tests/gestures.cjs && node tests/filesnames.cjs && node tests/filesjobs.cjs && node tests/filesclip.cjs && node tests/filesback.cjs && node tests/videoargs.cjs && node tests/videojob.cjs && node tests/videochoice.cjs en && node tests/videochoice.cjs ar && node tests/aria2poll.cjs && node tests/dlfix.cjs en && node tests/dlfix.cjs ar && node tests/desktoppaths.cjs && node tests/submatch.cjs && node tests/subpacks.cjs en && node tests/subpacks.cjs ar && node tests/mega.cjs && node tests/gdrive.cjs && node tests/mpvplayer.cjs && node tests/apk.cjs && node tests/swarm.cjs && node tests/settingscards.cjs && node tests/backnav.cjs && node tests/settingstabs.cjs && node tests/updater.cjs && node tests/player.cjs && node tests/videos.cjs && node tests/taskfiles.cjs en && node tests/taskfiles.cjs ar && node tests/anilistlink.cjs en && node tests/anilistlink.cjs ar && node tests/ipa.cjs en && node tests/ipa.cjs ar && node tests/archive.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && sh tests/native/screen.sh && node tests/screen.cjs en && node tests/screen.cjs ar && node tests/screenpc.cjs en && node tests/screenpc.cjs ar && node tests/folderaccess.cjs en && node tests/folderaccess.cjs ar && node tests/relink.cjs en && node tests/relink.cjs ar && node tests/installroute.cjs && node tests/replay.cjs && node tests/playertr.cjs && node tests/intake.cjs && node tests/playerpad.cjs && node tests/navtabs.cjs && node tests/anime.cjs && node tests/pcui.cjs && node tests/pcengine.cjs && node tests/pcmenu.cjs && node tests/pcsettings.cjs && node tests/titlebar.cjs tools && node tests/desktopstarter.cjs && node tests/appicon.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs && node tests/discover.cjs && node tests/mpvclear.cjs && node tests/mpvsee.cjs && node tests/tlsfallback.cjs && node tests/imgretry.cjs && node tests/nativelint.cjs
++      - run: npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3 && node tests/desktop-files.cjs && node tests/ytdlp-js.cjs && node tests/aria2-start.cjs && node tests/shared-copies.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/files.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/av.cjs && node tests/tv.cjs && node tests/tvsearch.cjs && node tests/torrentstream.cjs && node tests/soundbeside.cjs && node tests/transcode.cjs && node tests/lettering.cjs && node tests/subfont.cjs && node tests/speedtest.cjs && node tests/inpaint.cjs && node tests/swipe.cjs && node tests/gestures.cjs && node tests/filesnames.cjs && node tests/filesjobs.cjs && node tests/filesclip.cjs && node tests/filesback.cjs && node tests/videoargs.cjs && node tests/videojob.cjs && node tests/videochoice.cjs en && node tests/videochoice.cjs ar && node tests/aria2poll.cjs && node tests/dlfix.cjs en && node tests/dlfix.cjs ar && node tests/desktoppaths.cjs && node tests/submatch.cjs && node tests/subpacks.cjs en && node tests/subpacks.cjs ar && node tests/mega.cjs && node tests/gdrive.cjs && node tests/mpvplayer.cjs && node tests/apk.cjs && node tests/swarm.cjs && node tests/settingscards.cjs && node tests/backnav.cjs && node tests/settingstabs.cjs && node tests/updater.cjs && node tests/player.cjs && node tests/videos.cjs && node tests/taskfiles.cjs en && node tests/taskfiles.cjs ar && node tests/anilistlink.cjs en && node tests/anilistlink.cjs ar && node tests/ipa.cjs en && node tests/ipa.cjs ar && node tests/archive.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && sh tests/native/screen.sh && node tests/screen.cjs en && node tests/screen.cjs ar && node tests/screenpc.cjs en && node tests/screenpc.cjs ar && node tests/folderaccess.cjs en && node tests/folderaccess.cjs ar && node tests/relink.cjs en && node tests/relink.cjs ar && node tests/installroute.cjs && node tests/replay.cjs && node tests/playertr.cjs && node tests/intake.cjs && node tests/playerpad.cjs && node tests/navtabs.cjs && node tests/anime.cjs && node tests/pcui.cjs && node tests/pcengine.cjs && node tests/pcmenu.cjs && node tests/pcsettings.cjs && node tests/titlebar.cjs tools && node tests/desktopstarter.cjs && node tests/appicon.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs && node tests/discover.cjs && node tests/mpvclear.cjs && node tests/mpvsee.cjs && node tests/tlsfallback.cjs && node tests/imgretry.cjs && node tests/nativelint.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/handover.cjs && node tests/firstrun.cjs && node tests/setupui.cjs
+       - name: Package web build
+         run: cd dist && zip -r ../KurokawaTools-web.zip . && cd ..
+       - uses: actions/upload-artifact@v4
+@@ -229,9 +232,109 @@
+             apps/tools/desktop/out/KurokawaTools-pack-*.gz
+             apps/tools/desktop/out/*.packpart.json
+ 
++  # ---------- The Rust (Tauri) build: the main computer download from the switch-over on (stage P9) ----------
++  # Its files never take the Electron build's names, so no Electron copy's own updater takes one by mistake:
++  # KurokawaTools-<v>-windows-x64.exe (the setup program), …-windows-x64-setup.exe (the plain installer: the updater
++  # and the Electron switch take this one), …-windows-x64-portable.zip, …-macos-universal.DMG, …-linux-x64.appimage,
++  # …-linux-x64.deb (kt-core updatelogic.rs, desktop/rustswitch.cjs — tests/updatenames.cjs). (An Electron copy picks
++  # /win-x64\.exe$/, the first /\.dmg$/ and the first /\.AppImage$/ — case-sensitive —: none of these.)
++  rust-desktop:
++    needs: version
++    name: Rust ${{ matrix.name }}
++    runs-on: ${{ matrix.os }}
++    continue-on-error: ${{ matrix.optional }}
++    strategy:
++      fail-fast: false
++      matrix:
++        include:
++          - { name: Windows, os: windows-latest, bundles: 'nsis', target: '', optional: false }
++          - { name: Linux, os: ubuntu-22.04, bundles: 'appimage,deb', target: '', optional: false }
++          - { name: macOS, os: macos-15, bundles: 'dmg', target: 'universal-apple-darwin', optional: true }
++    defaults: { run: { shell: bash, working-directory: apps/tools } }
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with: { node-version: 22 }
++      - run: npm install
++      - run: npm run build
++      - name: Linux packages
++        if: runner.os == 'Linux'
++        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev file
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
++      - uses: Swatinem/rust-cache@v2
++        with:
++          workspaces: 'apps/tools/desktop-tauri/src-tauri -> target'
++          key: release-${{ matrix.target }}
++      # (aria2c as the Electron build gets it — none for macOS: Homebrew's at run time —, and 7-Zip from 7zip-bin.)
++      - name: aria2c and 7-Zip for the bundle
++        working-directory: apps/tools/desktop
++        run: |
++          node fetch-aria2.mjs
++          mkdir -p aria2 ../desktop-tauri/aria2
++          for d in aria2/*/; do [ -d "$d" ] && cp -R "${d%/}" ../desktop-tauri/aria2/; done
++          npm install --omit=dev --ignore-scripts --no-audit --no-fund
++          if [ "${{ matrix.target }}" = universal-apple-darwin ]; then archs="x64 arm64"; else archs=$(node -p process.arch); fi
++          plat=$(node -p "({ win32: 'win', darwin: 'mac' })[process.platform] || 'linux'")
++          for arch in $archs; do src="node_modules/7zip-bin/$plat/$arch"; if [ -d "$src" ]; then mkdir -p "../desktop-tauri/7zip/$plat/$arch"; cp "$src"/7za* "../desktop-tauri/7zip/$plat/$arch/"; chmod +x "../desktop-tauri/7zip/$plat/$arch/"7za* || true; fi; done
++          find node_modules/7zip-bin -maxdepth 1 -type f \( -iname '*licen*' -o -iname 'copying*' \) -exec cp {} ../desktop-tauri/7zip/ \;
++      - name: Build
++        working-directory: apps/tools/desktop-tauri
++        run: |
++          npx --yes @tauri-apps/cli@^2 icon ../desktop/icon.png
++          if [ -n "${{ matrix.target }}" ]; then npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}; else npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }}; fi
++      # (Windows: the installer's one screen — Tauri's own installer is kept, with a warning, if it cannot be put in.)
++      - name: One-page installer
++        if: runner.os == 'Windows'
++        working-directory: apps/tools/desktop-tauri
++        run: node src-tauri/installer/onepage.cjs src-tauri
++      # (Windows: the designed setup program — desktop-tauri/setup — with the NSIS installer above embedded and run
++      # silently underneath; told the program's file name Tauri gave it. Should it fail to build, the release still has
++      # the plain installer, and the job says so.)
++      - name: Setup program
++        if: runner.os == 'Windows'
++        continue-on-error: true
++        shell: pwsh
++        working-directory: apps/tools/desktop-tauri/src-tauri
++        run: |
++          $inner = Get-ChildItem 'target/release/bundle/nsis/*-setup.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
++          if (-not $inner) { throw 'no NSIS installer to embed' }
++          $v = (node -p "require('../../package.json').version").Trim()
++          $nsi = Get-ChildItem 'target' -Recurse -Depth 4 -Filter 'installer.nsi' -ErrorAction SilentlyContinue | Select-Object -First 1
++          $main = if ($nsi) { (Select-String -Path $nsi.FullName -Pattern '^\s*!define\s+MAINBINARYNAME\s+"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value } else { '' }
++          $env:KR_SETUP_APP_EXE = if ($main) { "$main.exe" } else { 'Kurokawa Tools.exe' }
++          $env:KR_SETUP_INNER = $inner.FullName
++          $env:KR_SETUP_APP_BYTES = "$((Get-Item 'target/release/kurokawa-tools.exe').Length)"
++          $env:CARGO_TARGET_DIR = (Resolve-Path 'target').Path
++          cargo build --release --manifest-path ../setup/src-tauri/Cargo.toml 2>&1 | Write-Host
++          if ($LASTEXITCODE) { "::warning::the setup program did not build: the release has the plain installer only"; throw "setup program: cargo build failed ($LASTEXITCODE)" }
++          New-Item -ItemType Directory -Force -Path 'target/release/bundle/setup' | Out-Null
++          Copy-Item 'target/release/KurokawaToolsSetup.exe' "target/release/bundle/setup/KurokawaTools-$v-windows-x64.exe" -Force
++      - name: Collect, under the release's names
++        working-directory: apps/tools/desktop-tauri/src-tauri
++        run: |
++          V=${{ needs.version.outputs.v }}; mkdir -p out
++          if [ "$RUNNER_OS" = Windows ]; then
++            cp target/release/bundle/nsis/*-setup.exe "out/KurokawaTools-$V-windows-x64-setup.exe"
++            for f in target/release/bundle/setup/*-windows-x64.exe; do [ -f "$f" ] && cp "$f" "out/KurokawaTools-$V-windows-x64.exe"; done
++            p="$RUNNER_TEMP/kt-portable"; mkdir -p "$p"; cp target/release/kurokawa-tools.exe "$p/Kurokawa Tools.exe"
++            for r in aria2 7zip; do [ -d "target/release/$r" ] && cp -r "target/release/$r" "$p/"; done
++            echo 'This copy is portable: it never updates itself. Download the new portable zip from the release page.' > "$p/KurokawaTools.portable"
++            (cd "$p" && 7z a -tzip -mx=7 "$GITHUB_WORKSPACE/apps/tools/desktop-tauri/src-tauri/out/KurokawaTools-$V-windows-x64-portable.zip" . > /dev/null)
++          elif [ "$RUNNER_OS" = macOS ]; then
++            cp target/universal-apple-darwin/release/bundle/dmg/*.dmg "out/KurokawaTools-$V-macos-universal.DMG"
++          else
++            cp target/release/bundle/appimage/*.AppImage "out/KurokawaTools-$V-linux-x64.appimage"
++            cp target/release/bundle/deb/*.deb "out/KurokawaTools-$V-linux-x64.deb"
++          fi
++          ls -la out
++      - uses: actions/upload-artifact@v4
++        with: { name: 'rust-${{ runner.os }}', path: apps/tools/desktop-tauri/src-tauri/out/* }
++
+   release:
+     name: Publish release
+-    needs: [version, web, android, windows, macos, linux]
++    needs: [version, web, android, windows, macos, linux, rust-desktop]
+     if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' }}
+     runs-on: ubuntu-latest
+     steps:
+@@ -259,6 +362,10 @@
+             echo "## What's new"
+             if [ -s "$APP/docs/notes/v$V.md" ]; then cat "$APP/docs/notes/v$V.md"; else echo "- Fixes and improvements"; fi
+             if [ "${{ needs.macos.result }}" != "success" ]; then echo; echo "_The macOS build did not run this time; the next release will carry one._"; fi
++            # (The new computer build is optional on macOS: without it the previous build's DMG is the Mac download, and the
++            # previous build on a Mac keeps updating as before — it offers the move only when the new DMG is there.)
++            if [ ! -d artifacts/rust-macOS ]; then echo; echo "_macOS: the new, smaller build did not come this time; the Mac download is the previous build's \`*-mac-universal.dmg\`, which keeps working and updating as before._"; fi
++            for os in Windows Linux; do if [ ! -d "artifacts/rust-$os" ]; then echo; echo "_$os: the new, smaller build did not come this time; the previous build stays the $os download._"; fi; done
+             echo
+             echo "## Files"
+             echo
+@@ -268,12 +375,23 @@
+             echo "| Android (older 32-bit phones) | \`*-armeabi-v7a.apk\` |"
+             echo "| Android (any, larger) | \`*-universal.apk\` |"
+             echo "| Android, a11y variant | \`*-a11y.apk\` — the same app with the screen translator's accessibility service (reads the screen's exact text); Google Play Protect may ask you to allow it. The ordinary APKs read the screen as a picture and install without a question |"
+-            echo "| Windows | \`*-win-x64.exe\` installer, or the portable \`*.exe\` |"
+-            echo "| macOS | \`*-mac-universal.dmg\` (unsigned: right-click → Open the first time; torrents need \`brew install aria2\`) |"
+-            echo "| Linux | \`*-linux-x64.AppImage\` (chmod +x, then run) |"
++            echo "| Windows | \`*-windows-x64.exe\` — the installer (new and far smaller; a few seconds, no administrator rights). The classic installer is \`*-windows-x64-setup.exe\`; the portable build is \`*-windows-x64-portable.zip\` |"
++            echo "| Windows (previous build, kept for two versions) | \`*-win-x64.exe\` installer, or the portable \`*-win-x64-portable.exe\` |"
++            echo "| macOS | \`*-macos-universal.DMG\` (unsigned: right-click → Open the first time; torrents need \`brew install aria2\`) |"
++            echo "| macOS (previous build) | \`*-mac-universal.dmg\` |"
++            echo "| Linux | \`*-linux-x64.appimage\` (chmod +x, then run), or \`*-linux-x64.deb\`; the previous build: \`*-linux-x86_64.AppImage\` |"
+             echo "| Android packs | \`KurokawaTools-pack-*.zip\` — Python and ffmpeg, downloaded by the app itself when an add-on needs them; nothing to install by hand |"
+             echo "| Web | \`KurokawaTools-web.zip\` — or https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/tools/ (downloads through the browser; torrents through a remote aria2) |"
++            echo
++            echo "_\`*-SHA256SUMS.txt\` holds every file's SHA-256, which the computer app's updater checks before it installs anything._"
+           } > notes.md
++      # (Every file's SHA-256, under its published name: the Rust build's updater and the Electron switch refuse a file
++      # that does not match.)
++      - name: Checksums
++        run: |
++          V=${{ needs.version.outputs.v }}
++          (cd artifacts && find . -type f ! -name '*.blockmap' -print0 | sort -z | xargs -0 sha256sum | sed -E 's#  \./[^/]+/#  #') > "KurokawaTools-$V-SHA256SUMS.txt"
++          cat "KurokawaTools-$V-SHA256SUMS.txt"
+       - uses: softprops/action-gh-release@v2
+         with:
+           tag_name: tools-v${{ needs.version.outputs.v }}
+@@ -288,3 +406,10 @@
+             artifacts/windows/*
+             artifacts/macos/*
+             artifacts/linux/*
++            KurokawaTools-*-SHA256SUMS.txt
++      # (The Rust build's files, uploaded after the others. Their names keep every Electron copy's updater off them, so
++      # the order does not matter: an Electron copy takes the bridge build, which makes the hand-over and offers the move.)
++      - name: The Rust build's files
++        env: { GH_TOKEN: '${{ github.token }}' }
++        run: |
++          for d in artifacts/rust-*; do [ -d "$d" ] && gh release upload "tools-v${{ needs.version.outputs.v }}" "$d"/* --clobber -R "$GITHUB_REPOSITORY"; done

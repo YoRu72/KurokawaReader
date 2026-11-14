@@ -2,6 +2,10 @@ import './styles/fonts.css';
 import './styles/base.css';
 import './styles/tools.css';
 import './styles/anime.css';
+import './theme/glass.css';
+import './theme/gallery.css';
+import './theme/editor.css';
+import './styles/glass-tools.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './router';
 import { h, icon, closeSheets } from './ui/dom';
@@ -10,6 +14,9 @@ import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { navPlacesAll } from './ui/navPlaces';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
+// (undo-redo) The snackbar's Undo / Redo, a computer's Ctrl+Z, and a settings restore that can still be taken back.
+import './styles/undo.css';
+import { wireUndoKeys } from './ui/undo';
 import { scheduleAutoCheck } from './updates';
 import { brandIcon, applyBrandIcon } from './ui/brandIcon';
 // (The icon of the user's choosing on the page's own little icon too, from the start.)
@@ -166,6 +173,7 @@ else {
   placeNav();
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
+  wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
   void import('./ui/gestures').then((g) => g.pageSwipe({
     enabled: () => getSettings().swipeTabs !== false,
     view: () => current,
@@ -187,7 +195,24 @@ else {
     void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   void import('./ui/imgRetry').then((m) => m.startImgRetry());
   void import('./desktopStarter').then((m) => m.startDesktopStarter());
-  void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
+  // (The window's own bar: the Tauri shell has the page draw all of it, its buttons too — ui/winbar.ts, the Reader's —;
+  // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
+  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
+  else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
+  // (Stage P9: the computer's two builds. The Tauri build: its first-run screen once — carrying the offer of the data the
+  // previous (Electron) version handed over —, else that offer alone when there is one (ui/firstrun.ts startScreens).
+  // The Electron build: the hand-over's maker reachable by the shell without an import (desktop/handover.cjs prepare
+  // runs window.__KT_HANDOVER__.beforeInstall() and installs the Tauri build only on true), and a while after the start
+  // the move offered when a release carries it — never while main.cjs's RUST_SWITCH is off (switchInfo answers null).)
+  // (Both shells that give window.kurokawaHandover: the tests' and CI's way in too — make, snapshot, the offer.)
+  if ((window as unknown as { kurokawaHandover?: unknown }).kurokawaHandover) {
+    const ho = () => import('./handover'); const hs = () => import('./ui/handoversheet');
+    try { Object.defineProperty(window, '__KT_HANDOVER__', { configurable: true, value: Object.freeze({ make: () => ho().then((m) => m.makeHandover()), beforeInstall: () => hs().then((m) => m.handoverBeforeInstall()), snapshot: () => ho().then((m) => m.profileSnapshot()), atStart: () => hs().then((m) => m.handoverAtStart()), restore: (dir?: string, mode?: 'auto' | 'copy' | 'merge') => ho().then(async (m) => { const f = await m.handoverApi()!.find!(dir); return m.restoreHandover(f, undefined, { mode }); }) }) }); } catch { /* defined already */ }
+  }
+  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/firstrun').then((m) => m.startScreens()).catch(() => undefined);
+  // (After the hand-over: the downloads both versions share run in one of them — told when the other holds them.)
+  if ((window as unknown as { kurokawaHandover?: { owner?: unknown } }).kurokawaHandover?.owner) void import('./ui/ownersheet').then((m) => m.startOwnerWatch()).catch(() => undefined);
+  else if ((window as unknown as { kurokawaHandover?: { shell?: string } }).kurokawaHandover?.shell === 'electron') window.setTimeout(() => void import('./rustswitch').then((m) => m.offerRustSwitch()).catch(() => undefined), 20000);
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());
   void import('./downloads/hotkeys').then((m) => m.startHotkeys());

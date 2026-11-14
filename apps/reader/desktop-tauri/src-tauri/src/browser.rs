@@ -28,7 +28,7 @@ use tauri::{AppHandle, Manager};
 
 use kurokawa_shell::{net, selftest as frame, util};
 
-use crate::browserlogic as logic;
+use kurokawa_shell::browserlogic as logic;
 
 /// The labels of the browser's windows begin so (main.rs lets them call kr_browser_deliver and nothing else).
 pub const PREFIX: &str = "krb-";
