@@ -212,7 +212,7 @@ function loadBridge(boot) {
     const got = []; let takes = 0; const evs = {}; const p6calls = [];
     const pwin = {
       __TAURI__: {
-        core: { invoke: (cmd, args) => { p6calls.push({ cmd, args }); if (cmd === 'kt_open_take') { takes++; return Promise.resolve(takes === 1 ? ['magnet:?xt=urn:btih:abc', 'data:application/x-bittorrent;base64,ZDQ6'] : takes === 2 ? ['https://e.org/f.iso'] : []); } return Promise.resolve(cmd === 'kt_list' ? [] : null); } },
+        core: { invoke: (cmd, args) => { p6calls.push({ cmd, args }); if (cmd === 'kt_open_take') { takes++; return Promise.resolve(takes === 1 ? ['magnet:?xt=urn:btih:abc', 'data:application/x-bittorrent;base64,ZDQ6'] : takes === 2 ? ['https://e.org/f.iso'] : []); } if (cmd === 'kt_task_take') return Promise.resolve(['cold1']); return Promise.resolve(cmd === 'kt_list' ? [] : null); } },
         event: { listen: (name, fn) => { (evs[name] = evs[name] || []).push(fn); return Promise.resolve(() => undefined); } },
       },
       dispatchEvent: (e) => { if (e.type === 'kt:open') got.push(e.detail); return true; },
@@ -230,7 +230,9 @@ function loadBridge(boot) {
     assert.ok(pwin.__KT_OPEN_LOG__.length === 3 && pwin.__KT_OPEN_LOG__[0].startsWith('magnet:'));
     const hk = []; const oh = pwin.kurokawaTools.onHotkeyAdd((x) => hk.push(x)); const ot = []; pwin.kurokawaTools.onOpenTask((x) => ot.push(x)); await new Promise((ok) => setTimeout(ok, 5));
     evs['kt:hotkeyAdd'][0]({ payload: { mode: 'clip', text: 'magnet:?x' } }); evs['kt:openTask'][0]({ payload: 'g1' }); oh(); evs['kt:hotkeyAdd'][0]({ payload: { mode: 'clip', text: 'y' } });
-    assert.deepEqual(JSON.parse(JSON.stringify(hk)), [{ mode: 'clip', text: 'magnet:?x' }]); assert.deepEqual(ot, ['g1']);
+    // (The original system: a click kept before the page listened — kt_task_take — handed to the callback first.)
+    assert.deepEqual(JSON.parse(JSON.stringify(hk)), [{ mode: 'clip', text: 'magnet:?x' }]); assert.deepEqual(ot, ['cold1', 'g1']);
+    assert.equal(p6calls.filter((c) => c.cmd === 'kt_task_take').length, 1, 'kt_task_take asked once per subscription');
   }
 
   // Screen translator: a region of null (the whole picture) sent as null, as the preload sends it; kt:screenCaption to
@@ -439,9 +441,11 @@ function loadBridge(boot) {
     // (The hybrid — hybridtest.rs, notifier.rs, mediawatch.rs, cookiecarry.rs, packadopt.rs — as their rules answer: the
     // notice's click sent as kt:openTask, the probe naming /h/clip a video, a made-up cookie set, the stand-ins taken.)
     {
-      const HB = 'http://127.0.0.1:9'; const opened = []; kt2.onOpenTask = (cb) => { opened.push(cb); return () => { opened.splice(opened.indexOf(cb), 1); }; };
+      const HB = 'http://127.0.0.1:9'; const opened = []; const cold = []; kt2.onOpenTask = (cb) => { opened.push(cb); cold.splice(0).forEach((id) => setTimeout(() => cb(id), 1)); return () => { opened.splice(opened.indexOf(cb), 1); }; };
       const tell = (id) => setTimeout(() => opened.forEach((f) => f(id)), 3);
-      const hyb = (o) => (o.act === 'server' ? { base: HB, other: 'http://localhost:10' } : o.act === 'state' ? { notice: '', media: 'the header probe only', cookieSet: true, cookieRead: true, notifyWait: false, webviewGtk: false, wv2: false }
+      const hyb = (o) => (o.act === 'server' ? { base: HB, other: 'http://localhost:10' } : o.act === 'state' ? { notice: '', media: 'the header probe only', cookieSet: true, cookieRead: true, notifyWait: false, webviewGtk: false, wv2: cfg.os === 'win32', original: { notice: { winrt: false, macUnc: false }, watch: cfg.os === 'win32', gtkFound: false } }
+        : o.act === 'coldClick' ? (cold.push(o.id), true) : o.act === 'seen' ? [[HB + '/h/clip', 'video']]
+        : o.act === 'domainCookie' ? { set: 1, failed: 0, onHost: true, onSub: false, scope: 'host-only', storedHost: ['kt-gap.localhost'], storedSub: [] }
         : o.act === 'probe' ? { added: 1, links: [{ href: HB + '/h/clip', text: '', kind: 'video' }], how: 'the header probe only' } : o.act === 'hits' ? 0
         : o.act === 'cookies' ? { result: { set: 1, skipped: 2, failed: 0, api: true }, wrong: { set: 0 }, gone: true, wrongGone: true, inStore: true, sessionLeft: true, expiredLeft: true, api: true, readApi: true }
         : o.act === 'adopt' ? { taken: { 'yt-dlp': 'taken', 'gallery-dl': 'taken', ffmpeg: 'taken', listsRead: true }, refused: { 'yt-dlp': 'not the listed program', 'gallery-dl': 'not the listed program', ffmpeg: 'no digest', listsRead: true }, gallery: true, ytSame: true, gdlSame: true, ffSame: true, marker: '7.1-test', stamp: true, leftNone: true, electronKept: true } : undefined);
@@ -475,6 +479,8 @@ function loadBridge(boot) {
     const p3 = res.filter((r) => /^(files|deletePath|archiveFree|font|megaDecrypt)/.test(r.name));
     assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_progress'));
+    const og = res.filter((r) => /^original:/.test(r.name));
+    assert.ok(og.length === 3 && og.filter((r) => r.required).every((r) => r.ok) && og.some((r) => /kt_task_take/.test(r.name) && r.ok && r.required) && og.some((r) => /domain cookie/.test(r.name) && !r.required && !r.ok && /host-only/.test(r.detail)), 'the original system\'s checks against the pretend shell: ' + JSON.stringify(og));
     const hy = res.filter((r) => /^hybrid:/.test(r.name));
     assert.ok(hy.length === 8 && hy.filter((r) => !/reported/.test(r.name)).every((r) => r.ok) && hy.filter((r) => /reported/.test(r.name)).every((r) => !r.required), 'the hybrid\'s checks against the pretend shell: ' + JSON.stringify(hy.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_desk' && c.args.o.act === 'second' && c.args.o.args[0] === 'kurokawatools://task?id=kt-hybrid-2'), 'the toast\'s click address driven through a second launch');

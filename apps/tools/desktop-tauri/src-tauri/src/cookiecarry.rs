@@ -6,7 +6,7 @@
 // or found damaged, and at a later start when its hand-over was taken or declined before, or is older than 14 days.
 //
 // The store: Tauri's Webview::set_cookie on the browser's keeper window (its own profile — Windows, Linux) or the main
-// window (a Mac's browser shares the app's store), each cookie read from its Set-Cookie line (hybridlogic.rs
+// window (a Mac's browser shares the app's store), each cookie read from its Set-Cookie line (gaplogic.rs
 // set_cookie_line; the cookie crate's FromStr) — where build.rs found both (kt_cookie_set, kt_cookie_fromstr); without
 // them nothing is set, the file is still deleted, and the sites ask to sign in again as before. Cookie values are never
 // logged or answered; only counts.
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use crate::hybridlogic as logic;
+use crate::gaplogic as logic;
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -101,6 +101,34 @@ fn import_here(app: &AppHandle, dir: &Path, id: &str) -> Value {
     let skipped = list.len() - lines.len();
     let (set, failed) = put(app, &lines);
     json!({ "set": set, "skipped": skipped, "failed": failed, "api": can_set() })
+}
+
+/// (Self-test: the original system's measurement of a domain cookie) Set-Cookie lines put as the hand-over puts them.
+pub fn put_lines(app: &AppHandle, lines: &[String]) -> (usize, usize) {
+    put(app, lines)
+}
+
+/// (Self-test) the cookies the browser's store lists for `url` → (name, value, domain as stored): the store window's
+/// own (a Mac's main window; the keeper elsewhere) — on a Mac every cookie, unfiltered (WKWebView's own match is exact).
+pub fn store_list(app: &AppHandle, url: &str) -> Option<Vec<(String, String, String)>> {
+    #[cfg(kt_cookie_read)]
+    {
+        use tauri::Manager;
+        let w = crate::browser::store_window(app).and_then(|l| app.get_webview_window(&l))?;
+        #[cfg(all(target_os = "macos", kt_cookie_all))]
+        let listed = {
+            let _ = url;
+            w.cookies().ok()?
+        };
+        #[cfg(not(all(target_os = "macos", kt_cookie_all)))]
+        let listed = w.cookies_for_url(url.parse().ok()?).ok()?;
+        return Some(listed.iter().map(|c| (c.name().to_string(), c.value().to_string(), c.domain().unwrap_or("").to_string())).collect());
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = (app, url);
+        None
+    }
 }
 
 /// Set-Cookie lines into the browser's store → (set, failed).

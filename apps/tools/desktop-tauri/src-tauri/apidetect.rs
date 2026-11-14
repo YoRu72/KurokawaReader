@@ -235,12 +235,51 @@ pub fn detect_notify(src: &str) -> Vec<Found> {
 pub fn detect_tauri_hyb(src: &str) -> Vec<Found> {
     let has = |s: &str| src.contains(&squeeze(s));
     let twice = |s: &str| src.matches(&squeeze(s)).count() >= 2;
-    let with = twice("pub fn with_webview<F: FnOnce(PlatformWebview) + Send + 'static>(");
+    let with = with_webview_count(src) >= 2;
     let set = twice("pub fn set_cookie(&self, cookie: Cookie<'_>) -> crate::Result<()>") || twice("pub fn set_cookie(&self, cookie: Cookie<'static>) -> crate::Result<()>");
     vec![
         Found { cfg: "kt_webview_gtk", what: "the web view's own object (with_webview; WebKitGTK's inner)", on: with && has("pub fn inner(&self) -> webkit2gtk::WebView") },
         Found { cfg: "kt_cookie_set", what: "a cookie put into the browser's store (set_cookie)", on: set },
     ]
+}
+
+/// How many times the squeezed tauri source declares `with_webview` (on Webview and on WebviewWindow) — written with
+/// `PlatformWebview` or with its path `crate::webview::PlatformWebview` (WebviewWindow's spelling; CI run 43599725459
+/// found «no» on every system for the web view's own object with only the first one counted).
+pub fn with_webview_count(src: &str) -> usize {
+    ["pub fn with_webview<F: FnOnce(PlatformWebview) + Send + 'static>(", "pub fn with_webview<F: FnOnce(crate::webview::PlatformWebview) + Send + 'static>(", "pub fn with_webview<F: FnOnce(webview::PlatformWebview) + Send + 'static>("]
+        .iter()
+        .map(|s| src.matches(&squeeze(s)).count())
+        .sum()
+}
+
+/// (The build's log, when the web view's own object is not found) what was: how often `with_webview` is declared, how
+/// often under any spelling, and whether `inner()` gives WebKitGTK's WebView — so the next run says why.
+pub fn webview_diag(src: &str) -> String {
+    let any = src.matches("pubfnwith_webview<").count();
+    let inner = src.contains(&squeeze("pub fn inner(&self) -> webkit2gtk::WebView"));
+    let inner_any = src.matches("pubfninner(&self)->").count();
+    format!("with_webview declared {} times as written for ({} under any spelling); inner() → webkit2gtk::WebView {}; inner() of any kind {} times", with_webview_count(src), any, if inner { "yes" } else { "no" }, inner_any)
+}
+
+/* ---------- the original system (PORTING.md «The original Rust system — piece by piece») ---------- */
+
+/// The cfg names the original system's checks can set: webview2-com and windows each resolved once (the versions wry
+/// and this shell name — Cargo.toml's `wv2` — are then the same crates, so wry's WebView2 objects are ours).
+pub const CFGS_ORIG: [&str; 1] = ["kt_wv2_single"];
+
+/// Whether `name` is resolved exactly once in the lock.
+pub fn single_version(lock: &str, name: &str) -> bool {
+    locked_versions(lock, name).len() == 1
+}
+
+/// The «KT build (original): …» line: each native path, whether this build has it, and why not.
+pub fn original_line(items: &[(&str, bool, &str)]) -> String {
+    items
+        .iter()
+        .map(|(what, on, why)| if *on { format!("yes {}", what) } else if why.is_empty() { format!("no {}", what) } else { format!("no {} ({})", what, why) })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// What the squeezed source of webkit2gtk offers: each resource a page loads, its end, its response's MIME type.
@@ -364,6 +403,13 @@ mod tests {
         assert!(t[0].on && t[1].on);
         let t1 = detect_tauri_hyb(&squeeze(w));
         assert!(!t1[0].on && !t1[1].on);
+        // (WebviewWindow's spelling counts too.)
+        let w2 = "pub fn with_webview<F: FnOnce(crate::webview::PlatformWebview) + Send + 'static>(\n &self,\n f: F,\n ) -> crate::Result<()> {\n";
+        let both = squeeze(&format!("{}{}pub fn inner(&self) -> webkit2gtk::WebView {{", w, w2));
+        assert!(detect_tauri_hyb(&both)[0].on);
+        assert_eq!(with_webview_count(&both), 2);
+        assert!(webview_diag(&both).contains("declared 2 times") && webview_diag(&both).contains("WebView yes"));
+        assert!(webview_diag("").contains("declared 0 times"));
         let k = squeeze("fn connect_resource_load_started<F: Fn(&Self, &WebResource, &URIRequest) + 'static>(\n &self, f: F) -> SignalHandlerId;\nfn connect_finished<F: Fn(&Self) + 'static>(&self, f: F) -> SignalHandlerId;\nfn response(&self) -> Option<URIResponse>;\nfn mime_type(&self) -> Option<glib::GString>;\nfn uri(&self) -> Option<glib::GString>;");
         assert!(!detect_webkit(&k)[0].on, "the traits not found");
         let k = format!("{}{}", k, squeeze("pub trait WebViewExt: 'static {\npub trait WebResourceExt: 'static {\npub trait URIResponseExt: 'static {"));
@@ -374,6 +420,9 @@ mod tests {
         all.extend(detect_tauri_hyb("").iter().map(|x| x.cfg));
         all.extend(detect_webkit("").iter().map(|x| x.cfg));
         all.extend(detect_cookie("").iter().map(|x| x.cfg));
+        let l2 = "[[package]]\nname = \"windows\"\nversion = \"0.62.2\"\n\n[[package]]\nname = \"webview2-com\"\nversion = \"0.39.1\"\n\n[[package]]\nname = \"windows\"\nversion = \"0.61.3\"\n";
+        assert!(single_version(l2, "webview2-com") && !single_version(l2, "windows") && !single_version(l2, "wry"));
+        assert_eq!(original_line(&[("a", true, ""), ("b", false, "off"), ("c", false, "")]), "yes a; no b (off); no c");
         let mut want = CFGS_HYB.to_vec();
         want.sort();
         all.sort();

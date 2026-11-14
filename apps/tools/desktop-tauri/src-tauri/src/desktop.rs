@@ -797,7 +797,7 @@ pub fn queue(app: &AppHandle, args: &[String], cwd: &Path) {
     // nothing handed to the page as a link. At a cold start the page is not listening yet: the app just opens.)
     let mut rest: Vec<String> = Vec::with_capacity(args.len());
     for a in args.iter() {
-        match crate::hybridlogic::task_link_id(a) {
+        match crate::gaplogic::task_link_id(a) {
             Some(id) => crate::notifier::clicked(app, &id),
             None => rest.push(a.clone()),
         }

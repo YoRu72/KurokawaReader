@@ -55,6 +55,12 @@ libc = "0.2"
 notify-rust = "4"
 webkit2gtk = "2"
 
+# (The original system, Windows: wry's own webview2-com and windows — the versions CI run 43599725459 resolved through
+# wry 0.57.2, in their semver slot, so Cargo unifies them with wry's —, for the `wv2` and `native-toast` features.)
+[target.'cfg(windows)'.dependencies]
+webview2-com = { version = "0.39.1", optional = true }
+windows = { version = "0.62.2", optional = true }
+
 # (Stage P4: torrent streaming with librqbit — OFF. The main build never names librqbit, so it never even resolves it:
 # an API or a version that moved can never break it, and aria2 streams meanwhile (src/stream_engine.rs). To build with
 # it, make this feature `rqbit = ["dep:librqbit", "dep:tokio"]` and add at the end
@@ -66,10 +72,26 @@ webkit2gtk = "2"
 # Tauri).)
 [features]
 rqbit = []
-# (The hybrid, Windows: WebView2's WebResourceResponseReceived — mediawatch.rs wv2_watch. OFF: webview2-com and windows
-# must be wry's exact versions, which only the lock knows; CI's «hybrid try» step pins them from it, turns this on and
-# prints what the compiler says. Until it is green and flipped, Windows finds such media by the header probe.)
-wv2 = []
+# (The original system — ../PORTING.md «The original Rust system — piece by piece». Each native piece is a feature, so
+# a compile failure of one can never break the main build; on by default only once CI has proven it.)
+#  - wv2 (Windows): WebView2's WebResourceResponseReceived — mediawatch.rs wv2_watch. ON since CI run 43599725459
+#    checked `--features wv2` clean with webview2-com 0.39.1 and windows 0.62.2, the versions wry resolved; its code is
+#    also kept to the build where the lock holds one of each (build.rs: kt_wv2_single), else the header probe.
+#  - native-toast (Windows): a toast from Rust through WinRT, its click in-process (wintoast.rs); PowerShell's stays
+#    the fallback at run time. OFF until the self-test proves it: CI's «Original system — compile try» builds it in when
+#    it compiles on the runner. The windows crate's WinRT parts it needs (the same 0.62 copy wry's webview2-com uses;
+#    tauri-winrt-notification, in the build already through the notification plugin, turns most of them on).
+#  - wkgtk (Linux): WebKitGTK's resource-load-started → each response's MIME type (mediawatch.rs) — webkit2gtk, wry's
+#    own, named above. OFF the same way.
+#  - mac-unc (macOS): UNUserNotificationCenter with a delegate for the click (macnotice.rs). OFF, and its crates
+#    (objc2-user-notifications 0.3 — not in the lock through tauri/wry/tao —, objc2 0.6, objc2-foundation 0.3, block2
+#    0.6) are not named here: only the not-required CI step «Hybrid and original try» adds them in its runner's copy and
+#    prints the compiler's word, as for librqbit.
+default = ["wv2"]
+wv2 = ["dep:webview2-com", "dep:windows"]
+native-toast = ["dep:windows", "windows/UI_Notifications", "windows/Data_Xml_Dom", "windows/Foundation", "windows/Foundation_Collections", "windows/Win32_UI_Shell"]
+wkgtk = []
+mac-unc = []
 
 [profile.release]
 opt-level = "s"

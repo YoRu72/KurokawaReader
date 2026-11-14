@@ -98,6 +98,14 @@ pub fn kill_tree_report(pid: u32) -> String {
         // (1) Every descendant noted BEFORE anything is ended — a child whose parent is gone no longer hangs under it.
         let mut tree = winjob::descendants(pid);
         tree.insert(0, pid);
+        // (And everything its job holds — the job, assigned while the program was still suspended, is the truth about
+        // what it started; a child whose parent is gone is in it all the same.)
+        let in_job = winjob::job_pids(pid);
+        for p in in_job.iter().flatten() {
+            if !tree.contains(p) {
+                tree.push(*p);
+            }
+        }
         let mut how: Vec<String> = Vec::new();
         // (2) Its job object (made at its start, kill-on-close): everything ever started inside it.
         if winjob::terminate(pid) {
@@ -134,8 +142,10 @@ pub fn kill_tree_report(pid: u32) -> String {
             thread::sleep(Duration::from_millis(100));
             left = tree.iter().copied().filter(|p| alive(*p)).collect();
         }
+        let job_after = winjob::job_pids(pid);
         winjob::forget(pid);
-        let mut out = format!("{} of {:?}", how.join(" + "), tree);
+        let jl = |j: &Option<Vec<u32>>| j.as_ref().map(|v| format!("{:?}", v)).unwrap_or_else(|| "none".into());
+        let mut out = format!("{} of {:?}; its job held {} before, {} after", how.join(" + "), tree, jl(&in_job), jl(&job_after));
         if !left.is_empty() {
             out.push_str(&format!("; STILL RUNNING: {}", left.iter().map(|p| format!("{} ({})", p, winjob::image(*p))).collect::<Vec<_>>().join(", ")));
         }
@@ -247,6 +257,27 @@ mod winjob {
         fn ResumeThread(h: isize) -> u32;
         fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
         fn TerminateProcess(h: isize, code: u32) -> i32;
+        fn QueryInformationJobObject(job: isize, class: i32, info: *mut c_void, len: u32, ret: *mut u32) -> i32;
+    }
+    /// JOBOBJECT_BASIC_PROCESS_ID_LIST with room for 64 processes.
+    #[repr(C)]
+    struct PIDLIST {
+        assigned: u32,
+        listed: u32,
+        ids: [usize; 64],
+    }
+    /// The processes in `pid`'s job now (JobObjectBasicProcessIdList) → None when it has no job here.
+    pub fn job_pids(pid: u32) -> Option<Vec<u32>> {
+        let job = JOBS.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(&pid).copied()))?;
+        unsafe {
+            let mut l: PIDLIST = std::mem::zeroed();
+            let ok = QueryInformationJobObject(job, 3, &mut l as *mut PIDLIST as *mut c_void, std::mem::size_of::<PIDLIST>() as u32, std::ptr::null_mut()) != 0;
+            if !ok {
+                return Some(Vec::new());
+            }
+            let n = (l.listed as usize).min(64);
+            Some(l.ids[..n].iter().map(|x| *x as u32).collect())
+        }
     }
     const INVALID: isize = -1;
     static JOBS: Mutex<Option<HashMap<u32, isize>>> = Mutex::new(None);

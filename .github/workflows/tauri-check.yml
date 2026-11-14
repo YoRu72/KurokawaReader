@@ -120,13 +120,13 @@ jobs:
       # (The hybrid — PORTING.md «Closed by the hybrid»: its std-only rules — a notice's click address and toast, Electron's
       # content-type rule and the header probe's limits, the handed cookies' lines, the programs' digests —, on every
       # system; the Electron half of the carried sign-ins in plain node, Linux.)
-      - name: Std-only unit tests (the hybrid)
+      - name: Std-only unit tests (the four gaps, hybrid and original)
         shell: bash
         run: |
           d="$RUNNER_TEMP/rs-tests-hyb"; mkdir -p "$d"
           ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
-          rustc --edition 2021 --test apps/tools/desktop-tauri/src-tauri/src/hybridlogic.rs -o "$d/hybridlogic$ext"
-          "$d/hybridlogic$ext"
+          rustc --edition 2021 --test apps/tools/desktop-tauri/src-tauri/src/gaplogic.rs -o "$d/gaplogic$ext"
+          "$d/gaplogic$ext"
           if [ "$RUNNER_OS" = Linux ]; then (cd apps/tools && node tests/hybridcookies.cjs); fi
 
       # (Stage P9: the switch-over's own checks. Plain node: the installer's one screen put into Tauri's script and the
@@ -194,14 +194,36 @@ jobs:
           npx --yes @tauri-apps/cli@^2 icon ../desktop/icon.png
           ls -la src-tauri/icons
 
+      # (The original system — PORTING.md «The original Rust system — piece by piece». Its native pieces not yet proven
+      # are Cargo features that are off (native-toast on Windows, wkgtk on Linux). Each is checked here first; what
+      # compiles on this runner is built into this run's program (KT_ORIGINAL → the Build step's --features), so the
+      # self-test proves it; what does not prints the compiler's errors and is left out — never the main build broken
+      # by it. Release builds keep Cargo.toml's defaults until a piece is flipped there.)
+      - name: Original system — compile try
+        if: matrix.target == ''
+        continue-on-error: true
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: |
+          case "$RUNNER_OS" in Windows) f=native-toast ;; Linux) f=wkgtk ;; *) f="" ;; esac
+          if [ -z "$f" ]; then echo "nothing to try on $RUNNER_OS"; exit 0; fi
+          set +e
+          cargo check --release --features "$f" --message-format short > "$RUNNER_TEMP/original.log" 2>&1
+          code=$?
+          set -e
+          grep -E 'error|KT build \(original\)|KT build \(hybrid\)' "$RUNNER_TEMP/original.log" | head -120 || true
+          tail -3 "$RUNNER_TEMP/original.log"
+          built=no; if [ "$code" = 0 ]; then built=yes; echo "KT_ORIGINAL=$f" >> "$GITHUB_ENV"; fi
+          echo "cargo check --features $f ($RUNNER_OS): exit $code — built into this run's program: $built" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Build
         id: build
         working-directory: apps/tools/desktop-tauri
         run: |
+          feats=""; if [ -n "${KT_ORIGINAL:-}" ]; then feats="--features $KT_ORIGINAL"; echo "with the original system's $KT_ORIGINAL"; fi
           if [ -n "${{ matrix.target }}" ]; then
-            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}
+            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} --target ${{ matrix.target }} $feats
           else
-            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }}
+            npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} $feats
           fi
 
       # (Stage P9, Windows: the installer's one screen, the designed setup program over it, the portable zip — as the
@@ -523,47 +545,40 @@ jobs:
           echo "cargo check --features rqbit: exit $code" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code
 
-      # (The hybrid.) What the native pieces resolved to, on every system — notify-rust and webkit2gtk (named by this
-      # shell too: build.rs uses them only when the lock holds one version of each), the cookie crate, webview2-com and
-      # windows —, then on Windows WebView2's response watch (mediawatch.rs, the `wv2` feature) tried: this runner's copy
-      # only, webview2-com and windows pinned to the versions wry resolved (read from Cargo.lock), `cargo check
-      # --features wv2`, the compiler's errors printed. Never required; last, Cargo.toml put back.
-      - name: Hybrid try (not required)
+      # (The hybrid and the original system.) What the native pieces resolved to, on every system — notify-rust and
+      # webkit2gtk (named by this shell too: build.rs uses them only when the lock holds one version of each), the cookie
+      # crate, webview2-com and windows (Cargo.toml's wv2, on by default since run 43599725459 checked it clean) —; on
+      # Linux the lines of tauri's source that declare with_webview and PlatformWebview::inner (why WebKitGTK's own
+      # object was not found); on macOS the `mac-unc` draft tried: this runner's copy only, objc2's crates added,
+      # `cargo check --features mac-unc`, the compiler's errors printed. Never required; last, Cargo.toml put back.
+      - name: Hybrid and original try (not required)
         if: always() && steps.build.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         working-directory: apps/tools/desktop-tauri/src-tauri
         run: |
-          for c in notify-rust webkit2gtk cookie webview2-com windows tauri-winrt-notification mac-notification-sys zbus wry; do
+          for c in notify-rust webkit2gtk cookie webview2-com windows tauri-winrt-notification mac-notification-sys zbus wry objc2 objc2-foundation objc2-user-notifications block2; do
             v=$(grep -A1 "^name = \"$c\"$" Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p' | tr '\n' ' ')
             echo "$c: ${v:-not resolved}"
           done | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$RUNNER_OS" != "Windows" ]; then exit 0; fi
-          pins=$(python - <<'PY'
-          import re
-          lock = open('Cargo.lock', encoding='utf-8').read()
-          pk = [dict(re.findall(r'^(name|version) = "([^"]*)"', b, re.M)) | {'deps': re.findall(r'^ "([^"]+)",?$', b, re.M)} for b in lock.split('[[package]]')]
-          wv = [p for p in pk if p.get('name') == 'webview2-com']
-          if not wv: print(''); raise SystemExit
-          w = wv[-1]
-          win = [d for d in w['deps'] if d.split(' ')[0] == 'windows']
-          wver = win[0].split(' ')[1] if win and ' ' in win[0] else next((p['version'] for p in pk if p.get('name') == 'windows'), '')
-          print(w['version'], wver)
-          PY
-          )
-          echo "webview2-com and windows pinned: ${pins:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
-          set -- $pins
-          if [ -z "$1" ] || [ -z "$2" ]; then echo "nothing to try"; exit 0; fi
-          cp Cargo.toml "$RUNNER_TEMP/Cargo.toml.hyb"
-          sed -i 's/^wv2 = \[\]$/wv2 = ["dep:webview2-com", "dep:windows"]/' Cargo.toml
-          printf '\n[target.%s.dependencies.webview2-com]\nversion = "=%s"\noptional = true\n\n[target.%s.dependencies.windows]\nversion = "=%s"\noptional = true\n' "'cfg(windows)'" "$1" "'cfg(windows)'" "$2" >> Cargo.toml
-          grep -n 'wv2\|webview2-com\|windows' Cargo.toml | tail -8
+          if [ "$RUNNER_OS" = Linux ]; then
+            tv=$(grep -A1 '^name = "tauri"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
+            src=$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/tauri-"$tv"/src 2>/dev/null | head -1)
+            echo "tauri $tv source: ${src:-not found}"
+            if [ -n "$src" ]; then grep -rn -A2 'fn with_webview\|fn inner(&self)' "$src" | head -40 || true; fi
+          fi
+          if [ "$RUNNER_OS" != "macOS" ] || [ -n "${{ matrix.target }}" ]; then exit 0; fi
+          cp Cargo.toml "$RUNNER_TEMP/Cargo.toml.orig"
+          sed -i '' 's/^mac-unc = \[\]$/mac-unc = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-user-notifications", "dep:block2"]/' Cargo.toml
+          printf '\n[target.%s.dependencies]\nobjc2 = { version = "0.6", optional = true }\nobjc2-foundation = { version = "0.3", optional = true }\nobjc2-user-notifications = { version = "0.3", optional = true }\nblock2 = { version = "0.6", optional = true }\n' "'cfg(target_os = \"macos\")'" >> Cargo.toml
+          grep -n 'mac-unc\|objc2\|block2' Cargo.toml | tail -8
           set +e
-          cargo check --release --features wv2 --message-format short > "$RUNNER_TEMP/wv2.log" 2>&1
+          cargo check --release --features mac-unc --message-format short > "$RUNNER_TEMP/macunc.log" 2>&1
           code=$?
           set -e
-          cp "$RUNNER_TEMP/Cargo.toml.hyb" Cargo.toml
-          grep -E 'error|warning: unused' "$RUNNER_TEMP/wv2.log" | head -120 || true
-          tail -5 "$RUNNER_TEMP/wv2.log"
-          echo "cargo check --features wv2 (Windows): exit $code" | tee -a "$GITHUB_STEP_SUMMARY"
+          cp "$RUNNER_TEMP/Cargo.toml.orig" Cargo.toml
+          grep -A1 '^name = "objc2-user-notifications"$' Cargo.lock || echo "objc2-user-notifications not resolved"
+          grep -E 'error|warning: unused' "$RUNNER_TEMP/macunc.log" | head -120 || true
+          tail -5 "$RUNNER_TEMP/macunc.log"
+          echo "cargo check --features mac-unc (macOS): exit $code" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code

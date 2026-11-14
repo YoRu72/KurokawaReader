@@ -1,7 +1,10 @@
-// The «hybrid» closures of four losses against Electron (../../PORTING.md «Closed by the hybrid»): the rules, std only,
-// checked alone with `rustc --edition 2021 --test hybridlogic.rs`. The native pieces that use them: notifier.rs (a
-// notice's click), mediawatch.rs (media told by content type), cookiecarry.rs (the in-app browser's sign-ins carried
-// at the hand-over), packadopt.rs (yt-dlp, gallery-dl and the ffmpeg pack taken over from the Electron build).
+// The four gaps against Electron (../../PORTING.md «Closed by the hybrid» and «The original Rust system — piece by
+// piece»): their rules, std only, checked alone with `rustc --edition 2021 --test gaplogic.rs`. (Named gaplogic.rs,
+// once hybridlogic.rs: the torrent work's own hybrid rules took that name.) Sections 1–4 are the hybrid's; section 5 is
+// the original system's — the native, all-Rust pieces that replace the hybrid's stop-gaps one by one, behind the same
+// interfaces. The native pieces that use them: notifier.rs and wintoast.rs / macnotice.rs (a notice's click),
+// mediawatch.rs (media told by content type), cookiecarry.rs (the in-app browser's sign-ins carried at the hand-over),
+// packadopt.rs (yt-dlp, gallery-dl and the ffmpeg pack taken over from the Electron build).
 #![allow(dead_code)]
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
@@ -64,7 +67,14 @@ pub fn xml_escape(s: &str) -> String {
 /// A Windows notice that opens `launch` when clicked (protocol activation: no COM server needed, and it works after
 /// the app was closed too).
 pub fn toast_xml(title: &str, body: &str, launch: &str) -> String {
-    let mut x = format!("<toast activationType=\"protocol\" launch=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text>", xml_escape(launch), xml_escape(title));
+    toast_xml_as(title, body, launch, true)
+}
+
+/// (The original system) the same notice, its click either a protocol activation (`protocol`: Windows starts the
+/// program with `launch`) or a foreground one (the running program's Activated event gets it, in-process — no second
+/// launch; `launch` is then only its argument).
+pub fn toast_xml_as(title: &str, body: &str, launch: &str, protocol: bool) -> String {
+    let mut x = format!("<toast{} launch=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text>", if protocol { " activationType=\"protocol\"" } else { "" }, xml_escape(launch), xml_escape(title));
     if !body.is_empty() {
         x.push_str(&format!("<text>{}</text>", xml_escape(body)));
     }
@@ -503,6 +513,168 @@ pub fn pack_version(versions_name: Option<&str>, ydl: Option<&str>, version: Opt
 pub const ADOPT_TRIES: u64 = 3;
 pub const ADOPT_STATE: &str = "programs-adopted.json";
 
+/* ---------- 5. the original system (PORTING.md «The original Rust system — piece by piece») ---------- */
+
+/// (Windows, wintoast.rs) the group every toast of this app is shown in, and each one's tag: «kt» and a number — at
+/// most 16 characters, what Windows before the Creators Update took.
+pub const TOAST_GROUP: &str = "kt";
+pub fn toast_tag(seq: u64) -> String {
+    format!("kt{}", seq % 100_000_000_000_000)
+}
+
+/// (Windows) at most this many shown toasts kept alive in-process (their Activated handler lives with them); the
+/// oldest let go first — its click then reaches nothing in-process (the Action Center's copy is re-posted or removed
+/// at exit only while kept).
+pub const MAX_KEPT: usize = 32;
+
+/// A bounded list, oldest first: `push` → what fell out.
+#[derive(Debug, Default)]
+pub struct Ring<T> {
+    items: VecDeque<T>,
+}
+impl<T> Ring<T> {
+    pub const fn new() -> Self {
+        Ring { items: VecDeque::new() }
+    }
+    pub fn push(&mut self, t: T, max: usize) -> Option<T> {
+        self.items.push_back(t);
+        if self.items.len() > max.max(1) {
+            self.items.pop_front()
+        } else {
+            None
+        }
+    }
+    pub fn take_all(&mut self) -> Vec<T> {
+        self.items.drain(..).collect()
+    }
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.items.iter()
+    }
+}
+
+/// (Windows) what becomes of this run's toasts still in the Action Center when the program quits: their clicks were
+/// the running program's (foreground activation), so each is either shown again — silently, same tag, replacing it —
+/// as a protocol toast that starts this program with its kurokawatools://task address (where those links open THIS
+/// program), or removed (a portable copy: a click could reach nothing).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ExitPlan {
+    Nothing,
+    Repost,
+    Remove,
+}
+pub fn exit_plan(link_ours: bool, kept: usize) -> ExitPlan {
+    if kept == 0 {
+        ExitPlan::Nothing
+    } else if link_ours {
+        ExitPlan::Repost
+    } else {
+        ExitPlan::Remove
+    }
+}
+
+/// The kept toasts' tags still in the Action Center (the user may have dismissed some: those stay gone), in order.
+pub fn still_shown(kept: &[String], present: &[String]) -> Vec<String> {
+    kept.iter().filter(|t| present.iter().any(|p| p == *t)).cloned().collect()
+}
+
+/// A notice's click before the page listens (a cold start by its address, a Mac's launch by its notice): the download's
+/// id kept until the page subscribes to kt:openTask (the bridge's onOpenTask asks for them — kt_task_take); after that,
+/// each click goes straight out as the event.
+#[derive(Debug, Default)]
+pub struct Pending {
+    ids: Vec<String>,
+    listens: bool,
+}
+/// At most this many kept (a stray burst of launches cannot grow it).
+pub const MAX_PENDING: usize = 16;
+impl Pending {
+    pub const fn new() -> Self {
+        Pending { ids: Vec::new(), listens: false }
+    }
+    /// A click on download `id` → true: send kt:openTask now; false: kept for the page (or not a download's id).
+    pub fn click(&mut self, id: &str) -> bool {
+        if !id_ok(id) {
+            return false;
+        }
+        if self.listens {
+            return true;
+        }
+        if !self.ids.iter().any(|x| x == id) {
+            if self.ids.len() >= MAX_PENDING {
+                self.ids.remove(0);
+            }
+            self.ids.push(id.to_string());
+        }
+        false
+    }
+    /// The page listens now: what was kept, once.
+    pub fn take(&mut self) -> Vec<String> {
+        self.listens = true;
+        std::mem::take(&mut self.ids)
+    }
+    /// (Self-test) a cold start's click as if the page had not subscribed yet.
+    pub fn keep_cold(&mut self, id: &str) {
+        let was = self.listens;
+        self.listens = false;
+        let _ = self.click(id);
+        self.listens = was;
+    }
+}
+
+/// One click, one opening: the same download's click again within this many ms (the toast's in-process event and its
+/// address through a second launch, a Mac's re-delivery) is the same click.
+pub const CLICK_SAME_MS: u64 = 2500;
+#[derive(Debug, Default)]
+pub struct ClickOnce {
+    last: Option<(String, u64)>,
+}
+impl ClickOnce {
+    pub const fn new() -> Self {
+        ClickOnce { last: None }
+    }
+    pub fn fresh(&mut self, id: &str, now_ms: u64) -> bool {
+        if let Some((l, at)) = &self.last {
+            if l == id && now_ms.saturating_sub(*at) < CLICK_SAME_MS {
+                return false;
+            }
+        }
+        self.last = Some((id.to_string(), now_ms));
+        true
+    }
+}
+
+/// (macOS, macnotice.rs) whether this program runs from an application bundle — UNUserNotificationCenter throws (the
+/// process ends) for a bare program, so nothing native is tried outside one.
+pub fn mac_bundled(exe: &str) -> bool {
+    exe.contains(".app/Contents/MacOS/")
+}
+
+/// (The sign-ins' measurement) a domain cookie set for `.<host>` and read back for the host and for a subdomain →
+/// what the store did with it: "domain" (both: kept as a domain cookie), "host-only" (the host only: its leading dot
+/// lost — the native cookie manager is then needed for such cookies), "not set", "subdomain only" (unexpected).
+pub fn cookie_scope(on_host: bool, on_sub: bool) -> &'static str {
+    match (on_host, on_sub) {
+        (true, true) => "domain",
+        (true, false) => "host-only",
+        (false, false) => "not set",
+        (false, true) => "subdomain only",
+    }
+}
+
+/// A stored cookie's domain covers `host` (RFC 6265 domain-match, as a store lists it: a leading dot marks a domain
+/// cookie; without one it is the host's alone).
+pub fn domain_covers(host: &str, stored: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    let d = stored.trim_start_matches('.').to_ascii_lowercase();
+    if d.is_empty() {
+        return false;
+    }
+    h == d || (stored.starts_with('.') && h.ends_with(&format!(".{}", d)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,5 +874,72 @@ mod tests {
         assert_eq!(pack_version(Some("7.1"), Some("y"), None, "1.0"), "7.1");
         assert_eq!(pack_version(None, None, Some("2.0"), "1.0"), "2.0");
         assert_eq!(pack_version(None, None, Some(""), "1.0"), "1.0");
+    }
+
+    #[test]
+    fn original_toast() {
+        let f = toast_xml_as("t", "b", "kurokawatools://task?id=1", false);
+        assert!(f.starts_with("<toast launch=\"kurokawatools://task?id=1\">") && !f.contains("activationType"));
+        assert!(toast_xml("t", "b", "l").contains("activationType=\"protocol\""));
+        assert_eq!(toast_tag(7), "kt7");
+        assert!(toast_tag(u64::MAX).len() <= 16);
+        let mut r: Ring<u32> = Ring::default();
+        assert_eq!(r.push(1, 2), None);
+        assert_eq!(r.push(2, 2), None);
+        assert_eq!(r.push(3, 2), Some(1));
+        assert_eq!(r.len(), 2);
+        assert_eq!(r.iter().copied().collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(r.take_all(), vec![2, 3]);
+        assert_eq!(r.len(), 0);
+        assert_eq!(exit_plan(true, 0), ExitPlan::Nothing);
+        assert_eq!(exit_plan(true, 2), ExitPlan::Repost);
+        assert_eq!(exit_plan(false, 2), ExitPlan::Remove);
+        let k = vec!["kt1".to_string(), "kt2".to_string(), "kt3".to_string()];
+        assert_eq!(still_shown(&k, &["kt3".to_string(), "kt1".to_string(), "other".to_string()]), vec!["kt1".to_string(), "kt3".to_string()]);
+        assert!(still_shown(&k, &[]).is_empty());
+    }
+
+    #[test]
+    fn original_pending() {
+        let mut p = Pending::default();
+        assert!(!p.click("a1"));
+        assert!(!p.click("a1"));
+        assert!(!p.click("bad id"));
+        assert!(!p.click("b2"));
+        assert_eq!(p.take(), vec!["a1".to_string(), "b2".to_string()]);
+        assert!(p.take().is_empty());
+        assert!(p.click("c3"), "the page listens: straight out");
+        p.keep_cold("d4");
+        assert!(p.click("e5"), "still listening after a self-test's cold click");
+        assert_eq!(p.take(), vec!["d4".to_string()]);
+        let mut q = Pending::default();
+        for i in 0..40 {
+            q.click(&format!("x{}", i));
+        }
+        let t = q.take();
+        assert_eq!(t.len(), MAX_PENDING);
+        assert_eq!(t[0], "x24");
+        let mut c = ClickOnce::default();
+        assert!(c.fresh("a", 1000));
+        assert!(!c.fresh("a", 2000));
+        assert!(c.fresh("b", 2100));
+        assert!(c.fresh("a", 2200));
+        assert!(c.fresh("a", 2200 + CLICK_SAME_MS));
+    }
+
+    #[test]
+    fn original_misc() {
+        assert!(mac_bundled("/Applications/Kurokawa Tools.app/Contents/MacOS/kurokawa-tools"));
+        assert!(!mac_bundled("/Users/runner/work/target/release/kurokawa-tools"));
+        assert_eq!(cookie_scope(true, true), "domain");
+        assert_eq!(cookie_scope(true, false), "host-only");
+        assert_eq!(cookie_scope(false, false), "not set");
+        assert_eq!(cookie_scope(false, true), "subdomain only");
+        assert!(domain_covers("a.kt-gap.localhost", ".kt-gap.localhost"));
+        assert!(domain_covers("kt-gap.localhost", ".KT-GAP.localhost"));
+        assert!(domain_covers("kt-gap.localhost", "kt-gap.localhost"));
+        assert!(!domain_covers("a.kt-gap.localhost", "kt-gap.localhost"));
+        assert!(!domain_covers("xkt-gap.localhost", ".kt-gap.localhost"));
+        assert!(!domain_covers("a", ""));
     }
 }

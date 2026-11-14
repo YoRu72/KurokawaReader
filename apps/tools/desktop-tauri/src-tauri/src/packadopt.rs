@@ -9,7 +9,7 @@
 // first needed. The copy is made beside its place, its digest taken again, and only then renamed in (never a hard
 // link: the Electron build may still rewrite its own file in place — ytdlp.cjs rollback). The same marks as the
 // pack mechanism's are written (yt-dlp.stamp.json, the pack's .kurokawa-pack with the version the page expects).
-// Rules: hybridlogic.rs (adopt_ok, pack_version). What happened: <app data>/programs-adopted.json.
+// Rules: gaplogic.rs (adopt_ok, pack_version). What happened: <app data>/programs-adopted.json.
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -18,7 +18,7 @@ use tauri::AppHandle;
 use kt_core::videotools as vt;
 use kurokawa_shell::util;
 
-use crate::hybridlogic as logic;
+use crate::gaplogic as logic;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)

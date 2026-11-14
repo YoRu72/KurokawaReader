@@ -14,7 +14,7 @@ use std::sync::{Mutex, OnceLock};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use crate::hybridlogic as logic;
+use crate::gaplogic as logic;
 
 /// The made-up cookie handed over (selftest.js looks for it in the browser's store).
 pub const COOKIE_NAME: &str = "kt_hybrid";
@@ -210,7 +210,13 @@ fn cookies(app: &AppHandle, base: &str) -> Value {
     let _ = std::fs::write(other.join(logic::COOKIE_NOTE), json!({ "kind": "browser-cookies", "id": "another", "size": body.len(), "sha256": sha_hex(&body) }).to_string());
     let wrong = crate::cookiecarry::import(app, &other, "kt-hybrid-id");
     let r = crate::cookiecarry::import(app, &dir, "kt-hybrid-id");
-    let header = crate::browser::cookie_header(app, &format!("{}/h/page", base));
+    // (Read from the store window itself — a Mac's is the main window, which the browser's own reader, looking at the
+    // browser or its keeper, does not ask once the browser is closed: run 43599725459 found it «not in the store».)
+    let page_url = format!("{}/h/page", base);
+    let header = match crate::cookiecarry::store_list(app, &page_url) {
+        Some(l) => l.iter().filter(|(_, _, d)| logic::domain_covers("127.0.0.1", d) || d.is_empty()).map(|(n, v, _)| format!("{}={}", n, v)).collect::<Vec<_>>().join("; "),
+        None => crate::browser::cookie_header(app, &page_url),
+    };
     let has = |n: &str| header.split(';').any(|p| p.trim().starts_with(&format!("{}=", n)));
     let out = json!({
         "result": r, "wrong": wrong, "gone": !dir.join(logic::COOKIE_FILE).exists() && !dir.join(logic::COOKIE_NOTE).exists(),
@@ -222,6 +228,39 @@ fn cookies(app: &AppHandle, base: &str) -> Value {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&other);
     out
+}
+
+/// (The original system, piece D — a measurement, not a guess) a domain cookie for a made-up name under «localhost»
+/// put into the browser's store as the hand-over puts one (`Domain=.kt-gap.localhost`), then read back for that host
+/// and for a subdomain of it — no request is made, the store alone is asked → { scope (gaplogic cookie_scope), the
+/// domains the store lists }. Removed after (an expired line of the same name). Where `set_cookie` keeps such a cookie
+/// host-only, the native cookie manager is the next piece (PORTING.md).
+fn domain_cookie(app: &AppHandle) -> Value {
+    const HOST: &str = "kt-gap.localhost";
+    const SUB: &str = "a.kt-gap.localhost";
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let c = logic::HandedCookie { name: "kt_gap_domain".into(), value: "made-up-4".into(), domain: format!(".{}", HOST), host_only: false, path: "/".into(), expires: (now + 86400) as f64, ..Default::default() };
+    let line = match logic::set_cookie_line(&c, now) {
+        Some(l) => l,
+        None => return json!({ "error": "no line" }),
+    };
+    let (set, failed) = crate::cookiecarry::put_lines(app, &[line.clone()]);
+    let look = |host: &str| -> (bool, Vec<String>) {
+        match crate::cookiecarry::store_list(app, &format!("http://{}/", host)) {
+            Some(l) => {
+                let mine: Vec<&(String, String, String)> = l.iter().filter(|(n, _, _)| n == "kt_gap_domain").collect();
+                let on = mine.iter().any(|(_, _, d)| d.is_empty() || logic::domain_covers(host, d));
+                (on, mine.iter().map(|(_, _, d)| d.clone()).collect())
+            }
+            None => (false, vec!["(this build cannot read the store)".into()]),
+        }
+    };
+    let (on_host, d1) = look(HOST);
+    let (on_sub, d2) = look(SUB);
+    // (Taken out again.)
+    let gone = format!("kt_gap_domain=x; Domain=.{}; Path=/; Expires={}", HOST, logic::http_date(0));
+    let _ = crate::cookiecarry::put_lines(app, &[gone]);
+    json!({ "set": set, "failed": failed, "line": line.split(';').skip(1).collect::<Vec<_>>().join(";"), "onHost": on_host, "onSub": on_sub, "scope": logic::cookie_scope(on_host, on_sub), "storedHost": d1, "storedSub": d2, "readApi": cfg!(kt_cookie_read), "setApi": crate::cookiecarry::can_set() })
 }
 
 /// (Self-test only.) { act }: 'state' → how this build closes each loss; 'server' → { base, other }; 'probe' { page,
@@ -237,8 +276,21 @@ pub async fn kt_selftest_hybrid(app: AppHandle, o: Value) -> Result<Value, Strin
     match o.get("act").and_then(|v| v.as_str()).unwrap_or("") {
         "state" => Ok(json!({
             "notice": crate::notifier::last(), "media": crate::mediawatch::how(), "cookieSet": crate::cookiecarry::can_set(),
-            "cookieRead": cfg!(kt_cookie_read), "notifyWait": cfg!(kt_notify_wait), "webviewGtk": cfg!(all(kt_webview_gtk, kt_wk_resources)), "wv2": cfg!(feature = "wv2"),
+            "cookieRead": cfg!(kt_cookie_read), "notifyWait": cfg!(kt_notify_wait), "webviewGtk": cfg!(all(feature = "wkgtk", kt_webview_gtk, kt_wk_resources)), "wv2": cfg!(all(feature = "wv2", kt_wv2_single)),
+            // (The original system: which native pieces this build has.)
+            "original": { "notice": crate::notifier::built(), "watch": crate::mediawatch::watch_built(), "gtkFound": cfg!(all(kt_webview_gtk, kt_wk_resources)) },
         })),
+        // (The original system.) A click kept as at a cold start (the page not listening yet).
+        "coldClick" => {
+            crate::notifier::keep_cold(o.get("id").and_then(|v| v.as_str()).unwrap_or(""));
+            Ok(json!(true))
+        }
+        // What the web view itself reported on a page (way a, not the probe).
+        "seen" => Ok(json!(crate::mediawatch::seen_on(o.get("page").and_then(|v| v.as_str()).unwrap_or("")).iter().map(|(u, k)| json!([u, k])).collect::<Vec<_>>())),
+        "domainCookie" => {
+            let a2 = app.clone();
+            tauri::async_runtime::spawn_blocking(move || domain_cookie(&a2)).await.map_err(|e| e.to_string())
+        }
         "server" => Ok(json!({ "base": base, "other": format!("http://localhost:{}", s.other) })),
         "probe" => {
             let page = o.get("page").and_then(|v| v.as_str()).unwrap_or("").to_string();

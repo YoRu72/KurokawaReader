@@ -1,12 +1,13 @@
 // The hybrid's media watch (../../PORTING.md «Closed by the hybrid»): the in-app browser's media found by what the
 // server said it is, as Electron's webRequest.onCompleted did (desktop/main.cjs openBrowser's `seen`; the rule is
-// hybridlogic.rs `classify`, Electron's unchanged). Two ways, each where it can be:
+// gaplogic.rs `classify`, Electron's unchanged). Two ways, each where it can be:
 //
-//  (a) the web view's own answers, as they come — Linux: WebKitGTK's resource-load-started → each resource's response
-//      MIME type (webkit2gtk, wry's own version; build.rs finds the calls: kt_webview_gtk, kt_wk_resources). Windows:
-//      WebView2's WebResourceResponseReceived, written behind the `wv2` feature (off: its crates must be wry's exact
-//      versions — CI's «hybrid try» step builds it with them and prints what the compiler says). A Mac: none (WKWebView
-//      tells no page's responses).
+//  (a) the web view's own answers, as they come (the original system's piece C — ../../PORTING.md «The original Rust
+//      system — piece by piece») — Windows: WebView2's WebResourceResponseReceived (the `wv2` feature, on by default:
+//      wry's own webview2-com and windows, resolved once each — build.rs kt_wv2_single). Linux: WebKitGTK's
+//      resource-load-started → each resource's response MIME type (the `wkgtk` feature, off until the self-test proves
+//      it; webkit2gtk, wry's own version; build.rs finds the calls: kt_webview_gtk, kt_wk_resources). A Mac: none
+//      (WKWebView tells no page's responses; PORTING.md says what could).
 //  (b) everywhere, and the only way on a Mac and on Windows today: the header probe. At «Grab» the page also lists what
 //      its resource timing holds (CAND_JS); the addresses no rule could name — and only those the page itself fetched —
 //      are asked their content type: ONE request each (HEAD for what a script fetched, else a GET of the first byte),
@@ -22,7 +23,7 @@ use serde_json::{json, Value};
 #[allow(unused_imports)]
 use tauri::{AppHandle, Manager};
 
-use crate::hybridlogic as logic;
+use crate::gaplogic as logic;
 
 /// The page's resource timing, run beside GRAB_JS (which stays Electron's, unchanged): [[address, initiatorType]…].
 pub const CAND_JS: &str = "(function(){try{return performance.getEntriesByType('resource').slice(-400).map(function(r){return [String(r.name),String(r.initiatorType||'')];});}catch(e){return [];}})()";
@@ -60,6 +61,20 @@ pub fn record(page: &str, url: &str, content_type: &str, resource_type: &str) {
     }
 }
 
+/// (Self-test) what the web view itself reported on `page` (way a, not the probe): [[address, kind]…].
+pub fn seen_on(page: &str) -> Vec<(String, &'static str)> {
+    let g = match SEEN.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    g.iter().filter(|(p, _, _)| p == bare(page)).map(|(_, u, k)| (u.clone(), *k)).collect()
+}
+
+/// Whether this build watches the web view's own answers (the original system's piece C compiled in).
+pub fn watch_built() -> bool {
+    cfg!(any(all(windows, feature = "wv2", kt_wv2_single), all(target_os = "linux", feature = "wkgtk", kt_webview_gtk, kt_wk_resources)))
+}
+
 /// How the browser's answers are watched here.
 pub fn how() -> &'static str {
     HOW.lock().map(|g| *g).unwrap_or("the header probe only")
@@ -67,7 +82,7 @@ pub fn how() -> &'static str {
 
 /// The browser window `label` made: its answers watched where the web view tells them (way a).
 pub fn attach(app: &AppHandle, label: &str) {
-    #[cfg(all(target_os = "linux", kt_webview_gtk, kt_wk_resources))]
+    #[cfg(all(target_os = "linux", feature = "wkgtk", kt_webview_gtk, kt_wk_resources))]
     {
         if let Some(w) = app.get_webview_window(label) {
             let ok = w
@@ -93,7 +108,7 @@ pub fn attach(app: &AppHandle, label: &str) {
             }
         }
     }
-    #[cfg(all(windows, feature = "wv2"))]
+    #[cfg(all(windows, feature = "wv2", kt_wv2_single))]
     {
         if let Some(w) = app.get_webview_window(label) {
             if w.with_webview(wv2_watch).is_ok() {
@@ -107,7 +122,7 @@ pub fn attach(app: &AppHandle, label: &str) {
 }
 
 /// (Windows, the `wv2` feature) WebView2's WebResourceResponseReceived → record.
-#[cfg(all(windows, feature = "wv2"))]
+#[cfg(all(windows, feature = "wv2", kt_wv2_single))]
 fn wv2_watch(pw: tauri::webview::PlatformWebview) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_2;
     use windows::core::{Interface, PWSTR};

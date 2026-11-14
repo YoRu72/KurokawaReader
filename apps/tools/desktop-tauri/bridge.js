@@ -274,7 +274,15 @@
     mini: function (o) { return call('kt_mini', { o: obj(o) }); },
     registerMagnet: function () { return call('kt_register_magnet'); },
     onHotkeyAdd: function (cb) { return subscribe('kt:hotkeyAdd', cb); },
-    onOpenTask: function (cb) { return subscribe('kt:openTask', cb); },
+    onOpenTask: function (cb) {
+      var off = subscribe('kt:openTask', cb);
+      /* (The original system, piece 1 — PORTING.md «The original Rust system — piece by piece»: a notice clicked before
+         the page listened — a cold start by its address, a Mac's launch by its notice — kept by the shell until now.) */
+      if (typeof cb === 'function') {
+        call('kt_task_take').then(function (ids) { (Array.isArray(ids) ? ids : []).forEach(function (id) { try { cb(String(id)); } catch (e) { /* the page's */ } }); }).catch(function () {});
+      }
+      return off;
+    },
     /* stage P6 (src-tauri/src/sitewin.rs): captureUrl({ url, marker, title }) → the first address carrying the marker,
        or null when the window is closed first; siteWindow({ url, title }) → false unless https, else true once closed. */
     captureUrl: function (o) { return call('kt_capture_url', { o: obj(o) }); },

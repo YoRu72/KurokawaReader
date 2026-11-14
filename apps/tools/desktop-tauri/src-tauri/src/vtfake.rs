@@ -100,7 +100,13 @@ fn arg_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 fn start_grandchild(exe: &Path, pids: &Path) {
     let child = Command::new(exe).arg("--kt-fake-sleep").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     let cpid = child.map(|c| c.id()).unwrap_or(0);
-    let _ = std::fs::write(pids, format!("{} {}", std::process::id(), cpid));
+    // (Written whole, then renamed in: the self-test never reads half of it. It removes the file before each run — an
+    // earlier run's file, read before this one was written, named another program's pids in run 43599835981.)
+    let tmp = pids.with_extension("pids-tmp");
+    if std::fs::write(&tmp, format!("{} {}", std::process::id(), cpid)).is_ok() && std::fs::rename(&tmp, pids).is_err() {
+        let _ = std::fs::remove_file(pids);
+        let _ = std::fs::rename(&tmp, pids);
+    }
 }
 
 /// The bytes a stand-in writes as a downloaded video (and the stream's after its first line).

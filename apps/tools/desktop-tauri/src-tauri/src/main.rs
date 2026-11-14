@@ -68,13 +68,20 @@ mod bootlogic;
 // (The hybrid — four losses against Electron closed by whichever native piece each system has, with an honest
 // fallback; ../PORTING.md «Closed by the hybrid»: notifier.rs a notice's click, mediawatch.rs media told by content
 // type, cookiecarry.rs the browser's sign-ins carried at the hand-over, packadopt.rs Electron's programs taken over;
-// their rules in hybridlogic.rs (std only); hybridtest.rs the self-test's side.)
+// their rules in gaplogic.rs (std only); hybridtest.rs the self-test's side.)
 mod cookiecarry;
-mod hybridlogic;
+mod gaplogic;
 mod hybridtest;
 mod mediawatch;
 mod notifier;
 mod packadopt;
+// (The original system — ../PORTING.md «The original Rust system — piece by piece»: the native pieces that replace the
+// hybrid's stop-gaps, each behind its Cargo feature — wintoast.rs a toast from Rust (WinRT), macnotice.rs a Mac's
+// notice centre with its delegate.)
+#[cfg(all(windows, feature = "native-toast"))]
+mod wintoast;
+#[cfg(all(target_os = "macos", feature = "mac-unc"))]
+mod macnotice;
 
 use std::path::PathBuf;
 
@@ -264,7 +271,9 @@ fn main() {
             boot::kt_boot_mark,
             boot::kt_boot_times,
             // (The hybrid's self-test side.)
-            hybridtest::kt_selftest_hybrid
+            hybridtest::kt_selftest_hybrid,
+            // (The original system: a notice's click kept until the page listens — the bridge's onOpenTask.)
+            notifier::kt_task_take
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -392,6 +401,9 @@ fn main() {
             b.build()?;
             // (Stage P6 part: the icon of the user's choosing put on again — window, taskbar, shortcuts, entry.)
             appicon::at_start(&handle);
+            // (The original system: a portable copy's AppUserModelID, a Mac's notice delegate — before this launch's
+            // own address is read, which may be a notice's click.)
+            notifier::at_start(&handle);
             // (Stage P6: magnets, links and .torrent files this launch was given, kept for the page.)
             desktop::at_start(&handle);
             // (Screen translator: its settings read, its keys / tray / start-with-the-computer applied; a --hidden
@@ -421,6 +433,9 @@ fn main() {
                 vtjobs::stop_all();
                 // (Screen translator: «auto» and its OCR helpers ended.)
                 screentr::at_exit();
+                // (The original system: this run's toasts left in the Action Center made to start this program, or
+                // removed.)
+                notifier::at_exit();
                 update::at_exit(app);
             }
         });

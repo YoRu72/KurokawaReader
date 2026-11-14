@@ -758,7 +758,7 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
 
 ## Closed by the hybrid (the Rust shell stays the one program; per gap, one small interface, the native piece each system has, an honest fallback)
 
-Rules std only in `src-tauri/src/hybridlogic.rs` (11 tests, `rustc --test`); each native call behind a cfg build.rs
+Rules std only in `src-tauri/src/gaplogic.rs` (11 tests, `rustc --test`); each native call behind a cfg build.rs
 sets only when the resolved crate has it (`apidetect.rs` CFGS_HYB: `kt_notify_wait`, `kt_webview_gtk`,
 `kt_wk_resources`, `kt_cookie_set`, `kt_cookie_fromstr` — the build's log says which: «KT build (hybrid): …»);
 notify-rust and webkit2gtk, which this shell names too, count only when the lock holds ONE version of each (the
@@ -772,13 +772,42 @@ plugin's, wry's). Self-test rows «hybrid: …» (selftest.js runHybrid, its own
 | **Programs fetched again** (`packadopt.rs`) | at a start after the hand-over or beside an Electron data folder: yt-dlp, gallery-dl (`<userData>/bin`), the ffmpeg pack (`<userData>/packs/ffmpeg`, with its marker) | the same | the same | the same (no gallery-dl there) | taken ONLY when byte for byte what a trusted list names: yt-dlp's SHA2-256SUMS of its newest release, gallery-dl's release digest and size, this release's packs file (`unpackedSha256` + `unpacked`, which `desktop/ffmpeg-pack.cjs` now adds — a release-time script; the page reads only file/size/sha256). Never run to ask what it is; copied beside its place, hashed again, renamed in (no hard link: Electron's rollback rewrites its file in place); yt-dlp's stamp and the pack's marker (the version the page expects) written. Else — an older yt-dlp, a list that cannot be read (retried at the next start, 3 at most) — the normal fetch when first needed. `<app data>/programs-adopted.json` says what happened |
 
 
-Left, and how: (1) WebView2's response watch — once CI's «Hybrid try» compiles `--features wv2`, put the two crates it
-pinned into Cargo.toml (`[target.'cfg(windows)'.dependencies]`, the exact versions it printed) and make `wv2` default;
-(2) native cookie-store fallbacks (WebView2 CookieManager, WKHTTPCookieStore, WebKitGTK's CookieManager) the same way,
+Left, and how — now the plan of «The original Rust system — piece by piece» below: (1) WebView2's response watch —
+done: `wv2` is a default feature with wry's two crates in Cargo.toml (CI run 43599725459 checked it clean); (2) native cookie-store fallbacks (WebView2 CookieManager, WKHTTPCookieStore, WebKitGTK's CookieManager) the same way,
 should a Tauri without `set_cookie` ever be resolved; (3) a Mac's notice click needs a signed bundle with its own
 notification delegate — not before the Mac build is signed. Nothing of the hybrid changes the Electron build:
 `exportCookies` / `dropCookies` / `tidyCookies` run only in the bridge build (RUST_SWITCH, still false), and
 `ffmpeg-pack.cjs` only adds a field to the release's packs file (tests/hybridcookies.cjs checks both).
+
+## The original Rust system — piece by piece
+
+The owner's standing instruction: *while the hybrid answers the four gaps, each release builds, in the background, an
+original system in Rust for it.* The hybrid stays the working answer; with each release one stop-gap is replaced by a
+native, all-Rust piece **behind the same small interface** (`notifier::show` / `clicked`, `mediawatch::attach` /
+`complete`, `cookiecarry::import`, `packadopt::run`), each piece a Cargo feature, **the hybrid path kept as the run-time
+fallback until CI has proven the native one** — then the feature becomes a default, and only after a further release
+without a fault may the stop-gap's code go. Rules std only in `src-tauri/src/gaplogic.rs` section 5 (renamed from
+hybridlogic.rs: the torrent work's own hybrid rules took that name). The build's log says what each build has: «KT
+build (original): …» (build.rs). CI: the step «Original system — compile try» (before the build) runs `cargo check
+--features <piece>` for the pieces not yet on by default and builds into that run's program only what compiled, so the
+self-test proves it the same run; a piece that does not compile prints its errors and is left out — the main build is
+never broken by it. Release workflows build the defaults.
+
+| # | Gap · system | Stop-gap today | The native piece | Interface kept | Proof needed to make it default | State |
+|---|---|---|---|---|---|---|
+| 1 | Notice click · Windows | a PowerShell 5.1 script host per notice (`TOAST_PS`), its click a protocol launch — none for a portable copy | `wintoast.rs` (feature `native-toast`): ToastNotificationManager from Rust (`windows` 0.62, wry's copy), our AppUserModelID (a portable copy / bare program sets it at start; its HKCU entry written only when missing — nothing can remove it when a portable folder is deleted: a program not running cannot notice; it is one small key named after the app), the toast's **Activated** event → `clicked` in-process (no second launch, no link registration needed); at quit, toasts still in the Action Center re-posted silently as protocol toasts (same tag) where kurokawatools: opens this program, else removed; PowerShell's toast when the native call errs | `show` / `clicked` | compile on CI; the self-test's notice row shows «a toast from Rust (WinRT)» on the installed run once a runner allows notices (CI's said «off in the system's settings» — reported) — then default | written; CI-built (compile try) |
+| 1′ | Notice click · all | a click after the app was closed only opened the app | `notifier.rs` + bridge: a click before the page listens is **kept** (`gaplogic::Pending`) and handed over when the page subscribes to kt:openTask (`kt_task_take`); the same click twice opens once (`ClickOnce`) | `onOpenTask` unchanged for the page | self-test «original: a notice clicked before the page listened …» (required everywhere) | **on** |
+| 2 | Notice click · macOS | the plugin's notice + the two-minute focus stand-in | `macnotice.rs` (feature `mac-unc`): UNUserNotificationCenter, our delegate (didReceiveNotificationResponse → `clicked`; willPresent → banner), only inside an .app bundle (the centre ends a bare process), authorisation asked once off the main thread — an unsigned / ad-hoc build may be refused → Err → the stand-in. **New crates** (not in the lock through tauri/wry/tao): objc2-user-notifications 0.3 with objc2 0.6, objc2-foundation 0.3, block2 0.6 (std cannot speak Objective-C; small — bindings only); named only by CI's «Hybrid and original try» | `show` / `clicked` | `cargo check --features mac-unc` clean on macOS; then a signed bundle's self-test (reported row) shows it allowed | draft, compile-tried only |
+| 3 | Media by type · Windows | the header probe | `mediawatch.rs wv2_watch`: WebView2's WebResourceResponseReceived (feature `wv2`, deps webview2-com 0.39.1 / windows 0.62.2 — wry's — in Cargo.toml; also only where the lock holds one of each, `kt_wv2_single`, else the probe) | `attach` / `complete` | run 43599725459: `cargo check --features wv2` exit 0 → **default now**; self-test «original: the web view itself names a medium …» required on Windows | **on (default)** |
+| 4 | Media by type · Linux | the header probe | WebKitGTK resource-load-started → MIME type (feature `wkgtk`) | same | the detection said «no» everywhere: WebviewWindow writes `crate::webview::PlatformWebview` — both spellings now count (apidetect `with_webview_count`; the build prints why when still not found, and «Hybrid and original try» prints tauri's own lines); then compile try + the same row (reported on Linux first) | detection fixed; CI-built |
+| 5 | Media by type · macOS | the header probe | WKURLSchemeHandler cannot see https. Route: a WKNavigationDelegate's `decidePolicyForNavigationResponse` gives the MIME type of main-frame and sub-frame navigations (a video opened as a page, an iframe player); subresources (XHR/fetch/media) stay with the probe. wry owns the navigation delegate; tao/wry expose no safe hook to chain one — so not written: it needs wry to forward `navigationResponse`, or swizzling (refused) | same | an upstream hook | design only |
+| 6 | Sign-ins · all | `Webview::set_cookie` (a domain cookie may lose its dot → host-only) | first **measured**: the reported row «original: a domain cookie through set_cookie — kept for its subdomains?» puts `Domain=.kt-gap.localhost` (a made-up name; the store alone is asked, no request) and reads it back for the host and `a.kt-gap.localhost` → «domain» / «host-only». Where host-only: ICoreWebView2CookieManager (Windows, `windows`/webview2-com already here), WebKitGTK's CookieManager (webkit2gtk already here), WKHTTPCookieStore (objc2-web-kit, wry's) for domain cookies only, set_cookie kept for the rest | `import` | the next run's measurement per system decides; then the same row required | measuring |
+| 7 | Programs fetched again | (already native: packadopt.rs) | — | — | — | done |
+
+Order: 1′ and 3 now; 1 (Windows toast) at the next release once its compile try is clean and the installed run shows it;
+4 with it; 6 after the measurement; 2 when the Mac build is signed; 5 waits for a hook. What switches a native piece
+off again: its compile try failing (it is then simply not built in), its self-test row failing (fix or flip the feature
+back off in Cargo.toml — the hybrid path is still there), or a fault report from a release.
 
 ## Stage P9 — the switch-over, prepared (the switch stays OFF)
 

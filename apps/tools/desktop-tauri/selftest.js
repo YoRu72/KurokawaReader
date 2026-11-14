@@ -507,7 +507,7 @@
     off();
   }
 
-  /* The hybrid (notifier.rs, mediawatch.rs, cookiecarry.rs, packadopt.rs; rules in hybridlogic.rs — PORTING.md «Closed
+  /* The hybrid (notifier.rs, mediawatch.rs, cookiecarry.rs, packadopt.rs; rules in gaplogic.rs — PORTING.md «Closed
      by the hybrid»), against a loopback server of its own (hybridtest.rs) and made-up data only:
      - a notice's click opens its download: the callback the system runs (a CI runner has no notification centre to
        click) and, on Windows, the address a toast's click hands Windows (kurokawatools://task?id=…) through a second
@@ -549,6 +549,16 @@
         must(r && r.native === true, 'the plugin\'s notice and the focus stand-in here: ' + short(r && r.how));
         return 'shown natively';
       }, 30000);
+      // (The original system — PORTING.md «The original Rust system — piece by piece»: a click before the page listened,
+      // kept by the shell and handed over when the page subscribes; required everywhere.)
+      await check('original: a notice clicked before the page listened opens its download once the page asks (kt_task_take)', true, async function () {
+        await H({ act: 'coldClick', id: 'kt-orig-1' });
+        var got = []; var off2 = kt.onOpenTask(function (id) { got.push(id); });
+        await waitFor(function () { return got.indexOf('kt-orig-1') >= 0; }, 10000, 'kt-orig-1 from kt_task_take');
+        off2();
+        must(opened.indexOf('kt-orig-1') < 0, 'sent as an event before the page asked');
+        return 'kt-orig-1 handed over when the page subscribed' + (st.original ? '; native here: ' + short(st.original.notice) : '');
+      });
       off();
     }
     await check('hybrid: the header probe names a medium by its Content-Type (HEAD, one each, no other host)', true, async function () {
@@ -577,6 +587,15 @@
         must(hit && hit.kind === 'video', 'not listed as a video: ' + short(o.links));
         return (o.links || []).length + ' links, /h/clip a video';
       }, 45000);
+      // (The original system, piece C: what the web view itself reported while the page loaded — not the probe.
+      // Required on Windows, where WebView2's watch is on by default; reported elsewhere.)
+      await check('original: the web view itself names a medium by its Content-Type (WebView2 / WebKitGTK)', win, async function () {
+        must(st.original && st.original.watch, 'not in this build: ' + short(st.original));
+        var sn = (await H({ act: 'seen', page: srv.base + '/h/page' })) || [];
+        must(sn.some(function (x) { return x[0] === srv.base + '/h/clip' && x[1] === 'video'; }), 'not seen by the web view: ' + short(sn));
+        must(!sn.some(function (x) { return x[0] === srv.base + '/h/note'; }), 'a text named a medium');
+        return sn.length + ' seen by the web view, /h/clip a video';
+      }, 20000);
       await b({ act: 'close' }).catch(function () {});
       offB();
     }
@@ -591,6 +610,13 @@
       must(ck.readApi ? ck.inStore && ck.sessionLeft && ck.expiredLeft : true, 'not in the browser\'s store: ' + short(ck));
       return 'set 1, left out 2' + (ck.readApi ? ', read back' : '');
     }, 45000);
+    // (The original system, piece D — a measurement: whether set_cookie keeps a domain cookie for its subdomains. Its
+    // answer decides whether the native cookie manager is needed on this system — PORTING.md.)
+    await check('original: a domain cookie through set_cookie — kept for its subdomains? (measured; reported)', false, async function () {
+      var r = await H({ act: 'domainCookie' });
+      must(r && r.scope === 'domain', short(r));
+      return 'domain cookie kept: ' + short(r.storedSub);
+    }, 30000);
     await check('hybrid: Electron\'s programs taken over only when the lists name their digests (nothing run)', true, async function () {
       var r = await H({ act: 'adopt' });
       must(r && r.taken && r.taken['yt-dlp'] === 'taken' && r.ytSame, 'yt-dlp: ' + short(r && r.taken));
@@ -1065,6 +1091,7 @@
       }, 45000);
       await check('yt-dlp: removing a running job ends its whole tree', true, async function () {
         var d2 = join(dir, 'slow', os);
+        await kt.removeFile(join(d2, 'kt-fake-pids.txt', os)).catch(function () {});
         var t = await kt.add({ source: { url: 'https://fake.test/slow' }, dir: d2, video: { title: 'Slow', args: ['-f', 'b'] } });
         var ps = await pids(join(d2, 'kt-fake-pids.txt', os));
         var a = await op({ op: 'alive', pids: ps }); must(a[0] && a[1], 'not both running ' + short(a));
@@ -1154,11 +1181,16 @@
       await check('ffmpeg: cancel ends its whole tree', true, async function () {
         var slowIn = await kt.writeTempBytes({ name: 'kt-slow-in.bin', b64: 'AAEC', sub: 'kt-selftest-vt' });
         var out = slowIn + '.out.mkv';
+        // (An earlier run's pids file removed first: in run 43599835981 the installed app's copy of this row read the bare
+        // program's file — pids 1360/1340, one of them since reused by another process — while the kill was rightly
+        // aimed at this run's stand-in, 6424.)
+        await kt.removeFile(out + '.pids').catch(function () {});
         var run = kt.ffmpeg({ id: 'vt-cancel', args: ['-i', slowIn, '-progress', 'pipe:1', '-nostats', out] });
         // (Each phase named when it fails: in run 43551417003 the installed app's copy of this row timed out at 40 s
         // with no word of where; the bare program's passed.)
         var phase = 'the stand-in\'s pids';
         var ps = await pids(out + '.pids');
+        var al = await op({ op: 'alive', pids: ps }); must(al[0] && al[1], 'the stand-in and its child not both running: ' + short(al) + ' ' + short(ps));
         phase = 'cancel'; var t0 = env.now();
         await kt.ffmpegCancel('vt-cancel');
         phase = 'the run\'s end after cancel';
