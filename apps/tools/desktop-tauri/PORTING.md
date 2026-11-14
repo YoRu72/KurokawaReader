@@ -161,11 +161,27 @@ Do the same once before a local `tauri build` / `tauri dev`.
   stats, stop). `Aria2Stream` works today: the download gets `stream-piece-selector=inorder` and
   `bt-prioritize-piece=head=16M,tail=4M` (torrentstream.cjs), each read waits until aria2's bitfield has its pieces and
   reads the growing file — no file handle kept between reads. aria2 cannot fetch an arbitrary place first, so a far
-  seek waits for the in-order fetch (Electron's reason for WebTorrent). `stream_rqbit.rs` (librqbit 8, the plan's
-  engine) pauses aria2, streams with librqbit's file streams in the same folder and hands back with check-integrity —
-  compiled only with `--features rqbit`, which the main build leaves out entirely (its dependency lines are added only
-  by the non-required CI step «librqbit try», so neither librqbit's API nor its dependency resolution can break the
-  main build). Its calls are written from memory, each marked GUESS; that step prints the compiler's verdict.
+  seek waits for the in-order fetch (Electron's reason for WebTorrent) — unless the hybrid engine below serves it.
+- **The hybrid engine** («far seeks»; `stream_hybrid.rs`, rules in `hybridlogic.rs`, std only, tested alone): one
+  StreamEngine in front of two back ends. aria2 keeps every download; a torrent the player opens goes to librqbit
+  (`stream_rqbit.rs`) when it is built in and its session started, the file is not already whole and librqbit has not
+  failed on that torrent in this run (`choose`). Its file streams fetch the pieces under the player's position first,
+  and the server answers the Range request chunk by chunk as they arrive. **One owner per info-hash** (`Owners`): aria2
+  is force-paused and confirmed quiet before librqbit adds (else the take is abandoned and aria2 keeps it); librqbit has
+  deleted the torrent from its session before aria2 is unpaused; while librqbit holds it, the page's pause / resume only
+  records a wish for the hand-back (`engine.rs` pause/resume — Electron's aria2.cjs skipped a handed-over resume); a
+  removal ends the watchers and librqbit's hold first; at quit every hold is handed back before aria2 saves its session.
+  **Fallback**: no session, a failed add, no metadata or no peer and no new piece for 90 s while a read waits
+  (`Stall`), or any error mid-stream → librqbit lets go, aria2 takes the torrent back (check-integrity, unpaused because
+  the player still reads) and the same reader goes on from aria2 — the page sees the same address and events
+  (`streamStats.engine` says which serves). **Continuing each other's pieces**: librqbit is pointed at aria2's own files
+  (`rqbit_folder`: `<dir>/<name>` for several files, `<dir>` for one) with `overwrite`, so it hashes what is on the disk
+  at its add and keeps the good pieces; aria2 gets `check-integrity` at the hand-back, which re-hashes the files on its
+  restart (as Electron's handBack did for WebTorrent). Whether aria2 really keeps librqbit's pieces (rather than trusting
+  its own .aria2 control file) is what the reported row «each engine continues the other's pieces» prints — not yet
+  run. The downloads list shows librqbit's speed and peers while it serves (aria2.cjs showed WebTorrent's).
+  librqbit is compiled only with the `rqbit` feature: the committed Cargo.toml never names it; `rqbit-feature.cjs on`
+  makes it the default feature with librqbit `=8.1.1` in CI's copy (see «librqbit» below).
 - **ffmpeg routes** (`streamproxy.rs`): `/audio`, `/video`, the proxy's HLS remux — streamproxy.cjs's and
   transcode.cjs's arguments word for word (kt-core: `videotools.rs` for /audio and /video since P5 merged,
   `streamlogic.rs` for the remux), ffmpeg found and run as the video tools do, its whole tree ended when its reader
@@ -181,9 +197,18 @@ Do the same once before a local `tauri build` / `tauri dev`.
   reported «AAC from ffmpeg» row (it needed a real ffmpeg; no runner had one) is gone: a self-test run only ever starts
   the app's stand-in ffmpeg, and P5's «transcode stream» row checks the bytes of `/video` and `/audio` on this server.
   Page-level: `tests/streamtauri.cjs`.
-- **librqbit**: `cargo check --features rqbit` passed against librqbit 8.1.1 in run 43543045018 (every «GUESS» call
-  compiled; in run 43543617161 the step failed only on its own `grep` having nothing to print — fixed with `|| true`). It
-  stays behind the feature: no build with it has streamed the swarm yet (see «Stages», 6).
+- **librqbit**: `cargo check --features rqbit` passed against librqbit 8.1.1 in runs 43543045018 and 43586049375 (exit 0;
+  no error or warning in the stream files; every call that was marked GUESS compiled). So CI now builds **with** it on
+  every system (the step «librqbit on for this build», `rqbit-feature.cjs on`, pinned `=8.1.1`), and «librqbit try» is
+  gone. A build that fails with it is made again without it («Build without librqbit»), every later check runs on that,
+  and «librqbit verdict» fails the job at its end. Linux also builds and self-tests the plain app every run («librqbit —
+  what it adds, and the plain build self-tested»: crates and sizes with − without, then part 2 of the self-test), so the
+  release's fallback (switch-over/NOTES.md) is always proven. stream_rqbit.rs uses no librqbit call beyond those that
+  compiled. Self-test rows (`selftest.js` runHybrid, 12 MiB made-up file, loopback only, DHT off in librqbit's session):
+  «hybrid: librqbit fails at the add → aria2 serves», «hybrid: one owner — … resume leaves aria2 paused», «hybrid:
+  librqbit fails mid-stream → the same reader goes on from aria2» (a stand-in librqbit, every build; required on Linux),
+  «hybrid: far seek — bytes near the end arrive through librqbit before the middle is in» (built with librqbit; required
+  on Linux), «hybrid: each engine continues the other's pieces» (reported). Elsewhere reported until a green Linux run.
 
 ## Stage P6 — desktop integration (`desktop.rs`, `desklogic.rs` std only, `sitewin.rs`)
 
@@ -549,9 +574,9 @@ done · P6 6 done · P7 8 done + the screen translator's 8 (`kt:archiveFree` cou
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:streamUrl` | done (P4) | `streamserver.rs` + the engine trait (`stream_engine.rs`): aria2's in-order fetch (torrentstream.cjs's options, reads wait on aria2's bitfield); librqbit only with `--features rqbit` (hand-over as WebTorrent's) |
+| `kt:streamUrl` | done (P4) | `streamserver.rs` + the hybrid engine (`stream_hybrid.rs`): librqbit for a watched torrent where built in (far seeks first, hand-over as WebTorrent's), aria2's in-order fetch otherwise and on any librqbit failure |
 | `kt:streamDone` | done (P4) | the download's addresses withdrawn, their waiting readers ended (Electron's aria2 path kept them) |
-| `kt:streamStats` | done (P4) | `{ down, up, peers, progress, buffered, engine }` for any download being watched (Electron: only WebTorrent's, else null) |
+| `kt:streamStats` | done (P4) | `{ down, up, peers, progress, buffered, engine }` for any download being watched (Electron: only WebTorrent's, else null); `engine` «rqbit» or «aria2», librqbit's `buffered` empty |
 | `kt:fileUrl` | done (P4) | the same server, `/<token>/f?p=` |
 | `kt:audioUrl` | done (P4+P5) | a route of the stream server (`/<token>/audio`); P5's ffmpeg rules (`vtffmpeg::binary()`: the pack, else the PATH / Homebrew); «pack:ffmpeg» without |
 | `kt:videoUrl` | done (P4+P5) | the same server (`/<token>/video`): transcode.cjs's encoders (card's first, x264 after a failure), kt-core videotools' arguments |
@@ -712,7 +737,8 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
 6. **Left before P9** (the switch-over with the hand-over, and the release job that publishes the file names above):
    Windows' first compile of P6/P8/the browser, a green re-run of P5 and the screen translator after the fixes of run
    43549144577; a build with
-   `--features rqbit` streaming the swarm before librqbit is switched on; the losses below decided.
+   `--features rqbit` streaming the swarm (now in CI: the hybrid engine's rows, waiting for their first run); the losses
+   below decided.
 7. **P9 — prepared, switch OFF** (written, waiting for its first CI compile; see «Stage P9» below): the hand-over (Electron
    writes, the Rust build carries the engine's files before aria2c starts and brings the rest at its first start), the
    bridge flow behind `RUST_SWITCH = false`, the installer's one screen and keep/replace hooks, the designed setup
@@ -733,8 +759,12 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
   <arch>]`, resumed fetch, SHA-256, marker; `scripts/denopack.py` makes the files from deno's release zips — to be run by
   the release job at the switch-over, see «What to flip»). Self-test row «deno pack: …» (a stand-in yt-dlp prints the
   warning, a stand-in deno from loopback; never the runner's own node).
-- **Far seeks in a torrent** (P4): aria2 fetches in order (head 16 MiB, tail 4 MiB first), so a seek far ahead waits for
-  the fetch to get there; WebTorrent fetched that place first. librqbit, behind its feature, is the cure.
+- **Far seeks in a torrent** (P4) — **closed in builds with librqbit** by the hybrid engine (see «Stage P4»), once its
+  CI rows pass: librqbit fetches the sought place first, as WebTorrent did. **Remains** in a build without librqbit
+  (a release that fell back — switch-over/NOTES.md —, or any local plain build): aria2 fetches in order (head 16 MiB,
+  tail 4 MiB first), so a seek far ahead waits for the fetch to get there. Also left: librqbit's `buffered` ranges in
+  streamStats are empty (WebTorrent gave none either); its pieces kept by aria2 after the hand-back are unproven until
+  the reported row has run.
 - **Finished files renamed by sniffing** (`sniff.cjs`): not ported.
 - **DNS over HTTPS for the page's own requests**: the system web views keep the system's DNS (see «DoH»).
 - **The Wi-Fi share's address**: the default route's IPv4, not the interface list by name.

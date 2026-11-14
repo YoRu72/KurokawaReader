@@ -4,7 +4,7 @@
 ### Computer: a new, far smaller app
 - **Windows: about 5 MB instead of 84 MB.** A new setup program with one screen: *Install*, and *Options* for the folder, a desktop shortcut, opening .torrent files and magnet links with Kurokawa Tools, and opening it when done. It installs for you only, in a few seconds, with no administrator prompt, shows real progress and says plainly what went wrong if something does. Also a portable zip and the classic installer.
 - **macOS: about 4 MB instead of 168 MB. Linux: a .deb of about 9 MB**, or the AppImage.
-- **The same app inside**: downloads and torrents with the same engine (aria2), streaming, the video tools, archives with the 7-Zip that comes with it, the Files page, the in-app browser, the Wi-Fi share and the local API, the tray, hotkeys and the mini window.
+- **The same app inside**: downloads and torrents with the same engine (aria2), streaming — seeking far ahead in a torrent you are watching fetches that place first, as before —, the video tools, archives with the 7-Zip that comes with it, the Files page, the in-app browser, the Wi-Fi share and the local API, the tray, hotkeys and the mini window.
 - **Its own title bar** and **your own app icon**, as before.
 - **Updates** are downloaded, checked against the release before anything is installed, resumed if the connection breaks, and installed in place.
 - A first screen at the first start: the language, the look, your data from the previous version, and opening torrents and magnet links with the app.
@@ -22,7 +22,7 @@
 - **Sign-ins inside the app's browser and sign-in windows** are asked again once. AniList and your debrid service stay signed in.
 - **yt-dlp, gallery-dl and the ffmpeg pack** are downloaded again the first time they are needed (once).
 - **The window** opens at its usual size the first time.
-- **Seeking far ahead in a torrent you are watching** waits until the download gets there; before, it jumped there at once.
+- _(Draft: the «seeking far ahead» words above hold only for a release built with librqbit — desktop-tauri/switch-over/NOTES.md. A release built without it puts this line back here: «**Seeking far ahead in a torrent you are watching** waits until the download gets there; before, it jumped there at once.»)_
 - **Files are no longer renamed after download** when their name says nothing about them.
 - **DNS over HTTPS** covers the app's own requests; pages shown inside it use the system's DNS.
 - **YouTube in the video tools**: if neither deno nor node is installed, some formats may be missing.

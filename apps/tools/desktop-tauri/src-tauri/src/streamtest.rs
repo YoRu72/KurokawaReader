@@ -21,7 +21,8 @@ use kt_core::streamlogic as sl;
 use kurokawa_shell::util;
 
 use crate::engine;
-use crate::stream_engine::{FileEntry, Source, StreamEngine};
+use crate::stream_engine::{self as se, FileEntry, Source, StreamEngine};
+use crate::stream_hybrid::{self as hy, Hybrid};
 use crate::streamserver;
 use crate::torrentmake as tm;
 
@@ -113,6 +114,45 @@ impl StreamEngine for FakeEngine {
 
 static FAKE: Mutex<Option<Arc<FakeEngine>>> = Mutex::new(None);
 
+/* ---------- the hybrid engine's stand-in librqbit that fails (stage P4, «far seeks») ---------- */
+
+/// Takes the torrent as librqbit would (stream_hybrid pauses aria2 and gives it the ownership first), then fails — at
+/// the add («add») or at the first read («read») —, so the fallback to aria2 is checked in every build, with or without
+/// librqbit, against the real aria2 and the loopback swarm.
+struct FailEngine {
+    mode: String,
+    aria2: Arc<dyn StreamEngine>,
+}
+
+impl StreamEngine for FailEngine {
+    fn name(&self) -> &'static str {
+        "selftest-fail"
+    }
+    fn add(&self, src: &Source) -> Result<Vec<FileEntry>, String> {
+        if self.mode == "add" {
+            return Err("stand-in librqbit: failed at the add".into());
+        }
+        self.aria2.add(src)
+    }
+    fn select(&self, _id: &str, _index: usize) -> Result<(), String> {
+        Ok(())
+    }
+    fn file(&self, id: &str, index: usize) -> Result<FileEntry, String> {
+        self.aria2.file(id, index)
+    }
+    fn prioritise(&self, _id: &str, _index: usize, _from: u64, _to: u64) {}
+    fn read_at(&self, _id: &str, _index: usize, _pos: u64, _buf: &mut [u8], _gone: &dyn Fn() -> bool) -> Result<usize, String> {
+        Err("stand-in librqbit: failed mid-stream".into())
+    }
+    fn stats(&self, _id: &str, _index: usize) -> Option<Value> {
+        Some(json!({ "down": 0, "up": 0, "peers": 0, "progress": 0.0, "buffered": [], "engine": "selftest-fail" }))
+    }
+    fn stop(&self, _id: &str) {}
+}
+
+/// The last hybrid engine the self-test made with a stand-in (its state read by «hybridState»).
+static TEST_HYBRID: Mutex<Option<Arc<Hybrid>>> = Mutex::new(None);
+
 /* ---------- the swarm on loopback ---------- */
 
 struct Swarm {
@@ -173,7 +213,7 @@ fn tracker(peer_port: u16, stop: Arc<AtomicBool>) -> Result<u16, String> {
     Ok(port)
 }
 
-fn swarm_start() -> Result<Value, String> {
+fn swarm_start(o: &Value) -> Result<Value, String> {
     swarm_stop();
     let bin = match engine::get().and_then(|e| e.find_binary()) {
         Some((b, _)) => b,
@@ -189,7 +229,9 @@ fn swarm_start() -> Result<Value, String> {
     std::fs::create_dir_all(&leech).map_err(|e| e.to_string())?;
     // (A file that does not end on a piece's edge, and a small one after it — the second file's bytes start inside a
     // piece of the first.)
-    let video = tm::noise(2 * 1024 * 1024 + 12345, 0x5eed_0001 ^ pid as u64);
+    // (Hybrid engine's far seek: a bigger file when asked, «size», so an in-order fetch would take long to reach its end.)
+    let big = num(o, "size") as usize;
+    let video = tm::noise(if big > 0 { big.min(64 * 1024 * 1024) } else { 2 * 1024 * 1024 + 12345 }, 0x5eed_0001 ^ pid as u64 ^ big as u64);
     let subs = tm::noise(3001, 0x5eed_0002 ^ pid as u64);
     std::fs::write(seed.join(&name).join("video.mp4"), &video).map_err(|e| e.to_string())?;
     std::fs::write(seed.join(&name).join("video.srt"), &subs).map_err(|e| e.to_string())?;
@@ -274,7 +316,8 @@ fn num(o: &Value, k: &str) -> u64 {
     o.get(k).and_then(|v| v.as_u64()).unwrap_or(0)
 }
 
-/// The self-test's torrent-streaming helper: `op` fake | release | live | swarm | bytes | swarmStop | serverStop.
+/// The self-test's torrent-streaming helper: `op` fake | release | live | swarm | bytes | swarmStop | serverStop, and the
+/// hybrid engine's hybridInfo | hybridFail | hybridState | seederStop.
 #[tauri::command]
 pub async fn kt_selftest_stream(o: Value) -> Result<Value, String> {
     if !kurokawa_shell::selftest::active() {
@@ -308,7 +351,7 @@ pub async fn kt_selftest_stream(o: Value) -> Result<Value, String> {
                 Ok(json!({ "bitfield": eng.bitfield() }))
             }
             "live" => Ok(json!({ "live": streamserver::live(), "port": streamserver::port() })),
-            "swarm" => swarm_start(),
+            "swarm" => swarm_start(&o),
             "bytes" => {
                 let g = SWARM.lock().map_err(|e| e.to_string())?;
                 let s = g.as_ref().ok_or("no swarm")?;
@@ -320,6 +363,40 @@ pub async fn kt_selftest_stream(o: Value) -> Result<Value, String> {
             "swarmStop" => {
                 swarm_stop();
                 Ok(json!({}))
+            }
+            // (Hybrid engine, stage P4 «far seeks».)
+            "hybridInfo" => Ok(hy::info()),
+            "seederStop" => {
+                // (The seeder ended, the tracker and files kept: whatever an engine has after this came from the disk.)
+                let mut g = SWARM.lock().map_err(|e| e.to_string())?;
+                let s = g.as_mut().ok_or("no swarm")?;
+                let _ = s.seeder.kill();
+                let _ = s.seeder.wait();
+                Ok(json!({ "stopped": true }))
+            }
+            "hybridFail" => {
+                let id = o.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let mode = o.get("mode").and_then(|v| v.as_str()).unwrap_or("read").to_string();
+                let fe: Arc<dyn StreamEngine> = Arc::new(FailEngine { mode, aria2: streamserver::aria2() });
+                let h = Arc::new(Hybrid::new("hybrid-test", true, streamserver::aria2(), Box::new(move || Some(fe.clone()))));
+                if let Ok(mut g) = TEST_HYBRID.lock() {
+                    *g = Some(h.clone());
+                }
+                let src = se::source_of(&id)?;
+                let url = streamserver::open(h.clone(), &src, num(&o, "file") as usize)?;
+                Ok(json!({ "url": url, "state": h.report(&id) }))
+            }
+            "hybridState" => {
+                let id = o.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let test = o.get("test").and_then(|v| v.as_bool()).unwrap_or(false);
+                let h = if test { TEST_HYBRID.lock().ok().and_then(|g| g.clone()).ok_or("no test hybrid")? } else { hy::global() };
+                let mut r = h.report(&id);
+                if let Some(e) = engine::get() {
+                    if let Ok(st) = e.call("tellStatus", vec![json!(id), json!(["status", "completedLength", "totalLength"])]) {
+                        r["aria2"] = st;
+                    }
+                }
+                Ok(r)
             }
             "serverStop" => {
                 let port = streamserver::port();
