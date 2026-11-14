@@ -44,7 +44,7 @@ jobs:
       # (The runner's package server is sometimes unreachable: tried twice with its system packages, then without
       # them — the runner already has what Chromium needs.)
       - run: npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium
-      - run: npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3 && node tests/desktop-files.cjs && node tests/ytdlp-js.cjs && node tests/aria2-start.cjs && node tests/shared-copies.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/files.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/av.cjs && node tests/tv.cjs && node tests/tvsearch.cjs && node tests/torrentstream.cjs && node tests/soundbeside.cjs && node tests/transcode.cjs && node tests/lettering.cjs && node tests/subfont.cjs && node tests/speedtest.cjs && node tests/inpaint.cjs && node tests/swipe.cjs && node tests/gestures.cjs && node tests/filesnames.cjs && node tests/filesjobs.cjs && node tests/filesclip.cjs && node tests/filesback.cjs && node tests/videoargs.cjs && node tests/videojob.cjs && node tests/videochoice.cjs en && node tests/videochoice.cjs ar && node tests/aria2poll.cjs && node tests/dlfix.cjs en && node tests/dlfix.cjs ar && node tests/desktoppaths.cjs && node tests/submatch.cjs && node tests/subpacks.cjs en && node tests/subpacks.cjs ar && node tests/mega.cjs && node tests/gdrive.cjs && node tests/mpvplayer.cjs && node tests/apk.cjs && node tests/swarm.cjs && node tests/settingscards.cjs && node tests/backnav.cjs && node tests/settingstabs.cjs && node tests/updater.cjs && node tests/player.cjs && node tests/videos.cjs && node tests/taskfiles.cjs en && node tests/taskfiles.cjs ar && node tests/anilistlink.cjs en && node tests/anilistlink.cjs ar && node tests/ipa.cjs en && node tests/ipa.cjs ar && node tests/archive.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && sh tests/native/screen.sh && node tests/screen.cjs en && node tests/screen.cjs ar && node tests/screenpc.cjs en && node tests/screenpc.cjs ar && node tests/folderaccess.cjs en && node tests/folderaccess.cjs ar && node tests/relink.cjs en && node tests/relink.cjs ar && node tests/installroute.cjs && node tests/replay.cjs && node tests/playertr.cjs && node tests/intake.cjs && node tests/playerpad.cjs && node tests/navtabs.cjs && node tests/anime.cjs && node tests/pcui.cjs && node tests/pcengine.cjs && node tests/pcmenu.cjs && node tests/pcsettings.cjs && node tests/titlebar.cjs tools && node tests/desktopstarter.cjs && node tests/appicon.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs && node tests/discover.cjs && node tests/mpvclear.cjs && node tests/mpvsee.cjs && node tests/tlsfallback.cjs && node tests/imgretry.cjs && node tests/nativelint.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/handover.cjs && node tests/firstrun.cjs && node tests/setupui.cjs
+      - run: npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3 && node tests/desktop-files.cjs && node tests/ytdlp-js.cjs && node tests/aria2-start.cjs && node tests/shared-copies.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/files.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/av.cjs && node tests/tv.cjs && node tests/tvsearch.cjs && node tests/torrentstream.cjs && node tests/soundbeside.cjs && node tests/transcode.cjs && node tests/lettering.cjs && node tests/subfont.cjs && node tests/speedtest.cjs && node tests/inpaint.cjs && node tests/swipe.cjs && node tests/gestures.cjs && node tests/filesnames.cjs && node tests/filesjobs.cjs && node tests/filesclip.cjs && node tests/filesback.cjs && node tests/videoargs.cjs && node tests/videojob.cjs && node tests/videochoice.cjs en && node tests/videochoice.cjs ar && node tests/aria2poll.cjs && node tests/dlfix.cjs en && node tests/dlfix.cjs ar && node tests/desktoppaths.cjs && node tests/submatch.cjs && node tests/subpacks.cjs en && node tests/subpacks.cjs ar && node tests/mega.cjs && node tests/gdrive.cjs && node tests/mpvplayer.cjs && node tests/apk.cjs && node tests/swarm.cjs && node tests/settingscards.cjs && node tests/backnav.cjs && node tests/settingstabs.cjs && node tests/updater.cjs && node tests/player.cjs && node tests/videos.cjs && node tests/taskfiles.cjs en && node tests/taskfiles.cjs ar && node tests/anilistlink.cjs en && node tests/anilistlink.cjs ar && node tests/ipa.cjs en && node tests/ipa.cjs ar && node tests/archive.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && sh tests/native/screen.sh && node tests/screen.cjs en && node tests/screen.cjs ar && node tests/screenpc.cjs en && node tests/screenpc.cjs ar && node tests/folderaccess.cjs en && node tests/folderaccess.cjs ar && node tests/relink.cjs en && node tests/relink.cjs ar && node tests/installroute.cjs && node tests/replay.cjs && node tests/playertr.cjs && node tests/intake.cjs && node tests/playerpad.cjs && node tests/navtabs.cjs && node tests/anime.cjs && node tests/pcui.cjs && node tests/pcengine.cjs && node tests/pcmenu.cjs && node tests/pcsettings.cjs && node tests/titlebar.cjs tools && node tests/desktopstarter.cjs && node tests/appicon.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs && node tests/discover.cjs && node tests/mpvclear.cjs && node tests/mpvsee.cjs && node tests/tlsfallback.cjs && node tests/imgretry.cjs && node tests/nativelint.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/handover.cjs && node tests/firstrun.cjs && node tests/setupui.cjs && node tests/hybridcookies.cjs && node tests/themes.cjs && node tests/themepacks.cjs && node tests/themeeditor.cjs && node tests/undo.cjs && node tests/dlengine.cjs && node scripts/themes.mjs --check
       - name: Package web build
         run: cd dist && zip -r ../KurokawaTools-web.zip . && cd ..
       - uses: actions/upload-artifact@v4
@@ -69,18 +69,22 @@ jobs:
         run: |
           set -o pipefail
           { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/android-prepare.log
-      # (The Rust core, docs/RUST-PORT.md §5 — apps/tools/core/kt-android/switch-over/NOTES.md. Off unless the
-      # repository variable KT_RUST_ANDROID is «1». It never stops a release: if it fails, nothing is copied, the APKs
-      # are built without the library and the app keeps its Java code (KtCore reports the core absent).)
+      # (The Rust core, docs/RUST-PORT.md §5 — apps/tools/core/kt-android/switch-over/NOTES.md. From 0.17.0 in every
+      # release; the phone's download engine still defaults to Java (Settings → Advanced offers Rust). It never stops a
+      # release: the library is copied into the APKs only when all three ABIs built — otherwise nothing is copied, the
+      # APKs are built exactly as before and the app keeps its Java code (KtCore reports the core absent).)
       - name: Rust core for Android (optional)
-        if: ${{ vars.KT_RUST_ANDROID == '1' }}
         continue-on-error: true
         shell: bash
         run: |
           rustup toolchain install stable --profile minimal && rustup default stable
+          rm -rf "$RUNNER_TEMP/jniLibs"
           bash core/kt-android/build-android.sh "$RUNNER_TEMP/jniLibs"
-          mkdir -p android/app/src/main/jniLibs && cp -R "$RUNNER_TEMP/jniLibs"/. android/app/src/main/jniLibs/
-          find android/app/src/main/jniLibs -name 'libkt_android.so' -exec ls -la {} \;
+          for abi in arm64-v8a armeabi-v7a x86_64; do [ -s "$RUNNER_TEMP/jniLibs/$abi/libkt_android.so" ] || { echo "::warning::the Rust core did not build for $abi — the APKs are built without it (Java only)"; exit 1; }; done
+          # (A copy broken off midway takes every library it put back out: all three or none.)
+          j=android/app/src/main/jniLibs
+          if ! { mkdir -p "$j" && cp -R "$RUNNER_TEMP/jniLibs"/. "$j"/; }; then find "$j" -name 'libkt_android.so' -delete 2>/dev/null; exit 1; fi
+          find "$j" -name 'libkt_android.so' -exec ls -la {} \;
       - name: Signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -291,11 +295,42 @@ jobs:
           plat=$(node -p "({ win32: 'win', darwin: 'mac' })[process.platform] || 'linux'")
           for arch in $archs; do src="node_modules/7zip-bin/$plat/$arch"; if [ -d "$src" ]; then mkdir -p "../desktop-tauri/7zip/$plat/$arch"; cp "$src"/7za* "../desktop-tauri/7zip/$plat/$arch/"; chmod +x "../desktop-tauri/7zip/$plat/$arch/"7za* || true; fi; done
           find node_modules/7zip-bin -maxdepth 1 -type f \( -iname '*licen*' -o -iname 'copying*' \) -exec cp {} ../desktop-tauri/7zip/ \;
+      # (The original system — PORTING.md «The original Rust system — piece by piece» —, chosen as tauri-check.yml does:
+      # the piece not yet on by default for this system (Windows native-toast, Linux wkgtk; none for the universal Mac)
+      # is checked first on the committed Cargo.toml and built in only when it compiles; never the build broken by it.)
+      - name: Original system — compile try
+        if: matrix.target == ''
+        continue-on-error: true
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: |
+          case "$RUNNER_OS" in Windows) f=native-toast ;; Linux) f=wkgtk ;; *) f="" ;; esac
+          if [ -z "$f" ]; then echo "nothing to try on $RUNNER_OS"; exit 0; fi
+          set +e
+          cargo check --release --features "$f" --message-format short > "$RUNNER_TEMP/original.log" 2>&1
+          code=$?
+          set -e
+          grep -E 'error|KT build \(original\)|KT build \(hybrid\)' "$RUNNER_TEMP/original.log" | head -60 || true
+          built=no; if [ "$code" = 0 ]; then built=yes; echo "KT_ORIGINAL=$f" >> "$GITHUB_ENV"; fi
+          echo "cargo check --features $f ($RUNNER_OS): exit $code — in this release's program: $built" | tee -a "$GITHUB_STEP_SUMMARY"
+      # (Stage P4's librqbit — far seeks fetch the sought place first — turned on as CI builds it (rqbit-feature.cjs); a
+      # build that fails with it is made again without it, so a librqbit failure can never block the release:
+      # desktop-tauri/switch-over/NOTES.md. The release notes say so when that happened.)
       - name: Build
         working-directory: apps/tools/desktop-tauri
         run: |
           npx --yes @tauri-apps/cli@^2 icon ../desktop/icon.png
-          if [ -n "${{ matrix.target }}" ]; then npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}; else npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }}; fi
+          feats=""; if [ -n "${KT_ORIGINAL:-}" ]; then feats="--features $KT_ORIGINAL"; echo "with the original system's $KT_ORIGINAL"; fi
+          build() { if [ -n "${{ matrix.target }}" ]; then npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} --target ${{ matrix.target }} $feats; else npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }} $feats; fi; }
+          mkdir -p "$RUNNER_TEMP/rust-note"
+          node rqbit-feature.cjs on
+          if build; then
+            echo "librqbit: in this build (far seeks fetch the sought place first)" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::the build with librqbit failed — the plain build is released (aria2 streams; far seeks wait)"
+            node rqbit-feature.cjs off
+            build
+            echo "_${{ matrix.name }}: built without librqbit this time (its build failed); seeking far ahead in a torrent you are watching waits until the download gets there._" | tee -a "$GITHUB_STEP_SUMMARY" > "$RUNNER_TEMP/rust-note/${{ matrix.name }}.md"
+          fi
       # (Windows: the installer's one screen — Tauri's own installer is kept, with a warning, if it cannot be put in.)
       - name: One-page installer
         if: runner.os == 'Windows'
@@ -341,8 +376,16 @@ jobs:
             cp target/release/bundle/deb/*.deb "out/KurokawaTools-$V-linux-x64.deb"
           fi
           ls -la out
+      - name: Sizes (for the notes' size table)
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: |
+          { echo "### ${{ matrix.name }} — release files"; echo; echo "| File | Size (MB) |"; echo "|---|---:|"
+            for f in out/*; do b=$(wc -c < "$f" | tr -d ' '); echo "| \`$(basename "$f")\` | $(awk -v b="$b" 'BEGIN { printf "%.2f", b / 1048576 }') |"; done; } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with: { name: 'rust-${{ runner.os }}', path: apps/tools/desktop-tauri/src-tauri/out/* }
+      # (Only when the build fell back to the plain one: a line for the release notes, read and removed by «Release notes».)
+      - uses: actions/upload-artifact@v4
+        with: { name: 'note-rust-${{ runner.os }}', path: '${{ runner.temp }}/rust-note/*', if-no-files-found: ignore }
 
   release:
     name: Publish release
@@ -365,6 +408,50 @@ jobs:
           json.dump(m, open(path, 'w'), indent=1)
           print(sorted(m['packs']['ffmpeg']))
           PY
+      # (Step 3b of PORTING.md «What to flip»: the «deno» pack — yt-dlp's JavaScript runtime, offered by the PC app's
+      # Tauri build as «Get deno» only when the release has it. deno's own release zips at one pinned version; each zip
+      # is taken only when its SHA-256 matches what that release states for it — GitHub's digest of the uploaded file
+      # and the release's own «<zip>.sha256sum» file, whichever are there (both: they must agree; neither: refused).
+      # A zip refused or missing leaves that system out of the pack; any failure leaves the release as it was (no pack:
+      # the app uses the first of deno / node / bun on the PATH, as before). Never a binary taken unverified.)
+      - name: The deno pack (PC; verified against deno's release)
+        continue-on-error: true
+        env: { GH_TOKEN: '${{ github.token }}', DENO_VERSION: '2.5.0' }
+        run: |
+          d="$RUNNER_TEMP/deno-zips"; o="$RUNNER_TEMP/deno-out"; rm -rf "$d" "$o"; mkdir -p "$d" "$o"
+          gh api "repos/denoland/deno/releases/tags/v$DENO_VERSION" > "$RUNNER_TEMP/deno-release.json"
+          python3 - "$RUNNER_TEMP/deno-release.json" "$d" <<'PY'
+          import hashlib, json, re, subprocess, sys
+          rel, out = json.load(open(sys.argv[1])), sys.argv[2]
+          assets = {a['name']: a for a in rel.get('assets', [])}
+          want = ['deno-x86_64-pc-windows-msvc.zip', 'deno-x86_64-apple-darwin.zip', 'deno-aarch64-apple-darwin.zip', 'deno-x86_64-unknown-linux-gnu.zip', 'deno-aarch64-unknown-linux-gnu.zip']
+          def fetch(url, path): subprocess.run(['curl', '-fsSL', '--retry', '3', '-o', path, url], check=True)
+          took = 0
+          for name in want:
+              a = assets.get(name)
+              if not a: print('not in the release:', name); continue
+              refs = []
+              dg = (a.get('digest') or '').lower()
+              if re.fullmatch(r'sha256:[0-9a-f]{64}', dg): refs.append(('GitHub digest', dg[7:]))
+              side = assets.get(name + '.sha256sum')
+              if side:
+                  fetch(side['browser_download_url'], f'{out}/{name}.sha256sum')
+                  m = re.search(r'\b[0-9a-fA-F]{64}\b', open(f'{out}/{name}.sha256sum', errors='replace').read())
+                  if m: refs.append(('.sha256sum', m.group(0).lower()))
+              if not refs: print('refused (no checksum stated by the release):', name); continue
+              if len({h for _, h in refs}) != 1: print('refused (the release\'s checksums disagree):', name); continue
+              fetch(a['browser_download_url'], f'{out}/{name}')
+              got = hashlib.sha256(open(f'{out}/{name}', 'rb').read()).hexdigest()
+              if got != refs[0][1]:
+                  print('refused (SHA-256 differs):', name); subprocess.run(['rm', '-f', f'{out}/{name}']); continue
+              print('verified:', name, got, 'against', ', '.join(k for k, _ in refs)); took += 1
+          sys.exit(0 if took else 1)
+          PY
+          cp artifacts/android/KurokawaTools-packs.json "$o/"
+          python3 "$APP/scripts/denopack.py" "$d" "$o" "$DENO_VERSION"
+          python3 -c "import json,sys; m=json.load(open(sys.argv[1])); assert m['packs'].get('deno'), 'no deno entry'" "$o/KurokawaTools-packs.json"
+          cp "$o"/KurokawaTools-pack-deno-*.gz artifacts/android/ && cp "$o/KurokawaTools-packs.json" artifacts/android/KurokawaTools-packs.json
+          ls -la artifacts/android | grep -E 'deno|packs.json'
       - name: Release notes
         run: |
           V=${{ needs.version.outputs.v }}
@@ -373,11 +460,13 @@ jobs:
             echo
             echo "## What's new"
             if [ -s "$APP/docs/notes/v$V.md" ]; then cat "$APP/docs/notes/v$V.md"; else echo "- Fixes and improvements"; fi
-            if [ "${{ needs.macos.result }}" != "success" ]; then echo; echo "_The macOS build did not run this time; the next release will carry one._"; fi
+            if [ "${{ needs.macos.result }}" != "success" ]; then echo; echo "_The previous build's macOS disk image did not come this time; the next release will carry one._"; fi
             # (The new computer build is optional on macOS: without it the previous build's DMG is the Mac download, and the
             # previous build on a Mac keeps updating as before — it offers the move only when the new DMG is there.)
             if [ ! -d artifacts/rust-macOS ]; then echo; echo "_macOS: the new, smaller build did not come this time; the Mac download is the previous build's \`*-mac-universal.dmg\`, which keeps working and updating as before._"; fi
             for os in Windows Linux; do if [ ! -d "artifacts/rust-$os" ]; then echo; echo "_$os: the new, smaller build did not come this time; the previous build stays the $os download._"; fi; done
+            # (A Rust build that fell back to the plain one — without librqbit — says so.)
+            for f in artifacts/note-rust-*/*.md; do [ -f "$f" ] && { echo; cat "$f"; }; done
             echo
             echo "## Files"
             echo
@@ -393,10 +482,12 @@ jobs:
             echo "| macOS (previous build) | \`*-mac-universal.dmg\` |"
             echo "| Linux | \`*-linux-x64.appimage\` (chmod +x, then run), or \`*-linux-x64.deb\`; the previous build: \`*-linux-x86_64.AppImage\` |"
             echo "| Android packs | \`KurokawaTools-pack-*.zip\` — Python and ffmpeg, downloaded by the app itself when an add-on needs them; nothing to install by hand |"
+            echo "| Computer packs | \`KurokawaTools-pack-*.gz\` — ffmpeg, and deno when the release has it (what YouTube's formats need in the video tools), downloaded by the computer app itself when needed and checked; nothing to install by hand |"
             echo "| Web | \`KurokawaTools-web.zip\` — or https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/tools/ (downloads through the browser; torrents through a remote aria2) |"
             echo
             echo "_\`*-SHA256SUMS.txt\` holds every file's SHA-256, which the computer app's updater checks before it installs anything._"
           } > notes.md
+          rm -rf artifacts/note-rust-*
       # (Every file's SHA-256, under its published name: the Rust build's updater and the Electron switch refuse a file
       # that does not match.)
       - name: Checksums
