@@ -60,7 +60,7 @@ function loadThemes() {
 }
 const { T, P, D } = loadThemes();
 // (The Reader's list: its own, the shared Obsidian, the ported trio — src/readertheme/index.ts orders the shared list so.)
-for (const d of [D.PAPER_INK, D.MIDNIGHT_STACKS, D.LAMPLIGHT]) T.registerTheme(d);
+for (const d of [D.PAPER_INK, D.MIDNIGHT_STACKS, D.READING_ROOM]) T.registerTheme(d);
 const IDS = D.READER_ORDER.filter((id) => id !== 'classic');
 const DEFS = IDS.map((id) => T.THEMES.find((d) => d.id === id));
 
@@ -184,7 +184,7 @@ async function makePacks() {
     ok('Classic is the chosen card in the gallery', await p.evaluate(() => document.querySelector('.tg-card.on')?.dataset.theme) === 'classic');
     await readBook(p, id); classic.read = await sample(p, READ);
     // A style chosen, then Classic again: the same colours.
-    await toSettings(p); await pick(p, 'lamplight'); await inForce(p, 'lamplight');
+    await toSettings(p); await pick(p, 'paper-ink'); await inForce(p, 'paper-ink');
     await pick(p, 'classic'); await p.waitForFunction(() => !document.documentElement.dataset.glass); await p.waitForTimeout(300);
     const st2 = await p.evaluate(() => ({ theme: document.documentElement.dataset.theme ?? null, inline: document.documentElement.getAttribute('style') }));
     const set2 = await sample(p, SET.filter((s) => s !== '.segmented button'));
@@ -261,16 +261,20 @@ async function makePacks() {
     await p.evaluate(() => document.querySelector('.reader-view').classList.add('immersive')); await p.waitForTimeout(500);
     const c = await backdrops(p);
     ok('a PDF with the bars hidden: no element has a backdrop filter', !c.length, c);
-    const ph = await page({ visual: { uiStyle: 'lamplight' } }); await ph.waitForFunction(() => document.documentElement.dataset.glass);
+    const ph = await page({ visual: { uiStyle: 'paper-ink' } }); await ph.waitForFunction(() => document.documentElement.dataset.glass);
     ok('a phone: Reduced on its own', await ph.evaluate(() => document.documentElement.dataset.glass) === 'reduced');
     await toSettings(ph);
     ok('… and the settings say why', await ph.evaluate(() => document.querySelector('.glass-blur .hint')?.textContent) === en('blurAutoMemory'));
-    const q = await page({ pc: true, visual: { uiStyle: 'lamplight' }, memory: 4 }); await q.waitForFunction(() => document.documentElement.dataset.glass);
+    const q = await page({ pc: true, visual: { uiStyle: 'paper-ink' }, memory: 4 }); await q.waitForFunction(() => document.documentElement.dataset.glass);
     ok('a computer with 4 GB: Reduced on its own', await q.evaluate(() => document.documentElement.dataset.glass) === 'reduced');
-    const r = await page({ pc: true, visual: { uiStyle: 'lamplight' }, reducedMotion: 'reduce' }); await r.waitForFunction(() => document.documentElement.dataset.glass);
+    const r = await page({ pc: true, visual: { uiStyle: 'paper-ink' }, reducedMotion: 'reduce' }); await r.waitForFunction(() => document.documentElement.dataset.glass);
     ok('a computer asking for less motion: Reduced on its own', await r.evaluate(() => document.documentElement.dataset.glass) === 'reduced');
-    const s = await page({ pc: true, visual: { uiStyle: 'lamplight' } }); await s.waitForFunction(() => document.documentElement.dataset.glass);
+    const s = await page({ pc: true, visual: { uiStyle: 'paper-ink' } }); await s.waitForFunction(() => document.documentElement.dataset.glass);
     ok('a computer otherwise: Full', await s.evaluate(() => document.documentElement.dataset.glass) === 'full');
+    // A style the Reader no longer has (Lamplight, tried in previews): Classic again, silently.
+    const g = await page({ visual: { uiStyle: 'lamplight' } });
+    await g.waitForFunction(() => JSON.parse(localStorage.getItem('kr.visual') || '{}').uiStyle === 'classic');
+    ok('a stored style that is gone (Lamplight) falls back to Classic, with nothing of glass left', await g.evaluate(() => !document.documentElement.dataset.glass && !document.documentElement.dataset.theme && !document.querySelector('.tg-card[data-theme="lamplight"]')));
   });
 
   // ---- 7. Packs.
@@ -291,7 +295,7 @@ async function makePacks() {
     ok('installed: checked, in the app\'s storage, the picture made the screen\'s size (3000 px → at most 800 here)', (await meta(p)).includes('frosted-glass') && pic && pic.w > 0 && pic.w <= 800, pic);
     ok('… the picture is the background, and the card offers to remove it', !!(await p.$('.tg-card[data-theme="frosted-glass-dark"] .tg-rm')));
     await p.context().setOffline(true);
-    await pick(p, 'lamplight'); await inForce(p, 'lamplight'); await pick(p, 'frosted-glass-dark');
+    await pick(p, 'midnight-stacks'); await inForce(p, 'midnight-stacks'); await pick(p, 'frosted-glass-dark');
     ok('offline, the installed style is chosen again with its picture', await p.waitForFunction(() => /blob:/.test(getComputedStyle(document.body, '::before').backgroundImage)).then(() => true, () => false));
     await p.context().setOffline(false);
     const said = await tap(p, '.tg-card[data-theme="frosted-glass-dark"] .tg-rm');
@@ -312,7 +316,7 @@ async function makePacks() {
     await q.click('.tg-card[data-theme="frosted-glass-light"] .tg-dl'); await q.waitForSelector('.tg-card[data-theme="frosted-glass-light"] .tg-state.err');
     const msg = await stateOf(q, 'frosted-glass-light');
     ok('storage full: the card says so, with the size needed, nothing kept', msg.startsWith(en('styleNoSpace').split('(')[0]) && /KB/.test(msg) && !(await meta(q)).length, msg);
-    await q.close(); const r = await page({ visual: { uiStyle: 'lamplight' } }); await toSettings(r);
+    await q.close(); const r = await page({ visual: { uiStyle: 'paper-ink' } }); await toSettings(r);
     await r.click('.tg-add'); await r.waitForSelector('.tg-addrow');
     ok('Add style lists the repository\'s packs, each with its size', await r.evaluate(() => [...document.querySelectorAll('.tg-addrow')].every((x) => /KB/.test(x.textContent))) && await r.evaluate(() => document.querySelectorAll('.tg-addrow').length) === 1);
     ok('… and installs one', (await tap(r, '.tg-addrow button')) === en('styleGot') && (await meta(r)).includes('frosted-glass'));

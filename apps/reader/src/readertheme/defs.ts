@@ -1,7 +1,7 @@
 // The Reader's own interface styles, in the shared theme format (src/theme/themes.ts — the module both Kurokawa apps
 // carry unchanged): a library and reading room in glass. Paper & Ink (paper-white frost with ink-blue, and its ink-wash
-// dark), Midnight Stacks (a library after hours: navy glass, oxblood and brass in the dark, brass hairlines), Lamplight
-// (amber glass under a reading lamp, dark and light). The shared Obsidian (OLED black, thin luminous edges) and the
+// dark), Midnight Stacks (a library after hours: navy glass, oxblood and brass in the dark, brass hairlines), Reading
+// Room (sea-green glass over green baize and slate, dark and light; cool and quiet). The shared Obsidian (OLED black, thin luminous edges) and the
 // ported Frosted Glass trio come from the shared module. Each dark one at most as bright as Classic's: depth from
 // colour at low luminance, never grey slabs.
 //
@@ -55,33 +55,33 @@ export const MIDNIGHT_STACKS: ThemeDef = {
   },
 };
 
-export const LAMPLIGHT: ThemeDef = {
-  id: 'lamplight', nameKey: 'styleNameLamplight', radius: { xs: 8, sm: 14, md: 18, lg: 24, xl: 32, xxl: 40 },
+export const READING_ROOM: ThemeDef = {
+  id: 'reading-room', nameKey: 'styleNameReadingRoom', radius: { xs: 8, sm: 12, md: 16, lg: 20, xl: 28, xxl: 34 },
   dark: {
-    surfaces: { ground: '#120d08', lowest: '#0d0906', low: '#1c140c', mid: '#231910', high: '#2e2216', highest: '#3a2b1d' },
-    text: { on: '#f7ecd9', variant: '#d8c4a4', dim: '#d8c4a4', outline: '#b8a283', outlineVariant: 'rgb(255 206 140 / .16)' },
-    roles: { primary: '#f2b65a', onPrimary: '#3a2300', primaryContainer: '#5c3c10', onPrimaryContainer: '#ffe2b5', secondaryContainer: 'rgb(242 182 90 / .18)', onSecondaryContainer: '#fbe6c6', tertiaryContainer: '#5c3c10', onTertiaryContainer: '#ffe2b5' },
-    // (The lamp at the top right; its glow falls off into umber; embers at the foot.)
-    bg: 'radial-gradient(72% 60% at 100% 0%, rgb(122 78 22 / .75), transparent 72%), radial-gradient(65% 55% at 0% 100%, rgb(62 36 18 / .9), transparent 65%), radial-gradient(28% 22% at 85% 8%, rgb(192 128 42 / .22), transparent 70%), '
-      + accentBlob('10% 20%', '45% 40%', 10),
-    extremes: ['#5f3f14', '#120d08'],
-    pane: 'rgb(32 23 14 / .8)', card: 'rgb(62 44 26 / .42)', sheet: 'rgb(32 23 14 / .84)', fill: .5,
-    blur: 24, sat: 1.45, edge: 'rgb(255 206 140 / .2)', sheen: 'inset 0 1px 0 rgb(255 220 170 / .22)',
-    shadow: '0 1px 2px rgb(0 0 0 / .3), 0 14px 34px rgb(10 5 0 / .45)', scrim: 'rgb(8 4 0 / .5)',
+    surfaces: { ground: '#0a1513', lowest: '#070f0e', low: '#0f1e1b', mid: '#132622', high: '#1a302c', highest: '#223b36' },
+    text: { on: '#e4eeeb', variant: '#b9cdc8', dim: '#b9cdc8', outline: '#94aaa4', outlineVariant: 'rgb(160 220 205 / .16)' },
+    roles: { primary: '#8fd1c1', onPrimary: '#00382f', primaryContainer: '#1f4a42', onPrimaryContainer: '#c8efe5', secondaryContainer: 'rgb(143 209 193 / .16)', onSecondaryContainer: '#d6efe8', tertiaryContainer: '#1f4a42', onTertiaryContainer: '#c8efe5' },
+    // (Green baize under a reading-room ceiling: sea-green at the top left, slate blue at the foot, verdigris at the side.)
+    bg: 'radial-gradient(72% 58% at 6% 0%, #14322d, transparent 72%), radial-gradient(64% 52% at 100% 100%, rgb(30 42 60 / .9), transparent 66%), radial-gradient(40% 36% at 100% 30%, rgb(47 93 85 / .3), transparent 70%), '
+      + accentBlob('8% 92%', '45% 40%', 10),
+    extremes: ['#1b3d37', '#0a1513'],
+    pane: 'rgb(12 26 23 / .8)', card: 'rgb(26 50 45 / .42)', sheet: 'rgb(12 26 23 / .84)', fill: .5,
+    blur: 24, sat: 1.3, edge: 'rgb(160 220 205 / .16)', sheen: 'inset 0 1px 0 rgb(200 255 240 / .12)',
+    shadow: '0 1px 2px rgb(0 0 0 / .3), 0 14px 34px rgb(0 8 6 / .45)', scrim: 'rgb(0 6 5 / .55)',
   },
   light: {
-    surfaces: { ground: '#f4e8d2', lowest: '#fffaf0', low: '#fbf3e3', mid: '#f6ecd8', high: '#efe2ca', highest: '#e8d8bd' },
-    text: { on: '#29190a', variant: '#55402a', dim: '#55402a', outline: '#6e5841', outlineVariant: 'rgb(110 70 20 / .16)' },
-    roles: { primary: '#8a5310', onPrimary: '#ffffff', primaryContainer: '#ffdcae', onPrimaryContainer: '#2c1700', secondaryContainer: 'rgb(138 83 16 / .14)', onSecondaryContainer: '#2c1a06', tertiaryContainer: '#ffdcae', onTertiaryContainer: '#2c1700' },
-    bg: 'radial-gradient(70% 60% at 100% 0%, rgb(246 214 153 / .9), transparent 70%), radial-gradient(60% 50% at 0% 30%, #fbf5e9, transparent 60%), radial-gradient(60% 50% at 40% 100%, rgb(237 191 144 / .55), transparent 60%), '
-      + accentBlob('0% 100%', '45% 40%', 12),
-    extremes: ['#fbf5e9', '#ecc79a'],
-    pane: 'rgb(252 245 230 / .8)', card: 'rgb(255 250 238 / .48)', sheet: 'rgb(252 245 230 / .84)', fill: .55,
-    blur: 22, sat: 1.4, edge: 'rgb(255 255 255 / .7)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .85)',
-    shadow: '0 1px 2px rgb(90 60 20 / .08), 0 10px 28px rgb(90 60 20 / .12)', scrim: 'rgb(40 24 8 / .28)',
+    surfaces: { ground: '#eaf1ef', lowest: '#ffffff', low: '#f5f9f8', mid: '#eef4f2', high: '#e3ece9', highest: '#d9e4e1' },
+    text: { on: '#10201d', variant: '#334a45', dim: '#334a45', outline: '#506662', outlineVariant: 'rgb(16 32 29 / .14)' },
+    roles: { primary: '#1f6a5c', onPrimary: '#ffffff', primaryContainer: '#cdeee5', onPrimaryContainer: '#002019', secondaryContainer: 'rgb(31 106 92 / .13)', onSecondaryContainer: '#0c2a24', tertiaryContainer: '#cdeee5', onTertiaryContainer: '#002019' },
+    bg: 'radial-gradient(70% 56% at 4% 0%, #f8fcfb, transparent 70%), radial-gradient(70% 56% at 0% 100%, rgb(198 224 216 / .85), transparent 70%), radial-gradient(60% 50% at 100% 70%, rgb(212 222 234 / .8), transparent 66%), '
+      + accentBlob('96% 4%', '45% 40%', 10),
+    extremes: ['#f8fcfb', '#c4d9d3'],
+    pane: 'rgb(244 249 247 / .8)', card: 'rgb(255 255 255 / .46)', sheet: 'rgb(244 249 247 / .84)', fill: .55,
+    blur: 22, sat: 1.3, edge: 'rgb(255 255 255 / .72)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .9)',
+    shadow: '0 1px 2px rgb(20 50 44 / .06), 0 10px 28px rgb(20 50 44 / .1)', scrim: 'rgb(10 26 22 / .3)',
   },
 };
 
 /** The Reader's gallery, in order: its own three, the shared Obsidian, the ported trio, Classic (the default) last —
  *  as the shared module keeps it, so a style from a pack goes in before it. */
-export const READER_ORDER = ['paper-ink', 'midnight-stacks', 'lamplight', 'obsidian', 'frosted-glass', 'frosted-glass-light', 'frosted-glass-dark', 'classic'];
+export const READER_ORDER = ['paper-ink', 'midnight-stacks', 'reading-room', 'obsidian', 'frosted-glass', 'frosted-glass-light', 'frosted-glass-dark', 'classic'];

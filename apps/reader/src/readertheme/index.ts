@@ -13,20 +13,23 @@ import READER_CSS from './reader.lazy.css' with { type: 'text' };
 import { THEMES, applyTheme, readEnv, resolveBlur, upsertTheme, removeTheme, type ThemeDef, type Blur, type DarkTone, type Mode } from '../theme/themes';
 import { loadMine, toDef, pictureKey, pictureAsset } from '../theme/custom';
 import { installed, pictureUrls } from '../theme/packs';
-import { PAPER_INK, MIDNIGHT_STACKS, LAMPLIGHT, READER_ORDER } from './defs';
+import { PAPER_INK, MIDNIGHT_STACKS, READING_ROOM, READER_ORDER } from './defs';
 import { themeIo, myStore } from './io';
 import { onRoute, parseRoute } from '../router';
 import { shellOf } from '../platform';
-import { pageIsLight, applyChrome, type VisualSettings } from '../settings';
+import { pageIsLight, applyChrome, getSettings, updateSettings, type VisualSettings } from '../settings';
 
 // (The shared list carries the Tools app's own styles too; the Reader shows its own, the shared Obsidian, the ported
 // trio and Classic — and a pack's, once installed.)
 const order = (): void => {
-  for (const d of [PAPER_INK, MIDNIGHT_STACKS, LAMPLIGHT]) if (!THEMES.some((x) => x.id === d.id)) THEMES.push(d);
+  for (const d of [PAPER_INK, MIDNIGHT_STACKS, READING_ROOM]) if (!THEMES.some((x) => x.id === d.id)) THEMES.push(d);
   const keep = THEMES.filter((d) => READER_ORDER.includes(d.id)).sort((a, b) => READER_ORDER.indexOf(a.id) - READER_ORDER.indexOf(b.id));
   THEMES.splice(0, THEMES.length, ...keep);
 };
 order();
+// (A style the Reader no longer has — Lamplight, until 0.62.x's previews — is Classic again, silently.)
+const GONE = ['lamplight'];
+if (GONE.includes(getSettings().uiStyle)) updateSettings({ uiStyle: 'classic' });
 // (The reader's own styles, saved with the shared editor — src/theme/editor.ts —: in the list from the start.)
 for (const m of loadMine(myStore)) upsertTheme(toDef(m));
 /** The style being edited, shown live in place of the chosen one (null: the chosen one again). */

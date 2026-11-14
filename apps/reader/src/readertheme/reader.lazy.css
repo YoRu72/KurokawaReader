@@ -70,3 +70,9 @@ html[data-glass] .segmented button:not([aria-pressed='true']) { box-shadow: inse
 html.winbar[data-glass] .kr-winbar { background: var(--g-pane); color: var(--md-on-surface); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter); box-shadow: inset 0 -1px 0 var(--g-edge); }
 html.winbar.wb-clear[data-glass] .kr-winbar { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 
+
+/* ---- Settings on a phone: a section is taller than the screen; as a pane its edges ran as two lines down the
+   screen's sides. There it is open ground, a hairline between sections, the bars and sheets keeping the glass. ---- */
+@media (max-width: 759px) {
+  html[data-glass] .settings-body > .card { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: inset 0 1px 0 var(--g-edge); border-radius: 0; padding-inline: 2px; }
+}

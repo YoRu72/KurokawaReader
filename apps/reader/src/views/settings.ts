@@ -16,7 +16,7 @@ import { decksCard } from '../ui/decks';
 import { fits, only } from '../platform';
 import { titleBarWaits as winBarWaits } from '../ui/winbar';
 import { SHORTCUTS, bindingFor, setBinding, resetBindings, comboOf } from '../shortcuts';
-import { styleField, licencesSheet } from '../readertheme/field';
+import { pairField, licencesSheet } from '../readertheme/field';
 
 declare global { interface Window { __krInstallPrompt?: { prompt(): Promise<void> } } }
 
@@ -68,7 +68,7 @@ export function settingsView(): HTMLElement {
         ...(cur.titleBarClear ? [] : [barSwitch(t('titleBarName'), cur.titleBarName, (v) => updateSettings({ titleBarName: v }), 'wb-name-switch')]),
       ] : []));
     // (The interface's style — Classic or frosted glass — first: the largest choice of the section. src/readertheme/field.ts.)
-    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), styleField(renderAppearance), appIconField(), sizeField, ...titleBarFields,
+    const parts: (HTMLElement | null)[] = [h('h3', null, t('appearance')), pairField(renderAppearance), appIconField(), sizeField, ...titleBarFields,
       h('div', { class: 'field' }, resettable(t('uiMode'), 'uiMode', () => { renderAppearance(); void applyOrientation(); }), h('div', { class: 'segmented' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.uiMode === id), onclick: () => { updateSettings({ uiMode: id }); renderAppearance(); } }, label)))),
       // (The dark surfaces' tone is Classic's; a glass style brings its own.)
       document.documentElement.dataset.ui !== 'light' && cur.uiStyle === 'classic' ? h('div', { class: 'field' }, resettable(t('darkTone'), 'darkTone', () => { renderAppearance(); }), h('div', { class: 'segmented' }, ...([['dim', t('darkDim')], ['grey', t('darkGrey')], ['black', t('darkBlack')]] as ['dim' | 'grey' | 'black', string][]).map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(cur.darkTone === id), onclick: () => { updateSettings({ darkTone: id }); renderAppearance(); } }, label)))) : null,

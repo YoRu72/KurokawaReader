@@ -181,6 +181,8 @@ export interface VisualSettings {
    *  and how much it blurs ('auto': as this device can afford — src/theme/themes.ts resolveBlur). */
   uiStyle: string;
   glassBlur: 'auto' | 'full' | 'reduced' | 'off';
+  /** The book page kept matched to the interface's style: a style chosen brings its page theme (readertheme/pagetheme.ts). */
+  pageFollowsStyle: boolean;
   darkTone: 'dim' | 'grey' | 'black'; // the dark interface's surfaces: near-black, Material grey, or pure black (OLED)
   arDigits: 'auto' | 'western' | 'eastern'; // digits in the Arabic interface: 123 for data and ١٢٣ in prose, or one of them throughout
   sizeUnits: 'latin' | 'arabic'; // KB/MB/GB, or كيلوبايت/ميغابايت/قيقابايت in Arabic
@@ -379,6 +381,7 @@ export const DEFAULTS: VisualSettings = {
   darkTone: 'dim',
   uiStyle: 'classic',
   glassBlur: 'auto',
+  pageFollowsStyle: false,
   arDigits: 'auto',
   sizeUnits: 'latin',
   bookPage: 'chaptered',
@@ -505,7 +508,7 @@ const GLOBAL_ONLY = new Set<string>([
   // the device's keys and gestures while reading
   'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library
-  'uiStyle', 'glassBlur', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
+  'uiStyle', 'glassBlur', 'pageFollowsStyle', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
   // lists the reader builds up for every book
   'myThemes', 'systemFonts', 'shortcuts', 'snapFolder',
 ]);
