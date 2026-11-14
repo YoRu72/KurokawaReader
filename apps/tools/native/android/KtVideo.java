@@ -65,7 +65,7 @@ final class KtVideo {
         return jsRuntime == null ? java.util.Collections.<String>emptyList() : java.util.Arrays.asList("--js-runtimes", jsRuntime);
     }
     /** How long a look may take before it is given up (the desktop's 90 s, less on a phone: its Python starts slower but the answer is the same). */
-    static final long INFO_TIMEOUT_MS = 75_000;
+    static long INFO_TIMEOUT_MS = 75_000;
     /** A page read moments ago is reused by the download (its signed addresses expire): this long. */
     static final long INFO_FRESH_MS = 5 * 60 * 1000;
     private static final java.util.concurrent.atomic.AtomicLong infoSeq = new java.util.concurrent.atomic.AtomicLong();

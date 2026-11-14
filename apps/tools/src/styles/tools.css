@@ -1095,5 +1095,6 @@ html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
 .video-why summary { cursor: pointer; font-size: 12px; color: var(--md-on-surface-variant); }
 .video-why p { margin: 6px 0 0; word-break: break-word; }
 .post-state, .video-healed { display: flex; align-items: flex-start; gap: 8px; margin: 0; }
-.post-chooser { margin-inline-start: 8px; } .post-chooser svg { width: 18px; height: 18px; }
+.post-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; } .post-foot .grow { flex: 1; }
+.post-chooser svg { width: 18px; height: 18px; }
 .kept-sites-box .addon-row svg { width: 20px; height: 20px; }

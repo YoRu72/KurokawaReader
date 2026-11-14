@@ -8,14 +8,14 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
 const PHOTOS = { code: 200, message: 'OK', tweet: { id: '1700000000000000001', text: 'Two photos', author: { screen_name: 'someone' }, media: { all: [
   { type: 'photo', url: 'https://pbs.twimg.com/media/AAAA1111.jpg', width: 4096, height: 2048 },
   { type: 'photo', url: 'https://pbs.twimg.com/media/BBBB2222?format=png&name=small', width: 800, height: 600 }] } } };
-const GIF = { code: 200, tweet: { id: '2118688654906573042', text: 'a gif', author: { screen_name: 'hutarikiri2025' }, media: { all: [{ type: 'gif', url: 'https://video.twimg.com/tweet_video/GGGG.mp4', thumbnail_url: 'https://pbs.twimg.com/tweet_video_thumb/GGGG.jpg', width: 480, height: 270 }] } } };
+const GIF = { code: 200, tweet: { id: '1700000000000000077', text: 'a gif', author: { screen_name: 'sample_gifs' }, media: { all: [{ type: 'gif', url: 'https://video.twimg.com/tweet_video/GGGG.mp4', thumbnail_url: 'https://pbs.twimg.com/tweet_video_thumb/GGGG.jpg', width: 480, height: 270 }] } } };
 (async () => {
   const web = serve(DIST).listen(0); const port = web.address().port;
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   const check = (what, ok) => { console.log(ok ? 'ok  ' : 'FAIL', what); if (!ok) errors.push(what); };
   const cors = { 'access-control-allow-origin': '*' };
-  await p.route('https://api.fxtwitter.com/**', (r) => r.fulfill({ headers: cors, contentType: 'application/json', body: /1585341984679469056/.test(r.request().url()) ? fs.readFileSync(path.join(FX, 'fxtwitter-video.json')) : /2118688654906573042/.test(r.request().url()) ? JSON.stringify(GIF) : JSON.stringify(PHOTOS) }));
+  await p.route('https://api.fxtwitter.com/**', (r) => r.fulfill({ headers: cors, contentType: 'application/json', body: /1700000000000000042/.test(r.request().url()) ? fs.readFileSync(path.join(FX, 'fxtwitter-video.json')) : /1700000000000000077/.test(r.request().url()) ? JSON.stringify(GIF) : JSON.stringify(PHOTOS) }));
   await p.route('https://public.api.bsky.app/**', (r) => r.fulfill({ headers: cors, contentType: 'application/json', body: fs.readFileSync(path.join(FX, 'bsky-post.json')) }));
   await p.route(/pbs\.twimg\.com|cdn\.bsky\.app/, (r) => r.fulfill({ status: 404 }));
   await p.addInitScript(() => {
@@ -29,13 +29,13 @@ const GIF = { code: 200, tweet: { id: '2118688654906573042', text: 'a gif', auth
     return p.$$eval('.grab-row', (r) => r.map((x) => ({ title: x.querySelector('.result-title').textContent, sub: x.querySelector('.src')?.textContent ?? '', thumb: !!x.querySelector('.grab-thumb'), on: x.querySelector('input').checked })));
   };
   // An X video (fixupx link): one row, the 1080p MP4.
-  let rows = await grab('https://fixupx.com/elonmusk/status/1585341984679469056?s=20');
+  let rows = await grab('https://fixupx.com/sample_user/status/1700000000000000042?s=20');
   console.log('x video:', JSON.stringify(rows)); check('x video listed with its thumbnail', rows.length === 1 && rows[0].thumb && /1080p/.test(rows[0].title));
   await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__added.length);
   let added = await p.evaluate(() => window.__added); console.log('added:', JSON.stringify(added.map((a) => [a.source.url, a.name])));
-  check('the best MP4, named after the post', /1920x1080\/aeoVUvTgj4wHShhN\.mp4/.test(added[0].source.url) && added[0].name === 'elonmusk-1585341984679469056-1.mp4');
+  check('the best MP4, named after the post', /1920x1080\/aeoVUvTgj4wHShhN\.mp4/.test(added[0].source.url) && added[0].name === 'sample_user-1700000000000000042-1.mp4');
   // An X GIF (x.com link, on a computer that has gallery-dl): the GIF's MP4 from FxTwitter, gallery-dl not asked.
-  rows = await grab('https://x.com/hutarikiri2025/status/2118688654906573042');
+  rows = await grab('https://x.com/sample_gifs/status/1700000000000000077');
   check('an x.com GIF post on a computer: the GIF, through the X reader (not gallery-dl)', rows.length === 1 && (await p.evaluate(() => window.__gdl)) === 0);
   await p.evaluate(() => document.querySelectorAll('.sheet, .scrim').forEach((x) => x.remove()));
   // X photos (x.com link): the original size.

@@ -41,7 +41,7 @@ export function postPanel(onChange: () => void, onChooser?: () => void): PostPan
     grid.replaceChildren(...list.map(tile));
     const videos = list.some((x) => x.kind !== 'image');
     el.replaceChildren(h('div', { class: 'post-head' }, icon('images'), h('div', { class: 'grow' }, h('b', null, t('postFromThis')), title ? h('small', { dir: 'auto' }, title) : null), all), grid,
-      h('p', { class: 'post-foot hint' }, count, videos && onChooser ? h('button', { type: 'button', class: 'btn text small post-chooser', onclick: (e: Event) => { (e.currentTarget as HTMLButtonElement).hidden = true; onChooser(); } }, icon('hq'), t('postChooseQuality')) : null));
+      h('div', { class: 'post-foot' }, h('span', { class: 'hint grow' }, count), videos && onChooser ? h('button', { type: 'button', class: 'btn tonal small post-chooser', onclick: (e: Event) => { (e.currentTarget as HTMLButtonElement).hidden = true; onChooser(); } }, icon('hq'), t('postChooseQuality')) : null));
     paint();
   };
   // (What the reader could not do, said in one line — not a panel that silently goes away while yt-dlp's raw text shows elsewhere.)
