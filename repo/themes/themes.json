@@ -1,0 +1,30 @@
+{
+ "format": 1,
+ "themes": [
+  {
+   "id": "frosted-glass",
+   "file": "frosted-glass.ktheme",
+   "size": 784506,
+   "sha256": "922eb1a6b694629dcd11d6bbb51facc726e3fa47c6d68bbdc7c3fb1081c5422a",
+   "name": "Frosted Glass",
+   "by": "Wessam Lauf",
+   "version": "1.4.0",
+   "assets": [
+    "bg-dark",
+    "bg-light"
+   ],
+   "preview": {
+    "dark": [
+     "#02060b",
+     "rgb(2 6 11 / .38)",
+     "#7aa2be"
+    ],
+    "light": [
+     "#fef4f2",
+     "rgb(254 244 242 / .42)",
+     "#4e58b8"
+    ]
+   }
+  }
+ ]
+}

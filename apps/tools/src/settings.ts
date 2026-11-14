@@ -1,9 +1,11 @@
 // The app's settings: kept in localStorage under one key, applied to the document (theme, accent) on change.
 import type { Limits } from './engine/types';
+import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, DEFAULT_THEME, type BlurPref, type Blur } from './theme/themes';
+import { nativePlatform } from './native';
 
 export type UiMode = 'system' | 'light' | 'dark';
 export type DarkTone = 'default' | 'grey' | 'black';
-export type Accent = 'graphite' | 'mono' | 'teal' | 'aqua' | 'mint' | 'olive' | 'gold' | 'sand' | 'coral' | 'rose' | 'violet' | 'custom';
+export type Accent = 'theme' | 'graphite' | 'mono' | 'teal' | 'aqua' | 'mint' | 'olive' | 'gold' | 'sand' | 'coral' | 'rose' | 'violet' | 'custom';
 
 export interface Settings {
   uiMode: UiMode;
@@ -12,6 +14,16 @@ export interface Settings {
   darkTone: DarkTone;
   accent: Accent;
   accentCustom: string;
+  /** The accent before a theme's own colours were taken (given back when a theme that follows the accent is chosen). */
+  accentPrev?: Accent;
+  /** The theme (theme/themes.ts): the glass look, its colours and background; 'classic' = the look before themes. */
+  theme?: string;
+  /** Set once by the move to themes for those who had chosen their own dark tone or accent: Frost keeps those colours. */
+  themeKeepColours?: boolean;
+  /** How much glass is blurred: chosen, or 'auto' (by the device, the system's wishes, the battery). */
+  glassBlur?: BlurPref;
+  /** A phone: lighter glass while the battery is low (default on). A computer: the sidebar in glass, or solid (default glass). */
+  glassBattery?: boolean; glassRail?: boolean;
   /** The download folder (a path, or a content: URI on Android); '' = the engine's default. */
   downloadDir: string;
   /** Folders chosen lately in the Add sheet, newest first. */
@@ -147,7 +159,7 @@ export interface Settings {
 
 const KEY = 'kt.settings';
 const DEFAULTS: Settings = {
-  uiMode: 'dark', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff',
+  uiMode: 'dark', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff', theme: DEFAULT_THEME, glassBlur: 'auto',
   downloadDir: '', maxActive: 3, connections: 0, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: false,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
@@ -160,8 +172,19 @@ const DEFAULTS: Settings = {
 export const BUILT_IN = ['player'];
 const withBuiltIn = (s: Settings): Settings => (BUILT_IN.every((b) => s.addons.includes(b)) ? s : { ...s, addons: [...s.addons, ...BUILT_IN.filter((b) => !s.addons.includes(b))] });
 let current: Settings = load();
+migrateTheme();
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
+/** Once: the move to themes (kt.themeMigrated). A fresh install and untouched settings get the new default; who had
+ *  chosen a dark tone or an accent gets it too, with those colours kept inside the glass. */
+function migrateTheme(): void {
+  try {
+    if (localStorage.getItem('kt.themeMigrated')) return;
+    const raw = localStorage.getItem(KEY); const stored = raw ? (JSON.parse(raw) as Partial<Settings>) : null;
+    if (!stored?.theme) { const m = migrateLook(stored); current = { ...current, theme: m.theme, themeKeepColours: m.keepColours || undefined }; if (raw) localStorage.setItem(KEY, JSON.stringify(current)); }
+    localStorage.setItem('kt.themeMigrated', '1');
+  } catch { /* private mode: the defaults */ }
+}
 function load(): Settings {
   try { return withBuiltIn({ ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>), aria2: { ...DEFAULTS.aria2, ...((JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>).aria2 ?? {}) } }); } catch { return withBuiltIn({ ...DEFAULTS }); }
 }
@@ -178,18 +201,40 @@ export function onSettingsChange(fn: (s: Settings) => void): () => void { listen
 /* ---------- the look ---------- */
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
 mql?.addEventListener?.('change', () => applyChrome());
+/** What the blur came to here (shown beside the choice), and why. */
+export let glassNow: ReturnType<typeof resolveBlur> = { blur: 'full', why: 'platform' };
+let lowBattery = false;
+let pictures: Record<string, string> = {}; let picturesFor = '';
+/** The pictures of the theme in use, read from where its pack was kept (then the look applied again). */
+export function reloadThemePictures(): void { picturesFor = ''; pictures = {}; applyChrome(); }
+const isPcNow = () => typeof document !== 'undefined' && document.documentElement.classList.contains('pc');
 export function applyChrome(s: Settings = current): void {
-  const light = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : !!mql?.matches;
+  const wantLight = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : !!mql?.matches;
   const html = document.documentElement;
+  const def = themeById(s.theme);
+  const plat = nativePlatform(); const env = readEnv(plat === 'android' ? 'android' : plat === 'desktop' ? 'desktop' : 'web', lowBattery && s.glassBattery !== false && !isPcNow());
+  glassNow = resolveBlur(s.glassBlur ?? 'auto', env);
+  const useThemeColours = s.accent === 'theme' && !def.classic && !!(def.dark?.roles || def.light?.roles);
+  const packId = def.pack?.id ?? '';
+  if (packId !== picturesFor) { picturesFor = packId; pictures = {}; if (packId) void import('./themeIo').then((m) => m.themePictures(packId)).then((p) => { if (picturesFor === packId && Object.keys(p).length) { pictures = p; applyChrome(); } }).catch(() => undefined); }
+  const got = applyTheme(html, { theme: def.id, mode: wantLight ? 'light' : 'dark', darkTone: s.darkTone, useThemeColours, keepColours: !!s.themeKeepColours, blur: glassNow.blur as Blur, pictures });
+  const light = got.mode === 'light';
   html.dataset.ui = light ? 'light' : 'dark';
   (html.style as CSSStyleDeclaration & { zoom?: string }).zoom = s.uiScale && s.uiScale !== 100 ? String(s.uiScale / 100) : '';
   html.dataset.dark = s.darkTone;
-  html.dataset.accent = s.accent;
+  html.dataset.accent = s.accent === 'theme' ? (useThemeColours ? 'theme' : 'graphite') : s.accent;
+  if (s.glassRail === false) html.dataset.railGlass = 'off'; else delete html.dataset.railGlass;
   const roles = ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'];
-  if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light); else roles.forEach((k) => html.style.removeProperty(k));
+  if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light); else if (!useThemeColours) roles.forEach((k) => html.style.removeProperty(k));
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', light ? '#f7f8fa' : s.darkTone === 'black' ? '#000000' : s.darkTone === 'grey' ? '#1c1b1f' : '#121314');
+  if (meta) meta.setAttribute('content', got.glass ? got.ground : light ? '#f7f8fa' : s.darkTone === 'black' ? '#000000' : s.darkTone === 'grey' ? '#1c1b1f' : '#121314');
 }
+// (The system's wishes and the battery change while the app is open: the blur follows.)
+if (typeof matchMedia === 'function') for (const q of ['(prefers-reduced-transparency: reduce)', '(prefers-reduced-motion: reduce)']) matchMedia(q).addEventListener?.('change', () => applyChrome());
+void (navigator as Navigator & { getBattery?(): Promise<{ level: number; charging: boolean; addEventListener(e: string, f: () => void): void }> }).getBattery?.().then((b) => {
+  const read = () => { const low = !b.charging && b.level <= 0.2; if (low !== lowBattery) { lowBattery = low; applyChrome(); } };
+  read(); b.addEventListener('levelchange', read); b.addEventListener('chargingchange', read);
+}).catch(() => undefined);
 function hexToHsl(hex: string): [number, number, number] {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim()); const n = m ? parseInt(m[1], 16) : 0x7fb8ff;
   const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;

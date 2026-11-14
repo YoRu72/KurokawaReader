@@ -3,7 +3,8 @@
 import { brandIcon, setBrandIcon } from '../ui/brandIcon';
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
-import { BUILT_IN, getSettings, updateSettings, type Accent, type UiMode, type DarkTone } from '../settings';
+import { BUILT_IN, getSettings, updateSettings } from '../settings';
+import { appearanceCard } from './appearance';
 import { back, navigate } from '../router';
 import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
@@ -92,6 +93,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     }
   };
   search.addEventListener('input', applySearch);
+  // (The sticky head's height, so a card scrolled to lands below it, not under it.)
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => body.style.setProperty('--head-h', `${head.offsetHeight}px`)).observe(head);
   const rerender = () => { const all = sections(); drawTabs(all); body.replaceChildren(head, ...inTab(all)); decorate(); };
 
   const sections = (): HTMLElement[] => {
@@ -105,10 +108,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       row(t('navCustomize'), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./navCustomize').then((m) => m.navCustomizeSheet()) }, icon('layout'), t('customizeBtn')), t('navCustomizeHint')),
       toggle(t('swipeTabs'), s.swipeTabs !== false, (v) => updateSettings({ swipeTabs: v }), t('swipeTabsHint')),
       row(t('uiScale'), pickButton(t('uiScale'), [['75', '75%'], ['85', '85%'], ['90', '90%'], ['100', '100%'], ['110', '110%'], ['125', '125%']], String(s.uiScale), (v) => { updateSettings({ uiScale: Number(v) }); rerender(); }, t('close')), t('uiScaleHint')),
-      row(t('uiMode'), pickButton(t('uiMode'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode, (v) => { updateSettings({ uiMode: v as UiMode }); rerender(); }, t('close'))),
-      row(t('darkTone'), pickButton(t('darkTone'), [['default', t('darkToneDefault')], ['grey', t('darkToneGrey')], ['black', t('darkToneBlack')]], s.darkTone, (v) => { updateSettings({ darkTone: v as DarkTone }); rerender(); }, t('close'))),
-      row(t('accent'), h('div', { class: 'accent-swatches' }, ...(['graphite', 'mono', 'teal', 'aqua', 'mint', 'olive', 'gold', 'sand', 'coral', 'rose', 'violet'] as Accent[]).map((a) => h('button', { type: 'button', class: 'swatch' + (s.accent === a ? ' on' : ''), 'data-accent': a, 'aria-label': a, onclick: () => { updateSettings({ accent: a }); rerender(); } })),
-        h('label', { class: 'swatch custom' + (s.accent === 'custom' ? ' on' : ''), title: 'custom' }, h('input', { type: 'color', value: s.accentCustom, oninput: (e: Event) => updateSettings({ accent: 'custom', accentCustom: (e.target as HTMLInputElement).value }) })))));
+    );
+    const appearance = appearanceCard(rerender);
     const eng = getEngine();
     const dirLabel = h('span', { class: 'src', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
     const canPick = !!(window.kurokawaTools?.pickDir || ktPlugin());
@@ -215,6 +216,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), backupRow, h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue')),
+      h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void import('../downloads/recorder').then((m) => recorderSheet(m)) }, icon('history'), t('recorderTitle'))));
     const anime = s.addons.includes('anime') ? animeSettingsCard(rerender) : null;
     const anilist = s.addons.includes('anime') ? anilistCard(rerender) : null;
@@ -344,7 +346,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
     // Translate on screen (the add-on, Android): its own page.
     const screen = (plat === 'android' || plat === 'desktop') && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
-    return [general, anilist, episodes, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
+    return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
