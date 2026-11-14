@@ -1396,4 +1396,5 @@ export const zh: Partial<Strings> = {
   maxVideo: "同时进行的视频下载",
   maxVideoHint: "同时运行的视频下载数量，其余的排队等候。",
   vQueuedAt: "队列位置：{n}",
+  vPageNotSaved: "不会把视频网站的页面另存为文件：在能读取到视频之前，“下载”不可用。",
 };

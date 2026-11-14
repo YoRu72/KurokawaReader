@@ -2492,6 +2492,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   maxVideo: "Simultaneous video downloads",
   maxVideoHint: "Video downloads that run at once; the others wait their turn.",
   vQueuedAt: "Place in queue: {n}",
+  vPageNotSaved: "A video site's page is not saved as a file: Download waits until the video can be read.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

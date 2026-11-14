@@ -1396,4 +1396,5 @@ export const ja: Partial<Strings> = {
   maxVideo: "同時に行う動画ダウンロード",
   maxVideoHint: "同時に実行する動画ダウンロードの数。ほかは順番を待ちます。",
   vQueuedAt: "待ち順: {n}",
+  vPageNotSaved: "動画サイトのページはファイルとして保存しません。動画を読めるまでダウンロードは押せません。",
 };

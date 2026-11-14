@@ -1396,4 +1396,5 @@ export const ko: Partial<Strings> = {
   maxVideo: "동시 동영상 다운로드",
   maxVideoHint: "한 번에 실행할 동영상 다운로드 수입니다. 나머지는 차례를 기다립니다.",
   vQueuedAt: "대기 순서: {n}",
+  vPageNotSaved: "동영상 사이트의 페이지는 파일로 저장하지 않습니다. 동영상을 읽을 수 있을 때까지 다운로드는 기다립니다.",
 };

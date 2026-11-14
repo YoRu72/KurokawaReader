@@ -19,7 +19,9 @@ export function startClipboardWatch(open: (text: string) => void): void {
     if (document.querySelector('.add-sheet')) return; open(text);
   };
   document.addEventListener('visibilitychange', () => void check()); window.addEventListener('focus', () => void check());
-  setInterval(() => void check(), 2500); void check();
+  // (The poll only while the app is in front and focused: a window left visible behind another reads the clipboard
+  // no more — its focus brings the check at once.)
+  setInterval(() => { if (getSettings().clipboardWatch && document.hasFocus()) void check(); }, 2500); void check();
 }
 
 /* ---------- the scheduler ---------- */

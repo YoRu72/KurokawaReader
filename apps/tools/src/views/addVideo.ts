@@ -98,7 +98,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
     const meta = [i.uploader, dur(i.duration), i.site].filter(Boolean).join(' · '); const changed = changeNote;
     // (Return YouTube Dislike: likes and dislikes of a YouTube video from its open API, when the setting asks.)
     // (Asked once per video and kept — not on every redraw —, and only after the qualities are on screen: never in their way.)
-    const rydLine = h('p', { class: 'src video-ryd', dir: 'ltr', hidden: true }); if (s.videoRyd !== false && /youtube/i.test(i.site ?? '') && i.id) { const put = (v: Ryd | null) => { if (!v) return; rydLine.hidden = false; rydLine.textContent = `👍 ${localDigits(v.likes)} · 👎 ${localDigits(v.dislikes)}`; }; const kept = RYD.get(i.id); if (kept) void kept.then(put); else setTimeout(() => { if (!rydLine.isConnected) return; const p = rydOf(i.id); void p.then(put); }, 0); }
+    const rydLine = h('p', { class: 'src video-ryd', dir: 'ltr', hidden: true }); if (s.videoRyd !== false && /youtube/i.test(i.site ?? '') && i.id) { const put = (v: Ryd | null) => { if (!v) return; rydLine.hidden = false; rydLine.replaceChildren(icon('thumbUp'), h('span', null, localDigits(v.likes)), h('span', { class: 'sep' }, '·'), icon('thumbDown'), h('span', null, localDigits(v.dislikes))); }; const kept = RYD.get(i.id); if (kept) void kept.then(put); else setTimeout(() => { if (!rydLine.isConnected) return; const p = rydOf(i.id); void p.then(put); }, 0); }
     const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
     const wanted = opts.subs.on ? opts.subs.langs : langs;
     el.replaceChildren(...[
@@ -178,7 +178,8 @@ export function videoPanel(onChange: () => void): VideoPanel {
       h('p', { class: 'video-err-msg', dir: 'auto' }, icon(err.action === 'signIn' ? 'lock' : 'alert'), ' ', t(err.key as 'vErrOther')),
       h('div', { class: 'video-err-actions' }, act(), err.action === 'signIn' && err.kind === 'botCheck' && (videoShell() === 'tauri' || videoShell() === 'electron') ? h('button', { type: 'button', class: 'btn text small', onclick: () => void import('../browser').then((m) => m.openBrowser(u)) }, icon('globe'), t('vOpenInBrowser')) : null),
       err.raw ? h('details', { class: 'video-why' }, h('summary', null, t('vDetails')), h('p', { class: 'src small', dir: 'ltr' }, err.raw)) : null,
-      h('p', { class: 'src small' }, t('videoFallback'))));
+      // (A video site's page is never saved as a file: the Download button waits for a read page — the sheet says why.)
+      h('p', { class: 'src small video-page-off' }, icon('info'), ' ', t('vPageNotSaved'))));
   };
   return {
     el, check, setJar: (id: string) => { if (id === jar) return; jar = id; if (url) { const u = url; url = null; check(u); } }, busy: async () => { let r: Promise<void>; do { r = running; await r.catch(() => undefined); } while (r !== running); },

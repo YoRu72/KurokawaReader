@@ -1098,3 +1098,11 @@ html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
 .post-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; } .post-foot .grow { flex: 1; }
 .post-chooser svg { width: 18px; height: 18px; }
 .kept-sites-box .addon-row svg { width: 20px; height: 20px; }
+/* A quality chip: the label and its size on one baseline, the size smaller and muted. */
+.video-chooser .chip.small, .video-choices .chip.small { align-items: baseline; }
+.video-chooser .chip.small > small.src, .video-choices .chip.small > small.src { display: inline; font-size: .82em; line-height: 1; margin: 0; margin-inline-start: 6px; padding: 0; color: var(--md-on-surface-variant); opacity: 1; font-weight: 400; vertical-align: baseline; }
+/* Return YouTube Dislike: the app's own line icons, in the muted text colour. */
+.video-ryd { display: flex; align-items: center; gap: 6px; color: var(--md-on-surface-variant); }
+.video-ryd svg { width: 16px; height: 16px; flex: none; }
+.video-ryd .sep { opacity: .6; margin-inline: 2px; }
+.video-page-off { display: flex; align-items: flex-start; gap: 8px; margin: 0; } .video-page-off > svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }

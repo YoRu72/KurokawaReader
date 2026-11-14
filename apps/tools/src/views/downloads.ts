@@ -181,7 +181,8 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
     if ((x.kind === 'video' || x.meta?.hls) && (x.state === 'downloading' || x.state === 'metadata')) { const m = x.meta ?? {}; if (m.frags) parts.push(t('hlsPieces', { i: localDigits(String(m.frag ?? 0)), n: localDigits(String(m.frags)) })); if (m.phase) parts.push(phaseShort(m.phase)); }
     if (x.state === 'downloading' && isStalled(x)) parts.push(t('stalled'));
-    { const n = places.get(x.id); if (n) parts.push(t('vQueuedAt', { n: localDigits(n) })); }
+    // (A waiting video's place first after its state: on a phone the line is cut at its end.)
+    { const n = places.get(x.id); if (n) parts.splice(1, 0, t('vQueuedAt', { n: localDigits(n) })); }
     if (x.kind === 'torrent' && x.state === 'downloading' && x.readyFile !== undefined && x.readyFile >= 0) parts.push(`▶ ${t('readyToPlay')}`);
     if (x.meta?.dhtFallback && x.state === 'downloading' && !x.peers && !x.seeds) parts.push(t('dhtAsked'));
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));

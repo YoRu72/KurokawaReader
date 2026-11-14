@@ -130,7 +130,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const debridRow = h('label', { class: 'check-row debrid-row', hidden: true }, viaDebrid, h('span', null, t('viaDebrid')));
   void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
   // (A page yt-dlp read — a post on X, a reel, a video — is not a file: no name to give it, no «web page» warning.)
-  const video = videoPanel(() => { const page = !!video.picks(); sh.el.classList.toggle('as-video', page); });
+  // (A known video site's link yt-dlp could not read: Download is off — its page is never what is wanted —, the panel says why.)
+  const video = videoPanel(() => { const page = !!video.picks(); sh.el.classList.toggle('as-video', page); if (goBtn) { const off = video.unread() && !post.picks() && sources().length === 1 && !!sh.el.querySelector('.video-failed'); goBtn.disabled = off; goBtn.title = off ? t('vPageNotSaved') : ''; } });
   // (A post's photos and videos read here at once — «auto-grab» —; then they are what «Download» adds.)
   let goBtn: HTMLButtonElement | null = null;
   const post = postPanel(() => { const pp = post.picks(); sh.el.classList.toggle('as-post', !!pp); if (goBtn) goBtn.lastChild!.textContent = pp ? t('grabAddN', { n: countFiles(pp.length) }) : t('addStart'); },

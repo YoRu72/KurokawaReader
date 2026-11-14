@@ -84,8 +84,9 @@ const serve = () => http.createServer((req, res) => {
     ok('  no icon larger than 48 px in the sheet', (await bigIcons(s.p)) === 0, await bigIcons(s.p));
     if (btn) { const b = s.p.locator('.video-err-actions .btn', { hasText: btn }); ok(`  «${btn}» shown and in view`, (await b.count()) === 1 && (await b.evaluate((e) => { const r = e.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }))); }
     else ok('  no action for a removed video', (await s.p.$$('.video-err-actions .btn')).length === 0);
+    ok('  Download is off: a video site\'s page is never saved as a file', await s.p.$eval('.sheet .btn.primary', (b) => b.disabled));
     ok('  the raw line under «Details»', (await s.p.$eval('.video-why', (e) => e.textContent)).includes(line.replace(/^ERROR: \[youtube\] abc: /, '')) && await inView(s.p, '.video-why summary'));
-    if (btn === 'Try again') { await s.p.evaluate(() => window.__setFail(null)); const before = (await s.n()).info; await s.p.click('.video-err-actions .btn'); await s.p.waitForSelector('.video-choices', { timeout: 5000 }); ok('  «Try again» reads again and shows the qualities', (await s.n()).info === before + 1); }
+    if (btn === 'Try again') { await s.p.evaluate(() => window.__setFail(null)); const before = (await s.n()).info; await s.p.click('.video-err-actions .btn'); await s.p.waitForSelector('.video-choices', { timeout: 5000 }); ok('  «Try again» reads again and shows the qualities', (await s.n()).info === before + 1); ok('  …and Download is on again', !(await s.p.$eval('.sheet .btn.primary', (b) => b.disabled))); }
     if (btn === 'Sign in') { await s.p.click('.video-err-actions .btn:has-text("Sign in")'); await s.p.waitForSelector('.sheet .btn.primary:has-text("Use my sign-in")'); await s.p.evaluate(() => window.__setFail(null)); await s.p.click('.sheet .btn.primary:has-text("Use my sign-in")'); await s.p.waitForSelector('.video-choices', { timeout: 5000 }); ok('  «Sign in» → the site\'s sign-in kept, the link read again', (await s.n()).cookies.includes('save')); }
     ok('  no page errors', !s.errs.length, s.errs); await s.ctx.close();
   }
@@ -120,6 +121,7 @@ const serve = () => http.createServer((req, res) => {
   { const s = await open(); await s.paste('https://www.youtube.com/watch?v=abc'); await s.p.waitForSelector('.video-choices'); await s.p.waitForTimeout(200);
     for (let i = 0; i < 3; i++) { await s.p.click('.video-choices .chip >> nth=1').catch(() => undefined); await s.p.waitForTimeout(60); }
     const n = await s.n(); ok('YouTube: no HEAD or range probe of the page', !n.http.some((x) => /^HEAD .*youtube/.test(x) || /youtube\.com\/watch/.test(x)), n.http);
+    ok('Return YouTube Dislike: the app\'s line icons, no emoji', await s.p.$eval('.video-ryd', (e) => e.querySelectorAll('svg').length === 2 && !/\p{Extended_Pictographic}/u.test(e.textContent)));
     ok('Return YouTube Dislike asked once, however often the panel is redrawn', n.http.filter((x) => /returnyoutubedislike/.test(x)).length === 1, n.http); await s.ctx.close(); }
   await br.close(); web.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })();
