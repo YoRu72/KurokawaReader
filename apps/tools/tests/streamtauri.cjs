@@ -119,7 +119,7 @@ async function selftestPart() {
     const req = results.filter((r) => r.required); const failed = req.filter((r) => !r.ok).map((r) => r.name);
     if (!bad) {
       ok('self-test P4 against a right server: every required check passes (' + req.length + ')', req.length >= 10 && failed.length === 0, results.filter((r) => !r.ok));
-      ok('… the swarm and ffmpeg checks are reported only', results.filter((r) => !r.required).every((r) => /swarm|ffmpeg/.test(r.name)) && results.some((r) => /swarm/.test(r.name)));
+      ok('… the swarm, ffmpeg and hybrid-engine checks are reported only (no aria2c here)', results.filter((r) => !r.required).every((r) => /swarm|ffmpeg|hybrid/.test(r.name)) && results.some((r) => /swarm/.test(r.name)) && results.some((r) => /^hybrid: torrent engines on loopback$/.test(r.name) && !r.required));
     } else ok(`self-test P4 against a wrong server (${bad}) fails`, failed.length === 1 && (bad === 'stats' ? /streamStats/.test(failed[0]) : /streamDone/.test(failed[0])), failed);
     fs.rmSync(tmp, { recursive: true, force: true });
   }

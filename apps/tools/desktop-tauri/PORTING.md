@@ -161,11 +161,27 @@ Do the same once before a local `tauri build` / `tauri dev`.
   stats, stop). `Aria2Stream` works today: the download gets `stream-piece-selector=inorder` and
   `bt-prioritize-piece=head=16M,tail=4M` (torrentstream.cjs), each read waits until aria2's bitfield has its pieces and
   reads the growing file — no file handle kept between reads. aria2 cannot fetch an arbitrary place first, so a far
-  seek waits for the in-order fetch (Electron's reason for WebTorrent). `stream_rqbit.rs` (librqbit 8, the plan's
-  engine) pauses aria2, streams with librqbit's file streams in the same folder and hands back with check-integrity —
-  compiled only with `--features rqbit`, which the main build leaves out entirely (its dependency lines are added only
-  by the non-required CI step «librqbit try», so neither librqbit's API nor its dependency resolution can break the
-  main build). Its calls are written from memory, each marked GUESS; that step prints the compiler's verdict.
+  seek waits for the in-order fetch (Electron's reason for WebTorrent) — unless the hybrid engine below serves it.
+- **The hybrid engine** («far seeks»; `stream_hybrid.rs`, rules in `hybridlogic.rs`, std only, tested alone): one
+  StreamEngine in front of two back ends. aria2 keeps every download; a torrent the player opens goes to librqbit
+  (`stream_rqbit.rs`) when it is built in and its session started, the file is not already whole and librqbit has not
+  failed on that torrent in this run (`choose`). Its file streams fetch the pieces under the player's position first,
+  and the server answers the Range request chunk by chunk as they arrive. **One owner per info-hash** (`Owners`): aria2
+  is force-paused and confirmed quiet before librqbit adds (else the take is abandoned and aria2 keeps it); librqbit has
+  deleted the torrent from its session before aria2 is unpaused; while librqbit holds it, the page's pause / resume only
+  records a wish for the hand-back (`engine.rs` pause/resume — Electron's aria2.cjs skipped a handed-over resume); a
+  removal ends the watchers and librqbit's hold first; at quit every hold is handed back before aria2 saves its session.
+  **Fallback**: no session, a failed add, no metadata or no peer and no new piece for 90 s while a read waits
+  (`Stall`), or any error mid-stream → librqbit lets go, aria2 takes the torrent back (check-integrity, unpaused because
+  the player still reads) and the same reader goes on from aria2 — the page sees the same address and events
+  (`streamStats.engine` says which serves). **Continuing each other's pieces**: librqbit is pointed at aria2's own files
+  (`rqbit_folder`: `<dir>/<name>` for several files, `<dir>` for one) with `overwrite`, so it hashes what is on the disk
+  at its add and keeps the good pieces; aria2 gets `check-integrity` at the hand-back, which re-hashes the files on its
+  restart (as Electron's handBack did for WebTorrent). Whether aria2 really keeps librqbit's pieces (rather than trusting
+  its own .aria2 control file) is what the reported row «each engine continues the other's pieces» prints — not yet
+  run. The downloads list shows librqbit's speed and peers while it serves (aria2.cjs showed WebTorrent's).
+  librqbit is compiled only with the `rqbit` feature: the committed Cargo.toml never names it; `rqbit-feature.cjs on`
+  makes it the default feature with librqbit `=8.1.1` in CI's copy (see «librqbit» below).
 - **ffmpeg routes** (`streamproxy.rs`): `/audio`, `/video`, the proxy's HLS remux — streamproxy.cjs's and
   transcode.cjs's arguments word for word (kt-core: `videotools.rs` for /audio and /video since P5 merged,
   `streamlogic.rs` for the remux), ffmpeg found and run as the video tools do, its whole tree ended when its reader
@@ -181,9 +197,28 @@ Do the same once before a local `tauri build` / `tauri dev`.
   reported «AAC from ffmpeg» row (it needed a real ffmpeg; no runner had one) is gone: a self-test run only ever starts
   the app's stand-in ffmpeg, and P5's «transcode stream» row checks the bytes of `/video` and `/audio` on this server.
   Page-level: `tests/streamtauri.cjs`.
-- **librqbit**: `cargo check --features rqbit` passed against librqbit 8.1.1 in run 43543045018 (every «GUESS» call
-  compiled; in run 43543617161 the step failed only on its own `grep` having nothing to print — fixed with `|| true`). It
-  stays behind the feature: no build with it has streamed the swarm yet (see «Stages», 6).
+- **librqbit**: `cargo check --features rqbit` passed against librqbit 8.1.1 in runs 43543045018 and 43586049375 (exit 0;
+  no error or warning in the stream files; every call that was marked GUESS compiled). So CI now builds **with** it on
+  every system (the step «librqbit on for this build», `rqbit-feature.cjs on`, pinned `=8.1.1`), and «librqbit try» is
+  gone. A build that fails with it is made again without it («Build without librqbit»), every later check runs on that,
+  and «librqbit verdict» fails the job at its end. Linux also builds and self-tests the plain app every run («librqbit —
+  what it adds, and the plain build self-tested»: crates and sizes with − without, then part 2 of the self-test), so the
+  release's fallback (switch-over/NOTES.md) is always proven. stream_rqbit.rs uses no librqbit call beyond those that
+  compiled. Self-test rows (`selftest.js` runHybrid, 12 MiB made-up file, loopback only, DHT off in librqbit's session):
+  «hybrid: librqbit fails at the add → aria2 serves», «hybrid: one owner — … resume leaves aria2 paused», «hybrid:
+  librqbit fails mid-stream → the same reader goes on from aria2» (a stand-in librqbit, every build; required on Linux),
+  «hybrid: far seek — bytes near the end arrive through librqbit before the middle is in» (built with librqbit; required
+  on Linux), «hybrid: each engine continues the other's pieces» (reported). Elsewhere reported until a green Linux run.
+  **Run 43597302499** (2ef84b6): compiled with librqbit on all four builds (macOS ×2 green; Linux plain build's rows
+  1–3 passed; Linux sizes AppImage 88.22 vs 85.46 MB, deb 12.45 vs 11.40, program 13.79 vs 11.26; 634 vs 516 crates),
+  but the self-test with librqbit aborted on Linux (134) and Windows (0xC0000409): librqbit spawned from a stream server
+  thread with no Tokio runtime («there is no reactor running», spawn_utils.rs:34), and `panic = "abort"` took the program
+  down. Fixed: stream_rqbit.rs owns one runtime («kt-rqbit», 2 workers) and runs every librqbit call — session, add,
+  select, stream open/read, stats, delete — entered in it, every handle and file stream made and dropped there; the build
+  with librqbit unwinds (`rqbit-feature.cjs`: `panic = "unwind"`, tokio `rt-multi-thread`), and stream_hybrid.rs's
+  `safe` catches a panic in any librqbit call as a librqbit failure: the torrent goes back to aria2, librqbit is not used
+  again in that run. Row «hybrid: librqbit panics mid-stream → caught, the same reader goes on from aria2» (a stand-in
+  that panics; required on Linux in a build that unwinds).
 
 ## Stage P6 — desktop integration (`desktop.rs`, `desklogic.rs` std only, `sitewin.rs`)
 
@@ -549,9 +584,9 @@ done · P6 6 done · P7 8 done + the screen translator's 8 (`kt:archiveFree` cou
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:streamUrl` | done (P4) | `streamserver.rs` + the engine trait (`stream_engine.rs`): aria2's in-order fetch (torrentstream.cjs's options, reads wait on aria2's bitfield); librqbit only with `--features rqbit` (hand-over as WebTorrent's) |
+| `kt:streamUrl` | done (P4) | `streamserver.rs` + the hybrid engine (`stream_hybrid.rs`): librqbit for a watched torrent where built in (far seeks first, hand-over as WebTorrent's), aria2's in-order fetch otherwise and on any librqbit failure |
 | `kt:streamDone` | done (P4) | the download's addresses withdrawn, their waiting readers ended (Electron's aria2 path kept them) |
-| `kt:streamStats` | done (P4) | `{ down, up, peers, progress, buffered, engine }` for any download being watched (Electron: only WebTorrent's, else null) |
+| `kt:streamStats` | done (P4) | `{ down, up, peers, progress, buffered, engine }` for any download being watched (Electron: only WebTorrent's, else null); `engine` «rqbit» or «aria2», librqbit's `buffered` empty |
 | `kt:fileUrl` | done (P4) | the same server, `/<token>/f?p=` |
 | `kt:audioUrl` | done (P4+P5) | a route of the stream server (`/<token>/audio`); P5's ffmpeg rules (`vtffmpeg::binary()`: the pack, else the PATH / Homebrew); «pack:ffmpeg» without |
 | `kt:videoUrl` | done (P4+P5) | the same server (`/<token>/video`): transcode.cjs's encoders (card's first, x264 after a failure), kt-core videotools' arguments |
@@ -712,7 +747,8 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
 6. **Left before P9** (the switch-over with the hand-over, and the release job that publishes the file names above):
    Windows' first compile of P6/P8/the browser, a green re-run of P5 and the screen translator after the fixes of run
    43549144577; a build with
-   `--features rqbit` streaming the swarm before librqbit is switched on; the losses below decided.
+   `--features rqbit` streaming the swarm (now in CI: the hybrid engine's rows, waiting for their first run); the losses
+   below decided.
 7. **P9 — prepared, switch OFF** (written, waiting for its first CI compile; see «Stage P9» below): the hand-over (Electron
    writes, the Rust build carries the engine's files before aria2c starts and brings the rest at its first start), the
    bridge flow behind `RUST_SWITCH = false`, the installer's one screen and keep/replace hooks, the designed setup
@@ -731,8 +767,12 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
   <arch>]`, resumed fetch, SHA-256, marker; `scripts/denopack.py` makes the files from deno's release zips — to be run by
   the release job at the switch-over, see «What to flip»). Self-test row «deno pack: …» (a stand-in yt-dlp prints the
   warning, a stand-in deno from loopback; never the runner's own node).
-- **Far seeks in a torrent** (P4): aria2 fetches in order (head 16 MiB, tail 4 MiB first), so a seek far ahead waits for
-  the fetch to get there; WebTorrent fetched that place first. librqbit, behind its feature, is the cure.
+- **Far seeks in a torrent** (P4) — **closed in builds with librqbit** by the hybrid engine (see «Stage P4»), once its
+  CI rows pass: librqbit fetches the sought place first, as WebTorrent did. **Remains** in a build without librqbit
+  (a release that fell back — switch-over/NOTES.md —, or any local plain build): aria2 fetches in order (head 16 MiB,
+  tail 4 MiB first), so a seek far ahead waits for the fetch to get there. Also left: librqbit's `buffered` ranges in
+  streamStats are empty (WebTorrent gave none either); its pieces kept by aria2 after the hand-back are unproven until
+  the reported row has run.
 - **Finished files renamed by sniffing** (`sniff.cjs`): not ported.
 - **DNS over HTTPS for the page's own requests**: the system web views keep the system's DNS (see «DoH»).
 - **The Wi-Fi share's address**: the default route's IPv4, not the interface list by name.
@@ -762,12 +802,12 @@ Rules std only in `src-tauri/src/gaplogic.rs` (11 tests, `rustc --test`); each n
 sets only when the resolved crate has it (`apidetect.rs` CFGS_HYB: `kt_notify_wait`, `kt_webview_gtk`,
 `kt_wk_resources`, `kt_cookie_set`, `kt_cookie_fromstr` — the build's log says which: «KT build (hybrid): …»);
 notify-rust and webkit2gtk, which this shell names too, count only when the lock holds ONE version of each (the
-plugin's, wry's). Self-test rows «hybrid: …» (selftest.js runHybrid, its own loopback server in `hybridtest.rs`).
+plugin's, wry's). Self-test rows «hybrid: …» (selftest.js runGaps, its own loopback server in `hybridtest.rs`).
 
 | Gap | Interface | Windows | Linux | macOS | Fallback / what still differs |
 |---|---|---|---|---|---|
 | **A notice's click** (`notifier.rs`) | `show(app, id, title, body)` → Ok (its click wired) or Err(why); the click → `clicked(id)` → the window to the front and `kt:openTask` (Electron's event: the page unchanged) | a toast through Windows PowerShell's WinRT (std only), its click a *protocol* activation of `kurokawatools://task?id=<id>` — Windows starts this program with it, the single-instance plugin hands it over (`desktop.rs queue`), never to the page as a link; only where the `kurokawatools:` links open THIS program (the installer's registration), under the AppUserModelID `app.kurokawa.tools` (registered for the user under `HKCU\Software\Classes\AppUserModelId` when missing — left there after an uninstall) | org.freedesktop.Notifications with a default action («Open», the page's `noticeOpen`), its ActionInvoked waited for on a thread (notify-rust, the plugin's own crate; at most 16 waiting) | none: a click reaches only a signed bundle's own delegate | the plugin's notice + the two-minute focus stand-in, wherever the native way says no (a portable .exe without the link registration, a Linux without a notification server, a Mac). A click on a toast after the app was closed starts it, but the page is not listening yet: it opens on its downloads, not on that one. Self-test: the click's callback (required), the toast's address through a second launch (required on Windows), the native notice itself reported (CI has no notification centre; the bare build is not the link handler — the installed run is) |
-| **Media told by content type** (`mediawatch.rs`) | Grab's answer `complete(page, ua, cookie_for)`: what the web view saw on this page, then the header probe; Electron's `seen` rule unchanged (`classify`) | the header probe; WebView2's `WebResourceResponseReceived` written behind the `wv2` feature (OFF: webview2-com / windows must be wry's exact versions — CI's «Hybrid try» pins them from the lock and prints the compiler's word) | WebKitGTK's resource-load-started → each response's MIME type, as the page loads; and the probe | the header probe (WKWebView tells no responses) | **the header probe**, every system: at Grab the page lists its resource timing (`CAND_JS`, beside GRAB_JS, which stays Electron's); only addresses the page itself fetched and no rule could name are asked — ONE request each (HEAD for what a script fetched, else a GET of the first byte), the browser's own User-Agent, the page as Referer and the site's cookies (what a download from the browser carries), a redirect followed only on the same host, at most 12 per Grab, 24 per page, 4 started per second, each address once (kept); a local-network address only from a local page; a 403 / 503 is no answer — nothing retried, no header varied. Differs: Electron saw every response as it came; the probe asks after the fact (a signed address that has expired, or a server that answers HEAD wrongly, is missed), and it adds up to a few seconds to Grab |
+| **Media told by content type** (`mediawatch.rs`) | Grab's answer `complete(page, ua, cookie_for)`: what the web view saw on this page, then the header probe; Electron's `seen` rule unchanged (`classify`) | the header probe; WebView2's `WebResourceResponseReceived` (the `wv2` feature — on by default now, wry's webview2-com / windows in Cargo.toml: see «The original Rust system») | WebKitGTK's resource-load-started → each response's MIME type, as the page loads; and the probe | the header probe (WKWebView tells no responses) | **the header probe**, every system: at Grab the page lists its resource timing (`CAND_JS`, beside GRAB_JS, which stays Electron's); only addresses the page itself fetched and no rule could name are asked — ONE request each (HEAD for what a script fetched, else a GET of the first byte), the browser's own User-Agent, the page as Referer and the site's cookies (what a download from the browser carries), a redirect followed only on the same host, at most 12 per Grab, 24 per page, 4 started per second, each address once (kept); a local-network address only from a local page; a 403 / 503 is no answer — nothing retried, no header varied. Differs: Electron saw every response as it came; the probe asks after the fact (a signed address that has expired, or a server that answers HEAD wrongly, is missed), and it adds up to a few seconds to Grab |
 | **The browser's sign-ins** (`cookiecarry.rs`; Electron: `handover.cjs exportCookies`) | Electron's bridge build (behind RUST_SWITCH) writes `handover/browser-cookies.json` (POSIX 0600; Windows: icacls, this user only) + its note (hand-over id, count, size, SHA-256) — outside the marker's list; the Rust build, at «Bring it now» (`kt_handover_mark` restored), puts them into the browser's store and wipes the file (zeros, flush, delete) | Tauri's `Webview::set_cookie` on the browser's keeper window (its own profile) | the same | the same, on the main window (a Mac's browser shares the app's store) | only cookies that outlive the session and have not expired; the file wiped unread when the hand-over is declined, found damaged, its switch fails in Electron, or at a later start (taken / declined before, or older than 14 days). Where build.rs finds no `set_cookie` + FromStr, nothing is set and the file is still wiped — sign in again, as before. Differs: a domain cookie is set as the web view's set call takes it (wry may pass its domain without the leading dot — then it covers that host only); the sign-in windows' own profile is not filled. No native CookieManager fallback (WebView2 / WKHTTPCookieStore / WebKit) yet: those need wry's exact crates, as `wv2` |
 | **Programs fetched again** (`packadopt.rs`) | at a start after the hand-over or beside an Electron data folder: yt-dlp, gallery-dl (`<userData>/bin`), the ffmpeg pack (`<userData>/packs/ffmpeg`, with its marker) | the same | the same | the same (no gallery-dl there) | taken ONLY when byte for byte what a trusted list names: yt-dlp's SHA2-256SUMS of its newest release, gallery-dl's release digest and size, this release's packs file (`unpackedSha256` + `unpacked`, which `desktop/ffmpeg-pack.cjs` now adds — a release-time script; the page reads only file/size/sha256). Never run to ask what it is; copied beside its place, hashed again, renamed in (no hard link: Electron's rollback rewrites its file in place); yt-dlp's stamp and the pack's marker (the version the page expects) written. Else — an older yt-dlp, a list that cannot be read (retried at the next start, 3 at most) — the normal fetch when first needed. `<app data>/programs-adopted.json` says what happened |
 
@@ -791,7 +831,11 @@ hybridlogic.rs: the torrent work's own hybrid rules took that name). The build's
 build (original): …» (build.rs). CI: the step «Original system — compile try» (before the build) runs `cargo check
 --features <piece>` for the pieces not yet on by default and builds into that run's program only what compiled, so the
 self-test proves it the same run; a piece that does not compile prints its errors and is left out — the main build is
-never broken by it. Release workflows build the defaults.
+never broken by it. Release workflows build the defaults. With stage P4's librqbit (`rqbit-feature.cjs on` adds
+"rqbit" to Cargo.toml's default list — `wv2` kept — and `off` restores the list exactly): the compile try runs first,
+on the committed Cargo.toml, then «librqbit on», then Build; the build with librqbit, the plain rebuild after a failed
+one, and Linux's plain rebuild for «what librqbit adds» all take the same KT_ORIGINAL features, so the original
+system's rows mean the same in each.
 
 | # | Gap · system | Stop-gap today | The native piece | Interface kept | Proof needed to make it default | State |
 |---|---|---|---|---|---|---|

@@ -779,7 +779,15 @@ impl Engine {
     /* ---------- tasks ---------- */
 
     fn task_of(&self, v: &Value) -> Value {
-        let st = status_of(v);
+        let mut st = status_of(v);
+        // (Stage P4, hybrid engine: watched through librqbit now — shown downloading at its speed and peers, as
+        // aria2.cjs's task() showed WebTorrent's.)
+        if let Some((down, up, peers)) = crate::stream_hybrid::watching(&st.gid) {
+            st.status = "active".to_string();
+            st.download_speed = down.to_string();
+            st.upload_speed = up.to_string();
+            st.connections = peers.to_string();
+        }
         let now = now_ms();
         let mut g = self.lock();
         let kept = g.keep.get(&st.gid).cloned();
@@ -1067,18 +1075,31 @@ impl Engine {
     }
 
     pub fn pause(&self, id: &str) -> Result<(), String> {
+        // (Stage P4, hybrid engine: a torrent librqbit serves to the player is not touched — kept for the hand-back.)
+        if crate::stream_hybrid::wish(id, false) {
+            self.tick();
+            return Ok(());
+        }
         self.call("pause", vec![json!(id)])?;
         self.tick();
         Ok(())
     }
 
     pub fn resume(&self, id: &str) -> Result<(), String> {
+        // (Stage P4, hybrid engine: never unpaused while librqbit writes it — Electron's aria2.cjs resume skipped a
+        // handed-over download; the wish is kept for the hand-back.)
+        if crate::stream_hybrid::wish(id, true) {
+            self.tick();
+            return Ok(());
+        }
         self.call("unpause", vec![json!(id)])?;
         self.tick();
         Ok(())
     }
 
     pub fn remove(&self, id: &str, delete_files: bool) -> Result<(), String> {
+        // (Stage P4, hybrid engine: its watchers ended and librqbit's hold let go before aria2 removes it and its files.)
+        crate::streamserver::done(id);
         let st: Option<ec::Status> = self
             .call("tellStatus", vec![json!(id)])
             .ok()

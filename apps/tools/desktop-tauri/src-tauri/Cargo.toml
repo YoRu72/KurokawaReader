@@ -61,15 +61,14 @@ webkit2gtk = "2"
 webview2-com = { version = "0.39.1", optional = true }
 windows = { version = "0.62.2", optional = true }
 
-# (Stage P4: torrent streaming with librqbit — OFF. The main build never names librqbit, so it never even resolves it:
-# an API or a version that moved can never break it, and aria2 streams meanwhile (src/stream_engine.rs). To build with
-# it, make this feature `rqbit = ["dep:librqbit", "dep:tokio"]` and add at the end
-#   [dependencies.librqbit]  version = "8", optional = true
-#   [dependencies.tokio]     version = "1", optional = true, features = ["io-util", "time"]
-# — what the non-required CI step «librqbit try» (tauri-check.yml, Linux) does before `cargo check --features rqbit`,
-# printing the compiler's errors. librqbit: the BitTorrent engine with file streams that fetch the pieces under the
-# reader first (std cannot be a BitTorrent client); several MB and tokio-based (tokio is already in the build through
-# Tauri).)
+# (Stage P4: the hybrid torrent engine's librqbit half — stream_rqbit.rs, the far seeks aria2 cannot do. This file never
+# names librqbit: the feature below is empty, so a plain build neither resolves nor compiles it and a librqbit that moved
+# can never break it (aria2 then serves every stream, as before). `node ../rqbit-feature.cjs on` makes the feature real
+# and a default (added to the list below, `wv2` kept) in the copy it runs on — librqbit pinned to =8.1.1 (what CI resolved and checked) and tokio (already
+# in the build through Tauri) with io-util and time —; `off` puts this text back. CI's builds turn it on and Linux also
+# builds and self-tests without it (tauri-check.yml «stage P4, hybrid engine»); the release's fallback is in
+# switch-over/NOTES.md. librqbit: the BitTorrent engine whose file streams fetch the pieces under the reader first (std
+# cannot be a BitTorrent client); its weight is printed by CI's «librqbit: what it adds» step.)
 [features]
 rqbit = []
 # (The original system — ../PORTING.md «The original Rust system — piece by piece». Each native piece is a feature, so

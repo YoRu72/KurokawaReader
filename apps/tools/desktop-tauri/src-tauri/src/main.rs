@@ -34,6 +34,9 @@ mod update;
 // (Stage P4: torrent streaming and the local stream server — the engine behind one trait (aria2 today; librqbit only
 // with `--features rqbit`), the server, its ffmpeg and proxy routes, the self-test's torrent and swarm.)
 mod stream_engine;
+// (Stage P4, the hybrid engine: aria2 for downloads, librqbit for a watched torrent's far seeks — hybridlogic.rs decides.)
+mod hybridlogic;
+mod stream_hybrid;
 #[cfg(feature = "rqbit")]
 mod stream_rqbit;
 mod streamproxy;

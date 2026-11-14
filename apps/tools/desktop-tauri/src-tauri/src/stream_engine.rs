@@ -6,8 +6,9 @@
 //   bitfield says the pieces under it are in, then reads the growing file from the disk. aria2 cannot jump to the
 //   place the player seeks to (it has no «these pieces next» call): a seek far ahead waits until the in-order fetch
 //   gets there — why Electron added WebTorrent, and why librqbit is planned.
-// - `stream_rqbit.rs` — librqbit, compiled only with `--features rqbit` (off by default; see Cargo.toml and that
-//   file for which parts of it are guesses).
+// - `stream_rqbit.rs` — librqbit, compiled only with `--features rqbit` (see Cargo.toml and rqbit-feature.cjs): the
+//   pieces under the player's position first. `stream_hybrid.rs` chooses between the two for each file the player opens
+//   and falls back to aria2 whenever librqbit cannot serve (hybridlogic.rs decides).
 // - the self-test's own engine (streamtest.rs), whose pieces the test lets in one by one.
 //
 // What one engine does: take a download up for watching (`add` → its files), `select` the file watched, `prioritise`
@@ -38,6 +39,10 @@ pub struct Source {
     pub dir: String,
     /// aria2's status when it was taken up (paused stays paused when given back).
     pub status: String,
+    /// (Hybrid engine.) The folder librqbit is pointed at so that its files are aria2's (hybridlogic::rqbit_folder).
+    pub folder: Option<String>,
+    /// (Hybrid engine.) The file the player opens, asked of librqbit from the start.
+    pub want: Option<usize>,
 }
 
 /// One file of the torrent: its place in the list (0-based), its name (the path inside the torrent), where it is on
@@ -68,6 +73,10 @@ pub trait StreamEngine: Send + Sync {
     fn stats(&self, id: &str, index: usize) -> Option<Value>;
     /// The player closed: the engine lets the download go (aria2's goes on as it was).
     fn stop(&self, id: &str);
+    /// (Hybrid engine, for the self-test's report.) The bytes this engine has verified of the download, where it knows.
+    fn have_bytes(&self, _id: &str) -> Option<u64> {
+        None
+    }
 }
 
 /* ---------- aria2 ---------- */
@@ -280,11 +289,16 @@ pub fn source_of(id: &str) -> Result<Source, String> {
     let st = e.call("tellStatus", vec![json!(id), json!(["gid", "status", "bittorrent", "infoHash", "files", "dir"])])?;
     let hash = text(st.get("infoHash")).to_ascii_lowercase();
     let dir = text(st.get("dir"));
-    let mut src = Source { id: id.to_string(), info_hash: None, torrent: None, magnet: None, dir: dir.clone(), status: text(st.get("status")) };
+    let mut src = Source { id: id.to_string(), info_hash: None, torrent: None, magnet: None, dir: dir.clone(), status: text(st.get("status")), folder: None, want: None };
     if st.get("bittorrent").is_none() || hash.is_empty() {
         return Ok(src);
     }
     src.info_hash = Some(hash.clone());
+    // (Hybrid engine: where aria2 keeps this torrent's files — «<dir>/<name>/…» for several files, «<dir>» for one.)
+    let bt = st.get("bittorrent");
+    let multi = bt.and_then(|b| b.get("mode")).and_then(|m| m.as_str()) == Some("multi");
+    let bt_name = text(bt.and_then(|b| b.get("info")).and_then(|i| i.get("name")));
+    src.folder = Some(crate::hybridlogic::rqbit_folder(&dir, multi, &bt_name));
     let kept = e.kept(id);
     let kept_src = kept.as_ref().and_then(|k| k.get("source"));
     if let Some(t) = kept_src.and_then(|s| s.get("torrent")).and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {

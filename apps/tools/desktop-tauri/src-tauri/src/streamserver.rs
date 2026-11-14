@@ -146,6 +146,8 @@ pub fn stop() -> bool {
     for x in all.iter() {
         x.cancelled.store(true, Ordering::SeqCst);
     }
+    // (Hybrid engine: every torrent librqbit holds handed back to aria2 — before aria2 saves its session at quit.)
+    crate::stream_hybrid::release_all();
     let until = Instant::now() + Duration::from_secs(3);
     while live() > 0 && Instant::now() < until {
         thread::sleep(Duration::from_millis(20));
@@ -441,28 +443,26 @@ where
 }
 
 /// kt:streamUrl({ id, fileIndex }) → { url }: the address the player reads a torrent's file from while it downloads.
-/// With librqbit built in (`--features rqbit`), the torrent is handed over to it first, as Electron hands it to
-/// WebTorrent; aria2's own in-order fetch otherwise, and whenever librqbit cannot take it.
+/// The hybrid engine (stream_hybrid.rs): with librqbit built in (`--features rqbit`) a torrent is handed over to it, as
+/// Electron hands it to WebTorrent, so a far seek fetches the sought place first; aria2's own in-order fetch otherwise,
+/// and whenever librqbit cannot take it or fails on it.
 #[tauri::command]
 pub async fn kt_stream_url(o: Value) -> Result<Value, String> {
     let id = text_of(o.get("id"));
     let index = index_of(o.get("fileIndex"));
     blocking(move || {
         let src = se::source_of(&id).unwrap_or_else(|_| Source { id: id.clone(), ..Default::default() });
-        #[cfg(feature = "rqbit")]
-        {
-            if let Some(r) = crate::stream_rqbit::engine() {
-                match open(r.clone(), &src, index) {
-                    Ok(u) => return Ok(json!({ "url": u })),
-                    Err(e) => {
-                        eprintln!("rqbit: {}", e);
-                        r.stop(&id);
-                    }
-                }
+        // (The hybrid engine — stream_hybrid.rs: librqbit for a torrent when it is built in and up, aria2 otherwise and
+        // whenever librqbit fails; aria2 alone if even the hybrid cannot open it, as before.)
+        let hy: Arc<dyn StreamEngine> = crate::stream_hybrid::global();
+        match open(hy, &src, index) {
+            Ok(u) => Ok(json!({ "url": u })),
+            Err(e) => {
+                eprintln!("hybrid: {}", e);
+                let u = open(aria2(), &src, index)?;
+                Ok(json!({ "url": u }))
             }
         }
-        let u = open(aria2(), &src, index)?;
-        Ok(json!({ "url": u }))
     })
     .await
 }

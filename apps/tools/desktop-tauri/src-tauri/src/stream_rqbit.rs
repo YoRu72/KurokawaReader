@@ -1,30 +1,36 @@
-// librqbit as torrent streaming's engine (stage P4) — compiled ONLY with `--features rqbit`, which is off: the main
-// build never names librqbit (Cargo.toml says why and how the CI step «librqbit try» turns it on), so an API that moved
-// can never break it. Written without librqbit's source at hand (no crates.io where this was written): every call
-// marked GUESS below is librqbit 8.x's API as remembered, to be checked against that step's compiler errors.
+// librqbit as torrent streaming's back end (stage P4, the hybrid engine's «far seek» half) — compiled ONLY with
+// `--features rqbit` (rqbit-feature.cjs turns it on in CI's copy of Cargo.toml; a plain build never names librqbit).
+// Every librqbit call below is one that compiled against librqbit 8.1.1 in CI run 43597302499; this file adds no other.
 //
-// What it does, as Electron does with WebTorrent (desktop/main.cjs watchUrl / handBack): the download aria2 has is
-// paused (forcePause) and librqbit takes the same torrent in the same folder, only the watched file wanted
-// (overwrite: it continues what is on the disk); each read of the player is a librqbit file stream seeked there, which
-// asks for the pieces under it first. When the player closes, librqbit lets the torrent go (its files stay) and aria2
-// takes it back, checking what is there (check-integrity), unpaused unless it was paused before. A file aria2 already
-// has whole is not handed over (add → Err → the server falls back to aria2, which serves it from the disk).
-use std::collections::HashMap;
+// What it does: stream_hybrid.rs has paused aria2 (and owns the torrent for librqbit — hybridlogic's Owners) before
+// `add`; librqbit takes the same torrent with aria2's files (`overwrite`: the files on the disk are checked and their
+// good pieces kept), only the watched files wanted; each read of the player is a librqbit file stream seeked there,
+// which asks for the pieces under it first — the far seek aria2 cannot do. A read that waits with no peer and no new
+// byte for 90 s gives up (Err → stream_hybrid falls back to aria2). `stop` deletes the torrent from librqbit's session,
+// its files kept; stream_hybrid then hands it back to aria2 (check-integrity).
+//
+// ONE Tokio runtime of its own (`rt`, two workers «kt-rqbit»): librqbit spawns tasks from its calls and from its drops
+// (CI run 43597302499: «there is no reactor running» from librqbit's spawn_utils in a stream server thread → the
+// program aborted). So every entry point runs inside `run`, which enters that runtime for the whole call — every
+// librqbit value (torrent handles, file streams) is made AND dropped there — and awaits with that runtime's block_on.
+// A panic inside librqbit is caught one level up (stream_hybrid.rs `safe`): the build with librqbit unwinds
+// (rqbit-feature.cjs sets panic = "unwind" for it), and the torrent goes back to aria2.
+use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::runtime::Runtime;
 
-use crate::engine;
+use crate::hybridlogic as hl;
 use crate::stream_engine::{Aria2Stream, FileEntry, Source, StreamEngine};
 
 struct Held {
-    // GUESS: the handle add_torrent gives back is Arc<ManagedTorrent>, and its id a usize.
     handle: Arc<librqbit::ManagedTorrent>,
     rq_id: usize,
-    was_paused: bool,
+    files: HashSet<usize>,
 }
 
 pub struct RqbitStream {
@@ -33,20 +39,56 @@ pub struct RqbitStream {
     aria2: Aria2Stream,
 }
 
+static RT: OnceLock<Option<Runtime>> = OnceLock::new();
 static ENGINE: OnceLock<Option<Arc<RqbitStream>>> = OnceLock::new();
+static WHY: OnceLock<String> = OnceLock::new();
 
-/// The engine (its session made once; None when librqbit could not start here).
+/// librqbit's own runtime (made once, never dropped).
+fn rt() -> Result<&'static Runtime, String> {
+    RT.get_or_init(|| {
+        match tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("kt-rqbit").enable_all().build() {
+            Ok(r) => Some(r),
+            Err(e) => {
+                eprintln!("rqbit: no runtime: {}", e);
+                None
+            }
+        }
+    })
+    .as_ref()
+    .ok_or_else(|| "rqbit: no runtime".to_string())
+}
+
+/// `f` inside librqbit's runtime: entered for the whole call (spawns and drops find it), `rt.block_on` for awaits.
+fn run<T>(f: impl FnOnce(&'static Runtime) -> T) -> Result<T, String> {
+    let rt = rt()?;
+    let _inside = rt.enter();
+    Ok(f(rt))
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
+/// The engine (its session made once; None when librqbit could not start here — `why` says why).
 pub fn engine() -> Option<Arc<dyn StreamEngine>> {
     let e = ENGINE.get_or_init(|| {
+        // (A fresh folder each run: nothing librqbit might have kept of an earlier run is taken up again — a torrent it
+        // restored by itself would write aria2's files without stream_hybrid's ownership. One app runs at a time.)
         let dir = std::env::temp_dir().join("kurokawa-rqbit");
+        let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
-        // GUESS: Session::new_with_opts(PathBuf, SessionOptions) → Result<Arc<Session>>; SessionOptions has Default,
-        // and fields disable_dht, persistence, enable_upnp_port_forwarding.
-        let opts = librqbit::SessionOptions { disable_dht: false, enable_upnp_port_forwarding: false, ..Default::default() };
-        match tauri::async_runtime::block_on(librqbit::Session::new_with_opts(dir, opts)) {
+        // (No DHT in a self-test run: its swarm is loopback only — the made-up torrent's own tracker on 127.0.0.1.
+        // Elsewhere DHT is on, as aria2's is, for magnets.)
+        let opts = librqbit::SessionOptions { disable_dht: kurokawa_shell::selftest::active(), enable_upnp_port_forwarding: false, ..Default::default() };
+        let made = run(|rt| rt.block_on(librqbit::Session::new_with_opts(dir, opts)).map_err(|e| format!("{:#}", e)));
+        match made.and_then(|r| r) {
             Ok(session) => Some(Arc::new(RqbitStream { session, held: Mutex::new(HashMap::new()), aria2: Aria2Stream::new() })),
             Err(e) => {
-                eprintln!("rqbit: no session: {:#}", e);
+                let _ = WHY.set(format!("no session: {}", e));
+                eprintln!("rqbit: no session: {}", e);
                 None
             }
         }
@@ -54,24 +96,32 @@ pub fn engine() -> Option<Arc<dyn StreamEngine>> {
     e.as_ref().map(|x| x.clone() as Arc<dyn StreamEngine>)
 }
 
-impl RqbitStream {
-    fn handle(&self, id: &str) -> Option<Arc<librqbit::ManagedTorrent>> {
-        self.held.lock().ok()?.get(id).map(|h| h.handle.clone())
-    }
+/// Why the session did not start (empty when it did, or was never asked).
+pub fn why() -> String {
+    WHY.get().cloned().unwrap_or_default()
 }
 
-/// aria2 paused (forcePause), waited for (5 s at most).
-fn pause_aria2(id: &str) {
-    if let Some(e) = engine::get() {
-        let _ = e.call("forcePause", vec![json!(id)]);
-        for _ in 0..25 {
-            let st = e.call("tellStatus", vec![json!(id), json!(["status"])]).ok();
-            let s = st.as_ref().and_then(|v| v.get("status")).and_then(|v| v.as_str()).unwrap_or("paused").to_string();
-            if s != "active" && s != "waiting" {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
+/// (verified bytes, live peers, down B/s, up B/s, total bytes wanted) of a torrent librqbit holds. Inside `run` only.
+fn live(h: &Arc<librqbit::ManagedTorrent>) -> (u64, u64, u64, u64, u64) {
+    let st = h.stats();
+    let (down, up, peers) = match st.live.as_ref() {
+        Some(l) => ((l.download_speed.mbps * 1048576.0) as u64, (l.upload_speed.mbps * 1048576.0) as u64, l.snapshot.peer_stats.live as u64),
+        None => (0, 0, 0),
+    };
+    // (Cast: the field types are not known here; only that they are numbers.)
+    #[allow(clippy::unnecessary_cast)]
+    let out = (st.progress_bytes as u64, peers, down, up, st.total_bytes as u64);
+    out
+}
+
+impl RqbitStream {
+    fn handle(&self, id: &str) -> Option<Arc<librqbit::ManagedTorrent>> {
+        lock(&self.held).get(id).map(|h| h.handle.clone())
+    }
+
+    /// Inside `run` only.
+    fn forget(&self, rt: &Runtime, rq_id: usize) {
+        let _ = rt.block_on(self.session.delete(librqbit::api::TorrentIdOrHash::Id(rq_id), false));
     }
 }
 
@@ -89,58 +139,54 @@ impl StreamEngine for RqbitStream {
         if self.handle(&src.id).is_some() {
             return Ok(files);
         }
-        let was_paused = src.status == "paused";
-        if src.status == "active" || src.status == "waiting" {
-            pause_aria2(&src.id);
-        }
-        // GUESS: AddTorrent::from_bytes(Vec<u8>) / AddTorrent::from_url(String); AddTorrentOptions { only_files:
-        // Option<Vec<usize>>, output_folder: Option<String>, overwrite: bool, .. Default }.
-        let add = match (&src.torrent, &src.magnet) {
-            (Some(t), _) => librqbit::AddTorrent::from_bytes(t.clone()),
-            (None, Some(m)) => librqbit::AddTorrent::from_url(m.clone()),
-            _ => return Err("not a torrent".into()),
-        };
-        let opts = librqbit::AddTorrentOptions { only_files: Some(vec![]), output_folder: Some(src.dir.clone()), overwrite: true, ..Default::default() };
-        let resp = tauri::async_runtime::block_on(self.session.add_torrent(add, Some(opts))).map_err(|e| format!("{:#}", e))?;
-        // GUESS: AddTorrentResponse::{Added(id, handle), AlreadyManaged(id, handle), ListOnly(_)}.
-        let (rq_id, handle) = match resp {
-            librqbit::AddTorrentResponse::Added(i, h) => (i, h),
-            librqbit::AddTorrentResponse::AlreadyManaged(i, h) => (i, h),
-            _ => return Err("rqbit: listed only".into()),
-        };
-        // GUESS: wait_until_initialized().await → Result<()>.
-        let ready = tauri::async_runtime::block_on(async {
-            tokio::time::timeout(Duration::from_secs(90), handle.wait_until_initialized()).await
-        });
-        match ready {
-            Ok(Ok(())) => {}
-            _ => {
-                let _ = tauri::async_runtime::block_on(self.session.delete(librqbit::api::TorrentIdOrHash::Id(rq_id), false));
-                hand_back(&src.id, was_paused);
-                return Err("rqbit: no metadata in 90 s".into());
+        run(|rt| -> Result<(), String> {
+            let add = match (&src.torrent, &src.magnet) {
+                (Some(t), _) => librqbit::AddTorrent::from_bytes(t.clone()),
+                (None, Some(m)) => librqbit::AddTorrent::from_url(m.clone()),
+                _ => return Err("not a torrent".into()),
+            };
+            // (aria2's own files: the folder hybridlogic::rqbit_folder gives, overwrite on — librqbit checks what is
+            // there and keeps every good piece; only the watched file wanted.)
+            let only: Vec<usize> = src.want.map(|w| vec![w]).unwrap_or_default();
+            let folder = src.folder.clone().unwrap_or_else(|| src.dir.clone());
+            let opts = librqbit::AddTorrentOptions { only_files: Some(only.clone()), output_folder: Some(folder), overwrite: true, ..Default::default() };
+            let resp = rt.block_on(self.session.add_torrent(add, Some(opts))).map_err(|e| format!("rqbit: {:#}", e))?;
+            let (rq_id, handle) = match resp {
+                librqbit::AddTorrentResponse::Added(i, h) => (i, h),
+                librqbit::AddTorrentResponse::AlreadyManaged(i, h) => (i, h),
+                _ => return Err("rqbit: listed only".into()),
+            };
+            // (A magnet's metadata, and the check of the files on the disk: 90 s at most.)
+            let ready = rt.block_on(async { tokio::time::timeout(Duration::from_secs(90), handle.wait_until_initialized()).await });
+            match ready {
+                Ok(Ok(())) => {}
+                _ => {
+                    drop(handle);
+                    self.forget(rt, rq_id);
+                    return Err("rqbit: not ready in 90 s".into());
+                }
             }
-        }
-        if let Ok(mut m) = self.held.lock() {
-            m.insert(src.id.clone(), Held { handle, rq_id, was_paused });
-        }
+            lock(&self.held).insert(src.id.clone(), Held { handle, rq_id, files: only.into_iter().collect() });
+            Ok(())
+        })??;
         Ok(files)
     }
 
     fn select(&self, id: &str, index: usize) -> Result<(), String> {
-        // (A file aria2 already has whole — main.cjs's watchUrl —: left to aria2, which serves it from the disk.)
-        if let Some(e) = engine::get() {
-            if let Ok(st) = e.call("tellStatus", vec![json!(id), json!(["files"])]) {
-                let f = st.get("files").and_then(|f| f.get(index));
-                let n = |k: &str| f.and_then(|x| x.get(k)).and_then(|v| v.as_str()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-                if n("length") > 0 && n("completedLength") >= n("length") {
-                    return Err("complete".into());
-                }
+        run(|rt| -> Result<(), String> {
+            // (Another file of the same torrent: the files already watched stay wanted.)
+            let (h, all) = {
+                let m = lock(&self.held);
+                let held = m.get(id).ok_or("rqbit: not added")?;
+                (held.handle.clone(), hl::wanted(&held.files, index))
+            };
+            let only: HashSet<usize> = all.iter().copied().collect();
+            rt.block_on(self.session.update_only_files(&h, &only)).map_err(|e| format!("rqbit: {:#}", e))?;
+            if let Some(held) = lock(&self.held).get_mut(id) {
+                held.files = only;
             }
-        }
-        let h = self.handle(id).ok_or("rqbit: not added")?;
-        // GUESS: Session::update_only_files(&Arc<ManagedTorrent>, &HashSet<usize>) → Result<()> (async).
-        let only: std::collections::HashSet<usize> = [index].into_iter().collect();
-        tauri::async_runtime::block_on(self.session.update_only_files(&h, &only)).map_err(|e| format!("{:#}", e))
+            Ok(())
+        })?
     }
 
     fn file(&self, id: &str, index: usize) -> Result<FileEntry, String> {
@@ -153,62 +199,69 @@ impl StreamEngine for RqbitStream {
 
     fn read_at(&self, id: &str, index: usize, pos: u64, buf: &mut [u8], gone: &dyn Fn() -> bool) -> Result<usize, String> {
         let h = self.handle(id).ok_or("rqbit: not added")?;
-        // GUESS: ManagedTorrent::stream(self: Arc<Self>, file_id: usize) → Result<FileStream>; FileStream is
-        // tokio's AsyncRead + AsyncSeek + Unpin, and its reads wait for the pieces.
-        let mut stream = h.clone().stream(index).map_err(|e| format!("{:#}", e))?;
         let want = buf.len();
-        tauri::async_runtime::block_on(async {
-            stream.seek(SeekFrom::Start(pos)).await.map_err(|e| e.to_string())?;
-            loop {
-                if gone() {
-                    return Err("gone".to_string());
+        run(|rt| {
+            let t0 = Instant::now();
+            let (have0, _, _, _, _) = live(&h);
+            let mut stall = hl::Stall::new(0, have0, hl::STALL_MS);
+            // (The file stream is made, read and dropped inside the runtime.)
+            let r: Result<usize, String> = rt.block_on(async {
+                let mut stream = h.clone().stream(index).map_err(|e| format!("rqbit: {:#}", e))?;
+                stream.seek(SeekFrom::Start(pos)).await.map_err(|e| e.to_string())?;
+                loop {
+                    if gone() {
+                        return Err("gone".to_string());
+                    }
+                    // (A read waits for its pieces; looked at every second: a reader that left, or a swarm that gives
+                    // nothing for 90 s — then aria2 takes over, stream_hybrid.rs.)
+                    match tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf[..want])).await {
+                        Ok(Ok(n)) => return Ok(n),
+                        Ok(Err(e)) => return Err(format!("rqbit: {}", e)),
+                        Err(_) => {
+                            let (have, peers, _, _, _) = live(&h);
+                            if stall.observe(t0.elapsed().as_millis() as u64, have, peers) {
+                                return Err("rqbit: no peer and no new piece in 90 s".to_string());
+                            }
+                        }
+                    }
                 }
-                // (A read waits for its pieces; looked at every second, so a reader that left is noticed.)
-                match tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf[..want])).await {
-                    Ok(Ok(n)) => return Ok(n),
-                    Ok(Err(e)) => return Err(e.to_string()),
-                    Err(_) => continue,
-                }
-            }
-        })
+            });
+            drop(h);
+            r
+        })?
     }
 
-    fn stats(&self, id: &str, index: usize) -> Option<Value> {
+    fn stats(&self, id: &str, _index: usize) -> Option<Value> {
         let h = self.handle(id)?;
-        // GUESS: stats() → TorrentStats { progress_bytes, total_bytes, live: Option<LiveStats { download_speed: Speed
-        // { mbps }, upload_speed, snapshot: { peer_stats: { live } } }> } (mbps in MiB/s).
-        let st = h.stats();
-        let (down, up, peers) = match st.live.as_ref() {
-            Some(l) => (
-                (l.download_speed.mbps * 1048576.0) as u64,
-                (l.upload_speed.mbps * 1048576.0) as u64,
-                l.snapshot.peer_stats.live as u64,
-            ),
-            None => (0, 0, 0),
-        };
-        let progress = if st.total_bytes > 0 { st.progress_bytes as f64 / st.total_bytes as f64 } else { 0.0 };
-        let _ = index;
-        Some(json!({ "down": down, "up": up, "peers": peers, "progress": progress, "buffered": [], "engine": "rqbit" }))
+        run(|_| {
+            let (have, peers, down, up, total) = live(&h);
+            drop(h);
+            let progress = if total > 0 { have as f64 / total as f64 } else { 0.0 };
+            json!({ "down": down, "up": up, "peers": peers, "progress": progress, "buffered": [], "engine": "rqbit" })
+        })
+        .ok()
     }
 
     fn stop(&self, id: &str) {
-        let held = self.held.lock().ok().and_then(|mut m| m.remove(id));
+        let held = lock(&self.held).remove(id);
         if let Some(h) = held {
-            // GUESS: Session::delete(TorrentIdOrHash, delete_files: bool) (async) — the files kept.
-            let _ = tauri::async_runtime::block_on(self.session.delete(librqbit::api::TorrentIdOrHash::Id(h.rq_id), false));
-            hand_back(id, h.was_paused);
+            // (Its files kept; stream_hybrid.rs hands the download back to aria2 after this. The handle dropped inside.)
+            let _ = run(|rt| {
+                let rq_id = h.rq_id;
+                drop(h);
+                self.forget(rt, rq_id);
+            });
         }
         self.aria2.stop(id);
     }
-}
 
-/// aria2 takes the download back: it checks what is on the disk, and goes on unless it was paused before.
-fn hand_back(id: &str, was_paused: bool) {
-    if let Some(e) = engine::get() {
-        let _ = e.call("changeOption", vec![json!(id), json!({ "check-integrity": "true" })]);
-        if !was_paused {
-            let _ = e.call("unpause", vec![json!(id)]);
-        }
-        e.tick();
+    fn have_bytes(&self, id: &str) -> Option<u64> {
+        let h = self.handle(id)?;
+        run(|_| {
+            let n = live(&h).0;
+            drop(h);
+            n
+        })
+        .ok()
     }
 }
