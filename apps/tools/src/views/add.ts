@@ -12,7 +12,8 @@ import { ktPlugin, clipboardText } from '../native';
 import { postPanel } from './addPost';
 import { videoPanel, preferredFormat, nativeHls } from './addVideo';
 import { galleryOf } from '../downloads/galleries';
-import { videoEnabled, videoSupported, isVideoHost } from '../video/ytdlp';
+import { videoEnabled, videoSupported, isVideoHost, warmVideo } from '../video/ytdlp';
+import { socialOf, feedOf, isShortLink, resolveShort } from '../downloads/social';
 import { probeUrl, splitName, type Probe } from '../downloads/probe';
 import { freeSpaceAt } from '../archives';
 import { nativePlatform } from '../native';
@@ -52,6 +53,8 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const lookAt = async (u: string | null, hdrs?: Record<string, string>) => {
     const my = ++probeToken; probed = null;
     if (!u || !/^https?:/i.test(u)) { sizeLine.hidden = true; void showStorage(); return; }
+    // (A video site's page or a post: what it offers comes from yt-dlp or the post reader — no HEAD, no first bytes of the page.)
+    if (isVideoHost(u) || socialOf(u) || feedOf(u)) { sizeLine.hidden = true; mega = null; megaBox.hidden = true; void showStorage(); return; }
     sizeLine.hidden = false; sizeLine.replaceChildren(h('div', { class: 'spinner small' }), ` ${t('lookingAtLink')}`);
     mega = null; megaBox.hidden = true;
     const C = await import('../downloads/cloud'); const cloud = await C.cloudOf(u);
@@ -127,10 +130,13 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const debridRow = h('label', { class: 'check-row debrid-row', hidden: true }, viaDebrid, h('span', null, t('viaDebrid')));
   void import('../debrid').then(async (m) => { const svc = await m.preferredDebrid(); if (svc) { debridRow.hidden = false; debridRow.lastChild!.textContent = t('viaDebridNamed', { service: svc.name }); } });
   // (A page yt-dlp read — a post on X, a reel, a video — is not a file: no name to give it, no «web page» warning.)
-  const video = videoPanel(() => { const page = !!video.picks(); sh.el.classList.toggle('as-video', page); });
+  // (A known video site's link yt-dlp could not read: Download is off — its page is never what is wanted —, the panel says why.)
+  const video = videoPanel(() => { const page = !!video.picks(); sh.el.classList.toggle('as-video', page); if (goBtn) { const off = video.unread() && !post.picks() && sources().length === 1 && !!sh.el.querySelector('.video-failed'); goBtn.disabled = off; goBtn.title = off ? t('vPageNotSaved') : ''; } });
   // (A post's photos and videos read here at once — «auto-grab» —; then they are what «Download» adds.)
   let goBtn: HTMLButtonElement | null = null;
-  const post = postPanel(() => { const pp = post.picks(); sh.el.classList.toggle('as-post', !!pp); if (goBtn) goBtn.lastChild!.textContent = pp ? t('grabAddN', { n: countFiles(pp.length) }) : t('addStart'); });
+  const post = postPanel(() => { const pp = post.picks(); sh.el.classList.toggle('as-post', !!pp); if (goBtn) goBtn.lastChild!.textContent = pp ? t('grabAddN', { n: countFiles(pp.length) }) : t('addStart'); },
+    // (The post's video in its qualities: yt-dlp asked only now — the post reader already listed it.)
+    () => { const u = sources()[0]?.url; if (!u) return; void post.read(null); video.check(u); });
   const zipBox = h('div', { class: 'add-files', hidden: true }); let zipFor = '';
   // A Hugging Face model's page: offered to the model window, where its files can be picked.
   const hfBox = h('div', { class: 'plan-note hf-offer', hidden: true });
@@ -141,10 +147,14 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
       // «Show them» on offer; one it cannot read — photos — opens its photos and videos at once.)
       void (async () => {
         // (Read at once, in this sheet: its photos and videos listed, ticked; nothing to list — or turned off — the rest as before.)
+        // (One path with a fallback: a post goes to the post reader first; yt-dlp is asked only when the reader could not
+        // list anything — and only then is the Video add-on set up, for a post that needs it.)
         if (getSettings().socialAuto !== false && sources().length === 1 && (await post.read(u))) return;
         if (!sh.el.isConnected || sources()[0]?.url !== u) return;
-        if (videoEnabled() && isVideoHost(u)) { await video.busy(); if (!sh.el.isConnected || sources()[0]?.url !== u) return; }
-        const read = !!video.picks();
+        if (isVideoHost(u)) { video.check(u); await video.busy(); if (!sh.el.isConnected || sources()[0]?.url !== u) return; }
+        const read = !!video.picks(); if (read) post.quiet();
+        // (Neither read it — a photo post yt-dlp has no video in, a profile —: the grabber, at once, as before; it tries the
+        // computer's gallery-dl too, and says why when nothing can be read.)
         if (!read && getSettings().socialAuto !== false && sh.el.isConnected && sources().length === 1) { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); return; }
         hfBox.hidden = false; hfBox.replaceChildren(icon('images'), h('span', { class: 'grow' }, t('socialOffer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void import('../downloads/prism').then((m) => m.grabberSheet(u)); } }, t('socialOpen')));
       })(); }); return; }
@@ -177,7 +187,12 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   // (One torrent typed or chosen: its files, to pick from, once the engine has read its metadata.)
   const peekZip = async (u: string | null) => { if (!u || !/\.(zip|cbz|apks|xapk|apkm)(\?|$)/i.test(u)) { zipBox.hidden = true; zipFor = ''; return; } if (zipFor === u) return; zipFor = u; zipBox.hidden = false; zipBox.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('zipPeeking')}`)); const m = await import('../downloads/prism'); const r = await m.remoteZipEntries(u).catch(() => null); if (zipFor !== u) return; if (!r) { zipBox.hidden = true; return; } zipBox.replaceChildren(h('details', null, h('summary', null, `${t('archiveContents')} · ${countFiles(r.entries.length)} · ${formatBytes(r.total)}`), h('div', { class: 'file-rows' }, ...r.entries.slice(0, 300).map((e) => h('div', { class: 'file-row' }, h('span', { class: 'grow', dir: 'ltr' }, e.path), h('small', { class: 'src' }, formatBytes(e.size))))))); };
   const metadata = async () => {
-    { const one = sources(); const u = one.length === 1 && one[0].url ? one[0].url : null; video.check(u); void peekZip(u); peekHf(u); probing = lookAt(u, one[0]?.headers); saveAs.classList.toggle('many', one.length > 1 || !!(one[0]?.magnet || one[0]?.torrent)); }
+    { let one = sources(); let u = one.length === 1 && one[0].url ? one[0].url : null;
+      // (A short link — t.co —: followed once by the app's own requests, then taken as the link it leads to, shown in the field.)
+      if (u && isShortLink(u)) { const to = await resolveShort(u); if (to && sources()[0]?.url === u) { ta.value = ta.value.replace(u, to); one = sources(); u = to; } }
+      // (A post the reader will read first: yt-dlp waits — peekHf asks it only if the reader lists nothing.)
+      const readerFirst = !!u && one.length === 1 && getSettings().socialAuto !== false && !!socialOf(u);
+      video.check(readerFirst ? null : u); void peekZip(u); peekHf(u); probing = lookAt(u, one[0]?.headers); saveAs.classList.toggle('many', one.length > 1 || !!(one[0]?.magnet || one[0]?.torrent)); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }
     const my = ++metaToken;
@@ -194,7 +209,13 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   };
   // (A link handed over by the app's browser: the site's cookies, page and identity go with it.)
   const sources = (): TaskSource[] => { const ref = referer.value.trim(); const out = parseSources(ta.value).map((x) => (how.headers && x.url && x.url === initial.trim() ? { ...x, headers: how.headers } : x)).map((x) => (ref && x.url ? { ...x, headers: { ...(x.headers ?? {}), Referer: ref } } : x)); if (torrentFile) out.push({ torrent: torrentFile.b64 }); return out; };
-  let typeTimer = 0; ta.addEventListener('input', () => { clear.hidden = !ta.value; clearTimeout(typeTimer); typeTimer = window.setTimeout(() => { void metadata(); void refreshJar(); }, 600); check.hidden = parseSources(ta.value).length < 2; });
+  // (A paste or a drop — or many characters at once, as a keyboard's paste that says nothing — is looked at at once; typing waits 600 ms.)
+  let typeTimer = 0; let lastLen = ta.value.length;
+  ta.addEventListener('input', (e: Event) => { clear.hidden = !ta.value; clearTimeout(typeTimer); const how = (e as InputEvent).inputType ?? ''; const jump = Math.abs(ta.value.length - lastLen) > 8; lastLen = ta.value.length;
+    if (how === 'insertFromPaste' || how === 'insertFromDrop' || jump) { void metadata(); void refreshJar(); } else typeTimer = window.setTimeout(() => { void metadata(); void refreshJar(); }, 600);
+    check.hidden = parseSources(ta.value).length < 2; });
+  // (The Video add-on's runtime made ready while the person pastes.)
+  warmVideo();
   if (initial) { void metadata(); void refreshJar(); check.hidden = parseSources(ta.value).length < 2; }
   // (One run at a time: the button off before the first wait — a double tap added everything twice, two downloads into one .part.)
   let going = false;

@@ -51,15 +51,57 @@ final class KtVideo {
     static void update(Context ctx) { try { init(ctx); YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel.STABLE.INSTANCE); } catch (Throwable e) { Log.w(TAG, "update: " + e); } }
     static String version(Context ctx) { try { init(ctx); return YoutubeDL.getInstance().version(ctx); } catch (Throwable e) { return null; } }
 
-    /** `-J` for a page: the raw JSON yt-dlp prints (the app shapes it). */
-    static String info(Context ctx, String url, boolean playlist) throws Exception { return info(ctx, url, playlist, ""); }
-    static String info(Context ctx, String url, boolean playlist, String cookieJar) throws Exception {
-        init(ctx);
-        YoutubeDLRequest r = new YoutubeDLRequest(url); r.addOption("-J"); r.addOption("--no-warnings"); r.addOption(playlist ? "--flat-playlist" : "--no-playlist");
-        if (cookieJar != null && !cookieJar.isEmpty()) { try { r.addOption("--cookies", KtCookies.disposable(ctx, cookieJar).getAbsolutePath()); } catch (Exception e) { Log.w(TAG, "cookie jar: " + e); } }
-        YoutubeDLResponse res = YoutubeDL.getInstance().execute(r, null, null);
-        return res.getOut();
+    /** yt-dlp's JavaScript runtime on the phone: QuickJS when the APK carries it (libqjs.so beside the app's other native
+     *  libraries) and this yt-dlp knows --js-runtimes (2025.11.12 on); nothing otherwise — as before. */
+    private static volatile String jsRuntime = null; private static volatile boolean jsLooked = false;
+    static java.util.List<String> jsArgs(Context ctx) {
+        if (!jsLooked) {
+            jsLooked = true;
+            try {
+                File q = new File(ctx.getApplicationInfo().nativeLibraryDir, "libqjs.so"); String v = YoutubeDL.getInstance().version(ctx);
+                if (q.isFile() && v != null && v.replaceAll("[^\\d.]", "").compareTo("2025.11.12") >= 0) jsRuntime = "quickjs:" + q.getAbsolutePath();
+            } catch (Throwable e) { Log.w(TAG, "js runtime: " + e); }
+        }
+        return jsRuntime == null ? java.util.Collections.<String>emptyList() : java.util.Arrays.asList("--js-runtimes", jsRuntime);
     }
+    /** How long a look may take before it is given up (the desktop's 90 s, less on a phone: its Python starts slower but the answer is the same). */
+    static long INFO_TIMEOUT_MS = 75_000;
+    /** A page read moments ago is reused by the download (its signed addresses expire): this long. */
+    static final long INFO_FRESH_MS = 5 * 60 * 1000;
+    private static final java.util.concurrent.atomic.AtomicLong infoSeq = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.ExecutorService infoRun = java.util.concurrent.Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "kt-video-info"); t.setDaemon(true); return t; });
+    /** The look under way, by the page's token: cancelled when the sheet moves on. */
+    static final java.util.Map<String, String> infoProcs = new java.util.concurrent.ConcurrentHashMap<>();
+    static File infoDir(Context ctx) { return new File(ctx.getCacheDir(), "video-info"); }
+    /** FNV-1a 64 of what was asked: the name a read page is kept under (16 hex digits; kt-core info_id). */
+    static String infoId(String url, boolean playlist, String jar) { long h = 0xcbf29ce484222325L; for (byte b : ((playlist ? "p" : "v") + "|" + (jar == null ? "" : jar) + "|" + url).getBytes(java.nio.charset.StandardCharsets.UTF_8)) { h ^= (b & 0xff); h *= 0x100000001b3L; } return String.format("%016x", h); }
+    /** A read page by the id this side gave it, when still fresh; null otherwise (never a path from the page). */
+    static File freshInfo(Context ctx, String id) { if (id == null || !id.matches("[0-9a-f]{16}")) return null; File f = new File(infoDir(ctx), id + ".json"); return f.isFile() && System.currentTimeMillis() - f.lastModified() < INFO_FRESH_MS ? f : null; }
+
+    /** `-J` for a page: the raw JSON yt-dlp prints (the app shapes it). */
+    static String info(Context ctx, String url, boolean playlist) throws Exception { return info(ctx, url, playlist, "", null); }
+    static String info(Context ctx, String url, boolean playlist, String cookieJar) throws Exception { return info(ctx, url, playlist, cookieJar, null); }
+    /** As above, given up after INFO_TIMEOUT_MS (yt-dlp's process ended), or when `token` is cancelled. */
+    static String info(Context ctx, String url, boolean playlist, String cookieJar, String token) throws Exception {
+        init(ctx);
+        // (A page that does not answer let go of after 15 s a try; a known extractor error tried once more, not three times — as on the desktop.)
+        YoutubeDLRequest r = new YoutubeDLRequest(url); r.addOption("-J"); r.addOption("--no-warnings"); r.addOption("--socket-timeout", "15"); r.addOption("--extractor-retries", "1"); r.addOption(playlist ? "--flat-playlist" : "--no-playlist");
+        java.util.List<String> js = jsArgs(ctx); if (!js.isEmpty()) r.addOption(js.get(0), js.get(1));
+        if (cookieJar != null && !cookieJar.isEmpty()) { try { r.addOption("--cookies", KtCookies.disposable(ctx, cookieJar).getAbsolutePath()); } catch (Exception e) { Log.w(TAG, "cookie jar: " + e); } }
+        final String pid = "info-" + infoSeq.incrementAndGet(); if (token != null && !token.isEmpty()) infoProcs.put(token, pid);
+        java.util.concurrent.Future<YoutubeDLResponse> f = infoRun.submit(() -> YoutubeDL.getInstance().execute(r, pid, null));
+        YoutubeDLResponse res;
+        try { res = f.get(INFO_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS); }
+        catch (java.util.concurrent.TimeoutException e) { try { YoutubeDL.getInstance().destroyProcessById(pid); } catch (Throwable ignored) {} f.cancel(true); throw new Exception("ERROR: timed out"); }
+        catch (java.util.concurrent.ExecutionException e) { Throwable c = e.getCause() != null ? e.getCause() : e; throw c instanceof Exception ? (Exception) c : new Exception(c); }
+        finally { if (token != null) infoProcs.remove(token); }
+        String out = res.getOut();
+        // (One video's answer kept a few minutes, for the download that follows.)
+        if (!playlist && out != null && out.length() < (48 << 20)) { try { File d = infoDir(ctx); d.mkdirs(); File[] old = d.listFiles(); if (old != null) for (File o : old) if (System.currentTimeMillis() - o.lastModified() > INFO_FRESH_MS * 2) o.delete(); java.nio.file.Files.write(new File(d, infoId(url, false, cookieJar) + ".json").toPath(), out.getBytes(java.nio.charset.StandardCharsets.UTF_8)); } catch (Exception e) { Log.w(TAG, "info kept: " + e); } }
+        return out;
+    }
+    /** The look under the page's token stopped (the sheet moved on, or the person asked to try again). */
+    static boolean cancelInfo(String token) { String pid = token == null ? null : infoProcs.remove(token); if (pid == null) return false; try { return YoutubeDL.getInstance().destroyProcessById(pid); } catch (Throwable e) { return false; } }
     interface Progress { void on(long done, long total, long speed, String file, String detail); }
     /** What is known live of a running download — phase (info/video/audio/merge/finish), fragment i/n, the stream's
      *  resolution, codecs, container and approximate size — read by the engine on each progress call. */
@@ -124,12 +166,29 @@ final class KtVideo {
         for (int attempt = 0; attempt < LADDER.length; attempt++) {
             try { File out = runOnce(ctx, id, url, dir, meta, pr, step); if (out != null && meta != null && meta.has("bilingual")) { try { bilingual(out, meta.optString("bilingual")); } catch (Throwable e) { Log.w(TAG, "bilingual", e); } } return out; }
             catch (Exception e) {
-                last = e; if (cancelled(id)) throw e; int next = stepFor(e.getMessage(), step); if (next < 0 || next >= LADDER.length || next <= step) throw e;
+                last = e; if (cancelled(id)) throw e;
+                // (The page read before could not be used — its addresses expired, or it was refused —: read again, once, at once.)
+                if (meta != null && meta.optBoolean("infoUsed", false) && !meta.optBoolean("noInfo", false)) { try { meta.put("noInfo", true); } catch (Exception ignored) {} attempt--; continue; }
+                // (A site that changed: most «it stopped working» is an old yt-dlp. A newer one looked for once — not more than
+                // once in six hours —, and with one, tried again once, at the same step.)
+                if (healable(e.getMessage()) && meta != null && !meta.optBoolean("healTried", false) && System.currentTimeMillis() - lastHeal > 6 * 3600_000L) {
+                    try { meta.put("healTried", true); } catch (Exception ignored) {}
+                    lastHeal = System.currentTimeMillis(); String before = YoutubeDL.getInstance().version(ctx); pr.on(0, 0, 0, null, "yt-dlp update");
+                    update(ctx); String after = YoutubeDL.getInstance().version(ctx);
+                    if (after != null && !after.equals(before)) { try { meta.put("healed", after); } catch (Exception ignored) {} attempt--; continue; }
+                }
+                int next = stepFor(e.getMessage(), step); if (next < 0 || next >= LADDER.length || next <= step) throw e;
                 step = next; pr.on(0, 0, 0, null, "retry: " + String.join(" ", LADDER[step]));
             }
         }
         throw last;
     }
+    private static volatile long lastHeal = 0;
+    /** kt-core videotools.rs healable: a failure a newer yt-dlp often mends. */
+    static boolean healable(String err) { String e = err == null ? "" : err.toLowerCase(java.util.Locale.ROOT); for (String k : new String[] { "unable to extract", "failed to extract", "failed to parse", "nsig extraction failed", "player response", "please report this issue", "update yt-dlp", "yt-dlp -u", "signature solving failed", "n challenge solving failed" }) if (e.contains(k)) return true; return false; }
+    /** A request with no address of its own (the page read before given with --load-info-json); null when this
+     *  youtubedl-android has no such constructor — the download then asks the site again, as before. */
+    private static YoutubeDLRequest requestWithoutUrl() { try { return YoutubeDLRequest.class.getConstructor(java.util.List.class).newInstance(new java.util.ArrayList<String>()); } catch (Throwable e) { return null; } }
     /* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
     static void bilingual(File out, String pair) throws java.io.IOException {
         String[] ls = pair.split(","); if (ls.length < 2) return;
@@ -158,8 +217,13 @@ final class KtVideo {
     private static File runOnce(Context ctx, String id, String url, File dir, JSONObject meta, Progress pr, int step) throws Exception {
         boolean audioOnly = meta != null && meta.optBoolean("audioOnly", false); String format = meta != null ? meta.optString("format", "") : ""; String container = meta != null ? meta.optString("container", "") : "";
         int idx = meta != null ? meta.optInt("playlistIndex", 0) : 0;
-        YoutubeDLRequest r = new YoutubeDLRequest(url);
-        r.addOption("--no-warnings"); r.addOption("--no-playlist"); r.addOption("--continue"); r.addOption("--no-mtime"); r.addOption("--newline");
+        // (The page read moments ago for the chooser, when still fresh: the site is not asked again.)
+        File infoFile = meta != null && !meta.optBoolean("noInfo", false) ? freshInfo(ctx, meta.optString("infoId", null)) : null;
+        YoutubeDLRequest r = infoFile != null ? requestWithoutUrl() : null;
+        if (r != null) { r.addOption("--load-info-json", infoFile.getAbsolutePath()); try { meta.put("infoUsed", true); } catch (Exception ignored) {} }
+        else { r = new YoutubeDLRequest(url); if (meta != null) { try { meta.remove("infoUsed"); } catch (Exception ignored) {} } }
+        r.addOption("--no-warnings"); r.addOption("--continue"); r.addOption("--no-mtime"); r.addOption("--newline");
+        { java.util.List<String> js = jsArgs(ctx); if (!js.isEmpty()) r.addOption(js.get(0), js.get(1)); }
         String outName = meta != null ? meta.optString("outName", "").replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]+", " ").trim() : "";
         String tpl = meta != null ? meta.optString("template", "") : ""; if (tpl.isEmpty() || tpl.contains("/") || tpl.contains("\\") || tpl.contains("..")) tpl = "%(title)s [%(id)s]";
         // (A list the page built is run as it is, vetted, in the download folder (-P); a task from before it runs the older way below.)
@@ -170,6 +234,8 @@ final class KtVideo {
             r.addOption("-P", dir.getAbsolutePath());
             for (int i = 0; i < vetted.size(); i++) { String a0 = vetted.get(i); if (ALONE.contains(a0) || i + 1 >= vetted.size()) r.addOption(a0); else r.addOption(a0, vetted.get(++i)); }
         } else {
+        // (One deliberate flag: a list the page built says --no-playlist or --yes-playlist itself; the older way never walks a list.)
+        r.addOption("--no-playlist");
         r.addOption("-o", new File(dir, !outName.isEmpty() ? outName + ".%(ext)s" : (idx > 0 ? String.format("%02d - ", idx) : "") + tpl + ".%(ext)s").getAbsolutePath());
         if (meta != null && meta.optBoolean("chapters", false)) r.addOption("--embed-chapters");
         // Parts: time ranges (several, «1:30-2:00»), or chapters whose names match; the file split by its chapters when asked.

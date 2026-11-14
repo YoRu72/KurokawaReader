@@ -31,6 +31,8 @@ export interface Settings {
   /** Folders chosen lately in the Add sheet, newest first. */
   recentDirs?: string[];
   maxActive: number;
+  /** Video downloads at once (unset: 2 on a phone, 3 on a computer). */
+  maxVideo?: number;
   /** The bottom bar's places in the reader's order, and those left off it (Settings always stays). */
   navOrder?: string[]; navHidden?: string[];
   /** A page swiped sideways goes to the bottom bar's next or previous place (on by default). */

@@ -2,6 +2,7 @@
 // or what Settings said before there was a choice), the options turned into yt-dlp's arguments (src/downloads/videoArgs.ts),
 // and the ffmpeg pack checked before a choice that needs it is added. The Add sheet's chooser, a clipboard hotkey, a followed
 // channel, a course, a grabbed stream — all end here, so they agree.
+import { autoFragments } from './queue';
 import { getSettings, updateSettings } from '../settings';
 import { t } from '../i18n';
 import type { AddOptions } from '../engine/types';
@@ -32,7 +33,7 @@ export const BUILT_IN: { id: 'fast' | 'quality' | 'compact' | 'music'; label: 'p
 
 /** Whether ffmpeg is here (the pack): merging, converting and embedding need it; an audio file taken as it is does not. */
 export async function ffmpegHere(): Promise<boolean> {
-  try { const { status, packsHere } = await import('../packs'); if (!packsHere()) return true; const st = await status(); return !!st?.ffmpeg?.version; } catch { return true; }
+  try { const { statusKept, packsHere } = await import('../packs'); if (!packsHere()) return true; const st = await statusKept(); return !!st?.ffmpeg?.version; } catch { return true; }
 }
 /** Offers the ffmpeg pack when this choice needs it and it is not here (the same card as everywhere); false when declined — nothing is added then. */
 export async function gateFfmpeg(needs: string[]): Promise<boolean> {
@@ -45,7 +46,8 @@ export function settingsExtras(): NonNullable<ArgsContext['extras']> {
   const s = getSettings();
   return { infoJson: (s.sidecarNfo || s.sidecarComments || s.sidecarChapters || s.sidecarLyrics) || undefined, cover: s.sidecarCover || undefined, comments: s.sidecarComments || undefined, liveChat: s.sidecarLiveChat || undefined };
 }
-export const fragmentsNow = (): number => resolveFragments(getSettings().videoFragments, getSettings().connections);
+// (Auto — neither setting given —: each job's share of a budget over the video jobs that may run together, src/video/queue.ts.)
+export const fragmentsNow = (): number => { const st = getSettings(); return (st.videoFragments ?? 0) > 0 || (st.connections ?? 0) > 0 ? resolveFragments(st.videoFragments, st.connections) : autoFragments(); };
 export const argsContext = (ffmpeg: boolean, more: ArgsContext = {}): ArgsContext => ({ fragments: fragmentsNow(), ffmpeg, ...more, extras: { ...settingsExtras(), ...(more.extras ?? {}) } });
 export const build = (o: VideoOptions, ffmpeg: boolean, more: ArgsContext = {}): BuiltArgs => buildVideoArgs(o, argsContext(ffmpeg, more));
 

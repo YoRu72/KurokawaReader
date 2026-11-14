@@ -30,35 +30,79 @@ const clip = (s: string, n = 80) => s.replace(/\s+/g, ' ').trim().slice(0, n);
 /* ---------- X ---------- */
 type FxMedia = { type: 'photo' | 'video' | 'gif'; url: string; thumbnail_url?: string; width?: number; height?: number; formats?: { url: string; container?: string; bitrate?: number }[]; variants?: { url: string; content_type?: string; bitrate?: number }[] };
 type FxTweet = { id: string; text: string; author: { screen_name: string; name?: string }; media?: { all?: FxMedia[] }; quote?: FxTweet };
-const bestMp4 = (m: FxMedia): string => {
-  const mp4s = [...(m.formats ?? []).filter((f) => f.container === 'mp4' || /\.mp4(\?|$)/.test(f.url)), ...(m.variants ?? []).filter((v) => v.content_type === 'video/mp4')] as { url: string; bitrate?: number }[];
-  return mp4s.sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0]?.url ?? m.url;
+/** An address that names a file of media (by its extension), not a page or a stream's playlist. */
+const MEDIA_EXT = /\.(mp4|m4v|mov|webm|gif|jpe?g|png|webp)(\?|#|$)/i;
+const isMp4 = (u: string): boolean => /\.mp4(\?|#|$)/i.test(u);
+/** The best MP4 of a video or GIF: its formats or variants, highest bitrate first; its own address only when that is an
+ *  MP4 itself — never a stream's playlist (.m3u8) or a page, which go to the Video add-on instead (null). */
+export const bestMp4 = (m: FxMedia): string | null => {
+  const mp4s = [...(m.formats ?? []).filter((f) => f.container === 'mp4' || isMp4(f.url)), ...(m.variants ?? []).filter((v) => v.content_type === 'video/mp4' || (!v.content_type && isMp4(v.url)))] as { url: string; bitrate?: number }[];
+  return mp4s.sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0]?.url ?? (isMp4(m.url) ? m.url : null);
 };
 /** A photo at its original size: «…/media/ID.jpg?name=orig» (or ?format=jpg&name=orig). */
 export const origPhoto = (u: string): string => { try { const x = new URL(u); if (x.hostname !== 'pbs.twimg.com') return u; const f = x.searchParams.get('format'); x.search = ''; return f ? `${x.href}?format=${f}&name=orig` : `${x.href}?name=orig`; } catch { return u; } };
-function xItems(tw: FxTweet, out: SocialItem[], depth = 0): void {
+/** A GIF of X is an MP4 without sound: named so («…-gif.mp4»), apart from a video of the same post. */
+const xName = (who: string, id: string, n: number, kind: 'image' | 'video' | 'gif', ext: string): string => `${who}-${id}-${n}${kind === 'gif' ? '-gif' : ''}.${ext}`;
+function xItems(tw: FxTweet, out: SocialItem[], link: string, depth = 0): void {
   const who = tw.author?.screen_name ?? 'x';
   (tw.media?.all ?? []).forEach((m, i) => {
     const n = i + 1;
-    if (m.type === 'photo') { const href = origPhoto(m.url); out.push({ href, kind: 'image', thumb: m.url, text: `${clip(tw.text, 60) || who} · ${n}`, name: `${who}-${tw.id}-${n}.${extOf(m.url, 'jpg')}` }); }
-    else { const href = bestMp4(m); out.push({ href, kind: m.type === 'gif' ? 'gif' : 'video', thumb: m.thumbnail_url, text: `${clip(tw.text, 60) || who} · ${n}${m.height ? ` · ${m.height}p` : ''}`, name: `${who}-${tw.id}-${n}.mp4` }); }
+    if (m.type === 'photo') { const href = origPhoto(m.url); out.push({ href, kind: 'image', thumb: m.url, text: `${clip(tw.text, 60) || who} · ${n}`, name: xName(who, tw.id, n, 'image', extOf(m.url, 'jpg')) }); return; }
+    const kind = m.type === 'gif' ? 'gif' : 'video'; const href = bestMp4(m);
+    // (No MP4 of it — a stream only —: the post itself, for the Video add-on to join.)
+    out.push({ href: href ?? link, viaVideo: !href || undefined, kind, thumb: m.thumbnail_url, text: `${clip(tw.text, 60) || who} · ${n}${m.height ? ` · ${m.height}p` : ''}`, name: xName(who, tw.id, n, kind, 'mp4') });
   });
-  if (tw.quote && depth < 1) xItems(tw.quote, out, depth + 1);
+  if (tw.quote && depth < 1) xItems(tw.quote, out, `https://x.com/${tw.quote.author?.screen_name ?? 'i'}/status/${tw.quote.id}`, depth + 1);
 }
-async function fromX(id: string): Promise<SocialPost> {
-  try {
-    const d = await json<{ code: number; message?: string; tweet?: FxTweet }>(`https://api.fxtwitter.com/status/${id}`);
-    if (!d.tweet) throw new Error(d.message ?? 'not found');
-    const items: SocialItem[] = []; xItems(d.tweet, items);
-    return { site: 'x', title: clip(d.tweet.text, 140), author: `@${d.tweet.author.screen_name}`, items };
-  } catch (e) {
-    // (VxTwitter's API, the same post another way, when FxTwitter's is down or refuses.)
-    try {
-      const v = await json<{ text: string; user_screen_name: string; tweetID: string; media_extended?: { type: 'image' | 'video' | 'gif'; url: string; thumbnail_url?: string }[] }>(`https://api.vxtwitter.com/i/status/${id}`);
-      const who = v.user_screen_name;
-      return { site: 'x', title: clip(v.text, 140), author: `@${who}`, items: (v.media_extended ?? []).map((m, i) => ({ href: m.type === 'image' ? origPhoto(m.url) : m.url, kind: m.type, thumb: m.thumbnail_url ?? m.url, text: `${clip(v.text, 60) || who} · ${i + 1}`, name: `${who}-${id}-${i + 1}.${m.type === 'image' ? extOf(m.url, 'jpg') : 'mp4'}` })) };
-    } catch { throw e; }
-  }
+/** Why a post could not be read: not there, private or removed, behind a sign-in (sensitive), or the services down. */
+export type ReaderFail = 'notFound' | 'private' | 'sensitive' | 'down';
+export class ReaderError extends Error { constructor(public kind: ReaderFail, msg: string) { super(msg); } }
+/** Each reader's budget, and the head start the first one has before the second is asked too. */
+export const READER_BUDGET = 7000; export const READER_HEAD_START = 1200;
+const failOf = (status: number, msg = ''): ReaderFail => (/sensitive|age|nsfw|adult/i.test(msg) ? 'sensitive' : status === 401 || status === 403 || /private|protected|suspended/i.test(msg) ? 'private' : status === 404 || /not.?found|deleted|unavailable|doesn.?t exist/i.test(msg) ? 'notFound' : 'down');
+async function fxReader(id: string, link: string): Promise<SocialPost> {
+  let r; try { r = await request(`https://api.fxtwitter.com/status/${id}`, { headers: { Accept: 'application/json' }, timeoutMs: READER_BUDGET }); } catch (e) { throw new ReaderError('down', String((e as Error).message ?? e)); }
+  let d: { code?: number; message?: string; tweet?: FxTweet } = {}; try { d = JSON.parse(r.body) as typeof d; } catch { /* not JSON */ }
+  if (r.status !== 200 || !d.tweet) throw new ReaderError(failOf(d.code ?? r.status, d.message), d.message ?? `HTTP ${r.status}`);
+  const items: SocialItem[] = []; xItems(d.tweet, items, link);
+  return { site: 'x', title: clip(d.tweet.text, 140), author: `@${d.tweet.author.screen_name}`, items };
+}
+type VxMedia = { type: 'image' | 'video' | 'gif'; url: string; thumbnail_url?: string };
+async function vxReader(id: string, link: string): Promise<SocialPost> {
+  let r; try { r = await request(`https://api.vxtwitter.com/i/status/${id}`, { headers: { Accept: 'application/json' }, timeoutMs: READER_BUDGET }); } catch (e) { throw new ReaderError('down', String((e as Error).message ?? e)); }
+  let v: { text?: string; user_screen_name?: string; tweetID?: string; media_extended?: VxMedia[]; error?: string; message?: string } = {}; try { v = JSON.parse(r.body) as typeof v; } catch { /* not JSON */ }
+  if (r.status !== 200 || !v.user_screen_name) throw new ReaderError(failOf(r.status, v.error ?? v.message), v.error ?? v.message ?? `HTTP ${r.status}`);
+  const who = v.user_screen_name; const text = v.text ?? '';
+  // (Only what is media by its address: a photo at its original size; a video or GIF as its MP4, or — a stream or a
+  // page — the post for the Video add-on. Anything else the service lists is left out.)
+  const items: SocialItem[] = [];
+  (v.media_extended ?? []).forEach((m, i) => {
+    const n = i + 1; const kind = m.type === 'image' ? 'image' : m.type === 'gif' ? 'gif' : 'video';
+    if (kind === 'image') { if (!MEDIA_EXT.test(m.url) && !/pbs\.twimg\.com\/media\//.test(m.url)) return; items.push({ href: origPhoto(m.url), kind, thumb: m.thumbnail_url ?? m.url, text: `${clip(text, 60) || who} · ${n}`, name: xName(who, id, n, kind, extOf(m.url, 'jpg')) }); return; }
+    const mp4 = isMp4(m.url);
+    items.push({ href: mp4 ? m.url : link, viaVideo: !mp4 || undefined, kind, thumb: m.thumbnail_url, text: `${clip(text, 60) || who} · ${n}`, name: xName(who, id, n, kind, 'mp4') });
+  });
+  return { site: 'x', title: clip(text, 140), author: `@${who}`, items };
+}
+/** X's post through two open services raced: FxTwitter first, VxTwitter after a head start (or at once when FxTwitter
+ *  has already failed); the first good answer wins. Each has its own budget, so the whole stays bounded. When both
+ *  fail, the more telling reason is kept (a post not there or private beats a service that was down). */
+async function fromX(id: string, link: string): Promise<SocialPost> {
+  return new Promise<SocialPost>((resolve, reject) => {
+    const fails: ReaderError[] = []; let started = 1; let settled = false;
+    const failed = (e: unknown) => { fails.push(e instanceof ReaderError ? e : new ReaderError('down', String((e as Error)?.message ?? e))); if (fails.length === 1 && started === 1) startVx(); if (fails.length === started && !settled) { settled = true; const rank: ReaderFail[] = ['private', 'sensitive', 'notFound', 'down']; reject(fails.sort((a, b) => rank.indexOf(a.kind) - rank.indexOf(b.kind))[0]); } };
+    const won = (p: SocialPost) => { if (!settled) { settled = true; clearTimeout(tm); resolve(p); } };
+    let vx = false; const startVx = () => { if (vx) return; vx = true; started = 2; clearTimeout(tm); vxReader(id, link).then(won, failed); };
+    const tm = setTimeout(startVx, READER_HEAD_START);
+    fxReader(id, link).then(won, failed);
+  });
+}
+/** A short link (t.co) followed once by the app's own requests: the address it leads to, or null. */
+export const SHORT_HOSTS = /^(t\.co|www\.t\.co)$/i;
+export const isShortLink = (u: string): boolean => { try { const x = new URL(u); return SHORT_HOSTS.test(x.hostname) && x.pathname.length > 1; } catch { return false; } };
+export async function resolveShort(u: string): Promise<string | null> {
+  if (!isShortLink(u)) return null;
+  try { const r = await request(u, { method: 'HEAD', timeoutMs: 6000 }); const to = r.url && r.url !== u ? r.url : null; return to && /^https?:\/\//i.test(to) ? to : null; } catch { return null; }
 }
 
 /* ---------- Bluesky ---------- */
@@ -160,7 +204,7 @@ async function fromRedditData(p: RedditPost & { id: string; permalink: string })
 export async function socialPost(link: string): Promise<SocialPost | null> {
   const s = socialOf(link); if (!s) return null;
   if (s.site === 'telegram') return fromTelegram(s.user!, s.id);
-  if (s.site === 'x') return fromX(s.id);
+  if (s.site === 'x') return fromX(s.id, link);
   if (s.site === 'bluesky') return fromBluesky(s.user!, s.id, link);
   return fromReddit(s.id);
 }

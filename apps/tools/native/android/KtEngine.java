@@ -99,6 +99,8 @@ final class KtEngine {
     /** Finished files hashed and identical ones hard-linked (Settings → Downloads). */ private volatile boolean dedupe = false;
     private volatile boolean dht = true, lsd = true, upnp = true, natpmp = true; private volatile String enc = "enabled"; private volatile double seedRatio = 0; private volatile int seedMinutes = 0;
     private int listenPort = 0, maxActive = 3;
+    /** Video jobs at once (Settings → Downloads «Simultaneous video downloads»; each runs Python and yt-dlp): the rest wait «queued», oldest first. */
+    private volatile int maxVideo = 2;
     /** Connections over every file download at once (OmniGet's global budget): a new download gets what is left of it. */
     private int budget = 24;
     /** Hosts that answer one request at a time well and many badly (YouTube, Instagram, TikTok, X, Reddit…): a pause between requests. */
@@ -287,7 +289,7 @@ final class KtEngine {
     }
     private void applyPriorities(Task x) { if (x.th == null || !x.th.isValid()) return; TorrentInfo ti = infoOf(x); if (ti == null) return; if (x.priorities != null && x.priorities.length < ti.numFiles()) { int[] np = new int[ti.numFiles()]; System.arraycopy(x.priorities, 0, np, 0, x.priorities.length); x.priorities = np; } x.th.prioritizeFiles(prioArray(x, ti)); }
 
-    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; x.heldBy = null; x.anyway = false; if ("video".equals(x.kind)) KtVideo.cancel(x.id); if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
+    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; x.heldBy = null; x.anyway = false; if ("video".equals(x.kind)) { KtVideo.cancel(x.id); bg.execute(this::pumpVideo); } if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
     void resume(String id) throws Exception { resume(id, false); }
     /** `anyway`: the user's «Download now» on one held — started in spite of the holds. Otherwise a hold that applies
      *  keeps it paused, marked with its reason (resumed by itself when the hold passes). */
@@ -351,7 +353,7 @@ final class KtEngine {
         if (kept != null) { java.util.Set<File> dirs = new java.util.HashSet<>(); for (int i = 0; i < kept.numFiles(); i++) { File f = new File(kept.files().filePath(i, x.dir)); f.delete(); new File(f.getPath() + ".part").delete(); File d = f.getParentFile(); while (d != null && !d.getAbsolutePath().equals(new File(x.dir).getAbsolutePath())) { dirs.add(d); d = d.getParentFile(); } } List<File> ds = new ArrayList<>(dirs); ds.sort((a, b) -> b.getAbsolutePath().length() - a.getAbsolutePath().length()); for (File d : ds) { String[] k = d.list(); if (k != null && k.length == 0) d.delete(); } }
         if (x.infoHash != null) byHash.remove(x.infoHash);
         if (x.cancel != null) x.cancel.set(true);
-        if ("video".equals(x.kind)) { KtVideo.cancel(x.id); if (deleteFiles && x.httpOut != null) { File[] kids = new File(x.dir).listFiles(); String stem = x.httpOut.getName().replaceAll("\\.[^.]+$", ""); if (kids != null) for (File k : kids) if (k.getName().startsWith(stem)) k.delete(); } }
+        if ("video".equals(x.kind)) { KtVideo.cancel(x.id); bg.execute(this::pumpVideo); if (deleteFiles && x.httpOut != null) { File[] kids = new File(x.dir).listFiles(); String stem = x.httpOut.getName().replaceAll("\\.[^.]+$", ""); if (kids != null) for (File k : kids) if (k.getName().startsWith(stem)) k.delete(); } }
         if (deleteFiles && x.httpOut != null && !"video".equals(x.kind)) { x.httpOut.delete(); new File(x.httpOut.getPath() + ".part").delete(); }
         new File(stateDir, id + ".http").delete(); new File(stateDir, id + ".fastresume").delete(); new File(stateDir, id + ".torrent").delete();
         persist(); tell(true); KtService.maybeStop(ctx, this);
@@ -507,6 +509,7 @@ final class KtEngine {
         if (o.has("enc")) enc = o.optString("enc", "enabled"); if (o.has("seedRatio")) seedRatio = o.optDouble("seedRatio", 0); if (o.has("seedMinutes")) seedMinutes = o.optInt("seedMinutes", 0);
         if (o.has("listenPort")) listenPort = o.optInt("listenPort");
         if (o.has("maxActive")) { maxActive = Math.max(1, o.optInt("maxActive", 3)); pumpQueue(); }
+        if (o.has("maxVideo")) { maxVideo = Math.max(1, Math.min(10, o.optInt("maxVideo", 2))); pumpVideo(); }
         if (o.has("connBudget")) budget = Math.max(4, Math.min(128, o.optInt("connBudget", 24)));
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
@@ -540,7 +543,12 @@ final class KtEngine {
 
     /* ---------- HTTP ---------- */
     /** A video page through yt-dlp: progress from its lines; the file it names becomes the task's file. */
-    private void startVideo(Task x) {
+    private int busyVideo(Task but) { int n = 0; for (Task t : snapshot()) if (t != but && "video".equals(t.kind) && "downloading".equals(t.state)) n++; return n; }
+    /** The waiting video jobs started while there is room, in the order they were added. */
+    private synchronized void pumpVideo() { for (Task t : snapshot()) { if (busyVideo(null) >= maxVideo) break; if ("video".equals(t.kind) && "queued".equals(t.state) && !t.paused) startVideo(t); } }
+    private synchronized void startVideo(Task x) {
+        // (No room: it waits its turn — its place shown in the list — and starts when one ends.)
+        if (busyVideo(x) >= maxVideo) { x.state = "queued"; x.downSpeed = 0; persist(); tell(true); return; }
         x.state = "downloading"; x.error = null; KtService.ensure(ctx); tell(true);
         bg.execute(() -> {
             try {
@@ -553,7 +561,7 @@ final class KtEngine {
             } catch (Exception e) {
                 if (x.paused) { x.state = "paused"; } else { x.state = "failed"; x.error = errOf(e); }
                 x.downSpeed = 0; persist(); tell(true); KtService.maybeStop(ctx, this);
-            }
+            } finally { pumpVideo(); }
         });
     }
     private synchronized void startHttp(Task x) {   // (one at a time: the queue, a hold passing and a restart may start the same download together)

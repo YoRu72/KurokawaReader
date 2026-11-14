@@ -191,6 +191,13 @@ pub async fn kt_set_limits(l: Value) -> Result<(), String> {
 /// kt:configure(o): the engine's settings (aria2-config.json), applied to the running aria2c where it can.
 #[tauri::command]
 pub async fn kt_configure(o: Value) -> Result<(), String> {
+    // (The video jobs' own limit — «Simultaneous video downloads» —: theirs, not aria2's.)
+    if let Some(n) = o.get("maxVideo").and_then(|v| v.as_f64()) {
+        crate::vtjobs::set_max(n.max(1.0) as usize);
+        if o.as_object().map(|m| m.len() == 1).unwrap_or(false) {
+            return Ok(());
+        }
+    }
     with_engine(move |e| e.configure(&o)).await
 }
 

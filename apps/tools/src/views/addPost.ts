@@ -14,9 +14,12 @@ export interface PostPanel {
   read(u: string | null): Promise<boolean>;
   /** The ticked ones, or null when there is no post here. */
   picks(): PostPick[] | null;
+  /** A note the reader left (it could not read the post) put away: what followed — yt-dlp — read it. */
+  quiet(): void;
 }
 
-export function postPanel(onChange: () => void): PostPanel {
+/** `onChooser`: the post's videos offered to the Video add-on's chooser (their qualities), only when asked. */
+export function postPanel(onChange: () => void, onChooser?: () => void): PostPanel {
   const el = h('div', { class: 'post-panel', hidden: true });
   let items: Item[] = []; const on = new Set<number>(); let token = 0; let shown = false;
   const count = h('span', { class: 'post-count' });
@@ -36,9 +39,13 @@ export function postPanel(onChange: () => void): PostPanel {
     items = list; on.clear(); list.forEach((_, i) => on.add(i)); shown = list.length > 0;
     el.hidden = !shown; if (!shown) { el.replaceChildren(); onChange(); return; }
     grid.replaceChildren(...list.map(tile));
-    el.replaceChildren(h('div', { class: 'post-head' }, icon('images'), h('div', { class: 'grow' }, h('b', null, t('postFromThis')), title ? h('small', { dir: 'auto' }, title) : null), all), grid, h('p', { class: 'post-foot hint' }, count));
+    const videos = list.some((x) => x.kind !== 'image');
+    el.replaceChildren(h('div', { class: 'post-head' }, icon('images'), h('div', { class: 'grow' }, h('b', null, t('postFromThis')), title ? h('small', { dir: 'auto' }, title) : null), all), grid,
+      h('div', { class: 'post-foot' }, h('span', { class: 'hint grow' }, count), videos && onChooser ? h('button', { type: 'button', class: 'btn tonal small post-chooser', onclick: (e: Event) => { (e.currentTarget as HTMLButtonElement).hidden = true; onChooser(); } }, icon('hq'), t('postChooseQuality')) : null));
     paint();
   };
+  // (What the reader could not do, said in one line — not a panel that silently goes away while yt-dlp's raw text shows elsewhere.)
+  const note = (key: string, kind: 'info' | 'alert') => { el.hidden = false; el.replaceChildren(h('p', { class: 'post-state src small' + (kind === 'alert' ? ' danger' : ''), dir: 'auto' }, icon(kind === 'alert' ? 'alert' : 'info'), ' ', t(key as 'postStateDown'))); onChange(); };
   const read = async (u: string | null): Promise<boolean> => {
     const my = ++token; items = []; on.clear(); shown = false; el.hidden = true; el.replaceChildren(); onChange();
     if (!u) return false;
@@ -51,8 +58,14 @@ export function postPanel(onChange: () => void): PostPanel {
       if (social) { const p = await S.socialPost(u); if (p) { title = [p.author, p.title].filter(Boolean).join(' · '); list = p.items.map((x) => ({ href: x.href, text: x.text, name: x.name, thumb: x.thumb, kind: x.kind, viaVideo: x.viaVideo })); } }
       else { const g = await G.gallery(u); title = g.title; list = g.items.map((x) => ({ href: x.href, text: x.text, name: x.name, thumb: x.thumb, kind: x.kind === 'image' ? 'image' : 'video' })); }
       if (my !== token) return false;
-      show(title, list); return list.length > 0;
-    } catch { if (my === token) { el.hidden = true; el.replaceChildren(); onChange(); } return false; }
+      if (!list.length) { note('postStateEmpty', 'info'); return false; }
+      show(title, list); return true;
+    } catch (e) {
+      if (my !== token) return false;
+      const kind = (e as { kind?: string }).kind;
+      note(kind === 'notFound' ? 'postStateNotFound' : kind === 'private' ? 'postStatePrivate' : kind === 'sensitive' ? 'postStateSensitive' : 'postStateDown', kind === 'down' || !kind ? 'info' : 'alert');
+      return false;
+    }
   };
-  return { el, read, picks: () => (shown ? items.filter((_, i) => on.has(i)) : null) };
+  return { el, read, picks: () => (shown ? items.filter((_, i) => on.has(i)) : null), quiet: () => { if (!shown) { el.hidden = true; el.replaceChildren(); } } };
 }

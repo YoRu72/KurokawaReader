@@ -194,9 +194,9 @@ pub fn js_args(version: Option<&str>, runtime: Option<(&str, &str)>) -> Vec<Stri
 }
 
 /// `-J` for what a page offers (ytdlp.cjs info): read once; a playlist only flat; one video never walks its list; a
-/// page that does not answer let go of after 20 s a try.
+/// page that does not answer let go of after 15 s a try; a known extractor error tried once more, not three times.
 pub fn info_args(url: &str, playlist: bool, cookies_from_browser: Option<&str>, js: &[String]) -> Vec<String> {
-    let mut a: Vec<String> = vec!["-J".into(), "--no-warnings".into(), "--skip-download".into(), "--socket-timeout".into(), "20".into()];
+    let mut a: Vec<String> = vec!["-J".into(), "--no-warnings".into(), "--skip-download".into(), "--socket-timeout".into(), "15".into(), "--extractor-retries".into(), "1".into()];
     a.extend(js.iter().cloned());
     if playlist {
         a.push("--flat-playlist".into());
@@ -853,10 +853,13 @@ pub fn audio_query(query: &str) -> (String, String, String) {
 
 /* ---------- sites ---------- */
 
+// (One list on every platform: src/video/ytdlp.ts VIDEO_HOSTS is the source, desktop/ytdlp.cjs and this one copies of it —
+// tests/videohosts.cjs fails when they differ. A subdomain counts: music.youtube.com, m.youtube.com, www.…)
 const VIDEO_HOSTS: &[&str] = &[
-    "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "twitch.tv", "tiktok.com", "instagram.com", "facebook.com", "fb.watch", "x.com", "twitter.com", "reddit.com",
-    "bilibili.com", "nicovideo.jp", "soundcloud.com", "bandcamp.com", "ok.ru", "vk.com", "rumble.com", "odysee.com", "streamable.com", "imgur.com", "pinterest.com",
-    "threads.net", "9gag.com", "crunchyroll.com", "iwara.tv", "nhk.or.jp", "abema.tv",
+    "youtube.com", "youtu.be", "youtube-nocookie.com", "vimeo.com", "dailymotion.com", "twitch.tv", "tiktok.com", "instagram.com", "facebook.com", "fb.watch", "x.com", "twitter.com",
+    "reddit.com", "bilibili.com", "bilibili.tv", "nicovideo.jp", "soundcloud.com", "bandcamp.com", "ok.ru", "vk.com", "vkvideo.ru", "rumble.com", "odysee.com", "streamable.com",
+    "imgur.com", "pinterest.com", "threads.net", "9gag.com", "crunchyroll.com", "iwara.tv", "nhk.or.jp", "abema.tv", "tver.jp", "kick.com", "archive.org", "ted.com", "bitchute.com",
+    "mixcloud.com", "vlive.tv", "weibo.com", "douyin.com", "ixigua.com", "youku.com", "zhihu.com", "naver.com", "kakao.com", "aparat.com", "shahid.mbc.net",
 ];
 /// The host of an absolute address (new URL(u).hostname), lowercased; None when it is not one.
 pub fn host_of(u: &str) -> Option<String> {
@@ -1246,6 +1249,210 @@ pub fn js_missing(err: &str, have_runtime: bool, js_ok: bool, url: &str) -> bool
     youtube_url(url) || JS_SYMPTOMS.iter().any(|s| err.contains(s))
 }
 
+/* ---------- a sign-in kept per site, the read page reused, the video queue ---------- */
+
+/// The site a sign-in is kept for: the address's host without «www.»/«m.»/«music.»…, its other names folded into one
+/// (youtu.be, youtube-nocookie.com → youtube.com; twitter.com → x.com), then its last two labels (three under a
+/// two-letter country's «co.», «com.», «or.»… — nhk.or.jp). None when it is not an address.
+pub fn cookie_site(url: &str) -> Option<String> {
+    let h = host_of(url)?;
+    if h.is_empty() || h.starts_with('[') || h.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let labels: Vec<&str> = h.split('.').filter(|l| !l.is_empty()).collect();
+    if labels.len() < 2 {
+        return None;
+    }
+    let n = labels.len();
+    let second = labels[n - 2];
+    let keep = if n >= 3 && labels[n - 1].len() == 2 && ["co", "com", "net", "org", "or", "ac", "gov", "edu", "ne", "go"].contains(&second) { 3 } else { 2 };
+    let site = labels[n.saturating_sub(keep)..].join(".");
+    Some(match site.as_str() {
+        "youtu.be" | "youtube-nocookie.com" => "youtube.com".to_string(),
+        "twitter.com" => "x.com".to_string(),
+        _ => site,
+    })
+}
+/// The file a site's sign-in is kept in (inside the app's own folder): the site's letters only, «.txt».
+pub fn cookie_file_name(site: &str) -> Option<String> {
+    let s: String = site.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-').collect::<String>().to_ascii_lowercase();
+    if s.is_empty() || s.starts_with('.') || s.contains("..") || s.len() > 100 {
+        return None;
+    }
+    Some(format!("{}.txt", s))
+}
+/// One cookie of the in-app browser, as yt-dlp's Netscape cookie file writes it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NsCookie {
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    /// Seconds since 1970; 0 for one that ends with the session (yt-dlp keeps those when it reads the file).
+    pub expires: u64,
+    pub name: String,
+    pub value: String,
+}
+/// The cookies that belong to `site` (its own domain or one under it), as a Netscape cookie file — the format
+/// `--cookies` reads. Lines with a tab or a line break in a field are left out (they would break the format).
+pub fn netscape_file(site: &str, cookies: &[NsCookie]) -> String {
+    let mut out = String::from("# Netscape HTTP Cookie File\n# Kept by Kurokawa Tools for one site; delete it in Settings.\n\n");
+    let site = site.trim_start_matches('.').to_ascii_lowercase();
+    let mut seen: Vec<(String, String, String)> = Vec::new();
+    for c in cookies {
+        let d = c.domain.to_ascii_lowercase();
+        let bare = d.trim_start_matches('.');
+        if bare.is_empty() || !(bare == site || bare.ends_with(&format!(".{}", site))) {
+            continue;
+        }
+        let bad = |x: &str| x.contains('\t') || x.contains('\n') || x.contains('\r');
+        if c.name.is_empty() || bad(&c.name) || bad(&c.value) || bad(&d) || bad(&c.path) {
+            continue;
+        }
+        let key = (d.clone(), c.path.clone(), c.name.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        let sub = d.starts_with('.');
+        let path = if c.path.is_empty() { "/" } else { c.path.as_str() };
+        out.push_str(&format!(
+            "{}{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            if c.http_only { "#HttpOnly_" } else { "" },
+            d,
+            if sub { "TRUE" } else { "FALSE" },
+            path,
+            if c.secure { "TRUE" } else { "FALSE" },
+            c.expires,
+            c.name,
+            c.value
+        ));
+    }
+    out
+}
+/// How many cookies a Netscape file holds (its lines that are not comments; «#HttpOnly_» lines count).
+pub fn netscape_count(text: &str) -> usize {
+    text.lines().filter(|l| !l.trim().is_empty() && (!l.starts_with('#') || l.starts_with("#HttpOnly_"))).count()
+}
+/// The arguments a job or a look runs with once the shell has added its own inputs: the site's sign-in kept by the
+/// app (`--cookies <file>`, which then replaces a browser's `--cookies-from-browser`), and a page read moments ago
+/// (`--load-info-json <file>` in place of the address, so the site is not asked again). The address is the last
+/// argument of `args`.
+pub fn with_shell_inputs(args: &[String], cookie_file: Option<&str>, info_file: Option<&str>) -> Vec<String> {
+    let mut a: Vec<String> = Vec::with_capacity(args.len() + 4);
+    let mut i = 0;
+    let last = args.len().saturating_sub(1);
+    while i < args.len() {
+        if cookie_file.is_some() && args[i] == "--cookies-from-browser" && i + 1 < last {
+            i += 2;
+            continue;
+        }
+        if i == last {
+            break;
+        }
+        a.push(args[i].clone());
+        i += 1;
+    }
+    if let Some(c) = cookie_file {
+        a.push("--cookies".into());
+        a.push(c.to_string());
+    }
+    match info_file {
+        Some(f) => {
+            a.push("--load-info-json".into());
+            a.push(f.to_string());
+        }
+        None => {
+            if let Some(u) = args.last() {
+                a.push(u.clone());
+            }
+        }
+    }
+    a
+}
+/// A read page is reused this long: the media addresses in it are signed and expire (YouTube's after hours, others'
+/// sooner), and a minute-old read is what the chooser and the download share.
+pub const INFO_FRESH_MS: u64 = 5 * 60 * 1000;
+/// The name a read page is kept under: FNV-1a (64 bits) of what was asked, as 16 hex digits.
+pub fn info_id(url: &str, playlist: bool, cookies: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in format!("{}|{}|{}", if playlist { "p" } else { "v" }, cookies, url).bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{:016x}", h)
+}
+/// An id the page hands back is one this shell made (16 hex digits) — never a path.
+pub fn info_id_ok(id: &str) -> bool {
+    id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+/// Whether a read page `age_ms` old is still to be reused.
+pub fn info_fresh(age_ms: u64) -> bool {
+    age_ms < INFO_FRESH_MS
+}
+/// The video jobs to start now: those waiting («queued»), oldest first, while fewer than `max` run.
+pub fn queue_pick(tasks: &[(String, String)], max: usize) -> Vec<String> {
+    let running = tasks.iter().filter(|(_, s)| s == "downloading").count();
+    let free = max.max(1).saturating_sub(running);
+    tasks.iter().filter(|(_, s)| s == "queued").take(free).map(|(id, _)| id.clone()).collect()
+}
+/// A waiting job's place in the queue (1 the next), None when it is not waiting.
+pub fn queue_place(tasks: &[(String, String)], id: &str) -> Option<usize> {
+    tasks.iter().filter(|(_, s)| s == "queued").position(|(i, _)| i == id).map(|p| p + 1)
+}
+/// yt-dlp's failure is one a newer release often mends (the site changed): worth one update and one more try.
+pub fn healable(err: &str) -> bool {
+    let e = err.to_ascii_lowercase();
+    ["unable to extract", "failed to extract", "failed to parse", "nsig extraction failed", "player response", "please report this issue", "update yt-dlp", "yt-dlp -u", "signature solving failed", "n challenge solving failed"].iter().any(|k| e.contains(k))
+}
+
+/* ---------- the video jobs' pushes to the page: progress merged, transitions never ---------- */
+
+/// What a push asked for does: go out now, go out after a wait (progress, merged with what follows), or nothing (a
+/// push is already waiting and will carry this change).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PushAction {
+    Now,
+    After(u64),
+    Merged,
+}
+/// The gate of the video jobs' pushes: progress numbers go out at most every `every_ms`, merged; a transition — a
+/// phase, a state, an error, a file's name, a queue place — always at once (a waiting progress push is then carried by
+/// it), so a phase that begins and ends inside one window is still seen, in order.
+#[derive(Clone, Debug, Default)]
+pub struct PushGate {
+    pub last_ms: Option<u64>,
+    pub pending: bool,
+}
+impl PushGate {
+    pub fn offer(&mut self, transition: bool, now_ms: u64, every_ms: u64) -> PushAction {
+        if transition {
+            self.pending = false;
+            self.last_ms = Some(now_ms);
+            return PushAction::Now;
+        }
+        if self.pending {
+            return PushAction::Merged;
+        }
+        let since = self.last_ms.map(|l| now_ms.saturating_sub(l)).unwrap_or(u64::MAX);
+        if since >= every_ms {
+            self.last_ms = Some(now_ms);
+            return PushAction::Now;
+        }
+        self.pending = true;
+        PushAction::After(every_ms - since)
+    }
+    /// The waiting push went out (unless a transition already carried it: then nothing is sent).
+    pub fn fire(&mut self, now_ms: u64) -> bool {
+        if !self.pending {
+            return false;
+        }
+        self.pending = false;
+        self.last_ms = Some(now_ms);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1374,7 +1581,7 @@ mod tests {
         assert!(a.contains(&"thumbnail:/d/A  b c.%(ext)s".to_string()));
         assert_eq!(safe_name("  a:b  "), "a b");
         let i = info_args("https://u", true, Some("chrome"), &js_args(Some("2026.01.01"), Some(("deno", "/bin/deno"))));
-        assert_eq!(i, s(&["-J", "--no-warnings", "--skip-download", "--socket-timeout", "20", "--js-runtimes", "deno:/bin/deno", "--flat-playlist", "--cookies-from-browser", "chrome", "https://u"]));
+        assert_eq!(i, s(&["-J", "--no-warnings", "--skip-download", "--socket-timeout", "15", "--extractor-retries", "1", "--js-runtimes", "deno:/bin/deno", "--flat-playlist", "--cookies-from-browser", "chrome", "https://u"]));
         assert!(js_args(Some("2025.06.30"), Some(("node", "/n"))).is_empty());
     }
 
@@ -1543,5 +1750,72 @@ mod tests {
         assert_eq!(version_answer(Some(2), "2025.11.20"), None);
         assert_eq!((0..7).map(retry_pause_ms).collect::<Vec<_>>(), vec![0, 1500, 3000, 6000, 12000, 20000, 20000]);
         assert!(final_error("HTTP 404") && final_error("HTTP 416") && !final_error("HTTP 503") && !final_error("HTTP 4") && !final_error("cut short"));
+    }
+
+    #[test]
+    fn sign_in_reuse_and_queue() {
+        assert_eq!(cookie_site("https://www.youtube.com/watch?v=x").as_deref(), Some("youtube.com"));
+        assert_eq!(cookie_site("https://music.youtube.com/watch?v=x").as_deref(), Some("youtube.com"));
+        assert_eq!(cookie_site("https://youtu.be/x").as_deref(), Some("youtube.com"));
+        assert_eq!(cookie_site("https://www.youtube-nocookie.com/embed/x").as_deref(), Some("youtube.com"));
+        assert_eq!(cookie_site("https://mobile.twitter.com/a/status/1").as_deref(), Some("x.com"));
+        assert_eq!(cookie_site("https://x.com/a/status/1").as_deref(), Some("x.com"));
+        assert_eq!(cookie_site("https://www3.nhk.or.jp/news").as_deref(), Some("nhk.or.jp"));
+        assert_eq!(cookie_site("https://www.bbc.co.uk/iplayer").as_deref(), Some("bbc.co.uk"));
+        assert_eq!(cookie_site("http://127.0.0.1:8080/x"), None);
+        assert_eq!(cookie_site("not a url"), None);
+        assert_eq!(cookie_file_name("youtube.com").as_deref(), Some("youtube.com.txt"));
+        assert_eq!(cookie_file_name("../etc"), None);
+        assert_eq!(cookie_file_name("a/b").as_deref(), Some("ab.txt"));
+        let c = |d: &str, n: &str, v: &str, ho: bool| NsCookie { domain: d.into(), path: "/".into(), secure: true, http_only: ho, expires: 0, name: n.into(), value: v.into() };
+        let f = netscape_file("youtube.com", &[c(".youtube.com", "SID", "made-up-1", false), c("www.youtube.com", "PREF", "f1=1", true), c(".google.com", "NID", "other-site", false), c(".youtube.com", "SID", "dupe", false), c(".youtube.com", "BAD", "a\tb", false)]);
+        assert!(f.starts_with("# Netscape HTTP Cookie File"));
+        assert!(f.contains(".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tmade-up-1\n"));
+        assert!(f.contains("#HttpOnly_www.youtube.com\tFALSE\t/\tTRUE\t0\tPREF\tf1=1\n"));
+        assert!(!f.contains("google") && !f.contains("dupe") && !f.contains("BAD"));
+        assert_eq!(netscape_count(&f), 2);
+        let s = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        let base = s(&["--newline", "-f", "22", "--cookies-from-browser", "firefox", "https://u/v"]);
+        assert_eq!(with_shell_inputs(&base, None, None), base);
+        assert_eq!(with_shell_inputs(&base, Some("/d/youtube.com.txt"), None), s(&["--newline", "-f", "22", "--cookies", "/d/youtube.com.txt", "https://u/v"]));
+        assert_eq!(with_shell_inputs(&base, Some("/c.txt"), Some("/i/0123456789abcdef.json")), s(&["--newline", "-f", "22", "--cookies", "/c.txt", "--load-info-json", "/i/0123456789abcdef.json"]));
+        assert_eq!(with_shell_inputs(&base, None, Some("/i.json")), s(&["--newline", "-f", "22", "--cookies-from-browser", "firefox", "--load-info-json", "/i.json"]));
+        let id = info_id("https://www.youtube.com/watch?v=abc", false, "");
+        assert!(info_id_ok(&id) && id != info_id("https://www.youtube.com/watch?v=abc", true, "") && id == info_id("https://www.youtube.com/watch?v=abc", false, ""));
+        assert!(!info_id_ok("../../etc/passwd") && !info_id_ok("0123456789ABCDEF") && !info_id_ok("0123"));
+        assert!(info_fresh(0) && info_fresh(INFO_FRESH_MS - 1) && !info_fresh(INFO_FRESH_MS));
+        let q = |xs: &[(&str, &str)]| xs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
+        let t = q(&[("a", "downloading"), ("b", "queued"), ("c", "paused"), ("d", "queued"), ("e", "queued")]);
+        assert_eq!(queue_pick(&t, 3), vec!["b".to_string(), "d".to_string()]);
+        assert_eq!(queue_pick(&t, 1), Vec::<String>::new());
+        assert_eq!(queue_pick(&t, 0), Vec::<String>::new());
+        assert_eq!(queue_place(&t, "d"), Some(2));
+        assert_eq!(queue_place(&t, "c"), None);
+        assert!(healable("ERROR: [youtube] abc: Unable to extract uploader id; please report this issue") && healable("nsig extraction failed") && !healable("HTTP Error 429: Too Many Requests") && !healable("Private video"));
+        assert!(is_video_host("https://www.youtube-nocookie.com/embed/x") && is_video_host("https://m.youtube.com/shorts/x") && is_video_host("https://music.youtube.com/watch?v=x") && is_video_host("https://kick.com/a"));
+    }
+
+    #[test]
+    fn pushes_keep_every_transition() {
+        // A burst video → audio → embed inside one 250 ms window: three pushes, each at once, in order.
+        let mut g = PushGate::default();
+        let mut sent: Vec<&str> = Vec::new();
+        for (t, phase) in [(0u64, "video"), (40, "audio"), (90, "embed")] {
+            if g.offer(true, t, 250) == PushAction::Now {
+                sent.push(phase);
+            }
+        }
+        assert_eq!(sent, vec!["video", "audio", "embed"]);
+        // Progress: the first at once, the next ones merged into one waiting push.
+        let mut g = PushGate::default();
+        assert_eq!(g.offer(false, 0, 250), PushAction::Now);
+        assert_eq!(g.offer(false, 100, 250), PushAction::After(150));
+        assert_eq!(g.offer(false, 120, 250), PushAction::Merged);
+        assert!(g.fire(250));
+        assert_eq!(g.offer(false, 600, 250), PushAction::Now);
+        // A transition while progress waits: sent at once, and the waiting push has nothing left to send.
+        assert_eq!(g.offer(false, 700, 250), PushAction::After(150));
+        assert_eq!(g.offer(true, 710, 250), PushAction::Now);
+        assert!(!g.fire(850));
     }
 }

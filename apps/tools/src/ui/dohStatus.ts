@@ -56,6 +56,11 @@ export function dohStatusCard(): HTMLElement {
   };
   void refresh();
   const p = plug(); if (p) void listen<DohEvent>(p as never, 'doh', () => { void refresh(); }).then((s) => { sub = s as { remove(): void }; });
-  const timer = window.setInterval(() => { if (!el.isConnected) { window.clearInterval(timer); sub?.remove(); return; } if (nativePlatform() === 'android') void refresh(); }, 15000);
+  // (The phone's status read every 15 s while the card is on screen and the app in front — no timer otherwise.)
+  let timer = 0;
+  const arm = () => { const want = el.isConnected && nativePlatform() === 'android' && document.visibilityState === 'visible'; if (want && !timer) timer = window.setInterval(() => { if (!el.isConnected) { stop(); return; } void refresh(); }, 15000); else if (!want && timer) { window.clearInterval(timer); timer = 0; } };
+  const stop = () => { window.clearInterval(timer); timer = 0; sub?.remove(); document.removeEventListener('visibilitychange', onVis); };
+  const onVis = () => { if (!el.isConnected) { stop(); return; } arm(); if (document.visibilityState === 'visible' && nativePlatform() === 'android') void refresh(); };
+  document.addEventListener('visibilitychange', onVis); setTimeout(arm, 0);
   return el;
 }

@@ -1032,9 +1032,14 @@ public class KtPlugin extends Plugin {
     }
     /* ---------- yt-dlp (the video add-on): what a page offers, its version, and updating it ---------- */
     @PluginMethod public void videoInfo(PluginCall call) {
-        final String url = call.getString("url", ""); final boolean playlist = Boolean.TRUE.equals(call.getBoolean("playlist", false)); final String jar = call.getString("cookieJar", "");
-        bg.execute(() -> { try { JSObject r = new JSObject(); r.put("json", KtVideo.info(getContext(), url, playlist, jar)); call.resolve(r); } catch (Throwable e) { call.reject(KtVideo.lastError(e.getMessage())); } });
+        final String url = call.getString("url", ""); final boolean playlist = Boolean.TRUE.equals(call.getBoolean("playlist", false)); final String jar = call.getString("cookieJar", ""); final String token = call.getString("token", "");
+        bg.execute(() -> { try { JSObject r = new JSObject(); r.put("json", KtVideo.info(getContext(), url, playlist, jar, token)); if (!playlist) r.put("infoId", KtVideo.infoId(url, false, jar)); call.resolve(r); } catch (Throwable e) { call.reject(KtVideo.lastError(e.getMessage())); } });
     }
+    /** The look under the page's token stopped (the Add sheet moved on, or «Try again»). */
+    @PluginMethod public void videoInfoCancel(PluginCall call) { JSObject r = new JSObject(); r.put("cancelled", KtVideo.cancelInfo(call.getString("token", ""))); call.resolve(r); }
+    /** The Add sheet opened: yt-dlp's runtime made ready beforehand (the packs checked, youtubedl-android set up — no
+     *  Python process is started, so nothing is held in memory), so the first link does not wait for it. */
+    @PluginMethod public void videoWarm(PluginCall call) { bg.execute(() -> { JSObject r = new JSObject(); long t0 = System.currentTimeMillis(); try { KtVideo.init(getContext()); r.put("ready", true); } catch (Throwable e) { r.put("ready", false); } r.put("ms", System.currentTimeMillis() - t0); call.resolve(r); }); }
     @PluginMethod public void videoVersion(PluginCall call) { bg.execute(() -> { JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); r.put("ready", v != null); call.resolve(r); }); }
     @PluginMethod public void videoUpdate(PluginCall call) { bg.execute(() -> { KtVideo.update(getContext()); JSObject r = new JSObject(); String v = KtVideo.version(getContext()); r.put("version", v == null ? JSObject.NULL : v); call.resolve(r); }); }
     @PluginMethod public void ffmpegCancel(PluginCall call) { Process p = ffJobs.remove(call.getString("id", "")); if (p != null) p.destroy(); call.resolve(); }

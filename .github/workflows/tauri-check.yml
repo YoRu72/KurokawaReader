@@ -599,6 +599,7 @@ jobs:
           node tests/setupui.cjs
           node tests/handover.cjs
           node tests/firstrun.cjs
+          node tests/rowpatch.cjs
           # (After the switch-over: one program runs the shared downloads — the owner rule's table, races and page.)
           node tests/ownerlock.cjs
           node tests/videotauri.cjs

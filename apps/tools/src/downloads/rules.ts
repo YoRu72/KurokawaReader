@@ -58,7 +58,8 @@ export async function setTaskMeta(id: string, patch: Record<string, unknown>): P
   if (p?.setTaskMeta) { try { await p.setTaskMeta({ id, patch: wire }); return; } catch { /* below */ } }
   const cur = { ...local.get(id) }; for (const k of Object.keys(patch)) cur[k] = patch[k] ?? null; local.set(id, cur);   // (null: taken off, over what the task's own meta says)
 }
-export const setClock = (id: string, patch: { startAt?: number; stopAt?: number }): Promise<void> => setTaskMeta(id, patch);
+/** A download's clock set: the scheduler plans its one timer again (downloads/background.ts). */
+export const setClock = (id: string, patch: { startAt?: number; stopAt?: number }): Promise<void> => setTaskMeta(id, patch).then(() => { window.dispatchEvent(new Event('kt:clocks')); });
 /** The task's meta with what is kept here for it (an engine without meta of its own). */
 export const metaOf = (x: Task): Record<string, unknown> => { const m: Record<string, unknown> = { ...(x.meta as Record<string, unknown> | undefined), ...local.get(x.id) }; for (const k of Object.keys(m)) if (m[k] === null) delete m[k]; return m; };
 export const clockOf = (x: Task): { startAt?: number; stopAt?: number } => metaOf(x) as { startAt?: number; stopAt?: number };

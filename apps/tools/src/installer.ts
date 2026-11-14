@@ -16,7 +16,8 @@ export const cmpVersion = cmpV;
 
 /** GitHub's API straight (it allows the app's origin); the feed through the app's own HTTP (it does not). */
 const fetchText: FetchText = async (url, accept) => {
-  if (url.startsWith('https://api.github.com/')) { try { const r = await fetch(url, { headers: accept ? { accept } : undefined, cache: 'no-store' }); return { status: r.status, body: await r.text() }; } catch { /* through the app below */ } }
+  if (url.startsWith('https://api.github.com/')) { // (Revalidated, not refetched: the browser sends the last answer's ETag and an unchanged list comes back as a 304 from its cache; 15 s at most.)
+    try { const r = await fetch(url, { headers: accept ? { accept } : undefined, cache: 'no-cache', signal: AbortSignal.timeout(15000) }); return { status: r.status, body: await r.text() }; } catch { /* through the app below */ } }
   const r = await request(url, { headers: accept ? { accept } : undefined }); return { status: r.status, body: r.body };
 };
 const appNameOf = (prefix: string) => (prefix === 'tools-v' ? 'KurokawaTools' : 'KurokawaReader');

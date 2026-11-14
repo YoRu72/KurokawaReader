@@ -496,7 +496,112 @@ fn truthy(v: Option<&Value>) -> bool {
     }
 }
 
-/// kt:videoInfo(o) → ytdlp.cjs info: `-J` (90 s at most), shaped by normalise.
+/* ---------- a sign-in kept per site, a read page reused (ytdlp.cjs; kt-core decides) ---------- */
+
+fn cookie_dir() -> PathBuf {
+    dirs().data.join("video-cookies")
+}
+fn info_dir() -> PathBuf {
+    dirs().data.join("video-info")
+}
+/// The kept sign-in of a link's site, when there is one.
+pub fn cookie_file_for(url: &str) -> Option<PathBuf> {
+    let name = vt::cookie_file_name(&vt::cookie_site(url)?)?;
+    let f = cookie_dir().join(name);
+    if f.is_file() {
+        Some(f)
+    } else {
+        None
+    }
+}
+/// A file only this user may read (0600 where the system has modes; Windows keeps it in the user's own folder).
+fn write_private(f: &Path, text: &[u8]) -> std::io::Result<()> {
+    if let Some(d) = f.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let tmp = f.with_extension("part");
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut o = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+        o.write_all(text)?;
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, f)
+}
+/// The in-app browser's cookies of `url`'s site written to the app's own file for it → { site, count }. Values are
+/// never logged nor answered. Without the cookie-reading API in this build (browser.rs), none: count 0.
+pub fn save_cookies(app: &AppHandle, url: &str) -> Result<Value, String> {
+    let site = vt::cookie_site(url).ok_or_else(|| "not a site".to_string())?;
+    let name = vt::cookie_file_name(&site).ok_or_else(|| "not a site".to_string())?;
+    let mut list = crate::browser::cookie_list(app, url);
+    list.extend(crate::browser::cookie_list(app, &format!("https://{}/", site)));
+    list.extend(crate::browser::cookie_list(app, &format!("https://www.{}/", site)));
+    let text = vt::netscape_file(&site, &list);
+    let count = vt::netscape_count(&text);
+    if count > 0 {
+        write_private(&cookie_dir().join(name), text.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    Ok(json!({ "site": site, "count": count }))
+}
+/// The sites with a kept sign-in → [{ site, count, at }].
+pub fn list_cookies() -> Value {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(cookie_dir()) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if let Some(site) = n.strip_suffix(".txt") {
+                let count = std::fs::read_to_string(e.path()).map(|t| vt::netscape_count(&t)).unwrap_or(0);
+                let at = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+                out.push(json!({ "site": site, "count": count, "at": at }));
+            }
+        }
+    }
+    Value::Array(out)
+}
+/// A kept sign-in removed: overwritten first, then deleted.
+pub fn remove_cookies(site: &str) -> bool {
+    let name = match vt::cookie_file_name(site) {
+        Some(n) => n,
+        None => return false,
+    };
+    let f = cookie_dir().join(name);
+    if !f.is_file() {
+        return false;
+    }
+    if let Ok(m) = std::fs::metadata(&f) {
+        let _ = std::fs::write(&f, vec![0u8; m.len() as usize]);
+    }
+    std::fs::remove_file(&f).is_ok()
+}
+/// A page read moments ago, by the id this shell gave it: its file when still fresh.
+pub fn fresh_info(id: &str) -> Option<PathBuf> {
+    if !vt::info_id_ok(id) {
+        return None;
+    }
+    let f = info_dir().join(format!("{}.json", id));
+    let age = std::fs::metadata(&f).ok()?.modified().ok()?.elapsed().ok()?.as_millis() as u64;
+    if vt::info_fresh(age) {
+        Some(f)
+    } else {
+        None
+    }
+}
+fn tidy_info() {
+    if let Ok(rd) = std::fs::read_dir(info_dir()) {
+        for e in rd.flatten() {
+            let old = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).map(|d| d.as_millis() as u64 > vt::INFO_FRESH_MS * 2).unwrap_or(false);
+            if old {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+/// kt:videoInfo(o) → ytdlp.cjs info: `-J` (90 s at most), shaped by normalise; one video's answer kept a few minutes
+/// (its id handed back as `infoId`) so the download that follows reads it instead of asking the site again.
 pub async fn info(o: Value) -> Result<Value, String> {
     ensure(None).await?;
     blocking(check_js).await?;
@@ -504,9 +609,14 @@ pub async fn info(o: Value) -> Result<Value, String> {
     let cookies = text_of(&o, "cookiesFromBrowser");
     let playlist = truthy(o.get("playlist"));
     let url2 = url.clone();
+    let kept = cookie_file_for(&url);
+    let kept2 = kept.clone();
+    let cookies2 = cookies.clone();
     let (ran, have_rt) = blocking(move || {
         let js = js_args();
-        let args = vt::info_args(&url2, playlist, Some(cookies.as_str()).filter(|c| !c.is_empty()), &js);
+        let base = vt::info_args(&url2, playlist, Some(cookies2.as_str()).filter(|c| !c.is_empty()), &js);
+        let ck = kept2.as_ref().map(|p| lossy(p));
+        let args = vt::with_shell_inputs(&base, ck.as_deref(), None);
         vtproc::run(&bin_path(), &args, Duration::from_secs(90), 64 << 20).map(|r| (r, !js.is_empty()))
     })
     .await??;
@@ -522,9 +632,17 @@ pub async fn info(o: Value) -> Result<Value, String> {
     let text = String::from_utf8_lossy(&ran.out).into_owned();
     let j = vidjson::parse(&text).map_err(|e| format!("yt-dlp: unreadable answer ({})", e))?;
     let mut v: Value = serde_json::from_str(&vidjson::normalise(&j).to_json()).map_err(|e| e.to_string())?;
-    if js_missing {
-        if let Some(o) = v.as_object_mut() {
+    let is_video = v.get("kind").and_then(|k| k.as_str()) == Some("video");
+    if let Some(o) = v.as_object_mut() {
+        if js_missing {
             o.insert("jsRuntime".into(), json!("missing"));
+        }
+        if is_video {
+            let id = vt::info_id(&url, false, if kept.is_some() { "kept" } else { cookies.as_str() });
+            if write_private(&info_dir().join(format!("{}.json", id)), text.as_bytes()).is_ok() {
+                o.insert("infoId".into(), json!(id));
+            }
+            tidy_info();
         }
     }
     Ok(v)
@@ -603,6 +721,31 @@ pub async fn gallery_list(o: Value) -> Result<Value, String> {
 #[tauri::command]
 pub async fn kt_video_info(o: Value) -> Result<Value, String> {
     info(o).await
+}
+
+/// kt:videoCookies({ op }) — 'save' { url } → { site, count }; 'list' → [{ site, count, at }]; 'remove' { site } →
+/// { removed }; 'site' { url } → { site, kept }. A sign-in kept per site for yt-dlp (never a cookie's value answered).
+#[tauri::command]
+pub async fn kt_video_cookies(app: AppHandle, o: Value) -> Result<Value, String> {
+    let op = text_of(&o, "op");
+    match op.as_str() {
+        "list" => blocking(list_cookies).await,
+        "remove" => {
+            let site = text_of(&o, "site");
+            let r = blocking(move || remove_cookies(&site)).await?;
+            Ok(json!({ "removed": r }))
+        }
+        "save" => {
+            let url = text_of(&o, "url");
+            // (Off the main thread: WebView2 deadlocks a cookie call made on it.)
+            blocking(move || save_cookies(&app, &url)).await?
+        }
+        "site" => {
+            let url = text_of(&o, "url");
+            Ok(json!({ "site": vt::cookie_site(&url), "kept": cookie_file_for(&url).is_some() }))
+        }
+        _ => Err("unknown".to_string()),
+    }
 }
 
 /// kt:videoJsRuntime (the Tauri shell's own; the page feature-detects it) → { missing, seen, pack, installed, runtime }.

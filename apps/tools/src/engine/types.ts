@@ -109,6 +109,8 @@ export interface AddOptions {
     args?: string[]; expect?: number; audioFmt?: string; /** The playlist's title, for a name of «Playlist / NN - Title». */ playlistTitle?: string;
     /** The cookie jar (a saved signed-in state) this download uses. */
     cookieJar?: string;
+    /** The shell's name for the page read moments ago (the chooser's): the download reads it instead of asking the site again, when still fresh. */
+    infoId?: string;
     /** The finished file's SHA-256 (when deduplication is on), and whether it became a link to an identical file. */
     linked?: boolean };
 }

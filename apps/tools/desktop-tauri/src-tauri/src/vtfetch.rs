@@ -48,7 +48,31 @@ pub fn sha256_file(p: &Path) -> Result<String, String> {
 }
 
 /// A small text (a checksum list, a release's JSON): GET → its body; Err «HTTP <status>» or the network's error.
+/// GitHub's API answers kept ten minutes (the newest yt-dlp / gallery-dl release asked by several paths in a row).
+static GH_KEPT: std::sync::Mutex<Vec<(String, std::time::Instant, String)>> = std::sync::Mutex::new(Vec::new());
 pub async fn text(url: &str, accept: Option<&str>) -> Result<String, String> {
+    let gh = url.starts_with("https://api.github.com/");
+    if gh {
+        if let Ok(g) = GH_KEPT.lock() {
+            if let Some((_, at, body)) = g.iter().find(|(u, at, _)| u == url && at.elapsed() < Duration::from_secs(600)) {
+                let _ = at;
+                return Ok(body.clone());
+            }
+        }
+    }
+    let got = text_now(url, accept).await?;
+    if gh {
+        if let Ok(mut g) = GH_KEPT.lock() {
+            g.retain(|(u, _, _)| u != url);
+            g.push((url.to_string(), std::time::Instant::now(), got.clone()));
+            if g.len() > 8 {
+                g.remove(0);
+            }
+        }
+    }
+    Ok(got)
+}
+async fn text_now(url: &str, accept: Option<&str>) -> Result<String, String> {
     let c = net::client()?;
     let mut req = c.get(url).timeout(Duration::from_secs(60));
     if let Some(a) = accept {

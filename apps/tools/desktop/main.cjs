@@ -150,13 +150,18 @@ else {
     // (Not waited for: the window opens at once; the page is told when aria2c is up — it may take a while on a
     // first start under Windows' antivirus.)
     void engine.ensure();
-    videos = new Ytdlp.VideoJobs(() => send('kt:tasks', allTasks()));
+    // (The video jobs' progress sent at most four times a second, together: five jobs each telling every 400 ms sent the
+    // whole list up to a dozen times a second.)
+    // (A transition — a phase, a state, an error — goes at once and carries any waiting progress with it: none is ever lost to the merging.)
+    videos = new Ytdlp.VideoJobs(Ytdlp.pusher(() => send('kt:tasks', allTasks())));
+    Ytdlp.setBusy(() => videos.running() > 0);
     // (Stage P9, the bridge build only: the downloads handed over to the Rust build kept paused here while it runs them.)
     if (RUST_SWITCH) ownerAtStart(userData);
     // (The hybrid, the bridge build only: browser cookies handed over and never taken — the Rust build gone, or the
     // hand-over old — wiped after 14 days; handover.cjs tidyCookies.)
     if (RUST_SWITCH) void Handover.tidyCookies(userData).catch(() => undefined);
     engine.onTasks((tasks) => { lastAria = tasks; const all = allTasks(); send('kt:tasks', all); onDesktopTasks(all); });
+    // (yt-dlp's daily check: this shell is its one owner here — the page leaves it alone on this build —; well after the first screen.)
     setTimeout(() => void Ytdlp.maybeUpdate(), 15000); setInterval(() => void Ytdlp.maybeUpdate(), 6 * 3600000);
     createWindow();
     ScreenTr.init({
@@ -236,7 +241,7 @@ ipcMain.handle('kt:browse', (_e, o) => { openBrowser(String(o && o.url || '')); 
 ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
-ipcMain.handle('kt:configure', (_e, o) => E().configure(o));
+ipcMain.handle('kt:configure', (_e, o) => { if (o && o.maxVideo !== undefined) { videos?.setMax(o.maxVideo); const { maxVideo, ...rest } = o; if (!Object.keys(rest).length) return undefined; o = rest; } return E().configure(o); });
 ipcMain.handle('kt:torrentInfo', (_e, s) => E().ensure().then(() => E().torrentInfo(s)));
 ipcMain.handle('kt:rename', (_e, o) => E().rename(String(o.id), String(o.name)));
 ipcMain.handle('kt:open', async (_e, id, fileIndex) => { const p = NP(isVideoId(id) ? videos.fileOf(id) : await E().fileOf(id, fileIndex)); if (fileIndex === -1 || fileIndex === undefined && !p) { shell.showItemInFolder(p); return; } if (fileIndex === -1) { shell.showItemInFolder(p); return; } const err = await shell.openPath(p); if (err) shell.showItemInFolder(p); });
@@ -247,7 +252,9 @@ ipcMain.handle('kt:pickDir', async () => { const r = await dialog.showOpenDialog
 ipcMain.handle('kt:openExternal', (_e, u) => { const s = String(u); if (/^file:\/\//i.test(s)) { const raw = s.replace(/^file:\/\/\/?/i, process.platform === 'win32' ? '' : '/'); let p = raw; try { p = decodeURIComponent(raw); } catch { /* a path with a % of its own */ } return shell.openPath(NP(p)); } return shell.openExternal(s); });
 ipcMain.handle('kt:registerMagnet', () => { if (process.defaultApp) { if (process.argv.length >= 2) app.setAsDefaultProtocolClient('magnet', process.execPath, [path.resolve(process.argv[1])]); } else app.setAsDefaultProtocolClient('magnet'); return true; });
 ipcMain.handle('kt:http', async (_e, o) => {
-  const r = await net.fetch(String(o.url), { method: o.method || 'GET', headers: o.headers || {}, body: o.body ? (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body) : undefined, redirect: 'follow' });
+  // (A budget when the page gives one — the post readers' few seconds —, two minutes otherwise: a stalled server never holds a sheet.)
+  const ms = Number(o.timeoutMs) > 0 ? Math.min(Number(o.timeoutMs), 600000) : 120000;
+  const r = await net.fetch(String(o.url), { method: o.method || 'GET', headers: o.headers || {}, body: o.body ? (o.bodyBase64 ? Buffer.from(o.body, 'base64') : o.body) : undefined, redirect: 'follow', signal: AbortSignal.timeout(ms) });
   const headers = {}; r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   const buf = Buffer.from(await r.arrayBuffer());
   return { status: r.status, url: r.url, headers, body: o.binary ? buf.toString('base64') : buf.toString('utf8') };
@@ -393,6 +400,16 @@ ipcMain.handle('kt:roots', () => ({ roots: [engine?.defaultDir || app.getPath('d
 
 /* ---------- yt-dlp: what a page offers, the binary ---------- */
 ipcMain.handle('kt:videoInfo', (_e, o) => Ytdlp.info(String(o.url), o));
+// (A sign-in for yt-dlp, kept per site: the in-app browser's cookies of that one site written to the app's own file — read only by this user —,
+// used by the look and the download of that site's links, listed and removable in Settings. Values are never logged nor sent to the page.)
+ipcMain.handle('kt:videoCookies', async (_e, o) => {
+  const op = String(o && o.op || '');
+  if (op === 'list') return Ytdlp.listCookies();
+  if (op === 'remove') return { removed: Ytdlp.removeCookies(String(o.site || '')) };
+  if (op === 'save') { const url = String(o.url || ''); const site = Ytdlp.cookieSite(url); if (!site) throw new Error('not a site'); const ses = browserWin && !browserWin.isDestroyed() ? browserWin.webContents.session : require('electron').session.defaultSession; const cs = await ses.cookies.get({ domain: site }).catch(() => []); return Ytdlp.saveCookies(url, cs); }
+  if (op === 'site') return { site: Ytdlp.cookieSite(String(o.url || '')), kept: !!Ytdlp.cookieFileFor(String(o.url || '')) };
+  throw new Error('unknown');
+});
 ipcMain.handle('kt:videoReady', async (e) => { try { await Ytdlp.ensure((p) => e.sender.send('kt:update-progress', { pct: p.total ? Math.round((p.got / p.total) * 100) : 0, got: p.got, total: p.total, what: 'yt-dlp' })); return { ok: true, version: await Ytdlp.version() }; } catch (err) { return { ok: false, why: String(err.message) }; } });
 ipcMain.handle('kt:videoVersion', async () => ({ version: Ytdlp.haveBinary() ? await Ytdlp.version() : null, ready: Ytdlp.haveBinary() }));
 ipcMain.handle('kt:videoUpdate', async () => Ytdlp.update(true));
@@ -443,9 +460,8 @@ ipcMain.handle('kt:megaDecrypt', async (_e, o) => {
 /* ---------- updates: the repository's tools-v* releases ---------- */
 const cmp = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; } return 0; };
 ipcMain.handle('kt:checkUpdate', async (_e, o) => {
-  const r = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers: { accept: 'application/vnd.github+json' } });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const all = (await r.json()).filter((x) => !x.draft && x.tag_name.startsWith('tools-v')).sort((a, b) => cmp(b.tag_name.slice(7), a.tag_name.slice(7)));
+  const G = require('./gh.cjs'); const u = `https://api.github.com/repos/${REPO}/releases?per_page=30`; if (o && o.force) G.forget(u);
+  const all = (await G.ghJson(u)).filter((x) => !x.draft && x.tag_name.startsWith('tools-v')).sort((a, b) => cmp(b.tag_name.slice(7), a.tag_name.slice(7)));
   const j = all[0]; if (!j) return null;
   const v = j.tag_name.slice(7); if (cmp(v, app.getVersion()) <= 0) return null;
   const want = process.platform === 'win32' ? /win-x64\.exe$/ : process.platform === 'darwin' ? /\.dmg$/ : /\.AppImage$/;
@@ -526,9 +542,9 @@ ipcMain.handle('kt:downloadsOwner', () => (RUST_SWITCH && owner ? owner.info() :
 ipcMain.handle('kt:downloadsTake', async () => { if (!RUST_SWITCH || !owner) return null; const ok = await owner.take(true); return { ok, ...(owner.info() || {}) }; });
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=60`;
 async function rustRelease(beta) {
-  const res = await net.fetch(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } });
-  if (!res.ok) return null;
-  return RustSwitch.pickRust(await res.json(), app.getVersion(), process.platform, process.arch, { beta: !!beta });
+  const list = await require('./gh.cjs').ghJson(RELEASES_API).catch(() => null);
+  if (!list) return null;
+  return RustSwitch.pickRust(list, app.getVersion(), process.platform, process.arch, { beta: !!beta });
 }
 // (What the page asks before it offers the switch: null while RUST_SWITCH is off, or with no release carrying it.)
 ipcMain.handle('kt:rustSwitchInfo', async (_e, o) => {

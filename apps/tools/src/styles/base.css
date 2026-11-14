@@ -395,7 +395,7 @@ html[dir='rtl'] .switch input:checked + i::after { transform: translateX(-20px);
 .empty { margin: 6vh auto 0; max-width: 460px; text-align: center; padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--md-on-surface-dim); }
 .empty h2 { margin: 6px 0 0; color: var(--md-on-surface); font-weight: 600; font-size: 24px; letter-spacing: -.015em; }
 .empty p { margin: 0; line-height: 1.6; }
-.empty .glyph { width: 112px; height: 112px; border-radius: 40% 60% 55% 45% / 55% 45% 55% 45%; background: var(--md-primary-container); display: grid; place-items: center; animation: blob 9s ease-in-out infinite; }
+.empty .glyph { width: 112px; height: 112px; border-radius: 40% 60% 55% 45% / 55% 45% 55% 45%; background: var(--md-primary-container); display: grid; place-items: center; animation: blob 9s ease-in-out 2; }
 .empty .glyph svg { width: 52px; height: 52px; stroke: var(--md-on-primary-container); fill: none; stroke-width: 1.6; }
 @keyframes blob { 0%, 100% { border-radius: 40% 60% 55% 45% / 55% 45% 55% 45%; } 33% { border-radius: 60% 40% 45% 55% / 45% 60% 40% 55%; } 66% { border-radius: 50% 50% 60% 40% / 40% 55% 45% 60%; } }
 .empty .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }

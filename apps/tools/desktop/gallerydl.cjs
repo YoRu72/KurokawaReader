@@ -10,7 +10,7 @@ async function fetchBinary(onProgress) {
   if (fetching) return fetching;
   fetching = (async () => {
     fs.mkdirSync(binDir(), { recursive: true });
-    const rel = await (await net.fetch('https://api.github.com/repos/mikf/gallery-dl/releases/latest', { headers: { accept: 'application/vnd.github+json' } })).json();
+    const rel = await require('./gh.cjs').ghJson('https://api.github.com/repos/mikf/gallery-dl/releases/latest');
     const asset = (rel.assets || []).find((a) => a.name === ASSET); if (!asset) throw new Error('gallery-dl: no binary for this platform');
     const want = asset.digest && /^sha256:/.test(asset.digest) ? asset.digest.slice(7) : null;
     const res = await net.fetch(asset.browser_download_url); if (!res.ok || !res.body) throw new Error('gallery-dl: HTTP ' + res.status);

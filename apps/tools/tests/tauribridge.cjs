@@ -25,7 +25,7 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
   // (Stage P8: lanshare.rs.)
   'shareWifi', 'shareWifiStop', 'shareWifiStatus', 'localApi', 'avScan', 'avAvailable',
   // (Stage P5: the video tools.)
-  'videoInfo', 'videoReady', 'isVideoHost', 'videoVersion', 'videoRollback', 'videoUpdate', 'videoBinary', 'galleryList', 'galleryReady', 'ffmpegAvailable', 'ffmpeg', 'ffmpegCancel', 'ffprobe',
+  'videoInfo', 'videoReady', 'isVideoHost', 'videoVersion', 'videoRollback', 'videoUpdate', 'videoBinary', 'videoCookies', 'galleryList', 'galleryReady', 'ffmpegAvailable', 'ffmpeg', 'ffmpegCancel', 'ffprobe',
   'packStatus', 'packInstall', 'packCancel', 'packRemove',
   // (Screen translator: screentr.rs.)
   'screenConfig', 'screenStatus', 'screenAction', 'screenJob', 'screenRegion', 'screenClose', 'screenOcrLangs', 'screenCaptionSize'];
@@ -109,7 +109,7 @@ function loadBridge(boot) {
     browse: [{ url: 'https://e.org/' }],
     shareWifi: [{ paths: ['/x/a.mkv'], names: ['a.mkv'] }], shareWifiStop: [], shareWifiStatus: [], localApi: [{ on: true, token: 't', port: 8977 }], avScan: [{ cfg: { kind: 'auto' }, file: '/x/a.exe' }], avAvailable: [],
     // (Stage P5.)
-    videoInfo: [{ url: 'https://www.youtube.com/watch?v=x', playlist: true, cookiesFromBrowser: 'firefox' }], videoReady: [], isVideoHost: ['https://youtu.be/x'], videoVersion: [], videoRollback: [], videoUpdate: [],
+    videoInfo: [{ url: 'https://www.youtube.com/watch?v=x', playlist: true, cookiesFromBrowser: 'firefox' }], videoCookies: [{ op: 'save', url: 'https://www.youtube.com/watch?v=x' }], videoReady: [], isVideoHost: ['https://youtu.be/x'], videoVersion: [], videoRollback: [], videoUpdate: [],
     videoBinary: [{ path: '/opt/yt-dlp' }], galleryList: [{ url: 'https://x.org/g', range: '1-100', cookies: '/c.txt' }], galleryReady: [], ffmpegAvailable: [], ffmpeg: [{ id: 'c1', args: ['-i', '/a.mkv', '/b.mp4'] }],
     ffmpegCancel: ['c1'], ffprobe: ['/a.mkv'], packStatus: [], packInstall: [{ name: 'ffmpeg', url: 'https://x.org/p.gz', sha256: 'ab', version: '7' }], packCancel: ['ffmpeg'], packRemove: ['ffmpeg'],
     // (Screen translator.)
