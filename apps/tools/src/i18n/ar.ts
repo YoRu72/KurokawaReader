@@ -2151,4 +2151,7 @@ export const ar: Partial<Strings> = {
   menuAbout: "عن أدوات كروكاوا", menuHide: "إخفاء أدوات كروكاوا", menuHideOthers: "إخفاء ما سواه", menuShowAll: "إظهار الكلّ", menuQuit: "إنهاء أدوات كروكاوا",
   menuFile: "ملف", menuCloseWindow: "إغلاق النافذة", menuEdit: "تحرير", menuUndo: "تراجُع", menuRedo: "إعادة", menuCut: "قصّ", menuCopy: "نسخ", menuPaste: "لصق", menuSelectAll: "تحديد الكلّ",
   menuView: "عرض", menuFullscreen: "ملء الشاشة", menuWindow: "نافذة", menuMinimize: "تصغير", menuZoom: "تكبير",
+  hotkeyWhyKey: "في مفاتيحه ما لا يُدعَم هنا", hotkeyWhyTaken: "يستأثر به برنامجٌ آخر", hotkeyWhyNone: "لا تتاح الاختصارات العامّة على هذا النظام",
+  // (المرحلة P7: شريط المتصفّح الداخلي.)
+  browserBarBack: "رجوع", browserBarForward: "تقدّم", browserBarReload: "إعادة التحميل", browserBarAddress: "عنوانٌ أو بحث", browserBarGrab: "التقاط الروابط (Ctrl+G)", browserBarCopy: "نسخ العنوان (Ctrl+L)", browserBarExternal: "الفتح في متصفّح النظام",
 };

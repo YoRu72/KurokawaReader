@@ -74,6 +74,17 @@ jobs:
             "$d/$n"
           done
 
+      # (Stages P6–P8: the desktop integration's, the in-app browser's and the local servers' std-only rules.)
+      - name: Std-only unit tests (P6-P8)
+        if: runner.os == 'Linux'
+        run: |
+          d="$RUNNER_TEMP/rs-tests-p6"; mkdir -p "$d"
+          for f in apps/tools/desktop-tauri/src-tauri/src/desklogic.rs apps/tools/desktop-tauri/src-tauri/src/lanlogic.rs shared/shell-rs/src/browserlogic.rs; do
+            n=$(basename "$f" .rs)
+            rustc --edition 2021 --test "$f" -o "$d/$n"
+            "$d/$n"
+          done
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'apps/tools/desktop-tauri/src-tauri -> target'

@@ -2156,6 +2156,9 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   menuAbout: "About Kurokawa Tools", menuHide: "Hide Kurokawa Tools", menuHideOthers: "Hide Others", menuShowAll: "Show All", menuQuit: "Quit Kurokawa Tools",
   menuFile: "File", menuCloseWindow: "Close Window", menuEdit: "Edit", menuUndo: "Undo", menuRedo: "Redo", menuCut: "Cut", menuCopy: "Copy", menuPaste: "Paste", menuSelectAll: "Select All",
   menuView: "View", menuFullscreen: "Enter Full Screen", menuWindow: "Window", menuMinimize: "Minimize", menuZoom: "Zoom",
+  hotkeyWhyKey: "one of its keys is not supported here", hotkeyWhyTaken: "another program holds it", hotkeyWhyNone: "shortcuts that work everywhere are not available on this system",
+  // (Stage P7, the Tauri shell: the in-app browser's bar.)
+  browserBarBack: "Back", browserBarForward: "Forward", browserBarReload: "Reload", browserBarAddress: "Address or search", browserBarGrab: "Grab links (Ctrl+G)", browserBarCopy: "Copy address (Ctrl+L)", browserBarExternal: "Open in the system's browser",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

@@ -1,7 +1,8 @@
 // The in-app browser's rules that need no web view (stage R4; browser.rs does the windows): what a site's origin is,
 // when a page counts as passed, the channel that brings a page's answers back to Rust, the address a sign-in ends at,
 // the names of a site's clearance cookies, a downloaded file's place. Std only, checked alone with
-// `rustc --edition 2021 --test browserlogic.rs`.
+// `rustc --edition 2021 --test browserlogic.rs`. (The Reader's since R4; in the shared crate since Tools' P7, unchanged:
+// both apps' browser.rs take it from here.)
 //
 // The channel. The site's page is never given a way into the app (no IPC: see browser.rs). Rust puts a script into
 // the page (`eval`), and the script answers by asking to go to an address no site has —

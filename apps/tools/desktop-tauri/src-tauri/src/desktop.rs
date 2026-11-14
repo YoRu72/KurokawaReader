@@ -88,6 +88,16 @@ fn word(l: &Value, k: &str, en: &str) -> String {
     l.get(k).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s.chars().count() < 80).unwrap_or_else(|| en.to_string())
 }
 
+/// (browser.rs) One of the page's words (desktopPrefs labels), `en` when the page sent none; a true flag as "1".
+pub fn label(k: &str, en: &str) -> String {
+    let l = desk().labels.clone();
+    match l.get(k) {
+        Some(Value::Bool(true)) => "1".to_string(),
+        Some(Value::String(_)) => word(&l, k, en),
+        _ => en.to_string(),
+    }
+}
+
 /// The main window brought back (main.cjs: show, focus; restored when minimised).
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -114,7 +124,13 @@ pub fn tray_possible() -> (bool, String) {
     }
 }
 
-static TRAY: Mutex<Option<tauri::tray::TrayIcon>> = Mutex::new(None);
+const TRAY_ID: &str = "kt-downloads";
+
+/// The tray icon once made (Tauri keeps it; looked up by its id rather than held here, so nothing of it crosses threads —
+/// every tray call is made on the main thread).
+fn tray_icon(app: &AppHandle) -> Option<tauri::tray::TrayIcon<tauri::Wry>> {
+    app.tray_by_id(TRAY_ID)
+}
 
 fn tray_menu(app: &AppHandle, l: &Value) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -129,10 +145,7 @@ fn tray_update(app: &AppHandle) {
         let d = desk();
         (d.prefs.tray, d.labels.clone(), d.last_moving, d.last_down)
     };
-    let mut g = match TRAY.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
+    let mut g = tray_icon(app);
     if !on {
         if let Some(t) = g.as_ref() {
             let _ = t.set_visible(false);
@@ -149,7 +162,7 @@ fn tray_update(app: &AppHandle) {
             return;
         }
         match build_tray(app, &labels) {
-            Ok(t) => *g = Some(t),
+            Ok(t) => g = Some(t),
             Err(e) => {
                 let mut d = desk();
                 d.tray_on = false;
@@ -167,11 +180,11 @@ fn tray_update(app: &AppHandle) {
     }
 }
 
-fn build_tray(app: &AppHandle, labels: &Value) -> Result<tauri::tray::TrayIcon, String> {
+fn build_tray(app: &AppHandle, labels: &Value) -> Result<tauri::tray::TrayIcon<tauri::Wry>, String> {
     use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
     let icon = tauri::image::Image::from_bytes(include_bytes!("../../../desktop/icon.png")).map_err(|e| e.to_string())?;
     let menu = tray_menu(app, labels).map_err(|e| e.to_string())?;
-    let b = TrayIconBuilder::with_id("kt-downloads")
+    let b = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip(APP)
         .menu(&menu)
@@ -409,8 +422,10 @@ fn hotkey_fired(app: &AppHandle, mode: &str) {
     show_main(app);
 }
 
-/// main.cjs's hotkeysApply: every one let go, each chosen registered; what could not be, with why, in hotkeyErrors
-/// (a taken shortcut, a key this shell has no name for — Electron dropped those silently).
+/// main.cjs's hotkeysApply: every one let go, each chosen registered; what could not be in hotkeyErrors { mode: why },
+/// why being 'key' (a key or modifier this shell has no name for), 'taken' (the system refused it: another program
+/// holds it) or 'none' (no global shortcuts here: Linux without an X display, or a build without the plugin's API) —
+/// the page says each in its language. Electron dropped those silently. The system's own words go to the log.
 fn hotkeys_apply(app: &AppHandle) {
     let wanted: Vec<(String, String)> = {
         let d = desk();
@@ -427,19 +442,21 @@ fn hotkeys_apply(app: &AppHandle) {
             for (mode, acc) in wanted.iter() {
                 match logic::accelerator(acc) {
                     Err(e) => {
-                        errors.insert(mode.clone(), json!(e));
+                        eprintln!("KT hotkey {} «{}»: {}", mode, acc, e);
+                        errors.insert(mode.clone(), json!("key"));
                     }
                     Ok(w) => match gs.register(w.as_str()) {
                         Ok(()) => bound.push((w, mode.clone())),
                         Err(e) => {
-                            errors.insert(mode.clone(), json!(format!("taken or refused by the system: {}", e)));
+                            eprintln!("KT hotkey {} «{}»: {}", mode, w, e);
+                            errors.insert(mode.clone(), json!("taken"));
                         }
                     },
                 }
             }
         } else {
             for (mode, _) in wanted.iter() {
-                errors.insert(mode.clone(), json!("no X display: global shortcuts are not available here"));
+                errors.insert(mode.clone(), json!("none"));
             }
         }
     }
@@ -447,7 +464,7 @@ fn hotkeys_apply(app: &AppHandle) {
     {
         let _ = app;
         for (mode, _) in wanted.iter() {
-            errors.insert(mode.clone(), json!("global shortcuts are not in this build"));
+            errors.insert(mode.clone(), json!("none"));
         }
     }
     let mut d = desk();
@@ -513,11 +530,7 @@ pub async fn kt_desktop_prefs(app: AppHandle, o: Value) -> Result<Value, String>
         let _ = app.run_on_main_thread(move || {
             // (A label change: the menu made again in the new words.)
             if let Some(l) = relabel {
-                let g = match TRAY.lock() {
-                    Ok(g) => g,
-                    Err(p) => p.into_inner(),
-                };
-                if let Some(t) = g.as_ref() {
+                if let Some(t) = tray_icon(&a2) {
                     if let Ok(m) = tray_menu(&a2, &l) {
                         let _ = t.set_menu(Some(m));
                     }
@@ -525,13 +538,7 @@ pub async fn kt_desktop_prefs(app: AppHandle, o: Value) -> Result<Value, String>
             }
             tray_update(&a2);
         });
-        #[cfg(target_os = "macos")]
-        if let Some(l) = o.get("labels").filter(|l| l.is_object()).cloned() {
-            let a3 = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                let _ = mac_menu(&a3, &l);
-            });
-        }
+        mac_menu_later(&app, &o);
     }
     if o.get("keepAwake").is_some() {
         let awake = {
@@ -543,6 +550,19 @@ pub async fn kt_desktop_prefs(app: AppHandle, o: Value) -> Result<Value, String>
     let d = desk();
     Ok(prefs_value(&d))
 }
+
+/// The page's words given: a Mac's menu bar made again in them (on the main thread); nothing elsewhere.
+#[cfg(target_os = "macos")]
+fn mac_menu_later(app: &AppHandle, o: &Value) {
+    if let Some(l) = o.get("labels").filter(|l| l.is_object()).cloned() {
+        let a3 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let _ = mac_menu(&a3, &l);
+        });
+    }
+}
+#[cfg(not(target_os = "macos"))]
+fn mac_menu_later(_app: &AppHandle, _o: &Value) {}
 
 /* ---------- a Mac's menu bar (Electron's: the app's, File, Edit, View, Window — its roles), in the interface's words ---------- */
 
@@ -640,11 +660,15 @@ pub fn open_mini(app: &AppHandle) -> Result<(), String> {
         .skip_taskbar(true)
         .maximizable(false)
         .minimizable(false)
-        .visible_on_all_workspaces(true)
         .disable_drag_drop_handler()
         .initialization_script(script.as_str());
     if let (Some(x), Some(y)) = (st.get("x").and_then(|v| v.as_f64()), st.get("y").and_then(|v| v.as_f64())) {
         b = b.position(x, y);
+    }
+    // (On every desktop, as Electron's setVisibleOnAllWorkspaces — where build.rs found the builder's call.)
+    #[cfg(kt_all_spaces)]
+    {
+        b = b.visible_on_all_workspaces(true);
     }
     b.build().map(|_| ()).map_err(|e| e.to_string())
 }

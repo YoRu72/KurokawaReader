@@ -15,7 +15,7 @@ pub struct Found {
 /// The cfg names this can set (for `rustc-check-cfg`).
 pub const CFGS: [&str; 4] = ["kt_reveal", "kt_set_icon", "kt_default_icon", "kt_progress"];
 /// (Stage P6, desktop.rs) the cfg names of the tray's left click, the dock's count and the global shortcuts.
-pub const CFGS_P6: [&str; 4] = ["kt_tray_left", "kt_tray_left_old", "kt_badge", "kt_shortcuts"];
+pub const CFGS_P6: [&str; 5] = ["kt_tray_left", "kt_tray_left_old", "kt_badge", "kt_all_spaces", "kt_shortcuts"];
 
 /// The version of `name` in a Cargo.lock's text.
 pub fn locked_version(lock: &str, name: &str) -> Option<String> {
@@ -133,6 +133,26 @@ pub fn detect_tauri_p6(src: &str) -> Vec<Found> {
         Found { cfg: "kt_tray_left", what: "the tray's left click (show_menu_on_left_click)", on: has("pub fn show_menu_on_left_click(mut self, enable: bool) -> Self") },
         Found { cfg: "kt_tray_left_old", what: "the tray's left click, older name (menu_on_left_click)", on: has("pub fn menu_on_left_click(mut self, enable: bool) -> Self") },
         Found { cfg: "kt_badge", what: "the dock's count (set_badge_count)", on: twice("pub fn set_badge_count(&self, count: Option<i64>) -> crate::Result<()>") },
+        // (WindowBuilder's and WebviewWindowBuilder's: the mini window on every desktop.)
+        Found { cfg: "kt_all_spaces", what: "a window on every desktop (visible_on_all_workspaces)", on: twice("pub fn visible_on_all_workspaces(mut self, visible_on_all_workspaces: bool) -> Self") },
+    ]
+}
+
+/// (Stage P7, browser.rs) the cfg names of the browser's cookie and download calls.
+pub const CFGS_P7: [&str; 3] = ["kt_cookie_read", "kt_cookie_all", "kt_download_api"];
+
+/// (Stage P7) What the squeezed tauri source offers the in-app browser — the Reader's detection (its apidetect.rs),
+/// under Tools' names: a site's cookies read, every cookie read, downloads caught (each on Webview and WebviewWindow).
+pub fn detect_tauri_p7(src: &str) -> Vec<Found> {
+    let twice = |s: &str| src.matches(&squeeze(s)).count() >= 2;
+    let has = |s: &str| src.contains(&squeeze(s));
+    let download = twice("pub fn on_download<F: Fn(Webview<R>, DownloadEvent<'_>) -> bool + Send + Sync + 'static>(")
+        && has("pub enum DownloadEvent<'a> {")
+        && has("Requested { url: Url, destination: &'a mut PathBuf");
+    vec![
+        Found { cfg: "kt_cookie_read", what: "the browser's cookies of a site read (cookies_for_url)", on: twice("pub fn cookies_for_url(&self, url: Url) -> crate::Result<Vec<Cookie<'static>>>") },
+        Found { cfg: "kt_cookie_all", what: "all the browser's cookies read (cookies)", on: twice("pub fn cookies(&self) -> crate::Result<Vec<Cookie<'static>>>") },
+        Found { cfg: "kt_download_api", what: "downloads in the browser caught (on_download)", on: download },
     ]
 }
 
@@ -181,10 +201,22 @@ mod tests {
     }
 
     #[test]
+    fn p7() {
+        let one = "pub fn cookies_for_url(\n &self,\n url: Url,\n ) -> crate::Result<Vec<Cookie<'static>>> {\npub fn on_download<F: Fn(Webview<R>, DownloadEvent<'_>) -> bool + Send + Sync + 'static>(\n";
+        let src = squeeze(&format!("{}{}pub enum DownloadEvent<'a> {{\n Requested {{ url: Url, destination: &'a mut PathBuf }},", one, one));
+        let f = detect_tauri_p7(&src);
+        assert!(f[0].on && !f[1].on && f[2].on);
+        assert!(detect_tauri_p7(&squeeze(one)).iter().all(|x| !x.on));
+        assert_eq!(detect_tauri_p7("").iter().map(|x| x.cfg).collect::<Vec<_>>(), CFGS_P7.to_vec());
+    }
+
+    #[test]
     fn p6() {
         let t = squeeze("pub fn show_menu_on_left_click(mut self, enable: bool) -> Self {\n pub fn set_badge_count(\n &self,\n count: Option<i64>,\n ) -> crate::Result<()> {\npub fn set_badge_count(&self, count: Option<i64>) -> crate::Result<()> {");
         let f = detect_tauri_p6(&t);
-        assert!(f[0].on && !f[1].on && f[2].on);
+        assert!(f[0].on && !f[1].on && f[2].on && !f[3].on);
+        let vw = squeeze("pub fn visible_on_all_workspaces(\n mut self,\n visible_on_all_workspaces: bool,\n ) -> Self {");
+        assert!(detect_tauri_p6(&format!("{}{}", vw, vw))[3].on && !detect_tauri_p6(&vw)[3].on);
         let old = detect_tauri_p6(&squeeze("pub fn menu_on_left_click(mut self, enable: bool) -> Self {"));
         assert!(!old[0].on && old[1].on && !old[2].on);
         let g = squeeze("pub fn with_handler<F: Fn(&AppHandle<R>, &Shortcut, ShortcutEvent) + Send + Sync + 'static>(\n mut self, handler: F) -> Self {\npub fn register<S>(&self, shortcut: S) -> Result<()>\nwhere\npub fn unregister_all(&self) -> Result<()> {");

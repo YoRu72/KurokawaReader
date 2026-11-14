@@ -14,6 +14,13 @@ mod commands;
 // mini window, launches handed over, a Mac's menu bar; desklogic.rs its rules, std only.)
 mod desklogic;
 mod desktop;
+// (Stage P6: kt:captureUrl and kt:siteWindow — the sign-in window and the site window.)
+mod sitewin;
+// (Stage P7: the in-app browser, kt:browse — its rules in the shared crate's browserlogic.rs.)
+mod browser;
+// (Stage P8: the Wi-Fi share, the local API, the antivirus check — lanlogic.rs their rules, std only.)
+mod lanlogic;
+mod lanshare;
 mod engine;
 // (Stage P3: the recycle bin, free space, fonts, MEGA, the Files page's jobs.)
 mod filecmds;
@@ -138,6 +145,18 @@ fn main() {
             desktop::kt_open_take,
             desktop::kt_register_magnet,
             desktop::kt_selftest_desk,
+            sitewin::kt_capture_url,
+            sitewin::kt_site_window,
+            sitewin::kt_selftest_site,
+            browser::kt_browse,
+            browser::kt_selftest_browse,
+            lanshare::kt_share_wifi,
+            lanshare::kt_share_wifi_stop,
+            lanshare::kt_share_wifi_status,
+            lanshare::kt_local_api,
+            lanshare::kt_av_scan,
+            lanshare::kt_av_available,
+            lanshare::kt_selftest_lan,
             selftest::kt_selftest_progress,
             selftest::kt_selftest_done
         ])
@@ -145,6 +164,8 @@ fn main() {
             winstate::on_event(window, event);
             titlebar::on_event(window, event);
             desktop::on_event(window, event);
+            sitewin::on_event(window, event);
+            browser::on_event(window, event);
         })
         .setup(|app| {
             // (Before any request: the app's own requests named as Tools' (shared crate's net.rs), the cookies sites

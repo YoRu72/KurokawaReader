@@ -1059,4 +1059,7 @@ export const ko: Partial<Strings> = {
   menuAbout: "Kurokawa Tools에 관하여", menuHide: "Kurokawa Tools 가리기", menuHideOthers: "기타 가리기", menuShowAll: "모두 보기", menuQuit: "Kurokawa Tools 종료",
   menuFile: "파일", menuCloseWindow: "윈도우 닫기", menuEdit: "편집", menuUndo: "실행 취소", menuRedo: "실행 복귀", menuCut: "오려두기", menuCopy: "복사하기", menuPaste: "붙여넣기", menuSelectAll: "모두 선택",
   menuView: "보기", menuFullscreen: "전체 화면 시작", menuWindow: "윈도우", menuMinimize: "최소화", menuZoom: "확대/축소",
+  hotkeyWhyKey: "여기서 지원하지 않는 키가 들어 있습니다", hotkeyWhyTaken: "다른 프로그램이 사용 중입니다", hotkeyWhyNone: "이 시스템에서는 전역 단축키를 쓸 수 없습니다",
+  // (단계 P7: 앱 안 브라우저의 막대)
+  browserBarBack: "뒤로", browserBarForward: "앞으로", browserBarReload: "새로 고침", browserBarAddress: "주소 또는 검색", browserBarGrab: "링크 가져오기 (Ctrl+G)", browserBarCopy: "주소 복사 (Ctrl+L)", browserBarExternal: "시스템 브라우저에서 열기",
 };

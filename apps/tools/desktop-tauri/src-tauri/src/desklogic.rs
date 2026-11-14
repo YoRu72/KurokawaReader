@@ -477,6 +477,20 @@ impl NoticeOpen {
     }
 }
 
+/// (sitewin.rs) Whether an address can be opened in the sign-in / site windows: http or https only (Electron's
+/// siteWindow: https only; its captureUrl took anything — here no file:, javascript: or data: address).
+pub fn site_openable(u: &str, https_only: bool) -> bool {
+    let l = u.trim().to_ascii_lowercase();
+    let https = l.starts_with("https://") && l.len() > 8;
+    https || (!https_only && l.starts_with("http://") && l.len() > 7)
+}
+
+/// (sitewin.rs) main.cjs's check(u) for kt:captureUrl: the address carries the marker (an empty one: the first
+/// address, as `includes('')`).
+pub fn site_hit(url: &str, marker: &str) -> bool {
+    url.contains(marker)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,5 +647,20 @@ mod tests {
         n.told("c", 5000, false);
         assert_eq!(n.focused(6000).as_deref(), Some("c"));
         assert_eq!(n.focused(6001), None);
+    }
+
+    #[test]
+    fn site_windows() {
+        assert!(site_openable("https://anilist.co/api/v2/oauth/authorize?x", false));
+        assert!(site_openable("http://127.0.0.1:9/x", false));
+        assert!(!site_openable("http://127.0.0.1:9/x", true));
+        assert!(!site_openable("javascript:alert(1)", false));
+        assert!(!site_openable("file:///etc/passwd", false));
+        assert!(!site_openable("data:text/html,x", false));
+        assert!(!site_openable("https://", true));
+        assert!(site_openable(" HTTPS://e.org/", true));
+        assert!(site_hit("https://anilist.co/api/v2/oauth/pin#access_token=abc", "access_token="));
+        assert!(!site_hit("https://anilist.co/login", "access_token="));
+        assert!(site_hit("https://x/", ""));
     }
 }

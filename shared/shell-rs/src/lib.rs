@@ -6,7 +6,8 @@
 //! No `#[tauri::command]` lives here: each app wraps these functions in its own commands, under its own names
 //! (Tools: kt_*, the Reader: kr_*), and registers them, its plugins and its window itself.
 //!
-//! - std only, testable alone with `rustc --edition 2021 --test <file>`: util, files, testserver, cookiejar, doh, archive
+//! - std only, testable alone with `rustc --edition 2021 --test <file>`: util, files, testserver, cookiejar, doh, browserlogic
+//!   (the in-app browser's rules: the Reader's since R4, both apps' since Tools' P7), archive
 //!   (archive: zip / tar / 7-Zip — the Reader's since R5, both apps' since Tools' P7), iconlogic (the app icon's rules,
 //!   the Reader's since R5, both apps' since Tools' P6)
 //! - serde_json / crates: hash, net (reqwest: web requests, the cookie jar's and DoH resolver's hooks), selftest
@@ -14,6 +15,8 @@
 //!   choosing: window, taskbar, shortcuts, desktop entry — each app gives its names and window calls: appicon::Spec)
 pub mod appicon;
 pub mod archive;
+// (The in-app browser's std-only rules: the Reader's browserlogic.rs, moved here unchanged for Tools' browser too.)
+pub mod browserlogic;
 pub mod cookiejar;
 pub mod doh;
 pub mod files;

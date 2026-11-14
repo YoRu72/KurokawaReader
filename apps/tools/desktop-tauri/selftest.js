@@ -133,6 +133,10 @@
       return 'available';
     }, 45000);
     if (up) await runDownload(kt, cfg, env, check, must, waitFor, engine);
+    /* stage P8: the Wi-Fi share, the local API, the antivirus check — from loopback */
+    await runLan(kt, cfg, env, check, must);
+    /* stage P7: the in-app browser on the test site */
+    await runBrowser(kt, cfg, env, check, must, waitFor);
     /* stage P6: the computer's side of the downloads (last: a second launch opens the add sheet) */
     await runP6(kt, cfg, env, check, must, waitFor);
     try { await env.invoke('kt_selftest_done', { results: results }); } catch (e) { /* the watchdog writes what there is */ }
@@ -155,13 +159,136 @@
     });
   }
 
+  /* stage P8 (lanshare.rs): every row required everywhere (loopback only; the stand-in scanner is the system's own
+     shell told to exit with a code). */
+  async function runLan(kt, cfg, env, check, must) {
+    if (typeof kt.shareWifi !== 'function') return;
+    var lan = function (o) { return env.invoke('kt_selftest_lan', { o: o }); };
+    var bytes = []; for (var i = 0; i < 3000; i++) bytes.push((i * 7) & 255);
+    var b64 = btoa(String.fromCharCode.apply(null, bytes));
+    var file = null, sh = null, base = '';
+    await check('wifi share: started, its list page from loopback', true, async function () {
+      file = await kt.writeTempBytes({ name: 'kt-share.bin', b64: b64, sub: 'kt-selftest-share' });
+      var r = await kt.shareWifi({ paths: [file, file + '.missing'], names: ['a <b>.bin'] }); must(r && r.files === 1, short(r));
+      sh = await lan({ act: 'share' }); must(sh && sh.port && sh.key && sh.key.length === 24, short(sh));
+      base = 'http://127.0.0.1:' + sh.port + '/';
+      var p = await kt.http({ url: base + sh.key + '/' }); must(p.status === 200 && p.body.indexOf('a &lt;b&gt;.bin') > 0 && p.body.indexOf("href='d/0/") > 0, p.status + ' ' + short(p.body));
+      return 'url ' + (r.url || 'none (no LAN address here)');
+    });
+    await check('wifi share: a wrong key, a path out and a number out refused', true, async function () {
+      var bad = [base + sh.key.replace(/.$/, function (c) { return c === '0' ? '1' : '0'; }) + '/', base + sh.key + '/../../etc/passwd', base + sh.key + '/d/0/..%2F..%2F..%2Fetc%2Fpasswd', base + sh.key + '/d/%2e%2e/x', base + sh.key + '/d/1/x', base + 'kt-selftest-share/kt-share.bin'];
+      for (var k = 0; k < bad.length; k++) { var r = await kt.http({ url: bad[k] }); must(r.status === 404, bad[k].slice(base.length) + ' → ' + r.status); }
+      return bad.length + ' refused (404)';
+    });
+    await check('wifi share: a range download byte for byte', true, async function () {
+      var r = await kt.http({ url: base + sh.key + '/d/0/x', headers: { Range: 'bytes=1000-1999' }, binary: true });
+      must(r.status === 206 && /^bytes 1000-1999\/3000$/.test(r.headers['content-range'] || ''), r.status + ' ' + short(r.headers));
+      must(sameBytes(b64bytes(r.body), bytes.slice(1000, 2000)), 'bytes differ');
+      var w = await kt.http({ url: base + sh.key + '/d/0/x', binary: true }); must(w.status === 200 && sameBytes(b64bytes(w.body), bytes), 'whole: ' + w.status);
+      var e = await kt.http({ url: base + sh.key + '/d/0/x', headers: { Range: 'bytes=5000-' } }); must(e.status === 416, 'past the end: ' + e.status);
+      var st = await kt.shareWifiStatus(); must(st.running && st.sent >= 4000 && st.hits >= 3, short(st));
+      return 'sent ' + st.sent + ', hits ' + st.hits;
+    });
+    await check('wifi share: an upload refused, then stopped', true, async function () {
+      var u = await kt.http({ url: base + sh.key + '/d/0/x', method: 'POST', body: 'x'.repeat(2048) }); must(u.status === 405, 'POST → ' + u.status);
+      await kt.shareWifiStop();
+      var st = await kt.shareWifiStatus(); must(!st.running, 'still running');
+      var gone = false; try { await kt.http({ url: base + sh.key + '/' }); } catch (e) { gone = true; } must(gone, 'still answering');
+      return 'POST 405; stopped';
+    });
+    await check('local API: the token on every request (wrong or none refused; Bearer or ?token=)', true, async function () {
+      var port = await lan({ act: 'freeport' }); var tok = 'kt-selftest-' + Date.now();
+      var r = await kt.localApi({ on: true, token: tok, port: port }); must(r && r.on === true && r.port === port && r.token === tok, short(r));
+      var b = 'http://127.0.0.1:' + port;
+      var none = await kt.http({ url: b + '/version' }); must(none.status === 401, 'none → ' + none.status);
+      var wrong = await kt.http({ url: b + '/version', headers: { Authorization: 'Bearer ' + tok + 'x' } }); must(wrong.status === 401, 'wrong → ' + wrong.status);
+      var q = await kt.http({ url: b + '/version?token=' + encodeURIComponent(tok) }); must(q.status === 200 && JSON.parse(q.body).app === 'Kurokawa Tools', 'query → ' + q.status);
+      var t = await kt.http({ url: b + '/tasks', headers: { Authorization: 'Bearer ' + tok } }); must(t.status === 200 && Array.isArray(JSON.parse(t.body).tasks), 'tasks → ' + t.status);
+      var pre = await kt.http({ url: b + '/add', method: 'OPTIONS' }); must(pre.status === 204 && pre.headers['access-control-allow-origin'] === '*', 'preflight → ' + pre.status);
+      var big = await kt.http({ url: b + '/add', method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'x'.repeat(1100000) }) }); must(big.status === 413, 'big body → ' + big.status);
+      var nf = await kt.http({ url: b + '/nothing', headers: { Authorization: 'Bearer ' + tok } }); must(nf.status === 404, 'route → ' + nf.status);
+      var off = await kt.localApi({ on: false }); must(off.on === false, short(off));
+      var gone = false; try { await kt.http({ url: b + '/version?token=' + tok }); } catch (e) { gone = true; } must(gone, 'still answering');
+      return 'none/wrong 401, query and Bearer 200, preflight 204, 1.1 MB 413, off';
+    });
+    await check('antivirus: available answered, a stand-in scanner\'s verdicts', true, async function () {
+      var a = await kt.avAvailable(); must(a && typeof a.defender === 'boolean' && typeof a.clamav === 'boolean' && a.platform === cfg.os, short(a));
+      var f = file || (await kt.writeTemp('kt-av.txt', 'x'));
+      var sh = cfg.os === 'win32' ? { command: 'cmd.exe', ok: '/c exit 0', bad: '/c exit 3' } : { command: '/bin/sh', ok: '-c "exit 0" {file}', bad: '-c "exit 3" {file}' };
+      var c = await kt.avScan({ cfg: { kind: 'custom', command: sh.command, args: sh.ok }, file: f }); must(c.result === 'clean', 'exit 0 → ' + short(c));
+      var i = await kt.avScan({ cfg: { kind: 'custom', command: sh.command, args: sh.bad }, file: f }); must(i.result === 'infected', 'exit 3 → ' + short(i));
+      var s = await kt.avScan({ cfg: { kind: 'custom', command: sh.command, args: sh.bad, extensions: ['exe'] }, file: f }); must(s.result === 'skipped', 'not an .exe → ' + short(s));
+      var n = await kt.avScan({ cfg: { kind: 'custom', command: '' }, file: f }); must(n.result === 'error' && n.detail === 'no-scanner', short(n));
+      return 'defender ' + a.defender + ', clamav ' + a.clamav + '; clean, infected, skipped, no scanner';
+    }, 30000);
+  }
+
+  /* stage P7 (browser.rs): the browser opened on the test site; Grab, a magnet and a download handed to the app
+     (kt:browser) with the site's cookies; the app's requests then carry them; a link aimed at a new window kept; closed.
+     Required on Windows (and the download where build.rs found on_download); elsewhere reported with the reason. */
+  async function runBrowser(kt, cfg, env, check, must, waitFor) {
+    if (typeof kt.browse !== 'function') return;
+    var win = cfg.os === 'win32';
+    var b = function (o) { return env.invoke('kt_selftest_browse', { o: o }); };
+    var waitA = async function (fn, ms, what) { var until = env.now() + ms; for (;;) { var v = await fn(); if (v) return v; if (env.now() > until) throw new Error('timeout: ' + what); await env.sleep(250); } };
+    var seen = []; var off = kt.onBrowser(function (o) { seen.push(o); });
+    var browseWin = async function () { return ((await b({ act: 'list' })) || []).filter(function (w) { return w.label.indexOf('ktb-browse') === 0; })[0] || null; };
+    var opened = await check('browser: opened on the test site', win, async function () {
+      must(await kt.browse({ url: cfg.base + '/site/' }) === true, 'browse did not answer true');
+      var w = await waitA(async function () { var x = await browseWin(); return x && x.url.indexOf('/site/') > 0 ? x : null; }, 20000, 'the browser window on /site/');
+      await env.sleep(2000);
+      return w.label + (cfg.os !== 'darwin' ? ', keeper: ' + ((await b({ act: 'list' })) || []).some(function (x) { return x.label.indexOf('ktb-keep') === 0; }) : '');
+    }, 30000);
+    if (!opened) { off(); return; }
+    await check('browser: Grab hands the page\'s links to the app (kt:browser links)', win, async function () {
+      seen.length = 0; await b({ act: 'cmd', cmd: 'grab' });
+      var o = await waitFor(function () { return seen.filter(function (x) { return x && x.kind === 'links'; })[0]; }, 20000, 'kt:browser links');
+      must((o.links || []).some(function (l) { return /\/site\/file\.epub$/.test(l.href); }) && o.url.indexOf('/site/') > 0 && o.title, short(o));
+      return (o.links || []).length + ' links, ua ' + (o.ua ? 'given' : 'none');
+    }, 30000);
+    await check('browser: a magnet the page goes to reaches the app, the page stays', win, async function () {
+      seen.length = 0; var m = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=kt-browser';
+      await b({ act: 'eval', js: 'location.href = ' + JSON.stringify(m) + ';' });
+      var o = await waitFor(function () { return seen.filter(function (x) { return x && x.kind === 'download' && x.url === m; })[0]; }, 15000, 'kt:browser magnet');
+      var w = await browseWin(); must(w && w.url.indexOf('/site/') > 0, 'the page left: ' + short(w));
+      return 'handed over';
+    }, 25000);
+    var api = await b({ act: 'cookies', url: cfg.base + '/site/' }).catch(function () { return {}; });
+    await check('browser: a download handed to the app with the site\'s cookies', win && !!api.download, async function () {
+      must(api.download, 'no on_download in this build');
+      seen.length = 0; await b({ act: 'eval', js: 'document.getElementById("dl").click();' });
+      var o = await waitFor(function () { return seen.filter(function (x) { return x && x.kind === 'download' && /\/site\/file\.epub$/.test(x.url); })[0]; }, 20000, 'kt:browser download');
+      must(o.name && o.referer && o.referer.indexOf('/site/') > 0, short(o));
+      if (api.api) must(/kr_site=/.test(o.cookie || ''), 'no site cookie: ' + short(o));
+      return o.name + (o.cookie ? ', cookies given' : ', no cookie API');
+    }, 30000);
+    await check('browser: the app\'s requests carry the browser\'s cookies', false, async function () {
+      must(api.api, 'no cookies_for_url in this build');
+      var r = await kt.http({ url: cfg.base + '/site/private' });
+      must(r.status === 200 && /^signed-in/.test(r.body), r.status + ' ' + short(r.body));
+      return r.body.slice(0, 40);
+    });
+    await check('browser: a link aimed at a new window opens in the same window', false, async function () {
+      await b({ act: 'eval', js: 'document.getElementById("pop").click();' });
+      await waitA(async function () { var x = await browseWin(); return x && /\/site\/popup/.test(x.url) ? x : null; }, 15000, 'the popup in the same window');
+      var n = ((await b({ act: 'list' })) || []).filter(function (x) { return x.label.indexOf('ktb-browse') === 0; }).length; must(n === 1, n + ' browser windows');
+      return 'kept';
+    }, 25000);
+    await check('browser: closed', win, async function () {
+      await b({ act: 'close' });
+      await waitA(async function () { return !(await browseWin()); }, 10000, 'the window closed');
+      return 'closed';
+    }, 15000);
+    off();
+  }
+
   /* stage P6 (desktop.rs): prefs, the tray, the clipboard hotkeys (one registered, one refused plainly; a press's way to
      the page), the taskbar, keep-awake, a notice, the mini window, a second launch's hand-over. Required on Windows (the
      owner's system and CI's fullest); elsewhere each says why when it cannot be. */
   async function runP6(kt, cfg, env, check, must, waitFor) {
     if (typeof kt.desktopPrefs !== 'function') return;
     var win = cfg.os === 'win32'; var mac = cfg.os === 'darwin';
-    var st = async function () { return (await env.invoke('kt_selftest_desk', { act: 'state' })) || {}; };
+    var st = async function () { return (await env.invoke('kt_selftest_desk', { o: { act: 'state' } })) || {}; };
     await check('desktop: prefs answered as Electron\'s deskPrefs', true, async function () {
       var r = await kt.desktopPrefs({ keepAwake: true, whenDone: 'nothing', notifyDone: true, tray: false, hotkeys: {} });
       must(r && r.keepAwake === true && r.whenDone === 'nothing' && r.notifyDone === true && r.tray === false && r.hotkeys && typeof r.hotkeys === 'object', short(r));
@@ -191,36 +318,55 @@
     await check('desktop: a hotkey\'s press reaches the page (kt:hotkeyAdd)', true, async function () {
       var got = null; var off = kt.onHotkeyAdd(function (p) { got = p; });
       await env.sleep(300);
-      await env.invoke('kt_selftest_desk', { act: 'hotkey', mode: 'clip' });
+      await env.invoke('kt_selftest_desk', { o: { act: 'hotkey', mode: 'clip' } });
       await waitFor(function () { return got; }, 8000, 'kt:hotkeyAdd'); off();
       must(got.mode === 'clip' && typeof got.text === 'string', short(got));
       return 'mode ' + got.mode;
     });
     await check('desktop: taskbar progress', win, async function () {
-      var a = await env.invoke('kt_selftest_desk', { act: 'progress', p: 0.5 }); var b = await env.invoke('kt_selftest_desk', { act: 'progress', p: -1 });
+      var a = await env.invoke('kt_selftest_desk', { o: { act: 'progress', p: 0.5 } }); var b = await env.invoke('kt_selftest_desk', { o: { act: 'progress', p: -1 } });
       must(a === true && b === true, 'set ' + a + ', cleared ' + b + (s0.progressApi ? '' : ' (no set_progress_bar in this build)'));
       return 'set and cleared';
     });
     await check('desktop: kept awake, then let go', win, async function () {
-      var a = await env.invoke('kt_selftest_desk', { act: 'awake', on: true }); var b = await env.invoke('kt_selftest_desk', { act: 'awake', on: false });
+      var a = await env.invoke('kt_selftest_desk', { o: { act: 'awake', on: true } }); var b = await env.invoke('kt_selftest_desk', { o: { act: 'awake', on: false } });
       must(a && a.awake && a.alive, 'not held: ' + short(a)); must(b && !b.awake, 'not let go');
       return a.how;
     });
-    await check('desktop: a notice shown', false, async function () { var r = await env.invoke('kt_selftest_desk', { act: 'notify' }); must(r === true, 'not shown'); return 'shown'; });
+    await check('desktop: a notice shown', false, async function () { var r = await env.invoke('kt_selftest_desk', { o: { act: 'notify' } }); must(r === true, 'not shown'); return 'shown'; });
     await check('desktop: the mini window (no frame) opened and closed', !mac, async function () {
       var r = await kt.mini({ action: 'open' }); must(r && r.open === true, short(r));
-      var w = null; for (var i = 0; i < 40; i++) { var l = await env.invoke('kt_selftest_desk', { act: 'windows' }); w = (l || []).filter(function (x) { return x.label === 'mini'; })[0]; if (w) break; await env.sleep(200); }
+      var w = null; for (var i = 0; i < 40; i++) { var l = await env.invoke('kt_selftest_desk', { o: { act: 'windows' } }); w = (l || []).filter(function (x) { return x.label === 'mini'; })[0]; if (w) break; await env.sleep(200); }
       must(w, 'no mini window'); must(w.decorated === false, 'it has a frame');
       await env.sleep(1500);
       var c = await kt.mini({ action: 'close' }); must(c && c.open === false, short(c));
-      for (var k = 0; k < 40; k++) { var l2 = await env.invoke('kt_selftest_desk', { act: 'windows' }); if (!(l2 || []).some(function (x) { return x.label === 'mini'; })) return 'opened, closed'; await env.sleep(200); }
+      for (var k = 0; k < 40; k++) { var l2 = await env.invoke('kt_selftest_desk', { o: { act: 'windows' } }); if (!(l2 || []).some(function (x) { return x.label === 'mini'; })) return 'opened, closed'; await env.sleep(200); }
       throw new Error('still open');
     }, 30000);
+    var site = function (o) { return env.invoke('kt_selftest_site', { o: o }); };
+    await check('desktop: a sign-in window gives the address with the marker, then closes (captureUrl)', !mac, async function () {
+      var p = kt.captureUrl({ url: cfg.base + '/text', marker: 'kt_marker=', title: 'Kurokawa Tools' });
+      var w = null; for (var i = 0; i < 50 && !w; i++) { w = ((await site({ act: 'list' })) || [])[0] || null; if (!w) await env.sleep(200); }
+      must(w, 'no sign-in window');
+      await env.sleep(800);
+      await site({ act: 'go', label: w.label, url: cfg.base + '/text?kt_marker=1#access_token=abc' });
+      var got = await Promise.race([p, new Promise(function (ok) { setTimeout(function () { ok('timeout'); }, 15000); })]);
+      must(typeof got === 'string' && got.indexOf('kt_marker=1') > 0, 'answered ' + short(got));
+      var p2 = kt.captureUrl({ url: cfg.base + '/text', marker: 'never-there', title: 'x' });
+      var w2 = null; for (var k = 0; k < 50 && !w2; k++) { w2 = ((await site({ act: 'list' })) || [])[0] || null; if (!w2) await env.sleep(200); }
+      must(w2, 'no second sign-in window'); await site({ act: 'close', label: w2.label });
+      var got2 = await Promise.race([p2, new Promise(function (ok) { setTimeout(function () { ok('timeout'); }, 15000); })]);
+      must(got2 === null, 'closed: answered ' + short(got2));
+      return 'marker caught; closed → null';
+    }, 45000);
+    await check('desktop: a site window refuses a plain http address (siteWindow)', true, async function () {
+      var r = await kt.siteWindow({ url: cfg.base + '/text', title: 'x' }); must(r === false, 'answered ' + short(r)); return 'refused';
+    });
     await check('desktop: a second launch hands over a magnet and a .torrent, and ends', win, async function () {
       must(s0.single, 'no single-instance here (Linux without a D-Bus session bus)');
       var tor = await kt.writeTempBytes({ name: 'kt-selftest.torrent', b64: 'ZDQ6aW5mb2Rl' });
       var mag = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=kt-selftest';
-      var r = await env.invoke('kt_selftest_desk', { act: 'second', args: [mag, tor] });
+      var r = await env.invoke('kt_selftest_desk', { o: { act: 'second', args: [mag, tor] } });
       must(r && r.ended, 'the second launch did not end: ' + short(r));
       var log = await waitFor(function () { var l = (env.openLog ? env.openLog() : root.__KT_OPEN_LOG__) || []; return l.some(function (x) { return x.indexOf('magnet:?xt=urn:btih:0123') === 0; }) && l.some(function (x) { return x.indexOf('data:application/x-bittorrent;base64,ZDQ6aW5mb2Rl') === 0; }) ? l : null; }, 10000, 'kt:open');
       return log.length + ' handed over';

@@ -257,6 +257,24 @@
     registerMagnet: function () { return call('kt_register_magnet'); },
     onHotkeyAdd: function (cb) { return subscribe('kt:hotkeyAdd', cb); },
     onOpenTask: function (cb) { return subscribe('kt:openTask', cb); },
+    /* stage P6 (src-tauri/src/sitewin.rs): captureUrl({ url, marker, title }) → the first address carrying the marker,
+       or null when the window is closed first; siteWindow({ url, title }) → false unless https, else true once closed. */
+    captureUrl: function (o) { return call('kt_capture_url', { o: obj(o) }); },
+    siteWindow: function (o) { return call('kt_site_window', { o: obj(o) }); },
+    /* stage P7 (src-tauri/src/browser.rs): browse({ url }) → true, the in-app browser; onBrowser(cb) — what it hands the
+       app: { kind: 'download', url, name, referer, ua, cookie } (a file or a magnet), { kind: 'links', url, title, links,
+       ua } (Grab). */
+    browse: function (o) { return call('kt_browse', { o: obj(o) }); },
+    onBrowser: function (cb) { return subscribe('kt:browser', cb); },
+    /* stage P8 (src-tauri/src/lanshare.rs, rules in lanlogic.rs): shareWifi({ paths, names }) → { url, files };
+       shareWifiStop(); shareWifiStatus() → { running, url, sent, hits }; localApi({ on, token, port }) → { on, token,
+       port }; avScan({ cfg, file }) → { result, detail, scanner }; avAvailable() → { defender, clamav, platform }. */
+    shareWifi: function (o) { return call('kt_share_wifi', { o: obj(o) }); },
+    shareWifiStop: function () { return call('kt_share_wifi_stop'); },
+    shareWifiStatus: function () { return call('kt_share_wifi_status'); },
+    localApi: function (o) { return call('kt_local_api', { o: obj(o) }); },
+    avScan: function (o) { return call('kt_av_scan', { o: obj(o) }); },
+    avAvailable: function () { return call('kt_av_available'); },
   };
   /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a
      second launch's, a Mac's Apple Events — kept by the shell (kt_open_take) and handed to the page as the preload's

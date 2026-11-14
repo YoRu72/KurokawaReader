@@ -9,7 +9,7 @@ mod appicon;
 // (archive.rs — std only — lives in the shared crate since Tools' stage P7: kurokawa_shell::archive.)
 mod archives;
 mod browser;
-mod browserlogic;
+// (browserlogic.rs — std only — lives in the shared crate since Tools' stage P7: kurokawa_shell::browserlogic.)
 mod commands;
 mod dlplan;
 mod download;
