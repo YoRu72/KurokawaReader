@@ -17,14 +17,15 @@ import { t, getLang, localDigits } from '../i18n';
 import type { Book } from '../db';
 import { originalState, deleteOriginal, whereIs, binWord, type OriginalState } from '../devicefiles';
 import { onPhone } from '../platform';
+import { offerUndo } from './undo';
 
 const cnt = (n: number) => (getLang() === 'ar' ? localDigits(n, 'prose') : String(n));
 /** How long a deletion is held, and its «Undo» shown (ms). */
 export const UNDO_MS = 10000;
 
-/* ---------- the snackbar with an action («Undo», «Show»): the app's own toast with its action (src/ui/dom.ts) ---------- */
-export function actionSnack(msg: string, action: string | null, onAction: (() => void) | null, ms = UNDO_MS, kind: 'info' | 'error' = 'info', onEnd?: (acted: boolean) => void): void {
-  toast(msg, kind, { ...(action && onAction ? { action: { label: action, run: onAction } } : {}), ms, onEnd });
+/* ---------- the snackbar with an action («Show»): the app's own toast with its action (src/ui/dom.ts) ---------- */
+function actionSnack(msg: string, action: string | null, onAction: (() => void) | null, ms = UNDO_MS, kind: 'info' | 'error' = 'info'): void {
+  toast(msg, kind, { ...(action && onAction ? { action: { label: action, run: onAction } } : {}), ms });
 }
 
 /* ---------- books held before they are removed ---------- */
@@ -37,23 +38,22 @@ export async function commitHeld(): Promise<void> {
   pending = null; window.clearTimeout(p.timer);
   await p.commit();
 }
-/** Books held for `ms`, then removed; `cancel` (Undo) keeps them, true when it came in time. */
-export function holdRemoval(ids: string[], remove: (ids: string[]) => Promise<void>, ms = UNDO_MS): { cancel: () => boolean } {
+/** Books held for `ms`, then removed; `cancel` (Undo) keeps them, true when it came in time; `held`: still waiting. */
+export function holdRemoval(ids: string[], remove: (ids: string[]) => Promise<void>, ms = UNDO_MS): { cancel: () => boolean; held: () => boolean } {
   void commitHeld();
   const p = { ids, timer: 0, commit: () => remove(ids) };
-  // (Removed when the snackbar ends untouched — dom.ts toast onEnd —; this timer only in case it is taken away unseen.)
+  // (Removed when the snackbar ends untouched — offerUndo's onEnd —; this timer only in case it is taken away unseen.)
   p.timer = window.setTimeout(() => void commitHeld(), ms + 1000);
   pending = p;
-  return { cancel: () => { if (pending !== p) return false; window.clearTimeout(p.timer); pending = null; return true; } };
+  return { cancel: () => { if (pending !== p) return false; window.clearTimeout(p.timer); pending = null; return true; }, held: () => pending === p };
 }
 // (Put away — another app, the window closed —: what is held is removed, so a deletion asked for is never lost.)
 addEventListener('pagehide', () => void commitHeld());
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void commitHeld(); });
 
-export interface UndoEntry { undo: () => Promise<boolean>; redo: () => Promise<void> }
 /** Ask, then remove `books` (`remove` does the library's part); true when they were removed or are held to be.
- *  `changed`: the list is to be drawn again (books held or given back); `remember`: an undo entry for Ctrl+Z. */
-export async function deleteBooksDialog(books: Book[], remove: (ids: string[]) => Promise<void>, o: { changed?: () => void; remember?: (e: UndoEntry) => void } = {}): Promise<boolean> {
+ *  `changed`: the list is to be drawn again (books held or given back). */
+export async function deleteBooksDialog(books: Book[], remove: (ids: string[]) => Promise<void>, o: { changed?: () => void } = {}): Promise<boolean> {
   if (!books.length) return false;
   const states = new Map<string, OriginalState>(await Promise.all(books.map(async (b) => [b.id, await originalState(b)] as [string, OriginalState])));
   const of = (k: OriginalState['kind']) => books.filter((b) => states.get(b.id)!.kind === k);
@@ -89,15 +89,16 @@ export async function deleteBooksDialog(books: Book[], remove: (ids: string[]) =
     const go = h('button', { type: 'button', class: 'btn danger primary del-go', onclick: async () => {
       go.disabled = true;
       if (!box?.checked) {
-        // Held, with «Undo»: nothing is removed until the snackbar ends.
-        const holdNow = (): void => {
-          const hd = holdRemoval(ids, remove);
-          const entry: UndoEntry = { undo: async () => { const ok = hd.cancel(); o.changed?.(); return ok; }, redo: async () => { holdNow(); } };
-          o.changed?.();
-          actionSnack(t('deletedHeld', { n: cnt(n) }), t('undo'), () => void entry.undo(), UNDO_MS, 'info', (acted) => { if (!acted) void commitHeld(); });
-          o.remember?.(entry);
-        };
-        result = true; sh.close(); holdNow();
+        // Held, with «Undo» (src/ui/undo.ts: the snackbar, Ctrl+Z / Ctrl+Shift+Z on a computer): nothing is removed
+        // until the snackbar ends — or the next deletion, or the app put away. Undone, the books were never touched;
+        // redone, held again, with the snackbar again.
+        result = true; sh.close();
+        let hd = holdRemoval(ids, remove); let back = false;
+        o.changed?.();
+        offerUndo(t('deletedHeld', { n: cnt(n) }),
+          () => { if (hd.cancel()) { back = true; o.changed?.(); } },
+          () => { hd = holdRemoval(ids, remove); back = false; o.changed?.(); },
+          { ms: UNDO_MS, alive: () => back || hd.held(), onEnd: (undone) => { if (!undone && hd.held()) void commitHeld(); } });
         return;
       }
       await commitHeld();

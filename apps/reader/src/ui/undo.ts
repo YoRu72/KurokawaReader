@@ -28,6 +28,9 @@ export interface UndoEntry {
   view: string;
   /** Whether what it undoes is still there to act on. */
   alive?: () => boolean;
+  /** Its snackbar's time and end (offerUndo's `opts`): the first one's, and again each time a Redo offers «Undo». */
+  ms?: number;
+  onEnd?: (undone: boolean) => void;
 }
 export interface UndoScope { undo(): boolean; redo(): boolean }
 
@@ -39,14 +42,16 @@ const scopes: UndoScope[] = [];
 const viewNow = (): string => (location.hash || '#/').replace(/\?.*$/, '');
 const live = (e: UndoEntry) => { try { return e.alive ? e.alive() : true; } catch { return false; } };
 
-/** Says what was done, with «Undo»; keeps it for Ctrl+Z. `opts.onEnd(undone)`: once the snackbar goes. */
+/** Says what was done, with «Undo»; keeps it for Ctrl+Z. `opts.onEnd(undone)`: once the snackbar goes (and once more
+ *  each time a Redo shows «Undo» again — the library's deletion held anew: src/ui/deletebooks.ts). */
 export function offerUndo(label: string, undo: () => unknown, redo?: () => unknown, opts: { alive?: () => boolean; ms?: number; onEnd?: (undone: boolean) => void } = {}): UndoEntry {
-  const e: UndoEntry = { label, undo, redo, view: viewNow(), alive: opts.alive };
+  const e: UndoEntry = { label, undo, redo, view: viewNow(), alive: opts.alive, ms: opts.ms, onEnd: opts.onEnd };
   done.push(e); if (done.length > HISTORY) done.shift();
   undone.length = 0;
-  toast(label, 'info', { ms: opts.ms, action: { label: t('undo'), run: () => void undoEntry(e) }, onEnd: opts.onEnd ? (acted) => opts.onEnd!(acted) : undefined });
+  snack(e);
   return e;
 }
+const snack = (e: UndoEntry) => toast(e.label, 'info', { ms: e.ms, action: { label: t('undo'), run: () => void undoEntry(e) }, onEnd: e.onEnd ? (acted) => e.onEnd!(acted) : undefined });
 
 /** Undo this entry (from its snackbar, or the last of the view with Ctrl+Z). */
 export async function undoEntry(e: UndoEntry): Promise<void> {
@@ -63,7 +68,7 @@ export async function redoEntry(e: UndoEntry): Promise<void> {
   if (!live(e)) return;
   await e.redo();
   done.push(e);
-  toast(e.label, 'info', { action: { label: t('undo'), run: () => void undoEntry(e) } });
+  snack(e);
 }
 
 /** The last entry of the view open, the dead ones dropped on the way. */
