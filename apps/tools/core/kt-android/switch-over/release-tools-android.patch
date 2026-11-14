@@ -1,0 +1,21 @@
+--- a/.github/workflows/release-tools.yml	2026-11-14 15:41:57.298678100 +0300
++++ b/.github/workflows/release-tools.yml	2026-11-14 15:41:57.318104025 +0300
+@@ -66,6 +66,18 @@
+         run: |
+           set -o pipefail
+           { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/android-prepare.log
++      # (The Rust core, docs/RUST-PORT.md §5 — apps/tools/core/kt-android/switch-over/NOTES.md. Off unless the
++      # repository variable KT_RUST_ANDROID is «1». It never stops a release: if it fails, nothing is copied, the APKs
++      # are built without the library and the app keeps its Java code (KtCore reports the core absent).)
++      - name: Rust core for Android (optional)
++        if: ${{ vars.KT_RUST_ANDROID == '1' }}
++        continue-on-error: true
++        shell: bash
++        run: |
++          rustup toolchain install stable --profile minimal && rustup default stable
++          bash core/kt-android/build-android.sh "$RUNNER_TEMP/jniLibs"
++          mkdir -p android/app/src/main/jniLibs && cp -R "$RUNNER_TEMP/jniLibs"/. android/app/src/main/jniLibs/
++          find android/app/src/main/jniLibs -name 'libkt_android.so' -exec ls -la {} \;
+       - name: Signing key
+         env:
+           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

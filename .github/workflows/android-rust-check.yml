@@ -1,0 +1,107 @@
+name: Android Rust check (Tools)
+
+# The Rust core for Android (docs/RUST-PORT.md §5, stages M0–M1; apps/tools/core/kt-android, ANDROID-PORT.md): the
+# std-only rules tested with rustc alone; the library built for the computer and loaded by a plain JVM through the
+# app's own Java door (KtCore) — the JNI call shape proven without an emulator, the download rules' cases answered
+# alike by Java and Rust, the shadow mode counting no difference; the library built for arm64-v8a, armeabi-v7a and
+# x86_64 with the runner's NDK and packed into a release APK signed with a throw-away key (no repository secret);
+# each APK checked for its library; sizes in the job summary. Nothing here is released: release-tools.yml is not
+# touched (its switch-over patch waits in apps/tools/core/kt-android/switch-over/). The APK without the library is
+# what android-check-tools.yml builds on the same pushes.
+on:
+  push:
+    branches: ['work-tt-p5', 'work-tauri']
+    paths:
+      - 'apps/tools/core/**'
+      - 'apps/tools/native/**'
+      - 'apps/tools/android/**'
+      - '.github/workflows/android-rust-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-rust:
+    name: Rust core for Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Rust (stable) with the three Android targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          rustc --version; cargo --version
+
+      - name: Std-only unit tests (rustc alone)
+        run: |
+          d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
+          for f in apps/tools/core/kt-core/src/dlrules.rs apps/tools/core/kt-core/src/translatekey.rs apps/tools/core/kt-core/src/vidjson.rs; do
+            n=$(basename "$f" .rs); rustc --edition 2021 --test "$f" -o "$d/$n"; "$d/$n"
+          done
+
+      - name: kt-android's dispatch tests (cargo; kt-core by path, no crates.io crate)
+        working-directory: apps/tools/core/kt-android
+        run: cargo test --locked
+
+      - name: Java's own rule tests (the reference, unchanged; no library here)
+        working-directory: apps/tools
+        run: sh tests/native/dlrules.sh && sh tests/native/screen.sh
+
+      - name: The JNI door from a plain JVM (host build of the library)
+        working-directory: apps/tools/core/kt-android
+        run: |
+          cargo build --release --locked
+          ls -la target/release/libkt_android.so
+          sh jvmtest/run.sh target/release/libkt_android.so
+
+      - name: The library for Android (arm64-v8a, armeabi-v7a, x86_64)
+        run: bash apps/tools/core/kt-android/build-android.sh "$RUNNER_TEMP/jniLibs"
+
+      - name: Web build
+        working-directory: apps/tools
+        run: |
+          for i in 1 2 3; do npm install && break; [ $i = 3 ] && exit 1; echo "npm install failed; again in 20 s"; sleep 20; done
+          npm run build
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Create Android project
+        working-directory: apps/tools
+        run: |
+          set -o pipefail
+          { npx cap add android && node native/android/overlay.mjs && npx cap sync android; } 2>&1 | tee $RUNNER_TEMP/prepare.log
+      # (The app module's default jniLibs folder: no Gradle change. A build without this step — every release today —
+      # simply has no library, and KtCore reports it absent.)
+      - name: Pack the library into the app
+        working-directory: apps/tools
+        run: |
+          mkdir -p android/app/src/main/jniLibs
+          cp -R "$RUNNER_TEMP/jniLibs"/. android/app/src/main/jniLibs/
+          find android/app/src/main/jniLibs -name '*.so' -exec ls -la {} \;
+      - name: Throw-away signing key (no repository secret)
+        run: |
+          keytool -genkeypair -keystore $RUNNER_TEMP/kt.keystore -alias kurokawa -keyalg RSA -keysize 2048 -validity 30 -storepass kurokawa -keypass kurokawa -dname "CN=check, O=Kurokawa, C=SA" > /dev/null 2>&1
+          echo "KR_KEYSTORE=$RUNNER_TEMP/kt.keystore" >> $GITHUB_ENV; echo "KR_KEYSTORE_PASSWORD=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_ALIAS=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_PASSWORD=kurokawa" >> $GITHUB_ENV
+      - name: Build the APKs (release, R8 on, as the real build)
+        working-directory: apps/tools
+        run: |
+          set -o pipefail
+          cd android && sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties && chmod +x gradlew && (./gradlew --version >/dev/null 2>&1 || ./gradlew --version >/dev/null 2>&1 || true) && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
+          ls -la app/build/outputs/apk/release/
+      - name: Each APK carries its library; sizes
+        working-directory: apps/tools
+        run: |
+          set -o pipefail
+          python3 core/kt-android/sizes.py --jni "$RUNNER_TEMP/jniLibs" --apks android/app/build/outputs/apk/release --strip "${KT_NDK_BIN:-}/llvm-strip" | tee -a "$GITHUB_STEP_SUMMARY"
+      # (An emulator run — the library loaded on Android itself, the shadow mode in a debuggable build — is not done
+      # here: it would add 10+ minutes for what the JVM test already proves of the call shape. The owner's phone run
+      # with a debug APK is the check on a device.)

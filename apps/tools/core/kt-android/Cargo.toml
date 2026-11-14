@@ -1,0 +1,32 @@
+[package]
+name = "kt-android"
+# (The version Java's KtCore reports: «Rust core: 0.1.0». Raise it with each Android stage.)
+version = "0.1.0"
+description = "Kurokawa Tools' Android library: kt-core called from Java through one JNI function (docs/RUST-PORT.md §5)"
+edition = "2021"
+publish = false
+
+[lib]
+name = "kt_android"
+path = "src/lib.rs"
+# The libkt_android.so packed into the APK (`cargo test` still runs the unit tests: they build as their own program).
+crate-type = ["cdylib"]
+
+# kt-core only, by path: no crates.io crate at all (the JNI is written by hand in src/jni.rs), so this builds with
+# `cargo build --offline` on any machine that has Rust — the host build is what the JVM test (jvmtest/) loads.
+[dependencies]
+kt-core = { path = "../kt-core" }
+
+# Its own workspace root, so no Cargo.toml above it is taken for one.
+[workspace]
+
+# Small first: the library is loaded by every APK. panic stays «unwind» (the default) on purpose: every JNI entry
+# catches a panic and answers Java with an error instead (catch_unwind does nothing under panic = "abort", where a
+# bug in a rule would end the app instead of falling back to Java's answer). The unwinding tables cost some tens of KB.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+debug = false
+incremental = false
