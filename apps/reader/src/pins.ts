@@ -10,6 +10,8 @@
 // A library from before pins has no 'pins' key: read as no pins (the migration, `migratePins`, also tidies a value
 // written by hand or by a newer app — unknown places and items kept, malformed ones and repeats dropped).
 // Not synced between devices (like the sort order: where things sit on a screen is the device's own).
+// This file is what the library's first render needs (read, ordered — it loads at the start); changing them, and
+// a backup's part: src/pinedit.ts; the menus with «Undo»: src/ui/pinmenu.ts — both loaded when first used.
 import { db } from './db';
 
 export interface PinStore { v: 1; places: Record<string, string[]> }

@@ -508,4 +508,7 @@ export const ja: Partial<Strings> = {
   trCacheCleared: "保存した翻訳 {n} 件を消去しました",
   restoreSettingsAsk: "バックアップの設定で現在の設定（読書オプション・アプリの設定・本ごとの設定）を置き換えます。（本・メモ・ハイライトは置き換えずに統合します。）復元しますか？",
   restoredSettingsUndo: "{n} 件を復元しました — 設定を置き換えました",
+  // Books moved between folders in the library, with Undo (src/views/library.ts moveBooks)
+  movedToFolderToast: "「{name}」に移動しました: {n}",
+  movedOutToast: "フォルダーから外しました: {n}",
 };

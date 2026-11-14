@@ -15,6 +15,9 @@ html[dir='rtl'] .toast.has-action { padding: 6px 16px 6px 8px; }
 }
 .toast .toast-action:hover { background: color-mix(in srgb, var(--md-primary) 22%, transparent); }
 .toast .toast-action:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
+/* (On the error snackbar — «Show» where files could not be deleted, src/ui/deletebooks.ts —: its own text colour.) */
+.toast.error .toast-action { color: var(--md-on-error-container); background: color-mix(in srgb, var(--md-on-error-container) 14%, transparent); }
+.toast.error .toast-action:focus-visible { outline-color: var(--md-on-error-container); }
 /* In a book: above the reading bars, never over them (the toolbar, a PDF's page bar, the ink tools sit below). */
 body:has(.reader-view) .toast { bottom: calc(112px + var(--safe-bottom)); }
 body:has(.reader-view.immersive) .toast { bottom: calc(56px + var(--safe-bottom)); }

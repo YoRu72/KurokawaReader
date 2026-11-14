@@ -9,7 +9,8 @@ import { getSettings, updateSettings, defaultOf, type VisualSettings } from '../
 import { groupedPlacesEditor, type PlaceChoice } from './placeditems';
 import { fits } from '../platform';
 import { historyButtons, offerOptionsUndo, stepCount } from './optionsundo';
-import { normalizeButtons, toolbarOf, isSep, idsAt, FLOW_ACTIONS, PDF_ACTIONS, DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, type ButtonPlace, type PlacedButton, type BarAt } from '../readbuttons';
+import { isSep, FLOW_ACTIONS, DEFAULT_FLOW_BUTTONS, DEFAULT_PDF_BUTTONS, type ButtonPlace, type PlacedButton, type BarAt } from '../readbuttons';
+import { normalizeButtons, toolbarOf, idsAt, PDF_ACTIONS } from '../readbuttonlists';
 
 type Kind = 'flow' | 'pdf';
 const rtl = () => document.documentElement.dir === 'rtl' || getLang() === 'ar';

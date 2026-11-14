@@ -16,6 +16,10 @@
 // stays deleted everywhere. (Keeping the id and holding the tombstone back would not do: a sync during the snackbar
 // would bring the remote copy back here — and an Undo pressed after a sync, with Ctrl+Z, would meet a tombstone.)
 // A note's text is not deleted but changed: its undo is a new edit, stamped later (stampAfter), which wins.
+// Books deleted from the library are the exception — HELD, not removed (src/ui/deletebooks.ts): nothing is written
+// until the snackbar ends (or the next deletion, or the app put away), so a sync meanwhile sees the book unchanged and
+// sends no deletion — book deletions were never tombstoned —, and Undo only lets go of the hold. The library's pins
+// (src/ui/pinmenu.ts) are not synced; its folder moves (src/ui/moveundo.ts) are undone and redone as later moves.
 import { toast } from './dom';
 import { t } from '../i18n';
 import { fits } from '../platform';

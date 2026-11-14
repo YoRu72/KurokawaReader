@@ -6,7 +6,7 @@
 // online, and a minute after reading progress changes (automatically, or after
 // asking — a setting).
 import { db, type Book, type Folder, type TagDef, type Bookmark, type Highlight, type PdfNote, type InkStroke, type Locator, type StatsPart } from './db';
-import { combineStats, emptyPart, partOf, withCounters } from './stats';
+import { combineStats, emptyPart, partOf, withCounters } from './statscore';
 import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 import { whenStill } from './still';

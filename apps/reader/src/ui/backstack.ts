@@ -22,7 +22,8 @@ export function goBack(): boolean {
   if (cam) { cam.click(); return true; }
   const sheets = document.querySelectorAll('.sheet .sheet-head button');
   if (sheets.length) { (sheets[sheets.length - 1] as HTMLButtonElement).click(); return true; }
-  const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;
+  // (Its close button — not the first in its head: the reading options put their Undo / Redo there, src/ui/optionsundo.ts.)
+  const panelClose = document.querySelector('.panel.open .panel-head > button[data-icon="close"]') as HTMLButtonElement | null;
   if (panelClose) { panelClose.click(); return true; }
   // Full-screen overlays (gallery, pages grid, lightbox, a cover) carry a dialog role and a close in their top bar.
   // (Shown, by its boxes: a fixed overlay — the cover view — has no offset parent though it is on the screen.)

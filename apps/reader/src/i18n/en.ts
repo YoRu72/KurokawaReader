@@ -2335,6 +2335,9 @@ export const en = {
   trCacheCleared: "{n} saved translations cleared",
   restoreSettingsAsk: "The backup’s settings will replace your current ones — the reading options, the app’s preferences and each book’s own settings. (Books, notes and highlights are merged, not replaced.) Restore?",
   restoredSettingsUndo: "Restored {n} item(s) — settings replaced",
+  // Books moved between folders in the library, with Undo (src/views/library.ts moveBooks)
+  movedToFolderToast: "Moved to “{name}”: {n}",
+  movedOutToast: "Taken out of folders: {n}",
 };
 
 export type Strings = typeof en;

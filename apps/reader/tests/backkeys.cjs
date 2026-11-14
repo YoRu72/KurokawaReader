@@ -423,7 +423,8 @@ const CAP = () => {
   await pc.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'options' }))); await visible(pc, '.panel.open');
   L = await pc.evaluate(() => [...document.querySelectorAll('.panel.open .options-grid .label')].map((l) => l.textContent.trim()));
   ok('without Android: "Back twice" shown, volume buttons and edges hidden', L.some((l) => l.startsWith('Back twice')) && !L.some((l) => /^Volume buttons|^Protect page-turn/.test(l)), L.filter((l) => /Volume|Back|swipes/.test(l)));
-  await pc.evaluate(() => document.querySelector('.panel.open .panel-head button').click());
+  // (Its close button: the reading options' Undo / Redo come first in the head — src/ui/optionsundo.ts.)
+  await pc.evaluate(() => document.querySelector('.panel.open .panel-head > button[data-icon="close"]').click()); await pc.waitForFunction(() => !document.querySelector('.panel.open'));
   await pc.keyboard.press('Alt+ArrowLeft'); await pc.waitForTimeout(300);
   ok('a computer\'s Alt+← goes through the same Back: the reminder, the book stays', await pc.evaluate(() => !!document.querySelector('.reader-view .reader-scroll')) && /Press Back again/.test(await pc.evaluate(() => [...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' | '))));
   await pc.keyboard.press('Alt+ArrowLeft'); await pc.waitForTimeout(400);

@@ -369,7 +369,8 @@ function watchBack(before: string): void {
 function forceBack(): boolean {
   const before = backSignature();
   closeSheets();
-  document.querySelectorAll<HTMLButtonElement>('.panel.open .panel-head button').forEach((b) => b.click());
+  // (The close button only: the reading options' Undo / Redo sit in the same head — src/ui/optionsundo.ts.)
+  document.querySelectorAll<HTMLButtonElement>('.panel.open .panel-head > button[data-icon="close"]').forEach((b) => b.click());
   document.querySelectorAll('.sel-toolbar, .lightbox, .pdf-cutter').forEach((e) => e.remove());
   const route = location.hash.replace(/^#/, '') || '/';
   if (route !== '/' && route !== '') { leaveView('/'); return true; }

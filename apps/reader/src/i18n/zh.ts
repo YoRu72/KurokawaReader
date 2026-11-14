@@ -508,4 +508,7 @@ export const zh: Partial<Strings> = {
   trCacheCleared: "已清除 {n} 条已保存的翻译",
   restoreSettingsAsk: "备份中的设置将替换当前设置（阅读选项、应用偏好及每本书的单独设置）。（书籍、笔记和高亮会合并，不会被替换。）要恢复吗？",
   restoredSettingsUndo: "已恢复 {n} 项 — 设置已替换",
+  // Books moved between folders in the library, with Undo (src/views/library.ts moveBooks)
+  movedToFolderToast: "已移到“{name}”：{n}",
+  movedOutToast: "已移出文件夹：{n}",
 };

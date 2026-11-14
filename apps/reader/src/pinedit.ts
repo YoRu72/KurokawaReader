@@ -2,7 +2,7 @@
 // moved, a place or an item gone, and carried by a backup. Loaded when first used — not at the start (the library's
 // first render only reads them).
 import { db, type Folder } from './db';
-import { PIN_KEY, migratePins, keepPins, pinsNow, placeFolder, pinBook, pinFolder, type PinStore } from './pins';
+import { PIN_KEY, migratePins, keepPins, pinsNow, loadPins, placeFolder, pinBook, pinFolder, type PinStore } from './pins';
 
 async function change(fn: (s: PinStore) => void): Promise<PinStore> {
   const next = await db.updateMeta<PinStore>(PIN_KEY, (cur) => { const s = migratePins(cur); fn(s); for (const k of Object.keys(s.places)) if (!s.places[k].length) delete s.places[k]; return s; });
@@ -33,6 +33,13 @@ export function forgetPinItems(items: string[]): Promise<PinStore> {
   if (!items.length) return Promise.resolve(pinsNow());
   const gone = new Set(items);
   return change((s) => { for (const k of Object.keys(s.places)) s.places[k] = s.places[k].filter((x) => !gone.has(x)); });
+}
+/** Books or a folder gone from the library (src/library.ts removeBooks, deleteFolder): unpinned everywhere, and the
+ *  folder's own place with its pins. */
+export async function forgetGone(o: { books?: string[]; folder?: string }): Promise<void> {
+  await loadPins();
+  await forgetPinItems([...(o.books ?? []).map(pinBook), ...(o.folder ? [pinFolder(o.folder)] : [])]);
+  if (o.folder) await forgetPlace(placeFolder(o.folder));
 }
 /** A place gone (a folder, a tag, a saved shelf deleted): its pins with it. */
 export function forgetPlace(place: string): Promise<PinStore> { return change((s) => { delete s.places[place]; }); }

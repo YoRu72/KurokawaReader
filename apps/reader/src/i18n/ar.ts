@@ -2338,4 +2338,7 @@ export const ar: Strings = {
   trCacheCleared: "مُحيَت {n} من الترجمات المحفوظة",
   restoreSettingsAsk: "ستحلّ إعداداتُ النسخة الاحتياطية محلَّ إعداداتك الحالية: خياراتِ القراءة، وتفضيلاتِ التطبيق، والإعداداتِ الخاصة بكلّ كتاب. (أمّا الكتب والملاحظات والتظليلات فتُدمَج ولا تُستبدَل.) أتمضي في الاستعادة؟",
   restoredSettingsUndo: "استُعيد {n} من العناصر، واستُبدلت الإعدادات",
+  // Books moved between folders in the library, with Undo (src/views/library.ts moveBooks)
+  movedToFolderToast: "نُقِلت إلى الحافظة «{name}»؛ العدد: {n}",
+  movedOutToast: "أُخرِجت من حوافظها؛ العدد: {n}",
 };

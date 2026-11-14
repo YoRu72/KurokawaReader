@@ -21,7 +21,4 @@
 .del-where { margin: 6px 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
 .del-where code { display: block; font-size: 12px; color: var(--md-on-surface-variant); word-break: break-all; }
 
-/* A snackbar with an action («Undo», «Show»): dom.ts toast's button (until the shared undo styles arrive) */
-.toast.has-action { display: flex; align-items: center; gap: 14px; padding-inline: 18px 8px; padding-block: 8px; }
-.toast .toast-action { background: transparent; border: 0; padding: 8px 12px; border-radius: var(--sh-full); color: var(--md-inverse-on-surface); background: color-mix(in srgb, var(--md-inverse-on-surface) 12%, transparent); font: inherit; font-weight: 700; cursor: pointer; flex: none; }
-.toast.error .toast-action { color: inherit; text-decoration: underline; }
+/* (The snackbar with an action — «Undo», «Show» — is styled once, for every snackbar: src/styles/undo.css.) */

@@ -9,7 +9,7 @@
 //     said in a snackbar whose «Show» lists where it lies; no «Undo» once files went;
 //  3. Arabic: the counts as «العدد: …», right to left;
 //  4. a computer (Windows): «computer» wording, the Recycle Bin; ticked: trashFile asked with the path, «Moved to the
-//     Recycle Bin»; unticked: Ctrl+Z brings the book back;
+//     Recycle Bin»; unticked: Ctrl+Z brings the book back, Ctrl+Shift+Z holds it again (src/ui/undo.ts);
 //  5. a book found by a scan, deleted without the box: its file is not touched and nothing brings the book back.
 // KR_PIN_SHOTS=<dir>: delete-dialog-phone.png, delete-dialog-phone-ar.png, delete-dialog-pc.png.
 const { chromium } = require('playwright'); const fs = require('fs'); const path = require('path');
@@ -151,6 +151,10 @@ const DESKTOP = () => {
     await p.click('.library-hero'); await p.keyboard.press('Control+z');
     await p.waitForSelector('.book-card[data-book="d1"]');
     ok('unticked, then Ctrl+Z: the book back, nothing sent to the bin', (await p.evaluate(() => window.__trash.length)) === 0 && (await H.bookIds(p)).includes('d1'));
+    // Redone (Ctrl+Shift+Z): held again, with «Undo» again; undone once more.
+    await p.keyboard.press('Control+Shift+z'); await p.waitForFunction(() => !document.querySelector('.book-card[data-book="d1"]'));
+    ok('Ctrl+Shift+Z: held again (still in the database), «Undo» shown', (await H.bookIds(p)).includes('d1') && (await p.$eval('.toast .toast-action', (e) => e.textContent).catch(() => '')) === 'Undo');
+    await p.keyboard.press('Control+z'); await p.waitForSelector('.book-card[data-book="d1"]');
     // Ticked: to the Recycle Bin, said so, no «Undo».
     await p.click('.book-card[data-book="d1"]', { button: 'right' }); await p.waitForSelector('.sheet.as-menu');
     await p.click('.sheet .sheet-actions .btn.danger'); await p.waitForSelector('.del-sheet .del-go');

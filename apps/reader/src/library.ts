@@ -66,8 +66,8 @@ export const BOOK_META = ['tr', 'trs', 'trWhole', 'trKeep', 'glossScan', 'crop',
 export async function removeBooks(ids: string[]): Promise<void> {
   for (const id of ids) await db.deleteBook(id);
   await forgetBookData(ids);
-  // (Unpinned wherever they were pinned: src/pins.ts.)
-  const pins = await import('./pins'); const pe = await import('./pinedit'); await pins.loadPins(); await pe.forgetPinItems(ids.map(pins.pinBook));
+  // (Unpinned wherever they were pinned: src/pinedit.ts.)
+  await (await import('./pinedit')).forgetGone({ books: ids });
 }
 /** All a book keeps besides its record, file and text (db.deleteBook): its meta, its own settings, its glossary
  *  terms, folder links and destination, its text rules, its place in the reading queue. (Keys matched whole —
@@ -109,8 +109,8 @@ export async function deleteFolder(id: string): Promise<Folder[]> {
   const left = (await db.updateMeta<Folder[]>('folders', (cur) => { name = cur?.find((f) => f.id === id)?.name ?? ''; return (cur ?? []).filter((f) => f.id !== id); })) ?? [];
   if (name) await (await import('./sync')).markDeleted(`folder:${name}`);
   await moveToFolder((await db.allBooks()).filter((b) => b.folderId === id).map((b) => b.id), null);
-  // (Its pins, and its own pin wherever it was pinned: src/pins.ts.)
-  const pins = await import('./pins'); const pe = await import('./pinedit'); await pins.loadPins(); await pe.forgetPinItems([pins.pinFolder(id)]); await pe.forgetPlace(pins.placeFolder(id));
+  // (Its pins, and its own pin wherever it was pinned: src/pinedit.ts.)
+  await (await import('./pinedit')).forgetGone({ folder: id });
   return left;
 }
 /** A folder renamed (on another device: the old name goes, the new one comes with its books); returns the folders. */

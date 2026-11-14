@@ -508,4 +508,7 @@ export const ko: Partial<Strings> = {
   trCacheCleared: "저장된 번역 {n}개를 지웠습니다",
   restoreSettingsAsk: "백업의 설정이 현재 설정(읽기 옵션, 앱 설정, 책마다의 설정)을 대체합니다. (책, 메모, 하이라이트는 대체하지 않고 합칩니다.) 복원할까요?",
   restoredSettingsUndo: "{n}개 항목을 복원했습니다 — 설정을 대체했습니다",
+  // Books moved between folders in the library, with Undo (src/views/library.ts moveBooks)
+  movedToFolderToast: "“{name}”(으)로 옮겼습니다: {n}",
+  movedOutToast: "폴더에서 뺐습니다: {n}",
 };

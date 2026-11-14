@@ -4,7 +4,7 @@ import { busyNow, onBusy } from '../busy';
 import { h, icon, iconButton, toast, clear, coverColors, openSheet, askText } from '../ui/dom';
 import { onBack } from '../ui/backstack';
 import { brandIcon } from '../ui/brandIcon';
-import { onHoldOrContext } from '../ui/tags';
+import { onHoldOrContext } from '../ui/hold';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
 import { searchFormOf } from '../formats/types';
@@ -16,7 +16,7 @@ import { readContentUri } from '../native';
 import { getSettings, updateSettings, onSettingsChange } from '../settings';
 import { openScanSheet, FORMAT_GROUPS, groupOf, canScan, canScanWhole } from '../ui/scan';
 import { pickDestination, type Destination } from '../ui/destination';
-import { todayKey, liveStatsOf } from '../stats';
+import { todayKey, liveStatsOf } from '../statscore';
 import * as P from '../pins';
 
 type Sort = 'title' | 'recent' | 'added' | 'author' | 'size' | 'rating' | 'progress' | 'length' | 'updated';
@@ -308,18 +308,14 @@ export function libraryView(): HTMLElement {
     moveLevel(() => { activeSeries = key; if (key) localStorage.setItem('kr.series', key); else localStorage.removeItem('kr.series'); renderGrid(); });
   }
   /** A saved shelf (src/views/library.ts shelves: formats, statuses and a tag kept under a name) is the one in force. */
-  function onSavedShelf(): boolean {
-    const s0 = getSettings(); const f = s0.formatFilter ?? [], st = s0.statusFilter ?? [];
-    if (!f.length && !st.length) return false;
-    const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
-    return (s0.shelves ?? []).some((sh) => same(sh.formats, f) && same(sh.statuses, st) && (sh.tag ?? null) === (tagFilter ?? null));
-  }
+  function onSavedShelf(): boolean { return !!savedShelfNow(); }
 
   /* ---------- Pins (src/pins.ts): a book, a folder or a series first in its PLACE, in the order the reader gives ---------- */
   // The place is the innermost level Back would leave (a folder, else a tag or a saved shelf, else the main page); a
   // series' own volumes keep their order and a search lists by relevance: no place there (format and status filters
   // keep the pinned first among what they let through). Long hold (a book: choosing, the bar's Pin second; a folder or
   // a series: its menu, Pin first), right-click, P on a computer; «Move pin earlier / later» to reorder.
+  /** (The saved shelf in force, if one is.) */
   function savedShelfNow(): { id: string } | undefined {
     const s0 = getSettings(); const f = s0.formatFilter ?? [], st = s0.statusFilter ?? [];
     const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
@@ -978,19 +974,14 @@ export function libraryView(): HTMLElement {
   }
 
   /** Books put in a folder or taken out of any — dropped on a folder's card or chip, or «Move to folder» — with «Undo»
-   *  (each back where it was; undone and redone as later moves, so sync takes them as the newest: library.ts). */
+   *  (src/ui/moveundo.ts). */
   async function moveBooks(ids: string[], folderId: string | null): Promise<void> {
-    const was = new Map(ids.map((id) => [id, books.find((b) => b.id === id)?.folderId ?? null] as [string, string | null]));
-    const moved = ids.filter((id) => was.get(id) !== folderId);
+    const was = new Map<string, string | null>(); for (const id of ids) { const f = books.find((b) => b.id === id)?.folderId ?? null; if (f !== folderId) was.set(id, f); }
     await moveToFolder(ids, folderId);
     for (const id of ids) { const bk = books.find((b) => b.id === id); if (bk) { if (folderId) bk.folderId = folderId; else delete bk.folderId; } }
     setSelecting(false);
     renderGrid();
-    if (!moved.length) return;
-    const back = async () => { for (const to of new Set(moved.map((id) => was.get(id) ?? null))) await moveToFolder(moved.filter((id) => (was.get(id) ?? null) === to), to); reread(); };
-    const name = folderId ? folders.find((f) => f.id === folderId)?.name ?? '' : '';
-    const n = localDigits(moved.length, 'prose');
-    void import('../ui/undo').then((m) => m.offerUndo(folderId ? t('movedToFolderToast', { name, n }) : t('movedOutToast', { n }), back, async () => { await moveToFolder(moved, folderId); reread(); }));
+    if (was.size) void import('../ui/moveundo').then((m) => m.offerMoveUndo(was, folderId, folders.find((f) => f.id === folderId)?.name ?? '', reread));
   }
 
   function moveSheet(ids: string[]) {

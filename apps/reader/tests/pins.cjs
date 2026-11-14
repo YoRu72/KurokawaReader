@@ -11,7 +11,8 @@
 //  6. a backup carries the pins (folders by name), and restored into another library (other ids) they land on the
 //     same books and folder;
 //  7. Arabic: the mark named in Arabic, inside the cover, never over the format badge;
-//  8. a computer: right-click menu with Pin (and its key, P), P on a focused card, Ctrl+Z / Ctrl+Shift+Z.
+//  8. a computer: right-click menu with Pin (and its key, P), P on a focused card, Ctrl+Z / Ctrl+Shift+Z; a book moved
+//     to a folder from the menu, undone from the snackbar and redone with Ctrl+Shift+Z (src/ui/moveundo.ts).
 // KR_PIN_SHOTS=<dir>: the previews (phone, deviceScaleFactor 2) are saved there.
 const { chromium } = require('playwright'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const H = require('./pins/harness.cjs');
@@ -207,6 +208,19 @@ const sheetShown = () => !!document.querySelector('.sheet');
     await q.keyboard.press('Control+z'); await q.waitForFunction(() => !document.querySelector('.book-card[data-book="b3"] .pin-mark'));
     await q.keyboard.press('Control+y'); await q.waitForSelector('.book-card[data-book="b3"] .pin-mark');
     ok('Ctrl+Y redoes too', (await pinsOf(q)).main.join() === 'b:b2,b:b3', await pinsOf(q));
+    // Moved to a folder (the right-click menu's «Move to folder»): «Undo» puts it back, Ctrl+Shift+Z moves it again.
+    const folderOf = (id) => q.evaluate((id) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const g = r.result.transaction('books').objectStore('books').get(id); g.onsuccess = () => { res(g.result?.folderId ?? null); r.result.close(); }; }; }), id);
+    await q.waitForFunction(() => !document.querySelector('.toast'), null, { timeout: 10000 });
+    await q.click('.book-card[data-book="b1"]', { button: 'right' }); await q.waitForSelector('.sheet.as-menu');
+    await q.evaluate(() => [...document.querySelectorAll('.sheet .dest-row')].find((e) => e.textContent.trim() === 'Move to folder').click());
+    await q.waitForFunction(() => [...document.querySelectorAll('.sheet .plain-list li button')].some((e) => e.textContent.trim() === 'Essays'));
+    await q.evaluate(() => [...document.querySelectorAll('.sheet .plain-list li button')].find((e) => e.textContent.trim() === 'Essays').click());
+    await q.waitForFunction(() => /Moved to “Essays”: 1/.test(document.querySelector('.toast')?.textContent ?? ''));
+    ok('moved to a folder: said, with «Undo»', (await folderOf('b1')) === 'f1' && (await q.$eval('.toast .toast-action', (e) => e.textContent)) === 'Undo');
+    await q.click('.toast .toast-action');
+    ok('«Undo»: back in no folder, listed on the main page again', await H.until(q, async () => (await folderOf('b1')) === null && !!(await q.$('.book-card[data-book="b1"]'))));
+    await q.click('.library-hero'); await q.keyboard.press('Control+Shift+z');
+    ok('Ctrl+Shift+Z: moved again', await H.until(q, async () => (await folderOf('b1')) === 'f1' && !(await q.$('.book-card[data-book="b1"]'))));
     await ctx2.close();
   }
   ok('no page errors', errors.length === 0, errors);
