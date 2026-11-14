@@ -234,7 +234,11 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const backupRow = h('div', { class: 'row-actions wrap' },
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../backup').then((m) => m.saveBackup()).then((p) => { if (p) toast(t('backupSaved')); }).catch((e) => toast(String((e as Error).message ?? e), 'error')) }, icon('upload'), t('backupSettings')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const f = h('input', { type: 'file', accept: '.json', onchange: async () => { const file = f.files?.[0]; if (!file) return; try { const m = await import('../backup'); const n = m.restoreBackup(await file.text()); toast(t('backupRestored', { n: localDigits(n) })); setTimeout(() => location.reload(), 1200); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }) as HTMLInputElement; f.click(); } }, icon('download'), t('restoreSettings')));
-    const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), backupRow, h('div', { class: 'row-actions' },
+    // (Stage P9, the Tauri build only: the data the previous (Electron) version handed over — brought again, from a
+    // folder, or its space freed; ui/handoversheet.ts. Nothing on a phone, the web or the Electron build.)
+    const handoverBox = h('div', { class: 'handover-box' });
+    if ((window as unknown as { kurokawaHandover?: { shell?: string } }).kurokawaHandover?.shell === 'tauri') void import('../ui/handoversheet').then((m) => { const r = m.handoverRows(); if (r) handoverBox.append(r); }).catch(() => undefined);
+    const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), backupRow, handoverBox, h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void import('../downloads/recorder').then((m) => recorderSheet(m)) }, icon('history'), t('recorderTitle'))));

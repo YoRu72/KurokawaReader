@@ -448,6 +448,8 @@ ipcMain.handle('kt:checkUpdate', async (_e, o) => {
   return { version: v, url: j.html_url, notes: j.body || '', asset: asset ? asset.browser_download_url : undefined };
 });
 ipcMain.handle('kt:installUpdate', async (e, url) => {
+  if (RUST_SWITCH) { const r = await rustSwitch(e); if (r) return r; } // (Stage P9: the move to the Tauri build, when a release carries it.)
+  if (url === 'rust-switch') throw new Error('kt-update:norelease'); // (The switch sheet's own ask: never an Electron update in its place.)
   const ext = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage';
   const file = path.join(app.getPath('temp'), `KurokawaTools-update-${Date.now()}` + ext);
   await fastFetch(url, file, (got, total) => e.sender.send('kt:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total }));
@@ -465,6 +467,113 @@ ipcMain.handle('kt:installUpdate', async (e, url) => {
   const err = await shell.openPath(file); if (err) throw new Error(err);
   setTimeout(() => app.quit(), 1500); return file;
 });
+/* ---------- the move to the Rust (Tauri) build (stage P9) ---------- */
+// OFF in this stage (desktop-tauri/PORTING.md «P9», «What to flip at the switch-over»). The Electron «bridge» build is
+// made with RUST_SWITCH = true and published under the old file names (…-win-x64.exe, …-mac-universal.dmg,
+// …-linux-x86_64.AppImage), so every Electron copy's own updater fetches it; from then on, when a release of this
+// version or newer carries the Tauri build for this system (rustswitch.cjs pickRust): the page is told
+// (window.kurokawaHandover.switchInfo() → src/rustswitch.ts offers it in its own sheet), and «Download and install» —
+// whatever file the page chose — runs the switch: (1) the person's data made ready by the hand-over (`await
+// Handover.prepare()`, handover.cjs: the page that asked writes it with its progress sheet — src/ui/handoversheet.ts
+// handoverBeforeInstall —, the engine paused and its session saved, all checked and marked on the disk) — nothing else
+// happens unless it answers { ok: true } —, (2) the Tauri build's file downloaded with the sheet's progress and
+// checked against the release (size; SHA-256 from GitHub's digest and/or the release's SHA256SUMS file — refused and
+// removed on any mismatch, or when neither exists), (3) installed: Windows — the Tauri installer run with its progress
+// window (/P) and the app started after it (/R); the installer (per user, no admin prompt) puts the new program in
+// place, points the shortcuts, .torrent files and magnet links at it, and only then removes this program's files —
+// never this app's data folder (desktop-tauri/src-tauri/installer/hooks.nsh) —; Linux — this AppImage replaced by the
+// Tauri one at once and started; a Mac — the disk image opened (drag it to Applications). Any failure leaves this app
+// as it is — the downloads paused for the hand-over set going again — and the sheet says why («kt-update:…»,
+// src/rustswitch.ts). Portable copies make the hand-over too, then are told to download the new portable build by
+// hand (it brings the data over on its first start); nothing is installed for them.
+const RUST_SWITCH = false;
+const RustSwitch = require('./rustswitch.cjs');
+const Handover = require('./handover.cjs');
+const handoverCh = Handover.install({ ipcMain, app }, { engine: () => engine, beforeEngine: () => WebStream.stopAll() });
+const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=60`;
+async function rustRelease(beta) {
+  const res = await net.fetch(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } });
+  if (!res.ok) return null;
+  return RustSwitch.pickRust(await res.json(), app.getVersion(), process.platform, process.arch, { beta: !!beta });
+}
+// (What the page asks before it offers the switch: null while RUST_SWITCH is off, or with no release carrying it.)
+ipcMain.handle('kt:rustSwitchInfo', async (_e, o) => {
+  if (!RUST_SWITCH) return null;
+  const p = await rustRelease(!!(o && o.beta)).catch(() => null);
+  return p ? { version: p.version, name: p.asset.name, size: p.asset.size, page: p.page, portable: !!process.env.PORTABLE_EXECUTABLE_FILE, os: process.platform } : null;
+});
+async function rustDownload(e, url, name, size) {
+  const file = path.join(app.getPath('temp'), `KurokawaTools-switch-${name.replace(/[^\w.+-]/g, '_')}`);
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await net.fetch(url);
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      const total = Number(res.headers.get('content-length') || size || 0);
+      const out = fs.createWriteStream(file); let streamError = null; out.on('error', (err) => { streamError = err; });
+      const reader = res.body.getReader(); let got = 0, lastT = Date.now(), lastGot = 0, speed = 0, told = 0;
+      for (;;) {
+        const { done, value } = await reader.read(); if (done) break;
+        if (!out.write(Buffer.from(value))) await new Promise((r) => out.once('drain', r)); got += value.length;
+        const now = Date.now(); if (now - lastT > 400) { speed = (got - lastGot) / ((now - lastT) / 1000); lastT = now; lastGot = got; }
+        if (now - told > 250) { told = now; try { e.sender.send('kt:update-progress', { pct: total ? Math.round((got / total) * 100) : 0, got, total, speed }); } catch { /* window gone */ } }
+      }
+      await new Promise((r) => out.end(r)); if (streamError) throw streamError;
+      return file;
+    } catch (err) { lastErr = err; await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); }
+  }
+  throw lastErr || new Error('download failed');
+}
+async function rustSwitch(e) {
+  const pick = await rustRelease(false).catch(() => null);
+  if (!pick) return null;
+  // (1) The hand-over: the person's data made ready for the Tauri build. Nothing is fetched or run unless it says ok.
+  let h;
+  try { h = await Handover.prepare({ app, webContents: e.sender }); } catch (err) { await handoverCh.resume(); throw new Error('kt-update:handover ' + String((err && err.message) || err)); }
+  if (!h || h.ok !== true) { await handoverCh.resume(); throw new Error('kt-update:handover ' + String((h && h.reason) || 'not ready')); }
+  // (A portable copy installs nothing: its data is now handed over — the new portable build brings it on its first
+  // start — and the sheet says where to download it. Its downloads STAY PAUSED here: the new copy takes them up from the
+  // same files, and two engines must never write one download at once; the person can resume them here by hand.)
+  if (process.env.PORTABLE_EXECUTABLE_FILE) throw new Error('kt-update:portable-ready');
+  let opened = false;
+  try {
+    // (2) The file, checked against the release.
+    let sumsLine = null;
+    if (pick.sums) { try { const r = await net.fetch(pick.sums.url); if (r.ok) sumsLine = RustSwitch.parseSums(await r.text()).get(pick.asset.name) || null; } catch { /* the digest may do */ } }
+    const want = RustSwitch.expectedSha(pick.asset.digest, sumsLine);
+    if (want.error) throw new Error('kt-update:' + want.error);
+    const file = await rustDownload(e, pick.asset.url, pick.asset.name, pick.asset.size);
+    try { e.sender.send('kt:update-progress', { pct: 100, got: 0, total: 0, speed: 0, verifying: true }); } catch { /* window gone */ }
+    const st = fs.statSync(file);
+    const sha = await new Promise((ok, bad) => { const hs = require('node:crypto').createHash('sha256'); fs.createReadStream(file).on('data', (d) => hs.update(d)).on('end', () => ok(hs.digest('hex'))).on('error', bad); });
+    if ((pick.asset.size && st.size !== pick.asset.size) || sha !== want.sha) { try { fs.unlinkSync(file); } catch { /* gone */ } throw new Error('kt-update:checksum'); }
+    // (3) Installed.
+    const { spawn } = require('node:child_process');
+    if (process.platform === 'win32') {
+      spawn(file, ['/P', '/R'], { detached: true, stdio: 'ignore' }).unref();
+      setTimeout(() => app.quit(), 800);
+      return 'rust';
+    }
+    if (process.platform === 'linux' && process.env.APPIMAGE) {
+      const current = process.env.APPIMAGE; fs.chmodSync(file, 0o755);
+      const script = path.join(app.getPath('temp'), 'kt-switch.sh');
+      fs.writeFileSync(script, `#!/bin/sh\nsleep 2\nmv -f "${file}" "${current}" && chmod +x "${current}" && ("${current}" >/dev/null 2>&1 &)\nrm -f "$0"\n`, { mode: 0o755 });
+      spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref();
+      setTimeout(() => app.quit(), 500);
+      return 'rust';
+    }
+    const err = await shell.openPath(file); if (err) throw new Error(err);
+    // (A Mac: the disk image opened, the new app dragged to Applications by the person. The downloads stay paused here,
+    // as for a portable copy: the new app takes them up.)
+    opened = true;
+    throw new Error('kt-update:mac-opened');
+  } catch (err) {
+    // (Not installed: this app keeps working, its downloads going on.)
+    if (!opened) await handoverCh.resume();
+    throw err;
+  }
+}
+
 /** A file fetched over several connections at once (8, each its own range) when the server allows ranges — as the
  *  phone's downloader does —, else in one stream; `tick(got, total)` as it comes. */
 async function fastFetch(url, file, tick) {

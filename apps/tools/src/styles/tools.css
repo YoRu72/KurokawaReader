@@ -1040,3 +1040,47 @@ html[dir='rtl'].page-in-next #app > .view { animation-name: page-in-prev; }
 html[dir='rtl'].page-in-prev #app > .view { animation-name: page-in-next; }
 @media (prefers-reduced-motion: reduce) { html.page-in-next #app > .view, html.page-in-prev #app > .view { animation: none; } }
 .sheet { will-change: auto; }
+
+/* ---------- Stage P9: the first-run screen of the computer app's Tauri build (ui/firstrun.ts) and the hand-over's
+   offer — the Reader's (its base.css, stage R6b), with Tools' badge ---------- */
+.firstrun { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px; overflow: auto; background: color-mix(in srgb, var(--md-surface) 82%, transparent); backdrop-filter: blur(14px); animation: fr-in var(--dur-med) var(--ease-emph); font-family: var(--font-ui); }
+.firstrun.leaving { opacity: 0; transform: scale(.985); transition: opacity .2s, transform .2s var(--ease-emph); }
+@keyframes fr-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.fr-card { width: min(560px, 100%); background: var(--md-surface-container-low); color: var(--md-on-surface); border-radius: var(--sh-xxl); padding: 28px 28px 22px; box-shadow: var(--el-2); display: grid; gap: 18px; }
+.fr-hero { display: flex; align-items: center; gap: 18px; }
+.fr-badge { width: 72px; height: 72px; }
+.fr-badge img { width: 46px; height: 46px; }
+.fr-hero h1 { margin: 0 0 4px; font-size: 28px; font-weight: 680; letter-spacing: -.02em; line-height: 1.12; }
+html[dir='rtl'] .fr-hero h1 { letter-spacing: 0; }
+.fr-hero p { margin: 0; color: var(--md-on-surface-variant); font-size: 14.5px; line-height: 1.45; }
+.fr-field { display: grid; gap: 8px; }
+.fr-label { font-size: 12.5px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--md-on-surface-variant); }
+html[dir='rtl'] .fr-label, html[lang='ja'] .fr-label, html[lang='zh'] .fr-label, html[lang='ko'] .fr-label { text-transform: none; letter-spacing: 0; }
+.fr-seg button { height: 40px; padding: 0 10px; font-size: 13.5px; }
+.fr-tile { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; padding: 14px 16px; border-radius: var(--sh-xl); background: var(--md-surface-container-high); }
+.fr-tile.ok { background: color-mix(in srgb, var(--md-primary-container) 70%, var(--md-surface-container-high)); }
+.fr-tile.bad { background: color-mix(in srgb, var(--md-error) 12%, var(--md-surface-container-high)); }
+.fr-tile-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 42% 58% 55% 45% / 48% 42% 58% 52%; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fr-tile.ok .fr-tile-icon { background: var(--md-primary); color: var(--md-on-primary); }
+.fr-tile-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fr-tile-text { min-width: 0; }
+.fr-tile-text b { display: block; font-size: 14.5px; font-weight: 650; margin-bottom: 2px; }
+.fr-tile-text p { margin: 0; font-size: 13px; line-height: 1.4; color: var(--md-on-surface-variant); }
+.fr-actions { display: flex; justify-content: flex-end; padding-top: 4px; }
+/* (The hand-over's offer in the library's tile — ui/handoversheet.ts handoverOffer: its words, the folder, the progress,
+   and its buttons on a row of their own under them.) */
+.fr-offer { grid-template-columns: auto 1fr; align-items: start; }
+.fr-offer .fr-tile-text p { margin: 0 0 6px; }
+.fr-offer .fr-tile-text p:empty { display: none; }
+.fr-offer .fr-tile-text code { font-size: 12px; }
+.fr-offer .handover-count b { display: inline; margin: 0; font-size: inherit; }
+.fr-offer progress { margin: 4px 0 6px; }
+.fr-offer[data-handover="failed"] { background: color-mix(in srgb, var(--md-error) 12%, var(--md-surface-container-high)); }
+.fr-tile-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.fr-start { min-width: 200px; }
+html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
+@media (max-width: 520px) { .fr-tile { grid-template-columns: auto 1fr; } .fr-tile > .btn { grid-column: 1 / -1; justify-self: end; } .fr-card { padding: 22px 18px 18px; } .fr-hero h1 { font-size: 23px; } }
+@media (prefers-reduced-motion: reduce) { .firstrun { animation: none; } }
+.fr-badge { display: grid; place-items: center; border-radius: 30%; background: var(--md-primary-container); flex: none; }
+.fr-tile .hint { margin: 0; }
+.switch-sheet .switch-file { display: flex; gap: 8px; align-items: center; }

@@ -59,7 +59,9 @@
       "titlebar.cjs",
       "packs.cjs",
       "antivirus.cjs",
-      "screentr.cjs"
+      "screentr.cjs",
+      "handover.cjs",
+      "rustswitch.cjs"
     ],
     "extraResources": [
       {

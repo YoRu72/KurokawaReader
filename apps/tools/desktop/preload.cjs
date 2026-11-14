@@ -38,3 +38,18 @@ contextBridge.exposeInMainWorld('kurokawaTools', {
   onUpdateProgress: (cb) => { const fn = (_e, p) => cb(p); ipcRenderer.on('kt:update-progress', fn); return () => ipcRenderer.removeListener('kt:update-progress', fn); },
 });
 ipcRenderer.on('kt:open', (_e, u) => window.dispatchEvent(new CustomEvent('kt:open', { detail: u })));
+// (Stage P9: the hand-over's writing half — desktop/handover.cjs — and what the page asks before it offers the move to
+// the Rust build. Its own name, so window.kurokawaTools keeps exactly the channels both shells have.)
+contextBridge.exposeInMainWorld('kurokawaHandover', {
+  shell: 'electron',
+  begin(o) { return ipcRenderer.invoke('kt:handover-begin', o); },
+  write(rel, data, append) { return ipcRenderer.invoke('kt:handover-write', rel, data, !!append); },
+  shellFiles() { return ipcRenderer.invoke('kt:handover-shell'); },
+  engineFiles() { return ipcRenderer.invoke('kt:handover-engine'); },
+  readPart(rel) { return ipcRenderer.invoke('kt:handover-read', rel); },
+  verify(list) { return ipcRenderer.invoke('kt:handover-verify', list); },
+  finish(info) { return ipcRenderer.invoke('kt:handover-finish', info); },
+  abort() { return ipcRenderer.invoke('kt:handover-abort'); },
+  status() { return ipcRenderer.invoke('kt:handover-status'); },
+  switchInfo(o) { return ipcRenderer.invoke('kt:rustSwitchInfo', o); },
+});

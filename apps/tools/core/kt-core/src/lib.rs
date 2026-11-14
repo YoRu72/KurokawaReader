@@ -28,3 +28,6 @@ pub mod streamlogic;
 // (Stage P5: the video tools.)
 pub mod videotools;
 pub mod vidjson;
+// (Stage P9: the hand-over from the Electron build — the Reader's handoverlogic.rs with Tools' names, and the engine's
+// files carried before aria2c first starts.)
+pub mod handoverlogic;
