@@ -28,7 +28,8 @@ const FIELD_CSS = `.style-field{gap:10px}.style-field>.label{display:flex;align-
 .pair-side{display:flex;flex-direction:column;gap:10px;padding:16px 0 4px;border-top:1px solid var(--md-outline-variant)}
 .pair-side>h4{margin:0;font-size:16px;font-weight:650;color:var(--md-on-surface);display:flex;align-items:center;gap:6px}.pair-side>.hint{margin:-6px 0 0}
 .pair-side .theme-swatches button{width:44px;height:44px}.pair-switch{display:flex;align-items:center;justify-content:space-between;gap:12px}.pair-switch>span{display:flex;flex-direction:column;gap:2px}
-.style-pair .pair-sides{display:flex;flex-direction:column;gap:14px}`;
+.style-pair .pair-sides{display:flex;flex-direction:column;gap:14px}
+html.pc .settings-body.pc-one>.card>.field.style-pair{display:flex;flex-direction:column;border-top:0;padding-top:4px}html.pc .style-pair .pair-preview{max-width:520px;width:100%;align-self:flex-start}`;
 let cssIn = false;
 const ensureCss = (): void => { if (cssIn) return; cssIn = true; const s = document.createElement('style'); s.id = 'kr-gallery'; s.textContent = `${GALLERY_CSS as string}\n${EDITOR_CSS as string}\n${FIELD_CSS}`; document.head.append(s); };
 
