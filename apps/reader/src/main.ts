@@ -19,6 +19,8 @@ import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
 import { initPcShell } from './ui/pcshell';
 import { takeResume } from './resume';
+// (Undo / redo — src/ui/undo.ts, loaded with the first thing that can be undone; its look here, with the rest.)
+import './styles/undo.css';
 
 const app = document.getElementById('app')!;
 let current: (HTMLElement & { dispose?: () => void }) | null = null;

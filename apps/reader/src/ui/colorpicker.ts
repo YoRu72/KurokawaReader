@@ -94,9 +94,11 @@ export function openColorSheet(initial: string, onChange: (hex: string) => void,
     }
     draw(); onChange(current());
   };
-  canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); pick(e, true); });
+  // (A drag is one change, for whoever keeps an undo of them — src/ui/optionsundo.ts: told when it starts and ends.)
+  const gesture = (detail: 'start' | 'end') => document.dispatchEvent(new CustomEvent('kr:gesture', { detail }));
+  canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); gesture('start'); pick(e, true); });
   canvas.addEventListener('pointermove', (e) => { if (mode && e.buttons) pick(e); });
-  canvas.addEventListener('pointerup', () => { mode = null; });
+  canvas.addEventListener('pointerup', () => { if (mode) gesture('end'); mode = null; });
   canvas.style.touchAction = 'none';
   hex.addEventListener('change', () => { const rgb = hexToRgb(hex.value); if (rgb) { [hue, sat, val] = rgbToHsv(...rgb); draw(); onChange(current()); } else hex.value = current(); });
   const presets = ['#1b1b1b', '#141414', '#000000', '#f3e8d2', '#ebe5da', '#fbfaf7', '#d2d2d2', '#cfcbc4', '#3b2f21', '#e5c56b', '#e58a8a', '#7fcfa5', '#7fb4e5', '#b9a3e8', '#8fd0f0', '#ebc47e'];

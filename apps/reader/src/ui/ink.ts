@@ -5,6 +5,7 @@ import { h, icon } from './dom';
 import { t } from '../i18n';
 import { uid, type InkStroke } from '../db';
 import type { PdfViewer } from '../formats/pdf';
+import { pushUndoScope, keyHint } from './undo';
 
 const NS = 'http://www.w3.org/2000/svg';
 export const INK_COLORS = ['#1a1a1a', '#d32f2f', '#1565c0', '#2e7d32', '#f9a825', '#8e24aa'];
@@ -14,7 +15,16 @@ export interface InkOptions {
   viewer: PdfViewer;
   strokes(): InkStroke[];
   save(list: InkStroke[], removed?: string[]): void;
+  /** Whose ink (the book's id): its undo history is kept for the session, across the layer made again. */
+  key?: string;
 }
+
+// Undo / redo: every stroke drawn and every sweep of the eraser is a step, several deep, kept for the session by book
+// (the layer is made again when the book is). A stroke brought back gets a new id: its old one is tombstoned for sync
+// (src/ui/undo.ts says why).
+type InkOp = { kind: 'add' | 'erase'; strokes: InkStroke[] };
+const HISTORY = 100;
+const histories = new Map<string, { undo: InkOp[]; redo: InkOp[] }>();
 
 export interface Ink { toolbar: HTMLElement; render(page?: number): void; setOn(on: boolean): void; readonly on: boolean; dispose(): void }
 
@@ -24,7 +34,29 @@ export function inkLayer(o: InkOptions): Ink {
   let on = false, mode: 'pen' | 'erase' = 'pen', color = INK_COLORS[0], width = WIDTHS[1];
   try { const s = JSON.parse(localStorage.getItem('kr.ink') ?? '{}') as { color?: string; width?: number }; if (s.color) color = s.color; if (s.width) width = s.width; } catch { /* defaults */ }
   const remember = () => { try { localStorage.setItem('kr.ink', JSON.stringify({ color, width })); } catch { /* private mode */ } };
-  const undone: InkStroke[] = [];
+  const hist = o.key ? (histories.get(o.key) ?? histories.set(o.key, { undo: [], redo: [] }).get(o.key)!) : { undo: [], redo: [] };
+  const pushOp = (op: InkOp) => { hist.undo.push(op); if (hist.undo.length > HISTORY) hist.undo.shift(); hist.redo.length = 0; };
+  const pagesOf = (list: InkStroke[]) => [...new Set(list.map((s) => s.page))];
+  const drop = (ids: string[]) => { const set = new Set(ids); o.save(o.strokes().filter((s) => !set.has(s.id)), ids); };
+  const bring = (list: InkStroke[]): InkStroke[] => { const again = list.map((s) => ({ ...s, id: uid() })); o.save([...o.strokes(), ...again]); return again; };
+  let sweep: InkOp | null = null;
+  const undoInk = (): boolean => {
+    const op = hist.undo.pop();
+    if (!op) {
+      // (Nothing done here this session: the last stroke drawn before is taken back, as always.)
+      const list = o.strokes(); if (!list.length) return false;
+      const last = list.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+      drop([last.id]); hist.redo.push({ kind: 'add', strokes: [last] }); pagesOf([last]).forEach((n) => render(n)); syncBar(); return true;
+    }
+    if (op.kind === 'add') drop(op.strokes.map((s) => s.id)); else op.strokes = bring(op.strokes);
+    hist.redo.push(op); pagesOf(op.strokes).forEach((n) => render(n)); syncBar(); return true;
+  };
+  const redoInk = (): boolean => {
+    const op = hist.redo.pop(); if (!op) return false;
+    if (op.kind === 'add') op.strokes = bring(op.strokes); else drop(op.strokes.map((s) => s.id));
+    hist.undo.push(op); pagesOf(op.strokes).forEach((n) => render(n)); syncBar(); return true;
+  };
+  let releaseKeys: (() => void) | null = null;
 
   const layerOf = (page: HTMLElement): SVGSVGElement => {
     let svg = page.querySelector<SVGSVGElement>(':scope > svg.pdf-ink');
@@ -87,10 +119,10 @@ export function inkLayer(o: InkOptions): Ink {
   const up = (e: PointerEvent) => {
     if (!live || e.pointerId !== live.id) return;
     const l = live; live = null; strokeEnded = Date.now();
-    if (mode === 'erase') { lastErase = null; return; }
+    if (mode === 'erase') { lastErase = null; sweep = null; return; }
     l.el.remove();
     const s: InkStroke = { id: uid(), page: l.n, color, w: width, pts: l.pts.map((v) => Math.round(v * 10000) / 10000), createdAt: Date.now() };
-    o.save([...o.strokes(), s]); undone.length = 0; render(l.n); syncBar();
+    o.save([...o.strokes(), s]); pushOp({ kind: 'add', strokes: [s] }); render(l.n); syncBar();
   };
   // The eraser takes every stroke its path comes near: the distance measured to the stroke's segments (not only
   // its sampled points — a touch between two of them counts), along the eraser's own path from where it last was
@@ -118,7 +150,11 @@ export function inkLayer(o: InkOptions): Ink {
     const hit = o.strokes().filter(near);
     if (!hit.length) return;
     const ids = new Set(hit.map((s) => s.id));
-    o.save(o.strokes().filter((s) => !ids.has(s.id)), [...ids]); render(n); syncBar();
+    o.save(o.strokes().filter((s) => !ids.has(s.id)), [...ids]);
+    // (One sweep of the eraser, however many strokes it takes, is one step.)
+    if (first || !sweep) { sweep = { kind: 'erase', strokes: [] }; pushOp(sweep); }
+    sweep.strokes.push(...hit);
+    render(n); syncBar();
   };
   // (While the pen is on, a tap or a click on a page is the pen's: the reader's tap zones — its bars shown or
   // hidden, a page turned — would move the page under the pen.)
@@ -139,12 +175,9 @@ export function inkLayer(o: InkOptions): Ink {
   // The toolbar.
   const penBtn = h('button', { type: 'button', class: 'icon-btn', title: t('inkPen'), 'aria-label': t('inkPen'), 'aria-pressed': 'false', onclick: () => { mode = 'pen'; syncBar(); } }, icon('pen'));
   const eraseBtn = h('button', { type: 'button', class: 'icon-btn', title: t('inkEraser'), 'aria-label': t('inkEraser'), 'aria-pressed': 'false', onclick: () => { mode = 'erase'; syncBar(); } }, icon('eraser'));
-  const undoBtn = h('button', { type: 'button', class: 'icon-btn', title: t('undo'), 'aria-label': t('undo'), onclick: () => {
-    const list = o.strokes(); if (!list.length) return;
-    const last = list.reduce((a, b) => (b.createdAt > a.createdAt ? b : a)); undone.push(last);
-    o.save(list.filter((s) => s.id !== last.id), [last.id]); render(last.page); syncBar();
-  } }, icon('back'));
-  const redoBtn = h('button', { type: 'button', class: 'icon-btn', title: t('redo'), 'aria-label': t('redo'), onclick: () => { const s = undone.pop(); if (!s) return; o.save([...o.strokes(), { ...s, id: uid(), createdAt: Date.now() }]); render(s.page); syncBar(); } }, icon('arrowRight'));
+  const tip = (what: 'undo' | 'redo') => t(what) + (keyHint(what) ? ` (${keyHint(what)})` : '');
+  const undoBtn = h('button', { type: 'button', class: 'icon-btn undo-btn', title: tip('undo'), 'aria-label': t('undo'), 'data-icon': 'undo', onclick: () => { undoInk(); } }, icon('undo'));
+  const redoBtn = h('button', { type: 'button', class: 'icon-btn', title: tip('redo'), 'aria-label': t('redo'), 'data-icon': 'redo', onclick: () => { redoInk(); } }, icon('undo'));
   const colors = h('div', { class: 'ink-colors', role: 'radiogroup', 'aria-label': t('color') }, ...INK_COLORS.map((c) => h('button', { type: 'button', role: 'radio', class: 'ink-color', style: { background: c }, 'aria-label': c, 'aria-checked': String(c === color), onclick: () => { color = c; mode = 'pen'; remember(); syncBar(); } })));
   const widths = h('div', { class: 'ink-widths', role: 'radiogroup', 'aria-label': t('inkWidth') }, ...WIDTHS.map((w, i) => h('button', { type: 'button', role: 'radio', class: 'ink-width', 'aria-label': `${i + 1}`, 'aria-checked': String(w === width), onclick: () => { width = w; mode = 'pen'; remember(); syncBar(); } }, h('i', { style: { height: `${3 + i * 3}px` } }))));
   const closeBtn = h('button', { type: 'button', class: 'icon-btn', title: t('close'), 'aria-label': t('close'), onclick: () => setOn(false) }, icon('close'));
@@ -160,13 +193,14 @@ export function inkLayer(o: InkOptions): Ink {
     colors.querySelectorAll('.ink-color').forEach((b) => b.setAttribute('aria-checked', String(b.getAttribute('aria-label') === color)));
     widths.querySelectorAll('.ink-width').forEach((b, i) => b.setAttribute('aria-checked', String(WIDTHS[i] === width)));
     swatch.style.background = color; swatch.style.width = swatch.style.height = `${10 + WIDTHS.indexOf(width) * 4}px`;
-    undoBtn.disabled = !o.strokes().length; redoBtn.disabled = !undone.length;
+    undoBtn.disabled = !hist.undo.length && !o.strokes().length; redoBtn.disabled = !hist.redo.length;
     root.dataset.ink = on ? mode : '';
   };
-  const setOn = (v: boolean) => { on = v; toolbar.hidden = !v; root.classList.toggle('inking', v); root.closest('.reader-view')?.classList.toggle('inking', v); if (v) mode = 'pen'; syncBar(); };
+  // (While the pen is out, Ctrl+Z and Ctrl+Y are the ink's — on a computer: src/ui/undo.ts.)
+  const setOn = (v: boolean) => { releaseKeys?.(); releaseKeys = v ? pushUndoScope({ undo: () => { undoInk(); return true; }, redo: () => { redoInk(); return true; } }) : null; on = v; toolbar.hidden = !v; root.classList.toggle('inking', v); root.closest('.reader-view')?.classList.toggle('inking', v); if (v) mode = 'pen'; syncBar(); };
   syncBar();
   return {
     toolbar, render, setOn, get on() { return on; },
-    dispose() { root.removeEventListener('click', swallow, true); root.removeEventListener('dblclick', swallow, true); root.removeEventListener('pointerdown', down, true); root.removeEventListener('pointermove', move, true); root.removeEventListener('pointerup', up, true); root.removeEventListener('pointercancel', up, true); },
+    dispose() { releaseKeys?.(); releaseKeys = null; root.removeEventListener('click', swallow, true); root.removeEventListener('dblclick', swallow, true); root.removeEventListener('pointerdown', down, true); root.removeEventListener('pointermove', move, true); root.removeEventListener('pointerup', up, true); root.removeEventListener('pointercancel', up, true); },
   };
 }

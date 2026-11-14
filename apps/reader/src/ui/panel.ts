@@ -48,6 +48,8 @@ export class SidePanel {
 
   show(id: string): void {
     this.active = id;
+    // (A tab's own buttons in the head — the reading options' Undo / Redo — go with it.)
+    this.el.querySelector('.panel-head > .opt-history')?.remove();
     clear(this.tabsEl);
     for (const tab of this.tabs) this.tabsEl.append(h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab.id === id), onclick: () => this.show(tab.id) }, tab.label));
     clear(this.body);

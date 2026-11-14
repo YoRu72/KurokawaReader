@@ -173,7 +173,9 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
     shadow.innerHTML = `<style>.card{font-size:19px;text-align:center;color:${night() ? '#e8e6e3' : '#1d1b18'}}img{max-width:100%}${r.css}</style>${r.html}`;
     void attachMedia(deck, shadow, urls);
     shadow.querySelectorAll<HTMLButtonElement>('.anki-sound').forEach((b) => b.addEventListener('click', () => void play(b.dataset.sound!)));
-    sh.actions.append(h('button', { class: 'btn small', type: 'button', onclick: async () => { delete p.cards[card.id]; await persist(); sh.close(); toast(t('ankiReset')); } }, icon('undo'), t('ankiForget')));
+    sh.actions.append(h('button', { class: 'btn small', type: 'button', onclick: async () => { const was = p.cards[card.id]; delete p.cards[card.id]; await persist(); sh.close();
+      // (Undo: the card's progress back as it was.)
+      if (was) void import('../ui/undo').then((m) => m.offerUndo(t('ankiReset'), async () => { p.cards[card.id] = was; await persist(); }, async () => { delete p.cards[card.id]; await persist(); }, { alive: () => root.isConnected })); else toast(t('ankiReset')); } }, icon('undo'), t('ankiForget')));
   }
 
   /* ---------- options ---------- */

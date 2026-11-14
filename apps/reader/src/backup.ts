@@ -103,7 +103,7 @@ async function manifest(full: boolean): Promise<Manifest> {
     books: [],
   };
   const icon = brandIcon(); if (iconOk(icon)) out.appIcon = icon;
-  { const { loadPins, pinsForBackup } = await import('./pins'); const pins = pinsForBackup(await loadPins(), folders); if (pins) out.libraryPins = pins; }
+  { const { loadPins } = await import('./pins'); const { pinsForBackup } = await import('./pinedit'); const pins = pinsForBackup(await loadPins(), folders); if (pins) out.libraryPins = pins; }
   for (const b of books) out.books.push({
     key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
     folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, done: b.done, doneAt: b.doneAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
@@ -292,7 +292,7 @@ export async function restoreManifest(m: Manifest, zip: BackupParts, onProgress?
   }
   if (want.reading) restoreShared(m, idMap);
   // (The pins, as the folders: merged — the device's first, the backup's it lacks after them.)
-  if (m.libraryPins) await (await import('./pins')).restorePins(m.libraryPins, folders, idMap);
+  if (m.libraryPins) await (await import('./pinedit')).restorePins(m.libraryPins, folders, idMap);
   return applied;
 }
 

@@ -54,7 +54,9 @@ export function rulesListSheet(book?: { id: string; title: string }): void {
         h('button', { type: 'button', class: 'rule-body', onclick: () => ruleSheet({ rule: r, made: draw }) },
           h('span', { class: 'rule-find-text', dir: 'auto' }, r.regex ? `/${r.find}/` : `«${r.find}»`),
           h('small', { class: 'src', dir: 'auto' }, `${r.replace ? `→ «${r.replace}»` : t('textRuleRemoved')} · ${r.book ? (book && r.book === book.id ? book.title : t('textRuleOneBook')) : t('textRuleAllBooks')}`)),
-        iconButton('trash', t('delete'), () => { saveTextRules(textRules().filter((x) => x.id !== r.id)); draw(); }));
+        iconButton('trash', t('delete'), () => { saveTextRules(textRules().filter((x) => x.id !== r.id)); draw();
+          // (Undo: the rule back as it was.)
+          void import('./undo').then((m) => m.offerUndo(t('ruleDeleted'), () => { saveTextRules([...textRules().filter((x) => x.id !== r.id), r]); if (sh.el.isConnected) draw(); }, () => { saveTextRules(textRules().filter((x) => x.id !== r.id)); if (sh.el.isConnected) draw(); })); }));
     }));
   };
   draw();

@@ -52,6 +52,7 @@ import { attachFurigana, isJapanese } from '../furigana';
 import { textRules, applyTextRules } from '../textrules';
 import { attachPinyin } from '../readings';
 import { scheduleSync, markDeleted } from '../sync';
+import { offerPutBack, offerNoteBack } from '../undoitems';
 import { mountBars, moreList, type ActionRun } from '../ui/buttonbars';
 import { buttonSheet } from '../ui/buttonsheet';
 import { shareFile, saveImage, copyImage } from '../ui/share';
@@ -1742,7 +1743,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       ta);
     sheet.actions.append(
       h('button', { class: 'btn danger small', onclick: async () => { await removeHighlight(doc, hl.id); sheet.close(); } }, icon('trash'), t('removeHighlight')),
-      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = stampAfter(hl.noteAt); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+      h('button', { class: 'btn primary small', onclick: async () => { const was = hl.note; hl.note = ta.value.trim() || undefined; hl.noteAt = stampAfter(hl.noteAt); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); sheet.close(); if (was && !hl.note) noteUndo(doc, hl.id, was); else toast(t('noteSaved')); } }, icon('check'), t('done')));
   }, true);
 
   function applyHighlights(doc: OpenDoc): void {
@@ -1772,11 +1773,25 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   }
 
   async function removeHighlight(doc: OpenDoc, id: string): Promise<void> {
+    const was = doc.book.highlights.find((x) => x.id === id);
+    document.getSelection()?.removeAllRanges();   // (what is left shown as it now is, no selection over it)
     doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => m.replaceWith(...m.childNodes));
     void markDeleted(id);
     doc.book.highlights = (doc.book.highlights ?? []).filter((x) => x.id !== id);
     await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; });
     renumberNotes(doc);
+    // (Undo: it comes back — its note with it — under a new id: src/undoitems.ts.)
+    if (was) offerPutBack(t('hlRemoved'), doc.book.id, 'highlights', was, (b) => highlightsNow(doc, b), () => doc.wrapper.isConnected);
+  }
+  /** The book's highlights as stored now (an undo, a redo): marked again, the panel redrawn. */
+  function highlightsNow(doc: OpenDoc, b: { highlights: Highlight[] } | undefined): void {
+    if (!b || !doc.wrapper.isConnected) return;
+    doc.book.highlights = b.highlights;
+    unmarkHighlights(doc); applyHighlights(doc); panel.refresh();
+  }
+  /** A highlight's note cleared: Undo writes it back. */
+  function noteUndo(doc: OpenDoc, id: string, note: string): void {
+    offerNoteBack(t('noteDeleted'), doc.book.id, 'highlights', id, note, (b) => highlightsNow(doc, b), () => doc.wrapper.isConnected);
   }
 
   /* ---------- bookmarks ---------- */
@@ -1825,7 +1840,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
         body.append(h('ul', { class: 'plain-list' }, ...all.map(({ doc, bm }) => h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); scrollToLocator(bm.locator); panel.dismiss(); } },
             h('span', { dir: 'auto' }, bm.label), h('span', { class: 'meta', dir: 'auto' }, (docs.length > 1 ? doc.book.title + ' · ' : '') + (bm.excerpt ?? ''))),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); doc.book.bookmarks = doc.book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(doc.book.id, (b) => { b.bookmarks = doc.book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); doc.book.bookmarks = doc.book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(doc.book.id, (b) => { b.bookmarks = doc.book.bookmarks; }); panel.refresh(); offerPutBack(t('bookmarkDeleted'), doc.book.id, 'bookmarks', bm, (b) => { if (b) { doc.book.bookmarks = b.bookmarks; panel.refresh(); } }, () => doc.wrapper.isConnected); } }, icon('trash'))))));
       } },
       { id: 'notes', label: t('notes'), render: (body) => {
         const all = docs.flatMap((d) => (d.book.highlights ?? []).filter((x) => x.note).sort((a, b) => a.createdAt - b.createdAt).map((hl, i) => ({ doc: d, hl, n: i + 1 })));
@@ -1834,7 +1849,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { const m = doc.wrapper.querySelector(`mark[data-hl="${hl.id}"]`) as HTMLElement | null; if (m) { if (!m.id) m.id = `hl-${hl.id}`; scrollToAnchor(m.id); } panel.dismiss(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(n)), h('span', { dir: 'auto', class: 'meta' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text)),
             h('span', { dir: 'auto' }, hl.note!)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { hl.note = undefined; hl.noteAt = stampAfter(hl.noteAt); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${hl.id}"]`).forEach((m) => { (m as HTMLElement).title = ''; m.classList.remove('has-note'); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { const was = hl.note; hl.note = undefined; hl.noteAt = stampAfter(hl.noteAt); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${hl.id}"]`).forEach((m) => { (m as HTMLElement).title = ''; m.classList.remove('has-note'); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); panel.refresh(); if (was) noteUndo(doc, hl.id, was); } }, icon('trash'))))));
       } },
       { id: 'highlights', label: t('highlights'), render: (body) => {
         const all = docs.flatMap((d) => (d.book.highlights ?? []).map((hl) => ({ doc: d, hl }))).sort((a, b) => b.hl.createdAt - a.hl.createdAt);
@@ -2768,7 +2783,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
         if (!list.length) { body.append(h('p', { class: 'center' }, t('noBookmarks'))); return; }
         body.append(h('ul', { class: 'plain-list' }, ...list.map((bm) => h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch' }, onclick: () => { back.remember(); viewer.goTo(bm.locator.page ?? 1, bm.locator.offset ?? 0); panel.dismiss(); } }, h('span', null, bm.label), bm.excerpt ? h('span', { class: 'meta', dir: 'auto' }, bm.excerpt) : null),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); book.bookmarks = book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; }); panel.refresh(); } }, icon('trash'))))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(bm.id); book.bookmarks = book.bookmarks.filter((x) => x.id !== bm.id); await db.updateBook(book.id, (b) => { b.bookmarks = book.bookmarks; }); panel.refresh(); offerPutBack(t('bookmarkDeleted'), book.id, 'bookmarks', bm, pdfNow, pdfAlive); } }, icon('trash'))))));
       } },
       { id: 'notes', label: t('notes'), render: (body) => {
         const pins = [...(book.pins ?? [])].sort((a, b) => a.createdAt - b.createdAt);
@@ -2779,13 +2794,13 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(pin.page, Math.max(0, pin.y - 0.1)); panel.dismiss(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: pin.page, total: viewer.total }))),
             h('span', { dir: 'auto' }, pin.note)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); } }, icon('trash')))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { void markDeleted(pin.id); book.pins = (book.pins ?? []).filter((x) => x.id !== pin.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); panel.refresh(); offerPutBack(t('pageNoteDeleted'), book.id, 'pins', pin, pdfNow, pdfAlive); } }, icon('trash')))));
         noted.forEach((hl, i) => list.append(h('li', null,
           h('button', { type: 'button', style: { flex: '1', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onclick: () => { back.remember(); viewer.goTo(hl.page, Math.max(0, (hl.rects[0]?.[1] ?? 0) - 0.1)); panel.dismiss(); } },
             h('span', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } }, h('sup', { class: 'kr-note-badge static' }, localDigits(i + 1)), h('span', { class: 'meta' }, t('pageOf', { n: hl.page, total: viewer.total }))),
             h('span', { class: 'meta', dir: 'auto' }, hl.text.length > 120 ? hl.text.slice(0, 120) + '…' : hl.text),
             h('span', { dir: 'auto' }, hl.note!)),
-          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { const at = stampAfter(hl.noteAt); await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) { x.note = undefined; x.noteAt = at; } }); const local = (book.pdfHighlights ?? []).find((y) => y.id === hl.id); if (local) { local.note = undefined; local.noteAt = at; } scheduleSync(); renderHighlights(hl.page); panel.refresh(); } }, icon('trash')))));
+          h('button', { type: 'button', class: 'del', 'aria-label': t('delete'), onclick: async () => { const was = hl.note; const at = stampAfter(hl.noteAt); await db.updateBook(book.id, (b) => { const x = (b.pdfHighlights ?? []).find((y) => y.id === hl.id); if (x) { x.note = undefined; x.noteAt = at; } }); const local = (book.pdfHighlights ?? []).find((y) => y.id === hl.id); if (local) { local.note = undefined; local.noteAt = at; } scheduleSync(); renderHighlights(hl.page); panel.refresh(); if (was) offerNoteBack(t('noteDeleted'), book.id, 'pdfHighlights', hl.id, was, pdfNow, pdfAlive); } }, icon('trash')))));
         body.append(list);
       } },
     ], tab, { dock: true });
@@ -2889,10 +2904,19 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     const colors = h('div', { class: 'sel-colors', style: { justifyContent: 'flex-start', border: '0', padding: '0 0 10px' } }, ...HIGHLIGHT_COLORS.map(([cid, hex]) => h('button', { type: 'button', class: 'dot', style: { background: hex, width: '44px', height: '22px', borderRadius: '999px', outline: hl.color === cid ? '3px solid var(--md-primary)' : 'none' }, onclick: async () => { hl.color = cid; await persistHighlights(); renderHighlights(hl.page); sheet.close(); } })));
     sheet.body.append(h('p', { class: 'src', dir: 'auto' }, hl.text.length > 200 ? hl.text.slice(0, 200) + '…' : hl.text), colors, ta);
     sheet.actions.append(
-      h('button', { class: 'btn danger small', onclick: async () => { void markDeleted(hl.id); book.pdfHighlights = (book.pdfHighlights ?? []).filter((x) => x.id !== hl.id); await persistHighlights(); renderHighlights(hl.page); panel.refresh(); sheet.close(); } }, icon('trash'), t('removeHighlight')),
-      h('button', { class: 'btn primary small', onclick: async () => { hl.note = ta.value.trim() || undefined; hl.noteAt = stampAfter(hl.noteAt); await persistHighlights(); scheduleSync(); renderHighlights(hl.page); panel.refresh(); sheet.close(); toast(t('noteSaved')); } }, icon('check'), t('done')));
+      h('button', { class: 'btn danger small', onclick: async () => { void markDeleted(hl.id); book.pdfHighlights = (book.pdfHighlights ?? []).filter((x) => x.id !== hl.id); await persistHighlights(); renderHighlights(hl.page); panel.refresh(); sheet.close(); offerPutBack(t('hlRemoved'), book.id, 'pdfHighlights', hl, pdfNow, pdfAlive); } }, icon('trash'), t('removeHighlight')),
+      h('button', { class: 'btn primary small', onclick: async () => { const was = hl.note; hl.note = ta.value.trim() || undefined; hl.noteAt = stampAfter(hl.noteAt); await persistHighlights(); scheduleSync(); renderHighlights(hl.page); panel.refresh(); sheet.close(); if (was && !hl.note) offerNoteBack(t('noteDeleted'), book.id, 'pdfHighlights', hl.id, was, pdfNow, pdfAlive); else toast(t('noteSaved')); } }, icon('check'), t('done')));
     setTimeout(() => ta.focus(), 100);
   }
+
+  /** The PDF's lists as stored now (an undo, a redo): drawn again. */
+  function pdfNow(b: Book | undefined): void {
+    if (!b || !viewer.root.isConnected) return;
+    const pages = new Set([...(book.pdfHighlights ?? []), ...(b.pdfHighlights ?? [])].map((x) => x.page));
+    book.bookmarks = b.bookmarks; book.pins = b.pins; book.pdfHighlights = b.pdfHighlights;
+    renderPins(); for (const p of pages) renderHighlights(p); panel.refresh();
+  }
+  const pdfAlive = () => viewer.root.isConnected;
 
   /* ---------- PDF notes: long-press (touch) or right-click (desktop) on a page ---------- */
   function renderPins(): void {
@@ -2914,7 +2938,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     let color: Highlight['color'] = existing?.color ?? getSettings().highlightColor;
     const colors = h('div', { class: 'sel-colors', style: { justifyContent: 'flex-start', border: '0', padding: '0 0 10px' } }, ...HIGHLIGHT_COLORS.map(([cid, hex]) => h('button', { type: 'button', class: 'dot', style: { background: hex, width: '44px', height: '22px', borderRadius: '999px', outline: color === cid ? '3px solid var(--md-primary)' : 'none' }, onclick: (e: Event) => { color = cid; colors.querySelectorAll('button').forEach((b) => (b.style.outline = 'none')); (e.currentTarget as HTMLElement).style.outline = '3px solid var(--md-primary)'; } })));
     sheet.body.append(h('p', { class: 'src' }, t('pageOf', { n: pin.page, total: viewer.total })), colors, ta);
-    if (existing) sheet.actions.append(h('button', { class: 'btn danger small', onclick: async () => { void markDeleted(existing.id); book.pins = (book.pins ?? []).filter((x) => x.id !== existing.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); sheet.close(); } }, icon('trash'), t('delete')));
+    if (existing) sheet.actions.append(h('button', { class: 'btn danger small', onclick: async () => { void markDeleted(existing.id); book.pins = (book.pins ?? []).filter((x) => x.id !== existing.id); await db.updateBook(book.id, (b) => { b.pins = book.pins; }); renderPins(); sheet.close(); offerPutBack(t('pageNoteDeleted'), book.id, 'pins', existing, pdfNow, pdfAlive); } }, icon('trash'), t('delete')));
     sheet.actions.append(h('button', { class: 'btn primary small', onclick: async () => {
       const note = ta.value.trim(); if (!note) { ta.focus(); return; }
       if (existing) { existing.note = note; existing.color = color; }
@@ -2956,6 +2980,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   let inkTimer = 0;
   ink = inkLayer({
     viewer,
+    key: book.id,
     strokes: () => book.ink ?? [],
     save: (list: InkStroke[], removed?: string[]) => {
       book.ink = list; removed?.forEach((id) => void markDeleted(id));

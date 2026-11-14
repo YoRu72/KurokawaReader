@@ -137,6 +137,7 @@ export function iconButton(name: string, label: string, onClick?: (e: MouseEvent
 }
 
 let toastTimer: number | undefined;
+/** A snackbar's one action («Undo», «Redo»…): `run` when tapped (the snackbar then goes). */
 export interface ToastAction { label: string; run: () => void }
 /** The snackbar: one at a time (a new one replaces it), said aloud (role=status). The third argument is its time,
  *  or { action, ms, onEnd }: a button on it, and longer to read (6.5 s unless said); `onEnd(acted)` once it goes —

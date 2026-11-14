@@ -11,6 +11,9 @@ export interface CoverEdit {
   custom(): boolean;
   /** The original back; resolves to its URL, or null for a book that had none. */
   restore(): Promise<string | null>;
+  /** The cover as it was before the last set() or restore() (and again as it was after, called a second time): its
+   *  Undo and Redo. */
+  swap?(): Promise<string | null>;
 }
 
 export interface CoverViewOpts {
@@ -52,6 +55,12 @@ export function pickPicture(): Promise<File | null> {
 }
 
 /** The sheet of a cover's own: a picture of one's own, or the original back. */
+/** A cover changed or restored: said with Undo (the cover before it kept for that — src/ui/undo.ts). */
+function undoCover(edit: CoverEdit, changed: (url: string | null) => void, label: string): void {
+  if (!edit.swap) { toast(label); return; }
+  const swap = async () => changed(await edit.swap!());
+  void import('./undo').then((m) => m.offerUndo(label, swap, swap));
+}
 export function editCoverSheet(edit: CoverEdit, changed: (url: string | null) => void): void {
   const sh = openSheet(t('editCover'), t('close'), { stack: true });
   const list = h('div', { class: 'dest-list' });
@@ -59,9 +68,9 @@ export function editCoverSheet(edit: CoverEdit, changed: (url: string | null) =>
   row('images', t('chooseImage'), async () => {
     const f = await pickPicture(); if (!f) return;
     if (!f.type.startsWith('image/')) { toast(t('saveFailed'), 'error'); return; }
-    changed(await edit.set(f)); toast(t('coverChanged'));
+    changed(await edit.set(f)); undoCover(edit, changed, t('coverChanged'));
   });
-  if (edit.custom()) row('undo', t('restoreCover'), async () => { changed(await edit.restore()); toast(t('coverRestored')); });
+  if (edit.custom()) row('undo', t('restoreCover'), async () => { changed(await edit.restore()); undoCover(edit, changed, t('coverRestored')); });
   sh.body.append(list);
 }
 

@@ -543,6 +543,7 @@ const merged = (): VisualSettings => (activeBook && overrides()[activeBook] ? { 
 export function setActiveBook(id: string | null): void {
   if (id === activeBook) return;
   activeBook = id; current = merged();
+  undoWatcher?.book(id);
   listeners.forEach((fn) => fn(current));
 }
 export const activeBookId = (): string | null => activeBook;
@@ -551,8 +552,11 @@ export const bookScoped = (): boolean => !!activeBook && !!overrides()[activeBoo
 /** Give the open book settings of its own (starting from the global ones), or take them away. */
 export function setBookScoped(on: boolean): void {
   if (!activeBook) return;
+  const was = undoWatcher ? beforeChange(activeBook, []) : null;
   if (on) overrides()[activeBook] = overrides()[activeBook] ?? {}; else delete overrides()[activeBook];
-  saveOverrides(); current = merged(); listeners.forEach((fn) => fn(current));
+  saveOverrides(); current = merged();
+  if (was) afterChange(was);
+  listeners.forEach((fn) => fn(current));
 }
 /** The library's own settings (not a book's on top of them): what a backup keeps. */
 export const globalSettings = (): VisualSettings => globals;
@@ -568,15 +572,69 @@ export function updateSettings(patch: Partial<VisualSettings>): VisualSettings {
   const scoped = !!activeBook && !!overrides()[activeBook];
   const toBook = scoped ? bookPart(patch) : {};
   const toApp = scoped ? Object.fromEntries(Object.entries(patch).filter(([k]) => isGlobalOnly(k))) as Partial<VisualSettings> : patch;
+  const was = undoWatcher ? beforeChange(scoped ? activeBook : null, Object.keys(toApp)) : null;
   if (scoped && Object.keys(toBook).length) { overrides()[activeBook!] = { ...overrides()[activeBook!], ...toBook }; saveOverrides(); }
   if (Object.keys(toApp).length || !scoped) {
     globals = { ...globals, ...toApp };
     localStorage.setItem(KEY, JSON.stringify(globals));
   }
   current = merged();
+  if (was) afterChange(was);
   listeners.forEach((fn) => fn(current));
   return current;
 }
+
+/* ---------- Undo (src/ui/optionsundo.ts): every change told to one watcher, with what it replaced ---------- */
+/** One change, as stored: the book's own settings whole (null: it had none), and the app's keys written. */
+export interface SettingsChange {
+  book: string | null; bookBefore: Partial<VisualSettings> | null; bookAfter: Partial<VisualSettings> | null;
+  appBefore: Record<string, unknown>; appAfter: Record<string, unknown>;
+  /** What the reader saw before (the merged settings). */
+  seen: VisualSettings;
+  /** The background picture replaced (setBgImage): the one before and after (null: none). */
+  file?: { before: Blob | null; after: Blob | null };
+}
+/** (setBgImage: the picture replaced, joined to its bgImage change.) */
+let pendingFile: SettingsChange['file'] | null = null;
+let undoWatcher: { change(c: SettingsChange): void; book(id: string | null): void } | null = null;
+export function watchSettings(w: typeof undoWatcher): void { undoWatcher = w; }
+const copyOf = <T>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));
+function beforeChange(book: string | null, appKeys: string[]): SettingsChange {
+  const g = globals as unknown as Record<string, unknown>;
+  return { book, bookBefore: book ? copyOf(overrides()[book] ?? null) : null, bookAfter: null, appBefore: Object.fromEntries(appKeys.map((k) => [k, copyOf(g[k])])), appAfter: {}, seen: current };
+}
+function afterChange(c: SettingsChange): void {
+  const g = globals as unknown as Record<string, unknown>;
+  if (c.book) c.bookAfter = copyOf(overrides()[c.book] ?? null);
+  for (const k of Object.keys(c.appBefore)) c.appAfter[k] = copyOf(g[k]);
+  if (pendingFile) c.file = pendingFile;
+  const same = !c.file && JSON.stringify([c.bookBefore, c.appBefore]) === JSON.stringify([c.bookAfter, c.appAfter]);
+  if (!same) undoWatcher?.change(c);
+}
+/** A change put back as it was (`before`) or done again (`after`) — where it was stored, whatever book is open now. */
+export function putSettingsBack(c: SettingsChange, which: 'before' | 'after'): void {
+  if (c.book) { const v = which === 'before' ? c.bookBefore : c.bookAfter; if (v) overrides()[c.book] = copyOf(v); else delete overrides()[c.book]; saveOverrides(); }
+  const app = which === 'before' ? c.appBefore : c.appAfter;
+  if (Object.keys(app).length) { const next = { ...globals } as unknown as Record<string, unknown>; for (const [k, v] of Object.entries(app)) { if (v === undefined) delete next[k]; else next[k] = copyOf(v); } globals = next as unknown as VisualSettings; localStorage.setItem(KEY, JSON.stringify(globals)); }
+  current = merged();
+  listeners.forEach((fn) => fn(current));
+}
+/** The background picture stored as it was (an undo): no setting written. */
+export async function putBgFile(blob: Blob | null): Promise<void> {
+  const { db } = await import('./db');
+  if (bgImageUrl) { URL.revokeObjectURL(bgImageUrl); bgImageUrl = null; }
+  if (blob) await db.putFile('bg-image', blob); else await db.deleteFile('bg-image');
+  listeners.forEach((fn) => fn(current));
+}
+/** Every setting as stored — the app's and each book's own —, to be put back whole (a backup's restore undone). */
+export interface SettingsSnapshot { globals: VisualSettings; books: Record<string, Partial<VisualSettings>> }
+export const settingsSnapshot = (): SettingsSnapshot => ({ globals: copyOf(globals), books: allBookSettings() });
+export function putSettingsSnapshot(s: SettingsSnapshot): void {
+  globals = copyOf(s.globals); localStorage.setItem(KEY, JSON.stringify(globals));
+  bookOverrides = copyOf(s.books); saveOverrides();
+  current = merged(); listeners.forEach((fn) => fn(current));
+}
+export async function bgFile(): Promise<Blob | null> { const { db } = await import('./db'); return (await db.getFile('bg-image')) ?? null; }
 
 /** The reading options back to their factory values (the app's own — the AI key, sync, the library — left as they
  *  are: the reading options' «Reset» is not a sign-out). */
@@ -643,9 +701,12 @@ export async function loadBgImage(): Promise<string | null> {
 }
 export async function setBgImage(blob: Blob | null): Promise<void> {
   const { db } = await import('./db');
+  const old = undoWatcher ? (await db.getFile('bg-image')) ?? null : null;
   if (bgImageUrl) { URL.revokeObjectURL(bgImageUrl); bgImageUrl = null; }
   if (blob) await db.putFile('bg-image', blob); else await db.deleteFile('bg-image');
+  if (undoWatcher) pendingFile = { before: old, after: blob };
   updateSettings({ bgImage: !!blob });
+  pendingFile = null;
 }
 
 /** Is a hex colour light? Used to flip the interface chrome. */
