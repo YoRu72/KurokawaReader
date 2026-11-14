@@ -233,7 +233,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const rowKey = (x: Task): string => { const m = x.meta ?? {}; const P = dlPrefs(); return [x.state, x.done, x.total, x.downSpeed, x.upSpeed, x.eta, displayName(x), x.error, x.heldBy, x.peers, x.seeds, x.readyFile, m.phase, m.frag, m.frags, m.dhtFallback, noteOf(x.id), places.get(x.id), x.state === 'downloading' && isStalled(x), JSON.stringify(P.show), P.look].join('|'); };
   const update = (el: HTMLElement, x: Task) => {
     const key = rowKey(x); const was = seen.get(el); if (was && was.key === key) return;
-    const actsKey = `${x.state}|${x.heldBy ?? ''}|${displayName(x)}|${x.files.length}`;
+    const actsKey = `${x.state}|${x.heldBy ?? ''}|${displayName(x)}|${x.files?.length ?? 0}`;
     { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
     { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); }
     (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
