@@ -48,7 +48,8 @@ const bookBy = async (p, re) => (await allBooks(p)).find((b) => new RegExp(re).t
 const patchBook = (p, id, fnSrc) => p.evaluate(([id, fnSrc]) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); const q = st.get(id); q.onsuccess = () => { const b = q.result; (0, eval)(fnSrc)(b); st.put(b); tx.oncomplete = () => res(); }; }; }), [id, fnSrc]);
 const meta = (p, key) => p.evaluate((key) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('meta').objectStore('meta').get(key); q.onsuccess = () => res(q.result?.value ?? q.result ?? null); q.onerror = () => res(null); }; }), key);
 const hasFile = (p, key) => p.evaluate((key) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('files').objectStore('files').get(key); q.onsuccess = () => res(!!q.result); q.onerror = () => res(false); }; }), key);
-const stored = (p) => p.evaluate(() => JSON.stringify([localStorage.getItem('kr.visual'), localStorage.getItem('kr.bookVisual')]));
+// (The app's settings and the books' own, as stored; no books' own and an empty list of them are the same.)
+const stored = (p) => p.evaluate(() => JSON.stringify([localStorage.getItem('kr.visual'), JSON.stringify(JSON.parse(localStorage.getItem('kr.bookVisual') || '{}'))]));
 /** Wait until `fn()` (in node) is true; false after `ms`. */
 async function until(fn, ms = 5000) { const end = Date.now() + ms; for (;;) { if (await fn()) return true; if (Date.now() > end) return false; await new Promise((r) => setImmediate(r)); } }
 const bookNow = async (p, id) => (await allBooks(p)).find((b) => b.id === id);
@@ -73,6 +74,8 @@ async function snack(p, action) {
   if (action) { await p.click('.toast .toast-action'); }
   return txt;
 }
+/** The snackbar settled (its rise over), for a picture. */
+const settled = (p) => p.waitForFunction(() => { const x = document.querySelector('.toast'); return !x || x.getAnimations().every((a) => a.playState === 'finished'); });
 const tombstoned = async (p, id) => !!((await meta(p, 'sync.deleted')) ?? {})[id];
 
 const newPage = async (kind, lang, visual = {}) => {
@@ -103,6 +106,7 @@ async function flowSection(lang, file, title) {
   const s1 = await snack(p);
   ok(tag + 'highlight removed: the snackbar says so, with Undo', !!s1.text && !!s1.action, s1);
   ok(tag + '… gone from storage, tombstoned for sync', !(await bookNow(p, bk.id)).highlights.some((x) => x.id === 'hA') && (await tombstoned(p, 'hA')));
+  await settled(p);
   if (lang === 'en') await p.screenshot({ path: path.join(OUT, 'undo-highlight-phone.png') });
   else await p.screenshot({ path: path.join(OUT, 'undo-highlight-phone-ar.png') });
   if (lang === 'ar') ok(tag + 'the snackbar in Arabic, «تراجع»', /أُزيل التظليل/.test(s1.text) && s1.action === 'تراجع', s1);
@@ -161,7 +165,7 @@ async function keysSection() {
   await openReader(p, bk.id); await p.waitForSelector('mark.kr-hl[data-hl="kA"]');
   await p.$eval('mark.kr-hl[data-hl="kA"]', (m) => m.scrollIntoView({ block: 'center' }));
   await p.click('mark.kr-hl[data-hl="kA"]'); await p.waitForSelector('.sheet .btn.danger'); await p.click('.sheet .btn.danger');
-  await snack(p);
+  await snack(p); await settled(p);
   await p.screenshot({ path: path.join(OUT, 'undo-pc.png') });
   const has = async () => (await bookNow(p, bk.id)).highlights.some((x) => x.text === 'the keeper climbed the stair');
   ok(tag + 'removed', await until(async () => !(await has())));
@@ -183,7 +187,9 @@ async function keysSection() {
   await p.keyboard.press('Control+Shift+v'); await p.waitForSelector('.panel.open .opt-history');
   const tip = await p.$eval('.panel-head .opt-history [data-icon="undo"]', (b) => b.title);
   ok(tag + 'the options\' Undo names its keys', /Ctrl\+Z|⌘Z/.test(tip), tip);
-  // Ctrl+Z with the options open: theirs.
+  // Ctrl+Z with the options open: theirs. (A first change stores the settings whole: made and undone first.)
+  await p.evaluate(() => [...document.querySelectorAll('.options-grid .stepper button')].find((b) => b.textContent === '+')?.click());
+  await p.keyboard.press('Control+z'); await until(async () => (await p.evaluate(() => window.__krUndo.options().future.length)) === 1);
   const before = await stored(p);
   await p.evaluate(() => [...document.querySelectorAll('.options-grid .stepper button')].find((b) => b.textContent === '+')?.click());
   await until(async () => (await stored(p)) !== before);
@@ -192,9 +198,8 @@ async function keysSection() {
   await p.keyboard.press('Control+y');
   ok(tag + 'Ctrl+Y redoes it', await until(async () => (await stored(p)) !== before));
   // Shortcuts reset (Settings, a computer): Undo.
-  await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.key-cap');
-  await p.evaluate(() => localStorage.setItem('kr.visual', localStorage.getItem('kr.visual')));
-  await p.click('.key-cap'); await p.keyboard.press('Control+Shift+K');
+  await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.key-cap', { state: 'attached' });
+  await p.evaluate(() => document.querySelector('.key-cap').click()); await p.waitForSelector('.key-cap.listening', { state: 'attached' }); await p.keyboard.press('Control+Shift+K');
   const changed = await until(async () => JSON.parse((await p.evaluate(() => localStorage.getItem('kr.visual'))) ?? '{}').shortcuts?.import === 'Ctrl+Shift+K');
   ok(tag + 'a shortcut rebound', changed);
   const keyCard = await p.evaluate(() => { const b = [...document.querySelectorAll('.card')].find((c) => c.querySelector('.key-cap')); return !!b; });
@@ -239,6 +244,7 @@ async function optionsSection(lang) {
     await until(async () => (await fsNow()) !== fs0);
     const arrow = async () => p.evaluate(() => { const r = [...document.querySelectorAll('.options-grid .field .row')].find((x) => /Font size/i.test(x.textContent)); return r?.querySelector('.reset-one')?.dataset.act ?? null; });
     ok(tag + 'after a change the option\'s arrow undoes it', (await arrow()) === 'undo', await arrow());
+    await p.evaluate(() => { document.querySelectorAll('.toast').forEach((x) => x.remove()); [...document.querySelectorAll('.options-grid .field .row')].find((x) => /Font size/i.test(x.textContent)).scrollIntoView({ block: 'center' }); });
     await p.screenshot({ path: path.join(OUT, 'undo-visual-options-phone.png') });
     await p.evaluate(() => { const r = [...document.querySelectorAll('.options-grid .field .row')].find((x) => /Font size/i.test(x.textContent)); r.querySelector('.reset-one').click(); });
     ok(tag + '… the value before the change back', await until(async () => (await fsNow()) === fs0 || (fs0 === undefined && (await fsNow()) === 19)));
@@ -303,7 +309,7 @@ async function optionsSection(lang) {
     await p.evaluate(() => { const b = [...document.querySelectorAll('.panel.open .panel-body button')].find((x) => /Reset to defaults/.test(x.textContent)); b.scrollIntoView(); });
     const sR = await stored(p);
     await p.evaluate(() => { [...document.querySelectorAll('.panel.open .panel-body button')].find((x) => /Reset to defaults/.test(x.textContent)).click(); });
-    await snack(p);
+    await snack(p); await settled(p);
     await p.screenshot({ path: path.join(OUT, 'undo-reset-phone.png') });
     ok(tag + 'Reset: the picture off, its file kept while Undo is offered', JSON.parse(await p.evaluate(() => localStorage.getItem('kr.visual'))).bgImage === false && (await hasFile(p, 'bg-image')));
     await snack(p, true);
@@ -336,13 +342,17 @@ async function optionsSection(lang) {
     ok(tag + '… Reset, then the snackbar\'s Undo', await until(async () => (await stored(p)) === sB2));
     await p.evaluate(() => document.querySelector('.buttons-sheet .sheet-head .icon-btn[data-icon="close"]').click());
   } else {
-    // Arabic: the head and an arrow, for the screenshot; one change undone.
+    // Arabic: the head and an arrow, for the screenshot; one change undone. (The settings stored whole first: what was
+    // seeded here is a part of them, and any write stores them whole.)
+    await p.evaluate(() => [...document.querySelectorAll('.options-grid .stepper button')].find((b) => b.textContent === '+')?.click());
+    await p.click(undoBtn); await until(async () => (await hist()).future.length === 1);
     const before = await stored(p);
     await p.evaluate(() => [...document.querySelectorAll('.options-grid .stepper button')].find((b) => b.textContent === '+')?.click());
-    await until(async () => (await stored(p)) !== before);
+    const chg = await until(async () => (await stored(p)) !== before);
+    await p.evaluate(() => { document.querySelectorAll('.toast').forEach((x) => x.remove()); document.querySelector('.options-grid .reset-one[data-act="undo"]')?.closest('.field')?.scrollIntoView({ block: 'center' }); });
     await p.screenshot({ path: path.join(OUT, 'undo-visual-options-phone-ar.png') });
     await p.click(undoBtn);
-    ok(tag + 'Undo in Arabic', await until(async () => (await stored(p)) === before));
+    ok(tag + 'Undo in Arabic', chg && await until(async () => (await stored(p)) === before), { chg, before, now: await stored(p), h: await hist() });
   }
   await p.context().close();
 }
@@ -352,7 +362,7 @@ async function optionsSection(lang) {
 async function walkControls(p, tag, hist, undoBtn, redoBtn) {
   const SEL = '.options-grid button, .options-grid input, .options-grid textarea, .options-grid select';
   const count = () => p.evaluate((sel) => document.querySelectorAll(sel).length, SEL);
-  let i = 0, tried = 0, changed = 0; const bad = [], seen = new Set();
+  let i = 0, tried = 0, changed = 0; const bad = [], seen = new Set(), noArrow = [];
   for (; i < (await count()); i++) {
     const info = await p.evaluate(([sel, i]) => {
       const el = document.querySelectorAll(sel)[i]; if (!el) return null;
@@ -382,6 +392,9 @@ async function walkControls(p, tag, hist, undoBtn, redoBtn) {
     tried++;
     if (!did) continue;
     changed++;
+    // (Its option's arrow, there at once: the label beside it — the theme's swatches under their heading's.)
+    const arrow = await p.evaluate(([sel, i]) => { const el = document.querySelectorAll(sel)[i]; if (!el || !el.isConnected) return 'gone'; const box = el.closest('label.row, .row, .field, .book-scope') ?? el.parentElement; let lab = box?.querySelector('[data-key], .label'); if (!lab && el.closest('.theme-swatches')) lab = el.closest('.theme-swatches').previousElementSibling?.querySelector('[data-key]'); return lab ? (lab.querySelector('.reset-one') ? 'yes' : 'no:' + (lab.dataset.key ?? lab.textContent.slice(0, 30))) : 'none'; }, [SEL, i]);
+    if (arrow.startsWith('no') || arrow === 'none') noArrow.push(`${id} (${arrow})`);
     const after = await stored(p); const n1 = (await hist()).past.length;
     await p.click(undoBtn);
     const undone = await until(async () => (await stored(p)) === before);
@@ -391,6 +404,7 @@ async function walkControls(p, tag, hist, undoBtn, redoBtn) {
     const back = await until(async () => (await stored(p)) === before);
     if (n1 !== n0 + 1 || !undone || !redone || !back) bad.push({ id, steps: n1 - n0, undone, redone, back });
   }
+  ok(`${tag}every control that changes a setting shows its option's arrow at once`, !noArrow.length, noArrow);
   ok(`${tag}every control walked (${changed} that change a setting, of ${tried} tried): each one step, Undo exact, Redo exact`, changed > 40 && !bad.length, bad);
 }
 
@@ -437,6 +451,7 @@ async function pdfSection() {
   await p.click('.ink-bar button[aria-label="Eraser"]');
   await p.mouse.move(sheet.x + sheet.width * 0.5, sheet.y + sheet.height * 0.25); await p.mouse.down(); for (let i = 1; i <= 8; i++) await p.mouse.move(sheet.x + sheet.width * 0.5, sheet.y + sheet.height * (0.25 + i * 0.025)); await p.mouse.up();
   ok(tag + 'the eraser swept through two', await until(async () => (await inkN()) === 1));
+  await p.evaluate(() => document.querySelectorAll('.toast').forEach((x) => x.remove()));
   await p.screenshot({ path: path.join(OUT, 'undo-ink-phone.png') });
   const u = '.ink-bar button[aria-label="Undo"]', r = '.ink-bar button[aria-label="Redo"]';
   await p.click(u);
@@ -509,9 +524,10 @@ async function listsSection() {
     localStorage.setItem('kr.glossaryFolders', JSON.stringify([{ id: 'fo1', name: 'Saga' }]));
     localStorage.setItem('kr.textRules', JSON.stringify([{ id: 'r1', find: 'Watermark', replace: '' }]));
   });
+  await p.reload(); await p.waitForSelector('.library-view');
   await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body');
   // Text rules.
-  const hasRules = await p.evaluate(() => { const b = [...document.querySelectorAll('.settings-body button')].find((x) => /Text rules/i.test(x.textContent)); b?.click(); return !!b; });
+  const hasRules = await p.evaluate(() => { const b = [...document.querySelectorAll('.settings-body .card button.btn')].find((x) => /Text rules/i.test(x.textContent)); b?.click(); return !!b; });
   if (hasRules) {
     await p.waitForSelector('.sheet .rule-row');
     const rules0 = await p.evaluate(() => localStorage.getItem('kr.textRules'));
@@ -522,7 +538,7 @@ async function listsSection() {
     await p.evaluate(() => [...document.querySelectorAll('.sheet')].forEach((s) => s.querySelector('.sheet-head .icon-btn')?.click()));
   } else ok(tag + 'the text rules list', false);
   // The glossary (from the AI settings).
-  await p.evaluate(() => { const b = [...document.querySelectorAll('.settings-body button')].find((x) => /AI|Provider/i.test(x.textContent) && x.closest('.card')); b?.click(); });
+  await p.evaluate(() => { const b = [...document.querySelectorAll('.settings-body .card button.btn')].find((x) => /Provider, key/i.test(x.textContent)); b?.click(); });
   const gl = await p.waitForSelector('.sheet button:has-text("Glossary")', { timeout: 4000 }).catch(() => null);
   if (gl) {
     await gl.click(); await p.waitForSelector('.gloss-sheet .gloss-row');

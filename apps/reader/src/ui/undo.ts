@@ -19,7 +19,6 @@
 import { toast } from './dom';
 import { t } from '../i18n';
 import { fits } from '../platform';
-import '../styles/undo.css';
 
 export interface UndoEntry {
   label: string;

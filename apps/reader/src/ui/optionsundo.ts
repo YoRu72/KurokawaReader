@@ -45,7 +45,7 @@ watchSettings({
   change(c) {
     if (applying || !optionsOpen()) return;
     const keys = keysOf(c).filter((k) => !NOISE.has(k)); if (!keys.length) return;
-    for (const k of keys) if (!origin.has(k)) origin.set(k, JSON.parse(JSON.stringify((c.seen as unknown as Record<string, unknown>)[k] ?? null)));
+    for (const k of keys) if (!origin.has(k)) origin.set(k, k === '(bookScope)' ? !!c.bookBefore : JSON.parse(JSON.stringify((c.seen as unknown as Record<string, unknown>)[k] ?? null)));
     future.length = 0;
     if (merging) { merging.changes.push(c); for (const k of keys) if (!merging.keys.includes(k)) merging.keys.push(k); }
     else {
@@ -95,6 +95,8 @@ export const historyState = () => ({ past: past.map((s) => [...s.keys]), future:
 { const w = window as unknown as { __krUndo?: Record<string, unknown> }; w.__krUndo = { ...(w.__krUndo ?? {}), options: historyState }; }
 
 /* ---------- one option's arrow ---------- */
+/** «This book only» as it was before this session changed it (undefined: not changed). */
+export const scopeOrigin = (): boolean | undefined => (origin.has('(bookScope)') ? (origin.get('(bookScope)') as boolean) : undefined);
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 /** What the arrow beside an option does now: bring back its value before this session's change, its default, or the
  *  reader's own value put aside by that default — or nothing. */

@@ -1,19 +1,26 @@
 /* Undo / redo (src/ui/undo.ts, src/ui/optionsundo.ts). The snackbar with an action: M3 — text, then a text button. */
+/* The snackbar on the app's own surfaces (no light slab over a dark page), and rising straight up — centred all the
+   way (the shared «rise» moved it in from the side: its transform replaced the centring one). */
+.toast:not(.error) { background: var(--md-surface-container-highest); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); }
+.toast { animation-name: kr-snack-rise; }
+@keyframes kr-snack-rise { from { transform: translate(-50%, 40px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
 .toast.has-action { display: flex; align-items: center; gap: 4px 12px; padding: 6px 8px 6px 16px; min-height: 48px; width: max-content; max-width: min(560px, calc(100vw - 32px)); pointer-events: auto; }
 html[dir='rtl'] .toast.has-action { padding: 6px 16px 6px 8px; }
 .toast .toast-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .toast .toast-action {
-  flex: none; height: 40px; min-width: 48px; padding: 0 12px; border: 0; border-radius: 20px; background: none; cursor: pointer;
-  color: var(--md-inverse-primary, color-mix(in oklab, var(--md-primary) 50%, var(--md-inverse-on-surface))); font: inherit; font-weight: 600; letter-spacing: .01em;
+  flex: none; height: 36px; min-width: 56px; padding: 0 14px; border: 0; border-radius: 18px; cursor: pointer;
+  /* (The inverse primary when the theme has one; else the snackbar's own text, on a tonal pill — readable on any.) */
+  color: var(--md-primary); background: color-mix(in srgb, var(--md-primary) 14%, transparent);
+  font: inherit; font-weight: 700; letter-spacing: .01em;
 }
-.toast .toast-action:hover { background: color-mix(in srgb, var(--md-inverse-primary, color-mix(in oklab, var(--md-primary) 50%, var(--md-inverse-on-surface))) 12%, transparent); }
-.toast .toast-action:focus-visible { outline: 2px solid var(--md-inverse-primary, color-mix(in oklab, var(--md-primary) 50%, var(--md-inverse-on-surface))); outline-offset: 1px; }
+.toast .toast-action:hover { background: color-mix(in srgb, var(--md-primary) 22%, transparent); }
+.toast .toast-action:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 /* In a book: above the reading bars, never over them (the toolbar, a PDF's page bar, the ink tools sit below). */
 body:has(.reader-view) .toast { bottom: calc(112px + var(--safe-bottom)); }
 body:has(.reader-view.immersive) .toast { bottom: calc(56px + var(--safe-bottom)); }
 
 /* The reading options' history: Undo / Redo in the panel's head (or atop the options in Settings). */
-.opt-history { display: inline-flex; align-items: center; gap: 2px; margin-inline-start: auto; }
+.opt-history { display: inline-flex; align-items: center; gap: 6px; margin-inline-start: auto; }
 .panel-head .opt-history + .icon-btn { margin-inline-start: 4px; }
 .opt-history .icon-btn:disabled { opacity: .38; cursor: default; }
 .opt-history-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; padding: 4px 0; background: inherit; }

@@ -1774,6 +1774,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
 
   async function removeHighlight(doc: OpenDoc, id: string): Promise<void> {
     const was = doc.book.highlights.find((x) => x.id === id);
+    document.getSelection()?.removeAllRanges();   // (what is left shown as it now is, no selection over it)
     doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => m.replaceWith(...m.childNodes));
     void markDeleted(id);
     doc.book.highlights = (doc.book.highlights ?? []).filter((x) => x.id !== id);

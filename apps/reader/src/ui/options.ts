@@ -14,7 +14,7 @@ import { getSettings, updateSettings, setBgImage, loadBgImage, activeBookId, boo
 import { fontsSync } from '../fonts';
 import { placedItemsEditor } from './placeditems';
 import { buttonsField } from './buttonsheet';
-import { historyButtons, arrowFor, arrowAct, resetAllOptions, offerOptionsUndo, stepCount, onHistory } from './optionsundo';
+import { historyButtons, arrowFor, arrowAct, resetAllOptions, offerOptionsUndo, stepCount, onHistory, scopeOrigin } from './optionsundo';
 import { barItems, barText, BAR_ITEM_LABEL, type BarItem, type BarValues } from './readbar';
 /** The reading bar's items as the editor shows them, each with an example. */
 const BAR_SAMPLE: BarValues = { chapter: '', title: '', page: 12, pages: 34, chapterPct: 35, bookPage: 120, bookPages: 410, bookPct: 29, minsChapter: 9, minsBook: 135 };
@@ -37,11 +37,15 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     const hist = historyButtons(historyAfter);
     const head = container.closest('.panel')?.querySelector('.panel-head');
     head?.querySelector('.opt-history')?.remove();
-    if (head) head.insertBefore(hist, head.lastElementChild); else grid.append(h('div', { class: 'opt-history-bar' }, hist));
+    if (head) head.insertBefore(hist, head.lastElementChild); else grid.prepend(h('div', { class: 'opt-history-bar' }, hist));
   }
 
   if (activeBookId()) {
-    grid.append(h('div', { class: 'book-scope' + (bookScoped() ? ' on' : '') }, toggle(t('bookOnly'), bookScoped(), (v) => { setBookScoped(v); rerender(); bump(); }), h('p', { class: 'hint' }, t(bookScoped() ? 'bookOnlyOn' : 'bookOnlyHint'))));
+    const scopeRow = toggle(t('bookOnly'), bookScoped(), (v) => { setBookScoped(v); rerender(); bump(); });
+    // (Its arrow, once changed here: back as it was — src/ui/optionsundo.ts.)
+    const was = scopeOrigin();
+    if (was !== undefined && was !== bookScoped()) scopeRow.querySelector('.label')?.append(h('button', { type: 'button', class: 'reset-one', 'data-act': 'undo', title: t('undoThisChange'), 'aria-label': t('undoThisChange'), onclick: (e: Event) => { e.preventDefault(); e.stopPropagation(); setBookScoped(was); rerender(); bump(); } }, icon('undo')));
+    grid.append(h('div', { class: 'book-scope' + (bookScoped() ? ' on' : '') }, scopeRow, h('p', { class: 'hint' }, t(bookScoped() ? 'bookOnlyOn' : 'bookOnlyHint'))));
   }
 
   /* ----- Theme ----- */
