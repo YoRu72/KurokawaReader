@@ -18,7 +18,12 @@
 //  8. the 1,000-page PDF's text read in idle moments goes on, at the next opening, from where it got to — the pages
 //     read before are not asked of pdf.js again (formats/pdf.ts readAllWhenIdle, booksearch.ts partialPages);
 //  9. a sync that starts by itself (back online) while the page is being scrolled does none of its work — the sync
-//     file read, the library read — till the scroll stops (src/still.ts), and then syncs (the sync file written).
+//     file read, the library read — till the scroll stops (src/still.ts), and then syncs (the sync file written);
+// 10. scrolling the 320-chapter EPUB and the multi-megabyte text — 30 steps (37 px each 170 ms) and a fling (two touch
+//     flicks) — the layout reads (getBoundingClientRect) and long tasks stay within the budget, and, given the build
+//     before (KR_OLD_DIST), within 3 reads of it over the steps (the fling's reads, which vary ±15 % run to run, reported beside it) and
+//     with no long task more: the place-keeping of views/reader.ts
+//     («held through layout changes») measures its anchor once a scroll settles, never on each scroll event.
 // The books are made here (no fixtures).
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
@@ -32,6 +37,10 @@ const BUDGET = { startJsKB: 340, diagKB: 9, libCards: 130, libImgs: 160, libDom:
 
 // Counters the app does not know of: pdf.js's page requests to its worker, and Node.contains calls.
 const INIT = () => {
+  // (Layout reads and long tasks, for 10.)
+  window.__rects = 0; window.__long = 0;
+  { const g = Element.prototype.getBoundingClientRect; Element.prototype.getBoundingClientRect = function () { window.__rects++; return g.call(this); }; }
+  try { new PerformanceObserver((l) => { window.__long += l.getEntries().length; }).observe({ type: 'longtask' }); } catch { /* none */ }
   window.__gp = 0; window.__contains = 0; window.__gpAtFirst = -1;
   // (The count when the first page's picture is put on the page, read at that moment.)
   new MutationObserver(() => { if (window.__gpAtFirst < 0 && document.querySelector('.pdf-page canvas.pdf-pic')) window.__gpAtFirst = window.__gp; }).observe(document, { childList: true, subtree: true });
@@ -91,9 +100,9 @@ function makeText(file) {
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
     return p;
   };
-  const fresh = async () => {
+  const fresh = async (at = base) => {
     const p = await phone();
-    await p.goto(base); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await p.reload(); await p.waitForSelector('.library-view');
+    await p.goto(at); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await p.reload(); await p.waitForSelector('.library-view');
     return p;
   };
   const importBook = async (p, file) => {
@@ -236,6 +245,45 @@ function makeText(file) {
     }));
     ok(`a sync started by itself during a scroll: no more than ${BUDGET.syncReadsWhileScrolled} of its steps while the page moves, then done`, r.during <= BUDGET.syncReadsWhileScrolled && r.after.includes('read') && r.after.includes('write'), r);
     await p.context().close();
+  }
+
+  // 10. Scrolling: layout reads and long tasks (this build, and the one before when given).
+  {
+    const OLD = process.env.KR_OLD_DIST ? path.resolve(process.env.KR_OLD_DIST) : null;
+    const oldServer = OLD ? http.createServer((req, res) => { let f = path.join(OLD, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(OLD, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); }) : null;
+    if (oldServer) await new Promise((r) => oldServer.listen(0, r));
+    const epub = path.join(TMP, 'scroll.epub'); await makeEpub(epub, 320); const txt = path.join(TMP, 'scroll.txt'); makeText(txt);
+    const measure = async (at, file) => {
+      const p = await fresh(at); const id = await importBook(p, file);
+      await openBook(p, id, 'text'); await p.waitForTimeout(4000);
+      const steps = await p.evaluate(async () => { const sc = document.querySelector('.reader-scroll'); await new Promise((r) => setTimeout(r, 400)); window.__rects = 0; window.__long = 0; for (let i = 0; i < 30; i++) { sc.scrollTop += 37; await new Promise((r) => setTimeout(r, 170)); } return { reads: window.__rects, long: window.__long }; });
+      await p.waitForTimeout(1200);
+      const cdp = await p.context().newCDPSession(p);
+      const top0 = await p.evaluate(() => { window.__rects = 0; window.__long = 0; return document.querySelector('.reader-scroll').scrollTop; });
+      // (Two quick flicks of a finger, as a phone sends them; the text goes on moving after the finger has left.)
+      const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+      for (let k = 0; k < 2; k++) { await touch('touchStart', 206, 760); for (let y = 700; y >= 200; y -= 50) await touch('touchMove', 206, y); await touch('touchEnd', 206, 200); await p.waitForTimeout(60); }
+      await p.waitForTimeout(1500);
+      const fling = await p.evaluate((t) => ({ reads: window.__rects, long: window.__long, moved: Math.round(document.querySelector('.reader-scroll').scrollTop - t) }), top0);
+      await p.context().close();
+      return { steps, fling };
+    };
+    for (const [name, file] of [['320-chapter EPUB', epub], ['multi-megabyte text', txt]]) {
+      const now = await measure(base, file);
+      // (Ceilings well over what the build of 0.62.0 measured here — the comparison with the build before is the tight one.)
+      ok(`${name}: 30 scroll steps — no more than 1000 layout reads and no long task over 2`, now.steps.reads <= 1000 && now.steps.long <= 2, now.steps);
+      ok(`${name}: a fling (the text moved) — no more than 800 layout reads and no long task over 2`, now.fling.moved > 600 && now.fling.reads <= 800 && now.fling.long <= 2, now.fling);
+      if (oldServer) {
+        const was = await measure(`http://127.0.0.1:${oldServer.address().port}/`, file);
+        ok(`${name}: 30 scroll steps — within 3 layout reads of the build before, no long task more`, now.steps.reads <= was.steps.reads + 3 && now.steps.long <= was.steps.long, { now: now.steps, was: was.steps });
+        // (A fling goes as far and as many frames as the timing lets it: its reads vary ±15 % run to run on either build
+        // — 529…653 over ~5,000 px on the build before —, so it is reported beside the build before, not failed on; the
+        // 30 steps above are the exact comparison. Its long tasks are: none more.)
+        console.log(`     (reported) ${name}: a fling, layout reads ${now.fling.reads} over ${now.fling.moved} px; the build before ${was.fling.reads} over ${was.fling.moved} px`);
+        ok(`${name}: a fling — no long task more than the build before`, now.fling.long <= was.fling.long, { now: now.fling, was: was.fling });
+      }
+    }
+    oldServer?.close();
   }
 
   ok('no page errors', errors.length === 0, errors);
