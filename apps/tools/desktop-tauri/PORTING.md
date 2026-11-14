@@ -453,6 +453,18 @@ lettering, the words taken off the picture, the region drawn, the caption's text
 - Sizes: installer 5.95 MB, setup program 9.45 MB, deb 11.35 MB, AppImage 85.41 MB, dmg 4.89 MB (arm64) / 9.38 MB
   (universal); silent install 1.3 s, setup through its window 2.5 s.
 
+### CI run 43555038084 (86a2d82)
+
+- «Web UI» failed on every system: tests/tauribridge.cjs runs the self-test against a fake shell that had no
+  `kt_boot_times`, so the new start-up row timed out (it was never re-run locally after the row was added). The fake
+  answers it now, and the row fails at once — not after 15 s — when the shell answers nothing. Nothing was built:
+  ownerlock.rs / boot.rs / the deno pack's Rust are still uncompiled.
+- Every later failure followed from that: the hand-over (Linux, 127: no `target/release/kurokawa-tools`), Windows'
+  installer / setup / «the Tauri build brings it» (no bundle), librqbit's try (101: gdk-sys without «Linux packages»).
+  Those steps now run only after a successful Build (`steps.build.outcome`).
+- «Hand-over — Electron makes it» (Windows) passed in 55 s; its `app.close()` never returned and the 20 s bound let it
+  go on — the cause of run 43551417003's half-hour hang (its log stops right after «hand-over: …ok»).
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of

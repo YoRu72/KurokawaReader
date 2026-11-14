@@ -119,7 +119,7 @@
     // colour before it painted is said too.)
     await check('start-up: first paint and app ready (ms from the program\'s start)', true, async function () {
       var t = null, until = env.now() + 15000;
-      while (!t) { var x = await env.invoke('kt_boot_times', {}); if (x && x.paint != null && x.ready != null) t = x; else if (env.now() > until) throw new Error('timeout: both marks ' + short(x)); else await env.sleep(200); }
+      while (!t) { var x = await env.invoke('kt_boot_times', {}); must(x && typeof x === 'object', 'kt_boot_times answered ' + short(x)); if (x.paint != null && x.ready != null) t = x; else if (env.now() > until) throw new Error('timeout: both marks ' + short(x)); else await env.sleep(200); }
       must(t.paint > 0 && t.ready > 0 && t.ready < 120000, short(t));
       return t.line + (t.colourAtStart ? '; the window opens in the page\'s colour' : '; no window colour before the page (background_color not in this Tauri)');
     }, 20000);

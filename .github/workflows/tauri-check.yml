@@ -181,6 +181,7 @@ jobs:
           ls -la src-tauri/icons
 
       - name: Build
+        id: build
         working-directory: apps/tools/desktop-tauri
         run: |
           if [ -n "${{ matrix.target }}" ]; then
@@ -358,13 +359,13 @@ jobs:
       # now», and after the reload every key, record and kept file the same (desktop-tauri/handovercheck.js). Linux is
       # reported.
       - name: Installer, end to end (Windows, stage P9)
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build.outcome == 'success' }}
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
         run: ../installtest.ps1
 
       - name: Setup program, end to end (Windows, stage P9)
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build.outcome == 'success' }}
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
         run: ../setup/setuptest.ps1
@@ -405,7 +406,7 @@ jobs:
 
       - name: Hand-over — the Tauri build brings it (Windows, stage P9)
         timeout-minutes: 15
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build.outcome == 'success' }}
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
@@ -423,7 +424,7 @@ jobs:
           exit $code
 
       - name: Hand-over — Electron → Tauri (Linux, under Xvfb; reported, stage P9)
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         continue-on-error: true
         env:
           KTH_SELFTEST_TIMEOUT: '400'
@@ -464,7 +465,7 @@ jobs:
       # this runner's copy only, `cargo check --features rqbit`, the compiler's errors printed — never required, and
       # last, so nothing after it builds with it. Its errors say which guesses of src/stream_rqbit.rs were wrong.
       - name: librqbit try (not required)
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os == 'Linux' && steps.build.outcome != 'skipped'
         continue-on-error: true
         working-directory: apps/tools/desktop-tauri/src-tauri
         run: |
