@@ -117,8 +117,9 @@ static FAKE: Mutex<Option<Arc<FakeEngine>>> = Mutex::new(None);
 /* ---------- the hybrid engine's stand-in librqbit that fails (stage P4, «far seeks») ---------- */
 
 /// Takes the torrent as librqbit would (stream_hybrid pauses aria2 and gives it the ownership first), then fails — at
-/// the add («add») or at the first read («read») —, so the fallback to aria2 is checked in every build, with or without
-/// librqbit, against the real aria2 and the loopback swarm.
+/// the add («add»), at the first read («read»), or by PANICKING at the first read («panic», only asked of a build that
+/// unwinds: CI run 43597302499 aborted on a librqbit panic) —, so the fallback to aria2 is checked in every build, with
+/// or without librqbit, against the real aria2 and the loopback swarm.
 struct FailEngine {
     mode: String,
     aria2: Arc<dyn StreamEngine>,
@@ -142,6 +143,9 @@ impl StreamEngine for FailEngine {
     }
     fn prioritise(&self, _id: &str, _index: usize, _from: u64, _to: u64) {}
     fn read_at(&self, _id: &str, _index: usize, _pos: u64, _buf: &mut [u8], _gone: &dyn Fn() -> bool) -> Result<usize, String> {
+        if self.mode == "panic" && cfg!(panic = "unwind") {
+            panic!("stand-in librqbit: panicked mid-stream");
+        }
         Err("stand-in librqbit: failed mid-stream".into())
     }
     fn stats(&self, _id: &str, _index: usize) -> Option<Value> {

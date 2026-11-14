@@ -12,6 +12,8 @@
 // hands the torrent back to aria2 and the same reader goes on from aria2, as the server served before the hybrid; the
 // page sees the same addresses and events (streamStats' «engine» says which one serves).
 use std::collections::{HashMap, HashSet};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -67,6 +69,19 @@ pub struct Hybrid {
     rq: RqSource,
     st: Mutex<State>,
     take_lock: Mutex<()>,
+    /// librqbit panicked once in this run: never used again here (aria2 serves everything).
+    broken: AtomicBool,
+}
+
+/// The text of a caught panic.
+fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "panic".to_string()
+    }
 }
 
 #[cfg(feature = "rqbit")]
@@ -162,7 +177,7 @@ fn file_complete(id: &str, index: usize) -> bool {
 
 impl Hybrid {
     pub fn new(label: &'static str, built: bool, aria2: Arc<dyn StreamEngine>, rq: RqSource) -> Hybrid {
-        Hybrid { label, built, aria2, rq, st: Mutex::new(State::default()), take_lock: Mutex::new(()) }
+        Hybrid { label, built, aria2, rq, st: Mutex::new(State::default()), take_lock: Mutex::new(()), broken: AtomicBool::new(false) }
     }
 
     fn route(&self, id: &str, index: usize) -> Back {
@@ -171,6 +186,21 @@ impl Hybrid {
 
     fn taken_rq(&self, id: &str) -> Option<Arc<dyn StreamEngine>> {
         lock(&self.st).taken.get(id).map(|t| t.rq.clone())
+    }
+
+    /// A call into the librqbit back end: a panic inside it (the build with librqbit unwinds — rqbit-feature.cjs) is a
+    /// librqbit failure like any other — Err, the torrent handed back to aria2 by the caller — and librqbit is not used
+    /// again in this run. Never the program taken down (CI run 43597302499 aborted on a librqbit panic).
+    fn safe<T>(&self, what: &str, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        match catch_unwind(AssertUnwindSafe(f)) {
+            Ok(r) => r,
+            Err(p) => {
+                self.broken.store(true, Ordering::SeqCst);
+                let m = format!("librqbit panicked ({}): {}", what, panic_text(p.as_ref()));
+                eprintln!("hybrid: {}", m);
+                Err(m)
+            }
+        }
     }
 
     fn note(&self, id: &str, why: &str) {
@@ -200,9 +230,9 @@ impl Hybrid {
         let snap = tell(&src.id, &["completedLength", "bitfield", "pieceLength"]).unwrap_or(Value::Null);
         let mut s2 = src.clone();
         s2.want = Some(index);
-        match rq.add(&s2) {
+        match self.safe("add", || rq.add(&s2)) {
             Ok(_) => {
-                let rq_at_add = rq.have_bytes(&src.id);
+                let rq_at_add = self.safe("have", || Ok(rq.have_bytes(&src.id))).ok().flatten();
                 lock(&self.st).taken.insert(
                     src.id.clone(),
                     Taken {
@@ -219,7 +249,10 @@ impl Hybrid {
             }
             Err(e) => {
                 owners().begin_release(&hash);
-                rq.stop(&src.id);
+                let _ = self.safe("stop", || {
+                    rq.stop(&src.id);
+                    Ok(())
+                });
                 let wish = owners().released(&hash).flatten();
                 hand_back(&src.id, hl::unpause_after(was_paused, wish, true));
                 Err(e)
@@ -234,7 +267,11 @@ impl Hybrid {
             None => return,
         };
         owners().begin_release(&t.hash);
-        t.rq.stop(id);
+        // (Its hold let go even when librqbit panics here: aria2 gets the torrent back whatever happens.)
+        let _ = self.safe("stop", || {
+            t.rq.stop(id);
+            Ok(())
+        });
         let wish = owners().released(&t.hash).flatten();
         hand_back(id, hl::unpause_after(t.was_paused, wish, still_watching));
     }
@@ -269,7 +306,7 @@ impl Hybrid {
         if let Some(t) = s.taken.get(id) {
             out["aria2AtTake"] = json!(t.aria2_at_take);
             out["rqAtAdd"] = json!(t.rq_at_add);
-            out["rqNow"] = json!(t.rq.have_bytes(id));
+            out["rqNow"] = json!(self.safe("have", || Ok(t.rq.have_bytes(id))).ok().flatten());
             out["pieceLength"] = json!(t.piece_len);
             if let Ok(f) = self.aria2.file(id, 0) {
                 if let Some((a, b)) = hl::far_missing(&t.bitfield_at_take, t.piece_len, 0, f.size, 2) {
@@ -284,7 +321,7 @@ impl Hybrid {
     /// The live figures of a download librqbit serves now (for the downloads list, as Electron showed WebTorrent's).
     fn watching(&self, id: &str) -> Option<(u64, u64, u64)> {
         let rq = self.taken_rq(id)?;
-        let v = rq.stats(id, 0)?;
+        let v = self.safe("stats", || Ok(rq.stats(id, 0))).ok().flatten()?;
         Some((num(v.get("down")), num(v.get("up")), num(v.get("peers"))))
     }
 
@@ -317,7 +354,8 @@ impl StreamEngine for Hybrid {
         let is_torrent = src.info_hash.is_some() && (src.torrent.is_some() || src.magnet.is_some());
         let complete = file_complete(id, index);
         // (The session is started only for a torrent that may use it.)
-        let rq = if self.built && is_torrent && (held || !complete) { (self.rq)() } else { None };
+        let usable = self.built && !self.broken.load(Ordering::SeqCst);
+        let rq = if usable && is_torrent && (held || !complete) { self.safe("session", || Ok((self.rq)())).ok().flatten() } else { None };
         let facts = Facts { purpose: Purpose::Stream, built: self.built, session_up: rq.is_some(), is_torrent, file_complete: complete, failed_before: failed, held };
         let mut back = hl::choose(&facts);
         if back == Back::Rqbit {
@@ -325,13 +363,22 @@ impl StreamEngine for Hybrid {
                 Some(r) => r,
                 None => return Err("librqbit".into()),
             };
-            let r = if held { rq.select(id, index) } else { self.take(&src, index, &rq).and_then(|_| rq.select(id, index)) };
+            let r = if held { self.safe("select", || rq.select(id, index)) } else { self.take(&src, index, &rq).and_then(|_| self.safe("select", || rq.select(id, index))) };
             if let Err(e) = r {
                 self.fall_back(id, &e);
                 back = Back::Aria2;
             }
         } else if self.built && is_torrent && !complete {
-            self.note(id, if failed { "librqbit failed on it before" } else { "librqbit's session is not up" });
+            self.note(
+                id,
+                if self.broken.load(Ordering::SeqCst) {
+                    "librqbit panicked earlier in this run"
+                } else if failed {
+                    "librqbit failed on it before"
+                } else {
+                    "librqbit's session is not up"
+                },
+            );
         }
         if back == Back::Aria2 {
             // (aria2's own streaming: its in-order fetch, head and tail first — as before the hybrid.)
@@ -347,7 +394,12 @@ impl StreamEngine for Hybrid {
 
     fn prioritise(&self, id: &str, index: usize, from: u64, to: u64) {
         match (self.route(id, index), self.taken_rq(id)) {
-            (Back::Rqbit, Some(rq)) => rq.prioritise(id, index, from, to),
+            (Back::Rqbit, Some(rq)) => {
+                let _ = self.safe("prioritise", || {
+                    rq.prioritise(id, index, from, to);
+                    Ok(())
+                });
+            }
             _ => self.aria2.prioritise(id, index, from, to),
         }
     }
@@ -355,7 +407,7 @@ impl StreamEngine for Hybrid {
     fn read_at(&self, id: &str, index: usize, pos: u64, buf: &mut [u8], gone: &dyn Fn() -> bool) -> Result<usize, String> {
         if self.route(id, index) == Back::Rqbit {
             if let Some(rq) = self.taken_rq(id) {
-                match rq.read_at(id, index, pos, buf, gone) {
+                match self.safe("read", || rq.read_at(id, index, pos, &mut *buf, gone)) {
                     Ok(n) => return Ok(n),
                     Err(e) => {
                         if gone() {
@@ -373,7 +425,7 @@ impl StreamEngine for Hybrid {
 
     fn stats(&self, id: &str, index: usize) -> Option<Value> {
         if self.route(id, index) == Back::Rqbit {
-            if let Some(v) = self.taken_rq(id).and_then(|rq| rq.stats(id, index)) {
+            if let Some(v) = self.taken_rq(id).and_then(|rq| self.safe("stats", || Ok(rq.stats(id, index))).ok().flatten()) {
                 return Some(v);
             }
         }
@@ -391,7 +443,7 @@ impl StreamEngine for Hybrid {
     }
 
     fn have_bytes(&self, id: &str) -> Option<u64> {
-        self.taken_rq(id).and_then(|rq| rq.have_bytes(id))
+        self.taken_rq(id).and_then(|rq| self.safe("have", || Ok(rq.have_bytes(id))).ok().flatten())
     }
 }
 
@@ -418,5 +470,7 @@ pub fn release_all() {
 /// (Self-test.) Whether librqbit is built in and its session starts here, and why not.
 pub fn info() -> Value {
     let up = rq_real().is_some();
-    json!({ "built": cfg!(feature = "rqbit"), "up": up, "why": if up { String::new() } else { rq_why() } })
+    let why = if up { String::new() } else { rq_why() };
+    // (unwind: a panic is caught — the build with librqbit; the plain build aborts, as before.)
+    json!({ "built": cfg!(feature = "rqbit"), "up": up, "why": why, "unwind": cfg!(panic = "unwind") })
 }

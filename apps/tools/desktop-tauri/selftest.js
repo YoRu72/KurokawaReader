@@ -1376,6 +1376,18 @@
           await kt.streamDone({ id: hid });
           return x.why + '; aria2 ' + x.aria2.status;
         }, 60000);
+        // (CI run 43597302499: a panic inside librqbit aborted the program. The build with librqbit unwinds now and the
+        // hybrid engine catches it — here a stand-in that panics mid-stream: the same reader goes on from aria2.)
+        await check('hybrid: librqbit panics mid-stream → caught, the same reader goes on from aria2', linux && !!info.unwind, async function () {
+          must(info.unwind, 'not asked of a build that aborts on a panic (the plain build has no librqbit to panic)');
+          var r = await st({ op: 'hybridFail', id: hid, mode: 'panic', file: 0 });
+          must(r.state.owner === 'rqbit' && r.state.back === 'rqbit', 'state ' + short(r.state));
+          var b = await body(await req(r.url, 'bytes=131072-196607')); must(same(b, await bytesOf0(131072, 196607)), 'the bytes differ');
+          var x = await state(true); must(x.owner === 'aria2' && x.back === 'aria2' && /panicked/.test(x.why), 'state ' + short(x));
+          must(x.aria2 && x.aria2.status !== 'paused', 'aria2 ' + short(x.aria2));
+          await kt.streamDone({ id: hid });
+          return x.why + '; aria2 ' + x.aria2.status;
+        }, 60000);
         // (aria2 paused now: what it has at librqbit's take stays what it had — the head, its fetch being in order.)
         try { await kt.pause(hid); } catch (e) { /* reported below */ }
         var far = null;

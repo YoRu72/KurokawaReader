@@ -13,9 +13,13 @@ const path = require('path');
 const PLAIN = 'rqbit = []';
 const ON = 'default = ["rqbit"]\nrqbit = ["dep:librqbit", "dep:tokio"]';
 const MARK = '# (Added by rqbit-feature.cjs on — removed by «off».)';
-// (librqbit 8.1.1: what CI resolved and checked in runs 43543045018 and 43586049375. tokio: already in the build through
-// Tauri; the stream's reads and timeouts need io-util and time.)
-const DEPS = `\n${MARK}\n[dependencies.librqbit]\nversion = "=8.1.1"\noptional = true\n\n[dependencies.tokio]\nversion = "1"\noptional = true\nfeatures = ["io-util", "time"]\n`;
+// (librqbit 8.1.1: what CI resolved and built in runs 43586049375 and 43597302499. tokio: already in the build through
+// Tauri; librqbit's own runtime (stream_rqbit.rs) needs rt-multi-thread, the stream's reads and timeouts io-util and time.)
+const DEPS = `\n${MARK}\n[dependencies.librqbit]\nversion = "=8.1.1"\noptional = true\n\n[dependencies.tokio]\nversion = "1"\noptional = true\nfeatures = ["rt-multi-thread", "io-util", "time"]\n`;
+// (The build with librqbit unwinds instead of aborting, so a panic inside librqbit is caught — stream_hybrid.rs's
+// \`safe\` — and the torrent handed back to aria2, never the program taken down. The plain build keeps «abort».)
+const ABORT = 'panic = "abort"';
+const UNWIND = 'panic = "unwind" # (rqbit-feature.cjs on: a librqbit panic is caught, aria2 takes over)';
 
 function isOn(text) {
   return text.includes(MARK);
@@ -30,6 +34,9 @@ function turnOn(text) {
   if (lines.some((l) => /^default\s*=/.test(l))) throw new Error('a default feature list is there already');
   const cr = lines[at].endsWith('\r') ? '\r' : '';
   lines[at] = ON.split('\n').join(cr + '\n') + cr;
+  const p = lines.findIndex((l) => l.replace(/\r$/, '') === ABORT);
+  if (p < 0) throw new Error('no «' + ABORT + '» line in [profile.release]');
+  lines[p] = UNWIND + (lines[p].endsWith('\r') ? '\r' : '');
   let out = lines.join('\n');
   if (!out.endsWith('\n')) out += '\n';
   return out + (cr ? DEPS.replace(/\n/g, '\r\n') : DEPS);
@@ -46,10 +53,11 @@ function turnOff(text) {
   if (d < 0) throw new Error('the added dependencies were changed by hand');
   out = out.slice(0, d) + out.slice(d + deps.length);
   if (!out.includes(on)) throw new Error('the feature lines were changed by hand');
-  return out.replace(on, PLAIN);
+  if (!out.includes(UNWIND)) throw new Error('the panic line was changed by hand');
+  return out.replace(on, PLAIN).replace(UNWIND, ABORT);
 }
 
-module.exports = { turnOn, turnOff, isOn, PLAIN, ON, DEPS };
+module.exports = { turnOn, turnOff, isOn, PLAIN, ON, DEPS, ABORT, UNWIND };
 
 if (require.main === module) {
   const [cmd, file] = process.argv.slice(2);

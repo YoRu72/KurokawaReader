@@ -209,6 +209,16 @@ Do the same once before a local `tauri build` / `tauri dev`.
   librqbit fails mid-stream → the same reader goes on from aria2» (a stand-in librqbit, every build; required on Linux),
   «hybrid: far seek — bytes near the end arrive through librqbit before the middle is in» (built with librqbit; required
   on Linux), «hybrid: each engine continues the other's pieces» (reported). Elsewhere reported until a green Linux run.
+  **Run 43597302499** (2ef84b6): compiled with librqbit on all four builds (macOS ×2 green; Linux plain build's rows
+  1–3 passed; Linux sizes AppImage 88.22 vs 85.46 MB, deb 12.45 vs 11.40, program 13.79 vs 11.26; 634 vs 516 crates),
+  but the self-test with librqbit aborted on Linux (134) and Windows (0xC0000409): librqbit spawned from a stream server
+  thread with no Tokio runtime («there is no reactor running», spawn_utils.rs:34), and `panic = "abort"` took the program
+  down. Fixed: stream_rqbit.rs owns one runtime («kt-rqbit», 2 workers) and runs every librqbit call — session, add,
+  select, stream open/read, stats, delete — entered in it, every handle and file stream made and dropped there; the build
+  with librqbit unwinds (`rqbit-feature.cjs`: `panic = "unwind"`, tokio `rt-multi-thread`), and stream_hybrid.rs's
+  `safe` catches a panic in any librqbit call as a librqbit failure: the torrent goes back to aria2, librqbit is not used
+  again in that run. Row «hybrid: librqbit panics mid-stream → caught, the same reader goes on from aria2» (a stand-in
+  that panics; required on Linux in a build that unwinds).
 
 ## Stage P6 — desktop integration (`desktop.rs`, `desklogic.rs` std only, `sitewin.rs`)
 
