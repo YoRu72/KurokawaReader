@@ -4,6 +4,7 @@ import { h, icon, toast, openSheet, pickButton } from '../ui/dom';
 import { t, formatBytes } from '../i18n';
 import { getSettings, updateSettings, glassNow, reloadThemePictures, setThemePreview, type Accent, type UiMode, type DarkTone, type Settings } from '../settings';
 import { onBack } from '../ui/backstack';
+import { undoScope } from '../ui/undo';
 import { saveText } from '../native';
 import { myStore } from '../myStore';
 import type { EditorDeps } from '../theme/editor';
@@ -51,6 +52,8 @@ export function editorDeps(rerender: () => void): EditorDeps {
       return out;
     },
     changed: () => rerender(),
+    // (The app's Ctrl+Z listener takes the keys first, in the capture phase: the editor's stack goes in as its scope.)
+    keys: (handler) => undoScope(handler),
   };
 }
 const RESET_KEYS = ['theme', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours'] as const;

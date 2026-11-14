@@ -1,8 +1,8 @@
 // CI (tauri-check.yml, «Hand-over — the Tauri build brings it», Windows): while the Tauri build runs the handed-over
 // downloads, the Electron side's own rule (desktop/ownerlock.cjs — what the bridge build runs before it resumes one)
 // is asked against the REAL owner file and the REAL process: it must find them held by a live Tauri app, refuse to
-// resume each handed-over id, and not take them unasked. (The released Electron build has RUST_SWITCH off, so its
-// window would not ask: the rule is run here as it would.)
+// resume each handed-over id, and not take them unasked. (The rule is run here as the bridge build —
+// RUST_SWITCH on from 0.17.0 — runs it, without its window.)
 //   node tests/ownerprobe.cjs <Electron userData> <expected.json> <out.json>   → exit 0 when all hold, 1 otherwise
 'use strict';
 const fs = require('node:fs'); const path = require('node:path');

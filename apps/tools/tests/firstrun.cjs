@@ -7,7 +7,7 @@
 //     none found but the old copy's data still there → «open the previous Kurokawa Tools once», with its button;
 //     «Use Kurokawa Tools» for torrents and magnets asks the shell (registerMagnet) only when pressed; Start closes it
 //     and it is not shown again; under a test driver or the self-test it is never shown;
-//   «Electron»: with RUST_SWITCH off (switchInfo → null) nothing is offered; with a release carrying the Tauri build the
+//   «Electron»: with no release carrying the Tauri build (switchInfo → null) nothing is offered; with a release carrying the Tauri build the
 //     sheet says what it is, «Move now» goes through installUpdate('rust-switch') and a refusal (Electron's wrapped
 //     «kt-update:handover …») is said in words, the button becomes «Try again»; «Not now» holds for a day (a week with
 //     weekly checks), not for a newer version.
@@ -107,7 +107,7 @@ const TAURI_SHIM = (o) => {
   const INFO = { version: '0.17.0', name: 'KurokawaTools-0.17.0-windows-x64-setup.exe', size: 12 * 1048576, page: 'https://example.test/releases/tools-v0.17.0', portable: false, os: 'win32' };
   {
     const p = await electronPage(null, 'x');
-    ok('Electron with RUST_SWITCH off (switchInfo → null): nothing offered', !(await p.$('.switch-sheet')));
+    ok('Electron with no Tauri build released (switchInfo → null): nothing offered', !(await p.$('.switch-sheet')));
     ok('… the hand-over\'s maker reachable by the shell (window.__KT_HANDOVER__.beforeInstall)', await p.evaluate(() => typeof window.__KT_HANDOVER__?.beforeInstall === 'function'));
     await p.context().close();
   }

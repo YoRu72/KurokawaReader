@@ -473,8 +473,8 @@ ipcMain.handle('kt:installUpdate', async (e, url) => {
   setTimeout(() => app.quit(), 1500); return file;
 });
 /* ---------- the move to the Rust (Tauri) build (stage P9) ---------- */
-// OFF in this stage (desktop-tauri/PORTING.md «P9», «What to flip at the switch-over»). The Electron «bridge» build is
-// made with RUST_SWITCH = true and published under the old file names (…-win-x64.exe, …-mac-universal.dmg,
+// ON from 0.17.0, the switch-over (desktop-tauri/PORTING.md «P9», «What to flip at the switch-over»): this Electron
+// build is the «bridge» build, made with RUST_SWITCH = true and published under the old file names (…-win-x64.exe, …-mac-universal.dmg,
 // …-linux-x86_64.AppImage), so every Electron copy's own updater fetches it; from then on, when a release of this
 // version or newer carries the Tauri build for this system (rustswitch.cjs pickRust): the page is told
 // (window.kurokawaHandover.switchInfo() → src/rustswitch.ts offers it in its own sheet), and «Download and install» —
@@ -491,7 +491,7 @@ ipcMain.handle('kt:installUpdate', async (e, url) => {
 // as it is — the downloads paused for the hand-over set going again — and the sheet says why («kt-update:…»,
 // src/rustswitch.ts). Portable copies make the hand-over too, then are told to download the new portable build by
 // hand (it brings the data over on its first start); nothing is installed for them.
-const RUST_SWITCH = false;
+const RUST_SWITCH = true;
 const RustSwitch = require('./rustswitch.cjs');
 const Handover = require('./handover.cjs');
 const handoverCh = Handover.install({ ipcMain, app }, { engine: () => engine, beforeEngine: () => WebStream.stopAll() });

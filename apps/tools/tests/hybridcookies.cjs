@@ -2,7 +2,7 @@
 // what the bridge build hands the Rust build of the in-app browser's sign-ins — on made-up cookies in a temp folder:
 // only those that outlive the session and have not expired, the file this user's only (POSIX 0600), a note naming the
 // hand-over with the file's size and SHA-256 (what cookiecarry.rs checks), nothing written into the marker; dropCookies
-// wipes both. And that the Electron build is unchanged while RUST_SWITCH is false: the export is called only inside
+// wipes both. And that in the bridge build (RUST_SWITCH true from the switch-over) the export is still called only inside
 // rustSwitch (which runs only with it true), and wiped again there when nothing is installed. Plain node.
 'use strict';
 const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os'); const crypto = require('node:crypto'); const assert = require('node:assert/strict');
@@ -46,9 +46,9 @@ const H = require(path.join(ROOT, 'desktop', 'handover.cjs'));
   assert.equal(await H.tidyCookies(root, Date.now() + 15 * 86400000), true); assert.ok(!fs.existsSync(path.join(hd, H.COOKIE_FILE)), 'an old one wiped');
   fs.rmSync(root, { recursive: true, force: true });
 
-  // (The Electron build unchanged while the switch is off.)
+  // (The bridge build: the switch on; the export and the tidy still only behind it.)
   const main = fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
-  assert.ok(/^const RUST_SWITCH = false;$/m.test(main), 'RUST_SWITCH stays false');
+  assert.ok(/^const RUST_SWITCH = true;$/m.test(main), 'RUST_SWITCH on (the bridge build)');
   const sw = main.indexOf('async function rustSwitch('); const end = main.indexOf('\n}\n', sw);
   const calls = [...main.matchAll(/Handover\.(exportCookies|dropCookies)\(/g)].map((m) => m.index);
   assert.ok(/if \(RUST_SWITCH\) void Handover\.tidyCookies\(/.test(main), 'the tidy only behind RUST_SWITCH');

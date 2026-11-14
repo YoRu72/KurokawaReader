@@ -40,8 +40,9 @@ html[data-glass] :is(.topbar, .nav-rail) {
 html[data-glass] .topbar { box-shadow: 0 1px 0 color-mix(in srgb, var(--g-edge) 70%, transparent); }
 html[data-glass] .nav-rail { border-inline-end: 0; box-shadow: var(--g-sheen), inset -1px 0 0 var(--g-edge); }
 html[data-glass][dir='rtl'] .nav-rail { box-shadow: var(--g-sheen), inset 1px 0 0 var(--g-edge); }
-/* The settings' sticky search and chips: the denser sheet glass, full width, so nothing behind shows through as lines. */
-html[data-glass] .settings-head { background: var(--g-sheet); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter); box-shadow: 0 1px 0 var(--g-edge), 0 10px 16px -14px rgb(0 0 0 / .5); margin-inline: -20px; padding-inline: 20px; }
+/* The settings' sticky search and chips: the sheet's solid glass, full width — nothing behind shows through (a frost
+   here let the cards scrolling under it ghost through as blobs). */
+html[data-glass] .settings-head { background: var(--g-sheet-s); box-shadow: 0 1px 0 var(--g-edge), 0 10px 16px -14px rgb(0 0 0 / .5); margin-inline: -20px; padding-inline: 20px; }
 html.pc[data-glass] .settings-head { margin-inline: 0; padding-inline: 0; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
 html[data-glass] .settings-body > .card { scroll-margin-top: calc(var(--head-h, 0px) + 8px); }
 
@@ -50,6 +51,9 @@ html[data-glass] .card {
   background: var(--g-card); -webkit-backdrop-filter: var(--g-filter-card); backdrop-filter: var(--g-filter-card);
   box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow);
 }
+/* (A settings section on a phone is taller than the screen: its hairline ran as two lines down the screen's sides.
+   The lit top edge and the depth say where it is.) */
+@media (max-width: 759px) { html[data-glass] .settings-body > .card { box-shadow: var(--g-sheen), var(--g-shadow); } }
 /* Headings of cards: the emphasised scale, in sentence case. */
 html[data-glass] .card > h3 { text-transform: none; letter-spacing: -.005em; font-size: 15.5px; font-weight: 600; color: var(--md-on-surface); }
 html[data-glass] .card > h3 svg { color: var(--md-primary); }

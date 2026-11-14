@@ -6,7 +6,6 @@ import { themeById, THEMES, upsertTheme, removeTheme, type ThemeDef, type Mode, 
 import { fromBase, toDef, sanitise, loadMine, lowestContrast, fixContrast, preparePicture, exportTheme, importTheme, pictureKey, pictureAsset, minePictureUrls, modeFromBase, ThemeFileError, RANGES, usesOwnPicture, type MyTheme, type MyMode, type BgKind, type MyStore } from './custom';
 import { History, deferred } from './history';
 import { el, themeName } from './gallery';
-import { undoScope } from '../ui/undo';
 
 export interface EditorDeps {
   t(key: string, vars?: Record<string, string | number>): string;
@@ -34,6 +33,21 @@ export interface EditorDeps {
   packPictures(): Promise<{ id: string; asset: string; label: string; url: string }[]>;
   /** Told when «My themes» changed (the gallery redraws). */
   changed(): void;
+  /** Optional: the app's own undo keys (Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y) handed to `handler` first while the editor is
+   * open (true: it took them); returns its removal. Without it the editor listens to those keys itself. */
+  keys?(handler: (op: 'undo' | 'redo') => boolean): () => void;
+}
+
+/** The editor's own key listener, when the app hands in no `keys`. */
+function ownKeys(handler: (op: 'undo' | 'redo') => boolean): () => void {
+  const keys = (e: KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || (e.target as HTMLElement)?.matches?.('input[type=text]')) return;
+    const k = e.key.toLowerCase();
+    const op = k === 'z' && !e.shiftKey ? 'undo' : (k === 'z' && e.shiftKey) || k === 'y' ? 'redo' : null;
+    if (op && handler(op)) e.preventDefault();
+  };
+  addEventListener('keydown', keys);
+  return () => removeEventListener('keydown', keys);
 }
 
 /* ---------- «My themes»: kept, listed, applied ---------- */
@@ -162,9 +176,8 @@ export function openEditor(d: EditorDeps, start: { my: MyTheme; existing: boolea
     const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
     handle.addEventListener('pointerdown', (e) => { y0 = e.clientY; h0 = root.getBoundingClientRect().height; addEventListener('pointermove', move); addEventListener('pointerup', up); e.preventDefault(); });
   }
-  // (undo-redo merge: the app's Ctrl+Z listener (ui/undo.ts) takes the keys in the capture phase, so the editor registers its own
-  // stack as a scope — it is asked first while open — instead of a window listener that would never be reached.)
-  const offKeys = undoScope((op) => { step(op === 'undo' ? -1 : 1); return true; });
+  // (An app with its own undo keys hands in `keys`, so the editor's stack is asked first while it is open; else its own listener.)
+  const offKeys = (d.keys ?? ownKeys)((op) => { step(op === 'undo' ? -1 : 1); return true; });
   const offBack = d.onBack(() => { close(); return true; });
 
   function step(dir: 1 | -1): void { if (dir < 0 ? hist.undo() : hist.redo()) { show(); draw(); } }

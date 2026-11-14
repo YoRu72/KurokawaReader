@@ -7,7 +7,7 @@
 //     without asking, a clock moved back (the pid decides), the owner's heartbeat yielding to a «Take them back» (its
 //     running ones paused, the page told) and those resumed when taken back again, a release at quit; the record
 //     written atomically (no temp file left).
-//   - Electron untouched while RUST_SWITCH is off: main.cjs reaches the owner only behind it.
+//   - The bridge build: RUST_SWITCH on (0.17.0's switch-over), and main.cjs still reaches the owner only behind it.
 //   - The page (the built app in Chromium, the real desktop-tauri bridges over a pretend IPC, en/ar): held at the start
 //     → told, with «Take them back»; the sheet says who and how many; taking asks first; a refused resume opens it and
 //     the download is resumed once taken back.
@@ -81,9 +81,9 @@ ok('the constants are ownerlogic.rs\'s', (() => { const rs = fs.readFileSync(pat
   ok('a file that is not a record is no record', L.parse('{"app":"x"}') === null && L.parse('not json') === null);
   fs.rmSync(dir, { recursive: true, force: true });
 
-  /* ---------- Electron untouched while the switch is off ---------- */
+  /* ---------- The bridge build: the switch on, the owner only behind it ---------- */
   const main = fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
-  ok('main.cjs: RUST_SWITCH still false', /\nconst RUST_SWITCH = false;\n/.test(main));
+  ok('main.cjs: RUST_SWITCH on (the bridge build — the switch-over)', /\nconst RUST_SWITCH = true;\n/.test(main) && !/const RUST_SWITCH = false/.test(main));
   ok('main.cjs: the owner reached only behind RUST_SWITCH (start, resume, quit, the page\'s two asks)',
     main.includes("if (RUST_SWITCH) ownerAtStart(userData);") && main.includes("(RUST_SWITCH ? ownerResume(id) : isVideoId(id) ? videos.resume(id) : E().resume(id))") && main.includes('if (RUST_SWITCH) owner?.release();')
     && main.includes("ipcMain.handle('kt:downloadsOwner', () => (RUST_SWITCH && owner ? owner.info() : null));") && /kt:downloadsTake', async \(\) => \{ if \(!RUST_SWITCH \|\| !owner\) return null;/.test(main)
