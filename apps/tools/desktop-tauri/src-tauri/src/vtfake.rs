@@ -49,6 +49,7 @@ pub fn tool_of(stem: &str) -> Option<&'static str> {
         "gallery-dl" => Some("gallery-dl"),
         "ffmpeg" => Some("ffmpeg"),
         "ffprobe" => Some("ffprobe"),
+        "deno" => Some("deno"),
         _ => None,
     }
 }
@@ -119,6 +120,10 @@ pub fn run_tool(tool: &str, version: &str, mode: &str, args: &[String], out: &mu
         "gallery-dl" => gallery(args, out, err),
         "ffmpeg" => ffmpeg(args, out, err, exe),
         "ffprobe" => ffprobe(args, out, err),
+        "deno" => {
+            let _ = writeln!(out, "deno 2.5.0-kt (stand-in)");
+            0
+        }
         _ => 2,
     }
 }
@@ -144,6 +149,18 @@ fn ytdlp(version: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Writ
         return 1;
     }
     if args.first().map(|a| a == "-J").unwrap_or(false) {
+        if url.contains("jswarn") {
+            // (yt-dlp 2025.11 without a JavaScript runtime: its warning — printed here whatever --no-warnings says, so
+            // the shell's reading of it is tested —; with one, where it was found in the title.)
+            let how = js_runtime_seen(args, std::env::var_os("PATH"));
+            if how.is_empty() {
+                let _ = writeln!(err, "WARNING: [youtube] No supported JavaScript runtime could be found. YouTube extraction without a JS runtime has been deprecated, and some formats may be missing.");
+                let _ = writeln!(out, "{}", VIDEO_JSON);
+            } else {
+                let _ = writeln!(out, "{}", VIDEO_JSON.replacen("\"Fake video\"", &format!("\"Fake video (js: {})\"", how), 1));
+            }
+            return 0;
+        }
         let _ = writeln!(out, "{}", if url.contains("playlist") { PLAYLIST_JSON } else { VIDEO_JSON });
         return 0;
     }
@@ -192,6 +209,25 @@ fn ytdlp(version: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Writ
     pause(60);
     say(out, &format!("[Metadata] Adding metadata to \"{}\"", whole.to_string_lossy()));
     0
+}
+
+/// Where the stand-in yt-dlp found a deno: «args» (--js-runtimes deno:<an existing file>), «PATH» (a deno program in
+/// a folder of its PATH), both joined by «+», or "" for none.
+pub fn js_runtime_seen(args: &[String], path: Option<std::ffi::OsString>) -> String {
+    let mut how: Vec<&str> = Vec::new();
+    if let Some(v) = arg_after(args, "--js-runtimes") {
+        if let Some(p) = v.strip_prefix("deno:") {
+            if Path::new(p).is_file() {
+                how.push("args");
+            }
+        }
+    }
+    if let Some(p) = path {
+        if std::env::split_paths(&p).any(|d| d.join("deno").is_file() || d.join("deno.exe").is_file()) {
+            how.push("PATH");
+        }
+    }
+    how.join("+")
 }
 
 fn gallery(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -447,6 +483,33 @@ fn parse_range(v: &str, size: usize) -> Option<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ytdlp_js_runtime_warning() {
+        let dir = std::env::temp_dir().join(format!("kt-fake-js-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let deno = dir.join(if cfg!(windows) { "deno.exe" } else { "deno" });
+        std::fs::write(&deno, b"x").unwrap();
+        let exe = std::path::PathBuf::from("x");
+        let run = |args: Vec<String>| {
+            let (mut o, mut e) = (Vec::new(), Vec::new());
+            let c = super::run_tool("yt-dlp", super::DEFAULT_VERSION, "ok", &args, &mut o, &mut e, &exe);
+            (c, String::from_utf8_lossy(&o).into_owned(), String::from_utf8_lossy(&e).into_owned())
+        };
+        let (c, o, e) = run(vec!["-J".into(), "--no-warnings".into(), "https://fake.test/watch?v=jswarn".into()]);
+        assert_eq!(c, 0);
+        assert!(e.contains("No supported JavaScript runtime could be found"), "{}", e);
+        assert!(o.contains("\"Fake video\""));
+        let (_, o, e) = run(vec!["-J".into(), "--js-runtimes".into(), format!("deno:{}", deno.display()), "https://fake.test/watch?v=jswarn".into()]);
+        assert!(e.is_empty(), "{}", e);
+        assert!(o.contains("Fake video (js: args"), "{}", o);
+        assert_eq!(super::js_runtime_seen(&[], Some(dir.clone().into_os_string())), "PATH");
+        assert_eq!(super::js_runtime_seen(&["--js-runtimes".into(), "deno:/no/such".into()], None), "");
+        let (mut o, mut e) = (Vec::new(), Vec::new());
+        assert_eq!(super::run_tool("deno", "x", "ok", &["--version".into()], &mut o, &mut e, &exe), 0);
+        assert!(String::from_utf8_lossy(&o).starts_with("deno "));
+        assert_eq!(super::tool_of("deno"), Some("deno"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
 
     fn s(xs: &[&str]) -> Vec<String> {

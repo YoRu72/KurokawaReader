@@ -320,3 +320,5 @@ window.SETUP_WORDS = {
   },
 };
 window.SETUP_LANGS = ['en', 'ar', 'ja', 'ko', 'zh'];
+// (What setup.js takes from the app: the «data kept» tile's picture — Tools' downloads tray, not the Reader's book.)
+window.SETUP_APP = { keptIcon: '<path d="M12 4v10M7.5 9.5L12 14l4.5-4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/>' };

@@ -33,10 +33,28 @@ extern "system" {
 /// for yt-dlp / gallery-dl / ffmpeg / ffprobe answer as those (vtfake.rs). Never set in a normal run.
 pub static FAKE_ENV: AtomicBool = AtomicBool::new(false);
 
+/// A folder put first on the programs' PATH (the «deno» pack's, once it is there: yt-dlp finds its JavaScript runtime
+/// there too, besides --js-runtimes). Set by vtools.rs.
+pub static PATH_FRONT: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// PATH with `front` first (the system's PATH as it is after it).
+pub fn path_with_front(front: &Path, path: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+    let mut parts: Vec<std::path::PathBuf> = vec![front.to_path_buf()];
+    if let Some(p) = path {
+        parts.extend(std::env::split_paths(&p).filter(|x| x != front));
+    }
+    std::env::join_paths(parts).ok()
+}
+
 /// The command for `bin` with `args`: stdin closed, stdout and stderr piped, no window, a group of its own.
 pub fn command(bin: &Path, args: &[String]) -> Command {
     let mut c = Command::new(bin);
     c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(front) = PATH_FRONT.lock().ok().and_then(|g| g.clone()).filter(|d| d.is_dir()) {
+        if let Some(p) = path_with_front(&front, std::env::var_os("PATH")) {
+            c.env("PATH", p);
+        }
+    }
     if FAKE_ENV.load(Ordering::SeqCst) {
         c.env("KT_FAKE_TOOLS", "1");
     }
@@ -323,5 +341,18 @@ mod tests {
         }
         assert!(!alive(gc), "the grandchild outlived the tree kill");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    #[test]
+    fn path_front_first() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let front = std::path::Path::new(if cfg!(windows) { "C:\\packs\\deno" } else { "/packs/deno" });
+        let other = if cfg!(windows) { "C:\\bin" } else { "/bin" };
+        let got = super::path_with_front(front, Some(format!("{}{}{}", other, sep, front.display()).into())).unwrap();
+        assert_eq!(got.to_string_lossy(), format!("{}{}{}", front.display(), sep, other));
+        assert_eq!(super::path_with_front(front, None).unwrap().to_string_lossy(), front.display().to_string());
     }
 }

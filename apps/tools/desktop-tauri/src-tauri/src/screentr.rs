@@ -59,6 +59,8 @@ struct St {
     caption_click_through: Option<bool>,
     asked_permission: bool,
     login_set: bool,
+    /// Start-at-log-in as this app last saw it (None before its first settings): screenlogic login_act.
+    startup_prev: Option<bool>,
 }
 
 static ST: OnceLock<Mutex<St>> = OnceLock::new();
@@ -146,11 +148,12 @@ fn load(s: &mut St) {
     let mine = std::fs::read_to_string(state_path()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).unwrap_or(Value::Null);
     s.asked_permission = truthy(mine.get("askedPermission"));
     s.login_set = truthy(mine.get("loginSet"));
+    s.startup_prev = mine.get("startupPrev").and_then(|v| v.as_bool());
 }
 
 fn save_state(s: &St) {
     let _ = std::fs::create_dir_all(data_dir());
-    let _ = std::fs::write(state_path(), json!({ "askedPermission": s.asked_permission, "loginSet": s.login_set }).to_string());
+    let _ = std::fs::write(state_path(), json!({ "askedPermission": s.asked_permission, "loginSet": s.login_set, "startupPrev": s.startup_prev }).to_string());
 }
 
 /* ---------- set up (main.rs) ---------- */
@@ -255,22 +258,47 @@ fn act_later(app: &AppHandle, what: &str) {
     let _ = std::thread::Builder::new().name("kt-screen-act".into()).spawn(move || act(&a2, &w));
 }
 
+/// The self-test's page on Linux, served over loopback (the server started once, in a self-test run only) → its address.
+fn test_page_url(page: String) -> Result<String, String> {
+    static SERVER: OnceLock<Option<(crate::vtfake::Server, u16)>> = OnceLock::new();
+    let got = SERVER.get_or_init(|| {
+        let s = crate::vtfake::Server::new();
+        s.start().ok().map(|port| (s, port))
+    });
+    let (s, port) = got.as_ref().ok_or_else(|| "the test page's server did not start".to_string())?;
+    s.set("/kt-screen-test.html", crate::vtfake::Route { body: std::sync::Arc::new(page.into_bytes()), ctype: "text/html; charset=utf-8", slow: false, cut: None });
+    Ok(format!("http://127.0.0.1:{}/kt-screen-test.html", port))
+}
+
 /* ---------- starting with the computer ---------- */
 
 /// Electron's setLoginItemSettings({ openAtLogin: on && startup, args: ['--hidden'] }) — not on Linux, as Electron.
 /// Windows: the Run key (reg.exe); a Mac: a launch agent. Removed only when this app set it.
 fn login_apply() {
-    let (want, was) = {
+    let (want, was, prev) = {
         let s = st();
-        (enabled(&s) && truthy(pc(&s.cfg).get("startup")), s.login_set)
+        (enabled(&s) && truthy(pc(&s.cfg).get("startup")), s.login_set, s.startup_prev)
     };
-    if want == was || cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") {
         return;
     }
     let exe = match std::env::current_exe() {
         Ok(e) => e.to_string_lossy().into_owned(),
         Err(_) => return,
     };
+    // (Stage P9: an earlier Electron copy kept beside this one that starts with the computer itself — its own Run value
+    // naming its program — gets no second beside it unless the person turns it on HERE; the hand-over's bridge build
+    // and the installer's replace take the old one away — screenlogic login_act.)
+    let act = logic::login_act(want, was, if want && !was { electron_login_live(&exe) } else { false }, prev);
+    if prev != Some(want) {
+        let mut s = st();
+        s.startup_prev = Some(want);
+        save_state(&s);
+    }
+    if act == logic::LoginAct::Nothing {
+        return;
+    }
+    let want = act == logic::LoginAct::Add;
     let mut done = false;
     #[cfg(windows)]
     {
@@ -292,11 +320,37 @@ fn login_apply() {
             };
         }
     }
-    let _ = &exe;
     if done {
         let mut s = st();
         s.login_set = want;
         save_state(&s);
+    }
+}
+
+/// Whether the earlier Electron build starts with the computer by itself: Windows — its Run value (by its
+/// AppUserModelId) names a program that is there and is not this one. (A Mac's Electron login item is the system's
+/// own list, not readable without asking: not looked at — the bridge build turns its own off at the hand-over.)
+fn electron_login_live(exe: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        for name in logic::ELECTRON_RUN_VALUES.iter() {
+            let out = std::process::Command::new("reg").args(["query", logic::RUN_KEY, "/v", name]).creation_flags(0x0800_0000).stderr(std::process::Stdio::null()).output();
+            if let Ok(o) = out {
+                if let Some(d) = logic::reg_value_data(&String::from_utf8_lossy(&o.stdout), name) {
+                    let prog = logic::run_program(&d);
+                    if !prog.is_empty() && !prog.eq_ignore_ascii_case(exe) && Path::new(&prog).is_file() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = exe;
+        false
     }
 }
 
@@ -1321,14 +1375,15 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
                 let r = Rect { x: 60, y: 60, w: o.get("w").and_then(|v| v.as_u64()).unwrap_or(480) as u32, h: o.get("h").and_then(|v| v.as_u64()).unwrap_or(240) as u32 };
                 let at = Rect { x: m.x + r.x, y: m.y + r.y, w: r.w, h: r.h };
                 // (Three bars of pure colour on the left half, black text on white on the right — in CSS pixels made to
-                // fill the window whatever its scale. Linux: the page itself carries them (a data: address), since in
-                // run 43549144577 WebKitGTK showed nothing of about:blank and its script there — the window's own grey;
-                // elsewhere about:blank and the script, as Windows proved.)
+                // fill the window whatever its scale. Linux: the page itself carries them, served from a loopback server
+                // of the test's own (vtfake.rs Server), since in run 43549144577 WebKitGTK showed nothing of about:blank
+                // and its script there — the window's own grey — and a data: address needs Tauri's `webview-data-url`
+                // feature (refused in run 43550802095); elsewhere about:blank and the script, as Windows proved.)
                 const BODY: &str = "<div style=\"width:50%;height:100%;display:flex;flex-direction:column\"><div style=\"flex:1;background:#ff0000\"></div><div style=\"flex:1;background:#00ff00\"></div><div style=\"flex:1;background:#0000ff\"></div></div><div style=\"width:50%;height:100%;background:#fff;color:#000;font:bold 15vh/1.15 Arial,Helvetica,sans-serif;display:flex;flex-direction:column;justify-content:center;align-items:center\"><div>TOOLS</div><div>2468</div></div>";
                 let js = format!("document.documentElement.style.cssText='margin:0;height:100%;background:#fff';document.body.style.cssText='margin:0;height:100%;display:flex;overflow:hidden;background:#fff';document.body.innerHTML='{}';", BODY);
                 let address = if cfg!(all(unix, not(target_os = "macos"))) {
                     let page = format!("<!doctype html><html style=\"margin:0;height:100%;background:#fff\"><body style=\"margin:0;height:100%;display:flex;overflow:hidden;background:#fff\">{}</body></html>", BODY);
-                    format!("data:text/html;charset=utf-8,{}", logic::data_url_text(&page))
+                    test_page_url(page)?
                 } else {
                     "about:blank".to_string()
                 };

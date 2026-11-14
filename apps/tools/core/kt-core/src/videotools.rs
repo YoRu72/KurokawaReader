@@ -1194,8 +1194,89 @@ pub fn final_error(msg: &str) -> bool {
     b.len() == 8 && msg.starts_with("HTTP 4") && b[6].is_ascii_digit() && b[7].is_ascii_digit()
 }
 
+/* ---------- yt-dlp without a JavaScript runtime: the «deno» pack (the Tauri shell) ---------- */
+
+/// The pack's name (packs/deno, the page's PackName) and its program.
+pub const DENO_PACK: &str = "deno";
+pub fn deno_file(os: &str) -> &'static str {
+    if os == "win32" {
+        "deno.exe"
+    } else {
+        "deno"
+    }
+}
+/// The deno release file the release workflow repacks for this system (Node's platform and arch names) — the pack's
+/// manifest key is «<platform>-<arch>» (src/packs.ts); scripts/denopack.py holds the same table.
+pub fn deno_asset(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("win32", "x64") => Some("deno-x86_64-pc-windows-msvc.zip"),
+        ("darwin", "x64") => Some("deno-x86_64-apple-darwin.zip"),
+        ("darwin", "arm64") => Some("deno-aarch64-apple-darwin.zip"),
+        ("linux", "x64") => Some("deno-x86_64-unknown-linux-gnu.zip"),
+        ("linux", "arm64") => Some("deno-aarch64-unknown-linux-gnu.zip"),
+        _ => None,
+    }
+}
+pub fn pack_key(os: &str, arch: &str) -> String {
+    format!("{}-{}", os, arch)
+}
+/// yt-dlp's own words when it has no JavaScript runtime (since 2025.11).
+pub const JS_WARNING: &str = "No supported JavaScript runtime could be found";
+/// What yt-dlp says when YouTube's formats thinned out or vanished for want of one.
+const JS_SYMPTOMS: [&str; 5] = ["Some formats may be missing", "n challenge solving failed", "Signature solving failed", "Requested format is not available", "Only images are available"];
+/// A YouTube address (the sites whose pages need the runtime today).
+pub fn youtube_url(url: &str) -> bool {
+    let rest = match url.split_once("://") {
+        Some((_, r)) => r,
+        None => return false,
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("").rsplit('@').next().unwrap_or("").split(':').next().unwrap_or("").to_ascii_lowercase();
+    ["youtube.com", "youtu.be", "youtube-nocookie.com"].iter().any(|d| host == *d || host.ends_with(&format!(".{}", d)))
+}
+/// Whether the person is told yt-dlp lacks a JavaScript runtime: it said so (whatever it was given), or — none was
+/// given to a yt-dlp that knows the option — YouTube was asked (the warning itself is hidden by --no-warnings) or its
+/// formats came back thinned out.
+pub fn js_missing(err: &str, have_runtime: bool, js_ok: bool, url: &str) -> bool {
+    if err.contains(JS_WARNING) {
+        return true;
+    }
+    if have_runtime || !js_ok {
+        return false;
+    }
+    youtube_url(url) || JS_SYMPTOMS.iter().any(|s| err.contains(s))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deno_pack_and_runtime_missing() {
+        assert_eq!(deno_file("win32"), "deno.exe");
+        assert_eq!(deno_file("linux"), "deno");
+        assert_eq!(deno_asset("win32", "x64"), Some("deno-x86_64-pc-windows-msvc.zip"));
+        assert_eq!(deno_asset("darwin", "arm64"), Some("deno-aarch64-apple-darwin.zip"));
+        assert_eq!(deno_asset("darwin", "x64"), Some("deno-x86_64-apple-darwin.zip"));
+        assert_eq!(deno_asset("linux", "x64"), Some("deno-x86_64-unknown-linux-gnu.zip"));
+        assert_eq!(deno_asset("linux", "arm64"), Some("deno-aarch64-unknown-linux-gnu.zip"));
+        assert_eq!(deno_asset("win32", "arm64"), None);
+        assert_eq!(deno_asset("freebsd", "x64"), None);
+        assert_eq!(pack_key("darwin", "arm64"), "darwin-arm64");
+        assert!(youtube_url("https://www.youtube.com/watch?v=x"));
+        assert!(youtube_url("https://youtu.be/x"));
+        assert!(youtube_url("https://music.youtube.com/watch?v=x"));
+        assert!(!youtube_url("https://notyoutube.com/x"));
+        assert!(!youtube_url("https://fake.test/watch?v=jswarn"));
+        let w = "WARNING: [youtube] No supported JavaScript runtime could be found. YouTube extraction without a JS runtime has been deprecated, and some formats may be missing.";
+        // Said by yt-dlp: told, whatever it was given.
+        assert!(js_missing(w, true, true, "https://fake.test/x"));
+        // Hidden by --no-warnings: YouTube asked without a runtime → told; with one → not.
+        assert!(js_missing("", false, true, "https://www.youtube.com/watch?v=x"));
+        assert!(!js_missing("", true, true, "https://www.youtube.com/watch?v=x"));
+        // An older yt-dlp (no --js-runtimes): nothing to offer.
+        assert!(!js_missing("", false, false, "https://www.youtube.com/watch?v=x"));
+        // Formats thinned out elsewhere.
+        assert!(js_missing("ERROR: [youtube] x: Requested format is not available", false, true, "https://example.com/v"));
+        assert!(!js_missing("ERROR: Unsupported URL", false, true, "https://example.com/v"));
+    }
     use super::*;
     fn s(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()

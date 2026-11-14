@@ -173,6 +173,20 @@ Var KrWasTorrentCmd
   ${EndIf}
 !macroend
 
+; The Electron build's Run value NAME removed (with Windows' «approved» note of it) where it names the old program.
+!macro KR_OLD_RUN_GONE NAME
+  ReadRegStr $R7 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${NAME}"
+  ${If} $R7 != ""
+    !insertmacro KR_NAMES_OLD "$R7"
+    ${If} $R5 = 1
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${NAME}"
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${NAME}"
+      !insertmacro KR_TRACE "login-old-removed"
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+!macroend
+
 ; A link (magnet, kurokawatools) written for the new program.
 !macro KR_LINK_NEW SCHEME
   WriteRegStr HKCU "Software\Classes\${SCHEME}" "" "URL:${SCHEME}"
@@ -210,8 +224,15 @@ Var KrWasTorrentCmd
       WriteRegStr HKCU "Software\Classes\$KrWasTorrentExt\shell\open\command" "" "$KrWasTorrentCmd"
       WriteRegStr HKCU "Software\Classes\.torrent" "" "$KrWasTorrentExt"
     ${EndIf}
+    ; (Its desktop shortcut, where there was one before this install, put back; the new program keeps its Start-menu
+    ; entry.)
+    ${If} ${FileExists} "$TEMP\kr-old-desktop.lnk"
+      CopyFiles /SILENT "$TEMP\kr-old-desktop.lnk" "$DESKTOP\${KR_OLD_NAME}.lnk"
+      !insertmacro KR_TRACE "desktop-kept"
+    ${EndIf}
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ${EndIf}
+  Delete "$TEMP\kr-old-desktop.lnk"
   ${If} $KrOldDir != ""
   ${AndIf} $KrOld == "replace"
     !insertmacro KR_TRACE "electron-replaced"
@@ -261,6 +282,11 @@ Var KrWasTorrentCmd
         DeleteRegKey HKCU "Software\$KrOldKey"
       ${EndIf}
     ${EndIf}
+    ; 4. Start at log-in: the Electron build's own Run value (named by its AppUserModelId) taken away where it names
+    ; the old program — the new one writes its own («Kurokawa Tools») when its settings say so: never two at log-in.
+    ; (Kept beside: left as it is — KR_OLD keep never reaches here.)
+    !insertmacro KR_OLD_RUN_GONE "app.kurokawa.tools"
+    !insertmacro KR_OLD_RUN_GONE "electron.app.Kurokawa Tools"
     ; (Explorer told: file types and shortcuts changed.)
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ${EndIf}
@@ -282,6 +308,12 @@ Var KrWasTorrentCmd
   ReadRegStr $KrWasTorrentExt HKCU "Software\Classes\.torrent" ""
   ${If} $KrWasTorrentExt != ""
     ReadRegStr $KrWasTorrentCmd HKCU "Software\Classes\$KrWasTorrentExt\shell\open\command" ""
+  ${EndIf}
+  ; (The desktop shortcut as it is now: Tauri's install makes one of the SAME name, «Kurokawa Tools.lnk», over the
+  ; Electron program's — run 43551417003 —; an Electron copy kept beside gets its own back.)
+  Delete "$TEMP\kr-old-desktop.lnk"
+  ${If} ${FileExists} "$DESKTOP\${KR_OLD_NAME}.lnk"
+    CopyFiles /SILENT "$DESKTOP\${KR_OLD_NAME}.lnk" "$TEMP\kr-old-desktop.lnk"
   ${EndIf}
   ClearErrors
 !macroend

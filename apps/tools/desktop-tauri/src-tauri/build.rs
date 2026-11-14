@@ -4,6 +4,10 @@
 // for the stages that use them) —; the build's log says what was found («KT build: …»). Nothing found leaves those
 // parts out; the build never fails for it.
 mod apidetect;
+// (Start-up: whether the window can be given its colour before the page paints — the Reader's bootdetect.rs, read in
+// place: one source for both apps, as the setup program reads it.)
+#[path = "../../../reader/desktop-tauri/src-tauri/bootdetect.rs"]
+mod bootdetect;
 
 fn main() {
     for c in apidetect::CFGS.iter().chain(apidetect::CFGS_P6.iter()).chain(apidetect::CFGS_P7.iter()).chain(apidetect::CFGS_SCR.iter()) {
@@ -44,5 +48,22 @@ fn main() {
         }
     }
     println!("cargo:warning=KT build: {}", said.join(" | "));
+    // (Start-up timing: the window opens in the page's own colour where Tauri's background_color and tauri-utils' Color
+    // are as written for — src/boot.rs.)
+    println!("cargo:rustc-check-cfg=cfg({})", bootdetect::CFG);
+    println!("cargo:rerun-if-changed=../../../reader/desktop-tauri/src-tauri/bootdetect.rs");
+    let bg = apidetect::locked_version(&lock, "tauri")
+        .zip(apidetect::locked_version(&lock, "tauri-utils"))
+        .and_then(|(tv, uv)| {
+            let h = home.as_ref()?;
+            let t = apidetect::crate_src(h, "tauri", &tv)?;
+            let u = apidetect::crate_src(h, "tauri-utils", &uv)?;
+            Some(bootdetect::bg_color(&apidetect::squeeze_tree(&t), &apidetect::squeeze_tree(&u)))
+        })
+        .unwrap_or(false);
+    if bg {
+        println!("cargo:rustc-cfg={}", bootdetect::CFG);
+    }
+    println!("cargo:warning=KT build (start-up): {} the window's colour before the page paints (background_color)", if bg { "yes" } else { "no" });
     tauri_build::build()
 }

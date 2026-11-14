@@ -9,7 +9,7 @@ import { ktPlugin, listen } from './native';
 import { REPO, APP_VERSION } from './repo';
 import { request } from './http';
 
-export type PackName = 'python' | 'ffmpeg' | 'mpv';
+export type PackName = 'python' | 'ffmpeg' | 'mpv' | 'deno';
 type Status = Record<PackName, { version: string | null; size: number }> & { abi?: string; platform?: string; arch?: string };
 type Prog = { name: string; done: number; total: number };
 type Plug = { packStatus(): Promise<Status>; packInstall(o: { name: string; url: string; sha256: string; version: string }): Promise<void>; packCancel(o: { name: string }): Promise<void>; packRemove(o: { name: string }): Promise<void>; addListener(ev: string, fn: (p: Prog) => void): unknown };
@@ -19,7 +19,8 @@ const desk = (): Desk | null => { const d = window.kurokawaTools as unknown as D
 /** Whether this build fetches packs at all (Android and the desktop do; the web has no native parts). */
 export const packsHere = (): boolean => !!(plug() || desk());
 /** The packs this platform has (the desktop has only ffmpeg: yt-dlp there is a single program). */
-export const packNames = (): PackName[] => (desk() ? ['ffmpeg'] : plug() ? ['python', 'ffmpeg', 'mpv'] : []);
+// (The Tauri shell also has «deno», yt-dlp's JavaScript runtime — Electron gives yt-dlp its own Node.)
+export const packNames = (): PackName[] => (desk() ? ['ffmpeg', ...((window.kurokawaTools as unknown as { videoJsRuntime?: unknown })?.videoJsRuntime ? ['deno' as PackName] : [])] : plug() ? ['python', 'ffmpeg', 'mpv'] : []);
 
 export async function status(): Promise<Status | null> { const d = desk(); if (d) return d.packStatus(); const p = plug(); return p ? p.packStatus() : null; }
 
@@ -50,7 +51,7 @@ async function missing(names: PackName[], st: Status): Promise<PackName[]> {
   for (const n of names) { const v = st[n]?.version; if (!v) { out.push(n); continue; } try { const m = await readManifest(); const want = versionOf(m, n); if (want && v !== want) out.push(n); } catch { /* offline: the one here will do */ } }
   return out;
 }
-export const packLabel = (n: PackName): string => (n === 'python' ? t('packPython') : n === 'mpv' ? t('packMpv') : t('packFfmpeg'));
+export const packLabel = (n: PackName): string => (n === 'python' ? t('packPython') : n === 'mpv' ? t('packMpv') : n === 'deno' ? t('packDeno') : t('packFfmpeg'));
 
 /** The packs among `names` that have to be fetched, with where from and how big (null: nothing to fetch). */
 export async function packsToFetch(names: PackName[]): Promise<{ n: PackName; e: Awaited<ReturnType<typeof entryFor>> }[]> {

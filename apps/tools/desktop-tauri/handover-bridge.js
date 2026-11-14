@@ -19,6 +19,19 @@
     if (!inv) return Promise.reject(new Error('Tauri IPC is not available'));
     try { return Promise.resolve(inv(cmd, args || {})).catch(function (e) { throw asError(e); }); } catch (e) { return Promise.reject(asError(e)); }
   }
+  function subscribe(name, cb) {
+    var t = window.__TAURI__, i = window.__TAURI_INTERNALS__, on = null, off = null, gone = false;
+    if (t && t.event && typeof t.event.listen === 'function') on = function (n, f) { return t.event.listen(n, f); };
+    else if (i && typeof i.invoke === 'function' && typeof i.transformCallback === 'function') on = function (n, f) { return i.invoke('plugin:event|listen', { event: n, target: { kind: 'Any' }, handler: i.transformCallback(f) }); };
+    if (on && typeof cb === 'function') {
+      try {
+        Promise.resolve(on(name, function (ev) { if (!gone) { try { cb(ev && ev.payload); } catch (e) { /* the page's */ } } })).then(function (u) {
+          if (typeof u === 'function') { if (gone) { try { u(); } catch (e) { /* gone */ } } else off = u; }
+        }).catch(function () {});
+      } catch (e) { /* no events */ }
+    }
+    return function () { gone = true; if (off) { try { off(); } catch (e) { /* gone */ } } };
+  }
   function toArrayBuffer(r) {
     if (r instanceof ArrayBuffer) return r;
     if (r && r.buffer instanceof ArrayBuffer && typeof r.byteLength === 'number') return r.buffer.slice(r.byteOffset || 0, (r.byteOffset || 0) + r.byteLength);
@@ -42,6 +55,12 @@
     free: function (dir) { return call('kt_handover_free', { p: String(dir) }); },
     // The earlier (Electron) Kurokawa Tools started, where it is still installed beside this one → true / false.
     openOld: function () { return call('kt_handover_open_old', {}); },
+    // (After the hand-over: who runs the downloads both programs' sessions name — src-tauri/src/ownerlock.rs, kt-core's
+    // ownerlogic.rs. null when nothing was handed over; else { held, status, by, since, count }.)
+    owner: function () { return call('kt_downloads_owner', {}); },
+    // «Take them back» (asked first by the page) → { ok, held, … }.
+    takeDownloads: function () { return call('kt_downloads_take', {}); },
+    onOwner: function (cb) { return subscribe('kt:downloadsOwner', cb); },
   };
   try { Object.defineProperty(window, 'kurokawaHandover', { value: Object.freeze(api), enumerable: true, configurable: false, writable: false }); } catch (e) { /* defined already */ }
 })();

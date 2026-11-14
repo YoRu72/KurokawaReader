@@ -166,10 +166,14 @@ function pretendIpc() {
       case 'kt_list': return tasks;
       case 'kt_default_dir': return '/home/u/Downloads/Kurokawa';
       case 'kt_roots': return { roots: ['/home/u/Downloads/Kurokawa'] };
-      case 'kt_pack_status': return { ffmpeg: { version: '7.1', size: 5e7 }, python: { version: null, size: 0 }, platform: 'linux', arch: 'x64' };
+      case 'kt_pack_status': return { ffmpeg: { version: '7.1', size: 5e7 }, python: { version: null, size: 0 }, deno: { version: window.__deno || null, size: window.__deno ? 4e7 : 0 }, platform: 'linux', arch: 'x64' };
+      // (Part 3: yt-dlp with no JavaScript runtime here — the «deno» pack offered.)
+      case 'kt_video_js_runtime': return { missing: !!window.__jsMissing && !window.__deno, seen: !!window.__jsMissing, pack: 'deno', installed: window.__deno || null, runtime: window.__deno ? 'deno' : null };
+      case 'kt_http': return /KurokawaTools-packs\.json$/.test(a.o.url) ? { status: 200, headers: {}, body: JSON.stringify({ versions: { deno: '2.5.0' }, packs: { deno: { 'linux-x64': { file: 'KurokawaTools-pack-deno-linux-x64.gz', size: 4e7, sha256: 'ab'.repeat(32) } } } }) } : null;
+      case 'kt_pack_install': if (a.o && a.o.name === 'deno') { emit('kt:packProgress', { name: 'deno', done: 4e7, total: 4e7 }); window.__deno = a.o.version; } return null;
       case 'kt_video_ready': return { ok: true, version };
       case 'kt_video_version': return { version, ready: true };
-      case 'kt_video_info': return raw;
+      case 'kt_video_info': return window.__jsMissing && !window.__deno ? { ...raw, jsRuntime: 'missing' } : raw;
       case 'kt_is_video_host': return /youtube\.com/.test(a.u);
       case 'kt_video_binary': return { path: '/home/u/.local/share/kt/bin/yt-dlp', managed: true, olds, min: '2025.01.01' };
       case 'kt_video_rollback': version = olds[0]; olds = []; return { version };
@@ -230,9 +234,52 @@ async function partTwo() {
   } finally { await br.close(); web.close(); }
 }
 
+/* ---------- part 3: yt-dlp without a JavaScript runtime — the «deno» pack offered once ---------- */
+async function partThree() {
+  let chromium; try { ({ chromium } = require('playwright')); } catch { return; }
+  const web = http.createServer((req, r) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); r.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(r); }).listen(0);
+  const base = `http://127.0.0.1:${web.address().port}/`;
+  const br = await chromium.launch(); const errors = [];
+  try {
+    for (const lang of ['en', 'ar']) {
+      const p = await br.newPage({ viewport: { width: 420, height: 860 } }); p.on('pageerror', (e) => errors.push(e.message));
+      await p.addInitScript(() => { window.__jsMissing = true; }); await p.addInitScript(pretendIpc); await p.addInitScript((l) => { localStorage.setItem('kr.lang', l); }, lang); await p.addInitScript(BRIDGE);
+      await p.goto(base + '#/'); await p.waitForSelector('.fab'); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet');
+      await p.fill('.add-input', 'https://www.youtube.com/watch?v=abc');
+      const offer = await p.waitForSelector('.sheet[data-jsruntime="offer"]', { timeout: 8000 }).then(() => true, () => false);
+      const words = offer ? await p.textContent('.sheet[data-jsruntime="offer"]') : '';
+      ok(`${lang}: no JavaScript runtime → told in the Add sheet, with «Get deno»`, offer && (lang === 'en' ? /found no JavaScript runtime/.test(words) && /Get deno/.test(words) : /بيئةً لتشغيل JavaScript/.test(words) && /نزِّل deno/.test(words)), words.slice(0, 200));
+      if (!offer) { await p.close(); continue; }
+      await p.click('[data-act="get-deno"]');
+      const inst = await p.waitForFunction(() => window.__calls.find((c) => c[0] === 'kt_pack_install'), null, { timeout: 8000 }).then((h) => h.jsonValue(), () => null);
+      ok(`${lang}: the pack fetched through the pack mechanism (this system's entry, its SHA-256 and version)`, inst && inst[1].o.name === 'deno' && /pack-deno-linux-x64\.gz$/.test(inst[1].o.url) && inst[1].o.sha256 === 'ab'.repeat(32) && inst[1].o.version === '2.5.0', inst);
+      await p.evaluate(() => { document.querySelectorAll('.sheet').forEach((s) => s.__close && s.__close()); });
+      await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet');
+      await p.fill('.add-input', 'https://www.youtube.com/watch?v=xyz');
+      await p.waitForSelector('.video-choices', { timeout: 8000 }).catch(() => null);
+      ok(`${lang}: told once (not again)`, !(await p.$('.sheet[data-jsruntime="offer"]')));
+      if (lang === 'en') {
+        await p.goto(base + '#/settings/storage'); await p.waitForTimeout(800);
+        const row = await p.waitForFunction(() => /deno \(JavaScript for yt-dlp\)/.test(document.body.innerText), null, { timeout: 5000 }).then(() => true, () => false);
+        ok('Settings → Storage lists the deno pack (removable)', row);
+      }
+      await p.close();
+    }
+    ok('part 3: no page errors', errors.length === 0, errors);
+  } finally { await br.close(); web.close(); }
+}
+
+// (The release's deno files: scripts/denopack.py's table is kt-core's deno_asset.)
+{
+  const rs = fs.readFileSync(path.join(ROOT, 'core', 'kt-core', 'src', 'videotools.rs'), 'utf8'); const py = fs.readFileSync(path.join(ROOT, 'scripts', 'denopack.py'), 'utf8');
+  const fromRs = [...rs.matchAll(/\("(\w+)", "(\w+)"\) => Some\("(deno-[^"]+)"\)/g)].map((m) => `${m[1]}-${m[2]}=${m[3]}`).sort();
+  const fromPy = [...py.matchAll(/'(\w+-\w+)': '(deno-[^']+)'/g)].map((m) => `${m[1]}=${m[2]}`).sort();
+  ok(`deno pack: the release script's table is kt-core's (${fromRs.length} systems)`, fromRs.length === 5 && fromRs.join() === fromPy.join(), { fromRs, fromPy });
+}
 (async () => {
   await partOne();
   await partTwo();
+  await partThree();
   console.log(fails ? `${fails} FAILED` : 'videotauri: all passed');
   process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

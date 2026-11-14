@@ -70,6 +70,8 @@ fn setup() -> Result<Value, String> {
         let gz = Arc::new(gz);
         server.set("/pack/ffmpeg.gz", Route { body: gz.clone(), ctype: "application/gzip", slow: false, cut: None });
         server.set("/pack/slow.gz", Route { body: gz.clone(), ctype: "application/gzip", slow: true, cut: None });
+        // (The «deno» pack: the same program — it answers as deno under that name, vtfake.rs.)
+        server.set("/pack/deno.gz", Route { body: gz.clone(), ctype: "application/gzip", slow: false, cut: None });
         server.set("/pack/cut.gz", Route { body: gz.clone(), ctype: "application/gzip", slow: false, cut: Some(pack_size / 3) });
         if let Some(asset) = vt::gallery_asset(util::node_platform()) {
             let mut prog = exe.as_ref().clone();
@@ -88,7 +90,7 @@ fn setup() -> Result<Value, String> {
     }
     let lab = g.as_ref().ok_or_else(|| "no lab".to_string())?;
     Ok(json!({
-        "base": lab.base, "packSha256": lab.pack_sha, "packSize": lab.pack_size,
+        "base": lab.base, "packSha256": lab.pack_sha, "packSize": lab.pack_size, "denoSha256": lab.pack_sha,
         "gallery": vt::gallery_asset(util::node_platform()).is_some(), "os": util::node_platform(),
         "dir": vtools::dirs().data.to_string_lossy(), "version": vtfake::DEFAULT_VERSION,
     }))

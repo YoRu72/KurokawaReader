@@ -61,7 +61,8 @@
       "antivirus.cjs",
       "screentr.cjs",
       "handover.cjs",
-      "rustswitch.cjs"
+      "rustswitch.cjs",
+      "ownerlock.cjs"
     ],
     "extraResources": [
       {

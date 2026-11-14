@@ -432,6 +432,9 @@ pub fn engine_prestart(app: &AppHandle) {
     let mut copied = 0u32;
     let mut downloads = 0usize;
     let mut videos = 0usize;
+    // (The downloads both programs' sessions now name — aria2's gids and the video jobs' ids —, for the owner file
+    // next to the session that was handed over: ownerlock.rs.)
+    let mut ids: Vec<String> = Vec::new();
     for &(rel, name) in logic::ENGINE_FILES.iter() {
         if !listed(rel) {
             continue;
@@ -449,11 +452,15 @@ pub fn engine_prestart(app: &AppHandle) {
         };
         let out: Vec<u8> = if name == "aria2.session" {
             let text = String::from_utf8_lossy(&bytes).to_string();
-            downloads = logic::session_gids(&text).len();
+            let gids = logic::session_gids(&text);
+            downloads = gids.len();
+            ids.extend(gids);
             logic::session_unpause(&text, &moving).into_bytes()
         } else {
             if name == "video-jobs.json" {
-                videos = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| v.as_array().map(|a| a.len())).unwrap_or(0);
+                let jobs = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                videos = jobs.len();
+                ids.extend(jobs.iter().filter_map(|j| j.get("id").and_then(|x| x.as_str()).map(String::from)));
             }
             bytes
         };
@@ -463,7 +470,8 @@ pub fn engine_prestart(app: &AppHandle) {
         }
         copied += 1;
     }
-    note("carried", json!({ "files": copied, "downloads": downloads, "moving": moving.len(), "videos": videos, "fonts": fonts }));
+    let owner_file = marker.get("from").and_then(|f| f.get("userData")).and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|d| shell::lossy(&Path::new(d).join(kt_core::ownerlogic::FILE)));
+    note("carried", json!({ "files": copied, "downloads": downloads, "moving": moving.len(), "videos": videos, "fonts": fonts, "ownerFile": owner_file, "ids": ids }));
 }
 
 /* ---------- CI: the hand-over's own check (KTH_SELFTEST) ---------- */

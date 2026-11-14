@@ -239,6 +239,7 @@ async function behaviour() {
   eq((await text(page, '#go')).trim(), 'Update', 'the Electron build found: Update');
   ok((await text(page, '.tile-line')).startsWith(WORDS.en.electronLine), 'replaces the earlier Kurokawa Tools');
   eq((await text(page, '.tile b')).trim(), WORDS.en.kept, 'data kept');
+  ok(await page.evaluate(() => { const p = document.querySelector('.tile-ic svg'); const d = (x) => [...x.matchAll(/ d="([^"]+)"/g)].map((m) => m[1]).join('|'); return !!p && d(p.innerHTML) === d(window.SETUP_APP.keptIcon) && !/M4 5\.5C6\.5/.test(p.innerHTML); }), 'the data-kept tile shows Tools\' own picture (words.js SETUP_APP), not the Reader\'s book');
   ok(await page.isEnabled('.browse'), 'a new folder can be chosen (the Electron folder is removed)');
   await ctx.close();
 

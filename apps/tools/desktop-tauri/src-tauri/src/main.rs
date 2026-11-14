@@ -57,6 +57,14 @@ mod screentr;
 // (Stage P9: the hand-over from the Electron build — its reading half, the engine's files carried before aria2c starts,
 // CI's hand-over check (KTH_SELFTEST); kt-core's handoverlogic.rs decides.)
 mod handover;
+// (Stage P9, after the hand-over: one program runs the downloads both sessions name — the owner file, its heartbeat;
+// kt-core's ownerlogic.rs decides.)
+mod ownerlock;
+// (Start-up timing and the window's colour before the page paints — the Reader's boot.rs with Tools' names; its rules
+// the Reader's bootlogic.rs, read in place.)
+mod boot;
+#[path = "../../../../reader/desktop-tauri/src-tauri/src/bootlogic.rs"]
+mod bootlogic;
 
 use std::path::PathBuf;
 
@@ -75,6 +83,8 @@ pub const WINDOW: winstate::Defaults = winstate::Defaults {
 const BRIDGE_JS: &str = include_str!("../../bridge.js");
 
 fn main() {
+    // (Start-up timing: counted from here.)
+    boot::mark_start();
     // (Stage P5, self-test runs only: this program started under the name yt-dlp / gallery-dl / ffmpeg / ffprobe
     // answers as that program and ends here — vtfake.rs; None at once otherwise. First, before any plugin: a stand-in
     // must never reach the single-instance hand-over.)
@@ -202,6 +212,7 @@ fn main() {
             streamtest::kt_selftest_stream,
             // (Stage P5: the video tools.)
             vtools::kt_video_info,
+            vtools::kt_video_js_runtime,
             vtools::kt_video_ready,
             vtools::kt_video_version,
             vtools::kt_video_update,
@@ -237,7 +248,11 @@ fn main() {
             handover::kt_handover_free,
             handover::kt_handover_open_old,
             handover::kt_handover_check_progress,
-            handover::kt_handover_check_done
+            handover::kt_handover_check_done,
+            ownerlock::kt_downloads_owner,
+            ownerlock::kt_downloads_take,
+            boot::kt_boot_mark,
+            boot::kt_boot_times
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -264,6 +279,9 @@ fn main() {
             // (Stage P9: before the video tools and the engine read their files — the downloads an Electron build handed
             // over put in place, once, when this build has none of its own; handover.rs engine_prestart.)
             handover::engine_prestart(&handle);
+            // (Stage P9: the handed-over downloads' owner taken — or, another live owner holding them, their entries paused
+            // in this build's session before aria2 reads it; ownerlock.rs.)
+            ownerlock::before_engine(&handle);
             // (Stage P7: where the shipped 7-Zip is; Tools' parts of the shared archive code switched on.)
             archives::init(&handle);
             // (Stage P5: the video tools' folders and jobs; yt-dlp brought up to date now and then, as main.cjs does.)
@@ -345,6 +363,13 @@ fn main() {
             if saved.maximized {
                 b = b.maximized(true);
             }
+            // (The window opens in the interface's own colour — kept from the last run — so nothing flashes white before
+            // the page paints; where this build's Tauri has background_color: boot.rs, the Reader's bootdetect.rs.)
+            #[cfg(kr_bg_color)]
+            {
+                let (r, g, bl) = boot::splash(&handle);
+                b = b.background_color(tauri::utils::config::Color(r, g, bl, 255));
+            }
             b.build()?;
             // (Stage P6 part: the icon of the user's choosing put on again — window, taskbar, shortcuts, entry.)
             appicon::at_start(&handle);
@@ -371,6 +396,8 @@ fn main() {
                 if let Some(e) = engine::get() {
                     e.stop();
                 }
+                // (Stage P9: the handed-over downloads released, while this build owns them.)
+                ownerlock::at_exit();
                 // (Stage P5: running video jobs ended with their trees.)
                 vtjobs::stop_all();
                 // (Screen translator: «auto» and its OCR helpers ended.)

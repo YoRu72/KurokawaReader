@@ -127,7 +127,7 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then (cd apps/tools && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/shared-copies.cjs); fi
           d="$RUNNER_TEMP/rs-tests-p9"; mkdir -p "$d"
           ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
-          for f in apps/tools/core/kt-core/src/handoverlogic.rs apps/tools/desktop-tauri/setup/src-tauri/src/logic.rs; do
+          for f in apps/tools/core/kt-core/src/handoverlogic.rs apps/tools/core/kt-core/src/ownerlogic.rs apps/tools/desktop-tauri/setup/src-tauri/src/logic.rs; do
             n=$(basename "$(dirname "$(dirname "$f")")")-$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n$ext"
             "$d/$n$ext"
@@ -383,6 +383,7 @@ jobs:
             ${{ runner.temp }}/kr-install/nsis-*/*.nsi
 
       - name: Hand-over — Electron makes it (Windows, stage P9)
+        timeout-minutes: 15
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: pwsh
         run: |
@@ -403,6 +404,7 @@ jobs:
           exit $LASTEXITCODE
 
       - name: Hand-over — the Tauri build brings it (Windows, stage P9)
+        timeout-minutes: 15
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
@@ -454,6 +456,9 @@ jobs:
           node tests/setupui.cjs
           node tests/handover.cjs
           node tests/firstrun.cjs
+          # (After the switch-over: one program runs the shared downloads — the owner rule's table, races and page.)
+          node tests/ownerlock.cjs
+          node tests/videotauri.cjs
 
       # (Stage P4.) librqbit, which the main build leaves out (src-tauri/Cargo.toml's [features] says why): turned on in
       # this runner's copy only, `cargo check --features rqbit`, the compiler's errors printed — never required, and

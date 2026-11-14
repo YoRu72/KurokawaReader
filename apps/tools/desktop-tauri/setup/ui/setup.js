@@ -191,6 +191,9 @@
     open: '<path d="M14 4h6v6M20 4l-9 9M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/>',
     wrench: '<path d="M14.5 6.5a4 4 0 0 0 5 5L13 18a2.1 2.1 0 0 1-3-3l6.5-6.5M14.5 6.5L17 4"/>',
   };
+  // (The «data kept» tile's picture: the app's own, from its words.js — window.SETUP_APP.keptIcon, an SVG path in the
+  // 24×24 box —, else the library's.)
+  ICONS.kept = (window.SETUP_APP && window.SETUP_APP.keptIcon) || ICONS.library;
   function icon(name, cls) {
     const s = document.createElementNS(SVGNS, 'svg');
     s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.setAttribute('class', 'ic' + (cls ? ' ' + cls : ''));
@@ -232,7 +235,7 @@
   const wTitle = h('h2', { class: 'title', id: 'title-welcome' });
   const lead = t('lead', 'p', { class: 'lead' });
   const tileLine = h('p', { class: 'tile-line' });
-  const tile = h('div', { class: 'tile', hidden: true }, h('span', { class: 'tile-ic' }, icon('library')), h('div', null, t('kept', 'b'), tileLine));
+  const tile = h('div', { class: 'tile', hidden: true }, h('span', { class: 'tile-ic' }, icon('kept')), h('div', null, t('kept', 'b'), tileLine));
   // (What will happen, at a glance — the folder and the options on; a press opens the options.)
   const sumPath = h('span', { class: 'sum-path ltr' });
   const sumChips = h('span', { class: 'sum-chips' });

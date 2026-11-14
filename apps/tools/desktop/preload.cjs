@@ -52,4 +52,9 @@ contextBridge.exposeInMainWorld('kurokawaHandover', {
   abort() { return ipcRenderer.invoke('kt:handover-abort'); },
   status() { return ipcRenderer.invoke('kt:handover-status'); },
   switchInfo(o) { return ipcRenderer.invoke('kt:rustSwitchInfo', o); },
+  // (After the hand-over: who runs the downloads both programs share — null unless the bridge build's switch is on and
+  // the Rust build owns some; ownerlock.cjs.)
+  owner() { return ipcRenderer.invoke('kt:downloadsOwner'); },
+  takeDownloads() { return ipcRenderer.invoke('kt:downloadsTake'); },
+  onOwner(cb) { const fn = (_e, o) => cb(o); ipcRenderer.on('kt:downloadsOwner', fn); return () => ipcRenderer.removeListener('kt:downloadsOwner', fn); },
 });

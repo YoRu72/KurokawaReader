@@ -1140,4 +1140,22 @@ export const ja: Partial<Strings> = {
   switchMacOpened: "新しいバージョンのディスクイメージを開きました。Kurokawa Tools をアプリケーションへドラッグしてから開いてください。ダウンロードはここでは一時停止し、新しいアプリで続きます。",
   switchNoChecksum: "リリースにファイルの確認値がないため、インストールしていません。",
   switchNoRelease: "新しいバージョンに今は接続できません。あとでもう一度お試しください。",
+  // (P9・パソコン: 引き継ぎ後に両バージョンが共有するダウンロードは、どちらか一方だけが進めます。)
+  ownerHeldTitle: "これらのダウンロードはもう一方の Kurokawa Tools で進行中です",
+  ownerHeldBody: "このパソコンの 2 つのバージョン間で引き継いだダウンロード（{n} 件）は、{who}が進めています。同じファイルに 2 つのプログラムが書き込むと壊れるため、ここでは一時停止のままです。",
+  ownerWhoNew: "新しい Kurokawa Tools",
+  ownerWhoOld: "以前の Kurokawa Tools",
+  ownerHeldShort: "ここでは一時停止中: もう一方の Kurokawa Tools がこのダウンロードを進めています",
+  ownerTakeBack: "こちらに戻す",
+  ownerTakeAsk: "これらのダウンロードをこのアプリに戻しますか？",
+  ownerTakeAskBody: "できればもう一方の Kurokawa Tools を先に閉じてください。あちらでは一時停止されます。両方で進め続けるとファイルが壊れるおそれがあります。",
+  ownerTaken: "こちらで進めています。",
+  ownerTakeFailed: "もう一方の Kurokawa Tools がまだ使っています。閉じてからもう一度お試しください。",
+  ownerYielded: "もう一方の Kurokawa Tools がこれらのダウンロードを戻したため、ここでは一時停止しました。",
+  // (Tauri 版: JavaScript ランタイムのない yt-dlp と「deno」コンポーネント。)
+  packDeno: "deno（yt-dlp 用の JavaScript）",
+  jsRtTitle: "YouTube には JavaScript ランタイムが必要です",
+  jsRtBody: "yt-dlp がこのパソコンで JavaScript ランタイムを見つけられませんでした。YouTube の一部の形式が欠けたり、ページを読めなかったりします。小さな「deno」コンポーネントを一度ダウンロードすれば、以後はそれを使います。",
+  jsRtGet: "deno を入手",
+  jsRtWhy: "yt-dlp が YouTube のページを読むのに使います。",
 };

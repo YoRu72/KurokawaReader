@@ -114,6 +114,15 @@
       var n = await waitFor(function () { var d = env.doc; var nav = d && d.querySelector && d.querySelector('.nav-rail, .bottom-nav'); return nav && d.querySelectorAll('[data-dest]').length > 0 ? nav : null; }, 20000, 'navigation');
       return (n.className || 'nav') + ', ' + env.doc.querySelectorAll('[data-dest]').length + ' places';
     }, 25000);
+    // (Start-up timing, as the Reader's: the page's first paint and its first screen in place, in ms from the program's
+    // start — boot.rs. Printed in every part, so CI's summary shows it per system; whether the window took the page's
+    // colour before it painted is said too.)
+    await check('start-up: first paint and app ready (ms from the program\'s start)', true, async function () {
+      var t = null, until = env.now() + 15000;
+      while (!t) { var x = await env.invoke('kt_boot_times', {}); if (x && x.paint != null && x.ready != null) t = x; else if (env.now() > until) throw new Error('timeout: both marks ' + short(x)); else await env.sleep(200); }
+      must(t.paint > 0 && t.ready > 0 && t.ready < 120000, short(t));
+      return t.line + (t.colourAtStart ? '; the window opens in the page\'s colour' : '; no window colour before the page (background_color not in this Tauri)');
+    }, 20000);
 
     // (KT_SELFTEST_PART — cfg.part: 1 the first half below, 2 the second, 0 all. The rows above run in both.)
     var part = cfg.part === 1 || cfg.part === 2 ? cfg.part : 0;
@@ -1013,12 +1022,22 @@
         var slowIn = await kt.writeTempBytes({ name: 'kt-slow-in.bin', b64: 'AAEC', sub: 'kt-selftest-vt' });
         var out = slowIn + '.out.mkv';
         var run = kt.ffmpeg({ id: 'vt-cancel', args: ['-i', slowIn, '-progress', 'pipe:1', '-nostats', out] });
+        // (Each phase named when it fails: in run 43551417003 the installed app's copy of this row timed out at 40 s
+        // with no word of where; the bare program's passed.)
+        var phase = 'the stand-in\'s pids';
         var ps = await pids(out + '.pids');
+        phase = 'cancel'; var t0 = env.now();
         await kt.ffmpegCancel('vt-cancel');
-        var r = await run; must(r && r.code !== 0, 'ended ' + short(r));
-        await gone(ps, 12000);
-        return 'code ' + r.code + '; ffmpeg ' + ps[0] + ' and its child ' + ps[1] + ' ended';
-      }, 40000);
+        phase = 'the run\'s end after cancel';
+        var r = null, again = false;
+        for (var k = 0; k < 3 && !r; k++) {
+          r = await Promise.race([run, env.sleep(10000).then(function () { return null; })]);
+          if (!r) { again = true; await kt.ffmpegCancel('vt-cancel'); }
+        }
+        must(r && r.code !== 0, 'ended ' + short(r) + ' (' + phase + ')');
+        phase = 'the tree gone'; await gone(ps, 12000);
+        return 'code ' + r.code + ' after ' + (env.now() - t0) + ' ms' + (again ? ' (a second cancel was needed)' : '') + '; ffmpeg ' + ps[0] + ' and its child ' + ps[1] + ' ended';
+      }, 75000);
       await check('ffprobe: its JSON (ffprobe beside the pack\'s ffmpeg)', true, async function () {
         await op({ op: 'probeBeside' });
         var j = await kt.ffprobe(inPath); must(j && j.streams && j.streams.length === 2 && j.streams[0].codec_type === 'video' && j.format.duration === '12.500000', short(j));
@@ -1047,6 +1066,21 @@
         if (inPath) await kt.removeFile(inPath);
         return 'gone';
       });
+      // (yt-dlp without a JavaScript runtime — the stand-in prints yt-dlp's warning — → the page's offer (jsRuntime:
+      // missing; videoJsRuntime says so) → the «deno» pack fetched from loopback (a stand-in deno) → the next look has it
+      // named (--js-runtimes) and first on yt-dlp's PATH → no warning. The runner's own node is never used here.)
+      if (kt.videoJsRuntime) await check('deno pack: yt-dlp\'s missing JavaScript runtime said, fetched, then used (args and PATH)', true, async function () {
+        var u = 'https://fake.test/watch?v=jswarn';
+        var st0 = await kt.videoJsRuntime(); must(st0 && st0.missing === true && st0.installed === null, 'before ' + short(st0));
+        var i1 = await kt.videoInfo({ url: u }); must(i1 && i1.jsRuntime === 'missing', 'not said: ' + short(i1 && { title: i1.title, jsRuntime: i1.jsRuntime }));
+        must((await kt.videoJsRuntime()).seen === true, 'not seen');
+        await kt.packInstall({ name: 'deno', url: vt.base + '/pack/deno.gz', sha256: vt.denoSha256, version: '2.5-kt' });
+        var s = await kt.packStatus(); must(s.deno && s.deno.version === '2.5-kt' && s.deno.size > 0, short(s.deno));
+        var st1 = await kt.videoJsRuntime(); must(st1.missing === false && st1.runtime === 'deno', 'after ' + short(st1));
+        var i2 = await kt.videoInfo({ url: u + '&again=1' }); must(!i2.jsRuntime && /js: args\+PATH/.test(i2.title || ''), 'still missing: ' + short({ title: i2.title, jsRuntime: i2.jsRuntime }));
+        await kt.packRemove('deno'); must((await kt.packStatus()).deno.version === null, 'not removed');
+        return 'offered, installed (' + s.deno.size + ' bytes), then «' + i2.title + '»; removed';
+      }, 60000);
     } finally { off(); off2(); }
   }
   /* stage P6 part — the app's icon of the user's choosing (appicon.rs over the shared appicon.rs): a picture chosen →

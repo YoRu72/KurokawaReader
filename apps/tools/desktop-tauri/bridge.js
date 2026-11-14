@@ -183,6 +183,9 @@
     screenFontRemove: function (o) { return call('kt_screen_font_remove', { o: obj(o) }); },
 
     /* the Files page's jobs (this shell's own: the phone plugin's shapes — { id, status, … } events as kt:files) */
+    // (This shell's own: whether yt-dlp has a JavaScript runtime here — the «deno» pack offered when it has none;
+    // vtools.rs. Electron gives yt-dlp its own Node.)
+    videoJsRuntime: function () { return call('kt_video_js_runtime', {}); },
     filesJob: function (o) { return call('kt_files_job', { o: obj(o) }); },
     filesCancel: function (o) { return call('kt_files_cancel', { o: obj(o) }); },
     filesAnswer: function (o) { return call('kt_files_answer', { o: obj(o) }); },
@@ -370,6 +373,30 @@
         });
       }
     } catch (e) { /* no DOM */ }
+  })();
+  // (Start-up timing — the Reader's bootMarks, Tools' command: src-tauri/src/boot.rs. The page's first paint and its
+  // first screen in place, from the program's start; its interface's colour (<meta name="theme-color">) kept so the
+  // window opens in it at the next start. The main window only: the mini window and the screen translator's do not
+  // mark.)
+  (function bootMarks() {
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+    try { var w = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.metadata && window.__TAURI_INTERNALS__.metadata.currentWindow; if (w && w.label && w.label !== 'main') return; } catch (e) { return; }
+    function colour() { var m = document.querySelector('meta[name="theme-color"]'); return (m && m.getAttribute('content')) || null; }
+    function mark(what) { call('kt_boot_mark', { what: what, bg: colour() }).catch(function () { /* no shell */ }); }
+    var later = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { return setTimeout(f, 16); };
+    function painted() { later(function () { mark('paint'); }); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', painted); else painted();
+    var tries = 0;
+    (function ready() {
+      var app = document.getElementById('app');
+      if (app && app.firstElementChild) { mark('ready'); watchColour(); return; }
+      if (++tries < 600) setTimeout(ready, 25);
+    })();
+    function watchColour() {
+      var m = document.querySelector('meta[name="theme-color"]'); var last = colour(); var t = 0;
+      if (!m || typeof MutationObserver !== 'function') return;
+      new MutationObserver(function () { var c = colour(); if (c === last) return; last = c; clearTimeout(t); t = setTimeout(function () { mark('theme'); }, 500); }).observe(m, { attributes: true });
+    }
   })();
   // (Which shell this is: the page draws the window's whole title bar here — src/ui/winbar.ts —, and the Files page
   // has its jobs.)

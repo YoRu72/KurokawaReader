@@ -88,6 +88,10 @@ foreach ($s in 'magnet', 'kurokawatools') { New-Item "HKCU:\Software\Classes\$s\
 # (Its .torrent kind under a class name of its own, as electron-builder may name it.)
 New-Item 'HKCU:\Software\Classes\.torrent' -Force | Out-Null; Set-Item 'HKCU:\Software\Classes\.torrent' 'KurokawaToolsElectron.torrent'
 New-Item 'HKCU:\Software\Classes\KurokawaToolsElectron.torrent\shell\open\command' -Force | Out-Null; Set-Item 'HKCU:\Software\Classes\KurokawaToolsElectron.torrent\shell\open\command' "`"$oldExe`" `"%1`""
+# (It starts with the computer, as Electron's setLoginItemSettings leaves it: a Run value named by its AppUserModelId.)
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+Set-ItemProperty $runKey 'app.kurokawa.tools' "`"$oldExe`" --hidden"
+Remove-ItemProperty $runKey 'Kurokawa Tools' -ErrorAction SilentlyContinue
 $partial = Join-Path $env:RUNNER_TEMP 'kt-ci-downloads\a.bin'; New-Item -ItemType Directory -Force -Path (Split-Path $partial) | Out-Null
 [IO.File]::WriteAllBytes($partial, [byte[]](1..200)); [IO.File]::WriteAllBytes("$partial.aria2", [byte[]](1..50))
 $partialSum = (Get-FileHash $partial).Hash + (Get-FileHash "$partial.aria2").Hash
@@ -121,6 +125,8 @@ Row 'Electron copy kept (data not handed over)' ((Test-Path (Join-Path $old 'res
 foreach ($k in '.torrent', 'magnet', 'kurokawatools') { $r = Opens-With $k $oldExe; Row "kept: $k still opens the Electron program" $r[0] $r[1] }
 Row 'desktop shortcut still the Electron program''s' ((LnkTarget $deskLnk) -eq $oldExe) (LnkTarget $deskLnk)
 Row 'Electron data kept' ((Test-Path (Join-Path $edata 'kt-ci-electron-data.txt')) -and (Test-Path (Join-Path $edata 'aria2.session'))) $edata
+$runOld = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).'app.kurokawa.tools'; $runNew = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).'Kurokawa Tools'
+Row 'kept: its start at log-in left as it was, no second added' (($runOld -like "*$oldExe*") -and -not $runNew) "old [$runOld], new [$runNew]"
 # 2b. The Electron «bridge» build's hand-over finished (its marker, written last, after every file was checked): the
 # installer run again — as the bridge build runs it — now REPLACES the Electron copy.
 New-Item -ItemType Directory -Force -Path (Join-Path $edata 'handover') | Out-Null
@@ -132,10 +138,22 @@ foreach ($k in '.torrent', 'magnet', 'kurokawatools') { $r = Opens-With $k $exe;
 Row 'Electron program removed (hand-over found)' (-not (Test-Path (Join-Path $old 'resources\app.asar'))) $old
 Row 'Electron uninstall entry removed' (-not (Test-Path $ek)) $ek
 Row 'Electron data kept' ((Test-Path (Join-Path $edata 'kt-ci-electron-data.txt')) -and (Test-Path (Join-Path $edata 'aria2.session')) -and (Test-Path (Join-Path $edata 'Local Storage'))) $edata
+$runOld = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).'app.kurokawa.tools'
+Row 'replaced: the old program''s start at log-in removed' (-not $runOld) "[$runOld]"
 Row 'a partial download and its .aria2 file untouched' (((Get-FileHash $partial).Hash + (Get-FileHash "$partial.aria2").Hash) -eq $partialSum) $partial
 # (The first-run screen, for real: a profile of its own, emptied after.)
 $p = Start-Process $exe -PassThru; Start-Sleep -Seconds 8; Shot 'firstrun-real'; try { Stop-Process -Id $p.Id -Force } catch {}
 Start-Sleep -Seconds 2
+# (Start-up timing of the installed app, as the Reader's: a cold start, then a warm one — KT_BOOTTIME makes it write
+# its first paint and ready (ms from the program's start, boot.rs) and end.)
+foreach ($k in 'cold', 'warm') {
+  $bt = Join-Path $d "boottime-$k.json"; Remove-Item $bt -ErrorAction SilentlyContinue; $env:KT_BOOTTIME = $bt
+  $p = Start-Process $exe -PassThru; $null = $p.Handle
+  if (-not $p.WaitForExit(60000)) { try { Stop-Process -Id $p.Id -Force } catch {} }
+  Remove-Item Env:KT_BOOTTIME
+  $j = if (Test-Path $bt) { Get-Content $bt -Raw | ConvertFrom-Json } else { $null }
+  Row "start-up ($k): first paint, app ready" ($null -ne $j -and $null -ne $j.ready) $(if ($j) { $j.line } else { 'not written' }) $false
+}
 
 # 3. The installed app's own self-test, both parts (as the self-test step runs the bare program).
 $code = 0
@@ -187,6 +205,7 @@ Row 'data folders kept after uninstall' (Test-Path (Join-Path $env:APPDATA 'app.
 Row 'Electron data still kept' (Test-Path (Join-Path $edata 'kt-ci-electron-data.txt')) $edata
 # (The Electron data made here goes, so the hand-over steps after start from a real Electron profile.)
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $edata
+Remove-ItemProperty $runKey 'app.kurokawa.tools', 'Kurokawa Tools' -ErrorAction SilentlyContinue
 foreach ($s in 'magnet', 'kurokawatools', 'KurokawaToolsElectron.torrent') { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "HKCU:\Software\Classes\$s" }
 
 $summary = @('### Windows — the installer, end to end (Tools P9)', '', '| Check | | Detail |', '|---|---|---|') + $rows + @('', "Pictures and logs: artifact tauri-tools-install-windows. Failures: $($fails.Count)")

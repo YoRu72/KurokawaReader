@@ -33,7 +33,7 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
-  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']] };
+  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []] };
 const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 

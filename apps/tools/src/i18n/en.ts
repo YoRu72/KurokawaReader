@@ -2237,6 +2237,24 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   switchMacOpened: "The new version's disk image is open: drag Kurokawa Tools to Applications, then open it. Your downloads are paused here and go on in the new app.",
   switchNoChecksum: "The release does not say what the file must be, so it was not installed.",
   switchNoRelease: "The new version could not be reached just now. Try again later.",
+  // (Stage P9, the computer: the downloads both versions share after the hand-over run in one of them only.)
+  ownerHeldTitle: "These downloads run in the other Kurokawa Tools",
+  ownerHeldBody: "{who} is running the downloads that were handed over between the two versions on this computer ({n}). They stay paused here: two programs writing the same files would damage them.",
+  ownerWhoNew: "The new Kurokawa Tools",
+  ownerWhoOld: "The previous Kurokawa Tools",
+  ownerHeldShort: "Paused here: the other Kurokawa Tools is running this download",
+  ownerTakeBack: "Take them back",
+  ownerTakeAsk: "Take these downloads back into this app?",
+  ownerTakeAskBody: "Close the other Kurokawa Tools first if you can. They will be paused there; if both kept running them, the files could be damaged.",
+  ownerTaken: "They run here now.",
+  ownerTakeFailed: "The other Kurokawa Tools still holds them. Close it, then try again.",
+  ownerYielded: "The other Kurokawa Tools took these downloads back, so they are paused here.",
+  // (The Tauri shell: yt-dlp without a JavaScript runtime — the «deno» component.)
+  packDeno: "deno (JavaScript for yt-dlp)",
+  jsRtTitle: "YouTube needs a JavaScript runtime",
+  jsRtBody: "yt-dlp found no JavaScript runtime on this computer, so some YouTube formats may be missing, or the page may not be read at all. The small «deno» component fixes it: it is downloaded once and used from then on.",
+  jsRtGet: "Get deno",
+  jsRtWhy: "yt-dlp needs it to read YouTube pages.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

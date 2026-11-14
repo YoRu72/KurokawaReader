@@ -18,7 +18,13 @@ if (!outFile) { console.error('usage: node tests/handover-electron.cjs <expected
 const WORK = workArg || fs.mkdtempSync(path.join(os.tmpdir(), 'kt-handover-e-'));
 fs.mkdirSync(WORK, { recursive: true });
 const ICON = 'data:image/png;base64,' + fs.readFileSync(path.join(DESK, 'icon.png')).toString('base64');
-const log = (...a) => console.log('[handover-electron]', ...a);
+let stage = 'start'; const t00 = Date.now();
+const log = (...a) => console.log('[handover-electron]', `+${((Date.now() - t00) / 1000).toFixed(1)}s`, ...a);
+const at = (s) => { stage = s; log('stage:', s); };
+// (A watchdog: in run 43551417003 this step on Windows ran for over 20 minutes with nothing said. Each stage is told,
+// and after 8 minutes the stage it hangs in is said and the run ends — the Electron process with it.)
+let appProc = null;
+setTimeout(() => { console.error(`[handover-electron] WATCHDOG: still in «${stage}» after 8 minutes`); try { if (appProc) appProc.kill(); } catch { /* gone */ } process.exit(3); }, 8 * 60 * 1000).unref();
 
 // A loopback server: /slow.bin — 64 MiB sent 64 KiB at a time, slowly (the download stays moving); /small.bin.
 const SLOW = 64 * 1024 * 1024; const chunk = Buffer.alloc(64 * 1024, 0x5a);
@@ -36,15 +42,18 @@ const server = http.createServer((req, res) => {
   const exe = require(path.join(DESK, 'node_modules', 'electron'));
   const args = [...(process.platform === 'linux' ? ['--no-sandbox'] : []), DESK];
   log('electron', exe, args.join(' '));
+  at('launch');
   const app = await pw._electron.launch({ executablePath: exe, args, cwd: DESK, env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' }, timeout: 120000 });
+  try { appProc = app.process(); } catch { /* older playwright */ }
   const userData = await app.evaluate(({ app }) => app.getPath('userData'));
   log('userData', userData);
   const p = await app.firstWindow(); p.setDefaultTimeout(60000);
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.update.lastCheck', String(Date.now())); });
-  await p.reload(); await p.waitForSelector('.downloads-view');
+  at('reload'); await p.reload(); await p.waitForSelector('.downloads-view');
   if (!(await p.evaluate(() => !!window.kurokawaHandover && !!window.__KT_HANDOVER__))) throw new Error('this Electron build has no hand-over (preload.cjs kurokawaHandover, main.ts __KT_HANDOVER__)');
 
+  at('profile');
   // What the person keeps, in the page's storage.
   const FONT_DIR = path.join(userData, 'screen-fonts');
   await p.evaluate(async ({ ICON }) => {
@@ -67,6 +76,7 @@ const server = http.createServer((req, res) => {
   // A screen-translator font through the shell (kt:screenFontAdd), named in its settings.
   const font = await p.evaluate(async () => { const b = new Uint8Array(4000).fill(7); let s = ''; for (const x of b) s += String.fromCharCode(x); const r = await window.kurokawaTools.screenFontAdd({ name: 'My Font.ttf', b64: btoa(s) }); localStorage.setItem('kt.screen', JSON.stringify({ fonts: [{ name: 'My Font', path: r.path }] })); return r.path; }).catch((e) => { log('screen font not added:', e.message); return null; });
 
+  at('downloads');
   // Downloads, where aria2c runs: one moving, one paused by the person.
   const engine = { gids: [], moving: [], pausedByUser: [], available: false };
   engine.available = await p.evaluate(async () => { const kt = window.kurokawaTools; await kt.ready(); for (let i = 0; i < 100 && !kt.available; i++) await new Promise((r) => setTimeout(r, 300)); return kt.available; });
@@ -85,14 +95,23 @@ const server = http.createServer((req, res) => {
   } else log('no aria2c here: the downloads are left out (the engine\'s files still cross)');
   await p.waitForTimeout(1500);
 
+  at('snapshot');
   const snap = await p.evaluate(() => window.__KT_HANDOVER__.snapshot());
   log('profile:', Object.keys(snap.local).length, 'keys;', Object.keys(snap.idb.meta).length + Object.keys(snap.idb.history).length, 'records;', Object.keys(snap.files).length, 'files');
   const t0 = Date.now();
-  const made = await p.evaluate(() => window.__KT_HANDOVER__.make());
+  at('make');
+  // (Where the disk's free space cannot be read, the page asks «Go on» — answered here, and said, so the step never
+  // waits on a click.)
+  let goOn = false; const asker = setInterval(() => { void p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /^\s*Go on\s*$/.test(x.textContent || '')); if (b) { b.click(); return true; } return false; }).then((c) => { if (c && !goOn) { goOn = true; log('the free space was unknown: «Go on» pressed'); } }).catch(() => undefined); }, 500);
+  const made = await p.evaluate(() => window.__KT_HANDOVER__.make()).finally(() => clearInterval(asker));
   log('hand-over:', JSON.stringify(made), `${Date.now() - t0} ms`);
   const status = await p.evaluate(() => window.kurokawaHandover.status());
   const after = engine.available ? await p.evaluate(() => window.kurokawaTools.list()) : [];
-  await app.close(); server.close();
+  at('close');
+  // (Closed, or — the app not ending within 20 s — its process killed: its downloads are paused and saved already.)
+  await Promise.race([app.close(), new Promise((r) => setTimeout(r, 20000))]).catch(() => undefined);
+  try { if (appProc && appProc.exitCode === null) { log('the app did not end in 20 s: killed'); appProc.kill(); } } catch { /* gone */ }
+  server.close(); at('checks');
   const fails = [];
   if (!made.ok) fails.push('the hand-over was not made: ' + JSON.stringify(made));
   if (!status || status.marker.id !== made.id) fails.push('no marker after it: ' + JSON.stringify(status));

@@ -415,6 +415,8 @@ pub fn schedule_updates() {
 /* ---------- running yt-dlp ---------- */
 
 static JS_OK: AtomicBool = AtomicBool::new(true);
+/// yt-dlp was seen without its JavaScript runtime in this run (kt:videoJsRuntime says so after a failed look).
+static JS_SEEN_MISSING: AtomicBool = AtomicBool::new(false);
 static JS_RUNTIME: OnceLock<Option<(String, String)>> = OnceLock::new();
 
 /// ytdlp.cjs checkJs: whether the program knows --js-runtimes.
@@ -422,7 +424,23 @@ pub fn check_js() {
     let v = version();
     JS_OK.store(vt::js_ok(v.as_deref()), Ordering::SeqCst);
 }
+/// The JavaScript runtime yt-dlp is told of: the «deno» pack's when it is there (its folder also put first on the
+/// programs' PATH), else the first of deno / node / bun on the PATH (looked for once) — in a self-test run only the
+/// pack's, never the runner's own node.
 fn js_runtime() -> Option<(String, String)> {
+    let deno = crate::vtffmpeg::pack_deno();
+    if deno.exists() {
+        if let Ok(mut g) = vtproc::PATH_FRONT.lock() {
+            *g = deno.parent().map(|p| p.to_path_buf());
+        }
+        return Some((vt::DENO_PACK.to_string(), lossy(&deno)));
+    }
+    if let Ok(mut g) = vtproc::PATH_FRONT.lock() {
+        *g = None;
+    }
+    if selftest_run() {
+        return None;
+    }
     JS_RUNTIME
         .get_or_init(|| {
             for n in vt::JS_RUNTIMES.iter() {
@@ -433,6 +451,13 @@ fn js_runtime() -> Option<(String, String)> {
             None
         })
         .clone()
+}
+/// kt:videoJsRuntime (this shell's own) → { missing, pack: "deno", installed, runtime }: whether yt-dlp (a release
+/// that knows --js-runtimes) has no JavaScript runtime here.
+pub fn js_runtime_state() -> Value {
+    check_js();
+    let rt = js_runtime();
+    json!({ "missing": rt.is_none() && JS_OK.load(Ordering::SeqCst), "pack": vt::DENO_PACK, "installed": crate::vtffmpeg::deno_installed(), "runtime": rt.map(|(n, _)| n) })
 }
 fn js_args() -> Vec<String> {
     if !JS_OK.load(Ordering::SeqCst) {
@@ -478,18 +503,31 @@ pub async fn info(o: Value) -> Result<Value, String> {
     let url = text_of(&o, "url");
     let cookies = text_of(&o, "cookiesFromBrowser");
     let playlist = truthy(o.get("playlist"));
-    let ran = blocking(move || {
-        let args = vt::info_args(&url, playlist, Some(cookies.as_str()).filter(|c| !c.is_empty()), &js_args());
-        vtproc::run(&bin_path(), &args, Duration::from_secs(90), 64 << 20)
+    let url2 = url.clone();
+    let (ran, have_rt) = blocking(move || {
+        let js = js_args();
+        let args = vt::info_args(&url2, playlist, Some(cookies.as_str()).filter(|c| !c.is_empty()), &js);
+        vtproc::run(&bin_path(), &args, Duration::from_secs(90), 64 << 20).map(|r| (r, !js.is_empty()))
     })
     .await??;
+    // (No JavaScript runtime: said by yt-dlp, or none given for YouTube — the page offers the «deno» pack once.)
+    let js_missing = vt::js_missing(&ran.err, have_rt, JS_OK.load(Ordering::SeqCst), &url);
+    if js_missing {
+        JS_SEEN_MISSING.store(true, Ordering::SeqCst);
+    }
     if ran.code != Some(0) || ran.timed_out {
         let why = if ran.timed_out { "timed out".to_string() } else { format!("yt-dlp exited with {}", ran.code.map(|c| c.to_string()).unwrap_or_else(|| "a signal".into())) };
         return Err(vt::last_line(&ran.err, &why));
     }
     let text = String::from_utf8_lossy(&ran.out).into_owned();
     let j = vidjson::parse(&text).map_err(|e| format!("yt-dlp: unreadable answer ({})", e))?;
-    serde_json::from_str(&vidjson::normalise(&j).to_json()).map_err(|e| e.to_string())
+    let mut v: Value = serde_json::from_str(&vidjson::normalise(&j).to_json()).map_err(|e| e.to_string())?;
+    if js_missing {
+        if let Some(o) = v.as_object_mut() {
+            o.insert("jsRuntime".into(), json!("missing"));
+        }
+    }
+    Ok(v)
 }
 
 /* ---------- gallery-dl ---------- */
@@ -565,6 +603,16 @@ pub async fn gallery_list(o: Value) -> Result<Value, String> {
 #[tauri::command]
 pub async fn kt_video_info(o: Value) -> Result<Value, String> {
     info(o).await
+}
+
+/// kt:videoJsRuntime (the Tauri shell's own; the page feature-detects it) → { missing, seen, pack, installed, runtime }.
+#[tauri::command]
+pub async fn kt_video_js_runtime() -> Result<Value, String> {
+    let mut v = blocking(js_runtime_state).await?;
+    if let Some(o) = v.as_object_mut() {
+        o.insert("seen".into(), json!(JS_SEEN_MISSING.load(Ordering::SeqCst)));
+    }
+    Ok(v)
 }
 
 /// kt:videoReady → { ok, version } or { ok: false, why }; the fetch's progress as kt:update-progress (what: yt-dlp).

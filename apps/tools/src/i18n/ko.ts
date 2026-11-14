@@ -1140,4 +1140,22 @@ export const ko: Partial<Strings> = {
   switchMacOpened: "새 버전의 디스크 이미지가 열렸습니다. Kurokawa Tools를 응용 프로그램으로 끌어다 놓은 뒤 여세요. 다운로드는 여기서 일시 정지되고 새 앱에서 이어집니다.",
   switchNoChecksum: "릴리스에 파일 확인값이 없어 설치하지 않았습니다.",
   switchNoRelease: "지금은 새 버전에 연결할 수 없습니다. 나중에 다시 시도하세요.",
+  // (P9, 컴퓨터: 넘겨받은 뒤 두 버전이 함께 가진 다운로드는 한쪽에서만 진행합니다.)
+  ownerHeldTitle: "이 다운로드는 다른 Kurokawa Tools에서 진행 중입니다",
+  ownerHeldBody: "이 컴퓨터의 두 버전 사이에서 넘겨받은 다운로드({n}개)를 {who}에서 진행하고 있습니다. 두 프로그램이 같은 파일에 쓰면 손상되므로 여기서는 일시 정지된 채로 둡니다.",
+  ownerWhoNew: "새 Kurokawa Tools",
+  ownerWhoOld: "이전 Kurokawa Tools",
+  ownerHeldShort: "여기서는 일시 정지됨: 다른 Kurokawa Tools가 이 다운로드를 진행 중입니다",
+  ownerTakeBack: "다시 가져오기",
+  ownerTakeAsk: "이 다운로드를 이 앱으로 다시 가져올까요?",
+  ownerTakeAskBody: "가능하면 다른 Kurokawa Tools를 먼저 닫으세요. 그쪽에서는 일시 정지됩니다. 양쪽에서 계속 진행하면 파일이 손상될 수 있습니다.",
+  ownerTaken: "이제 여기서 진행합니다.",
+  ownerTakeFailed: "다른 Kurokawa Tools가 아직 사용 중입니다. 닫은 뒤 다시 시도하세요.",
+  ownerYielded: "다른 Kurokawa Tools가 이 다운로드를 가져가서 여기서는 일시 정지했습니다.",
+  // (Tauri 셸: JavaScript 런타임이 없는 yt-dlp와 «deno» 구성 요소.)
+  packDeno: "deno (yt-dlp용 JavaScript)",
+  jsRtTitle: "YouTube에는 JavaScript 런타임이 필요합니다",
+  jsRtBody: "yt-dlp가 이 컴퓨터에서 JavaScript 런타임을 찾지 못해 YouTube 형식 일부가 빠지거나 페이지를 아예 읽지 못할 수 있습니다. 작은 «deno» 구성 요소를 한 번 내려받으면 그 뒤로는 그것을 씁니다.",
+  jsRtGet: "deno 받기",
+  jsRtWhy: "yt-dlp가 YouTube 페이지를 읽는 데 씁니다.",
 };

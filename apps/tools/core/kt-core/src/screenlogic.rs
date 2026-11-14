@@ -587,6 +587,64 @@ pub fn launch_agent_plist(label: &str, exe: &str) -> String {
     )
 }
 
+/// The Electron build's own Run values (Electron's setLoginItemSettings names it by the app's AppUserModelId —
+/// main.cjs sets «app.kurokawa.tools» —; «electron.app.Kurokawa Tools» is Electron's default when none was set).
+pub const ELECTRON_RUN_VALUES: [&str; 2] = ["app.kurokawa.tools", "electron.app.Kurokawa Tools"];
+
+/// `reg query <key> /v <name>`'s answer → the value's data («    <name>    REG_SZ    <data>»).
+pub fn reg_value_data(out: &str, name: &str) -> Option<String> {
+    for line in out.lines() {
+        let l = line.trim_start();
+        if let Some(rest) = l.strip_prefix(name) {
+            let rest = rest.trim_start();
+            for kind in ["REG_SZ", "REG_EXPAND_SZ"] {
+                if let Some(d) = rest.strip_prefix(kind) {
+                    let d = d.trim();
+                    if !d.is_empty() {
+                        return Some(d.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// A Run value's program: its first word, unquoted («"C:\a b\x.exe" --hidden» → «C:\a b\x.exe»).
+pub fn run_program(data: &str) -> String {
+    let d = data.trim();
+    if let Some(r) = d.strip_prefix('"') {
+        return r.split('"').next().unwrap_or("").to_string();
+    }
+    d.split_whitespace().next().unwrap_or("").to_string()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LoginAct {
+    Nothing,
+    Add,
+    Remove,
+}
+
+/// Start at log-in, decided: `want` (the screen translator on and «start with the computer» chosen), `set` (this app's
+/// own entry is there), `old_live` (the earlier Electron build's own entry is there and names a program that exists —
+/// it is kept beside this one), `prev` (what this app saw the last time: None before its first settings). Beside a
+/// kept Electron copy that starts with the computer, this app adds a second only when the person turns it on HERE
+/// (seen off, then on) — not because the choice came over with the hand-over.
+pub fn login_act(want: bool, set: bool, old_live: bool, prev: Option<bool>) -> LoginAct {
+    if want == set {
+        return LoginAct::Nothing;
+    }
+    if !want {
+        return LoginAct::Remove;
+    }
+    if !old_live || prev == Some(false) {
+        LoginAct::Add
+    } else {
+        LoginAct::Nothing
+    }
+}
+
 /* ---------- pixels ---------- */
 
 /// GDI's top-down BGRA (alpha unset) → RGBA, opaque.
@@ -864,6 +922,25 @@ pub fn data_url_text(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn login_rules() {
+        let out = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    app.kurokawa.tools    REG_SZ    \"C:\\Users\\u\\AppData\\Local\\Programs\\Kurokawa Tools\\Kurokawa Tools.exe\" --hidden\r\n\r\n";
+        let d = reg_value_data(out, "app.kurokawa.tools").unwrap();
+        assert_eq!(run_program(&d), "C:\\Users\\u\\AppData\\Local\\Programs\\Kurokawa Tools\\Kurokawa Tools.exe");
+        assert_eq!(reg_value_data(out, "Kurokawa Tools"), None);
+        assert_eq!(reg_value_data("ERROR: The system was unable to find the specified registry key or value.", "app.kurokawa.tools"), None);
+        assert_eq!(run_program("C:\\x.exe --hidden"), "C:\\x.exe");
+        // Nothing kept beside: on as chosen, off when unchosen.
+        assert_eq!(login_act(true, false, false, None), LoginAct::Add);
+        assert_eq!(login_act(false, true, false, Some(true)), LoginAct::Remove);
+        assert_eq!(login_act(true, true, true, Some(true)), LoginAct::Nothing);
+        // A kept Electron copy starts with the computer: the choice that came over does not add a second…
+        assert_eq!(login_act(true, false, true, None), LoginAct::Nothing);
+        assert_eq!(login_act(true, false, true, Some(true)), LoginAct::Nothing);
+        // …turned on here (seen off, then on) it does.
+        assert_eq!(login_act(true, false, true, Some(false)), LoginAct::Add);
+        assert_eq!(login_act(false, false, true, Some(true)), LoginAct::Nothing);
+    }
     #[test]
     fn data_url_text_escapes() {
         assert_eq!(data_url_text("<a style=\"x:1%\">é #</a>"), "%3Ca%20style%3D%22x%3A1%25%22%3E%C3%A9%20%23%3C%2Fa%3E");

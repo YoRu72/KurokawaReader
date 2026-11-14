@@ -172,11 +172,24 @@ pub fn installed() -> Option<String> {
     }
     std::fs::read_to_string(marker()).ok().map(|t| t.trim().to_string())
 }
-/// packs.cjs status().
+/// The «deno» pack's program (yt-dlp's JavaScript runtime — the Tauri shell's own pack), whether or not it is there.
+pub fn pack_deno() -> PathBuf {
+    dirs().packs.join(vt::DENO_PACK).join(vt::deno_file(os()))
+}
+/// The «deno» pack's version when its program is there.
+pub fn deno_installed() -> Option<String> {
+    if !pack_deno().exists() {
+        return None;
+    }
+    std::fs::read_to_string(dirs().packs.join(vt::DENO_PACK).join(vt::PACK_MARKER)).ok().map(|t| t.trim().to_string())
+}
+/// packs.cjs status() (+ the «deno» pack, which only this shell has).
 pub fn status() -> Value {
     let v = installed();
     let size = if v.is_some() { std::fs::metadata(pack_ffmpeg()).map(|m| m.len()).unwrap_or(0) } else { 0 };
-    json!({ "ffmpeg": { "version": v, "size": size }, "python": { "version": null, "size": 0 }, "platform": util::node_platform(), "arch": util::node_arch() })
+    let dv = deno_installed();
+    let dsize = if dv.is_some() { std::fs::metadata(pack_deno()).map(|m| m.len()).unwrap_or(0) } else { 0 };
+    json!({ "ffmpeg": { "version": v, "size": size }, "python": { "version": null, "size": 0 }, "deno": { "version": dv, "size": dsize }, "platform": util::node_platform(), "arch": util::node_arch() })
 }
 
 fn text(o: &Value, k: &str) -> String {
@@ -190,9 +203,12 @@ fn text(o: &Value, k: &str) -> String {
 /// packs.cjs install({ name, url, sha256, version }, onProgress).
 pub async fn install(app: &AppHandle, o: &Value) -> Result<(), String> {
     let name = text(o, "name");
-    if name != "ffmpeg" {
-        return Err(format!("pack {}", name));
-    }
+    // (ffmpeg as packs.cjs; «deno», yt-dlp's JavaScript runtime, this shell's own — the same fetch, SHA-256 and marker.)
+    let (d, dest) = match name.as_str() {
+        "ffmpeg" => (pack_dir(), pack_ffmpeg()),
+        "deno" => (dirs().packs.join(vt::DENO_PACK), pack_deno()),
+        _ => return Err(format!("pack {}", name)),
+    };
     let url = text(o, "url");
     // (A self-test run fetches packs from its loopback server only — never the release's real ffmpeg: in run
     // 43545725648 the page's first-start helper did, and the pack's row found it already there.)
@@ -205,8 +221,8 @@ pub async fn install(app: &AppHandle, o: &Value) -> Result<(), String> {
     if let Ok(mut g) = PACK_JOBS.lock() {
         g.get_or_insert_with(HashMap::new).insert(name.clone(), flag.clone());
     }
-    let d = pack_dir();
     let tmp = d.join("download.gz");
+    let mark = d.join(vt::PACK_MARKER);
     let r = async {
         std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
         let mut last = Instant::now() - Duration::from_secs(1);
@@ -226,7 +242,8 @@ pub async fn install(app: &AppHandle, o: &Value) -> Result<(), String> {
         if !sha.is_empty() && got.sha256 != sha {
             return Err("checksum".to_string());
         }
-        let dest = pack_ffmpeg();
+        let dest = dest.clone();
+        let mark = mark.clone();
         let tmp2 = tmp.clone();
         let ver = if version.is_empty() { "1".to_string() } else { version.clone() };
         blocking(move || -> Result<(), String> {
@@ -242,7 +259,7 @@ pub async fn install(app: &AppHandle, o: &Value) -> Result<(), String> {
             drop(out);
             vtproc::make_executable(&part).map_err(|e| e.to_string())?;
             std::fs::rename(&part, &dest).map_err(|e| e.to_string())?;
-            std::fs::write(marker(), ver).map_err(|e| e.to_string())?;
+            std::fs::write(&mark, ver).map_err(|e| e.to_string())?;
             Ok(())
         })
         .await??;

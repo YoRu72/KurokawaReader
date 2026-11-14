@@ -129,6 +129,11 @@ pub async fn kt_pause(id: Value) -> Result<(), String> {
 #[tauri::command]
 pub async fn kt_resume(id: Value) -> Result<(), String> {
     let id = id_text(&id);
+    // (Stage P9: a handed-over download the earlier Kurokawa Tools runs now is not resumed here — ownerlock.rs.)
+    let id2 = id.clone();
+    if tauri::async_runtime::spawn_blocking(move || crate::ownerlock::resume_refused(&id2)).await.unwrap_or(false) {
+        return Err("kt-owner:held".to_string());
+    }
     if crate::vtjobs::has(&id) {
         crate::vtjobs::resume(&id);
         return Ok(());

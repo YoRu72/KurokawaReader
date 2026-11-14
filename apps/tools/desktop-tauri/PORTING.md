@@ -436,6 +436,23 @@ lettering, the words taken off the picture, the region drawn, the caption's text
 - Reported only: Linux «kept awake» (systemd-inhibit refused on the runner: no logind authorisation, exit 1); a Mac's
   screen rows (white pixels; Vision read the system's local-network prompt).
 
+### CI runs 43550802095 (b4d4f6a) and 43551417003 (d7c235d, P9's first compile)
+
+- P9 compiled on all four builds (handover.rs, main.rs's block, the setup crate under Tools' paths, NSIS hooks with
+  `${MAINBINARYNAME}` / `${PRODUCTNAME}`); setup program end to end, the Linux hand-over (Electron → Tauri), handover /
+  firstrun pages: passed. The ffmpeg pack's row and the five after it passed on Windows, Linux and both Macs.
+- **Linux, screen**: «data URLs are not supported without the `webview-data-url` feature» — the test page is now served
+  from a loopback server of the test's own (vtfake Server); the frozen screen, crop, OCR and «auto» rows failed after it.
+- **Installer end to end (Windows)**: the Electron copy KEPT lost its desktop shortcut — Tauri's install makes one of the
+  same name over it: PREINSTALL keeps a copy, the keep branch puts it back. The installed app's «ffmpeg: cancel ends its
+  whole tree» timed out at 40 s with no word of where (the bare program's passed): the row now names its phase and
+  cancels again after 10 s, saying so.
+- **Hand-over — Electron makes it (Windows)** ran for over half an hour with nothing said: the driver now tells each
+  stage, answers the page's «Go on» (free space unknown), kills an app that does not end in 20 s, ends by itself after 8
+  minutes naming the stage, and both Windows hand-over steps have `timeout-minutes: 15`.
+- Sizes: installer 5.95 MB, setup program 9.45 MB, deb 11.35 MB, AppImage 85.41 MB, dmg 4.89 MB (arm64) / 9.38 MB
+  (universal); silent install 1.3 s, setup through its window 2.5 s.
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
@@ -679,12 +696,14 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
   minutes opens the download instead.
 - **Media told by content type** (P7 browser): no system web view gives response headers; Grab finds media by address,
   by the page's elements and by resource timing — media a server marks only by `Content-Type` is missed.
-- **yt-dlp's JavaScript runtime** (P5): Electron handed yt-dlp its own Node; this shell names the first of deno / node /
-  bun on the PATH (`--js-runtimes`). With none, yt-dlp goes on but warns «No supported JavaScript runtime could be
-  found … YouTube extraction without a JS runtime has been deprecated, and some formats may be missing», its signature
-  and «n» challenges unsolved, so YouTube's formats thin out or vanish. Proposed: a «deno» pack beside the ffmpeg pack
-  (the same fetch, SHA-256 and marker; one program per system), offered in the page's words when yt-dlp prints that
-  warning. Until then the user is told nothing.
+- **yt-dlp's JavaScript runtime** (P5; answered after P9): Electron handed yt-dlp its own Node; this shell names the
+  «deno» pack when it is there (`--js-runtimes deno:<path>`, the option Electron's `node:<path>` already uses, and its
+  folder first on yt-dlp's PATH), else the first of deno / node / bun on the PATH. With none, the page is told ONCE in
+  the Add sheet (yt-dlp's warning seen, or — the warning hidden by `--no-warnings` — YouTube asked or its formats thinned
+  out; kt-core `js_missing`) and offered «Get deno» through the pack mechanism (manifest entry `packs.deno[<platform>-
+  <arch>]`, resumed fetch, SHA-256, marker; `scripts/denopack.py` makes the files from deno's release zips — to be run by
+  the release job at the switch-over, see «What to flip»). Self-test row «deno pack: …» (a stand-in yt-dlp prints the
+  warning, a stand-in deno from loopback; never the runner's own node).
 - **Far seeks in a torrent** (P4): aria2 fetches in order (head 16 MiB, tail 4 MiB first), so a seek far ahead waits for
   the fetch to get there; WebTorrent fetched that place first. librqbit, behind its feature, is the cure.
 - **Finished files renamed by sniffing** (`sniff.cjs`): not ported.
@@ -709,8 +728,6 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
 - **(P9) At the switch-over, once**: sites' sign-ins in the sign-in window and the in-app browser are asked again
   (cookies stay in Electron's encrypted profile; AniList and the debrid key are tokens and cross); yt-dlp, gallery-dl and
   the ffmpeg / mpv packs are downloaded again when first needed; the window opens at its default size once.
-- **(P9) Start-up not timed**: the Reader's `boot.rs` (first paint, ready, the window in the theme's colour before the
-  page paints) has no Tools copy yet.
 
 ## Stage P9 — the switch-over, prepared (the switch stays OFF)
 
@@ -845,8 +862,7 @@ anchors. `kt:installUpdate('rust-switch')` never falls back to an Electron updat
   version» (the hand-over's offer IS the tile; none found but the old copy's data there → «open the previous Kurokawa
   Tools once and let it update», with a button when its program is found), «Torrents and magnet links» (the shell's
   `registerMagnet`, only when pressed), «Start». One screen; the offer alone when the first run was done before.
-  Not yet: the Reader's boot timing (`boot.rs`: first paint, ready, the window's colour before the page paints) — Tools
-  has no `boot.rs`; the start is not timed in CI.
+  Start-up timing: see «Start-up timing» below.
 
 ### Tests
 
@@ -868,6 +884,40 @@ an update over it as the updater runs it; uninstall keeping the data); `setup/se
 (`tests/handover-electron.cjs` — the real Electron Tools with a moving and a paused download from a loopback server —,
 then the Tauri build with `KTH_SELFTEST`, `handovercheck.js`): Windows required, Linux reported.
 
+### After the hand-over: one owner for the shared downloads (`ownerlock.rs`; `desktop/ownerlock.cjs`; kt-core `ownerlogic.rs`)
+
+Both sessions name the same partial files and `.aria2` control files, so an old Electron copy left open (portable, a
+Mac's, one kept side by side) and the new app must never continue one at once. ONE owner file,
+`<Electron userData>/downloads-owner.json` (next to the session that was handed over — the one place both know):
+`{ app, kind, format, owner: tauri|electron, pid, startedAt, heartbeat, released, handover, ids }`, written atomically
+(temp + rename). The Rust build takes it at its start when its engine files were «carried» (`handover-engine.json`
+now names `ownerFile` and the handed-over `ids` — aria2 gids and video job ids), renews the heartbeat every 10 s, marks
+it released at quit. A program finding another LIVE owner keeps those ids paused (the Rust build adds ` pause=true` to
+them in its own session before aria2 reads it), refuses their resume (`kt-owner:held` → `src/ui/ownersheet.ts`: who,
+how many, «Take them back», asked first) and, at a heartbeat that finds its record taken, pauses its running ones and
+says so. Stale (taken without asking): heartbeat older than 45 s and pid gone, or older than 10 min whatever the pid;
+a heartbeat more than 2 min in the future (clock moved back) → only the pid decides. Two takers: each writes, waits
+1.5 s, reads back — only the one named keeps them. Electron's side runs only in the bridge build (`RUST_SWITCH`);
+both rules checked against one table (`core/kt-core/src/ownerlock-cases.txt`, 20 rows) by ownerlogic.rs's tests and
+`tests/ownerlock.cjs` (+ races, stale, clock jumps, yield/take back, the page in en/ar).
+
+### Start at log-in, once
+
+Electron's login item (screen translator → «start with the computer») is a Run value named by its AppUserModelId
+(`app.kurokawa.tools`); the Rust build's is `Kurokawa Tools` (a Mac: a launch agent). At the switch the bridge build
+turns its own off after the hand-over (put back if nothing is installed); the installer's REPLACE removes the old Run
+value (and its StartupApproved note) where it names the old program (`KR_OLD_RUN_GONE`); KEEP leaves it, and the Rust
+build then adds its own only when the person turns the option on HERE (seen off, then on — screenlogic `login_act`;
+Windows reads the old value with reg.exe; a Mac's Electron login item is not readable, the bridge build's turn-off
+covers it). installtest.ps1: «kept: … no second added», «replaced: the old program's start at log-in removed».
+
+### Start-up timing (`boot.rs`, the Reader's with Tools' names)
+
+The bridge marks the page's first paint and first screen (`kt_boot_mark`), the self-test prints «start-up: first paint
+and app ready» on every system, installtest.ps1 times a cold and a warm start of the installed app (`KT_BOOTTIME`), and
+the window opens in the interface's colour kept in `<config>/boot.json` where Tauri has `background_color` (the
+Reader's `bootdetect.rs` and `bootlogic.rs` read in place — one source).
+
 ### What to flip at the switch-over (and what stays)
 
 1. The screen translator's 8 channels (written, compiled once in run 43549144577; a green re-run still due) and the
@@ -875,6 +925,9 @@ then the Tauri build with `KTH_SELFTEST`, `handovercheck.js`): Windows required,
 2. A green CI run of this stage on all systems (its first compile: `handover.rs`, `main.rs`'s block, the setup crate
    under Tools' paths).
 3. `desktop/main.cjs`: `const RUST_SWITCH = true;` (the bridge build).
+3b. The release job also builds the «deno» pack: deno's release zips for the five systems fetched, then
+   `python3 scripts/denopack.py <zips> out <deno version>` (adds `packs.deno` to `KurokawaTools-packs.json`) — not in
+   the patch yet.
 4. `git apply` the release patch (`release-tools.yml`: the `rust-desktop` job, SHA256SUMS, the notes' table, the
    Electron jobs kept as «previous build»; the paths filter takes `shared/shell-rs/**` again).
 5. The version: a minor bump (`apps/tools/package.json`, `desktop/package.json`), the notes `docs/notes/NEXT-rust.md`

@@ -202,6 +202,8 @@ else {
     try { Object.defineProperty(window, '__KT_HANDOVER__', { configurable: true, value: Object.freeze({ make: () => ho().then((m) => m.makeHandover()), beforeInstall: () => hs().then((m) => m.handoverBeforeInstall()), snapshot: () => ho().then((m) => m.profileSnapshot()), atStart: () => hs().then((m) => m.handoverAtStart()), restore: (dir?: string, mode?: 'auto' | 'copy' | 'merge') => ho().then(async (m) => { const f = await m.handoverApi()!.find!(dir); return m.restoreHandover(f, undefined, { mode }); }) }) }); } catch { /* defined already */ }
   }
   if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/firstrun').then((m) => m.startScreens()).catch(() => undefined);
+  // (After the hand-over: the downloads both versions share run in one of them — told when the other holds them.)
+  if ((window as unknown as { kurokawaHandover?: { owner?: unknown } }).kurokawaHandover?.owner) void import('./ui/ownersheet').then((m) => m.startOwnerWatch()).catch(() => undefined);
   else if ((window as unknown as { kurokawaHandover?: { shell?: string } }).kurokawaHandover?.shell === 'electron') window.setTimeout(() => void import('./rustswitch').then((m) => m.offerRustSwitch()).catch(() => undefined), 20000);
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());

@@ -20,7 +20,7 @@ export const looksLikeFile = (url: string): boolean => { try { const p = new URL
 export const videoSupported = (): boolean => { const p = getPlatform(); return (p === 'desktop' && !!window.kurokawaTools?.videoInfo) || (p === 'android' && !!ktPlugin()); };
 export const videoEnabled = (): boolean => videoSupported() && getSettings().addons.includes(VIDEO_ADDON);
 
-interface Bridge { videoInfo?(o: { url: string; playlist?: boolean }): Promise<unknown>; videoReady?(): Promise<unknown>; videoVersion?(): Promise<{ version: string | null; ready: boolean }>; videoUpdate?(): Promise<{ version: string | null; updated?: boolean; latest?: string }> }
+interface Bridge { videoJsRuntime?(): Promise<{ missing: boolean; seen?: boolean; installed: string | null } | null>; videoInfo?(o: { url: string; playlist?: boolean }): Promise<unknown>; videoReady?(): Promise<unknown>; videoVersion?(): Promise<{ version: string | null; ready: boolean }>; videoUpdate?(): Promise<{ version: string | null; updated?: boolean; latest?: string }> }
 const desk = (): Bridge | null => (window.kurokawaTools as unknown as Bridge | undefined) ?? null;
 /** The Tauri shell's own codes for a new yt-dlp / gallery-dl that did not start (stage P5: the one before put back, or
  *  none and it was removed) in the page's language; any other error as it came. */
@@ -43,7 +43,15 @@ export function pageInfo(url: string, playlist = false, opts: { cookieJar?: stri
   const p = (async () => {
     const { withPacks } = await import('../packs'); const { t } = await import('../i18n');
     // (yt-dlp needs Python and ffmpeg on a phone. On a computer reading a page needs neither: ffmpeg is asked for when a choice that needs it is added — an audio file taken as it is never does.)
-    const d = desk(); if (d?.videoInfo) { await d.videoReady?.(); return normalise(await toolError(d.videoInfo({ url, playlist }))); }
+    const d = desk(); if (d?.videoInfo) {
+      await d.videoReady?.();
+      // (The Tauri shell: yt-dlp with no JavaScript runtime here — said in the answer, or a look that failed — → the
+      // «deno» pack offered, once; ui/jsruntime.ts. Electron gives yt-dlp its own Node: never there.)
+      let r: unknown;
+      try { r = await toolError(d.videoInfo({ url, playlist })); } catch (e) { if (d.videoJsRuntime) void d.videoJsRuntime().then((s) => { if (s && (s.seen || (s.missing && isVideoHost(url)))) void import('../ui/jsruntime').then((m) => m.offerDeno()); }).catch(() => undefined); throw e; }
+      if ((r as { jsRuntime?: string } | null)?.jsRuntime === 'missing') void import('../ui/jsruntime').then((m) => m.offerDeno());
+      return normalise(r);
+    }
     const k = plug(); if (k) return normalise(JSON.parse((await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => k.videoInfo({ url, playlist, cookieJar: opts.cookieJar }))).json));
     throw new Error('yt-dlp');
   })();
@@ -51,6 +59,8 @@ export function pageInfo(url: string, playlist = false, opts: { cookieJar?: stri
   if (cache.size > 40) for (const [k, v] of cache) if (Date.now() - v.at > INFO_TTL) cache.delete(k);
   return p;
 }
+/** The looks kept are forgotten (a component arrived that changes what yt-dlp sees). */
+export function forgetPageInfo(): void { cache.clear(); }
 export async function videoVersion(): Promise<string | null> { try { const d = desk(); if (d?.videoVersion) return (await d.videoVersion()).version; const k = plug(); return k ? (await k.videoVersion()).version : null; } catch { return null; } }
 export async function updateVideo(): Promise<string | null> { const d = desk(); if (d?.videoUpdate) return (await toolError(d.videoUpdate())).version; const k = plug(); return k ? (await k.videoUpdate()).version : null; }
 /** Once a day, quietly: yt-dlp follows the sites as they change, so it is kept current. */

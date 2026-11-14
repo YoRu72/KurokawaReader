@@ -1140,4 +1140,22 @@ export const zh: Partial<Strings> = {
   switchMacOpened: "新版本的磁盘映像已打开：把 Kurokawa Tools 拖到“应用程序”，然后打开它。下载在这里已暂停，会在新应用中继续。",
   switchNoChecksum: "发布中没有说明文件的校验值，因此未安装。",
   switchNoRelease: "现在无法连接到新版本，请稍后再试。",
+  // （P9，电脑：交接之后两个版本共有的下载只由其中一个进行。）
+  ownerHeldTitle: "这些下载正在另一个 Kurokawa Tools 中进行",
+  ownerHeldBody: "这台电脑上两个版本之间交接的下载（{n} 个）正由{who}进行。两个程序写入同一文件会损坏文件，因此它们在这里保持暂停。",
+  ownerWhoNew: "新版 Kurokawa Tools",
+  ownerWhoOld: "旧版 Kurokawa Tools",
+  ownerHeldShort: "在此暂停：另一个 Kurokawa Tools 正在进行这个下载",
+  ownerTakeBack: "收回到这里",
+  ownerTakeAsk: "把这些下载收回到这个应用吗？",
+  ownerTakeAskBody: "如果可以，请先关闭另一个 Kurokawa Tools。那边会暂停它们；如果两边都继续，文件可能会损坏。",
+  ownerTaken: "现在在这里进行。",
+  ownerTakeFailed: "另一个 Kurokawa Tools 仍在使用它们。请先关闭它，再重试。",
+  ownerYielded: "另一个 Kurokawa Tools 收回了这些下载，因此它们在这里已暂停。",
+  // （Tauri 版：没有 JavaScript 运行时的 yt-dlp 与“deno”组件。）
+  packDeno: "deno（供 yt-dlp 使用的 JavaScript）",
+  jsRtTitle: "YouTube 需要 JavaScript 运行时",
+  jsRtBody: "yt-dlp 在这台电脑上没有找到 JavaScript 运行时，因此可能缺少部分 YouTube 格式，甚至无法读取页面。下载一次小巧的“deno”组件即可解决，之后会一直使用它。",
+  jsRtGet: "获取 deno",
+  jsRtWhy: "yt-dlp 需要它来读取 YouTube 页面。",
 };

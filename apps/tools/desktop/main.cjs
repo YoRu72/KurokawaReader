@@ -151,6 +151,8 @@ else {
     // first start under Windows' antivirus.)
     void engine.ensure();
     videos = new Ytdlp.VideoJobs(() => send('kt:tasks', allTasks()));
+    // (Stage P9, the bridge build only: the downloads handed over to the Rust build kept paused here while it runs them.)
+    if (RUST_SWITCH) ownerAtStart(userData);
     engine.onTasks((tasks) => { lastAria = tasks; const all = allTasks(); send('kt:tasks', all); onDesktopTasks(all); });
     setTimeout(() => void Ytdlp.maybeUpdate(), 15000); setInterval(() => void Ytdlp.maybeUpdate(), 6 * 3600000);
     createWindow();
@@ -163,7 +165,7 @@ else {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin' && !ScreenTr.keepInTray()) app.quit(); });
-  app.on('before-quit', () => { quitting = true; void WebStream.stopAll(); ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); });
+  app.on('before-quit', () => { quitting = true; if (RUST_SWITCH) owner?.release(); void WebStream.stopAll(); ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); });
 }
 
 /* ---------- the engine, to the page ---------- */
@@ -176,7 +178,7 @@ ipcMain.handle('kt:engineRetry', async () => { await engine?.ensure(); return en
 ipcMain.handle('kt:list', async () => { if (engine?.available) lastAria = await engine.list().catch(() => lastAria); return allTasks(); });
 ipcMain.handle('kt:add', (_e, o) => (o.video ? videos.add({ ...o.video, url: o.source.url, dir: o.dir || engine.defaultDir, paused: o.paused, meta: o.meta }) : E().ensure().then(() => E().add(o))));
 ipcMain.handle('kt:pause', (_e, id) => (isVideoId(id) ? videos.pause(id) : E().pause(id)));
-ipcMain.handle('kt:resume', (_e, id) => (isVideoId(id) ? videos.resume(id) : E().resume(id)));
+ipcMain.handle('kt:resume', (_e, id) => (RUST_SWITCH ? ownerResume(id) : isVideoId(id) ? videos.resume(id) : E().resume(id)));
 ipcMain.handle('kt:remove', (_e, id, del) => (isVideoId(id) ? videos.remove(id, !!del) : E().remove(id, !!del)));
 ipcMain.handle('kt:setFiles', (_e, id, p) => E().setFiles(id, p));
 ipcMain.handle('kt:exists', (_e, ps) => (Array.isArray(ps) ? ps : []).map((p) => { try { return require('node:fs').existsSync(NP(String(p))); } catch { return false; } }));
@@ -490,6 +492,35 @@ const RUST_SWITCH = false;
 const RustSwitch = require('./rustswitch.cjs');
 const Handover = require('./handover.cjs');
 const handoverCh = Handover.install({ ipcMain, app }, { engine: () => engine, beforeEngine: () => WebStream.stopAll() });
+// (After the hand-over: the downloads both programs' sessions name — the same partial files and .aria2 control files
+// in the person's folders — are run by ONE of them. The Rust build writes itself as their owner into this app's data
+// folder (downloads-owner.json, ownerlock.cjs — kt-core's ownerlogic.rs in JavaScript) and keeps a heartbeat; this
+// build, while that owner lives, keeps them paused and refuses to resume them («kt-owner:held»: the page says so, with
+// «Take them back», asked first). A stale owner (gone, its heartbeat old) is taken over without asking.)
+const OwnerLock = require('./ownerlock.cjs');
+let owner = null;
+const MOVING = ['downloading', 'queued', 'metadata', 'checking', 'seeding'];
+async function ownerPause(ids) {
+  const out = [];
+  for (const id of ids || []) {
+    try {
+      if (isVideoId(id)) { const x = videos.list().find((y) => y.id === id); if (x && MOVING.includes(x.state)) { await videos.pause(id); out.push(id); } }
+      else if (engine && engine.available) { const x = lastAria.find((y) => y.id === id); if (x && MOVING.includes(x.state)) { await engine.pause(id); out.push(id); } }
+    } catch { /* gone */ }
+  }
+  return out;
+}
+async function ownerResumeIds(ids) { for (const id of ids || []) { try { if (isVideoId(id)) await videos.resume(id); else await E().resume(id); } catch { /* gone */ } } }
+function ownerAtStart(userData) {
+  owner = new OwnerLock.OwnerLock(userData, { pause: ownerPause, resume: ownerResumeIds, told: (info) => send('kt:downloadsOwner', info) });
+  void engine.ensure().then(() => owner.atStart()).catch(() => undefined);
+}
+async function ownerResume(id) {
+  if (owner && !(await owner.allowResume(String(id)))) throw new Error('kt-owner:held');
+  return isVideoId(id) ? videos.resume(id) : E().resume(id);
+}
+ipcMain.handle('kt:downloadsOwner', () => (RUST_SWITCH && owner ? owner.info() : null));
+ipcMain.handle('kt:downloadsTake', async () => { if (!RUST_SWITCH || !owner) return null; const ok = await owner.take(true); return { ok, ...(owner.info() || {}) }; });
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=60`;
 async function rustRelease(beta) {
   const res = await net.fetch(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } });
@@ -524,6 +555,11 @@ async function rustDownload(e, url, name, size) {
   }
   throw lastErr || new Error('download failed');
 }
+function loginOffForSwitch() {
+  if (process.platform === 'linux') return false;
+  try { const was = !!app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin; if (was) app.setLoginItemSettings({ openAtLogin: false, args: ['--hidden'] }); return was; } catch { return false; }
+}
+function loginBack(was) { if (was) { try { app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] }); } catch { /* not allowed */ } } }
 async function rustSwitch(e) {
   const pick = await rustRelease(false).catch(() => null);
   if (!pick) return null;
@@ -531,6 +567,9 @@ async function rustSwitch(e) {
   let h;
   try { h = await Handover.prepare({ app, webContents: e.sender }); } catch (err) { await handoverCh.resume(); throw new Error('kt-update:handover ' + String((err && err.message) || err)); }
   if (!h || h.ok !== true) { await handoverCh.resume(); throw new Error('kt-update:handover ' + String((h && h.reason) || 'not ready')); }
+  // (Start at log-in: this program's own entry taken away now — the new one starts with the computer when the settings
+  // that came over say so; never both. Put back below if nothing is installed. A portable copy and a Mac keep it off.)
+  const loginWas = loginOffForSwitch();
   // (A portable copy installs nothing: its data is now handed over — the new portable build brings it on its first
   // start — and the sheet says where to download it. Its downloads STAY PAUSED here: the new copy takes them up from the
   // same files, and two engines must never write one download at once; the person can resume them here by hand.)
@@ -569,7 +608,7 @@ async function rustSwitch(e) {
     throw new Error('kt-update:mac-opened');
   } catch (err) {
     // (Not installed: this app keeps working, its downloads going on.)
-    if (!opened) await handoverCh.resume();
+    if (!opened) { await handoverCh.resume(); loginBack(loginWas); }
     throw err;
   }
 }

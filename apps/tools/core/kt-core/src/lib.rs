@@ -34,3 +34,6 @@ pub mod screenlogic;
 // (Stage P9: the hand-over from the Electron build — the Reader's handoverlogic.rs with Tools' names, and the engine's
 // files carried before aria2c first starts.)
 pub mod handoverlogic;
+// (Stage P9, after the hand-over: which of the two programs runs the downloads they share — one owner file, a
+// heartbeat, a stale rule; the same rule in desktop/ownerlock.cjs, one table for both.)
+pub mod ownerlogic;
