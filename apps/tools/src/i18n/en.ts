@@ -1,6 +1,13 @@
 // English strings of Kurokawa Tools (the fallback for every language).
 export const en = {
   // (undo-redo) Undo / Redo, unsaved work, questions before what cannot be taken back (ui/undo.ts and its callers)
+  wsTiming: "Timing",
+  wsTranslation: "Translation",
+  wsDubbing: "Dubbing",
+  wsShiftBy: "Shift",
+  wsStretchBy: "Stretch",
+  wsUnitSec: "s",
+  wsDubShort: "Every line spoken by the phone’s voice into a copy of the video.",
   undoAct: "Undo",
   redoAct: "Redo",
   undoneMsg: "Undone",

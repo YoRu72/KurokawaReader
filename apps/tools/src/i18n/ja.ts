@@ -1,6 +1,13 @@
 import type { Strings } from './en';
 export const ja: Partial<Strings> = {
   // (undo-redo) Undo / Redo, unsaved work, questions before what cannot be taken back (ui/undo.ts and its callers)
+  wsTiming: "タイミング",
+  wsTranslation: "翻訳",
+  wsDubbing: "吹き替え",
+  wsShiftBy: "ずらす",
+  wsStretchBy: "伸縮",
+  wsUnitSec: "秒",
+  wsDubShort: "各行を端末の音声で読み上げ、動画のコピーに入れます。",
   undoAct: "元に戻す",
   redoAct: "やり直す",
   undoneMsg: "元に戻しました",

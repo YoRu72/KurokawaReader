@@ -1,6 +1,13 @@
 import type { Strings } from './en';
 export const ko: Partial<Strings> = {
   // (undo-redo) Undo / Redo, unsaved work, questions before what cannot be taken back (ui/undo.ts and its callers)
+  wsTiming: "타이밍",
+  wsTranslation: "번역",
+  wsDubbing: "더빙",
+  wsShiftBy: "이동",
+  wsStretchBy: "늘이기",
+  wsUnitSec: "초",
+  wsDubShort: "모든 줄을 휴대폰 음성으로 읽어 동영상 사본에 넣습니다.",
   undoAct: "실행 취소",
   redoAct: "다시 실행",
   undoneMsg: "실행 취소했습니다",

@@ -124,11 +124,23 @@ async function workshop(br, lang, z) {
   await openIt(); const c0 = await cues();
   ok(L('Undo and Redo in the header, both off at first; no shortcut in their names on a phone'), (await p.$eval('.subs-workshop .ws-undo', (b) => b.disabled && !/Ctrl/.test(b.title))) && (await p.$eval('.subs-workshop .ws-redo', (b) => b.disabled)));
   await p.click('.subs-workshop .ws-text >> nth=0'); await p.keyboard.press('Control+a'); await p.keyboard.type('Edited line'); await p.click('.subs-workshop .sheet-body > .hint');
-  await p.fill('.subs-workshop .ws-tools input >> nth=0', '1.5'); await p.click('.subs-workshop .ws-tools .btn.tonal.small >> nth=0');
+  ok(L('Apply is off while the shift is 0 and the stretch 1'), await p.$eval('.subs-workshop .ws-apply', (b) => b.disabled));
+  await p.click('.subs-workshop .ws-num >> nth=0 >> .icon-btn[data-icon="plus"]');
+  ok(L('the stepper: +0.1, and Apply on'), (await p.inputValue('.subs-workshop .ws-num-in >> nth=0')) === '0.1' && !(await p.$eval('.subs-workshop .ws-apply', (b) => b.disabled)));
+  await p.fill('.subs-workshop .ws-num-in >> nth=0', '1.5'); await p.click('.subs-workshop .ws-apply');
+  ok(L('applied: Apply off again'), await p.$eval('.subs-workshop .ws-apply', (b) => b.disabled));
+  // no two controls of the tools touch (each pair of boxes in a group apart by 8 px at least)
+  const touching = await p.$$eval('.subs-workshop .ws-group', (gs) => { const bad = []; for (const g of gs) { const els = [...g.querySelectorAll('.btn, .pick-btn, .ws-num-box, .ws-step .icon-btn')].map((e) => [e, e.getBoundingClientRect()]); for (let i = 0; i < els.length; i++) for (let j = i + 1; j < els.length; j++) { const a = els[i][1], b = els[j][1]; const gapX = Math.max(b.left - a.right, a.left - b.right), gapY = Math.max(b.top - a.bottom, a.top - b.bottom); if (Math.max(gapX, gapY) < 7.5) bad.push([els[i][0].textContent.trim(), els[j][0].textContent.trim()]); } } return bad; });
+  ok(L('no two controls touch'), !touching.length, touching);
+  const heights = await p.$$eval('.subs-workshop .ws-group .btn, .subs-workshop .ws-group .pick-btn, .subs-workshop .ws-num-box', (e) => [...new Set(e.map((x) => Math.round(x.getBoundingClientRect().height)))]);
+  ok(L('one height for every button and field'), heights.length === 1, heights);
   const c2 = await cues();
   ok(L('a line edited and the times shifted'), /Edited line/.test(c2[0]) && /00:00:02,500/.test(c2[0]) && c2.length === 2, c2);
   await p.waitForFunction(() => !document.querySelector('.toast:not(.undo-snack)'));
   await shot(p, lang === 'en' ? 'tools-undo-workshop-phone.png' : 'tools-undo-workshop-phone-ar.png');
+  if (SHOTS) { await p.setViewportSize({ width: 320, height: 915 }); await p.waitForTimeout(300); await p.evaluate(() => document.querySelector('.subs-workshop .sheet-body').scrollTo(0, 0)); await shot(p, lang === 'en' ? 'tools-undo-workshop-320.png' : 'tools-undo-workshop-320-ar.png');
+    const narrow = await p.$$eval('.subs-workshop .ws-group', (gs) => gs.some((g) => g.scrollWidth > g.clientWidth + 1)); ok(L('320 px wide: nothing runs out of its group'), !narrow);
+    await p.setViewportSize({ width: 1280, height: 800 }); await p.waitForTimeout(300); await shot(p, lang === 'en' ? 'tools-undo-workshop-wide.png' : 'tools-undo-workshop-wide-ar.png'); await p.setViewportSize({ width: 412, height: 915 }); await p.waitForTimeout(300); }
   await p.click('.subs-workshop .ws-undo'); const c1 = await cues();
   ok(L('Undo: the shift taken back, the edit kept'), /Edited line/.test(c1[0]) && /00:00:01,000/.test(c1[0]), c1);
   await p.click('.subs-workshop .ws-undo');

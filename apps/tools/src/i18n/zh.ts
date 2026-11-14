@@ -1,6 +1,13 @@
 import type { Strings } from './en';
 export const zh: Partial<Strings> = {
   // (undo-redo) Undo / Redo, unsaved work, questions before what cannot be taken back (ui/undo.ts and its callers)
+  wsTiming: "时间轴",
+  wsTranslation: "翻译",
+  wsDubbing: "配音",
+  wsShiftBy: "平移",
+  wsStretchBy: "伸缩",
+  wsUnitSec: "秒",
+  wsDubShort: "用手机的语音朗读每一行，并放入视频的副本。",
   undoAct: "撤销",
   redoAct: "重做",
   undoneMsg: "已撤销",

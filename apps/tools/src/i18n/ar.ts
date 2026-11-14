@@ -2,6 +2,13 @@ import type { Strings } from './en';
 
 export const ar: Partial<Strings> = {
   // (undo-redo) Undo / Redo, unsaved work, questions before what cannot be taken back (ui/undo.ts and its callers)
+  wsTiming: "التوقيت",
+  wsTranslation: "الترجمة",
+  wsDubbing: "الدبلجة",
+  wsShiftBy: "الإزاحة",
+  wsStretchBy: "التمديد",
+  wsUnitSec: "ث",
+  wsDubShort: "يُنطَق كلُّ سطرٍ بصوت الهاتف في نسخةٍ من الفيديو.",
   undoAct: "تراجَع",
   redoAct: "أعِد",
   undoneMsg: "تمّ التراجع",

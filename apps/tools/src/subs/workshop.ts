@@ -42,10 +42,18 @@ export async function workshopSheet(path?: string, video?: string): Promise<void
     list.replaceChildren(...cues.slice(0, 400).map((c, i) => h('div', { class: 'ws-cue' }, h('small', { class: 'src', dir: 'ltr' }, `${localDigits(i + 1)} · ${fmtTime(c.start)} → ${fmtTime(c.end)}`), h('div', { class: 'ws-text', contenteditable: 'true', dir: 'auto', onblur: (e: Event) => { const v = (e.target as HTMLElement).innerText.trim(); if (v === c.text) return; const next = copy(cues); next[i].text = v; commit(next); } }, c.text))), cues.length > 400 ? h('p', { class: 'hint' }, t('wsMore', { n: localDigits(cues.length - 400) })) : h('span'));
   };
   // ---- time: shift by seconds, stretch by a factor (a subtitle for another cut of the film)
-  const shift = h('input', { type: 'number', step: '0.1', value: '0', style: { width: '6em' } }) as HTMLInputElement; const stretch = h('input', { type: 'number', step: '0.001', value: '1', style: { width: '6em' } }) as HTMLInputElement;
-  const applyTime = () => { const d = Number(shift.value) || 0, k = Number(stretch.value) || 1; if (d === 0 && k === 1) return; commit(cues.map((c) => ({ ...c, start: Math.max(0, c.start * k + d), end: Math.max(0, c.end * k + d) }))); shift.value = '0'; stretch.value = '1'; toast(t('wsApplied')); };
+  // (A number with its label, its unit and − / + either side; Apply only once one of them is not the identity.)
+  const shift = h('input', { type: 'number', class: 'ws-num-in', step: '0.1', value: '0', inputmode: 'decimal', dir: 'ltr', 'aria-label': t('wsShiftBy') }) as HTMLInputElement; const stretch = h('input', { type: 'number', class: 'ws-num-in', step: '0.001', min: '0.5', max: '2', value: '1', inputmode: 'decimal', dir: 'ltr', 'aria-label': t('wsStretchBy') }) as HTMLInputElement;
+  const applyBtn = h('button', { type: 'button', class: 'btn primary ws-apply', disabled: true, onclick: () => applyTime() }, icon('check'), t('apply')) as HTMLButtonElement;
+  const syncApply = () => { applyBtn.disabled = (Number(shift.value) || 0) === 0 && (Number(stretch.value) || 1) === 1; };
+  const stepper = (label: string, unit: string, input: HTMLInputElement, by: number, digits: number) => {
+    const bump = (d: number) => { input.value = String(Math.round(((Number(input.value) || 0) + d) * 10 ** digits) / 10 ** digits); syncApply(); };
+    input.addEventListener('input', syncApply);
+    return h('div', { class: 'ws-num' }, h('span', { class: 'ws-num-label' }, label), h('div', { class: 'ws-step' }, iconButton('minus', t('less'), () => bump(-by)), h('span', { class: 'ws-num-box' }, input, h('span', { class: 'ws-unit' }, unit)), iconButton('plus', t('more'), () => bump(by))));
+  };
+  function applyTime() { const d = Number(shift.value) || 0, k = Number(stretch.value) || 1; if (d === 0 && k === 1) return; commit(cues.map((c) => ({ ...c, start: Math.max(0, c.start * k + d), end: Math.max(0, c.end * k + d) }))); shift.value = '0'; stretch.value = '1'; syncApply(); toast(t('wsApplied')); }
   // ---- translate whole, through the screen translator's engine
-  let target = ''; const translateBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
+  let target = ''; const translateBtn = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const { loadScreen, SCREEN_LANGS, engineReady } = await import('../screen/config'); const { translateTexts } = await import('../screen/translate');
     const cfg = loadScreen(); if (!target) target = cfg.target; if (!engineReady(cfg)) cfg.engine = 'google'; cfg.target = target;
     const label = SCREEN_LANGS.find(([c]) => c === target)?.[1] ?? target; translateBtn.disabled = true; const busy = toast(t('wsTranslating', { lang: label }), undefined, 60000); void busy;
@@ -54,7 +62,7 @@ export async function workshopSheet(path?: string, video?: string): Promise<void
   } }, icon('translate'), t('wsTranslate'));
   const langBtn = (async () => { const { SCREEN_LANGS, loadScreen } = await import('../screen/config'); target = loadScreen().target; return pickButton(t('wsTarget'), SCREEN_LANGS.map(([c, l]) => [c, l] as [string, string]), target, (v) => { target = v; }, t('close')); })();
   // ---- bilingual with a second file
-  const bilingualBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
+  const bilingualBtn = h('button', { type: 'button', class: 'btn tonal', onclick: async () => {
     const ps = await pickFiles(false); if (!ps[0]) return; const b = await readLocal(ps[0]); if (!b) return; const other = parseCues(decodeSubtitle(b), sniffFormat(ps[0], decodeSubtitle(b)));
     commit(cues.map((c) => { const o = other.filter((x) => { const ov = Math.min(c.end, x.end) - Math.max(c.start, x.start); return ov > 0 && ov * 2 >= Math.min(c.end - c.start, x.end - x.start); }).map((x) => x.text.replace(/\n/g, ' ')).join(' '); return o ? { ...c, text: `${c.text}\n${o}` } : c; })); toast(t('wsMerged'));
   } }, icon('subtitles'), t('wsBilingual'));
@@ -69,7 +77,7 @@ export async function workshopSheet(path?: string, video?: string): Promise<void
   }
   // ---- the dub (Android, ffmpeg pack): the phone's voice, into a copy of the video
   const p = ktPlugin() as unknown as Plug | null; let dubLang = '';
-  const dubBtn = p?.dubMake ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
+  const dubBtn = p?.dubMake ? h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const { SCREEN_LANGS } = await import('../screen/config'); if (!dubLang) dubLang = target || 'en';
     const d = openSheet(t('wsDub'), t('cancel'), { stack: true }); const status = h('p', { class: 'src' }); const id = `dub-${Date.now()}`;
     d.body.append(h('p', { class: 'hint' }, t('wsDubHint')), h('div', { class: 'row' }, h('span', null, t('wsDubVoice')), pickButton(t('wsDubVoice'), SCREEN_LANGS.map(([c, l]) => [c, l] as [string, string]), dubLang, (v) => { dubLang = v; }, t('close'))), status);
@@ -82,10 +90,18 @@ export async function workshopSheet(path?: string, video?: string): Promise<void
     } }, icon('music'), t('wsDubMake')));
     d.el.addEventListener('transitionend', () => undefined); const origClose = d.close; d.close = () => { void p.dubCancel?.({ id }); origClose(); };
   } }, icon('music'), t('wsDub')) : null;
+  // Three groups, each on its own surface: the timing (and its Apply), the translation (into which language, then
+  // the whole file or a second language beside it), the dub (where the phone can make one).
+  const group = (title: string, ...kids: (HTMLElement | null)[]) => h('section', { class: 'ws-group' }, h('h4', { class: 'ws-group-title' }, title), ...kids);
+  const lang = await langBtn; lang.classList.add('ws-lang');
   sh.body.append(info,
-    h('div', { class: 'row wrap ws-tools' }, h('label', { class: 'field row' }, h('span', { class: 'label' }, t('wsShift')), shift), h('label', { class: 'field row' }, h('span', { class: 'label' }, t('wsStretch')), stretch), h('button', { type: 'button', class: 'btn tonal small', onclick: applyTime }, icon('check'), t('apply'))),
-    h('div', { class: 'row wrap ws-tools' }, await langBtn, translateBtn, bilingualBtn, dubBtn ?? h('span')),
+    h('div', { class: 'ws-groups' },
+      group(t('wsTiming'), h('div', { class: 'ws-nums' }, stepper(t('wsShiftBy'), t('wsUnitSec'), shift, 0.1, 2), stepper(t('wsStretchBy'), '×', stretch, 0.001, 3)), h('div', { class: 'ws-group-actions' }, applyBtn)),
+      group(t('wsTranslation'), h('label', { class: 'ws-field' }, h('span', { class: 'ws-num-label' }, t('wsTarget')), lang), h('div', { class: 'ws-pair' }, translateBtn, bilingualBtn)),
+      dubBtn ? group(t('wsDubbing'), h('p', { class: 'hint ws-group-hint' }, t('wsDubShort')), h('div', { class: 'ws-group-actions' }, dubBtn)) : null),
     list);
-  sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void saveAs('vtt') }, icon('download'), 'VTT'), h('button', { type: 'button', class: 'btn primary', onclick: () => void saveAs('srt') }, icon('download'), t('wsSaveSrt')));
+  // (The footer: saving in the file's own kind is the primary action, the other kind beside it.)
+  const vttFirst = fmt === 'vtt'; const vttBtn = h('button', { type: 'button', class: 'btn ' + (vttFirst ? 'primary' : 'tonal'), onclick: () => void saveAs('vtt') }, icon('download'), 'VTT'); const srtBtn = h('button', { type: 'button', class: 'btn ' + (vttFirst ? 'tonal' : 'primary'), onclick: () => void saveAs('srt') }, icon('download'), t('wsSaveSrt'));
+  sh.actions.classList.add('ws-footer'); sh.actions.append(...(vttFirst ? [srtBtn, vttBtn] : [vttBtn, srtBtn]));
   draw(); void nativePlatform; void iconButton;
 }
