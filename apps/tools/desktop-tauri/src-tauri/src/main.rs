@@ -10,6 +10,17 @@ mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
 mod commands;
+// (Stage P6: the computer's side of the downloads — tray, notices, hotkeys, keep-awake, when done, taskbar progress, the
+// mini window, launches handed over, a Mac's menu bar; desklogic.rs its rules, std only.)
+mod desklogic;
+mod desktop;
+// (Stage P6: kt:captureUrl and kt:siteWindow — the sign-in window and the site window.)
+mod sitewin;
+// (Stage P7: the in-app browser, kt:browse — its rules in the shared crate's browserlogic.rs.)
+mod browser;
+// (Stage P8: the Wi-Fi share, the local API, the antivirus check — lanlogic.rs their rules, std only.)
+mod lanlogic;
+mod lanshare;
 mod engine;
 // (Stage P3: the recycle bin, free space, fonts, MEGA, the Files page's jobs.)
 mod filecmds;
@@ -47,7 +58,25 @@ pub const WINDOW: winstate::Defaults = winstate::Defaults {
 const BRIDGE_JS: &str = include_str!("../../bridge.js");
 
 fn main() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // (Stage P6: a second launch hands its magnets, links and .torrent files to this window and ends — main.cjs's
+    // requestSingleInstanceLock / second-instance. Registered first, as the plugin asks; on Linux only with a D-Bus
+    // session bus, else each launch is its own window.)
+    if desktop::single_instance_possible() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            desktop::second_launch(app, argv, cwd);
+        }));
+    }
+    // (Stage P6: the clipboard hotkeys — where build.rs found the plugin's API, and on Linux with an X display.)
+    #[cfg(kt_shortcuts)]
+    {
+        if desktop::shortcuts_possible() {
+            builder = builder.plugin(desktop::shortcuts_plugin());
+        }
+    }
+    builder
+        // (Stage P6: notices when a download finishes — from Rust only, no JS permission granted.)
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
@@ -120,6 +149,23 @@ fn main() {
             archives::kt_selftest_7z,
             archives::kt_selftest_write,
             titlebar::kt_title_bar,
+            desktop::kt_desktop_prefs,
+            desktop::kt_mini,
+            desktop::kt_open_take,
+            desktop::kt_register_magnet,
+            desktop::kt_selftest_desk,
+            sitewin::kt_capture_url,
+            sitewin::kt_site_window,
+            sitewin::kt_selftest_site,
+            browser::kt_browse,
+            browser::kt_selftest_browse,
+            lanshare::kt_share_wifi,
+            lanshare::kt_share_wifi_stop,
+            lanshare::kt_share_wifi_status,
+            lanshare::kt_local_api,
+            lanshare::kt_av_scan,
+            lanshare::kt_av_available,
+            lanshare::kt_selftest_lan,
             selftest::kt_selftest_progress,
             selftest::kt_selftest_done,
             // (Stage P4.)
@@ -135,6 +181,9 @@ fn main() {
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
             titlebar::on_event(window, event);
+            desktop::on_event(window, event);
+            sitewin::on_event(window, event);
+            browser::on_event(window, event);
         })
         .setup(|app| {
             // (Before any request: the app's own requests named as Tools' (shared crate's net.rs), the cookies sites
@@ -176,6 +225,8 @@ fn main() {
             let boot =
                 serde_json::json!({ "os": util::node_platform(), "arch": util::node_arch() });
             let mut script: String = format!("window.__KT_BOOT__ = {};\n{}", boot, BRIDGE_JS);
+            // (Stage P6: the mini window runs the page without the self-test.)
+            let _ = desktop::WEB_SCRIPT.set(script.clone());
             // (Only with KT_SELFTEST set: the self-test, after the bridge.)
             if kurokawa_shell::selftest::out_path("KT").is_some() {
                 let found = engine::get().and_then(|e| e.find_binary());
@@ -221,11 +272,18 @@ fn main() {
             b.build()?;
             // (Stage P6 part: the icon of the user's choosing put on again — window, taskbar, shortcuts, entry.)
             appicon::at_start(&handle);
+            // (Stage P6: magnets, links and .torrent files this launch was given, kept for the page.)
+            desktop::at_start(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building Kurokawa Tools")
         .run(|app, event| {
+            // (Stage P6: a Mac hands magnets, kurokawatools: links and .torrent files over as Apple Events.)
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                desktop::opened(app, urls.iter().map(|u| u.to_string()).collect());
+            }
             // (Quitting: aria2c's session saved and aria2c stopped; an update downloaded in the background and not
             // installed is installed quietly — update.rs, as electron-updater's autoInstallOnAppQuit.)
             if let tauri::RunEvent::Exit = event {

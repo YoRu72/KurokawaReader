@@ -1054,4 +1054,12 @@ export const zh: Partial<Strings> = {
   filesPlaceDocuments: "文档",
   updateByHand: "此副本无法自行替换：请从发布页面下载新版本。",
   filesBadName: "名称不能包含 / 或 \\（在 Windows 上也不能包含 < > : \" | ? *）。",
+  // (P6 阶段：托盘菜单、Mac 菜单栏、无法设置的快捷键)
+  trayQuit: "退出", hotkeyRefused: "无法设置快捷键 {keys}：{why}",
+  menuAbout: "关于 Kurokawa Tools", menuHide: "隐藏 Kurokawa Tools", menuHideOthers: "隐藏其他", menuShowAll: "全部显示", menuQuit: "退出 Kurokawa Tools",
+  menuFile: "文件", menuCloseWindow: "关闭窗口", menuEdit: "编辑", menuUndo: "撤销", menuRedo: "重做", menuCut: "剪切", menuCopy: "拷贝", menuPaste: "粘贴", menuSelectAll: "全选",
+  menuView: "显示", menuFullscreen: "进入全屏幕", menuWindow: "窗口", menuMinimize: "最小化", menuZoom: "缩放",
+  hotkeyWhyKey: "其中有此处不支持的按键", hotkeyWhyTaken: "已被其他程序占用", hotkeyWhyNone: "此系统不支持全局快捷键",
+  // (阶段 P7：应用内浏览器的工具栏)
+  browserBarBack: "后退", browserBarForward: "前进", browserBarReload: "重新加载", browserBarAddress: "地址或搜索", browserBarGrab: "抓取链接 (Ctrl+G)", browserBarCopy: "复制地址 (Ctrl+L)", browserBarExternal: "在系统浏览器中打开",
 };

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window. The app's own kt_* commands need no permission; the plugins (dialog, clipboard, opener) are used from Rust only, so none of their JS permissions are granted.",
-  "windows": ["main"],
+  "description": "The main window and (stage P6) the mini window, which runs the same page on #/mini. The app's own kt_* commands need no permission; the plugins (dialog, clipboard, opener) are used from Rust only, so none of their JS permissions are granted.",
+  "windows": ["main", "mini"],
   "permissions": ["core:default"]
 }

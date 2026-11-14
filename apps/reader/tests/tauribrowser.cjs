@@ -23,7 +23,9 @@ const SRC = path.join(__dirname, '..', 'desktop-tauri', 'src-tauri', 'src');
 const RS = fs.readFileSync(path.join(SRC, 'browser.rs'), 'utf8');
 const raw = (name) => { const m = new RegExp(`const ${name}: &str = r#"([\\s\\S]*?)"#;`).exec(RS); assert.ok(m, `${name} not found in browser.rs`); return m[1]; };
 const J = { SENDER: raw('SENDER_JS'), FETCH: raw('FETCH_JS'), STATE: raw('STATE_JS'), INIT: raw('INIT_JS'), BROWSE: raw('BROWSE_JS'), PROBE: raw('PROBE_JS'), CLICK: raw('CLICK_JS') };
-const CHUNK = (() => { const m = /pub const CHUNK: usize = (\d+) \* 1024;/.exec(fs.readFileSync(path.join(SRC, 'browserlogic.rs'), 'utf8')); return Number(m[1]) * 1024; })();
+// (browserlogic.rs lives in the shared crate since Tools' P7.)
+const LOGIC = path.join(__dirname, '..', '..', '..', 'shared', 'shell-rs', 'src', 'browserlogic.rs');
+const CHUNK = (() => { const m = /pub const CHUNK: usize = (\d+) \* 1024;/.exec(fs.readFileSync(LOGIC, 'utf8')); return Number(m[1]) * 1024; })();
 const js = (s) => JSON.stringify(s);
 // (As browser.rs's sender_call, init_script and the replacements: ours first, the page's words last.)
 const sender = (nonce, pref = '') => `${J.SENDER}(${js('__kr' + nonce)},${js(nonce)},${CHUNK},${js(pref)})`;
@@ -187,7 +189,7 @@ async function main() {
   if (rustc) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-tauribrowser-'));
     try {
-      const prog = `#[allow(dead_code)] #[path = ${JSON.stringify(path.join(SRC, 'browserlogic.rs'))}] mod browserlogic;
+      const prog = `#[allow(dead_code)] #[path = ${JSON.stringify(LOGIC)}] mod browserlogic;
 fn main() { let nonce = std::env::args().nth(1).unwrap(); let text = std::fs::read_to_string(std::env::args().nth(2).unwrap()).unwrap();
   for l in text.lines() { match browserlogic::parse_reply(l, &nonce) { browserlogic::Reply::Message(m) => println!("{} {} {} {}", m.rid, m.part, m.total, m.data.len()), browserlogic::Reply::Refused => println!("refused"), browserlogic::Reply::Other => println!("other") } } }`;
       fs.writeFileSync(path.join(dir, 'p.rs'), prog); fs.writeFileSync(path.join(dir, 'urls.txt'), recorded.join('\n'));

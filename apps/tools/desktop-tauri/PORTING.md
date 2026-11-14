@@ -172,13 +172,171 @@ Do the same once before a local `tauri build` / `tauri dev`.
   engine fetching it while the page streams start, middle, end and the second file, compared byte for byte. Make the
   swarm rows required once CI has shown them steady. Page-level: `tests/streamtauri.cjs`.
 
+## Stage P6 — desktop integration (`desktop.rs`, `desklogic.rs` std only, `sitewin.rs`)
+
+- **Tray** (Tauri's `tray-icon` feature): made when chosen (main.cjs's `trayUpdate`), its tooltip the speed over every
+  moving download, its menu (the app's name → the window; Quit) in the interface's language — the page sends the words
+  (`desktopPrefs({labels})`, src/downloads/power.ts; Electron's menu is English). A left click brings the window back
+  (cfg `kt_tray_left` / `kt_tray_left_old` keep the menu to the right click); Linux's tray gives no clicks, its menu has
+  the same item. On Linux a tray is made only where libayatana-appindicator3 / libappindicator3 is installed (the crate
+  would stop the program otherwise); the self-test says why when not. **Close to tray**: Electron hides instead of
+  closing only while the screen translator keeps itself in the tray (`ScreenTr.keepInTray()`) — that comes with the
+  screen translator (below); nothing else of Electron closes to the tray. **Autostart**: Electron has none; none here.
+- **Notices** (tauri-plugin-notification, from Rust only): main.cjs's rule (a download seen moving that finishes; its
+  name and size). **The plugin gives no click on a computer** — what Tools loses is Electron's «click the notice →
+  the download's page». The nearest thing here: a download told of while the window was not in front is opened
+  (`kt:openTask`, as the click did) the first time the window comes to the front within two minutes
+  (`desklogic::NoticeOpen`).
+- **Clipboard hotkeys** (tauri-plugin-global-shortcut, cfg `kt_shortcuts`): Electron accelerators turned into the
+  plugin's words (`desklogic::accelerator`); all let go, each registered; a press sends `kt:hotkeyAdd {mode, text}` and
+  brings the window back. A clash is said plainly: `hotkeyErrors {mode: 'key'|'taken'|'none'}`, one toast in the
+  page's language (`hotkeyRefused`, `hotkeyWhy*`; Electron dropped them silently); on Linux only with an X display.
+- **Taskbar progress** (`set_progress_bar`, cfg `kt_progress`), a Mac's dock count (cfg `kt_badge`, not on Windows as
+  main.cjs). **Keep-awake** while something downloads (Electron's `prevent-app-suspension`; Electron has none for
+  playing): Windows `SetThreadExecutionState` on a thread that holds it; a Mac `caffeinate -i -w <pid>`; Linux
+  `systemd-inhibit --what=idle:sleep … tail --pid=<pid>` — each child ends with the app. **When done**: main.cjs's
+  commands after 5 s (quit after 3 s).
+- **Single instance + hand-over** (tauri-plugin-single-instance, on Linux only with a D-Bus session bus — the Reader's
+  rule): a second launch's arguments, this launch's, and a Mac's Apple Events (`RunEvent::Opened`) sorted as main.cjs's
+  `takeArg` (`desklogic::sort_args`: magnet:, http(s):, `kurokawatools://open?u=`, an existing `.torrent` — relative or
+  `file://` too — read into a data: address, at most 64 MiB) and kept until the page listens for `kt:open` (bridge.js
+  takes them with `kt_open_take` and dispatches the preload's DOM event; again on `kt:openPending`). The schemes and the
+  .torrent association are in tauri.conf.json (`plugins.deep-link.desktop.schemes`, `bundle.fileAssociations`), which
+  the bundler writes into the installer, the .deb's entry and the Info.plist, as electron-builder's `protocols`.
+- **The mini window** («Prism's»): `#/mini` with the bridge (no self-test), the `mini` capability; dragged by its head.
+- **A Mac's menu bar** (the Reader's `menu.rs` way): Electron's roles (app, File, Edit, View, Window) in the page's words.
+- **Sign-in and site windows** (`sitewin.rs`): see the table. Neither gets the bridge; neither is the main window's child.
+
+New crates: `tauri-plugin-single-instance` "2" and `tauri-plugin-notification` "2" (the Reader's, already built on CI),
+`tauri-plugin-global-shortcut` "2" (new: brings `global-hotkey`, which uses x11-dl on Linux — loaded at run time — and
+the Windows/macOS bindings the tray already brings; std has no system-wide key grab), and Tauri's own `tray-icon`
+feature (the `tray-icon` crate; muda is already in). Each uncertain call is behind a cfg from `build.rs`/`apidetect.rs`
+(`kt_tray_left`, `kt_tray_left_old`, `kt_badge`, `kt_all_spaces`, `kt_shortcuts`); not found → that part left out, the
+build never fails for it. Tests: `desklogic.rs` (rustc, CI's «P6-P8» step), `apidetect.rs`, tests/tauribridge.cjs (the
+methods, `kt:open`'s hand-over, the events, the self-test's P6 rows against a pretend shell), tests/desktauri.cjs (the
+page sends the words and says a refused hotkey, five languages), selftest.js's `desktop:` rows (required on Windows;
+the tray wherever it can be made but a Mac; the mini window and the sign-in window but on a Mac; `siteWindow`'s refusal
+everywhere; a notice reported only).
+
+## Stage P7 — the in-app browser (`browser.rs`, `grab.js`; rules in `shared/shell-rs/src/browserlogic.rs`)
+
+`browserlogic.rs` moved from the Reader into the shared crate **unchanged** (the Reader's `browser.rs` takes it as
+`kurokawa_shell::browserlogic`; its std-only tests, tests/tauribrowser.cjs — which now reads it there — and
+tests/tauribridge.cjs pass as before; the Reader's workflow tests it at its new path). Electron's Tools browser
+(main.cjs `openBrowser`) is smaller than the Reader's: one window, no `browserFetch`, no forget/reset — so neither is
+here (never more than Electron). What this shell does:
+- **The window** (`ktb-browse-<n>`, 1100×800, an external address — http(s), else DuckDuckGo, as main.cjs): no bridge,
+  no IPC from the site (no capability names it), titled «<page> — Kurokawa Tools». Opened again → the same window sent
+  to the new address and brought to the front. Closed with the main window.
+- **Its own profile** on Windows and Linux (`<app local data>/browser`), with the Reader's **keeper rule**: a hidden
+  `ktb-keep-<n>` window (about:blank) opened first and kept while the app runs — on Windows WebView2 otherwise ends
+  the profile's process (and its session cookies) with its last window; on Linux it is the one window with
+  `on_download` (WebKitGTK asks the first handler connected; a gone window's answers «cancel»). A Mac: WKWebView's
+  default store (the Reader's way). Electron used the app's one session.
+- **The channel** (page → app): the Reader's sender, by addresses only (`https://kr-lane.invalid/<nonce>/…`, refused
+  by the navigation handler, each piece acknowledged; 24 KiB pieces on a Mac — the Reader's **large-answer lesson**: a
+  hidden WKWebView is slow with long addresses; nothing here is large but a grab, and the window is shown). Messages:
+  `t` the title (and the browser's user agent), `c` a bar command — it must carry the bar's own token, which lives
+  only in the bar's closure (a site's script can find the channel, not that) —, `g` a grab's answer, taken only when
+  asked for. Unasked messages are one piece each.
+- **The bar** (Electron's window menu: ‹ › ↻ Grab links (Ctrl+G), Copy address (Ctrl+L), Open in system browser): a
+  small bar in a corner of the page (a closed shadow root, the start side; the Reader's), in the interface's words
+  (`desktopPrefs` labels `browser*`, five languages), plus Alt+← / Alt+→ / F5. **Grab** runs main.cjs's GRAB_JS
+  unchanged (`grab.js`, tests/tauribridge.cjs keeps them equal) → `kt:browser {kind:'links', url, title, links, ua}`.
+- **Magnets** the page goes to or opens (`on_navigation`) → `kt:browser {kind:'download', url}`, the page stays.
+  **Downloads** (`on_download`, cfg `kt_download_api`): the web view's own cancelled, `{kind:'download', url, name,
+  referer, ua, cookie}` to the app (Electron's will-download), on every system; `blob:`/`data:` left to the web view.
+- **Cookies shared with the app's client**: the site's cookies (cfg `kt_cookie_read`; a Mac every cookie (`kt_cookie_all`)
+  matched by `browserlogic::cookie_for_host` — the Reader's **domain-matching lesson**) go in the download's `cookie`
+  and into the app's jar (`net::put_cookie`) when a download or a grab is handed over — asked off the main thread
+  (WebView2 deadlocks a cookie call made on it).
+- **Not here**, said plainly: Electron's `webRequest.onCompleted` list (media told by the answers' content types) — no
+  system web view gives response headers; Grab has what GRAB_JS finds, including the page's resource timing (the media
+  it loaded by address). New windows a site opens stay in this window (Electron loaded http(s) ones there too).
+- Tests: tests/tauribrowsertools.cjs (the page scripts in Chromium against a local site, the channel answered as
+  browser.rs answers it: title + user agent, the bar closed and right-to-left, Ctrl+G / Ctrl+L, a forged command told
+  apart, a grab in pieces whole and in main.cjs's shape, an unasked answer refused, new windows kept, the site's own load
+  finishing); tests/tauribridge.cjs (methods, GRAB_JS equal, the self-test's browser rows against a pretend browser);
+  apidetect.rs (`detect_tauri_p7`); selftest.js `browser:` rows on the loopback test site (`/site/`: opened, Grab,
+  a magnet, a download with the site's cookies — required on Windows where `on_download` is found —, the app's request
+  then signed in and a target=_blank link kept — reported —, closed).
+
+## Stage P8 — the Wi-Fi share, the local API, the antivirus (`lanshare.rs`, `lanlogic.rs` std only)
+
+Plain `std::net` servers on threads (no new crate). As Electron's and no more: the **Wi-Fi share** listens on every
+interface (as wifishare.cjs: `0.0.0.0`, a free port) and answers only under its random key — the list page and each
+shared file **by its number in the list the app made** (never a path from the request, so no traversal: «..», encoded
+or not, backslashes, a NUL, a number out of range → 404) with ranges and HEAD; no upload (Electron has none: other
+methods → 405). A shared file is resolved when shared and served only while it still resolves to that same real file
+(no link swapped in). The **local API** listens on 127.0.0.1 only (port 8977 unless given), the token on every request
+but the CORS preflight (localapi.cjs's order), by `Authorization: Bearer` or `?token=`; the same routes (`GET /tasks`,
+`GET /version`, `POST /add`, `POST /tasks/<id>/pause|resume|remove`); `video`/`audio` adds answer an error until P5.
+Stricter, said plainly: the key is 24 hex digits (Electron 12) from the system's generator (`/dev/urandom`,
+`BCryptGenRandom`), key and token compared in constant time; a head over 16 KiB → 400, an API body over 1 MiB → 413
+(Electron dropped the connection), a chunked body → 411; 30 s idle timeouts; at most 32 connections; a refused body
+read off before the answer (at most 4 MiB). A port the local API cannot take answers `on: false` with `error` (Electron
+said `on: true` and listened nowhere). The address shown is the default-route IPv4 (a private one first) — std cannot
+list interfaces by name as wifishare.cjs did. **Antivirus**: antivirus.cjs's rules (Defender's newest MpCmdRun under
+`ProgramData\…\Platform`, else Program Files; ClamAV on the PATH; the user's own program with `{file}`, run directly,
+never through a shell; Defender 2 / ClamAV 1 / a custom non-zero → infected; ten minutes, then killed → error; only the
+kinds chosen). Tests: `lanlogic.rs` (rustc; hostile heads, routes, ranges, tokens, names in the page), selftest.js's
+`wifi share:` / `local API:` / `antivirus:` rows from loopback, required everywhere (wrong key / traversal / a number
+out refused, a range byte for byte, 416, an upload refused, stopped; none / wrong token 401, query and Bearer 200,
+preflight 204, 1.1 MB 413, off; a stand-in scanner — the system's own shell told to exit 0 / 3 — clean, infected,
+skipped by kind, no scanner). Any remaining update-install channel: none — `kt:installUpdate` was done with the updater.
+
+### The screen translator — the plan (its 8 channels left untouched)
+
+What Electron does (`desktop/screentr.cjs`, 234 lines; the page: `src/views/overlay.ts`, `src/views/screen.ts`,
+`src/screen/{config,translate,lettering,inpaint}.ts`):
+- **Settings / status**: `kt:screenConfig` (the page's config saved to `screen.json`; keys, tray re-applied),
+  `kt:screenStatus`, `kt:screenOcrLangs` (Windows OCR's installed languages / Tesseract's `--list-langs` / Vision's).
+- **Triggers**: global shortcuts per action (`region`, `full`, `repeat`, `auto`, `clipboard`; `DEFAULT_KEYS`), its own
+  tray with a menu of the same actions, and **close to tray** while it is on (`keepInTray()` — main.cjs hides the
+  main window instead of closing it then).
+- **Capture**: the display under the mouse at full resolution (`desktopCapturer` thumbnail), its scale.
+- **Overlay**: a frameless always-on-top window over that display (`#/overlay`), the frozen picture as its background;
+  the page draws the region (`kt:screenJob` gives it the picture, `kt:screenRegion` the rectangle back); closed on blur.
+- **Reading** (`kt:screenRegion`): the crop's text blocks — Windows OCR through a PowerShell script (WinRT
+  `Windows.Media.Ocr`), a Mac's Vision through `osascript -l JavaScript`, else Tesseract's TSV — or the crop itself as
+  a data: address for an AI model.
+- **Auto / tracking**: the last region re-captured every `interval` s, read, compared loosely, and a transparent
+  click-through caption window under (or over) it gets `kt:screenCaption {text}`; `kt:screenCaption` (size) lets the
+  page resize it; `autoStop` minutes.
+- **Clipboard popup**: the clipboard's text translated in a small window by the mouse; `kt:screenClose`.
+- **Page code already** (nothing to port): translation (`translate.ts`), the look-ahead / glossary / kind of block and
+  its font (`lettering.ts`), the words taken off the picture (`inpaint.ts`), the overlay's drawing and region choice,
+  the caption's text. 
+
+What the Rust side must provide (a `screentr.rs` + std-only `screenlogic.rs`):
+1. **Capture** — a new crate is unavoidable (std has no screen access): `xcap` (pure Rust over each OS's API:
+   Windows GDI / DXGI, macOS CoreGraphics `CGDisplayCreateImage` — the Screen Recording permission, asked once by the
+   system —, Linux X11 via xcb and Wayland via the xdg-desktop-portal Screenshot (asks the user each time; no silent
+   repeat → «auto» says it cannot run there)). Behind `apidetect` like the rest. Monitor under the cursor: xcap's
+   `Monitor::from_point` and the cursor from `tauri::AppHandle::cursor_position` (2.x). PNG encode: `image-png` is
+   already in.
+2. **Windows**: overlay = `WebviewWindowBuilder` on `#/overlay` with the bridge, `decorations(false)`,
+   `always_on_top(true)`, `skip_taskbar`, the monitor's position/size, `visible_on_all_workspaces` (cfg
+   `kt_all_spaces`); caption = the same plus `transparent(true)` (on a Mac `macos-private-api`, a Cargo feature and
+   `app.macOSPrivateApi` in tauri.conf.json — not App Store safe, said in PORTING) and `set_ignore_cursor_events(true)`
+   (click-through), `focused(false)`; blur → `WindowEvent::Focused(false)`. The capability adds `overlay`/`caption`.
+3. **OCR**: the same helper processes, std::process: the PowerShell script (written to app data as screentr.cjs does,
+   `CREATE_NO_WINDOW`), `osascript` with the JXA script, `tesseract … tsv`; their parsing (`parseLines`, `tsvLines`)
+   std-only in `screenlogic.rs` with tests from screentr.cjs's outputs. No OCR crate.
+4. **Keys, tray, close-to-tray**: the global-shortcut plugin and tray of P6 (`desktop.rs`): the screen keys registered
+   beside the clipboard hotkeys (one registry, both apps' clash reports), a second tray icon or extra items, and
+   `CloseRequested` → `prevent_close` + hide while `keepInTray()`.
+5. **Events**: `kt:screenCaption` to the caption window only (`emit_to`).
+What stays uncertain until a CI run: xcap on the Windows runner without a desktop session, Wayland's portal under
+Xvfb (none: X11 there), the transparent click-through caption on WebKitGTK.
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
 docs/RUST-PORT.md that brings it. **done**: in bridge.js and a Rust command; **missing**: absent from bridge.js (the page
-asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 done (P4) · P5 17
-missing · P6 1 done, 5 missing · P7 7 done, 9 missing (`kt:archiveFree` counted in P3) · P8 3 done, 6 missing — **61 of 98
-done** (with P4). Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
+asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 done · P5 17
+missing · P6 6 done · P7 8 done, 8 missing (`kt:archiveFree` counted in P3; the 8 are the screen translator's) · P8 9 done — **73 of 98
+done** (P4, P6, the browser and P8's rest). Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
 `filesAnswer` / `onFilesJob` (P3), `homeDir` / `filesRoots` / `filesStat` / `filesMkdir` / `filesRename` (after P3),
 `updateDownload` / `updateInstall` (P8).
 
@@ -269,18 +427,18 @@ done** (with P4). Besides these, the shell has its own (no Electron channel): th
 | `kt:packCancel` | missing |  |
 | `kt:packRemove` | missing |  |
 
-### P6 — desktop integration (1 done, 5 missing)
+### P6 — desktop integration (6 done)
 
 | Channel | Status | Notes |
 |---|---|---|
 | `kt:appIcon` | done (P6 part) | the shared crate's `appicon.rs` + `iconlogic.rs` (the Reader's, moved) with Tools' Spec (`appicon.rs`); cfgs `kt_set_icon`/`kt_default_icon` |
-| `kt:mini` | missing | second always-on-top window on `#/mini` |
-| `kt:desktopPrefs` | missing | tray, notifications, keep-awake, when-done, global shortcuts |
-| `kt:registerMagnet` | missing | deep links + single instance (the Reader's `openfile.rs`/`openargs.rs`) |
-| `kt:captureUrl` | missing | second window (the Reader's `browser.rs`) |
-| `kt:siteWindow` | missing | same |
+| `kt:mini` | done (P6) | `desktop.rs`: 320×200 (≥260×120), no frame, above the others, off the taskbar, on every desktop (cfg `kt_all_spaces`), its place kept (`mini-state.json`); `auto` opens it when the main window is minimised |
+| `kt:desktopPrefs` | done (P6) | `desktop.rs` + `desklogic.rs`: tray, notices, keep-awake, when-done, taskbar progress, the clipboard hotkeys; also takes `labels`, answers `hotkeyErrors` |
+| `kt:registerMagnet` | done (P6) | Windows HKCU\Software\Classes\magnet (reg.exe), Linux xdg-mime on the entry that runs this program, a Mac its Info.plist; single instance + launch arguments + Apple Events → the page's `kt:open` |
+| `kt:captureUrl` | done (P6) | `sitewin.rs`: a window of its own (profile `<app local data>/signin` on Windows/Linux), navigations + redirects + in-page address polled |
+| `kt:siteWindow` | done (P6) | `sitewin.rs`: https only, new windows refused by a script, true once closed |
 
-### P7 — archives, the in-app browser, the screen translator (7 done, 9 missing; `kt:archiveFree` in P3)
+### P7 — archives, the in-app browser, the screen translator (8 done, 8 missing; `kt:archiveFree` in P3)
 
 | Channel | Status | Notes |
 |---|---|---|
@@ -291,7 +449,7 @@ done** (with P4). Besides these, the shell has its own (no Electron channel): th
 | `kt:archiveCancel` | done (P7) | a cancel before its job starts is kept for it |
 | `kt:archiveRestore` | done (P7) |  |
 | `kt:archiveExisting` | done (P7) |  |
-| `kt:browse` | missing | the Reader's `browser.rs` + `browserlogic.rs` (caught downloads, cookies), plus media sniffing |
+| `kt:browse` | done (P7) | `browser.rs` over the shared crate's `browserlogic.rs` (the Reader's, moved): own profile + keeper, the bar, Grab, magnets and downloads to the app with the site's cookies; no content-type sniffing (see «Stage P7 — the in-app browser») |
 | `kt:screenConfig` | missing | screen capture + OCR helpers |
 | `kt:screenStatus` | missing |  |
 | `kt:screenAction` | missing |  |
@@ -301,18 +459,18 @@ done** (with P4). Besides these, the shell has its own (no Electron channel): th
 | `kt:screenOcrLangs` | missing |  |
 | `kt:screenCaption` | missing |  |
 
-### P8 — servers, DoH, antivirus, update install (3 done, 6 missing)
+### P8 — servers, DoH, antivirus, update install (9 done)
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:shareWifi` | missing | HTTP server on all interfaces, random key |
-| `kt:shareWifiStop` | missing |  |
-| `kt:shareWifiStatus` | missing |  |
-| `kt:localApi` | missing | same routes and token |
+| `kt:shareWifi` | done (P8) | `lanshare.rs` + `lanlogic.rs`: 0.0.0.0, a free port, a 24-hex key; the list page and each file by its number, ranges |
+| `kt:shareWifiStop` | done (P8) |  |
+| `kt:shareWifiStatus` | done (P8) | `{running, url, sent, hits}` |
+| `kt:localApi` | done (P8) | 127.0.0.1 only, port 8977 unless given; the same routes, token (Bearer or ?token=) and CORS |
 | `kt:setDoh` | done (P8) | `net::set_doh` with kt-core `dohnames` (Tools' names) |
 | `kt:dohProbe` | done (P8) | example.com asked of the resolver in force (`net::doh_lookup`), timed |
-| `kt:avScan` | missing | the system's scanner |
-| `kt:avAvailable` | missing |  |
+| `kt:avScan` | done (P8) | Defender's MpCmdRun / ClamAV's clamscan / the user's program, run directly (no shell), 10 min |
+| `kt:avAvailable` | done (P8) |  |
 | `kt:installUpdate` | done (P8) | `update.rs` + kt-core `updatelogic.rs` (the Reader's, Tools' names); progress `kt:update-progress` |
 
 ### What the Reader's port gives each stage
@@ -392,7 +550,7 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
    builds): the shared crate, kt-core, API detection, the recycle bin, free space, fonts, MEGA, screen fonts, the Files
    page's jobs, the title bar; then its gaps (storages, new folder, rename, stat, a cancel never lost, local trash
    dates). Left of P3: the preview builds beside each Electron release.
-4. **P7 archives, P8 DoH + updater, P6 app icon — written, waiting for CI.** Left of P6: `kt:mini`, `kt:desktopPrefs`,
-   `kt:registerMagnet`, `kt:captureUrl`, `kt:siteWindow`; of P7: the in-app browser and the screen translator; of P8:
-   Wi-Fi share, the local API, antivirus. P4, P5; P9 the switch-over with the hand-over (and the release job that
+4. **P7 archives, P8 DoH + updater, P6 app icon — written, waiting for CI.** P6's other five channels written since
+   (see «Stage P6»), and the in-app browser (P7), waiting for CI. Left of P7: the screen translator (planned above); P8's rest written too (see
+   «Stage P8»). P4, P5; P9 the switch-over with the hand-over (and the release job that
    publishes the file names above).

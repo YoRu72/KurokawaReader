@@ -1054,4 +1054,12 @@ export const ja: Partial<Strings> = {
   filesPlaceDocuments: "ドキュメント",
   updateByHand: "このコピーは自分で置き換えられません。リリースページから新しいバージョンをダウンロードしてください。",
   filesBadName: "名前に / や \\ は使えません（Windows では < > : \" | ? * も使えません）。",
+  // (ステージ P6: トレイのメニュー、Mac のメニューバー、登録できなかったショートカット)
+  trayQuit: "終了", hotkeyRefused: "ショートカット {keys} を設定できませんでした: {why}",
+  menuAbout: "Kurokawa Tools について", menuHide: "Kurokawa Tools を隠す", menuHideOthers: "ほかを隠す", menuShowAll: "すべてを表示", menuQuit: "Kurokawa Tools を終了",
+  menuFile: "ファイル", menuCloseWindow: "ウインドウを閉じる", menuEdit: "編集", menuUndo: "取り消す", menuRedo: "やり直す", menuCut: "カット", menuCopy: "コピー", menuPaste: "ペースト", menuSelectAll: "すべてを選択",
+  menuView: "表示", menuFullscreen: "フルスクリーンにする", menuWindow: "ウインドウ", menuMinimize: "しまう", menuZoom: "拡大/縮小",
+  hotkeyWhyKey: "ここでは使えないキーが含まれています", hotkeyWhyTaken: "ほかのプログラムが使用中です", hotkeyWhyNone: "このシステムではグローバルショートカットを使えません",
+  // (ステージ P7: アプリ内ブラウザーのバー)
+  browserBarBack: "戻る", browserBarForward: "進む", browserBarReload: "再読み込み", browserBarAddress: "アドレスまたは検索", browserBarGrab: "リンクを取得 (Ctrl+G)", browserBarCopy: "アドレスをコピー (Ctrl+L)", browserBarExternal: "システムのブラウザーで開く",
 };

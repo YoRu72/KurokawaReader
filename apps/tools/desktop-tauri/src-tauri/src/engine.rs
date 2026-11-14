@@ -498,6 +498,8 @@ impl Engine {
         };
         if send {
             let _ = self.app.emit("kt:tasks", v.clone());
+            // (Stage P6: the taskbar, keep-awake, when done, the tray, notices — main.cjs's onDesktopTasks.)
+            crate::desktop::on_tasks(&self.app, v);
         }
     }
 

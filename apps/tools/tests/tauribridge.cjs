@@ -17,13 +17,19 @@ const ROOT = path.join(__dirname, '..');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
   'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
   // (Stage P4.)
-  'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl'];
+  'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl',
+  // (Stage P6: desktop.rs.)
+  'desktopPrefs', 'mini', 'registerMagnet', 'captureUrl', 'siteWindow',
+  // (Stage P7: browser.rs.)
+  'browse',
+  // (Stage P8: lanshare.rs.)
+  'shareWifi', 'shareWifiStop', 'shareWifiStatus', 'localApi', 'avScan', 'avAvailable'];
 // (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']] };
-const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress'];
+const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
 // --- Electron's preload, with a fake electron that records each invoke.
@@ -74,7 +80,7 @@ function loadBridge(boot) {
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
-  for (const k of ['mini', 'screenStatus', 'videoInfo', 'shareWifi', 'browse', 'avScan']) assert.ok(!(k in kt), `${k} should be absent`);
+  for (const k of ['screenStatus', 'videoInfo']) assert.ok(!(k in kt), `${k} should be absent`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -91,6 +97,10 @@ function loadBridge(boot) {
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
     appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
     streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }],
+    desktopPrefs: [{ keepAwake: true, whenDone: 'sleep', notifyDone: false, tray: true, hotkeys: { clip: 'CommandOrControl+Shift+V' } }], mini: [{ action: 'auto', on: true }], registerMagnet: [],
+    captureUrl: [{ url: 'https://anilist.co/api/v2/oauth/authorize?client_id=1&response_type=token', marker: 'access_token=', title: 'AniList' }], siteWindow: [{ url: 'https://e.org/', title: 'E' }],
+    browse: [{ url: 'https://e.org/' }],
+    shareWifi: [{ paths: ['/x/a.mkv'], names: ['a.mkv'] }], shareWifiStop: [], shareWifiStatus: [], localApi: [{ on: true, token: 't', port: 8977 }], avScan: [{ cfg: { kind: 'auto' }, file: '/x/a.exe' }], avAvailable: [],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};
@@ -181,6 +191,40 @@ function loadBridge(boot) {
   const bare = vm.createContext({ window: {}, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array });
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), bare);
   await assert.rejects(bare.window.kurokawaTools.list(), /IPC/);
+
+  // Stage P6: what the system handed the app reaches the page as the preload's kt:open DOM event, once the page listens
+  // for it (kt_open_take), and again on each kt:openPending; kt:hotkeyAdd / kt:openTask to their callbacks.
+  {
+    const got = []; let takes = 0; const evs = {}; const p6calls = [];
+    const pwin = {
+      __TAURI__: {
+        core: { invoke: (cmd, args) => { p6calls.push({ cmd, args }); if (cmd === 'kt_open_take') { takes++; return Promise.resolve(takes === 1 ? ['magnet:?xt=urn:btih:abc', 'data:application/x-bittorrent;base64,ZDQ6'] : takes === 2 ? ['https://e.org/f.iso'] : []); } return Promise.resolve(cmd === 'kt_list' ? [] : null); } },
+        event: { listen: (name, fn) => { (evs[name] = evs[name] || []).push(fn); return Promise.resolve(() => undefined); } },
+      },
+      dispatchEvent: (e) => { if (e.type === 'kt:open') got.push(e.detail); return true; },
+      addEventListener: function () { return undefined; },
+    };
+    vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), vm.createContext({ window: pwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, CustomEvent: FakeCustomEvent, setTimeout }));
+    await new Promise((ok) => setTimeout(ok, 10));
+    assert.equal(takes, 0, 'nothing taken before the page listens');
+    pwin.addEventListener('kt:open', () => undefined); pwin.addEventListener('kt:open', () => undefined);
+    await new Promise((ok) => setTimeout(ok, 10));
+    assert.deepEqual(got, ['magnet:?xt=urn:btih:abc', 'data:application/x-bittorrent;base64,ZDQ6']);
+    assert.equal((evs['kt:openPending'] || []).length, 1, 'kt:openPending listened to once');
+    evs['kt:openPending'][0]({ event: 'kt:openPending', payload: {} }); await new Promise((ok) => setTimeout(ok, 10));
+    assert.deepEqual(got.slice(2), ['https://e.org/f.iso']);
+    assert.ok(pwin.__KT_OPEN_LOG__.length === 3 && pwin.__KT_OPEN_LOG__[0].startsWith('magnet:'));
+    const hk = []; const oh = pwin.kurokawaTools.onHotkeyAdd((x) => hk.push(x)); const ot = []; pwin.kurokawaTools.onOpenTask((x) => ot.push(x)); await new Promise((ok) => setTimeout(ok, 5));
+    evs['kt:hotkeyAdd'][0]({ payload: { mode: 'clip', text: 'magnet:?x' } }); evs['kt:openTask'][0]({ payload: 'g1' }); oh(); evs['kt:hotkeyAdd'][0]({ payload: { mode: 'clip', text: 'y' } });
+    assert.deepEqual(JSON.parse(JSON.stringify(hk)), [{ mode: 'clip', text: 'magnet:?x' }]); assert.deepEqual(ot, ['g1']);
+  }
+
+  // Stage P7: the browser's GRAB_JS is main.cjs's, unchanged.
+  {
+    const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'));
+    assert.ok(m, 'GRAB_JS in main.cjs');
+    assert.equal(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'), 'utf8').trim(), JSON.parse(m[1]).trim(), 'grab.js ≠ main.cjs GRAB_JS');
+  }
 
   // Rust: every command the bridge calls is registered, with the argument names the bridge sends.
   const src = path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src');
@@ -277,6 +321,17 @@ function loadBridge(boot) {
   }
   function fakeKt(bad) {
     let subs = []; let task = null; const disk = fakeDisk(); let doh = 'off'; let dnsCount = 0; let icon = null;
+    const desk = { prefs: { keepAwake: true, whenDone: 'nothing', notifyDone: true, tray: false, hotkeys: {} }, bound: [], mini: false, hk: [], openLog: [] };
+    const p6 = {
+      __desk: desk,
+      desktopPrefs: async (o) => { const P = desk.prefs; if ('keepAwake' in o) P.keepAwake = !!o.keepAwake; if (['nothing', 'quit', 'sleep', 'shutdown'].includes(o.whenDone)) P.whenDone = o.whenDone; if ('notifyDone' in o) P.notifyDone = !!o.notifyDone; if ('tray' in o) P.tray = !!o.tray;
+        const r = { ...P }; if (o.hotkeys) { P.hotkeys = o.hotkeys; desk.bound = []; const err = {}; for (const [m, a] of Object.entries(o.hotkeys)) { if (/AltGr/.test(a)) err[m] = 'key'; else desk.bound.push([a, m]); } if (Object.keys(err).length) r.hotkeyErrors = err; } r.hotkeys = P.hotkeys; return r; },
+      mini: async (o) => { if (o.action === 'open') desk.mini = true; if (o.action === 'close') desk.mini = false; return { open: desk.mini }; },
+      onHotkeyAdd: (cb) => { desk.hk.push(cb); return () => { desk.hk = desk.hk.filter((f) => f !== cb); }; },
+      // (Stage P7: the pretend browser — its window, what it hands the app.)
+      browse: async (o) => { desk.br = { url: o.url }; return true; }, onBrowser: (cb) => { desk.brSubs = [cb]; return () => { desk.brSubs = []; }; },
+      captureUrl: (o) => new Promise((ok) => { desk.capture = { o, ok }; }), siteWindow: async (o) => /^https:\/\//.test(o.url),
+    };
     const push = () => subs.forEach((f) => f(task ? [JSON.parse(JSON.stringify(task))] : []));
     const later = (f) => setTimeout(f, 5);
     return {
@@ -314,13 +369,25 @@ function loadBridge(boot) {
       rename: async (o) => { task.name = o.name; task.files[0].path = o.name; return o.name; },
       list: async () => (task ? [JSON.parse(JSON.stringify(task))] : []),
       remove: async () => { task = null; },
+      // (Stage P6: desktop.rs as its rules say — an AltGr hotkey refused, the rest bound; the mini window; hotkey presses.)
+      ...p6,
     };
   }
   const doc = { querySelector: () => ({ className: 'nav-rail' }), querySelectorAll: () => [1, 2, 3] };
   for (const bad of [false, true]) {
     const sent2 = [];
     const kt2 = fakeKt(bad);
-    const env = { sleep: () => new Promise((ok) => setTimeout(ok, 2)), invoke: (cmd, args) => { sent2.push({ cmd, args }); return Promise.resolve(cmd === 'kt_selftest_icon' ? { png: kt2.__icon() ? 9 : null, ico: [], dir: '/c', last: { window: true }, setIcon: true } : cmd === 'kt_selftest_write' ? kt2.__write(args) : cmd === 'kt_selftest_updatedl' ? { size: cfg.largeSize, resumedFrom: 1048576, ok: true, refused: 'kt-update:checksum', removedWhenRefused: true, noChecksum: 'kt-update:nochecksum', kind: 'bare', file: null } : undefined); }, doc, now: () => Date.now() };
+    const D = kt2.__desk;
+    const siteAct = (o) => (o.act === 'list' ? (D.capture ? [{ label: 'kt-site-capture-1', url: D.capture.o.url }] : []) : o.act === 'go' ? (D.capture && D.capture.o.marker && o.url.includes(D.capture.o.marker) ? (D.capture.ok(o.url), D.capture = null, true) : true) : o.act === 'close' ? (D.capture && (D.capture.ok(null), D.capture = null), true) : undefined);
+    const brTell = (o) => setTimeout(() => (D.brSubs || []).forEach((f) => f(o)), 5);
+    const brAct = (o) => (o.act === 'list' ? (D.br ? [{ label: 'ktb-keep-1', visible: false, url: 'about:blank' }, { label: 'ktb-browse-2', visible: true, url: D.br.url }] : [])
+      : o.act === 'cmd' ? (brTell({ kind: 'links', url: D.br.url, title: 'KR site', links: [{ href: cfg.base + '/site/file.epub', text: 'f', kind: 'a' }], ua: 'UA' }), true)
+      : o.act === 'eval' ? (/magnet:/.test(o.js) ? brTell({ kind: 'download', url: JSON.parse(o.js.slice(16, -1)) }) : /"dl"/.test(o.js) ? brTell({ kind: 'download', url: cfg.base + '/site/file.epub', name: 'f.epub', referer: D.br.url, cookie: 'kr_site=1' }) : /"pop"/.test(o.js) ? (D.br.url = cfg.base + '/site/popup') : 0, true)
+      : o.act === 'cookies' ? { cookie: 'kr_site=1', api: true, download: true } : o.act === 'close' ? (D.br = null, true) : undefined);
+    const deskAct = (o) => (o.act === 'state' ? { trayPossible: true, tray: D.prefs.tray, shortcuts: true, single: true, progressApi: true, os: 'linux', bound: D.bound } : o.act === 'hotkey' ? (D.hk.forEach((f) => f({ mode: o.mode, text: '' })), true)
+      : o.act === 'progress' ? true : o.act === 'awake' ? { awake: !!o.on, alive: !!o.on, how: 'systemd-inhibit' } : o.act === 'notify' ? true : o.act === 'windows' ? [{ label: 'main', visible: true, decorated: false }, ...(D.mini ? [{ label: 'mini', visible: true, decorated: false }] : [])]
+      : o.act === 'second' ? (D.openLog.push(o.args[0], 'data:application/x-bittorrent;base64,ZDQ6aW5mb2Rl'), { ended: true, code: 0 }) : undefined);
+    const env = { openLog: () => D.openLog, sleep: () => new Promise((ok) => setTimeout(ok, 2)), invoke: (cmd, args) => { sent2.push({ cmd, args }); if (cmd === 'kt_selftest_desk') return Promise.resolve(deskAct(args.o)); if (cmd === 'kt_selftest_site') return Promise.resolve(siteAct(args.o)); if (cmd === 'kt_selftest_browse') return Promise.resolve(brAct(args.o)); return Promise.resolve(cmd === 'kt_selftest_icon' ? { png: kt2.__icon() ? 9 : null, ico: [], dir: '/c', last: { window: true }, setIcon: true } : cmd === 'kt_selftest_write' ? kt2.__write(args) : cmd === 'kt_selftest_updatedl' ? { size: cfg.largeSize, resumedFrom: 1048576, ok: true, refused: 'kt-update:checksum', removedWhenRefused: true, noChecksum: 'kt-update:nochecksum', kind: 'bare', file: null } : undefined); }, doc, now: () => Date.now() };
     const res = JSON.parse(JSON.stringify(await lib.run(kt2, cfg, env)));
     const last = sent2[sent2.length - 1];
     assert.equal(last.cmd, 'kt_selftest_done');
@@ -330,6 +397,11 @@ function loadBridge(boot) {
     assert.equal(lib.verdict(res), bad ? 1 : 0);
     assert.ok(res.some((r) => r.name === 'remove' && r.ok) && res.some((r) => r.name === 'kt:tasks events' && r.ok));
     const p7 = res.filter((r) => /^archives:/.test(r.name));
+    const p6r = res.filter((r) => /^desktop:/.test(r.name));
+    assert.ok(p6r.length === 11 && p6r.every((r) => r.ok), 'the P6 checks against the pretend shell: ' + JSON.stringify(p6r.filter((r) => !r.ok)));
+    const p7b = res.filter((r) => /^browser:/.test(r.name));
+    assert.ok(p7b.length === 7 && p7b.filter((r) => r.name !== 'browser: the app\'s requests carry the browser\'s cookies').every((r) => r.ok), 'the P7 browser checks against the pretend browser: ' + JSON.stringify(p7b.filter((r) => !r.ok)));
+    assert.ok(sent2.filter((c) => c.cmd === 'kt_selftest_desk').every((c) => c.args && c.args.o && typeof c.args.o.act === 'string'), 'kt_selftest_desk takes its object under «o»');
     assert.ok(p7.length === 8 && p7.filter((r) => r.required).every((r) => r.ok) && p7.filter((r) => !r.required).length === 3, 'the P7 checks against the pretend disk (the 7-Zip ones not required without wantSeven): ' + JSON.stringify(p7.filter((r) => r.required && !r.ok)));
     const p3 = res.filter((r) => /^(files|deletePath|archiveFree|font|megaDecrypt)/.test(r.name));
     assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));

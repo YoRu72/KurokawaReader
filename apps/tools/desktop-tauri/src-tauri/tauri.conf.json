@@ -19,6 +19,9 @@
     "publisher": "Kurokawa",
     "category": "Utility",
     "shortDescription": "Downloads, torrents, streaming and the tools around them",
+    "fileAssociations": [
+      { "ext": ["torrent"], "name": "Torrent", "role": "Viewer", "mimeType": "application/x-bittorrent" }
+    ],
     "resources": {
       "../aria2/": "aria2/",
       "../7zip/": "7zip/"
@@ -30,5 +33,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["magnet", "kurokawatools"]
+      }
+    }
   }
 }
