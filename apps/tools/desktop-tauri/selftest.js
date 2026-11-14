@@ -1343,8 +1343,10 @@
       var SIZE = 12 * 1024 * 1024; var hw = null; var hid = null;
       async function bytesOf0(from, to) { return u8(b64bytes((await st({ op: 'bytes', file: 0, from: from, len: to - from + 1 })).b64)); }
       async function state(test) { return st({ op: 'hybridState', id: hid, test: !!test }); }
-      // (No row may depend on how fast the rows before it ran: aria2 is let fetch only what a row reads — the head —, then
-      // paused, so the download never finishes under the rows (a finished file is never handed to librqbit).)
+      // (No row may depend on how fast the rows before it ran — CI run 43601730567: the stand-in rows shared one torrent,
+      // aria2 fetched it whole while a row read through it, and the next row's file was «already whole», so no take.
+      // Each stand-in row now has a torrent of its OWN (other made-up bytes → another info-hash), aria2 let fetch only
+      // the head the row reads, paused, and taken at once: the file cannot be whole at the take, however slow the run.)
       async function aria2Has(n, ms) {
         var c = 0; var until = env.now() + ms;
         while ((c = Number(((await state(false)).aria2 || {}).completedLength) || 0) < n) { if (env.now() > until) throw new Error('aria2 got ' + c + ' of ' + n + ' bytes in ' + ms + ' ms'); await env.sleep(100); }
@@ -1356,55 +1358,64 @@
         while ((x = await state(false)).aria2 && x.aria2.status !== 'paused') { if (env.now() > until) throw new Error('aria2 not paused: ' + short(x.aria2)); await env.sleep(100); }
         return x;
       }
-      var started = await check('hybrid: swarm of ' + SIZE + ' bytes, seeder on 127.0.0.1', linux, async function () {
-        hw = await st({ op: 'swarm', size: SIZE }); must(hw && !hw.skip, hw && hw.skip);
+      /** The torrent before (if any) removed with its files and seeder; a fresh one of SIZE + k pieces added, aria2 let
+       *  fetch its head (≥ 256 KiB), then paused → aria2's bytes. */
+      async function fresh(k) {
+        if (hid) { try { await kt.streamDone({ id: hid }); } catch (e) { /* none */ } try { await kt.remove(hid, true); } catch (e) { /* gone */ } hid = null; }
+        try { await st({ op: 'swarmStop' }); } catch (e) { /* none */ }
+        hw = await st({ op: 'swarm', size: SIZE + k * 32768 }); must(hw && !hw.skip, hw && hw.skip);
         var t = await kt.add({ source: { torrent: hw.torrentB64 }, dir: hw.dir }); hid = t && t.id; must(hid, 'not added');
-        var c = await aria2Has(262144, 30000); await pauseNow();
-        return hw.infoHash + ', seeder :' + hw.seedPort + '; aria2 paused at ' + c + ' bytes (the head the rows read)';
+        var c = await aria2Has(262144, 30000); var x = await pauseNow();
+        must(Number(x.aria2.completedLength) < Number(x.aria2.totalLength), 'aria2 has it whole already: ' + short(x.aria2));
+        return Number(x.aria2.completedLength) || c;
+      }
+      var started = await check('hybrid: swarm of ' + SIZE + ' bytes, seeder on 127.0.0.1', linux, async function () {
+        var c = await fresh(0);
+        return hw.infoHash + ', seeder :' + hw.seedPort + '; aria2 paused at ' + c + ' bytes (the head the row reads)';
       }, 60000);
       if (started) {
         await check('hybrid: librqbit fails at the add → aria2 serves, the download goes on', linux, async function () {
+          var t0 = env.now();
           var r = await st({ op: 'hybridFail', id: hid, mode: 'add', file: 0 });
-          must(r.state.back === 'aria2' && r.state.owner === 'aria2', 'state ' + short(r.state));
+          must(r.state.back === 'aria2' && r.state.owner === 'aria2' && /at the add/.test(r.state.why), 'state ' + short(r.state));
           var b = await body(await req(r.url, 'bytes=0-65535')); must(same(b, await bytesOf0(0, 65535)), 'the bytes differ');
           var s = await kt.streamStats({ id: hid }); must(s && s.engine === 'aria2', 'stats ' + short(s));
           var x = await state(true); must(x.aria2 && x.aria2.status !== 'paused', 'aria2 ' + short(x.aria2));
-          await kt.streamDone({ id: hid }); await pauseNow();
-          return r.state.why + '; aria2 ' + x.aria2.status;
+          return r.state.why + '; aria2 ' + x.aria2.status + '; ' + (env.now() - t0) + ' ms';
         }, 60000);
-        var held = null;
+        var held = null; var t1 = 0;
         await check('hybrid: one owner — while librqbit holds the torrent, the page\'s resume leaves aria2 paused', linux, async function () {
+          var c = await fresh(1); t1 = env.now();
           held = await st({ op: 'hybridFail', id: hid, mode: 'read', file: 0 });
-          must(held.state.owner === 'rqbit' && held.state.back === 'rqbit', 'state ' + short(held.state));
+          must(held.state.owner === 'rqbit' && held.state.back === 'rqbit', 'state ' + short(held.state) + ' (aria2 had ' + c + ')');
           var a = await state(true); must(a.aria2 && a.aria2.status === 'paused', 'aria2 not paused: ' + short(a.aria2));
           await kt.resume(hid);
           var b = await state(true); must(b.owner === 'rqbit' && b.aria2.status === 'paused', 'after resume ' + short(b));
-          return 'owner ' + b.owner + ', aria2 ' + b.aria2.status + ' after the page\'s resume';
-        }, 30000);
+          return hw.infoHash + ': owner ' + b.owner + ', aria2 ' + b.aria2.status + ' after the page\'s resume';
+        }, 60000);
         await check('hybrid: librqbit fails mid-stream → the same reader goes on from aria2', linux, async function () {
           must(held && held.url, 'not opened');
           var b = await body(await req(held.url, 'bytes=65536-131071')); must(same(b, await bytesOf0(65536, 131071)), 'the bytes differ');
-          var x = await state(true); must(x.owner === 'aria2' && x.back === 'aria2', 'state ' + short(x));
+          var x = await state(true); must(x.owner === 'aria2' && x.back === 'aria2' && /mid-stream/.test(x.why), 'state ' + short(x));
           must(x.aria2 && x.aria2.status !== 'paused', 'aria2 ' + short(x.aria2));
           var s = await kt.streamStats({ id: hid }); must(s && s.engine === 'aria2', 'stats ' + short(s));
-          await kt.streamDone({ id: hid }); await pauseNow();
-          return x.why + '; aria2 ' + x.aria2.status;
+          return x.why + '; aria2 ' + x.aria2.status + '; ' + (env.now() - t1) + ' ms since the take';
         }, 60000);
         // (CI run 43597302499: a panic inside librqbit aborted the program. The build with librqbit unwinds now and the
         // hybrid engine catches it — here a stand-in that panics mid-stream: the same reader goes on from aria2.)
         await check('hybrid: librqbit panics mid-stream → caught, the same reader goes on from aria2', linux && !!info.unwind, async function () {
           must(info.unwind, 'not asked of a build that aborts on a panic (the plain build has no librqbit to panic)');
+          var c = await fresh(2); var t0 = env.now();
           var r = await st({ op: 'hybridFail', id: hid, mode: 'panic', file: 0 });
-          must(r.state.owner === 'rqbit' && r.state.back === 'rqbit', 'state ' + short(r.state));
+          must(r.state.owner === 'rqbit' && r.state.back === 'rqbit', 'state ' + short(r.state) + ' (aria2 had ' + c + ')');
           var b = await body(await req(r.url, 'bytes=131072-196607')); must(same(b, await bytesOf0(131072, 196607)), 'the bytes differ');
           var x = await state(true); must(x.owner === 'aria2' && x.back === 'aria2' && /panicked/.test(x.why), 'state ' + short(x));
           must(x.aria2 && x.aria2.status !== 'paused', 'aria2 ' + short(x.aria2));
-          await kt.streamDone({ id: hid }); await pauseNow();
-          return x.why + '; aria2 ' + x.aria2.status;
+          return hw.infoHash + ': ' + x.why + '; aria2 ' + x.aria2.status + '; ' + (env.now() - t0) + ' ms';
         }, 60000);
         // (The far seek gets a torrent of its OWN — other made-up bytes, so another info-hash —, taken by librqbit right
         // after aria2 has its first pieces: the end can then only come from librqbit's fetch of the sought place.)
-        try { await kt.remove(hid, true); } catch (e) { /* gone */ }
+        if (hid) { try { await kt.streamDone({ id: hid }); } catch (e) { /* none */ } try { await kt.remove(hid, true); } catch (e) { /* gone */ } }
         hid = null;
         try { await st({ op: 'swarmStop' }); } catch (e) { /* gone */ }
         var far = null; var FSIZE = SIZE + 3 * 32768;
