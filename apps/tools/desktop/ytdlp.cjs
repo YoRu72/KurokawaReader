@@ -46,13 +46,13 @@ function versionOf(bin) { return new Promise((res) => execFile(bin, ['--version'
 async function version() { const bin = binPath(); let key = ''; try { const st = fs.statSync(bin); key = `${bin}|${st.size}|${st.mtimeMs}`; } catch { return null; } if (verCache && verCache.key === key) return verCache.v; const v = await versionOf(bin); verCache = { key, v }; return v; }
 async function ensure(onProgress) { if (!haveBinary()) await fetchBinary(onProgress); else if (isManaged()) { const v = await version(); if (v && olderThan(v, MIN_VERSION)) { try { await fetchBinary(onProgress); } catch { /* offline: the old one runs */ } } } return binPath(); }
 /** The newest release's tag (yt-dlp prints the same string for --version). */
-async function latestTag() { const r = await net.fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', { headers: { accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error('HTTP ' + r.status); return String((await r.json()).tag_name || '').trim(); }
+async function latestTag(force) { const G = require('./gh.cjs'); const u = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest'; if (force) G.forget(u); return String((await G.ghJson(u)).tag_name || '').trim(); }
 /** Brings the binary to the newest release when it is behind; `force` checks even if checked within the day. */
 async function update(force = false) {
   if (!haveBinary()) { await fetchBinary(); return { version: await version(), updated: true }; }
   let st = {}; try { st = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); } catch { /* none */ }
   if (!force && st.checked && Date.now() - st.checked < 86400000) return { version: await version(), updated: false };
-  const [have, tag] = await Promise.all([version(), latestTag()]);
+  const [have, tag] = await Promise.all([version(), latestTag(force)]);
   let updated = false; if (tag && have !== tag && (!st.pinned || olderThan(have, MIN_VERSION) || force)) { await fetchBinary(); updated = true; }
   try { const cur = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); fs.writeFileSync(stampPath(), JSON.stringify({ ...cur, checked: Date.now() })); } catch { /* ignore */ }
   return { version: await version(), latest: tag, updated };

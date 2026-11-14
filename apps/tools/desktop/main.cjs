@@ -150,7 +150,9 @@ else {
     // (Not waited for: the window opens at once; the page is told when aria2c is up — it may take a while on a
     // first start under Windows' antivirus.)
     void engine.ensure();
-    videos = new Ytdlp.VideoJobs(() => send('kt:tasks', allTasks()));
+    // (The video jobs' changes sent at most four times a second, together: five jobs each telling every 400 ms sent the
+    // whole list up to a dozen times a second.)
+    let pushT = null; videos = new Ytdlp.VideoJobs(() => { if (pushT) return; pushT = setTimeout(() => { pushT = null; send('kt:tasks', allTasks()); }, 250); });
     Ytdlp.setBusy(() => videos.running() > 0);
     // (Stage P9, the bridge build only: the downloads handed over to the Rust build kept paused here while it runs them.)
     if (RUST_SWITCH) ownerAtStart(userData);
@@ -457,9 +459,8 @@ ipcMain.handle('kt:megaDecrypt', async (_e, o) => {
 /* ---------- updates: the repository's tools-v* releases ---------- */
 const cmp = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; } return 0; };
 ipcMain.handle('kt:checkUpdate', async (_e, o) => {
-  const r = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers: { accept: 'application/vnd.github+json' } });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const all = (await r.json()).filter((x) => !x.draft && x.tag_name.startsWith('tools-v')).sort((a, b) => cmp(b.tag_name.slice(7), a.tag_name.slice(7)));
+  const G = require('./gh.cjs'); const u = `https://api.github.com/repos/${REPO}/releases?per_page=30`; if (o && o.force) G.forget(u);
+  const all = (await G.ghJson(u)).filter((x) => !x.draft && x.tag_name.startsWith('tools-v')).sort((a, b) => cmp(b.tag_name.slice(7), a.tag_name.slice(7)));
   const j = all[0]; if (!j) return null;
   const v = j.tag_name.slice(7); if (cmp(v, app.getVersion()) <= 0) return null;
   const want = process.platform === 'win32' ? /win-x64\.exe$/ : process.platform === 'darwin' ? /\.dmg$/ : /\.AppImage$/;
@@ -540,9 +541,9 @@ ipcMain.handle('kt:downloadsOwner', () => (RUST_SWITCH && owner ? owner.info() :
 ipcMain.handle('kt:downloadsTake', async () => { if (!RUST_SWITCH || !owner) return null; const ok = await owner.take(true); return { ok, ...(owner.info() || {}) }; });
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=60`;
 async function rustRelease(beta) {
-  const res = await net.fetch(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } });
-  if (!res.ok) return null;
-  return RustSwitch.pickRust(await res.json(), app.getVersion(), process.platform, process.arch, { beta: !!beta });
+  const list = await require('./gh.cjs').ghJson(RELEASES_API).catch(() => null);
+  if (!list) return null;
+  return RustSwitch.pickRust(list, app.getVersion(), process.platform, process.arch, { beta: !!beta });
 }
 // (What the page asks before it offers the switch: null while RUST_SWITCH is off, or with no release carrying it.)
 ipcMain.handle('kt:rustSwitchInfo', async (_e, o) => {

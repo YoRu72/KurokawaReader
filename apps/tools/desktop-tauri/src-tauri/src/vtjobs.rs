@@ -103,7 +103,21 @@ pub fn emit_tasks(app: &AppHandle, aria: Value) {
 }
 
 /// A video task changed: the whole list sent.
+/// A push asked for while one is waiting: the video jobs' changes go out at most four times a second, together (five
+/// jobs each telling every 400 ms sent the whole list up to a dozen times a second).
+static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn push(app: &AppHandle) {
+    if PENDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(250));
+        PENDING.store(false, Ordering::SeqCst);
+        push_now(&app);
+    });
+}
+fn push_now(app: &AppHandle) {
     let _g = EMIT.lock();
     let aria = ARIA.lock().ok().and_then(|a| a.clone()).unwrap_or(Value::Array(Vec::new()));
     let _ = app.emit("kt:tasks", merged(aria));

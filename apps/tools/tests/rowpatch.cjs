@@ -22,11 +22,29 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
     for (let k = 0; k < 60; k++) {
       const next = window.__tasks.map((x, i) => (i < 5 ? { ...x, done: Math.min(x.total, x.done + 50000 * (k + 1)), downSpeed: 1e5 + k * 10 + i } : { ...x }));
       touched = new Set(); const t0 = performance.now(); window.__push(next); void document.body.offsetHeight; times.push(performance.now() - t0);
-      await new Promise((res) => setTimeout(res, 0)); mo.takeRecords().forEach(() => undefined); touchedN.push(touched.size);
+      await new Promise((res) => setTimeout(res, 300)); mo.takeRecords().forEach(() => undefined); touchedN.push(touched.size);
     }
     mo.disconnect(); times.sort((a, b) => a - b);
     return { median: times[30], p90: times[54], max: times[59], touched: touchedN.slice(5).reduce((a, b) => Math.max(a, b), 0), rows: document.querySelectorAll('.task-card').length };
   });
+  // (The rate: 5 jobs pushing ~3 times a second each — 15 pushes a second — for 4 s of real time; the main thread's busy
+  // time per second (Chrome's TaskDuration) and the list's paints per second.)
+  const cdp = await p.context().newCDPSession(p); await cdp.send('Performance.enable');
+  const busy = async () => (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'TaskDuration').value;
+  const i0 = await busy(); await p.waitForTimeout(4000); const idleSec = ((await busy()) - i0) * 1000 / 4;
+  const b0 = await busy();
+  const rate = await p.evaluate(async () => {
+    const list = document.querySelector('.task-list'); let paints = 0; const mo = new MutationObserver(() => { paints++; }); mo.observe(list, { subtree: true, childList: true, characterData: true });
+    let k = 0; const t0 = performance.now();
+    await new Promise((res) => { const iv = setInterval(() => { k++; window.__push(window.__tasks.map((x, i) => (i < 5 ? { ...x, done: Math.min(x.total, (x.done || 0) + 20000 * k), downSpeed: 1e5 + k + i } : { ...x }))); if (performance.now() - t0 > 4000) { clearInterval(iv); res(); } }, 1000 / 15); });
+    await new Promise((res) => setTimeout(res, 300)); mo.disconnect(); return { pushes: k, paints };
+  });
+  const perSec = ((await busy()) - b0) * 1000 / 4.3;
+  console.log(`idle (no pushes): main thread busy ${idleSec.toFixed(0)} ms per second`);
+  console.log(`15 pushes/s, 4 s: main thread busy ${perSec.toFixed(0)} ms per second · ${rate.pushes} pushes · list mutated in ${rate.paints} batches`);
+  // (Hidden: pushes keep coming; nothing is drawn till it is shown again.)
+  const hid = await p.evaluate(async () => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); const list = document.querySelector('.task-list'); let n = 0; const mo = new MutationObserver(() => { n++; }); mo.observe(list, { subtree: true, childList: true, characterData: true }); for (let k = 0; k < 20; k++) { window.__push(window.__tasks.map((x, i) => (i < 5 ? { ...x, done: 4e6 + k * 1000 + i } : { ...x }))); await new Promise((r) => setTimeout(r, 60)); } const hiddenN = n; Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); document.dispatchEvent(new Event('visibilitychange')); await new Promise((r) => setTimeout(r, 50)); mo.disconnect(); return { hiddenN, after: n - hiddenN }; });
+  console.log(`hidden: ${hid.hiddenN} list changes during 20 pushes; ${hid.after ? 'drawn' : 'not drawn'} when shown again`);
   console.log(`push of 200 tasks (5 under way): median ${r.median.toFixed(2)} ms · p90 ${r.p90.toFixed(2)} ms · max ${r.max.toFixed(2)} ms · rows touched per push ≤ ${r.touched} · rows ${r.rows}`);
   if (!process.env.KT_DIST) {
     ok('every task has its row', r.rows === 200, r.rows);
@@ -35,6 +53,9 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
     await p.evaluate(() => { const t2 = window.__tasks[2]; Object.assign(t2, { state: 'done', done: t2.total, downSpeed: 0 }); window.__push(window.__tasks.map((x) => ({ ...x }))); });
     await p.click('.chip:has-text("Active")'); await p.waitForTimeout(200);
     const act = await p.$$eval('.task-card', (xs) => xs.map((x) => x.dataset.id)); ok('a filter stays right after a push (Active: the 4 still under way)', JSON.stringify(act.sort()) === JSON.stringify(['t0', 't1', 't3', 't4']), act);
+    ok('under 15 pushes a second the main thread stays under 150 ms busy a second (was ~400: an eased width laid out the list each frame)', perSec < 150, perSec);
+    ok('at most 4 paints a second under 15 pushes a second', rate.paints <= 4.5 * 4.3 + 2, rate);
+    ok('nothing drawn while hidden, drawn when shown again', hid.hiddenN === 0 && hid.after > 0, hid);
     ok('no page errors', !errs.length, errs);
   }
   await br.close(); web.close(); process.exit(fails ? 1 : 0);

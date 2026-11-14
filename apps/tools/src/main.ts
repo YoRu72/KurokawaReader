@@ -17,7 +17,6 @@ import { downloadsView } from './views/downloads';
 // (undo-redo) The snackbar's Undo / Redo, a computer's Ctrl+Z, and a settings restore that can still be taken back.
 import './styles/undo.css';
 import { wireUndoKeys } from './ui/undo';
-import { scheduleAutoCheck } from './updates';
 import { brandIcon, applyBrandIcon } from './ui/brandIcon';
 // (The icon of the user's choosing on the page's own little icon too, from the start.)
 applyBrandIcon();
@@ -158,8 +157,10 @@ function mountInner(route: Route): void {
   markNav(route);
 }
 
-await loadLang(getLang());
-await window.kurokawaTools?.ready?.();
+// (The language and the shell's state asked together: neither waits for the other before the first screen.)
+await Promise.all([loadLang(getLang()), window.kurokawaTools?.ready?.()]);
+/** `fn` once, after the next frame is drawn (or 120 ms, when no frame comes — a hidden window). */
+function afterFirstPaint(fn: () => void): void { let done = false; const go = () => { if (done) return; done = true; fn(); }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 120); }
 registerNativePlugins();
 applyDocumentLang();
 applyChrome();
@@ -171,6 +172,16 @@ if (MINI) { document.documentElement.classList.add('mini'); const { miniView } =
 else if (OVERLAY) { const { overlayView } = await import('./views/overlay'); app.replaceChildren(overlayView()); }
 else {
   placeNav();
+  // (The window's own bar: the Tauri shell has the page draw all of it, its buttons too — ui/winbar.ts, the Reader's —;
+  // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
+  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
+  else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
+  onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
+  onRoute(mount);
+  mount(parseRoute());
+  // (Everything that works in the background starts once the first screen is drawn — not before it: the list is
+  // usable sooner. A window that opens hidden — no frames — starts it all the same, a moment later.)
+  afterFirstPaint(() => {
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
   wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
@@ -195,10 +206,6 @@ else {
     void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   void import('./ui/imgRetry').then((m) => m.startImgRetry());
   void import('./desktopStarter').then((m) => m.startDesktopStarter());
-  // (The window's own bar: the Tauri shell has the page draw all of it, its buttons too — ui/winbar.ts, the Reader's —;
-  // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
-  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
-  else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
   // (Stage P9: the computer's two builds. The Tauri build: its first-run screen once — carrying the offer of the data the
   // previous (Electron) version handed over —, else that offer alone when there is one (ui/firstrun.ts startScreens).
   // The Electron build: the hand-over's maker reachable by the shell without an import (desktop/handover.cjs prepare
@@ -230,10 +237,9 @@ else {
   if (getSettings().addons.includes('anime') || getSettings().addons.includes('tv')) void import('./downloads/episodeCache').then((m) => m.startEpisodeCache());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());
   if (getSettings().addons.includes('video')) { void import('./video/ytdlp').then((m) => m.autoUpdateVideo()); void import('./video/queue').then((m) => m.applyVideoQueue()); }
-  onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
-  onRoute(mount);
-  mount(parseRoute());
-  scheduleAutoCheck();
+  });
+  // (The app's update check: its code fetched after the first screen — it waits 3 s before it asks anyway.)
+  void import('./updates').then((m) => m.scheduleAutoCheck());
   document.documentElement.dataset.platform = nativePlatform();
 
   // Android's back: the native side asks the page (through the plugin's `backButton` event when present).

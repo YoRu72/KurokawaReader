@@ -21,7 +21,7 @@ export function redact(s: string): string {
     .replace(/(token|key|secret|password|pass|auth|cookie|bearer)([=:]\s*)[^\s&;,"']+/gi, '$1$2•••')
     .slice(0, 300);
 }
-export function record(kind: string, text: string): void { ring.push({ t: Date.now(), kind, text: redact(text) }); if (ring.length > MAX) ring = ring.slice(-MAX); dirty = true; }
+export function record(kind: string, text: string): void { ring.push({ t: Date.now(), kind, text: redact(text) }); if (ring.length > MAX) ring = ring.slice(-MAX); if (!dirty) window.setTimeout(flush, 5000); dirty = true; }
 export const events = (): Event[] => ring.slice();
 export const clear = (): void => { ring = []; dirty = true; flush(); };
 /** The report text: the app and platform, then the events, newest last. */
@@ -41,5 +41,6 @@ export function startRecorder(): void {
     off = eng.onChange((tasks: Task[]) => { for (const x of tasks) { const prev = last.get(x.id); if (prev === x.state) continue; last.set(x.id, x.state); if (!prev && x.state === 'queued') record('task', `added ${x.kind} ${x.source.url ?? x.source.magnet ?? 'torrent'}`); else if (x.state === 'failed') record('task', `failed ${x.kind} ${x.name}: ${x.error ?? ''}`); else if (x.state === 'done') record('task', `done ${x.kind} ${x.name} ${x.total}`); else if (x.state === 'downloading' && prev !== 'downloading') record('task', `running ${x.kind} ${x.name}`); } });
   };
   watch(); onEngineChange(watch);
-  setInterval(flush, 5000); window.addEventListener('pagehide', flush);
+  // (Written 5 s after something was recorded — not every 5 s whether or not anything was —; and as the page goes.)
+  window.addEventListener('pagehide', flush); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
 }

@@ -36,6 +36,7 @@
       "sniff.cjs",
       "localapi.cjs",
       "gallerydl.cjs",
+      "gh.cjs",
       "wifishare.cjs",
       "aria2rpc.cjs",
       "icon.png",

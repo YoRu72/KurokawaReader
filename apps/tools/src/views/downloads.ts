@@ -131,6 +131,17 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     return sortTasks(applyFilters(list, query));
   };
   const cards = new Map<string, HTMLElement>(); const heads = new Map<string, HTMLElement>();
+  // (The window over a long list: the rows from `start` to `end`, a few screens around what is seen.)
+  const WINDOW_MIN = 300; let rowH = 76; let win: { start: number; end: number } | null = null;
+  const topPad = h('div', { class: 'task-pad', 'aria-hidden': 'true' }); const bottomPad = h('div', { class: 'task-pad', 'aria-hidden': 'true' });
+  const windowOf = (n: number): { start: number; end: number } => {
+    const top = list.getBoundingClientRect().top; const view = window.innerHeight || 800; const per = Math.ceil(view / rowH);
+    const first = Math.max(0, Math.floor(-top / rowH)); const start = Math.max(0, Math.min(n - 1, first - per)); return { start, end: Math.min(n, first + per * 2 + 2) };
+  };
+  const measureRows = () => { const cs = [...list.querySelectorAll<HTMLElement>(':scope > .task-card')]; if (cs.length < 2) return; const a = cs[0].getBoundingClientRect().top, b = cs[cs.length - 1].getBoundingClientRect().top; const hgt = (b - a) / (cs.length - 1); if (hgt > 20 && Math.abs(hgt - rowH) > 1) rowH = hgt; };
+  let scrollFrame = 0;
+  const onScroll = () => { if (!win || scrollFrame || !root.isConnected) return; scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; if (!win) return; const r = windowOf(shown().length); if (Math.abs(r.start - win.start) >= 4 || Math.abs(r.end - win.end) >= 4) draw(); }); };
+  document.addEventListener('scroll', onScroll, { capture: true, passive: true }); window.addEventListener('resize', onScroll);
   let places = new Map<string, number>();
   const draw = () => {
     places = queuePlaces(tasks);
@@ -143,7 +154,14 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     for (const id of [...picked]) if (!tasks.some((x) => x.id === id)) picked.delete(id);
     // The order of the list: under each group's heading when grouped (groups in the order they first come).
     const nodes: HTMLElement[] = [];
-    if (P.group === 'none') nodes.push(...vis.map((x) => cardFor(x)));
+    // (A long list — more than WINDOW_MIN, not grouped — keeps in the page only the rows near the screen, with spacers
+    // standing for the rest: 2,000 finished downloads are a screenful of rows, not 56,000 nodes. Selection, search,
+    // filters, sort and Undo work on the data, so they see every row; the rows come back as they are scrolled to.)
+    if (P.group === 'none' && vis.length > WINDOW_MIN) {
+      const r = windowOf(vis.length); win = r;
+      topPad.style.height = `${Math.max(0, r.start * rowH - 10)}px`; bottomPad.style.height = `${Math.max(0, (vis.length - r.end) * rowH - 10)}px`;
+      nodes.push(...(r.start > 0 ? [topPad] : []), ...vis.slice(r.start, r.end).map((x) => cardFor(x)), ...(r.end < vis.length ? [bottomPad] : []));
+    } else if (P.group === 'none') { win = null; nodes.push(...vis.map((x) => cardFor(x))); }
     else {
       const groups = new Map<string, { label: string; items: Task[] }>();
       for (const x of vis) { const g = groupOf(x, P.group)!; const e = groups.get(g.key) ?? groups.set(g.key, { label: g.label, items: [] }).get(g.key)!; e.items.push(x); }
@@ -151,6 +169,8 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     }
     const keep = new Set(nodes);
     for (const [id, el] of cards) if (!keep.has(el)) { el.remove(); cards.delete(id); }
+    for (const pad of [topPad, bottomPad]) if (!keep.has(pad)) pad.remove();
+    if (win) measureRows();
     for (const [k, el] of heads) if (!keep.has(el)) { el.remove(); heads.delete(k); }
     nodes.forEach((el, i) => { if (list.children[i] !== el) list.insertBefore(el, list.children[i] ?? null); });
     if (!vis.length && tasks.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
@@ -198,7 +218,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
         oncontextmenu: (e: Event) => { e.preventDefault(); const cur = tasks.find((y) => y.id === x.id) ?? x; // (A computer's right-click: its menu at the pointer; a phone's long press: choosing.)
           if (document.documentElement.classList.contains('pc') && !selecting) { taskMenu(cur, e); return; } if (!selecting) setSelecting(true); pick(cur); } },
         h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : catOf(x).icon)),
-        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: 'auto' }, displayName(x)), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i', { style: { width: `${bar(x)}%` } })))),
+        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: 'auto' }, displayName(x)), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i')))),
       h('span', { class: 'task-actions' }));
     // (A phone: swiped to the right, its first action — pause, resume, retry —; to the left, removed (asked first).)
     swipeable(el, () => { const cur = tasks.find((y) => y.id === x.id) ?? x; const eng = getEngine();
@@ -218,7 +238,9 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); }
     (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
-    (el.querySelector('.task-bar i') as HTMLElement).style.width = `${bar(x)}%`;
+    // (The fill is a full-width bar scaled — eased by the compositor, not by laying out the whole list on every frame
+    // as an eased width did: tests/rowpatch.cjs.)
+    { const fill = el.querySelector('.task-bar i') as HTMLElement; fill.style.transform = `scaleX(${(bar(x) / 100).toFixed(4)})`; }
     (el.querySelector('.task-bar') as HTMLElement).classList.toggle('busy-any', x.state === 'metadata' || x.state === 'checking' || (x.state === 'downloading' && !(x.total > 0)));
     seen.set(el, { key, acts: actsKey }); if (was && was.acts === actsKey) return;
     const acts = el.querySelector('.task-actions') as HTMLElement; acts.replaceChildren();
@@ -269,7 +291,20 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if ((x.kind === 'http' && x.source.url) || (x.kind === 'torrent' && x.source.magnet)) { if (x.state === 'done' || x.state === 'failed' || x.state === 'seeding') row('refresh', t('redownload'), () => { if (!confirm(t('confirmRedownload', { name: displayName(x) }))) return; void (async () => { await eng.remove(x.id, true); await eng.add({ source: x.source, dir: x.dir, name: x.kind === 'http' ? displayName(x) : undefined, meta: x.meta }); toast(t('taskAdded', { name: displayName(x) })); })().catch((er) => toast(String(er.message ?? er), 'error')); }); }
     sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); removeSheet([x]); } }, icon('trash'), t('removeTask')));
   };
-  let cleaned = false; const got = (ts: Task[]) => { raw = ts; tasks = ts.filter((x) => !held.has(x.id)); countFinished(ts); if (ts.some((x) => (x.meta?.megaKey || x.meta?.gdrive) && (x.state === 'failed' || x.state === 'done'))) void import('../downloads/cloud').then((c) => c.watch(getEngine(), ts)); if (!cleaned && ts.length) { cleaned = true; void autoClean(ts).then((n) => { if (n) toast(t('autoCleaned', { n: countItems(n) })); }); } draw(); };
+  let cleaned = false; const got = (ts: Task[]) => { raw = ts; tasks = ts.filter((x) => !held.has(x.id)); countFinished(ts); if (ts.some((x) => (x.meta?.megaKey || x.meta?.gdrive) && (x.state === 'failed' || x.state === 'done'))) void import('../downloads/cloud').then((c) => c.watch(getEngine(), ts)); if (!cleaned && ts.length) { cleaned = true; void autoClean(ts).then((n) => { if (n) toast(t('autoCleaned', { n: countItems(n) })); }); } paintSoon(); };
+  // (Pushes come several times a second with downloads under way: the list is drawn at most once a frame and four
+  // times a second — text nobody reads faster —, and not at all while the page is hidden: the latest list is kept and
+  // drawn when it is shown again. The first list, and a change of what is shown (a task added, gone, its state), at once.)
+  let paintAt = 0; let paintFrame = 0; let paintTimer = 0; let lastShape = '';
+  const shape = () => tasks.map((x) => `${x.id}:${x.state}`).join(',');
+  const paintNow = () => { paintFrame = 0; window.clearTimeout(paintTimer); paintTimer = 0; paintAt = performance.now(); lastShape = shape(); draw(); };
+  const paintSoon = () => {
+    if (document.visibilityState === 'hidden') return;
+    if (!paintAt || shape() !== lastShape) { cancelAnimationFrame(paintFrame); paintNow(); return; }
+    if (paintFrame || paintTimer) return; const wait = Math.max(0, 250 - (performance.now() - paintAt));
+    paintTimer = window.setTimeout(() => { paintTimer = 0; paintFrame = requestAnimationFrame(paintNow); }, wait);
+  };
+  const onVis = () => { if (document.visibilityState === 'visible' && root.isConnected) paintNow(); }; document.addEventListener('visibilitychange', onVis);
   let off = getEngine().onChange(got);
   const offEngine = onEngineChange((e) => { off(); off = e.onChange(got); });
   const reheld = () => { tasks = raw.filter((x) => !held.has(x.id)); for (const id of held) picked.delete(id); draw(); }; heldWatch.add(reheld);
@@ -286,7 +321,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     else if (e.key === ' ' && selecting && picked.size) { e.preventDefault(); const eng = getEngine(); void Promise.all(tasks.filter((x) => picked.has(x.id)).map((x) => (x.state === 'paused' || x.state === 'failed' ? eng.resume(x.id) : ACTIVE.includes(x.state) ? eng.pause(x.id) : Promise.resolve()))); }
   };
   window.addEventListener('keydown', onKey);
-  root.dispose = () => { heldWatch.delete(reheld); off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
+  root.dispose = () => { document.removeEventListener('scroll', onScroll, { capture: true }); window.removeEventListener('resize', onScroll); cancelAnimationFrame(scrollFrame); document.removeEventListener('visibilitychange', onVis); cancelAnimationFrame(paintFrame); window.clearTimeout(paintTimer); heldWatch.delete(reheld); off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
   return root;
 }
 /** The next time the scheduler starts, as «HH:MM» (with the weekday when it is not today). */

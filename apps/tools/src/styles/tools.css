@@ -1106,3 +1106,9 @@ html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
 .video-ryd svg { width: 16px; height: 16px; flex: none; }
 .video-ryd .sep { opacity: .6; margin-inline: 2px; }
 .video-page-off { display: flex; align-items: flex-start; gap: 8px; margin: 0; } .video-page-off > svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+/* A progress bar's own layout: its fill's width eases on every push, and the size of the bar never depends on it — so
+   each eased frame re-lays out the bar alone, not the whole list (tests/rowpatch.cjs counts it). */
+
+
+.task-list .task-bar i { width: 100%; border-radius: 0; transform-origin: left center; transition: transform .4s ease; }
+html[dir='rtl'] .task-list .task-bar i { transform-origin: right center; }
