@@ -497,9 +497,11 @@ impl Engine {
             }
         };
         if send {
-            let _ = self.app.emit("kt:tasks", v.clone());
-            // (Stage P6: the taskbar, keep-awake, when done, the tray, notices — main.cjs's onDesktopTasks.)
-            crate::desktop::on_tasks(&self.app, v);
+            // (Stage P5: sent with the video tasks after aria2's, as main.cjs allTasks.)
+            crate::vtjobs::emit_tasks(&self.app, v.clone());
+            // (Stage P6: the taskbar, keep-awake, when done, the tray, notices — main.cjs's onDesktopTasks, which is
+            // given allTasks() — aria2's and the video tasks — on each of aria2's passes.)
+            crate::desktop::on_tasks(&self.app, &crate::vtjobs::merged(v.clone()));
         }
     }
 

@@ -13,8 +13,9 @@
 //!   query as the server reads them (URLSearchParams' decoding: «+» is a space).
 //! - `head_text`, `reason`: the answer's status line and headers.
 //! - `new_token`, `same_token`: the per-run secret every address of the server carries.
-//! - `audio_args`, `remux_args`, `transcode_args`, `encoder_args`, `encoder_candidates`, `encoder_probe_args`:
-//!   streamproxy.cjs's and transcode.cjs's ffmpeg arguments, word for word.
+//! - `remux_args`: streamproxy.cjs's HLS remux arguments, word for word. (The /audio and /video routes' arguments —
+//!   streamproxy.cjs's audio(), transcode.cjs's — are kt-core's `videotools`, one copy for the stream server and the
+//!   video tools.)
 //! - `magnet_of`, `is_playlist`, `PROXY_UA`, `PASS_HEADERS`.
 //! - `STREAM_OPTIONS`, `finished`, `stopped`, `buffered`: watching a download aria2 has (torrentstream.cjs).
 //! - `Route`, `route`, `torrent_address`, `file_address`, `proxy_address`: the server's addresses, each under the run's
@@ -465,18 +466,6 @@ fn strs(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
-/// streamproxy.cjs's audio(): one audio track, from `ss` seconds, as AAC in ADTS on stdout.
-pub fn audio_args(src: &str, ss: &str, a: &str) -> Vec<String> {
-    let mut v = strs(&["-nostdin", "-hide_banner", "-loglevel", "error", "-ss"]);
-    v.push(ss.to_string());
-    v.push("-i".into());
-    v.push(src.to_string());
-    v.push("-map".into());
-    v.push(format!("0:a:{}", a));
-    v.extend(strs(&["-vn", "-sn", "-dn", "-ac", "2", "-c:a", "aac", "-b:a", "192k", "-f", "adts", "pipe:1"]));
-    v
-}
-
 /// streamproxy.cjs's remux(): an HLS stream copied into fragmented MP4, its headers handed to every request ffmpeg
 /// makes (the user agent on its own, the rest as «k: v\r\n» lines; range left out).
 pub fn remux_args(url: &str, headers: &[(String, String)]) -> Vec<String> {
@@ -498,64 +487,6 @@ pub fn remux_args(url: &str, headers: &[(String, String)]) -> Vec<String> {
         "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mp4", "-movflags",
         "frag_keyframe+empty_moov+default_base_moof", "pipe:1",
     ]));
-    v
-}
-
-/// transcode.cjs's CANDIDATES: the graphics card's encoders tried in turn (Node's platform names).
-pub fn encoder_candidates(os: &str) -> &'static [&'static str] {
-    match os {
-        "win32" => &["h264_nvenc", "h264_qsv", "h264_amf"],
-        "darwin" => &["h264_videotoolbox"],
-        "linux" => &["h264_nvenc"],
-        _ => &[],
-    }
-}
-
-/// transcode.cjs's encArgs().
-pub fn encoder_args(enc: &str) -> Vec<String> {
-    let even = "scale='min(1920,iw)':-2";
-    let f = |fmt: &str| format!("{},format={}", even, fmt);
-    match enc {
-        "h264_nvenc" => vec!["-vf".into(), f("yuv420p"), "-c:v".into(), "h264_nvenc".into(), "-preset".into(), "fast".into(), "-rc".into(), "vbr".into(), "-cq".into(), "21".into(), "-b:v".into(), "0".into(), "-g".into(), "48".into(), "-bf".into(), "0".into()],
-        "h264_qsv" => vec!["-vf".into(), f("nv12"), "-c:v".into(), "h264_qsv".into(), "-preset".into(), "veryfast".into(), "-global_quality".into(), "22".into(), "-g".into(), "48".into(), "-bf".into(), "0".into()],
-        "h264_amf" => vec!["-vf".into(), f("yuv420p"), "-c:v".into(), "h264_amf".into(), "-quality".into(), "speed".into(), "-rc".into(), "cqp".into(), "-qp_i".into(), "20".into(), "-qp_p".into(), "22".into(), "-g".into(), "48".into(), "-bf".into(), "0".into()],
-        "h264_videotoolbox" => vec!["-vf".into(), f("yuv420p"), "-c:v".into(), "h264_videotoolbox".into(), "-realtime".into(), "1".into(), "-b:v".into(), "8M".into(), "-g".into(), "48".into()],
-        "libvpx-vp9" => vec!["-vf".into(), f("yuv420p"), "-c:v".into(), "libvpx-vp9".into(), "-deadline".into(), "realtime".into(), "-cpu-used".into(), "8".into(), "-row-mt".into(), "1".into(), "-b:v".into(), "2M".into(), "-g".into(), "48".into()],
-        _ => vec!["-vf".into(), f("yuv420p"), "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(), "-tune".into(), "zerolatency".into(), "-crf".into(), "21".into(), "-g".into(), "48".into(), "-bf".into(), "0".into()],
-    }
-}
-
-/// transcode.cjs's works(): one second of test picture through `enc`.
-pub fn encoder_probe_args(enc: &str) -> Vec<String> {
-    let mut v = strs(&["-hide_banner", "-loglevel", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=24:d=1"]);
-    v.extend(encoder_args(enc));
-    v.extend(strs(&["-f", "null", "-"]));
-    v
-}
-
-/// transcode.cjs's args(): the picture turned into H.264 + AAC in fragmented MP4 (or VP9 + Opus in WebM).
-pub fn transcode_args(src: &str, ss: f64, a: u64, enc: &str) -> Vec<String> {
-    let vp9 = enc == "libvpx-vp9";
-    let mut v = strs(&["-nostdin", "-hide_banner", "-loglevel", "error"]);
-    if ss > 0.0 {
-        v.push("-ss".into());
-        v.push(js_num(ss));
-    }
-    v.push("-i".into());
-    v.push(src.to_string());
-    v.extend(strs(&["-map", "0:v:0", "-map"]));
-    v.push(format!("0:a:{}?", a));
-    v.extend(strs(&["-sn", "-dn"]));
-    v.extend(encoder_args(enc));
-    if vp9 {
-        v.extend(strs(&["-c:a", "libopus", "-b:a", "160k", "-ac", "2", "-f", "webm", "-cluster_time_limit", "1000"]));
-    } else {
-        v.extend(strs(&[
-            "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-            "-frag_duration", "1000000",
-        ]));
-    }
-    v.push("pipe:1".into());
     v
 }
 
@@ -880,24 +811,12 @@ mod tests {
         assert_eq!(num_or_zero(Some("7.25")), 7.25);
         assert_eq!(num_or_zero(Some("x")), 0.0);
         assert_eq!(num_or_zero(None), 0.0);
-        let a = audio_args("http://127.0.0.1:1/t/x/0", "12.5", "1");
-        assert_eq!(a.join(" "), "-nostdin -hide_banner -loglevel error -ss 12.5 -i http://127.0.0.1:1/t/x/0 -map 0:a:1 -vn -sn -dn -ac 2 -c:a aac -b:a 192k -f adts pipe:1");
         let r = remux_args("https://h/x.m3u8", &proxy_headers(&[("Referer".into(), "https://h/".into()), ("Range".into(), "bytes=0-".into())]));
         assert_eq!(r[4], "-user_agent");
         assert_eq!(r[5], PROXY_UA);
         assert_eq!(r[6], "-headers");
         assert_eq!(r[7], "referer: https://h/\r\n");
         assert_eq!(r[r.len() - 1], "pipe:1");
-        let t = transcode_args("/v.mkv", 0.0, 1, "libx264");
-        assert!(!t.contains(&"-ss".to_string()));
-        assert!(t.contains(&"0:a:1?".to_string()) && t.contains(&"libx264".to_string()) && t.contains(&"-frag_duration".to_string()));
-        let t = transcode_args("/v.mkv", 61.5, 0, "libvpx-vp9");
-        assert_eq!(&t[4..6], &["-ss".to_string(), "61.5".to_string()]);
-        assert!(t.contains(&"libopus".to_string()) && t.contains(&"webm".to_string()));
-        assert_eq!(encoder_args("h264_qsv")[1], "scale='min(1920,iw)':-2,format=nv12");
-        assert_eq!(encoder_candidates("win32").len(), 3);
-        assert!(encoder_candidates("freebsd").is_empty());
-        assert_eq!(encoder_probe_args("h264_nvenc").last().unwrap(), "-");
     }
 
     #[test]

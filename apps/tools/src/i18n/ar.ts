@@ -824,6 +824,9 @@ export const ar: Partial<Strings> = {
   videoRolledBack: "رُجع إلى {v}",
   videoBinaryPath: "استعمال yt-dlp الخاصّ بي",
   videoBinaryHint: "المسار الكامل لملفّ yt-dlp؛ فارغ للمُدار",
+  // (Stage P5, the Tauri shell: a new yt-dlp / gallery-dl that did not start.)
+  videoNewFailed: "لم يعمل {tool} الجديد، فأُزيل.",
+  videoNewFailedBack: "لم يعمل {tool} الجديد، فأُعيد الإصدار {v}.",
   appsTitle: "التطبيقات",
   appsHint: "التطبيقات المثبَّتة مجلّداتٍ: ملفّات APK وبيانات وملفّات obb",
   appsDataFolder: "البيانات (Android/data)",

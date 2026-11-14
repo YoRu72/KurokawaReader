@@ -22,6 +22,11 @@ pub static WEB_SCRIPT: OnceLock<String> = OnceLock::new();
 
 const APP: &str = "Kurokawa Tools";
 
+/// Set while the self-test's «kept awake, then let go» row holds the keep-awake itself: the downloads' own rule
+/// (on_tasks) leaves it alone meanwhile — in CI run 43543617161 (macOS universal) it put it back between the row's «let
+/// go» and its look, a download of an earlier row still being seen.
+static AWAKE_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 enum Awake {
     Child(std::process::Child),
     #[cfg(windows)]
@@ -271,15 +276,31 @@ fn set_awake(on: bool) {
     }
 }
 
-/// Whether the keep-awake child is still running (it ends at once when its program refuses — no logind, say).
+/// Whether the keep-awake child is still running (it ends at once when its program refuses — no logind, say); when
+/// it has ended, `awake_how` gets its exit code (its output is not kept: a pipe read after it ended could wait on a
+/// child of its own still holding it).
 fn awake_alive() -> bool {
     let mut d = desk();
-    match d.awake.as_mut() {
-        Some(Awake::Child(c)) => matches!(c.try_wait(), Ok(None)),
+    let mut why: Option<String> = None;
+    let alive = match d.awake.as_mut() {
+        Some(Awake::Child(c)) => match c.try_wait() {
+            Ok(None) => true,
+            Ok(Some(st)) => {
+                why = Some(format!("ended at once, exit {}", st.code().map(|x| x.to_string()).unwrap_or_else(|| "by a signal".into())));
+                false
+            }
+            Err(_) => false,
+        },
         #[cfg(windows)]
         Some(Awake::Thread(_)) => true,
         None => false,
+    };
+    if let Some(w) = why {
+        if !d.awake_how.contains("ended at once") {
+            d.awake_how = format!("{} — {}", d.awake_how, w);
+        }
     }
+    alive
 }
 
 /* ---------- the taskbar ---------- */
@@ -348,7 +369,9 @@ pub fn on_tasks(app: &AppHandle, tasks: &Value) {
     };
     set_progress(app, step.progress);
     set_badge(app, step.moving);
-    set_awake(step.awake);
+    if !AWAKE_TEST.load(std::sync::atomic::Ordering::SeqCst) {
+        set_awake(step.awake);
+    }
     if let Some(what) = step.when_done.clone() {
         when_all_done(app, &what);
     }
@@ -898,19 +921,58 @@ pub async fn kt_selftest_desk(app: AppHandle, o: Value) -> Result<Value, String>
             Ok(json!(true))
         }
         "awake" => {
-            set_awake(o.get("on").map(truthy).unwrap_or(false));
+            // (The row's own: the downloads' rule kept off it from «on» until its «off» has been looked at.)
+            let on = o.get("on").map(truthy).unwrap_or(false);
+            AWAKE_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+            set_awake(on);
             std::thread::sleep(Duration::from_millis(400));
             let alive = awake_alive();
-            let d = desk();
-            Ok(json!({ "awake": d.awake.is_some(), "alive": alive, "how": d.awake_how }))
+            let r = {
+                let d = desk();
+                json!({ "awake": d.awake.is_some(), "alive": alive, "how": d.awake_how })
+            };
+            if !on {
+                AWAKE_TEST.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(r)
         }
         "second" => {
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             let args: Vec<String> = o.get("args").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
             let r = tauri::async_runtime::spawn_blocking(move || {
                 let mut c = std::process::Command::new(exe);
-                c.args(&args).env_remove("KT_SELFTEST").env_remove("KT_SELFTEST_TIMEOUT");
+                c.args(&args).env_remove("KT_SELFTEST").env_remove("KT_SELFTEST_TIMEOUT").env_remove("KT_SELFTEST_PART");
+                // (What it says kept — the end of it — so a launch that does not end says why: CI run 43543617161 on
+                // Linux only showed «ended: false». Read on a thread of its own and never waited for: a web view
+                // process it started could hold the pipe after it is gone.)
+                c.stderr(std::process::Stdio::piped());
                 let mut child = c.spawn().map_err(|e| e.to_string())?;
+                let said = std::sync::Arc::new(Mutex::new(Vec::<u8>::new()));
+                if let Some(mut e) = child.stderr.take() {
+                    let s2 = said.clone();
+                    let _ = std::thread::Builder::new().name("kt-second-err".into()).spawn(move || {
+                        use std::io::Read;
+                        let mut b = [0u8; 2048];
+                        while let Ok(n) = e.read(&mut b) {
+                            if n == 0 {
+                                break;
+                            }
+                            if let Ok(mut g) = s2.lock() {
+                                g.extend_from_slice(&b[..n]);
+                                if g.len() > 4000 {
+                                    let cut = g.len() - 2000;
+                                    g.drain(..cut);
+                                }
+                            }
+                        }
+                    });
+                }
+                let tail = |said: &std::sync::Arc<Mutex<Vec<u8>>>| -> String {
+                    let t = said.lock().map(|g| String::from_utf8_lossy(&g[..]).into_owned()).unwrap_or_default();
+                    let t = t.trim();
+                    let n = t.chars().count();
+                    t.chars().skip(n.saturating_sub(600)).collect()
+                };
                 for _ in 0..150 {
                     if let Ok(Some(st)) = child.try_wait() {
                         return Ok(json!({ "ended": true, "code": st.code() }));
@@ -919,7 +981,8 @@ pub async fn kt_selftest_desk(app: AppHandle, o: Value) -> Result<Value, String>
                 }
                 let _ = child.kill();
                 let _ = child.wait();
-                Ok::<Value, String>(json!({ "ended": false }))
+                std::thread::sleep(Duration::from_millis(200));
+                Ok::<Value, String>(json!({ "ended": false, "said": tail(&said) }))
             })
             .await
             .map_err(|e| e.to_string())??;

@@ -103,6 +103,11 @@ pub fn script(aria2: Option<(String, bool)>) -> Option<String> {
         // (Stage P8: the made-up name the test server's DNS-over-HTTPS resolver answers, and its 3 MiB file.)
         "dohHost": testserver::DOH_HOST,
         "largeSize": testserver::LARGE_SIZE,
+        // (Since P5 merged: which half of the checks this launch runs — KT_SELFTEST_PART=1 (files, archives, DoH and
+        // the updater, the icon, the video tools) or 2 (the engine, streaming, the Wi-Fi share and local API, the
+        // in-app browser, the desktop side); unset or anything else: all, in one launch. CI runs the two halves as two
+        // launches, each under its own watchdog, so neither is one fragile long run.)
+        "part": std::env::var("KT_SELFTEST_PART").ok().and_then(|v| v.trim().parse::<u8>().ok()).filter(|p| *p == 1 || *p == 2).unwrap_or(0),
     });
     Some(format!("window.__KT_SELFTEST__ = {};\n{}", cfg, SELFTEST_JS))
 }

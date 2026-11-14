@@ -23,13 +23,16 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
   // (Stage P7: browser.rs.)
   'browse',
   // (Stage P8: lanshare.rs.)
-  'shareWifi', 'shareWifiStop', 'shareWifiStatus', 'localApi', 'avScan', 'avAvailable'];
+  'shareWifi', 'shareWifiStop', 'shareWifiStatus', 'localApi', 'avScan', 'avAvailable',
+  // (Stage P5: the video tools.)
+  'videoInfo', 'videoReady', 'isVideoHost', 'videoVersion', 'videoRollback', 'videoUpdate', 'videoBinary', 'galleryList', 'galleryReady', 'ffmpegAvailable', 'ffmpeg', 'ffmpegCancel', 'ffprobe',
+  'packStatus', 'packInstall', 'packCancel', 'packRemove'];
 // (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']] };
-const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser'];
+const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
 // --- Electron's preload, with a fake electron that records each invoke.
@@ -80,7 +83,8 @@ function loadBridge(boot) {
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
-  for (const k of ['screenStatus', 'videoInfo']) assert.ok(!(k in kt), `${k} should be absent`);
+  // (Still missing: the screen translator's 8 channels — kt:screenConfig … kt:screenCaption.)
+  for (const k of ['screenConfig', 'screenStatus', 'screenAction', 'screenJob', 'screenRegion', 'screenClose', 'screenOcrLangs', 'screenCaptionSize', 'onScreenCaption']) assert.ok(!(k in kt), `${k} should be absent`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -101,6 +105,10 @@ function loadBridge(boot) {
     captureUrl: [{ url: 'https://anilist.co/api/v2/oauth/authorize?client_id=1&response_type=token', marker: 'access_token=', title: 'AniList' }], siteWindow: [{ url: 'https://e.org/', title: 'E' }],
     browse: [{ url: 'https://e.org/' }],
     shareWifi: [{ paths: ['/x/a.mkv'], names: ['a.mkv'] }], shareWifiStop: [], shareWifiStatus: [], localApi: [{ on: true, token: 't', port: 8977 }], avScan: [{ cfg: { kind: 'auto' }, file: '/x/a.exe' }], avAvailable: [],
+    // (Stage P5.)
+    videoInfo: [{ url: 'https://www.youtube.com/watch?v=x', playlist: true, cookiesFromBrowser: 'firefox' }], videoReady: [], isVideoHost: ['https://youtu.be/x'], videoVersion: [], videoRollback: [], videoUpdate: [],
+    videoBinary: [{ path: '/opt/yt-dlp' }], galleryList: [{ url: 'https://x.org/g', range: '1-100', cookies: '/c.txt' }], galleryReady: [], ffmpegAvailable: [], ffmpeg: [{ id: 'c1', args: ['-i', '/a.mkv', '/b.mp4'] }],
+    ffmpegCancel: ['c1'], ffprobe: ['/a.mkv'], packStatus: [], packInstall: [{ name: 'ffmpeg', url: 'https://x.org/p.gz', sha256: 'ab', version: '7' }], packCancel: ['ffmpeg'], packRemove: ['ffmpeg'],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};
@@ -223,7 +231,9 @@ function loadBridge(boot) {
   {
     const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'));
     assert.ok(m, 'GRAB_JS in main.cjs');
-    assert.equal(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'), 'utf8').trim(), JSON.parse(m[1]).trim(), 'grab.js ≠ main.cjs GRAB_JS');
+    // (Line ends compared as LF: a Windows checkout gives grab.js CRLF — CI run 43543617161's Windows job failed here.)
+    const lf = (t) => t.replace(/\r\n/g, '\n').trim();
+    assert.equal(lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'), 'utf8')), lf(JSON.parse(m[1])), 'grab.js ≠ main.cjs GRAB_JS');
   }
 
   // Rust: every command the bridge calls is registered, with the argument names the bridge sends.
@@ -374,7 +384,10 @@ function loadBridge(boot) {
     };
   }
   const doc = { querySelector: () => ({ className: 'nav-rail' }), querySelectorAll: () => [1, 2, 3] };
-  for (const bad of [false, true]) {
+  // (Also the two halves CI launches since P5 merged — cfg.part 1 and 2 (KT_SELFTEST_PART): each passes, and together
+  // they hold every check of the whole run.)
+  const byPart = {};
+  for (const [bad, part] of [[false, 0], [true, 0], [false, 1], [false, 2]]) {
     const sent2 = [];
     const kt2 = fakeKt(bad);
     const D = kt2.__desk;
@@ -388,12 +401,14 @@ function loadBridge(boot) {
       : o.act === 'progress' ? true : o.act === 'awake' ? { awake: !!o.on, alive: !!o.on, how: 'systemd-inhibit' } : o.act === 'notify' ? true : o.act === 'windows' ? [{ label: 'main', visible: true, decorated: false }, ...(D.mini ? [{ label: 'mini', visible: true, decorated: false }] : [])]
       : o.act === 'second' ? (D.openLog.push(o.args[0], 'data:application/x-bittorrent;base64,ZDQ6aW5mb2Rl'), { ended: true, code: 0 }) : undefined);
     const env = { openLog: () => D.openLog, sleep: () => new Promise((ok) => setTimeout(ok, 2)), invoke: (cmd, args) => { sent2.push({ cmd, args }); if (cmd === 'kt_selftest_desk') return Promise.resolve(deskAct(args.o)); if (cmd === 'kt_selftest_site') return Promise.resolve(siteAct(args.o)); if (cmd === 'kt_selftest_browse') return Promise.resolve(brAct(args.o)); return Promise.resolve(cmd === 'kt_selftest_icon' ? { png: kt2.__icon() ? 9 : null, ico: [], dir: '/c', last: { window: true }, setIcon: true } : cmd === 'kt_selftest_write' ? kt2.__write(args) : cmd === 'kt_selftest_updatedl' ? { size: cfg.largeSize, resumedFrom: 1048576, ok: true, refused: 'kt-update:checksum', removedWhenRefused: true, noChecksum: 'kt-update:nochecksum', kind: 'bare', file: null } : undefined); }, doc, now: () => Date.now() };
-    const res = JSON.parse(JSON.stringify(await lib.run(kt2, cfg, env)));
+    const res = JSON.parse(JSON.stringify(await lib.run(kt2, Object.assign({}, cfg, { part }), env)));
     const last = sent2[sent2.length - 1];
     assert.equal(last.cmd, 'kt_selftest_done');
     const failed = res.filter((r) => r.required && !r.ok).map((r) => `${r.name}: ${r.detail}`);
-    if (!bad) assert.deepEqual(failed, [], 'self-test against a good fake');
-    else assert.deepEqual(res.filter((r) => r.required && !r.ok).map((r) => r.name), ['http text + headers']);
+    if (!bad) assert.deepEqual(failed, [], 'self-test against a good fake' + (part ? ` (part ${part})` : ''));
+    if (!bad) byPart[part] = res.map((r) => r.name).filter((n) => n !== 'self-test part' && n !== 'page error');
+    if (part) continue;
+    if (bad) assert.deepEqual(res.filter((r) => r.required && !r.ok).map((r) => r.name), ['http text + headers']);
     assert.equal(lib.verdict(res), bad ? 1 : 0);
     assert.ok(res.some((r) => r.name === 'remove' && r.ok) && res.some((r) => r.name === 'kt:tasks events' && r.ok));
     const p7 = res.filter((r) => /^archives:/.test(r.name));
@@ -406,6 +421,13 @@ function loadBridge(boot) {
     const p3 = res.filter((r) => /^(files|deletePath|archiveFree|font|megaDecrypt)/.test(r.name));
     assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_progress'));
+  }
+  {
+    const whole = new Set(byPart[0]); const one = new Set(byPart[1]); const two = new Set(byPart[2]);
+    assert.deepEqual([...new Set([...one, ...two])].sort(), [...whole].sort(), 'parts 1 + 2 = the whole run');
+    const both = [...one].filter((n) => two.has(n));
+    assert.ok(both.length > 0 && both.length < 25 && both.includes('bridge') && !both.some((n) => /^(stream|swarm|archives:|desktop:|browser:|transcode|yt-dlp)/.test(n)), 'only the common rows run twice: ' + both.join(', '));
+    assert.ok([...two].some((n) => /^stream:/.test(n)) && [...two].some((n) => /^desktop:/.test(n)) && [...one].some((n) => /^archives:/.test(n)) && [...one].some((n) => /^files/.test(n)), 'each half has its own checks');
   }
 
   console.log(`tauribridge: ok (${SLICE.length} slice methods, ${BOOT.length} boot-safe, ${registered.length} commands)`);

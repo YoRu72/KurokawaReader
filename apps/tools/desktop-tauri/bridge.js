@@ -3,7 +3,7 @@
 // Run by src-tauri/src/main.rs as the window's initialization script — before the page's own scripts, on every
 // load —, after a line that sets window.__KT_BOOT__ = { os, arch }.
 // Only the ported slice is here (../PORTING.md: stage 1 files/dialogs/clipboard/http, stage 2 the download engine,
-// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts, P7 the archives, P4 streaming): the page asks for each feature by
+// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts, P7 the archives, P4 streaming, P5 the video tools): the page asks for each feature by
 // its method (d?.dohProbe, …), so whatever is not ported yet is absent, not a stub. Events (kt:tasks, kt:engineState,
 // kt:files) come as Tauri events, listened to with window.__TAURI__.event.listen.
 // Some methods are this shell's own, not the preload's: filesJob, filesCancel, filesAnswer and onFilesJob — the Files
@@ -250,7 +250,8 @@
        in-order fetch today, librqbit only in a build with --features rqbit). streamUrl({ id, fileIndex }) → { url };
        streamDone({ id }) → { ok } (the address withdrawn); streamStats({ id }) → { down, up, peers, progress, buffered,
        engine } or null; fileUrl(path) → the address (a string) of a file on this computer, with ranges;
-       audioUrl() / videoUrl() → { url } the page adds «?src=…» to (ffmpeg: the pack, else the PATH's); proxyUrl({ url,
+       audioUrl() / videoUrl() → { url } the page adds «?src=…» to (ffmpeg found as the video tools find it — the
+       pack, else the PATH, a Mac's Homebrew —; the card's encoder, x264 after it fails); proxyUrl({ url,
        headers }) → the address (a string) that fetches it with those headers (HLS remuxed to MP4). */
     streamUrl: function (o) { return call('kt_stream_url', { o: obj(o) }); },
     streamDone: function (o) { return call('kt_stream_done', { o: obj(o) }); },
@@ -289,6 +290,32 @@
     localApi: function (o) { return call('kt_local_api', { o: obj(o) }); },
     avScan: function (o) { return call('kt_av_scan', { o: obj(o) }); },
     avAvailable: function () { return call('kt_av_available'); },
+    /* stage P5 — the video tools (src-tauri/src/vtools.rs, vtjobs.rs, vtffmpeg.rs over kt-core's
+       videotools / vidjson): yt-dlp fetched, checked, updated, rolled back (videoReady's fetch progress as
+       kt:update-progress with what: 'yt-dlp'), `-J` shaped for the Add sheet, a site yt-dlp is always asked about, the
+       program of the user's own choosing; gallery-dl's listing; ffmpeg runs with progress (kt:ffmpegProgress), cancel,
+       ffprobe's JSON; the ffmpeg pack (kt:packProgress). (videoUrl / audioUrl — the transcode stream and the sound
+       track — are stage P4's above: one server, streamproxy.rs, with P5's ffmpeg and encoder rules.) A video
+       download is kt_add with o.video, and its task comes in kt:tasks with the others. */
+    videoInfo: function (o) { return call('kt_video_info', { o: obj(o) }); },
+    videoReady: function () { return call('kt_video_ready'); },
+    isVideoHost: function (u) { return call('kt_is_video_host', { u: str(u) }); },
+    videoVersion: function () { return call('kt_video_version'); },
+    videoRollback: function () { return call('kt_video_rollback'); },
+    videoUpdate: function () { return call('kt_video_update'); },
+    videoBinary: function (o) { return call('kt_video_binary', { o: obj(o) }); },
+    galleryList: function (o) { return call('kt_gallery_list', { o: obj(o) }); },
+    galleryReady: function () { return call('kt_gallery_ready'); },
+    ffmpegAvailable: function () { return call('kt_ffmpeg_available'); },
+    ffmpeg: function (o) { return call('kt_ffmpeg', { o: obj(o) }); },
+    ffmpegCancel: function (id) { return call('kt_ffmpeg_cancel', { id: str(id) }); },
+    ffprobe: function (p) { return call('kt_ffprobe', { p: str(p) }); },
+    onFfmpegProgress: function (cb) { return subscribe('kt:ffmpegProgress', cb); },
+    packStatus: function () { return call('kt_pack_status'); },
+    packInstall: function (o) { return call('kt_pack_install', { o: obj(o) }); },
+    packCancel: function (n) { return call('kt_pack_cancel', { n: str(n) }); },
+    packRemove: function (n) { return call('kt_pack_remove', { n: str(n) }); },
+    onPackProgress: function (cb) { return subscribe('kt:packProgress', cb); },
   };
   /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a
      second launch's, a Mac's Apple Events — kept by the shell (kt_open_take) and handed to the page as the preload's

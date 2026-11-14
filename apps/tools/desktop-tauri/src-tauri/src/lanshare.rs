@@ -423,6 +423,8 @@ fn api_conn(app: &AppHandle, token: &str, s: &mut TcpStream) {
     let r: Result<Value, String> = match route {
         logic::ApiRoute::Tasks => {
             let list = engine.as_ref().map(|e| e.list().unwrap_or_else(|_| e.last())).unwrap_or(Value::Array(vec![]));
+            // (Stage P5: the video tasks after aria2's, as main.cjs allTasks.)
+            let list = crate::vtjobs::merged(list);
             let tasks: Vec<Value> = list
                 .as_array()
                 .map(|a| {
@@ -444,8 +446,28 @@ fn api_conn(app: &AppHandle, token: &str, s: &mut TcpStream) {
             if urls.is_empty() {
                 return Ok(json!({ "__status": 400, "error": "url" }));
             }
-            if o.get("video").map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false) || o.get("audio").map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false) {
-                return Err("Video downloads are not in this preview build yet".to_string());
+            // (Stage P5: `video` / `audio` — localapi.cjs's !!o.video / !!o.audio — become video jobs run by yt-dlp, as
+            // main.cjs's add: { url, dir: o.dir || the default folder, paused, meta: { audioOnly, format, title } }.)
+            let audio = truthy(o.get("audio"));
+            if truthy(o.get("video")) || audio {
+                let dir = match o.get("dir") {
+                    Some(d) if truthy(Some(d)) => d.clone(),
+                    _ => json!(crate::commands::default_dir(app).to_string_lossy().into_owned()),
+                };
+                let mut meta = json!({ "audioOnly": audio });
+                if audio {
+                    meta["format"] = json!("bestaudio/best");
+                }
+                if let Some(n) = o.get("name").filter(|n| !n.is_null()) {
+                    meta["title"] = n.clone();
+                }
+                let mut ids: Vec<Value> = Vec::new();
+                for u in urls.iter() {
+                    let job = json!({ "url": u, "dir": dir, "paused": truthy(o.get("paused")), "meta": meta });
+                    let t = crate::vtjobs::add(&job)?;
+                    ids.push(t.get("id").cloned().unwrap_or(Value::Null));
+                }
+                return Ok(json!({ "added": ids }));
             }
             let e = engine.as_ref().ok_or("engine")?;
             e.ensure();
@@ -465,6 +487,15 @@ fn api_conn(app: &AppHandle, token: &str, s: &mut TcpStream) {
             Ok(json!({ "added": ids }))
         })(),
         logic::ApiRoute::Act(id, act) => (|| -> Result<Value, String> {
+            // (Stage P5: a video task's id goes to its job, as main.cjs's act.)
+            if crate::vtjobs::has(&id) {
+                match act.as_str() {
+                    "pause" => crate::vtjobs::pause(&id),
+                    "resume" => crate::vtjobs::resume(&id),
+                    _ => crate::vtjobs::remove(&id, false),
+                }
+                return Ok(json!({ "ok": true }));
+            }
             let e = engine.as_ref().ok_or("engine")?;
             match act.as_str() {
                 "pause" => e.pause(&id)?,
@@ -678,5 +709,16 @@ pub async fn kt_selftest_lan(o: Value) -> Result<Value, String> {
             Ok(json!(l.local_addr().map_err(|e| e.to_string())?.port()))
         }
         _ => Err("unknown act".to_string()),
+    }
+}
+
+/// JavaScript's truthiness (localapi.cjs's `!!o.video`): absent, null, false, 0, NaN and "" are false.
+fn truthy(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_f64().map(|x| x != 0.0 && !x.is_nan()).unwrap_or(false),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
     }
 }

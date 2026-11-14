@@ -527,6 +527,9 @@ export const ko: Partial<Strings> = {
   videoRolledBack: "{v}(으)로 되돌렸습니다",
   videoBinaryPath: "내 yt-dlp 사용",
   videoBinaryHint: "yt-dlp 바이너리의 전체 경로. 비우면 관리판",
+  // (Stage P5, the Tauri shell: a new yt-dlp / gallery-dl that did not start.)
+  videoNewFailed: "새 {tool}이(가) 실행되지 않아 삭제했습니다.",
+  videoNewFailedBack: "새 {tool}이(가) 실행되지 않아 {v}(으)로 되돌렸습니다.",
   appsTitle: "앱",
   appsHint: "설치된 앱을 폴더로: APK, data, obb",
   appsDataFolder: "데이터 (Android/data)",

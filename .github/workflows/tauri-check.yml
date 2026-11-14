@@ -85,6 +85,20 @@ jobs:
             "$d/$n"
           done
 
+      # (Stage P5: the video tools' std-only parts — kt-core's rules and JSON, the self-test's stand-in programs and
+      # their loopback server, the process runner with its tree kill — on every system, since running and killing
+      # programs differ between them.)
+      - name: Std-only unit tests (stage P5, video tools)
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/rs-tests-p5"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          for f in apps/tools/core/kt-core/src/videotools.rs apps/tools/core/kt-core/src/vidjson.rs apps/tools/desktop-tauri/src-tauri/src/vtfake.rs apps/tools/desktop-tauri/src-tauri/src/vtproc.rs; do
+            n=$(basename "$f" .rs)
+            rustc --edition 2021 --test "$f" -o "$d/$n$ext"
+            "$d/$n$ext"
+          done
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'apps/tools/desktop-tauri/src-tauri -> target'
@@ -182,14 +196,23 @@ jobs:
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
           NO_AT_BRIDGE: '1'
         run: |
-          out="$RUNNER_TEMP/kt-selftest.json"
           find target/release/aria2 -type f -exec ls -la {} \; || echo "no aria2/ beside the executable"
           find target/release/7zip -type f -exec ls -la {} \; || echo "no 7zip/ beside the executable"
-          set +e
-          KT_SELFTEST="$out" timeout 340 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
-          code=$?
-          set -e
-          node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          # (Two launches since P5 merged — KT_SELFTEST_PART 1 and 2, selftest.js says which checks each runs —, each
+          # under its own watchdog; the step fails with the first failing launch's code, after both have run.)
+          # (A session bus of its own, so the single-instance hand-over has one for certain: in run 43543617161 the
+          # second launch did not end. The self-test row now also prints what that launch said.)
+          bus=""; if command -v dbus-run-session >/dev/null; then bus="dbus-run-session --"; fi
+          code=0
+          for part in 1 2; do
+            out="$RUNNER_TEMP/kt-selftest-$part.json"
+            set +e
+            KT_SELFTEST="$out" KT_SELFTEST_PART="$part" $bus timeout 340 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
+            c=$?
+            set -e
+            node ../selftest-report.cjs "$out" "$c" "${{ matrix.name }} (part $part of 2)" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$c" != 0 ] && [ "$code" = 0 ]; then code=$c; fi
+          done
           exit $code
 
       - name: Self-test (Windows)
@@ -200,14 +223,20 @@ jobs:
           KT_SELFTEST_TIMEOUT: '290'
           KT_SELFTEST_BUNDLED: '1'
         run: |
-          $out = Join-Path $env:RUNNER_TEMP 'kt-selftest.json'
-          $env:KT_SELFTEST = $out
           if (Test-Path 'target/release/aria2') { Get-ChildItem 'target/release/aria2' -Recurse -File | Format-Table FullName, Length } else { 'no aria2/ beside the executable' }
           $exe = (Resolve-Path 'target/release/kurokawa-tools.exe').Path
-          $p = Start-Process -FilePath $exe -PassThru
-          $null = $p.Handle
-          if ($p.WaitForExit(340000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
-          node ../selftest-report.cjs $out $code '${{ matrix.name }}' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          # (Two launches, KT_SELFTEST_PART 1 and 2, each under its own watchdog — as on Linux.)
+          $code = 0
+          foreach ($part in 1, 2) {
+            $out = Join-Path $env:RUNNER_TEMP "kt-selftest-$part.json"
+            $env:KT_SELFTEST = $out
+            $env:KT_SELFTEST_PART = "$part"
+            $p = Start-Process -FilePath $exe -PassThru
+            $null = $p.Handle
+            if ($p.WaitForExit(340000)) { $c = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $c = 124 }
+            node ../selftest-report.cjs $out $c "${{ matrix.name }} (part $part of 2)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            if ($c -ne 0 -and $code -eq 0) { $code = $c }
+          }
           exit $code
 
       - name: Self-test (macOS)
@@ -217,17 +246,22 @@ jobs:
         env:
           KT_SELFTEST_TIMEOUT: '290'
         run: |
-          out="$RUNNER_TEMP/kt-selftest.json"
           # (The bare executable, as on Linux: the web UI is built into it; macOS bundles no aria2c.)
           if [ -n "${{ matrix.target }}" ]; then bin="target/${{ matrix.target }}/release/kurokawa-tools"; else bin="target/release/kurokawa-tools"; fi
           [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
           echo "running $bin"
-          set +e
-          # (No `timeout` on macOS: perl's alarm ends it after 340 s.)
-          KT_SELFTEST="$out" perl -e 'alarm 340; exec @ARGV' "$bin"
-          code=$?
-          set -e
-          node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          # (Two launches, KT_SELFTEST_PART 1 and 2, each under its own watchdog — as on Linux.)
+          code=0
+          for part in 1 2; do
+            out="$RUNNER_TEMP/kt-selftest-$part.json"
+            set +e
+            # (No `timeout` on macOS: perl's alarm ends it after 340 s.)
+            KT_SELFTEST="$out" KT_SELFTEST_PART="$part" perl -e 'alarm 340; exec @ARGV' "$bin"
+            c=$?
+            set -e
+            node ../selftest-report.cjs "$out" "$c" "${{ matrix.name }} (part $part of 2)" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$c" != 0 ] && [ "$code" = 0 ]; then code=$c; fi
+          done
           exit $code
 
       # (Stage P4.) librqbit, which the main build leaves out (src-tauri/Cargo.toml's [features] says why): turned on in
@@ -248,7 +282,9 @@ jobs:
           set -e
           cp "$RUNNER_TEMP/Cargo.toml.main" Cargo.toml
           grep -A1 '^name = "librqbit"$' Cargo.lock || echo "librqbit not resolved"
-          grep -E 'error|warning: unused' "$RUNNER_TEMP/rqbit.log" | head -150
+          # (|| true: with nothing to show grep answers 1, which ended this step as failed in run 43543617161 though
+          # cargo check had passed.)
+          grep -E 'error|warning' "$RUNNER_TEMP/rqbit.log" | head -150 || true
           tail -5 "$RUNNER_TEMP/rqbit.log"
           echo "cargo check --features rqbit: exit $code" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code

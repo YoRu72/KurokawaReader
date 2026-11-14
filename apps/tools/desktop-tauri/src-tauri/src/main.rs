@@ -40,6 +40,16 @@ mod streamproxy;
 mod streamserver;
 mod streamtest;
 mod torrentmake;
+// (Stage P5: the video tools — yt-dlp, gallery-dl, ffmpeg and its pack, the transcode stream; kt-core's videotools.rs
+// and vidjson.rs decide. vtfake.rs: the self-test's stand-in programs, active only in a self-test run. The transcode
+// stream's /video and /audio are routes of P4's stream server — streamproxy.rs —, no server of their own.)
+mod vtfake;
+mod vtfetch;
+mod vtffmpeg;
+mod vtjobs;
+mod vtools;
+mod vtproc;
+mod vtselftest;
 
 use std::path::PathBuf;
 
@@ -58,6 +68,12 @@ pub const WINDOW: winstate::Defaults = winstate::Defaults {
 const BRIDGE_JS: &str = include_str!("../../bridge.js");
 
 fn main() {
+    // (Stage P5, self-test runs only: this program started under the name yt-dlp / gallery-dl / ffmpeg / ffprobe
+    // answers as that program and ends here — vtfake.rs; None at once otherwise. First, before any plugin: a stand-in
+    // must never reach the single-instance hand-over.)
+    if let Some(code) = vtfake::maybe_run() {
+        std::process::exit(code);
+    }
     let mut builder = tauri::Builder::default();
     // (Stage P6: a second launch hands its magnets, links and .torrent files to this window and ends — main.cjs's
     // requestSingleInstanceLock / second-instance. Registered first, as the plugin asks; on Linux only with a D-Bus
@@ -176,7 +192,26 @@ fn main() {
             streamserver::kt_audio_url,
             streamserver::kt_video_url,
             streamserver::kt_proxy_url,
-            streamtest::kt_selftest_stream
+            streamtest::kt_selftest_stream,
+            // (Stage P5: the video tools.)
+            vtools::kt_video_info,
+            vtools::kt_video_ready,
+            vtools::kt_video_version,
+            vtools::kt_video_update,
+            vtools::kt_video_rollback,
+            vtools::kt_video_binary,
+            vtools::kt_is_video_host,
+            vtools::kt_gallery_list,
+            vtools::kt_gallery_ready,
+            vtffmpeg::kt_ffmpeg_available,
+            vtffmpeg::kt_ffmpeg,
+            vtffmpeg::kt_ffmpeg_cancel,
+            vtffmpeg::kt_ffprobe,
+            vtffmpeg::kt_pack_status,
+            vtffmpeg::kt_pack_install,
+            vtffmpeg::kt_pack_cancel,
+            vtffmpeg::kt_pack_remove,
+            vtselftest::kt_selftest_vt
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -200,12 +235,14 @@ fn main() {
             let handle = app.handle().clone();
             // (Stage P7: where the shipped 7-Zip is; Tools' parts of the shared archive code switched on.)
             archives::init(&handle);
+            // (Stage P5: the video tools' folders and jobs; yt-dlp brought up to date now and then, as main.cjs does.)
+            vtools::init(&handle);
+            vtools::schedule_updates();
             let data_dir = match app.path().app_data_dir() {
                 Ok(d) => d,
                 Err(_) => std::env::temp_dir().join("kurokawa-tools"),
             };
-            // (Stage P4: where the ffmpeg pack is looked for — <app data>/packs/ffmpeg/.)
-            streamproxy::init(data_dir.clone());
+            // (Stage P4's ffmpeg routes find ffmpeg as the video tools do — vtffmpeg::binary(), set up by vtools::init.)
             let mut res_dirs: Vec<PathBuf> = Vec::new();
             if let Ok(r) = app.path().resource_dir() {
                 res_dirs.push(r);
@@ -292,6 +329,8 @@ fn main() {
                 if let Some(e) = engine::get() {
                     e.stop();
                 }
+                // (Stage P5: running video jobs ended with their trees.)
+                vtjobs::stop_all();
                 update::at_exit(app);
             }
         });

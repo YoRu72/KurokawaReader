@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window and (stage P6) the mini window, which runs the same page on #/mini. The app's own kt_* commands need no permission; the plugins (dialog, clipboard, opener) are used from Rust only, so none of their JS permissions are granted.",
+  "description": "The main window and (stage P6) the mini window, which runs the same page on #/mini. The app's own kt_* commands need no permission; the plugins (dialog, clipboard, opener) are used from Rust only, so none of their JS permissions are granted — except the notification plugin's (as the Reader's): its script, put into every page, asks at load whether notifications are allowed (is_permission_granted) and backs the web's Notification, which the page's own «download finished» notice uses while the window is hidden, as it does in Electron (whose pages are granted notifications); without it every page load logged a refused command (CI run 43543617161).",
   "windows": ["main", "mini"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "notification:default"]
 }

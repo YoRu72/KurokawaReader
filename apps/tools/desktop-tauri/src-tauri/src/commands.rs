@@ -40,6 +40,17 @@ where
     }
 }
 
+/// JavaScript's truthiness of a value.
+fn truthy_value(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().map(|x| x != 0.0 && !x.is_nan()).unwrap_or(false),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+
 fn id_text(id: &Value) -> String {
     match id {
         Value::String(s) => s.clone(),
@@ -70,17 +81,33 @@ pub async fn kt_engine_retry() -> Result<Value, String> {
     Ok(state_now())
 }
 
-/// kt:list: the downloads (the last list while aria2c is down).
+/// kt:list: the downloads (the last list while aria2c is down), then the video tasks (stage P5, main.cjs allTasks).
 #[tauri::command]
 pub async fn kt_list() -> Result<Value, String> {
-    with_engine(|e| Ok(e.list().unwrap_or_else(|_| e.last()))).await
+    let aria = with_engine(|e| Ok(e.list().unwrap_or_else(|_| e.last()))).await.unwrap_or(Value::Array(Vec::new()));
+    Ok(crate::vtjobs::merged(aria))
 }
 
-/// kt:add(o): a download (o.video — yt-dlp — is not in this build); aria2c started first if it is not running.
+/// kt:add(o): a download; aria2c started first if it is not running. o.video: a video job run by yt-dlp (stage P5,
+/// vtjobs.rs) — `{ ...o.video, url: o.source.url, dir: o.dir || the engine's folder, paused, meta }`, as main.cjs.
 #[tauri::command]
-pub async fn kt_add(o: Value) -> Result<Value, String> {
-    if o.get("video").map(|v| !v.is_null()).unwrap_or(false) {
-        return Err("Video downloads are not in this preview build yet".to_string());
+pub async fn kt_add(app: AppHandle, o: Value) -> Result<Value, String> {
+    if let Some(v) = o.get("video").filter(|v| truthy_value(v)) {
+        let mut job = match v {
+            Value::Object(m) => m.clone(),
+            _ => serde_json::Map::new(),
+        };
+        let url = o.get("source").and_then(|s| s.get("url")).cloned().unwrap_or(Value::Null);
+        job.insert("url".into(), url);
+        let dir = match o.get("dir") {
+            Some(d) if truthy_value(d) => d.clone(),
+            _ => json!(lossy(&default_dir(&app))),
+        };
+        job.insert("dir".into(), dir);
+        job.insert("paused".into(), o.get("paused").cloned().unwrap_or(Value::Null));
+        job.insert("meta".into(), o.get("meta").cloned().unwrap_or(Value::Null));
+        let job = Value::Object(job);
+        return tauri::async_runtime::spawn_blocking(move || crate::vtjobs::add(&job)).await.map_err(|e| e.to_string())?;
     }
     with_engine(move |e| {
         e.ensure();
@@ -89,21 +116,32 @@ pub async fn kt_add(o: Value) -> Result<Value, String> {
     .await
 }
 
+// (A video task's id — stage P5 — goes to its job, as main.cjs isVideoId.)
 #[tauri::command]
 pub async fn kt_pause(id: Value) -> Result<(), String> {
     let id = id_text(&id);
+    if crate::vtjobs::has(&id) {
+        return tauri::async_runtime::spawn_blocking(move || crate::vtjobs::pause(&id)).await.map_err(|e| e.to_string());
+    }
     with_engine(move |e| e.pause(&id)).await
 }
 
 #[tauri::command]
 pub async fn kt_resume(id: Value) -> Result<(), String> {
     let id = id_text(&id);
+    if crate::vtjobs::has(&id) {
+        crate::vtjobs::resume(&id);
+        return Ok(());
+    }
     with_engine(move |e| e.resume(&id)).await
 }
 
 #[tauri::command]
 pub async fn kt_remove(id: Value, del: bool) -> Result<(), String> {
     let id = id_text(&id);
+    if crate::vtjobs::has(&id) {
+        return tauri::async_runtime::spawn_blocking(move || crate::vtjobs::remove(&id, del)).await.map_err(|e| e.to_string());
+    }
     with_engine(move |e| e.remove(&id, del)).await
 }
 
@@ -273,7 +311,7 @@ pub async fn kt_open_external(app: AppHandle, u: String) -> Result<(), String> {
 pub async fn kt_open(app: AppHandle, id: Value, index: Option<i64>) -> Result<(), String> {
     let idt = id_text(&id);
     let i = index.unwrap_or(0);
-    let p = with_engine(move |e| e.file_of(&idt, i)).await?;
+    let p = if crate::vtjobs::has(&idt) { crate::vtjobs::file_of(&idt) } else { with_engine(move |e| e.file_of(&idt, i)).await? };
     if index == Some(-1) || (index.is_none() && p.is_empty()) {
         return crate::filecmds::reveal(&app, &p);
     }

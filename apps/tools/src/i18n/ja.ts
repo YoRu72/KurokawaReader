@@ -527,6 +527,9 @@ export const ja: Partial<Strings> = {
   videoRolledBack: "{v} に戻しました",
   videoBinaryPath: "自分の yt-dlp を使う",
   videoBinaryHint: "yt-dlp バイナリのフルパス。空なら管理版",
+  // (Stage P5, the Tauri shell: a new yt-dlp / gallery-dl that did not start.)
+  videoNewFailed: "新しい {tool} が起動しなかったため削除しました。",
+  videoNewFailedBack: "新しい {tool} が起動しなかったため {v} に戻しました。",
   appsTitle: "アプリ",
   appsHint: "インストール済みアプリをフォルダーとして: APK、data、obb",
   appsDataFolder: "データ (Android/data)",

@@ -828,6 +828,9 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   videoRolledBack: "Rolled back to {v}",
   videoBinaryPath: "Use my own yt-dlp",
   videoBinaryHint: "full path to a yt-dlp binary; empty for the managed one",
+  // (Stage P5, the Tauri shell: a new yt-dlp / gallery-dl that did not start.)
+  videoNewFailed: "The new {tool} did not start, so it was removed.",
+  videoNewFailedBack: "The new {tool} did not start, so {v} was put back.",
   appsTitle: "Apps",
   appsHint: "Installed apps as folders: their APKs, data and obb",
   appsDataFolder: "Data (Android/data)",

@@ -42,7 +42,12 @@ skipped move, a folder into itself, cancel mid-copy with the file it replaced ke
 disk and a cancelled move there, where the machine has a second disk — /dev/shm on Linux, the runner's D: on Windows —,
 else reported as skipped with the reason), and — where aria2c is found — a 2 MiB download from the test
 server through the engine (paused mid-way, resumed, its hash checked, renamed, removed), then hands the results to
-`kt_selftest_done`, which writes them and exits 0/1; a watchdog exits 2 after `KT_SELFTEST_TIMEOUT` (170 in CI) s.
+`kt_selftest_done`, which writes them and exits 0/1; a watchdog exits 2 after `KT_SELFTEST_TIMEOUT` (290 in CI) s.
+Since P5 merged CI runs it as **two launches** (`KT_SELFTEST_PART=1`: files, archives, DoH and the updater, the icon,
+the video tools; `=2`: the engine, streaming, the Wi-Fi share and local API, the in-app browser, the desktop side),
+each under its own watchdog (290 s; the step's outer limit 340 s), so neither half has to fit the whole; unset, one
+launch runs all (tests/tauribridge.cjs checks that the two halves add up to the whole). On Linux under
+`dbus-run-session`, so the single-instance hand-over has a session bus.
 Since the P3 gaps, P7, P8 and P6's icon also: the storages, new folder / rename / stat, a cancel sent at once and one sent
 before its job; the archives (the shipped 7-Zip found — required on Windows and Linux —, a zip made → listed with
 dates → tested → extracted byte for byte, a part of it taken out with no other folder made, entries copied out through
@@ -162,15 +167,23 @@ Do the same once before a local `tauri build` / `tauri dev`.
   by the non-required CI step «librqbit try», so neither librqbit's API nor its dependency resolution can break the
   main build). Its calls are written from memory, each marked GUESS; that step prints the compiler's verdict.
 - **ffmpeg routes** (`streamproxy.rs`): `/audio`, `/video`, the proxy's HLS remux — streamproxy.cjs's and
-  transcode.cjs's arguments word for word (kt-core), each ffmpeg killed when its reader leaves.
+  transcode.cjs's arguments word for word (kt-core: `videotools.rs` for /audio and /video since P5 merged,
+  `streamlogic.rs` for the remux), ffmpeg found and run as the video tools do, its whole tree ended when its reader
+  leaves (see «Stage P5», the transcode stream).
 - **Self-test** (`streamtest.rs`, `torrentmake.rs`): required everywhere — a stand-in engine whose pieces the test lets
   in (a read held until its pieces come while the start is served, eight readers at once, 416 / 403 / 404 / OPTIONS,
   stats, streamDone ending a waiting reader, no connection left), `fileUrl`, the audio/video addresses, the proxy
-  against the test server, the server stopped with its port free. Reported only for now: ffmpeg's AAC; a real swarm on
-  loopback — a private two-file torrent made in the test from made-up bytes (std SHA-1 and bencoding), a tracker on
-  127.0.0.1 naming one peer, a second aria2c bound to 127.0.0.1 seeding at 256 KiB/s (DHT, LPD, PEX off), the app's
-  engine fetching it while the page streams start, middle, end and the second file, compared byte for byte. Make the
-  swarm rows required once CI has shown them steady. Page-level: `tests/streamtauri.cjs`.
+  against the test server, the server stopped with its port free. **The real swarm on loopback — required wherever
+  aria2c runs** since CI runs 43543045018 and 43543617161 passed it on every build that ran (Linux, Windows in the
+  first, both macOS builds): a private two-file torrent made in the test from made-up bytes (std SHA-1 and bencoding), a
+  tracker on 127.0.0.1 naming one peer, a second aria2c bound to 127.0.0.1 seeding at 256 KiB/s (DHT, LPD, PEX off), the
+  app's engine fetching it while the page streams start, middle, end and the second file, compared byte for byte. P4's
+  reported «AAC from ffmpeg» row (it needed a real ffmpeg; no runner had one) is gone: a self-test run only ever starts
+  the app's stand-in ffmpeg, and P5's «transcode stream» row checks the bytes of `/video` and `/audio` on this server.
+  Page-level: `tests/streamtauri.cjs`.
+- **librqbit**: `cargo check --features rqbit` passed against librqbit 8.1.1 in run 43543045018 (every «GUESS» call
+  compiled; in run 43543617161 the step failed only on its own `grep` having nothing to print — fixed with `|| true`). It
+  stays behind the feature: no build with it has streamed the swarm yet (see «Stages», 6).
 
 ## Stage P6 — desktop integration (`desktop.rs`, `desklogic.rs` std only, `sitewin.rs`)
 
@@ -270,7 +283,7 @@ or not, backslashes, a NUL, a number out of range → 404) with ranges and HEAD;
 methods → 405). A shared file is resolved when shared and served only while it still resolves to that same real file
 (no link swapped in). The **local API** listens on 127.0.0.1 only (port 8977 unless given), the token on every request
 but the CORS preflight (localapi.cjs's order), by `Authorization: Bearer` or `?token=`; the same routes (`GET /tasks`,
-`GET /version`, `POST /add`, `POST /tasks/<id>/pause|resume|remove`); `video`/`audio` adds answer an error until P5.
+`GET /version`, `POST /add`, `POST /tasks/<id>/pause|resume|remove`); `video`/`audio` adds become video jobs (since P5).
 Stricter, said plainly: the key is 24 hex digits (Electron 12) from the system's generator (`/dev/urandom`,
 `BCryptGenRandom`), key and token compared in constant time; a head over 16 KiB → 400, an API body over 1 MiB → 413
 (Electron dropped the connection), a chunked body → 411; 30 s idle timeouts; at most 32 connections; a refused body
@@ -329,14 +342,56 @@ What the Rust side must provide (a `screentr.rs` + std-only `screenlogic.rs`):
 5. **Events**: `kt:screenCaption` to the caption window only (`emit_to`).
 What stays uncertain until a CI run: xcap on the Windows runner without a desktop session, Wayland's portal under
 Xvfb (none: X11 there), the transparent click-through caption on WebKitGTK.
+## Stage P5: the video tools (written, waiting for its first CI compile)
+
+- **yt-dlp** (`vtools.rs`, kt-core `videotools.rs` + `vidjson.rs`, rule for rule from `ytdlp.cjs`): the release's program for
+  this system (`yt-dlp.exe` / `yt-dlp_macos` / `yt-dlp_linux`, Linux ARM `yt-dlp_linux_aarch64`) into `<app data>/bin`,
+  resumed (`vtfetch.rs`, the updater's way), checked against `SHA2-256SUMS`; the one in use kept as `yt-dlp.<v>.old`
+  (newest three); then — new here — the new program is asked `--version` and one that does not answer is removed and
+  the one before put back at once (kt-core `Swap`; the page words the code `kt-video:rolledback:<tool>:<v>` /
+  `kt-video:broken:<tool>` — `src/video/ytdlp.ts toolError`, five languages). Updates as `ytdlp.cjs` (once a day; a
+  rollback pins; forced from Settings; 15 s after start and every 6 h). The JavaScript runtime: Electron gave its own
+  Node; this shell names the first of deno / node / bun on the PATH (`--js-runtimes`), only to a yt-dlp that knows it.
+- **Video jobs** (`vtjobs.rs`): kt:add with `o.video` → a task of kind «video» listed after aria2's (kt:list and the
+  kt:tasks push — `engine.rs` now hands its list to `vtjobs::emit_tasks`), kept in `video-jobs.json`; the page's argument
+  list vetted (kt-core `vet_args`) or a task's older settings built (`job_args`); yt-dlp's lines read into the task
+  (`LineReader`: one bar over the streams, phases, fragments; pushed every 400 ms or at a phase change); pause / remove
+  end yt-dlp's **whole tree** (Electron killed yt-dlp alone); the bilingual .srt merged when done.
+- **gallery-dl**: the release's standalone program (digest checked), asked its version before use; `-j` read by
+  `vidjson::gallery_items`.
+- **ffmpeg** (`vtffmpeg.rs`): runs, cancel, ffprobe, the pack (resumed, SHA-256, gunzipped beside its marker).
+- **Running programs** (`vtproc.rs`, std only): an argument list, never a shell; stdin closed; no console window on
+  Windows; a process group of its own off Windows so the group is killed, `taskkill /T /F` on Windows; timeouts.
+- **The transcode stream — one server since the merge**: P5 had written `/video` and `/audio` on a loopback server of its
+  own (`vtstream.rs`, deleted with the merge); they are now only routes of P4's stream server (`streamserver.rs`: a port
+  of the system's choosing, the run's token in every address — 403 without it —, 64 connections at most, stopped at
+  quit), as streamproxy.cjs's /p, /f, /audio, /video are one server in Electron. `streamproxy.rs` runs them with P5's
+  rules: the arguments from kt-core `videotools.rs` (`transcode_args`, `audio_args`, `encoder_candidates`,
+  `encoder_test_args`, the query read by `video_query` / `audio_query`; streamlogic.rs's copies removed, its tests moved
+  there), ffmpeg found by `vtffmpeg::binary()` (the pack, else the PATH, a Mac's Homebrew; in a self-test run only the
+  pack's stand-in), started by `vtproc::command` (no window, a group of its own) and its **whole tree** ended when the
+  reader leaves or the server stops; the card's encoder asked once, x264 after it fails within the same request
+  (`X-KT-Encoder` says which). One registration of `kt_video_url` / `kt_audio_url` (streamserver.rs).
+- **Self-test** (CI): the app's own executable stands in for yt-dlp, gallery-dl, ffmpeg and ffprobe (`vtfake.rs`: only
+  with KT_SELFTEST and KT_FAKE_TOOLS=1, only under those file names; a trailer names its version or «broken»), fetched
+  from a loopback release server (`vtselftest.rs`): fetched and resumed → checked → `-J` → a job's phases and file → a
+  running job removed with its tree → a failing job → an update (the one before kept) → a broken update rolled back →
+  a wrong checksum refused → a rollback by hand → gallery-dl → the pack (wrong checksum, cancel, resumed install) →
+  ffmpeg's progress and file → a cancel ending the tree → ffprobe → the transcode stream's and the sound track's bytes
+  (through P4's server: its token, a forged one refused; P4's «audioUrl / videoUrl» row checks the same routes' heads).
+  `tests/videotauri.cjs` runs those checks against a pretend shell, and the page over the real bridge.
+- **The local API's video adds** (P8's `lanshare.rs`): `video` / `audio` in `POST /add` now become video jobs (main.cjs's
+  add: `meta.audioOnly`, `bestaudio/best`, the name as the title); `GET /tasks` lists them after aria2's; pause / resume /
+  remove reach them by id. **The desktop side** (P6's `desktop::on_tasks`) is handed aria2's list and the video tasks, as
+  main.cjs's `onDesktopTasks(allTasks())`.
 
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
 docs/RUST-PORT.md that brings it. **done**: in bridge.js and a Rust command; **missing**: absent from bridge.js (the page
 asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 done · P5 17
-missing · P6 6 done · P7 8 done, 8 missing (`kt:archiveFree` counted in P3; the 8 are the screen translator's) · P8 9 done — **73 of 98
-done** (P4, P6, the browser and P8's rest). Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
+done · P6 6 done · P7 8 done, 8 missing (`kt:archiveFree` counted in P3; the 8 are the screen translator's) · P8 9 done —
+**90 of 98 done** (P5 merged; it and P6, the browser and P8's rest not yet through CI's compiler). Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
 `filesAnswer` / `onFilesJob` (P3), `homeDir` / `filesRoots` / `filesStat` / `filesMkdir` / `filesRename` (after P3),
 `updateDownload` / `updateInstall` (P8).
 
@@ -347,7 +402,7 @@ done** (P4, P6, the browser and P8's rest). Besides these, the shell has its own
 | `kt:state` | done | the engine's `available`/`reason`, `os`/`arch` in Node's words |
 | `kt:engineRetry` | done |  |
 | `kt:list` | done | the last list while aria2c is down |
-| `kt:add` | done | `o.video` (yt-dlp) refused until P5 |
+| `kt:add` | done | `o.video`: a yt-dlp job (P5, `vtjobs.rs`) |
 | `kt:pause` | done |  |
 | `kt:resume` | done |  |
 | `kt:remove` | done | waits up to 3 s for `forceRemove` |
@@ -357,7 +412,7 @@ done** (P4, P6, the browser and P8's rest). Besides these, the shell has its own
 | `kt:setLimits` | done |  |
 | `kt:configure` | done |  |
 | `kt:torrentInfo` | done |  |
-| `kt:rename` | done | `sniff.cjs` renaming of finished files not ported (P5) |
+| `kt:rename` | done | `sniff.cjs` renaming of finished files not ported |
 | `kt:open` | done | «show in folder» now chooses the item where the opener can (P3, `kt_reveal`) |
 | `kt:defaultDir` | done |  |
 | `kt:roots` | done |  |
@@ -393,7 +448,7 @@ done** (P4, P6, the browser and P8's rest). Besides these, the shell has its own
 | `kt:screenFontRemove` | done (P3) |  |
 | `app:titleBar` | done (P3) | `kt_title_bar` — the Reader's `titlebar.rs` (own bar / system frame, act, `kt:titleBarState`); the page draws it (`src/ui/winbar.ts`, shared) |
 
-### P4 — torrent streaming and the local stream server (7 done — written, waiting for CI)
+### P4 — torrent streaming and the local stream server (7 done; compiled and passed in CI run 43543045018)
 
 | Channel | Status | Notes |
 |---|---|---|
@@ -401,31 +456,31 @@ done** (P4, P6, the browser and P8's rest). Besides these, the shell has its own
 | `kt:streamDone` | done (P4) | the download's addresses withdrawn, their waiting readers ended (Electron's aria2 path kept them) |
 | `kt:streamStats` | done (P4) | `{ down, up, peers, progress, buffered, engine }` for any download being watched (Electron: only WebTorrent's, else null) |
 | `kt:fileUrl` | done (P4) | the same server, `/<token>/f?p=` |
-| `kt:audioUrl` | done (P4) | ffmpeg: `<app data>/packs/ffmpeg/` (P5 installs it), else the PATH's; «pack:ffmpeg» without |
-| `kt:videoUrl` | done (P4) | transcode.cjs's encoders (card's first, x264 after a failure) |
+| `kt:audioUrl` | done (P4+P5) | a route of the stream server (`/<token>/audio`); P5's ffmpeg rules (`vtffmpeg::binary()`: the pack, else the PATH / Homebrew); «pack:ffmpeg» without |
+| `kt:videoUrl` | done (P4+P5) | the same server (`/<token>/video`): transcode.cjs's encoders (card's first, x264 after a failure), kt-core videotools' arguments |
 | `kt:proxyUrl` | done (P4) | the shared web client (cookies, DoH), ranges passed, HLS remuxed by ffmpeg |
 
-### P5 — video tools and packs (17 missing)
+### P5 — video tools and packs (17 done — written, waiting for CI)
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:videoInfo` | missing | yt-dlp spawned from Rust |
-| `kt:videoReady` | missing |  |
-| `kt:videoVersion` | missing |  |
-| `kt:videoUpdate` | missing |  |
-| `kt:videoRollback` | missing |  |
-| `kt:videoBinary` | missing |  |
-| `kt:isVideoHost` | missing |  |
-| `kt:galleryList` | missing | gallery-dl |
-| `kt:galleryReady` | missing |  |
-| `kt:ffmpegAvailable` | missing | ffmpeg pack |
-| `kt:ffmpeg` | missing | progress as events |
-| `kt:ffmpegCancel` | missing |  |
-| `kt:ffprobe` | missing |  |
-| `kt:packStatus` | missing | download + SHA-256 |
-| `kt:packInstall` | missing |  |
-| `kt:packCancel` | missing |  |
-| `kt:packRemove` | missing |  |
+| `kt:videoInfo` | done (P5) | `vtools.rs`: `-J` (90 s), kt-core `vidjson::normalise` |
+| `kt:videoReady` | done (P5) | fetched when missing / older than 2025.01.01; progress `kt:update-progress` (what: yt-dlp) |
+| `kt:videoVersion` | done (P5) | asked once per file (path, size, time) |
+| `kt:videoUpdate` | done (P5) | forced; the one before kept as `yt-dlp.<v>.old` (three); a new one that does not start rolled back at once (`kt-video:rolledback:…`, worded by the page) |
+| `kt:videoRollback` | done (P5) | the newest kept copy put back, pinned |
+| `kt:videoBinary` | done (P5) | the user's own program when it exists |
+| `kt:isVideoHost` | done (P5) | kt-core `is_video_host` (ytdlp.cjs VIDEO_HOSTS) |
+| `kt:galleryList` | done (P5) | gallery-dl `-j --no-download` (120 s), kt-core `vidjson::gallery_items`; none on a Mac (no standalone build — Electron fetched Linux's) |
+| `kt:galleryReady` | done (P5) |  |
+| `kt:ffmpegAvailable` | done (P5) | `vtffmpeg.rs`: the pack's, else the PATH's (a Mac also Homebrew's) |
+| `kt:ffmpeg` | done (P5) | progress `kt:ffmpegProgress` (300 ms); «pack:ffmpeg» when there is none |
+| `kt:ffmpegCancel` | done (P5) | SIGINT, the tree ended 3 s later (Windows: at once) |
+| `kt:ffprobe` | done (P5) | beside the ffmpeg in use, else the PATH's |
+| `kt:packStatus` | done (P5) |  |
+| `kt:packInstall` | done (P5) | resumed (six tries), SHA-256, gunzip; `kt:packProgress` |
+| `kt:packCancel` | done (P5) |  |
+| `kt:packRemove` | done (P5) |  |
 
 ### P6 — desktop integration (6 done)
 
@@ -550,7 +605,34 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
    builds): the shared crate, kt-core, API detection, the recycle bin, free space, fonts, MEGA, screen fonts, the Files
    page's jobs, the title bar; then its gaps (storages, new folder, rename, stat, a cancel never lost, local trash
    dates). Left of P3: the preview builds beside each Electron release.
-4. **P7 archives, P8 DoH + updater, P6 app icon — written, waiting for CI.** P6's other five channels written since
-   (see «Stage P6»), and the in-app browser (P7), waiting for CI. Left of P7: the screen translator (planned above); P8's rest written too (see
-   «Stage P8»). P4, P5; P9 the switch-over with the hand-over (and the release job that
-   publishes the file names above).
+4. **P4, P6, the in-app browser (P7), P8 — compiled and passed**: P4 in CI run 43543045018 (all four builds; the
+   self-test passed everywhere, the swarm too); P6 + browser + P8 in run 43543617161 on Linux and both macOS builds
+   (Windows stopped at the web step — tests/tauribridge.cjs compared grab.js with Windows' CRLF; fixed —, so Windows has
+   not compiled P6/P8/the browser yet). Fixed from that run's reported rows: the notification plugin's own page script
+   was refused `is_permission_granted` on every load (now `notification:default`, as the Reader's); the keep-awake row
+   raced the downloads' own rule (held off during the row now) and says why a Linux inhibitor ended; the second-launch
+   row says what that launch printed, and Linux's self-test has a session bus of its own.
+5. **P5 — merged, not yet compiled** (its first CI run is the next one): 17 channels; the transcode stream joined P4's
+   server. **90 of 98 channels done**; missing only the screen translator's 8 (planned above).
+6. **Left before P9** (the switch-over with the hand-over, and the release job that publishes the file names above):
+   Windows' first compile of P6/P8/the browser and every system's of P5; the screen translator; a build with
+   `--features rqbit` streaming the swarm before librqbit is switched on; the losses below decided.
+
+## Known losses against Electron (so far)
+
+- **A notice's click** (P6): the plugin gives no click on a computer; the window brought to the front within two
+  minutes opens the download instead.
+- **Media told by content type** (P7 browser): no system web view gives response headers; Grab finds media by address,
+  by the page's elements and by resource timing — media a server marks only by `Content-Type` is missed.
+- **yt-dlp's JavaScript runtime** (P5): Electron handed yt-dlp its own Node; this shell names the first of deno / node /
+  bun on the PATH (`--js-runtimes`). With none, yt-dlp goes on but warns «No supported JavaScript runtime could be
+  found … YouTube extraction without a JS runtime has been deprecated, and some formats may be missing», its signature
+  and «n» challenges unsolved, so YouTube's formats thin out or vanish. Proposed: a «deno» pack beside the ffmpeg pack
+  (the same fetch, SHA-256 and marker; one program per system), offered in the page's words when yt-dlp prints that
+  warning. Until then the user is told nothing.
+- **Far seeks in a torrent** (P4): aria2 fetches in order (head 16 MiB, tail 4 MiB first), so a seek far ahead waits for
+  the fetch to get there; WebTorrent fetched that place first. librqbit, behind its feature, is the cure.
+- **Finished files renamed by sniffing** (`sniff.cjs`): not ported.
+- **DNS over HTTPS for the page's own requests**: the system web views keep the system's DNS (see «DoH»).
+- **The Wi-Fi share's address**: the default route's IPv4, not the interface list by name.
+- **Close to tray**: only with the screen translator (not ported), as in Electron.

@@ -2,60 +2,36 @@
 // with the headers the page's <video> cannot send — the app's own client, its cookies and DNS over HTTPS —, ranges
 // passed through, an HLS playlist remuxed into fragmented MP4 by ffmpeg) and /audio (one audio track as AAC), and
 // desktop/transcode.cjs's /video (the picture turned into H.264 — the graphics card's encoder when one works, else x264
-// — or VP9, as it plays). ffmpeg's arguments are kt-core's streamlogic.rs, word for word Electron's. ffmpeg itself: the
-// pack in the app's data folder (<app data>/packs/ffmpeg/, where the packs stage — P5 — puts it), else one on the PATH;
-// none → the route answers «pack:ffmpeg» as Electron's. Each ffmpeg is killed when its reader leaves or the server stops.
+// — or VP9, as it plays). One implementation since stage P5 merged (P5 had written its own loopback server for /audio
+// and /video — vtstream.rs, gone): the routes live on this token-protected server, with the video tools' rules —
+// ffmpeg's arguments from kt-core's videotools.rs (the HLS remux's from streamlogic.rs), word for word Electron's;
+// ffmpeg found as everywhere in the video tools (vtffmpeg::binary(): the pack in <app data>/packs/ffmpeg/, else the
+// PATH, on a Mac also Homebrew's; in a self-test run only the pack's stand-in); started as every video tool is
+// (vtproc::command: no window, a process group of its own) and its whole tree ended when its reader leaves or the
+// server stops. None found → the route answers «pack:ffmpeg» as Electron's.
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
 use kt_core::streamlogic as sl;
+use kt_core::videotools as vt;
 use kurokawa_shell::{net, reqwest, util};
 
 use crate::streamserver::{simple, write_head};
+use crate::{vtffmpeg, vtproc};
 
-static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// transcode.cjs's `chosen`: the encoder found to work here (asked once; x264 after a card's encoder failed a file).
 static CHOSEN: Mutex<Option<String>> = Mutex::new(None);
 
-/// Where the app keeps its data (the ffmpeg pack's folder is under it). Called once at start.
-pub fn init(data_dir: PathBuf) {
-    let _ = DATA_DIR.set(data_dir);
-}
-
-/// ffmpeg.cjs's binary(): the pack, else the PATH's.
-pub fn ffmpeg_binary() -> String {
-    let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-    if let Some(d) = DATA_DIR.get() {
-        let p = d.join("packs").join("ffmpeg").join(exe);
-        if p.is_file() {
-            return p.to_string_lossy().into_owned();
-        }
-    }
-    exe.to_string()
-}
-
-#[cfg(windows)]
-fn no_window(c: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    c.creation_flags(0x0800_0000);
-}
-
-#[cfg(not(windows))]
-fn no_window(_c: &mut Command) {}
-
+/// ffmpeg started as the video tools start it (vtproc.rs).
 fn spawn_ffmpeg(args: &[String]) -> std::io::Result<Child> {
-    let mut c = Command::new(ffmpeg_binary());
-    c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    no_window(&mut c);
-    c.spawn()
+    vtproc::command(&vtffmpeg::binary(), args).spawn()
 }
 
 /// What a run of ffmpeg gave: whether any bytes went out, its exit code, the end of what it said.
@@ -65,13 +41,15 @@ struct Pumped {
     err: String,
 }
 
-/// ffmpeg's output copied to the reader; `first` called before the first bytes (to send the head). ffmpeg killed when
-/// the reader leaves (a watcher looks every 300 ms) or the server stops.
+/// ffmpeg's output copied to the reader; `first` called before the first bytes (to send the head). ffmpeg's whole tree
+/// ended (vtproc::kill_tree) when the reader leaves (a watcher looks every 300 ms) or the server stops. The tree is
+/// ended while the child is held (not yet reaped), so its pid and group cannot have been taken by another process.
 fn pump(mut child: Child, s: &mut TcpStream, stop: &Arc<AtomicBool>, first: &mut dyn FnMut(&mut TcpStream) -> std::io::Result<()>) -> Pumped {
+    let pid = child.id();
     let mut out = match child.stdout.take() {
         Some(o) => o,
         None => {
-            let _ = child.kill();
+            vtproc::kill_tree(pid);
             let _ = child.wait();
             return Pumped { any: false, code: None, err: "no output".into() };
         }
@@ -120,7 +98,9 @@ fn pump(mut child: Child, s: &mut TcpStream, stop: &Arc<AtomicBool>, first: &mut
                     };
                 if gone {
                     if let Ok(mut g) = c.lock() {
-                        let _ = g.kill();
+                        if !matches!(g.try_wait(), Ok(Some(_))) {
+                            vtproc::kill_tree(pid);
+                        }
                     }
                     break;
                 }
@@ -147,7 +127,9 @@ fn pump(mut child: Child, s: &mut TcpStream, stop: &Arc<AtomicBool>, first: &mut
     finished.store(true, Ordering::SeqCst);
     let code = match child.lock() {
         Ok(mut g) => {
-            let _ = g.kill();
+            if !matches!(g.try_wait(), Ok(Some(_))) {
+                vtproc::kill_tree(pid);
+            }
             g.wait().ok().and_then(|st| st.code())
         }
         Err(_) => None,
@@ -162,43 +144,24 @@ fn not_found(e: &std::io::Error) -> bool {
 
 /* ---------- /audio ---------- */
 
-/// streamproxy.cjs's audio(): one audio track of `src` from `ss` seconds, as AAC (ADTS).
+/// streamproxy.cjs's audio(): one audio track of `src` from `ss` seconds, as AAC (ADTS). The query read as
+/// streamproxy.cjs reads it (String(Number(x) || 0)), the arguments kt-core videotools' (one copy for both stages).
 pub fn audio(s: &mut TcpStream, query: &str, head_only: bool, stop: &Arc<AtomicBool>) {
-    let src = sl::query_get(query, "src").unwrap_or_default();
-    let ss = sl::js_num(sl::num_or_zero(sl::query_get(query, "ss").as_deref()));
-    let a = sl::js_num(sl::num_or_zero(sl::query_get(query, "a").as_deref()));
+    let (src, ss, a) = vt::audio_query(query);
     let h = vec![("Content-Type".to_string(), "audio/aac".to_string()), ("Cache-Control".to_string(), "no-store".to_string())];
     if write_head(s, 200, h).is_err() || head_only || src.is_empty() {
         return;
     }
-    if let Ok(c) = spawn_ffmpeg(&sl::audio_args(&src, &ss, &a)) {
+    if let Ok(c) = spawn_ffmpeg(&vt::audio_args(&src, &ss, &a)) {
         pump(c, s, stop, &mut |_s: &mut TcpStream| -> std::io::Result<()> { Ok(()) });
     }
 }
 
 /* ---------- /video ---------- */
 
-/// transcode.cjs's works(): one second of test picture through `enc`, 15 s at most.
+/// transcode.cjs's works(): one second of test picture through `enc`, 15 s at most (its tree ended after that).
 fn works(enc: &str) -> bool {
-    let mut c = Command::new(ffmpeg_binary());
-    c.args(sl::encoder_probe_args(enc)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    no_window(&mut c);
-    let mut child = match c.spawn() {
-        Ok(ch) => ch,
-        Err(_) => return false,
-    };
-    let until = Instant::now() + Duration::from_secs(15);
-    loop {
-        match child.try_wait() {
-            Ok(Some(st)) => return st.success(),
-            Ok(None) if Instant::now() < until => thread::sleep(Duration::from_millis(100)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-        }
-    }
+    vtproc::run(&vtffmpeg::binary(), &vt::encoder_test_args(enc), Duration::from_secs(15), 1 << 16).map(|r| r.code == Some(0) && !r.timed_out).unwrap_or(false)
 }
 
 /// transcode.cjs's encoder(): KT_TRANSCODE_ENCODER, else the first of the card's encoders that works here, else x264
@@ -217,7 +180,7 @@ fn encoder() -> String {
         return e.clone();
     }
     let mut pick = "libx264".to_string();
-    for e in sl::encoder_candidates(util::node_platform()) {
+    for e in vt::encoder_candidates(util::node_platform()) {
         if works(e) {
             pick = e.to_string();
             break;
@@ -228,12 +191,10 @@ fn encoder() -> String {
 }
 
 /// transcode.cjs's serve(): /video?src=&ss=&a=&c= — the head sent with ffmpeg's first bytes, so a card's encoder that
-/// fails at once is replaced by x264 within the same request.
+/// fails at once is replaced by x264 within the same request; 502 with ffmpeg's last line (or «pack:ffmpeg») when
+/// nothing came.
 pub fn video(s: &mut TcpStream, query: &str, head_only: bool, stop: &Arc<AtomicBool>) {
-    let src = sl::query_get(query, "src").unwrap_or_default();
-    let ss = sl::num_or_zero(sl::query_get(query, "ss").as_deref()).max(0.0);
-    let a = sl::num_or_zero(sl::query_get(query, "a").as_deref()).max(0.0).floor() as u64;
-    let vp9 = sl::query_get(query, "c").as_deref() == Some("vp9");
+    let (src, ss, a, vp9) = vt::video_query(query);
     let ctype = if vp9 { "video/webm" } else { "video/mp4" };
     if head_only || src.is_empty() {
         let h = vec![("Content-Type".to_string(), ctype.to_string()), ("Cache-Control".to_string(), "no-store".to_string()), ("Content-Length".to_string(), "0".to_string())];
@@ -245,7 +206,7 @@ pub fn video(s: &mut TcpStream, query: &str, head_only: bool, stop: &Arc<AtomicB
         if stop.load(Ordering::SeqCst) {
             return;
         }
-        let child = match spawn_ffmpeg(&sl::transcode_args(&src, ss, a, &enc)) {
+        let child = match spawn_ffmpeg(&vt::transcode_args(&src, ss, a, &enc)) {
             Ok(c) => c,
             Err(e) => {
                 simple(s, 502, &if not_found(&e) { "pack:ffmpeg".to_string() } else { e.to_string() });

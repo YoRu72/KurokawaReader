@@ -13,6 +13,9 @@
 //! - dohnames: the DNS-over-HTTPS resolvers Tools' settings name (desktop/main.cjs's DOH table) (P8)
 //! - streamlogic: torrent streaming's and the local stream server's rules — ranges, types, aria2's pieces, ffmpeg's
 //!   arguments (P4)
+//! - videotools: yt-dlp / gallery-dl / ffmpeg rules — release files, versions, a replaced program checked and rolled
+//!   back, the argument lists, progress lines, the transcode stream's arguments, the bilingual subtitle (P5)
+//! - vidjson: a small JSON reader/writer and yt-dlp's `-J` / gallery-dl's `-j` answers shaped for the page (P5)
 pub mod engine_core;
 pub mod filejobs;
 pub mod fontnames;
@@ -22,3 +25,6 @@ pub mod updatelogic;
 pub mod dohnames;
 // (Stage P4: torrent streaming and the local stream server.)
 pub mod streamlogic;
+// (Stage P5: the video tools.)
+pub mod videotools;
+pub mod vidjson;

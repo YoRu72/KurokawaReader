@@ -155,6 +155,8 @@ pub fn bencode(b: &B) -> Vec<u8> {
 pub struct Made {
     pub torrent: Vec<u8>,
     pub info_hash: String,
+    // (The raw 20 bytes, for a peer handshake should a test need one; unread for now — CI's only warning here.)
+    #[allow(dead_code)]
     pub info_hash_raw: [u8; 20],
 }
 

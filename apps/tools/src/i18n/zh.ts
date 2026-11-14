@@ -527,6 +527,9 @@ export const zh: Partial<Strings> = {
   videoRolledBack: "已回滚到 {v}",
   videoBinaryPath: "使用我自己的 yt-dlp",
   videoBinaryHint: "yt-dlp 可执行文件的完整路径；留空则用托管版",
+  // (Stage P5, the Tauri shell: a new yt-dlp / gallery-dl that did not start.)
+  videoNewFailed: "新的 {tool} 无法启动，已删除。",
+  videoNewFailedBack: "新的 {tool} 无法启动，已恢复到 {v}。",
   appsTitle: "应用",
   appsHint: "已安装的应用作为文件夹：APK、data、obb",
   appsDataFolder: "数据 (Android/data)",

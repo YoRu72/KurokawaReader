@@ -43,6 +43,8 @@ struct Server {
 pub struct Session {
     pub id: String,
     pub index: usize,
+    // (Kept with the session for the log; nothing reads it yet — CI's only warning on this file.)
+    #[allow(dead_code)]
     pub name: String,
     pub engine: Arc<dyn StreamEngine>,
     pub cancelled: Arc<AtomicBool>,
