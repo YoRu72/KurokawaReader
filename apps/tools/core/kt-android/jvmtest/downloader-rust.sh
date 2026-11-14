@@ -7,6 +7,7 @@
 set -e
 SO=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); [ -f "$SO" ] || { echo "no library at $1"; exit 1; }
 HERE=$(cd "$(dirname "$0")" && pwd); A="$HERE/../../../native/android"; N="$HERE/../../../tests/native"; D=$(mktemp -d)
+trap 'rm -rf "$D"' EXIT   # (the test files — some 300 MB a run — gone when it ends)
 for f in KrDownloader KrDownloaderRs; do sed "s/^final class $f/public final class $f/; s/^package .*;//" "$A/$f.java" > "$D/$f.java"; done
 cp "$A/KtCore.java" "$D/"
 # (Only the engine changes: every KrDownloader.fetch( becomes KrDownloaderRs.fetch( — the same arguments, Result, Opts.)

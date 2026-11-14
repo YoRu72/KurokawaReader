@@ -605,8 +605,8 @@ final class KtEngine {
                 final File part0 = part;
                 // (Stage M2: the engine for this run — the Rust core's decisions when chosen in Settings → Advanced and
                 // the core is here, else Java's; see dlFetch.)
-                final boolean[] rs = { useRustEngine(x) };
-                try { r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
+                final boolean[] rustEng = { useRustEngine(x) };
+                try { r = dlFetch(x, rustEng, new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
                 catch (KrDownloader.Status st403) {
                     // (403 and nothing fetched yet: asked once more the way a browser following a link would — the site's
                     // own origin as the referer, the fetch hints a navigation carries, a plain range — before giving up.)
@@ -615,19 +615,19 @@ final class KtEngine {
                     URL u0 = new URL(url); String origin = u0.getProtocol() + "://" + u0.getHost() + (u0.getPort() > 0 ? ":" + u0.getPort() : "") + "/";
                     if (!h2.has("Referer") && !h2.has("referer")) h2.put("Referer", origin);
                     h2.put("Sec-Fetch-Site", "same-origin"); h2.put("Sec-Fetch-Mode", "navigate"); h2.put("Sec-Fetch-Dest", "document"); h2.put("Sec-Fetch-User", "?1"); h2.put("Accept", "*/*"); h2.put("Accept-Language", "en-US,en;q=0.9");
-                    final JSONObject hh = h2; r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, hh, false), x.cancel, x.got, info, tick, opt);
+                    final JSONObject hh = h2; r = dlFetch(x, rustEng, new URL(url), part0, conns, u -> open(u, hh, false), x.cancel, x.got, info, tick, opt);
                 }
                 catch (IOException e) {
                     // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
                     // tried once more by the network's own DNS.)
                     if (!KrDoh.on() || e instanceof KrDownloader.Status || e instanceof KrDownloader.WebPage || e instanceof KrDownloaderRs.RustError || x.cancel.get()) throw e;
-                    try { r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt); }
+                    try { r = dlFetch(x, rustEng, new URL(url), part0, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt); }
                     catch (IOException e2) {
                         // (Neither way reached it: the site forced through the resolver with the TLS hello split — a
                         // filter reading names — and tried a last time.)
                         if (e2 instanceof KrDownloader.Status || e2 instanceof KrDownloader.WebPage || e2 instanceof KrDownloaderRs.RustError || x.cancel.get() || KrDoh.isForced(new URL(url).getHost())) throw e2;
                         KrDoh.force(new URL(url).getHost());
-                        r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt);
+                        r = dlFetch(x, rustEng, new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt);
                     }
                 }
                 if (r.out != null) part = r.out;
