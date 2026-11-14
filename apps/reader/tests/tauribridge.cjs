@@ -636,7 +636,7 @@ async function pagePart(ported) {
         kr_scan_device: () => ({ root: '/home/u', files: [], truncated: false }), kr_folder_pick: () => '/picked', kr_archive_pick_dir: () => '/picked', kr_archive_pick_file: () => ['/a.zip'],
         kr_default_apps: () => null, kr_scan_folder: (a) => (a.p === '/picked' ? { root: '/picked', files: [{ path: '/picked/sub/Linked Book.epub', name: 'Linked Book.epub', size: 1234 }], truncated: false } : { root: a.p, files: [], truncated: false }),
         // (What the shell keeps of files and links handed to the app: nothing at first; the test puts some in later.)
-        kr_download: (a) => '/data/downloads/' + a.name, kr_delete_download: () => true, kr_set_doh: (a) => ({ provider: a.provider || 'off' }), kr_notify: () => true, kr_download_cancel: () => false,
+        kr_download: (a) => '/data/downloads/' + a.name, kr_delete_download: () => true, kr_trash_file: () => ({ ok: true, gone: false }), kr_set_doh: (a) => ({ provider: a.provider || 'off' }), kr_notify: () => true, kr_download_cancel: () => false,
         kr_open_take: (a) => { const l = window.__openQueue[a.kind] || []; window.__openQueue[a.kind] = []; return l; }, kr_title_bar: (a) => ({ platform: 'linux', height: 32, own: true, wanted: true, controls: 'own', maximized: !!(a.o && a.o.act === 'maximize'), fullscreen: false, focused: true }), kr_http: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('ok') }),
         // (Stage R4: the in-app browser.)
         kr_open_webview: () => ({ passed: true, blocked: false, title: 'T' }), kr_browser_fetch: (a) => ({ status: 200, url: a.o.url, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: btoa('in the browser'), via: 'browser' }),
@@ -664,7 +664,7 @@ async function pagePart(ported) {
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 47 - shape.leftOut + 4, 'functions in the page (and the extras scanFolder, cancelDownload, menuText, printFile)'); assert.equal(shape.leftOut, 1, 'left out'); assert.equal(shape.platform, 'linux');
+    assert.equal(shape.fns, 48 - shape.leftOut + 4, 'functions in the page (and the extras scanFolder, cancelDownload, menuText, printFile)'); assert.equal(shape.leftOut, 1, 'left out'); assert.equal(shape.platform, 'linux');
     // (Stage R5: the library's Archives button — there now that the archives are.)
     assert.ok(await p.evaluate(() => { const b = [...document.querySelectorAll('.library-tools button, .library-view button')].find((x) => /Archives/.test(x.getAttribute('aria-label') || x.title || x.textContent)); return !!b && !b.hidden; }), 'the Archives button');
     const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));
@@ -700,7 +700,7 @@ async function pagePart(ported) {
         titleBar: async () => (await kd.titleBar({ act: 'maximize' })).maximized, onTitleBarState: () => { const off = kd.onTitleBarState(() => {}); off(); return typeof off; },
         onOpenFile: async () => { window.__openQueue.file = [{ name: 'x.epub', path: '/x/a.epub' }]; let got = null; kd.onOpenFile((f) => { got = { name: f.name, bytes: [...new Uint8Array(f.data)] }; }); for (let i = 0; i < 50 && !got; i++) await new Promise((r) => setTimeout(r, 10)); return got; },
         onOpenUrl: async () => { window.__openQueue.url = ['kurokawareader://x']; let got = null; kd.onOpenUrl((u) => { got = u; }); for (let i = 0; i < 50 && !got; i++) await new Promise((r) => setTimeout(r, 10)); return got; },
-        download: () => kd.download('https://example.org/b.epub', 'b.epub', 'd1'), deleteDownload: () => kd.deleteDownload('/data/downloads/b.epub'), setDoh: () => kd.setDoh('quad9'), notify: () => kd.notify({ title: 'T', body: 'B', hash: '/' }),
+        download: () => kd.download('https://example.org/b.epub', 'b.epub', 'd1'), deleteDownload: () => kd.deleteDownload('/data/downloads/b.epub'), trashFile: () => kd.trashFile('/x/linked.epub'), setDoh: () => kd.setDoh('quad9'), notify: () => kd.notify({ title: 'T', body: 'B', hash: '/' }),
         onDownloadProgress: () => { let n = 0; kd.onDownloadProgress(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:download-progress').forEach((l) => l[1]({ payload: { id: '', pct: 1 } })); return n; },
         addDownloadListener: () => { let n = 0; const off = kd.addDownloadListener(() => { n++; }); window.__listeners.filter((l) => l[0] === 'kr:download-progress').forEach((l) => l[1]({ payload: { id: 'x', pct: 1 } })); off(); return n; },
         openWebView: () => kd.openWebView({ url: 'https://example.org/', hidden: true }), browserFetch: async () => (await kd.browserFetch({ url: 'https://example.org/p' })).body,
@@ -727,7 +727,7 @@ async function pagePart(ported) {
       archivePickFile: ['kr_archive_pick_file', { o: { multiple: true } }, ['/a.zip']], openDefaultApps: ['kr_default_apps', {}, null],
       http: ['kr_http', { o: { url: 'https://example.org/', method: 'GET', headers: {}, binary: true } }, 'ok'],
       titleBar: ['kr_title_bar', { o: { act: 'maximize' } }, true],
-      download: ['kr_download', { url: 'https://example.org/b.epub', name: 'b.epub', id: 'd1' }, '/data/downloads/b.epub'], deleteDownload: ['kr_delete_download', { p: '/data/downloads/b.epub' }, true],
+      download: ['kr_download', { url: 'https://example.org/b.epub', name: 'b.epub', id: 'd1' }, '/data/downloads/b.epub'], deleteDownload: ['kr_delete_download', { p: '/data/downloads/b.epub' }, true], trashFile: ['kr_trash_file', { p: '/x/linked.epub' }, { ok: true, gone: false }],
       setDoh: ['kr_set_doh', { provider: 'quad9', test: null }, { provider: 'quad9' }], notify: ['kr_notify', { o: { title: 'T', body: 'B', hash: '/' } }, true],
       openWebView: ['kr_open_webview', { o: { url: 'https://example.org/', hidden: true } }, { passed: true, blocked: false, title: 'T' }],
       browserFetch: ['kr_browser_fetch', { o: { url: 'https://example.org/p' } }, 'in the browser'],
