@@ -2,7 +2,8 @@
 // marked, a download button on those whose pictures are fetched on demand (progress, then usable), remove to free
 // the room, and «Add themes» for those in the repository's list. Shared by the Kurokawa apps: the app hands in its
 // words, icons and storage (`GalleryDeps`); styles are in glass.css's companion block, gallery.css.
-import { THEMES, previewOf, modesOf, registerTheme, type ThemeDef, type Mode, type DarkTone, type Preview } from './themes';
+import { THEMES, themeById, previewOf, modesOf, registerTheme, type ThemeDef, type Mode, type DarkTone, type Preview } from './themes';
+import { deferred } from './history';
 import { loadIndex, installPack, removePack, installed, pictureUrls, PackError, forgetIndex, type PackIO, type Installed, type IndexEntry } from './packs';
 
 export interface GalleryDeps {
@@ -13,11 +14,15 @@ export interface GalleryDeps {
   current(): { theme: string; mode: Mode; darkTone: DarkTone };
   choose(id: string): void;
   sheet(title: string): { body: HTMLElement; close(): void };
-  toast(msg: string, kind?: 'info' | 'error'): void;
+  toast(msg: string, kind?: 'info' | 'error', action?: { label: string; run: () => void }, ms?: number): void;
+  /** The reader's own themes (theme/editor.ts): customise any theme, a saved one's menu, a file imported. */
+  mine?: { customise(id: string): void; menu(id: string): void; importTheme(): void };
+  /** Pictures of the reader's own themes (by asset name), for their miniatures. */
+  mineLoader?(id: string): Promise<Record<string, string>>;
 }
 
 type Kid = Node | string | null | undefined | false;
-function el(tag: string, attrs: Record<string, unknown> | null, ...kids: Kid[]): HTMLElement {
+export function el(tag: string, attrs: Record<string, unknown> | null, ...kids: Kid[]): HTMLElement {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs ?? {})) {
     if (v === undefined || v === null || v === false) continue;
@@ -64,13 +69,13 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
     }
     draw();
   }
+  const removing = new Set<string>();
   async function remove(def: ThemeDef): Promise<void> {
-    const id = def.pack?.id ?? def.id; const size = have[id]?.size ?? 0;
-    await removePack(d.io, id); have = await installed(d.io);
-    // (The theme in use loses its pictures: it stays, on its drawn background, until they come back.)
-    d.toast(d.t('themeRemoved', { name: themeName(def, d.t), size: d.formatBytes(size) }));
-    if (d.current().theme === def.id) d.choose(def.id);
-    draw();
+    const id = def.pack?.id ?? def.id; const size = have[id]?.size ?? 0; if (removing.has(id)) return;
+    // (Really removed only when the snackbar's Undo is over; the theme in use then stays, on its drawn background.)
+    removing.add(id); draw();
+    const job = deferred(async () => { removing.delete(id); await removePack(d.io, id); have = await installed(d.io); if (d.current().theme === def.id) d.choose(def.id); draw(); }, 6000);
+    d.toast(d.t('themeRemoved', { name: themeName(def, d.t), size: d.formatBytes(size) }), 'info', { label: d.t('undo'), run: () => { job.undo(); removing.delete(id); draw(); } }, 6000);
   }
   function paintProgress(id: string): void {
     const p = busy.get(id); if (!p) return;
@@ -84,7 +89,7 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
     const modes = modesOf(def);
     const minis = modes.map((m) => { const p = previewOf(def, m, cur.darkTone); return miniature(p, p.picture ? pics[p.picture] : undefined); });
     const name = themeName(def, d.t);
-    const state = prog ? d.t('themeDownloading', { done: d.formatBytes(prog.done), size: d.formatBytes(prog.total || sizeOf(def)) })
+    const state = def.custom ? d.t('editorFrom', { base: themeName(themeById(def.base), d.t) }) : packId && removing.has(packId) ? d.t('themeRemoving') : prog ? d.t('themeDownloading', { done: d.formatBytes(prog.done), size: d.formatBytes(prog.total || sizeOf(def)) })
       : err ? errText(err, def)
       : need ? d.t('themeNeedsDownload', { size: d.formatBytes(sizeOf(def)) })
       : packId ? d.t('themeOnDevice', { size: d.formatBytes(have[packId]?.size ?? sizeOf(def)) })
@@ -100,9 +105,14 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
       el('small', { class: 'tg-state' + (err ? ' err' : ''), id: `tg-s-${def.id}`, role: err ? 'alert' : undefined }, state)));
     const act = prog ? el('span', { class: 'tg-progress', role: 'progressbar', 'aria-label': d.t('themeDownloadingShort') }, el('i', { style: { width: `${prog.total ? Math.min(100, (prog.done / prog.total) * 100) : 8}%` } }))
       : need ? el('button', { type: 'button', class: 'tg-act tg-dl' + (err ? ' retry' : ''), title: err ? d.t('themeRetry') : d.t('themeDownload', { size: d.formatBytes(sizeOf(def)) }), 'aria-label': `${err ? d.t('themeRetry') : d.t('themeDownload', { size: d.formatBytes(sizeOf(def)) })} — ${name}`, onclick: () => void fetchIt(def, false) }, d.icon(err ? 'refresh' : 'download'))
+      : packId && removing.has(packId) ? null
       : packId ? el('button', { type: 'button', class: 'tg-act tg-rm', title: d.t('themeRemove'), 'aria-label': `${d.t('themeRemove')} — ${name}`, onclick: () => void remove(def) }, d.icon('trash'))
       : null;
-    return el('div', { class: 'tg-card' + (on ? ' on' : '') + (need ? ' needs' : '') + (prog ? ' busy' : '') + (err ? ' failed' : ''), 'data-theme': def.id, 'data-pack': packId }, pick, act);
+    // (Customise: a pencil on every theme but Classic; a saved theme's ⋮ holds its own actions.)
+    const edit = !d.mine || def.classic ? null : def.custom
+      ? el('button', { type: 'button', class: 'tg-edit tg-more', title: d.t('myMore'), 'aria-label': `${d.t('myMore')} — ${name}`, onclick: () => d.mine!.menu(def.id) }, d.icon('more'))
+      : el('button', { type: 'button', class: 'tg-edit', title: d.t('editorCustomise'), 'aria-label': `${d.t('editorCustomise')} — ${name}`, onclick: () => d.mine!.customise(def.id) }, d.icon('pencil'));
+    return el('div', { class: 'tg-card' + (on ? ' on' : '') + (need ? ' needs' : '') + (prog ? ' busy' : '') + (err ? ' failed' : '') + (def.custom ? ' mine' : ''), 'data-theme': def.id, 'data-pack': def.custom ? undefined : packId }, pick, edit, act);
   }
   const addTile = () => el('button', { type: 'button', class: 'tg-card tg-add', onclick: () => void addSheet() }, el('span', { class: 'tg-add-ic' }, d.icon('plus')), el('span', { class: 'tg-meta' }, el('b', { class: 'tg-name' }, d.t('themeAdd')), el('small', { class: 'tg-state' }, d.t('themeAddHint'))));
 
@@ -142,7 +152,15 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
     const pics: Record<string, string> = {};
     for (const def of THEMES) if (def.pack && have[def.pack.id]) Object.assign(pics, await pictureUrls(d.io, def.pack.id));
     if (my !== drawing) return;
-    grid.replaceChildren(...THEMES.map((def) => card(def, pics)), addTile());
+    const mineDefs = THEMES.filter((x) => x.custom && x.id !== 'my-preview');
+    for (const def of mineDefs) if (d.mine) { const ex = await d.mineLoader?.(def.id); if (ex) Object.assign(pics, ex); }
+    if (my !== drawing) return;
+    grid.replaceChildren(...THEMES.filter((x) => !x.custom).map((def) => card(def, pics)), addTile(),
+      ...(d.mine ? [el('h4', { class: 'tg-section' }, d.t('myThemes')),
+        ...(mineDefs.length ? mineDefs.map((def) => card(def, pics)) : [el('p', { class: 'tg-mine-empty hint' }, d.t('myThemesEmpty'))]),
+        el('div', { class: 'tg-mine-actions' },
+          el('button', { type: 'button', class: 'btn tonal small', onclick: () => d.mine!.customise(d.current().theme) }, d.icon('pencil'), d.t('editorCustomiseCurrent')),
+          el('button', { type: 'button', class: 'btn text small', onclick: () => d.mine!.importTheme() }, d.icon('download'), d.t('myImport')))] : []));
     grid.dataset.index = indexState;
   }
   void (async () => {

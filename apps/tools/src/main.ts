@@ -4,6 +4,7 @@ import './styles/tools.css';
 import './styles/anime.css';
 import './theme/glass.css';
 import './theme/gallery.css';
+import './theme/editor.css';
 import './styles/glass-tools.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './router';

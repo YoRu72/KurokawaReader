@@ -25,6 +25,8 @@ export interface ModeTokens {
   bg: string;
   /** A picture from the theme's pack laid under `bg`'s layers (its asset name), and a veil over it. */
   picture?: string; veil?: string;
+  /** A blur over the background itself (px; the reader's own picture, softened). */
+  bgBlur?: number;
   /** The brightest and the darkest colour the background shows once blurred (the contrast test reads them). */
   extremes: [string, string];
   /** Tints of the glass layers: bars and the rail, cards, sheets/dialogs/menus; rgba() or {from surface, alpha}. */
@@ -39,6 +41,8 @@ export interface ModeTokens {
 export type Tint = string | { from: keyof Surfaces; a: number };
 export interface ThemeDef {
   id: string;
+  /** A theme the reader made (theme/custom.ts): its base theme's id. */
+  custom?: boolean; base?: string;
   /** The name: an i18n key of the app's, or a proper name shown as is. */
   nameKey?: string; name?: string;
   /** Who made it (shown «by …»); its licence notice (shipped in the app and in its pack). */
@@ -278,10 +282,13 @@ const FROSTED_DARK: ThemeDef = { ...FG_BASE, id: 'frosted-glass-dark', name: 'Fr
 export const THEMES: ThemeDef[] = [FROST, AURORA, EMBER, OBSIDIAN, WASHI, FROSTED, FROSTED_LIGHT, FROSTED_DARK, CLASSIC];
 export const DEFAULT_THEME = 'frost';
 export const themeById = (id: string | undefined): ThemeDef => THEMES.find((x) => x.id === id) ?? FROST;
+/** A theme made by the reader: added (or replaced) among «My themes»; removed again. */
+export function upsertTheme(def: ThemeDef): void { const i = THEMES.findIndex((x) => x.id === def.id); if (i >= 0) THEMES[i] = def; else THEMES.push(def); }
+export function removeTheme(id: string): void { const i = THEMES.findIndex((x) => x.id === id && x.custom); if (i >= 0) THEMES.splice(i, 1); }
 /** A theme that came in a pack (its tokens in the pack's header), added before Classic. */
 export function registerTheme(def: ThemeDef): void {
   if (!def || typeof def.id !== 'string' || THEMES.some((x) => x.id === def.id) || !(def.dark || def.light)) return;
-  THEMES.splice(THEMES.length - 1, 0, { ...def, classic: false });
+  const at = THEMES.findIndex((x) => x.classic); THEMES.splice(at < 0 ? THEMES.length : at, 0, { ...def, classic: false, custom: false });
 }
 
 /* ---------- colour arithmetic (sRGB), for alpha blending and WCAG contrast ---------- */
@@ -387,7 +394,8 @@ export function applyTheme(html: HTMLElement, st: ApplyState): { mode: Mode; gro
   put(html, '--g-blur', `${t.blur}px`); put(html, '--g-sat', String(t.sat)); put(html, '--g-edge', t.edge); put(html, '--g-sheen', t.sheen); put(html, '--g-shadow', t.shadow);
   if (t.scrim) put(html, '--md-scrim', t.scrim);
   const pic = t.picture ? st.pictures?.[t.picture] : undefined;
-  put(html, '--th-bg', [t.veil && pic ? t.veil : '', pic ? `url("${pic}")` : '', t.bg].filter(Boolean).join(', '));
+  put(html, '--th-bg', [t.veil && pic ? t.veil : '', pic ? `url("${pic}")` : '', t.bg].filter(Boolean).join(', ') || 'none');
+  if (pic && t.bgBlur) { put(html, '--th-bg-filter', `blur(${t.bgBlur}px)`); put(html, '--th-bg-bleed', `${Math.round(t.bgBlur * 2)}px`); }
   if (pic) html.dataset.picture = '1'; else delete html.dataset.picture;
   for (const [k, v] of Object.entries(r.def.radius ?? {})) put(html, `--sh-${k}`, `${v}px`);
   return { mode: r.mode, ground: S.ground, glass: true };

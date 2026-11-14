@@ -29,7 +29,7 @@ html[data-glass='off'] { --g-filter: none; --g-filter-card: none; --g-pane: var(
 /* The ground: one fixed layer behind everything (painted once, scrolled over — no background-attachment: fixed). */
 html[data-glass] body { background: transparent; }
 html[data-glass] body::before {
-  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  content: ''; position: fixed; inset: calc(var(--th-bg-bleed, 0px) * -1); z-index: -1; pointer-events: none; filter: var(--th-bg-filter, none);
   background-color: var(--th-ground); background-image: var(--th-bg); background-size: cover; background-position: center; background-repeat: no-repeat;
 }
 

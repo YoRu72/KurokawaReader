@@ -1,6 +1,8 @@
 // The app's settings: kept in localStorage under one key, applied to the document (theme, accent) on change.
 import type { Limits } from './engine/types';
-import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, DEFAULT_THEME, type BlurPref, type Blur } from './theme/themes';
+import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
+import { loadMine, toDef, pictureKey, pictureAsset } from './theme/custom';
+import { myStore } from './myStore';
 import { nativePlatform } from './native';
 
 export type UiMode = 'system' | 'light' | 'dark';
@@ -173,6 +175,8 @@ export const BUILT_IN = ['player'];
 const withBuiltIn = (s: Settings): Settings => (BUILT_IN.every((b) => s.addons.includes(b)) ? s : { ...s, addons: [...s.addons, ...BUILT_IN.filter((b) => !s.addons.includes(b))] });
 let current: Settings = load();
 migrateTheme();
+// (The reader's own themes, among the others from the start.)
+for (const m of loadMine(myStore)) upsertTheme(toDef(m));
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
 /** Once: the move to themes (kt.themeMigrated). A fresh install and untouched settings get the new default; who had
@@ -207,17 +211,27 @@ let lowBattery = false;
 let pictures: Record<string, string> = {}; let picturesFor = '';
 /** The pictures of the theme in use, read from where its pack was kept (then the look applied again). */
 export function reloadThemePictures(): void { picturesFor = ''; pictures = {}; applyChrome(); }
+/** The theme being edited, shown live in place of the chosen one (null: the chosen one again). */
+let previewing: { def: ThemeDef; useThemeColours: boolean; pictures: Record<string, string> } | null = null;
+export function setThemePreview(p: typeof previewing): void { previewing = p; if (p) upsertTheme(p.def); else { removeTheme('my-preview'); picturesFor = ''; } applyChrome(); }
+/** Pictures a theme draws: its pack's, and the reader's own for a theme of theirs. */
+async function picturesOf(def: ThemeDef): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (def.pack?.id) Object.assign(out, await import('./themeIo').then((m) => m.themePictures(def.pack!.id)).catch(() => ({})));
+  if (def.custom && def.id !== 'my-preview') for (const m of ['dark', 'light'] as Mode[]) { if ((m === 'dark' ? def.dark : def.light)?.picture !== pictureAsset(def.id, m)) continue; const b = await myStore.io.getFile(pictureKey(def.id, m)).catch(() => undefined); if (b) out[pictureAsset(def.id, m)] = URL.createObjectURL(b); }
+  return out;
+}
 const isPcNow = () => typeof document !== 'undefined' && document.documentElement.classList.contains('pc');
 export function applyChrome(s: Settings = current): void {
   const wantLight = s.uiMode === 'light' ? true : s.uiMode === 'dark' ? false : !!mql?.matches;
   const html = document.documentElement;
-  const def = themeById(s.theme);
+  const def = previewing ? previewing.def : themeById(s.theme);
   const plat = nativePlatform(); const env = readEnv(plat === 'android' ? 'android' : plat === 'desktop' ? 'desktop' : 'web', lowBattery && s.glassBattery !== false && !isPcNow());
   glassNow = resolveBlur(s.glassBlur ?? 'auto', env);
-  const useThemeColours = s.accent === 'theme' && !def.classic && !!(def.dark?.roles || def.light?.roles);
-  const packId = def.pack?.id ?? '';
-  if (packId !== picturesFor) { picturesFor = packId; pictures = {}; if (packId) void import('./themeIo').then((m) => m.themePictures(packId)).then((p) => { if (picturesFor === packId && Object.keys(p).length) { pictures = p; applyChrome(); } }).catch(() => undefined); }
-  const got = applyTheme(html, { theme: def.id, mode: wantLight ? 'light' : 'dark', darkTone: s.darkTone, useThemeColours, keepColours: !!s.themeKeepColours, blur: glassNow.blur as Blur, pictures });
+  const useThemeColours = (previewing ? previewing.useThemeColours : s.accent === 'theme') && !def.classic && !!(def.dark?.roles || def.light?.roles);
+  const packId = `${def.id}|${def.pack?.id ?? ''}`;
+  if (packId !== picturesFor) { picturesFor = packId; pictures = {}; void picturesOf(def).then((p) => { if (picturesFor === packId && Object.keys(p).length) { pictures = p; applyChrome(); } }); }
+  const got = applyTheme(html, { theme: def.id, mode: wantLight ? 'light' : 'dark', darkTone: s.darkTone, useThemeColours, keepColours: !!s.themeKeepColours, blur: glassNow.blur as Blur, pictures: previewing ? { ...pictures, ...previewing.pictures } : pictures });
   const light = got.mode === 'light';
   html.dataset.ui = light ? 'light' : 'dark';
   (html.style as CSSStyleDeclaration & { zoom?: string }).zoom = s.uiScale && s.uiScale !== 100 ? String(s.uiScale / 100) : '';
