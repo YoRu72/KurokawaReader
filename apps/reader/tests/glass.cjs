@@ -55,10 +55,10 @@ async function makePdf(file) {
 // (The shared module and the Reader's styles, as the app has them: bundled here from their sources by esbuild.)
 function loadThemes() {
   const esbuild = require(path.join(ROOT, 'node_modules/esbuild'));
-  const out = esbuild.buildSync({ stdin: { contents: "import * as T from './src/theme/themes'; import * as P from './src/theme/packs'; import * as D from './src/readertheme/defs'; module.exports = { T, P, D };", resolveDir: ROOT, loader: 'ts' }, bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent' });
+  const out = esbuild.buildSync({ stdin: { contents: "import * as T from './src/theme/themes'; import * as P from './src/theme/packs'; import * as D from './src/readertheme/defs'; import * as G from './src/readertheme/pagetheme'; module.exports = { T, P, D, G };", resolveDir: ROOT, loader: 'ts' }, bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent' });
   const m = { exports: {} }; new Function('module', 'exports', 'require', out.outputFiles[0].text)(m, m.exports, require); return m.exports;
 }
-const { T, P, D } = loadThemes();
+const { T, P, D, G } = loadThemes();
 // (The Reader's list: its own, the shared Obsidian, the ported trio — src/readertheme/index.ts orders the shared list so.)
 for (const d of [D.PAPER_INK, D.MIDNIGHT_STACKS, D.READING_ROOM]) T.registerTheme(d);
 const IDS = D.READER_ORDER.filter((id) => id !== 'classic');
@@ -89,6 +89,40 @@ function contrast() {
   }
   void accents;
 }
+/** HSL of an rgb(a) triple: hue in degrees, saturation and lightness 0–1. */
+function hsl([r, g, b]) {
+  r /= 255; g /= 255; b /= 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return { h: 0, s: 0, l };
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = mx === r ? 60 * (((g - b) / d) % 6) : mx === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  return { h: (h + 360) % 360, s, l };
+}
+// Easy on the eyes (the owner: «comfortable to the eyes, not yellow»): the grounds, panes, cards, sheets and the
+// background's colour fields of the Reader's own styles near-neutral (HSL saturation at most 10 % dark, 12 % light; a
+// colour under 6 % lightness is black to the eye and not counted); their glass never boosts saturation; and no accent,
+// selected state, edge or page of any style — the ported trio's too — yellow, amber or gold (hue 30°–70° at more
+// than 20 % saturation). The ported trio keep their author's grounds (faithful to the original, under its pictures).
+function comfort() {
+  const OWN = [D.PAPER_INK, D.MIDNIGHT_STACKS, D.READING_ROOM].map((d) => d.id);
+  const yellow = (c) => { const x = hsl(c); return x.s > 0.2 && x.l > 0.06 && x.l < 0.97 && x.h >= 30 && x.h <= 70; };
+  const colours = (str) => [...String(str).matchAll(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b|rgba?\([^)]*\)/gi)].map((m) => T.parseColor(m[0]));
+  for (const def of DEFS) for (const mode of T.modesOf(def)) {
+    const bad = []; const tok = def[mode]; const r = T.resolve({ theme: def.id, mode, darkTone: 'default', useThemeColours: true });
+    if (!def.by) {
+      const lim = mode === 'dark' ? 0.10 : 0.12;
+      const fields = [['ground', T.parseColor(r.surfaces.ground)], ['pane', r.pane], ['card', r.card], ['sheet', r.sheet], ...colours(tok.bg).map((c, i) => [`background field ${i + 1}`, c]), ...tok.extremes.map((c, i) => [`extreme ${i + 1}`, T.parseColor(c)])];
+      for (const [k, c] of fields) { const x = hsl(c); if (x.l >= 0.06 && x.s > lim + 1e-9) bad.push(`${k} ${Math.round(x.s * 100)} % saturated`); }
+      // (The Reader's own ask for no boost; the shared and ported ones are held to 1 where they are applied, index.ts.)
+      if (OWN.includes(def.id) && tok.sat > 1) bad.push(`glass saturation ${tok.sat}`);
+    }
+    const accents = [...(r.roles ? Object.entries(r.roles).map(([k, v]) => [k, T.parseColor(v)]) : []), ...colours(tok.edge).map((c) => ['edge', c]), ...colours(tok.sheen).map((c) => ['sheen', c])];
+    for (const [k, c] of accents) if (yellow(c)) bad.push(`${k} is yellow (${Math.round(hsl(c).h)}°)`);
+    const pg = G.pageThemeOf(def, mode);
+    for (const k of ['bg', 'fg', 'link', 'sel']) if (pg[k] && yellow(T.parseColor(pg[k]))) bad.push(`its book page ${k} is yellow`);
+    if (!def.by) { const x = hsl(T.parseColor(pg.bg)); if (x.l >= 0.06 && x.s > (mode === 'dark' ? 0.10 : 0.12)) bad.push(`its book page ${Math.round(x.s * 100)} % saturated`); }
+    ok(`easy on the eyes: ${def.id} (${mode}) — near-neutral grounds and glass, nothing yellow, its book page too`, !bad.length, bad);
+  }
+}
 /** A made-up picture: a PNG of w×h pixels in one colour (no real image). */
 function png(w, h, rgb) {
   const zlib = require('zlib'); const crc = (b) => { let c = ~0; for (const x of b) { c ^= x; for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1; } return ~c >>> 0; };
@@ -114,6 +148,7 @@ async function makePacks() {
 /* ---------------------------------------------------------------- the browser parts */
 (async () => {
   contrast();
+  comfort();
   const entry = await makePacks();
   const epub = path.join(TMP, 'glass.epub'); await makeEpub(epub); const pdf = path.join(TMP, 'glass.pdf'); await makePdf(pdf);
   const server = serve(DIST); await new Promise((r) => server.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${server.address().port}/`;
@@ -121,7 +156,7 @@ async function makePacks() {
   if (OLD) { oldServer = serve(OLD); await new Promise((r) => oldServer.listen(0, '127.0.0.1', r)); oldBase = `http://127.0.0.1:${oldServer.address().port}/`; }
   const br = await chromium.launch(); const errors = [];
   const open = new Set();
-  const sect = async (name, fn) => { try { await fn(); } catch (e) { ok(`${name}: the part ran to its end`, false, String(e.message ?? e).split('\n')[0]); } for (const c of open) await c.close().catch(() => undefined); open.clear(); };
+  const sect = async (name, fn) => { try { await fn(); } catch (e) { ok(`${name}: the part ran to its end`, false, String(e.message ?? e).split('\n')[0]); } for (const c of open) { c.__closing = true; await c.close().catch(() => undefined); } open.clear(); };
   /** A fresh page: a phone (360×800, touch) or a computer (1280×800, mouse); `visual`: settings stored before it opens. */
   const page = async ({ at = base, lang = 'en', pc = false, visual = null, memory = 8, reducedMotion = 'no-preference', extra = null } = {}) => {
     const ctx = await br.newContext({ viewport: pc ? { width: 1280, height: 800 } : { width: 360, height: 800 }, deviceScaleFactor: 1, isMobile: !pc, hasTouch: !pc, serviceWorkers: 'block', locale: lang, reducedMotion });
@@ -133,7 +168,7 @@ async function makePacks() {
       localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.themeIndex', idx);
       if (v) localStorage.setItem('kr.visual', JSON.stringify(v));
     }, [lang, visual, memory, `${at}packs/themes.json`, extra]);
-    const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
+    const p = await ctx.newPage(); p.on('pageerror', (e) => { if (!ctx.__closing) errors.push(e.message); });
     p.__js = []; p.on('request', (r) => { if (/\.js(\?|$)/.test(r.url())) p.__js.push(r.url()); });
     await p.goto(at); await p.waitForSelector('.library-view');
     return p;

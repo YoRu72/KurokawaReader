@@ -1,9 +1,10 @@
 // The Reader's own interface styles, in the shared theme format (src/theme/themes.ts — the module both Kurokawa apps
-// carry unchanged): a library and reading room in glass. Paper & Ink (paper-white frost with ink-blue, and its ink-wash
-// dark), Midnight Stacks (a library after hours: navy glass, oxblood and brass in the dark, brass hairlines), Reading
-// Room (sea-green glass over green baize and slate, dark and light; cool and quiet). The shared Obsidian (OLED black, thin luminous edges) and the
-// ported Frosted Glass trio come from the shared module. Each dark one at most as bright as Classic's: depth from
-// colour at low luminance, never grey slabs.
+// carry unchanged): a library and reading room in glass, kept easy on the eyes. Near-neutral grounds and tints (a whisper
+// of hue, depth from lightness), muted cool accents, nothing yellow, nothing that glows (tests/glass.cjs checks it).
+// Paper & Ink (soft paper-grey frost with slate ink, and its ink-wash dark), Midnight Stacks (a library after hours:
+// dark blue-grey glass, steel hairlines), Reading Room (soft slate, dark and light, a grey-teal accent). The shared
+// Obsidian (OLED black, thin edges) and the ported Frosted Glass trio come from the shared module. Each dark one at most
+// as bright as Classic's.
 //
 // Their bars and sheets carry .8 of their tint: they float over any page or cover — white or black — and their
 // text stays at least 4.5:1 there (tests/glass.cjs). Their cards (.4–.5) sit over the still background only.
@@ -15,70 +16,71 @@ const accentBlob = (at: string, size: string, pct: number) => `radial-gradient($
 export const PAPER_INK: ThemeDef = {
   id: 'paper-ink', nameKey: 'styleNamePaperInk', radius: RADII_PAPER,
   light: {
-    surfaces: { ground: '#efe9de', lowest: '#fffdf8', low: '#faf7f0', mid: '#f4f0e7', high: '#ece6da', highest: '#e4ddd0' },
-    text: { on: '#1a1c23', variant: '#434754', dim: '#434754', outline: '#5d6270', outlineVariant: 'rgb(26 28 35 / .14)' },
-    roles: { primary: '#2f4a7a', onPrimary: '#ffffff', primaryContainer: '#d6e0f2', onPrimaryContainer: '#0d1b33', secondaryContainer: 'rgb(47 74 122 / .14)', onSecondaryContainer: '#14213d', tertiaryContainer: '#d6e0f2', onTertiaryContainer: '#0d1b33' },
-    // (Paper at the top left, a cool ink wash at the foot, a sepia stain at the side, the accent faint at the top.)
-    bg: 'radial-gradient(70% 60% at 8% 0%, #fbf6ea, transparent 70%), radial-gradient(75% 60% at 100% 100%, rgb(201 211 223 / .85), transparent 75%), radial-gradient(55% 45% at 0% 62%, rgb(228 207 174 / .55), transparent 70%), '
-      + accentBlob('92% 6%', '55% 45%', 14),
-    extremes: ['#fbf6ea', '#c9d1db'],
-    pane: 'rgb(250 247 240 / .8)', card: 'rgb(255 253 248 / .46)', sheet: 'rgb(250 247 240 / .84)', fill: .55,
-    blur: 22, sat: 1.35, edge: 'rgb(255 255 255 / .75)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .9)',
-    shadow: '0 1px 2px rgb(40 44 60 / .06), 0 10px 28px rgb(40 44 60 / .1)', scrim: 'rgb(30 32 40 / .28)',
+    surfaces: { ground: '#ebebe9', lowest: '#fbfbfa', low: '#f5f5f3', mid: '#efefed', high: '#e6e6e3', highest: '#dddddb' },
+    text: { on: '#1f2126', variant: '#474a52', dim: '#474a52', outline: '#61646c', outlineVariant: 'rgb(31 33 38 / .13)' },
+    roles: { primary: '#4a5a75', onPrimary: '#ffffff', primaryContainer: '#dfe3ea', onPrimaryContainer: '#1a2333', secondaryContainer: 'rgb(74 90 117 / .12)', onSecondaryContainer: '#1d2433', tertiaryContainer: '#dfe3ea', onTertiaryContainer: '#1a2333' },
+    // (Plain paper at the top left, a cool grey wash at the foot; the ink a breath at the top.)
+    bg: 'radial-gradient(70% 60% at 8% 0%, #f7f7f5, transparent 70%), radial-gradient(75% 60% at 100% 100%, rgb(214 217 222 / .7), transparent 75%), radial-gradient(55% 45% at 0% 62%, rgb(226 226 223 / .5), transparent 70%), '
+      + accentBlob('92% 6%', '55% 45%', 5),
+    extremes: ['#f7f7f5', '#d6d9de'],
+    pane: 'rgb(245 245 243 / .8)', card: 'rgb(251 251 250 / .46)', sheet: 'rgb(245 245 243 / .84)', fill: .55,
+    blur: 22, sat: 1, edge: 'rgb(255 255 255 / .7)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .85)',
+    shadow: '0 1px 2px rgb(30 32 36 / .06), 0 10px 28px rgb(30 32 36 / .09)', scrim: 'rgb(28 29 32 / .28)',
   },
   dark: {
-    surfaces: { ground: '#0f1217', lowest: '#0b0d11', low: '#161a21', mid: '#1b2029', high: '#242a35', highest: '#2d3441' },
-    text: { on: '#ede9e0', variant: '#c4c0b6', dim: '#c4c0b6', outline: '#a29e95', outlineVariant: 'rgb(237 233 224 / .14)' },
-    roles: { primary: '#a9c1ea', onPrimary: '#102445', primaryContainer: '#2a3d60', onPrimaryContainer: '#dce6f8', secondaryContainer: 'rgb(169 193 234 / .16)', onSecondaryContainer: '#e3eaf7', tertiaryContainer: '#2a3d60', onTertiaryContainer: '#dce6f8' },
-    bg: 'radial-gradient(70% 60% at 0% 0%, #1f2838, transparent 70%), radial-gradient(60% 50% at 100% 90%, rgb(74 58 38 / .45), transparent 60%), radial-gradient(50% 45% at 60% 100%, #0a0c10, transparent 50%), '
-      + accentBlob('90% 8%', '50% 45%', 16),
-    extremes: ['#2a3346', '#0a0c10'],
-    pane: 'rgb(22 26 34 / .8)', card: 'rgb(40 46 60 / .4)', sheet: 'rgb(22 26 34 / .84)', fill: .5,
-    blur: 24, sat: 1.3, edge: 'rgb(237 233 224 / .14)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .1)',
-    shadow: '0 1px 2px rgb(0 0 0 / .3), 0 12px 32px rgb(0 0 0 / .38)', scrim: 'rgb(0 0 0 / .5)',
+    surfaces: { ground: '#17181b', lowest: '#111214', low: '#1c1d20', mid: '#222326', high: '#2a2b2e', highest: '#333437' },
+    text: { on: '#e8e8e6', variant: '#bfbfbc', dim: '#bfbfbc', outline: '#9b9b98', outlineVariant: 'rgb(232 232 230 / .13)' },
+    roles: { primary: '#a6b2c6', onPrimary: '#1c2433', primaryContainer: '#2f3644', onPrimaryContainer: '#dfe4ee', secondaryContainer: 'rgb(166 178 198 / .14)', onSecondaryContainer: '#e2e6ee', tertiaryContainer: '#2f3644', onTertiaryContainer: '#dfe4ee' },
+    // (Ink wash: a lighter grey at the top left, near-black at the foot.)
+    bg: 'radial-gradient(70% 60% at 0% 0%, #25272b, transparent 70%), radial-gradient(60% 50% at 100% 90%, rgb(36 38 42 / .5), transparent 60%), radial-gradient(50% 45% at 60% 100%, #0e0f11, transparent 50%), '
+      + accentBlob('90% 8%', '50% 45%', 5),
+    extremes: ['#2a2c30', '#0e0f11'],
+    pane: 'rgb(27 28 31 / .8)', card: 'rgb(44 45 49 / .4)', sheet: 'rgb(27 28 31 / .84)', fill: .5,
+    blur: 24, sat: 1, edge: 'rgb(232 232 230 / .12)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .07)',
+    shadow: '0 1px 2px rgb(0 0 0 / .3), 0 12px 32px rgb(0 0 0 / .36)', scrim: 'rgb(0 0 0 / .5)',
   },
 };
 
 export const MIDNIGHT_STACKS: ThemeDef = {
   id: 'midnight-stacks', nameKey: 'styleNameMidnight', force: 'dark', radius: { xs: 6, sm: 10, md: 14, lg: 20, xl: 28, xxl: 34 },
   dark: {
-    surfaces: { ground: '#090d1b', lowest: '#070a16', low: '#10152a', mid: '#151b33', high: '#1d2440', highest: '#262e4d' },
-    text: { on: '#ece9f4', variant: '#c3bfd3', dim: '#c3bfd3', outline: '#a19db4', outlineVariant: 'rgb(214 196 150 / .18)' },
-    roles: { primary: '#e2c77f', onPrimary: '#2b2208', primaryContainer: '#4a3b17', onPrimaryContainer: '#f7e6b9', secondaryContainer: 'rgb(226 199 127 / .16)', onSecondaryContainer: '#f3e8cb', tertiaryContainer: '#4a3b17', onTertiaryContainer: '#f7e6b9' },
-    // (Navy overhead, oxblood leather at the foot, brass at the side.)
-    bg: 'radial-gradient(75% 60% at 20% 0%, #18224a, transparent 75%), radial-gradient(62% 50% at 0% 100%, rgb(74 32 32 / .55), transparent 62%), radial-gradient(50% 40% at 100% 78%, rgb(110 84 36 / .3), transparent 50%), '
-      + accentBlob('95% 5%', '45% 40%', 12),
-    extremes: ['#1f2a55', '#090d1b'],
-    pane: 'rgb(14 19 38 / .8)', card: 'rgb(26 33 62 / .44)', sheet: 'rgb(14 19 38 / .84)', fill: .5,
-    blur: 26, sat: 1.4, edge: 'rgb(226 204 152 / .22)', sheen: 'inset 0 1px 0 rgb(255 232 180 / .18)',
-    shadow: '0 1px 2px rgb(0 0 0 / .35), 0 14px 36px rgb(2 4 14 / .5)', scrim: 'rgb(2 4 12 / .55)',
+    surfaces: { ground: '#131417', lowest: '#0f1012', low: '#18191d', mid: '#1e1f24', high: '#26282d', highest: '#2f3137' },
+    text: { on: '#e6e7ea', variant: '#b9bcc3', dim: '#b9bcc3', outline: '#969aa3', outlineVariant: 'rgb(200 208 222 / .14)' },
+    roles: { primary: '#9fadc4', onPrimary: '#1a2232', primaryContainer: '#2c3446', onPrimaryContainer: '#dde3ee', secondaryContainer: 'rgb(159 173 196 / .14)', onSecondaryContainer: '#e0e5ee', tertiaryContainer: '#2c3446', onTertiaryContainer: '#dde3ee' },
+    // (After hours: blue-grey overhead, the stacks falling to near-black at the foot, steel at the side.)
+    bg: 'radial-gradient(75% 60% at 20% 0%, #202226, transparent 75%), radial-gradient(62% 50% at 0% 100%, rgb(8 9 11 / .8), transparent 62%), radial-gradient(50% 40% at 100% 78%, rgb(54 57 64 / .22), transparent 50%), '
+      + accentBlob('95% 5%', '45% 40%', 6),
+    extremes: ['#232529', '#0f1012'],
+    pane: 'rgb(22 23 26 / .8)', card: 'rgb(38 40 46 / .44)', sheet: 'rgb(22 23 26 / .84)', fill: .5,
+    blur: 26, sat: 1, edge: 'rgb(200 210 225 / .13)', sheen: 'inset 0 1px 0 rgb(220 228 240 / .08)',
+    shadow: '0 1px 2px rgb(0 0 0 / .35), 0 14px 36px rgb(0 0 0 / .45)', scrim: 'rgb(4 5 7 / .55)',
   },
 };
 
 export const READING_ROOM: ThemeDef = {
   id: 'reading-room', nameKey: 'styleNameReadingRoom', radius: { xs: 8, sm: 12, md: 16, lg: 20, xl: 28, xxl: 34 },
   dark: {
-    surfaces: { ground: '#0a1513', lowest: '#070f0e', low: '#0f1e1b', mid: '#132622', high: '#1a302c', highest: '#223b36' },
-    text: { on: '#e4eeeb', variant: '#b9cdc8', dim: '#b9cdc8', outline: '#94aaa4', outlineVariant: 'rgb(160 220 205 / .16)' },
-    roles: { primary: '#8fd1c1', onPrimary: '#00382f', primaryContainer: '#1f4a42', onPrimaryContainer: '#c8efe5', secondaryContainer: 'rgb(143 209 193 / .16)', onSecondaryContainer: '#d6efe8', tertiaryContainer: '#1f4a42', onTertiaryContainer: '#c8efe5' },
-    // (Green baize under a reading-room ceiling: sea-green at the top left, slate blue at the foot, verdigris at the side.)
-    bg: 'radial-gradient(72% 58% at 6% 0%, #14322d, transparent 72%), radial-gradient(64% 52% at 100% 100%, rgb(30 42 60 / .9), transparent 66%), radial-gradient(40% 36% at 100% 30%, rgb(47 93 85 / .3), transparent 70%), '
-      + accentBlob('8% 92%', '45% 40%', 10),
-    extremes: ['#1b3d37', '#0a1513'],
-    pane: 'rgb(12 26 23 / .8)', card: 'rgb(26 50 45 / .42)', sheet: 'rgb(12 26 23 / .84)', fill: .5,
-    blur: 24, sat: 1.3, edge: 'rgb(160 220 205 / .16)', sheen: 'inset 0 1px 0 rgb(200 255 240 / .12)',
-    shadow: '0 1px 2px rgb(0 0 0 / .3), 0 14px 34px rgb(0 8 6 / .45)', scrim: 'rgb(0 6 5 / .55)',
+    surfaces: { ground: '#1a1c1d', lowest: '#141516', low: '#1f2122', mid: '#252728', high: '#2d3031', highest: '#36393a' },
+    text: { on: '#e5e8e8', variant: '#bcc1c1', dim: '#bcc1c1', outline: '#989e9e', outlineVariant: 'rgb(210 220 220 / .13)' },
+    roles: { primary: '#9db3b0', onPrimary: '#1a2a28', primaryContainer: '#2e3a39', onPrimaryContainer: '#d9e5e3', secondaryContainer: 'rgb(157 179 176 / .14)', onSecondaryContainer: '#dde6e4', tertiaryContainer: '#2e3a39', onTertiaryContainer: '#d9e5e3' },
+    // (Soft slate: a lighter grey at the top left, a deeper one at the foot, the faintest cool at the side.)
+    bg: 'radial-gradient(72% 58% at 6% 0%, #27292a, transparent 72%), radial-gradient(64% 52% at 100% 100%, rgb(14 15 16 / .85), transparent 66%), radial-gradient(40% 36% at 100% 30%, rgb(60 68 70 / .22), transparent 70%), '
+      + accentBlob('8% 92%', '45% 40%', 5),
+    extremes: ['#2a2d2e', '#111213'],
+    pane: 'rgb(30 32 33 / .8)', card: 'rgb(48 51 52 / .42)', sheet: 'rgb(30 32 33 / .84)', fill: .5,
+    blur: 24, sat: 1, edge: 'rgb(210 220 220 / .12)', sheen: 'inset 0 1px 0 rgb(235 245 245 / .07)',
+    shadow: '0 1px 2px rgb(0 0 0 / .3), 0 14px 34px rgb(0 0 0 / .4)', scrim: 'rgb(6 7 7 / .55)',
   },
   light: {
-    surfaces: { ground: '#eaf1ef', lowest: '#ffffff', low: '#f5f9f8', mid: '#eef4f2', high: '#e3ece9', highest: '#d9e4e1' },
-    text: { on: '#10201d', variant: '#334a45', dim: '#334a45', outline: '#506662', outlineVariant: 'rgb(16 32 29 / .14)' },
-    roles: { primary: '#1f6a5c', onPrimary: '#ffffff', primaryContainer: '#cdeee5', onPrimaryContainer: '#002019', secondaryContainer: 'rgb(31 106 92 / .13)', onSecondaryContainer: '#0c2a24', tertiaryContainer: '#cdeee5', onTertiaryContainer: '#002019' },
-    bg: 'radial-gradient(70% 56% at 4% 0%, #f8fcfb, transparent 70%), radial-gradient(70% 56% at 0% 100%, rgb(198 224 216 / .85), transparent 70%), radial-gradient(60% 50% at 100% 70%, rgb(212 222 234 / .8), transparent 66%), '
-      + accentBlob('96% 4%', '45% 40%', 10),
-    extremes: ['#f8fcfb', '#c4d9d3'],
-    pane: 'rgb(244 249 247 / .8)', card: 'rgb(255 255 255 / .46)', sheet: 'rgb(244 249 247 / .84)', fill: .55,
-    blur: 22, sat: 1.3, edge: 'rgb(255 255 255 / .72)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .9)',
-    shadow: '0 1px 2px rgb(20 50 44 / .06), 0 10px 28px rgb(20 50 44 / .1)', scrim: 'rgb(10 26 22 / .3)',
+    surfaces: { ground: '#e7e9ea', lowest: '#fafbfb', low: '#f2f3f4', mid: '#ebedee', high: '#e1e4e5', highest: '#d7dadb' },
+    text: { on: '#1c2122', variant: '#444b4c', dim: '#444b4c', outline: '#5e6566', outlineVariant: 'rgb(28 33 34 / .13)' },
+    roles: { primary: '#4f6966', onPrimary: '#ffffff', primaryContainer: '#d8e1e0', onPrimaryContainer: '#142321', secondaryContainer: 'rgb(79 105 102 / .12)', onSecondaryContainer: '#182624', tertiaryContainer: '#d8e1e0', onTertiaryContainer: '#142321' },
+    bg: 'radial-gradient(70% 56% at 4% 0%, #f6f7f7, transparent 70%), radial-gradient(70% 56% at 0% 100%, rgb(208 213 215 / .7), transparent 70%), radial-gradient(60% 50% at 100% 70%, rgb(220 224 226 / .6), transparent 66%), '
+      + accentBlob('96% 4%', '45% 40%', 5),
+    extremes: ['#f6f7f7', '#cfd4d6'],
+    pane: 'rgb(242 243 244 / .8)', card: 'rgb(255 255 255 / .46)', sheet: 'rgb(242 243 244 / .84)', fill: .55,
+    blur: 22, sat: 1, edge: 'rgb(255 255 255 / .7)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .85)',
+    shadow: '0 1px 2px rgb(24 30 32 / .06), 0 10px 28px rgb(24 30 32 / .09)', scrim: 'rgb(18 22 23 / .3)',
   },
 };
 

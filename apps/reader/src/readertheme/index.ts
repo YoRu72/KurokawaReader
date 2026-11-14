@@ -94,6 +94,10 @@ export function applyStyle(s: VisualSettings, light: boolean): void {
   const blur = blurNow(s);
   const got = applyTheme(html, { theme: def.id, mode: light ? 'light' : 'dark', darkTone: tone, useThemeColours, blur: blur.blur as Blur, pictures: previewing ? { ...pictures, ...previewing.pictures } : pictures });
   applied = true;
+  // (Glass never boosts what is under it in the Reader: the shared and ported styles ask for 1.25–1.7, which makes
+  // covers and pictures glow through the bars; easy on the eyes, the saturation stays at most 1.)
+  const sat = parseFloat(html.style.getPropertyValue('--g-sat'));
+  if (sat > 1) html.style.setProperty('--g-sat', '1');
   // (Without the style's colours, an accent of the reader's own — set inline by applyChrome — comes back.)
   if (!useThemeColours) for (const [k, v] of kept) if (v) html.style.setProperty(k, v);
   html.dataset.ui = got.mode;
