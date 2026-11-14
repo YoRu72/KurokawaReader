@@ -50,6 +50,10 @@ mod vtjobs;
 mod vtools;
 mod vtproc;
 mod vtselftest;
+// (Screen translator — the last 8 channels: screentr.rs its windows, keys, tray, OCR helpers; screencap.rs the
+// capture by each system's own facility; the rules in kt-core's screenlogic.rs.)
+mod screencap;
+mod screentr;
 
 use std::path::PathBuf;
 
@@ -211,7 +215,17 @@ fn main() {
             vtffmpeg::kt_pack_install,
             vtffmpeg::kt_pack_cancel,
             vtffmpeg::kt_pack_remove,
-            vtselftest::kt_selftest_vt
+            vtselftest::kt_selftest_vt,
+            // (Screen translator.)
+            screentr::kt_screen_config,
+            screentr::kt_screen_status,
+            screentr::kt_screen_action,
+            screentr::kt_screen_job,
+            screentr::kt_screen_region,
+            screentr::kt_screen_close,
+            screentr::kt_screen_ocr_langs,
+            screentr::kt_screen_caption,
+            screentr::kt_selftest_screen
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -219,6 +233,8 @@ fn main() {
             desktop::on_event(window, event);
             sitewin::on_event(window, event);
             browser::on_event(window, event);
+            // (Screen translator: close to the tray while it is on; its windows' focus and ends.)
+            screentr::on_event(window, event);
         })
         .setup(|app| {
             // (Before any request: the app's own requests named as Tools' (shared crate's net.rs), the cookies sites
@@ -311,6 +327,9 @@ fn main() {
             appicon::at_start(&handle);
             // (Stage P6: magnets, links and .torrent files this launch was given, kept for the page.)
             desktop::at_start(&handle);
+            // (Screen translator: its settings read, its keys / tray / start-with-the-computer applied; a --hidden
+            // start left in the tray when chosen.)
+            screentr::init(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -331,6 +350,8 @@ fn main() {
                 }
                 // (Stage P5: running video jobs ended with their trees.)
                 vtjobs::stop_all();
+                // (Screen translator: «auto» and its OCR helpers ended.)
+                screentr::at_exit();
                 update::at_exit(app);
             }
         });

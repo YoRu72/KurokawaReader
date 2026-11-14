@@ -298,50 +298,80 @@ out refused, a range byte for byte, 416, an upload refused, stopped; none / wron
 preflight 204, 1.1 MB 413, off; a stand-in scanner — the system's own shell told to exit 0 / 3 — clean, infected,
 skipped by kind, no scanner). Any remaining update-install channel: none — `kt:installUpdate` was done with the updater.
 
-### The screen translator — the plan (its 8 channels left untouched)
+### The screen translator (`screentr.rs`, `screencap.rs`; rules in kt-core's `screenlogic.rs`) — the last 8 channels
 
-What Electron does (`desktop/screentr.cjs`, 234 lines; the page: `src/views/overlay.ts`, `src/views/screen.ts`,
-`src/screen/{config,translate,lettering,inpaint}.ts`):
-- **Settings / status**: `kt:screenConfig` (the page's config saved to `screen.json`; keys, tray re-applied),
-  `kt:screenStatus`, `kt:screenOcrLangs` (Windows OCR's installed languages / Tesseract's `--list-langs` / Vision's).
-- **Triggers**: global shortcuts per action (`region`, `full`, `repeat`, `auto`, `clipboard`; `DEFAULT_KEYS`), its own
-  tray with a menu of the same actions, and **close to tray** while it is on (`keepInTray()` — main.cjs hides the
-  main window instead of closing it then).
-- **Capture**: the display under the mouse at full resolution (`desktopCapturer` thumbnail), its scale.
-- **Overlay**: a frameless always-on-top window over that display (`#/overlay`), the frozen picture as its background;
-  the page draws the region (`kt:screenJob` gives it the picture, `kt:screenRegion` the rectangle back); closed on blur.
-- **Reading** (`kt:screenRegion`): the crop's text blocks — Windows OCR through a PowerShell script (WinRT
-  `Windows.Media.Ocr`), a Mac's Vision through `osascript -l JavaScript`, else Tesseract's TSV — or the crop itself as
-  a data: address for an AI model.
-- **Auto / tracking**: the last region re-captured every `interval` s, read, compared loosely, and a transparent
-  click-through caption window under (or over) it gets `kt:screenCaption {text}`; `kt:screenCaption` (size) lets the
-  page resize it; `autoStop` minutes.
-- **Clipboard popup**: the clipboard's text translated in a small window by the mouse; `kt:screenClose`.
-- **Page code already** (nothing to port): translation (`translate.ts`), the look-ahead / glossary / kind of block and
-  its font (`lettering.ts`), the words taken off the picture (`inpaint.ts`), the overlay's drawing and region choice,
-  the caption's text. 
+Electron's `desktop/screentr.cjs` (the page: `src/views/screen.ts`, `src/views/overlay.ts`, `src/screen/*` — translation,
+lettering, the words taken off the picture, the region drawn, the caption's text: all the page's, nothing of it moved).
+**No new crate.** Same channel names, arguments, results and event shapes:
+- **Settings / status**: `kt:screenConfig` (kept in `<app data>/screen.json`; the region forgotten on `clearFixed`; keys,
+  tray and start-with-the-computer applied again) and `kt:screenStatus` answer Electron's `{ platform, on, keys { action:
+  { acc, ok } }, tray, auto, region, ocr }` plus this shell's `capture { kind, why }` and, on a Mac, `permission`
+  (`granted` / `denied`) — the page shows a step for each (`scrCapNone` with the system's reason, `scrCapPortal`,
+  `scrPermNeed` with a button: `screenAction('permission')`), in five languages; Electron sends neither, so its page is
+  unchanged. `kt:screenOcrLangs`: Windows OCR's languages (the same PowerShell script, `-list`), Tesseract's
+  `--list-langs`, else `{ kind }`.
+- **Keys** (`Alt+Shift+T/F/R/A/C` unless set): one registry with the clipboard hotkeys — desktop.rs's `hotkeys_apply`
+  lets every key go, registers the clipboard ones, then `screentr::register_keys`; its handler hands a key that is not a
+  clipboard one to `screentr::on_shortcut`. A clash (another program, or a clipboard hotkey) → that key `ok: false`, which
+  the page already says. Without the plugin's API, or on Linux without an X display: every key `ok: false`.
+- **Tray** (`kt-screen`, its own icon as Electron's): the five actions with their shortcuts shown, «Open the app» (the
+  window on `#/screen`), «Quit», in the page's words (`config.labels`); «again» / «auto» greyed without a region; the
+  menu made again when the region or «auto» changes. Linux: only with appindicator (desktop.rs's rule). **Close to tray**:
+  the main window's close is turned into a hide while `keepInTray()` (on + tray chosen + the icon made) — main.rs's
+  window events call `screentr::on_event`. **Start with the computer** (`pc.startup`): Windows' Run key (`reg.exe`, value
+  «Kurokawa Tools», `"<exe>" --hidden`), a Mac's launch agent (`~/Library/LaunchAgents/app.kurokawa.tools.screen.plist`),
+  none on Linux (as Electron); written or removed only when the choice changes, removed only if this app wrote it. A
+  `--hidden` start hides the window only once the tray icon exists (else the app could not be reached).
+- **Capture** (`screencap.rs`, the display under the mouse at full resolution, as Electron's thumbnail): Windows GDI
+  `BitBlt` + `GetDIBits` (raw FFI to user32/gdi32; physical pixels — the process is per-monitor DPI aware); Linux X11
+  `XGetImage` of the root window through libX11 loaded with `dlopen` (on a connection of its own: GTK ignores X errors on
+  displays it did not open; the rectangle is kept inside the root window); Linux Wayland: `grim` where installed, else the
+  desktop portal's Screenshot through `gdbus` (`gdbus monitor` started first, the request's `Response` read, the picture
+  the portal saved removed again; the system may ask the user); a Mac: `/usr/sbin/screencapture -x -R` in points, the
+  Screen Recording permission checked with `CGPreflightScreenCaptureAccess` and asked once with
+  `CGRequestScreenCaptureAccess` (both looked up with `dlsym`, so older macOS still starts; never a loop: the second time
+  the button opens the settings pane). The picture goes to the page as a PNG data: address (kt-core's PNG writer, rows
+  «Sub»-filtered, flate2 — already in the build); system PNGs (grim, portal, screencapture) decoded with Tauri's own image
+  reader. Monitors and the mouse from Tauri (the main window's `available_monitors` / `primary_monitor`; `cursor_position`
+  where build.rs finds it — `kt_cursor` —, else `GetCursorPos` / `XQueryPointer`), the monitor under the mouse as
+  Electron's `getDisplayNearestPoint` (`screenlogic::nearest`).
+- **Windows** (made hidden, placed in physical pixels, then shown — per-monitor DPI right on mixed monitors): the frozen
+  screen `kts-overlay` (#/overlay, `?go=1` for «again»): no frame, on top, not on the taskbar, on every desktop where the
+  build has it (`kt_all_spaces`), focused; closed when it loses the focus unless a region is being drawn or
+  `closeOnBlur` is off (Electron's rule). «Auto»'s caption `kts-caption` (#/overlay?caption=1): under the region (or over
+  it), as wide as it (≥ 260), 120 tall, transparent (not on a Mac — below), **click-through** (`set_ignore_cursor_events`,
+  `kt_ignore_cursor`), never focused (`focused(false)`, and `focusable(false)` where the build has it — `kt_focusable`),
+  its height from `kt:screenCaption` (40–400). The clipboard's window `kts-popup` (#/overlay?text=1): 420×220 by the mouse,
+  kept on the monitor, closed on blur. All three run the page with the bridge (not the self-test); capability
+  `capabilities/screen.json` (core only). On Wayland, where no window may place itself, the frozen screen is made full
+  screen instead.
+- **Reading** (`kt:screenRegion`): the region drawn kept (`screen-region.json`, with its monitor's id), cropped from the
+  frozen picture with Electron's arithmetic (`screenlogic::crop_rect`), then the crop for an AI model (`{ ai, offset,
+  scale }`) or the same OCR helpers as Electron, run directly (no shell, no console window, 60 s, each one's tree ended
+  when «auto» stops or the app ends): Windows OCR through the **same PowerShell script** (`src/kt-ocr.ps1`, cut out of
+  screentr.cjs; tests/tauribridge.cjs keeps them equal, as grab.js), Vision through the **same JavaScript for Automation
+  script** (`src/kt-ocr.js`, kept equal the same way), Tesseract's TSV; both written to the app's data folder as Electron does. No OCR → `ocr-missing`, which the
+  page says.
+- **Auto**: a thread per run (a generation counter stops it), every `interval` s (≥ 1), `autoStop` minutes; the region
+  taken again off the monitor it was drawn on (Electron took it off the monitor under the mouse at each look), read,
+  compared loosely (`screenlogic::loose`), sent as `kt:screenCaption { text }` (`emit_to` the caption where build.rs
+  finds it — `kt_emit_to` —, else to all: only the caption listens). The caption closed → «auto» stops.
+- **Tests**: `screenlogic.rs` (rustc; Electron's TSV and JSON samples from tests/screenpc.cjs, monitors, regions, the
+  caption's and popup's places, «repeat», the loose comparison, the Run key and the launch agent, GDI / X11 pixels, the
+  PNG read back, the portal's answers) — CI's «Std-only unit tests (screen translator)» on every system; `apidetect.rs`
+  (`detect_tauri_scr`); tests/tauribridge.cjs (the 8 methods, a null region, the caption event; the self-test's screen
+  rows against tests/screenfake.cjs); tests/screentauri.cjs (the real bridge.js over a pretend IPC, en and ar: the
+  settings page and this shell's steps, the frozen screen, «again», «full», no OCR, the caption, the clipboard; and the
+  self-test's rows: all pass, wrong pixels fail them); selftest.js `screen:` rows (part 2) — a window the test draws
+  (colour bars, black text on white) captured and compared pixel by pixel, the frozen screen's window and its picture, a
+  region's crop through the scale, closed, the OCR reading the drawn text (required on Linux, where CI installs
+  Tesseract), OCR languages (reported), «auto»'s caption click-through and unfocused, then stopped with no window and no
+  helper left, the clipboard's window, all off at the end — required on Windows and on Linux (X11 under Xvfb), reported on
+  a Mac (no Screen Recording permission on its runners). Checked here for real before CI: the X11 capture code (cut out of
+  screencap.rs into a harness) under Xvfb gave a drawn window's pixels exactly, its PNG equal to the drawn one, and
+  Tesseract read «TOOLS» / «2468» from it through `tsv_lines`; screentr.rs / screencap.rs type-checked against mock
+  crates for Windows', Linux's and a Mac's branches (not the real Tauri: its API is guarded by build.rs as above).
 
-What the Rust side must provide (a `screentr.rs` + std-only `screenlogic.rs`):
-1. **Capture** — a new crate is unavoidable (std has no screen access): `xcap` (pure Rust over each OS's API:
-   Windows GDI / DXGI, macOS CoreGraphics `CGDisplayCreateImage` — the Screen Recording permission, asked once by the
-   system —, Linux X11 via xcb and Wayland via the xdg-desktop-portal Screenshot (asks the user each time; no silent
-   repeat → «auto» says it cannot run there)). Behind `apidetect` like the rest. Monitor under the cursor: xcap's
-   `Monitor::from_point` and the cursor from `tauri::AppHandle::cursor_position` (2.x). PNG encode: `image-png` is
-   already in.
-2. **Windows**: overlay = `WebviewWindowBuilder` on `#/overlay` with the bridge, `decorations(false)`,
-   `always_on_top(true)`, `skip_taskbar`, the monitor's position/size, `visible_on_all_workspaces` (cfg
-   `kt_all_spaces`); caption = the same plus `transparent(true)` (on a Mac `macos-private-api`, a Cargo feature and
-   `app.macOSPrivateApi` in tauri.conf.json — not App Store safe, said in PORTING) and `set_ignore_cursor_events(true)`
-   (click-through), `focused(false)`; blur → `WindowEvent::Focused(false)`. The capability adds `overlay`/`caption`.
-3. **OCR**: the same helper processes, std::process: the PowerShell script (written to app data as screentr.cjs does,
-   `CREATE_NO_WINDOW`), `osascript` with the JXA script, `tesseract … tsv`; their parsing (`parseLines`, `tsvLines`)
-   std-only in `screenlogic.rs` with tests from screentr.cjs's outputs. No OCR crate.
-4. **Keys, tray, close-to-tray**: the global-shortcut plugin and tray of P6 (`desktop.rs`): the screen keys registered
-   beside the clipboard hotkeys (one registry, both apps' clash reports), a second tray icon or extra items, and
-   `CloseRequested` → `prevent_close` + hide while `keepInTray()`.
-5. **Events**: `kt:screenCaption` to the caption window only (`emit_to`).
-What stays uncertain until a CI run: xcap on the Windows runner without a desktop session, Wayland's portal under
-Xvfb (none: X11 there), the transparent click-through caption on WebKitGTK.
 ## Stage P5: the video tools (written, waiting for its first CI compile)
 
 - **yt-dlp** (`vtools.rs`, kt-core `videotools.rs` + `vidjson.rs`, rule for rule from `ytdlp.cjs`): the release's program for
@@ -493,7 +523,7 @@ done · P6 6 done · P7 8 done, 8 missing (`kt:archiveFree` counted in P3; the 8
 | `kt:captureUrl` | done (P6) | `sitewin.rs`: a window of its own (profile `<app local data>/signin` on Windows/Linux), navigations + redirects + in-page address polled |
 | `kt:siteWindow` | done (P6) | `sitewin.rs`: https only, new windows refused by a script, true once closed |
 
-### P7 — archives, the in-app browser, the screen translator (8 done, 8 missing; `kt:archiveFree` in P3)
+### P7 — archives, the in-app browser, the screen translator (8 done, 8 written and waiting for CI; `kt:archiveFree` in P3)
 
 | Channel | Status | Notes |
 |---|---|---|
@@ -505,14 +535,14 @@ done · P6 6 done · P7 8 done, 8 missing (`kt:archiveFree` counted in P3; the 8
 | `kt:archiveRestore` | done (P7) |  |
 | `kt:archiveExisting` | done (P7) |  |
 | `kt:browse` | done (P7) | `browser.rs` over the shared crate's `browserlogic.rs` (the Reader's, moved): own profile + keeper, the bar, Grab, magnets and downloads to the app with the site's cookies; no content-type sniffing (see «Stage P7 — the in-app browser») |
-| `kt:screenConfig` | missing | screen capture + OCR helpers |
-| `kt:screenStatus` | missing |  |
-| `kt:screenAction` | missing |  |
-| `kt:screenJob` | missing |  |
-| `kt:screenRegion` | missing |  |
-| `kt:screenClose` | missing |  |
-| `kt:screenOcrLangs` | missing |  |
-| `kt:screenCaption` | missing |  |
+| `kt:screenConfig` | written (screen translator) | `screentr.rs`: kept in `screen.json`; keys (one registry with the hotkeys), tray, start with the computer applied |
+| `kt:screenStatus` | written (screen translator) | Electron's shape + `capture { kind, why }`, a Mac's `permission` |
+| `kt:screenAction` | written (screen translator) | region / full / repeat / auto / clipboard, and this shell's `permission` |
+| `kt:screenJob` | written (screen translator) | the frozen screen as a PNG data: address (`screencap.rs`: GDI, X11, grim / portal, screencapture) |
+| `kt:screenRegion` | written (screen translator) | Electron's crop; the same OCR helpers (PowerShell Windows OCR, Vision JXA, Tesseract TSV) or the crop for AI |
+| `kt:screenClose` | written (screen translator) |  |
+| `kt:screenOcrLangs` | written (screen translator) |  |
+| `kt:screenCaption` | written (screen translator) | the caption's height; the `kt:screenCaption { text }` event to the click-through caption |
 
 ### P8 — servers, DoH, antivirus, update install (9 done)
 
@@ -581,11 +611,8 @@ Tauri 2's `WebviewWindowBuilder` gives `on_navigation`, `on_page_load`, `on_down
 - the grab-links script (`GRAB_JS`) runs unchanged with `Webview::eval` + a command to return its result.
 
 ### The screen translator
-Needs: capture of the whole screen (Electron `desktopCapturer`), global shortcuts, a tray, transparent always-on-top
-overlay windows, OCR. In Tauri: `xcap` crate for screen capture on all three OSes (macOS needs the Screen Recording
-permission, Wayland goes through the portal and is limited), `tauri-plugin-global-shortcut`, the `tray-icon` feature,
-transparent windows (`transparent(true)`; macOS needs the `macos-private-api` feature). OCR stays as today: Windows
-OCR / macOS Vision / Tesseract through the same helper processes `screentr.cjs` runs. A late stage on its own.
+Done without a capture crate (the earlier plan named `xcap`): each system's own facility, called directly — see «The
+screen translator (`screentr.rs`, …)» above. OCR as Electron's: the same helper processes.
 
 ### DoH (`kt:setDoh`, `kt:dohProbe`)
 Electron sets Chromium's resolver for every request of the app. The system web views have no such switch. What
@@ -635,4 +662,19 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
 - **Finished files renamed by sniffing** (`sniff.cjs`): not ported.
 - **DNS over HTTPS for the page's own requests**: the system web views keep the system's DNS (see «DoH»).
 - **The Wi-Fi share's address**: the default route's IPv4, not the interface list by name.
-- **Close to tray**: only with the screen translator (not ported), as in Electron.
+- **Close to tray**: only with the screen translator, as in Electron (ported: see below).
+- (Screen translator.) **Over full-screen programs**: Electron put its windows at the «screen-saver» level, above a
+  full-screen game or video (a Mac's full-screen spaces too); Tauri's `always_on_top` is the ordinary top level, so a
+  program in exclusive full screen may stay above the frozen screen and the caption — borderless/windowed full screen is
+  fine.
+- (Screen translator.) **A Mac's caption is not transparent**: a transparent web view needs Tauri's `macos-private-api`
+  (a Cargo feature and `app.macOSPrivateApi` in tauri.conf.json, not App Store safe); left off, the caption keeps the
+  page's own dark box on an opaque window. Turning it on is two lines if wanted.
+- (Screen translator.) **What GDI cannot see** (Windows): a game in exclusive full screen or a DRM-protected video comes
+  out black, as some do with Electron's capturer; the lock screen and elevation prompts cannot be taken at all.
+- (Screen translator.) **Wayland**: no window may place itself, so the caption is put where the compositor likes and the
+  frozen screen is made full screen; each capture goes through grim or the desktop portal (which may ask the user — then
+  «auto» asks often); the global shortcuts work only while an X11 program has the keyboard (the plugin grabs through X).
+  An X11 session works as on Windows.
+- (Screen translator.) **«Auto» on several monitors**: the region is taken off the monitor it was drawn on (Electron took
+  it off the monitor under the mouse at each look — a fix, not a loss).

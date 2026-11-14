@@ -427,6 +427,9 @@ pub fn shortcuts_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             };
             if let Some(mode) = mode {
                 hotkey_fired(app, &mode);
+            } else {
+                // (Screen translator: its shortcuts share this one registry — screentr.rs.)
+                crate::screentr::on_shortcut(app, sc);
             }
         })
         .build()
@@ -493,6 +496,16 @@ fn hotkeys_apply(app: &AppHandle) {
     let mut d = desk();
     d.bound = bound;
     d.hotkey_errors = errors;
+    // (Screen translator: its shortcuts registered again after these — every key was let go above.)
+    drop(d);
+    crate::screentr::register_keys(app);
+}
+
+/* ---------- screen translator: its shortcuts applied through this one registry (screentr.rs) ---------- */
+
+/// Every key let go, the clipboard hotkeys and then the screen translator's registered again.
+pub fn hotkeys_again(app: &AppHandle) {
+    hotkeys_apply(app);
 }
 
 /* ---------- kt:desktopPrefs ---------- */

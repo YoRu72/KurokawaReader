@@ -6,7 +6,7 @@
 mod apidetect;
 
 fn main() {
-    for c in apidetect::CFGS.iter().chain(apidetect::CFGS_P6.iter()).chain(apidetect::CFGS_P7.iter()) {
+    for c in apidetect::CFGS.iter().chain(apidetect::CFGS_P6.iter()).chain(apidetect::CFGS_P7.iter()).chain(apidetect::CFGS_SCR.iter()) {
         println!("cargo:rustc-check-cfg=cfg({})", c);
     }
     println!("cargo:rerun-if-changed=Cargo.lock");
@@ -23,6 +23,8 @@ fn main() {
         ("tauri-plugin-global-shortcut", apidetect::detect_shortcut as fn(&str) -> Vec<apidetect::Found>),
         // (Stage P7: browser.rs — the browser's cookies, its downloads.)
         ("tauri", apidetect::detect_tauri_p7 as fn(&str) -> Vec<apidetect::Found>),
+        // (Screen translator: screentr.rs — the mouse's place, the click-through caption, an event to one window.)
+        ("tauri", apidetect::detect_tauri_scr as fn(&str) -> Vec<apidetect::Found>),
     ] {
         let src = apidetect::locked_version(&lock, krate)
             .and_then(|v| home.as_ref().and_then(|h| apidetect::crate_src(h, krate, &v)).map(|s| (v, s)));

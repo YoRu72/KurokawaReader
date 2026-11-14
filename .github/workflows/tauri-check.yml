@@ -57,6 +57,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev file xvfb xauth at-spi2-core dbus-x11
 
+      # (Screen translator: Tesseract with its English data — what a Linux user installs for the screen translator's
+      # OCR —, so the self-test's OCR row reads the text it draws; not needed to build.)
+      - name: Tesseract for the screen translator's OCR row
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y tesseract-ocr tesseract-ocr-eng || echo "no Tesseract — the OCR row is then reported, not required"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
@@ -98,6 +104,16 @@ jobs:
             rustc --edition 2021 --test "$f" -o "$d/$n$ext"
             "$d/$n$ext"
           done
+
+      # (Screen translator: its std-only rules — kt-core's screenlogic.rs: monitors and regions, the OCR answers, pixels
+      # and the PNG, the portal's answers — on every system.)
+      - name: Std-only unit tests (screen translator)
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/rs-tests-scr"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          rustc --edition 2021 --test apps/tools/core/kt-core/src/screenlogic.rs -o "$d/screenlogic$ext"
+          "$d/screenlogic$ext"
 
       - uses: Swatinem/rust-cache@v2
         with:

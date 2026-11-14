@@ -2162,6 +2162,9 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   hotkeyWhyKey: "one of its keys is not supported here", hotkeyWhyTaken: "another program holds it", hotkeyWhyNone: "shortcuts that work everywhere are not available on this system",
   // (Stage P7, the Tauri shell: the in-app browser's bar.)
   browserBarBack: "Back", browserBarForward: "Forward", browserBarReload: "Reload", browserBarAddress: "Address or search", browserBarGrab: "Grab links (Ctrl+G)", browserBarCopy: "Copy address (Ctrl+L)", browserBarExternal: "Open in the system's browser",
+  // (Screen translator on the Tauri shell: how the screen is taken here; a Mac's Screen Recording permission.)
+  scrCapNone: "The screen can't be taken here", scrCapPortal: "Each picture goes through the system's screenshot portal", scrCapPortalHint: "On Wayland your desktop may ask you to allow it; «auto» works best in an X11 session or with grim installed.",
+  scrPermNeed: "Allow screen recording", scrPermHint: "macOS asks once: System Settings → Privacy & Security → Screen Recording → turn on Kurokawa Tools, then open the app again.", scrPermOpen: "Open the settings",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

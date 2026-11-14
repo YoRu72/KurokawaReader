@@ -167,6 +167,27 @@ pub fn detect_shortcut(src: &str) -> Vec<Found> {
     vec![Found { cfg: "kt_shortcuts", what: "global shortcuts (with_handler, register, unregister_all)", on }]
 }
 
+/* ---------- screen translator (screentr.rs) ---------- */
+
+/// The cfg names of the screen translator's calls: the mouse's place, a click-through window, a window that takes no
+/// focus, an event to one window.
+pub const CFGS_SCR: [&str; 4] = ["kt_cursor", "kt_ignore_cursor", "kt_focusable", "kt_emit_to"];
+
+/// What the squeezed tauri source offers the screen translator (each method on Window and WebviewWindow, the builder's
+/// on WindowBuilder and WebviewWindowBuilder): cursor_position; set_ignore_cursor_events (the caption's clicks go
+/// through it); focusable(false) (the caption never takes the focus from the game under it); Emitter::emit_to (the
+/// caption's text to its window only — without it, to every window, where only the caption listens).
+pub fn detect_tauri_scr(src: &str) -> Vec<Found> {
+    let twice = |s: &str| src.matches(&squeeze(s)).count() >= 2;
+    let has = |s: &str| src.contains(&squeeze(s));
+    vec![
+        Found { cfg: "kt_cursor", what: "the mouse's place (cursor_position)", on: twice("pub fn cursor_position(&self) -> crate::Result<PhysicalPosition<f64>>") },
+        Found { cfg: "kt_ignore_cursor", what: "a click-through window (set_ignore_cursor_events)", on: twice("pub fn set_ignore_cursor_events(&self, ignore: bool) -> crate::Result<()>") },
+        Found { cfg: "kt_focusable", what: "a window that takes no focus (focusable)", on: twice("pub fn focusable(mut self, focusable: bool) -> Self") },
+        Found { cfg: "kt_emit_to", what: "an event to one window (emit_to)", on: has("fn emit_to<I, S>(&self, target: I, event: &str, payload: S)") && has("I: Into<EventTarget>") && has("impl<T: AsRef<str>> From<T> for EventTarget {") },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +246,17 @@ mod tests {
         let mut all: Vec<&str> = detect_tauri_p6("").iter().map(|x| x.cfg).collect();
         all.extend(detect_shortcut("").iter().map(|x| x.cfg));
         assert_eq!(all, CFGS_P6.to_vec());
+    }
+
+    #[test]
+    fn screen() {
+        let one = "pub fn cursor_position(&self) -> crate::Result<PhysicalPosition<f64>> {\n pub fn set_ignore_cursor_events(\n &self,\n ignore: bool,\n ) -> crate::Result<()> {\n pub fn focusable(mut self, focusable: bool) -> Self {\n";
+        let src = squeeze(&format!("{}{}fn emit_to<I, S>(&self, target: I, event: &str, payload: S) -> Result<()>\n where\n I: Into<EventTarget>,\nimpl<T: AsRef<str>> From<T> for EventTarget {{\n", one, one));
+        assert!(detect_tauri_scr(&src).iter().all(|f| f.on));
+        let half = squeeze(one);
+        let f = detect_tauri_scr(&half);
+        assert!(f.iter().all(|f| !f.on));
+        assert_eq!(f.iter().map(|x| x.cfg).collect::<Vec<_>>(), CFGS_SCR.to_vec());
     }
 
     #[test]

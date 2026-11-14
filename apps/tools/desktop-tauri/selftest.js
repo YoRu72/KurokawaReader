@@ -147,6 +147,8 @@
     await runLan(kt, cfg, env, check, must);
     /* stage P7: the in-app browser on the test site */
     await runBrowser(kt, cfg, env, check, must, waitFor);
+    /* screen translator: capture, the overlay / caption / popup windows, OCR, keys and tray — left off */
+    await runScreen(kt, cfg, env, check, must);
     /* stage P6: the computer's side of the downloads (last: a second launch opens the add sheet) */
     await runP6(kt, cfg, env, check, must, waitFor);
     }
@@ -169,6 +171,154 @@
       Promise.resolve(kt.filesJob(o)).catch(function (e) { if (!done) { done = true; clearTimeout(t); off(); no(e); } });
     });
   }
+
+  /* screen translator (screentr.rs, screencap.rs; rules in kt-core's screenlogic.rs). A window this test draws (colour
+     bars, black text on white) is captured as the app captures it and its pixels compared; the frozen screen's window
+     opens and its job holds the monitor's picture; a region drawn comes back as its crop (the AI path: no OCR, no
+     network); the system's OCR reads the drawn text where there is one (Tesseract on CI's Linux; reported elsewhere);
+     «auto»'s caption opens click-through and stopping leaves no window or helper; the clipboard's window opens and
+     closes; everything off again. Translations the windows ask for go to the loopback test server only (the page's
+     screen settings point an «AI» engine there, put back after). Required on Windows and on Linux under X11 (Xvfb);
+     a Mac's rows are reported (its runners have no Screen Recording permission). */
+  async function runScreen(kt, cfg, env, check, must) {
+    if (!kt.screenStatus) { await check('screen: in the bridge', true, async function () { must(false, 'screenStatus is missing'); }); return; }
+    var S = function (o) { return env.invoke('kt_selftest_screen', { o: o }); };
+    var waitA = async function (fn, ms, what) { var until = env.now() + ms; for (;;) { var v = await fn(); if (v) return v; if (env.now() > until) throw new Error('timeout: ' + what); await env.sleep(200); } };
+    var near = function (a, b, tol) { return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol && Math.abs(a[2] - b[2]) <= tol; };
+    var st0 = {}; try { st0 = (await S({ act: 'state' })) || {}; } catch (e) { st0 = { error: String((e && e.message) || e) }; }
+    var win = cfg.os === 'win32'; var mac = cfg.os === 'darwin';
+    var can = win || (cfg.os === 'linux' && st0.capture === 'x11');
+    // (A Mac without the Screen Recording permission — CI's runners —: the capture rows say so instead of asking.)
+    var noPerm = mac && st0.permission === false ? 'skipped: this Mac has not given the Screen Recording permission' : '';
+    var shown = function (label) { return async function () { var x = ((await S({ act: 'state' })) || {}).windows || []; for (var i = 0; i < x.length; i++) if (x[i].label === label && x[i].visible) return x[i]; return null; }; };
+    var gone = function (label) { return async function () { var x = ((await S({ act: 'state' })) || {}).windows || []; for (var i = 0; i < x.length; i++) if (x[i].label === label) return null; return true; }; };
+    // (The page's screen settings kept, an «AI» engine on the loopback test server put in their place.)
+    var KEY = 'kt.screen'; var keep = null; var store = env.storage || null;
+    try { if (store) { keep = store.getItem(KEY); store.setItem(KEY, JSON.stringify({ engine: 'ai', source: 'en', target: 'ar', ai: { preset: 'custom', style: 'openai', base: cfg.base + '/no-translator', key: 'k', model: 'm', prompt: '' } })); } } catch (e) { /* no storage */ }
+    var base = { engine: 'ai', source: 'en', target: 'ar', interval: 1, autoStop: 0, read: 'auto', labels: { region: 'R', translateScreen: 'F', bubble: 'Screen' },
+      ai: { style: 'openai', base: cfg.base + '/no-translator', key: 'k', model: 'm', prompt: '', headers: {} } };
+    var conf = function (on, extra) { var c = JSON.parse(JSON.stringify(base)); c.pcOn = on; c.pc = Object.assign({ keys: { region: 'Alt+Shift+T', full: 'Alt+Shift+F', repeat: 'Alt+Shift+R', auto: 'Alt+Shift+A', clipboard: 'Alt+Shift+C' }, tray: false, startup: false, ocr: 'ai', closeOnBlur: true }, extra || {}); return c; };
+    await check('screen: status answered in Electron\'s shape (+ how this system captures)', true, async function () {
+      var s = await kt.screenStatus();
+      must(s && s.platform === cfg.os && typeof s.on === 'boolean' && typeof s.tray === 'boolean' && typeof s.auto === 'boolean', short(s));
+      must(s.keys && ['region', 'full', 'repeat', 'auto', 'clipboard'].every(function (k) { return s.keys[k] && typeof s.keys[k].acc === 'string' && typeof s.keys[k].ok === 'boolean'; }), 'keys ' + short(s.keys));
+      must(['windows', 'vision', 'tesseract', 'ai', 'none'].indexOf(s.ocr) >= 0, 'ocr ' + s.ocr);
+      must(s.capture && typeof s.capture.kind === 'string', 'capture ' + short(s.capture));
+      return 'capture ' + s.capture.kind + (s.capture.why ? ' (' + s.capture.why + ')' : '') + ', OCR ' + s.ocr + (s.permission ? ', permission ' + s.permission : '') + ', monitors ' + short(st0.monitors) + ', mouse ' + short(st0.cursor);
+    });
+    await check('screen: turned on — its shortcuts registered beside the hotkeys', win, async function () {
+      var s = await kt.screenConfig({ config: conf(true) });
+      must(s && s.on === true, short(s));
+      var st = (await S({ act: 'state' })) || {};
+      if (!st.shortcuts) return 'no global shortcuts here (' + short(st) + ')';
+      must(s.keys.region.ok && s.keys.clipboard.ok, 'keys ' + short(s.keys));
+      return 'bound ' + short(st.bound);
+    });
+    await check('screen: its tray icon, and the window then closes to the tray', !mac, async function () {
+      var s = await kt.screenConfig({ config: conf(true, { tray: true }) });
+      var st = (await S({ act: 'state' })) || {};
+      if (!st.tray && st.trayWhy) return 'no tray here: ' + st.trayWhy;
+      must(s.tray === true && st.keepInTray === true, short({ tray: s.tray, st: st }));
+      s = await kt.screenConfig({ config: conf(true) });
+      st = (await S({ act: 'state' })) || {};
+      must(s.tray === false && st.keepInTray === false, 'still kept in the tray ' + short(st));
+      return 'made, closing kept the app in the tray; taken away';
+    });
+    var drawn = null;
+    var sample = function (d) { return [[d.w * 0.25, d.h / 6, [255, 0, 0]], [d.w * 0.25, d.h / 2, [0, 255, 0]], [d.w * 0.25, d.h * 5 / 6, [0, 0, 255]], [d.w * 0.95, d.h * 0.06, [255, 255, 255]]]; };
+    var compare = async function (url, ox, oy, d) {
+      must(env.pixels, 'no pixel reader');
+      var pts = sample(d); var got = await env.pixels(url, pts.map(function (p) { return [ox + p[0], oy + p[1]]; }));
+      var bad = []; pts.forEach(function (p, i) { if (!near(got.px[i], p[2], 40)) bad.push(short(p[2]) + '≠' + short(got.px[i])); });
+      must(!bad.length, 'pixels ' + bad.join(', ') + ' in ' + got.w + '×' + got.h);
+      return got;
+    };
+    await check('screen: a window the test draws, captured as the app captures it — its pixels', can, async function () {
+      if (noPerm) return noPerm;
+      drawn = await S({ act: 'draw', w: 480, h: 240 });
+      must(drawn && drawn.w === 480, short(drawn));
+      var g = await S({ act: 'grab', x: drawn.x, y: drawn.y, w: drawn.w, h: drawn.h });
+      must(g && /^data:image\/png;base64,/.test(g.png) && g.w > 0, short(g));
+      var got = await compare(g.png, 0, 0, { w: g.w, h: g.h });
+      return st0.capture + ': ' + got.w + '×' + got.h + ' at ' + drawn.x + ',' + drawn.y + ' on ' + drawn.monitor;
+    }, 30000);
+    var job = null;
+    await check('screen: the frozen screen — its window opens frameless on top, its job holds the monitor\'s picture', can, async function () {
+      if (noPerm) return noPerm;
+      must(drawn, 'nothing drawn');
+      await kt.screenAction('region');
+      var w = await waitA(shown('kts-overlay'), 15000, 'the overlay window');
+      must(w.decorated === false, 'decorated ' + short(w));
+      job = await kt.screenJob();
+      must(job && job.mode === 'region' && /^data:image\/png;base64,/.test(job.image) && job.width > 0 && job.scale > 0, short(job && { mode: job.mode, width: job.width, scale: job.scale }));
+      await compare(job.image, drawn.x, drawn.y, drawn);
+      return job.width + '×' + job.height + ', scale ' + job.scale;
+    }, 40000);
+    await check('screen: a region drawn comes back as its crop (the scale applied), and is kept', can, async function () {
+      if (noPerm) return noPerm;
+      must(job && drawn, 'no job');
+      var s = job.scale; var r = { x: drawn.x / s, y: drawn.y / s, width: drawn.w / s, height: drawn.h / s };
+      var res = await kt.screenRegion(r);
+      must(res && /^data:image\/png;base64,/.test(res.ai || ''), short(res));
+      must(Math.abs(res.offset.x - r.x) < 1 && Math.abs(res.offset.y - r.y) < 1 && Math.abs(res.scale - s) < 1e-6, 'offset ' + short(res.offset) + ' scale ' + res.scale);
+      var got = await compare(res.ai, 0, 0, drawn);
+      var st = await kt.screenStatus();
+      must(st.region && Math.abs(st.region.width - r.width) < 0.01 && typeof st.region.display === 'string', 'region ' + short(st.region));
+      return 'crop ' + got.w + '×' + got.h + ', kept on ' + st.region.display;
+    }, 30000);
+    await check('screen: closed — no frozen screen left', can, async function () {
+      if (noPerm) return noPerm;
+      await kt.screenClose();
+      await waitA(gone('kts-overlay'), 10000, 'the overlay closed');
+      return 'closed';
+    });
+    await check('screen: the system\'s OCR reads the drawn text', cfg.os === 'linux' && st0.ocr === 'tesseract' && can, async function () {
+      if (noPerm) return noPerm;
+      must(drawn, 'nothing drawn');
+      var r = await S({ act: 'ocr', x: drawn.x + drawn.w / 2, y: drawn.y, w: drawn.w / 2, h: drawn.h, lang: 'en' });
+      if (r.kind === 'none') return 'no OCR engine here';
+      var t = (r.lines || []).join(' ');
+      must(/2468/.test(t) || /TOOLS/i.test(t), r.kind + ' read ' + short(t));
+      return r.kind + ': ' + t;
+    }, 90000);
+    await check('screen: OCR languages', false, async function () { var l = await kt.screenOcrLangs(); must(l && typeof l.kind === 'string', short(l)); return short(l); }, 60000);
+    await check('screen: auto — the caption opens click-through, and stopping leaves no window or helper', can, async function () {
+      if (noPerm) return noPerm;
+      await kt.screenConfig({ config: conf(true, { ocr: 'system' }) });
+      await kt.screenAction('auto');
+      var c = await waitA(shown('kts-caption'), 15000, 'the caption window');
+      var st = (await S({ act: 'state' })) || {};
+      must(st.auto === true, 'auto ' + st.auto);
+      must(st.clickThrough !== false, 'not click-through');
+      // (Never focused on Windows; an X server without a window manager — CI's Xvfb — gives the focus by the pointer.)
+      if (win) must(c.focused === false, 'the caption took the focus');
+      await env.sleep(2500);
+      st = (await S({ act: 'state' })) || {};
+      var sent = st.sent;
+      await kt.screenAction('auto');
+      await waitA(async function () { var x = (await S({ act: 'state' })) || {}; return !x.auto && x.ocrRunning === 0 && (await gone('kts-caption')()) ? x : null; }, 15000, 'auto stopped, no caption, no helper');
+      return 'click-through ' + (st.clickThrough === null ? 'not in this build' : st.clickThrough) + ', focused ' + c.focused + ', captions sent ' + sent + (st.lastError ? ', last error: ' + st.lastError : '');
+    }, 60000);
+    await check('screen: the clipboard\'s translation opens by the mouse and closes', can, async function () {
+      await S({ act: 'popup', text: 'Good night' });
+      await waitA(shown('kts-popup'), 15000, 'the popup');
+      var j = await kt.screenJob(); must(j && j.mode === 'text' && j.text === 'Good night', short(j));
+      await kt.screenClose();
+      await waitA(gone('kts-popup'), 10000, 'the popup closed');
+      return 'opened, closed';
+    }, 40000);
+    try { await S({ act: 'undraw' }); } catch (e) { /* gone */ }
+    await check('screen: turned off — no shortcut, tray, window or helper left', true, async function () {
+      var s = await kt.screenConfig({ config: conf(false) });
+      must(s && s.on === false && s.tray === false && s.auto === false, short(s));
+      var st = await waitA(async function () { var x = (await S({ act: 'state' })) || {}; return (x.windows || []).length === 0 ? x : null; }, 10000, 'no screen window');
+      must((st.bound || []).length === 0 && st.ocrRunning === 0, short(st));
+      return 'off';
+    }, 30000);
+    if (mac) await rec2(check, 'screen: macOS Screen Recording permission', st0.permission);
+    try { if (store) { if (keep === null) store.removeItem(KEY); else store.setItem(KEY, keep); } } catch (e) { /* no storage */ }
+  }
+  function rec2(check, name, v) { return check(name, false, async function () { return v === true ? 'granted' : v === false ? 'not granted (the system asks the user once)' : 'not asked here'; }); }
 
   /* stage P8 (lanshare.rs): every row required everywhere (loopback only; the stand-in scanner is the system's own
      shell told to exit with a code). */
@@ -1140,7 +1290,7 @@
     off();
   }
 
-  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP4: runP4, runP5: runP5 };
+  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP4: runP4, runP5: runP5, runScreen: runScreen };
   try { Object.defineProperty(root, '__KT_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KT_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KT_SELFTEST__;
@@ -1165,6 +1315,16 @@
     var env = { sleep: function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }, invoke: invoke, doc: root.document, now: function () { return Date.now(); } };
     // (Stage P4: the player's own fetch for the stream server, and SHA-256 for the proxy's bytes.)
     env.fetch = typeof root.fetch === 'function' ? root.fetch.bind(root) : null;
+    // (Screen translator: a picture's pixels at some points — the page's canvas —, and the page's storage.)
+    env.pixels = function (url, pts) {
+      return new Promise(function (ok, no) {
+        var img = new root.Image();
+        img.onload = function () { try { var c = root.document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; var x = c.getContext('2d'); x.drawImage(img, 0, 0); ok({ w: c.width, h: c.height, px: pts.map(function (p) { var d = x.getImageData(Math.max(0, Math.min(c.width - 1, Math.round(p[0]))), Math.max(0, Math.min(c.height - 1, Math.round(p[1]))), 1, 1).data; return [d[0], d[1], d[2], d[3]]; }) }); } catch (e) { no(e); } };
+        img.onerror = function () { no(new Error('the picture did not load')); };
+        img.src = url;
+      });
+    };
+    try { env.storage = root.localStorage; } catch (e) { env.storage = null; }
     env.sha256 = root.crypto && root.crypto.subtle ? function (u) { return root.crypto.subtle.digest('SHA-256', u).then(function (d) { return Array.prototype.map.call(new Uint8Array(d), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join(''); }); } : null;
     setTimeout(function () {
       run(root.kurokawaTools, cfg, env, results).catch(function (e) {
