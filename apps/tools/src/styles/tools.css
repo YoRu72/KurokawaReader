@@ -956,10 +956,12 @@ html.pc .settings-view .card .row small.src, html.pc .settings-view .card .switc
 
 /* A phone's bar too narrow for its title and buttons: two lines (ui/fitTopbar.ts) — the buttons, then the title. */
 .view > .topbar.stacked { flex-wrap: wrap; height: auto; min-height: calc(var(--topbar-h) + var(--safe-top)); padding-bottom: 6px; row-gap: 0; }
-.view > .topbar.stacked > .topbar-actions { order: 1; margin-inline-start: auto; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-.view > .topbar.stacked > .topbar-actions::-webkit-scrollbar { display: none; }
+/* (The parts carry the class themselves — fitTopbar.ts sets it on each —, so each restyles with its own class change: a
+   title left at «order: 2» beside a bar no longer wrapping put the title after the buttons, on the far side.) */
+.view > .topbar > .topbar-actions.tb-stacked { order: 1; margin-inline-start: auto; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.view > .topbar > .topbar-actions.tb-stacked::-webkit-scrollbar { display: none; }
 .view > .topbar.stacked > .icon-btn:first-child { order: 0; }
-.view > .topbar.stacked > .title { order: 2; flex: 1 0 100%; padding-inline: 10px; }
+.view > .topbar > .title.tb-stacked { order: 2; flex: 1 0 100%; padding-inline: 10px; }
 /* The filters stay in sight above the list as it scrolls, instead of being cut in half under the bar. */
 .downloads-view .body > .chips { position: sticky; top: -8px; z-index: 6; margin-top: -8px; padding-top: 8px; padding-bottom: 8px; background: var(--md-surface); }
 html.pc .downloads-view .body > .chips { top: -18px; margin-top: -18px; padding-top: 18px; }

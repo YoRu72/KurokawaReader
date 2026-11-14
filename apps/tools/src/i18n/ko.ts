@@ -1228,7 +1228,6 @@ export const ko: Partial<Strings> = {
   themeFrost: "프로스트 × Material 3 Expressive",
   themeClassic: "클래식 (유리 없음)",
   themeAurora: "오로라",
-  themeEmber: "호박빛 황혼",
   themeObsidian: "흑요석",
   themeWashi: "쪽빛 한지",
   themeBy: "제작: {who}",

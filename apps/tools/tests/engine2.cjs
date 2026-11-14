@@ -42,6 +42,9 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
   // Remove missing
   await p.locator('.topbar-actions > button').last().click(); await p.waitForSelector('.sheet .dest-row');
   await p.locator('.sheet .dest-row', { hasText: /whose files are gone|فُقدت ملفاته/ }).click(); await p.waitForTimeout(400);
+  // (Since Undo and Redo the removal is only held while its Undo lasts; the app settles what is held when it goes away
+  // — ui/undo.ts settleAll on pagehide —, which is how it is made final here, without waiting out the Undo.)
+  await p.evaluate(() => dispatchEvent(new Event('pagehide'))); await p.waitForTimeout(300);
   const missing = await p.evaluate(() => window.__calls.filter((c) => c[0] === 'remove' && c[1].id === 'c').length); console.log('removed missing:', missing);
   // Recently removed: gone.iso and movie.mkv (the old one) are there; put gone.iso back
   await p.locator('.topbar-actions > button').last().click(); await p.waitForSelector('.sheet .dest-row');

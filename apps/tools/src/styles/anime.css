@@ -352,6 +352,8 @@ body:has(.sheet) .get-card.watch-card { opacity: 0; pointer-events: none; }
 /* mpv: its picture is under the page (a surface behind the web view), so the page is see-through while it plays —
    the player's own controls and subtitles over it, the rest of the app hidden. */
 html.kt-mpv-on, html.kt-mpv-on body { background: transparent !important; }
+/* (The glass themes' background is painted by body::before: hidden too, or it covers mpv's picture under the page.) */
+html.kt-mpv-on body::before { display: none !important; }
 html.kt-mpv-on body > :not(.kt-player):not(.sheet):not(.scrim):not(.sheet-scrim):not(.toast):not(.get-card):not(dialog):not(script):not(style) { visibility: hidden !important; }
 html.kt-mpv-on .kt-player, html.kt-mpv-on .kt-stage { background: transparent !important; }
 /* (The stand-in element for mpv's picture is a «.kt-video», which the page paints black: see-through, or it is a black sheet over the picture.) */

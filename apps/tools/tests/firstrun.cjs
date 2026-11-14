@@ -58,7 +58,7 @@ const TAURI_SHIM = (o) => {
     ok(`${tag}: Bring it now and Not now`, await p.isVisible('[data-handover-go]') && (await p.$$('.firstrun [data-handover="offer"] .btn')).length >= 2);
     if (SHOTS) await p.screenshot({ path: path.join(SHOTS, `firstrun-${lang}-${mode}.png`) });
     const bg = await p.evaluate(() => getComputedStyle(document.querySelector('.fr-card')).backgroundColor);
-    ok(`${tag}: the card in the ${mode} look`, mode === 'light' ? !/rgb\((1\d|2\d|3\d|4\d), /.test(bg) : /rgb\((1\d|2\d|3\d|4\d), /.test(bg), bg);
+    ok(`${tag}: the card in the ${mode} look`, mode === 'light' ? !/rgba?\((1\d|2\d|3\d|4\d), /.test(bg) : /rgba?\((1\d|2\d|3\d|4\d), /.test(bg), bg);
     await p.context().close();
   }
 

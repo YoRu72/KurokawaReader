@@ -33,6 +33,28 @@ const OLD = {
     for (const x of T.contrastReport(r)) { if (x.ratio < worst.ratio) worst = { ...x, theme: def.id, mode, darkTone }; }
   }
   ok(`text on glass ≥ 4.5:1 over each background's brightest and darkest parts, every theme and mode (lowest ${worst.ratio.toFixed(2)}: ${worst.theme} ${worst.mode} ${worst.text} on ${worst.layer})`, worst.ratio >= 4.5);
+  /* 1a. comfortable to the eyes: near-neutral grounds and glass, a soft glass saturation, muted accents and never a
+     yellow one (HSL; an alpha colour by its own RGB) */
+  {
+    const hsl = (c) => { const [r, g, b] = T.parseColor(c).map((x, i) => (i < 3 ? x / 255 : x)); const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+      const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1)); let h = 0; if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return { h: (h * 60 + 360) % 360, s, l }; };
+    const lits = (str) => (String(str).match(/#[0-9a-f]{6}\b|rgba?\([^)]*\)/gi) || []).filter((x) => !/var\(/.test(x));
+    const bad = [];
+    for (const def of T.THEMES) for (const mode of T.modesOf(def)) {
+      const tok = mode === 'dark' ? def.dark : def.light; if (!tok || def.classic) continue;
+      const lim = mode === 'dark' ? 0.10 : 0.12; const tag = `${def.id} ${mode}`;
+      const surf = tok.surfaces ?? (mode === 'dark' ? T.FROST_GRAPHITE : T.FROST_LIGHT);
+      for (const [k, c] of Object.entries(surf)) if (hsl(c).s > lim) bad.push(`${tag} ${k} ${c} S ${(hsl(c).s * 100).toFixed(0)}%`);
+      for (const k of ['pane', 'card', 'sheet']) if (typeof tok[k] === 'string' && hsl(tok[k]).s > lim) bad.push(`${tag} ${k} ${tok[k]}`);
+      if (tok.sat > 1.05) bad.push(`${tag} --g-sat ${tok.sat}`);
+      for (const c of lits(tok.bg)) if (hsl(c).s > 0.25) bad.push(`${tag} background ${c}`);
+      for (const [k, c] of Object.entries(tok.roles ?? {})) { if (!lits(c).length) continue; const x = hsl(c);
+        if (x.h >= 30 && x.h <= 70 && x.s > 0.2 && x.l > 0.08 && x.l < 0.95) bad.push(`${tag} ${k} ${c} is yellow`);
+        if (k === 'primary' && x.s > 0.4) bad.push(`${tag} primary ${c} S ${(x.s * 100).toFixed(0)}%`); }
+    }
+    ok('comfortable to the eyes: grounds and glass ≤ 10 % (dark) / 12 % (light) saturation, glass saturation ≤ 1.05, the background a whisper of hue, accents muted, none yellow', !bad.length, bad.join('; '));
+    ok('a theme taken out of the app (ember) falls back to the default', T.themeById('ember').id === 'frost' && !T.THEMES.some((x) => x.id === 'ember'));
+  }
   ok('the blur follows the platform (phone Reduced, computer Full, WebKitGTK Reduced) and the system\'s wishes', T.resolveBlur('auto', { platform: 'android', phone: true, webkitGtk: false, reducedTransparency: false, reducedMotion: false, lowBattery: false }).blur === 'reduced'
     && T.resolveBlur('auto', { platform: 'desktop', phone: false, webkitGtk: false, deviceMemory: 16, reducedTransparency: false, reducedMotion: false, lowBattery: false }).blur === 'full'
     && T.resolveBlur('auto', { platform: 'desktop', phone: false, webkitGtk: true, reducedTransparency: false, reducedMotion: false, lowBattery: false }).blur === 'reduced'
@@ -45,7 +67,7 @@ const OLD = {
   const web = serve().listen(0, '127.0.0.1'); await new Promise((r) => web.once('listening', r)); const port = web.address().port; const URL0 = `http://127.0.0.1:${port}/`;
   const br = await chromium.launch(); const errors = [];
   const page = async (o, settings, lang = 'en') => {
-    const ctx = await br.newContext({ viewport: { width: o.w, height: o.h }, isMobile: !!o.mobile, hasTouch: !!o.mobile, locale: lang, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    const ctx = await br.newContext({ viewport: { width: o.w, height: o.h }, deviceScaleFactor: o.dpr || 1, isMobile: !!o.mobile, hasTouch: !!o.mobile, locale: lang, reducedMotion: 'reduce', serviceWorkers: 'block' });
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
     await p.addInitScript(([s, l]) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); if (s !== null) localStorage.setItem('kt.settings', s); if (s && s.includes('"__migrated"')) localStorage.setItem('kt.themeMigrated', '1'); }, [settings === null ? null : JSON.stringify({ addons: ['player'], ...settings }), lang]);
     // (raw.githubusercontent.com — the theme list — is not reached: answered 404 here.)
@@ -56,7 +78,7 @@ const OLD = {
   const go = async (p, hash, sel) => { await p.goto(URL0 + hash); await p.waitForSelector(sel); await p.waitForFunction(() => document.documentElement.dataset.theme !== undefined); };
 
   /* 1b. the drawn background within the declared extremes */
-  for (const id of (process.env.KT_ONLY ? [process.env.KT_ONLY] : ['frost', 'aurora', 'ember', 'obsidian', 'washi', 'frosted-glass'])) for (const mode of T.modesOf(T.themeById(id))) {
+  for (const id of (process.env.KT_ONLY ? [process.env.KT_ONLY] : ['frost', 'aurora', 'obsidian', 'washi', 'frosted-glass'])) for (const mode of T.modesOf(T.themeById(id))) {
     const { p, ctx } = await page(PHONE, { theme: id, uiMode: mode, accent: T.themeById(id).followsAccent ? 'graphite' : 'theme', glassBlur: 'off', __migrated: 1 });
     await go(p, '', '.downloads-view');
     // (Everything over the background made invisible, and seen to be so, before the picture is taken.)
@@ -69,6 +91,27 @@ const OLD = {
     await ctx.close();
   }
 
+  /* 1c. the header's title on the start side in every theme (a narrow phone stacks the bar: buttons, then the title
+     below — never the title after the buttons, on the far side), and the bar settled (the same layout twice) */
+  {
+    const bad = [];
+    for (const lang of ['en', 'ar']) for (const def of T.THEMES.filter((x) => !x.custom)) {
+      const { p, ctx } = await page({ w: 360, h: 780, mobile: true, dpr: 2 }, { theme: def.id, glassBlur: 'full', __migrated: 1 }, lang);
+      // (As on a phone: the native bridge there gives the bar all its buttons — the narrow case.)
+      await p.addInitScript(() => { const L = {}; const plugin = new Proxy({ addListener: (ev, fn) => { (L[ev] = L[ev] || []).push(fn); return { remove() {} }; }, list: async () => ({ tasks: [] }) }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
+        window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] }; });
+      await go(p, '', '.downloads-view > .topbar .title');
+      // (The window resized by a pixel and back, as a phone turning or its keyboard does: the bar decides again.)
+      await p.evaluate(() => document.fonts.ready); await p.setViewportSize({ width: 361, height: 780 }); await p.setViewportSize({ width: 360, height: 780 }); await p.waitForTimeout(250);
+      const look = () => p.evaluate(() => { const tb = document.querySelector('.downloads-view > .topbar'); const t = tb.querySelector(':scope > .title').getBoundingClientRect(); const a = tb.querySelector(':scope > .topbar-actions').getBoundingClientRect();
+        const rtl = document.documentElement.dir === 'rtl'; const below = t.top >= a.bottom - 1; return { cls: tb.className, start: below || (rtl ? t.right >= a.right : t.left <= a.left), wide: document.scrollingElement.scrollWidth > innerWidth + 1 }; });
+      const one = await look(); await p.waitForTimeout(200); const two = await look();
+      if (!one.start || one.wide || one.cls !== two.cls) bad.push(`${def.id} ${lang} ${JSON.stringify([one, two])}`);
+      await ctx.close();
+    }
+    ok('the header\'s title on the start side in every theme (en, ar), the bar settled, nothing wider than the screen', !bad.length, bad.join('; '));
+  }
+
   /* 2. tokens on every main screen */
   const SCREENS = [['', '.downloads-view'], ['#/search', '.view'], ['#/videos', '.view'], ['#/settings', '.settings-view']];
   for (const lang of ['en', 'ar']) for (const [size, o] of [['phone', PHONE], ['pc', PC]]) for (const id of ['frost', 'aurora', 'obsidian', 'classic']) {
@@ -78,7 +121,7 @@ const OLD = {
       await go(p, hash, sel);
       const st = await p.evaluate(() => { const h = document.documentElement; const cs = (q, k) => { const e = document.querySelector(q); return e ? getComputedStyle(e)[k] : null; }; const before = getComputedStyle(document.body, '::before'); return { theme: h.dataset.theme, glass: h.dataset.glass, dir: h.dir, bgImg: before.backgroundImage, bar: cs('.topbar', 'backdropFilter'), nav: cs('.bottom-nav', 'backdropFilter') ?? cs('.nav-rail', 'backdropFilter'), low: getComputedStyle(h).getPropertyValue('--md-surface-container-low').trim(), primary: getComputedStyle(h).getPropertyValue('--md-primary').trim() }; });
       const glassy = id !== 'classic';
-      const fine = st.theme === id && (lang === 'ar' ? st.dir === 'rtl' : st.dir === 'ltr') && (glassy ? st.glass === 'full' && st.bgImg.includes('gradient') && (st.bar === null || /blur/.test(st.bar) || hash === '#/settings') && /blur/.test(st.nav || '') && /\/ 0?\.\d/.test(st.low) : st.glass === undefined && st.bgImg === 'none' && st.low === '#1a1b1d') && (id !== 'aurora' || st.primary === '#7ee3d6');
+      const fine = st.theme === id && (lang === 'ar' ? st.dir === 'rtl' : st.dir === 'ltr') && (glassy ? st.glass === 'full' && st.bgImg.includes('gradient') && (st.bar === null || /blur/.test(st.bar) || hash === '#/settings') && /blur/.test(st.nav || '') && /\/ 0?\.\d/.test(st.low) : st.glass === undefined && st.bgImg === 'none' && st.low === '#1a1b1d') && (id !== 'aurora' || st.primary === '#a1c0bc');
       if (!fine) { good = false; why = `${hash || '#/'} ${JSON.stringify(st)}`; }
     }
     ok(`${id} applies on every main screen (${lang}, ${size})`, good, why);
@@ -94,7 +137,7 @@ const OLD = {
   {
     const { p, ctx } = await page(PHONE, { uiMode: 'dark', darkTone: 'default', accent: 'graphite' }); await go(p, '', '.downloads-view');
     const r = await p.evaluate(() => ({ s: JSON.parse(localStorage.getItem('kt.settings')), flag: localStorage.getItem('kt.themeMigrated'), ground: getComputedStyle(document.documentElement).getPropertyValue('--th-ground').trim() }));
-    ok('untouched settings move to the new default (its refined graphite), once', r.s.theme === 'frost' && !r.s.themeKeepColours && r.flag === '1' && r.ground === '#0a0b0d'); await ctx.close();
+    ok('untouched settings move to the new default (its refined graphite), once', r.s.theme === 'frost' && !r.s.themeKeepColours && r.flag === '1' && r.ground === '#17181b'); await ctx.close();
   }
   {
     const { p, ctx } = await page(PHONE, { uiMode: 'dark', darkTone: 'grey', accent: 'teal' }); await go(p, '', '.downloads-view');
@@ -131,7 +174,7 @@ const OLD = {
     const { p, ctx } = await page(o, { theme: 'frost', __migrated: 1 });
     await go(p, '#/settings/appearance', '#appearance .tg-grid .tg-card');
     const r = await p.evaluate(() => { const txt = document.querySelector('#appearance').textContent; return { battery: /low battery/i.test(txt), rail: /Glass sidebar/.test(txt), blur: /Glass blur/.test(txt), cards: document.querySelectorAll('#appearance .tg-card[data-theme]').length }; });
-    ok(`${size}: ${size === 'pc' ? 'the sidebar choice, not the battery one' : 'the battery choice, not the sidebar one'}; the blur choice and every theme`, r.blur && r.cards >= 9 && (size === 'pc' ? r.rail && !r.battery : r.battery && !r.rail), JSON.stringify(r));
+    ok(`${size}: ${size === 'pc' ? 'the sidebar choice, not the battery one' : 'the battery choice, not the sidebar one'}; the blur choice and every theme`, r.blur && r.cards >= 8 && (size === 'pc' ? r.rail && !r.battery : r.battery && !r.rail), JSON.stringify(r));
     await ctx.close();
   }
 

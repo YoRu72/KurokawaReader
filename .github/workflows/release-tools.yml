@@ -467,6 +467,8 @@ jobs:
             for os in Windows Linux; do if [ ! -d "artifacts/rust-$os" ]; then echo; echo "_$os: the new, smaller build did not come this time; the previous build stays the $os download._"; fi; done
             # (A Rust build that fell back to the plain one — without librqbit — says so.)
             for f in artifacts/note-rust-*/*.md; do [ -f "$f" ] && { echo; cat "$f"; }; done
+            # (No deno pack this time — «The deno pack» refused or could not fetch deno's files: the notes' «Get deno» does not hold.)
+            if ! ls artifacts/android/KurokawaTools-pack-deno-*.gz > /dev/null 2>&1; then echo; echo "_This release carries no deno pack: for YouTube's full choice of formats in the video tools on a computer, install deno or node yourself._"; fi
             echo
             echo "## Files"
             echo

@@ -1,4 +1,4 @@
-# release-tools.yml — the switch-over patch (Tools' stage P9), NOT applied
+# release-tools.yml — the switch-over patch (Tools' stage P9) — APPLIED in 0.17.0 (PORTING.md «What to flip», «Flipped for 0.17.0»)
 
 `git apply --check release-tools-yml.patch` passes against `.github/workflows/release-tools.yml` on branch work-tt-p9
 (checked when it was made). Apply it only at the switch-over, together with the flips below.

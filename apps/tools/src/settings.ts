@@ -193,6 +193,8 @@ const listeners = new Set<(s: Settings) => void>();
 /** Once: the move to themes (kt.themeMigrated). A fresh install and untouched settings get the new default; who had
  *  chosen a dark tone or an accent gets it too, with those colours kept inside the glass. */
 function migrateTheme(): void {
+  // (A theme that is no longer in the app — «ember» was taken out before release — falls back to the default.)
+  if (current.theme === 'ember') { current = { ...current, theme: DEFAULT_THEME }; try { localStorage.setItem(KEY, JSON.stringify(current)); } catch { /* private mode */ } }
   try {
     if (localStorage.getItem('kt.themeMigrated')) return;
     const raw = localStorage.getItem(KEY); const stored = raw ? (JSON.parse(raw) as Partial<Settings>) : null;

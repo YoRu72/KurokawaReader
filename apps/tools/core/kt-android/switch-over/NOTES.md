@@ -1,5 +1,10 @@
 # Switching the Rust core on in the released APKs
 
+**Applied in 0.17.0, unconditionally** (no repository variable): the step runs in every release with
+`continue-on-error`, and the libraries are copied only when all three ABIs built — otherwise the APKs are built exactly
+as before. To turn it off: delete the step «Rust core for Android (optional)» in release-tools.yml. The text below is
+the plan as it was written.
+
 `release-tools-android.patch` (beside this file) adds one step to the Android job of
 `.github/workflows/release-tools.yml`, right after «Create Android project»: build `libkt_android.so` for the three
 ABIs (`core/kt-android/build-android.sh`) and copy it into `android/app/src/main/jniLibs/<abi>/`, before Gradle runs.

@@ -1,5 +1,8 @@
 # Switch-over notes — the hybrid torrent engine's librqbit (stage P4, «far seeks»)
 
+**Applied in 0.17.0**: release-tools.yml's `rust-desktop` «Build» step has these lines (with the original system's
+features as tauri-check.yml picks them); a fallback adds its line to the release notes (artifact `note-rust-<os>`).
+
 The release patch (`release-tools-yml.patch`, its own notes in `release-tools-yml.NOTES.md`) builds the plain app:
 the committed `src-tauri/Cargo.toml` never names librqbit, so a release built from it streams torrents with aria2 alone
 (a far seek waits for the in-order fetch). CI (`tauri-check.yml`) builds **with** librqbit on every system and, on

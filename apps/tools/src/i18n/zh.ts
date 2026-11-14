@@ -1228,7 +1228,6 @@ export const zh: Partial<Strings> = {
   themeFrost: "霜玻璃 × Material 3 Expressive",
   themeClassic: "经典（无玻璃）",
   themeAurora: "极光",
-  themeEmber: "琥珀暮色",
   themeObsidian: "黑曜石",
   themeWashi: "靛蓝和纸",
   themeBy: "作者：{who}",

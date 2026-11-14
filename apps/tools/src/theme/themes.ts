@@ -115,80 +115,54 @@ const FROST: ThemeDef = {
   dark: {
     text: { on: '#e2e4e8', variant: '#b4b8bf', dim: '#8f949c', outline: '#7d828a', outlineVariant: '#2c3036' },
     // (Three fields you can only just tell apart: blue-graphite ink above, the accent's container low at the side, a cooler ink at the foot.)
-    bg: 'radial-gradient(90% 46% at 0% -6%, color-mix(in srgb, var(--md-tertiary-container) 60%, transparent), transparent 72%),'
-      + ' radial-gradient(70% 44% at 104% 46%, color-mix(in srgb, var(--md-primary-container) 30%, transparent), transparent 70%),'
-      + ' radial-gradient(100% 46% at 20% 108%, color-mix(in srgb, var(--md-tertiary-container) 44%, transparent), transparent 72%)',
-    extremes: ['#1b2027', '#0a0b0d'],
+    bg: 'radial-gradient(90% 46% at 0% -6%, color-mix(in srgb, var(--md-tertiary-container) 34%, transparent), transparent 72%),'
+      + ' radial-gradient(70% 44% at 104% 46%, color-mix(in srgb, var(--md-primary-container) 16%, transparent), transparent 70%),'
+      + ' radial-gradient(100% 46% at 20% 108%, color-mix(in srgb, var(--md-tertiary-container) 26%, transparent), transparent 72%)',
+    extremes: ['#1c2026', '#17181b'],
     pane: { from: 'low', a: .66 }, card: { from: 'low', a: .5 }, sheet: { from: 'mid', a: .86 }, fill: .55,
-    blur: 28, sat: 1.35, edge: 'rgb(255 255 255 / .07)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .055)', shadow: '0 16px 40px -18px rgb(0 0 0 / .8), 0 1px 3px rgb(0 0 0 / .4)', scrim: 'rgb(3 4 5 / .62)',
+    blur: 28, sat: 1, edge: 'rgb(255 255 255 / .07)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .055)', shadow: '0 16px 40px -18px rgb(0 0 0 / .8), 0 1px 3px rgb(0 0 0 / .4)', scrim: 'rgb(4 4 4 / .62)',
   },
   light: {
     text: { on: '#171a1d', variant: '#3b4047', dim: '#535860', outline: '#6d727a', outlineVariant: '#c5c9cf' },
-    bg: 'radial-gradient(70% 48% at 8% -4%, color-mix(in srgb, var(--md-primary-container) 80%, transparent), transparent 72%),'
-      + ' radial-gradient(60% 46% at 104% 34%, color-mix(in srgb, var(--md-tertiary-container) 85%, transparent), transparent 70%),'
-      + ' radial-gradient(80% 52% at 26% 106%, color-mix(in srgb, var(--md-secondary-container) 90%, transparent), transparent 72%)',
+    bg: 'radial-gradient(70% 48% at 8% -4%, color-mix(in srgb, var(--md-primary-container) 46%, transparent), transparent 72%),'
+      + ' radial-gradient(60% 46% at 104% 34%, color-mix(in srgb, var(--md-tertiary-container) 50%, transparent), transparent 70%),'
+      + ' radial-gradient(80% 52% at 26% 106%, color-mix(in srgb, var(--md-secondary-container) 56%, transparent), transparent 72%)',
     extremes: ['#ffffff', '#c9cfd8'],
     pane: { from: 'lowest', a: .62 }, card: { from: 'lowest', a: .55 }, sheet: { from: 'lowest', a: .8 }, fill: .7,
-    blur: 26, sat: 1.6, edge: 'rgb(255 255 255 / .6)', sheen: SHEEN_LIGHT, shadow: SHADOW_LIGHT, scrim: 'rgb(30 34 44 / .32)',
+    blur: 26, sat: 1, edge: 'rgb(255 255 255 / .6)', sheen: SHEEN_LIGHT, shadow: SHADOW_LIGHT, scrim: 'rgb(31 34 43 / .32)',
   },
 };
-/** The refined graphite the new default stands on (cooler, deeper); kept colours use the app's own instead. */
-export const FROST_GRAPHITE: Surfaces = { ground: '#0a0b0d', lowest: '#070809', low: '#111316', mid: '#15171b', high: '#1c1f24', highest: '#24282e' };
-export const FROST_LIGHT: Surfaces = { ground: '#eef1f5', lowest: '#ffffff', low: '#f4f6f9', mid: '#eceff3', high: '#e4e8ed', highest: '#dce1e7' };
+/** The soft charcoal the default stands on (and a neutral paper in light); kept colours use the app's own instead. */
+export const FROST_GRAPHITE: Surfaces = { ground: '#17181b', lowest: '#111214', low: '#1c1d20', mid: '#222326', high: '#2a2b2e', highest: '#333437' };
+export const FROST_LIGHT: Surfaces = { ground: '#ebebe9', lowest: '#fbfbfa', low: '#f5f5f3', mid: '#efefed', high: '#e6e6e3', highest: '#dddddb' };
 
 const CLASSIC: ThemeDef = { id: 'classic', nameKey: 'themeClassic', classic: true, followsAccent: true };
 
-/** Aurora: curtains of teal and violet over a polar night; in light, mint and lilac on ice. */
+/** Aurora: a polar night with the faintest curtains of sea-green and lilac, close to grey; in light, the same on ice. */
 const AURORA: ThemeDef = {
   id: 'aurora', nameKey: 'themeAurora', radius: M3E_RADII,
   dark: {
-    surfaces: { ground: '#060a13', lowest: '#04070d', low: '#0c1220', mid: '#111827', high: '#1a2233', highest: '#232c3f' },
-    text: { on: '#e8edf5', variant: '#cdd5e1', dim: '#b6bfcc', outline: '#8693a6', outlineVariant: '#334055' },
-    roles: { primary: '#7ee3d6', onPrimary: '#003731', primaryContainer: '#16504a', onPrimaryContainer: '#b4f5ec', secondaryContainer: '#25304a', onSecondaryContainer: '#d6e0f5', tertiaryContainer: '#3e2f6b', onTertiaryContainer: '#e5dbff' },
-    bg: 'radial-gradient(90% 34% at 30% -6%, rgb(56 214 190 / .22), transparent 70%),'
-      + ' radial-gradient(46% 60% at 96% 18%, rgb(132 92 246 / .30), transparent 70%),'
-      + ' radial-gradient(70% 40% at 0% 70%, rgb(40 120 200 / .22), transparent 70%),'
-      + ' radial-gradient(80% 40% at 70% 108%, rgb(30 160 140 / .2), transparent 70%)',
-    extremes: ['#22505a', '#060a13'],
+    surfaces: { ground: '#131417', lowest: '#0f1012', low: '#18191d', mid: '#1e1f24', high: '#26282d', highest: '#2f3137' },
+    text: { on: '#eceef1', variant: '#cfd5df', dim: '#b6bfcc', outline: '#8693a6', outlineVariant: '#374151' },
+    roles: { primary: '#a1c0bc', onPrimary: '#172020', primaryContainer: '#293d3b', onPrimaryContainer: '#ccdddb', secondaryContainer: '#2d3342', onSecondaryContainer: '#e1e4ea', tertiaryContainer: '#453e5c', onTertiaryContainer: '#eceaf0' },
+    bg: 'radial-gradient(90% 34% at 30% -6%, rgb(121 149 145 / .22), transparent 70%),'
+      + ' radial-gradient(46% 60% at 96% 18%, rgb(164 159 179 / .30), transparent 70%),'
+      + ' radial-gradient(70% 40% at 0% 70%, rgb(106 120 134 / .22), transparent 70%),'
+      + ' radial-gradient(80% 40% at 70% 108%, rgb(84 106 103 / .2), transparent 70%)',
+    extremes: ['#334549', '#131417'],
     pane: { from: 'mid', a: .58 }, card: { from: 'low', a: .48 }, sheet: { from: 'mid', a: .76 }, fill: .6,
-    blur: 30, sat: 1.7, edge: 'rgb(170 230 255 / .12)', sheen: 'inset 0 1px 0 rgb(190 240 255 / .09), inset 0 0 0 1px rgb(190 240 255 / .04)', shadow: SHADOW_DARK, scrim: 'rgb(2 5 12 / .55)',
+    blur: 30, sat: 1, edge: 'rgb(208 215 217 / .12)', sheen: 'inset 0 1px 0 rgb(219 225 226 / .09), inset 0 0 0 1px rgb(219 225 226 / .04)', shadow: SHADOW_DARK, scrim: 'rgb(7 7 7 / .55)',
   },
   light: {
-    surfaces: { ground: '#eaf3f5', lowest: '#ffffff', low: '#f2f8f9', mid: '#e8f0f3', high: '#dfe9ed', highest: '#d6e1e6' },
-    text: { on: '#101b22', variant: '#2f3e48', dim: '#42515b', outline: '#6c7b85', outlineVariant: '#bccbd3' },
-    roles: { primary: '#0e6b64', onPrimary: '#ffffff', primaryContainer: '#b2efe6', onPrimaryContainer: '#00201d', secondaryContainer: '#d7e3f2', onSecondaryContainer: '#122033', tertiaryContainer: '#e6dcff', onTertiaryContainer: '#22124d' },
-    bg: 'radial-gradient(90% 36% at 28% -8%, rgb(80 220 196 / .32), transparent 70%),'
-      + ' radial-gradient(50% 60% at 100% 20%, rgb(170 140 255 / .28), transparent 70%),'
-      + ' radial-gradient(80% 44% at 50% 110%, rgb(120 190 255 / .26), transparent 70%)',
-    extremes: ['#ffffff', '#b5cce0'],
+    surfaces: { ground: '#e7e9ea', lowest: '#fafbfb', low: '#f2f3f4', mid: '#ebedee', high: '#e1e4e5', highest: '#d7dadb' },
+    text: { on: '#141a1d', variant: '#303e47', dim: '#42515b', outline: '#6c7b85', outlineVariant: '#bdcbd2' },
+    roles: { primary: '#314847', onPrimary: '#ffffff', primaryContainer: '#c8d9d7', onPrimaryContainer: '#0d1313', secondaryContainer: '#e0e4e9', onSecondaryContainer: '#1c2129', tertiaryContainer: '#ecebf0', onTertiaryContainer: '#2b2738' },
+    bg: 'radial-gradient(90% 36% at 28% -8%, rgb(138 162 158 / .32), transparent 70%),'
+      + ' radial-gradient(50% 60% at 100% 20%, rgb(194 191 204 / .28), transparent 70%),'
+      + ' radial-gradient(80% 44% at 50% 110%, rgb(180 188 195 / .26), transparent 70%)',
+    extremes: ['#ffffff', '#c2cbd3'],
     pane: { from: 'lowest', a: .6 }, card: { from: 'lowest', a: .55 }, sheet: { from: 'lowest', a: .8 }, fill: .7,
-    blur: 28, sat: 1.7, edge: 'rgb(255 255 255 / .65)', sheen: SHEEN_LIGHT, shadow: '0 16px 40px -16px rgb(20 60 80 / .26), 0 2px 6px rgb(20 60 80 / .08)', scrim: 'rgb(16 30 40 / .32)',
-  },
-};
-
-/** Amber Dusk: the last light of a lantern-lit evening — amber low on the horizon, a rose haze above. */
-const EMBER: ThemeDef = {
-  id: 'ember', nameKey: 'themeEmber', radius: { xs: 8, sm: 12, md: 18, lg: 22, xl: 30, xxl: 40 },
-  dark: {
-    surfaces: { ground: '#130d0b', lowest: '#0c0807', low: '#1c1512', mid: '#221a16', high: '#2d241f', highest: '#382e28' },
-    text: { on: '#f4e9e2', variant: '#dccbc0', dim: '#c3b1a5', outline: '#9c8a7e', outlineVariant: '#4f423a' },
-    roles: { primary: '#ffc27a', onPrimary: '#462a00', primaryContainer: '#664010', onPrimaryContainer: '#ffdcb6', secondaryContainer: '#4a3328', onSecondaryContainer: '#fadccc', tertiaryContainer: '#5e2f3b', onTertiaryContainer: '#ffd9e1' },
-    bg: 'radial-gradient(90% 46% at 10% 108%, rgb(255 150 40 / .24), transparent 70%),'
-      + ' radial-gradient(60% 46% at 100% 0%, rgb(225 70 110 / .24), transparent 70%),'
-      + ' radial-gradient(60% 40% at 0% 20%, rgb(150 60 40 / .2), transparent 70%)',
-    extremes: ['#523219', '#130d0b'],
-    pane: { from: 'mid', a: .6 }, card: { from: 'low', a: .5 }, sheet: { from: 'mid', a: .78 }, fill: .62,
-    blur: 26, sat: 1.45, edge: 'rgb(255 214 170 / .11)', sheen: 'inset 0 1px 0 rgb(255 225 190 / .09), inset 0 0 0 1px rgb(255 225 190 / .035)', shadow: '0 18px 44px -14px rgb(0 0 0 / .62), 0 2px 8px rgb(20 6 0 / .3)', scrim: 'rgb(10 4 2 / .55)',
-  },
-  light: {
-    surfaces: { ground: '#fbefe6', lowest: '#ffffff', low: '#fdf5ef', mid: '#f7ebe2', high: '#f0e2d7', highest: '#e9d8cb' },
-    text: { on: '#24170f', variant: '#4a3a2f', dim: '#5c4a3e', outline: '#857063', outlineVariant: '#dcc6b7' },
-    roles: { primary: '#8a4d0f', onPrimary: '#ffffff', primaryContainer: '#ffdcb6', onPrimaryContainer: '#2d1600', secondaryContainer: '#f9dccd', onSecondaryContainer: '#2c160b', tertiaryContainer: '#ffd9e1', onTertiaryContainer: '#3d0718' },
-    bg: 'radial-gradient(90% 46% at 10% 108%, rgb(255 170 80 / .34), transparent 70%),'
-      + ' radial-gradient(60% 46% at 100% 0%, rgb(255 140 170 / .3), transparent 70%)',
-    extremes: ['#ffffff', '#f6c69a'],
-    pane: { from: 'lowest', a: .6 }, card: { from: 'lowest', a: .55 }, sheet: { from: 'lowest', a: .82 }, fill: .7,
-    blur: 24, sat: 1.4, edge: 'rgb(255 255 255 / .6)', sheen: SHEEN_LIGHT, shadow: '0 16px 40px -16px rgb(90 40 10 / .26), 0 2px 6px rgb(90 40 10 / .08)', scrim: 'rgb(40 20 10 / .32)',
+    blur: 28, sat: 1, edge: 'rgb(255 255 255 / .65)', sheen: SHEEN_LIGHT, shadow: '0 16px 40px -16px rgb(45 52 56 / .26), 0 2px 6px rgb(45 52 56 / .08)', scrim: 'rgb(25 29 31 / .32)',
   },
 };
 
@@ -196,12 +170,12 @@ const EMBER: ThemeDef = {
 const OBSIDIAN: ThemeDef = {
   id: 'obsidian', nameKey: 'themeObsidian', force: 'dark', followsAccent: true, radius: { xs: 6, sm: 10, md: 14, lg: 18, xl: 24, xxl: 32 },
   dark: {
-    surfaces: { ground: '#000000', lowest: '#000000', low: '#08090a', mid: '#0d0e10', high: '#17181b', highest: '#212226' },
+    surfaces: { ground: '#000000', lowest: '#000000', low: '#090909', mid: '#0e0e0f', high: '#17181a', highest: '#222225' },
     text: { on: '#ececee', variant: '#c8c9cd', dim: '#9fa1a6', outline: '#8a8c91', outlineVariant: '#3a3c40' },
     bg: 'radial-gradient(120% 30% at 50% -18%, color-mix(in srgb, var(--md-primary) 16%, transparent), transparent 70%)',
     extremes: ['#24262a', '#000000'],
     pane: { from: 'lowest', a: .72 }, card: { from: 'low', a: .55 }, sheet: { from: 'low', a: .86 }, fill: .7,
-    blur: 20, sat: 1.3, edge: 'color-mix(in srgb, var(--md-primary) 30%, transparent)',
+    blur: 20, sat: 1, edge: 'color-mix(in srgb, var(--md-primary) 30%, transparent)',
     sheen: 'inset 0 1px 0 color-mix(in srgb, var(--md-primary) 32%, transparent), inset 0 0 18px -10px color-mix(in srgb, var(--md-primary) 40%, transparent)',
     shadow: '0 0 0 1px rgb(0 0 0 / .9), 0 18px 40px -16px color-mix(in srgb, var(--md-primary) 18%, transparent)', scrim: 'rgb(0 0 0 / .7)',
   },
@@ -211,29 +185,29 @@ const OBSIDIAN: ThemeDef = {
 const WASHI: ThemeDef = {
   id: 'washi', nameKey: 'themeWashi', radius: { xs: 6, sm: 10, md: 14, lg: 16, xl: 22, xxl: 28 },
   light: {
-    surfaces: { ground: '#eceef1', lowest: '#ffffff', low: '#f5f6f8', mid: '#eef0f3', high: '#e6e9ee', highest: '#dde1e8' },
-    text: { on: '#141a2e', variant: '#313950', dim: '#3c445d', outline: '#6c7490', outlineVariant: '#c4c9d8' },
-    roles: { primary: '#2f3f94', onPrimary: '#ffffff', primaryContainer: '#dde1ff', onPrimaryContainer: '#0b1650', secondaryContainer: '#e2e4f0', onSecondaryContainer: '#181c2e', tertiaryContainer: '#f0e3cf', onTertiaryContainer: '#2a1d08' },
-    // (Long fibres across the sheet, indigo soaked in from the upper corner, the paper's own straw at the foot.)
-    bg: 'repeating-linear-gradient(100deg, rgb(47 63 148 / .045) 0 1px, transparent 1px 9px),'
-      + ' repeating-linear-gradient(8deg, rgb(120 100 60 / .03) 0 1px, transparent 1px 13px),'
-      + ' radial-gradient(80% 46% at 100% -4%, rgb(47 63 148 / .26), transparent 70%),'
-      + ' radial-gradient(60% 34% at 0% 30%, rgb(47 63 148 / .12), transparent 70%),'
-      + ' radial-gradient(80% 50% at 10% 104%, rgb(206 178 128 / .38), transparent 70%)',
-    extremes: ['#ffffff', '#b4bbd6'],
+    surfaces: { ground: '#ebebe9', lowest: '#fbfbfa', low: '#f5f5f3', mid: '#efefed', high: '#e6e6e3', highest: '#dddddb' },
+    text: { on: '#1b1e27', variant: '#343a4d', dim: '#3e455b', outline: '#6c7490', outlineVariant: '#c5c9d7' },
+    roles: { primary: '#4e5475', onPrimary: '#ffffff', primaryContainer: '#ebebf1', onPrimaryContainer: '#252736', secondaryContainer: '#e5e5ed', onSecondaryContainer: '#1c1e2a', tertiaryContainer: '#e4e5ea', onTertiaryContainer: '#1d1f26' },
+    // (Long fibres across the sheet, a grey-blue ink soaked in from the upper corner, the paper's own grey at the foot.)
+    bg: 'repeating-linear-gradient(100deg, rgb(86 90 109 / .045) 0 1px, transparent 1px 9px),'
+      + ' repeating-linear-gradient(8deg, rgb(96 98 104 / .03) 0 1px, transparent 1px 13px),'
+      + ' radial-gradient(80% 46% at 100% -4%, rgb(86 90 109 / .26), transparent 70%),'
+      + ' radial-gradient(60% 34% at 0% 30%, rgb(86 90 109 / .12), transparent 70%),'
+      + ' radial-gradient(80% 50% at 10% 104%, rgb(170 171 175 / .34), transparent 70%)',
+    extremes: ['#ffffff', '#bbbfcf'],
     pane: { from: 'lowest', a: .66 }, card: { from: 'lowest', a: .62 }, sheet: { from: 'lowest', a: .86 }, fill: .72,
-    blur: 18, sat: 1.15, edge: 'rgb(47 63 148 / .12)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .8)', shadow: '0 10px 30px -14px rgb(20 26 46 / .25), 0 1px 3px rgb(20 26 46 / .1)', scrim: 'rgb(20 26 46 / .3)',
+    blur: 18, sat: 1, edge: 'rgb(86 90 109 / .12)', sheen: 'inset 0 1px 0 rgb(255 255 255 / .8)', shadow: '0 10px 30px -14px rgb(30 31 36 / .25), 0 1px 3px rgb(30 31 36 / .1)', scrim: 'rgb(30 31 36 / .3)',
   },
   dark: {
-    surfaces: { ground: '#101218', lowest: '#0a0b10', low: '#161922', mid: '#1b1f29', high: '#252a36', highest: '#2f3542' },
-    text: { on: '#e6e8f0', variant: '#c4c8d6', dim: '#9ca2b4', outline: '#878ea3', outlineVariant: '#3a4054' },
-    roles: { primary: '#b8c3ff', onPrimary: '#1b2a6e', primaryContainer: '#343f7e', onPrimaryContainer: '#dde1ff', secondaryContainer: '#2c3142', onSecondaryContainer: '#dfe2f2', tertiaryContainer: '#4a3e2a', onTertiaryContainer: '#f2e2c6' },
-    bg: 'repeating-linear-gradient(102deg, rgb(184 195 255 / .018) 0 1px, transparent 1px 7px),'
-      + ' radial-gradient(70% 40% at 100% 0%, rgb(90 108 220 / .22), transparent 70%),'
-      + ' radial-gradient(70% 46% at 0% 100%, rgb(150 120 70 / .14), transparent 70%)',
-    extremes: ['#2a3150', '#101218'],
+    surfaces: { ground: '#1a1c1d', lowest: '#141516', low: '#1f2122', mid: '#252728', high: '#2d3031', highest: '#36393a' },
+    text: { on: '#e8e9ef', variant: '#c4c8d6', dim: '#9ca2b4', outline: '#878ea3', outlineVariant: '#3a4054' },
+    roles: { primary: '#d5d7e2', onPrimary: '#373b52', primaryContainer: '#484d6a', onPrimaryContainer: '#ebebf1', secondaryContainer: '#2d3141', onSecondaryContainer: '#e5e6ec', tertiaryContainer: '#3d3f46', onTertiaryContainer: '#e3e4ea' },
+    bg: 'repeating-linear-gradient(102deg, rgb(216 216 223 / .018) 0 1px, transparent 1px 7px),'
+      + ' radial-gradient(70% 40% at 100% 0%, rgb(144 146 166 / .22), transparent 70%),'
+      + ' radial-gradient(70% 46% at 0% 100%, rgb(110 112 120 / .14), transparent 70%)',
+    extremes: ['#333647', '#1a1c1d'],
     pane: { from: 'mid', a: .66 }, card: { from: 'low', a: .55 }, sheet: { from: 'mid', a: .82 }, fill: .65,
-    blur: 18, sat: 1.15, edge: 'rgb(184 195 255 / .1)', sheen: 'inset 0 1px 0 rgb(220 226 255 / .06)', shadow: SHADOW_DARK, scrim: 'rgb(4 5 10 / .55)',
+    blur: 18, sat: 1, edge: 'rgb(216 216 223 / .1)', sheen: 'inset 0 1px 0 rgb(236 236 239 / .06)', shadow: SHADOW_DARK, scrim: 'rgb(7 7 7 / .55)',
   },
 };
 
@@ -241,36 +215,36 @@ const WASHI: ThemeDef = {
 // Their values: header rgba(2,6,11,.10) blur 8 sat 1.1 (dark) / rgba(254,244,242,.10) blur 6 sat 1.2 (light);
 // sidebar .10 blur 20 sat 1.3/1.35; cards transparent, blur 10/8 sat 1.25, 0.5px border rgba(234,235,238,.22) /
 // rgba(255,255,255,.3), radius 18; popups rgba(…, .35) blur 18 sat 1.2; text rgba(234,235,238,.98)/.8 and
-// rgba(19,21,54,.98)/.8; primary #7AA2BE / #6A74D3. Our panes carry a little more tint than theirs where text sits
+// rgba(19,21,54,.98)/.8; primary #8b9fad / #8e91af. Our panes carry a little more tint than theirs where text sits
 // on them, secondary text is a little more opaque (.9/.88 for their .8) and the light picture gets a .3 veil (theirs
 // none), so text stays readable (≥ 4.5:1) over the brightest and darkest parts of their pictures.
 const FG_DARK: ModeTokens = {
-  surfaces: { ground: '#02060b', lowest: '#010307', low: '#0a1018', mid: '#0e151e', high: '#17202b', highest: '#212b37' },
+  surfaces: { ground: '#060606', lowest: '#040404', low: '#101112', mid: '#151617', high: '#1f2123', highest: '#292c2f' },
   text: { on: 'rgb(234 235 238 / .98)', variant: 'rgb(234 235 238 / .9)', dim: 'rgb(234 235 238 / .88)', outline: 'rgb(234 235 238 / .5)', outlineVariant: 'rgb(90 111 128 / .45)' },
-  roles: { primary: '#7aa2be', onPrimary: '#0a1115', primaryContainer: '#294254', onPrimaryContainer: '#e4ecf2', secondaryContainer: 'rgb(122 162 190 / .24)', onSecondaryContainer: '#e4ecf2', tertiaryContainer: '#3d637e', onTertiaryContainer: '#f2f6f8' },
+  roles: { primary: '#7fa1b9', onPrimary: '#0b1114', primaryContainer: '#2c4251', onPrimaryContainer: '#e5ecf1', secondaryContainer: 'rgb(127 161 185 / .24)', onSecondaryContainer: '#e5ecf1', tertiaryContainer: '#426279', onTertiaryContainer: '#f2f6f8' },
   // (The stand-in until the picture is here: their dark room — a cold blue light upper left, a pale floor.)
-  bg: 'radial-gradient(42% 30% at 24% 26%, rgb(40 70 110 / .55), transparent 70%),'
+  bg: 'radial-gradient(42% 30% at 24% 26%, rgb(62 73 88 / .55), transparent 70%),'
     + ' radial-gradient(40% 30% at 48% 46%, rgb(90 96 110 / .45), transparent 70%),'
     + ' radial-gradient(60% 10% at 56% 74%, rgb(120 128 140 / .32), transparent 70%),'
     + ' radial-gradient(40% 30% at 82% 10%, rgb(70 66 72 / .45), transparent 70%),'
-    + ' radial-gradient(40% 30% at 6% 92%, rgb(60 30 50 / .4), transparent 70%)',
-  picture: 'bg-dark', extremes: ['#5a5f6b', '#000002'],
-  pane: 'rgb(2 6 11 / .38)', card: 'rgb(2 6 11 / .22)', sheet: 'rgb(2 6 11 / .55)', fill: .5,
-  blur: 18, sat: 1.25, edge: 'rgb(234 235 238 / .22)',
+    + ' radial-gradient(40% 30% at 6% 92%, rgb(53 37 48 / .4), transparent 70%)',
+  picture: 'bg-dark', extremes: ['#5a5f6b', '#010101'],
+  pane: 'rgb(6 6 6 / .38)', card: 'rgb(6 6 6 / .22)', sheet: 'rgb(6 6 6 / .55)', fill: .5,
+  blur: 18, sat: 1, edge: 'rgb(234 235 238 / .22)',
   sheen: '3px 3px .5px -3.5px rgb(255 255 255 / .3) inset, -2px -2px .5px -2px rgb(255 255 255 / .2) inset, 0 0 8px 1px rgb(255 255 255 / .06) inset, 0 0 2px 0 rgb(0 0 0 / .18)',
   shadow: '0 14px 38px rgb(0 0 0 / .34), 0 2px 10px rgb(0 0 0 / .24)', scrim: 'rgb(0 0 0 / .5)',
 };
 const FG_LIGHT: ModeTokens = {
-  surfaces: { ground: '#fef4f2', lowest: '#ffffff', low: '#fdf6f5', mid: '#f6eeee', high: '#ece6ea', highest: '#e2dde4' },
-  text: { on: 'rgb(19 21 54 / .98)', variant: 'rgb(19 21 54 / .92)', dim: 'rgb(19 21 54 / .86)', outline: 'rgb(19 21 54 / .5)', outlineVariant: 'rgb(19 21 54 / .16)' },
-  roles: { primary: '#4e58b8', onPrimary: '#ffffff', primaryContainer: 'rgb(106 116 211 / .24)', onPrimaryContainer: '#131536', secondaryContainer: 'rgb(255 255 255 / .55)', onSecondaryContainer: '#131536', tertiaryContainer: '#dfe2ff', onTertiaryContainer: '#131536' },
+  surfaces: { ground: '#f8f8f8', lowest: '#ffffff', low: '#f9f9f9', mid: '#f3f1f1', high: '#eae8e9', highest: '#e2dee3' },
+  text: { on: 'rgb(30 30 43 / .98)', variant: 'rgb(30 30 43 / .92)', dim: 'rgb(30 30 43 / .86)', outline: 'rgb(30 30 43 / .5)', outlineVariant: 'rgb(30 30 43 / .16)' },
+  roles: { primary: '#5e65a8', onPrimary: '#ffffff', primaryContainer: 'rgb(130 135 187 / .24)', onPrimaryContainer: '#1a1b2f', secondaryContainer: 'rgb(255 255 255 / .55)', onSecondaryContainer: '#1a1b2f', tertiaryContainer: '#ebebf3', onTertiaryContainer: '#1a1b2f' },
   // (Their morning sky: blush at the upper left to periwinkle at the lower right.)
-  bg: 'linear-gradient(118deg, #fbf4ef 0%, #ecebf2 26%, #c9dbf2 52%, #9fbbe6 76%, #6f86cf 100%)',
-  picture: 'bg-light', veil: 'linear-gradient(rgb(254 244 242 / .3), rgb(254 244 242 / .3))', extremes: ['#fefbf4', '#4c6abe'],
-  pane: 'rgb(254 244 242 / .42)', card: 'rgb(254 244 242 / .4)', sheet: 'rgb(254 244 242 / .62)', fill: .55,
-  blur: 16, sat: 1.25, edge: 'rgb(255 255 255 / .3)',
+  bg: 'linear-gradient(118deg, #f6f5f3 0%, #ececf1 26%, #d8dde3 52%, #b8c0cd 76%, #8e96b0 100%)',
+  picture: 'bg-light', veil: 'linear-gradient(rgb(249 247 247 / .3), rgb(249 247 247 / .3))', extremes: ['#faf9f8', '#707b9a'],
+  pane: 'rgb(248 248 248 / .42)', card: 'rgb(248 248 248 / .4)', sheet: 'rgb(248 248 248 / .62)', fill: .55,
+  blur: 16, sat: 1, edge: 'rgb(255 255 255 / .3)',
   sheen: '3px 3px .5px -3.5px rgb(255 255 255 / .3) inset, -2px -2px .5px -2px rgb(255 255 255 / .3) inset, 0 0 8px 1px rgb(255 255 255 / .1) inset, 0 0 2px 0 rgb(0 0 0 / .1)',
-  shadow: '0 10px 32px rgb(21 25 45 / .12), 0 2px 8px rgb(21 25 45 / .08)', scrim: 'rgb(0 0 0 / .38)',
+  shadow: '0 10px 32px rgb(28 29 38 / .12), 0 2px 8px rgb(28 29 38 / .08)', scrim: 'rgb(0 0 0 / .38)',
 };
 const FG_RADII = { xs: 8, sm: 12, md: 14, lg: 18, xl: 22, xxl: 28 };
 const FG_PACK = { id: 'frosted-glass', size: 784_506, assets: { dark: 'bg-dark', light: 'bg-light' } as Partial<Record<Mode, string>> };
@@ -279,7 +253,7 @@ const FROSTED: ThemeDef = { ...FG_BASE, id: 'frosted-glass', name: 'Frosted Glas
 const FROSTED_LIGHT: ThemeDef = { ...FG_BASE, id: 'frosted-glass-light', name: 'Frosted Glass Light', force: 'light', light: FG_LIGHT, pack: { ...FG_PACK, size: 784_506, assets: { light: 'bg-light' } } };
 const FROSTED_DARK: ThemeDef = { ...FG_BASE, id: 'frosted-glass-dark', name: 'Frosted Glass Dark', force: 'dark', dark: FG_DARK, pack: { ...FG_PACK, size: 784_506, assets: { dark: 'bg-dark' } } };
 
-export const THEMES: ThemeDef[] = [FROST, AURORA, EMBER, OBSIDIAN, WASHI, FROSTED, FROSTED_LIGHT, FROSTED_DARK, CLASSIC];
+export const THEMES: ThemeDef[] = [FROST, AURORA, OBSIDIAN, WASHI, FROSTED, FROSTED_LIGHT, FROSTED_DARK, CLASSIC];
 export const DEFAULT_THEME = 'frost';
 export const themeById = (id: string | undefined): ThemeDef => THEMES.find((x) => x.id === id) ?? FROST;
 /** A theme made by the reader: added (or replaced) among «My themes»; removed again. */

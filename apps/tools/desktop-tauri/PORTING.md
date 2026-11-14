@@ -816,7 +816,7 @@ Left, and how — now the plan of «The original Rust system — piece by piece�
 done: `wv2` is a default feature with wry's two crates in Cargo.toml (CI run 43599725459 checked it clean); (2) native cookie-store fallbacks (WebView2 CookieManager, WKHTTPCookieStore, WebKitGTK's CookieManager) the same way,
 should a Tauri without `set_cookie` ever be resolved; (3) a Mac's notice click needs a signed bundle with its own
 notification delegate — not before the Mac build is signed. Nothing of the hybrid changes the Electron build:
-`exportCookies` / `dropCookies` / `tidyCookies` run only in the bridge build (RUST_SWITCH, still false), and
+`exportCookies` / `dropCookies` / `tidyCookies` run only in the bridge build (RUST_SWITCH, true from 0.17.0), and
 `ffmpeg-pack.cjs` only adds a field to the release's packs file (tests/hybridcookies.cjs checks both).
 
 ## The original Rust system — piece by piece
@@ -853,7 +853,7 @@ Order: 1′ and 3 now; 1 (Windows toast) at the next release once its compile tr
 off again: its compile try failing (it is then simply not built in), its self-test row failing (fix or flip the feature
 back off in Cargo.toml — the hybrid path is still there), or a fault report from a release.
 
-## Stage P9 — the switch-over, prepared (the switch stays OFF)
+## Stage P9 — the switch-over (prepared OFF; switched ON in 0.17.0 — «What to flip» below)
 
 The owner's decisions, as the Reader's 0.62.0 took them: the Rust build becomes the main download; updating keeps the
 person's data intact; backups (Settings → the settings file, `src/backup.ts`) restore in either build; the designed
@@ -947,7 +947,7 @@ folder…» (the Tauri build only).
 
 ### The Electron side (`desktop/main.cjs`, the `RUST_SWITCH` block)
 
-`RUST_SWITCH = false` in this stage: nothing changes for Electron users (the hand-over's IPC channels and
+`RUST_SWITCH = false` while prepared (true from 0.17.0, the bridge build): nothing changed for Electron users (the hand-over's IPC channels and
 `window.kurokawaHandover` exist but nothing calls them; `kt:rustSwitchInfo` answers null; the page's offer timer finds
 nothing). With it true (the bridge build): `rustswitch.cjs` (the Reader's, Tools' tags `tools-v*`, GitHub's pre-release
 mark not read — every Tools release has it) picks the newest release of this version or newer with this system's
@@ -1057,3 +1057,13 @@ Reader's `bootdetect.rs` and `bootlogic.rs` read in place — one source).
 5. The version: a minor bump (`apps/tools/package.json`, `desktop/package.json`), the notes `docs/notes/NEXT-rust.md`
    renamed to that version.
 6. Two versions later: the Electron jobs removed from `release-tools.yml` (keep `desktop/` in the repository).
+
+**Flipped for 0.17.0** (CI run 43608138104 on 61826db green on Linux, Windows, macOS and macOS universal; the owner's
+go-ahead): 1–2 held; 3 `RUST_SWITCH = true` (tests/ownerlock.cjs and hybridcookies.cjs now assert the bridge build);
+3b in the release job's «The deno pack» step — deno 2.5.0 pinned, each zip taken only when its SHA-256 matches
+GitHub's digest and/or the release's `<zip>.sha256sum` (both: must agree; neither: refused), `continue-on-error`, the
+notes say when no pack came; 4 the patch applied, plus: the original system's compile try (KT_ORIGINAL, as
+tauri-check.yml), librqbit on with the plain build as fallback (switch-over/NOTES.md), a «Sizes» summary per system,
+the Android Rust core unconditional and all-or-none (kt-android/switch-over/NOTES.md), the theme / undo / engine tests
+and `scripts/themes.mjs --check` in the release list; 5 0.17.0, `docs/notes/v0.17.0.md` (NEXT-rust.md removed).
+Left: 6, at 0.19.0.

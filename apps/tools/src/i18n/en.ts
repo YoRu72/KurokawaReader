@@ -2325,7 +2325,6 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   themeFrost: "Frost × Material 3 Expressive",
   themeClassic: "Classic (no glass)",
   themeAurora: "Aurora",
-  themeEmber: "Amber Dusk",
   themeObsidian: "Obsidian",
   themeWashi: "Indigo Paper",
   themeBy: "by {who}",

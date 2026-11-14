@@ -2320,7 +2320,6 @@ export const ar: Partial<Strings> = {
   themeFrost: "صقيع × Material 3 Expressive",
   themeClassic: "الكلاسيكيّة (بلا زجاج)",
   themeAurora: "الشَّفَق القطبيّ",
-  themeEmber: "غَسَقٌ كهرمانيّ",
   themeObsidian: "السَّبَج",
   themeWashi: "ورقٌ نيليّ",
   themeBy: "من تصميم {who}",

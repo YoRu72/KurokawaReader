@@ -1228,7 +1228,6 @@ export const ja: Partial<Strings> = {
   themeFrost: "フロスト × Material 3 Expressive",
   themeClassic: "クラシック（ガラスなし）",
   themeAurora: "オーロラ",
-  themeEmber: "琥珀の夕暮れ",
   themeObsidian: "黒曜石",
   themeWashi: "藍の和紙",
   themeBy: "作：{who}",
