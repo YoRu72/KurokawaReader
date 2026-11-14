@@ -20,6 +20,15 @@ mod titlebar;
 mod trash;
 // (Stage P8: the in-app updater — kt-core's updatelogic.rs decides.)
 mod update;
+// (Stage P4: torrent streaming and the local stream server — the engine behind one trait (aria2 today; librqbit only
+// with `--features rqbit`), the server, its ffmpeg and proxy routes, the self-test's torrent and swarm.)
+mod stream_engine;
+#[cfg(feature = "rqbit")]
+mod stream_rqbit;
+mod streamproxy;
+mod streamserver;
+mod streamtest;
+mod torrentmake;
 
 use std::path::PathBuf;
 
@@ -112,7 +121,16 @@ fn main() {
             archives::kt_selftest_write,
             titlebar::kt_title_bar,
             selftest::kt_selftest_progress,
-            selftest::kt_selftest_done
+            selftest::kt_selftest_done,
+            // (Stage P4.)
+            streamserver::kt_stream_url,
+            streamserver::kt_stream_done,
+            streamserver::kt_stream_stats,
+            streamserver::kt_file_url,
+            streamserver::kt_audio_url,
+            streamserver::kt_video_url,
+            streamserver::kt_proxy_url,
+            streamtest::kt_selftest_stream
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -137,6 +155,8 @@ fn main() {
                 Ok(d) => d,
                 Err(_) => std::env::temp_dir().join("kurokawa-tools"),
             };
+            // (Stage P4: where the ffmpeg pack is looked for — <app data>/packs/ffmpeg/.)
+            streamproxy::init(data_dir.clone());
             let mut res_dirs: Vec<PathBuf> = Vec::new();
             if let Ok(r) = app.path().resource_dir() {
                 res_dirs.push(r);
@@ -209,6 +229,8 @@ fn main() {
             // (Quitting: aria2c's session saved and aria2c stopped; an update downloaded in the background and not
             // installed is installed quietly — update.rs, as electron-updater's autoInstallOnAppQuit.)
             if let tauri::RunEvent::Exit = event {
+                // (Stage P4: the stream server stopped — its port and files let go, its ffmpegs ended.)
+                streamserver::stop();
                 if let Some(e) = engine::get() {
                     e.stop();
                 }

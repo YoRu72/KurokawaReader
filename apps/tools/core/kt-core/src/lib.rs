@@ -11,6 +11,8 @@
 //! - places: a computer's storages for the Files page (home, Downloads, Desktop, Documents, disks), shallow stat, names
 //! - updatelogic: the PC updater's decisions — the Reader's updatelogic.rs with Tools' names (P8)
 //! - dohnames: the DNS-over-HTTPS resolvers Tools' settings name (desktop/main.cjs's DOH table) (P8)
+//! - streamlogic: torrent streaming's and the local stream server's rules — ranges, types, aria2's pieces, ffmpeg's
+//!   arguments (P4)
 pub mod engine_core;
 pub mod filejobs;
 pub mod fontnames;
@@ -18,3 +20,5 @@ pub mod mega;
 pub mod places;
 pub mod updatelogic;
 pub mod dohnames;
+// (Stage P4: torrent streaming and the local stream server.)
+pub mod streamlogic;

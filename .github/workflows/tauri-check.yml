@@ -68,7 +68,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohnames.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs; do
+          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohnames.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -165,7 +165,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
-          KT_SELFTEST_TIMEOUT: '170'
+          KT_SELFTEST_TIMEOUT: '230'
           KT_SELFTEST_BUNDLED: '1'
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
@@ -175,7 +175,7 @@ jobs:
           find target/release/aria2 -type f -exec ls -la {} \; || echo "no aria2/ beside the executable"
           find target/release/7zip -type f -exec ls -la {} \; || echo "no 7zip/ beside the executable"
           set +e
-          KT_SELFTEST="$out" timeout 220 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
+          KT_SELFTEST="$out" timeout 280 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -186,7 +186,7 @@ jobs:
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
-          KT_SELFTEST_TIMEOUT: '170'
+          KT_SELFTEST_TIMEOUT: '230'
           KT_SELFTEST_BUNDLED: '1'
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'kt-selftest.json'
@@ -195,7 +195,7 @@ jobs:
           $exe = (Resolve-Path 'target/release/kurokawa-tools.exe').Path
           $p = Start-Process -FilePath $exe -PassThru
           $null = $p.Handle
-          if ($p.WaitForExit(220000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          if ($p.WaitForExit(280000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
           node ../selftest-report.cjs $out $code '${{ matrix.name }}' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           exit $code
 
@@ -204,7 +204,7 @@ jobs:
         continue-on-error: true
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
-          KT_SELFTEST_TIMEOUT: '170'
+          KT_SELFTEST_TIMEOUT: '230'
         run: |
           out="$RUNNER_TEMP/kt-selftest.json"
           # (The bare executable, as on Linux: the web UI is built into it; macOS bundles no aria2c.)
@@ -212,9 +212,32 @@ jobs:
           [ -x "$bin" ] || { echo "no executable at $bin"; exit 1; }
           echo "running $bin"
           set +e
-          # (No `timeout` on macOS: perl's alarm ends it after 220 s.)
-          KT_SELFTEST="$out" perl -e 'alarm 220; exec @ARGV' "$bin"
+          # (No `timeout` on macOS: perl's alarm ends it after 280 s.)
+          KT_SELFTEST="$out" perl -e 'alarm 280; exec @ARGV' "$bin"
           code=$?
           set -e
           node ../selftest-report.cjs "$out" "$code" "${{ matrix.name }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+      # (Stage P4.) librqbit, which the main build leaves out (src-tauri/Cargo.toml's [features] says why): turned on in
+      # this runner's copy only, `cargo check --features rqbit`, the compiler's errors printed — never required, and
+      # last, so nothing after it builds with it. Its errors say which guesses of src/stream_rqbit.rs were wrong.
+      - name: librqbit try (not required)
+        if: always() && runner.os == 'Linux'
+        continue-on-error: true
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: |
+          cp Cargo.toml "$RUNNER_TEMP/Cargo.toml.main"
+          sed -i 's/^rqbit = \[\]$/rqbit = ["dep:librqbit", "dep:tokio"]/' Cargo.toml
+          printf '\n[dependencies.librqbit]\nversion = "8"\noptional = true\n\n[dependencies.tokio]\nversion = "1"\noptional = true\nfeatures = ["io-util", "time"]\n' >> Cargo.toml
+          grep -n 'rqbit\|tokio' Cargo.toml
+          set +e
+          cargo check --release --features rqbit --message-format short > "$RUNNER_TEMP/rqbit.log" 2>&1
+          code=$?
+          set -e
+          cp "$RUNNER_TEMP/Cargo.toml.main" Cargo.toml
+          grep -A1 '^name = "librqbit"$' Cargo.lock || echo "librqbit not resolved"
+          grep -E 'error|warning: unused' "$RUNNER_TEMP/rqbit.log" | head -150
+          tail -5 "$RUNNER_TEMP/rqbit.log"
+          echo "cargo check --features rqbit: exit $code" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code

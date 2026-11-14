@@ -133,6 +133,8 @@
       return 'available';
     }, 45000);
     if (up) await runDownload(kt, cfg, env, check, must, waitFor, engine);
+    /* stage P4: torrent streaming and the local stream server */
+    await runP4(kt, cfg, env, check, must, waitFor, !!up);
     try { await env.invoke('kt_selftest_done', { results: results }); } catch (e) { /* the watchdog writes what there is */ }
     return results;
   }
@@ -487,6 +489,185 @@
       return 'kept in ' + st.dir + '; .ico of ' + icoN + ' sizes; window: ' + short(win) + (st.last && st.last.desktopEntry ? '; desktop entry: ' + short(st.last.desktopEntry) : '') + '; refused a non-PNG; reset';
     }, 30000);
   }
+  /* stage P4 — torrent streaming and the local stream server (streamserver.rs over kt-core's streamlogic.rs): every
+     check reads the server as the page's player does, with fetch. Required on every system: a stand-in engine whose
+     pieces the test lets in (HEAD, ranges, a read that waits for its pieces while the start is served — a seek while
+     buffering —, eight readers at once, 416, a wrong token, an unknown session, the stats, kt:streamDone ending a
+     reader that waits and withdrawing the address), a file on this computer (kt:fileUrl), the audio / video addresses,
+     the proxy against the test server (its headers sent, ranges passed through, every byte), and the server stopped with
+     its port free and no connection left. Reported only (until CI shows it steady): ffmpeg's AAC, and a real swarm on
+     loopback — a torrent made from made-up bytes, a second aria2c seeding it on 127.0.0.1, the app's engine fetching it
+     and the page streaming its start, middle and end (and its second file) while it comes. */
+  async function runP4(kt, cfg, env, check, must, waitFor, engineUp) {
+    var F = env.fetch;
+    if (!kt.streamUrl || !kt.fileUrl || !F) { await check('stream: server present', false, function () { throw new Error('no streamUrl / fileUrl / fetch here'); }); return; }
+    function req(url, range, method) { var h = {}; if (range) h.Range = range; return F(url, { method: method || 'GET', headers: h, cache: 'no-store' }); }
+    async function body(r) { return new Uint8Array(await r.arrayBuffer()); }
+    function same(a, b) { if (!a || !b || a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+    function part(u8, from, to) { return u8.subarray ? u8.subarray(from, to + 1) : u8.slice(from, to + 1); }
+    function u8(arr) { return new Uint8Array(arr); }
+    function hd(r, k) { return r.headers.get(k); }
+    var st = function (o) { return env.invoke('kt_selftest_stream', { o: o }); };
+    function badToken(url) { return url.replace(/\/([0-9a-f]{32})\//, function (_m, t) { return '/' + (t.charAt(0) === '0' ? '1' : '0') + t.slice(1) + '/'; }); }
+
+    /* the stand-in engine */
+    var f = null; var data = null;
+    var ok = await check('stream: torrent address, HEAD', true, async function () {
+      f = await st({ op: 'fake', size: 1048576 + 4321, piece: 65536, seed: 7 }); data = u8(b64bytes(f.b64));
+      must(/^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}\/t\/[0-9a-f]{20}\/stream%20test\.mp4$/.test(f.url), 'url ' + f.url);
+      var r = await req(f.url, null, 'HEAD');
+      must(r.status === 200, 'status ' + r.status); must(hd(r, 'content-length') === String(data.length), 'length ' + hd(r, 'content-length'));
+      must(hd(r, 'accept-ranges') === 'bytes' && hd(r, 'content-type') === 'video/mp4', hd(r, 'accept-ranges') + ' ' + hd(r, 'content-type'));
+      return f.url;
+    });
+    if (ok) {
+      await check('stream: a read waits for its pieces (seek while buffering)', true, async function () {
+        await st({ op: 'release', from: 0, to: 1 });
+        var r = await req(f.url, 'bytes=0-65535'); must(r.status === 206, 'status ' + r.status);
+        must(hd(r, 'content-range') === 'bytes 0-65535/' + data.length, 'range ' + hd(r, 'content-range'));
+        must(same(await body(r), part(data, 0, 65535)), 'the start differs');
+        var ended = false; var res = null;
+        var mid = req(f.url, 'bytes=600000-700000').then(function (x) { res = x; return body(x); }).then(function (b) { ended = true; return b; });
+        await waitFor(function () { return res; }, 10000, 'the middle\'s head');
+        await env.sleep(300);
+        must(!ended, 'the middle came before its pieces');
+        await st({ op: 'release', from: 0, to: 99 });
+        var b = await mid; must(res.status === 206 && same(b, part(data, 600000, 700000)), 'the middle differs (' + res.status + ')');
+        return 'held, then sent once its pieces were in';
+      }, 30000);
+      await check('stream: eight readers at once', true, async function () {
+        var asks = [[0, 99], [65530, 65545], [131072, 262143], [500000, 500000], [900000, data.length - 1], [-1000], [1000000], [12345, 1048575]];
+        var got = await Promise.all(asks.map(function (a) {
+          var range = a.length === 1 ? (a[0] < 0 ? 'bytes=' + a[0] : 'bytes=' + a[0] + '-') : 'bytes=' + a[0] + '-' + a[1];
+          return req(f.url, range).then(function (r) { return body(r).then(function (b) { return { r: r, b: b, a: a }; }); });
+        }));
+        got.forEach(function (g) {
+          var from = g.a.length === 1 ? (g.a[0] < 0 ? data.length + g.a[0] : g.a[0]) : g.a[0]; var to = g.a.length === 1 ? data.length - 1 : g.a[1];
+          must(g.r.status === 206 && same(g.b, part(data, from, to)), 'range ' + g.a.join('-') + ' differs (' + g.r.status + ')');
+        });
+        return asks.length + ' ranges, every byte';
+      }, 30000);
+      await check('stream: 416, wrong token, unknown session', true, async function () {
+        var r = await req(f.url, 'bytes=' + data.length + '-'); must(r.status === 416 && hd(r, 'content-range') === 'bytes */' + data.length, '416? ' + r.status + ' ' + hd(r, 'content-range'));
+        r = await req(badToken(f.url)); must(r.status === 403, 'wrong token ' + r.status);
+        r = await req(f.url.replace(/\/t\/[0-9a-f]{20}\//, '/t/00000000000000000000/')); must(r.status === 404, 'unknown session ' + r.status);
+        r = await req(f.url, null, 'OPTIONS'); must(r.status === 204, 'OPTIONS ' + r.status);
+        return '416, 403, 404, 204';
+      });
+      await check('streamStats', true, async function () {
+        var s = await kt.streamStats({ id: f.id }); must(s && s.engine === 'selftest' && s.progress === 1 && typeof s.down === 'number' && typeof s.peers === 'number', short(s));
+        must(Array.isArray(s.buffered) && s.buffered.length === 1 && s.buffered[0][1] === data.length - 1, 'buffered ' + short(s.buffered));
+        var none = await kt.streamStats({ id: 'no-such-download' }); must(none === null, 'stats of nothing ' + short(none));
+        return short(s);
+      });
+      await check('streamDone ends a waiting reader and withdraws the address', true, async function () {
+        var g = await st({ op: 'fake', size: 300000, piece: 65536, seed: 8 });
+        var r = await req(g.url, 'bytes=200000-'); must(r.status === 206, 'status ' + r.status);
+        var outcome = body(r).then(function (b) { return 'ended with ' + b.length + ' bytes'; }, function (e) { return 'cut: ' + ((e && e.message) || e); });
+        var d = await kt.streamDone({ id: g.id }); must(d && d.ok === true, short(d));
+        var how = await outcome;
+        var r2 = await req(g.url); must(r2.status === 404, 'after streamDone ' + r2.status);
+        var live = 1;
+        for (var i = 0; i < 50 && live !== 0; i++) { live = (await st({ op: 'live' })).live; if (live) await env.sleep(100); }
+        must(live === 0, live + ' connections left');
+        return how + '; 404 after; no connection left';
+      }, 20000);
+    }
+
+    /* a file on this computer */
+    var fp = null; var fdata = []; for (var k = 0, x = 12345; k < 70000; k++) { x = (x * 1103515245 + 12345) % 2147483648; fdata.push(x >> 16 & 255); }
+    fdata = u8(fdata);
+    await check('fileUrl: ranges, types, refusals', true, async function () {
+      fp = await kt.writeTempBytes({ name: 'kt stream ✓.srt', b64: toB64(fdata), sub: 'kt-selftest-stream' });
+      var u = await kt.fileUrl(fp); must(typeof u === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}\/f\?p=/.test(u), 'url ' + u);
+      var r = await req(u); must(r.status === 200 && same(await body(r), fdata), 'whole ' + r.status);
+      r = await req(u, 'bytes=100-199'); must(r.status === 206 && same(await body(r), part(fdata, 100, 199)), 'part ' + r.status);
+      r = await req(u, 'bytes=-10'); must(r.status === 206 && same(await body(r), part(fdata, 69990, 69999)), 'suffix ' + r.status);
+      r = await req(u, null, 'HEAD'); must(hd(r, 'content-type') === 'text/plain; charset=utf-8' && hd(r, 'content-length') === '70000', 'head ' + hd(r, 'content-type') + ' ' + hd(r, 'content-length'));
+      r = await req(u, 'bytes=70000-'); must(r.status === 416, '416? ' + r.status);
+      r = await req(badToken(u)); must(r.status === 403, 'wrong token ' + r.status);
+      r = await req(await kt.fileUrl(fp + '.none')); must(r.status === 404, 'missing ' + r.status);
+      return u.replace(/\/[0-9a-f]{32}\//, '/…/');
+    });
+    var au = null, vu = null;
+    await check('audioUrl / videoUrl', true, async function () {
+      au = (await kt.audioUrl()).url; vu = (await kt.videoUrl()).url;
+      must(/^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}\/audio$/.test(au) && /\/video$/.test(vu), au + ' ' + vu);
+      var r = await req(vu + '?src=x', null, 'HEAD'); must(r.status === 200 && hd(r, 'content-type') === 'video/mp4', 'video HEAD ' + r.status);
+      r = await req(vu + '?src=x&c=vp9', null, 'HEAD'); must(hd(r, 'content-type') === 'video/webm', 'vp9 HEAD ' + hd(r, 'content-type'));
+      r = await req(vu, null, 'HEAD'); must(r.status === 400, 'no src ' + r.status);
+      r = await req(au, null, 'HEAD'); must(r.status === 200 && hd(r, 'content-type') === 'audio/aac', 'audio HEAD ' + r.status);
+      return 'heads as Electron\'s';
+    });
+    await check('audio: AAC from ffmpeg (needs ffmpeg)', false, async function () {
+      // (One second of a 440 Hz tone, 8 kHz mono 16-bit WAV, made here.)
+      var n = 8000; var w = [82, 73, 70, 70].concat(le(36 + n * 2, 4), [87, 65, 86, 69, 102, 109, 116, 32], le(16, 4), le(1, 2), le(1, 2), le(8000, 4), le(16000, 4), le(2, 2), le(16, 2), [100, 97, 116, 97], le(n * 2, 4));
+      for (var i = 0; i < n; i++) { var v = Math.round(Math.sin(i * 2 * Math.PI * 440 / 8000) * 12000) & 65535; w.push(v & 255, v >> 8); }
+      var wp = await kt.writeTempBytes({ name: 'kt-tone.wav', b64: toB64(w), sub: 'kt-selftest-stream' });
+      var r = await req(au + '?src=' + encodeURIComponent(wp) + '&ss=0&a=0'); var b = await body(r);
+      must(b.length > 7 && b[0] === 0xff && (b[1] & 0xf0) === 0xf0, 'not ADTS (' + b.length + ' bytes) — no ffmpeg here?');
+      return b.length + ' bytes of AAC';
+    }, 30000);
+    await check('proxyUrl: the page\'s headers, ranges, every byte', true, async function () {
+      must(cfg.base, 'no test server');
+      var p = await kt.proxyUrl({ url: cfg.base + '/headers', headers: { 'X-KT-Proxy': 'yes', Referer: 'http://127.0.0.1/ref' } });
+      must(typeof p === 'string' && /\/p\?u=/.test(p), 'url ' + short(p));
+      var t = (await (await req(p)).text()).toLowerCase();
+      must(t.indexOf('x-kt-proxy: yes') >= 0 && t.indexOf('referer: http://127.0.0.1/ref') >= 0 && t.indexOf('chrome/130') >= 0, 'headers sent: ' + short(t));
+      var big = await kt.proxyUrl({ url: cfg.base + '/big/kt-proxy.bin', headers: {} });
+      var whole = await body(await req(big)); must(whole.length === cfg.bigSize, 'size ' + whole.length);
+      if (env.sha256) { var h = await env.sha256(whole); must(h === cfg.bigSha256, 'sha256 ' + h); }
+      var r = await req(big, 'bytes=100-199'); must(r.status === 206 && hd(r, 'content-range') === 'bytes 100-199/' + cfg.bigSize, 'range ' + r.status + ' ' + hd(r, 'content-range'));
+      must(same(await body(r), part(whole, 100, 199)), 'the range differs');
+      return 'headers, 206, ' + cfg.bigSize + ' bytes';
+    }, 30000);
+
+    /* a real swarm on loopback (reported) */
+    if (engineUp && cfg.aria2Bin) {
+      var sw = null; var id = null;
+      var started = await check('swarm: torrent made, seeder on 127.0.0.1', false, async function () {
+        sw = await st({ op: 'swarm' }); must(sw && !sw.skip, sw && sw.skip);
+        var t = await kt.add({ source: { torrent: sw.torrentB64 }, dir: sw.dir }); id = t && t.id; must(id, 'not added');
+        return sw.infoHash + ', seeder :' + sw.seedPort + ', tracker :' + sw.trackerPort;
+      }, 40000);
+      if (started) {
+        var u0 = null;
+        await check('swarm: start, middle and end streamed while it comes', false, async function () {
+          u0 = (await kt.streamUrl({ id: id, fileIndex: 0 })).url;
+          var size = sw.sizes[0]; var r = await req(u0, null, 'HEAD'); must(r.status === 200 && hd(r, 'content-length') === String(size), 'HEAD ' + r.status + ' ' + hd(r, 'content-length'));
+          var mid = Math.floor(size / 2); var asks = [[0, 65535], [mid, mid + 65535], [size - 65536, size - 1]];
+          var got = await Promise.all(asks.map(function (a) { return req(u0, 'bytes=' + a[0] + '-' + a[1]).then(body); }));
+          for (var i = 0; i < asks.length; i++) {
+            var want = u8(b64bytes((await st({ op: 'bytes', file: 0, from: asks[i][0], len: asks[i][1] - asks[i][0] + 1 })).b64));
+            must(same(got[i], want), 'range ' + asks[i].join('-') + ' differs');
+          }
+          var s = await kt.streamStats({ id: id }); must(s && s.engine && typeof s.peers === 'number', 'stats ' + short(s));
+          return '3 ranges, every byte; ' + short(s);
+        }, 90000);
+        await check('swarm: the second file (from inside a piece of the first)', false, async function () {
+          var u1 = (await kt.streamUrl({ id: id, fileIndex: 1 })).url; var r = await req(u1);
+          must(hd(r, 'content-type') === 'text/plain; charset=utf-8', 'type ' + hd(r, 'content-type'));
+          var want = u8(b64bytes((await st({ op: 'bytes', file: 1, from: 0, len: sw.sizes[1] })).b64));
+          must(same(await body(r), want), 'differs');
+          return sw.sizes[1] + ' bytes';
+        }, 60000);
+        await check('swarm: streamDone withdraws the address', false, async function () {
+          await kt.streamDone({ id: id }); var r = await req(u0); must(r.status === 404, 'status ' + r.status); return '404';
+        });
+      }
+      if (id) { try { await kt.remove(id, true); } catch (e) { /* gone */ } }
+      try { await st({ op: 'swarmStop' }); } catch (e) { /* gone */ }
+    } else {
+      await check('swarm: torrent streamed on loopback', false, async function () { throw new Error('no aria2c running here'); });
+    }
+
+    await check('stream server stopped: its port free, no connection left', true, async function () {
+      var r = await st({ op: 'serverStop' }); must(r.ended && r.portFree && r.live === 0, short(r));
+      var u = await kt.fileUrl(fp); var r2 = await req(u, 'bytes=0-9'); must(r2.status === 206, 'started again: ' + r2.status);
+      return 'port ' + r.port + ' free; started again on demand';
+    });
+  }
+
   async function runDownload(kt, cfg, env, check, must, waitFor, required) {
     var latest = null; var pushes = 0; var id = '';
     var dir = join(cfg.temp, 'kt-selftest-dl', cfg.os);
@@ -535,7 +716,7 @@
     off();
   }
 
-  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run };
+  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP4: runP4 };
   try { Object.defineProperty(root, '__KT_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KT_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KT_SELFTEST__;
@@ -558,6 +739,9 @@
   function start() {
     if (started) return; started = true;
     var env = { sleep: function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }, invoke: invoke, doc: root.document, now: function () { return Date.now(); } };
+    // (Stage P4: the player's own fetch for the stream server, and SHA-256 for the proxy's bytes.)
+    env.fetch = typeof root.fetch === 'function' ? root.fetch.bind(root) : null;
+    env.sha256 = root.crypto && root.crypto.subtle ? function (u) { return root.crypto.subtle.digest('SHA-256', u).then(function (d) { return Array.prototype.map.call(new Uint8Array(d), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join(''); }); } : null;
     setTimeout(function () {
       run(root.kurokawaTools, cfg, env, results).catch(function (e) {
         results.push({ name: 'self-test script', ok: false, detail: short((e && e.message) || String(e)), required: true });

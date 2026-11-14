@@ -1340,6 +1340,12 @@ impl Engine {
         self.save_keep(&all);
         self.tick();
     }
+
+    /* (Stage P4: what the app kept of a download — its source as the page added it —, for torrent streaming's
+    hand-over to librqbit: stream_engine.rs's source_of.) */
+    pub fn kept(&self, id: &str) -> Option<Value> {
+        self.lock().keep.get(id).cloned()
+    }
 }
 
 fn said_text(s: &Arc<Mutex<String>>) -> String {

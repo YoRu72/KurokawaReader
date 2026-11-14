@@ -143,13 +143,42 @@ Do the same once before a local `tauri build` / `tauri dev`.
   «Kurokawa Tools.lnk» shortcuts, Linux's desktop entry copy marked `X-KurokawaTools-CustomIcon=true`; the backup
   already carries the icon), the .ico's sizes drawn by bridge.js's canvas as the Reader's.
 
+## Stage P4: torrent streaming and the local stream server
+
+- **The server** (`src-tauri/src/streamserver.rs`, rules in kt-core's `streamlogic.rs`): std only, 127.0.0.1 on a port the
+  system picks, this run's random token in every address (wrong: 403) — Electron's servers had one only for files —, a
+  torrent file's address its own session token too (`/<token>/t/<session>/<name>`), withdrawn by `streamDone`. Range
+  answers as Electron's (200 / 206 / 416 / HEAD; «500-100» and an empty file now answered right), Content-Type from the
+  name (webstream's table, the files' table for `fileUrl`), CORS open plus an OPTIONS preflight answer, a thread per
+  connection (64 at most, then 503), blocking writes with a 60 s timeout (back-pressure), `Connection: close`. Stopped
+  at quit: its port free, every reader and ffmpeg ended.
+- **The engine** behind one trait (`stream_engine.rs`: add → files, select, prioritise, read_at that waits for pieces,
+  stats, stop). `Aria2Stream` works today: the download gets `stream-piece-selector=inorder` and
+  `bt-prioritize-piece=head=16M,tail=4M` (torrentstream.cjs), each read waits until aria2's bitfield has its pieces and
+  reads the growing file — no file handle kept between reads. aria2 cannot fetch an arbitrary place first, so a far
+  seek waits for the in-order fetch (Electron's reason for WebTorrent). `stream_rqbit.rs` (librqbit 8, the plan's
+  engine) pauses aria2, streams with librqbit's file streams in the same folder and hands back with check-integrity —
+  compiled only with `--features rqbit`, which the main build leaves out entirely (its dependency lines are added only
+  by the non-required CI step «librqbit try», so neither librqbit's API nor its dependency resolution can break the
+  main build). Its calls are written from memory, each marked GUESS; that step prints the compiler's verdict.
+- **ffmpeg routes** (`streamproxy.rs`): `/audio`, `/video`, the proxy's HLS remux — streamproxy.cjs's and
+  transcode.cjs's arguments word for word (kt-core), each ffmpeg killed when its reader leaves.
+- **Self-test** (`streamtest.rs`, `torrentmake.rs`): required everywhere — a stand-in engine whose pieces the test lets
+  in (a read held until its pieces come while the start is served, eight readers at once, 416 / 403 / 404 / OPTIONS,
+  stats, streamDone ending a waiting reader, no connection left), `fileUrl`, the audio/video addresses, the proxy
+  against the test server, the server stopped with its port free. Reported only for now: ffmpeg's AAC; a real swarm on
+  loopback — a private two-file torrent made in the test from made-up bytes (std SHA-1 and bencoding), a tracker on
+  127.0.0.1 naming one peer, a second aria2c bound to 127.0.0.1 seeding at 256 KiB/s (DHT, LPD, PEX off), the app's
+  engine fetching it while the page streams start, middle, end and the second file, compared byte for byte. Make the
+  swarm rows required once CI has shown them steady. Page-level: `tests/streamtauri.cjs`.
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
 docs/RUST-PORT.md that brings it. **done**: in bridge.js and a Rust command; **missing**: absent from bridge.js (the page
-asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 missing · P5 17
-missing · P6 1 done, 5 missing · P7 7 done, 9 missing (`kt:archiveFree` counted in P3) · P8 3 done, 6 missing — **54 of 98
-done**. Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
+asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 done (P4) · P5 17
+missing · P6 1 done, 5 missing · P7 7 done, 9 missing (`kt:archiveFree` counted in P3) · P8 3 done, 6 missing — **61 of 98
+done** (with P4). Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
 `filesAnswer` / `onFilesJob` (P3), `homeDir` / `filesRoots` / `filesStat` / `filesMkdir` / `filesRename` (after P3),
 `updateDownload` / `updateInstall` (P8).
 
@@ -206,17 +235,17 @@ done**. Besides these, the shell has its own (no Electron channel): the Files pa
 | `kt:screenFontRemove` | done (P3) |  |
 | `app:titleBar` | done (P3) | `kt_title_bar` — the Reader's `titlebar.rs` (own bar / system frame, act, `kt:titleBarState`); the page draws it (`src/ui/winbar.ts`, shared) |
 
-### P4 — torrent streaming and the local stream server (7 missing)
+### P4 — torrent streaming and the local stream server (7 done — written, waiting for CI)
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:streamUrl` | missing | librqbit + range server, aria2 head/tail fallback |
-| `kt:streamDone` | missing |  |
-| `kt:streamStats` | missing |  |
-| `kt:fileUrl` | missing | the local stream server serves files |
-| `kt:audioUrl` | missing | `streamproxy.cjs` → 127.0.0.1 server |
-| `kt:videoUrl` | missing |  |
-| `kt:proxyUrl` | missing | forwards headers |
+| `kt:streamUrl` | done (P4) | `streamserver.rs` + the engine trait (`stream_engine.rs`): aria2's in-order fetch (torrentstream.cjs's options, reads wait on aria2's bitfield); librqbit only with `--features rqbit` (hand-over as WebTorrent's) |
+| `kt:streamDone` | done (P4) | the download's addresses withdrawn, their waiting readers ended (Electron's aria2 path kept them) |
+| `kt:streamStats` | done (P4) | `{ down, up, peers, progress, buffered, engine }` for any download being watched (Electron: only WebTorrent's, else null) |
+| `kt:fileUrl` | done (P4) | the same server, `/<token>/f?p=` |
+| `kt:audioUrl` | done (P4) | ffmpeg: `<app data>/packs/ffmpeg/` (P5 installs it), else the PATH's; «pack:ffmpeg» without |
+| `kt:videoUrl` | done (P4) | transcode.cjs's encoders (card's first, x264 after a failure) |
+| `kt:proxyUrl` | done (P4) | the shared web client (cookies, DoH), ranges passed, HLS remuxed by ffmpeg |
 
 ### P5 — video tools and packs (17 missing)
 

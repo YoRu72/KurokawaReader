@@ -3,7 +3,7 @@
 // Run by src-tauri/src/main.rs as the window's initialization script — before the page's own scripts, on every
 // load —, after a line that sets window.__KT_BOOT__ = { os, arch }.
 // Only the ported slice is here (../PORTING.md: stage 1 files/dialogs/clipboard/http, stage 2 the download engine,
-// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts, P7 the archives): the page asks for each feature by
+// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts, P7 the archives, P4 streaming): the page asks for each feature by
 // its method (d?.dohProbe, …), so whatever is not ported yet is absent, not a stub. Events (kt:tasks, kt:engineState,
 // kt:files) come as Tauri events, listened to with window.__TAURI__.event.listen.
 // Some methods are this shell's own, not the preload's: filesJob, filesCancel, filesAnswer and onFilesJob — the Files
@@ -244,6 +244,21 @@
     onUpdateProgress: function (cb) { return subscribe('kt:update-progress', cb); },
     updateDownload: function (o) { return call('kt_update_download', { o: obj(o) }); },
     updateInstall: function () { return call('kt_update_install'); },
+
+    /* stage P4: torrent streaming and the local stream server (src-tauri/src/streamserver.rs: 127.0.0.1, a port of the
+       system's choosing, a random token in every address; the engine behind stream_engine.rs's trait — aria2's
+       in-order fetch today, librqbit only in a build with --features rqbit). streamUrl({ id, fileIndex }) → { url };
+       streamDone({ id }) → { ok } (the address withdrawn); streamStats({ id }) → { down, up, peers, progress, buffered,
+       engine } or null; fileUrl(path) → the address (a string) of a file on this computer, with ranges;
+       audioUrl() / videoUrl() → { url } the page adds «?src=…» to (ffmpeg: the pack, else the PATH's); proxyUrl({ url,
+       headers }) → the address (a string) that fetches it with those headers (HLS remuxed to MP4). */
+    streamUrl: function (o) { return call('kt_stream_url', { o: obj(o) }); },
+    streamDone: function (o) { return call('kt_stream_done', { o: obj(o) }); },
+    streamStats: function (o) { return call('kt_stream_stats', { o: obj(o) }); },
+    fileUrl: function (p) { return call('kt_file_url', { p: str(p) }); },
+    audioUrl: function () { return call('kt_audio_url'); },
+    videoUrl: function () { return call('kt_video_url'); },
+    proxyUrl: function (o) { return call('kt_proxy_url', { o: obj(o) }); },
   };
   // (Which shell this is: the page draws the window's whole title bar here — src/ui/winbar.ts —, and the Files page
   // has its jobs.)
