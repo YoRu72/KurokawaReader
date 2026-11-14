@@ -73,13 +73,14 @@ export function presets(): [string, number][] {
 /* ---------- the sheets ---------- */
 import { h, icon, iconButton, openSheet, toast, pickButton } from '../ui/dom';
 import { t, dateLocale } from '../i18n';
+import { offerUndo } from '../ui/undo';
 /** The rules, listed, each editable; a link typed is matched against them. */
 export function rulesSheet(): void {
   const sh = openSheet(t('rulesTitle'), t('close')); const list = h('div', { class: 'dest-list' });
   const test = h('input', { type: 'url', dir: 'ltr', placeholder: t('rulesTestHint'), autocapitalize: 'off', spellcheck: 'false' }) as HTMLInputElement; const verdict = h('p', { class: 'hint', dir: 'auto' });
   const draw = () => {
     const rs = rules();
-    list.replaceChildren(...(rs.length ? rs.map((r, i) => h('div', { class: 'dest-row' + (r.on ? '' : ' off') }, h('input', { type: 'checkbox', checked: r.on, 'aria-label': r.name, onchange: (e: Event) => { const all = rules(); all[i].on = (e.target as HTMLInputElement).checked; saveRules(all); } }), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, r.name || t('ruleUnnamed')), h('small', { class: 'src', dir: 'auto' }, describe(r))), iconButton('pen', t('rename'), () => ruleSheet(r, draw)), iconButton('trash', t('delete'), () => { saveRules(rules().filter((x) => x.id !== r.id)); draw(); }))) : [h('p', { class: 'hint' }, t('rulesNone'))]));
+    list.replaceChildren(...(rs.length ? rs.map((r, i) => h('div', { class: 'dest-row' + (r.on ? '' : ' off') }, h('input', { type: 'checkbox', checked: r.on, 'aria-label': r.name, onchange: (e: Event) => { const all = rules(); all[i].on = (e.target as HTMLInputElement).checked; saveRules(all); } }), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, r.name || t('ruleUnnamed')), h('small', { class: 'src', dir: 'auto' }, describe(r))), iconButton('pen', t('rename'), () => ruleSheet(r, draw)), iconButton('trash', t('delete'), () => { /* (undo-redo) */ const was = rules(); saveRules(was.filter((x) => x.id !== r.id)); draw(); offerUndo(t('ruleRemoved', { name: r.name || t('ruleUnnamed') }), () => { saveRules(was); draw(); }, () => { saveRules(rules().filter((x) => x.id !== r.id)); draw(); }); }))) : [h('p', { class: 'hint' }, t('rulesNone'))]));
   };
   const check = () => { const u = test.value.trim(); if (!u) { verdict.textContent = ''; return; } const m = match({ url: u }, /^magnet:/i.test(u) ? 'torrent' : /youtube\.com|youtu\.be|vimeo|twitch|tiktok|instagram|x\.com|twitter|dailymotion|bilibili/i.test(u) ? 'video' : 'file'); verdict.textContent = m ? t('rulesTestHit', { name: m.name || t('ruleUnnamed'), what: describe(m) }) : t('rulesTestNone'); };
   test.addEventListener('input', check);

@@ -5,6 +5,7 @@
 // what its taps do, reading aloud, and the history of what was translated.
 import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, getLang } from '../i18n';
+import { offerUndo } from '../ui/undo';
 import { back } from '../router';
 import { ktPlugin, nativePlatform } from '../native';
 import { parseTerms } from '../screen/lettering';
@@ -160,7 +161,8 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
       h('input', { class: 'input', type: 'text', value: e.to, placeholder: t('scrTermTo'), dir: 'auto', 'aria-label': t('scrTermTo'), onchange: (ev: Event) => set((c) => { c.glossary.entries[i].to = (ev.target as HTMLInputElement).value; }) }),
       select(e.kind ?? '', kinds, (v) => set((c) => { c.glossary.entries[i].kind = v as TextKind | ''; }), `gk-${i}`),
       select(e.lang ?? '', langs, (v) => set((c) => { c.glossary.entries[i].lang = v; }), `gl-${i}`),
-      iconButton('trash', t('scrRemove'), () => set((c) => { c.glossary.entries.splice(i, 1); }, true)));
+      // (undo-redo) Undo puts the term back where it was, as it was.
+      iconButton('trash', t('scrRemove'), () => { const gone = { ...cfg.glossary.entries[i] }; const del = () => set((c) => { c.glossary.entries.splice(i, 1); }, true); del(); offerUndo(t('termRemoved', { term: gone.from || '…' }), () => set((c) => { c.glossary.entries.splice(i, 0, { ...gone }); }, true), del); }));
     const bulk = h('textarea', { class: 'input', rows: 4, dir: 'auto', placeholder: t('scrGlossaryBulkHint') }) as HTMLTextAreaElement;
     glossCard.replaceChildren(h('h3', null, t('scrGlossary')), h('p', { class: 'hint' }, t('scrGlossaryHint')),
       toggle(t('scrGlossaryOn'), G.on, (v) => set((c) => { c.glossary.on = v; }, true)),

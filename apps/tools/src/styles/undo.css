@@ -1,0 +1,32 @@
+/* Undo and Redo (ui/undo.ts): the snackbar that offers them, a message shown above it while it waits, the
+   questions asked first (unsaved work, something that cannot be taken back), the subtitle workshop's own buttons. */
+.toast.undo-snack { background: var(--md-surface-container-highest); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); display: flex; align-items: center; gap: 4px; padding-block: 4px; padding-inline: 18px 4px; min-height: 48px; width: max-content; min-width: min(320px, calc(100vw - 32px)); max-width: min(560px, calc(100vw - 32px)); box-sizing: border-box; }
+.toast.undo-snack > .grow { flex: 1; min-width: 0; padding-block: 8px; line-height: 1.35; overflow-wrap: anywhere; }
+/* (On the theme's own raised surface — no colour of its own —, its action the snackbar's ink on a tonal pill.) */
+.toast.undo-snack .toast-act { padding: 8px 16px; min-height: 40px; color: inherit; background: color-mix(in srgb, currentColor 13%, transparent); }
+.toast.undo-snack .toast-act:hover { background: color-mix(in srgb, currentColor 22%, transparent); }
+.toast.undo-snack .undo-key { font: 600 11px/1 var(--font-ui); letter-spacing: .02em; opacity: .72; border: 1px solid currentColor; border-radius: 6px; padding: 4px 6px; white-space: nowrap; }
+.toast-x { background: none; border: 0; color: inherit; width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center; cursor: pointer; opacity: .8; flex: none; }
+.toast-x:hover { background: color-mix(in srgb, currentColor 12%, transparent); opacity: 1; }
+.toast-x svg { width: 18px; height: 18px; }
+/* (A plain message while the Undo waits: above it, both readable.) */
+.toast.undo-snack ~ .toast:not(.undo-snack), .toast.with-action ~ .toast:not(.with-action) { margin-bottom: 64px; }
+/* (In the player: at the top, clear of its controls along the bottom.) */
+.toast.undo-snack.in-player { bottom: auto; top: calc(72px + var(--safe-top)); }
+html.pc:not(.rail-off) .toast.undo-snack.in-player { left: 50%; }
+
+.confirm-sheet .sheet-body p { margin: 4px 0 10px; }
+.confirm-sheet .sheet-actions { justify-content: flex-end; }
+.confirm-sheet .confirm-list { font-family: var(--font-ui); font-size: 13.5px; color: var(--md-on-surface-dim); margin: 0 0 8px; padding-inline-start: 20px; max-height: 30vh; overflow: auto; }
+.unsaved-sheet .sheet-actions .btn.text { margin-inline-end: auto; }
+
+/* The subtitle workshop's Undo / Redo, beside its title. */
+.subs-workshop .ws-history { display: flex; align-items: center; gap: 4px; margin-inline-start: auto; }
+.subs-workshop .sheet-head { gap: 4px; }
+.subs-workshop .sheet-head h3 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subs-workshop .ws-history .icon-btn:disabled { opacity: .38; }
+.subs-workshop .ws-dirty { font: 600 12px/1 var(--font-ui); color: var(--md-primary); white-space: nowrap; }
+
+/* (Its time fields — shift, stretch — spaced as other rows when they wrap onto lines of their own.) */
+.subs-workshop .ws-tools { gap: 10px 12px; margin-block: 6px; }
+.subs-workshop .ws-tools .field.row { margin: 0; }

@@ -3,6 +3,7 @@
 // Jellyfin (signed in, its libraries browsed, played straight from it) and WebDAV (a NAS, a cloud folder) — whose
 // videos play in the app's player like any other. A video file can also be opened from anywhere.
 import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '../ui/dom';
+import { offerUndo } from '../ui/undo';
 import { t, formatBytes, localDigits } from '../i18n';
 import { navigate } from '../router';
 import { ktPlugin, nativePlatform } from '../native';
@@ -120,7 +121,11 @@ function recent(out: HTMLElement): void {
     const f = m.watched ? 1 : m.duration ? Math.min(1, m.pos / m.duration) : 0; const local = k.startsWith('/') || /^[A-Za-z]:[\\/]/.test(k); const playable = local || /^https?:/.test(k);
     return h('div', { class: 'video-row' + (m.watched ? ' seen' : '') }, h('span', { class: 'video-thumb' }, icon(local ? 'film' : 'cloud'), f > 0 ? h('i', { class: 'video-prog', style: { width: `${f * 100}%` } }) : null),
       h('button', { type: 'button', class: 'grow plain', disabled: !playable, onclick: async () => { const u = local ? await urlOf(k) : k; if (u) void play(u, name(k), local ? { localPath: k } : {}); } }, h('b', { dir: 'auto' }, name(k)), h('small', { class: 'src' }, [m.watched ? t('videosWatched') : m.pos ? t('videosLeftAt', { t: dur(m.pos * 1000) }) : '', new Date(m.at).toLocaleDateString()].filter(Boolean).join(' · '))),
-      iconButton('close', t('videosForget'), () => { const mem = memory(); delete mem[k]; try { localStorage.setItem('kt.player.memory', JSON.stringify(mem)); } catch { /* */ } all.splice(all.findIndex((x) => x[0] === k), 1); draw(); }));
+      iconButton('close', t('videosForget'), () => {
+        // (undo-redo) Undo: the video's memory (where it stopped, its marks) and its place in the list, as they were.
+        const at = all.findIndex((x) => x[0] === k); const item = all[at]; const kept = memory()[k];
+        const forget = () => { const mem = memory(); delete mem[k]; try { localStorage.setItem('kt.player.memory', JSON.stringify(mem)); } catch { /* */ } const i = all.findIndex((x) => x[0] === k); if (i >= 0) all.splice(i, 1); draw(); };
+        forget(); offerUndo(t('videoForgotten', { name: name(k) }), () => { const mem = memory(); mem[k] = kept; try { localStorage.setItem('kt.player.memory', JSON.stringify(mem)); } catch { /* */ } if (!all.some((x) => x[0] === k)) all.splice(Math.min(at, all.length), 0, item); draw(); }, forget); }));
   }) : [h('p', { class: 'empty small' }, t('videosNoRecent'))]));
   draw();
   out.append(list, ...(all.length ? [h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small danger', onclick: () => { if (!confirm(t('videosClearAsk'))) return; localStorage.removeItem('kt.player.memory'); all.length = 0; draw(); } }, icon('trash'), t('videosClear')))] : []));
@@ -235,7 +240,7 @@ async function followed(content: HTMLElement): Promise<void> {
       icon(f.checking ? 'refresh' : f.auto ? 'download' : 'bell'),
       h('button', { type: 'button', class: 'grow plain files-main', onclick: () => editSheet(f) }, h('span', { class: 'name', dir: 'auto' }, f.title), h('small', { class: 'src', dir: 'auto' }, [f.auto ? t('followAuto') : t('followNotify'), t('followEvery', { h: localDigits(f.every) }), fmtAgo(f.lastAt), f.newCount ? t('followNewN', { n: localDigits(f.newCount) }) : '', f.error ? f.error : ''].filter(Boolean).join(' · '))),
       iconButton('refresh', t('followCheckNow'), () => { void m.check(f, true).then((n) => { toast(n ? t(f.auto ? 'followAdded' : 'followNew', { n: String(n) }) : t('followNothingNew')); draw(); }); draw(); }),
-      iconButton('trash', t('delete'), () => { m.unfollow(f.id); draw(); }))) : [h('p', { class: 'empty small' }, t('followEmpty'))]));
+      iconButton('trash', t('delete'), () => { const was = m.follows(); m.unfollow(f.id); draw(); offerUndo(t('unfollowed', { name: f.title }), () => { m.saveFollows(was); draw(); }, () => { m.unfollow(f.id); draw(); }); }))) : [h('p', { class: 'empty small' }, t('followEmpty'))]));   // (undo-redo)
   };
   const editSheet = (f: import('../video/follow').Follow | null) => {
     const sh = openSheet(f ? f.title : t('followAdd'), t('cancel'));

@@ -72,7 +72,7 @@ export function fontRows(changed: () => void): HTMLElement[] {
       sh.body.replaceChildren(
         h('p', { class: 'hint' }, t('subFontHint')),
         row('', t('subFontSystem'), ''),
-        ...lib.map((x) => row(x.families[0] ?? x.file, x.families[0] ?? x.file, `${x.file} · ${formatBytes(x.size)}`, iconButton('trash', t('remove'), (ev) => { ev.stopPropagation(); void F.removeFont(x.id).then(() => { if (x.families.includes(getPrefs().subFont)) pick(''); else void draw(); }); }))),
+        ...lib.map((x) => row(x.families[0] ?? x.file, x.families[0] ?? x.file, `${x.file} · ${formatBytes(x.size)}`, iconButton('trash', t('remove'), (ev) => { ev.stopPropagation(); /* (undo-redo) held, with Undo */ void F.removeFontWithUndo(x, () => void draw()); }))),
         ...(cur && !known.has(cur) ? [row(cur, cur, t('subFontInstalled'))] : []),
         file,
         h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal', onclick: () => file.click() }, icon('plus'), t('subFontAdd'))),

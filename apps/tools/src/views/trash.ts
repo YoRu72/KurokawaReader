@@ -1,6 +1,6 @@
 // Recently removed (Prism's trash): each with when it went and its size, put back with a tap, or all emptied.
 import { h, icon, toast, openSheet } from '../ui/dom';
-import { t, formatBytes, dateLocale } from '../i18n';
+import { t, formatBytes, dateLocale, localDigits } from '../i18n';
 import { trashList, restore, emptyTrash, type Trashed } from '../downloads/trash';
 
 export function trashSheet(): void {
@@ -14,7 +14,7 @@ export function trashSheet(): void {
       h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : 'file')),
       h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.name), h('small', { class: 'src' }, [when(x.removedAt), x.total ? formatBytes(x.total) : '', x.filesDeleted ? t('trashFilesGone') : ''].filter(Boolean).join(' · '))),
       h('button', { type: 'button', class: 'btn tonal small', onclick: (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; void restore(x).then(() => { toast(t('trashRestored', { name: x.name })); draw(); }).catch((er) => { toast(String((er as Error).message ?? er), 'error'); draw(); }); } }, icon('refresh'), t('trashRestore')))));
-    sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn text danger', onclick: () => { emptyTrash(); draw(); } }, icon('trash'), t('trashEmptyAll')));
+    sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn text danger', onclick: async () => { /* (undo-redo) for good: asked first, with how many */ const { confirmSheet } = await import('../ui/undo'); if (!(await confirmSheet(t('trashEmptyAll'), [t('trashEmptyAsk', { n: localDigits(l.length) })], t('emptyBinGo')))) return; emptyTrash(); draw(); } }, icon('trash'), t('trashEmptyAll')));
   };
   sh.body.append(list); draw();
 }
