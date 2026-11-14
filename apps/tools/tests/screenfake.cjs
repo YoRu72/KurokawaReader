@@ -10,7 +10,7 @@ const KEYS = { region: 'Alt+Shift+T', full: 'Alt+Shift+F', repeat: 'Alt+Shift+R'
 module.exports = function fakeScreen(cfg, opts) {
   const o = Object.assign({ capture: 'x11', ocr: 'tesseract', trayPossible: true, paint: 'shown', captionFocused: false }, opts || {});
   const MON = { id: 'M@0,0', x: 0, y: 0, w: 1280, h: 900, scale: 1 };
-  const S = { conf: {}, on: false, tray: false, auto: false, region: null, wins: new Map(), job: null, drawn: null, sent: 0, calls: [] };
+  const S = { conf: {}, on: false, tray: false, auto: false, region: null, wins: new Map(), job: null, drawn: null, sent: 0, calls: [], closing: 0 };
   const pic = (x, y, w, h) => `data:image/png;base64,iVBORw0KGgo#${x},${y},${w},${h}`;
   const colour = (x, y) => {
     const d = S.drawn;
@@ -24,7 +24,7 @@ module.exports = function fakeScreen(cfg, opts) {
     const k = {}; for (const [a, acc] of Object.entries(keys())) k[a] = { acc, ok: S.on && !!acc };
     return { platform: cfg.os, on: S.on, keys: k, tray: S.tray, auto: S.auto, region: S.region, ocr: S.conf.pc && S.conf.pc.ocr === 'ai' ? 'ai' : o.ocr, capture: { kind: o.capture, why: '' } };
   };
-  const stopAuto = () => { S.auto = false; S.wins.delete('kts-caption'); };
+  const stopAuto = () => { S.auto = false; if (o.slowClose) S.closing = 3; else S.wins.delete('kts-caption'); };
   const kt = {
     screenStatus: async () => status(),
     screenConfig: async (x) => {
@@ -35,7 +35,7 @@ module.exports = function fakeScreen(cfg, opts) {
     },
     screenAction: async (a) => {
       S.calls.push(['action', a]);
-      if (a === 'auto') { if (S.auto) stopAuto(); else if (S.region) { S.auto = true; S.wins.set('kts-caption', { label: 'kts-caption', visible: true, focused: !!o.captionFocused, decorated: false }); S.sent++; } return true; }
+      if (a === 'auto') { if (S.auto) stopAuto(); else if (S.region) { S.closing = 0; S.wins.delete('kts-caption'); S.auto = true; S.wins.set('kts-caption', { label: 'kts-caption', visible: true, focused: !!o.captionFocused, decorated: false }); S.sent++; } return true; }
       if (a === 'clipboard') return true;
       S.job = { mode: a === 'full' ? 'full' : a === 'repeat' && S.region ? 'result' : 'region', image: pic(0, 0, MON.w, MON.h), width: MON.w, height: MON.h, scale: MON.scale, cfg: S.conf };
       S.wins.set('kts-overlay', { label: 'kts-overlay', visible: true, focused: true, decorated: false });
@@ -56,7 +56,11 @@ module.exports = function fakeScreen(cfg, opts) {
     onScreenCaption: () => () => undefined,
   };
   const act = (x) => {
-    if (x.act === 'state') return { capture: o.capture, why: '', os: 'linux', monitors: [MON], cursor: [640, 450], under: MON.id, ocr: o.ocr, windows: [...S.wins.values()].concat(S.drawn ? [{ label: 'kts-test', visible: true, focused: false, decorated: false }] : []).filter((w) => w.label !== 'kts-test' || S.drawn),
+    // (`caption`: the probe screentr.rs answers — Tauri's view and, on Windows, the system's; `noSample`: none.)
+    if (x.act === 'state' && S.closing > 0 && --S.closing === 0) S.wins.delete('kts-caption');
+    const cw = S.wins.get('kts-caption');
+    const caption = !cw || o.noSample ? null : { tauri: { visible: true, focused: !!o.captionFocused }, win32: cfg.os === 'win32' ? { visible: true, foreground: !!o.captionFocused } : null };
+    if (x.act === 'state') return { caption, capture: o.capture, why: '', os: 'linux', monitors: [MON], cursor: [640, 450], under: MON.id, ocr: o.ocr, windows: [...S.wins.values()].concat(S.drawn ? [{ label: 'kts-test', visible: true, focused: false, decorated: false }] : []).filter((w) => w.label !== 'kts-test' || S.drawn),
       ocrRunning: 0, auto: S.auto, sent: S.sent, lastError: '', clickThrough: S.auto ? true : null, ignoreApi: true, focusableApi: true, emitTo: true, cursorApi: true, shortcuts: true,
       bound: S.on ? Object.entries(keys()).map(([a, acc]) => [acc, a]) : [], tray: S.tray, trayWhy: o.trayPossible ? '' : 'no libayatana-appindicator3', permission: null, keepInTray: S.on && S.tray };
     // (As screentr.rs: where the screen can be looked at, whether the window got painted and how — `paint`: 'shown',

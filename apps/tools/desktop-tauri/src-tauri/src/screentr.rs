@@ -60,6 +60,8 @@ struct St {
     auto_stop_why: String,
     /// The front window before and after the caption was shown (Windows), for the self-test.
     caption_fg: String,
+    /// The current caption's Win32 title (Windows: how the self-test asks the system about it).
+    caption_title: String,
     caption_click_through: Option<bool>,
     asked_permission: bool,
     login_set: bool,
@@ -561,8 +563,12 @@ fn act(app: &AppHandle, what: &str) {
             return show_popup(app, &t);
         }
         if what == "auto" {
+            // (One start or stop at a time — a quick toggle waits for the one under way; act_later runs each on a thread
+            // of its own. A stop waits until its caption is gone, so the next start never meets it.)
+            let _one = AUTO_LOCK.lock().unwrap_or_else(|p| p.into_inner());
             if st().auto {
                 stop_auto_why(app, "«auto» asked again (a toggle)");
+                wait_caption_gone(app, 3000);
             } else {
                 start_auto(app)?;
             }
@@ -757,6 +763,37 @@ fn region_dip(r: &Value) -> Option<DipRect> {
 /// startAuto: the caption window under (or over) the kept region, a look every `interval` s, stopped after `autoStop`
 /// minutes. (Electron took the region off the monitor under the mouse at each look; here off the monitor it was drawn
 /// on, which is where it is.)
+static AUTO_LOCK: Mutex<()> = Mutex::new(());
+
+/// The caption as the system and Tauri see it (the self-test's focus samples): null when there is none; else { tauri:
+/// { visible, focused }, win32: { visible, foreground } | null (not Windows, or its window not found) }.
+fn caption_probe(app: &AppHandle, title: &str) -> Value {
+    let w = match app.get_webview_window(CAPTION) {
+        Some(w) => w,
+        None => return Value::Null,
+    };
+    #[cfg(windows)]
+    let win32 = noact::probe(title).map(|(v, f)| json!({ "visible": v, "foreground": f }));
+    #[cfg(not(windows))]
+    let win32: Option<Value> = {
+        let _ = title;
+        None
+    };
+    json!({ "tauri": { "visible": w.is_visible().ok(), "focused": w.is_focused().ok() }, "win32": win32 })
+}
+
+/// Waits (at most `ms`) until no caption window is left under its label → whether it is gone.
+fn wait_caption_gone(app: &AppHandle, ms: u64) -> bool {
+    let until = Instant::now() + Duration::from_millis(ms);
+    while app.get_webview_window(CAPTION).is_some() {
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    true
+}
+
 fn start_auto(app: &AppHandle) -> Result<(), String> {
     let (region, cfg) = {
         let s = st();
@@ -774,15 +811,17 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
     let did = region.get("display").and_then(|v| v.as_str()).unwrap_or("");
     let m = ms.iter().find(|m| m.id == did).or_else(|| ms.first()).cloned().ok_or("no monitor")?;
     close_window(app, CAPTION);
-    for _ in 0..50 {
-        if app.get_webview_window(CAPTION).is_none() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    // (The run before's caption may still be closing — Tauri refuses a second window under the same label: waited for,
+    // 5 s at most, else said.)
+    if !wait_caption_gone(app, 5000) {
+        return Err("the caption of the run before is still closing".to_string());
     }
+    // (Each run's caption has a title of its own: the Win32 look-up below never finds a caption of a run before.)
+    let run = AUTO_GEN.load(Ordering::SeqCst) + 1;
+    let title = format!("{} #{}", CAPTION_TITLE, run);
     let script = window_script("#/overlay?caption=1");
     let mut b = tauri::WebviewWindowBuilder::new(app, CAPTION, tauri::WebviewUrl::App("index.html".into()))
-        .title(CAPTION_TITLE)
+        .title(title.as_str())
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
@@ -812,19 +851,32 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
     // this thread was still between the show and `auto = true` (the focus being given back waits up to 300 ms), read
     // «auto false» with no reason, and the caption still focused. Nothing had stopped it: it had not been marked yet.)
     let gen = AUTO_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = run;
     {
         let mut s = st();
         s.auto = true;
         s.auto_stop_why = String::new();
         s.auto_text = logic::AutoText::default();
     }
-    // (Windows: the caption never takes the focus — made a no-activate tool window at the Win32 level before it is
-    // shown, and shown without activation (SW_SHOWNOACTIVATE): a game or the page in front keeps the keyboard; nothing
-    // to give back. Where its window cannot be found, the show and the give-back as before.)
+    // (Clicks go through it to what is under it — Electron's setIgnoreMouseEvents(true). Set while it is still hidden:
+    // tao re-derives the window's styles from its own flags at every such change — after the raw show below it took the
+    // no-activate style off and hid the window it believed hidden (run 43579061871: the caption seen, then gone).)
+    #[cfg(kt_ignore_cursor)]
+    let through = Some(w.set_ignore_cursor_events(true).is_ok());
+    #[cfg(not(kt_ignore_cursor))]
+    let through: Option<bool> = None;
+    {
+        let mut s = st();
+        s.caption_click_through = through;
+    }
+    // (Windows: the caption never takes the focus — made a no-activate tool window at the Win32 level and shown without
+    // activation (SW_SHOWNOACTIVATE): a game or the page in front keeps the keyboard; nothing to give back. No call that
+    // changes tao's flags follows. Where its window cannot be found, the show and the give-back as before.)
     #[cfg(windows)]
     let before = fg::foreground();
     #[cfg(windows)]
-    let shown_quietly = noact::show_no_activate(CAPTION_TITLE);
+    let shown_quietly = noact::show_no_activate(&title);
+    st().caption_title = title.clone();
     #[cfg(not(windows))]
     let shown_quietly = false;
     if !shown_quietly {
@@ -837,15 +889,6 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
         }
         let after = fg::foreground();
         st().caption_fg = format!("front window before {:#x}, after {:#x}{}", before, after, if shown_quietly { ", shown without activation" } else { ", shown (focus given back)" });
-    }
-    // (Clicks go through it to what is under it — Electron's setIgnoreMouseEvents(true).)
-    #[cfg(kt_ignore_cursor)]
-    let through = Some(w.set_ignore_cursor_events(true).is_ok());
-    #[cfg(not(kt_ignore_cursor))]
-    let through: Option<bool> = None;
-    {
-        let mut s = st();
-        s.caption_click_through = through;
     }
     tray_refresh(app);
     let every = Duration::from_millis(logic::interval_ms(cfg.get("interval").and_then(|v| v.as_f64()).or_else(|| cfg.get("interval").and_then(|v| v.as_str()).and_then(|s| s.trim().parse().ok()))));
@@ -1018,6 +1061,22 @@ mod noact {
             SetWindowPos(h, HWND_TOPMOST as *mut c_void, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
         true
+    }
+    /// The window titled `title`: (whether the system shows it, whether it is the front window); None when not found.
+    pub fn probe(title: &str) -> Option<(bool, bool)> {
+        #[link(name = "user32")]
+        extern "system" {
+            fn IsWindowVisible(h: *mut c_void) -> i32;
+            fn GetForegroundWindow() -> *mut c_void;
+        }
+        let t: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let h = FindWindowW(std::ptr::null(), t.as_ptr());
+            if h.is_null() {
+                return None;
+            }
+            Some((IsWindowVisible(h) != 0, GetForegroundWindow() == h))
+        }
     }
 }
 
@@ -1434,9 +1493,13 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
                 let mut wins: Vec<Value> = Vec::new();
                 for (l, w) in app.webview_windows() {
                     if l.starts_with("kts-") {
-                        wins.push(json!({ "label": l, "visible": w.is_visible().unwrap_or(false), "focused": w.is_focused().unwrap_or(false), "decorated": w.is_decorated().unwrap_or(true) }));
+                        let at = w.outer_position().ok().map(|p| json!([p.x, p.y]));
+                        let size = w.outer_size().ok().map(|z| json!([z.width, z.height]));
+                        wins.push(json!({ "label": l, "visible": w.is_visible().unwrap_or(false), "focused": w.is_focused().unwrap_or(false), "decorated": w.is_decorated().unwrap_or(true), "at": at, "size": size }));
                     }
                 }
+                let ct = st().caption_title.clone();
+                let cap = caption_probe(&app, &ct);
                 let s = st();
                 Ok(json!({
                     "capture": ck, "why": why, "os": os(),
@@ -1445,7 +1508,7 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
                     "under": monitor_under_mouse(&app).map(|m| m.id),
                     "ocr": logic::ocr_kind(os(), false, has_tesseract()),
                     "windows": wins, "ocrRunning": ocr_running(), "auto": s.auto, "sent": s.auto_sent, "lastError": s.last_error,
-                    "clickThrough": s.caption_click_through, "autoStopWhy": s.auto_stop_why, "captionFg": s.caption_fg, "ignoreApi": cfg!(kt_ignore_cursor), "focusableApi": cfg!(kt_focusable), "emitTo": cfg!(kt_emit_to),
+                    "clickThrough": s.caption_click_through, "autoStopWhy": s.auto_stop_why, "captionFg": s.caption_fg, "caption": cap, "ignoreApi": cfg!(kt_ignore_cursor), "focusableApi": cfg!(kt_focusable), "emitTo": cfg!(kt_emit_to),
                     "cursorApi": cfg!(kt_cursor), "shortcuts": cfg!(kt_shortcuts) && crate::desktop::shortcuts_possible(),
                     "bound": s.bound.iter().map(|(w, a)| json!([w, a])).collect::<Vec<_>>(), "tray": s.tray_on, "trayWhy": s.tray_why,
                     "permission": screencap::permission(), "keepInTray": enabled(&s) && truthy(pc(&s.cfg).get("tray")) && s.tray_on,

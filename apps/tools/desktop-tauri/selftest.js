@@ -311,34 +311,55 @@
     await check('screen: auto — the caption opens click-through, and stopping leaves no window or helper', can, async function () {
       if (noPerm) return noPerm;
       await kt.screenConfig({ config: conf(true, { ocr: 'system' }) });
-      var why = function (st, t0, c) { st = st || {}; return ' [round ' + round + ', ' + (env.now() - t0) + ' ms; stopped: ' + (st.autoStopWhy || '—') + '; last error: ' + (st.lastError || '—') + '; ' + (st.captionFg || 'front window not known') + '; caption ' + short(c) + ']'; };
-      var round = 0, sentAll = 0, focusAll = [], st = {}, clickThrough = null;
+      var round = 0, t0 = 0, sentAll = 0, samples = 0, st = {}, clickThrough = null;
+      // (Every failure says: the round, the time since «auto» was asked, whether «auto» is on, why it stopped, the last
+      // error, the front window before and after the caption was shown, and the app's windows with place and size.)
+      var why = async function () {
+        var x = (await S({ act: 'state' }).catch(function () { return null; })) || {};
+        return ' [round ' + round + ', ' + (env.now() - t0) + ' ms; auto ' + x.auto + '; stopped: ' + (x.autoStopWhy || '—') + '; last error: ' + (x.lastError || '—') + '; ' + (x.captionFg || 'front window not known') + '; caption ' + short(x.caption) + '; windows ' + short(x.windows) + ']';
+      };
+      var fail = async function (msg) { throw new Error(msg + (await why())); };
+      // (One focus sample: a real answer about the caption — Tauri's is_focused, and on Windows whether the system's
+      // front window IS the caption. null when no answer could be had: a failure of its own, never taken for «focused».)
+      var sample = async function () {
+        var x = (await S({ act: 'state' })) || {}; var c = x.caption;
+        if (!c || !c.tauri || typeof c.tauri.focused !== 'boolean') return null;
+        if (win && (!c.win32 || typeof c.win32.foreground !== 'boolean')) return null;
+        return { focused: c.tauri.focused || !!(c.win32 && c.win32.foreground), visible: c.win32 ? c.win32.visible : c.tauri.visible };
+      };
       for (round = 1; round <= 5; round++) {
-        var t0 = env.now(), c = null, focus = [];
+        t0 = env.now();
         await kt.screenAction('auto');
         try {
-          c = await waitA(shown('kts-caption'), 15000, 'the caption window');
+          var seen = null; var until = env.now() + 15000;
+          while (!seen) { seen = await shown('kts-caption')(); if (!seen) { if (env.now() > until) await fail('timeout: the caption window'); await env.sleep(200); } }
           // (Marked on before the caption is shown: read at once, it must already say so.)
           st = (await S({ act: 'state' })) || {};
-          must(st.auto === true, 'auto ' + st.auto + why(st, t0, c));
-          must(st.clickThrough !== false, 'not click-through' + why(st, t0, c));
+          if (st.auto !== true) await fail('auto ' + st.auto + ' once the caption was seen');
+          if (st.clickThrough === false) await fail('not click-through');
           clickThrough = st.clickThrough;
-          // (Never focused on Windows; an X server without a window manager — CI's Xvfb — gives the focus by the pointer.)
-          for (var i = 0; i < 4; i++) { await env.sleep(200); var cc = await shown('kts-caption')(); focus.push(cc ? cc.focused : null); }
+          for (var i = 0; i < 4; i++) {
+            await env.sleep(200);
+            var sm = await sample();
+            if (!sm) await fail('a focus sample could not be taken (no caption answer)');
+            samples++;
+            if (!sm.visible) await fail('the caption went away by itself (sample ' + (i + 1) + ')');
+            // (An X server without a window manager — CI's Xvfb — gives the focus by the pointer: Windows only.)
+            if (win && sm.focused === true) await fail('the caption took the focus (sample ' + (i + 1) + ')');
+          }
           if (round === 1) await env.sleep(1250);
           st = (await S({ act: 'state' })) || {};
-          must(st.auto === true, 'auto ended by itself: ' + st.auto + why(st, t0, c));
+          if (st.auto !== true) await fail('auto ended by itself');
           sentAll += st.sent || 0;
-          if (win) must(focus.every(function (f) { return f === false; }), 'the caption took the focus: ' + short(focus) + why(st, t0, c));
-          focusAll = focusAll.concat(focus);
         } finally {
           // (Stopped whatever failed above, so the rows after this one do not run beside a caption and its helper.)
           var now = (await S({ act: 'state' })) || {};
           if (now.auto) await kt.screenAction('auto');
         }
-        await waitA(async function () { var x = (await S({ act: 'state' })) || {}; return !x.auto && x.ocrRunning === 0 && (await gone('kts-caption')()) ? x : null; }, 15000, 'auto stopped, no caption, no helper (round ' + round + ')');
+        var t1 = env.now() + 15000, off = null;
+        while (!off) { var x = (await S({ act: 'state' })) || {}; if (!x.auto && x.ocrRunning === 0 && (await gone('kts-caption')())) off = x; else { if (env.now() > t1) await fail('auto stopped, no caption, no helper — not within 15 s'); await env.sleep(200); } }
       }
-      return '5 rounds; click-through ' + (clickThrough === null ? 'not in this build' : clickThrough) + ', focused ' + (focusAll.every(function (f) { return f === false; }) ? 'never' : short(focusAll)) + ', captions sent ' + sentAll + (st.captionFg ? '; ' + st.captionFg : '') + (st.lastError ? ', last error: ' + st.lastError : '');
+      return '5 rounds, ' + samples + ' focus samples, never focused; click-through ' + (clickThrough === null ? 'not in this build' : clickThrough) + ', captions sent ' + sentAll + (st.captionFg ? '; ' + st.captionFg : '') + (st.lastError ? ', last error: ' + st.lastError : '');
     }, 150000);
     await check('screen: the clipboard\'s translation opens by the mouse and closes', can, async function () {
       await S({ act: 'popup', text: 'Good night' });
