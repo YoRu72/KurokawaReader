@@ -237,11 +237,21 @@
       if (noPerm) return noPerm;
       drawn = await S({ act: 'draw', w: 480, h: 240 });
       must(drawn && drawn.w === 480, short(drawn));
+      // (Where this shell can look at the screen, «draw» waits until the window is painted and says how: a window that
+      // never paints is the failure itself — in run 43549144577 Linux's showed only its grey.)
+      must(drawn.painted !== false, 'the test window: ' + drawn.how);
       var g = await S({ act: 'grab', x: drawn.x, y: drawn.y, w: drawn.w, h: drawn.h });
       must(g && /^data:image\/png;base64,/.test(g.png) && g.w > 0, short(g));
       var got = await compare(g.png, 0, 0, { w: g.w, h: g.h });
-      return st0.capture + ': ' + got.w + '×' + got.h + ' at ' + drawn.x + ',' + drawn.y + ' on ' + drawn.monitor;
-    }, 30000);
+      return st0.capture + ': ' + got.w + '×' + got.h + ' at ' + drawn.x + ',' + drawn.y + ' on ' + drawn.monitor + (drawn.how ? '; ' + drawn.how : '');
+    }, 45000);
+    // (Reported: whether a window made hidden and then shown — the app's frozen screen, caption and clipboard window are
+    // made so — paints without help; «after a size nudge» or «hidden and shown again» would say those windows need it.)
+    await check('screen: a window made hidden, then shown, paints without help', false, async function () {
+      if (!drawn || drawn.painted == null) return 'not looked at here';
+      must(/^painted shown /.test(drawn.how || ''), drawn.how);
+      return drawn.how;
+    });
     var job = null;
     await check('screen: the frozen screen — its window opens frameless on top, its job holds the monitor\'s picture', can, async function () {
       if (noPerm) return noPerm;
@@ -286,18 +296,26 @@
       if (noPerm) return noPerm;
       await kt.screenConfig({ config: conf(true, { ocr: 'system' }) });
       await kt.screenAction('auto');
-      var c = await waitA(shown('kts-caption'), 15000, 'the caption window');
-      var st = (await S({ act: 'state' })) || {};
-      must(st.auto === true, 'auto ' + st.auto);
-      must(st.clickThrough !== false, 'not click-through');
-      // (Never focused on Windows; an X server without a window manager — CI's Xvfb — gives the focus by the pointer.)
-      if (win) must(c.focused === false, 'the caption took the focus');
-      await env.sleep(2500);
-      st = (await S({ act: 'state' })) || {};
-      var sent = st.sent;
-      await kt.screenAction('auto');
+      var c, st, sent, focus = [];
+      try {
+        c = await waitA(shown('kts-caption'), 15000, 'the caption window');
+        st = (await S({ act: 'state' })) || {};
+        must(st.auto === true, 'auto ' + st.auto);
+        must(st.clickThrough !== false, 'not click-through');
+        // (Never focused on Windows — looked at again for a second: the focus is given back once the show is done —;
+        // an X server without a window manager — CI's Xvfb — gives the focus by the pointer.)
+        for (var i = 0; i < 5; i++) { await env.sleep(250); var cc = await shown('kts-caption')(); focus.push(cc ? cc.focused : null); }
+        await env.sleep(1250);
+        st = (await S({ act: 'state' })) || {};
+        sent = st.sent;
+      } finally {
+        // (Stopped whatever failed above, so the rows after this one do not run beside a caption and its helper.)
+        var now = (await S({ act: 'state' })) || {};
+        if (now.auto) await kt.screenAction('auto');
+      }
       await waitA(async function () { var x = (await S({ act: 'state' })) || {}; return !x.auto && x.ocrRunning === 0 && (await gone('kts-caption')()) ? x : null; }, 15000, 'auto stopped, no caption, no helper');
-      return 'click-through ' + (st.clickThrough === null ? 'not in this build' : st.clickThrough) + ', focused ' + c.focused + ', captions sent ' + sent + (st.lastError ? ', last error: ' + st.lastError : '');
+      if (win) must(focus.length === 5 && focus.every(function (f) { return f === false; }), 'the caption took the focus: ' + short(focus));
+      return 'click-through ' + (st.clickThrough === null ? 'not in this build' : st.clickThrough) + ', focused ' + short(focus) + ', captions sent ' + sent + (st.lastError ? ', last error: ' + st.lastError : '');
     }, 60000);
     await check('screen: the clipboard\'s translation opens by the mouse and closes', can, async function () {
       await S({ act: 'popup', text: 'Good night' });
@@ -1296,6 +1314,12 @@
   var cfg = root.__KT_SELFTEST__;
   if (!cfg || root.__KT_SELFTEST_STARTED__) return;
   root.__KT_SELFTEST_STARTED__ = true;
+  // (The page's first-start helper — desktopStarter.ts: every add-on and the ffmpeg pack fetched from the app's real
+  // release 4 s after the start — kept off: in run 43545725648 it put the release's real ffmpeg into this run's pack
+  // folder before the pack's row ran, on all three systems. A self-test reaches no network; the rows install what
+  // they need from the loopback server. Set before the page's scripts run: this script is in the initialization
+  // script.)
+  try { root.localStorage.setItem('kt.pc.starter', '1'); root.localStorage.setItem('kt.playerPacksAsked', 'ffmpeg'); } catch (e) { /* no storage */ }
   var results = [];
   var errors = 0;
   function invoke(cmd, args) {

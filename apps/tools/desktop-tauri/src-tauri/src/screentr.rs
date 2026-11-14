@@ -743,7 +743,13 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
     }
     let w = b.build().map_err(|e| e.to_string())?;
     place(&w, &logic::caption_rect(&m, &rd));
+    // (Windows: showing a window activates it whatever its builder said — in run 43549144577 the caption took the
+    // focus —; the window that had it gets it back, as Electron's focusable:false caption never took it.)
+    #[cfg(windows)]
+    let before = fg::foreground();
     let _ = w.show();
+    #[cfg(windows)]
+    fg::give_back(before);
     // (Clicks go through it to what is under it — Electron's setIgnoreMouseEvents(true).)
     #[cfg(kt_ignore_cursor)]
     let through = Some(w.set_ignore_cursor_events(true).is_ok());
@@ -847,6 +853,44 @@ pub fn stop_auto(app: &AppHandle) {
     }
 }
 
+/* ---------- Windows: the focus given back after a window that must not take it is shown ---------- */
+
+#[cfg(windows)]
+mod fg {
+    use std::ffi::c_void;
+    use std::time::Duration;
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetForegroundWindow() -> *mut c_void;
+        fn SetForegroundWindow(h: *mut c_void) -> i32;
+    }
+    /// The window in front now (as a number: it crosses threads).
+    pub fn foreground() -> usize {
+        unsafe { GetForegroundWindow() as usize }
+    }
+    /// Once the front window is no longer `before` (a show is carried out on the main thread, perhaps a moment
+    /// later), `before` brought to the front again; nothing when it stays in front for 300 ms.
+    pub fn give_back(before: usize) {
+        if before == 0 {
+            return;
+        }
+        for _ in 0..10 {
+            let now = foreground();
+            if now != before {
+                unsafe {
+                    SetForegroundWindow(before as *mut c_void);
+                }
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+}
+
+/// Whether the clipboard's window has had the focus since it opened: it closes when it loses it (Electron's «blur»,
+/// which only follows a focus) — not on a loss of focus it never had.
+static POPUP_FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /* ---------- the clipboard's text, by the mouse ---------- */
 
 fn show_popup(app: &AppHandle, text: &str) -> Result<(), String> {
@@ -867,6 +911,7 @@ fn show_popup(app: &AppHandle, text: &str) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(20));
     }
     let script = window_script("#/overlay?text=1");
+    POPUP_FOCUSED.store(false, Ordering::SeqCst);
     let w = tauri::WebviewWindowBuilder::new(app, POPUP, tauri::WebviewUrl::App("index.html".into()))
         .title(APP)
         .decorations(false)
@@ -1185,8 +1230,21 @@ pub fn on_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 let _ = window.close();
             }
         }
+        (POPUP, tauri::WindowEvent::Focused(true)) => {
+            POPUP_FOCUSED.store(true, Ordering::SeqCst);
+        }
         (POPUP, tauri::WindowEvent::Focused(false)) => {
-            let _ = window.close();
+            // (Closed when the focus has really gone elsewhere: still without it a moment later — a loss of focus the
+            // web view's own focus moves give and take back does not close it.)
+            if POPUP_FOCUSED.load(Ordering::SeqCst) {
+                let w = window.clone();
+                let _ = std::thread::Builder::new().name("kt-popup-blur".into()).spawn(move || {
+                    std::thread::sleep(Duration::from_millis(200));
+                    if !w.is_focused().unwrap_or(false) {
+                        let _ = w.close();
+                    }
+                });
+            }
         }
         (CAPTION, tauri::WindowEvent::Destroyed) => {
             if st().auto {
@@ -1254,19 +1312,76 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
             "draw" => {
                 let m = monitor_under_mouse(&app).ok_or("no monitor")?;
                 close_window(&app, TEST_WIN);
-                let r = Rect { x: 60, y: 60, w: o.get("w").and_then(|v| v.as_u64()).unwrap_or(480) as u32, h: o.get("h").and_then(|v| v.as_u64()).unwrap_or(240) as u32 };
-                let url = "about:blank".parse().map(tauri::WebviewUrl::External).map_err(|_| "about:blank")?;
-                let w = tauri::WebviewWindowBuilder::new(&app, TEST_WIN, url).title("kt screen test").decorations(false).always_on_top(true).skip_taskbar(true).resizable(false).visible(false).build().map_err(|e| e.to_string())?;
-                place(&w, &Rect { x: m.x + r.x, y: m.y + r.y, w: r.w, h: r.h });
-                let _ = w.show();
-                // (Three bars of pure colour on the left half, black text on white on the right — in CSS pixels made to
-                // fill the window whatever its scale.)
-                let js = "document.documentElement.style.cssText='margin:0;height:100%;background:#fff';document.body.style.cssText='margin:0;height:100%;display:flex;overflow:hidden;background:#fff';document.body.innerHTML='<div style=\"width:50%;height:100%;display:flex;flex-direction:column\"><div style=\"flex:1;background:#ff0000\"></div><div style=\"flex:1;background:#00ff00\"></div><div style=\"flex:1;background:#0000ff\"></div></div><div style=\"width:50%;height:100%;background:#fff;color:#000;font:bold 15vh/1.15 Arial,Helvetica,sans-serif;display:flex;flex-direction:column;justify-content:center;align-items:center\"><div>TOOLS</div><div>2468</div></div>';";
-                for _ in 0..3 {
-                    let _ = w.eval(js);
-                    std::thread::sleep(Duration::from_millis(400));
+                for _ in 0..50 {
+                    if app.get_webview_window(TEST_WIN).is_none() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
                 }
-                Ok(json!({ "x": r.x, "y": r.y, "w": r.w, "h": r.h, "monitor": m.id, "scale": m.scale, "mx": m.x, "my": m.y }))
+                let r = Rect { x: 60, y: 60, w: o.get("w").and_then(|v| v.as_u64()).unwrap_or(480) as u32, h: o.get("h").and_then(|v| v.as_u64()).unwrap_or(240) as u32 };
+                let at = Rect { x: m.x + r.x, y: m.y + r.y, w: r.w, h: r.h };
+                // (Three bars of pure colour on the left half, black text on white on the right — in CSS pixels made to
+                // fill the window whatever its scale. Linux: the page itself carries them (a data: address), since in
+                // run 43549144577 WebKitGTK showed nothing of about:blank and its script there — the window's own grey;
+                // elsewhere about:blank and the script, as Windows proved.)
+                const BODY: &str = "<div style=\"width:50%;height:100%;display:flex;flex-direction:column\"><div style=\"flex:1;background:#ff0000\"></div><div style=\"flex:1;background:#00ff00\"></div><div style=\"flex:1;background:#0000ff\"></div></div><div style=\"width:50%;height:100%;background:#fff;color:#000;font:bold 15vh/1.15 Arial,Helvetica,sans-serif;display:flex;flex-direction:column;justify-content:center;align-items:center\"><div>TOOLS</div><div>2468</div></div>";
+                let js = format!("document.documentElement.style.cssText='margin:0;height:100%;background:#fff';document.body.style.cssText='margin:0;height:100%;display:flex;overflow:hidden;background:#fff';document.body.innerHTML='{}';", BODY);
+                let address = if cfg!(all(unix, not(target_os = "macos"))) {
+                    let page = format!("<!doctype html><html style=\"margin:0;height:100%;background:#fff\"><body style=\"margin:0;height:100%;display:flex;overflow:hidden;background:#fff\">{}</body></html>", BODY);
+                    format!("data:text/html;charset=utf-8,{}", logic::data_url_text(&page))
+                } else {
+                    "about:blank".to_string()
+                };
+                let url = address.parse().map(tauri::WebviewUrl::External).map_err(|_| "the test page's address".to_string())?;
+                // (Made hidden, then placed and shown — as the frozen screen, the caption and the clipboard's window are.)
+                let w = tauri::WebviewWindowBuilder::new(&app, TEST_WIN, url).title("kt screen test").decorations(false).always_on_top(true).skip_taskbar(true).resizable(false).visible(false).build().map_err(|e| e.to_string())?;
+                place(&w, &at);
+                let _ = w.show();
+                // (Where the screen can be taken — Windows, X11 —: waited for until it is painted (a red pixel in the
+                // first bar), as long as 8 s; then a size nudge, then hidden and shown again, 4 s each — what helped is
+                // said, so a window of the app's that would stay blank shows here. Elsewhere three tries of the script.)
+                let probe = Rect { x: at.x - m.x + (r.w / 4) as i32, y: at.y - m.y + (r.h / 6) as i32, w: 1, h: 1 };
+                let red = || screencap::grab(&m, &probe).ok().map(|p| p.rgba.len() >= 3 && p.rgba[0] > 200 && p.rgba[1] < 80 && p.rgba[2] < 80).unwrap_or(false);
+                let can_look = matches!(screencap::how().0, "gdi" | "x11");
+                let t0 = Instant::now();
+                let mut painted: Option<bool> = None;
+                let mut how = String::new();
+                if can_look {
+                    painted = Some(false);
+                    for (k, step) in ["shown", "after a size nudge", "hidden and shown again"].iter().enumerate() {
+                        if k == 1 {
+                            let _ = w.set_size(tauri::PhysicalSize::new(r.w + 1, r.h + 1));
+                            std::thread::sleep(Duration::from_millis(200));
+                            place(&w, &at);
+                        } else if k == 2 {
+                            let _ = w.hide();
+                            std::thread::sleep(Duration::from_millis(200));
+                            let _ = w.show();
+                        }
+                        let until = Instant::now() + Duration::from_secs(if k == 0 { 8 } else { 4 });
+                        while Instant::now() < until {
+                            let _ = w.eval(js.as_str());
+                            std::thread::sleep(Duration::from_millis(300));
+                            if red() {
+                                painted = Some(true);
+                                break;
+                            }
+                        }
+                        if painted == Some(true) {
+                            how = format!("painted {} ({} ms)", step, t0.elapsed().as_millis());
+                            break;
+                        }
+                    }
+                    if painted != Some(true) {
+                        how = format!("never painted in {} ms (shown, a size nudge, hidden and shown again)", t0.elapsed().as_millis());
+                    }
+                } else {
+                    for _ in 0..3 {
+                        let _ = w.eval(js.as_str());
+                        std::thread::sleep(Duration::from_millis(400));
+                    }
+                }
+                Ok(json!({ "x": r.x, "y": r.y, "w": r.w, "h": r.h, "monitor": m.id, "scale": m.scale, "mx": m.x, "my": m.y, "painted": painted, "how": how }))
             }
             "grab" => {
                 let m = monitor_under_mouse(&app).ok_or("no monitor")?;

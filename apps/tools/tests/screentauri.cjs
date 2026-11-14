@@ -169,15 +169,20 @@ function fakeTauri({ lang, v }) {
   // --- the self-test's screen rows against the pretend screen: all pass; wrong pixels fail the pixel rows.
   const sw = {}; vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'desktop-tauri', 'selftest.js'), 'utf8'), vm.createContext({ window: sw, Promise, Object, Array, String, Error, JSON, Uint8Array, Date, setTimeout, clearTimeout, Math }));
   const lib = sw.__KT_SELFTEST_LIB__;
-  for (const [what, opts, wrong] of [['good', {}, false], ['wrong pixels', {}, true], ['no tray, no OCR', { trayPossible: false, ocr: 'none' }, false]]) {
-    const F = require('./screenfake.cjs')({ os: 'linux' }, opts); const results = [];
+  for (const [what, opts, wrong, os] of [['good', {}, false], ['wrong pixels', {}, true], ['no tray, no OCR', { trayPossible: false, ocr: 'none' }, false], ['never painted', { paint: 'never' }, false],
+    ['painted after a nudge', { paint: 'nudge' }, false], ['the caption keeps the focus (Windows)', { captionFocused: true, capture: 'gdi', ocr: 'windows' }, false, 'win32'], ['Windows, all well', { capture: 'gdi', ocr: 'windows' }, false, 'win32']]) {
+    const F = require('./screenfake.cjs')({ os: os || 'linux' }, opts); const results = [];
     const env = { sleep: () => new Promise((r) => setTimeout(r, 1)), now: () => Date.now(), invoke: (cmd, a) => Promise.resolve().then(() => F.act(a.o)), storage: null,
       pixels: wrong ? async (u, pts) => ({ w: 1, h: 1, px: pts.map(() => [40, 40, 40, 255]) }) : F.pixels };
     const must = (c, m) => { if (!c) throw new Error(m); };
     const check = async (name, required, fn) => { try { const d = await fn(); results.push({ name, ok: true, required, d }); return true; } catch (e) { results.push({ name, ok: false, required, d: e.message }); return false; } };
-    await lib.runScreen(F.kt, { os: 'linux', base: 'http://127.0.0.1:1' }, env, check, must);
+    await lib.runScreen(F.kt, { os: os || 'linux', base: 'http://127.0.0.1:1' }, env, check, must);
     const failed = results.filter((r) => r.required && !r.ok).map((r) => r.name);
-    if (what === 'good') ok('self-test rows against the pretend screen: all pass', failed.length === 0 && results.length === 12, results.filter((r) => !r.ok));
+    if (what === 'good') ok('self-test rows against the pretend screen: all pass', failed.length === 0 && results.length === 13 && results.every((r) => r.ok), results.filter((r) => !r.ok));
+    if (what === 'never painted') ok('self-test rows: a test window never painted fails its row with how, the rows after it too, and is reported', failed[0] === 'screen: a window the test draws, captured as the app captures it — its pixels' && /never painted/.test(results.find((r) => r.name === failed[0]).d) && results.some((r) => /paints without help/.test(r.name) && !r.ok && !r.required), results.filter((r) => !r.ok));
+    if (what === 'painted after a nudge') ok('self-test rows: painted only after a nudge — the capture passes, the «without help» row reports it', failed.length === 0 && results.some((r) => /paints without help/.test(r.name) && !r.ok && /nudge/.test(r.d)), results.filter((r) => !r.ok));
+    if (what === 'the caption keeps the focus (Windows)') ok('self-test rows (Windows): a caption holding the focus fails its row, and «auto» is still stopped for the rows after', failed.length === 1 && /caption opens click-through/.test(failed[0]) && /took the focus/.test(results.find((r) => r.name === failed[0]).d) && F.S.auto === false && results.some((r) => /clipboard/.test(r.name) && r.ok), results.filter((r) => !r.ok));
+    if (what === 'Windows, all well') ok('self-test rows (Windows): all pass', failed.length === 0 && results.every((r) => r.ok || !r.required), results.filter((r) => !r.ok));
     if (what === 'wrong pixels') ok('self-test rows: wrong pixels fail the capture, frozen-screen and crop rows', failed.length === 3 && failed.every((n) => /pixels|frozen screen|crop/.test(n)), failed);
     if (what === 'no tray, no OCR') ok('self-test rows: no tray / no OCR said, not failed', failed.length === 0 && /no tray here/.test(results.find((r) => /tray/.test(r.name)).d), results.filter((r) => /tray|OCR/.test(r.name)));
     ok(`self-test rows (${what}): left off — no window, no auto`, !F.S.on && !F.S.auto && F.S.wins.size === 0, { on: F.S.on, wins: [...F.S.wins.keys()] });

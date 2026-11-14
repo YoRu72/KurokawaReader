@@ -415,6 +415,27 @@ lettering, the words taken off the picture, the region drawn, the caption's text
   remove reach them by id. **The desktop side** (P6's `desktop::on_tasks`) is handed aria2's list and the video tasks, as
   main.cjs's `onDesktopTasks(allTasks())`.
 
+### CI runs 43545725648 (P5's first compile everywhere) and 43549144577 (the screen translator's first compile)
+
+- Both compiled on all four builds; «KT build:» found cursor_position, set_ignore_cursor_events, focusable and emit_to.
+  P5's rows all passed up to the pack's on Windows and Linux (the stand-ins start as `.exe`, trees end, SIGINT works).
+- **The pack's row failed on all three systems** with a real ffmpeg (0.18.1, 46–83 MB) already in the run's pack folder:
+  the page's first-start helper (`src/desktopStarter.ts`, 4 s after start) installed every add-on and fetched the
+  release's real pack from GitHub. A self-test reaches no network: selftest.js now marks the starter done before the page
+  runs, and `vtffmpeg::install` refuses a pack from anywhere but 127.0.0.1 in a self-test run. The rows after it (ffmpeg's
+  run, cancel, ffprobe, the transcode stream, the pack removed) never ran there yet.
+- **Linux, screen**: the test's window showed only GTK's grey (246,245,244) — WebKitGTK painted nothing of about:blank and
+  its script —, so the capture, frozen-screen, crop and OCR rows failed. The test page is now a data: address on Linux
+  and «draw» waits until a red pixel is on the screen (8 s; then a size nudge; then hidden and shown again), saying
+  which helped; the reported row «a window made hidden, then shown, paints without help» tells whether the app's own
+  hidden-made windows (frozen screen, caption, clipboard) need the same.
+- **Windows, screen**: the caption took the focus (a shown window is activated): the window in front before is given the
+  focus back (GetForegroundWindow / SetForegroundWindow); the clipboard's window now closes on a loss of focus only after
+  it had the focus and still lacks it 200 ms later; the «auto» row stops «auto» whatever fails, so a failure no longer
+  leaves the caption running beside the next rows (the popup's timeout followed that one).
+- Reported only: Linux «kept awake» (systemd-inhibit refused on the runner: no logind authorisation, exit 1); a Mac's
+  screen rows (white pixels; Vision read the system's local-network prompt).
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of

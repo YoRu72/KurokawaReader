@@ -12,7 +12,7 @@
 // send, full screen, the settings (kind, transparent, name: offered, applied, kept) — and that Electron's bridge, a web
 // page and a phone have none of it. (The same file is in both apps' tests: tests/shared-copies.cjs.)
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
-const APP = process.argv[2] || (__dirname.includes('/reader/') ? 'reader' : 'tools');
+const APP = process.argv[2] || (path.basename(path.dirname(__dirname)) === 'reader' ? 'reader' : 'tools');
 const DIST = path.join(__dirname, '..', '..', APP, 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm' };
 const serve = () => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(DIST, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
@@ -50,7 +50,9 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
 })().catch((e) => { console.error(e); process.exit(1); });
 
 // ---------- the Tauri shell's bar (the Reader) ----------
-const BRIDGE = fs.readFileSync(path.join(__dirname, '..', 'desktop-tauri', 'bridge.js'), 'utf8');
+// (The bridge of the app named in the argument — not of the folder this copy sits in: `titlebar.cjs reader` run from
+// the Tools folder once paired the Tools bridge with the Reader's page.)
+const BRIDGE = fs.readFileSync(path.join(__dirname, '..', '..', APP, 'desktop-tauri', 'bridge.js'), 'utf8');
 // (A fake Tauri IPC: kr_title_bar keeps a window's state and tells each change as the kr:titleBarState event.)
 const FAKE = (os) => `(function () {
   var os = ${JSON.stringify(os)};

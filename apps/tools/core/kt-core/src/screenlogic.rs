@@ -848,8 +848,28 @@ pub fn is_wayland(session_type: Option<&str>, wayland_display: Option<&str>) -> 
     session_type.map(|s| s.eq_ignore_ascii_case("wayland")).unwrap_or(false) || wayland_display.map(|s| !s.is_empty()).unwrap_or(false)
 }
 
+/// Text for a data: address (the self-test's page on Linux): all but ASCII letters, digits and «-_.~» as %XX of its
+/// UTF-8 bytes.
+pub fn data_url_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn data_url_text_escapes() {
+        assert_eq!(data_url_text("<a style=\"x:1%\">é #</a>"), "%3Ca%20style%3D%22x%3A1%25%22%3E%C3%A9%20%23%3C%2Fa%3E");
+        assert_eq!(data_url_text("A-z_0.9~"), "A-z_0.9~");
+    }
+
     use super::*;
 
     fn mon(x: i32, y: i32, w: u32, h: u32, s: f64) -> Mon {

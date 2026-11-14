@@ -194,6 +194,11 @@ pub async fn install(app: &AppHandle, o: &Value) -> Result<(), String> {
         return Err(format!("pack {}", name));
     }
     let url = text(o, "url");
+    // (A self-test run fetches packs from its loopback server only — never the release's real ffmpeg: in run
+    // 43545725648 the page's first-start helper did, and the pack's row found it already there.)
+    if crate::vtools::selftest_run() && !url.starts_with("http://127.0.0.1:") {
+        return Err("selftest: no network".to_string());
+    }
     let sha = text(o, "sha256").to_ascii_lowercase();
     let version = text(o, "version");
     let flag = Arc::new(AtomicBool::new(false));

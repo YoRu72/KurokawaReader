@@ -456,7 +456,7 @@ function loadBridge(boot) {
     assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_progress'));
     const scr = res.filter((r) => /^screen:/.test(r.name));
-    assert.ok(scr.length === 12 && scr.every((r) => r.ok), 'the screen translator\'s checks against the pretend screen: ' + JSON.stringify(scr.filter((r) => !r.ok)));
+    assert.ok(scr.length === 13 && scr.every((r) => r.ok), 'the screen translator\'s checks against the pretend screen: ' + JSON.stringify(scr.filter((r) => !r.ok)));
   }
   {
     const whole = new Set(byPart[0]); const one = new Set(byPart[1]); const two = new Set(byPart[2]);
