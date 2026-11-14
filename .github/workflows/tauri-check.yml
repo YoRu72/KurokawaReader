@@ -430,7 +430,7 @@ jobs:
           if ($exp.engine.gids.Count -gt 0) {
             node ../../tests/ownerprobe.cjs $exp.handover.userData $env:KTH_EXPECT (Join-Path $env:RUNNER_TEMP 'kt-owner-probe.json')
             $probe = $LASTEXITCODE
-          } else { 'no downloads were handed over (no aria2c in the Electron step): the owner probe not run' }
+          } else { 'FAILED: no downloads were handed over (the Electron step had no engine): the download rows and the owner probe cannot run — required on Windows'; $probe = 1 }
           if ($p.WaitForExit(460000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
           New-Item -ItemType File -Force (Join-Path $work 'dlserver.stop') | Out-Null
           node ../selftest-report.cjs $out $code 'Windows — hand-over (Electron → Tauri)' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append

@@ -48,6 +48,16 @@ function aria2Dir() {
 (async () => {
   at('server'); const srv = startServer(); const base = `http://127.0.0.1:${srv.port}`; log('download server', base, 'pid', srv.pid);
   const a2 = aria2Dir(); log('aria2c for Electron:', a2 || 'none fetched');
+  // (Also where desktop/aria2.cjs looks FIRST — <resources>/aria2/<plat>-<arch>/, Electron's own resources folder under
+  // `electron .`: in run 43563414074 the PATH alone was not enough on Windows — its `aria2c.exe --version` probe has
+  // 4 s, and a fresh copy's first start under the antivirus can take longer.)
+  if (a2) {
+    const plat = process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux';
+    const resDir = path.join(path.dirname(require(path.join(DESK, 'node_modules', 'electron'))), 'resources', 'aria2', `${plat}-${process.arch}`);
+    try { fs.mkdirSync(resDir, { recursive: true }); for (const f of fs.readdirSync(a2)) fs.copyFileSync(path.join(a2, f), path.join(resDir, f)); log('aria2c copied into Electron\'s resources:', resDir, fs.readdirSync(resDir).join(', ')); } catch (e) { log('aria2c not copied into Electron\'s resources:', e.message); }
+    // (Its first start, here, before Electron's: the antivirus' look at a new program paid now.)
+    try { const r = require('child_process').spawnSync(path.join(a2, process.platform === 'win32' ? 'aria2c.exe' : 'aria2c'), ['--version'], { timeout: 60000, windowsHide: true }); log('aria2c --version:', r.status, String(r.stdout || '').split(/\r?\n/)[0]); } catch (e) { log('aria2c --version failed:', e.message); }
+  }
   const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '1' }; if (a2) { const k = Object.keys(env).find((x) => x.toUpperCase() === 'PATH') || 'PATH'; env[k] = a2 + path.delimiter + (env[k] || ''); }
   const exe = require(path.join(DESK, 'node_modules', 'electron'));
   const args = [...(process.platform === 'linux' ? ['--no-sandbox'] : []), DESK];
@@ -89,7 +99,8 @@ function aria2Dir() {
   at('downloads');
   // Downloads, where aria2c runs: one moving, one paused by the person.
   const engine = { gids: [], moving: [], pausedByUser: [], available: false, dir: '', slow: null, server: { base, size: srv.size, sha256: srv.sha256, work: WORK } };
-  engine.available = await p.evaluate(async () => { const kt = window.kurokawaTools; await kt.ready(); for (let i = 0; i < 100 && !kt.available; i++) await new Promise((r) => setTimeout(r, 300)); return kt.available; });
+  const eng = await p.evaluate(async () => { const kt = window.kurokawaTools; await kt.ready(); for (let i = 0; i < 100 && !kt.available; i++) { if (i === 30 && kt.retryEngine) await kt.retryEngine().catch(() => undefined); await new Promise((r) => setTimeout(r, 300)); } return { available: kt.available, reason: kt.reason }; });
+  engine.available = eng.available; log('Electron\'s engine:', JSON.stringify(eng));
   if (engine.available) {
     const dir = path.join(WORK, 'Downloads'); fs.mkdirSync(dir, { recursive: true });
     const add = (url, name) => p.evaluate(({ url, name, dir }) => window.kurokawaTools.add({ source: { url }, name, dir }), { url, name, dir });
@@ -104,6 +115,8 @@ function aria2Dir() {
     engine.pausedByUser = tasks.filter((t) => engine.gids.includes(t.id) && t.state === 'paused').map((t) => t.id);
     log('downloads', JSON.stringify(tasks.map((t) => [t.id, t.state, t.done])));
   } else log('no aria2c here: the downloads are left out (the engine\'s files still cross)');
+  // (Windows: the downloads' hand-over is required — never left out unsaid again.)
+  const needDownloads = process.platform === 'win32';
   await p.waitForTimeout(1500);
 
   at('snapshot');
@@ -124,6 +137,8 @@ function aria2Dir() {
   try { if (appProc && appProc.exitCode === null) { log('the app did not end in 20 s: killed'); appProc.kill(); } } catch { /* gone */ }
   at('checks');
   const fails = [];
+  if (needDownloads && !engine.available) fails.push('Electron\'s engine did not start, so no download was handed over (required on Windows): ' + JSON.stringify(eng));
+  if (needDownloads && engine.available && (engine.moving.length !== 1 || engine.pausedByUser.length !== 1)) fails.push('not one moving and one paused download at the hand-over: ' + JSON.stringify({ moving: engine.moving, paused: engine.pausedByUser }));
   if (!made.ok) fails.push('the hand-over was not made: ' + JSON.stringify(made));
   if (!status || status.marker.id !== made.id) fails.push('no marker after it: ' + JSON.stringify(status));
   if (!fs.existsSync(path.join(userData, 'custom-icon.png'))) fails.push('the custom icon was not set by the shell');

@@ -312,7 +312,7 @@
       try {
         c = await waitA(shown('kts-caption'), 15000, 'the caption window');
         st = (await S({ act: 'state' })) || {};
-        must(st.auto === true, 'auto ' + st.auto);
+        must(st.auto === true, 'auto ' + st.auto + (st.autoStopWhy ? ' — stopped: ' + st.autoStopWhy : '') + (st.lastError ? ' — last error: ' + st.lastError : '') + ' — caption ' + short(c));
         must(st.clickThrough !== false, 'not click-through');
         // (Never focused on Windows — looked at again for a second: the focus is given back once the show is done —;
         // an X server without a window manager — CI's Xvfb — gives the focus by the pointer.)

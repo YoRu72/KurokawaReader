@@ -56,6 +56,8 @@ struct St {
     auto_text: logic::AutoText,
     auto_sent: u64,
     last_error: String,
+    /// Why «auto» last stopped (the self-test says it when a run ends unasked).
+    auto_stop_why: String,
     caption_click_through: Option<bool>,
     asked_permission: bool,
     login_set: bool,
@@ -199,7 +201,7 @@ fn apply(app: &AppHandle) {
     login_apply();
     let off = !enabled(&st());
     if off {
-        stop_auto(app);
+        stop_auto_why(app, "the screen translator turned off");
     }
 }
 
@@ -558,7 +560,7 @@ fn act(app: &AppHandle, what: &str) {
         }
         if what == "auto" {
             if st().auto {
-                stop_auto(app);
+                stop_auto_why(app, "«auto» asked again (a toggle)");
             } else {
                 start_auto(app)?;
             }
@@ -835,7 +837,7 @@ fn start_auto(app: &AppHandle) -> Result<(), String> {
                 return;
             }
             if until.map(|u| Instant::now() >= u).unwrap_or(false) {
-                stop_auto(&a2);
+                stop_auto_why(&a2, "its time ran out (autoStop)");
                 return;
             }
             auto_tick(&a2, &m, gen, &lang);
@@ -899,11 +901,17 @@ fn emit_caption(app: &AppHandle, text: &str) {
 
 /// stopAuto: the run ended, its caption closed, a reading under way ended with its helper's tree.
 pub fn stop_auto(app: &AppHandle) {
+    stop_auto_why(app, "stopped");
+}
+fn stop_auto_why(app: &AppHandle, why: &str) {
     AUTO_GEN.fetch_add(1, Ordering::SeqCst);
     let was = {
         let mut s = st();
         let w = s.auto;
         s.auto = false;
+        if w {
+            s.auto_stop_why = why.to_string();
+        }
         w
     };
     kill_ocr();
@@ -1276,7 +1284,7 @@ pub fn on_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             }
         }
         ("main", tauri::WindowEvent::Destroyed) => {
-            stop_auto(&app);
+            stop_auto_why(&app, "the main window closed");
             for l in [OVERLAY, POPUP, TEST_WIN] {
                 close_window(&app, l);
             }
@@ -1307,9 +1315,17 @@ pub fn on_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             }
         }
         (CAPTION, tauri::WindowEvent::Destroyed) => {
+            // (The person closed the caption: «auto» ends. Not when this is the caption of a run before — its Destroyed
+            // can come after a new run made its own under the same label: only when no caption is there now.)
             if st().auto {
                 let a2 = app.clone();
-                let _ = std::thread::Builder::new().spawn(move || stop_auto(&a2));
+                let gen = AUTO_GEN.load(Ordering::SeqCst);
+                let _ = std::thread::Builder::new().spawn(move || {
+                    std::thread::sleep(Duration::from_millis(300));
+                    if AUTO_GEN.load(Ordering::SeqCst) == gen && st().auto && a2.get_webview_window(CAPTION).is_none() {
+                        stop_auto_why(&a2, "its caption window was closed");
+                    }
+                });
             }
         }
         _ => {}
@@ -1363,7 +1379,7 @@ pub async fn kt_selftest_screen(app: AppHandle, o: Value) -> Result<Value, Strin
                     "under": monitor_under_mouse(&app).map(|m| m.id),
                     "ocr": logic::ocr_kind(os(), false, has_tesseract()),
                     "windows": wins, "ocrRunning": ocr_running(), "auto": s.auto, "sent": s.auto_sent, "lastError": s.last_error,
-                    "clickThrough": s.caption_click_through, "ignoreApi": cfg!(kt_ignore_cursor), "focusableApi": cfg!(kt_focusable), "emitTo": cfg!(kt_emit_to),
+                    "clickThrough": s.caption_click_through, "autoStopWhy": s.auto_stop_why, "ignoreApi": cfg!(kt_ignore_cursor), "focusableApi": cfg!(kt_focusable), "emitTo": cfg!(kt_emit_to),
                     "cursorApi": cfg!(kt_cursor), "shortcuts": cfg!(kt_shortcuts) && crate::desktop::shortcuts_possible(),
                     "bound": s.bound.iter().map(|(w, a)| json!([w, a])).collect::<Vec<_>>(), "tray": s.tray_on, "trayWhy": s.tray_why,
                     "permission": screencap::permission(), "keepInTray": enabled(&s) && truthy(pc(&s.cfg).get("tray")) && s.tray_on,
