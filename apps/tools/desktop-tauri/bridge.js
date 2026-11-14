@@ -309,6 +309,7 @@
        track — are stage P4's above: one server, streamproxy.rs, with P5's ffmpeg and encoder rules.) A video
        download is kt_add with o.video, and its task comes in kt:tasks with the others. */
     videoInfo: function (o) { return call('kt_video_info', { o: obj(o) }); },
+    videoCookies: function (o) { return call('kt_video_cookies', { o: obj(o) }); },
     videoReady: function () { return call('kt_video_ready'); },
     isVideoHost: function (u) { return call('kt_is_video_host', { u: str(u) }); },
     videoVersion: function () { return call('kt_video_version'); },

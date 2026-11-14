@@ -1,6 +1,7 @@
 // The downloads: every task as a card — its name, a progress bar, speeds, peers, what is left — with pause,
 // resume, play, remove; filters over them (all, active, finished, failed) and the options sheet (filter, sort,
 // display, as the reader's Library has it); a search; selecting several for one action; the + for a new one.
+import { queuePlaces } from '../video/queue';
 import { swipeable } from '../ui/swipe';
 import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
@@ -130,7 +131,9 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     return sortTasks(applyFilters(list, query));
   };
   const cards = new Map<string, HTMLElement>(); const heads = new Map<string, HTMLElement>();
+  let places = new Map<string, number>();
   const draw = () => {
+    places = queuePlaces(tasks);
     drawChips(); drawRecovery();
     const P = dlPrefs(); const vis = shown();
     optBtn.dataset.n = String(activeFilters(P));
@@ -178,6 +181,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
     if ((x.kind === 'video' || x.meta?.hls) && (x.state === 'downloading' || x.state === 'metadata')) { const m = x.meta ?? {}; if (m.frags) parts.push(t('hlsPieces', { i: localDigits(String(m.frag ?? 0)), n: localDigits(String(m.frags)) })); if (m.phase) parts.push(phaseShort(m.phase)); }
     if (x.state === 'downloading' && isStalled(x)) parts.push(t('stalled'));
+    { const n = places.get(x.id); if (n) parts.push(t('vQueuedAt', { n: localDigits(n) })); }
     if (x.kind === 'torrent' && x.state === 'downloading' && x.readyFile !== undefined && x.readyFile >= 0) parts.push(`▶ ${t('readyToPlay')}`);
     if (x.meta?.dhtFallback && x.state === 'downloading' && !x.peers && !x.seeds) parts.push(t('dhtAsked'));
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
@@ -202,13 +206,20 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       return { right, left: { label: t('removeTask'), icon: 'trash', run: () => removeSheet([cur]) } }; }, icon, () => !selecting);
     update(el, x); return el;
   };
+  // (Keyed rows, each redrawn only when what it shows changed: a progress push of a long list touches the few rows that
+  // moved, not every row's text and buttons — tests/rowpatch.cjs measures a list of 200 with 5 under way.)
+  const seen = new WeakMap<HTMLElement, { key: string; acts: string }>();
+  const rowKey = (x: Task): string => { const m = x.meta ?? {}; const P = dlPrefs(); return [x.state, x.done, x.total, x.downSpeed, x.upSpeed, x.eta, displayName(x), x.error, x.heldBy, x.peers, x.seeds, x.readyFile, m.phase, m.frag, m.frags, m.dhtFallback, noteOf(x.id), places.get(x.id), x.state === 'downloading' && isStalled(x), JSON.stringify(P.show), P.look].join('|'); };
   const update = (el: HTMLElement, x: Task) => {
+    const key = rowKey(x); const was = seen.get(el); if (was && was.key === key) return;
+    const actsKey = `${x.state}|${x.heldBy ?? ''}|${displayName(x)}|${x.files.length}`;
     { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
     { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); }
     (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
     (el.querySelector('.task-bar i') as HTMLElement).style.width = `${bar(x)}%`;
     (el.querySelector('.task-bar') as HTMLElement).classList.toggle('busy-any', x.state === 'metadata' || x.state === 'checking' || (x.state === 'downloading' && !(x.total > 0)));
+    seen.set(el, { key, acts: actsKey }); if (was && was.acts === actsKey) return;
     const acts = el.querySelector('.task-actions') as HTMLElement; acts.replaceChildren();
     const eng = getEngine();
     if (ACTIVE.includes(x.state) && eng.can.pause) acts.append(iconButton('pause', t('pause'), (e) => { e.stopPropagation(); void eng.pause(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
@@ -217,7 +228,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'done' && isVideo(displayName(x))) acts.append(iconButton('play', t('play'), (e) => { e.stopPropagation(); void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => isVideo(f.path))?.index ?? 0)).catch((er) => toast(String(er.message ?? er), 'error')); }));
     // (Done: a video or a sound plays in the app; anything else opens in the system's viewer.)
     else if (x.state === 'done' && eng.open) { const media = x.files.some((f) => f.priority > 0 && isMedia(f.path)) || isMedia(x.name); acts.append(iconButton(media ? 'play' : 'external', t(media ? 'play' : 'open'), (e) => { e.stopPropagation(); if (media) { void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => f.priority > 0 && isMedia(f.path))?.index ?? 0)).catch((er) => toast(String((er as Error).message ?? er), 'error')); return; } void eng.open!(x.id).catch((er) => toast(String(er.message ?? er) === 'notFound' ? t('fileGone') : String(er.message ?? er), 'error')); })); }
-    acts.append(iconButton('more', t('more'), (e) => { e.stopPropagation(); taskMenu(x, e); }));
+    acts.append(iconButton('more', t('more'), (e) => { e.stopPropagation(); taskMenu(tasks.find((y) => y.id === x.id) ?? x, e); }));
   };
   const taskMenu = (x: Task, at?: Event) => {
     const sh = openSheet(displayName(x), t('close'), { at });

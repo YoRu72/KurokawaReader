@@ -1086,3 +1086,14 @@ html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
 .fr-badge { display: grid; place-items: center; border-radius: 30%; background: var(--md-primary-container); flex: none; }
 .fr-tile .hint { margin: 0; }
 .switch-sheet .switch-file { display: flex; gap: 8px; align-items: center; }
+/* yt-dlp's failures in plain words (src/video/errors.ts): the message, its action, the raw line folded under «Details». */
+.video-failed { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 16px; background: color-mix(in srgb, var(--md-error, #f2b8b5) 10%, transparent); }
+.video-err-msg { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 14px; line-height: 1.45; }
+.video-err-msg > svg, .post-state > svg, .video-healed > svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--md-error, #f2b8b5); }
+.video-failed.kind-rateLimit .video-err-msg > svg, .video-failed.kind-notLive .video-err-msg > svg, .video-failed.kind-timeout .video-err-msg > svg, .video-healed > svg { color: var(--md-primary); }
+.video-err-actions { display: flex; flex-wrap: wrap; gap: 8px; } .video-err-actions:empty { display: none; }
+.video-why summary { cursor: pointer; font-size: 12px; color: var(--md-on-surface-variant); }
+.video-why p { margin: 6px 0 0; word-break: break-word; }
+.post-state, .video-healed { display: flex; align-items: flex-start; gap: 8px; margin: 0; }
+.post-chooser { margin-inline-start: 8px; } .post-chooser svg { width: 18px; height: 18px; }
+.kept-sites-box .addon-row svg { width: 20px; height: 20px; }

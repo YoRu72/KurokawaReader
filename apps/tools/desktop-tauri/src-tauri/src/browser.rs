@@ -203,6 +203,49 @@ fn site_cookies(app: &AppHandle, url: &str) -> String {
     }
 }
 
+/// The browser's cookies of the site of `url`, each with what yt-dlp's cookie file keeps (vtools.rs writes them for a
+/// sign-in kept per site). Off the main thread. None where this build cannot read the store (kt_cookie_read unset) —
+/// the sign-in then is not kept and yt-dlp runs as before. The expiry is not read (0: yt-dlp keeps such a cookie).
+pub fn cookie_list(app: &AppHandle, url: &str) -> Vec<kt_core::videotools::NsCookie> {
+    #[cfg(kt_cookie_read)]
+    {
+        let host = match logic::host_of(url) {
+            Some(h) => h,
+            None => return Vec::new(),
+        };
+        let label = lock(&BROWSER).as_ref().map(|w| w.label.clone()).or_else(|| lock(&KEEPER).clone());
+        let w = match label.and_then(|l| app.get_webview_window(&l)) {
+            Some(w) => w,
+            None => return Vec::new(),
+        };
+        #[cfg(all(target_os = "macos", kt_cookie_all))]
+        let listed = w.cookies().ok().map(|l| l.into_iter().filter(|c| logic::cookie_for_host(&host, c.domain().unwrap_or(""))).collect::<Vec<_>>());
+        #[cfg(not(all(target_os = "macos", kt_cookie_all)))]
+        let listed = match url.parse() {
+            Ok(u) => w.cookies_for_url(u).ok(),
+            Err(_) => None,
+        };
+        return listed
+            .unwrap_or_default()
+            .iter()
+            .map(|c| kt_core::videotools::NsCookie {
+                domain: c.domain().map(|d| d.to_string()).unwrap_or_else(|| host.clone()),
+                path: c.path().unwrap_or("/").to_string(),
+                secure: c.secure().unwrap_or(false),
+                http_only: c.http_only().unwrap_or(false),
+                expires: 0,
+                name: c.name().to_string(),
+                value: c.value().to_string(),
+            })
+            .collect();
+    }
+    #[cfg(not(kt_cookie_read))]
+    {
+        let _ = (app, url);
+        Vec::new()
+    }
+}
+
 fn current_url(app: &AppHandle) -> String {
     let label = lock(&BROWSER).as_ref().map(|w| w.label.clone());
     label.and_then(|l| app.get_webview_window(&l)).and_then(|w| w.url().ok()).map(|u| u.to_string()).unwrap_or_default()

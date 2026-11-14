@@ -23,6 +23,10 @@ export const packsHere = (): boolean => !!(plug() || desk());
 export const packNames = (): PackName[] => (desk() ? ['ffmpeg', ...((window.kurokawaTools as unknown as { videoJsRuntime?: unknown })?.videoJsRuntime ? ['deno' as PackName] : [])] : plug() ? ['python', 'ffmpeg', 'mpv'] : []);
 
 export async function status(): Promise<Status | null> { const d = desk(); if (d) return d.packStatus(); const p = plug(); return p ? p.packStatus() : null; }
+// (What is here, kept a minute for the questions asked on every link — «is ffmpeg here?» —; forgotten when a pack comes or goes.)
+let kept: { at: number; p: Promise<Status | null> } | null = null;
+export function statusKept(): Promise<Status | null> { if (kept && Date.now() - kept.at < 60000) return kept.p; const p = status(); kept = { at: Date.now(), p }; p.catch(() => { kept = null; }); return p; }
+export function forgetStatus(): void { kept = null; }
 
 type Entry = { file: string; size: number; sha256: string };
 type Manifest = { ydl?: string; version?: string; versions?: Record<string, string>; packs: Record<string, Record<string, Entry>> };
@@ -55,7 +59,7 @@ export const packLabel = (n: PackName): string => (n === 'python' ? t('packPytho
 
 /** The packs among `names` that have to be fetched, with where from and how big (null: nothing to fetch). */
 export async function packsToFetch(names: PackName[]): Promise<{ n: PackName; e: Awaited<ReturnType<typeof entryFor>> }[]> {
-  const st = await status(); if (!st) return [];
+  const st = await statusKept(); if (!st) return [];
   const need = await missing(names.filter((n) => packNames().includes(n)), st); if (!need.length) return [];
   // (The mpv pack is the player's better engine, not a must: a release or a phone without it plays with the web view.)
   const got = await Promise.all(need.map(async (n) => { try { return { n, e: await entryFor(n, st) }; } catch (err) { if (n === 'mpv') return null; throw err; } }));
@@ -65,6 +69,7 @@ let runningPack: PackName | null = null;
 export function cancelPack(): void { if (!runningPack) return; const d = desk(); if (d) void d.packCancel(runningPack); else void plug()?.packCancel({ name: runningPack }); }
 /** Downloads the packs one after another; `progress(i, done, total)` for the i-th. */
 export async function fetchPacks(list: { n: PackName; e: Awaited<ReturnType<typeof entryFor>> }[], progress: (i: number, done: number, total: number) => void): Promise<void> {
+  forgetStatus();
   const d = desk(); let i = 0;
   const onP = (p: Prog) => { const k = list.findIndex((x) => x.n === p.name); if (k >= 0) progress(k, p.done, p.total || list[k].e.size); };
   const off: { remove(): void } | (() => void) = d ? d.onPackProgress(onP) : await listen<Prog>(plug()! as never, 'packProgress', onP);
@@ -74,7 +79,7 @@ export async function fetchPacks(list: { n: PackName; e: Awaited<ReturnType<type
       if (d) await d.packInstall({ name: r.n, url: r.e.url, sha256: r.e.sha256, version: r.e.version }); else await plug()!.packInstall({ name: r.n, url: r.e.url, sha256: r.e.sha256, version: r.e.version });
       progress(i, r.e.size, r.e.size); i++;
     }
-  } finally { runningPack = null; if (typeof off === 'function') off(); else off.remove(); }
+  } finally { runningPack = null; forgetStatus(); if (typeof off === 'function') off(); else off.remove(); }
 }
 /** Makes sure the packs are here: the download card offers them (with their size) and shows them coming. */
 export async function ensurePacks(names: PackName[], why: string, opts: { start?: boolean } = {}): Promise<boolean> {
@@ -84,7 +89,7 @@ export async function ensurePacks(names: PackName[], why: string, opts: { start?
   const { getCard } = await import('./ui/getCard');
   return getCard({ icon: 'download', title: list.map((x) => packLabel(x.n)).join(' + '), why: `${why} ${t('packWhyShort')}`, steps: list.map((x) => ({ label: packLabel(x.n), size: x.e.size })), run: (p) => fetchPacks(list, p), cancel: cancelPack, start: opts.start });
 }
-export async function removePack(n: PackName): Promise<void> { const d = desk(); if (d) await d.packRemove(n); else await plug()?.packRemove({ name: n }); }
+export async function removePack(n: PackName): Promise<void> { forgetStatus(); const d = desk(); if (d) await d.packRemove(n); else await plug()?.packRemove({ name: n }); }
 
 /** A native call that may answer «pack:ffmpeg» (or python): the pack fetched, then the call made again. */
 export async function withPacks<T>(names: PackName[], why: string, fn: () => Promise<T>): Promise<T> {

@@ -419,6 +419,10 @@ pub async fn http(o: &Value) -> Result<Value, String> {
     };
     let method = reqwest::Method::from_bytes(method_text.as_bytes()).map_err(|e| e.to_string())?;
     let mut rb = client()?.request(method, url.as_str());
+    // (A budget when the page gives one — the post readers' few seconds —; the client's own limits otherwise.)
+    if let Some(ms) = o.get("timeoutMs").and_then(|v| v.as_f64()).filter(|m| *m > 0.0) {
+        rb = rb.timeout(Duration::from_millis(ms.min(600_000.0) as u64));
+    }
     if let Some(Value::Object(h)) = o.get("headers") {
         for (k, v) in h.iter() {
             let val = as_text(v);

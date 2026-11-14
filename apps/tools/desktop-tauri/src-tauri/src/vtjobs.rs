@@ -6,7 +6,7 @@
 // Differences from Electron: pause and remove end yt-dlp's whole tree (its ffmpeg too), not yt-dlp alone.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,15 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 static ARIA: Mutex<Option<Value>> = Mutex::new(None);
 /// One push at a time: the list is read and sent under it, so an older list never overtakes a newer one.
 static EMIT: Mutex<()> = Mutex::new(());
+/// At most this many run at once (Settings → Downloads «Simultaneous video downloads», kt:configure maxVideo); the
+/// rest wait «queued», oldest first (kt-core queue_pick).
+static MAX: AtomicUsize = AtomicUsize::new(3);
+pub fn set_max(n: usize) {
+    MAX.store(n.clamp(1, 10), Ordering::SeqCst);
+    if let Some(j) = get() {
+        j.pump();
+    }
+}
 
 pub fn init(app: &AppHandle) {
     let path = vtools::dirs().data.join("video-jobs.json");
@@ -218,6 +227,8 @@ pub fn add(o: &Value) -> Result<Value, String> {
     for k in ["chapters", "template", "section"] {
         set(&mut meta, k, pick(k));
     }
+    // (A page this shell read moments ago, by its id — never a path from the page.)
+    set(&mut meta, "infoId", s_of(o, "infoId").filter(|i| vt::info_id_ok(i)).map(Value::String));
     let name = match o.get("title") {
         Some(t) if truthy(Some(t)) => t.clone(),
         _ => json!(url),
@@ -282,11 +293,34 @@ impl Jobs {
         self.lock().tasks.iter().find(|t| id_of(t) == id).cloned()
     }
 
+    /// The waiting ones started while there is room, in the order they were added.
+    fn pump(self: &Arc<Self>) {
+        let pairs: Vec<(String, String)> = {
+            let g = self.lock();
+            g.tasks.iter().map(|t| (id_of(t).to_string(), if g.procs.contains_key(id_of(t)) { "downloading".to_string() } else { s_of(t, "state").unwrap_or_default() })).collect()
+        };
+        for id in vt::queue_pick(&pairs, MAX.load(Ordering::SeqCst)) {
+            let j = self.clone();
+            tauri::async_runtime::spawn(async move { j.start(&id).await });
+        }
+    }
+
     /// ytdlp.cjs start(id).
     async fn start(self: &Arc<Self>, id: &str) {
         {
             let mut g = self.lock();
             if g.procs.contains_key(id) {
+                return;
+            }
+            // (No room: it waits its turn — «queued», its place shown in the list — and starts when one ends.)
+            if g.procs.len() >= MAX.load(Ordering::SeqCst) {
+                drop(g);
+                self.edit(id, |m| {
+                    m.insert("state".into(), json!("queued"));
+                    m.insert("downSpeed".into(), json!(0));
+                });
+                self.save();
+                push(&self.app);
                 return;
             }
             // (Marked running at once, so a second start does not begin while this one fetches yt-dlp.)
@@ -309,6 +343,7 @@ impl Jobs {
             });
             push(&self.app);
             self.save();
+            self.pump();
             return;
         }
         let me = self.clone();
@@ -341,9 +376,15 @@ impl Jobs {
                 });
                 push(&self.app);
                 self.save();
+                self.pump();
                 return;
             }
         };
+        // (The shell's own inputs: the site's kept sign-in, and the page read moments ago for the chooser — the site
+        // not asked again; kt-core with_shell_inputs.)
+        let info_file = if truthy(meta.get("noInfo")) { None } else { s_of(&meta, "infoId").and_then(|i| vtools::fresh_info(&i)) };
+        let cookie_file = vtools::cookie_file_for(&url);
+        let args = vt::with_shell_inputs(&args, cookie_file.as_ref().map(|p| p.to_string_lossy().into_owned()).as_deref(), info_file.as_ref().map(|p| p.to_string_lossy().into_owned()).as_deref());
         let phase = meta.get("phase").and_then(|p| p.as_str()).map(|s| s.to_string());
         let audio_fmt = s_of(&meta, "audioFmt").unwrap_or_default();
         let mut rd = vt::LineReader::new(jm.audio_only, &audio_fmt, num(meta.get("expect")).max(0.0) as u64, phase);
@@ -373,6 +414,7 @@ impl Jobs {
                 });
                 push(&self.app);
                 self.save();
+                self.pump();
                 return;
             }
         };
@@ -384,6 +426,59 @@ impl Jobs {
         }
         let (code, err) = lines.wait();
         self.lock().procs.remove(id);
+        // (A failure a second run may mend, while the job is still wanted: the page read before could not be used —
+        // read again, once, at once —; or the site changed — most «it stopped working» is an old yt-dlp —: a newer one
+        // looked for once, and with one, tried again once.)
+        let wanted = self.task(id).and_then(|t| s_of(&t, "state")).as_deref() == Some("downloading");
+        if code != Some(0) && wanted {
+            let mark = |me: &Arc<Self>, k: &str, v: Value| {
+                me.edit(id, |m| {
+                    if let Some(Value::Object(mm)) = m.get_mut("meta") {
+                        mm.insert(k.into(), v);
+                    }
+                });
+            };
+            if info_file.is_some() {
+                mark(self, "noInfo", json!(true));
+                self.save();
+                let (j, id2) = (self.clone(), id.to_string());
+                tauri::async_runtime::spawn(async move { j.start(&id2).await });
+                return;
+            }
+            if vt::healable(&err) && !truthy(meta.get("healTried")) && vtools::is_managed() {
+                mark(self, "healTried", json!(true));
+                self.edit(id, |m| {
+                    m.insert("detail".into(), json!("yt-dlp update"));
+                });
+                self.save();
+                push(&self.app);
+                let (j, id2, line) = (self.clone(), id.to_string(), vt::job_error(&err, code));
+                tauri::async_runtime::spawn(async move {
+                    match vtools::update(true).await {
+                        Ok(v) if v.get("updated").and_then(|u| u.as_bool()) == Some(true) => {
+                            let ver = v.get("version").cloned().unwrap_or(json!(true));
+                            j.edit(&id2, |m| {
+                                if let Some(Value::Object(mm)) = m.get_mut("meta") {
+                                    mm.insert("healed".into(), ver);
+                                }
+                            });
+                            j.save();
+                            j.start(&id2).await;
+                        }
+                        _ => {
+                            j.edit(&id2, |m| {
+                                m.insert("state".into(), json!("failed"));
+                                m.insert("error".into(), json!(line));
+                            });
+                            j.save();
+                            push(&j.app);
+                            j.pump();
+                        }
+                    }
+                });
+                return;
+            }
+        }
         let mut bilingual: Option<(PathBuf, String)> = None;
         self.edit(id, |m| {
             let s = m.get("state").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -418,6 +513,7 @@ impl Jobs {
         }
         self.save();
         push(&self.app);
+        self.pump();
     }
 
     fn stop_proc(&self, id: &str) {
@@ -496,6 +592,8 @@ pub fn pause(id: &str) {
         j.stop_proc(id);
         j.save();
         push(&j.app);
+        // (One waiting — not started yet — paused: its place given to the next.)
+        j.pump();
     }
 }
 
@@ -543,6 +641,7 @@ pub fn remove(id: &str, delete_files: bool) {
     }
     j.save();
     push(&j.app);
+    j.pump();
 }
 
 /// ytdlp.cjs fileOf(id): the file, else the folder.

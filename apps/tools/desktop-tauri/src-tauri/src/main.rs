@@ -233,6 +233,7 @@ fn main() {
             // (Stage P5: the video tools.)
             vtools::kt_video_info,
             vtools::kt_video_js_runtime,
+            vtools::kt_video_cookies,
             vtools::kt_video_ready,
             vtools::kt_video_version,
             vtools::kt_video_update,

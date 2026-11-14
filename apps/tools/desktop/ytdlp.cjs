@@ -26,7 +26,7 @@ async function fetchBinary(onProgress) {
   if (fetching) return fetching;
   fetching = (async () => {
     fs.mkdirSync(binDir(), { recursive: true });
-    const sums = await (await net.fetch('https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS')).text();
+    const sums = await (await net.fetch('https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS', { signal: AbortSignal.timeout(20000) })).text();
     const want = sums.split('\n').map((l) => l.trim().split(/\s+/)).find((p) => p[1] === ASSET)?.[0];
     const res = await net.fetch(`https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ASSET}`); if (!res.ok || !res.body) throw new Error('yt-dlp: HTTP ' + res.status);
     const total = Number(res.headers.get('content-length') || 0); const tmp = managedPath() + '.part'; const out = fs.createWriteStream(tmp); const hash = crypto.createHash('sha256'); let got = 0;
@@ -46,7 +46,7 @@ function versionOf(bin) { return new Promise((res) => execFile(bin, ['--version'
 async function version() { const bin = binPath(); let key = ''; try { const st = fs.statSync(bin); key = `${bin}|${st.size}|${st.mtimeMs}`; } catch { return null; } if (verCache && verCache.key === key) return verCache.v; const v = await versionOf(bin); verCache = { key, v }; return v; }
 async function ensure(onProgress) { if (!haveBinary()) await fetchBinary(onProgress); else if (isManaged()) { const v = await version(); if (v && olderThan(v, MIN_VERSION)) { try { await fetchBinary(onProgress); } catch { /* offline: the old one runs */ } } } return binPath(); }
 /** The newest release's tag (yt-dlp prints the same string for --version). */
-async function latestTag() { const r = await net.fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', { headers: { accept: 'application/vnd.github+json' } }); if (!r.ok) throw new Error('HTTP ' + r.status); return String((await r.json()).tag_name || '').trim(); }
+async function latestTag() { const r = await net.fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', { headers: { accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error('HTTP ' + r.status); return String((await r.json()).tag_name || '').trim(); }
 /** Brings the binary to the newest release when it is behind; `force` checks even if checked within the day. */
 async function update(force = false) {
   if (!haveBinary()) { await fetchBinary(); return { version: await version(), updated: true }; }
@@ -57,7 +57,10 @@ async function update(force = false) {
   try { const cur = JSON.parse(fs.readFileSync(stampPath(), 'utf8')); fs.writeFileSync(stampPath(), JSON.stringify({ ...cur, checked: Date.now() })); } catch { /* ignore */ }
   return { version: await version(), latest: tag, updated };
 }
-async function maybeUpdate() { try { if (haveBinary()) await update(false); } catch { /* offline: next time */ } }
+// (The one owner of the daily check on this build: main.cjs calls it after the window is up and every 6 h; never while a
+// job runs — a job that fails with an extractor error asks for its own check, below.)
+let busy = () => false; function setBusy(f) { busy = f; }
+async function maybeUpdate() { try { if (haveBinary() && !busy()) await update(false); } catch { /* offline: next time */ } }
 // (YouTube needs a JavaScript runtime since yt-dlp 2025.11 — without one it reads nothing. The app's own Node is it:
 // Electron's program runs as plain Node with ELECTRON_RUN_AS_NODE, which yt-dlp's child inherits.)
 // (Only for a yt-dlp that knows the option — one of the user's own may be older.)
@@ -84,15 +87,74 @@ function vetArgs(args) {
 }
 const common = () => { const ff = Ffmpeg.binary(); return ['--no-warnings', '--no-playlist-reverse', ...jsArgs(), ...(fs.existsSync(ff) ? ['--ffmpeg-location', ff] : [])]; };
 
-/** What a page offers: title, thumbnail, duration, formats; a playlist's entries (flat). */
+/* ---------- a sign-in kept per site (the in-app browser's cookies of that site only), a read page reused ---------- */
+// (kt-core videotools.rs cookie_site / netscape_file / with_shell_inputs / info_id are the same rules for the Tauri build.)
+const cookieDir = () => path.join(app.getPath('userData'), 'video-cookies');
+const infoDir = () => path.join(app.getPath('userData'), 'video-info');
+const INFO_FRESH_MS = 5 * 60 * 1000;
+function cookieSite(url) {
+  let h; try { h = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, ''); } catch { return null; }
+  if (!h || /^[\d.]+$/.test(h) || h.startsWith('[')) return null;
+  const l = h.split('.').filter(Boolean); if (l.length < 2) return null; const n = l.length;
+  const keep = n >= 3 && l[n - 1].length === 2 && ['co', 'com', 'net', 'org', 'or', 'ac', 'gov', 'edu', 'ne', 'go'].includes(l[n - 2]) ? 3 : 2;
+  const site = l.slice(n - keep).join('.');
+  return site === 'youtu.be' || site === 'youtube-nocookie.com' ? 'youtube.com' : site === 'twitter.com' ? 'x.com' : site;
+}
+const cookieFileName = (site) => { const s = String(site || '').toLowerCase().replace(/[^a-z0-9.-]/g, ''); return !s || s.startsWith('.') || s.includes('..') || s.length > 100 ? null : `${s}.txt`; };
+/** The kept sign-in of a link's site, when there is one. */
+function cookieFileFor(url) { const n = cookieFileName(cookieSite(url)); if (!n) return null; const f = path.join(cookieDir(), n); return fs.existsSync(f) ? f : null; }
+function netscapeFile(site, cookies) {
+  let out = '# Netscape HTTP Cookie File\n# Kept by Kurokawa Tools for one site; delete it in Settings.\n\n'; const seen = new Set();
+  for (const c of cookies) {
+    const d = String(c.domain || '').toLowerCase(); const bare = d.replace(/^\./, ''); if (!bare || !(bare === site || bare.endsWith(`.${site}`))) continue;
+    const bad = (x) => /[\t\r\n]/.test(String(x)); if (!c.name || bad(c.name) || bad(c.value) || bad(d) || bad(c.path || '')) continue;
+    const key = `${d}|${c.path}|${c.name}`; if (seen.has(key)) continue; seen.add(key);
+    const sub = d.startsWith('.') || c.hostOnly === false;
+    out += `${c.httpOnly ? '#HttpOnly_' : ''}${sub && !d.startsWith('.') ? `.${d}` : d}\t${sub ? 'TRUE' : 'FALSE'}\t${c.path || '/'}\t${c.secure ? 'TRUE' : 'FALSE'}\t${Math.max(0, Math.floor(Number(c.expirationDate) || 0))}\t${c.name}\t${c.value}\n`;
+  }
+  return out;
+}
+const countOf = (text) => text.split('\n').filter((l) => l.trim() && (!l.startsWith('#') || l.startsWith('#HttpOnly_'))).length;
+/** The in-app browser's cookies of `url`'s site written to the app's own file for it (only this user may read it); never logged. → { site, count } */
+async function saveCookies(url, cookies) {
+  const site = cookieSite(url); const name = cookieFileName(site); if (!name) throw new Error('not a site');
+  const text = netscapeFile(site, cookies); const count = countOf(text); if (!count) return { site, count: 0 };
+  fs.mkdirSync(cookieDir(), { recursive: true, mode: 0o700 }); const f = path.join(cookieDir(), name); const tmp = `${f}.part`;
+  fs.writeFileSync(tmp, text, { mode: 0o600 }); fs.renameSync(tmp, f); try { fs.chmodSync(f, 0o600); } catch { /* Windows: the user's own folder */ }
+  return { site, count };
+}
+function listCookies() { try { return fs.readdirSync(cookieDir()).filter((n) => /\.txt$/.test(n)).map((n) => { const f = path.join(cookieDir(), n); let count = 0; try { count = countOf(fs.readFileSync(f, 'utf8')); } catch { /* unreadable */ } return { site: n.replace(/\.txt$/, ''), count, at: fs.statSync(f).mtimeMs }; }); } catch { return []; } }
+/** A kept sign-in removed: overwritten first, then deleted. */
+function removeCookies(site) { const n = cookieFileName(site); if (!n) return false; const f = path.join(cookieDir(), n); if (!fs.existsSync(f)) return false; try { fs.writeFileSync(f, Buffer.alloc(fs.statSync(f).size)); } catch { /* gone */ } fs.rmSync(f, { force: true }); return true; }
+/** The shell's own inputs added to a list whose last argument is the address (kt-core with_shell_inputs). */
+function withShellInputs(args, cookieFile, infoFile) {
+  const a = []; const last = args.length - 1;
+  for (let i = 0; i < last; i++) { if (cookieFile && args[i] === '--cookies-from-browser' && i + 1 < last) { i++; continue; } a.push(args[i]); }
+  if (cookieFile) a.push('--cookies', cookieFile);
+  if (infoFile) a.push('--load-info-json', infoFile); else if (last >= 0) a.push(args[last]);
+  return a;
+}
+/** FNV-1a 64 of what was asked: the name a read page is kept under (16 hex digits). */
+function infoId(url, playlist, cookies) { let h = 0xcbf29ce484222325n; for (const b of Buffer.from(`${playlist ? 'p' : 'v'}|${cookies || ''}|${url}`)) { h ^= BigInt(b); h = (h * 0x100000001b3n) & 0xffffffffffffffffn; } return h.toString(16).padStart(16, '0'); }
+const infoIdOk = (id) => typeof id === 'string' && /^[0-9a-f]{16}$/.test(id);
+/** A page read moments ago, by the id this shell gave it: its file when still fresh (signed media addresses expire). */
+function freshInfo(id) { if (!infoIdOk(id)) return null; const f = path.join(infoDir(), `${id}.json`); try { return Date.now() - fs.statSync(f).mtimeMs < INFO_FRESH_MS ? f : null; } catch { return null; } }
+function tidyInfo() { try { for (const n of fs.readdirSync(infoDir())) { const f = path.join(infoDir(), n); if (Date.now() - fs.statSync(f).mtimeMs > INFO_FRESH_MS * 2) fs.rmSync(f, { force: true }); } } catch { /* none */ } }
+
+/** What a page offers: title, thumbnail, duration, formats; a playlist's entries (flat). One video's answer is kept a
+ *  few minutes (its id handed back), so the download that follows reads it instead of asking the site again. */
 async function info(url, opts = {}) {
   await ensure();
   await checkJs();
-  // (-J reads the page once and prints everything; a playlist only flat — its entries, not each video —; one video never walks its list; a page that does not answer is let go of after 20 s a try.)
-  const args = ['-J', '--no-warnings', '--skip-download', '--socket-timeout', '20', ...jsArgs(), ...(opts.playlist ? ['--flat-playlist'] : ['--no-playlist']), ...(opts.cookiesFromBrowser ? ['--cookies-from-browser', opts.cookiesFromBrowser] : []), url];
-  const out = await new Promise((res, rej) => execFile(binPath(), args, { maxBuffer: 64 << 20, timeout: 90000, env: ENV }, (e, so, se) => (e ? rej(new Error(String(se || e.message).trim().split('\n').pop())) : res(so))));
+  // (-J reads the page once and prints everything; a playlist only flat — its entries, not each video —; one video never walks its list; a page that does not answer is let go of after 15 s a try, and a known extractor error is tried once more, not three times.)
+  const ck = cookieFileFor(url);
+  const base = ['-J', '--no-warnings', '--skip-download', '--socket-timeout', '15', '--extractor-retries', '1', ...jsArgs(), ...(opts.playlist ? ['--flat-playlist'] : ['--no-playlist']), ...(opts.cookiesFromBrowser ? ['--cookies-from-browser', String(opts.cookiesFromBrowser)] : []), String(url)];
+  const args = withShellInputs(base, ck, null);
+  const out = await new Promise((res, rej) => execFile(binPath(), args, { maxBuffer: 64 << 20, timeout: 90000, env: ENV }, (e, so, se) => (e ? rej(new Error(e.killed && !se ? 'ERROR: timed out' : String(se || e.message).trim().split('\n').pop())) : res(so))));
   const j = JSON.parse(out);
-  return normalise(j);
+  const shaped = normalise(j);
+  if (shaped.kind === 'video') { try { fs.mkdirSync(infoDir(), { recursive: true, mode: 0o700 }); const id = infoId(String(url), false, ck ? 'kept' : String(opts.cookiesFromBrowser || '')); fs.writeFileSync(path.join(infoDir(), `${id}.json`), out, { mode: 0o600 }); shaped.infoId = id; tidyInfo(); } catch { /* not kept: the download reads the page again */ } }
+  return shaped;
 }
 function normalise(j) {
   if (j._type === 'playlist') return { kind: 'playlist', title: j.title, entries: (j.entries || []).filter(Boolean).map((e) => ({ url: e.url || e.webpage_url || e.original_url, title: e.title, duration: e.duration, id: e.id })), count: (j.entries || []).length, url: j.webpage_url };
@@ -134,26 +196,33 @@ function lineReader(t, m, emit) {
 /** Video jobs: each a task like the others, run by yt-dlp with its progress read from the progress template. */
 class VideoJobs {
   has(id) { return this.tasks.has(id); }
-  constructor(send) { this.send = send; this.tasks = new Map(); this.procs = new Map(); this.statePath = path.join(app.getPath('userData'), 'video-jobs.json'); this.load(); }
+  constructor(send) { this.send = send; this.tasks = new Map(); this.procs = new Map(); this.active = new Set(); this.max = 3; this.statePath = path.join(app.getPath('userData'), 'video-jobs.json'); this.load(); }
+  /** At most this many run at once (Settings → Downloads «Simultaneous video downloads»); the rest wait, oldest first. */
+  setMax(n) { this.max = Math.max(1, Math.min(10, Math.floor(Number(n)) || 3)); this.pump(); }
+  running() { return this.active.size; }
+  /** The waiting ones started while there is room, in the order they were added. */
+  pump() { for (const t of this.tasks.values()) { if (this.active.size >= this.max) break; if (t.state === 'queued' && !this.active.has(t.id)) void this.start(t.id); } }
   load() { try { for (const t of JSON.parse(fs.readFileSync(this.statePath, 'utf8'))) { if (t.state === 'downloading' || t.state === 'queued') t.state = 'paused'; this.tasks.set(t.id, t); } } catch { /* none */ } }
   save() { try { fs.writeFileSync(this.statePath, JSON.stringify([...this.tasks.values()])); } catch { /* ignore */ } }
   list() { return [...this.tasks.values()]; }
   emit() { this.send(); }
   async add(o) {
     const id = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const t = { id, kind: 'video', name: o.title || o.url, source: { url: o.url }, dir: o.dir, state: 'queued', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), meta: { ...(o.meta || {}), kind: 'video', site: o.site, quality: o.label, format: o.format, audioOnly: !!o.audioOnly, container: o.container, headers: o.headers, outName: o.outName, subs: o.subs, embedThumb: o.embedThumb, embedMeta: o.embedMeta, sponsorblock: o.sponsorblock, args: Array.isArray(o.args) ? o.args : undefined, expect: o.expect || undefined, audioFmt: o.audioFmt, playlistIndex: o.playlistIndex, cookiesFromBrowser: o.cookies || o.cookiesFromBrowser, chapters: o.chapters, template: o.template, section: o.section }, engine: 'native' };
+    const t = { id, kind: 'video', name: o.title || o.url, source: { url: o.url }, dir: o.dir, state: 'queued', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now(), meta: { ...(o.meta || {}), kind: 'video', site: o.site, quality: o.label, format: o.format, audioOnly: !!o.audioOnly, container: o.container, headers: o.headers, outName: o.outName, subs: o.subs, embedThumb: o.embedThumb, embedMeta: o.embedMeta, sponsorblock: o.sponsorblock, args: Array.isArray(o.args) ? o.args : undefined, expect: o.expect || undefined, audioFmt: o.audioFmt, playlistIndex: o.playlistIndex, cookiesFromBrowser: o.cookies || o.cookiesFromBrowser, chapters: o.chapters, template: o.template, section: o.section, infoId: infoIdOk(o.infoId) ? o.infoId : undefined }, engine: 'native' };
     this.tasks.set(id, t); this.save(); this.emit(); if (!o.paused) void this.start(id); return t;
   }
   async start(id) {
-    const t = this.tasks.get(id); if (!t || this.procs.has(id)) return;
-    t.state = 'downloading'; t.error = undefined; this.emit();
-    try { await ensure(); } catch (e) { t.state = 'failed'; t.error = String(e.message); this.emit(); this.save(); return; }
+    const t = this.tasks.get(id); if (!t || this.procs.has(id) || this.active.has(id)) return;
+    // (No room: it waits its turn — «queued», its place shown in the list — and starts when one ends.)
+    if (this.active.size >= this.max) { t.state = 'queued'; t.downSpeed = 0; this.emit(); this.save(); return; }
+    this.active.add(id); t.state = 'downloading'; t.error = undefined; this.emit();
+    try { await ensure(); } catch (e) { this.active.delete(id); t.state = 'failed'; t.error = String(e.message); this.emit(); this.save(); this.pump(); return; }
     await checkJs();
     const m = t.meta || {}; const safe = (x) => String(x).replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().slice(0, 180); const tpl = m.template && !/[\\/]|\.\./.test(m.template) ? m.template : '%(title)s [%(id)s]';
     const outTpl = m.outName ? path.join(t.dir, `${safe(m.outName)}.%(ext)s`) : m.template ? path.join(t.dir, `${m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - ` : ''}${tpl}.%(ext)s`) : path.join(t.dir, m.playlistIndex ? `${String(m.playlistIndex).padStart(2, '0')} - %(title)s [%(id)s].%(ext)s` : '%(title)s [%(id)s].%(ext)s');
     // (A list the page built — src/downloads/videoArgs.ts — runs as it is, vetted, in the download folder (-P); a task from before it, or one the local API added, runs the older way below.)
     const vetted = Array.isArray(m.args) ? vetArgs(m.args) : null;
-    if (Array.isArray(m.args) && !vetted) { t.state = 'failed'; t.error = 'invalid options'; this.emit(); this.save(); return; }
+    if (Array.isArray(m.args) && !vetted) { this.active.delete(id); t.state = 'failed'; t.error = 'invalid options'; this.emit(); this.save(); this.pump(); return; }
     const args = [...common(), '--newline', ...(vetted ? [] : ['--no-playlist']), '--continue', '--no-mtime', '--progress-template', 'download:KT|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.fragment_index)s|%(progress.fragment_count)s|%(info.filename)s', ...(vetted ? ['-P', t.dir, ...vetted] : ['-o', outTpl])];
     if (!vetted) {
     if (m.audioOnly) args.push('-f', m.format || 'bestaudio/best', '-x', ...(m.container ? ['--audio-format', m.container] : [])); else args.push('-f', m.format ? `${m.format}/best` : 'bestvideo+bestaudio/best', ...(m.container ? ['--merge-output-format', m.container] : ['--merge-output-format', 'mp4']));
@@ -168,20 +237,35 @@ class VideoJobs {
     for (const [k, v] of Object.entries(m.headers || {})) if (k && v) args.push('--add-header', `${k}:${v}`);
     }
     args.push(t.source.url);
-    const p = spawn(binPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: ENV }); this.procs.set(id, p); let err = ''; let buf = '';
+    // (The shell's own inputs: the site's kept sign-in, and the page read moments ago for the chooser — the site not asked again.)
+    const infoFile = m.noInfo ? null : freshInfo(m.infoId);
+    const run = withShellInputs(args, cookieFileFor(t.source.url), infoFile);
+    if (t.state !== 'downloading') { this.active.delete(id); this.pump(); return; }
+    const p = spawn(binPath(), run, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: ENV }); this.procs.set(id, p); let err = ''; let buf = '';
     const read = lineReader(t, m, () => this.emit());
     p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop() || ''; for (const l of lines) read(l); });
     p.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-10000); });
-    p.on('close', (code) => { this.procs.delete(id); const tt = this.tasks.get(id); if (!tt) return; if (tt.state === 'paused' || tt.state === 'removed') { /* asked */ } else if (code === 0) { tt.state = 'done'; tt.done = tt.total || tt.done; tt.doneAt = Date.now(); tt.downSpeed = 0; if (m.bilingual && tt.files && tt.files[0]) { try { bilingual(path.join(tt.dir, tt.files[0].path || tt.files[0].name || ''), String(m.bilingual)); } catch (e) { /* the two files stay */ } } } else { tt.state = 'failed'; tt.error = (err.trim().split('\n').filter((l) => /ERROR/.test(l)).pop() || err.trim().split('\n').pop() || `yt-dlp ${code}`).replace(/^ERROR:\s*/, '').slice(0, 300); } this.save(); this.emit(); });
+    p.on('close', (code) => { this.procs.delete(id); this.active.delete(id); const tt = this.tasks.get(id); if (!tt) { this.pump(); return; }
+      if (code !== 0 && tt.state === 'downloading') {
+        const line = err.trim().split('\n').filter((l) => /ERROR/.test(l)).pop() || '';
+        // (The page read before could not be used — its addresses expired, or it was refused —: read again, once, at once.)
+        if (infoFile && !m.noInfo) { m.noInfo = true; this.save(); void this.start(id); return; }
+        // (A site that changed: most «it stopped working» is an old yt-dlp. Checked for a newer one once; when there was one, tried again once.)
+        if (healable(line) && !m.healTried && isManaged()) { m.healTried = true; tt.detail = 'yt-dlp update'; this.emit(); void update(true).then((r) => { if (r && r.updated) { m.healed = r.version || true; this.save(); void this.start(id); } else { tt.state = 'failed'; tt.error = line.replace(/^ERROR:\s*/, '').slice(0, 300); this.save(); this.emit(); this.pump(); } }, () => { tt.state = 'failed'; tt.error = line.replace(/^ERROR:\s*/, '').slice(0, 300); this.save(); this.emit(); this.pump(); }); return; }
+      }
+      if (tt.state === 'paused' || tt.state === 'removed') { /* asked */ } else if (code === 0) { tt.state = 'done'; tt.done = tt.total || tt.done; tt.doneAt = Date.now(); tt.downSpeed = 0; if (m.bilingual && tt.files && tt.files[0]) { try { bilingual(path.join(tt.dir, tt.files[0].path || tt.files[0].name || ''), String(m.bilingual)); } catch (e) { /* the two files stay */ } } } else { tt.state = 'failed'; tt.error = (err.trim().split('\n').filter((l) => /ERROR/.test(l)).pop() || err.trim().split('\n').pop() || `yt-dlp ${code}`).replace(/^ERROR:\s*/, '').slice(0, 300); } this.save(); this.emit(); this.pump(); });
   }
-  pause(id) { const t = this.tasks.get(id); if (!t) return; t.state = 'paused'; t.downSpeed = 0; const p = this.procs.get(id); if (p) p.kill(); this.save(); this.emit(); }
+  pause(id) { const t = this.tasks.get(id); if (!t) return; t.state = 'paused'; t.downSpeed = 0; const p = this.procs.get(id); if (p) p.kill(); else { this.active.delete(id); this.pump(); } this.save(); this.emit(); }
   resume(id) { const t = this.tasks.get(id); if (!t) return; void this.start(id); }
-  remove(id, deleteFiles) { const t = this.tasks.get(id); if (!t) return; t.state = 'removed'; const p = this.procs.get(id); if (p) p.kill(); this.tasks.delete(id); if (deleteFiles && t.dir) { try { for (const f of fs.readdirSync(t.dir)) if (t.files[0] && f.startsWith(t.files[0].path.replace(/\.[^.]+$/, ''))) fs.rmSync(path.join(t.dir, f), { force: true }); } catch { /* ignore */ } } this.save(); this.emit(); }
+  remove(id, deleteFiles) { const t = this.tasks.get(id); if (!t) return; t.state = 'removed'; const p = this.procs.get(id); if (p) p.kill(); else { this.active.delete(id); } this.tasks.delete(id); this.pump(); if (deleteFiles && t.dir) { try { for (const f of fs.readdirSync(t.dir)) if (t.files[0] && f.startsWith(t.files[0].path.replace(/\.[^.]+$/, ''))) fs.rmSync(path.join(t.dir, f), { force: true }); } catch { /* ignore */ } } this.save(); this.emit(); }
   fileOf(id) { const t = this.tasks.get(id); return t && t.files[0] ? path.join(t.dir, t.files[0].path) : t?.dir; }
   stop() { for (const p of this.procs.values()) p.kill(); }
 }
-const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv)$/i;
-module.exports = { vetArgs, ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION };
+// (A copy of src/video/ytdlp.ts's list — tests/videohosts.cjs keeps the three equal.)
+const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|bilibili\.tv|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|vkvideo\.ru|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv|tver\.jp|kick\.com|archive\.org|ted\.com|bitchute\.com|mixcloud\.com|vlive\.tv|weibo\.com|douyin\.com|ixigua\.com|youku\.com|zhihu\.com|naver\.com|kakao\.com|aparat\.com|shahid\.mbc\.net)$/i;
+/** kt-core videotools.rs healable: a failure a newer yt-dlp often mends. */
+const healable = (line) => /unable to extract|failed to extract|failed to parse|nsig extraction failed|player response|please report this issue|update yt-dlp|yt-dlp -u|signature solving failed|n challenge solving failed/i.test(line);
+module.exports = { vetArgs, ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, setBusy, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION, cookieSite, cookieFileFor, saveCookies, listCookies, removeCookies, withShellInputs, infoId, freshInfo, healable };
 
 /* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
 const TIMES = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/;

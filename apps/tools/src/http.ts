@@ -4,9 +4,15 @@
 import { ktPlugin } from './native';
 
 export interface HttpResult { status: number; url: string; headers: Record<string, string>; body: string }
-export interface HttpInit { method?: string; headers?: Record<string, string>; body?: string; bodyBase64?: boolean; binary?: boolean }
+export interface HttpInit { method?: string; headers?: Record<string, string>; body?: string; bodyBase64?: boolean; binary?: boolean; /** Given up after this long (the shells stop the request too; the page stops waiting either way). */ timeoutMs?: number }
 
 export async function request(url: string, init: HttpInit = {}): Promise<HttpResult> {
+  if (!init.timeoutMs) return requestNow(url, init);
+  // (A budget: the page stops waiting at once, and the shell — told the same budget — lets go of the connection.)
+  const ms = init.timeoutMs; let tm = 0;
+  return Promise.race([requestNow(url, init), new Promise<never>((_, rej) => { tm = window.setTimeout(() => rej(new Error('timeout')), ms); })]).finally(() => clearTimeout(tm));
+}
+async function requestNow(url: string, init: HttpInit): Promise<HttpResult> {
   const d = window.kurokawaTools as (typeof window.kurokawaTools & { http?(o: HttpInit & { url: string }): Promise<HttpResult> }) | undefined;
   if (d?.http) return d.http({ url, ...init });
   const p = ktPlugin() as (ReturnType<typeof ktPlugin> & { httpRequest?(o: HttpInit & { url: string }): Promise<HttpResult> }) | null;
@@ -33,7 +39,7 @@ const viaWeb = (host: string): boolean => { const at = webHosts()[host]; return 
 const rememberWeb = (host: string): void => { const w = webHosts(); w[host] = Date.now(); try { localStorage.setItem(WEB_KEY, JSON.stringify(w)); } catch { /* full */ } };
 const forgetWeb = (host: string): void => { const w = webHosts(); delete w[host]; try { localStorage.setItem(WEB_KEY, JSON.stringify(w)); } catch { /* full */ } };
 async function webFetch(url: string, init: HttpInit): Promise<HttpResult> {
-  const r = await fetch(url, { method: init.method ?? 'GET', headers: init.headers, body: init.body ? (init.bodyBase64 ? Uint8Array.from(atob(init.body), (c) => c.charCodeAt(0)) : init.body) : undefined });
+  const r = await fetch(url, { method: init.method ?? 'GET', headers: init.headers, signal: init.timeoutMs && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(init.timeoutMs) : undefined, body: init.body ? (init.bodyBase64 ? Uint8Array.from(atob(init.body), (c) => c.charCodeAt(0)) : init.body) : undefined });
   const headers: Record<string, string> = {}; r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   const buf = new Uint8Array(await r.arrayBuffer());
   let body: string; if (init.binary) { let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000)); body = btoa(s); } else body = new TextDecoder().decode(buf);

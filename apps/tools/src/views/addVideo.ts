@@ -11,7 +11,8 @@ import { defaultOptions, hasSavedChoice, saveDefaults, ffmpegHere, gateFfmpeg, b
 import { chooser, summary, heightsOf } from './videoChooser';
 import { safeRange, type VideoOptions } from '../downloads/videoArgs';
 import type { AddOptions } from '../engine/types';
-import { VIDEO_ADDON, isVideoHost, looksLikeFile, pageInfo, videoEnabled, videoSupported, type PageInfo, type PlaylistInfo, type VideoInfo } from '../video/ytdlp';
+import { VIDEO_ADDON, isVideoHost, looksLikeFile, pageInfo, forgetPageInfo, videoEnabled, videoSupported, videoShell, healOnce, type PageInfo, type PlaylistInfo, type VideoInfo } from '../video/ytdlp';
+import { videoError, healable } from '../video/errors';
 
 export type VideoPick = NonNullable<AddOptions['video']>;
 export interface VideoPanel {
@@ -42,6 +43,9 @@ export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (
 /** An HLS playlist the app fetches itself (pieces joined here), unless yt-dlp was chosen for streams. */
 export const nativeHls = (url: string): boolean => getPlatform() === 'android' && !!ktPlugin() && getSettings().hlsNative !== false && /\.m3u8(\?|#|$)/i.test(url);
 
+type Ryd = { likes: number; dislikes: number };
+const RYD = new Map<string, Promise<Ryd | null>>();
+const rydOf = (id: string): Promise<Ryd | null> => { let p = RYD.get(id); if (!p) { p = import('../http').then(({ request }) => request(`https://returnyoutubedislikeapi.com/votes?videoId=${encodeURIComponent(id)}`, { timeoutMs: 6000 })).then((r) => { if (r.status !== 200) return null; const j = JSON.parse(r.body) as { likes?: number; dislikes?: number }; return j.likes === undefined ? null : { likes: j.likes, dislikes: j.dislikes ?? 0 }; }).catch(() => null); RYD.set(id, p); if (RYD.size > 200) RYD.delete(RYD.keys().next().value!); } return p; };
 /** Whether sign-ins (cookie jars) can be kept here: the Android app's. */
 const hasCookieJars = (): boolean => !!(window as unknown as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.();
 export function videoPanel(onChange: () => void): VideoPanel {
@@ -93,7 +97,8 @@ export function videoPanel(onChange: () => void): VideoPanel {
     const i = info;
     const meta = [i.uploader, dur(i.duration), i.site].filter(Boolean).join(' · '); const changed = changeNote;
     // (Return YouTube Dislike: likes and dislikes of a YouTube video from its open API, when the setting asks.)
-    const rydLine = h('p', { class: 'src video-ryd', dir: 'ltr', hidden: true }); if (s.videoRyd !== false && /youtube/i.test(i.site ?? '') && i.id) void import('../http').then(({ request }) => request(`https://returnyoutubedislikeapi.com/votes?videoId=${encodeURIComponent(i.id)}`).then((r) => { if (r.status !== 200) return; const j = JSON.parse(r.body) as { likes?: number; dislikes?: number }; if (j.likes === undefined) return; rydLine.hidden = false; rydLine.textContent = `👍 ${localDigits(j.likes)} · 👎 ${localDigits(j.dislikes ?? 0)}`; }).catch(() => undefined));
+    // (Asked once per video and kept — not on every redraw —, and only after the qualities are on screen: never in their way.)
+    const rydLine = h('p', { class: 'src video-ryd', dir: 'ltr', hidden: true }); if (s.videoRyd !== false && /youtube/i.test(i.site ?? '') && i.id) { const put = (v: Ryd | null) => { if (!v) return; rydLine.hidden = false; rydLine.textContent = `👍 ${localDigits(v.likes)} · 👎 ${localDigits(v.dislikes)}`; }; const kept = RYD.get(i.id); if (kept) void kept.then(put); else setTimeout(() => { if (!rydLine.isConnected) return; const p = rydOf(i.id); void p.then(put); }, 0); }
     const langs = s.subLangs.filter((l) => i.subtitles.some((x) => x === l || x.startsWith(`${l}-`)));
     const wanted = opts.subs.on ? opts.subs.langs : langs;
     el.replaceChildren(...[
@@ -125,7 +130,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
   };
   let jar = '';
   const check = (u: string | null) => {
-    if (u === url) return; url = u; info = null; listInfo = null; withList = false; open = getSettings().videoAsk !== false; const my = ++token; void ffmpegHere().then((v) => { ff = v; });
+    if (u === url) return; url = u; if (!u) { look?.abort(); look = null; } info = null; listInfo = null; withList = false; open = getSettings().videoAsk !== false; const my = ++token; void ffmpegHere().then((v) => { ff = v; });
     if (!u || !pageLike(u)) { el.hidden = true; el.replaceChildren(); onChange(); return; }
     // (A video site's link with the video add-on off: it is set up at once — yt-dlp fetched — and the link read, once a
     // session; turned down, the offer stays. What was asked for is a video, never the site's page.)
@@ -138,19 +143,42 @@ export function videoPanel(onChange: () => void): VideoPanel {
     }
     el.hidden = false; el.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('videoChecking')}`));
     const playlist = /[?&]list=|\/playlist\b|\/sets\/|\/album\//i.test(u) && !/[?&]v=/.test(u);
-    running = pageInfo(u, playlist, jar ? { cookieJar: jar } : {}).then((got) => { if (my !== token) return; info = got; withList = got.kind === 'video' && /[?&]list=/.test(u) && /[?&]v=|youtu\.be\//.test(u); changeNote = got.kind === 'video' ? noteChanges(got) : null; pickDefault(got); draw(); onChange(); }, (e: unknown) => {
+    look?.abort(); const ac = new AbortController(); look = ac;
+    running = pageInfo(u, playlist, { ...(jar ? { cookieJar: jar } : {}), signal: ac.signal }).then((got) => { if (my !== token) return; info = got; withList = got.kind === 'video' && /[?&]list=/.test(u) && /[?&]v=|youtu\.be\//.test(u); changeNote = got.kind === 'video' ? noteChanges(got) : null; pickDefault(got); draw(); if (healedNote) el.prepend(h('p', { class: 'src small video-healed' }, icon('refresh'), ' ', t('vHealed', { v: healedNote }))); onChange(); }, async (e: unknown) => {
       if (my !== token) return;
-      // Not a page yt-dlp reads: an ordinary download, said quietly only when a video site was expected — with
-      // yt-dlp's own reason, and, when the site wants a sign-in (Instagram, a YouTube «not a bot» check, a private
-      // post), a way to read it with the user's own sign-in: their cookies for it, taken from the app's browser.
-      if (isVideoHost(u)) {
-        const why = String((e as Error)?.message ?? e ?? '').replace(/^ERROR:\s*/i, '').replace(/\s+/g, ' ').trim().slice(0, 220);
-        const signIn = /sign ?in|log ?in|login|cookies|rate.?limit|private|not a bot|age.?restrict|members|account/i.test(why);
-        el.replaceChildren(h('div', { class: 'video-failed' }, h('p', { class: 'src small' }, t(signIn ? 'videoNeedsSignIn' : 'videoFallback')), why ? h('p', { class: 'src small video-why', dir: 'ltr' }, why) : null,
-          signIn && hasCookieJars() ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../downloads/cookies').then((m) => m.signInFor(u, () => { url = null; check(u); })) }, icon('globe'), t('videoUseSignIn')) : null));
-      } else { el.hidden = true; el.replaceChildren(); }
-      onChange();
+      // Not a page yt-dlp reads: an ordinary download, said quietly only when a video site was expected — in plain words
+      // with what can be done (src/video/errors.ts, one table for every platform), yt-dlp's own line under «Details».
+      if (!isVideoHost(u)) { el.hidden = true; el.replaceChildren(); onChange(); return; }
+      const shell = videoShell(); const err = videoError(e, shell);
+      // (Self-healing, once a session: the way an old yt-dlp fails → a newer one fetched, the link read again, one line said.)
+      if (healable(err.kind) && !healedNote && shell !== 'web') {
+        el.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('vHealing')}`));
+        const v = await healOnce().catch(() => null); if (my !== token) return;
+        if (v) { healedNote = v; forgetPageInfo(u); url = null; check(u); return; }
+      }
+      failed(u, err); onChange();
     });
+  };
+  let look: AbortController | null = null; let healedNote = '';
+  /** The failure said: the plain message, its action — Sign in, Try again (now or later), Get deno —, the raw line folded. */
+  const failed = (u: string, err: ReturnType<typeof videoError>) => {
+    const again = () => { forgetPageInfo(u); url = null; check(u); };
+    const act = (): HTMLElement | null => {
+      if (err.action === 'signIn') {
+        if (hasCookieJars()) return h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../downloads/cookies').then((m) => m.signInFor(u, again)) }, icon('globe'), t('videoUseSignIn'));
+        if (videoShell() === 'tauri' || videoShell() === 'electron') return h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../video/signin').then((m) => m.pcSignIn(u, again)) }, icon('key'), t('vSignIn'));
+        return null;
+      }
+      if (err.action === 'getDeno') return h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/jsruntime').then((m) => m.offerDeno()) }, icon('download'), t('vGetDeno'));
+      if (err.action === 'retry' || err.action === 'retryLater') return h('button', { type: 'button', class: 'btn tonal small', onclick: again }, icon('refresh'), t('vTryAgain'));
+      return null;
+    };
+    el.hidden = false;
+    el.replaceChildren(h('div', { class: `video-failed kind-${err.kind}` },
+      h('p', { class: 'video-err-msg', dir: 'auto' }, icon(err.action === 'signIn' ? 'lock' : 'alert'), ' ', t(err.key as 'vErrOther')),
+      h('div', { class: 'video-err-actions' }, act(), err.action === 'signIn' && err.kind === 'botCheck' && (videoShell() === 'tauri' || videoShell() === 'electron') ? h('button', { type: 'button', class: 'btn text small', onclick: () => void import('../browser').then((m) => m.openBrowser(u)) }, icon('globe'), t('vOpenInBrowser')) : null),
+      err.raw ? h('details', { class: 'video-why' }, h('summary', null, t('vDetails')), h('p', { class: 'src small', dir: 'ltr' }, err.raw)) : null,
+      h('p', { class: 'src small' }, t('videoFallback'))));
   };
   return {
     el, check, setJar: (id: string) => { if (id === jar) return; jar = id; if (url) { const u = url; url = null; check(u); } }, busy: async () => { let r: Promise<void>; do { r = running; await r.catch(() => undefined); } while (r !== running); },
@@ -172,7 +200,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
         // work to the one video, not the list again. The range, when there is one, picks which.)
         return chosenEntries().map(({ e, n }) => ({ url: e.url, video: pick(e.title, undefined, { ...opts, playlist: 'one' }, { playlistIndex: n, playlistTitle: pl.title }) }));
       }
-      const i = info as VideoInfo; return [{ url: i.url || url, video: pick(i.title, i, opts, { extras: extras() }, { site: i.site, thumbnail: i.thumbnail }) }];
+      const i = info as VideoInfo; return [{ url: i.url || url, video: pick(i.title, i, opts, { extras: extras() }, { site: i.site, thumbnail: i.thumbnail, ...(i.infoId ? { infoId: i.infoId } : {}) }) }];
     },
   };
   /** One pick for the engine: the argument list (the one pure builder) and the few fields the list shows. */

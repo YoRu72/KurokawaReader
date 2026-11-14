@@ -229,7 +229,7 @@ else {
   // (Watched episodes let go after the days chosen.)
   if (getSettings().addons.includes('anime') || getSettings().addons.includes('tv')) void import('./downloads/episodeCache').then((m) => m.startEpisodeCache());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());
-  if (getSettings().addons.includes('video')) void import('./video/ytdlp').then((m) => m.autoUpdateVideo());
+  if (getSettings().addons.includes('video')) { void import('./video/ytdlp').then((m) => m.autoUpdateVideo()); void import('./video/queue').then((m) => m.applyVideoQueue()); }
   onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
   onRoute(mount);
   mount(parseRoute());

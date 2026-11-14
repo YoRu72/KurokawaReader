@@ -12,6 +12,8 @@ import { Aria2Rpc } from '../engine/aria2';
 import { getEngine } from '../engine';
 import { animeSettingsCard, anilistCard } from './animeSettings';
 import { tvSettingsCard } from './tvSettings';
+import { keptSitesCard } from '../video/signin';
+import { maxVideoOf, applyVideoQueue } from '../video/queue';
 import { advancedCard } from './engineSettings';
 import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
 import { updateRows } from '../updates';
@@ -158,6 +160,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         void show(); return row(t('notifyProgress'), h('div', { class: 'row' }, st, btn), t('notifyProgressHint')); })() : null,
       !!ktPlugin() && !s.downloadDir ? row(t('moveFinished'), h('button', { type: 'button', class: 'btn tonal small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const r = await (ktPlugin() as unknown as { moveFinished(o: { dir?: string }): Promise<{ moved: number; dir: string }> }).moveFinished({}); toast(t('movedFinished', { n: localDigits(r.moved), dir: r.dir }), 'info', 6000); } catch (er) { toast(String((er as Error).message ?? er), 'error'); } b.disabled = false; } }, icon('folder'), t('moveFinishedGo')), t('moveFinishedHint')) : null,
       row(t('maxActive'), numberField(s.maxActive, (v) => { updateSettings({ maxActive: Math.max(1, Math.min(10, v)) }); void (window.kurokawaTools?.configure?.({ maxConnections: v }) ?? ktPlugin()?.configure({ maxActive: v })); }, { min: 1, max: 10 })),
+      // (Video downloads have their own limit: each runs yt-dlp — on a phone, Python too —, and their pieces share the line.)
+      ...(getSettings().addons.includes('video') ? [row(t('maxVideo'), numberField(maxVideoOf(), (v) => { updateSettings({ maxVideo: Math.max(1, Math.min(10, v)) }); void applyVideoQueue(); }, { min: 1, max: 10 }), t('maxVideoHint'))] : []),
       (() => { const opts: [string, string][] = [['0', t('connAuto')], ...['1', '2', '4', '8', '16', '24'].map((n) => [n, localDigits(n)] as [string, string])]; const pb = pickButton(t('connPerDl'), opts, String(s.connections ?? 0), (v) => updateSettings({ connections: Number(v) })); return row(t('connPerDl'), h('div', { class: 'row' }, pb, h('button', { type: 'button', class: 'btn tonal small speed-btn', onclick: () => void import('../downloads/speedTest').then((m) => m.openSpeedTest((n) => pb.setValue(String(n)))) }, icon('gauge'), t('speedTest'))), t('connPerDlHint')); })(),
       ...(ktPlugin() ? [row(t('connBudget'), numberField(s.connBudget ?? 24, (v) => { updateSettings({ connBudget: Math.max(4, Math.min(128, v)) }); void ktPlugin()?.configure({ connBudget: v }); }, { min: 4, max: 128 }), t('connBudgetHint'))] : []),
       h('div', { class: 'row' }, h('span', null, t('dlAutoClean'), h('small', { class: 'src' }, t('dlAutoCleanHint'))), pickButton(t('dlAutoClean'), [['0', t('never')], ['1', t('days1')], ['7', t('days7')], ['30', t('days30')]], String(s.dlAutoClean ?? 0), (v) => updateSettings({ dlAutoClean: Number(v) }), t('close'))),
@@ -319,7 +323,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         toggle(t('videoChapters'), s.videoChapters !== false, (v) => updateSettings({ videoChapters: v, ...dflt(['chapters']) })),
         toggle(t('videoNumber'), s.videoNumber !== false, (v) => updateSettings({ videoNumber: v, ...dflt(['number']) }), t('videoNumberHint')),
         row(t('videoTemplate'), h('input', { type: 'text', dir: 'ltr', value: s.videoTemplate ?? '', placeholder: '%(title)s [%(id)s]', onchange: (e: Event) => updateSettings({ videoTemplate: (e.target as HTMLInputElement).value.trim(), ...dflt(['name', 'custom']) }) }), t('videoTemplateHint')),
-        ...(nativePlatform() === 'desktop' ? [row(t('videoCookies'), pickButton(t('videoCookies'), [['', t('videoCookiesNone')], ['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox'], ['brave', 'Brave'], ['opera', 'Opera'], ['vivaldi', 'Vivaldi'], ['chromium', 'Chromium'], ['safari', 'Safari']], s.videoCookies ?? '', (v) => { updateSettings({ videoCookies: v }); rerender(); }, t('close')), t('videoCookiesHint'))] : []));
+        ...(nativePlatform() === 'desktop' ? [row(t('videoCookies'), pickButton(t('videoCookies'), [['', t('videoCookiesNone')], ['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox'], ['brave', 'Brave'], ['opera', 'Opera'], ['vivaldi', 'Vivaldi'], ['chromium', 'Chromium'], ['safari', 'Safari']], s.videoCookies ?? '', (v) => { updateSettings({ videoCookies: v }); rerender(); }, t('close')), t('videoCookiesHint')), keptSitesCard()].filter((x): x is HTMLElement => !!x) : []));
     }
     // The player: how videos are watched (another app, or the in-app player of the Player add-on).
     const plat = nativePlatform();

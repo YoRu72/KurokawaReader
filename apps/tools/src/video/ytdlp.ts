@@ -7,12 +7,13 @@ import { getSettings } from '../settings';
 
 export const VIDEO_ADDON = 'video';
 export interface VideoChoice { id: string; kind: 'video' | 'audio'; label: string; ext?: string; height?: number; fps?: number; size?: number; vcodec?: string; acodec?: string; note?: string }
-export interface VideoInfo { kind: 'video'; id: string; title: string; thumbnail?: string; duration?: number; site?: string; url: string; uploader?: string; choices: VideoChoice[]; audio: VideoChoice[]; subtitles: string[]; /** Languages with automatic captions only. */ autoSubs?: string[]; live: boolean; chapters: number }
+export interface VideoInfo { kind: 'video'; id: string; /** The shell's name for this answer, kept a few minutes: the download reads it instead of asking the site again. */ infoId?: string; title: string; thumbnail?: string; duration?: number; site?: string; url: string; uploader?: string; choices: VideoChoice[]; audio: VideoChoice[]; subtitles: string[]; /** Languages with automatic captions only. */ autoSubs?: string[]; live: boolean; chapters: number }
 export interface PlaylistInfo { kind: 'playlist'; title: string; url: string; count: number; entries: { url: string; title?: string; duration?: number; id?: string; /** A course's section (chapter) and its number, when the site tells. */ chapter?: string; chapterNo?: number }[] }
 export type PageInfo = VideoInfo | PlaylistInfo;
 
 /** Sites yt-dlp is always asked about (others are, too, when the link is a web page rather than a file). */
-export const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|bilibili\.tv|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|vkvideo\.ru|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv|tver\.jp|kick\.com|archive\.org|ted\.com|bitchute\.com|mixcloud\.com|vlive\.tv|weibo\.com|douyin\.com|ixigua\.com|youku\.com|zhihu\.com|naver\.com|kakao\.com|aparat\.com|shahid\.mbc\.net)$/i;
+// (The one list: desktop/ytdlp.cjs and core/kt-core videotools.rs hold copies — tests/videohosts.cjs fails when they differ.)
+export const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|bilibili\.tv|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|vkvideo\.ru|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv|tver\.jp|kick\.com|archive\.org|ted\.com|bitchute\.com|mixcloud\.com|vlive\.tv|weibo\.com|douyin\.com|ixigua\.com|youku\.com|zhihu\.com|naver\.com|kakao\.com|aparat\.com|shahid\.mbc\.net)$/i;
 export const isVideoHost = (url: string): boolean => { try { return VIDEO_HOSTS.test(new URL(url).hostname); } catch { return false; } };
 /** A link whose path names a file (an extension that is not a page): a plain download, not a page for yt-dlp. */
 export const looksLikeFile = (url: string): boolean => { try { const p = new URL(url).pathname; return /\.[a-z0-9]{1,5}$/i.test(p) && !/\.(html?|php|aspx?|jsp|cgi)$/i.test(p); } catch { return false; } };
@@ -20,7 +21,7 @@ export const looksLikeFile = (url: string): boolean => { try { const p = new URL
 export const videoSupported = (): boolean => { const p = getPlatform(); return (p === 'desktop' && !!window.kurokawaTools?.videoInfo) || (p === 'android' && !!ktPlugin()); };
 export const videoEnabled = (): boolean => videoSupported() && getSettings().addons.includes(VIDEO_ADDON);
 
-interface Bridge { videoJsRuntime?(): Promise<{ missing: boolean; seen?: boolean; installed: string | null } | null>; videoInfo?(o: { url: string; playlist?: boolean }): Promise<unknown>; videoReady?(): Promise<unknown>; videoVersion?(): Promise<{ version: string | null; ready: boolean }>; videoUpdate?(): Promise<{ version: string | null; updated?: boolean; latest?: string }> }
+interface Bridge { videoJsRuntime?(): Promise<{ missing: boolean; seen?: boolean; installed: string | null } | null>; videoInfo?(o: { url: string; playlist?: boolean; cookiesFromBrowser?: string }): Promise<unknown>; videoCookies?(o: { op: string; url?: string; site?: string }): Promise<unknown>; videoReady?(): Promise<unknown>; videoVersion?(): Promise<{ version: string | null; ready: boolean }>; videoUpdate?(): Promise<{ version: string | null; updated?: boolean; latest?: string }> }
 const desk = (): Bridge | null => (window.kurokawaTools as unknown as Bridge | undefined) ?? null;
 /** The Tauri shell's own codes for a new yt-dlp / gallery-dl that did not start (stage P5: the one before put back, or
  *  none and it was removed) in the page's language; any other error as it came. */
@@ -32,43 +33,84 @@ export async function toolError<T>(p: Promise<T>): Promise<T> {
     throw new Error(m[1] === 'rolledback' ? t('videoNewFailedBack', { tool: m[2], v: m[3] ?? '' }) : t('videoNewFailed', { tool: m[2] }));
   }
 }
-const plug = () => ktPlugin() as unknown as { videoInfo(o: { url: string; playlist?: boolean; cookieJar?: string }): Promise<{ json: string }>; videoVersion(): Promise<{ version: string | null; ready: boolean }>; videoUpdate(): Promise<{ version: string | null }> } | null;
+const plug = () => ktPlugin() as unknown as { videoInfo(o: { url: string; playlist?: boolean; cookieJar?: string; token?: string }): Promise<{ json: string; infoId?: string }>; videoInfoCancel?(o: { token: string }): Promise<unknown>; videoWarm?(): Promise<{ ready: boolean; ms?: number }>; videoVersion(): Promise<{ version: string | null; ready: boolean }>; videoUpdate(): Promise<{ version: string | null }> } | null;
 
 // (Kept ten minutes: the sheet, the add that follows and a second look at the same link cost one yt-dlp run, not three.)
 const INFO_TTL = 10 * 60 * 1000;
+/** The longest a look is waited for: the shells give yt-dlp 90 s (the phone 75 s); past that the sheet says so and offers «Try again». */
+export const INFO_WAIT_MS = 100_000;
 const cache = new Map<string, { at: number; p: Promise<PageInfo> }>();
+const shellKind = (): 'tauri' | 'electron' | 'android' | 'web' => { const d = desk(); if (d?.videoInfo) return (window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri' ? 'tauri' : 'electron'; return plug() ? 'android' : 'web'; };
+export { shellKind as videoShell };
+// (Once a session on a computer: yt-dlp there and recent enough — not asked again before every look.)
+let readyOnce: Promise<unknown> | null = null;
+const ready = (d: Bridge): Promise<unknown> => { if (!d.videoReady) return Promise.resolve(); if (!readyOnce) { readyOnce = d.videoReady().then((r) => { if ((r as { ok?: boolean } | null)?.ok === false) readyOnce = null; return r; }, (e) => { readyOnce = null; throw e; }); } return readyOnce; };
+/** The Add sheet opened: what a look needs made ready beforehand, when it is cheap — the phone's yt-dlp runtime set up
+ *  (no Python process started), the computer's yt-dlp checked once a session. Quiet; nothing when the add-on is off. */
+export function warmVideo(): void {
+  if (!videoEnabled()) return;
+  const d = desk(); if (d?.videoInfo) { void ready(d).catch(() => undefined); return; }
+  // (The packs' check — what a look asks first — done now too: its answer kept a minute, this release's packs file for the session.)
+  void import('../packs').then(async (m) => { const st = await m.statusKept(); if (st?.python?.version) void plug()?.videoWarm?.().catch(() => undefined); await m.packsToFetch(['python', 'ffmpeg']); }).catch(() => undefined);
+}
+let tokenSeq = 0;
 /** What a page offers (asked once per link per session). Throws yt-dlp's own last error line. */
-export function pageInfo(url: string, playlist = false, opts: { cookieJar?: string } = {}): Promise<PageInfo> {
-  const key = `${playlist ? 'p' : 'v'}|${opts.cookieJar ?? ''}|${url}`; const hit = cache.get(key); if (hit && Date.now() - hit.at < INFO_TTL) return hit.p;
+export function pageInfo(url: string, playlist = false, opts: { cookieJar?: string; signal?: AbortSignal } = {}): Promise<PageInfo> {
+  const browser = shellKind() === 'electron' || shellKind() === 'tauri' ? getSettings().videoCookies || '' : '';
+  const key = `${playlist ? 'p' : 'v'}|${opts.cookieJar ?? ''}|${browser}|${url}`; const hit = cache.get(key); if (hit && Date.now() - hit.at < INFO_TTL) return hit.p;
   const p = (async () => {
     const { withPacks } = await import('../packs'); const { t } = await import('../i18n');
     // (yt-dlp needs Python and ffmpeg on a phone. On a computer reading a page needs neither: ffmpeg is asked for when a choice that needs it is added — an audio file taken as it is never does.)
     const d = desk(); if (d?.videoInfo) {
-      await d.videoReady?.();
+      await ready(d);
       // (The Tauri shell: yt-dlp with no JavaScript runtime here — said in the answer, or a look that failed — → the
       // «deno» pack offered, once; ui/jsruntime.ts. Electron gives yt-dlp its own Node: never there.)
+      // (The browser chosen in Settings → Video for a sign-in goes to the look too, not only to the download; a sign-in
+      // kept by the app for the link's site wins over it in the shell.)
       let r: unknown;
-      try { r = await toolError(d.videoInfo({ url, playlist })); } catch (e) { if (d.videoJsRuntime) void d.videoJsRuntime().then((s) => { if (s && (s.seen || (s.missing && isVideoHost(url)))) void import('../ui/jsruntime').then((m) => m.offerDeno()); }).catch(() => undefined); throw e; }
+      try { r = await toolError(within(d.videoInfo({ url, playlist, ...(browser ? { cookiesFromBrowser: browser } : {}) }), INFO_WAIT_MS)); } catch (e) { if (d.videoJsRuntime) void d.videoJsRuntime().then((s) => { if (s && (s.seen || (s.missing && isVideoHost(url)))) void import('../ui/jsruntime').then((m) => m.offerDeno()); }).catch(() => undefined); throw e; }
       if ((r as { jsRuntime?: string } | null)?.jsRuntime === 'missing') void import('../ui/jsruntime').then((m) => m.offerDeno());
       return normalise(r);
     }
-    const k = plug(); if (k) return normalise(JSON.parse((await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => k.videoInfo({ url, playlist, cookieJar: opts.cookieJar }))).json));
+    const k = plug(); if (k) {
+      const token = `t${++tokenSeq}`; opts.signal?.addEventListener('abort', () => void k.videoInfoCancel?.({ token }).catch(() => undefined), { once: true });
+      const got = await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => within(k.videoInfo({ url, playlist, cookieJar: opts.cookieJar, token }), INFO_WAIT_MS, () => void k.videoInfoCancel?.({ token }).catch(() => undefined)));
+      const info = normalise(JSON.parse(got.json)); if (info.kind === 'video' && got.infoId && /^[0-9a-f]{16}$/.test(got.infoId)) info.infoId = got.infoId; return info;
+    }
     throw new Error('yt-dlp');
   })();
   cache.set(key, { at: Date.now(), p }); p.catch(() => cache.delete(key));
   if (cache.size > 40) for (const [k, v] of cache) if (Date.now() - v.at > INFO_TTL) cache.delete(k);
   return p;
 }
+/** A promise given up after `ms` («timed out», which the sheet says in plain words), `onLate` told. */
+function within<T>(p: Promise<T>, ms: number, onLate?: () => void): Promise<T> {
+  let tm = 0; return Promise.race([p, new Promise<never>((_, rej) => { tm = window.setTimeout(() => { onLate?.(); rej(new Error('ERROR: timed out')); }, ms); })]).finally(() => clearTimeout(tm));
+}
 /** The looks kept are forgotten (a component arrived that changes what yt-dlp sees). */
-export function forgetPageInfo(): void { cache.clear(); }
+export function forgetPageInfo(url?: string): void { if (!url) { cache.clear(); return; } for (const k of [...cache.keys()]) if (k.endsWith(`|${url}`)) cache.delete(k); }
 export async function videoVersion(): Promise<string | null> { try { const d = desk(); if (d?.videoVersion) return (await d.videoVersion()).version; const k = plug(); return k ? (await k.videoVersion()).version : null; } catch { return null; } }
-export async function updateVideo(): Promise<string | null> { const d = desk(); if (d?.videoUpdate) return (await toolError(d.videoUpdate())).version; const k = plug(); return k ? (await k.videoUpdate()).version : null; }
-/** Once a day, quietly: yt-dlp follows the sites as they change, so it is kept current. */
+export async function updateVideo(): Promise<string | null> { readyOnce = null; const d = desk(); if (d?.videoUpdate) return (await toolError(d.videoUpdate())).version; const k = plug(); return k ? (await k.videoUpdate()).version : null; }
+/** Self-healing, once a session: a look that failed the way an old yt-dlp fails (the site changed) → a newer yt-dlp
+ *  looked for → the version it brought, or null when there was none newer (nothing to try again with). */
+let healed: Promise<string | null> | null = null;
+export function healOnce(): Promise<string | null> {
+  if (!healed) healed = (async () => { const before = await videoVersion(); const after = await updateVideo().catch(() => null); return after && after !== before ? after : null; })();
+  return healed;
+}
+/** Once a day, quietly: yt-dlp follows the sites as they change, so it is kept current. One owner per build: Electron's
+ *  shell checks it itself (desktop/main.cjs), so the page does only on the Tauri build and the phone — well after the
+ *  first screen, and never while a video downloads (one that fails with an extractor error asks for its own check). */
 export function autoUpdateVideo(): void {
-  if (!videoEnabled()) return;
+  if (!videoEnabled() || shellKind() === 'electron') return;
   let last = 0; try { last = Number(localStorage.getItem('kt.video.checked') || 0); } catch { /* none */ }
   if (Date.now() - last < 86400000) return;
-  setTimeout(() => { void updateVideo().then(() => { try { localStorage.setItem('kt.video.checked', String(Date.now())); } catch { /* full */ } }).catch(() => undefined); }, 20000);
+  const go = async (tries: number) => {
+    const { getEngine } = await import('../engine'); const busy = (await getEngine().list().catch(() => [])).some((x) => x.kind === 'video' && x.state === 'downloading');
+    if (busy) { if (tries < 12) setTimeout(() => void go(tries + 1), 10 * 60000); return; }
+    await updateVideo(); try { localStorage.setItem('kt.video.checked', String(Date.now())); } catch { /* full */ }
+  };
+  setTimeout(() => void go(0).catch(() => undefined), 20000);
 }
 
 type Fmt = { format_id: string; url?: string; manifest_url?: string; vcodec?: string; acodec?: string; height?: number; fps?: number; tbr?: number; abr?: number; ext?: string; filesize?: number; filesize_approx?: number; dynamic_range?: string; format_note?: string };
