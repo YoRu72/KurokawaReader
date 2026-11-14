@@ -2252,4 +2252,12 @@ export const ar: Partial<Strings> = {
   jsRtBody: "لم تجد أداة yt-dlp على هذا الحاسوب بيئةً لتشغيل JavaScript، فقد تغيب بعض صيغ يوتيوب أو لا تُقرأ الصفحة أصلًا. ويُصلح ذلك مكوِّنُ «deno» الصغير: يُنزَّل مرةً واحدة ثم يُستعمل بعدها.",
   jsRtGet: "نزِّل deno",
   jsRtWhy: "تحتاج إليه أداة yt-dlp لقراءة صفحات يوتيوب.",
+  // (Stage M2 of the Rust port: Settings → Advanced, the phone's download engine — views/engineSettings.ts.)
+  advancedSection: "خيارات متقدّمة",
+  advancedHint: "خياراتٌ لتجربة ما لا يزال قيد الاختبار؛ فدَعْها على حالها ما لم يُطلَب منك تجربةُ شيءٍ منها.",
+  dlEngine: "محرّك التنزيل",
+  dlEngineHint: "المحرّكُ الذي تُجلَب به الملفّات، لا التورنت ولا المقاطع. فأمّا Java فهو المجرَّب، وأمّا Rust فجديد؛ فجرِّبه على شبكة Wi-Fi وعلى بيانات الجوّال، وارجِع عنه إن ظهر خلل. ويسري على ما يُبدأ من التنزيلات بعد التغيير.",
+  dlEngineJava: "Java",
+  dlEngineRust: "Rust",
+  dlEngineStatus: "نواة Rust ‏{version} · المستعمَل الآن: {engine} · ما أُعيد إلى Java، العدد: {n}",
 };

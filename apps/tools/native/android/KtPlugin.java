@@ -72,7 +72,14 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); }
+    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
+    /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
+     *  debuggable build its shadow mode on (each download rule also asked of Rust, differences counted — Java's answer
+     *  used). Off the main thread; nothing changes for the user whether the library is there or not. */
+    private void rustCore() {
+        try { KtCore.log = (line) -> android.util.Log.i("KtCore", line); KtCore.shadow = (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0; } catch (Throwable ignored) {}
+        bg.execute(() -> { try { KtCore.available(); } catch (Throwable ignored) {} });
+    }
     /** The web views pointed at the app's own proxy (KrDohProxy) while DoH is on — every connection they make resolved
      *  through the resolver, the hello split — and set free of it when off. The app's own page (localhost) and the home
      *  network stay direct. */
@@ -382,7 +389,13 @@ public class KtPlugin extends Plugin {
 
     /* ---------- the device, other apps ---------- */
     @PluginMethod public void deviceInfo(PluginCall call) {
-        JSObject r = new JSObject(); JSArray abis = new JSArray(); for (String a : Build.SUPPORTED_ABIS) abis.put(a); r.put("abis", abis); r.put("sdk", Build.VERSION.SDK_INT); r.put("a11yBuild", KtScreenA11y.declared(getContext())); call.resolve(r);
+        JSObject r = new JSObject(); JSArray abis = new JSArray(); for (String a : Build.SUPPORTED_ABIS) abis.put(a); r.put("abis", abis); r.put("sdk", Build.VERSION.SDK_INT); r.put("a11yBuild", KtScreenA11y.declared(getContext()));
+        // (The Rust core's state for the diagnostics: its version or null, and the shadow's figures. No UI reads them yet.)
+        try { r.put("rustCore", KtCore.available() ? KtCore.version() : JSObject.NULL); r.put("rustCoreStatus", KtCore.status()); r.put("rustShadow", new JSObject(KtCore.json(KtCore.shadowReport()))); } catch (Throwable ignored) {}
+        // (Stage M2: the download engine — the one chosen in Settings → Advanced, the one new downloads use (Java when the
+        // core is absent), and how many downloads the Rust engine handed back to Java before their first byte.)
+        try { String choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; r.put("dlEngineChoice", choice); r.put("dlEngine", "rust".equals(choice) && KtCore.available() ? "rust" : "java"); r.put("dlEngineFallbacks", KrDownloaderRs.FALLBACKS.get()); } catch (Throwable ignored) {}
+        call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {
         JSObject r = new JSObject(); try { getContext().getPackageManager().getPackageInfo(call.getString("pkg", ""), 0); r.put("installed", true); } catch (PackageManager.NameNotFoundException e) { r.put("installed", false); } call.resolve(r);

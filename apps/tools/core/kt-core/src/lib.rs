@@ -37,3 +37,10 @@ pub mod handoverlogic;
 // (Stage P9, after the hand-over: which of the two programs runs the downloads they share — one owner file, a
 // heartbeat, a stale rule; the same rule in desktop/ownerlock.cjs, one table for both.)
 pub mod ownerlogic;
+// (Android stages M0–M1: the download queue's decisions — KtDlRules.java's — and the screen translator's cache keys —
+// KtTranslate.java's —, called from Java through apps/tools/core/kt-android; Java keeps its copies as the reference.)
+pub mod dlrules;
+pub mod translatekey;
+// (Android stage M2: the HTTP downloader's decisions — KrDownloader.java's rules as a state machine; Java moves the
+// bytes and asks this for every choice, through kt-android's `http.*` methods.)
+pub mod httpdl;
