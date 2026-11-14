@@ -20,6 +20,27 @@ const langName = (code: string): string => { try { return new Intl.DisplayNames(
 const card = (id: string, title: string, ...kids: (Node | null)[]) => h('section', { class: 'card', id }, h('h3', null, title), ...kids);
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
+/** The window's title bar — offered only where the shell has the page draw it (the Tauri shell on a computer:
+ *  ui/winbar.ts, the Reader's too): the app's own or the system's frame (at once on Windows and Linux, on a Mac at the
+ *  next start); the app's own transparent or not, its name shown or not. */
+function titleBarRows(rerender: () => void): HTMLElement[] {
+  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ !== 'tauri' || nativePlatform() !== 'desktop') return [];
+  const s = getSettings();
+  const waits = document.documentElement.classList.contains('wb-mac') || /Mac/.test(navigator.platform);
+  const sw = (label: string, on: boolean, set: (v: boolean) => void, cls: string, hint?: string): HTMLElement => {
+    const c = h('input', { type: 'checkbox', class: cls, checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) });
+    return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c);
+  };
+  return [
+    h('div', { class: 'field title-bar-field' }, h('span', { class: 'label' }, t('titleBar')),
+      h('div', { class: 'segmented' }, ...([['own', t('titleBarOwn')], ['system', t('titleBarSystem')]] as ['own' | 'system', string][]).map(([id, label]) => h('button', { type: 'button', 'data-tb-kind': id, 'aria-pressed': String(s.titleBarKind === id), onclick: () => { updateSettings({ titleBarKind: id }); rerender(); } }, label))),
+      h('p', { class: 'hint' }, t('titleBarHint') + (waits ? ` ${t('titleBarNextStart')}` : ''))),
+    ...(s.titleBarKind !== 'system' ? [
+      sw(t('titleBarClear'), s.titleBarClear, (v) => { updateSettings({ titleBarClear: v }); rerender(); }, 'wb-clear-switch', t('titleBarClearHint')),
+      ...(s.titleBarClear ? [] : [sw(t('titleBarName'), s.titleBarName !== false, (v) => updateSettings({ titleBarName: v }), 'wb-name-switch')]),
+    ] : []),
+  ];
+}
 const numberField = (value: number, set: (v: number) => void, o: { min?: number; max?: number; step?: number; width?: string } = {}) => h('input', { type: 'number', value: String(value), min: String(o.min ?? 0), max: o.max !== undefined ? String(o.max) : undefined, step: String(o.step ?? 1), style: { width: o.width ?? '6em' }, onchange: (e: Event) => set(Number((e.target as HTMLInputElement).value) || 0) });
 
 export function settingsView(section?: string): HTMLElement & { dispose?: () => void } {
@@ -105,6 +126,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       row(t('navCustomize'), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./navCustomize').then((m) => m.navCustomizeSheet()) }, icon('layout'), t('customizeBtn')), t('navCustomizeHint')),
       toggle(t('swipeTabs'), s.swipeTabs !== false, (v) => updateSettings({ swipeTabs: v }), t('swipeTabsHint')),
       row(t('uiScale'), pickButton(t('uiScale'), [['75', '75%'], ['85', '85%'], ['90', '90%'], ['100', '100%'], ['110', '110%'], ['125', '125%']], String(s.uiScale), (v) => { updateSettings({ uiScale: Number(v) }); rerender(); }, t('close')), t('uiScaleHint')),
+      ...titleBarRows(rerender),
       row(t('uiMode'), pickButton(t('uiMode'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode, (v) => { updateSettings({ uiMode: v as UiMode }); rerender(); }, t('close'))),
       row(t('darkTone'), pickButton(t('darkTone'), [['default', t('darkToneDefault')], ['grey', t('darkToneGrey')], ['black', t('darkToneBlack')]], s.darkTone, (v) => { updateSettings({ darkTone: v as DarkTone }); rerender(); }, t('close'))),
       row(t('accent'), h('div', { class: 'accent-swatches' }, ...(['graphite', 'mono', 'teal', 'aqua', 'mint', 'olive', 'gold', 'sand', 'coral', 'rose', 'violet'] as Accent[]).map((a) => h('button', { type: 'button', class: 'swatch' + (s.accent === a ? ' on' : ''), 'data-accent': a, 'aria-label': a, onclick: () => { updateSettings({ accent: a }); rerender(); } })),

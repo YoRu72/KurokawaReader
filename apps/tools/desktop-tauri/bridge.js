@@ -2,9 +2,13 @@
 // Electron shell's bridge; the typed shape is src/engine/desktop.ts), each channel kt:xyz a Tauri command kt_xyz.
 // Run by src-tauri/src/main.rs as the window's initialization script — before the page's own scripts, on every
 // load —, after a line that sets window.__KT_BOOT__ = { os, arch }.
-// Only the ported slice is here (../PORTING.md: stage 1 files/dialogs/clipboard/http, stage 2 the download engine):
-// the page asks for each feature by its method (d?.dohProbe, …), so whatever is not ported yet is absent, not a stub.
-// Events (kt:tasks, kt:engineState) come as Tauri events, listened to with window.__TAURI__.event.listen.
+// Only the ported slice is here (../PORTING.md: stage 1 files/dialogs/clipboard/http, stage 2 the download engine,
+// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts): the page asks for each feature by
+// its method (d?.dohProbe, …), so whatever is not ported yet is absent, not a stub. Events (kt:tasks, kt:engineState,
+// kt:files) come as Tauri events, listened to with window.__TAURI__.event.listen.
+// Four methods are this shell's own, not the preload's: filesJob, filesCancel, filesAnswer and onFilesJob — the Files
+// page's copy / move / delete jobs with the phone's shapes (src/views/files.ts uses them where they are; the Electron
+// shell has none, so there Copy, Cut and Paste stay hidden).
 (function () {
   'use strict';
   if (window.kurokawaTools) return;
@@ -52,7 +56,20 @@
     if (i && typeof i.invoke === 'function' && typeof i.transformCallback === 'function') return function (n, f) { return i.invoke('plugin:event|listen', { event: n, target: { kind: 'Any' }, handler: i.transformCallback(f) }); };
     return null;
   }
+  // (One event's payloads to `cb` until the returned function is called — the title bar's state.)
+  function subscribe(name, cb) {
+    var on = listener(); var off = null; var gone = false;
+    if (on && typeof cb === 'function') {
+      try {
+        Promise.resolve(on(name, function (ev) { if (!gone) { try { cb(ev && ev.payload); } catch (e) { /* the page's */ } } })).then(function (u) {
+          if (typeof u === 'function') { if (gone) { try { u(); } catch (e) { /* gone */ } } else off = u; }
+        }).catch(function () {});
+      } catch (e) { /* no events: the remover alone */ }
+    }
+    return function () { gone = true; if (off) { try { off(); } catch (e) { /* gone */ } } };
+  }
   var taskSubs = [];
+  var fileSubs = [];
   var listening = false;
   // (Once: kt:tasks to every onTasks callback, kt:engineState to the state; then the state asked again, since an
   // event sent while the page was loading is lost — what Electron's did-finish-load resend does.)
@@ -63,6 +80,7 @@
     listening = true;
     try {
       Promise.resolve(on('kt:tasks', function (ev) { var list = ev && ev.payload; taskSubs.slice().forEach(function (f) { try { f(list); } catch (e) { /* the page's */ } }); })).catch(function () { listening = false; });
+      Promise.resolve(on('kt:files', function (ev) { var e = ev && ev.payload; fileSubs.slice().forEach(function (f) { try { f(e); } catch (x) { /* the page's */ } }); })).catch(function () {});
       Promise.resolve(on('kt:engineState', function (ev) { news(ev && ev.payload); })).then(function () { return call('kt_state').then(function (s) { if (s && (s.available !== state.available || s.reason !== state.reason)) news(s); else if (s) Object.assign(state, s); }); }).catch(function () {});
     } catch (e) { listening = false; }
   }
@@ -111,6 +129,23 @@
     writeTempBytes: function (o) { return call('kt_write_temp_bytes', { o: obj(o) }); },
     removeFile: function (p) { return call('kt_remove_file', { p: str(p) }); },
     hashFile: function (p) { return call('kt_hash_file', { p: str(p) }); },
+    deletePath: function (p) { return call('kt_delete_path', { p: str(p) }); },
+    archiveFree: function (o) { return call('kt_archive_free', { o: obj(o) }); },
+    fontDirs: function () { return call('kt_font_dirs'); },
+    fontIndex: function (dirs) { return call('kt_font_index', { dirs: (Array.isArray(dirs) ? dirs : []).map(str) }); },
+    megaDecrypt: function (o) { return call('kt_mega_decrypt', { o: obj(o) }); },
+    screenFontAdd: function (o) { return call('kt_screen_font_add', { o: obj(o) }); },
+    screenFontRemove: function (o) { return call('kt_screen_font_remove', { o: obj(o) }); },
+
+    /* the Files page's jobs (this shell's own: the phone plugin's shapes — { id, status, … } events as kt:files) */
+    filesJob: function (o) { return call('kt_files_job', { o: obj(o) }); },
+    filesCancel: function (o) { return call('kt_files_cancel', { o: obj(o) }); },
+    filesAnswer: function (o) { return call('kt_files_answer', { o: obj(o) }); },
+    onFilesJob: function (cb) {
+      listen();
+      fileSubs.push(cb);
+      return function () { var k = fileSubs.indexOf(cb); if (k >= 0) fileSubs.splice(k, 1); };
+    },
     openPath: function (p) { return call('kt_open_path', { p: str(p) }); },
     openExternal: function (u) { return call('kt_open_external', { u: str(u) }); },
 
@@ -120,9 +155,20 @@
     saveText: function (o) { return call('kt_save_text', { o: obj(o) }); },
     clipboardText: function () { return call('kt_clipboard_text'); },
 
+    /* the window's own title bar (src-tauri/src/titlebar.rs, the Reader's): titleBar(o) — o.own asks for the app's own
+       bar (true) or the system's frame (false), o.act works the window (minimize, maximize — or restore —, close,
+       drag) — answers the bar's state { platform, height, own, wanted, controls, maximized, fullscreen, focused };
+       onTitleBarState(cb) — each change of it (the kt:titleBarState event). The page draws the bar, its buttons too
+       (src/ui/winbar.ts). */
+    titleBar: function (o) { return call('kt_title_bar', { o: obj(o) }); },
+    onTitleBarState: function (cb) { return subscribe('kt:titleBarState', cb); },
+
     /* network */
     http: function (o) { return call('kt_http', { o: obj(o) }); },
     checkUpdate: function (o) { return call('kt_check_update', { o: obj(o) }); },
   };
+  // (Which shell this is: the page draws the window's whole title bar here — src/ui/winbar.ts —, and the Files page
+  // has its jobs.)
+  try { Object.defineProperty(window, '__KT_SHELL__', { value: 'tauri', configurable: true }); } catch (e) { /* the page then keeps Electron's bar */ }
   Object.defineProperty(window, 'kurokawaTools', { value: api, enumerable: true, configurable: false, writable: false });
 })();

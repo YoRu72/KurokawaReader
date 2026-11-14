@@ -3,7 +3,9 @@
 // is there, bytes come back as an ArrayBuffer, errors as Errors, the kt:tasks / kt:engineState events reach onTasks
 // and the kt:engine-state DOM event; every command the bridge calls is registered in main.rs with the argument names
 // the bridge sends; and the self-test script (desktop-tauri/selftest.js) is inert without its settings and passes /
-// fails as it should against a fake bridge. Plain node.
+// fails as it should against a fake bridge. Since stage P3 also the shell's own methods (the Files page's jobs —
+// filesJob, filesCancel, filesAnswer, onFilesJob —, which the preload does not have) and their kt:files event; the
+// commands are looked for in every file of src-tauri/src. Plain node.
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
@@ -12,8 +14,12 @@ const Module = require('node:module');
 const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
-const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate'];
-const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks'];
+const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar'];
+// (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
+const RENAMED = { titleBar: 'kt_title_bar' };
+// (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
+const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']] };
+const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
 // --- Electron's preload, with a fake electron that records each invoke.
@@ -57,13 +63,14 @@ function loadBridge(boot) {
 
   // Names: the slice and the boot-safe ones, every one of them a name the preload has; nothing else.
   const keys = Object.keys(kt).sort();
-  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT])].sort(), 'bridge methods ≠ slice + boot-safe');
-  for (const k of keys) assert.ok(k in pre, `${k} is not in preload.cjs`);
+  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), 'onFilesJob'])].sort(), 'bridge methods ≠ slice + boot-safe + own');
+  for (const k of keys) assert.ok(k in pre || k in OWN || k === 'onFilesJob', `${k} is not in preload.cjs`);
+  for (const k of [...Object.keys(OWN), 'onFilesJob']) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
   assert.equal(kt.platform, 'desktop');
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
-  for (const k of ['dohProbe', 'titleBar', 'installUpdate', 'streamUrl', 'streamDone', 'mini', 'screenStatus', 'onTitleBarState', 'megaDecrypt', 'deletePath', 'fontIndex', 'videoInfo']) assert.ok(!(k in kt), `${k} should be absent`);
+  for (const k of ['dohProbe', 'installUpdate', 'streamUrl', 'streamDone', 'mini', 'screenStatus', 'videoInfo', 'archiveList', 'shareWifi']) assert.ok(!(k in kt), `${k} should be absent`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -74,6 +81,8 @@ function loadBridge(boot) {
     writeText: [{ path: '/x/a.ass', text: 'نص' }], writeTemp: ['a.ass', 'text'], writeTempBytes: [{ name: 'f.ttf', b64: 'AAEC', sub: 'fonts' }], removeFile: ['/x/a'],
     hashFile: ['/x/a'], openPath: ['/x/a'], openExternal: ['https://example.org/'], open: ['t1', -1], pickDir: [], pickFile: [{ multiple: true, filters: [{ name: 'Subs', extensions: ['ass', 'srt'] }] }],
     saveText: [{ name: 'a.txt', text: 't' }], clipboardText: [], http: [{ url: 'https://example.org/', method: 'POST', headers: { a: 'b' }, body: 'x', binary: true }], checkUpdate: [{ beta: false }],
+    deletePath: ['/x/a.mkv'], archiveFree: [{ dir: '/x' }], fontDirs: [], fontIndex: [['/usr/share/fonts', '/home/u/.fonts']], megaDecrypt: [{ path: '/x/a.mp4', key: 'abc_-' }],
+    screenFontAdd: [{ name: 'a.ttf', b64: 'AAEC' }], screenFontRemove: [{ path: '/d/screen-fonts/1-a.ttf' }], titleBar: [{ own: true, act: 'maximize' }],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};
@@ -83,9 +92,19 @@ function loadBridge(boot) {
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');
     assert.equal(eCalls.length, 1, `${m}: preload calls`); assert.equal(tCalls.length, 1, `${m}: bridge calls`);
     const { ch, a } = eCalls[0]; const { cmd, args } = tCalls[0];
-    assert.equal(cmd, snake(ch), `${m}: ${ch} → ${cmd}`);
+    assert.equal(cmd, RENAMED[m] || snake(ch), `${m}: ${ch} → ${cmd}`);
     assert.deepEqual(JSON.parse(JSON.stringify(Object.values(args))), JSON.parse(JSON.stringify(a)), `${m}: arguments`);
     sent[cmd] = Object.keys(args);
+  }
+
+  // The shell's own methods: each one command, its object under «o».
+  const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' } };
+  for (const [m, [cmd, ks]] of Object.entries(OWN)) {
+    tCalls = []; await kt[m](ownSamples[m]);
+    tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');
+    assert.equal(tCalls.length, 1, `${m}: bridge calls`); assert.equal(tCalls[0].cmd, cmd, `${m} → ${cmd}`);
+    assert.deepEqual(Object.keys(tCalls[0].args), ks); assert.deepEqual(JSON.parse(JSON.stringify(tCalls[0].args.o)), ownSamples[m]);
+    sent[cmd] = ks;
   }
 
   // Bytes: an ArrayBuffer whatever the IPC handed back.
@@ -113,6 +132,13 @@ function loadBridge(boot) {
   await new Promise((ok) => setTimeout(ok, 10));
   assert.equal((listeners['kt:tasks'] || []).length, 1, 'kt:tasks listened to once');
   assert.equal((listeners['kt:engineState'] || []).length, 1, 'kt:engineState listened to once');
+  assert.equal((listeners['kt:files'] || []).length, 1, 'kt:files listened to once');
+  // kt:files: each event to every onFilesJob callback, as it came, until unsubscribed.
+  const jobs = []; const offJ = fresh.onFilesJob((e) => jobs.push(JSON.parse(JSON.stringify(e)))); fresh.onFilesJob(() => undefined);
+  assert.equal((listeners['kt:files'] || []).length, 1, 'kt:files still listened to once');
+  listeners['kt:files'][0]({ event: 'kt:files', payload: { id: 'fj-1', status: 'conflict', to: '/b/x', dir: false } });
+  offJ(); listeners['kt:files'][0]({ event: 'kt:files', payload: { id: 'fj-1', status: 'done' } });
+  assert.deepEqual(jobs, [{ id: 'fj-1', status: 'conflict', to: '/b/x', dir: false }]);
   assert.deepEqual(seen, [[]]);
   listeners['kt:tasks'][0]({ event: 'kt:tasks', payload: [{ id: 'g1', state: 'downloading' }] });
   assert.deepEqual(seen, [[], [{ id: 'g1', state: 'downloading' }]]);
@@ -135,7 +161,7 @@ function loadBridge(boot) {
   iwin.kurokawaTools.onTasks(() => undefined);
   await new Promise((ok) => setTimeout(ok, 10));
   const ls = icalls.filter((c) => c.cmd === 'plugin:event|listen').map((c) => c.args);
-  assert.deepEqual(ls.map((a) => a.event).sort(), ['kt:engineState', 'kt:tasks']);
+  assert.deepEqual(ls.map((a) => a.event).sort(), ['kt:engineState', 'kt:files', 'kt:tasks']);
   assert.ok(ls.every((a) => a.handler === 7 && a.target && a.target.kind === 'Any'));
   // No IPC at all: a clear rejection, not a TypeError at load.
   const bare = vm.createContext({ window: {}, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array });
@@ -145,11 +171,17 @@ function loadBridge(boot) {
   // Rust: every command the bridge calls is registered, with the argument names the bridge sends.
   const src = path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/commands::(kt_\w+)/g)].map((m) => m[1]);
-  const cmds = fs.readFileSync(path.join(src, 'commands.rs'), 'utf8');
+  const handler = main.slice(main.indexOf('generate_handler!['), main.indexOf(']', main.indexOf('generate_handler![')));
+  const registered = [...handler.matchAll(/\b\w+::(kt_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const m of cmds.matchAll(/#\[tauri::command\]\s*pub async fn (kt_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*AppHandle$/.test(x)).map((x) => x.split(':')[0].trim());
-  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ commands.rs defines');
+  for (const f of fs.readdirSync(src).filter((x) => x.endsWith('.rs'))) {
+    const code = fs.readFileSync(path.join(src, f), 'utf8');
+    for (const m of code.matchAll(/#\[tauri::command\]\s*pub async fn (kt_\w+)\(([^)]*)\)/g)) {
+      assert.ok(!(m[1] in params), `${m[1]} defined twice`);
+      params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
+    }
+  }
+  assert.deepEqual([...registered].sort(), Object.keys(params).sort(), 'main.rs registers ≠ the commands src-tauri/src defines');
   sent.kt_state = []; sent.kt_list = sent.kt_list || [];
   for (const [cmd, ks] of Object.entries(sent)) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
@@ -170,10 +202,51 @@ function loadBridge(boot) {
   assert.equal(lib.join('/tmp/', 'a', 'linux'), '/tmp/a');
   assert.ok(lib.sameBytes(new Uint8Array([1, 2]).buffer, [1, 2]) && !lib.sameBytes([1], [1, 2]));
   const crypto = require('node:crypto');
-  const cfg = { base: 'http://127.0.0.1:1', temp: '/tmp', aria2Bin: '/r/aria2/linux-x64/aria2c', aria2Bundled: true, wantBundled: true, text: 'T ✓', gzText: 'G', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), bigSize: 2097152, bigSha256: 'ab', os: 'linux' };
+  const megaPlain = Buffer.from('mega ✓ '.repeat(20)); const megaEnc = Buffer.from(megaPlain.map((b) => b ^ 0x5a));
+  assert.deepEqual(JSON.parse(JSON.stringify(lib.b64bytes(megaPlain.toString('base64')))), [...megaPlain]);
+  const cfg = { otherTemp: '/other', megaKey: 'k', megaPlainB64: megaPlain.toString('base64'), megaEncB64: megaEnc.toString('base64'), base: 'http://127.0.0.1:1', temp: '/tmp', aria2Bin: '/r/aria2/linux-x64/aria2c', aria2Bundled: true, wantBundled: true, text: 'T ✓', gzText: 'G', binB64: Buffer.from([...Array(256).keys()]).toString('base64'), bigSize: 2097152, bigSha256: 'ab', os: 'linux' };
   for (const k of ['md5', 'sha1', 'sha256']) assert.equal(lib.ABC[k], crypto.createHash(k).update('abc').digest('hex'), `known ${k} of abc`);
+  // (A pretend disk for the P3 checks: files by path, folders implied by them; the jobs with the phone's rules, enough
+  // for the script's checks — questions, apply-to-all, skip, into itself, pace + cancel, moves, deletes.)
+  function fakeDisk() {
+    const files = new Map(); const fileSubs = []; const jobs = {};
+    const under = (d) => [...files.keys()].filter((k) => k.startsWith(d + '/'));
+    const isDir = (p) => under(p).length > 0;
+    const base = (p) => p.split('/').pop();
+    const emit = (e) => setTimeout(() => fileSubs.slice().forEach((f) => f(JSON.parse(JSON.stringify(e)))), 1);
+    const keepBoth = (to) => { const m = /^(.*?)(\.[^./]*)?$/.exec(to); for (let i = 2; ; i++) { const c = `${m[1]} (${i})${m[2] || ''}`; if (!files.has(c) && !isDir(c)) return c; } };
+    const run = async (o) => {
+      const j = (jobs[o.id] = { cancel: false, standing: o.conflict || 'ask', answer: null, wake: null }); const end = { id: o.id, failed: [], skipped: 0, files: 0 }; const remaining = []; let left = 0;
+      const ask = (from, to) => new Promise((ok) => { if (j.standing !== 'ask') return ok(j.standing); j.wake = ok; emit({ id: o.id, status: 'conflict', from, to, size: (files.get(from) || '').length, existingSize: (files.get(to) || '').length, dir: false }); });
+      for (const p of o.paths) {
+        if (j.cancel) { if (o.op === 'move') { left++; remaining.push(p); } continue; }
+        if (o.op === 'delete') { for (const k of [p, ...under(p)]) if (files.delete(k)) end.files++; continue; }
+        if (isDir(p) && (o.dest + '/').startsWith(p + '/')) { end.failed.push(base(p) + ': into itself'); continue; }
+        const list = isDir(p) ? under(p).map((k) => [k, o.dest + '/' + base(p) + k.slice(p.length)]) : [[p, o.dest + '/' + base(p)]];
+        for (const [from, to0] of list) {
+          let to = to0;
+          if (o.pace) { emit({ id: o.id, status: 'progress', done: 1, total: 2, files: 0, ofFiles: 1, name: base(from) }); await new Promise((ok) => setTimeout(ok, 30)); if (j.cancel) { if (o.op === 'move') { left++; remaining.push(p); } break; } }
+          if (files.has(to)) { const a = await ask(from, to); if (a === 'skip') { end.skipped++; if (o.op === 'move') { left++; remaining.push(p); } continue; } if (a === 'keep') to = keepBoth(to); }
+          files.set(to, files.get(from)); end.files++; if (o.op === 'move') files.delete(from);
+        }
+      }
+      delete jobs[o.id]; emit({ ...end, status: j.cancel ? 'cancelled' : 'done', ...(o.op === 'move' ? { left, remaining } : {}) });
+    };
+    return {
+      files,
+      has: (p) => files.has(p) || isDir(p),
+      writeText: async (o) => { files.set(o.path, o.text); return { ok: true }; },
+      deletePath: async (p) => { for (const k of [p, ...under(p)]) files.delete(k); return { ok: true, trashed: true }; },
+      archiveFree: async () => ({ free: 5e9 }), fontDirs: async () => ['/usr/share/fonts'], fontIndex: async () => [{ path: '/usr/share/fonts/a.ttf', size: 9, mtime: 1, families: ['A'] }],
+      megaDecrypt: async (o) => { const b = files.get(o.path); files.set(o.path, Buffer.from(b, 'latin1').map((x) => x ^ 0x5a).toString('latin1')); return true; },
+      filesJob: async (o) => { void run(o); return { id: o.id }; },
+      filesCancel: async (o) => { const j = jobs[o.id]; if (j) { j.cancel = true; if (j.wake) j.wake('skip'); } },
+      filesAnswer: async (o) => { const j = jobs[o.id]; if (!j) return; if (/All$/.test(o.answer)) j.standing = o.answer.replace(/All$/, ''); const w = j.wake; j.wake = null; if (w) w(o.answer.replace('All', '')); },
+      onFilesJob: (cb) => { fileSubs.push(cb); return () => { const i = fileSubs.indexOf(cb); if (i >= 0) fileSubs.splice(i, 1); }; },
+    };
+  }
   function fakeKt(bad) {
-    let subs = []; let task = null;
+    let subs = []; let task = null; const disk = fakeDisk();
     const push = () => subs.forEach((f) => f(task ? [JSON.parse(JSON.stringify(task))] : []));
     const later = (f) => setTimeout(f, 5);
     return {
@@ -181,10 +254,11 @@ function loadBridge(boot) {
       ready: async () => ({ os: 'linux', arch: 'x64', available: false }), async retryEngine() { this.available = true; },
       roots: async () => ({ roots: ['/d'] }), defaultDir: async () => '/d/Kurokawa', listDir: async () => ({ exists: true, entries: [] }),
       writeTemp: async () => '/tmp/kt-selftest.txt', pathInfo: async () => ({ exists: true, dir: false, size: 3 }),
-      readFile: async (p) => (p.endsWith('.txt') ? new Uint8Array([97, 98, 99]).buffer : new Uint8Array([0, 1, 2, 255]).buffer),
-      writeTempBytes: async () => '/tmp/kt-selftest/kt-selftest.bin',
+      readFile: async (p) => (disk.files.has(p) ? new Uint8Array(Buffer.from(disk.files.get(p), 'latin1')).buffer : p.endsWith('.txt') ? new Uint8Array([97, 98, 99]).buffer : new Uint8Array([0, 1, 2, 255]).buffer),
+      writeTempBytes: async (o) => { if (/mega/.test(o.name)) { disk.files.set('/tmp/kt-selftest/' + o.name, Buffer.from(o.b64, 'base64').toString('latin1')); return '/tmp/kt-selftest/' + o.name; } return '/tmp/kt-selftest/kt-selftest.bin'; },
+      ...Object.fromEntries(['writeText', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'filesJob', 'filesCancel', 'filesAnswer', 'onFilesJob'].map((k) => [k, disk[k]])),
       hashFile: async (p) => (p.endsWith('.txt') ? { ...lib.ABC, size: 3 } : { sha256: cfg.bigSha256, size: cfg.bigSize }),
-      removeFile: async () => undefined, exists: async (ps) => ps.map((p) => p.includes('renamed')),
+      removeFile: async (p) => { disk.files.delete(p); }, exists: async (ps) => ps.map((p) => disk.has(p) || p.includes('renamed')),
       http: async (o) => {
         const u = o.url.slice(cfg.base.length);
         if (u === '/text' || u === '/redirect') return { status: 200, url: cfg.base + '/text', headers: { 'x-kt-test': '1', 'x-kt-multi': bad ? 'a' : 'a, b' }, body: cfg.text };
@@ -216,6 +290,8 @@ function loadBridge(boot) {
     else assert.deepEqual(res.filter((r) => r.required && !r.ok).map((r) => r.name), ['http text + headers']);
     assert.equal(lib.verdict(res), bad ? 1 : 0);
     assert.ok(res.some((r) => r.name === 'remove' && r.ok) && res.some((r) => r.name === 'kt:tasks events' && r.ok));
+    const p3 = res.filter((r) => /^(files|deletePath|archiveFree|font|megaDecrypt)/.test(r.name));
+    assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_progress'));
   }
 

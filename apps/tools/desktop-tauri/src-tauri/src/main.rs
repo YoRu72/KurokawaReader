@@ -1,24 +1,32 @@
-// Kurokawa Tools — the Tauri shell (stage 2, beside the Electron one in ../../desktop): the same web UI (../../dist)
-// in a window made here, with bridge.js run before the page's own scripts on every load so the page finds the
-// same `window.kurokawaTools` the Electron preload gives it, and the download engine (aria2c beside the app,
-// engine.rs) started in the background (see ../PORTING.md for what is ported so far).
+// Kurokawa Tools — the Tauri shell (stages P1–P3, beside the Electron one in ../../desktop): the same web UI
+// (../../dist) in a window made here, with bridge.js run before the page's own scripts on every load so the page finds
+// the same `window.kurokawaTools` the Electron preload gives it, and the download engine (aria2c beside the app,
+// engine.rs) started in the background (see ../PORTING.md for what is ported so far). What both apps' shells share is
+// the shared crate's (shared/shell-rs, `kurokawa_shell`); Tools' engine rules are kt-core's (apps/tools/core/kt-core).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
 mod engine;
-mod engine_core;
-mod files;
-mod hash;
-mod net;
+// (Stage P3: the recycle bin, free space, fonts, MEGA, the Files page's jobs.)
+mod filecmds;
 mod rpc;
 mod selftest;
-mod testserver;
-mod util;
-mod winstate;
+// (Stage P3: the window's own title bar, the Reader's — the page draws it, src/ui/winbar.ts.)
+mod titlebar;
+mod trash;
 
 use std::path::PathBuf;
 
+use kurokawa_shell::{util, winstate};
 use tauri::Manager;
+
+/// desktop/main.cjs's createWindow: 1100×780 when nothing was saved, at least 420×560.
+pub const WINDOW: winstate::Defaults = winstate::Defaults {
+    width: 1100.0,
+    height: 780.0,
+    min_width: 420.0,
+    min_height: 560.0,
+};
 
 /// The page's bridge (../../bridge.js), injected as the window's initialization script.
 const BRIDGE_JS: &str = include_str!("../../bridge.js");
@@ -64,11 +72,34 @@ fn main() {
             commands::kt_clipboard_text,
             commands::kt_http,
             commands::kt_check_update,
+            filecmds::kt_delete_path,
+            filecmds::kt_archive_free,
+            filecmds::kt_font_dirs,
+            filecmds::kt_font_index,
+            filecmds::kt_mega_decrypt,
+            filecmds::kt_screen_font_add,
+            filecmds::kt_screen_font_remove,
+            filecmds::kt_files_job,
+            filecmds::kt_files_cancel,
+            filecmds::kt_files_answer,
+            titlebar::kt_title_bar,
             selftest::kt_selftest_progress,
             selftest::kt_selftest_done
         ])
-        .on_window_event(|window, event| winstate::on_event(window, event))
+        .on_window_event(|window, event| {
+            winstate::on_event(window, event);
+            titlebar::on_event(window, event);
+        })
         .setup(|app| {
+            // (Before any request: the app's own requests named as Tools' (shared crate's net.rs), the cookies sites
+            // set kept between runs in <app data>/cookies.txt, as Electron's session keeps them.)
+            kurokawa_shell::net::configure(format!(
+                "Mozilla/5.0 (compatible) KurokawaTools/{} (Tauri)",
+                app.handle().package_info().version
+            ));
+            if let Ok(dir) = app.path().app_data_dir() {
+                kurokawa_shell::net::configure_cookies(dir.join("cookies.txt"));
+            }
             // The engine: its files in the app's data folder, aria2c looked for in the resource folder (then beside
             // the executable, then on the PATH), started in the background.
             let handle = app.handle().clone();
@@ -96,17 +127,19 @@ fn main() {
                 serde_json::json!({ "os": util::node_platform(), "arch": util::node_arch() });
             let mut script: String = format!("window.__KT_BOOT__ = {};\n{}", boot, BRIDGE_JS);
             // (Only with KT_SELFTEST set: the self-test, after the bridge.)
-            if selftest::out_path().is_some() {
+            if kurokawa_shell::selftest::out_path("KT").is_some() {
                 let found = engine::get().and_then(|e| e.find_binary());
                 if let Some(t) = selftest::script(found) {
                     script.push('\n');
                     script.push_str(&t);
                 }
             }
-            // (The window of desktop/main.cjs's createWindow: 1100×780 or as it was left, at least 420×560, the
-            // system's own frame for now. Made here rather than in tauri.conf.json so it can carry the
-            // initialization script.)
-            let saved = winstate::load(&handle);
+            // (The window of desktop/main.cjs's createWindow: 1100×780 or as it was left, at least 420×560 — with the
+            // app's own title bar unless the system's was chosen (titlebar.rs, as the Reader's): no system frame on
+            // Windows and Linux, the page draws the bar and its buttons; on a Mac the system's lights over the page,
+            // its title hidden. Made here rather than in tauri.conf.json so it can carry the initialization script.)
+            let own = titlebar::own_at_start(&handle);
+            let saved = winstate::load(&handle, &WINDOW);
             let mut b = tauri::WebviewWindowBuilder::new(
                 app.handle(),
                 "main",
@@ -114,11 +147,23 @@ fn main() {
             )
             .title("Kurokawa Tools")
             .inner_size(saved.width, saved.height)
-            .min_inner_size(420.0, 560.0)
+            .min_inner_size(WINDOW.min_width, WINDOW.min_height)
             .disable_drag_drop_handler()
             .initialization_script(script.as_str());
             if let (Some(x), Some(y)) = (saved.x, saved.y) {
                 b = b.position(x, y);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                b = b.decorations(!own);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                if own {
+                    b = b
+                        .title_bar_style(tauri::TitleBarStyle::Overlay)
+                        .hidden_title(true);
+                }
             }
             if saved.maximized {
                 b = b.maximized(true);

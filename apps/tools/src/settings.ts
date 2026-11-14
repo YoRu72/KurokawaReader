@@ -143,6 +143,13 @@ export interface Settings {
   videoOpts?: Partial<import('./downloads/videoArgs').VideoOptions>; videoPresets?: { name: string; opts: Partial<import('./downloads/videoArgs').VideoOptions> }[]; videoAsk?: boolean; videoFragments?: number;
   videoChapters?: boolean; videoTemplate?: string; videoNumber?: boolean; videoCookies?: string;
   schedule: { enabled: boolean; start: string; stop: string; days: number[] };
+  /** A computer's window where the shell has the page draw its bar (the Tauri shell — src/ui/winbar.ts, the Reader's
+   *  too): the app's own title bar in the theme's colours, or the system's frame. */
+  titleBarKind: 'own' | 'system';
+  /** The app's own bar without a surface: the window's buttons float over the top of the page. */
+  titleBarClear: boolean;
+  /** The app's icon and name at the start of its own (solid) bar; off, the sidebar keeps them. */
+  titleBarName: boolean;
 }
 
 const KEY = 'kt.settings';
@@ -154,6 +161,7 @@ const DEFAULTS: Settings = {
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeAuto: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
   subLangs: [], settingsLayout: 'tabs', autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
   categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, torrent: { dht: true, lsd: true, upnp: true, natpmp: true, enc: 'enabled', seedRatio: 0, seedMinutes: 0 }, doh: 'off', secureScreen: false, playerWith: 'ask', archiveKeepFree: -1, archiveVerifyFirst: false, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
+  titleBarKind: 'own', titleBarClear: false, titleBarName: true,
 };
 
 /** Parts of the app once offered as add-ons and now always there: the player. */

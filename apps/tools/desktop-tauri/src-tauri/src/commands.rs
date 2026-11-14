@@ -1,44 +1,20 @@
 // desktop/main.cjs's `ipcMain.handle('kt:*')` channels as Tauri commands: kt:xyz → kt_xyz (stage 1: files, dialogs,
-// clipboard, http, update check; stage 2: the download engine, engine.rs). Every command is async so it runs on the
-// async runtime, never on the main thread (the blocking dialogs need that); the engine's work, which is synchronous,
-// goes through spawn_blocking. Arguments come from bridge.js under the keys named here (p, ps, o, id, index, …).
-use std::path::{Path, PathBuf};
+// clipboard, http, update check; stage 2: the download engine, engine.rs; stage P3's file functions and the Files
+// page's jobs: filecmds.rs). Every command is async so it runs on the async runtime, never on the main thread (the
+// blocking dialogs need that); the engine's work, which is synchronous, goes through spawn_blocking. Arguments come
+// from bridge.js under the keys named here (p, ps, o, id, index, …). Since stage P3 the bodies of the shell's own
+// channels are the shared crate's (kurokawa_shell: shell, files, hash, net — the same code the Reader runs); these are
+// thin wrappers under Tools' names.
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_clipboard_manager::ClipboardExt;
-use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_opener::OpenerExt;
+
+use kurokawa_shell::shell::{self, downloads_dir, home_dir, lossy, text_of};
+use kurokawa_shell::{files, hash, net, util};
 
 use crate::engine::{self, Engine};
-use crate::{files, hash, net, util};
-
-fn text_of(o: &Value, key: &str) -> String {
-    match o.get(key) {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Null) | None => String::new(),
-        Some(other) => other.to_string(),
-    }
-}
-
-fn lossy(p: &std::path::Path) -> String {
-    p.to_string_lossy().into_owned()
-}
-
-fn downloads_dir(app: &AppHandle) -> PathBuf {
-    match app.path().download_dir() {
-        Ok(p) => p,
-        Err(_) => home_dir(app),
-    }
-}
-
-fn home_dir(app: &AppHandle) -> PathBuf {
-    match app.path().home_dir() {
-        Ok(p) => p,
-        Err(_) => PathBuf::from("."),
-    }
-}
 
 /// Where downloads go when nothing else was chosen: <Downloads>/Kurokawa, as desktop/main.cjs gives aria2.
 pub fn default_dir(app: &AppHandle) -> PathBuf {
@@ -218,26 +194,12 @@ pub async fn kt_roots(app: AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn kt_list_dir(p: String) -> Result<Value, String> {
-    match files::list_dir(&p) {
-        Some(entries) => {
-            let list: Vec<Value> = entries
-                .iter()
-                .map(|e| json!({ "name": e.name, "path": e.path, "dir": e.dir, "size": e.size, "mtime": e.mtime }))
-                .collect();
-            Ok(json!({ "entries": list, "exists": true }))
-        }
-        None => Ok(json!({ "entries": [], "exists": false })),
-    }
+    Ok(shell::list_dir_value(&p))
 }
 
 #[tauri::command]
 pub async fn kt_path_info(p: String) -> Result<Value, String> {
-    match files::path_info(&p) {
-        Some(i) => Ok(
-            json!({ "exists": true, "dir": i.dir, "size": i.size, "name": i.name, "parent": i.parent }),
-        ),
-        None => Ok(json!({ "exists": false })),
-    }
+    Ok(shell::path_info_value(&p))
 }
 
 #[tauri::command]
@@ -253,8 +215,7 @@ pub async fn kt_siblings(p: String) -> Result<Vec<String>, String> {
 /// The file's bytes, handed to the page as an ArrayBuffer (not a JSON array of numbers).
 #[tauri::command]
 pub async fn kt_read_file(p: String) -> Result<tauri::ipc::Response, String> {
-    let bytes: Vec<u8> = std::fs::read(&p).map_err(|e| e.to_string())?;
-    Ok(tauri::ipc::Response::new(bytes))
+    shell::read_file_response(&p)
 }
 
 #[tauri::command]
@@ -265,25 +226,16 @@ pub async fn kt_write_text(o: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn kt_write_temp(o: Value) -> Result<String, String> {
-    let f = files::write_temp(
-        &std::env::temp_dir(),
-        &text_of(&o, "name"),
-        &text_of(&o, "text"),
-    )
-    .map_err(|e| e.to_string())?;
+    let f = files::write_temp(&std::env::temp_dir(), &text_of(&o, "name"), &text_of(&o, "text"))
+        .map_err(|e| e.to_string())?;
     Ok(lossy(&f))
 }
 
 #[tauri::command]
 pub async fn kt_write_temp_bytes(o: Value) -> Result<String, String> {
     let bytes = util::b64_decode(&text_of(&o, "b64"));
-    let f = files::write_temp_bytes(
-        &std::env::temp_dir(),
-        &text_of(&o, "sub"),
-        &text_of(&o, "name"),
-        &bytes,
-    )
-    .map_err(|e| e.to_string())?;
+    let f = files::write_temp_bytes(&std::env::temp_dir(), &text_of(&o, "sub"), &text_of(&o, "name"), &bytes)
+        .map_err(|e| e.to_string())?;
     Ok(lossy(&f))
 }
 
@@ -307,51 +259,27 @@ pub async fn kt_hash_file(p: String) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn kt_open_path(app: AppHandle, p: String) -> Result<(), String> {
-    app.opener()
-        .open_path(p, None::<&str>)
-        .map_err(|e| e.to_string())
+    shell::open_path(&app, p)
 }
 
 #[tauri::command]
 pub async fn kt_open_external(app: AppHandle, u: String) -> Result<(), String> {
-    let windows = cfg!(target_os = "windows");
-    match util::file_url_to_path(&u, windows) {
-        Some(p) => app
-            .opener()
-            .open_path(p, None::<&str>)
-            .map_err(|e| e.to_string()),
-        None => app
-            .opener()
-            .open_url(u, None::<&str>)
-            .map_err(|e| e.to_string()),
-    }
+    shell::open_external(&app, u)
 }
 
-/// The folder holding `p`, opened (Electron's showItemInFolder, without selecting the item).
-fn show_in_folder(app: &AppHandle, p: &str) -> Result<(), String> {
-    let path = Path::new(p);
-    let dir: PathBuf = match path.parent() {
-        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
-        _ => path.to_path_buf(),
-    };
-    app.opener()
-        .open_path(lossy(&dir), None::<&str>)
-        .map_err(|e| e.to_string())
-}
-
-/// kt:open(id, fileIndex): a task's file opened with its program, or its folder shown (fileIndex −1, or a file
-/// that cannot be opened).
+/// kt:open(id, fileIndex): a task's file opened with its program, or shown in its folder (fileIndex −1, or a file
+/// that cannot be opened) — chosen there where this build's opener can (filecmds::reveal).
 #[tauri::command]
 pub async fn kt_open(app: AppHandle, id: Value, index: Option<i64>) -> Result<(), String> {
     let idt = id_text(&id);
     let i = index.unwrap_or(0);
     let p = with_engine(move |e| e.file_of(&idt, i)).await?;
     if index == Some(-1) || (index.is_none() && p.is_empty()) {
-        return show_in_folder(&app, &p);
+        return crate::filecmds::reveal(&app, &p);
     }
-    match app.opener().open_path(p.clone(), None::<&str>) {
+    match shell::open_path(&app, p.clone()) {
         Ok(()) => Ok(()),
-        Err(_) => show_in_folder(&app, &p),
+        Err(_) => crate::filecmds::reveal(&app, &p),
     }
 }
 
@@ -359,87 +287,26 @@ pub async fn kt_open(app: AppHandle, id: Value, index: Option<i64>) -> Result<()
 
 #[tauri::command]
 pub async fn kt_pick_dir(app: AppHandle) -> Result<Option<String>, String> {
-    let picked = app.dialog().file().blocking_pick_folder();
-    match picked {
-        Some(fp) => {
-            let p = fp.into_path().map_err(|e| e.to_string())?;
-            Ok(Some(lossy(&p)))
-        }
-        None => Ok(None),
-    }
+    shell::pick_dir(&app)
 }
 
 /// kt:pickFile({ multiple?, filters?: [{ name, extensions }] }) → the paths, or null when cancelled.
 #[tauri::command]
 pub async fn kt_pick_file(app: AppHandle, o: Value) -> Result<Option<Vec<String>>, String> {
-    let mut b = app.dialog().file();
-    if let Some(Value::Array(filters)) = o.get("filters") {
-        for f in filters.iter() {
-            let name = text_of(f, "name");
-            let mut exts: Vec<String> = Vec::new();
-            if let Some(Value::Array(xs)) = f.get("extensions") {
-                for x in xs.iter() {
-                    if let Some(s) = x.as_str() {
-                        exts.push(s.to_string());
-                    }
-                }
-            }
-            let refs: Vec<&str> = exts.iter().map(|s| s.as_str()).collect();
-            b = b.add_filter(name, &refs);
-        }
-    }
-    let multiple = o.get("multiple").and_then(|m| m.as_bool()).unwrap_or(false);
-    let mut out: Vec<String> = Vec::new();
-    if multiple {
-        match b.blocking_pick_files() {
-            Some(list) => {
-                for fp in list {
-                    let p = fp.into_path().map_err(|e| e.to_string())?;
-                    out.push(lossy(&p));
-                }
-            }
-            None => return Ok(None),
-        }
-    } else {
-        match b.blocking_pick_file() {
-            Some(fp) => {
-                let p = fp.into_path().map_err(|e| e.to_string())?;
-                out.push(lossy(&p));
-            }
-            None => return Ok(None),
-        }
-    }
-    Ok(Some(out))
+    shell::pick_files(&app, &o)
 }
 
 /// kt:saveText({ name, text }): a save dialog in Downloads; the text written where chosen → { path | null }.
 #[tauri::command]
 pub async fn kt_save_text(app: AppHandle, o: Value) -> Result<Value, String> {
-    let mut name = text_of(&o, "name");
-    if name.is_empty() {
-        name = "kurokawa.txt".to_string();
-    }
-    let picked = app
-        .dialog()
-        .file()
-        .set_directory(downloads_dir(&app))
-        .set_file_name(name)
-        .blocking_save_file();
-    let fp = match picked {
-        Some(fp) => fp,
-        None => return Ok(json!({ "path": null })),
-    };
-    let p = fp.into_path().map_err(|e| e.to_string())?;
-    std::fs::write(&p, text_of(&o, "text").as_bytes()).map_err(|e| e.to_string())?;
-    Ok(json!({ "path": lossy(&p) }))
+    shell::save_text(&app, &o)
 }
 
 /* ---------- clipboard ---------- */
 
 #[tauri::command]
 pub async fn kt_clipboard_text(app: AppHandle) -> Result<String, String> {
-    // (An empty clipboard, or one holding no text, is '' — as Electron's clipboard.readText() gives.)
-    Ok(app.clipboard().read_text().unwrap_or_default())
+    Ok(shell::clipboard_text(&app))
 }
 
 /* ---------- network ---------- */
@@ -449,6 +316,7 @@ pub async fn kt_http(o: Value) -> Result<Value, String> {
     net::http(&o).await
 }
 
+/// kt:checkUpdate: the newest tools-v* release (they are all pre-releases) newer than this one.
 #[tauri::command]
 pub async fn kt_check_update(app: AppHandle, o: Value) -> Result<Value, String> {
     let _ = o;

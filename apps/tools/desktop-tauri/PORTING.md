@@ -14,7 +14,7 @@ Tauri events (`app.emit`), listened to in bridge.js with `window.__TAURI__.event
 part of `core:default`). `tests/tauribridge.cjs` keeps the bridge, the preload and the Rust command list in step,
 and tests the self-test script against a fake bridge.
 
-The download engine (`src-tauri/src/engine.rs`, pure parts in `engine_core.rs`): aria2c, found as `aria2.cjs` finds
+The download engine (`src-tauri/src/engine.rs`, pure parts in kt-core's `engine_core.rs`): aria2c, found as `aria2.cjs` finds
 it — `<resources>/aria2/<win|linux|mac>-<arch>/aria2c[.exe]`, then `<resources>/aria2/<plat>/`, the same under the
 executable's folder, then the PATH (on macOS also Homebrew's `/opt/homebrew/bin` and `/usr/local/bin`) —, started
 with `aria2.cjs`'s arguments (free loopback port, random secret, session file, the same option list) plus
@@ -36,7 +36,11 @@ README so local builds work without it; to bundle aria2c locally, run `node fetc
 
 Self-test: with `KT_SELFTEST=<file>` set, `selftest.rs` starts a loopback test server and adds `selftest.js` to the
 initialization script; the page checks the bridge, files, hashes, `kt:http` (headers, redirect, gzip, binary, POST),
-the clipboard (not required), that the UI rendered, and — where aria2c is found — a 2 MiB download from the test
+the clipboard (not required), that the UI rendered, the P3 functions (the recycle bin — required on Linux, reported
+elsewhere —, free space, fonts, MEGA) and the Files page's jobs on temp folders (copy, keep both, replace for all, a
+skipped move, a folder into itself, cancel mid-copy with the file it replaced kept whole; a folder moved to another
+disk and a cancelled move there, where the machine has a second disk — /dev/shm on Linux, the runner's D: on Windows —,
+else reported as skipped with the reason), and — where aria2c is found — a 2 MiB download from the test
 server through the engine (paused mid-way, resumed, its hash checked, renamed, removed), then hands the results to
 `kt_selftest_done`, which writes them and exits 0/1; a watchdog exits 2 after `KT_SELFTEST_TIMEOUT` (100) s.
 `tauri-check.yml` runs it on Linux under Xvfb and on Windows (both required), and on macOS (the bare executable,
@@ -45,7 +49,7 @@ reported only).
 Paths on Windows: aria2 reports a file's path with «/» and its folder as given (with «\\»). The shell hands the page
 `dir` (and the paths of `kt:open`, a renamed file) in native form — backslashes, no `\\?\` prefix, as Node's path
 functions give —, and `files[].path` relative to `dir` with «/» between its parts, which is what the page's code
-splits on (`engine_core.rs`'s `native_path` / `rel_path_on`). Electron compared the two forms as they came, so on
+splits on (kt-core `engine_core.rs`'s `native_path` / `rel_path_on`). Electron compared the two forms as they came, so on
 Windows it handed the page the whole «C:/…» path as `files[].path`; the Tauri shell fixes that.
 `selftest-report.cjs` prints the results as a table.
 
@@ -55,110 +59,184 @@ Version: `tauri.conf.json` has `"version": "../../package.json"`, so the app's v
 Icons: not committed; CI runs `npx @tauri-apps/cli icon ../desktop/icon.png` first (it writes `src-tauri/icons/`).
 Do the same once before a local `tauri build` / `tauri dev`.
 
-## The 98 channels
+## Stage P3 (this pass)
 
-Status: **done** (stage 1, or the stage named) · **stage N** · **hard** (see below).
+- **The shared crate.** `src-tauri` takes `kurokawa-shell` (`../../../shared/shell-rs`, the Reader's too) for files,
+  dialogs, clipboard, opening, web requests (now with the cookie jar, as Electron's session), the update check, window
+  state, hashes, the self-test's frame and its test server; Tools' own copies (`util`, `files`, `hash`, `net`,
+  `winstate`, `testserver`, the frame of `selftest`) are gone. `commands.rs` is thin wrappers under Tools' names.
+- **kt-core** (`../core/kt-core`, docs/RUST-PORT.md §6): std only, every module tested alone with rustc —
+  `engine_core` (moved from the shell), `filejobs`, `fontnames`, `mega`. The Android stages will take it as it is. Not a
+  Cargo workspace yet (it would move `target/` and the workflow's paths); the shell takes it by path.
+- **API detection** (`src-tauri/build.rs` + `apidetect.rs`, the Reader's way): `kt_reveal` (tauri-plugin-opener's
+  `reveal_item_in_dir` on its Opener, for «show in folder» with the item chosen), and for later stages `kt_set_icon`,
+  `kt_default_icon`, `kt_progress`. Not found → that part is left out; the build never fails for it; the log says
+  «KT build: …».
+- **The Files page's jobs** (`src-tauri/src/filecmds.rs` over kt-core `filejobs.rs`, a rule-for-rule port of
+  `native/android/KtFileJobs.java` with tests/native/FilesT.java's cases): copy, move, delete; an original removed only
+  after its copy arrived whole (size checked); replace writes beside (`.ktpart`) and swaps only when complete; keep both
+  → «name (2).ext»; skip; «…All» for the rest; a folder never into itself (trailing separator, a link, letter case); a
+  link to a folder neither followed nor deleted through; cancel; per-item failures in `failed`; a move's `left` and
+  `remaining`. Events `kt:files` with the phone plugin's shapes; the page (src/views/files.ts) takes the shell's
+  `filesJob` / `filesCancel` / `filesAnswer` / `onFilesJob` where they are, so Copy, Cut, Paste, the clipboard bar and
+  Delete (to the system's recycle bin, or for good) appear on the Tauri shell only — Electron's bridge has none.
+- **The title bar** (`src-tauri/src/titlebar.rs`, the Reader's with Tools' names; the window made without the system's
+  frame unless chosen): the page draws it with `src/ui/winbar.ts` — one file in both apps (tests/shared-copies.cjs) —
+  and offers its settings (the app's own / the system's, transparent, the name) in Settings on the Tauri shell only.
+  Electron keeps `ui/titlebar.ts`. The custom app icon system (`kt:appIcon`) is P6.
 
-| Area | Channel | Status | Notes |
+## The 98 channels (stocktaking, P3)
+
+Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
+docs/RUST-PORT.md that brings it. **done**: in bridge.js and a Rust command; **missing**: absent from bridge.js (the page
+asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 · P5 17 · P6 6 ·
+P7 16 · P8 9 missing — **43 of 98 done**. Besides these, the shell has four of its own (no Electron channel): the Files
+page's jobs `filesJob` / `filesCancel` / `filesAnswer` / `onFilesJob` (P3).
+
+### P1–P2 — done before this pass (35)
+
+| Channel | Status | Notes |
+|---|---|---|
+| `kt:state` | done | the engine's `available`/`reason`, `os`/`arch` in Node's words |
+| `kt:engineRetry` | done |  |
+| `kt:list` | done | the last list while aria2c is down |
+| `kt:add` | done | `o.video` (yt-dlp) refused until P5 |
+| `kt:pause` | done |  |
+| `kt:resume` | done |  |
+| `kt:remove` | done | waits up to 3 s for `forceRemove` |
+| `kt:setFiles` | done |  |
+| `kt:setUrl` | done |  |
+| `kt:move` | done |  |
+| `kt:setLimits` | done |  |
+| `kt:configure` | done |  |
+| `kt:torrentInfo` | done |  |
+| `kt:rename` | done | `sniff.cjs` renaming of finished files not ported (P5) |
+| `kt:open` | done | «show in folder» now chooses the item where the opener can (P3, `kt_reveal`) |
+| `kt:defaultDir` | done |  |
+| `kt:roots` | done |  |
+| `kt:listDir` | done | shared crate |
+| `kt:pathInfo` | done | shared crate |
+| `kt:exists` | done | shared crate |
+| `kt:siblings` | done | shared crate |
+| `kt:readFile` | done | raw bytes → ArrayBuffer (shared crate) |
+| `kt:writeText` | done | shared crate |
+| `kt:writeTemp` | done | shared crate |
+| `kt:writeTempBytes` | done | shared crate |
+| `kt:removeFile` | done | shared crate |
+| `kt:hashFile` | done | shared crate |
+| `kt:openPath` | done | shared crate |
+| `kt:openExternal` | done | shared crate |
+| `kt:pickDir` | done | shared crate |
+| `kt:pickFile` | done | shared crate |
+| `kt:saveText` | done | shared crate |
+| `kt:clipboardText` | done | shared crate |
+| `kt:http` | done | shared crate: since P3 with a cookie jar kept in `<app data>/cookies.txt`, as Electron's session |
+| `kt:checkUpdate` | done | shared crate (`tools-v*`, pre-releases) |
+
+### P3 — this stage (8 done)
+
+| Channel | Status | Notes |
+|---|---|---|
+| `kt:deletePath` | done (P3) | `trash.rs`: Windows SHFileOperationW (shell32), macOS NSFileManager trashItemAtURL (Objective-C runtime), Linux the freedesktop.org Trash spec; then removed, as main.cjs falls back to fs.rm; also answers `trashed` |
+| `kt:fontDirs` | done (P3) | kt-core `fontnames::font_dirs` |
+| `kt:fontIndex` | done (P3) | kt-core `fontnames::index` (name-table reader, cached by size + time) |
+| `kt:megaDecrypt` | done (P3) | kt-core `mega` (AES-128-CTR written here, FIPS-197 / SP 800-38A vectors and Node's output in its tests) |
+| `kt:archiveFree` | done (P3) | free space (statvfs / GetDiskFreeSpaceExW, the Reader's code); the other archive channels are P7 |
+| `kt:screenFontAdd` | done (P3) | `<app data>/screen-fonts` |
+| `kt:screenFontRemove` | done (P3) |  |
+| `app:titleBar` | done (P3) | `kt_title_bar` — the Reader's `titlebar.rs` (own bar / system frame, act, `kt:titleBarState`); the page draws it (`src/ui/winbar.ts`, shared) |
+
+### P4 — torrent streaming and the local stream server (7 missing)
+
+| Channel | Status | Notes |
+|---|---|---|
+| `kt:streamUrl` | missing | librqbit + range server, aria2 head/tail fallback |
+| `kt:streamDone` | missing |  |
+| `kt:streamStats` | missing |  |
+| `kt:fileUrl` | missing | the local stream server serves files |
+| `kt:audioUrl` | missing | `streamproxy.cjs` → 127.0.0.1 server |
+| `kt:videoUrl` | missing |  |
+| `kt:proxyUrl` | missing | forwards headers |
+
+### P5 — video tools and packs (17 missing)
+
+| Channel | Status | Notes |
+|---|---|---|
+| `kt:videoInfo` | missing | yt-dlp spawned from Rust |
+| `kt:videoReady` | missing |  |
+| `kt:videoVersion` | missing |  |
+| `kt:videoUpdate` | missing |  |
+| `kt:videoRollback` | missing |  |
+| `kt:videoBinary` | missing |  |
+| `kt:isVideoHost` | missing |  |
+| `kt:galleryList` | missing | gallery-dl |
+| `kt:galleryReady` | missing |  |
+| `kt:ffmpegAvailable` | missing | ffmpeg pack |
+| `kt:ffmpeg` | missing | progress as events |
+| `kt:ffmpegCancel` | missing |  |
+| `kt:ffprobe` | missing |  |
+| `kt:packStatus` | missing | download + SHA-256 |
+| `kt:packInstall` | missing |  |
+| `kt:packCancel` | missing |  |
+| `kt:packRemove` | missing |  |
+
+### P6 — desktop integration (6 missing)
+
+| Channel | Status | Notes |
+|---|---|---|
+| `kt:appIcon` | missing | the Reader's `appicon.rs` + `iconlogic.rs` with Tools' names (cfgs `kt_set_icon`/`kt_default_icon` already detected) |
+| `kt:mini` | missing | second always-on-top window on `#/mini` |
+| `kt:desktopPrefs` | missing | tray, notifications, keep-awake, when-done, global shortcuts |
+| `kt:registerMagnet` | missing | deep links + single instance (the Reader's `openfile.rs`/`openargs.rs`) |
+| `kt:captureUrl` | missing | second window (the Reader's `browser.rs`) |
+| `kt:siteWindow` | missing | same |
+
+### P7 — archives, the in-app browser, the screen translator (16 missing)
+
+| Channel | Status | Notes |
+|---|---|---|
+| `kt:archiveList` | missing | the Reader's `archive.rs` + `archives.rs` (zip/tar/7-Zip in Rust) — no JS helper needed |
+| `kt:archiveExtract` | missing |  |
+| `kt:archiveTest` | missing |  |
+| `kt:archiveCreate` | missing |  |
+| `kt:archiveCancel` | missing |  |
+| `kt:archiveRestore` | missing |  |
+| `kt:archiveExisting` | missing |  |
+| `kt:browse` | missing | the Reader's `browser.rs` + `browserlogic.rs` (caught downloads, cookies), plus media sniffing |
+| `kt:screenConfig` | missing | screen capture + OCR helpers |
+| `kt:screenStatus` | missing |  |
+| `kt:screenAction` | missing |  |
+| `kt:screenJob` | missing |  |
+| `kt:screenRegion` | missing |  |
+| `kt:screenClose` | missing |  |
+| `kt:screenOcrLangs` | missing |  |
+| `kt:screenCaption` | missing |  |
+
+### P8 — servers, DoH, antivirus, update install (9 missing)
+
+| Channel | Status | Notes |
+|---|---|---|
+| `kt:shareWifi` | missing | HTTP server on all interfaces, random key |
+| `kt:shareWifiStop` | missing |  |
+| `kt:shareWifiStatus` | missing |  |
+| `kt:localApi` | missing | same routes and token |
+| `kt:setDoh` | missing | the shared crate already has the resolver (`net::set_doh`, `doh.rs`, the Reader's `kr_set_doh`): a thin wrapper |
+| `kt:dohProbe` | missing | `net::doh_try` |
+| `kt:avScan` | missing | the system's scanner |
+| `kt:avAvailable` | missing |  |
+| `kt:installUpdate` | missing | the Reader's `update.rs`/`updatelogic.rs` + installer |
+
+### What the Reader's port gives each stage
+
+| Stage | Reused nearly as is | Adapted | Nothing to reuse |
 |---|---|---|---|
-| State | `kt:state` | done | the engine's `available`/`reason`, `os`/`arch` in Node's words |
-| Engine | `kt:engineRetry` | done (stage 2) | starts aria2c if it is not running, then the state |
-| Engine | `kt:list` | done (stage 2) | the last list while aria2c is down |
-| Engine | `kt:add` | done (stage 2) | `o.video` (yt-dlp) refuses until stage 3 |
-| Engine | `kt:pause` | done (stage 2) |  |
-| Engine | `kt:resume` | done (stage 2) |  |
-| Engine | `kt:remove` | done (stage 2) | waits up to 3 s for `forceRemove` to finish before removing the result and the files |
-| Engine | `kt:setFiles` | done (stage 2) |  |
-| Engine | `kt:setUrl` | done (stage 2) |  |
-| Engine | `kt:move` | done (stage 2) |  |
-| Engine | `kt:setLimits` | done (stage 2) |  |
-| Engine | `kt:configure` | done (stage 2) |  |
-| Engine | `kt:torrentInfo` | done (stage 2) |  |
-| Engine | `kt:rename` | done (stage 2) | the content-sniffed renaming of finished files (`sniff.cjs` `fixName`) is not ported yet |
-| Engine | `kt:open` | done (stage 2) | the file with its program; «show in folder» opens the parent folder (no item selection: `reveal_item_in_dir` not used yet) |
-| Engine | `kt:megaDecrypt` | stage 3 | AES-128-CTR (`aes` + `ctr` crates), streamed |
-| Files | `kt:defaultDir` | done | `<Downloads>/Kurokawa` |
-| Files | `kt:roots` | done | |
-| Files | `kt:listDir` | done | |
-| Files | `kt:pathInfo` | done | |
-| Files | `kt:exists` | done | |
-| Files | `kt:siblings` | done | |
-| Files | `kt:readFile` | done | raw bytes (`ipc::Response`) → ArrayBuffer |
-| Files | `kt:writeText` | done | |
-| Files | `kt:writeTemp` | done | |
-| Files | `kt:writeTempBytes` | done | |
-| Files | `kt:removeFile` | done | |
-| Files | `kt:hashFile` | done | md5/sha1/sha256 in one streamed pass |
-| Files | `kt:deletePath` | stage 3 | to the trash: `trash` crate, then `remove_dir_all` as Electron does |
-| Files | `kt:fontDirs` | stage 3 | plain path list |
-| Files | `kt:fontIndex` | stage 3 | the `name`-table reader ported as is (or `ttf-parser`) |
-| Opening | `kt:openPath` | done | `tauri-plugin-opener` |
-| Opening | `kt:openExternal` | done | file:// → `open_path`, else `open_url` |
-| Opening | `kt:fileUrl` | stage 3 | the local stream server (below) serves files |
-| Dialogs | `kt:pickDir` | done | `tauri-plugin-dialog`, blocking form in an async command |
-| Dialogs | `kt:pickFile` | done | multiple, filters |
-| Dialogs | `kt:saveText` | done | |
-| Clipboard | `kt:clipboardText` | done | `tauri-plugin-clipboard-manager` |
-| Network | `kt:http` | done | reqwest (rustls, gzip/brotli/deflate), same result shape |
-| Network | `kt:captureUrl` | stage 4 | second `WebviewWindow` + `on_navigation`, own data dir for the sign-in |
-| Network | `kt:siteWindow` | stage 4 | second `WebviewWindow`; resolve on close |
-| Network | `kt:setDoh` | hard | see DoH |
-| Network | `kt:dohProbe` | hard | see DoH |
-| Updates | `kt:checkUpdate` | done | same GitHub tools-v* logic and result |
-| Updates | `kt:installUpdate` | stage 3 | absent: the page falls back to opening the asset; later `tauri-plugin-updater` (needs signed update manifests) or the Electron logic in Rust |
-| Streaming | `kt:streamUrl` | hard | see torrents |
-| Streaming | `kt:streamDone` | hard | |
-| Streaming | `kt:streamStats` | hard | |
-| Streaming | `kt:audioUrl` | stage 3 | `streamproxy.cjs` → a 127.0.0.1 HTTP server in Rust (`tiny_http` or hyper) |
-| Streaming | `kt:videoUrl` | stage 3 | same server |
-| Streaming | `kt:proxyUrl` | stage 3 | same server, forwards headers |
-| Videos | `kt:videoInfo` | stage 3 | yt-dlp is already an external binary: spawn it from Rust (`tokio::process`), same args |
-| Videos | `kt:videoReady` | stage 3 | download/update of yt-dlp, progress as a Tauri event |
-| Videos | `kt:videoVersion` | stage 3 | |
-| Videos | `kt:videoUpdate` | stage 3 | |
-| Videos | `kt:videoRollback` | stage 3 | |
-| Videos | `kt:videoBinary` | stage 3 | |
-| Videos | `kt:isVideoHost` | stage 3 | the host regex moved to Rust (`regex` crate) or into bridge.js |
-| Videos | `kt:galleryList` | stage 3 | gallery-dl binary, same as yt-dlp |
-| Videos | `kt:galleryReady` | stage 3 | |
-| ffmpeg | `kt:ffmpegAvailable` | stage 3 | ffmpeg is a pack (downloaded), spawned from Rust |
-| ffmpeg | `kt:ffmpeg` | stage 3 | progress as events |
-| ffmpeg | `kt:ffmpegCancel` | stage 3 | |
-| ffmpeg | `kt:ffprobe` | stage 3 | |
-| Archives | `kt:archiveList` | stage 3 | `zip` crate for ZIP; 7-Zip as a sidecar for the rest (as 7zip-bin today) |
-| Archives | `kt:archiveExtract` | stage 3 | the in-place HatchZip extraction is a careful port |
-| Archives | `kt:archiveTest` | stage 3 | |
-| Archives | `kt:archiveCreate` | stage 3 | |
-| Archives | `kt:archiveCancel` | stage 3 | |
-| Archives | `kt:archiveRestore` | stage 3 | |
-| Archives | `kt:archiveFree` | stage 3 | free space: `fs2`/`sysinfo` |
-| Archives | `kt:archiveExisting` | stage 3 | |
-| Packs | `kt:packStatus` | stage 3 | download + SHA-256 check, plain Rust |
-| Packs | `kt:packInstall` | stage 3 | |
-| Packs | `kt:packCancel` | stage 3 | |
-| Packs | `kt:packRemove` | stage 3 | |
-| Antivirus | `kt:avScan` | stage 3 | spawns the system's scanner |
-| Antivirus | `kt:avAvailable` | stage 3 | |
-| Browser | `kt:browse` | hard | see the in-app browser |
-| Screen | `kt:screenConfig` | hard | see the screen translator |
-| Screen | `kt:screenStatus` | hard | |
-| Screen | `kt:screenAction` | hard | |
-| Screen | `kt:screenJob` | hard | |
-| Screen | `kt:screenRegion` | hard | |
-| Screen | `kt:screenClose` | hard | |
-| Screen | `kt:screenOcrLangs` | hard | |
-| Screen | `kt:screenCaption` | hard | |
-| Screen | `kt:screenFontAdd` | stage 3 | plain file write in app data |
-| Screen | `kt:screenFontRemove` | stage 3 | |
-| Wi-Fi share | `kt:shareWifi` | stage 3 | the same small HTTP server (all interfaces, random key) |
-| Wi-Fi share | `kt:shareWifiStop` | stage 3 | |
-| Wi-Fi share | `kt:shareWifiStatus` | stage 3 | |
-| Window | `app:titleBar` | stage 4 | frameless window + `data-tauri-drag-region`; Windows has no `titleBarOverlay`, so the min/max/close buttons are drawn by the page |
-| Window | `kt:appIcon` | stage 4 | `Window::set_icon`; the Windows taskbar overlay of `appicon.cjs` needs `windows` crate calls |
-| Window | `kt:mini` | stage 4 | second always-on-top `WebviewWindow` on `#/mini` |
-| Desktop | `kt:desktopPrefs` | stage 4 | tray (`tray-icon` feature), notifications (`tauri-plugin-notification`), keep-awake (`keepawake` crate), when-done actions, global shortcuts (`tauri-plugin-global-shortcut`) |
-| Desktop | `kt:registerMagnet` | stage 4 | `tauri-plugin-deep-link` (magnet:, kurokawatools:) + `tauri-plugin-single-instance` for the second-instance hand-over |
-| Desktop | `kt:localApi` | stage 4 | the local API server in Rust (same routes, token) |
+| P3 | shared crate (`shell`, `files`, `hash`, `net`, `winstate`, `selftest`, `testserver`, `cookiejar`); `titlebar.rs`; `src/ui/winbar.ts` (one file in both apps); free space (`archives.rs`) | `apidetect.rs` (Tools' cfgs) | the file job engine (ported from the Android `KtFileJobs.java`), the recycle bin |
+| P4 | `testserver` (Range answers) for the stream tests | `download.rs`/`dlplan.rs` for `proxyUrl` | librqbit, the stream server, the WebTorrent hand-over |
+| P5 | — | `download.rs` + `updatelogic.rs` (fetch, SHA-256, replace, roll back) for packs and yt-dlp | yt-dlp / gallery-dl / ffmpeg running and parsing |
+| P6 | the notification plugin, single instance, `winbits.rs` (taskbar progress), `menu.rs` (a Mac's menu) | `appicon.rs` + `iconlogic.rs`, `openfile.rs` + `openargs.rs` (magnet, .torrent) | tray, global shortcuts, mini window, keep-awake, when-done |
+| P7 | `archive.rs` + `archives.rs` (and the 7-Zip resources step of its workflow) | `browser.rs` + `browserlogic.rs` | the screen translator (capture, OCR, overlays) |
+| P8 | `doh.rs` + `net::set_doh` / `doh_try` | `update.rs` + `installer/*` + `setup/` | Wi-Fi share, local API, antivirus |
+| P9 | release.yml's rust-desktop job, SHA256SUMS, asset names | `handover.rs` + `handoverlogic.rs` (settings, download list, library) | — |
 
 Events the preload listens for (`kt:tasks` and `kt:engineState` — done —, `kt:packProgress`, `kt:archiveProgress`,
 `kt:ffmpegProgress`, `kt:update-progress`, `kt:hotkeyAdd`, `kt:openTask`, `kt:browser`, `kt:screenCaption`,
@@ -216,12 +294,11 @@ it. Requests the page makes itself (images, `fetch`) keep the system's DNS, exce
 
 ## Stages
 
-1. **Done**: window, bridge, files, dialogs, clipboard, `kt:http`, `kt:checkUpdate`; CI builds and sizes.
-2. **Done**: the aria2 engine (bundled aria2c, tasks, `kt:tasks` / `kt:engineState` events), `kt:open`, the window's
-   size and place kept (`winstate.rs`, `window-state.json` in the app's config folder), the runtime self-test in CI.
-3. `deletePath`, fonts, `megaDecrypt`; the binaries and servers: yt-dlp, gallery-dl, ffmpeg packs, archives (+7-Zip sidecar), the local stream/proxy
-   server (`fileUrl`, `audioUrl`, `videoUrl`, `proxyUrl`), Wi-Fi share, antivirus, screen fonts, updates install.
-4. Desktop integration: single instance, deep links (magnet:, .torrent), tray, notifications, keep-awake, global
-   hotkeys, mini window, title bar, app icon, captureUrl / siteWindow windows, local API.
-5. Torrent streaming (librqbit, with the aria2 fallback), the in-app browser, DoH.
-6. The screen translator. Then parity review, and the Tauri builds into release-tools.yml.
+The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which channel each brings.
+
+1. **P1 done**: window, bridge, files, dialogs, clipboard, `kt:http`, `kt:checkUpdate`; CI builds and sizes.
+2. **P2 done**: the aria2 engine (bundled aria2c, tasks, `kt:tasks` / `kt:engineState` events), `kt:open`, the window's
+   size and place kept (`window-state.json` in the app's config folder), the runtime self-test in CI.
+3. **P3 written, waiting for CI**: the shared crate, kt-core, API detection, the recycle bin, free space, fonts, MEGA,
+   screen fonts, the Files page's jobs, the title bar. Left of P3: the preview builds beside each Electron release.
+4. P4–P8 as the table above; P9 the switch-over with the hand-over.

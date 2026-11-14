@@ -2,24 +2,32 @@
 name = "kurokawa-tools"
 # (Not the app's version: Tauri takes that from tauri.conf.json, which reads apps/tools/package.json.)
 version = "0.0.0"
-description = "Kurokawa Tools — the Tauri shell (stage 2)"
+description = "Kurokawa Tools — the Tauri shell"
 edition = "2021"
 publish = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# (Stage P3: what both apps' shells share — files, dialogs, clipboard, web requests with their cookies and DNS over
+# HTTPS, the update check, window state, hashes, the self-tests' frame and test server — comes from shared/shell-rs,
+# with the versions it names; Tools' engine rules from apps/tools/core/kt-core (std only). Tools lists tauri and the
+# three plugins itself: it registers the plugins, and Tauri's build reads their permissions from its direct
+# dependencies.)
 [dependencies]
+kurokawa-shell = { path = "../../../../shared/shell-rs" }
+kt-core = { path = "../../core/kt-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "deflate"] }
+# (The self-test's digest of the test server's file; the same version as kurokawa-shell's, so one copy.)
 sha2 = "0.10"
-sha1 = "0.10"
-md-5 = "0.10"
+
+# (Stage P3: the free space of a disk — statvfs; already in the build through Tauri.)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 opt-level = "s"

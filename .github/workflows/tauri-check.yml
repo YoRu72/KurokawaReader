@@ -1,15 +1,19 @@
 name: Tauri check
 
-# The Tauri shell of Kurokawa Tools (apps/tools/desktop-tauri, stage 2) built on Windows, Linux and macOS beside the
-# Electron one, to see that it builds, how big its bundles are, and that it runs: the built app is started with
-# KT_SELFTEST set and checks its own bridge, files, http and download engine against a loopback test server
-# (desktop-tauri/selftest.js). Linux and Windows must pass; macOS is reported without failing the job for now.
-# Nothing is signed or released.
+# The Tauri shell of Kurokawa Tools (apps/tools/desktop-tauri, stages P1–P3) built on Windows, Linux and macOS beside
+# the Electron one, to see that it builds, how big its bundles are, and that it runs: the built app is started with
+# KT_SELFTEST set and checks its own bridge, files, http, the recycle bin, free space, fonts, MEGA, the Files page's
+# copy / move / delete jobs (on temp folders, across disks where the machine has two) and the download engine against
+# a loopback test server (desktop-tauri/selftest.js). Linux and Windows must pass; macOS is reported without failing
+# the job for now. Since P3 the shell is built on the shared crate (shared/shell-rs, the Reader's too) and Tools' own
+# kt-core (apps/tools/core/kt-core), so a change to either runs this. Nothing is signed or released.
 on:
   push:
     branches: ['work-tauri*']
     paths:
       - 'apps/tools/desktop-tauri/**'
+      - 'apps/tools/core/**'
+      - 'shared/shell-rs/**'
       - 'apps/tools/src/**'
       - '.github/workflows/tauri-check.yml'
   workflow_dispatch:
@@ -53,6 +57,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
+
+      # The std-only modules' own tests, with rustc alone (the same ones run in the workspace): kt-core, the shell's
+      # recycle bin and API detection, and the shared crate's std-only parts. On Linux (/dev/shm is a second disk
+      # there, so the file jobs' moves across disks are tested too).
+      - name: Std-only unit tests
+        if: runner.os == 'Linux'
+        run: |
+          d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
+          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs; do
+            n=$(basename "$f" .rs)
+            rustc --edition 2021 --test "$f" -o "$d/$n"
+            "$d/$n"
+          done
 
       - uses: Swatinem/rust-cache@v2
         with:

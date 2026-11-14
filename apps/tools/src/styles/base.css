@@ -1941,3 +1941,71 @@ html.frameless.rail-mini .rail-brand { justify-content: center; }
 html.frameless body { position: fixed; top: var(--tb); left: 0; right: 0; bottom: 0; height: auto; transform: translateZ(0); overflow: hidden; }
 html.frameless.tb-hidden { --tb: 0px; }
 html.frameless.tb-hidden .win-titlebar { display: none; }
+
+/* The window's title bar, the app's own, drawn whole by the page where the shell asks it to (ui/winbar.ts — the Tauri
+   shell; the Reader's own, shared): a slim strip in the theme's colours (the sidebar's surface), the icon and name at
+   its start, the window's buttons at its end — Expressive state layers, rounded, that open out on hover
+   and square up a little when pressed; close turns the error colour. The page sits below it; transparent, it has no
+   surface and the page keeps room for its buttons instead. Full screen hides it. */
+.kr-winbar { display: none; }
+html.winbar { --wb-ctl: 46px; }
+html.winbar .kr-winbar {
+  display: flex; align-items: stretch; position: fixed; top: 0; left: 0; right: 0; height: var(--wb-h, 32px); z-index: 2147483000; box-sizing: border-box;
+  background: var(--wb-bg, var(--md-surface-container-low)); color: var(--wb-fg, var(--md-on-surface));
+  font: 600 12px/1 var(--font-ui, system-ui); letter-spacing: .01em; user-select: none; -webkit-user-select: none; cursor: default;
+  transition: background var(--dur-med) var(--ease-emph), color var(--dur-med) var(--ease-emph);
+}
+html.winbar:not(.wb-clear):not(.wb-hide) body { position: fixed; top: var(--wb-h, 32px); left: 0; right: 0; bottom: 0; height: auto; transform: translateZ(0); overflow: hidden; }
+.kr-winbar .wb-brand { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding-inline: 12px 8px; pointer-events: none; }
+.kr-winbar .wb-brand img { width: 16px; height: 16px; border-radius: 5px; object-fit: cover; flex: none; transition: opacity var(--dur-med); }
+.kr-winbar .wb-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; transition: opacity var(--dur-med); }
+html.winbar:not(.wb-named) .kr-winbar .wb-brand > * { display: none; }
+html.winbar[dir='rtl'] .kr-winbar .wb-name { letter-spacing: 0; font-size: 12.5px; }
+.kr-winbar .wb-controls { display: flex; flex: none; }
+.wb-btn { all: unset; box-sizing: border-box; position: relative; display: grid; place-items: center; width: var(--wb-ctl); height: 100%; color: inherit; cursor: default; -webkit-tap-highlight-color: transparent; }
+.wb-btn::before {
+  content: ''; position: absolute; inset: 3px 4px; border-radius: 11px; background: currentColor; opacity: 0; transform: scale(.7);
+  transition: opacity var(--dur-short) var(--ease-emph), transform var(--dur-med) var(--spring), border-radius var(--dur-med) var(--spring), background-color var(--dur-short);
+}
+.wb-btn:hover::before { opacity: .1; transform: none; }
+.wb-btn:active::before { opacity: .16; transform: scale(.94); border-radius: 7px; transition-duration: 90ms, 160ms, 160ms, 90ms; }
+.wb-btn svg { grid-area: 1 / 1; position: relative; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; overflow: visible;
+  transition: transform var(--dur-long) var(--spring), opacity var(--dur-short), scale var(--dur-med) var(--spring); }
+.wb-btn:active svg { scale: .86; }
+.wb-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -4px; border-radius: 12px; }
+.wb-close { transition: color var(--dur-short); }
+.wb-close::before { background: var(--md-error); }
+.wb-close:hover { color: var(--md-on-error); }
+.wb-close:hover::before { opacity: 1; }
+.wb-close:active::before { opacity: 1; background: color-mix(in srgb, var(--md-error) 80%, var(--md-on-error)); }
+.wb-close:hover svg { transform: rotate(90deg); }
+/* (Maximise ↔ restore: one square turns into two with a spring, as the window's state changes.) */
+.wb-max .g-restore { opacity: 0; transform: scale(.5) rotate(-45deg); }
+html.wb-maxed .wb-max .g-max { opacity: 0; transform: scale(.5) rotate(45deg); }
+html.wb-maxed .wb-max .g-restore { opacity: 1; transform: none; }
+/* The window not in front: the bar quietens. */
+html.wb-blur .kr-winbar { color: color-mix(in srgb, var(--wb-fg, var(--md-on-surface)) 52%, transparent); }
+html.wb-blur .kr-winbar .wb-brand img { opacity: .5; }
+/* (The bar carries the icon and the name: the sidebar's top keeps only its fold button.) */
+html.winbar.wb-named:not(.wb-hide) .rail-brand > img, html.winbar.wb-named:not(.wb-hide) .rail-brand > .rail-name { display: none; }
+html.winbar.wb-named:not(.wb-hide) .rail-brand { justify-content: flex-end; min-height: 0; margin-bottom: -6px; }
+html.winbar.wb-named.rail-mini:not(.wb-hide) .rail-brand { justify-content: center; }
+/* A Mac: the system's lights at the bar's left (no buttons of the page's), the name in the middle as a Mac has it. */
+html.wb-mac .kr-winbar .wb-controls { display: none; }
+html.wb-mac .kr-winbar { padding-left: 78px; }
+html.wb-mac .kr-winbar .wb-brand { justify-content: center; padding-inline: 8px 86px; }
+/* Hidden: full screen, immersive reading. A mouse at the top shows it over the page until it leaves. */
+html.winbar.wb-hide .kr-winbar { display: none; }
+html.winbar.wb-hide.wb-peek .kr-winbar { display: flex; background: var(--wb-bg, var(--md-surface-container-low)); box-shadow: var(--el-2); animation: wb-peek var(--dur-med) var(--ease-emph-decel); }
+html.winbar.wb-hide.wb-peek .kr-winbar .wb-brand > * { display: revert; }
+@keyframes wb-peek { from { transform: translateY(-100%); } }
+/* Transparent: no surface; the buttons float over the page's top edge. The page's top bars keep room for them —
+   --wb-end at the interface's end (the app's own buttons), --wb-start / --wb-end at the window's left (a Mac's
+   lights) — as a transparent border, so their own padding stays as it is; a docked or opened side panel starts below
+   them; a Mac's sidebar starts below its lights. */
+html.winbar.wb-clear .kr-winbar { background: none; pointer-events: none; }
+html.winbar.wb-clear .kr-winbar .wb-controls { pointer-events: auto; }
+html.winbar.wb-clear .kr-winbar .wb-brand > * { display: none; }
+/* (Tools' own: the page's top bars keep room for the transparent bar's buttons; a Mac's sidebar starts below its lights.) */
+html.winbar.wb-clear:not(.wb-hide) .view > .topbar { border-inline-start: var(--wb-start, 0px) solid transparent; border-inline-end: var(--wb-end, 0px) solid transparent; }
+html.winbar.wb-clear.wb-mac:not(.wb-hide):not([dir='rtl']) .nav-rail { padding-top: calc(14px + var(--wb-h, 28px)); }

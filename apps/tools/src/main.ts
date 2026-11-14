@@ -187,7 +187,10 @@ else {
     void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   void import('./ui/imgRetry').then((m) => m.startImgRetry());
   void import('./desktopStarter').then((m) => m.startDesktopStarter());
-  void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
+  // (The window's own bar: the Tauri shell has the page draw all of it, its buttons too — ui/winbar.ts, the Reader's —;
+  // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
+  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
+  else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());
   void import('./downloads/hotkeys').then((m) => m.startHotkeys());

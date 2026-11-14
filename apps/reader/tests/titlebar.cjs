@@ -7,6 +7,10 @@
 // drags; the settings (the app's own / the system's, transparent, the name) apply, persist and are offered there
 // alone; mirrored right to left; hidden in full screen and immersive reading; a Mac keeps its lights; and nothing of
 // the page under its buttons, at 1024 and 1366 px, solid and transparent.
+// Tools has the same bar on its Tauri shell (the same src/ui/winbar.ts, desktop-tauri/bridge.js's titleBar →
+// kt_title_bar, the kt:titleBarState event): `titlebar.cjs tools` checks it there — the bar, its buttons and what they
+// send, full screen, the settings (kind, transparent, name: offered, applied, kept) — and that Electron's bridge, a web
+// page and a phone have none of it. (The same file is in both apps' tests: tests/shared-copies.cjs.)
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const APP = process.argv[2] || (__dirname.includes('/reader/') ? 'reader' : 'tools');
 const DIST = path.join(__dirname, '..', '..', APP, 'dist');
@@ -40,12 +44,13 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('no bar in a browser', !(await q.$('.win-titlebar')) && (await q.evaluate(() => document.body.getBoundingClientRect().top)) === 0);
   await c2.close();
   if (APP === 'reader') await tauriPart(br, base, check, errors);
+  if (APP === 'tools') await toolsTauriPart(br, base, check, errors);
   await br.close(); web.close();
   if (errors.length) { console.log('errors', errors); process.exit(1); } console.log('all passed');
 })().catch((e) => { console.error(e); process.exit(1); });
 
 // ---------- the Tauri shell's bar (the Reader) ----------
-const BRIDGE = APP === 'reader' ? fs.readFileSync(path.join(__dirname, '..', 'desktop-tauri', 'bridge.js'), 'utf8') : '';
+const BRIDGE = fs.readFileSync(path.join(__dirname, '..', 'desktop-tauri', 'bridge.js'), 'utf8');
 // (A fake Tauri IPC: kr_title_bar keeps a window's state and tells each change as the kr:titleBarState event.)
 const FAKE = (os) => `(function () {
   var os = ${JSON.stringify(os)};
@@ -204,6 +209,88 @@ async function tauriPart(br, base, check, errors) {
     await q.addInitScript(() => localStorage.setItem('kr.lang', 'en')); await q.addInitScript(init);
     await q.goto(base + '#/settings'); await q.waitForSelector('.settings-body'); await q.waitForTimeout(800);
     check(`tauri: no bar and no title-bar settings on ${what}`, !(await q.$('.kr-winbar')) && !(await q.$('.title-bar-field')));
+    await c.close();
+  }
+}
+
+// ---------- the Tauri shell's bar (Tools) ----------
+const FAKE_KT = (os) => `(function () {
+  var os = ${JSON.stringify(os)};
+  var st = { platform: os, height: os === 'darwin' ? 28 : 32, own: true, wanted: true, controls: os === 'darwin' ? 'system' : 'own', maximized: false, fullscreen: false, focused: true };
+  var subs = []; window.__wb = { state: st, calls: [] };
+  window.__wbEmit = function (patch) { Object.assign(st, patch || {}); subs.forEach(function (f) { f({ event: 'kt:titleBarState', payload: JSON.parse(JSON.stringify(st)) }); }); };
+  var replies = {
+    kt_state: function () { return { available: false, reason: '', os: os, arch: 'x64' }; }, kt_list: function () { return []; },
+    kt_title_bar: function (a) {
+      var o = (a && a.o) || {}; window.__wb.calls.push(JSON.parse(JSON.stringify(o)));
+      if (typeof o.own === 'boolean') { st.wanted = o.own; if (os !== 'darwin') st.own = o.own; }
+      if (o.act === 'maximize') setTimeout(function () { window.__wbEmit({ maximized: !st.maximized }); }, 5);
+      return JSON.parse(JSON.stringify(st));
+    },
+  };
+  window.__TAURI__ = { core: { invoke: function (c, a) { return Promise.resolve(replies[c] ? replies[c](a) : null); } },
+    event: { listen: function (n, f) { if (n === 'kt:titleBarState') subs.push(f); return Promise.resolve(function () { var i = subs.indexOf(f); if (i >= 0) subs.splice(i, 1); }); } } };
+})();`;
+
+async function toolsTauriPart(br, base, check, errors) {
+  const make = async ({ os = 'win32', lang = 'en', settings = {} } = {}) => {
+    const ctx = await br.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: 'block' }); await ctx.route(/raw\.githubusercontent\.com|api\.github\.com/, (r) => r.fulfill({ status: 404, body: '' }));
+    const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message)); p.setDefaultTimeout(15000);
+    await p.addInitScript(({ lang, settings }) => { if (!sessionStorage.getItem('tb.init')) { sessionStorage.setItem('tb.init', '1'); localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.settings', JSON.stringify(settings)); } }, { lang, settings });
+    await p.addInitScript({ content: FAKE_KT(os) });
+    await p.addInitScript({ content: `window.__KT_BOOT__ = ${JSON.stringify({ os, arch: 'x64' })};\n${BRIDGE}` });
+    await p.goto(base + '#/'); await p.waitForSelector('.kr-winbar', { state: 'attached' }); await p.waitForTimeout(500);
+    return { ctx, p };
+  };
+  const calls = (p) => p.evaluate(() => window.__wb.calls.slice());
+  const cls = (p, c) => p.evaluate((c) => document.documentElement.classList.contains(c), c);
+  let { ctx, p } = await make();
+  const g = await p.evaluate(() => {
+    const b = document.querySelector('.kr-winbar').getBoundingClientRect();
+    const btns = [...document.querySelectorAll('.kr-winbar .wb-btn')].map((x) => { const r = x.getBoundingClientRect(); return { label: x.getAttribute('aria-label'), w: r.width, h: r.height, left: r.left }; });
+    return { top: b.top, h: b.height, w: b.width, bodyTop: document.body.getBoundingClientRect().top, name: document.querySelector('.kr-winbar .wb-name').textContent, logo: !!document.querySelector('.kr-winbar img[data-brand]'), btns, shell: window.__KT_SHELL__, old: !!document.querySelector('.win-titlebar') };
+  });
+  check('tauri (Tools): the bar at the top, 32 px, the icon and the name; the page below it; not Electron\'s', g.top === 0 && g.h === 32 && g.bodyTop === 32 && /Kurokawa/.test(g.name) && g.logo && g.shell === 'tauri' && !g.old, g);
+  check('tauri (Tools): three buttons of 46×32 at the end, named', g.btns.length === 3 && g.btns.every((b) => b.w === 46 && b.h === 32) && g.btns.map((b) => b.label).join('|') === 'Minimise|Maximise|Close' && g.btns[2].left + 46 === g.w, g.btns);
+  check('tauri (Tools): the shell asked for the app\'s own bar at the start', (await calls(p))[0]?.own === true, await calls(p));
+  await p.evaluate(() => { window.__wb.calls.length = 0; });
+  await p.click('.wb-min'); await p.click('.wb-max'); await p.waitForTimeout(150);
+  check('tauri (Tools): minimise and maximise sent; the state comes back as «Restore»', JSON.stringify((await calls(p)).map((c) => c.act)) === '["minimize","maximize"]' && await cls(p, 'wb-maxed') && (await p.getAttribute('.wb-max', 'aria-label')) === 'Restore', await calls(p));
+  await p.evaluate(() => { window.__wb.calls.length = 0; }); await p.mouse.move(600, 16); await p.mouse.down(); await p.mouse.up(); await p.waitForTimeout(100);
+  check('tauri (Tools): a press on the bar drags the window', (await calls(p))[0]?.act === 'drag', await calls(p));
+  await p.evaluate(() => window.__wbEmit({ fullscreen: true })); await p.waitForTimeout(80);
+  check('tauri (Tools): hidden in full screen, the page at the top', await p.evaluate(() => getComputedStyle(document.querySelector('.kr-winbar')).display === 'none' && document.body.getBoundingClientRect().top === 0));
+  await p.evaluate(() => window.__wbEmit({ fullscreen: false })); await p.waitForTimeout(80);
+  await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.title-bar-field', { state: 'attached' });
+  const rows = await p.evaluate(() => ({ kind: [...document.querySelectorAll('[data-tb-kind]')].map((b) => b.textContent + ':' + b.getAttribute('aria-pressed')), clear: !!document.querySelector('.wb-clear-switch'), name: !!document.querySelector('.wb-name-switch') }));
+  check('tauri (Tools): the settings offer the title bar (the app\'s own pressed), transparent, the name', rows.kind.join('|') === "The app's own:true|The system's:false" && rows.clear && rows.name, rows);
+  await p.evaluate(() => document.querySelector('.wb-clear-switch').click()); await p.waitForTimeout(500);
+  const tr = await p.evaluate(() => ({ clear: document.documentElement.classList.contains('wb-clear'), bg: getComputedStyle(document.querySelector('.kr-winbar')).backgroundColor, top: document.body.getBoundingClientRect().top, kept: JSON.parse(localStorage.getItem('kt.settings')).titleBarClear }));
+  check('tauri (Tools): transparent — no surface, the page under the bar, kept', tr.clear && tr.bg === 'rgba(0, 0, 0, 0)' && tr.top === 0 && tr.kept === true, tr);
+  await p.reload(); await p.waitForSelector('.kr-winbar', { state: 'attached' }); await p.waitForTimeout(400);
+  check('tauri (Tools): transparent kept after a reload', await cls(p, 'wb-clear'));
+  await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.title-bar-field', { state: 'attached' });
+  await p.evaluate(() => document.querySelector('.wb-clear-switch').click()); await p.waitForTimeout(200);
+  await p.evaluate(() => document.querySelector('.wb-name-switch').click()); await p.waitForTimeout(200);
+  check('tauri (Tools): the name off — a plain strip', !(await cls(p, 'wb-named')) && !(await cls(p, 'wb-clear')));
+  await p.evaluate(() => { window.__wb.calls.length = 0; document.querySelector('[data-tb-kind="system"]').click(); }); await p.waitForTimeout(300);
+  check('tauri (Tools): the system\'s frame — asked of the shell, the bar gone, the page at the top', (await calls(p)).some((c) => c.own === false) && !(await p.$('.kr-winbar')) && !(await cls(p, 'winbar')) && await p.evaluate(() => document.body.getBoundingClientRect().top === 0 && !document.querySelector('.wb-clear-switch')));
+  await p.evaluate(() => document.querySelector('[data-tb-kind="own"]').click()); await p.waitForTimeout(300);
+  check('tauri (Tools): the app\'s own again', !!(await p.$('.kr-winbar')) && await cls(p, 'winbar'));
+  await ctx.close();
+  ({ ctx, p } = await make({ lang: 'ar' }));
+  const m = await p.evaluate(() => { const b = [...document.querySelectorAll('.kr-winbar .wb-btn')].map((x) => x.getBoundingClientRect().left); return { close: b[2], min: b[0], dir: getComputedStyle(document.querySelector('.kr-winbar')).direction, label: document.querySelector('.wb-close').getAttribute('aria-label') }; });
+  check('tauri (Tools): right to left the bar mirrors — close leftmost, named in Arabic', m.dir === 'rtl' && m.close < m.min && m.min < 200 && m.label === 'إغلاق', m);
+  await ctx.close();
+  ({ ctx, p } = await make({ os: 'darwin' }));
+  const mac = await p.evaluate(() => ({ h: document.querySelector('.kr-winbar').getBoundingClientRect().height, ctl: getComputedStyle(document.querySelector('.kr-winbar .wb-controls')).display, pad: getComputedStyle(document.querySelector('.kr-winbar')).paddingLeft }));
+  check('tauri (Tools, Mac): a 28 px bar, the lights\' room, no buttons of the page\'s', mac.h === 28 && mac.ctl === 'none' && mac.pad === '78px', mac);
+  await ctx.close();
+  for (const [what, init] of [['a web page on a computer', () => {}], ['a phone app', () => { window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: {} }; }], ["Electron's bridge", () => { window.kurokawaTools = new Proxy({ platform: 'desktop', available: true, os: 'win32', list: async () => [], onTasks: () => () => {}, titleBar: async () => ({ platform: 'win32', height: 38 }), onTitleBarState: () => () => {} }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) }); }]]) {
+    const c = await br.newContext({ viewport: what === 'a phone app' ? { width: 412, height: 915 } : { width: 1366, height: 768 }, serviceWorkers: 'block' }); const q = await c.newPage();
+    await q.addInitScript(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.pc.starter', '1'); }); await q.addInitScript(init);
+    await q.goto(base + '#/settings'); await q.waitForTimeout(1200);
+    check(`tauri (Tools): no Tauri bar and no title-bar settings on ${what}`, !(await q.$('.kr-winbar')) && !(await q.$('.title-bar-field')));
     await c.close();
   }
 }

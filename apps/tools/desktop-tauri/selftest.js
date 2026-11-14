@@ -1,7 +1,7 @@
 // The Tauri shell's runtime self-test (CI only). Added after bridge.js to the window's initialization script by
 // src-tauri/src/selftest.rs only when the KT_SELFTEST environment variable is set, after a line that sets
-// window.__KT_SELFTEST__ = { base, temp, aria2Bin, aria2Bundled, wantBundled, text, gzText, binB64, bigSize,
-// bigSha256, os }. Without that object it does nothing. Once the page has loaded it runs its checks through
+// window.__KT_SELFTEST__ = { base, temp, otherTemp, otherWhy, aria2Bin, aria2Bundled, wantBundled, text, gzText, binB64,
+// bigSize, bigSha256, megaKey, megaPlainB64, megaEncB64, os }. Without that object it does nothing. Once the page has loaded it runs its checks through
 // window.kurokawaTools — the same calls the page makes —, sends the results so far to kt_selftest_progress after
 // each, and the whole list to kt_selftest_done, which writes them and ends the process (0 all required checks
 // passed, 1 not). A check is { name, ok, detail, required }. The pure parts are on window.__KT_SELFTEST_LIB__ for
@@ -25,6 +25,13 @@
   function sameBytes(buf, want) { var a = bytesOf(buf); if (a.length !== want.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== want[i]) return false; return true; }
   function join(dir, name, os) { var sep = os === 'win32' ? '\\' : '/'; return String(dir).replace(/[\\/]+$/, '') + sep + name; }
   function find(list, id) { if (!Array.isArray(list)) return null; for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i]; return null; }
+  /** Base64 → bytes (no atob needed). */
+  function b64bytes(s) {
+    var A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; var out = []; var acc = 0; var bits = 0;
+    for (var i = 0; i < s.length; i++) { var v = A.indexOf(s.charAt(i)); if (v < 0) continue; acc = (acc << 6) | v; bits += 6; if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); acc &= (1 << bits) - 1; } }
+    return out;
+  }
+  function latin(buf) { var a = bytesOf(buf); var s = ''; for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return s; }
   function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s); }
 
   /**
@@ -81,6 +88,9 @@
       return (n.className || 'nav') + ', ' + env.doc.querySelectorAll('[data-dest]').length + ' places';
     }, 25000);
 
+    /* stage P3: the recycle bin, free space, fonts, MEGA; the Files page's jobs */
+    await runP3(kt, cfg, env, check, must, waitFor);
+
     /* the engine */
     var engine = !!cfg.aria2Bin;
     rec('aria2c binary', cfg.wantBundled ? !!cfg.aria2Bundled : true, (cfg.aria2Bin || 'none found') + (cfg.aria2Bundled ? ' (bundled)' : ''), !!cfg.wantBundled);
@@ -92,6 +102,123 @@
     if (up) await runDownload(kt, cfg, env, check, must, waitFor, engine);
     try { await env.invoke('kt_selftest_done', { results: results }); } catch (e) { /* the watchdog writes what there is */ }
     return results;
+  }
+
+  /** One file job run to its end through filesJob / onFilesJob: `answers` the replies to its questions in turn,
+   *  `cancelAt` 'progress' to cancel at the first progress. Resolves with { end, asked, progress }. */
+  function fileJob(kt, o, answers, cancelAt) {
+    return new Promise(function (ok, no) {
+      var asked = []; var progress = 0; var id = o.id; var done = false;
+      var t = setTimeout(function () { if (!done) { done = true; off(); no(new Error('timeout: job ' + id)); } }, 30000);
+      var off = kt.onFilesJob(function (ev) {
+        if (!ev || ev.id !== id || done) return;
+        if (ev.status === 'progress') { progress++; if (cancelAt === 'progress' && progress === 1) kt.filesCancel({ id: id }); return; }
+        if (ev.status === 'conflict') { asked.push(ev); var a = (answers || [])[asked.length - 1] || 'skip'; kt.filesAnswer({ id: id, answer: a }); return; }
+        done = true; clearTimeout(t); off(); ok({ end: ev, asked: asked, progress: progress });
+      });
+      Promise.resolve(kt.filesJob(o)).catch(function (e) { if (!done) { done = true; clearTimeout(t); off(); no(e); } });
+    });
+  }
+
+  async function runP3(kt, cfg, env, check, must, waitFor) {
+    var os = cfg.os; var J = function (d, n) { return join(d, n, os); };
+    var text = async function (p) { return latin(await kt.readFile(p)); };
+    var trashed = false;
+    var has = async function (ps) { return kt.exists(ps); };
+    await check('deletePath (to the recycle bin)', true, async function () {
+      var f = J(J(cfg.temp, 'kt-selftest-trash-' + env.now()), 'gone.txt');
+      await kt.writeText({ path: f, text: 'bin' }); must((await has([f]))[0] === true, 'not written');
+      var r = await kt.deletePath(f); must(r && r.ok === true, short(r)); must((await has([f]))[0] === false, 'still there');
+      trashed = r.trashed === true;
+      await kt.deletePath(f.replace(/[\\/]gone\.txt$/, ''));
+      return trashed ? 'in the recycle bin' : 'removed (the recycle bin refused it)';
+    });
+    // (Linux's is this shell's own — the freedesktop.org layout —, so it must work there; Windows' and a Mac's are the
+    // system's own calls, reported.)
+    await check('deletePath went to the recycle bin', os === 'linux', function () { must(trashed, 'removed instead'); return 'yes'; });
+    await check('archiveFree (free space)', true, async function () { var r = await kt.archiveFree({ dir: J(cfg.temp, 'no-such-folder-' + env.now()) }); must(r && typeof r.free === 'number' && r.free > 0 && r.free < 1e15, short(r)); return Math.round(r.free / 1048576) + ' MB free'; });
+    var fdirs = [];
+    await check('fontDirs', true, async function () { fdirs = await kt.fontDirs(); must(Array.isArray(fdirs), short(fdirs)); return fdirs.length ? fdirs : 'none on this system'; });
+    await check('fontIndex', true, async function () {
+      var ix = await kt.fontIndex(fdirs); must(Array.isArray(ix), short(ix));
+      for (var i = 0; i < ix.length; i++) must(ix[i] && typeof ix[i].path === 'string' && Array.isArray(ix[i].families) && ix[i].families.length > 0, short(ix[i]));
+      return ix.length + ' fonts' + (ix[0] ? ', e.g. ' + ix[0].families[0] : '');
+    }, 60000);
+    await check('megaDecrypt', true, async function () {
+      var p = await kt.writeTempBytes({ name: 'kt-selftest-mega.bin', b64: cfg.megaEncB64, sub: 'kt-selftest' });
+      var r = await kt.megaDecrypt({ path: p, key: cfg.megaKey }); must(r === true, short(r));
+      var b = await kt.readFile(p); must(sameBytes(b, b64bytes(cfg.megaPlainB64)), 'bytes differ');
+      await kt.removeFile(p); return bytesOf(b).length + ' bytes decrypted';
+    });
+
+    /* the Files page's jobs, on temp folders */
+    var jobsHere = typeof kt.filesJob === 'function' && typeof kt.onFilesJob === 'function';
+    if (!(await check('files: the jobs are there', true, function () { must(jobsHere, 'no filesJob / onFilesJob'); return 'filesJob, filesCancel, filesAnswer, onFilesJob'; }))) return;
+    var base = J(cfg.temp, 'kt-selftest-files-' + env.now()); var src = J(base, 'src'); var dst = J(base, 'dst'); var n = 0;
+    var id = function () { n++; return 'st-' + n + '-' + env.now(); };
+    await kt.writeText({ path: J(src, 'a.txt'), text: 'A' }); await kt.writeText({ path: J(J(src, 'D'), 'x.txt'), text: 'X' }); await kt.writeText({ path: J(J(J(src, 'D'), 'sub'), 'y.txt'), text: 'Y' });
+    await kt.writeText({ path: J(dst, '.keep'), text: '' });
+    await check('files: copy files and a folder', true, async function () {
+      var r = await fileJob(kt, { id: id(), op: 'copy', paths: [J(src, 'a.txt'), J(src, 'D')], dest: dst, conflict: 'ask' });
+      must(r.end.status === 'done' && r.end.files === 3 && r.end.failed.length === 0, short(r.end));
+      must((await text(J(dst, 'a.txt'))) === 'A' && (await text(J(J(J(dst, 'D'), 'sub'), 'y.txt'))) === 'Y', 'contents');
+      must((await has([J(src, 'a.txt')]))[0] === true, 'a copy removed its original');
+      return r.end.files + ' files, ' + r.progress + ' progress events';
+    });
+    await check('files: a name taken — keep both', true, async function () {
+      var r = await fileJob(kt, { id: id(), op: 'copy', paths: [J(src, 'a.txt')], dest: dst, conflict: 'ask' }, ['keep']);
+      must(r.asked.length === 1 && r.asked[0].to === J(dst, 'a.txt') && r.asked[0].size === 1 && r.asked[0].dir === false, short(r.asked));
+      must((await text(J(dst, 'a (2).txt'))) === 'A', 'no «a (2).txt»'); return 'a (2).txt';
+    });
+    await check('files: replace, the same for all that follow', true, async function () {
+      await kt.writeText({ path: J(src, 'b.txt'), text: 'B2' }); await kt.writeText({ path: J(dst, 'b.txt'), text: 'B1' });
+      var r = await fileJob(kt, { id: id(), op: 'copy', paths: [J(src, 'a.txt'), J(src, 'b.txt')], dest: dst, conflict: 'ask' }, ['replaceAll']);
+      must(r.asked.length === 1, 'asked ' + r.asked.length + ' times'); must((await text(J(dst, 'b.txt'))) === 'B2', 'not replaced');
+      must((await has([J(dst, 'b.txt.ktpart'), J(dst, 'b.txt.ktold')])).every(function (x) { return !x; }), 'a part file left');
+      return 'asked once, both replaced';
+    });
+    await check('files: a move skipped keeps its original', true, async function () {
+      await kt.writeText({ path: J(src, 'c.txt'), text: 'C2' }); await kt.writeText({ path: J(dst, 'c.txt'), text: 'C1' });
+      var r = await fileJob(kt, { id: id(), op: 'move', paths: [J(src, 'c.txt')], dest: dst, conflict: 'ask' }, ['skip']);
+      must(r.end.skipped === 1 && r.end.left === 1 && r.end.remaining.length === 1, short(r.end));
+      must((await text(J(src, 'c.txt'))) === 'C2' && (await text(J(dst, 'c.txt'))) === 'C1', 'contents');
+      return 'left in place';
+    });
+    await check('files: a folder into itself refused', true, async function () {
+      var r = await fileJob(kt, { id: id(), op: 'copy', paths: [J(src, 'D')], dest: J(J(src, 'D'), 'sub'), conflict: 'ask' });
+      must(r.end.failed.length === 1 && /itself/.test(r.end.failed[0]), short(r.end)); must((await has([J(J(J(src, 'D'), 'sub'), 'D')]))[0] === false, 'copied into itself');
+      return r.end.failed[0];
+    });
+    var big = 'x'.repeat(4 << 20);
+    await check('files: cancelled mid-copy — the file it replaced kept whole, no part left', true, async function () {
+      await kt.writeText({ path: J(src, 'big.bin'), text: big }); await kt.writeText({ path: J(dst, 'big.bin'), text: 'OLD' });
+      var r = await fileJob(kt, { id: id(), op: 'copy', paths: [J(src, 'big.bin')], dest: dst, conflict: 'replace', pace: 120 }, [], 'progress');
+      must(r.end.status === 'cancelled', short(r.end)); must((await text(J(dst, 'big.bin'))) === 'OLD', 'the old file changed');
+      must((await has([J(dst, 'big.bin.ktpart')]))[0] === false, 'a part file left'); return 'cancelled after ' + r.progress + ' progress event(s)';
+    });
+    var other = cfg.otherTemp;
+    if (other) {
+      await check('files: a folder moved to another disk', true, async function () {
+        var r = await fileJob(kt, { id: id(), op: 'move', paths: [J(src, 'D')], dest: other, conflict: 'ask' });
+        must(r.end.status === 'done' && r.end.left === 0 && r.end.remaining.length === 0, short(r.end));
+        must((await has([J(src, 'D')]))[0] === false && (await text(J(J(J(other, 'D'), 'sub'), 'y.txt'))) === 'Y', 'not moved whole');
+        return other;
+      });
+      await check('files: a move to another disk cancelled — the original stays, nothing half there', true, async function () {
+        var r = await fileJob(kt, { id: id(), op: 'move', paths: [J(src, 'big.bin')], dest: other, conflict: 'ask', pace: 120 }, [], 'progress');
+        must(r.end.status === 'cancelled' && r.end.left === 1, short(r.end));
+        var e = await has([J(src, 'big.bin'), J(other, 'big.bin'), J(other, 'big.bin.ktpart')]); must(e[0] === true && e[1] === false && e[2] === false, short(e));
+        return 'original kept';
+      });
+      await fileJob(kt, { id: id(), op: 'delete', paths: [other] }).catch(function () {});
+    } else {
+      await check('files: moves across disks', false, function () { throw new Error('skipped: ' + (cfg.otherWhy || 'no second disk')); });
+    }
+    await check('files: delete a folder and all in it', true, async function () {
+      var r = await fileJob(kt, { id: id(), op: 'delete', paths: [base] });
+      must(r.end.status === 'done' && r.end.failed.length === 0, short(r.end)); must((await has([base]))[0] === false, 'still there');
+      return r.end.files + ' items';
+    });
   }
 
   async function runDownload(kt, cfg, env, check, must, waitFor, required) {
@@ -142,7 +269,7 @@
     off();
   }
 
-  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, run: run };
+  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run };
   try { Object.defineProperty(root, '__KT_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KT_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KT_SELFTEST__;

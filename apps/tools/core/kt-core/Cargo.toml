@@ -1,0 +1,15 @@
+[package]
+name = "kt-core"
+# (Never published; the shells take it by path — today the PC's Tauri shell, apps/tools/desktop-tauri/src-tauri;
+# later the Android library, docs/RUST-PORT.md §6.)
+version = "0.0.0"
+description = "Kurokawa Tools' engine rules: pure logic shared by the PC shell and (later) the Android library"
+edition = "2021"
+publish = false
+
+[lib]
+name = "kt_core"
+path = "src/lib.rs"
+
+# None: every module is std only, so each is checked alone with `rustc --edition 2021 --test src/<module>.rs`.
+[dependencies]

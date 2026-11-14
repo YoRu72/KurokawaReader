@@ -42,8 +42,18 @@ type Desk = { listDir?(p: string): Promise<{ entries: Entry[] }>; openPath?(p: s
 const plug = (): Plug | null => { const p = ktPlugin() as unknown as Partial<Plug> | null; return p?.filesList ? (p as Plug) : null; };
 const desk = (): Desk | null => (window.kurokawaTools as unknown as Desk | undefined) ?? null;
 export const canBrowseFiles = (): boolean => !!(plug() || desk()?.listDir);
-/** Copy, move and delete as jobs: the phone's (a computer's Files lists and opens, but has no jobs yet). */
-const canJobs = (): boolean => !!plug();
+/** The jobs' side of the phone's plugin — and of a computer's shell where it has them (the Tauri shell's filesJob,
+ *  filesCancel, filesAnswer and onFilesJob: the same rules and events as the phone's; Electron's shell has none). */
+type Jobs = Pick<Plug, 'filesJob' | 'filesCancel' | 'filesAnswer'> & { addListener(ev: string, fn: (d: never) => void): unknown };
+type DeskJobs = Partial<Pick<Plug, 'filesJob' | 'filesCancel' | 'filesAnswer'>> & { onFilesJob?(cb: (ev: JobEvent) => void): () => void; deletePath?(p: string): Promise<{ ok: boolean }> };
+const deskJobs = (): DeskJobs | null => { const d = window.kurokawaTools as unknown as DeskJobs | undefined; return d?.filesJob && d.filesCancel && d.filesAnswer && d.onFilesJob ? d : null; };
+const jobs = (): Jobs | null => {
+  const p = plug(); if (p) return p as unknown as Jobs;
+  const d = deskJobs(); if (!d) return null;
+  return { filesJob: (o) => d.filesJob!(o), filesCancel: (o) => d.filesCancel!(o), filesAnswer: (o) => d.filesAnswer!(o), addListener: (_ev, fn) => ({ remove: d.onFilesJob!(fn as (ev: JobEvent) => void) }) };
+};
+/** Copy, move and delete as jobs: the phone's, or the computer's where its shell has them. */
+const canJobs = (): boolean => !!jobs();
 
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
 export type Prefs = { view: 'list' | 'grid'; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string;
@@ -64,8 +74,8 @@ const stagings = new Map<string, string>();
 const STAGE = '.kurokawa-extract-';
 const setClip = (c: typeof clipboard) => { clipboard = c; for (const f of clipWatch) f(); };
 /** `dest` is one of `paths` or lies inside one — a folder pasted into itself (whole names compared, letter case aside:
- *  the phone's storage ignores it; /a/b and /a/bc are strangers). */
-export const intoItself = (paths: string[], dest: string): boolean => { const d = dest.replace(/\/+$/, '').toLowerCase() + '/'; return paths.some((p) => d.startsWith(p.replace(/\/+$/, '').toLowerCase() + '/')); };
+ *  the phone's storage ignores it; /a/b and /a/bc are strangers; a computer's «\\» is a «/»). */
+export const intoItself = (paths: string[], dest: string): boolean => { const norm = (x: string) => x.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() + '/'; const d = norm(dest); return paths.some((p) => d.startsWith(norm(p))); };
 // (The jobs under way and the pane that asked for each: only that pane answers a job's questions and shows its row; a
 // pane gone — the page moved on — leaves its jobs to the next pane that hears of them.)
 type JobRec = { owner: object | null; label: string; cancel: () => void; ended?: boolean };
@@ -513,7 +523,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     } catch (err) { sizeLine.lastElementChild!.textContent = String((err as Error).message ?? err); }
   };
   const confirmDelete = async (paths: string[]) => {
-    const pl = plug(); if (!pl) return; if (paths.some(isArc)) { toast(t('arcReadOnly'), 'info'); return; }
+    const pl = plug(); if (!pl) { if (deskJobs()) deskDelete(paths); return; } if (paths.some(isArc)) { toast(t('arcReadOnly'), 'info'); return; }
     if (prefs.confirmDelete === false) { const m0 = await import('./filesMore'); if (m0.trashOn() && !paths.some((p) => p.includes('/.kurokawa-trash/') || isVirtual(p))) { leaveSel(); try { trashed(await m0.toTrash(paths)); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } return; } }
     const sh = openSheet(t('delete'), t('cancel'));
     sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint', dir: 'auto' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')));
@@ -522,6 +532,22 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     // (With the recycle bin on, a second way: gone from the phone at once, the bin passed by.)
     if (toBin) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); leaveSel(); void startJob('delete', paths); } }, icon('trash'), t('filesDeleteForever')));
     sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: async () => { sh.close(); leaveSel(); if (!toBin) { void startJob('delete', paths); return; } try { trashed(await m.toTrash(paths)); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('delete')));
+  };
+  /** A computer's delete (its shell's jobs): to the system's recycle bin (asked first unless that is turned off), or —
+   *  the second button — deleted for good by a job, with its progress and Cancel. */
+  const deskDelete = (paths: string[]) => {
+    if (!paths.length) return; if (paths.some(isArc)) { toast(t('arcReadOnly'), 'info'); return; }
+    const toBin = async () => {
+      leaveSel(); const d = deskJobs(); let moved = 0; const left: string[] = [];
+      for (const p of paths) { try { if ((await d!.deletePath!(p)).ok) moved++; else left.push(p); } catch { left.push(p); } }
+      void load(); if (left.length) toast(t('filesTrashSystemFailed', { n: localDigits(left.length) }), 'error'); else toast(t('filesMovedToTrash', { n: localDigits(moved) }));
+    };
+    const canBin = !!deskJobs()?.deletePath;
+    if (canBin && prefs.confirmDelete === false) { void toBin(); return; }
+    const sh = openSheet(t('delete'), t('cancel'));
+    sh.body.append(h('p', null, canBin ? t('filesTrashSystemAsk', { n: localDigits(paths.length) }) : t('filesDeleteAsk', { n: localDigits(paths.length) })), h('p', { class: 'hint', dir: 'auto' }, paths.slice(0, 5).map(baseOf).join(' · ') + (paths.length > 5 ? ' …' : '')), h('p', { class: 'hint' }, canBin ? t('filesTrashSystemHint') : t('filesDeleteForeverHint')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); leaveSel(); void startJob('delete', paths); } }, icon('trash'), t('filesDeleteForever')));
+    if (canBin) sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: () => { sh.close(); void toBin(); } }, icon('trash'), t('filesTrashSystem')));
   };
   // (What the recycle bin could not take — a storage where the bin cannot be made — is not left as if deleted: the
   // reader is asked whether to delete it for good.)
@@ -553,7 +579,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const ownRow = (id: string, label: string, cancel: () => void) => { liveJobs.set(id, { owner: me, label, cancel }); return jobRow(id, label, cancel); };
   /** True when the job was started (its events will come). */
   const startJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = `fj-${Date.now()}`, label0?: string): Promise<boolean> => {
-    const pl = plug(); if (!pl) return false;
+    const pl = jobs(); if (!pl) return false;
     // (An archive's entries: taken out, as a copy — an archive is not changed from here, so never deleted or moved out of.)
     if (paths.length && paths.every(isArc)) { if (op === 'delete' || !dest) { toast(t('arcReadOnly'), 'error'); return false; } if (isArc(dest)) { toast(t('arcNoPaste'), 'error'); return false; } void extractEntries(paths, dest); return false; }
     if (dest && isArc(dest)) { toast(t('arcNoPaste'), 'error'); return false; }
@@ -656,7 +682,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     el?.remove(); void load();
     if (rec) { rec.ended = true; setTimeout(() => liveJobs.delete(ev.id), 2000); }
     // (An archive's entries moved in from their hidden folder: the folder goes, whatever happened.)
-    const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void plug()?.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: [stage] }).catch(() => undefined); }
+    const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void jobs()?.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: [stage] }).catch(() => undefined); }
     const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); }
     if (ev.status === 'done') { if (ev.failed?.length) summarySheet(ev); else if (ev.left) toast(t('filesLeftInPlace', { n: localDigits(ev.left) }), 'info', 5000); else if (ev.skipped) toast(t('filesDoneSkipped', { n: localDigits(ev.skipped) })); else toast(t('filesDone')); }
     else if (ev.status === 'cancelled') { if (ev.failed?.length) summarySheet(ev); else toast(ev.left ? t('filesCancelledLeft', { n: localDigits(ev.left) }) : t('filesCancelled')); }
@@ -669,7 +695,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       h('ul', { class: 'files-failed' }, ...failed.slice(0, 30).map((f) => h('li', { dir: 'auto' }, f))), ...(failed.length > 30 ? [h('p', { class: 'hint' }, '…')] : []));
   };
   const conflictSheet = (ev: JobEvent) => {
-    const pl = plug()!; let answered = false;
+    const pl = jobs()!; let answered = false;
     // (Closed unanswered — the button, Escape, the scrim, or another sheet over it —: the job is cancelled, not left waiting.)
     const sh = openSheet(t('filesNameTakenTitle'), t('cancel'), { onClose: () => { if (!answered) void pl.filesCancel({ id: ev.id }); } });
     const name = baseOf(ev.to ?? ''); const all = h('input', { type: 'checkbox' }) as HTMLInputElement;
@@ -691,7 +717,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- start
   let sub: { remove(): void } | null = null;
-  const pl = plug(); if (pl) { void listen<JobEvent>(pl as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; }); void import('./filesMore').then((m) => m.pruneTrash()); }
+  const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
+  const pl = plug(); if (pl) void import('./filesMore').then((m) => m.pruneTrash());
   void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); })();
   let wake: { release(): Promise<void> } | null = null;
   if (prefs.keepOn) void (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen').then((w) => { wake = w; }).catch(() => undefined);

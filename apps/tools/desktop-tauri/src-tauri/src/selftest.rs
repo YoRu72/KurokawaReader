@@ -1,54 +1,63 @@
-// The runtime self-test (CI): with KT_SELFTEST=<file> set, the window's initialization script also carries
-// ../../selftest.js and its settings (a loopback test server's address, the expected digests), the page runs its
-// checks through window.kurokawaTools and hands the results to kt_selftest_done, which writes them to <file> and
-// ends the process: 0 when every required check passed, 1 otherwise; a watchdog writes what it has and ends with 2
-// if nothing comes in time. Without KT_SELFTEST none of this runs (no script, no server, no watchdog; the two
-// commands refuse).
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
+// Tools' part of the runtime self-test (CI). The frame — the results file named by KT_SELFTEST, the watchdog
+// (KT_SELFTEST_TIMEOUT, 100 s), the verdict, the exit — is the shared crate's (kurokawa_shell::selftest, the same for
+// both apps); here: the script added to the window's initialization script (../../selftest.js) with its settings — the
+// loopback test server's address (kurokawa_shell::testserver), the expected digests, a second disk for the file jobs'
+// moves across disks where this machine has one, a MEGA file's key and bytes —, and the two commands the page reports
+// through. Without KT_SELFTEST none of this runs (no script, no server, no watchdog; the commands refuse).
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::{engine, testserver, util};
+use kurokawa_shell::{selftest, testserver, util};
+
+use crate::engine;
 
 const SELFTEST_JS: &str = include_str!("../../selftest.js");
 
-static OUT: OnceLock<PathBuf> = OnceLock::new();
-static PROGRESS: Mutex<Option<Value>> = Mutex::new(None);
-static FINISHED: Mutex<bool> = Mutex::new(false);
-
-/// The results file, when this is a self-test run.
-pub fn out_path() -> Option<PathBuf> {
-    match std::env::var_os("KT_SELFTEST") {
-        Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
-        _ => None,
+/// aria2c stopped (its session saved) before the process ends.
+fn stop_engine() {
+    if let Some(e) = engine::get() {
+        e.stop();
     }
 }
 
-/// The script added to the window's initialization script (None in a normal run). Starts the test server and the
-/// watchdog. `aria2` is the aria2c the engine found → (path, whether it is the app's own).
+/// A writable folder on another disk than `temp` (made here, emptied by the page): /dev/shm on Linux, the runner's
+/// own disk on Windows (its temp folder is on C:, the work on D:); None with the reason when there is none.
+fn other_volume(temp: &Path) -> (Option<PathBuf>, String) {
+    let mut cands: Vec<PathBuf> = Vec::new();
+    if cfg!(unix) {
+        cands.push(PathBuf::from("/dev/shm"));
+    }
+    if let Some(r) = std::env::var_os("RUNNER_TEMP").filter(|v| !v.is_empty()) {
+        cands.push(PathBuf::from(r));
+    }
+    if let Ok(c) = std::env::current_dir() {
+        cands.push(c);
+    }
+    for c in cands {
+        if !c.is_dir() {
+            continue;
+        }
+        let probe = c.join(format!("kt-selftest-vol-{}", std::process::id()));
+        if std::fs::create_dir_all(&probe).is_err() {
+            continue;
+        }
+        if !kt_core::filejobs::same_storage(&probe, temp) {
+            return (Some(probe), String::new());
+        }
+        let _ = std::fs::remove_dir(&probe);
+    }
+    (None, "no second disk on this machine (tried /dev/shm, RUNNER_TEMP, the working folder)".to_string())
+}
+
+/// The script added to the window's initialization script (None in a normal run): the shared frame started, the test
+/// server started. `aria2` is the aria2c the engine found → (path, whether it is the app's own).
 pub fn script(aria2: Option<(String, bool)>) -> Option<String> {
-    let out = out_path()?;
-    let _ = OUT.set(out);
-    let secs: u64 = std::env::var("KT_SELFTEST_TIMEOUT")
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or(100);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(secs));
-        let got = match PROGRESS.lock() {
-            Ok(g) => g.clone(),
-            Err(_) => None,
-        };
-        finish(
-            2,
-            got.unwrap_or_else(|| json!([])),
-            &format!("watchdog: no verdict within {} s", secs),
-        );
-    });
+    if !selftest::begin("KT") {
+        return None;
+    }
+    selftest::on_exit(stop_engine);
     let base = match testserver::start() {
         Ok(port) => format!("http://127.0.0.1:{}", port),
         Err(_) => String::new(),
@@ -63,9 +72,20 @@ pub fn script(aria2: Option<(String, bool)>) -> Option<String> {
     let want_bundled = std::env::var("KT_SELFTEST_BUNDLED")
         .map(|v| v == "1")
         .unwrap_or(false);
+    let temp = std::env::temp_dir();
+    let (other, other_why) = other_volume(&temp);
+    // (A MEGA file as aria2 leaves it: the bytes encrypted with a file key, which kt:megaDecrypt must undo.)
+    let mega_key: Vec<u8> = (0u8..32).map(|i| i.wrapping_mul(29).wrapping_add(11)).collect();
+    let mega_plain: Vec<u8> = "kurokawa mega selftest \u{2713} ".repeat(40).into_bytes();
+    let mut mega_enc = mega_plain.clone();
+    if let Some((k, iv)) = kt_core::mega::key_parts(&util::b64_encode(&mega_key)) {
+        kt_core::mega::Ctr::new(&k, &iv).apply(&mut mega_enc);
+    }
     let cfg = json!({
         "base": base,
-        "temp": std::env::temp_dir().to_string_lossy().into_owned(),
+        "temp": temp.to_string_lossy().into_owned(),
+        "otherTemp": other.map(|p| p.to_string_lossy().into_owned()),
+        "otherWhy": other_why,
         "aria2Bin": aria2_bin,
         "aria2Bundled": aria2_bundled,
         "wantBundled": want_bundled,
@@ -74,74 +94,22 @@ pub fn script(aria2: Option<(String, bool)>) -> Option<String> {
         "binB64": util::b64_encode(&bin),
         "bigSize": testserver::BIG_SIZE,
         "bigSha256": big_sha,
+        "megaKey": util::b64_encode(&mega_key),
+        "megaPlainB64": util::b64_encode(&mega_plain),
+        "megaEncB64": util::b64_encode(&mega_enc),
         "os": util::node_platform(),
     });
-    Some(format!(
-        "window.__KT_SELFTEST__ = {};\n{}",
-        cfg, SELFTEST_JS
-    ))
-}
-
-/// 0 when there are results and every one not marked `required: false` has `ok: true`; 1 otherwise.
-pub fn verdict(results: &Value) -> i32 {
-    let list = match results {
-        Value::Array(a) => a,
-        _ => return 1,
-    };
-    if list.is_empty() {
-        return 1;
-    }
-    for r in list.iter() {
-        let required = r.get("required").and_then(|x| x.as_bool()).unwrap_or(true);
-        let ok = r.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
-        if required && !ok {
-            return 1;
-        }
-    }
-    0
-}
-
-/// The results written, aria2c stopped, the process ended with `code` (once).
-fn finish(code: i32, results: Value, note: &str) {
-    {
-        let mut f = match FINISHED.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if *f {
-            return;
-        }
-        *f = true;
-    }
-    if let Some(p) = OUT.get() {
-        let doc = json!({ "code": code, "note": note, "os": util::node_platform(), "arch": util::node_arch(), "results": results });
-        let _ = std::fs::write(p, doc.to_string());
-    }
-    if let Some(e) = engine::get() {
-        e.stop();
-    }
-    std::process::exit(code);
+    Some(format!("window.__KT_SELFTEST__ = {};\n{}", cfg, SELFTEST_JS))
 }
 
 /// The results so far (what the watchdog writes if the page stalls).
 #[tauri::command]
 pub async fn kt_selftest_progress(results: Value) -> Result<(), String> {
-    if OUT.get().is_none() {
-        return Err("not a self-test run".to_string());
-    }
-    if let Ok(mut g) = PROGRESS.lock() {
-        *g = Some(results);
-    }
-    Ok(())
+    selftest::progress(results)
 }
 
 /// The page's verdict: written, and the process ended (0 all required passed, 1 not).
 #[tauri::command]
 pub async fn kt_selftest_done(results: Value) -> Result<(), String> {
-    if OUT.get().is_none() {
-        return Err("not a self-test run".to_string());
-    }
-    let code = verdict(&results);
-    finish(code, results, "");
-    Ok(())
+    selftest::done(results)
 }

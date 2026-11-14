@@ -2,7 +2,7 @@
 // free loopback port with a secret, spoken to over its HTTP JSON-RPC endpoint (rpc.rs, plain std — no WebSocket),
 // the list polled and pushed to the page as the `kt:tasks` event only when it changed, `kt:engineState` when aria2c
 // comes or goes. Everything here is synchronous on plain threads; the commands run it with spawn_blocking. The pure
-// parts (arguments, options, the Task mapping) are in engine_core.rs.
+// parts (arguments, options, the Task mapping) are kt-core's engine_core.rs (apps/tools/core/kt-core).
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -17,8 +17,10 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter};
 
-use crate::engine_core as ec;
-use crate::{rpc, util};
+use kt_core::engine_core as ec;
+use kurokawa_shell::util;
+
+use crate::rpc;
 
 static ENGINE: OnceLock<Arc<Engine>> = OnceLock::new();
 static SEQ: AtomicU64 = AtomicU64::new(0);
