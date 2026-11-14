@@ -1065,4 +1065,7 @@ export const ja: Partial<Strings> = {
   hotkeyWhyKey: "ここでは使えないキーが含まれています", hotkeyWhyTaken: "ほかのプログラムが使用中です", hotkeyWhyNone: "このシステムではグローバルショートカットを使えません",
   // (ステージ P7: アプリ内ブラウザーのバー)
   browserBarBack: "戻る", browserBarForward: "進む", browserBarReload: "再読み込み", browserBarAddress: "アドレスまたは検索", browserBarGrab: "リンクを取得 (Ctrl+G)", browserBarCopy: "アドレスをコピー (Ctrl+L)", browserBarExternal: "システムのブラウザーで開く",
+  // (Tauri シェルの画面翻訳：ここでの画面の取り込み方、Mac の画面収録の許可)
+  scrCapNone: "ここでは画面を取り込めません", scrCapPortal: "取り込みのたびにシステムのスクリーンショットポータルを通ります", scrCapPortalHint: "Wayland ではデスクトップが毎回許可を求めることがあります。「自動」は X11 セッションか grim があると最もよく動きます。",
+  scrPermNeed: "画面収録を許可してください", scrPermHint: "macOS は一度だけ尋ねます：システム設定 → プライバシーとセキュリティ → 画面収録 → Kurokawa Tools をオンにして、アプリを開き直してください。", scrPermOpen: "設定を開く",
 };

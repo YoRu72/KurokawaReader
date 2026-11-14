@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "screen",
+  "description": "The screen translator's windows (src/screentr.rs): the frozen screen (kts-overlay), «auto»'s caption (kts-caption, which listens for kt:screenCaption) and the clipboard's translation (kts-popup) run the same page on #/overlay with the bridge; the app's own kt_* commands need no permission, events need core's. Its self-test window (kts-test, about:blank) has none.",
+  "windows": ["kts-overlay", "kts-caption", "kts-popup"],
+  "permissions": ["core:default"]
+}

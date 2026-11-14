@@ -1065,4 +1065,7 @@ export const zh: Partial<Strings> = {
   hotkeyWhyKey: "其中有此处不支持的按键", hotkeyWhyTaken: "已被其他程序占用", hotkeyWhyNone: "此系统不支持全局快捷键",
   // (阶段 P7：应用内浏览器的工具栏)
   browserBarBack: "后退", browserBarForward: "前进", browserBarReload: "重新加载", browserBarAddress: "地址或搜索", browserBarGrab: "抓取链接 (Ctrl+G)", browserBarCopy: "复制地址 (Ctrl+L)", browserBarExternal: "在系统浏览器中打开",
+  // (Tauri 外壳的屏幕翻译：此处如何截取屏幕；Mac 的屏幕录制权限)
+  scrCapNone: "此处无法截取屏幕", scrCapPortal: "每次截图都经过系统的截图门户", scrCapPortalHint: "在 Wayland 下，桌面可能每次都请求你的允许；“自动”在 X11 会话或安装了 grim 时效果最好。",
+  scrPermNeed: "请允许屏幕录制", scrPermHint: "macOS 只询问一次：系统设置 → 隐私与安全性 → 屏幕录制 → 打开 Kurokawa Tools，然后重新打开应用。", scrPermOpen: "打开设置",
 };

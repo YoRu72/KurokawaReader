@@ -2157,4 +2157,7 @@ export const ar: Partial<Strings> = {
   hotkeyWhyKey: "في مفاتيحه ما لا يُدعَم هنا", hotkeyWhyTaken: "يستأثر به برنامجٌ آخر", hotkeyWhyNone: "لا تتاح الاختصارات العامّة على هذا النظام",
   // (المرحلة P7: شريط المتصفّح الداخلي.)
   browserBarBack: "رجوع", browserBarForward: "تقدّم", browserBarReload: "إعادة التحميل", browserBarAddress: "عنوانٌ أو بحث", browserBarGrab: "التقاط الروابط (Ctrl+G)", browserBarCopy: "نسخ العنوان (Ctrl+L)", browserBarExternal: "الفتح في متصفّح النظام",
+  // (مترجم الشاشة في غلاف Tauri: كيف تُلتقط الشاشة هنا، وإذن تسجيل الشاشة في ماك.)
+  scrCapNone: "تعذّر التقاط الشاشة هنا", scrCapPortal: "تمرّ كلّ لقطةٍ عبر بوّابة النظام لالتقاط الشاشة", scrCapPortalHint: "قد يستأذنك سطح المكتب في Wayland عند كلّ لقطة، وتعمل «الترجمة التلقائية» على أحسن وجهٍ في جلسة X11 أو إذا ثُبّت grim.",
+  scrPermNeed: "اسمح بتسجيل الشاشة", scrPermHint: "يسأل macOS مرّةً واحدة: إعدادات النظام ← الخصوصية والأمان ← تسجيل الشاشة ← فعّل Kurokawa Tools، ثم أعد فتح التطبيق.", scrPermOpen: "افتح الإعدادات",
 };

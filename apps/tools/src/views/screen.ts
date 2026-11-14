@@ -30,7 +30,9 @@ type Plug = {
 const plug = (): Plug | null => ktPlugin() as unknown as Plug | null;
 const A11Y_RELEASES = 'https://github.com/YoRu72/KurokawaReader/releases/latest';
 
-type PcStatus = { platform: string; on: boolean; keys: Record<string, { acc: string; ok: boolean }>; tray: boolean; auto: boolean; region: unknown; ocr: 'windows' | 'vision' | 'tesseract' | 'ai' | 'none' };
+type PcStatus = { platform: string; on: boolean; keys: Record<string, { acc: string; ok: boolean }>; tray: boolean; auto: boolean; region: unknown; ocr: 'windows' | 'vision' | 'tesseract' | 'ai' | 'none';
+  /** The Tauri shell's own: how the screen is taken here (and why it cannot be); a Mac's Screen Recording permission. */
+  capture?: { kind: string; why?: string }; permission?: 'granted' | 'denied' };
 type Desk = { screenConfig(o: { config: Record<string, unknown>; clearFixed?: boolean }): Promise<PcStatus>; screenStatus(): Promise<PcStatus>; screenAction(a: string): Promise<void>; screenOcrLangs(): Promise<{ kind: string; langs?: string[]; error?: string }> };
 const desk = (): Desk | null => { const d = (window as unknown as { kurokawaTools?: Partial<Desk> }).kurokawaTools; return d?.screenStatus ? d as Desk : null; };
 /** Whether the add-on can run here: the floating bubble on Android; shortcuts and the tray on a computer. */
@@ -113,6 +115,11 @@ export function screenView(): HTMLElement & { dispose?: () => void } {
     const kind = { windows: t('scrOcrWindows'), vision: t('scrOcrVision'), tesseract: 'Tesseract', ai: t('scrEngineAi'), none: t('scrOcrNone') }[s.ocr] ?? s.ocr;
     steps.replaceChildren(
       h('div', { class: 'screen-step' + (s.ocr === 'none' ? ' need' : ' done'), 'data-step': 'ocr' }, h('span', { class: 'screen-step-ic' }, icon(s.ocr === 'none' ? 'alert' : 'check')), h('span', { class: 'grow' }, h('b', null, t('scrOcrIs', { kind })), h('small', { class: 'src' }, s.ocr === 'none' ? t('scrOcrNoneHint') : s.ocr === 'windows' ? t('scrOcrWindowsHint') : s.ocr === 'tesseract' ? t('scrOcrTessHint') : s.ocr === 'ai' ? t('scrOcrAiHint') : t('scrOcrVisionHint')))),
+      // (The Tauri shell: the screen cannot be taken here, or each picture goes through the desktop portal; a Mac's
+      // Screen Recording permission not given — its button shows the system's request once, then its settings.)
+      ...(s.capture?.kind === 'none' ? [h('div', { class: 'screen-step need', 'data-step': 'capture' }, h('span', { class: 'screen-step-ic' }, icon('alert')), h('span', { class: 'grow' }, h('b', null, t('scrCapNone')), h('small', { class: 'src', dir: 'auto' }, s.capture.why ?? '')))] : []),
+      ...(s.capture?.kind === 'portal' ? [h('div', { class: 'screen-step', 'data-step': 'capture' }, h('span', { class: 'screen-step-ic' }, icon('info')), h('span', { class: 'grow' }, h('b', null, t('scrCapPortal')), h('small', { class: 'src' }, t('scrCapPortalHint'))))] : []),
+      ...(s.permission === 'denied' ? [h('div', { class: 'screen-step need', 'data-step': 'perm' }, h('span', { class: 'screen-step-ic' }, icon('lock')), h('span', { class: 'grow' }, h('b', null, t('scrPermNeed')), h('small', { class: 'src' }, t('scrPermHint'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void desk()?.screenAction('permission') }, t('scrPermOpen')))] : []),
       ...Object.entries(s.keys).filter(([, v]) => v.acc && s.on && !v.ok).map(([k, v]) => h('div', { class: 'screen-step need', 'data-step': 'key-' + k }, h('span', { class: 'screen-step-ic' }, icon('alert')), h('span', { class: 'grow' }, h('b', null, t('scrKeyTaken', { key: v.acc })), h('small', { class: 'src' }, t('scrKeyTakenHint'))))));
   }
   const engineCard = h('section', { class: 'card', id: 'scr-engine' }); const readCard = h('section', { class: 'card', id: 'scr-read' }); const autoCard = h('section', { class: 'card', id: 'scr-auto' });

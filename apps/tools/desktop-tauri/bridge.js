@@ -316,6 +316,22 @@
     packCancel: function (n) { return call('kt_pack_cancel', { n: str(n) }); },
     packRemove: function (n) { return call('kt_pack_remove', { n: str(n) }); },
     onPackProgress: function (cb) { return subscribe('kt:packProgress', cb); },
+    /* screen translator (src-tauri/src/screentr.rs, the capture in screencap.rs, the rules in kt-core's
+       screenlogic.rs): screenConfig({ config, clearFixed }) → the status; screenStatus() → { platform, on, keys {
+       action: { acc, ok } }, tray, auto, region, ocr } (this shell adds capture { kind, why } and, on a Mac,
+       permission 'granted' | 'denied'); screenAction(a) → true (region, full, repeat, auto, clipboard — and this
+       shell's 'permission'); screenJob() → the frozen screen's job or null; screenRegion(r | null) → { blocks } or
+       { ai, offset, scale }; screenClose(); screenOcrLangs() → { kind, langs | error }; screenCaptionSize({ height })
+       (Electron's kt:screenCaption call); onScreenCaption(cb) — { text } for «auto»'s caption window. */
+    screenConfig: function (o) { return call('kt_screen_config', { o: obj(o) }); },
+    screenStatus: function () { return call('kt_screen_status'); },
+    screenAction: function (a) { return call('kt_screen_action', { a: str(a) }); },
+    screenJob: function () { return call('kt_screen_job'); },
+    screenRegion: function (r) { return call('kt_screen_region', { r: r && typeof r === 'object' ? r : null }); },
+    screenClose: function () { return call('kt_screen_close'); },
+    screenOcrLangs: function () { return call('kt_screen_ocr_langs'); },
+    screenCaptionSize: function (o) { return call('kt_screen_caption', { o: obj(o) }); },
+    onScreenCaption: function (cb) { return subscribe('kt:screenCaption', cb); },
   };
   /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a
      second launch's, a Mac's Apple Events — kept by the shell (kt_open_take) and handed to the page as the preload's

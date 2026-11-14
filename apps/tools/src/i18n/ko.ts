@@ -1065,4 +1065,7 @@ export const ko: Partial<Strings> = {
   hotkeyWhyKey: "여기서 지원하지 않는 키가 들어 있습니다", hotkeyWhyTaken: "다른 프로그램이 사용 중입니다", hotkeyWhyNone: "이 시스템에서는 전역 단축키를 쓸 수 없습니다",
   // (단계 P7: 앱 안 브라우저의 막대)
   browserBarBack: "뒤로", browserBarForward: "앞으로", browserBarReload: "새로 고침", browserBarAddress: "주소 또는 검색", browserBarGrab: "링크 가져오기 (Ctrl+G)", browserBarCopy: "주소 복사 (Ctrl+L)", browserBarExternal: "시스템 브라우저에서 열기",
+  // (Tauri 셸의 화면 번역: 여기서 화면을 캡처하는 방식, Mac의 화면 기록 권한)
+  scrCapNone: "여기서는 화면을 캡처할 수 없습니다", scrCapPortal: "캡처할 때마다 시스템의 스크린샷 포털을 거칩니다", scrCapPortalHint: "Wayland에서는 데스크톱이 캡처마다 허락을 물을 수 있습니다. '자동'은 X11 세션이나 grim이 설치된 환경에서 가장 잘 동작합니다.",
+  scrPermNeed: "화면 기록을 허용하세요", scrPermHint: "macOS는 한 번만 묻습니다: 시스템 설정 → 개인정보 보호 및 보안 → 화면 기록 → Kurokawa Tools를 켠 뒤 앱을 다시 여세요.", scrPermOpen: "설정 열기",
 };

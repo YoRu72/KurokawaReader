@@ -26,13 +26,15 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
   'shareWifi', 'shareWifiStop', 'shareWifiStatus', 'localApi', 'avScan', 'avAvailable',
   // (Stage P5: the video tools.)
   'videoInfo', 'videoReady', 'isVideoHost', 'videoVersion', 'videoRollback', 'videoUpdate', 'videoBinary', 'galleryList', 'galleryReady', 'ffmpegAvailable', 'ffmpeg', 'ffmpegCancel', 'ffprobe',
-  'packStatus', 'packInstall', 'packCancel', 'packRemove'];
+  'packStatus', 'packInstall', 'packCancel', 'packRemove',
+  // (Screen translator: screentr.rs.)
+  'screenConfig', 'screenStatus', 'screenAction', 'screenJob', 'screenRegion', 'screenClose', 'screenOcrLangs', 'screenCaptionSize'];
 // (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']] };
-const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress'];
+const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
 // --- Electron's preload, with a fake electron that records each invoke.
@@ -83,8 +85,8 @@ function loadBridge(boot) {
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
-  // (Still missing: the screen translator's 8 channels — kt:screenConfig … kt:screenCaption.)
-  for (const k of ['screenConfig', 'screenStatus', 'screenAction', 'screenJob', 'screenRegion', 'screenClose', 'screenOcrLangs', 'screenCaptionSize', 'onScreenCaption']) assert.ok(!(k in kt), `${k} should be absent`);
+  // (Every channel of the preload is here now — the screen translator's 8 were the last.)
+  for (const k of Object.keys(pre)) assert.ok(k in kt, `${k} is in preload.cjs but not in the bridge`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -109,6 +111,9 @@ function loadBridge(boot) {
     videoInfo: [{ url: 'https://www.youtube.com/watch?v=x', playlist: true, cookiesFromBrowser: 'firefox' }], videoReady: [], isVideoHost: ['https://youtu.be/x'], videoVersion: [], videoRollback: [], videoUpdate: [],
     videoBinary: [{ path: '/opt/yt-dlp' }], galleryList: [{ url: 'https://x.org/g', range: '1-100', cookies: '/c.txt' }], galleryReady: [], ffmpegAvailable: [], ffmpeg: [{ id: 'c1', args: ['-i', '/a.mkv', '/b.mp4'] }],
     ffmpegCancel: ['c1'], ffprobe: ['/a.mkv'], packStatus: [], packInstall: [{ name: 'ffmpeg', url: 'https://x.org/p.gz', sha256: 'ab', version: '7' }], packCancel: ['ffmpeg'], packRemove: ['ffmpeg'],
+    // (Screen translator.)
+    screenConfig: [{ config: { pcOn: true, pc: { keys: { region: 'Alt+Shift+T' }, tray: true } }, clearFixed: true }], screenStatus: [], screenAction: ['region'], screenJob: [],
+    screenRegion: [{ x: 90, y: 90, width: 330, height: 90 }], screenClose: [], screenOcrLangs: [], screenCaptionSize: [{ height: 88 }],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};
@@ -227,6 +232,20 @@ function loadBridge(boot) {
     assert.deepEqual(JSON.parse(JSON.stringify(hk)), [{ mode: 'clip', text: 'magnet:?x' }]); assert.deepEqual(ot, ['g1']);
   }
 
+  // Screen translator: a region of null (the whole picture) sent as null, as the preload sends it; kt:screenCaption to
+  // onScreenCaption's callback until it is removed.
+  {
+    tCalls = []; eCalls = [];
+    await pre.screenRegion(null); await kt.screenRegion(null);
+    assert.deepEqual(JSON.parse(JSON.stringify(tCalls.filter((c) => c.cmd === 'kt_screen_region').map((c) => c.args))), [{ r: null }]);
+    assert.deepEqual(eCalls[0].a, [null]);
+    const caps = []; const offC = fresh.onScreenCaption((x) => caps.push(x)); await new Promise((ok) => setTimeout(ok, 5));
+    listeners['kt:screenCaption'][0]({ event: 'kt:screenCaption', payload: { text: 'Hello' } }); offC();
+    for (const f of listeners['kt:screenCaption'] || []) f({ event: 'kt:screenCaption', payload: { text: 'gone' } });
+    assert.deepEqual(JSON.parse(JSON.stringify(caps)), [{ text: 'Hello' }]);
+    assert.equal((listeners['kt:screenCaption'] || []).length, 0, 'unlistened');
+  }
+
   // Stage P7: the browser's GRAB_JS is main.cjs's, unchanged.
   {
     const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'));
@@ -234,6 +253,18 @@ function loadBridge(boot) {
     // (Line ends compared as LF: a Windows checkout gives grab.js CRLF — CI run 43543617161's Windows job failed here.)
     const lf = (t) => t.replace(/\r\n/g, '\n').trim();
     assert.equal(lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'), 'utf8')), lf(JSON.parse(m[1])), 'grab.js ≠ main.cjs GRAB_JS');
+  }
+
+  // Screen translator: the OCR helpers' scripts the Tauri shell writes are screentr.cjs's, unchanged (line ends as LF).
+  {
+    const cjs = fs.readFileSync(path.join(ROOT, 'desktop', 'screentr.cjs'), 'utf8');
+    const lf = (t) => t.replace(/\r\n/g, '\n');
+    for (const name of ['kt-ocr.ps1', 'kt-ocr.js']) {
+      const at = cjs.indexOf(`script('${name}', \``); assert.ok(at > 0, `${name} in screentr.cjs`);
+      let i = at + `script('${name}', \``.length; let body = '';
+      for (;;) { const c = cjs[i]; if (c === '\\') { body += cjs[i + 1]; i += 2; continue; } if (c === '`') break; body += c; i++; }
+      assert.equal(lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', name), 'utf8')), lf(body), `src-tauri/src/${name} ≠ screentr.cjs's`);
+    }
   }
 
   // Rust: every command the bridge calls is registered, with the argument names the bridge sends.
@@ -390,6 +421,8 @@ function loadBridge(boot) {
   for (const [bad, part] of [[false, 0], [true, 0], [false, 1], [false, 2]]) {
     const sent2 = [];
     const kt2 = fakeKt(bad);
+    // (Screen translator: a pretend screen — tests/screenfake.cjs.)
+    const SCR = require('./screenfake.cjs')(cfg); Object.assign(kt2, SCR.kt);
     const D = kt2.__desk;
     const siteAct = (o) => (o.act === 'list' ? (D.capture ? [{ label: 'kt-site-capture-1', url: D.capture.o.url }] : []) : o.act === 'go' ? (D.capture && D.capture.o.marker && o.url.includes(D.capture.o.marker) ? (D.capture.ok(o.url), D.capture = null, true) : true) : o.act === 'close' ? (D.capture && (D.capture.ok(null), D.capture = null), true) : undefined);
     const brTell = (o) => setTimeout(() => (D.brSubs || []).forEach((f) => f(o)), 5);
@@ -401,6 +434,7 @@ function loadBridge(boot) {
       : o.act === 'progress' ? true : o.act === 'awake' ? { awake: !!o.on, alive: !!o.on, how: 'systemd-inhibit' } : o.act === 'notify' ? true : o.act === 'windows' ? [{ label: 'main', visible: true, decorated: false }, ...(D.mini ? [{ label: 'mini', visible: true, decorated: false }] : [])]
       : o.act === 'second' ? (D.openLog.push(o.args[0], 'data:application/x-bittorrent;base64,ZDQ6aW5mb2Rl'), { ended: true, code: 0 }) : undefined);
     const env = { openLog: () => D.openLog, sleep: () => new Promise((ok) => setTimeout(ok, 2)), invoke: (cmd, args) => { sent2.push({ cmd, args }); if (cmd === 'kt_selftest_desk') return Promise.resolve(deskAct(args.o)); if (cmd === 'kt_selftest_site') return Promise.resolve(siteAct(args.o)); if (cmd === 'kt_selftest_browse') return Promise.resolve(brAct(args.o)); return Promise.resolve(cmd === 'kt_selftest_icon' ? { png: kt2.__icon() ? 9 : null, ico: [], dir: '/c', last: { window: true }, setIcon: true } : cmd === 'kt_selftest_write' ? kt2.__write(args) : cmd === 'kt_selftest_updatedl' ? { size: cfg.largeSize, resumedFrom: 1048576, ok: true, refused: 'kt-update:checksum', removedWhenRefused: true, noChecksum: 'kt-update:nochecksum', kind: 'bare', file: null } : undefined); }, doc, now: () => Date.now() };
+    { const inv0 = env.invoke; env.invoke = (cmd, args) => (cmd === 'kt_selftest_screen' ? (sent2.push({ cmd, args }), Promise.resolve().then(() => SCR.act(args.o))) : inv0(cmd, args)); env.pixels = SCR.pixels; }
     const res = JSON.parse(JSON.stringify(await lib.run(kt2, Object.assign({}, cfg, { part }), env)));
     const last = sent2[sent2.length - 1];
     assert.equal(last.cmd, 'kt_selftest_done');
@@ -421,6 +455,8 @@ function loadBridge(boot) {
     const p3 = res.filter((r) => /^(files|deletePath|archiveFree|font|megaDecrypt)/.test(r.name));
     assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_progress'));
+    const scr = res.filter((r) => /^screen:/.test(r.name));
+    assert.ok(scr.length === 12 && scr.every((r) => r.ok), 'the screen translator\'s checks against the pretend screen: ' + JSON.stringify(scr.filter((r) => !r.ok)));
   }
   {
     const whole = new Set(byPart[0]); const one = new Set(byPart[1]); const two = new Set(byPart[2]);

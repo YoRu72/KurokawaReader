@@ -28,3 +28,6 @@ pub mod streamlogic;
 // (Stage P5: the video tools.)
 pub mod videotools;
 pub mod vidjson;
+// (The screen translator on a computer: shortcuts, monitors and regions, the caption's and the popup's places, the
+// OCR answers read, pixels and a PNG, the screenshot portal — desktop/screentr.cjs's rules for the Tauri shell.)
+pub mod screenlogic;
