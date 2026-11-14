@@ -18,6 +18,8 @@ on:
       - 'apps/tools/core/**'
       - 'shared/shell-rs/**'
       - 'apps/tools/src/**'
+      - 'apps/tools/tests/**'
+      - 'apps/tools/desktop/**'
       - '.github/workflows/tauri-check.yml'
   workflow_dispatch:
 
