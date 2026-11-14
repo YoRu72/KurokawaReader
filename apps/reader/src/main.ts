@@ -153,7 +153,11 @@ const route0 = parseRoute();
 mount(route0);
 // A book the app was ended under (by the system, for its memory) opened again where it was — not the library.
 const startsOnLibrary = location.hash === '' || location.hash === '#/' || location.hash === '#';
-const resumed = startsOnLibrary ? takeResume() : null;
+// (Loaded again by the Android shell because the page did not answer Back — MainActivity checkBack —: on the library,
+// the book not opened again, and the rescue kept for the Performance page.)
+const rescued = /[?&]kr-rescued=1/.test(location.search);
+if (rescued) { diagEvent('rescued'); try { localStorage.removeItem('kr.reading'); } catch { /* none */ } try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* kept */ } }
+const resumed = startsOnLibrary && !rescued ? takeResume() : null;
 if (resumed) { diagEvent('resume'); navigate(`/read/${resumed.join(',')}`); }
 else if (current && route0.name === 'library') diagMark('shown');
 // Optionally resume the last book on a cold start.

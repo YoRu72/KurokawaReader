@@ -4,6 +4,7 @@ import { isPc, uiSize, setUiSize, UI_SIZES } from '../ui/pcshell';
 import { vocab, vocabSheet, onVocabChange } from '../ui/vocab';
 import { t, formatBytes, getLangPref, setLangPref, getDirPref, setDirPref, type LangPref, type DirPref, LANGS, systemLang, localDigits, getLang, countBooks, countChapters, countNovels, countHours } from '../i18n';
 import { navigate, back } from '../router';
+import { onBack } from '../ui/backstack';
 import { db } from '../db';
 import { renderOptions } from '../ui/options';
 import { colorField } from '../ui/colorpicker';
@@ -437,6 +438,8 @@ export function settingsView(): HTMLElement {
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); } });
     nav.append(h('button', { type: 'button', class: 'chip small', 'data-sec': card.id, onclick: () => { if (pc()) { showSec(card.id); return; } card.classList.remove('collapsed'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
   });
+  // (Back with a search typed: the search emptied first, every section shown again — then Back leaves Settings.)
+  const offBack = onBack(() => { if (!root.isConnected) { offBack(); return false; } if (!search.value) return false; search.value = ''; search.blur(); applySearch(); return true; });
   const titled = cards.filter((c) => c.querySelector(':scope > h3'));
   if (!titled.some((c) => c.id === pcSec)) pcSec = titled[0]?.id ?? '';
   const applySearch = () => {

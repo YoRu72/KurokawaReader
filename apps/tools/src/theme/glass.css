@@ -1,0 +1,109 @@
+/* ------------------------------------------------------------------
+   Glass — the theme layer shared by the Kurokawa apps (themes.ts sets the tokens on <html>).
+   Nothing here applies under «Classic» (no data-glass): the app's own look, exactly.
+   Tokens (set by themes.ts):
+     --th-ground   the solid ground          --th-bg      background image layers (picture, gradients)
+     --g-{pane,card,sheet}-t / -s           translucent / solid tints of bars, cards, sheets
+     --g-blur --g-sat                       blur radius and saturation of the full glass
+     --g-edge --g-sheen --g-shadow          hairline, inner highlight, depth
+     --th-solid-{lowest,low,mid,high,highest}  opaque surfaces for what floats without a blur
+   data-glass = full | reduced | off: how much is blurred (see resolveBlur in themes.ts). At most the bars,
+   the open sheet and the snackbar blur on «reduced»; the cards too on «full»; nothing on «off».
+   ------------------------------------------------------------------ */
+
+html[data-glass] {
+  --g-pane: var(--g-pane-t); --g-card: var(--g-card-t); --g-sheet: var(--g-sheet-t);
+  --g-filter: blur(var(--g-blur)) saturate(var(--g-sat));
+  --g-filter-card: blur(calc(var(--g-blur) * .6)) saturate(var(--g-sat));
+  --g-ring: inset 0 0 0 1px var(--g-edge);
+  --g-lift: var(--g-sheen), var(--g-ring), var(--g-shadow);
+  background: var(--th-ground);
+}
+html[data-glass='reduced'] { --g-filter: blur(calc(var(--g-blur) * .5)) saturate(var(--g-sat)); --g-filter-card: none; }
+html[data-glass='off'] { --g-filter: none; --g-filter-card: none; --g-pane: var(--g-pane-s); --g-card: var(--g-card-s); --g-sheet: var(--g-sheet-s); }
+/* A web view without backdrop-filter: the solid glass, never see-through text. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-glass] { --g-filter: none; --g-filter-card: none; --g-pane: var(--g-pane-s); --g-card: var(--g-card-s); --g-sheet: var(--g-sheet-s); }
+}
+
+/* The ground: one fixed layer behind everything (painted once, scrolled over — no background-attachment: fixed). */
+html[data-glass] body { background: transparent; }
+html[data-glass] body::before {
+  content: ''; position: fixed; inset: calc(var(--th-bg-bleed, 0px) * -1); z-index: -1; pointer-events: none; filter: var(--th-bg-filter, none);
+  background-color: var(--th-ground); background-image: var(--th-bg); background-size: cover; background-position: center; background-repeat: no-repeat;
+}
+
+/* ---------- panes: the app bar, the rail, the sticky heads ---------- */
+html[data-glass] :is(.topbar, .nav-rail) {
+  background: var(--g-pane); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter);
+}
+html[data-glass] .topbar { box-shadow: 0 1px 0 color-mix(in srgb, var(--g-edge) 70%, transparent); }
+html[data-glass] .nav-rail { border-inline-end: 0; box-shadow: var(--g-sheen), inset -1px 0 0 var(--g-edge); }
+html[data-glass][dir='rtl'] .nav-rail { box-shadow: var(--g-sheen), inset 1px 0 0 var(--g-edge); }
+/* The settings' sticky search and chips: the denser sheet glass, full width, so nothing behind shows through as lines. */
+html[data-glass] .settings-head { background: var(--g-sheet); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter); box-shadow: 0 1px 0 var(--g-edge), 0 10px 16px -14px rgb(0 0 0 / .5); margin-inline: -20px; padding-inline: 20px; }
+html.pc[data-glass] .settings-head { margin-inline: 0; padding-inline: 0; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+html[data-glass] .settings-body > .card { scroll-margin-top: calc(var(--head-h, 0px) + 8px); }
+
+/* ---------- cards ---------- */
+html[data-glass] .card {
+  background: var(--g-card); -webkit-backdrop-filter: var(--g-filter-card); backdrop-filter: var(--g-filter-card);
+  box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow);
+}
+/* Headings of cards: the emphasised scale, in sentence case. */
+html[data-glass] .card > h3 { text-transform: none; letter-spacing: -.005em; font-size: 15.5px; font-weight: 600; color: var(--md-on-surface); }
+html[data-glass] .card > h3 svg { color: var(--md-primary); }
+
+/* ---------- sheets, dialogs, menus, the snackbar ---------- */
+html[data-glass] .sheet {
+  background: var(--g-sheet); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter);
+  box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow);
+}
+html.pc[data-glass] .sheet, html.pc[data-glass] .sheet.as-menu { background: var(--g-sheet); box-shadow: var(--g-sheen), var(--g-ring), 0 28px 70px -20px rgb(0 0 0 / .55), var(--g-shadow); }
+html[data-glass] .sheet::before { background: color-mix(in srgb, var(--md-on-surface) 38%, transparent); }
+html[data-glass] .scrim { background: var(--md-scrim); }
+html[data-glass] .toast:not(.error) {
+  background: color-mix(in srgb, var(--md-inverse-surface) 88%, transparent); -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter);
+  box-shadow: var(--g-ring), var(--g-shadow); border-radius: var(--sh-lg);
+}
+html[data-glass='off'] .toast:not(.error) { background: var(--md-inverse-surface); }
+
+/* ---------- Material 3 Expressive: shapes that answer a touch ---------- */
+/* The accent, sparingly and clearly: tinted glass — the accent at low alpha, its hairline, its icon — on the main
+   action, the selected place and the active filter. Shapes: pills for what is chosen among (chips, filters, the
+   selected place), the large rounded square for the one main action, rounded panels for containers. */
+html[data-glass] {
+  --g-accent-fill: color-mix(in srgb, var(--md-primary) 15%, transparent);
+  --g-accent-line: inset 0 0 0 1px color-mix(in srgb, var(--md-primary) 34%, transparent);
+}
+html[data-glass] .fab, html[data-glass] .rail-fab {
+  background: color-mix(in srgb, var(--md-primary) 14%, var(--g-sheet)); color: var(--md-on-surface); border-radius: var(--sh-lg);
+  -webkit-backdrop-filter: var(--g-filter); backdrop-filter: var(--g-filter);
+  box-shadow: var(--g-sheen), var(--g-accent-line), var(--g-shadow);
+}
+html[data-glass] :is(.fab, .rail-fab) svg { color: var(--md-primary); }
+html[data-glass] .rail-fab:hover { background: color-mix(in srgb, var(--md-primary) 22%, var(--g-sheet)); }
+html[data-glass] .chip { border-radius: var(--sh-full); }
+html[data-glass] .chip.on { background: var(--g-accent-fill); color: var(--md-on-surface); box-shadow: var(--g-accent-line); }
+html[data-glass] .chip.on svg { color: var(--md-primary); }
+/* An empty page's sign: a dark glass pebble, its icon in the accent; the words under it calm. */
+html[data-glass] .empty .glyph { background: var(--g-card); -webkit-backdrop-filter: var(--g-filter-card); backdrop-filter: var(--g-filter-card); box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow); }
+html[data-glass] .empty .glyph svg { stroke: var(--md-primary); stroke-width: 1.4; }
+html[data-glass] .empty h2 { font-weight: 480; font-size: 21px; letter-spacing: -.01em; line-height: 1.3; }
+html[data-glass][dir='rtl'] .empty h2 { letter-spacing: 0; }
+html[data-glass] .empty p { color: var(--md-on-surface-dim); font-size: 14.5px; }
+html[data-glass] .topbar .title { font-weight: 620; letter-spacing: -.012em; }
+html[data-glass][dir='rtl'] .topbar .title { letter-spacing: 0; }
+html[data-glass] .rail-item.active { background: var(--g-accent-fill); color: var(--md-on-surface); box-shadow: var(--g-accent-line); }
+html[data-glass] .rail-item.active svg { color: var(--md-primary); }
+@media (prefers-reduced-motion: no-preference) {
+  /* The selected place: its pill grows from a soft square to a full capsule, springing. */
+  html[data-glass] .rail-item { transition: background-color var(--dur-med) var(--spring-soft), border-radius var(--dur-long) var(--spring), color var(--dur-short); border-radius: var(--sh-md); }
+  html[data-glass] .rail-item.active { border-radius: var(--sh-full); }
+  html[data-glass] .fab, html[data-glass] .rail-fab { transition: transform var(--dur-med) var(--spring), border-radius var(--dur-long) var(--spring), box-shadow var(--dur-med); }
+  html[data-glass] .sheet { animation-timing-function: var(--spring-soft); }
+}
+/* The filled button: the accent as tinted glass, never a light slab. */
+html[data-glass] :is(.btn.primary, .btn.filled) { background: color-mix(in srgb, var(--md-primary) 22%, var(--g-sheet)); color: var(--md-on-surface); box-shadow: var(--g-sheen), var(--g-accent-line); }
+html[data-glass] :is(.btn.primary, .btn.filled) svg { color: var(--md-primary); }
+html[data-glass] :is(.btn.primary, .btn.filled):hover { background: color-mix(in srgb, var(--md-primary) 30%, var(--g-sheet)); }

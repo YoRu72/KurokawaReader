@@ -187,6 +187,7 @@ public class MainActivity extends BridgeActivity {
             if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN) {
                 if (volumeKey(code, event)) return true;
             }
+            if (code == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) noteBack();
         }
         return super.dispatchKeyEvent(event);
     }
@@ -231,6 +232,47 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /*
+     * Back's watchdog. The page decides what Back does (Capacitor's App plugin hands it the press — src/native.ts) and
+     * says at once that it heard it (KurokawaPlugin.backAck). A page that does not answer two Backs in a row, the first
+     * BACK_ANSWER_MS ago or more — stuck, or its script not running —, is not left to keep the reader: the app's start
+     * page is loaded again on the library (`kr-rescued`: the book is not opened again there, and the Performance
+     * record notes the rescue). Only once the page has shown it answers Back at all (its first answer, at its start).
+     */
+    private static final long BACK_ANSWER_MS = 4000;
+    private int unanswered = 0;
+    private long firstUnanswered = 0;
+
+    private void noteBack() {
+        final long now = android.os.SystemClock.uptimeMillis();
+        if (KurokawaPlugin.backAckAt == 0) return;
+        if (KurokawaPlugin.backAckAt >= firstUnanswered) unanswered = 0;
+        if (unanswered == 0) firstUnanswered = now;
+        unanswered++;
+        final android.webkit.WebView w = getBridge() != null ? getBridge().getWebView() : null;
+        if (w == null) return;
+        w.postDelayed(this::checkBack, BACK_ANSWER_MS);
+    }
+
+    private void checkBack() {
+        if (unanswered == 0) return;
+        if (KurokawaPlugin.backAckAt >= firstUnanswered) { unanswered = 0; return; }
+        long now = android.os.SystemClock.uptimeMillis();
+        if (unanswered < 2 || now - firstUnanswered < BACK_ANSWER_MS) return;
+        unanswered = 0;
+        if (isFinishing() || getBridge() == null) return;
+        final android.webkit.WebView w = getBridge().getWebView();
+        if (w == null || w.getParent() == null) return;
+        try {
+            getSharedPreferences(CRASH_PREFS, Context.MODE_PRIVATE).edit().putLong("rescueAt", System.currentTimeMillis()).apply();
+            String u = w.getUrl();
+            if (u == null) return;
+            int i = u.indexOf('#'); if (i >= 0) u = u.substring(0, i);
+            i = u.indexOf('?'); if (i >= 0) u = u.substring(0, i);
+            w.loadUrl(u + "?kr-rescued=1#/");
+        } catch (Throwable ignored) {}
     }
 
     /** In the background the keys are the system's again; the web side asks anew when the app comes back. */

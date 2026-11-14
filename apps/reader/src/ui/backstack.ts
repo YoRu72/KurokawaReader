@@ -6,6 +6,9 @@ import { navigate } from '../router';
 import { diagBack } from '../diag';
 
 const handlers: (() => boolean)[] = [];
+let stepsTaken = 0;
+/** How many Backs a view's own step took (a place left inside it): src/native.ts tells by it that a press did something. */
+export const backSteps = (): number => stepsTaken;
 /** A view's own step back (a series opened inside it): `fn` returns true when it went back. The latest first;
  *  the returned function takes it away (the view left, the place closed). */
 export function onBack(fn: () => boolean): () => void {
@@ -28,7 +31,7 @@ export function goBack(): boolean {
   if (overlays.some((d) => d.classList.contains('app-lock'))) return true;
   const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.lb-close, .topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
   if (overlayBtn) { overlayBtn.click(); return true; }
-  for (let i = handlers.length - 1; i >= 0; i--) { const fn = handlers[i]; if (fn()) return true; }
+  for (let i = handlers.length - 1; i >= 0; i--) { const fn = handlers[i]; if (fn()) { stepsTaken++; return true; } }
   const viewBack = document.querySelector<HTMLButtonElement>('.view .topbar button[data-icon="back"]');
   if (viewBack) { viewBack.click(); return true; }
   if (location.hash && location.hash !== '#/' && location.hash !== '#') { navigate('/'); return true; }

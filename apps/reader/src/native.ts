@@ -2,15 +2,15 @@
 // iOS share sheet, Electron file associations) are imported into the library
 // and opened straight away. Everything here is optional at runtime — the plain
 // web build simply has none of these globals.
-import { goBack, wirePcBack } from './ui/backstack';
+import { goBack, wirePcBack, backSteps } from './ui/backstack';
 import { importFiles } from './library';
-import { navigate } from './router';
-import { toast } from './ui/dom';
+import { navigate, leaveView, onRoute } from './router';
+import { toast, closeSheets } from './ui/dom';
 import { t, onLangChange } from './i18n';
 import { brandIcon, setBrandIcon } from './ui/brandIcon';
 import { getSettings } from './settings';
 import { actionFor } from './shortcuts';
-import { diagBack, diagLeaveIntent, diagAppState } from './diag';
+import { diagBack, diagBackHeld, diagEvent, diagLeaveIntent, diagAppState } from './diag';
 
 interface CapApp { addListener(ev: 'appUrlOpen' | 'backButton' | 'appStateChange', fn: (d: { url: string; canGoBack?: boolean; isActive?: boolean }) => void): Promise<unknown>; getLaunchUrl(): Promise<{ url?: string } | null>; minimizeApp?(): Promise<void> }
 interface CapFs { readFile(o: { path: string }): Promise<{ data: string | Blob }> }
@@ -195,10 +195,30 @@ export function initNativeBridges(): void {
     // (Each press kept for the Performance page, with where the last touch began: src/diag.ts.)
     // (A Back that comes in the middle of a page-turn swipe is first offered to the open reader — src/readkeys.ts —,
     // which may take it as part of the swipe, or let it go on a moment later: `backGate`.)
-    const press = (): void => { if (goBack()) return; if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); };
-    void cap.Plugins.App.addListener('backButton', () => { diagBack('back-button'); if (backGate?.(press)) return; press(); });
+    const atTop = (): void => { if (getSettings().doubleBackExit && Date.now() - backAt > 2000) { backAt = Date.now(); toast(t('pressAgainToExit')); return; } void cap.Plugins?.App?.minimizeApp?.(); };
+    const press = (): void => { const before = backSignature(); if (goBack()) { if (backSignature() === before) watchBack(before); return; } atTop(); };
+    void cap.Plugins.App.addListener('backButton', () => {
+      // (Heard: the shell's watchdog — MainActivity — is told the page answers its Back.)
+      void (cap.Plugins as { Kurokawa?: { backAck?(): Promise<void> } } | undefined)?.Kurokawa?.backAck?.().catch(() => undefined);
+      diagBack('back-button');
+      // The safety net: a Back right after one that was held, or that changed nothing, is never held again — it closes
+      // what is truly open over the screen and leaves the view, in the one press.
+      // ("Back twice to leave a book" on, after a Back a swipe took: that setting's own pair — the reminder, then out —
+      // is kept; it leaves on the second press by itself.)
+      if (strike?.why === 'gate' && getSettings().backTwiceLeave) strike = null;
+      if (strike && Date.now() - strike.at <= STRIKE_MS && !document.querySelector('.app-lock')) { const why = strike.why; strike = null; diagBackHeld('forced', { after: why }); if (!forceBack()) atTop(); return; }
+      strike = null;
+      if (backGate?.(press)) { strike = { at: Date.now(), why: 'gate' }; return; }
+      press();
+    });
+    // (The shell's watchdog is armed only for a page that answers Back: this one does, from now on.)
+    void (cap.Plugins as { Kurokawa?: { backAck?(): Promise<void> } } | undefined)?.Kurokawa?.backAck?.().catch(() => undefined);
   }
   wirePcBack();
+  // (A Back that seemed to change nothing, followed by a change of screen after all: not held.)
+  onRoute(() => { strike = null; screens++; });
+  // (A step back the browser did not take, taken by the app itself — src/router.ts —: for the Performance page.)
+  window.addEventListener('kr:backfix', (e) => diagEvent('backfix', { why: String((e as CustomEvent<string>).detail) }));
   if (window.kurokawaDesktop) {
     window.kurokawaDesktop.onOpenFile((p) => void openIncoming(new File([p.data], p.name)));
     (window.kurokawaDesktop as DesktopBridge & { onOpenUrl?(cb: (u: string) => void): void }).onOpenUrl?.((u) => void handleUrl(u));
@@ -310,6 +330,54 @@ export async function setVolumeKeys(on: boolean): Promise<void> {
   const kr = (window.Capacitor as (CapGlobal & { Plugins?: { Kurokawa?: { setVolumeKeys?(o: { on: boolean }): Promise<void> } } }) | undefined)?.Plugins?.Kurokawa;
   try { await kr?.setVolumeKeys?.({ on }); } catch { /* ignore */ }
 }
+/* ---------- Back's safety net (the phone's Back) ----------
+ * One rule, for every screen: Back goes up one level of where the reader is — what is open over the screen first (a
+ * sheet, a menu, a panel, a full-screen view, the books selected, a search), then a place inside the view (a folder,
+ * a series, a tag or shelf entered as a place: src/views/library.ts), then the view itself (to the one it was opened
+ * from: src/router.ts) — and only on the library's main page, nothing open, does it offer to leave the app
+ * (src/ui/backstack.ts goBack, in that order). Whatever a gate or a step does, a reader is never kept: a Back that was
+ * held (by a gate: src/readkeys.ts, "Back twice to leave a book") or that changed nothing on the screen is followed —
+ * within STRIKE_MS — by one that closes what is truly open and leaves the view in the same press (forceBack), each
+ * kept in the Performance record (backheld why=gate|noeffect|forced). */
+const STRIKE_MS = 4000;
+/** How long a Back has to change something on the screen (ms). */
+const BACK_EFFECT_MS = 700;
+let strike: { at: number; why: string } | null = null;
+/** Screens shown since the start: a screen left and the same one opened again is still a change. */
+let screens = 0;
+/** What a Back can change, in a few characters: the address, what is open over the screen, the view's own level. */
+function backSignature(): string {
+  const open = document.querySelectorAll('.sheet, .panel.open, .cam-view, [role="dialog"]:not(.panel), .selection-bar:not([hidden])').length;
+  const lvl = document.querySelector<HTMLElement>('[data-level]')?.dataset.level ?? '';
+  return `${location.hash}|${open}|${lvl}|${backSteps()}|${screens}`;
+}
+/** A press whose step showed nothing at once (a way back the browser takes later, or nothing at all): looked at again a
+ *  moment later. (What a press closes at once is seen at once: src/native.ts press.) */
+function watchBack(before: string): void {
+  const at = Date.now();
+  window.setTimeout(() => {
+    if (backSignature() !== before || document.visibilityState === 'hidden') return;
+    // (The app's lock: Back is not to get past it.)
+    if (document.querySelector('.app-lock')) return;
+    strike = { at, why: 'noeffect' };
+    diagBackHeld('noeffect');
+  }, BACK_EFFECT_MS);
+}
+/** Out, in one press: every sheet and full-screen view closed, the selection let go, and the view left for the one
+ *  beneath (the library when none). False on the library's main page with nothing open: the caller then does what Back
+ *  does there (leave the app, or warn first). */
+function forceBack(): boolean {
+  const before = backSignature();
+  closeSheets();
+  document.querySelectorAll<HTMLButtonElement>('.panel.open .panel-head button').forEach((b) => b.click());
+  document.querySelectorAll('.sel-toolbar, .lightbox, .pdf-cutter').forEach((e) => e.remove());
+  const route = location.hash.replace(/^#/, '') || '/';
+  if (route !== '/' && route !== '') { leaveView('/'); return true; }
+  // (The library: back to its main page — out of a folder, a series, a search — when it is not there.)
+  if (goBack()) return true;
+  return backSignature() !== before;
+}
+
 /** The open reader's say over a Back press (src/readkeys.ts): returns true when it takes the press — held as part of
  *  a page-turn swipe, or kept until the touch under way ends, `go` then called if it is to go on after all. */
 let backGate: ((go: () => void) => boolean) | null = null;

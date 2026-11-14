@@ -332,6 +332,35 @@
     return waitFor(function () { return $$(sel).filter(visible)[0]; }, 45000, 'the book open (' + sel + ')');
   }
   function scroller() { return $('.reader-scroll'); }
+  /** The paragraph drawn at the top of the reading area (elementFromPoint): what the reader sees there. (topPara below
+   *  measures every paragraph — one in a run or chapter not laid out is measured as if it were, and can reach past its
+   *  box over the text below.) */
+  function seenPara() {
+    var sc = scroller(); if (!sc) return null; var r = sc.getBoundingClientRect();
+    for (var dy = 10; dy <= 50; dy += 10) { var e = doc.elementFromPoint(r.left + r.width / 2, r.top + dy); var p = e && e.closest && e.closest('.reader-flow p'); var m = p && /\[P(\d+)\]/.exec(p.textContent || ''); if (m) return Number(m[1]); }
+    return null;
+  }
+  /** What can move the text under a reader at a saved place, for the report: the place (drawn and measured), the scroll,
+   *  the size of each run or chapter above the place (runs not laid out take a reckoned height), the fonts, the zoom and
+   *  the window — and what the reader's place-keeping did (__krPlaceLog: its last put-backs and why). */
+  function placeState() {
+    var sc = scroller(); if (!sc) return { scroller: null };
+    var y = sc.getBoundingClientRect().top + 10;
+    var boxes = $$('.reader-flow .kr-content > .kr-run, .reader-flow .kr-content > .kr-chapter');
+    var above = boxes.filter(function (b) { return b.getBoundingClientRect().bottom <= y; });
+    var cv = function (b) { return root.getComputedStyle(b).contentVisibility === 'auto'; };
+    var fonts = doc.fonts ? { status: doc.fonts.status, loaded: 0, all: 0 } : null;
+    if (fonts) doc.fonts.forEach(function (f) { fonts.all++; if (f.status === 'loaded') fonts.loaded++; });
+    var zoom = null; try { zoom = sessionStorage.getItem('kr.zoom.now'); } catch (e) { /* none */ }
+    return {
+      seen: seenPara(), measured: topPara(), top: Math.round(sc.scrollTop), height: sc.scrollHeight, view: sc.clientWidth + '×' + sc.clientHeight,
+      above: above.length + ' of ' + boxes.length + (boxes[0] ? ' ' + boxes[0].className.replace(/\s+/g, '.') : ''),
+      aboveH: above.map(function (b) { return Math.round(b.getBoundingClientRect().height); }), aboveSum: Math.round(above.reduce(function (n, b) { return n + b.getBoundingClientRect().height; }, 0)),
+      aboveSkippedLike: above.filter(cv).length, cpx: (($('.reader-flow .kr-content') || {}).style || { getPropertyValue: function () { return ''; } }).getPropertyValue('--kr-cpx'),
+      fonts: fonts, dpr: root.devicePixelRatio, window: root.innerWidth + '×' + root.innerHeight, zoom: zoom, zoomWay: root.__KR_ZOOM_WAY__ || null, full: !!doc.fullscreenElement,
+      log: (root.__krPlaceLog || []).slice(-10)
+    };
+  }
   function topPara() {
     var sc = scroller(); if (!sc) return null;
     var top = sc.getBoundingClientRect().top + 10;
@@ -734,16 +763,22 @@
         var sc = must(scroller(), 'no .reader-scroll');
         sc.scrollTop = (sc.scrollHeight - sc.clientHeight) / 2; await sleep(800);
         sc.scrollTop = (sc.scrollHeight - sc.clientHeight) / 2; await sleep(1500);
-        var p = must(topPara(), 'no paragraph at the top'); st.data.textAt = p; save();
+        var p = must(seenPara() || topPara(), 'no paragraph at the top'); st.data.textAt = p; save();
         return 'paragraph ' + p + ' at the top (scrollTop ' + Math.round(sc.scrollTop) + ' of ' + sc.scrollHeight + ')';
       });
       await step('the place saved and restored', true, async function () {
         await toLibrary(); await sleep(600);
         var b = await bookById(st.data.text);
         await openReader(st.data.text, '.reader-flow p');
-        var atOpen = topPara();
-        var back = await waitFor(async function () { await sleep(400); var p = topPara(); return p && Math.abs(p - st.data.textAt) <= 2 ? p : null; }, 12000, function () { return 'back at paragraph ' + st.data.textAt + ' (at the open ' + atOpen + ', at the end ' + topPara() + '; window ' + root.innerWidth + '×' + root.innerHeight + '; saved ' + short(b && b.progress) + ')'; });
-        return 'paragraph ' + back + ' (left at ' + st.data.textAt + '; saved ' + short(b && b.progress) + ')';
+        var atOpen = placeState();
+        // (On a failure: what changed between the open and the end — the runs above, the fonts, the zoom, the window —,
+        // what the place-keeping did, and whether the saved place was overwritten meanwhile.)
+        var back = await waitFor(async function () { await sleep(400); var p = seenPara() || topPara(); return p && Math.abs(p - st.data.textAt) <= 2 ? p : null; }, 12000, function () { return 'back at paragraph ' + st.data.textAt + ' (at the open ' + atOpen.seen + ', at the end ' + (seenPara() || topPara()) + '; window ' + root.innerWidth + '×' + root.innerHeight + '; saved ' + short(b && b.progress) + ') — at the open ' + short(atOpen, 1400) + ' — at the end ' + short(placeState(), 1800); });
+        await sleep(800);
+        var b2 = await bookById(st.data.text); var kept = !!(b && b2 && b.progress && b2.progress && b2.progress.block === b.progress.block);
+        must(kept, 'the saved place was overwritten: ' + short(b && b.progress) + ' → ' + short(b2 && b2.progress) + ' — ' + short(placeState(), 1800));
+        var end = placeState();
+        return 'paragraph ' + back + ' (left at ' + st.data.textAt + '; saved ' + short(b && b.progress) + ', still saved there; DPR ' + end.dpr + ', zoom ' + end.zoom + ', window ' + end.window + ', fonts ' + short(end.fonts) + '; put back ' + end.log.length + '×' + (end.log.length ? ': ' + short(end.log.slice(-3), 300) : '') + ')';
       }, 60000);
       return at;
     });
