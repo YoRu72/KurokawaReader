@@ -65,6 +65,8 @@ function aria2Dir() {
   at('launch');
   const app = await pw._electron.launch({ executablePath: exe, args, cwd: DESK, env, timeout: 120000 });
   try { appProc = app.process(); } catch { /* older playwright */ }
+  // (The main process's own words about the engine — desktop/aria2.cjs's «[aria2c] …» — in this log.)
+  try { for (const st of [appProc && appProc.stdout, appProc && appProc.stderr]) if (st) st.on('data', (d) => { for (const l of String(d).split(/\r?\n/)) if (/\[aria2c\]|\[tools\]|aria2/i.test(l)) log('electron:', l.slice(0, 300)); }); } catch { /* no pipes */ }
   const userData = await app.evaluate(({ app }) => app.getPath('userData'));
   log('userData', userData);
   const p = await app.firstWindow(); p.setDefaultTimeout(60000);
@@ -99,7 +101,11 @@ function aria2Dir() {
   at('downloads');
   // Downloads, where aria2c runs: one moving, one paused by the person.
   const engine = { gids: [], moving: [], pausedByUser: [], available: false, dir: '', slow: null, server: { base, size: srv.size, sha256: srv.sha256, work: WORK } };
-  const eng = await p.evaluate(async () => { const kt = window.kurokawaTools; await kt.ready(); for (let i = 0; i < 100 && !kt.available; i++) { if (i === 30 && kt.retryEngine) await kt.retryEngine().catch(() => undefined); await new Promise((r) => setTimeout(r, 300)); } return { available: kt.available, reason: kt.reason }; });
+  // (Electron's contextBridge copies `window.kurokawaTools` when it exposes it: its `available` / `reason` getters were
+  // read ONCE, while the engine was still starting — so polling `kt.available` gave {false, ''} for ever, in runs
+  // 43563414074 and 43567491803, whatever aria2c did. The engine's real state is what main.cjs answers: kt:engineRetry
+  // waits for the start under way (aria2c up and answering, or its reason) and returns it — as the page's «Try again».)
+  const eng = await p.evaluate(async () => { const kt = window.kurokawaTools; await kt.ready(); const s = await kt.retryEngine(); return { available: !!(s && s.available), reason: (s && s.reason) || '' }; });
   engine.available = eng.available; log('Electron\'s engine:', JSON.stringify(eng));
   if (engine.available) {
     const dir = path.join(WORK, 'Downloads'); fs.mkdirSync(dir, { recursive: true });
