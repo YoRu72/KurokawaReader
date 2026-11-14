@@ -42,7 +42,8 @@ let eCalls = [];
 function loadPreload() {
   let exposed = null;
   const fake = {
-    contextBridge: { exposeInMainWorld: (_n, o) => { exposed = o; } },
+    // (Only kurokawaTools: the preload also exposes kurokawaHandover since P9.)
+    contextBridge: { exposeInMainWorld: (_n, o) => { if (_n === 'kurokawaTools') exposed = o; } },
     ipcRenderer: { invoke: (ch, ...a) => { eCalls.push({ ch, a }); return Promise.resolve(ch === 'kt:state' ? {} : null); }, on() {}, removeListener() {} },
   };
   const orig = Module._load;

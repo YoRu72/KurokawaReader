@@ -191,6 +191,18 @@ else {
   // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
   if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
   else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
+  // (Stage P9: the computer's two builds. The Tauri build: its first-run screen once — carrying the offer of the data the
+  // previous (Electron) version handed over —, else that offer alone when there is one (ui/firstrun.ts startScreens).
+  // The Electron build: the hand-over's maker reachable by the shell without an import (desktop/handover.cjs prepare
+  // runs window.__KT_HANDOVER__.beforeInstall() and installs the Tauri build only on true), and a while after the start
+  // the move offered when a release carries it — never while main.cjs's RUST_SWITCH is off (switchInfo answers null).)
+  // (Both shells that give window.kurokawaHandover: the tests' and CI's way in too — make, snapshot, the offer.)
+  if ((window as unknown as { kurokawaHandover?: unknown }).kurokawaHandover) {
+    const ho = () => import('./handover'); const hs = () => import('./ui/handoversheet');
+    try { Object.defineProperty(window, '__KT_HANDOVER__', { configurable: true, value: Object.freeze({ make: () => ho().then((m) => m.makeHandover()), beforeInstall: () => hs().then((m) => m.handoverBeforeInstall()), snapshot: () => ho().then((m) => m.profileSnapshot()), atStart: () => hs().then((m) => m.handoverAtStart()), restore: (dir?: string, mode?: 'auto' | 'copy' | 'merge') => ho().then(async (m) => { const f = await m.handoverApi()!.find!(dir); return m.restoreHandover(f, undefined, { mode }); }) }) }); } catch { /* defined already */ }
+  }
+  if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/firstrun').then((m) => m.startScreens()).catch(() => undefined);
+  else if ((window as unknown as { kurokawaHandover?: { shell?: string } }).kurokawaHandover?.shell === 'electron') window.setTimeout(() => void import('./rustswitch').then((m) => m.offerRustSwitch()).catch(() => undefined), 20000);
   void import('./downloads/recorder').then((m) => m.startRecorder());
   void import('./downloads/sidecars').then((m) => m.startSidecars());
   void import('./downloads/hotkeys').then((m) => m.startHotkeys());

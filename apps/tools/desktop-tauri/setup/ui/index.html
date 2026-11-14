@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Kurokawa Tools Setup</title>
+<script>
+  // (Before anything paints: the look and language the setup program read from Windows — window.__SETUP_BOOT__, put
+  // in by main.rs as the window's initialization script — else the browser's own. setup.js takes over from here.)
+  (function () {
+    var b = window.__SETUP_BOOT__ || {}, r = document.documentElement;
+    var dark = typeof b.dark === 'boolean' ? b.dark : !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    r.setAttribute('data-theme', dark ? 'dark' : 'light');
+  })();
+</script>
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<div id="app" class="win"></div>
+<script src="words.js"></script>
+<script src="setup.js"></script>
+</body>
+</html>

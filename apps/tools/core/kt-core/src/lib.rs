@@ -31,3 +31,6 @@ pub mod vidjson;
 // (The screen translator on a computer: shortcuts, monitors and regions, the caption's and the popup's places, the
 // OCR answers read, pixels and a PNG, the screenshot portal — desktop/screentr.cjs's rules for the Tauri shell.)
 pub mod screenlogic;
+// (Stage P9: the hand-over from the Electron build — the Reader's handoverlogic.rs with Tools' names, and the engine's
+// files carried before aria2c first starts.)
+pub mod handoverlogic;

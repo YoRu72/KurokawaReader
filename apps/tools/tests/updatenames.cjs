@@ -42,4 +42,19 @@ for (const pick of [page, shell]) {
 }
 // (The Rust build's own name pattern for each system — what its updater looks for — never matches an Electron file.)
 for (const e of electron) assert.ok(!tails.some((t) => e.endsWith(t)), e);
+// (Stage P9: the Electron bridge build's switch picks the same names — desktop/rustswitch.cjs —, from Tools' own tags
+// only, GitHub's pre-release mark (on every Tools release) not read; never a Reader release, never an Electron file.)
+const RS = require(path.join(ROOT, 'desktop', 'rustswitch.cjs'));
+assert.equal(RS.rustAssetName(v, 'win32', 'x64'), `KurokawaTools-${v}-windows-x64-setup.exe`);
+assert.equal(RS.rustAssetName(v, 'darwin', 'arm64'), `KurokawaTools-${v}-macos-universal.DMG`);
+assert.equal(RS.rustAssetName(v, 'linux', 'x64'), `KurokawaTools-${v}-linux-x64.appimage`);
+assert.equal(RS.sumsName(v), `KurokawaTools-${v}-SHA256SUMS.txt`);
+for (const os of ['win32', 'darwin', 'linux']) assert.ok(rust.includes(RS.rustAssetName(v, os, 'x64')), `${os}: the switch's file is one of the release's`);
+const relOf = (tag, names, pre = true) => ({ tag_name: tag, prerelease: pre, draft: false, html_url: 'page', assets: names.map((name) => ({ name, browser_download_url: 'u/' + name, size: 9, digest: 'sha256:' + 'b'.repeat(64) })) });
+const rels = [relOf('v0.99.0', [`KurokawaReader-0.99.0-windows-x64-setup.exe`]), relOf(`tools-v${v}`, [...electron, ...rust]), relOf('tools-v0.18.0-beta.1', [...rust.map((n) => n.replace(v, '0.18.0-beta.1'))])];
+assert.equal(RS.pickRust(rels, '0.16.32', 'win32', 'x64').asset.name, `KurokawaTools-${v}-windows-x64-setup.exe`, 'a pre-release-marked Tools release is taken');
+assert.equal(RS.pickRust(rels, '0.16.32', 'win32', 'x64').sums.name, `KurokawaTools-${v}-SHA256SUMS.txt`);
+assert.equal(RS.pickRust(rels, '0.16.32', 'win32', 'x64', { beta: true }).version, '0.18.0-beta.1', 'beta: a version with «-»');
+assert.equal(RS.pickRust(rels, '0.17.1', 'linux', 'x64'), null, 'nothing older than the copy');
+assert.equal(RS.pickRust([relOf(`tools-v${v}`, electron)], '0.16.32', 'win32', 'x64'), null, 'a release without the Tauri build: no switch');
 console.log(`updatenames: ok (${rust.length} Tauri names, none taken by the Electron build's ${2} pickers)`);

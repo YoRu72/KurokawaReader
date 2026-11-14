@@ -115,6 +115,24 @@ jobs:
           rustc --edition 2021 --test apps/tools/core/kt-core/src/screenlogic.rs -o "$d/screenlogic$ext"
           "$d/screenlogic$ext"
 
+      # (Stage P9: the switch-over's own checks. Plain node: the installer's one screen put into Tauri's script and the
+      # hooks' keep/replace rule, the release files' names alike everywhere (the Electron switch's too), the hand-over's
+      # and the setup program's copies the same as the Reader's apart from the names. Std only: the hand-over's rules,
+      # the setup program's decisions.)
+      - name: Switch-over checks (stage P9)
+        shell: bash
+        run: |
+          # (The node checks on Linux only: a Windows checkout turns line ends into CRLF, which the copies' compare and the
+          # installer's script checks are not written for — the same lesson as grab.js in run 43543617161.)
+          if [ "$RUNNER_OS" = Linux ]; then (cd apps/tools && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/shared-copies.cjs); fi
+          d="$RUNNER_TEMP/rs-tests-p9"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          for f in apps/tools/core/kt-core/src/handoverlogic.rs apps/tools/desktop-tauri/setup/src-tauri/src/logic.rs; do
+            n=$(basename "$(dirname "$(dirname "$f")")")-$(basename "$f" .rs)
+            rustc --edition 2021 --test "$f" -o "$d/$n$ext"
+            "$d/$n$ext"
+          done
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'apps/tools/desktop-tauri/src-tauri -> target'
@@ -170,6 +188,54 @@ jobs:
           else
             npx --yes @tauri-apps/cli@^2 build --bundles ${{ matrix.bundles }}
           fi
+
+      # (Stage P9, Windows: the installer's one screen, the designed setup program over it, the portable zip — as the
+      # Reader's tauri-check-reader.yml makes them, with Tools' names. The setup program is told the program's file name
+      # Tauri gave it (its rendered installer script's MAINBINARYNAME). A failed setup build lets the steps after it run;
+      # «Setup program, end to end» then fails on finding none.)
+      - name: One-page installer (stage P9)
+        if: runner.os == 'Windows'
+        working-directory: apps/tools/desktop-tauri
+        run: node src-tauri/installer/onepage.cjs src-tauri --strict
+
+      - name: Setup program (stage P9)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: |
+          $inner = Get-ChildItem 'target/release/bundle/nsis/*-setup.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $inner) { throw 'no NSIS installer to embed' }
+          $v = (node -p "require('../../package.json').version").Trim()
+          $nsi = Get-ChildItem 'target' -Recurse -Depth 4 -Filter 'installer.nsi' -ErrorAction SilentlyContinue | Select-Object -First 1
+          $main = if ($nsi) { (Select-String -Path $nsi.FullName -Pattern '^\s*!define\s+MAINBINARYNAME\s+"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value } else { '' }
+          $appExe = if ($main) { "$main.exe" } else { 'Kurokawa Tools.exe' }
+          "KT_APP_EXE=$appExe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $env:KR_SETUP_INNER = $inner.FullName
+          $env:KR_SETUP_APP_EXE = $appExe
+          $env:KR_SETUP_APP_BYTES = "$((Get-Item 'target/release/kurokawa-tools.exe').Length)"
+          $env:CARGO_TARGET_DIR = (Resolve-Path 'target').Path
+          $t = Measure-Command { cargo build --release --manifest-path ../setup/src-tauri/Cargo.toml 2>&1 | Write-Host }
+          if ($LASTEXITCODE) { throw "setup program: cargo build failed ($LASTEXITCODE)" }
+          New-Item -ItemType Directory -Force -Path 'target/release/bundle/setup' | Out-Null
+          $out = "target/release/bundle/setup/KurokawaTools-$v-windows-x64.exe"
+          Copy-Item 'target/release/KurokawaToolsSetup.exe' $out -Force
+          "Setup program: $out, $('{0:N2}' -f ((Get-Item $out).Length / 1MB)) MB (embedded installer $('{0:N2}' -f ($inner.Length / 1MB)) MB; the app's program: $appExe), built in $('{0:N0}' -f $t.TotalSeconds) s" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Portable zip (stage P9)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: |
+          $v = (node -p "require('../../package.json').version").Trim()
+          $s = Join-Path $env:RUNNER_TEMP 'kt-portable'; New-Item -ItemType Directory -Force -Path $s | Out-Null
+          Copy-Item 'target/release/kurokawa-tools.exe' (Join-Path $s 'Kurokawa Tools.exe')
+          foreach ($r in 'aria2', '7zip') { if (Test-Path "target/release/$r") { Copy-Item "target/release/$r" (Join-Path $s $r) -Recurse } }
+          Set-Content (Join-Path $s 'KurokawaTools.portable') 'This copy is portable: it never updates itself. Download the new portable zip from the release page.'
+          New-Item -ItemType Directory -Force -Path 'target/release/bundle/portable' | Out-Null
+          $z = "target/release/bundle/portable/KurokawaTools-$v-windows-x64-portable.zip"
+          Compress-Archive -Path (Join-Path $s '*') -DestinationPath $z -CompressionLevel Optimal -Force
+          "Portable zip: $z, $('{0:N2}' -f ((Get-Item $z).Length / 1MB)) MB" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Sizes
         working-directory: apps/tools/desktop-tauri/src-tauri
@@ -279,6 +345,115 @@ jobs:
             if [ "$c" != 0 ] && [ "$code" = 0 ]; then code=$c; fi
           done
           exit $code
+
+      # (Stage P9, Windows required.) The installer end to end (desktop-tauri/installtest.ps1: an Electron Tools made to
+      # look installed — kept beside the new program with its links and .torrent while its data is not handed over,
+      # replaced once a hand-over's marker is there —, the installed app's self-test, an update over it as the updater
+      # runs it, a silent uninstall that keeps the data), then the designed setup program end to end
+      # (desktop-tauri/setup/setuptest.ps1), then the hand-over for real: the ELECTRON Tools (`electron .`, driven by
+      # Playwright: tests/handover-electron.cjs) given settings, lists, add-ons, history, an icon, a screen font and —
+      # with its own aria2c — a download moving and one paused, from a loopback server; its hand-over made as the bridge
+      # build makes it; then the Tauri build started with an EMPTY web-view profile and KTH_SELFTEST set: the engine's
+      # files there before aria2c starts (the moving download going, the paused one paused), the offer, «Bring it
+      # now», and after the reload every key, record and kept file the same (desktop-tauri/handovercheck.js). Linux is
+      # reported.
+      - name: Installer, end to end (Windows, stage P9)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: ../installtest.ps1
+
+      - name: Setup program, end to end (Windows, stage P9)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        run: ../setup/setuptest.ps1
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        with:
+          name: tauri-tools-install-windows
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/kr-install/*.png
+            ${{ runner.temp }}/kr-install/*.json
+            ${{ runner.temp }}/kr-install/*.md
+            ${{ runner.temp }}/kr-install/*.log
+            ${{ runner.temp }}/kr-install/nsis-*/*.nsi
+
+      - name: Hand-over — Electron makes it (Windows, stage P9)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          # (The Tauri build's web-view profile and hand-over state emptied: the self-tests above filled them, and a
+          # user's first start of the Rust build has neither. WebView2's helpers may hold the profile a moment.)
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          foreach ($w in (Join-Path $env:LOCALAPPDATA 'app.kurokawa.tools'), (Join-Path $env:APPDATA 'app.kurokawa.tools')) {
+            for ($i = 0; $i -lt 10 -and (Test-Path $w); $i++) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $w; if (Test-Path $w) { Start-Sleep -Seconds 3 } }
+            if (Test-Path $w) { "the Tauri build's data could not be emptied: $w"; exit 1 }
+          }
+          Set-Location apps/tools
+          if (-not (Test-Path 'desktop/dist')) { Copy-Item 'dist' 'desktop/dist' -Recurse }
+          Set-Location desktop
+          for ($i = 1; $i -le 3; $i++) { npm install --no-audit --no-fund; if ($LASTEXITCODE -eq 0) { break }; if ($i -eq 3) { exit 1 }; Start-Sleep -Seconds 20 }
+          Set-Location ..
+          for ($i = 1; $i -le 3; $i++) { npm install --no-save --no-audit --no-fund playwright-core@1.48.2; if ($LASTEXITCODE -eq 0) { break }; if ($i -eq 3) { exit 1 }; Start-Sleep -Seconds 20 }
+          node tests/handover-electron.cjs (Join-Path $env:RUNNER_TEMP 'kt-handover-expect.json') (Join-Path $env:RUNNER_TEMP 'kt-handover-work')
+          exit $LASTEXITCODE
+
+      - name: Hand-over — the Tauri build brings it (Windows, stage P9)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        env:
+          KTH_SELFTEST_TIMEOUT: '400'
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'kt-handover-check.json'
+          $env:KTH_SELFTEST = $out
+          $env:KTH_EXPECT = Join-Path $env:RUNNER_TEMP 'kt-handover-expect.json'
+          if (-not (Test-Path $env:KTH_EXPECT)) { 'no expectation: the Electron step did not finish'; exit 1 }
+          $exe = (Resolve-Path 'target/release/kurokawa-tools.exe').Path
+          $p = Start-Process -FilePath $exe -PassThru
+          $null = $p.Handle
+          if ($p.WaitForExit(460000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 124 }
+          node ../selftest-report.cjs $out $code 'Windows — hand-over (Electron → Tauri)' | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          exit $code
+
+      - name: Hand-over — Electron → Tauri (Linux, under Xvfb; reported, stage P9)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        continue-on-error: true
+        env:
+          KTH_SELFTEST_TIMEOUT: '400'
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          NO_AT_BRIDGE: '1'
+        run: |
+          rm -rf "$HOME/.local/share/app.kurokawa.tools" "$HOME/.cache/app.kurokawa.tools"
+          (cd apps/tools && [ -d desktop/dist ] || cp -R dist desktop/dist)
+          (cd apps/tools/desktop && for i in 1 2 3; do npm install --no-audit --no-fund && break; [ $i = 3 ] && exit 1; sleep 20; done)
+          (cd apps/tools && for i in 1 2 3; do npm install --no-save --no-audit --no-fund playwright-core@1.48.2 && break; [ $i = 3 ] && exit 1; sleep 20; done)
+          xvfb-run -a -s '-screen 0 1280x900x24' node apps/tools/tests/handover-electron.cjs "$RUNNER_TEMP/kt-handover-expect.json" "$RUNNER_TEMP/kt-handover-work"
+          cd apps/tools/desktop-tauri/src-tauri
+          bus=""; if command -v dbus-run-session >/dev/null; then bus="dbus-run-session --"; fi
+          set +e
+          KTH_SELFTEST="$RUNNER_TEMP/kt-handover-check.json" KTH_EXPECT="$RUNNER_TEMP/kt-handover-expect.json" $bus timeout 460 xvfb-run -a -s '-screen 0 1280x900x24' ./target/release/kurokawa-tools
+          code=$?
+          set -e
+          node ../selftest-report.cjs "$RUNNER_TEMP/kt-handover-check.json" "$code" "Linux — hand-over (Electron → Tauri)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+      # (Stage P9.) The setup program's page and the first run / the hand-over's pages in Chromium (tests/setupui.cjs:
+      # every state in English and Arabic, light and dark; tests/handover.cjs, tests/firstrun.cjs). Linux only.
+      - name: Switch-over pages (Linux, Chromium, stage P9)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        working-directory: apps/tools
+        run: |
+          for i in 1 2 3; do npm install --no-save --no-audit --no-fund playwright@1.48.2 && break; [ $i = 3 ] && exit 1; sleep 20; done
+          npx playwright install --with-deps chromium
+          node tests/setupui.cjs
+          node tests/handover.cjs
+          node tests/firstrun.cjs
 
       # (Stage P4.) librqbit, which the main build leaves out (src-tauri/Cargo.toml's [features] says why): turned on in
       # this runner's copy only, `cargo check --features rqbit`, the compiler's errors printed — never required, and

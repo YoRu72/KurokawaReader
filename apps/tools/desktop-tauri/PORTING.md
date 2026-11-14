@@ -441,8 +441,8 @@ lettering, the words taken off the picture, the region drawn, the caption's text
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
 docs/RUST-PORT.md that brings it. **done**: in bridge.js and a Rust command; **missing**: absent from bridge.js (the page
 asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 done · P5 17
-done · P6 6 done · P7 8 done, 8 missing (`kt:archiveFree` counted in P3; the 8 are the screen translator's) · P8 9 done —
-**90 of 98 done** (P5 merged; it and P6, the browser and P8's rest not yet through CI's compiler). Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
+done · P6 6 done · P7 8 done + the screen translator's 8 (`kt:archiveFree` counted in P3) · P8 9 done —
+**98 of 98 written**: 90 as before (P4, P6, the browser and P8 compiled and passed in CI; P5's and the screen translator's compiled on all four builds in run 43545725648 / 43549144577 with their fixes written after those runs, not yet re-run), and P9 (hand-over, setup program) written only, waiting for its first compile. Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
 `filesAnswer` / `onFilesJob` (P3), `homeDir` / `filesRoots` / `filesStat` / `filesMkdir` / `filesRename` (after P3),
 `updateDownload` / `updateInstall` (P8).
 
@@ -660,11 +660,18 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
    was refused `is_permission_granted` on every load (now `notification:default`, as the Reader's); the keep-awake row
    raced the downloads' own rule (held off during the row now) and says why a Linux inhibitor ended; the second-launch
    row says what that launch printed, and Linux's self-test has a session bus of its own.
-5. **P5 — merged, not yet compiled** (its first CI run is the next one): 17 channels; the transcode stream joined P4's
-   server. **90 of 98 channels done**; missing only the screen translator's 8 (planned above).
+5. **P5 — compiled on all four builds in run 43545725648** (its pack row fixed since, not re-run): 17 channels; the transcode stream joined P4's
+   server. The screen translator's 8 channels written after it (`screentr.rs`, `screencap.rs`, kt-core `screenlogic.rs`; first
+   compiled on all four builds in run 43549144577, fixes since not yet re-run). **All 98 of 98 channels are now written.**
 6. **Left before P9** (the switch-over with the hand-over, and the release job that publishes the file names above):
-   Windows' first compile of P6/P8/the browser and every system's of P5; the screen translator; a build with
+   Windows' first compile of P6/P8/the browser, a green re-run of P5 and the screen translator after the fixes of run
+   43549144577; a build with
    `--features rqbit` streaming the swarm before librqbit is switched on; the losses below decided.
+7. **P9 — prepared, switch OFF** (written, waiting for its first CI compile; see «Stage P9» below): the hand-over (Electron
+   writes, the Rust build carries the engine's files before aria2c starts and brings the rest at its first start), the
+   bridge flow behind `RUST_SWITCH = false`, the installer's one screen and keep/replace hooks, the designed setup
+   program (a checked copy of the Reader's), the first-run screen, CI's installer / setup / hand-over steps, and the
+   release wiring as a patch (not applied).
 
 ## Known losses against Electron (so far)
 
@@ -699,3 +706,177 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
   An X11 session works as on Windows.
 - (Screen translator.) **«Auto» on several monitors**: the region is taken off the monitor it was drawn on (Electron took
   it off the monitor under the mouse at each look — a fix, not a loss).
+- **(P9) At the switch-over, once**: sites' sign-ins in the sign-in window and the in-app browser are asked again
+  (cookies stay in Electron's encrypted profile; AniList and the debrid key are tokens and cross); yt-dlp, gallery-dl and
+  the ffmpeg / mpv packs are downloaded again when first needed; the window opens at its default size once.
+- **(P9) Start-up not timed**: the Reader's `boot.rs` (first paint, ready, the window in the theme's colour before the
+  page paints) has no Tools copy yet.
+
+## Stage P9 — the switch-over, prepared (the switch stays OFF)
+
+The owner's decisions, as the Reader's 0.62.0 took them: the Rust build becomes the main download; updating keeps the
+person's data intact; backups (Settings → the settings file, `src/backup.ts`) restore in either build; the designed
+Material 3 setup program and a fast first run; the same title bar and icon system; Electron stays downloadable as
+«previous build» for two versions; nothing of the person's is ever deleted; a manual install over an Electron copy
+with no verified hand-over keeps the old program side by side. The web view's profile cannot be shared (Electron's page
+lives at `app://` in its own Chromium, the Rust build's at `http://tauri.localhost` / `tauri://localhost` in the
+system's web view), so the data is **handed over**: the LAST Electron build (the bridge build, published under the old
+asset names so every Electron updater fetches it) writes it into a folder before it installs the Rust build; the Rust
+build takes the download engine's part before its engine first starts and offers the rest on its first start.
+
+### What a Tools user has, and how each part crosses
+
+Electron's data folder (`userData`): installed — `%APPDATA%\Kurokawa Tools`, `~/Library/Application Support/Kurokawa
+Tools`, `~/.config/Kurokawa Tools`; the portable .exe uses the same; `electron .` (CI) — `…/kurokawa-tools-desktop`.
+The Rust build's: `<app data>` = `%APPDATA%\app.kurokawa.tools`, `~/Library/Application Support/app.kurokawa.tools`,
+`~/.local/share/app.kurokawa.tools`; `<app config>` the same folder on Windows and Linux' config dir; its web view's
+profile under `%LOCALAPPDATA%\app.kurokawa.tools\EBWebView`, WebKit's `…/WebsiteData`, WebKitGTK's data folder.
+
+| What (from the code) | Electron | Rust build | How it crosses |
+|---|---|---|---|
+| Settings — `kt.settings` (theme, accent, language `kr.lang`, direction `kr.dir`, downloads folder, connections, DoH, update channel and cadence, add-ons on, desktop prefs: tray, keep-awake, when done, hotkeys) | localStorage | localStorage | `handover/local.json`: **every key** but `kt.handover.*`, `kt.rustSwitch.*` and `kt.update.file` (a downloaded installer's path in the old build's temp folder). Applied at the reload (DoH, tray, hotkeys are read from settings at start) |
+| The library's lists: anime (`kt.anime.listStatus`, `.diary`, `.studios`, fillers, art…), TV (`kt.tv.watchlist`, `.seen`, `.schedMine`…), videos (`kt.videos.*`, `kt.videoArchive`), follows, notes, courses, the Files page's bookmarks and trash list, Grab projects, trackers, search histories, the recorder's log | localStorage | localStorage | the same file, copied as they are |
+| Watch progress, the player's memory and subtitle choices (`kt.player.memory`, `kt.player`, `kt.subPacks`, `kt.stream.*`, `kt.watchedTasks`, `kt.watchPick`) | localStorage | localStorage | the same file |
+| Accounts and tokens: AniList (`kt.anilist.token`, `.user`), the debrid key, trackers, the Wi-Fi share's user, the local API's token | localStorage | localStorage | the same file — kept, unlike the settings backup the person shares (it never leaves this computer and its user's own data folder); never printed, never in a log |
+| The database `kurokawa-tools`: `meta` (add-on manifests, versions, children, saved subtitle translations `subtr:*`), `files` (add-ons' code `addon:*`, fonts `font:*`, providers), `history` | IndexedDB | IndexedDB | `handover/idb.jsonl` (meta + history, record by record, keys kept; dates, bytes, odd numbers and pictures by tagged stand-ins) + `files/<n>` (8 MiB pieces both ways) + `handover/files.json` |
+| Downloads in progress: aria2's session (`aria2.session`), the app's notes on each download (`tasks.json`: name, source, added/done times, renames), the engine's settings (`aria2-config.json`), the DHT's nodes (`dht.dat`, `dht6.dat`) | userData | `<app data>`, the same names | `engine/*` — **put in place by the Rust build before its engine starts** (`handover.rs engine_prestart`), once per hand-over and only when it has no downloads of its own; the downloads that were moving go on by themselves, the ones the person paused stay paused |
+| The downloaded files, partial files and aria2's `.aria2` control files; `.torrent` files aria2 saved for magnets | the person's download folders | the same folders (`<Downloads>/Kurokawa` by default, as Electron's) | **not moved, not copied**: the session names them where they are; aria2 here takes each up from its control file |
+| Torrents and their state (pieces, selected files, seeding choice) | aria2's session + control files | the same | as above. A torrent being **streamed** at the switch: the bridge build ends every stream first (`webstream.cjs stopAll` hands it back to aria2 with `check-integrity`, as closing the player does), then pauses; the Rust build's aria2 resumes it from the file and its control file — pieces WebTorrent fetched while watching are kept by that check |
+| Video jobs (yt-dlp, gallery-dl) — `video-jobs.json`; their `.part` files | userData; download folders | `<app data>/video-jobs.json` | `engine/video-jobs.json` with the engine's files; a job that was running comes back paused (both builds' loaders do that) and yt-dlp continues its `.part` |
+| yt-dlp, gallery-dl (`userData/bin`), the ffmpeg / mpv packs (`userData/packs`) | userData | `<app data>/bin`, `<app data>/packs` | **not carried: fetched again when first needed** (each build checks its own downloads and markers; an unverified program is never copied into the new one) — tens of MB once |
+| Screen translator: its settings (`screen.json`), last region (`screen-region.json`), its own fonts (`screen-fonts/*`) | userData | `<app data>/screen-fonts` (P3) | fonts → `shell/screen-fonts/<n>` with their names in `shell/screen-fonts.json`, copied in under their own names at the Rust start; `kt.screen`'s font paths moved to the new folder by the page; `screen.json` and the region kept in the hand-over for the screen translator's stage (not ported yet) |
+| The custom icon (`custom-icon.png` + `.ico`) | userData | `appicon.rs`'s file | `shell/custom-icon.png` kept; restored through `appIcon({ set })` from `app.icon` (localStorage) |
+| Window state (`window-state.json`), the mini window's (`mini-state.json`) | userData | `<app config>/window-state.json`, `mini-state.json` | kept in `shell/`, not applied (the first window opens at the default size once) |
+| The title bar's choice | localStorage / `titlebar.json` | `<app config>/titlebar.json` | the page's setting crosses; the shell's file is made again |
+| Cookies and sessions (sign-in windows, the in-app browser, the app's own requests) | Chromium's profile (encrypted by the system's key store) | `cookies.txt` (P3), the browser's profile (P7) | **not carried**: a site asks to sign in again once (AniList and the debrid service are tokens: they cross) |
+| Cache Storage, the HTTP cache, service worker caches | the profile | — | not carried: fetched again |
+| Shared-file lists (the Wi-Fi share's picks) | in memory | in memory | nothing to carry (a share ends with the app) |
+| Hotkeys | `kt.settings` (desktop prefs) | the same | crosses with the settings; re-registered at start |
+| The `kurokawatools://`, `magnet:` links and `.torrent` files | registry (Windows), `.desktop` (Linux) | Tauri's installer / `kt:registerMagnet` | moved to the new program by the installer **only when it replaces the old one**; kept as they were when the old one stays (below) |
+
+### The folder
+
+`<userData>/handover/` — written by `desktop/handover.cjs` (an adapted copy of the Reader's: the Writer is the same,
+`tests/shared-copies.cjs` keeps it so) for the page (`src/handover.ts makeHandover`):
+
+    handover/local.json, idb.jsonl, files.json   localStorage, the database's records, its kept files' index
+    files/<n>, blobs/<n>                          kept files (8 MiB pieces), pictures and bytes inside records
+    engine/aria2.session, tasks.json, aria2-config.json, dht.dat, dht6.dat, video-jobs.json, moving.json
+    shell/custom-icon.png, window-state.json, mini-state.json, screen.json, screen-region.json,
+          screen-fonts/<n>, screen-fonts.json
+    marker.json      written last: { app: "KurokawaTools", kind: "handover", format: 1, id, createdAt,
+                     from: { shell, platform, version, portable, userData }, counts, bytes, files: [{ rel, size, sha256 }] }
+
+The Reader's rules hold: everything into `handover.part/`, each file hashed as it arrives, read back and hashed again,
+flushed; the page reads the records back and compares; the marker written (temp, flush, rename); only then
+`handover.part` → `handover` (an older one replaced at that moment). Broken off anywhere: no marker, no hand-over.
+Space: `statfs` against the database's size (or the origin's usage) + 2 % + 256 MB; short → nothing written, said;
+unknown → the estimate shown and «Go on» asked. Pointers: `<Rust app data>/handover-from.json`, and beside a portable
+.exe `KurokawaTools-handover.json`.
+
+**The engine's part** (`kt:handover-engine`, after the page's own files): every stream ended (`webstream.cjs stopAll`),
+the ids of the downloads that are active or waiting noted, `pauseAll` (then `forcePauseAll` after 8 s if a torrent is
+still saying goodbye to its trackers), `saveSession` awaited, the files copied, `engine/moving.json` written. If the
+hand-over then fails or is cancelled, or the switch does not happen (a checksum refused, a download broken), the
+paused downloads are set going again (`unpause` of exactly those). After a hand-over that worked, a portable copy and a
+Mac (whose disk image is only opened) **keep them paused**: the new copy takes them up from the same files, and two
+engines must never write one download at once.
+
+**The Rust build** (`src-tauri/src/handover.rs`, rules in kt-core `handoverlogic.rs` — the Reader's functions, Tools'
+names, checked equal by `tests/shared-copies.cjs` — plus Tools' own: `ENGINE_FILES`, `engine_target_empty`,
+`session_gids`, `session_unpause`, `parse_moving`, `font_name_ok`, `electron_has_data`, `old_decision`):
+`engine_prestart` runs in `main.rs` setup **before** the video tools and the engine read their files: the first whole
+hand-over found (KT_HANDOVER_FROM, the pointers, Electron's default folders); not taken before (`handover-engine.json`
+names its id); the engine's files and the fonts checked by SHA-256 (damaged → `damaged`, nothing copied); this build
+has downloads of its own → `kept-own`, nothing copied (the old list stays where it was); else copied (temp + rename),
+the session with ` pause=true` taken off the moving downloads' entries → `carried` with the counts. Never fails the
+start. Commands (`window.kurokawaHandover`, `handover-bridge.js`): `kt_handover_find` (+ `engine`, `dataDir`;
+`electron: { library, program }` when none), `kt_handover_verify`, `kt_handover_read` (ranges), `kt_handover_mark`,
+`kt_handover_free` (only a folder named `handover` with its marker), `kt_handover_open_old`; CI's
+`kt_handover_check_progress` / `_done` (KTH_SELFTEST, `handovercheck.js`).
+
+**The page** (`src/handover.ts restoreHandover`): into an empty profile (no history, kept file, add-on or list) it is
+COPIED — every key and record as it was, the icon put on the window, `kt.screen`'s font paths moved —; into a profile
+with things of its own it is MERGED (only what is missing added; its own values kept). The offer
+(`ui/handoversheet.ts`): what it holds («Settings: n · Lists: n · Add-ons: n · Downloads: n», «العدد: n» in Arabic),
+its size, the downloads already here, where the old data stays; «Bring it now» with its progress, then «Free the space»
+(asks first; deletes the copy only — never Electron's folder, never a download) and «Continue» (reload). «Not now»:
+declined, not offered at the start again; Settings → About has «Bring my data from the previous version» and «From a
+folder…» (the Tauri build only).
+
+### The Electron side (`desktop/main.cjs`, the `RUST_SWITCH` block)
+
+`RUST_SWITCH = false` in this stage: nothing changes for Electron users (the hand-over's IPC channels and
+`window.kurokawaHandover` exist but nothing calls them; `kt:rustSwitchInfo` answers null; the page's offer timer finds
+nothing). With it true (the bridge build): `rustswitch.cjs` (the Reader's, Tools' tags `tools-v*`, GitHub's pre-release
+mark not read — every Tools release has it) picks the newest release of this version or newer with this system's
+Tauri file; the page (`src/rustswitch.ts`) offers it in its own sheet 20 s after the start («Move now» / «Not now»,
+asked again after a day, a week with weekly checks, at once for a newer version); «Move now», or «Download and install»
+in Tools' own update sheet, reaches `kt:installUpdate` → `rustSwitch`: (1) `Handover.prepare()` — the page's
+`handoverBeforeInstall()` with its progress sheet — nothing else unless it answers ok; (2) the file downloaded and
+checked (size; SHA-256 from GitHub's digest and/or the release's SHA256SUMS — both must agree; none → refused);
+(3) Windows: `/P /R` and quit; Linux AppImage: replaced and restarted; a Mac: the disk image opened. Every refusal is a
+`kt-update:<code>` the page turns into words (`switchErrorText`: handover, portable-ready, mac-opened, checksum, size,
+nochecksum, norelease) — inside Electron's «Error invoking remote method …», which the page now searches rather than
+anchors. `kt:installUpdate('rust-switch')` never falls back to an Electron update.
+
+### Installer, setup program, first run
+
+- **`installer/`** — `onepage.cjs` (the Reader's, names in comments only), `onepage.nsh` (Tools' kinds: «Open .torrent
+  files and magnet links with Kurokawa Tools» takes back `.torrent` → `Torrent` and the `magnet` / `kurokawatools`
+  links when unticked, only where they name this program), `onepage-lang.nsh` (five languages), `hooks.nsh`: the
+  Electron install found by its uninstall entry (DisplayName «Kurokawa Tools», `resources\app.asar` and «Kurokawa
+  Tools.exe» in its InstallLocation) or `%LOCALAPPDATA%\Programs\Kurokawa Tools`; **KR_OLD_DECISION** — `/KROLD=` wins;
+  else replace when `%APPDATA%\Kurokawa Tools\handover\marker.json` is there, keep when its Local Storage, IndexedDB or
+  tasks.json is there, replace when none is (a copy never opened). **Kept**: its program, entry and data untouched, and
+  the links and `.torrent` kind PREINSTALL read are written back where they named the Electron program (Tauri's
+  install had pointed them at the new one). **Replaced**: shortcuts (desktop, pinned, Start menu) re-pointed, the links
+  and `.torrent` made the new program's, its program folder removed (retried, else at restart), its entry removed;
+  its data folder never touched, its uninstaller never run. `KR_TRACE` with `KR_INSTALL_TRACE` as the Reader's.
+  `tauri.conf.json` `bundle.windows`: per user, five languages, LZMA, WebView2 bootstrapper, the hooks.
+- **`setup/`** — the designed setup program, a **copy** of the Reader's `setup/` (lifting it into a shared folder would
+  have meant changing the released Reader's crate paths and CI; `tests/shared-copies.cjs` keeps the copy equal:
+  `setup.js`, `setup.css`, `index.html`, `tauri.conf.json` the same apart from the names; every Rust function the same
+  but `electron_data` (Tools' data rule); `words.js` the same keys in the same five languages). Its `build.rs` reads the
+  Reader's `apidetect.rs` / `bootdetect.rs` in place (one source); `KR_SETUP_APP_EXE` names the program Tauri's
+  installer puts in place (CI reads `MAINBINARYNAME` from the rendered script; «Kurokawa Tools.exe» by default).
+- **First run** (`src/ui/firstrun.ts`, the Tauri build only, once per profile, never under the self-test, the hand-over
+  check or a test driver): the language (five), the look (System / Light / Dark), «Your data from the previous
+  version» (the hand-over's offer IS the tile; none found but the old copy's data there → «open the previous Kurokawa
+  Tools once and let it update», with a button when its program is found), «Torrents and magnet links» (the shell's
+  `registerMagnet`, only when pressed), «Start». One screen; the offer alone when the first run was done before.
+  Not yet: the Reader's boot timing (`boot.rs`: first paint, ready, the window's colour before the page paints) — Tools
+  has no `boot.rs`; the start is not timed in CI.
+
+### Tests
+
+`tests/handover.cjs` (Chromium, the built app; desktop/handover.cjs's real `install()` over a pretend ipcMain and a
+pretend aria2, the Rust side's rules in Node): a full disk refused (nothing written, nothing paused); unknown space
+asked (Cancel → nothing; «Go on» → made); a write broken at the check → no hand-over, the paused downloads going again;
+made: marker, hashes, pointer, the engine paused after the streams ended, its session saved, `moving.json`; the partial
+download and its `.aria2` untouched; a killed write leaves only a part folder; the Rust start: the engine's files in
+place (moving going, the person's paused one paused), the screen font under its own name, the offer with its counts,
+brought (a 17 MiB file in three pieces), every key / record / file the same (deep compare), the icon, marked, not
+offered again, not taken twice; damaged refused, truncated not offered; «kept-own»; «Not now»; a merge keeping the
+profile's own; a picked folder; «Free the space» only the copy. `tests/firstrun.cjs` (en/ar, light/dark; the Electron
+offer with Playwright's clock). `tests/installerpatch.cjs`, `tests/updatenames.cjs` (+ the switch's names and picking),
+`tests/setupui.cjs` (the setup page: every state in en/ar, light/dark), `tests/shared-copies.cjs` (the copies). Std
+only: kt-core `handoverlogic.rs` (8 tests), `setup/src-tauri/src/logic.rs` (13). CI (`tauri-check.yml`, the «stage P9»
+steps): the checks above on every system; the one-page installer, the setup program and the portable zip (Windows);
+`installtest.ps1` (an Electron install kept with its links, then replaced after a marker; the installed app's self-test;
+an update over it as the updater runs it; uninstall keeping the data); `setup/setuptest.ps1`; the hand-over for real
+(`tests/handover-electron.cjs` — the real Electron Tools with a moving and a paused download from a loopback server —,
+then the Tauri build with `KTH_SELFTEST`, `handovercheck.js`): Windows required, Linux reported.
+
+### What to flip at the switch-over (and what stays)
+
+1. The screen translator's 8 channels (written, compiled once in run 43549144577; a green re-run still due) and the
+   losses listed under «Known losses» decided.
+2. A green CI run of this stage on all systems (its first compile: `handover.rs`, `main.rs`'s block, the setup crate
+   under Tools' paths).
+3. `desktop/main.cjs`: `const RUST_SWITCH = true;` (the bridge build).
+4. `git apply` the release patch (`release-tools.yml`: the `rust-desktop` job, SHA256SUMS, the notes' table, the
+   Electron jobs kept as «previous build»; the paths filter takes `shared/shell-rs/**` again).
+5. The version: a minor bump (`apps/tools/package.json`, `desktop/package.json`), the notes `docs/notes/NEXT-rust.md`
+   renamed to that version.
+6. Two versions later: the Electron jobs removed from `release-tools.yml` (keep `desktop/` in the repository).

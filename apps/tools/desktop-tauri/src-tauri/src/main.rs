@@ -54,6 +54,9 @@ mod vtselftest;
 // capture by each system's own facility; the rules in kt-core's screenlogic.rs.)
 mod screencap;
 mod screentr;
+// (Stage P9: the hand-over from the Electron build — its reading half, the engine's files carried before aria2c starts,
+// CI's hand-over check (KTH_SELFTEST); kt-core's handoverlogic.rs decides.)
+mod handover;
 
 use std::path::PathBuf;
 
@@ -225,7 +228,16 @@ fn main() {
             screentr::kt_screen_close,
             screentr::kt_screen_ocr_langs,
             screentr::kt_screen_caption,
-            screentr::kt_selftest_screen
+            screentr::kt_selftest_screen,
+            // (Stage P9: the hand-over.)
+            handover::kt_handover_find,
+            handover::kt_handover_verify,
+            handover::kt_handover_read,
+            handover::kt_handover_mark,
+            handover::kt_handover_free,
+            handover::kt_handover_open_old,
+            handover::kt_handover_check_progress,
+            handover::kt_handover_check_done
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -249,6 +261,9 @@ fn main() {
             // The engine: its files in the app's data folder, aria2c looked for in the resource folder (then beside
             // the executable, then on the PATH), started in the background.
             let handle = app.handle().clone();
+            // (Stage P9: before the video tools and the engine read their files — the downloads an Electron build handed
+            // over put in place, once, when this build has none of its own; handover.rs engine_prestart.)
+            handover::engine_prestart(&handle);
             // (Stage P7: where the shipped 7-Zip is; Tools' parts of the shared archive code switched on.)
             archives::init(&handle);
             // (Stage P5: the video tools' folders and jobs; yt-dlp brought up to date now and then, as main.cjs does.)
@@ -278,8 +293,16 @@ fn main() {
             let boot =
                 serde_json::json!({ "os": util::node_platform(), "arch": util::node_arch() });
             let mut script: String = format!("window.__KT_BOOT__ = {};\n{}", boot, BRIDGE_JS);
+            // (Stage P9: window.kurokawaHandover — the hand-over's reading half — after the bridge.)
+            script.push('\n');
+            script.push_str(handover::BRIDGE_JS);
             // (Stage P6: the mini window runs the page without the self-test.)
             let _ = desktop::WEB_SCRIPT.set(script.clone());
+            // (Stage P9, only with KTH_SELFTEST set: CI's hand-over check, after the bridges.)
+            if let Some(t) = handover::check_script(&handle) {
+                script.push('\n');
+                script.push_str(&t);
+            }
             // (Only with KT_SELFTEST set: the self-test, after the bridge.)
             if kurokawa_shell::selftest::out_path("KT").is_some() {
                 let found = engine::get().and_then(|e| e.find_binary());

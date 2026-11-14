@@ -144,7 +144,13 @@ export async function fetchAndInstall(asset: Asset, onProgress: (p: Progress) =>
     // a damaged download, or a copy that cannot replace itself (the portable one, a program run where it was built).
     // Electron's never answers so.)
     try { await window.kurokawaTools.installUpdate(asset.url); }
-    catch (e) { const m = String((e as Error)?.message ?? e); if (/^kt-update:(checksum|size|nochecksum)/.test(m)) throw new InstallError('damaged'); if (/^kt-update:(portable|bare|unknown|app|deb)\b/.test(m)) throw new InstallError('network', t('updateByHand')); throw e; }
+    catch (e) {
+      const m = String((e as Error)?.message ?? e);
+      // (Stage P9: the Electron bridge build's move to the Tauri build says why it stopped — «kt-update:handover …»,
+      // «…:portable-ready», «…:mac-opened», «…:norelease» —, inside Electron's own words for a failed call.)
+      if (/kt-update:(handover|portable-ready|mac-opened|norelease)\b/.test(m)) { const { switchErrorText } = await import('./rustswitch'); throw new InstallError('network', switchErrorText(m) ?? m); }
+      if (/kt-update:(checksum|size|nochecksum)\b/.test(m)) throw new InstallError('damaged'); if (/^kt-update:(portable|bare|unknown|app|deb)\b/.test(m)) throw new InstallError('network', t('updateByHand')); throw e;
+    }
     return 'installing';
   }
   const { openExternal } = await import('./native'); await openExternal(asset.url); return 'opened';
