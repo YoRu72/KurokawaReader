@@ -1079,6 +1079,121 @@ pub fn srt_of_lang(name: &str, stem: &str, lang: &str) -> bool {
     }
 }
 
+/* ---------- a fetched program put in place, checked, rolled back (yt-dlp, gallery-dl) ---------- */
+
+/// Where replacing a managed program stands. ytdlp.cjs: download → checksum → the one in use kept as an older copy →
+/// the new one renamed in place; this shell adds the step the Electron one left to the user (Settings → Roll back):
+/// the new program is asked its version, and one that does not answer is taken away and the kept copy put back at
+/// once.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Swap {
+    /// Downloaded whole; its SHA-256 still to be compared.
+    Fetched,
+    /// Its checksum matched (or the release published none — ytdlp.cjs then takes it as it is).
+    Verified,
+    /// The program in use copied aside (`old` its copy's version), or there was none.
+    OldKept { old: Option<String> },
+    /// The new one renamed in place.
+    Placed { old: Option<String> },
+    /// It answered its version: kept.
+    Done { version: String },
+    /// It did not answer: removed, and `old` put back (None: there was nothing to put back).
+    RolledBack { old: Option<String> },
+    /// Refused before anything was replaced (its checksum).
+    Refused(String),
+}
+
+impl Swap {
+    /// The checksum step: `want` the release's (None when it published none), `got` the download's.
+    pub fn verified(self, want: Option<&str>, got: &str) -> Swap {
+        match self {
+            Swap::Fetched => match want {
+                Some(w) if !w.trim().eq_ignore_ascii_case(got.trim()) => Swap::Refused("checksum mismatch".to_string()),
+                _ => Swap::Verified,
+            },
+            other => other,
+        }
+    }
+    /// The program in use copied aside as version `old` (None: no program there yet).
+    pub fn old_kept(self, old: Option<String>) -> Swap {
+        match self {
+            Swap::Verified => Swap::OldKept { old },
+            other => other,
+        }
+    }
+    pub fn placed(self) -> Swap {
+        match self {
+            Swap::OldKept { old } => Swap::Placed { old },
+            other => other,
+        }
+    }
+    /// The new program asked `--version`: its exit code and output.
+    pub fn checked(self, code: Option<i32>, out: &str) -> Swap {
+        match self {
+            Swap::Placed { old } => match version_answer(code, out) {
+                Some(v) => Swap::Done { version: v },
+                None => Swap::RolledBack { old },
+            },
+            other => other,
+        }
+    }
+    /// What the caller is told when it did not end Done (None when it did): «<tool>: checksum mismatch» as
+    /// ytdlp.cjs says it; a new program that did not start as a code the page words — «kt-video:rolledback:<tool>:<v>»
+    /// (the one before put back) or «kt-video:broken:<tool>» (none before: removed).
+    pub fn error(&self, tool: &str) -> Option<String> {
+        match self {
+            Swap::Done { .. } => None,
+            Swap::Refused(why) => Some(format!("{}: {}", tool, why)),
+            // (Codes the page puts in its language — src/video/ytdlp.ts toolError.)
+            Swap::RolledBack { old: Some(v) } => Some(format!("kt-video:rolledback:{}:{}", tool, v)),
+            Swap::RolledBack { old: None } => Some(format!("kt-video:broken:{}", tool)),
+            _ => Some(format!("{}: not installed", tool)),
+        }
+    }
+}
+
+/// A program's answer to `--version` (execFile's: an exit other than 0 is no answer) → the version, trimmed; None when
+/// it failed or said nothing.
+pub fn version_answer(code: Option<i32>, out: &str) -> Option<String> {
+    if code != Some(0) {
+        return None;
+    }
+    let v = out.trim();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v.to_string())
+    }
+}
+
+/// Whether update(false) asks the network again: not when it was checked within the day (ytdlp.cjs update).
+pub fn update_check_due(checked_ms: Option<u64>, now_ms: u64, force: bool) -> bool {
+    force
+        || match checked_ms {
+            Some(c) if c > 0 => now_ms.saturating_sub(c) >= 86_400_000,
+            _ => true,
+        }
+}
+
+/// The JavaScript runtimes yt-dlp can be told of, in the order looked for on the PATH (Electron gave its own Node;
+/// this shell has none of its own).
+pub const JS_RUNTIMES: &[&str] = &["deno", "node", "bun"];
+
+/// packs.cjs: the marker beside the pack's program, holding its version.
+pub const PACK_MARKER: &str = ".kurokawa-pack";
+/// The pause before download try `attempt` (0 the first): 1.5 s doubled each time, 20 s at most (packs.cjs).
+pub fn retry_pause_ms(attempt: u32) -> u64 {
+    if attempt == 0 {
+        return 0;
+    }
+    (1500u64 << (attempt - 1).min(20)).min(20_000)
+}
+/// «HTTP 4xx» is final (packs.cjs: no more tries); anything else is tried again.
+pub fn final_error(msg: &str) -> bool {
+    let b = msg.as_bytes();
+    b.len() == 8 && msg.starts_with("HTTP 4") && b[6].is_ascii_digit() && b[7].is_ascii_digit()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1297,5 +1412,45 @@ mod tests {
         assert!(!srt_of_lang("V [x].en-1.srt", "V [x]", "en"));
         assert!(!srt_of_lang("V [x].eng.srt", "V [x]", "en"));
         assert!(!srt_of_lang("W.en.srt", "V [x]", "en"));
+    }
+
+    #[test]
+    fn swap_and_rollback() {
+        // (A good release: verified, the old one kept, placed, it answers → Done.)
+        let s0 = Swap::Fetched.verified(Some("ABC"), "abc").old_kept(Some("2025.10.01".into())).placed();
+        assert_eq!(s0, Swap::Placed { old: Some("2025.10.01".into()) });
+        assert_eq!(s0.clone().checked(Some(0), "2025.12.01\n"), Swap::Done { version: "2025.12.01".into() });
+        assert_eq!(Swap::Done { version: "x".into() }.error("yt-dlp"), None);
+        // (A broken one: no answer, or an exit other than 0 → rolled back to the kept copy.)
+        let rb = s0.clone().checked(Some(1), "2025.12.01");
+        assert_eq!(rb, Swap::RolledBack { old: Some("2025.10.01".into()) });
+        assert_eq!(rb.error("yt-dlp").unwrap(), "kt-video:rolledback:yt-dlp:2025.10.01");
+        assert_eq!(s0.clone().checked(None, ""), Swap::RolledBack { old: Some("2025.10.01".into()) });
+        assert_eq!(s0.checked(Some(0), "  \n"), Swap::RolledBack { old: Some("2025.10.01".into()) });
+        // (Nothing there before: removed, nothing put back.)
+        let first = Swap::Fetched.verified(None, "abc").old_kept(None).placed().checked(Some(9), "");
+        assert_eq!(first.error("gallery-dl").unwrap(), "kt-video:broken:gallery-dl");
+        // (A wrong checksum: refused, and the later steps leave it refused — nothing replaced.)
+        let bad = Swap::Fetched.verified(Some("00"), "ff").old_kept(Some("v".into())).placed().checked(Some(0), "v2");
+        assert_eq!(bad, Swap::Refused("checksum mismatch".into()));
+        assert_eq!(bad.error("yt-dlp").unwrap(), "yt-dlp: checksum mismatch");
+        // (No checksum published: taken as it is, as ytdlp.cjs / gallerydl.cjs do.)
+        assert_eq!(Swap::Fetched.verified(None, "ff"), Swap::Verified);
+        // (Steps out of order change nothing.)
+        assert_eq!(Swap::Fetched.placed(), Swap::Fetched);
+        assert_eq!(Swap::Verified.checked(Some(0), "v"), Swap::Verified);
+        assert!(Swap::Verified.error("x").is_some());
+    }
+
+    #[test]
+    fn update_timing_and_retries() {
+        assert!(update_check_due(None, 5, false));
+        assert!(!update_check_due(Some(1_000), 1_000 + 86_399_999, false));
+        assert!(update_check_due(Some(1_000), 1_000 + 86_400_000, false));
+        assert!(update_check_due(Some(1_000), 1_001, true));
+        assert_eq!(version_answer(Some(0), " 2025.11.20\r\n"), Some("2025.11.20".into()));
+        assert_eq!(version_answer(Some(2), "2025.11.20"), None);
+        assert_eq!((0..7).map(retry_pause_ms).collect::<Vec<_>>(), vec![0, 1500, 3000, 6000, 12000, 20000, 20000]);
+        assert!(final_error("HTTP 404") && final_error("HTTP 416") && !final_error("HTTP 503") && !final_error("HTTP 4") && !final_error("cut short"));
     }
 }

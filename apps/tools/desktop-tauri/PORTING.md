@@ -143,12 +143,43 @@ Do the same once before a local `tauri build` / `tauri dev`.
   «Kurokawa Tools.lnk» shortcuts, Linux's desktop entry copy marked `X-KurokawaTools-CustomIcon=true`; the backup
   already carries the icon), the .ico's sizes drawn by bridge.js's canvas as the Reader's.
 
+## Stage P5: the video tools (written, waiting for CI)
+
+- **yt-dlp** (`vtools.rs`, kt-core `videotools.rs` + `vidjson.rs`, rule for rule from `ytdlp.cjs`): the release's program for
+  this system (`yt-dlp.exe` / `yt-dlp_macos` / `yt-dlp_linux`, Linux ARM `yt-dlp_linux_aarch64`) into `<app data>/bin`,
+  resumed (`vtfetch.rs`, the updater's way), checked against `SHA2-256SUMS`; the one in use kept as `yt-dlp.<v>.old`
+  (newest three); then — new here — the new program is asked `--version` and one that does not answer is removed and
+  the one before put back at once (kt-core `Swap`; the page words the code `kt-video:rolledback:<tool>:<v>` /
+  `kt-video:broken:<tool>` — `src/video/ytdlp.ts toolError`, five languages). Updates as `ytdlp.cjs` (once a day; a
+  rollback pins; forced from Settings; 15 s after start and every 6 h). The JavaScript runtime: Electron gave its own
+  Node; this shell names the first of deno / node / bun on the PATH (`--js-runtimes`), only to a yt-dlp that knows it.
+- **Video jobs** (`vtjobs.rs`): kt:add with `o.video` → a task of kind «video» listed after aria2's (kt:list and the
+  kt:tasks push — `engine.rs` now hands its list to `vtjobs::emit_tasks`), kept in `video-jobs.json`; the page's argument
+  list vetted (kt-core `vet_args`) or a task's older settings built (`job_args`); yt-dlp's lines read into the task
+  (`LineReader`: one bar over the streams, phases, fragments; pushed every 400 ms or at a phase change); pause / remove
+  end yt-dlp's **whole tree** (Electron killed yt-dlp alone); the bilingual .srt merged when done.
+- **gallery-dl**: the release's standalone program (digest checked), asked its version before use; `-j` read by
+  `vidjson::gallery_items`.
+- **ffmpeg** (`vtffmpeg.rs`): runs, cancel, ffprobe, the pack (resumed, SHA-256, gunzipped beside its marker).
+- **Running programs** (`vtproc.rs`, std only): an argument list, never a shell; stdin closed; no console window on
+  Windows; a process group of its own off Windows so the group is killed, `taskkill /T /F` on Windows; timeouts.
+- **The transcode stream** (`vtstream.rs`): `/video` (H.264/VP9 as it plays, the card's encoder tried once, x264 after a
+  refusal within the same request) and `/audio` on a loopback server of its own — **to be merged with P4's Range server**
+  (streamproxy.cjs's /p, /f, /audio, /video are one server in Electron).
+- **Self-test** (CI): the app's own executable stands in for yt-dlp, gallery-dl, ffmpeg and ffprobe (`vtfake.rs`: only
+  with KT_SELFTEST and KT_FAKE_TOOLS=1, only under those file names; a trailer names its version or «broken»), fetched
+  from a loopback release server (`vtselftest.rs`): fetched and resumed → checked → `-J` → a job's phases and file → a
+  running job removed with its tree → a failing job → an update (the one before kept) → a broken update rolled back →
+  a wrong checksum refused → a rollback by hand → gallery-dl → the pack (wrong checksum, cancel, resumed install) →
+  ffmpeg's progress and file → a cancel ending the tree → ffprobe → the transcode stream's and the sound track's bytes.
+  `tests/videotauri.cjs` runs those checks against a pretend shell, and the page over the real bridge.
+
 ## The 98 channels (stocktaking, P3)
 
 Every `ipcMain.handle` of `../desktop` (89 in main.cjs, 8 in screentr.cjs, 1 in titlebar.cjs), grouped by the stage of
 docs/RUST-PORT.md that brings it. **done**: in bridge.js and a Rust command; **missing**: absent from bridge.js (the page
-asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 7 missing · P5 17
-missing · P6 1 done, 5 missing · P7 7 done, 9 missing (`kt:archiveFree` counted in P3) · P8 3 done, 6 missing — **54 of 98
+asks for each feature by its method, so nothing is a stub). Counts: P1–P2 35 done · P3 8 done · P4 5 missing, 2 written in P5 (`kt:audioUrl`, `kt:videoUrl`) · P5 17
+written · P6 1 done, 5 missing · P7 7 done, 9 missing (`kt:archiveFree` counted in P3) · P8 3 done, 6 missing — **54 of 98
 done**. Besides these, the shell has its own (no Electron channel): the Files page's jobs `filesJob` / `filesCancel` /
 `filesAnswer` / `onFilesJob` (P3), `homeDir` / `filesRoots` / `filesStat` / `filesMkdir` / `filesRename` (after P3),
 `updateDownload` / `updateInstall` (P8).
@@ -160,7 +191,7 @@ done**. Besides these, the shell has its own (no Electron channel): the Files pa
 | `kt:state` | done | the engine's `available`/`reason`, `os`/`arch` in Node's words |
 | `kt:engineRetry` | done |  |
 | `kt:list` | done | the last list while aria2c is down |
-| `kt:add` | done | `o.video` (yt-dlp) refused until P5 |
+| `kt:add` | done | `o.video`: a yt-dlp job (P5, `vtjobs.rs`) |
 | `kt:pause` | done |  |
 | `kt:resume` | done |  |
 | `kt:remove` | done | waits up to 3 s for `forceRemove` |
@@ -170,7 +201,7 @@ done**. Besides these, the shell has its own (no Electron channel): the Files pa
 | `kt:setLimits` | done |  |
 | `kt:configure` | done |  |
 | `kt:torrentInfo` | done |  |
-| `kt:rename` | done | `sniff.cjs` renaming of finished files not ported (P5) |
+| `kt:rename` | done | `sniff.cjs` renaming of finished files not ported |
 | `kt:open` | done | «show in folder» now chooses the item where the opener can (P3, `kt_reveal`) |
 | `kt:defaultDir` | done |  |
 | `kt:roots` | done |  |
@@ -214,31 +245,31 @@ done**. Besides these, the shell has its own (no Electron channel): the Files pa
 | `kt:streamDone` | missing |  |
 | `kt:streamStats` | missing |  |
 | `kt:fileUrl` | missing | the local stream server serves files |
-| `kt:audioUrl` | missing | `streamproxy.cjs` → 127.0.0.1 server |
-| `kt:videoUrl` | missing |  |
+| `kt:audioUrl` | written (P5) | `vtstream.rs` (/audio), P5's own loopback server — to be merged with P4's |
+| `kt:videoUrl` | written (P5) | `vtstream.rs` (/video: the transcode stream) — same |
 | `kt:proxyUrl` | missing | forwards headers |
 
-### P5 — video tools and packs (17 missing)
+### P5 — video tools and packs (17 written, waiting for CI)
 
 | Channel | Status | Notes |
 |---|---|---|
-| `kt:videoInfo` | missing | yt-dlp spawned from Rust |
-| `kt:videoReady` | missing |  |
-| `kt:videoVersion` | missing |  |
-| `kt:videoUpdate` | missing |  |
-| `kt:videoRollback` | missing |  |
-| `kt:videoBinary` | missing |  |
-| `kt:isVideoHost` | missing |  |
-| `kt:galleryList` | missing | gallery-dl |
-| `kt:galleryReady` | missing |  |
-| `kt:ffmpegAvailable` | missing | ffmpeg pack |
-| `kt:ffmpeg` | missing | progress as events |
-| `kt:ffmpegCancel` | missing |  |
-| `kt:ffprobe` | missing |  |
-| `kt:packStatus` | missing | download + SHA-256 |
-| `kt:packInstall` | missing |  |
-| `kt:packCancel` | missing |  |
-| `kt:packRemove` | missing |  |
+| `kt:videoInfo` | written (P5) | `vtools.rs`: `-J` (90 s), kt-core `vidjson::normalise` |
+| `kt:videoReady` | written (P5) | fetched when missing / older than 2025.01.01; progress `kt:update-progress` (what: yt-dlp) |
+| `kt:videoVersion` | written (P5) | asked once per file (path, size, time) |
+| `kt:videoUpdate` | written (P5) | forced; the one before kept as `yt-dlp.<v>.old` (three); a new one that does not start rolled back at once (`kt-video:rolledback:…`, worded by the page) |
+| `kt:videoRollback` | written (P5) | the newest kept copy put back, pinned |
+| `kt:videoBinary` | written (P5) | the user's own program when it exists |
+| `kt:isVideoHost` | written (P5) | kt-core `is_video_host` (ytdlp.cjs VIDEO_HOSTS) |
+| `kt:galleryList` | written (P5) | gallery-dl `-j --no-download` (120 s), kt-core `vidjson::gallery_items`; none on a Mac (no standalone build — Electron fetched Linux's) |
+| `kt:galleryReady` | written (P5) |  |
+| `kt:ffmpegAvailable` | written (P5) | `vtffmpeg.rs`: the pack's, else the PATH's (a Mac also Homebrew's) |
+| `kt:ffmpeg` | written (P5) | progress `kt:ffmpegProgress` (300 ms); «pack:ffmpeg» when there is none |
+| `kt:ffmpegCancel` | written (P5) | SIGINT, the tree ended 3 s later (Windows: at once) |
+| `kt:ffprobe` | written (P5) | beside the ffmpeg in use, else the PATH's |
+| `kt:packStatus` | written (P5) |  |
+| `kt:packInstall` | written (P5) | resumed (six tries), SHA-256, gunzip; `kt:packProgress` |
+| `kt:packCancel` | written (P5) |  |
+| `kt:packRemove` | written (P5) |  |
 
 ### P6 — desktop integration (1 done, 5 missing)
 

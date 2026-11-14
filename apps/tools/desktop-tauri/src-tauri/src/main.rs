@@ -20,6 +20,16 @@ mod titlebar;
 mod trash;
 // (Stage P8: the in-app updater — kt-core's updatelogic.rs decides.)
 mod update;
+// (Stage P5: the video tools — yt-dlp, gallery-dl, ffmpeg and its pack, the transcode stream; kt-core's videotools.rs
+// and vidjson.rs decide. vtfake.rs: the self-test's stand-in programs, active only in a self-test run.)
+mod vtfake;
+mod vtfetch;
+mod vtffmpeg;
+mod vtjobs;
+mod vtools;
+mod vtproc;
+mod vtselftest;
+mod vtstream;
 
 use std::path::PathBuf;
 
@@ -38,6 +48,11 @@ pub const WINDOW: winstate::Defaults = winstate::Defaults {
 const BRIDGE_JS: &str = include_str!("../../bridge.js");
 
 fn main() {
+    // (Stage P5, self-test runs only: this program started under the name yt-dlp / gallery-dl / ffmpeg / ffprobe
+    // answers as that program and ends here — vtfake.rs; None at once otherwise.)
+    if let Some(code) = vtfake::maybe_run() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -112,7 +127,28 @@ fn main() {
             archives::kt_selftest_write,
             titlebar::kt_title_bar,
             selftest::kt_selftest_progress,
-            selftest::kt_selftest_done
+            selftest::kt_selftest_done,
+            // (Stage P5: the video tools.)
+            vtools::kt_video_info,
+            vtools::kt_video_ready,
+            vtools::kt_video_version,
+            vtools::kt_video_update,
+            vtools::kt_video_rollback,
+            vtools::kt_video_binary,
+            vtools::kt_is_video_host,
+            vtools::kt_gallery_list,
+            vtools::kt_gallery_ready,
+            vtffmpeg::kt_ffmpeg_available,
+            vtffmpeg::kt_ffmpeg,
+            vtffmpeg::kt_ffmpeg_cancel,
+            vtffmpeg::kt_ffprobe,
+            vtffmpeg::kt_pack_status,
+            vtffmpeg::kt_pack_install,
+            vtffmpeg::kt_pack_cancel,
+            vtffmpeg::kt_pack_remove,
+            vtstream::kt_video_url,
+            vtstream::kt_audio_url,
+            vtselftest::kt_selftest_vt
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -133,6 +169,9 @@ fn main() {
             let handle = app.handle().clone();
             // (Stage P7: where the shipped 7-Zip is; Tools' parts of the shared archive code switched on.)
             archives::init(&handle);
+            // (Stage P5: the video tools' folders and jobs; yt-dlp brought up to date now and then, as main.cjs does.)
+            vtools::init(&handle);
+            vtools::schedule_updates();
             let data_dir = match app.path().app_data_dir() {
                 Ok(d) => d,
                 Err(_) => std::env::temp_dir().join("kurokawa-tools"),
@@ -212,6 +251,8 @@ fn main() {
                 if let Some(e) = engine::get() {
                     e.stop();
                 }
+                // (Stage P5: running video jobs ended with their trees.)
+                vtjobs::stop_all();
                 update::at_exit(app);
             }
         });

@@ -22,6 +22,16 @@ export const videoEnabled = (): boolean => videoSupported() && getSettings().add
 
 interface Bridge { videoInfo?(o: { url: string; playlist?: boolean }): Promise<unknown>; videoReady?(): Promise<unknown>; videoVersion?(): Promise<{ version: string | null; ready: boolean }>; videoUpdate?(): Promise<{ version: string | null; updated?: boolean; latest?: string }> }
 const desk = (): Bridge | null => (window.kurokawaTools as unknown as Bridge | undefined) ?? null;
+/** The Tauri shell's own codes for a new yt-dlp / gallery-dl that did not start (stage P5: the one before put back, or
+ *  none and it was removed) in the page's language; any other error as it came. */
+export async function toolError<T>(p: Promise<T>): Promise<T> {
+  try { return await p; } catch (e) {
+    const m = /^kt-video:(rolledback|broken):([\w-]+)(?::(.+))?$/.exec(String((e as Error)?.message ?? e));
+    if (!m) throw e;
+    const { t } = await import('../i18n');
+    throw new Error(m[1] === 'rolledback' ? t('videoNewFailedBack', { tool: m[2], v: m[3] ?? '' }) : t('videoNewFailed', { tool: m[2] }));
+  }
+}
 const plug = () => ktPlugin() as unknown as { videoInfo(o: { url: string; playlist?: boolean; cookieJar?: string }): Promise<{ json: string }>; videoVersion(): Promise<{ version: string | null; ready: boolean }>; videoUpdate(): Promise<{ version: string | null }> } | null;
 
 // (Kept ten minutes: the sheet, the add that follows and a second look at the same link cost one yt-dlp run, not three.)
@@ -33,7 +43,7 @@ export function pageInfo(url: string, playlist = false, opts: { cookieJar?: stri
   const p = (async () => {
     const { withPacks } = await import('../packs'); const { t } = await import('../i18n');
     // (yt-dlp needs Python and ffmpeg on a phone. On a computer reading a page needs neither: ffmpeg is asked for when a choice that needs it is added — an audio file taken as it is never does.)
-    const d = desk(); if (d?.videoInfo) { await d.videoReady?.(); return normalise(await d.videoInfo({ url, playlist })); }
+    const d = desk(); if (d?.videoInfo) { await d.videoReady?.(); return normalise(await toolError(d.videoInfo({ url, playlist }))); }
     const k = plug(); if (k) return normalise(JSON.parse((await withPacks(['python', 'ffmpeg'], t('packWhyVideo'), () => k.videoInfo({ url, playlist, cookieJar: opts.cookieJar }))).json));
     throw new Error('yt-dlp');
   })();
@@ -42,7 +52,7 @@ export function pageInfo(url: string, playlist = false, opts: { cookieJar?: stri
   return p;
 }
 export async function videoVersion(): Promise<string | null> { try { const d = desk(); if (d?.videoVersion) return (await d.videoVersion()).version; const k = plug(); return k ? (await k.videoVersion()).version : null; } catch { return null; } }
-export async function updateVideo(): Promise<string | null> { const d = desk(); if (d?.videoUpdate) return (await d.videoUpdate()).version; const k = plug(); return k ? (await k.videoUpdate()).version : null; }
+export async function updateVideo(): Promise<string | null> { const d = desk(); if (d?.videoUpdate) return (await toolError(d.videoUpdate())).version; const k = plug(); return k ? (await k.videoUpdate()).version : null; }
 /** Once a day, quietly: yt-dlp follows the sites as they change, so it is kept current. */
 export function autoUpdateVideo(): void {
   if (!videoEnabled()) return;

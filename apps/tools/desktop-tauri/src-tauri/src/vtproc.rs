@@ -7,7 +7,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,16 +22,24 @@ const SIGINT: i32 = 2;
 
 #[cfg(windows)]
 #[allow(non_snake_case)]
+#[link(name = "kernel32")]
 extern "system" {
     fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
     fn GetExitCodeProcess(h: isize, code: *mut u32) -> i32;
     fn CloseHandle(h: isize) -> i32;
 }
 
+/// Set by the self-test only (vtools.rs): the programs started get KT_FAKE_TOOLS=1, so the app's own copies standing in
+/// for yt-dlp / gallery-dl / ffmpeg / ffprobe answer as those (vtfake.rs). Never set in a normal run.
+pub static FAKE_ENV: AtomicBool = AtomicBool::new(false);
+
 /// The command for `bin` with `args`: stdin closed, stdout and stderr piped, no window, a group of its own.
 pub fn command(bin: &Path, args: &[String]) -> Command {
     let mut c = Command::new(bin);
     c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if FAKE_ENV.load(Ordering::SeqCst) {
+        c.env("KT_FAKE_TOOLS", "1");
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -190,7 +198,8 @@ pub struct Lines {
 }
 
 /// `bin` started; each stdout line (split on \n, a \r before it dropped) to `on_line` on a thread of its own.
-pub fn spawn_lines<F: FnMut(&str) + Send + 'static>(bin: &Path, args: &[String], mut on_line: F) -> Result<Lines, String> {
+/// stderr's last `max_err` bytes or so are kept (an error's last lines are what is shown).
+pub fn spawn_lines<F: FnMut(&str) + Send + 'static>(bin: &Path, args: &[String], max_err: usize, mut on_line: F) -> Result<Lines, String> {
     let mut child = command(bin, args).spawn().map_err(spawn_error)?;
     let pid = child.id();
     let mut so = child.stdout.take().ok_or("no stdout")?;
@@ -218,7 +227,7 @@ pub fn spawn_lines<F: FnMut(&str) + Send + 'static>(bin: &Path, args: &[String],
             on_line(&String::from_utf8_lossy(&pending));
         }
     });
-    let err = reader(se, 40000);
+    let err = reader(se, max_err);
     Ok(Lines { child, pid, out: Some(out), err: Some(err) })
 }
 
@@ -234,9 +243,29 @@ impl Lines {
     }
 }
 
-/// Channel-based waiting with a limit, for a caller on another thread: → Some(code) when it ended in time.
-pub fn wait_for(rx: &mpsc::Receiver<()>, limit: Duration) -> bool {
-    rx.recv_timeout(limit).is_ok()
+/// A program found on the PATH (`name`, with .exe on Windows), as a spawn by bare name would find it.
+pub fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let file = if cfg!(windows) { format!("{}.exe", name) } else { name.to_string() };
+    let path = std::env::var_os("PATH")?;
+    for d in std::env::split_paths(&path) {
+        let p = d.join(&file);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Made executable (rwxr-xr-x) off Windows.
+pub fn make_executable(p: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755))?;
+    }
+    #[cfg(not(unix))]
+    let _ = p;
+    Ok(())
 }
 
 #[cfg(all(test, unix))]
@@ -266,7 +295,7 @@ mod tests {
     fn lines_and_tree_kill() {
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let s2 = seen.clone();
-        let p = spawn_lines(Path::new("/bin/sh"), &sh("printf 'a\\r\\nb\\nc'; echo e >&2"), move |l| s2.lock().unwrap().push(l.to_string())).unwrap();
+        let p = spawn_lines(Path::new("/bin/sh"), &sh("printf 'a\\r\\nb\\nc'; echo e >&2"), 4096, move |l| s2.lock().unwrap().push(l.to_string())).unwrap();
         let (code, err) = p.wait();
         assert_eq!((code, err.as_str()), (Some(0), "e\n"));
         assert_eq!(*seen.lock().unwrap(), vec!["a", "b", "c"]);
@@ -275,7 +304,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let pidf = dir.join("gc.pid");
         let script = format!("sleep 60 & echo $! > '{}'; echo started; wait", pidf.display());
-        let p = spawn_lines(Path::new("/bin/sh"), &sh(&script), |_| {}).unwrap();
+        let p = spawn_lines(Path::new("/bin/sh"), &sh(&script), 4096, |_| {}).unwrap();
         let until = Instant::now() + Duration::from_secs(5);
         let gc = loop {
             if let Some(n) = std::fs::read_to_string(&pidf).ok().and_then(|t| t.trim().parse::<u32>().ok()) {

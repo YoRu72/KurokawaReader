@@ -124,6 +124,8 @@
     await runP8(kt, cfg, env, check, must);
     /* stage P6 part: the app's icon */
     await runIcon(kt, cfg, env, check, must);
+    /* stage P5: the video tools (stand-in programs, a loopback release server) */
+    await runP5(kt, cfg, env, check, must, waitFor);
     /* the engine */
     var engine = !!cfg.aria2Bin;
     rec('aria2c binary', cfg.wantBundled ? !!cfg.aria2Bundled : true, (cfg.aria2Bin || 'none found') + (cfg.aria2Bundled ? ' (bundled)' : ''), !!cfg.wantBundled);
@@ -451,6 +453,201 @@
       return 'resumed from ' + r.resumedFrom + ' of ' + r.size + '; refused: ' + r.refused + '; kind ' + r.kind + (r.file ? ', its file ' + r.file : '');
     }, 60000);
   }
+  /* stage P5 — the video tools (vtools.rs, vtjobs.rs, vtffmpeg.rs, vtstream.rs over kt-core's videotools / vidjson),
+     with no real program or site: the app's own executable stands in for yt-dlp, gallery-dl, ffmpeg and ffprobe
+     (vtfake.rs, active only in this run), fetched from a loopback release server (kt_selftest_vt). yt-dlp fetched — its
+     first download broken off and resumed —, checked against SHA2-256SUMS, asked its version; `-J` shaped for the Add
+     sheet; a video job's progress, phases and file; a running job removed with its whole tree; a failing job's error;
+     an update to a newer release (the one before kept), a broken newer one rolled back at once, a wrong checksum
+     refused, a rollback by hand; gallery-dl's listing; the ffmpeg pack (a wrong checksum refused, a cancel mid-way, a
+     download resumed); ffmpeg's run with its progress, a cancel ending the tree; ffprobe's JSON; the transcode stream's
+     and the sound track's bytes; the pack removed. Absent methods (a build without them): nothing is checked. */
+  async function runP5(kt, cfg, env, check, must, waitFor) {
+    if (typeof kt.videoReady !== 'function') return;
+    var rejects = async function (p) { try { await p; return null; } catch (e) { return e || new Error('rejected'); } };
+    var op = function (o) { return env.invoke('kt_selftest_vt', { o: o }); };
+    var vt = null;
+    var up = await check('video tools: the stand-ins\' release server', true, async function () {
+      vt = await op({ op: 'setup' }); must(vt && vt.base && vt.dir, 'setup ' + short(vt)); return vt.base + ' (' + vt.os + ')';
+    });
+    if (!up) return;
+    var os = vt.os; var dir = join(vt.dir, 'videos', os);
+    var latest = []; var off = kt.onTasks(function (l) { if (Array.isArray(l)) latest = l; });
+    var snaps = {};
+    var off2 = kt.onTasks(function (l) { (l || []).forEach(function (t) { if (t && t.kind === 'video') (snaps[t.id] = snaps[t.id] || []).push(JSON.parse(JSON.stringify(t))); }); });
+    var cur = function (id) { return find(latest, id); };
+    var pids = async function (file) {
+      var until = env.now() + 15000;
+      for (;;) { try { var p = await op({ op: 'pids', file: file }); if (Array.isArray(p) && p.length === 2 && p[0] > 0 && p[1] > 0) return p; } catch (e) { /* not written yet */ } if (env.now() > until) throw new Error('no pids in ' + file); await env.sleep(150); }
+    };
+    var gone = async function (ps, ms) { var until = env.now() + ms; for (;;) { var a = await op({ op: 'alive', pids: ps }); if (a.every(function (x) { return !x; })) return true; if (env.now() > until) throw new Error('still running: ' + short(a)); await env.sleep(200); } };
+    try {
+      var fetched = await check('yt-dlp: fetched (resumed), checked, its version', true, async function () {
+        var before = await kt.videoVersion(); must(before && before.ready === false && before.version === null, 'already there ' + short(before));
+        var prog = 0; var offP = kt.onUpdateProgress(function (p) { if (p && p.what === 'yt-dlp' && p.got > 0) prog++; });
+        try {
+          var r = await kt.videoReady(); must(r && r.ok === true && r.version === vt.version, 'ready ' + short(r));
+          var seen = await op({ op: 'seen' }); must(seen.some(function (l) { return /^GET \/yt\/download\/\S+ bytes=\d+-$/.test(l); }), 'not resumed: ' + short(seen));
+          await waitFor(function () { return prog > 0; }, 5000, 'kt:update-progress');
+        } finally { offP(); }
+        var v = await kt.videoVersion(); must(v.ready === true && v.version === vt.version, short(v));
+        return 'yt-dlp ' + v.version + ', ' + prog + ' progress events';
+      }, 90000);
+      if (!fetched) return;
+      await check('isVideoHost', true, async function () {
+        must((await kt.isVideoHost('https://m.youtube.com/watch?v=x')) === true, 'youtube'); must((await kt.isVideoHost('https://example.org/a.mp4')) === false, 'example.org');
+        return 'youtube yes, example.org no';
+      });
+      await check('yt-dlp: -J read and shaped (video, playlist, error)', true, async function () {
+        var i = await kt.videoInfo({ url: 'https://fake.test/watch?v=abc' });
+        must(i && i.kind === 'video' && i.title === 'Fake video' && i.id === 'abc', short(i));
+        must(i.choices.length === 2 && i.choices[0].id === '137+140' && i.choices[0].label === '1080p' && i.choices[1].id === '18', 'choices ' + short(i.choices));
+        must(i.audio.length === 1 && i.audio[0].id === '140' && i.subtitles.join() === 'en,ar' && i.chapters === 1, 'audio/subs ' + short(i));
+        var p = await kt.videoInfo({ url: 'https://fake.test/playlist?list=p', playlist: true });
+        must(p.kind === 'playlist' && p.count === 2 && p.entries[1].id === 'b', short(p));
+        var e = await rejects(kt.videoInfo({ url: 'https://fake.test/fail' })); must(e && /Unsupported URL/.test(e.message), 'error ' + short(e && e.message));
+        return i.choices.map(function (c) { return c.label; }).join(', ') + '; playlist of ' + p.count + '; ' + e.message.slice(0, 50);
+      }, 30000);
+      await check('yt-dlp: a video job — progress, phases, fragments, its file', true, async function () {
+        var t = await kt.add({ source: { url: 'https://fake.test/watch?v=abc' }, dir: dir, video: { title: 'Fake video', args: ['-f', '137+140', '--merge-output-format', 'mp4', '-o', '%(title)s [%(id)s].%(ext)s'], expect: 120000, label: '1080p' } });
+        must(t && /^v/.test(t.id) && t.kind === 'video' && t.engine === 'native', short(t));
+        var d = await waitFor(function () { var x = cur(t.id); return x && (x.state === 'done' || x.state === 'failed') ? x : null; }, 30000, 'done');
+        must(d.state === 'done', d.state + ' ' + (d.error || ''));
+        var phases = (snaps[t.id] || []).map(function (x) { return x.meta && x.meta.phase; }).filter(Boolean);
+        must(phases.indexOf('video') >= 0 && phases.indexOf('audio') >= 0 && phases.indexOf('merge') >= 0, 'phases ' + short(phases));
+        must((snaps[t.id] || []).some(function (x) { return x.meta && x.meta.frags === 40; }), 'no fragment counts');
+        must(d.files[0] && d.files[0].path === 'Fake video [abc].mp4' && d.name === 'Fake video [abc]' && d.meta.quality === '1080p', 'file ' + short(d.files) + ' ' + d.name);
+        var i = await kt.pathInfo(join(dir, 'Fake video [abc].mp4', os)); must(i.exists && i.size === 120000, 'on disk ' + short(i));
+        var l = await kt.list(); must(find(l, t.id), 'not in kt:list');
+        await kt.remove(t.id, true);
+        var e = await kt.exists([join(dir, 'Fake video [abc].mp4', os)]); must(e[0] === false, 'its file stayed');
+        return phases.filter(function (x, k) { return phases.indexOf(x) === k; }).join(' → ') + '; ' + (snaps[t.id] || []).length + ' pushes';
+      }, 45000);
+      await check('yt-dlp: removing a running job ends its whole tree', true, async function () {
+        var d2 = join(dir, 'slow', os);
+        var t = await kt.add({ source: { url: 'https://fake.test/slow' }, dir: d2, video: { title: 'Slow', args: ['-f', 'b'] } });
+        var ps = await pids(join(d2, 'kt-fake-pids.txt', os));
+        var a = await op({ op: 'alive', pids: ps }); must(a[0] && a[1], 'not both running ' + short(a));
+        await waitFor(function () { var x = cur(t.id); return x && x.state === 'downloading' && x.done > 0 ? x : null; }, 10000, 'progress');
+        await kt.remove(t.id, false);
+        await gone(ps, 10000);
+        must(!find(await kt.list(), t.id), 'still listed');
+        return 'yt-dlp ' + ps[0] + ' and its child ' + ps[1] + ' ended';
+      }, 40000);
+      await check('yt-dlp: a failing job shows yt-dlp\'s error', true, async function () {
+        var t = await kt.add({ source: { url: 'https://fake.test/fail' }, dir: dir, video: { title: 'Fail', args: ['-f', 'b'] } });
+        var d = await waitFor(function () { var x = cur(t.id); return x && (x.state === 'failed' || x.state === 'done') ? x : null; }, 20000, 'failed');
+        must(d.state === 'failed' && /^\[generic\] Unsupported URL/.test(d.error || ''), d.state + ' ' + d.error);
+        var bad = await kt.add({ source: { url: 'https://fake.test/x' }, dir: dir, video: { title: 'Bad', args: ['-f', 'b', '--exec', 'x'] } });
+        var b = await waitFor(function () { var x = cur(bad.id); return x && x.state === 'failed' ? x : null; }, 10000, 'refused');
+        must(b.error === 'invalid options', 'a list with --exec ' + short(b.error));
+        await kt.remove(t.id, false); await kt.remove(bad.id, false);
+        return d.error + '; --exec refused';
+      }, 30000);
+      await check('yt-dlp: an update to a newer release, the one before kept', true, async function () {
+        await op({ op: 'serve', version: '2025.12.01' });
+        var u = await kt.videoUpdate(); must(u && u.updated === true && u.version === '2025.12.01' && u.latest === '2025.12.01', short(u));
+        var b = await kt.videoBinary({}); must(b.managed === true && b.olds[0] === vt.version && b.min, 'kept ' + short(b));
+        return vt.version + ' → ' + u.version + ', kept: ' + b.olds.join(', ');
+      }, 60000);
+      await check('yt-dlp: a broken newer release is rolled back at once', true, async function () {
+        await op({ op: 'serve', version: '2025.12.24', mode: 'broken' });
+        var e = await rejects(kt.videoUpdate()); must(e && e.message === 'kt-video:rolledback:yt-dlp:2025.12.01', 'update ' + short(e && e.message));
+        var v = await kt.videoVersion(); must(v.version === '2025.12.01', 'running ' + short(v));
+        return e.message;
+      }, 60000);
+      await check('yt-dlp: a wrong checksum is refused', true, async function () {
+        await op({ op: 'serve', version: '2025.12.30', badSum: true });
+        var e = await rejects(kt.videoUpdate()); must(e && /checksum mismatch/.test(e.message), 'update ' + short(e && e.message));
+        var v = await kt.videoVersion(); must(v.version === '2025.12.01', 'running ' + short(v));
+        return e.message;
+      }, 60000);
+      await check('yt-dlp: rolled back by hand', true, async function () {
+        var r = await kt.videoRollback(); must(r && r.version === vt.version, short(r));
+        var v = await kt.videoVersion(); must(v.version === vt.version, 'running ' + short(v));
+        var b = await kt.videoBinary({}); must(b.olds.indexOf(vt.version) < 0, 'still kept ' + short(b.olds));
+        return 'back to ' + v.version;
+      }, 30000);
+      await check('gallery-dl: fetched, checked, a gallery listed', vt.gallery, async function () {
+        var g0 = await kt.galleryReady(); must(g0 && g0.ready === false, 'already there ' + short(g0));
+        if (!vt.gallery) { var n = await rejects(kt.galleryList({ url: 'https://fake.test/g' })); must(n && /no binary/.test(n.message), short(n && n.message)); return 'no standalone gallery-dl for ' + os + ': ' + n.message; }
+        var g = await kt.galleryList({ url: 'https://fake.test/g', range: '1-10' });
+        must(g.title === 'Fake gallery' && g.items.length === 2 && g.items[0].name === 'one.jpg' && g.items[1].name === '2.png' && g.items[1].headers.Referer === 'https://fake.test/', short(g));
+        var r = await kt.galleryReady(); must(r.ready === true && r.version === '1.30.2', short(r));
+        var e = await rejects(kt.galleryList({ url: 'https://fake.test/fail' })); must(e && /No suitable extractor/.test(e.message), 'error ' + short(e && e.message));
+        return g.items.length + ' items; gallery-dl ' + r.version;
+      }, 60000);
+      var packed = await check('ffmpeg pack: a wrong checksum refused, a cancel, a resumed install', true, async function () {
+        var s0 = await kt.packStatus(); must(s0 && s0.ffmpeg && s0.ffmpeg.version === null && s0.python && s0.platform === os, short(s0));
+        var bad = await rejects(kt.packInstall({ name: 'ffmpeg', url: vt.base + '/pack/ffmpeg.gz', sha256: '0'.repeat(64), version: '7.1-kt' }));
+        must(bad && bad.message === 'checksum', 'wrong checksum ' + short(bad && bad.message));
+        must((await kt.packStatus()).ffmpeg.version === null, 'installed anyway');
+        var ev = []; var offP = kt.onPackProgress(function (p) { ev.push(p); });
+        try {
+          var p = kt.packInstall({ name: 'ffmpeg', url: vt.base + '/pack/slow.gz', sha256: vt.packSha256, version: '7.1-kt' });
+          var caught = rejects(p);
+          await waitFor(function () { return ev.length > 0; }, 15000, 'kt:packProgress');
+          await kt.packCancel('ffmpeg');
+          var c = await caught; must(c && c.message === 'cancelled', 'cancel ' + short(c && c.message));
+          await kt.packInstall({ name: 'ffmpeg', url: vt.base + '/pack/cut.gz', sha256: vt.packSha256, version: '7.1-kt' });
+        } finally { offP(); }
+        var s = await kt.packStatus(); must(s.ffmpeg.version === '7.1-kt' && s.ffmpeg.size > 0, short(s));
+        var seen = await op({ op: 'seen' }); must(seen.some(function (l) { return /^GET \/pack\/cut\.gz bytes=\d+-$/.test(l); }), 'not resumed ' + short(seen.slice(-5)));
+        var last = ev[ev.length - 1]; must(last && last.name === 'ffmpeg' && last.done === vt.packSize && last.total === vt.packSize, 'progress ' + short(last));
+        return 'installed ' + s.ffmpeg.version + ' (' + s.ffmpeg.size + ' bytes), ' + ev.length + ' progress events';
+      }, 90000);
+      if (!packed) return;
+      var inPath = '';
+      await check('ffmpeg: available (the pack\'s), a run with its progress and file', true, async function () {
+        var a = await kt.ffmpegAvailable(); must(a && a.ok === true && /kt-fake/.test(a.version), short(a));
+        inPath = await kt.writeTempBytes({ name: 'kt-vt-in.bin', b64: 'AAEC/w==', sub: 'kt-selftest-vt' });
+        var out = inPath + '.out.mkv'; var ev = [];
+        var offF = kt.onFfmpegProgress(function (p) { if (p && p.id === 'vt-run') ev.push(p); });
+        var r; try { r = await kt.ffmpeg({ id: 'vt-run', args: ['-i', inPath, '-c', 'copy', '-progress', 'pipe:1', '-nostats', out] }); } finally { setTimeout(offF, 1000); }
+        must(r && r.code === 0 && typeof r.log === 'string', short(r));
+        await waitFor(function () { return ev.some(function (p) { return p.done === true; }); }, 3000, 'the last progress');
+        var end = ev.filter(function (p) { return p.done; })[0]; must(end.time === 5 && end.size === 5000 && end.speed === 2.5, 'progress ' + short(end));
+        must(sameBytes(await kt.readFile(out), [0, 1, 2, 255]), 'its file');
+        await kt.removeFile(out);
+        return a.version.slice(0, 40) + '; ' + ev.length + ' progress events';
+      }, 30000);
+      await check('ffmpeg: cancel ends its whole tree', true, async function () {
+        var slowIn = await kt.writeTempBytes({ name: 'kt-slow-in.bin', b64: 'AAEC', sub: 'kt-selftest-vt' });
+        var out = slowIn + '.out.mkv';
+        var run = kt.ffmpeg({ id: 'vt-cancel', args: ['-i', slowIn, '-progress', 'pipe:1', '-nostats', out] });
+        var ps = await pids(out + '.pids');
+        await kt.ffmpegCancel('vt-cancel');
+        var r = await run; must(r && r.code !== 0, 'ended ' + short(r));
+        await gone(ps, 12000);
+        return 'code ' + r.code + '; ffmpeg ' + ps[0] + ' and its child ' + ps[1] + ' ended';
+      }, 40000);
+      await check('ffprobe: its JSON (ffprobe beside the pack\'s ffmpeg)', true, async function () {
+        await op({ op: 'probeBeside' });
+        var j = await kt.ffprobe(inPath); must(j && j.streams && j.streams.length === 2 && j.streams[0].codec_type === 'video' && j.format.duration === '12.500000', short(j));
+        must((await kt.ffprobe(join(dir, 'no-such-file.mkv', os))) === null, 'a missing file');
+        return j.streams.map(function (s) { return s.codec_name; }).join(' + ') + ', ' + j.format.duration + ' s';
+      }, 20000);
+      await check('transcode stream: the bytes ffmpeg makes, x264 after the cards\' encoders fail', true, async function () {
+        var u = await kt.videoUrl(); must(u && /^http:\/\/127\.0\.0\.1:\d+\/video$/.test(u.url), short(u));
+        var r = await kt.http({ url: u.url + '?src=' + encodeURIComponent(inPath) + '&ss=5&a=1', binary: true });
+        must(r.status === 200 && r.headers['x-kt-encoder'] === 'libx264' && /video\/mp4/.test(r.headers['content-type'] || ''), r.status + ' ' + short(r.headers));
+        var head = latin(b64bytes(String(r.body).slice(0, 80)));
+        must(head.indexOf('KTFAKE-STREAM enc=libx264 ss=5 map=0:v:0,0:a:1?') === 0, 'first bytes ' + short(head));
+        must(r.body.length > 600000, 'only ' + r.body.length + ' base64 characters');
+        var none = await kt.http({ url: u.url }); must(none.status === 400, 'no src: ' + none.status);
+        var a = await kt.audioUrl(); must(/\/audio$/.test(a.url), short(a));
+        var s = await kt.http({ url: a.url + '?src=' + encodeURIComponent(inPath) + '&ss=2&a=0', binary: true });
+        var sh = latin(b64bytes(String(s.body).slice(0, 60)));
+        must(s.status === 200 && /audio\/aac/.test(s.headers['content-type'] || '') && sh.indexOf('KTFAKE-STREAM enc=aac ss=2 map=0:a:0') === 0, s.status + ' ' + short(sh));
+        return 'video ' + Math.round(r.body.length * 0.75) + ' bytes (' + r.headers['x-kt-encoder'] + '), sound ' + Math.round(s.body.length * 0.75) + ' bytes';
+      }, 60000);
+      await check('ffmpeg pack removed', true, async function () {
+        await kt.packRemove('ffmpeg'); var s = await kt.packStatus(); must(s.ffmpeg.version === null && s.ffmpeg.size === 0, short(s));
+        if (inPath) await kt.removeFile(inPath);
+        return 'gone';
+      });
+    } finally { off(); off2(); }
+  }
   /* stage P6 part — the app's icon of the user's choosing (appicon.rs over the shared appicon.rs): a picture chosen →
      the PNG and the .ico (its sizes drawn by the page) kept, the window's icon set (Windows; Linux under Xvfb; a Mac's
      windows have none); given back as the one in force; a picture that is no PNG refused; reset → no file. */
@@ -535,7 +732,7 @@
     off();
   }
 
-  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run };
+  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP5: runP5 };
   try { Object.defineProperty(root, '__KT_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KT_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KT_SELFTEST__;

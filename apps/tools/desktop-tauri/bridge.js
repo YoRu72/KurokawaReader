@@ -3,7 +3,7 @@
 // Run by src-tauri/src/main.rs as the window's initialization script — before the page's own scripts, on every
 // load —, after a line that sets window.__KT_BOOT__ = { os, arch }.
 // Only the ported slice is here (../PORTING.md: stage 1 files/dialogs/clipboard/http, stage 2 the download engine,
-// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts, P7 the archives): the page asks for each feature by
+// stage P3 the recycle bin, free space, fonts, MEGA, the screen translator's fonts, P7 the archives, P5 the video tools): the page asks for each feature by
 // its method (d?.dohProbe, …), so whatever is not ported yet is absent, not a stub. Events (kt:tasks, kt:engineState,
 // kt:files) come as Tauri events, listened to with window.__TAURI__.event.listen.
 // Some methods are this shell's own, not the preload's: filesJob, filesCancel, filesAnswer and onFilesJob — the Files
@@ -244,6 +244,34 @@
     onUpdateProgress: function (cb) { return subscribe('kt:update-progress', cb); },
     updateDownload: function (o) { return call('kt_update_download', { o: obj(o) }); },
     updateInstall: function () { return call('kt_update_install'); },
+
+    /* stage P5 — the video tools (src-tauri/src/vtools.rs, vtjobs.rs, vtffmpeg.rs, vtstream.rs over kt-core's
+       videotools / vidjson): yt-dlp fetched, checked, updated, rolled back (videoReady's fetch progress as
+       kt:update-progress with what: 'yt-dlp'), `-J` shaped for the Add sheet, a site yt-dlp is always asked about, the
+       program of the user's own choosing; gallery-dl's listing; ffmpeg runs with progress (kt:ffmpegProgress), cancel,
+       ffprobe's JSON; the ffmpeg pack (kt:packProgress); the transcode stream's and the sound track's addresses. A video
+       download is kt_add with o.video, and its task comes in kt:tasks with the others. */
+    videoInfo: function (o) { return call('kt_video_info', { o: obj(o) }); },
+    videoReady: function () { return call('kt_video_ready'); },
+    isVideoHost: function (u) { return call('kt_is_video_host', { u: str(u) }); },
+    videoVersion: function () { return call('kt_video_version'); },
+    videoRollback: function () { return call('kt_video_rollback'); },
+    videoUpdate: function () { return call('kt_video_update'); },
+    videoBinary: function (o) { return call('kt_video_binary', { o: obj(o) }); },
+    galleryList: function (o) { return call('kt_gallery_list', { o: obj(o) }); },
+    galleryReady: function () { return call('kt_gallery_ready'); },
+    ffmpegAvailable: function () { return call('kt_ffmpeg_available'); },
+    ffmpeg: function (o) { return call('kt_ffmpeg', { o: obj(o) }); },
+    ffmpegCancel: function (id) { return call('kt_ffmpeg_cancel', { id: str(id) }); },
+    ffprobe: function (p) { return call('kt_ffprobe', { p: str(p) }); },
+    onFfmpegProgress: function (cb) { return subscribe('kt:ffmpegProgress', cb); },
+    packStatus: function () { return call('kt_pack_status'); },
+    packInstall: function (o) { return call('kt_pack_install', { o: obj(o) }); },
+    packCancel: function (n) { return call('kt_pack_cancel', { n: str(n) }); },
+    packRemove: function (n) { return call('kt_pack_remove', { n: str(n) }); },
+    onPackProgress: function (cb) { return subscribe('kt:packProgress', cb); },
+    videoUrl: function () { return call('kt_video_url'); },
+    audioUrl: function () { return call('kt_audio_url'); },
   };
   // (Which shell this is: the page draws the window's whole title bar here — src/ui/winbar.ts —, and the Files page
   // has its jobs.)

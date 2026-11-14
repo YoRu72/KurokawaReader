@@ -15,13 +15,16 @@ const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
-  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon'];
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
+  // (Stage P5: the video tools.)
+  'videoInfo', 'videoReady', 'isVideoHost', 'videoVersion', 'videoRollback', 'videoUpdate', 'videoBinary', 'galleryList', 'galleryReady', 'ffmpegAvailable', 'ffmpeg', 'ffmpegCancel', 'ffprobe',
+  'packStatus', 'packInstall', 'packCancel', 'packRemove', 'videoUrl', 'audioUrl'];
 // (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']] };
-const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress'];
+const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onFfmpegProgress', 'onPackProgress'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
 // --- Electron's preload, with a fake electron that records each invoke.
@@ -72,7 +75,7 @@ function loadBridge(boot) {
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
-  for (const k of ['streamUrl', 'streamDone', 'mini', 'screenStatus', 'videoInfo', 'shareWifi', 'browse', 'avScan']) assert.ok(!(k in kt), `${k} should be absent`);
+  for (const k of ['streamUrl', 'streamDone', 'mini', 'screenStatus', 'shareWifi', 'browse', 'avScan']) assert.ok(!(k in kt), `${k} should be absent`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -88,6 +91,10 @@ function loadBridge(boot) {
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
     appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
+    // (Stage P5.)
+    videoInfo: [{ url: 'https://www.youtube.com/watch?v=x', playlist: true, cookiesFromBrowser: 'firefox' }], videoReady: [], isVideoHost: ['https://youtu.be/x'], videoVersion: [], videoRollback: [], videoUpdate: [],
+    videoBinary: [{ path: '/opt/yt-dlp' }], galleryList: [{ url: 'https://x.org/g', range: '1-100', cookies: '/c.txt' }], galleryReady: [], ffmpegAvailable: [], ffmpeg: [{ id: 'c1', args: ['-i', '/a.mkv', '/b.mp4'] }],
+    ffmpegCancel: ['c1'], ffprobe: ['/a.mkv'], packStatus: [], packInstall: [{ name: 'ffmpeg', url: 'https://x.org/p.gz', sha256: 'ab', version: '7' }], packCancel: ['ffmpeg'], packRemove: ['ffmpeg'], videoUrl: [], audioUrl: [],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};

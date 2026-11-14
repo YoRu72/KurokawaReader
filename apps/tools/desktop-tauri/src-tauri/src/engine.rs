@@ -497,7 +497,8 @@ impl Engine {
             }
         };
         if send {
-            let _ = self.app.emit("kt:tasks", v.clone());
+            // (Stage P5: sent with the video tasks after aria2's, as main.cjs allTasks.)
+            crate::vtjobs::emit_tasks(&self.app, v.clone());
         }
     }
 
