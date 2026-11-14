@@ -14,6 +14,8 @@ pub struct Found {
 
 /// The cfg names this can set (for `rustc-check-cfg`).
 pub const CFGS: [&str; 4] = ["kt_reveal", "kt_set_icon", "kt_default_icon", "kt_progress"];
+/// (Stage P6, desktop.rs) the cfg names of the tray's left click, the dock's count and the global shortcuts.
+pub const CFGS_P6: [&str; 4] = ["kt_tray_left", "kt_tray_left_old", "kt_badge", "kt_shortcuts"];
 
 /// The version of `name` in a Cargo.lock's text.
 pub fn locked_version(lock: &str, name: &str) -> Option<String> {
@@ -121,6 +123,30 @@ pub fn detect_tauri(src: &str) -> Vec<Found> {
     ]
 }
 
+/// (Stage P6) What the squeezed source of the tauri crate offers desktop.rs: the tray's left click kept from opening
+/// its menu (show_menu_on_left_click, before it menu_on_left_click), the dock's count (set_badge_count, on Window and
+/// WebviewWindow).
+pub fn detect_tauri_p6(src: &str) -> Vec<Found> {
+    let has = |s: &str| src.contains(&squeeze(s));
+    let twice = |s: &str| src.matches(&squeeze(s)).count() >= 2;
+    vec![
+        Found { cfg: "kt_tray_left", what: "the tray's left click (show_menu_on_left_click)", on: has("pub fn show_menu_on_left_click(mut self, enable: bool) -> Self") },
+        Found { cfg: "kt_tray_left_old", what: "the tray's left click, older name (menu_on_left_click)", on: has("pub fn menu_on_left_click(mut self, enable: bool) -> Self") },
+        Found { cfg: "kt_badge", what: "the dock's count (set_badge_count)", on: twice("pub fn set_badge_count(&self, count: Option<i64>) -> crate::Result<()>") },
+    ]
+}
+
+/// (Stage P6) What the squeezed source of tauri-plugin-global-shortcut offers: the handler with the shortcut and its
+/// event, register by text, unregister_all — all three, or the clipboard hotkeys are left out.
+pub fn detect_shortcut(src: &str) -> Vec<Found> {
+    let has = |s: &str| src.contains(&squeeze(s));
+    let on = has("pub fn with_handler<F: Fn(&AppHandle<R>, &Shortcut, ShortcutEvent)")
+        && has("pub fn register<S>(&self, shortcut: S) -> Result<()>")
+        && has("pub fn unregister_all(&self) -> Result<()>")
+        && has("ShortcutEvent");
+    vec![Found { cfg: "kt_shortcuts", what: "global shortcuts (with_handler, register, unregister_all)", on }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +178,21 @@ mod tests {
         let mut all: Vec<&str> = detect_opener("").iter().map(|x| x.cfg).collect();
         all.extend(f.iter().map(|x| x.cfg));
         assert_eq!(all, CFGS.to_vec());
+    }
+
+    #[test]
+    fn p6() {
+        let t = squeeze("pub fn show_menu_on_left_click(mut self, enable: bool) -> Self {\n pub fn set_badge_count(\n &self,\n count: Option<i64>,\n ) -> crate::Result<()> {\npub fn set_badge_count(&self, count: Option<i64>) -> crate::Result<()> {");
+        let f = detect_tauri_p6(&t);
+        assert!(f[0].on && !f[1].on && f[2].on);
+        let old = detect_tauri_p6(&squeeze("pub fn menu_on_left_click(mut self, enable: bool) -> Self {"));
+        assert!(!old[0].on && old[1].on && !old[2].on);
+        let g = squeeze("pub fn with_handler<F: Fn(&AppHandle<R>, &Shortcut, ShortcutEvent) + Send + Sync + 'static>(\n mut self, handler: F) -> Self {\npub fn register<S>(&self, shortcut: S) -> Result<()>\nwhere\npub fn unregister_all(&self) -> Result<()> {");
+        assert!(detect_shortcut(&g)[0].on);
+        assert!(!detect_shortcut(&squeeze("pub fn register<S>(&self, shortcut: S) -> Result<()>"))[0].on);
+        let mut all: Vec<&str> = detect_tauri_p6("").iter().map(|x| x.cfg).collect();
+        all.extend(detect_shortcut("").iter().map(|x| x.cfg));
+        assert_eq!(all, CFGS_P6.to_vec());
     }
 
     #[test]

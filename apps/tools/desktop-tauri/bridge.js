@@ -244,7 +244,58 @@
     onUpdateProgress: function (cb) { return subscribe('kt:update-progress', cb); },
     updateDownload: function (o) { return call('kt_update_download', { o: obj(o) }); },
     updateInstall: function () { return call('kt_update_install'); },
+
+    /* stage P6 (src-tauri/src/desktop.rs, rules in desklogic.rs): the computer's side of the downloads — desktopPrefs(o)
+       → the choices in force (keepAwake, whenDone, notifyDone, tray, hotkeys; this shell also takes o.labels, the
+       interface's words for the tray's menu and a Mac's menu bar, and answers hotkeyErrors { mode: why } for a hotkey
+       it could not register); mini({ action: open | close | main | auto, on }) → { open }; registerMagnet() → true;
+       onHotkeyAdd(cb) ({ mode, text }: a clipboard hotkey pressed), onOpenTask(cb) (a finished download's notice
+       followed: see PORTING.md — a computer's notices give no click, so it is the window brought to the front soon
+       after). Links the system handed the app reach the page as the preload's kt:open DOM event (below). */
+    desktopPrefs: function (o) { return call('kt_desktop_prefs', { o: obj(o) }); },
+    mini: function (o) { return call('kt_mini', { o: obj(o) }); },
+    registerMagnet: function () { return call('kt_register_magnet'); },
+    onHotkeyAdd: function (cb) { return subscribe('kt:hotkeyAdd', cb); },
+    onOpenTask: function (cb) { return subscribe('kt:openTask', cb); },
   };
+  /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a
+     second launch's, a Mac's Apple Events — kept by the shell (kt_open_take) and handed to the page as the preload's
+     kt:open DOM event once the page listens for it (Electron waits for the page's load the same way), and again on each
+     kt:openPending; each noted (its start) in window.__KT_OPEN_LOG__ for the self-test. The mini window: dragged by its
+     top (.mini-head, not its buttons), as Electron's app-region. */
+  (function () {
+    var wanted = false;
+    function flush() {
+      call('kt_open_take').then(function (list) {
+        (Array.isArray(list) ? list : []).forEach(function (u) {
+          try { window.__KT_OPEN_LOG__ = (window.__KT_OPEN_LOG__ || []).concat([String(u).slice(0, 80)]); } catch (e) { /* frozen */ }
+          try { window.dispatchEvent(new CustomEvent('kt:open', { detail: u })); } catch (e) { /* no DOM */ }
+        });
+      }).catch(function () {});
+    }
+    try {
+      var add = window.addEventListener;
+      if (typeof add === 'function') {
+        window.addEventListener = function (type) {
+          var r = add.apply(this, arguments);
+          if (type === 'kt:open' && !wanted) {
+            wanted = true;
+            setTimeout(flush, 0);
+            var on = listener();
+            if (on) { try { Promise.resolve(on('kt:openPending', function () { flush(); })).catch(function () {}); } catch (e) { /* none */ } }
+          }
+          return r;
+        };
+        add.call(window, 'mousedown', function (e) {
+          try {
+            if (!String(location.hash).startsWith('#/mini') || e.button !== 0) return;
+            var t = e.target; if (!t || !t.closest || !t.closest('.mini-head') || t.closest('button')) return;
+            call('kt_title_bar', { o: { act: 'drag' } }).catch(function () {});
+          } catch (x) { /* not a page */ }
+        });
+      }
+    } catch (e) { /* no DOM */ }
+  })();
   // (Which shell this is: the page draws the window's whole title bar here — src/ui/winbar.ts —, and the Files page
   // has its jobs.)
   try { Object.defineProperty(window, '__KT_SHELL__', { value: 'tauri', configurable: true }); } catch (e) { /* the page then keeps Electron's bar */ }

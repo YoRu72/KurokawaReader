@@ -1054,4 +1054,9 @@ export const ko: Partial<Strings> = {
   filesPlaceDocuments: "문서",
   updateByHand: "이 사본은 스스로 교체할 수 없습니다. 릴리스 페이지에서 새 버전을 내려받으세요.",
   filesBadName: "이름에 / 또는 \\를 넣을 수 없습니다(Windows에서는 < > : \" | ? *도 안 됩니다).",
+  // (P6 단계: 트레이 메뉴, Mac 메뉴 막대, 등록되지 않은 단축키)
+  trayQuit: "종료", hotkeyRefused: "단축키 {keys}을(를) 설정할 수 없습니다: {why}",
+  menuAbout: "Kurokawa Tools에 관하여", menuHide: "Kurokawa Tools 가리기", menuHideOthers: "기타 가리기", menuShowAll: "모두 보기", menuQuit: "Kurokawa Tools 종료",
+  menuFile: "파일", menuCloseWindow: "윈도우 닫기", menuEdit: "편집", menuUndo: "실행 취소", menuRedo: "실행 복귀", menuCut: "오려두기", menuCopy: "복사하기", menuPaste: "붙여넣기", menuSelectAll: "모두 선택",
+  menuView: "보기", menuFullscreen: "전체 화면 시작", menuWindow: "윈도우", menuMinimize: "최소화", menuZoom: "확대/축소",
 };

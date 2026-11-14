@@ -17,11 +17,21 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 kurokawa-shell = { path = "../../../../shared/shell-rs" }
 kt-core = { path = "../../core/kt-core" }
-# ("image-png", stage P6 part: a PNG read for the app icon of the user's choosing — the shared appicon.rs.)
-tauri = { version = "2", features = ["image-png"] }
+# ("image-png", stage P6 part: a PNG read for the app icon of the user's choosing — the shared appicon.rs. "tray-icon",
+# stage P6: the downloads' tray icon — Tauri's own, behind its feature; it brings the tray-icon crate (muda is already in
+# through the menus), which on Linux loads libayatana-appindicator3 / libappindicator3 at run time: desktop.rs makes no
+# tray where neither is installed.)
+tauri = { version = "2", features = ["image-png", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
+# (Stage P6, desktop.rs — the official plugins. single-instance and notification: the Reader's shell resolves and builds
+# them already (its Cargo.toml, "2"). global-shortcut: new here (it brings global-hotkey — x11-dl on Linux, the
+# Windows and macOS system bindings the tray already brings); used only where build.rs finds its API (kt_shortcuts).
+# std has none of these: a second launch's hand-over, system notifications, keys grabbed system-wide.)
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
 serde_json = "1"
 # (The self-test's digest of the test server's file; the same version as kurokawa-shell's, so one copy.)
 sha2 = "0.10"

@@ -2151,6 +2151,11 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   filesPlaceDocuments: "Documents",
   updateByHand: "This copy can't replace itself: download the new version from the release page.",
   filesBadName: "A name can't hold / or \\ (nor < > : \" | ? * on Windows).",
+  // (Stage P6, the Tauri shell: the tray's menu, a Mac's menu bar, a clipboard hotkey the system refused.)
+  trayQuit: "Quit", hotkeyRefused: "The shortcut {keys} could not be set: {why}",
+  menuAbout: "About Kurokawa Tools", menuHide: "Hide Kurokawa Tools", menuHideOthers: "Hide Others", menuShowAll: "Show All", menuQuit: "Quit Kurokawa Tools",
+  menuFile: "File", menuCloseWindow: "Close Window", menuEdit: "Edit", menuUndo: "Undo", menuRedo: "Redo", menuCut: "Cut", menuCopy: "Copy", menuPaste: "Paste", menuSelectAll: "Select All",
+  menuView: "View", menuFullscreen: "Enter Full Screen", menuWindow: "Window", menuMinimize: "Minimize", menuZoom: "Zoom",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

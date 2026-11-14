@@ -133,6 +133,8 @@
       return 'available';
     }, 45000);
     if (up) await runDownload(kt, cfg, env, check, must, waitFor, engine);
+    /* stage P6: the computer's side of the downloads (last: a second launch opens the add sheet) */
+    await runP6(kt, cfg, env, check, must, waitFor);
     try { await env.invoke('kt_selftest_done', { results: results }); } catch (e) { /* the watchdog writes what there is */ }
     return results;
   }
@@ -151,6 +153,78 @@
       });
       Promise.resolve(kt.filesJob(o)).catch(function (e) { if (!done) { done = true; clearTimeout(t); off(); no(e); } });
     });
+  }
+
+  /* stage P6 (desktop.rs): prefs, the tray, the clipboard hotkeys (one registered, one refused plainly; a press's way to
+     the page), the taskbar, keep-awake, a notice, the mini window, a second launch's hand-over. Required on Windows (the
+     owner's system and CI's fullest); elsewhere each says why when it cannot be. */
+  async function runP6(kt, cfg, env, check, must, waitFor) {
+    if (typeof kt.desktopPrefs !== 'function') return;
+    var win = cfg.os === 'win32'; var mac = cfg.os === 'darwin';
+    var st = async function () { return (await env.invoke('kt_selftest_desk', { act: 'state' })) || {}; };
+    await check('desktop: prefs answered as Electron\'s deskPrefs', true, async function () {
+      var r = await kt.desktopPrefs({ keepAwake: true, whenDone: 'nothing', notifyDone: true, tray: false, hotkeys: {} });
+      must(r && r.keepAwake === true && r.whenDone === 'nothing' && r.notifyDone === true && r.tray === false && r.hotkeys && typeof r.hotkeys === 'object', short(r));
+      var r2 = await kt.desktopPrefs({ whenDone: 'reboot' }); must(r2.whenDone === 'nothing', 'took an unknown whenDone');
+      return 'ok';
+    });
+    var s0 = await st().catch(function () { return {}; });
+    await check('desktop: tray icon made, then hidden', !!s0.trayPossible && !mac, async function () {
+      must(s0.trayPossible, s0.trayWhy || 'no tray here');
+      await kt.desktopPrefs({ tray: true, labels: { app: 'Kurokawa Tools', quit: 'Quit' } });
+      var s1 = null; for (var i = 0; i < 25; i++) { s1 = await st(); if (s1.tray) break; await env.sleep(200); }
+      must(s1 && s1.tray, 'not made: ' + (s1 && s1.trayWhy));
+      await kt.desktopPrefs({ tray: false });
+      var s2 = null; for (var k = 0; k < 25; k++) { s2 = await st(); if (!s2.tray) break; await env.sleep(200); }
+      must(s2 && !s2.tray, 'still shown');
+      return 'made and hidden';
+    });
+    await check('desktop: a hotkey registered, a bad one refused plainly', win, async function () {
+      must(s0.shortcuts, 'global shortcuts not available here (' + s0.os + ')');
+      var r = await kt.desktopPrefs({ hotkeys: { clip: 'CommandOrControl+Shift+F11', video: 'AltGr+V' } });
+      must(r.hotkeyErrors && r.hotkeyErrors.video && !r.hotkeyErrors.clip, short(r.hotkeyErrors));
+      var s1 = await st(); must((s1.bound || []).some(function (b) { return b[1] === 'clip'; }), 'clip not bound: ' + short(s1.bound));
+      var r2 = await kt.desktopPrefs({ hotkeys: {} }); must(!r2.hotkeyErrors, short(r2.hotkeyErrors));
+      var s2 = await st(); must(!(s2.bound || []).length, 'still bound');
+      return 'bound ' + s1.bound[0][0] + '; refused: ' + r.hotkeyErrors.video;
+    });
+    await check('desktop: a hotkey\'s press reaches the page (kt:hotkeyAdd)', true, async function () {
+      var got = null; var off = kt.onHotkeyAdd(function (p) { got = p; });
+      await env.sleep(300);
+      await env.invoke('kt_selftest_desk', { act: 'hotkey', mode: 'clip' });
+      await waitFor(function () { return got; }, 8000, 'kt:hotkeyAdd'); off();
+      must(got.mode === 'clip' && typeof got.text === 'string', short(got));
+      return 'mode ' + got.mode;
+    });
+    await check('desktop: taskbar progress', win, async function () {
+      var a = await env.invoke('kt_selftest_desk', { act: 'progress', p: 0.5 }); var b = await env.invoke('kt_selftest_desk', { act: 'progress', p: -1 });
+      must(a === true && b === true, 'set ' + a + ', cleared ' + b + (s0.progressApi ? '' : ' (no set_progress_bar in this build)'));
+      return 'set and cleared';
+    });
+    await check('desktop: kept awake, then let go', win, async function () {
+      var a = await env.invoke('kt_selftest_desk', { act: 'awake', on: true }); var b = await env.invoke('kt_selftest_desk', { act: 'awake', on: false });
+      must(a && a.awake && a.alive, 'not held: ' + short(a)); must(b && !b.awake, 'not let go');
+      return a.how;
+    });
+    await check('desktop: a notice shown', false, async function () { var r = await env.invoke('kt_selftest_desk', { act: 'notify' }); must(r === true, 'not shown'); return 'shown'; });
+    await check('desktop: the mini window (no frame) opened and closed', !mac, async function () {
+      var r = await kt.mini({ action: 'open' }); must(r && r.open === true, short(r));
+      var w = null; for (var i = 0; i < 40; i++) { var l = await env.invoke('kt_selftest_desk', { act: 'windows' }); w = (l || []).filter(function (x) { return x.label === 'mini'; })[0]; if (w) break; await env.sleep(200); }
+      must(w, 'no mini window'); must(w.decorated === false, 'it has a frame');
+      await env.sleep(1500);
+      var c = await kt.mini({ action: 'close' }); must(c && c.open === false, short(c));
+      for (var k = 0; k < 40; k++) { var l2 = await env.invoke('kt_selftest_desk', { act: 'windows' }); if (!(l2 || []).some(function (x) { return x.label === 'mini'; })) return 'opened, closed'; await env.sleep(200); }
+      throw new Error('still open');
+    }, 30000);
+    await check('desktop: a second launch hands over a magnet and a .torrent, and ends', win, async function () {
+      must(s0.single, 'no single-instance here (Linux without a D-Bus session bus)');
+      var tor = await kt.writeTempBytes({ name: 'kt-selftest.torrent', b64: 'ZDQ6aW5mb2Rl' });
+      var mag = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=kt-selftest';
+      var r = await env.invoke('kt_selftest_desk', { act: 'second', args: [mag, tor] });
+      must(r && r.ended, 'the second launch did not end: ' + short(r));
+      var log = await waitFor(function () { var l = (env.openLog ? env.openLog() : root.__KT_OPEN_LOG__) || []; return l.some(function (x) { return x.indexOf('magnet:?xt=urn:btih:0123') === 0; }) && l.some(function (x) { return x.indexOf('data:application/x-bittorrent;base64,ZDQ6aW5mb2Rl') === 0; }) ? l : null; }, 10000, 'kt:open');
+      return log.length + ' handed over';
+    }, 30000);
   }
 
   async function runP3(kt, cfg, env, check, must, waitFor) {

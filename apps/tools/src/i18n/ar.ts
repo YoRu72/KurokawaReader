@@ -2146,4 +2146,9 @@ export const ar: Partial<Strings> = {
   filesPlaceDocuments: "المستندات",
   updateByHand: "لا تستطيع هذه النسخة أن تحلّ محلّ نفسها؛ فنزّل الإصدار الجديد من صفحة الإصدار.",
   filesBadName: "لا يصحّ أن يتضمّن الاسم / أو \\ (ولا < > : \" | ? * في ويندوز).",
+  // (المرحلة P6: قائمة صينيّة النظام، وشريط القوائم في ماك، واختصار رفضه النظام.)
+  trayQuit: "إنهاء", hotkeyRefused: "تعذّر تعيين الاختصار {keys}: {why}",
+  menuAbout: "عن أدوات كروكاوا", menuHide: "إخفاء أدوات كروكاوا", menuHideOthers: "إخفاء ما سواه", menuShowAll: "إظهار الكلّ", menuQuit: "إنهاء أدوات كروكاوا",
+  menuFile: "ملف", menuCloseWindow: "إغلاق النافذة", menuEdit: "تحرير", menuUndo: "تراجُع", menuRedo: "إعادة", menuCut: "قصّ", menuCopy: "نسخ", menuPaste: "لصق", menuSelectAll: "تحديد الكلّ",
+  menuView: "عرض", menuFullscreen: "ملء الشاشة", menuWindow: "نافذة", menuMinimize: "تصغير", menuZoom: "تكبير",
 };
