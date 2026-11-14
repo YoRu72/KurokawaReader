@@ -39,7 +39,7 @@ export function diagReport(d: Data = diagData()): string {
   for (const e of leaves) L.push(`  ${stamp(e.t)} ${e.why} -> ${e.to}${e.inBook !== undefined ? ` after ${e.inBook} s` : ''}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
   const held = d.events.filter((e) => e.k === 'backheld').slice(-15).reverse();
   if (held.length) {
-    L.push('', `Back held, book kept (last ${held.length}):`);
+    L.push('', `Back held or forced (last ${held.length}):`);
     for (const e of held) L.push(`  ${stamp(e.t)} ${heldWhy(e)}${e.edge && e.edge !== 'none' ? ` · touch at ${e.edge} edge ${e.edgeAgo} ms before` : e.edge ? ' · no edge touch' : ''}${e.touching ? ' · finger down' : ''}`);
   }
   // (Whether the edges were kept from Back in the books opened: the setting as each opened.)
@@ -59,6 +59,8 @@ export function diagReport(d: Data = diagData()): string {
 function heldWhy(e: DiagEvent): string {
   if (e.why === 'twice') return 'Back twice to leave: reminder shown, book kept';
   if (e.why === 'selection') return 'Back twice to leave: selection cleared, book kept';
+  if (e.why === 'noeffect') return 'BACK CHANGED NOTHING on the screen (the next Back within 4 s leaves the screen)';
+  if (e.why === 'forced') return `Back after a held one: what was open closed and the screen left at once (the one before: ${e.after === 'gate' ? 'held by a gate' : 'changed nothing'})`;
   if (e.why === 'swipe') return `IGNORED AS PART OF A PAGE-TURN SWIPE (${e.how === 'after-turn' ? `${e.ms} ms after the chapter turned` : e.how === 'down' ? 'came with the finger down; that touch then turned the chapter' : e.how}; the touch began ${e.edge0 && e.edge0 !== 'none' ? `at the ${e.edge0} edge` : 'away from the edges'})`;
   return String(e.why);
 }

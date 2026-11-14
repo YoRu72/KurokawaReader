@@ -37,7 +37,7 @@ const DOCK_KEY = 'kr.reader.dock';
  *  up or down, whatever the speed.) */
 export const SWIPE = { SLOP: 10, LOCK_DEG: 30, VEL_MS: 100, BACK_V: 0.3, low: { dist: 120, flick: 50, speed: 0.6 }, normal: { dist: 90, flick: 36, speed: 0.45 }, high: { dist: 60, flick: 24, speed: 0.3 } };
 import { touchBook, coverUrl, shareBooks } from '../library';
-import { navigate, back as goBackView } from '../router';
+import { navigate, back as goBackView, leaveView, parseRoute } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
 import { renderTextCanvas, showSnapshot, pictureNear, pictureOnByDefault } from '../ui/textcard';
@@ -82,6 +82,23 @@ interface SearchHit { bookId: string; label: string; pct: number; before: string
 /** A hit of the search across languages: the paragraph, its original and its translation, and where the words
  *  were found in either. */
 interface PairHit { bookId: string; label: string; pct: number; block: HTMLElement; orig: string; tr?: string; inOrig: [number, number] | null; inTr: [number, number] | null }
+
+/** The top bar's arrow — and the phone's Back once nothing is open over the book —: out of the book, at once. To the book
+ *  that it came from (another app, when it was opened from one in this run of the app), else to the book's own page or
+ *  the library by the way back (src/router.ts back); and whatever may hold that — the book's page not fetched, a step
+ *  back the browser does not take —, still on the book a moment later, the view beneath is put in its place. No gate,
+ *  no "close what is open first": a tap on the arrow is a wish to leave. */
+export function leaveBook(book: Book | undefined, many: boolean): void {
+  diagLeaveIntent('top-back', true);
+  if (book && leaveToCaller(book.id)) return;
+  // (The reader on screen now: still there later — not another opened since — is what the check below looks at.)
+  const view = document.querySelector('.reader-view');
+  if (book && !many) void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')).catch(() => goBackView('/'));
+  else goBackView('/');
+  window.setTimeout(() => { if (view?.isConnected && parseRoute().name === 'read') { diagEvent('backfix', { why: 'arrow' }); leaveView('/'); } }, LEAVE_CHECK_MS);
+}
+/** How long the book may stay on screen after its arrow is tapped (ms): longer than the way back's own check. */
+const LEAVE_CHECK_MS = 900;
 
 export function readerView(ids: string[]): HTMLElement {
   const root = h('div', { class: 'view reader-view' });
@@ -168,7 +185,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const panel = new SidePanel(root);
 
   // (Back: to the book's own page when the book opens on one, else the library.)
-  const goBack = () => { diagLeaveIntent('top-back', true); const b = docs[0]?.book; if (b && leaveToCaller(b.id)) return; if (b && docs.length === 1) void import('./book').then((m) => goBackView(m.wantsBookPage(b) ? `/book/${b.id}` : '/')); else goBackView('/'); };
+  const goBack = () => leaveBook(docs[0]?.book, docs.length > 1);
   // The top bar — the back arrow (always there), the buttons placed at its start, the title, those at its end — and
   // the M3 Expressive floating toolbar: what each holds is the reader's choice (src/readbuttons.ts), drawn below
   // once the reader's state is there (mountBars).
@@ -2417,7 +2434,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   const relayout = () => { const s = getSettings(); bar.dataset.layout = barLayout(); bar.dataset.side = s.pdfBarSide; bar.dataset.row = s.pdfBarRow; bar.dataset.look = s.pdfBarLook === 'docked' ? 'docked' : 'pill'; };
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
-  const backBtn = iconButton('back', t('back'), () => { diagLeaveIntent('top-back', true); if (leaveToCaller(book.id)) return; void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')); });
+  const backBtn = iconButton('back', t('back'), () => leaveBook(book, false));
   const moreBtn = iconButton('more', t('more'), () => openMore());
   const topbar = h('header', { class: 'topbar' }, backBtn, title, moreBtn);
   // Every action of a PDF (src/readbuttons.ts PDF_ACTIONS), wherever the reader has put it — or nowhere (its key still
