@@ -126,7 +126,12 @@ problems, the Java version is removed.
 (`.github/workflows/android-rust-check.yml`): the crate `apps/tools/core/kt-android` (one hand-written JNI function,
 no crates.io dependency), Java's `KtCore` (absent → Java as today), the download rules and the translator's cache key
 in kt-core with Java's cases, shadow mode in debuggable builds, the release switch-over as a patch not yet applied.
-Details, size budget and the M2 plan: `apps/tools/core/kt-android/ANDROID-PORT.md`.
+M0+M1's first CI run (43596554460) passed: the three libraries built with the NDK and packed, +193 KB arm64-v8a,
++183 KB armeabi-v7a, +200 KB x86_64, +576 KB universal. **M2 written 2026-11-14** (same branch, waiting for CI): the
+HTTP downloader's decisions in kt-core (`httpdl.rs`), Java moving the bytes (`KrDownloaderRs`), the downloader's runs
+1–19 passing through the Rust engine on the host beside Java's; «Download engine: Java / Rust» under Settings →
+Advanced on phones with the core, default Java until the owner's phone run on Wi-Fi and mobile data. M3 re-planned
+for P4's hybrid engine. Details, sizes and the plans: `apps/tools/core/kt-android/ANDROID-PORT.md`.
 
 **What Rust on Android will and will not give.**
 - One engine to fix instead of two: a download or torrent bug is fixed once for PC and phone.

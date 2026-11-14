@@ -2255,6 +2255,14 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   jsRtBody: "yt-dlp found no JavaScript runtime on this computer, so some YouTube formats may be missing, or the page may not be read at all. The small «deno» component fixes it: it is downloaded once and used from then on.",
   jsRtGet: "Get deno",
   jsRtWhy: "yt-dlp needs it to read YouTube pages.",
+  // (Stage M2 of the Rust port: Settings → Advanced, the phone's download engine — views/engineSettings.ts.)
+  advancedSection: "Advanced",
+  advancedHint: "Options for trying what is still being tested. Leave them as they are unless you have been asked to try one.",
+  dlEngine: "Download engine",
+  dlEngineHint: "The engine that fetches files (not torrents or videos). Java is the tried one; Rust is new — try it on Wi-Fi and on mobile data, and switch back if anything goes wrong. Applies to downloads started after the change.",
+  dlEngineJava: "Java",
+  dlEngineRust: "Rust",
+  dlEngineStatus: "Rust core {version} · in use: {engine} · handed back to Java: {n}",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

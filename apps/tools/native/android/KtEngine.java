@@ -510,6 +510,7 @@ final class KtEngine {
         if (o.has("connBudget")) budget = Math.max(4, Math.min(128, o.optInt("connBudget", 24)));
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
+        if (o.has("dlEngine")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putString("dlEngine", "rust".equals(o.optString("dlEngine")) ? "rust" : "java").apply(); } catch (Throwable ignored) {}   // (stage M2: read when a download starts)
         if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", true)).apply(); } catch (Throwable ignored) {}   // (from the next start)
         if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 150)); for (Task t : snapshot()) applyOwn(t); }
         if (o.has("connsTotal")) { int n = Math.max(20, o.optInt("connsTotal", 500)); try { SessionManager sm = session; if (sm != null && sm.isRunning()) { SettingsPack sp = new SettingsPack(); sp.connectionsLimit(n); sm.applySettings(sp); } } catch (Throwable ignored) {} }
@@ -602,7 +603,10 @@ final class KtEngine {
                 final Runnable tick = () -> { x.total = Math.max(0, info.total); /* (-1 while the size is unknown: 0, «unknown», on the page) */ x.done = x.got.get(); x.connections = info.connections; long now = System.currentTimeMillis(); if (now - x.lastT >= 700) { long g = x.got.get(); x.downSpeed = x.lastT == 0 ? 0 : (long) ((g - x.lastGot) / ((now - x.lastT) / 1000.0)); x.lastT = now; x.lastGot = g; tell(false); } };
                 KrDownloader.Result r;
                 final File part0 = part;
-                try { r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
+                // (Stage M2: the engine for this run — the Rust core's decisions when chosen in Settings → Advanced and
+                // the core is here, else Java's; see dlFetch.)
+                final boolean[] rs = { useRustEngine(x) };
+                try { r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt); }
                 catch (KrDownloader.Status st403) {
                     // (403 and nothing fetched yet: asked once more the way a browser following a link would — the site's
                     // own origin as the referer, the fetch hints a navigation carries, a plain range — before giving up.)
@@ -611,19 +615,19 @@ final class KtEngine {
                     URL u0 = new URL(url); String origin = u0.getProtocol() + "://" + u0.getHost() + (u0.getPort() > 0 ? ":" + u0.getPort() : "") + "/";
                     if (!h2.has("Referer") && !h2.has("referer")) h2.put("Referer", origin);
                     h2.put("Sec-Fetch-Site", "same-origin"); h2.put("Sec-Fetch-Mode", "navigate"); h2.put("Sec-Fetch-Dest", "document"); h2.put("Sec-Fetch-User", "?1"); h2.put("Accept", "*/*"); h2.put("Accept-Language", "en-US,en;q=0.9");
-                    final JSONObject hh = h2; r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, hh, false), x.cancel, x.got, info, tick, opt);
+                    final JSONObject hh = h2; r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, hh, false), x.cancel, x.got, info, tick, opt);
                 }
                 catch (IOException e) {
                     // (With DNS over HTTPS on, a connection that failed on the way — not an answer the server gave —
                     // tried once more by the network's own DNS.)
-                    if (!KrDoh.on() || e instanceof KrDownloader.Status || e instanceof KrDownloader.WebPage || x.cancel.get()) throw e;
-                    try { r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt); }
+                    if (!KrDoh.on() || e instanceof KrDownloader.Status || e instanceof KrDownloader.WebPage || e instanceof KrDownloaderRs.RustError || x.cancel.get()) throw e;
+                    try { r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, headers, true), x.cancel, x.got, info, tick, opt); }
                     catch (IOException e2) {
                         // (Neither way reached it: the site forced through the resolver with the TLS hello split — a
                         // filter reading names — and tried a last time.)
-                        if (e2 instanceof KrDownloader.Status || e2 instanceof KrDownloader.WebPage || x.cancel.get() || KrDoh.isForced(new URL(url).getHost())) throw e2;
+                        if (e2 instanceof KrDownloader.Status || e2 instanceof KrDownloader.WebPage || e2 instanceof KrDownloaderRs.RustError || x.cancel.get() || KrDoh.isForced(new URL(url).getHost())) throw e2;
                         KrDoh.force(new URL(url).getHost());
-                        r = KrDownloader.fetch(new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt);
+                        r = dlFetch(x, rs, new URL(url), part0, conns, u -> open(u, headers, false), x.cancel, x.got, info, tick, opt);
                     }
                 }
                 if (r.out != null) part = r.out;
@@ -648,12 +652,41 @@ final class KtEngine {
                 // (The file hashed and, when its bytes are here already, made a link to them — when the setting says.)
                 if (dedupe) { try { JSONObject dd = KtDedupe.onDone(ctx, x.httpOut); if (x.meta == null) x.meta = new JSONObject(); if (dd.has("sha256")) x.meta.put("sha256", dd.getString("sha256")); if (dd.optBoolean("linked")) x.meta.put("linked", true); } catch (Throwable e) { Log.w(TAG, "dedupe", e); } }
                 x.done = x.total = x.httpOut.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; scan(x);
-            } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); x.done = x.got.get(); } x.downSpeed = 0; }
+            } catch (Throwable e) {
+                // (The Rust engine failed after bytes had come: paused with the reason, and the next run is Java's — it
+                // goes on from the same record.)
+                if (e instanceof KrDownloaderRs.RustError && !x.cancel.get()) { Log.w(TAG, "rust engine, paused: " + e.getMessage()); x.paused = true; x.state = "paused"; x.error = String.valueOf(e.getMessage()); x.done = x.got.get(); try { if (x.meta == null) x.meta = new JSONObject(); x.meta.put("dlEngine", "java"); } catch (Exception ignored) {} }
+                else if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.WebPage ? "page" : e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); x.done = x.got.get(); } x.downSpeed = 0; }
             persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this);
         } finally { afterRun(x); } }, "kt-http-" + x.id);
         x.httpThread.start();
         KtService.ensure(ctx);
     }
+    /* ---------- stage M2: the download engine, Java's or the Rust core's (Settings → Advanced, phones) ---------- */
+
+    /** The engine chosen in the settings («java» unless «rust» was chosen; kept in the «kt» preferences). */
+    String dlEngineChoice() { try { return "rust".equals(ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; } catch (Throwable e) { return "java"; } }
+    /** The engine this download's run uses: Rust when chosen and the core is here, unless the Rust engine already
+     *  failed it once (then Java, from its record). */
+    private boolean useRustEngine(Task x) {
+        if (!"rust".equals(dlEngineChoice())) return false;
+        if (x.meta != null && "java".equals(x.meta.optString("dlEngine", ""))) return false;
+        try { return KtCore.available(); } catch (Throwable e) { return false; }
+    }
+    /** One fetch through the engine `rs[0]` names. A Rust failure before this run's first byte: counted, and the same
+     *  download started again on Java at once (rs[0] then stays false for the tries after it); after bytes it is thrown
+     *  on (the run pauses). */
+    private KrDownloader.Result dlFetch(Task x, boolean[] rs, URL u, File out, int conns, KrDownloader.Opener op, AtomicBoolean cancel, AtomicLong got, KrDownloader.Result info, Runnable tick, KrDownloader.Opts opt) throws Exception {
+        if (!rs[0]) return KrDownloader.fetch(u, out, conns, op, cancel, got, info, tick, opt);
+        try { return KrDownloaderRs.fetch(u, out, conns, op, cancel, got, info, tick, opt); }
+        catch (KrDownloaderRs.RustError e) {
+            if (e.wrote > 0 || cancel.get()) throw e;
+            KrDownloaderRs.FALLBACKS.incrementAndGet(); rs[0] = false; Log.w(TAG, "rust engine failed before the first byte, Java takes it: " + e.getMessage());
+            try { if (x.meta == null) x.meta = new JSONObject(); x.meta.put("dlEngine", "java"); } catch (Exception ignored) {}
+            return KrDownloader.fetch(u, info.out != null ? info.out : out, conns, op, cancel, got, info, tick, opt);
+        }
+    }
+
     /** A run ended: started again when it was resumed while stopping (from another thread, once this one is gone). */
     private void afterRun(Task x) {
         if (!x.restart) return; x.restart = false;

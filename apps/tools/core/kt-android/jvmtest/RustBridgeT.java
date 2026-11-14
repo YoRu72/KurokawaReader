@@ -23,7 +23,7 @@ public class RustBridgeT {
     // --- M0: the plumbing ---
     check("library loaded", KtCore.available(), KtCore.status());
     System.out.println("     " + KtCore.status());
-    eq("version", KtCore.version(), "0.1.0");
+    eq("version", KtCore.version(), "0.2.0");
     eq("core.sum 2 + 40", KtCore.r("core.sum", "a", 2, "b", 40), 42L);
     eq("core.sum negative", KtCore.r("core.sum", "a", -7, "b", 3), -4L);
     String odd = "مرحبا \u0000 \t \"q\" \\ 😀 　 é";
@@ -107,7 +107,49 @@ public class RustBridgeT {
     rep = KtCore.shadowReport();
     check("shadow: a difference counted and kept for the diagnostics", Long.valueOf(1).equals(rep.get("mismatches")) && ((List<?>) rep.get("first")).size() == 1 && String.valueOf(((List<?>) rep.get("first")).get(0)).startsWith("dl.holds"), rep);
     KtCore.shadow = false;
+    m2();
     System.out.println(fails == 0 ? "rust bridge: all passed" : "rust bridge: " + fails + " FAILED"); System.exit(fails == 0 ? 0 : 1);
+  }
+
+  /** Stage M2 beside the downloader's runs (downloader-rust.sh): the record Java writes is the record Rust writes, each
+   *  reads the other's; MEGA's decryption at any offset as Java's CtrFile; one small download through each engine. */
+  static void m2() throws Exception {
+    File dir = new File("m2"); dir.mkdirs(); File st = new File(dir, "x.state");
+    KrDownloader.State s = new KrDownloader.State(); s.total = 20 << 20; s.chunk = 1310720; s.validator = "\"v1\""; s.mark(0); s.mark(1); s.mark(5); s.setPartial(2, 65536); s.setPartial(7, 1);
+    s.write(st); String javaText = new String(java.nio.file.Files.readAllBytes(st.toPath()), "UTF-8");
+    eq("record: Rust writes what Java wrote", KtCore.r("http.record", "text", javaText), javaText);
+    String rustText = (String) KtCore.r("http.record", "text", "kt1\n20971520\n\"v1\"\n1310720\n5,0,1,\n7:1,2:65536,1:99,");
+    java.nio.file.Files.write(st.toPath(), rustText.getBytes("UTF-8")); KrDownloader.State back = KrDownloader.State.read(st);
+    check("record: Java reads what Rust wrote", back != null && back.total == s.total && back.chunk == s.chunk && back.validator.equals(s.validator) && back.done.equals(s.done) && back.partial.equals(s.partial), rustText);
+    eq("record: what Java refuses Rust refuses", KtCore.r("http.record", "text", "kt1\n0\n\n1\n\n"), null);
+    byte[] k = new byte[32]; new Random(7).nextBytes(k); byte[] enc = new byte[70000]; new Random(9).nextBytes(enc); boolean same = true;
+    for (int[] r : new int[][] { { 0, 70000 }, { 1, 17 }, { 15, 16 }, { 16, 48 }, { 12345, 60001 }, { 69999, 70000 } }) {
+      byte[] part = Arrays.copyOfRange(enc, r[0], r[1]);
+      if (!Arrays.equals(KrDownloader.CtrFile.plain(k, r[0], part), KrDownloaderRs.megaPlain(k, r[0], part, 0, part.length))) { same = false; System.out.println("     differs at " + r[0]); }
+    }
+    check("MEGA: Rust decrypts as Java at any offset", same, null);
+    eq("a small download through the Rust engine", smallDownload(dir, true), true);
+  }
+
+  /** 300 KB from a loopback server through KrDownloaderRs (`viaRs`) — the Rust engine, or Java when the core is absent. */
+  static boolean smallDownload(File dir, boolean viaRs) throws Exception {
+    dir.mkdirs(); final byte[] data = new byte[300_000]; new Random(5).nextBytes(data);
+    com.sun.net.httpserver.HttpServer srv = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 10);
+    srv.createContext("/f", ex -> {
+      String range = ex.getRequestHeaders().getFirst("Range"); ex.getResponseHeaders().add("Accept-Ranges", "bytes"); ex.getResponseHeaders().add("ETag", "\"s\"");
+      if (range == null) { ex.sendResponseHeaders(200, data.length); try (OutputStream o = ex.getResponseBody()) { o.write(data); } return; }
+      String[] p = range.substring(6).split("-"); int f = Integer.parseInt(p[0]), t = p.length > 1 && !p[1].isEmpty() ? Integer.parseInt(p[1]) : data.length - 1;
+      ex.getResponseHeaders().add("Content-Range", "bytes " + f + "-" + t + "/" + data.length); ex.sendResponseHeaders(206, t - f + 1); try (OutputStream o = ex.getResponseBody()) { o.write(data, f, t - f + 1); }
+    });
+    srv.start();
+    try {
+      File out = new File(dir, "small.part"); out.delete(); int runs = KrDownloaderRs.RUST_RUNS.get();
+      java.net.URL u = new java.net.URL("http://127.0.0.1:" + srv.getAddress().getPort() + "/f");
+      KrDownloader.Opener op = x -> { java.net.HttpURLConnection c = (java.net.HttpURLConnection) x.openConnection(java.net.Proxy.NO_PROXY); c.setInstanceFollowRedirects(false); return c; };
+      KrDownloaderRs.fetch(u, out, 4, op, new AtomicBoolean(), new AtomicLong(), new KrDownloader.Result(), () -> {});
+      boolean viaRust = KrDownloaderRs.RUST_RUNS.get() > runs;
+      return Arrays.equals(java.nio.file.Files.readAllBytes(out.toPath()), data) && viaRust == viaRs;
+    } finally { srv.stop(0); }
   }
 
   /** No library: Java carries on, nothing throws at a caller. */
@@ -120,6 +162,7 @@ public class RustBridgeT {
     check("absent: shadowing off whatever the switch", !KtCore.shadowing(), null);
     eq("absent: Java's rules unchanged", KtDlRules.nextHostLimit(4, 24, false, 4), 8);
     eq("absent: no shadow call made", KtCore.shadowReport().get("calls"), 0L);
+    eq("absent: the Rust engine's door downloads with Java, silently", smallDownload(new File("m2-absent"), false), true);
     System.out.println(fails == 0 ? "rust bridge (absent): all passed" : "rust bridge (absent): " + fails + " FAILED"); System.exit(fails == 0 ? 0 : 1);
   }
 }

@@ -41,3 +41,6 @@ pub mod ownerlogic;
 // KtTranslate.java's —, called from Java through apps/tools/core/kt-android; Java keeps its copies as the reference.)
 pub mod dlrules;
 pub mod translatekey;
+// (Android stage M2: the HTTP downloader's decisions — KrDownloader.java's rules as a state machine; Java moves the
+// bytes and asks this for every choice, through kt-android's `http.*` methods.)
+pub mod httpdl;

@@ -8,12 +8,16 @@ name: Android Rust check (Tools)
 # each APK checked for its library; sizes in the job summary. Nothing here is released: release-tools.yml is not
 # touched (its switch-over patch waits in apps/tools/core/kt-android/switch-over/). The APK without the library is
 # what android-check-tools.yml builds on the same pushes.
+# Stage M2 (the HTTP downloader): kt-core's httpdl.rs tested alone; tests/native/T.java's runs 1–19 run twice against
+# their loopback server — once through Java's KrDownloader (the reference, unchanged) and once through KrDownloaderRs,
+# every decision asked of the host library (jvmtest/downloader-rust.sh, strict: no silent Java fallback).
 on:
   push:
     branches: ['work-tt-p5', 'work-tauri']
     paths:
       - 'apps/tools/core/**'
       - 'apps/tools/native/**'
+      - 'apps/tools/tests/native/**'
       - 'apps/tools/android/**'
       - '.github/workflows/android-rust-check.yml'
   workflow_dispatch:
@@ -46,7 +50,7 @@ jobs:
       - name: Std-only unit tests (rustc alone)
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in apps/tools/core/kt-core/src/dlrules.rs apps/tools/core/kt-core/src/translatekey.rs apps/tools/core/kt-core/src/vidjson.rs; do
+          for f in apps/tools/core/kt-core/src/dlrules.rs apps/tools/core/kt-core/src/translatekey.rs apps/tools/core/kt-core/src/vidjson.rs apps/tools/core/kt-core/src/httpdl.rs apps/tools/core/kt-core/src/mega.rs; do
             n=$(basename "$f" .rs); rustc --edition 2021 --test "$f" -o "$d/$n"; "$d/$n"
           done
 
@@ -58,12 +62,20 @@ jobs:
         working-directory: apps/tools
         run: sh tests/native/dlrules.sh && sh tests/native/screen.sh
 
+      - name: Java's downloader, runs 1–19 (the reference engine, unchanged)
+        working-directory: apps/tools
+        run: sh tests/native/downloader.sh
+
       - name: The JNI door from a plain JVM (host build of the library)
         working-directory: apps/tools/core/kt-android
         run: |
           cargo build --release --locked
           ls -la target/release/libkt_android.so
           sh jvmtest/run.sh target/release/libkt_android.so
+
+      - name: The same runs 1–19 through the Rust engine (M2; host library, strict)
+        working-directory: apps/tools/core/kt-android
+        run: sh jvmtest/downloader-rust.sh target/release/libkt_android.so
 
       - name: The library for Android (arm64-v8a, armeabi-v7a, x86_64)
         run: bash apps/tools/core/kt-android/build-android.sh "$RUNNER_TEMP/jniLibs"

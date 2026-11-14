@@ -188,10 +188,10 @@ final class KrDownloader {
 
     /** A connection to `url` with its redirects followed here — also from http to https, which
      *  HttpURLConnection does not follow itself. */
-    private static HttpURLConnection follow(URL url, Opener opener, String range) throws IOException { return follow(url, opener, range, null, null); }
+    static HttpURLConnection follow(URL url, Opener opener, String range) throws IOException { return follow(url, opener, range, null, null); }
     /** `at[0]`: the address the redirects ended at, by its own name (a connection asked by address — DNS over
      *  HTTPS, see KrDoh — would say the address). `ifRange`: the part asked only if the file is still the same. */
-    private static HttpURLConnection follow(URL url, Opener opener, String range, URL[] at, String ifRange) throws IOException {
+    static HttpURLConnection follow(URL url, Opener opener, String range, URL[] at, String ifRange) throws IOException {
         for (int hop = 0; hop < 10; hop++) {
             HttpURLConnection c = opener.open(url);
             if (range != null) c.setRequestProperty("Range", range);
@@ -556,7 +556,7 @@ final class KrDownloader {
     }
 
     /** A finished answer read to its end, so its connection goes back to the pool for the next request. */
-    private static void drain(HttpURLConnection c) {
+    static void drain(HttpURLConnection c) {
         try (InputStream in = c.getInputStream()) { byte[] b = new byte[256]; while (in.read(b) > 0) { /* the one byte */ } } catch (Exception ignored) {}
     }
 }

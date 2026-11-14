@@ -29,7 +29,7 @@ public final class KtCore {
     private static native byte[] nCall(byte[] method, byte[] args, byte[] data);
 
     /** A call the Rust core answered with an error (or could not be made). */
-    public static final class Failure extends Exception { Failure(String m) { super(m); } }
+    public static final class Failure extends Exception { public Failure(String m) { super(m); } }
 
     /** Where a line for the log goes (KtPlugin points it at android.util.Log; null: nowhere). */
     public static volatile java.util.function.Consumer<String> log;

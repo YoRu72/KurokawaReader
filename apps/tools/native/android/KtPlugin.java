@@ -392,6 +392,9 @@ public class KtPlugin extends Plugin {
         JSObject r = new JSObject(); JSArray abis = new JSArray(); for (String a : Build.SUPPORTED_ABIS) abis.put(a); r.put("abis", abis); r.put("sdk", Build.VERSION.SDK_INT); r.put("a11yBuild", KtScreenA11y.declared(getContext()));
         // (The Rust core's state for the diagnostics: its version or null, and the shadow's figures. No UI reads them yet.)
         try { r.put("rustCore", KtCore.available() ? KtCore.version() : JSObject.NULL); r.put("rustCoreStatus", KtCore.status()); r.put("rustShadow", new JSObject(KtCore.json(KtCore.shadowReport()))); } catch (Throwable ignored) {}
+        // (Stage M2: the download engine — the one chosen in Settings → Advanced, the one new downloads use (Java when the
+        // core is absent), and how many downloads the Rust engine handed back to Java before their first byte.)
+        try { String choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; r.put("dlEngineChoice", choice); r.put("dlEngine", "rust".equals(choice) && KtCore.available() ? "rust" : "java"); r.put("dlEngineFallbacks", KrDownloaderRs.FALLBACKS.get()); } catch (Throwable ignored) {}
         call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {

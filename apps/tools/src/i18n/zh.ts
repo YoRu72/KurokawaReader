@@ -1158,4 +1158,12 @@ export const zh: Partial<Strings> = {
   jsRtBody: "yt-dlp 在这台电脑上没有找到 JavaScript 运行时，因此可能缺少部分 YouTube 格式，甚至无法读取页面。下载一次小巧的“deno”组件即可解决，之后会一直使用它。",
   jsRtGet: "获取 deno",
   jsRtWhy: "yt-dlp 需要它来读取 YouTube 页面。",
+  // (Stage M2 of the Rust port: Settings → Advanced, the phone's download engine — views/engineSettings.ts.)
+  advancedSection: "高级",
+  advancedHint: "用于试用仍在测试中的功能。除非有人请你试用，否则请保持原样。",
+  dlEngine: "下载引擎",
+  dlEngineHint: "用于获取文件（不含种子和视频）的引擎。Java 久经考验，Rust 是新的——请在 Wi-Fi 和移动数据下都试一试，出现问题就切换回来。对更改后开始的下载生效。",
+  dlEngineJava: "Java",
+  dlEngineRust: "Rust",
+  dlEngineStatus: "Rust 核心 {version} · 正在使用：{engine} · 交回 Java 的次数：{n}",
 };

@@ -1158,4 +1158,12 @@ export const ko: Partial<Strings> = {
   jsRtBody: "yt-dlp가 이 컴퓨터에서 JavaScript 런타임을 찾지 못해 YouTube 형식 일부가 빠지거나 페이지를 아예 읽지 못할 수 있습니다. 작은 «deno» 구성 요소를 한 번 내려받으면 그 뒤로는 그것을 씁니다.",
   jsRtGet: "deno 받기",
   jsRtWhy: "yt-dlp가 YouTube 페이지를 읽는 데 씁니다.",
+  // (Stage M2 of the Rust port: Settings → Advanced, the phone's download engine — views/engineSettings.ts.)
+  advancedSection: "고급",
+  advancedHint: "아직 시험 중인 기능을 써 보기 위한 옵션입니다. 써 보라는 요청을 받지 않았다면 그대로 두세요.",
+  dlEngine: "다운로드 엔진",
+  dlEngineHint: "파일(토렌트와 동영상 제외)을 받는 엔진입니다. Java는 검증된 엔진이고 Rust는 새 엔진입니다. Wi-Fi와 모바일 데이터에서 모두 써 보고, 문제가 생기면 되돌리세요. 변경 후 시작한 다운로드부터 적용됩니다.",
+  dlEngineJava: "Java",
+  dlEngineRust: "Rust",
+  dlEngineStatus: "Rust 코어 {version} · 사용 중: {engine} · Java로 넘긴 수: {n}",
 };

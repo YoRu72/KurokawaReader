@@ -5,6 +5,8 @@
 
 mod jni;
 pub mod dispatch;
+// (Stage M2: the downloader's `http.*` methods and `bytes.megaCtr`.)
+mod httpcall;
 
 /// The answer as Java reads it: one status byte (0 ok, 1 error), then the payload (the method's answer, or a UTF-8
 /// error message).

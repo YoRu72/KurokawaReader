@@ -31,6 +31,25 @@ pub const METHODS: &[&str] = &[
     "tr.glossaryKey",
     "tr.configId",
     "tr.cacheKey",
+    // M2: the HTTP downloader's decisions (src/httpcall.rs; kt-core's httpdl) and MEGA's decryption at any offset
+    "http.probe",
+    "http.single",
+    "http.begin",
+    "http.zero",
+    "http.checked",
+    "http.next",
+    "http.take",
+    "http.wrote",
+    "http.error",
+    "http.segEnd",
+    "http.workerEnd",
+    "http.scaleBegin",
+    "http.scaling",
+    "http.scale",
+    "http.finish",
+    "http.close",
+    "http.record",
+    "bytes.megaCtr",
 ];
 
 /// Bytes in, bytes out: what the JNI function hands over.
@@ -49,9 +68,10 @@ pub fn call_bytes(method: &[u8], args: &[u8], data: &[u8]) -> Result<Vec<u8>, St
 }
 
 /// The bytes methods (the MEGA decrypt of M2 and the like come here).
-fn call_raw(m: &str, _args: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+fn call_raw(m: &str, args: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
     match m {
         "bytes.echo" => Ok(data.to_vec()),
+        "bytes.megaCtr" => crate::httpcall::mega_ctr(args, data),
         _ => Err(format!("no such method: {}", m)),
     }
 }
@@ -96,40 +116,42 @@ pub fn call_json(m: &str, a: &J) -> Result<J, String> {
         "tr.configId" => Ok(J::s(&translatekey::config_id(&config(a)?))),
         "tr.cacheKey" => Ok(J::s(&translatekey::cache_key(&config(a)?, &string(a, "text")?))),
 
+        m if m.starts_with("http.") => crate::httpcall::call(m, a),
+
         _ => Err(format!("no such method: {}", m)),
     }
 }
 
 /* ---------- reading the arguments (a missing or mistyped one is an error, never a guess) ---------- */
 
-fn num(n: i64) -> J {
+pub(crate) fn num(n: i64) -> J {
     J::num(n as f64)
 }
 fn opt_s(s: Option<String>) -> J {
     s.map(|x| J::Str(x)).unwrap_or(J::Null)
 }
-fn field<'a>(a: &'a J, k: &str) -> Result<&'a J, String> {
+pub(crate) fn field<'a>(a: &'a J, k: &str) -> Result<&'a J, String> {
     a.get(k).ok_or_else(|| format!("args: «{}» missing", k))
 }
-fn string(a: &J, k: &str) -> Result<String, String> {
+pub(crate) fn string(a: &J, k: &str) -> Result<String, String> {
     match field(a, k)? {
         J::Str(s) => Ok(s.clone()),
         _ => Err(format!("args: «{}» not a string", k)),
     }
 }
-fn boolean(a: &J, k: &str) -> Result<bool, String> {
+pub(crate) fn boolean(a: &J, k: &str) -> Result<bool, String> {
     match field(a, k)? {
         J::Bool(b) => Ok(*b),
         _ => Err(format!("args: «{}» not a boolean", k)),
     }
 }
-fn int(a: &J, k: &str) -> Result<i64, String> {
+pub(crate) fn int(a: &J, k: &str) -> Result<i64, String> {
     match field(a, k)? {
         J::Num(n, _) if n.fract() == 0.0 && n.abs() < 9.0e15 => Ok(*n as i64),
         _ => Err(format!("args: «{}» not a whole number", k)),
     }
 }
-fn opt_int(a: &J, k: &str) -> Result<Option<i64>, String> {
+pub(crate) fn opt_int(a: &J, k: &str) -> Result<Option<i64>, String> {
     match a.get(k) {
         None | Some(J::Null) => Ok(None),
         Some(_) => int(a, k).map(Some),
@@ -180,7 +202,7 @@ mod tests {
     #[test]
     fn core_methods() {
         let v = call("core.version", "").unwrap();
-        assert!(v.starts_with("{\"r\":{\"version\":\"0.1.0\",\"protocol\":1,"), "{}", v);
+        assert!(v.starts_with("{\"r\":{\"version\":\"0.2.0\",\"protocol\":1,"), "{}", v);
         assert_eq!(call("core.sum", r#"{"a":2,"b":40}"#).unwrap(), r#"{"r":42}"#);
         assert_eq!(call("core.sum", r#"{"a":-7,"b":3}"#).unwrap(), r#"{"r":-4}"#);
         assert!(call("core.sum", r#"{"a":1}"#).unwrap_err().contains("«b» missing"));
