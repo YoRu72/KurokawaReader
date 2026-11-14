@@ -3,6 +3,8 @@
 // file name). It only edits an options object (src/downloads/videoArgs.ts); the arguments are built from it elsewhere.
 import { h, icon } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
+import { offerUndo } from '../ui/undo';
+import { getSettings, updateSettings } from '../settings';
 import { HEIGHTS, SPONSOR_CATS, buildVideoArgs, normaliseOptions, safeRange, safeTemplate, type AudioFormat, type VideoOptions } from '../downloads/videoArgs';
 import type { VideoInfo, PlaylistInfo } from '../video/ytdlp';
 import { BUILT_IN, deletePreset, presetsList, savePreset } from '../video/choice';
@@ -49,7 +51,7 @@ export function chooser(c: ChooserCtx): HTMLElement {
   const apply = (p: Partial<VideoOptions>) => { Object.assign(o, normaliseOptions({ ...o, ...p, playlist: o.playlist, range: o.range, subs: p.subs ?? o.subs })); c.change(); c.redraw(); };
   const nameRow = h('div', { class: 'video-preset-name', hidden: true }, h('input', { type: 'text', 'aria-label': t('vcPresetName'), placeholder: t('vcPresetName'), maxlength: '40', dir: 'auto' }), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const i = nameRow.querySelector('input')!; if (!i.value.trim()) return; savePreset(i.value, o); c.redraw(); } }, t('save')));
   const presets = h('div', { class: 'chip-row wrap video-presets' }, ...BUILT_IN.map((p) => h('button', { type: 'button', class: 'chip small', onclick: () => apply(p.opts) }, icon(p.icon), ' ', t(p.label))),
-    ...mine.map((p) => h('span', { class: 'chip small preset-own' }, h('button', { type: 'button', class: 'plain', onclick: () => apply(p.opts) }, icon('bookmark'), ' ', p.name), h('button', { type: 'button', class: 'plain', 'aria-label': t('remove'), onclick: () => { deletePreset(p.name); c.redraw(); } }, icon('close')))),
+    ...mine.map((p) => h('span', { class: 'chip small preset-own' }, h('button', { type: 'button', class: 'plain', onclick: () => apply(p.opts) }, icon('bookmark'), ' ', p.name), h('button', { type: 'button', class: 'plain', 'aria-label': t('remove'), onclick: () => { /* (undo-redo) */ const was = [...(getSettings().videoPresets ?? [])]; deletePreset(p.name); c.redraw(); offerUndo(t('presetRemoved', { name: p.name }), () => { updateSettings({ videoPresets: was }); c.redraw(); }, () => { deletePreset(p.name); c.redraw(); }); } }, icon('close')))),
     h('button', { type: 'button', class: 'chip small', onclick: () => { naming = !naming; nameRow.hidden = !naming; if (naming) nameRow.querySelector('input')?.focus(); } }, icon('plus'), ' ', t('vcSavePreset')));
 
   const mode = h('div', { class: 'chip-row wrap' }, chip(h('span', null, icon('film'), ' ', t('vcVideo')), !audio, set(() => { o.mode = 'video'; })), chip(h('span', null, icon('music'), ' ', t('videoAudioOnly')), audio, set(() => { o.mode = 'audio'; o.subs.on = false; })));

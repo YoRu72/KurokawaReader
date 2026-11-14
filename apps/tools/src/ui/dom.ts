@@ -146,6 +146,8 @@ const PATHS: Record<string, string> = {
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
   heartFill: '<path fill="currentColor" d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
   undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>',
+  // (undo-redo) Redo: the Undo arrow turned the other way.
+  redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/>',
   rotate: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   // (The player's REX-style buttons.)
   gauge: '<path d="M12 14l4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
@@ -192,13 +194,14 @@ export function iconButton(name: string, label: string, onClick?: (e: MouseEvent
 
 let toastTimer: number | undefined;
 export function toast(msg: string, kind: 'info' | 'error' = 'info', ms = 2200, action?: { label: string; run: () => void }): void {
-  document.querySelectorAll('.toast').forEach((t) => t.remove());
+  // (undo-redo) A snackbar offering Undo (ui/undo.ts's, or any with an action such as Appearance's) is not dropped by a
+  // plain message: the message shows above it, the Undo still in reach, each gone at its own time.
+  document.querySelectorAll(action ? '.toast:not(.undo-snack)' : '.toast:not(.undo-snack):not(.with-action)').forEach((t) => t.remove());
   // (With an action — «Show» —: a button in it, and it can be touched.)
   const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : '') + (action ? ' with-action' : ''), role: 'status' }, h('span', null, msg),
     action ? h('button', { type: 'button', class: 'toast-act', onclick: () => { el.remove(); action.run(); } }, action.label) : null);
   document.body.appendChild(el);
-  window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.remove(), ms);
+  toastTimer = window.setTimeout(() => el.remove(), ms);   // (undo-redo: each its own time, so a message never cuts an Undo short)
 }
 
 /** A bottom sheet. Returns the body element and a close function. */
@@ -207,13 +210,15 @@ export function closeSheets(): void {
   document.querySelectorAll<HTMLElement & { __close?: () => void }>('.sheet').forEach((s) => { if (s.__close) s.__close(); else s.remove(); });
   document.querySelectorAll('.sheet-scrim').forEach((s) => s.remove());
 }
-export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean; /** Told once, however the sheet went (the button, the scrim, Escape, or `close`). */ onClose?: () => void; /** On a computer: a small menu at this point (the pointer, or the button's corner) instead of a dialog. */ at?: { x: number; y: number } | Event } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
+export function openSheet(title: string, closeLabel: string, opts: { stack?: boolean; /** Told once, however the sheet went (the button, the scrim, Escape, or `close`). */ onClose?: () => void; /** (undo-redo) Asked before any close but closeSheets' (the button, the scrim, Escape, Back, a drag): false keeps it open — unsaved work. */ beforeClose?: () => boolean | Promise<boolean>; /** On a computer: a small menu at this point (the pointer, or the button's corner) instead of a dialog. */ at?: { x: number; y: number } | Event } = {}): { body: HTMLElement; actions: HTMLElement; close: () => void; el: HTMLElement } {
   // A stacked sheet opens above the current one (choice lists inside a form) instead of replacing it.
   if (!opts.stack) closeSheets();
   const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
-  let closed = false; const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
+  let closed = false; const shut = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
+  // (undo-redo) With `beforeClose`: asked first; kept open, a sheet dragged half away comes back.
+  const close = () => { if (!opts.beforeClose || closed) { shut(); return; } void Promise.resolve(opts.beforeClose()).then((go) => { if (go) shut(); else { el.style.transform = ''; scrim.style.opacity = ''; } }); };
   // Escape closes the top-most sheet (capture phase, so the reader's own shortcuts don't fire underneath).
   const onEsc = (e: KeyboardEvent) => { if (!el.isConnected) { close(); return; } if (e.key !== 'Escape') return; const all = document.querySelectorAll('.sheet'); if (all[all.length - 1] !== el) return; e.preventDefault(); e.stopPropagation(); close(); };
   window.addEventListener('keydown', onEsc, true);
@@ -221,7 +226,7 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
     h('div', { class: 'sheet-head' }, h('h3', null, title), iconButton('close', closeLabel, close)),
     body, actions);
   const scrim = h('div', { class: 'scrim sheet-scrim', style: depth ? { zIndex: String(69 + depth * 2) } : undefined, onclick: close });
-  (el as HTMLElement & { __close?: () => void }).__close = close;
+  (el as HTMLElement & { __close?: () => void }).__close = shut;
   document.body.append(scrim, el);
   if (opts.at && document.documentElement.classList.contains('pc')) placeMenu(el, scrim, opts.at);
   else dragToClose(el, scrim, close);

@@ -4,6 +4,7 @@
 import { canBrowse } from '../browser';
 import { h, icon, toast } from '../ui/dom';
 import { t } from '../i18n';
+import { offerUndo } from '../ui/undo';
 import { getEngine, parseSources } from '../engine';
 import { canInstallApps, installSheet } from './apk';
 import { isIos } from './ipa';
@@ -82,7 +83,7 @@ function editMenu(every: HTMLElement[]): void {
         icon(e.ic), h('span', { class: 'grow', dir: 'auto' }, e.label), iconButton('arrowUp', t('moveUp'), () => move(i, -1)), iconButton('arrowDown', t('moveDown'), () => move(i, 1)))));
     };
     sh.body.append(h('p', { class: 'hint' }, t('fabEditHint')), list);
-    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { updateSettings({ fabOrder: [], fabHidden: [] }); draw(); } }, icon('refresh'), t('reset')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { /* (undo-redo) */ const s0 = getSettings(); const was = { fabOrder: [...(s0.fabOrder ?? [])], fabHidden: [...(s0.fabHidden ?? [])] }; const reset = () => { updateSettings({ fabOrder: [], fabHidden: [] }); draw(); }; reset(); offerUndo(t('fabReset'), () => { updateSettings({ fabOrder: [...was.fabOrder], fabHidden: [...was.fabHidden] }); draw(); }, reset); } }, icon('refresh'), t('reset')));
     draw();
   });
 }

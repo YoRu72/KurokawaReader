@@ -14,6 +14,9 @@ import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { navPlacesAll } from './ui/navPlaces';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
+// (undo-redo) The snackbar's Undo / Redo, a computer's Ctrl+Z, and a settings restore that can still be taken back.
+import './styles/undo.css';
+import { wireUndoKeys } from './ui/undo';
 import { scheduleAutoCheck } from './updates';
 import { brandIcon, applyBrandIcon } from './ui/brandIcon';
 // (The icon of the user's choosing on the page's own little icon too, from the start.)
@@ -170,6 +173,7 @@ else {
   placeNav();
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   wirePcBack();
+  wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
   void import('./ui/gestures').then((g) => g.pageSwipe({
     enabled: () => getSettings().swipeTabs !== false,
     view: () => current,

@@ -18,6 +18,19 @@ import { allCategories, categoryOf, categoryName } from '../downloads/categories
 import { updateSettings } from '../settings';
 import { dlPrefs, applyFilters, sortTasks, groupOf, activeFilters, downloadsOptionsSheet } from './downloadsOptions';
 import { historyOf, sparkline } from './taskmap';
+import { offerUndo } from '../ui/undo';
+// (undo-redo) Downloads taken off the list with an Undo are only held out of sight until it is over — every kind,
+// a video or a .torrent's too, which the trash cannot put back —, then removed for real; Undo shows them again as
+// they were (still downloading, if they were). The list's own files are never deleted this way.
+const held = new Set<string>(); const heldWatch = new Set<() => void>();
+const heldChanged = (): void => heldWatch.forEach((f) => f());
+export function removeWithUndo(xs: Task[], label: string): void {
+  if (!xs.length) return; const ids = xs.map((x) => x.id); const eng = getEngine();
+  const hide = () => { for (const id of ids) held.add(id); heldChanged(); };
+  const show = () => { for (const id of ids) held.delete(id); heldChanged(); };
+  hide();
+  offerUndo(label, show, hide, { commit: async () => { for (const id of ids) { try { await eng.remove(id, false); } catch (er) { held.delete(id); heldChanged(); toast(String((er as Error).message ?? er), 'error'); } } } });
+}
 /** The add sheet, loaded on the first tap that opens it (it and the video panel are not on the first screen). */
 const addSheet = (...a: Parameters<typeof import('./add').addSheet>): void => { void import('./add').then((m) => m.addSheet(...a)); };
 const isMedia = (n: string): boolean => /\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|wmv|flv|ogv|3gp|mp3|m4a|flac|ogg|opus|wav|aac)$/i.test(n);
@@ -28,7 +41,7 @@ export const stateLabel = (s: TaskState): string => t(({ queued: 'stateQueued', 
 export const fmtEta = (s: number): string => { s = Math.max(0, Math.round(s)); const hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits(hh ? `${hh}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`); };
 
 export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => void } {
-  let tasks: Task[] = []; let current = filter; let cat = ''; let query = ''; const picked = new Set<string>(); let selecting = false;
+  let tasks: Task[] = []; let raw: Task[] = []; let current = filter; let cat = ''; let query = ''; const picked = new Set<string>(); let selecting = false;
   const list = h('div', { class: 'task-list' });
   const empty = h('div', { class: 'empty', hidden: true }, h('div', { class: 'glyph' }, icon('download')), h('h2', null, t('downloadsEmptyTitle')), h('p', null, t(document.documentElement.classList.contains('pc') ? 'downloadsEmptyBodyPc' : 'downloadsEmptyBody')));
   const chips = h('div', { class: 'chips filter-chips' });
@@ -58,7 +71,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     void import('../downloads/wifishare').then((m) => { if (m.canShareWifi() && tasks.some((x) => x.state === 'done')) row('wifi', t('wifiShareDone'), () => void m.shareWifiSheet(tasks)); });
     row('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch(err));
     row('play', t('resumeAll'), () => void Promise.all(tasks.filter((x) => x.state === 'paused').map((x) => getEngine().resume(x.id))).catch(err));
-    row('trash', t('clearDone'), () => void Promise.all(tasks.filter((x) => x.state === 'done' || x.state === 'failed').map((x) => getEngine().remove(x.id, false))).then((r) => toast(t('tasksRemoved', { n: countItems(r.length) }))).catch(err));
+    row('trash', t('clearDone'), () => { const xs = tasks.filter((x) => x.state === 'done' || x.state === 'failed'); if (!xs.length) { toast(t('nothingToClear')); return; } removeWithUndo(xs, t('tasksRemoved', { n: countItems(xs.length) })); });
     { const mb = window.kurokawaTools as unknown as { mini?(o: { action: string }): Promise<unknown> } | undefined; if (mb?.mini) row('mini', t('miniOpen'), () => void mb.mini!({ action: 'open' })); }
     row('folder', t('removeMissing'), () => void removeMissing(tasks).catch(err));
     if (tasks.some((x) => x.state === 'failed')) row('refresh', t('retryFailed'), () => void retryFailed(tasks).then((n) => toast(t('retriedN', { n: countItems(n) }))).catch(err));
@@ -233,7 +246,10 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.source.magnet) row('copy', t('copyMagnet'), () => void navigator.clipboard?.writeText(x.source.magnet!).then(() => toast(t('copied'))));
     if (x.source.url) row('copy', t('copyLink'), () => void navigator.clipboard?.writeText(x.source.url!).then(() => toast(t('copied'))));
     if (eng.move && (x.state === 'queued' || x.state === 'paused' || (x.state === 'downloading' && eng.id === 'native'))) {
-      const mv = (how: -2 | -1 | 1 | 2) => () => { if (getSettings().sort !== 'queue') { updateSettings({ sort: 'queue', dl: { ...dlPrefs(), desc: false } }); toast(t('sortedQueue')); } void eng.move!(x.id, how).catch((er) => toast(String(er.message ?? er), 'error')); };
+      // (undo-redo) Moving in the queue shows the list in queue order; that change of sort is said, with an Undo that puts the
+      // sort back as it was. (The move itself is not offered back: the engine's queue may hold more than the list shows,
+      // so the step back could not be promised exact — the arrows here are its way back.)
+      const mv = (how: -2 | -1 | 1 | 2) => () => { const st = getSettings(); if (st.sort !== 'queue') { const was = { sort: st.sort, dl: { ...dlPrefs() } }; const toQueue = () => updateSettings({ sort: 'queue', dl: { ...was.dl, desc: false } }); toQueue(); offerUndo(t('sortedQueue'), () => updateSettings({ sort: was.sort, dl: { ...was.dl } }), toQueue); } void eng.move!(x.id, how).catch((er) => toast(String(er.message ?? er), 'error')); };
       sh.body.append(h('div', { class: 'move-row' }, h('span', { class: 'grow' }, t('queuePlace')), iconButton('top', t('moveTop'), mv(-2)), iconButton('up', t('moveUp'), mv(-1)), iconButton('down', t('moveDown'), mv(1)), iconButton('bottom', t('moveBottom'), mv(2))));
     }
     if (x.kind === 'http' && x.state === 'failed' && x.source.url) void import('../browser').then((m) => { if (m.canBrowse()) row('globe', t('openInBrowser'), () => m.openBrowser(x.source.url!)); });
@@ -241,9 +257,10 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if ((x.kind === 'http' && x.source.url) || (x.kind === 'torrent' && x.source.magnet)) { if (x.state === 'done' || x.state === 'failed' || x.state === 'seeding') row('refresh', t('redownload'), () => { if (!confirm(t('confirmRedownload', { name: displayName(x) }))) return; void (async () => { await eng.remove(x.id, true); await eng.add({ source: x.source, dir: x.dir, name: x.kind === 'http' ? displayName(x) : undefined, meta: x.meta }); toast(t('taskAdded', { name: displayName(x) })); })().catch((er) => toast(String(er.message ?? er), 'error')); }); }
     sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); removeSheet([x]); } }, icon('trash'), t('removeTask')));
   };
-  let cleaned = false; const got = (ts: Task[]) => { tasks = ts; countFinished(ts); if (ts.some((x) => (x.meta?.megaKey || x.meta?.gdrive) && (x.state === 'failed' || x.state === 'done'))) void import('../downloads/cloud').then((c) => c.watch(getEngine(), ts)); if (!cleaned && ts.length) { cleaned = true; void autoClean(ts).then((n) => { if (n) toast(t('autoCleaned', { n: countItems(n) })); }); } draw(); };
+  let cleaned = false; const got = (ts: Task[]) => { raw = ts; tasks = ts.filter((x) => !held.has(x.id)); countFinished(ts); if (ts.some((x) => (x.meta?.megaKey || x.meta?.gdrive) && (x.state === 'failed' || x.state === 'done'))) void import('../downloads/cloud').then((c) => c.watch(getEngine(), ts)); if (!cleaned && ts.length) { cleaned = true; void autoClean(ts).then((n) => { if (n) toast(t('autoCleaned', { n: countItems(n) })); }); } draw(); };
   let off = getEngine().onChange(got);
   const offEngine = onEngineChange((e) => { off(); off = e.onChange(got); });
+  const reheld = () => { tasks = raw.filter((x) => !held.has(x.id)); for (const id of held) picked.delete(id); draw(); }; heldWatch.add(reheld);
   draw();
   // Keys (Prism's): F search, A select all, Delete remove the selected, Space pause/resume them, Escape leave.
   const onKey = (e: KeyboardEvent) => {
@@ -253,11 +270,11 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRow.hidden = false; searchIn.focus(); }
     else if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); if (!selecting) setSelecting(true); for (const x of shown()) picked.add(x.id); draw(); }
     else if (e.key === 'Escape' && selecting) setSelecting(false);
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && selecting && picked.size) { e.preventDefault(); void Promise.all([...picked].map((id) => getEngine().remove(id, false))).then(() => { toast(t('tasksRemoved', { n: countItems(picked.size) })); setSelecting(false); }); }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && selecting && picked.size) { e.preventDefault(); const xs = tasks.filter((x) => picked.has(x.id)); setSelecting(false); removeWithUndo(xs, t('tasksRemoved', { n: countItems(xs.length) })); }
     else if (e.key === ' ' && selecting && picked.size) { e.preventDefault(); const eng = getEngine(); void Promise.all(tasks.filter((x) => picked.has(x.id)).map((x) => (x.state === 'paused' || x.state === 'failed' ? eng.resume(x.id) : ACTIVE.includes(x.state) ? eng.pause(x.id) : Promise.resolve()))); }
   };
   window.addEventListener('keydown', onKey);
-  root.dispose = () => { off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
+  root.dispose = () => { heldWatch.delete(reheld); off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
   return root;
 }
 /** The next time the scheduler starts, as «HH:MM» (with the weekday when it is not today). */
@@ -294,8 +311,7 @@ async function removeMissing(ts: Task[]): Promise<void> {
   if (!there) { toast(t('notHere'), 'error'); return; }
   const gone = done.filter((_, i) => !there[i]);
   if (!gone.length) { toast(t('noneMissing')); return; }
-  for (const x of gone) await getEngine().remove(x.id, false);
-  toast(t('removedMissing', { n: countItems(gone.length) }));
+  removeWithUndo(gone, t('removedMissing', { n: countItems(gone.length) }));
 }
 
 
@@ -310,6 +326,8 @@ export function removeSheet(tasks: Task[], done?: () => void): void {
     h('label', { class: 'row switch-row remove-files' }, h('span', null, t('deleteFromDevice'), h('small', { class: 'src' }, t('deleteFromDeviceHint'))), box));
   sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => {
     sh.close(); let n = 0;
+    // (undo-redo) From the list only: held with an Undo. With the files deleted: for good — there is no Undo for that.
+    if (!box.checked) { removeWithUndo(tasks, t('tasksRemoved', { n: countItems(tasks.length) })); done?.(); return; }
     for (const x of tasks) { try { await eng.remove(x.id, box.checked); n++; } catch (er) { toast(String((er as Error).message ?? er), 'error'); } }
     toast(box.checked ? t('removedWithFiles', { n: localDigits(n) }) : t('tasksRemoved', { n: countItems(n) })); done?.();
   } }, icon('trash'), t('remove')));

@@ -20,6 +20,7 @@
 import { getSettings } from '../settings';
 import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress, closeSheets } from '../ui/dom';
 import { t, localDigits, formatBytes } from '../i18n';
+import { offerUndo } from '../ui/undo';
 import type { Task } from '../engine/types';
 import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, DEFAULT_PREFS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
 import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, langOfTrack, cuesToSrt, type Cue, type AssRenderer } from './subs';
@@ -323,6 +324,7 @@ export function openPlayer(src: PlayerSource): void {
   const onKey = (e: KeyboardEvent) => {
     if (!root.isConnected) return; if ((e.target as HTMLElement).closest('.sheet, input, textarea')) return;
     const k = e.key;
+    if ((e.ctrlKey || e.metaKey) && /^[zy]$/i.test(k)) return;   // (undo-redo) Ctrl+Z / Ctrl+Y: Undo and Redo (ui/undo.ts); z alone stays the subtitle delay
     if (k === ' ' || k === 'k') { e.preventDefault(); toggle(); }
     else if (e.ctrlKey && (k === 'ArrowRight' || k === 'ArrowLeft')) subLine(k === 'ArrowRight' ? 1 : -1);
     else if (k === 'ArrowRight' || k === 'l') seekBy(e.shiftKey ? 60 : P.doubleTapSeek); else if (k === 'ArrowLeft' || k === 'j') seekBy(e.shiftKey ? -60 : -P.doubleTapSeek);
@@ -450,8 +452,11 @@ export function openPlayer(src: PlayerSource): void {
   function syncMark(which: 'heard' | 'seen') {
     if (which === 'heard') { heardAt = video.currentTime; flashText(t('subSyncHeard')); return; }
     if (heardAt === null) { flashText(t('subSyncFirst')); return; }
-    subDelay = Math.round((subDelay + heardAt - video.currentTime) * 100) / 100; heardAt = null; ass?.setOffset(-subDelay); remember(key, { subDelay }); flashText(t('subDelayNow', { s: subDelay.toFixed(2) }), true);
+    const was = subDelay; subDelay = Math.round((subDelay + heardAt - video.currentTime) * 100) / 100; heardAt = null; ass?.setOffset(-subDelay); remember(key, { subDelay }); flashText(t('subDelayNow', { s: subDelay.toFixed(2) }), true);
+    const now = subDelay; offerUndo(t('subDelayNow', { s: now.toFixed(2) }), () => setSubDelay(was), () => setSubDelay(now), { scope: 'player' });   // (undo-redo)
   }
+  /** (undo-redo) The subtitle delay set outright (an Undo, the «0»), the sheet's box told when it is open. */
+  function setSubDelay(v: number) { subDelay = v; ass?.setOffset(-subDelay); remember(key, { subDelay }); const box = document.querySelector<HTMLInputElement>('.kt-delay-box'); if (box) box.value = subDelay.toFixed(2); flashText(t('subDelayNow', { s: subDelay.toFixed(2) })); }
   /** The fonts the release itself brings for its styled subtitles: the video's attachments (a Matroska's), and font
    *  files in its torrent (a «Fonts» folder) once they are on the disk. */
   async function fileFonts(): Promise<string[]> {
@@ -590,7 +595,7 @@ export function openPlayer(src: PlayerSource): void {
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void findSubs(); } }, icon('search'), t('subsFind')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void voiceSheet(); } }, icon('mic'), t('voiceSubs')),
       ...(ktPlugin() ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => { sh.close(); void localSubs(); } }, icon('folder'), t('subsOnPhone'))] : []));
-    const delay = h('input', { type: 'number', step: '0.05', value: subDelay.toFixed(2), style: { width: '6em' }, onchange: () => { subDelay = Number(delay.value) || 0; ass?.setOffset(-subDelay); remember(key, { subDelay }); } }) as HTMLInputElement;
+    const delay = h('input', { type: 'number', class: 'kt-delay-box', step: '0.05', value: subDelay.toFixed(2), style: { width: '6em' }, onchange: () => { subDelay = Number(delay.value) || 0; ass?.setOffset(-subDelay); remember(key, { subDelay }); } }) as HTMLInputElement;
     const nudge = (d: number) => { nudgeSub(d); delay.value = subDelay.toFixed(2); };
     const size = h('input', { type: 'range', min: '40', max: '250', step: '5', value: String(p.subSize), oninput: () => { updatePrefs({ subSize: Number(size.value) }); applySubStyle(); } });
     const pos = h('input', { type: 'range', min: '0', max: '100', step: '1', value: String(p.subPos), oninput: () => { updatePrefs({ subPos: Number(pos.value) }); applySubStyle(); } });
@@ -617,7 +622,9 @@ export function openPlayer(src: PlayerSource): void {
     const packBox = await packRows(() => sh.close());
     sh.body.append(list, fileIn, actions, packBox, ...(exportRow ? [exportRow] : []), ...(second ? [second] : []), trBox,
       h('h4', null, t('subTiming')),
-      h('div', { class: 'row' }, h('span', null, t('subDelay'), h('small', { class: 'src' }, t('subDelayHint'))), h('div', { class: 'progress-ctl' }, iconButton('minus', t('less'), () => nudge(-0.1)), delay, iconButton('plus', t('more'), () => nudge(0.1)))),
+      h('div', { class: 'row' }, h('span', null, t('subDelay'), h('small', { class: 'src' }, t('subDelayHint'))), h('div', { class: 'progress-ctl' }, iconButton('minus', t('less'), () => nudge(-0.1)), delay, iconButton('plus', t('more'), () => nudge(0.1)),
+        // (undo-redo) Back to no delay in one tap, and Undo for it.
+        h('button', { type: 'button', class: 'btn text small kt-delay-zero', title: t('subDelayZero'), 'aria-label': t('subDelayZero'), onclick: () => { const was = subDelay; if (!was) return; setSubDelay(0); offerUndo(t('subDelayZeroed'), () => setSubDelay(was), () => setSubDelay(0), { scope: 'player' }); } }, localDigits(0)))),
       h('div', { class: 'row' }, h('span', null, t('subSync'), h('small', { class: 'src' }, t('subSyncHint'))), h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => syncMark('heard') }, icon('speak'), t('subSyncHeardBtn')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => { syncMark('seen'); delay.value = subDelay.toFixed(2); } }, icon('eye'), t('subSyncSeenBtn')))),
       h('div', { class: 'row' }, h('span', null, t('subLineSeek')), h('div', { class: 'row-actions' }, iconButton('chevronLeft', t('subPrevLine'), () => subLine(-1)), iconButton('chevronRight', t('subNextLine'), () => subLine(1)))),
       h('div', { class: 'row' }, h('span', null, t('subSpeed'), h('small', { class: 'src' }, t('subSpeedHint'))), pickButton(t('subSpeed'), [['1', '1×'], ['0.959', '25 → 23.976'], ['1.043', '23.976 → 25'], ['0.96', '25 → 24'], ['1.042', '24 → 25'], ['0.999', '24 → 23.976'], ['1.001', '23.976 → 24']], String(p.subSpeed), (v) => { updatePrefs({ subSpeed: Number(v) }); drawSubs(video.currentTime); }, t('close'))),
@@ -851,7 +858,7 @@ export function openPlayer(src: PlayerSource): void {
       sw(t('normalizeAudio'), 'normalize', t('normalizeAudioHint')), sw(t('monoAudio'), 'mono'),
       h('label', { class: 'field' }, h('span', null, t('audioBalance')), bal),
       h('div', { class: 'row' }, h('span', null, t('audioDelay'), h('small', { class: 'src' }, t('audioDelayHint'))), del));
-    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { updatePrefs({ eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0 }); applySound(); sh.close(); } }, t('reset')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { const p0 = getPrefs(); const was = { eqOn: p0.eqOn, eq: [...p0.eq] as typeof p0.eq, eqPreamp: p0.eqPreamp, eqPreset: p0.eqPreset, normalize: p0.normalize, mono: p0.mono, balance: p0.balance, audioDelay: p0.audioDelay }; const flat = () => { updatePrefs({ eqOn: false, eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], eqPreamp: 0, eqPreset: 'flat', normalize: false, mono: false, balance: 0, audioDelay: 0 }); applySound(); }; flat(); sh.close(); offerUndo(t('soundReset'), () => { updatePrefs({ ...was, eq: [...was.eq] as typeof was.eq }); applySound(); }, flat, { scope: 'player' }); } }, t('reset')));
   }
 
   // ---- picture sheet: rotation, mirroring, crop, zoom, filters and their presets
@@ -872,7 +879,8 @@ export function openPlayer(src: PlayerSource): void {
       h('label', { class: 'field' }, h('span', null, t('zoomLevel')), zoomR),
       h('h4', null, t('filterPresets')), chips<string>(presetItems, () => getPrefs().filterPreset, (v) => { updatePrefs({ filterPreset: v }); applyFilters(); }),
       h('h4', null, t('videoFilters')), sliders);
-    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { updatePrefs({ filters: { ...DEFAULT_FILTERS }, filterPreset: '' }); brightness = 1; rotate = 0; flipH = flipV = false; crop = ''; zoom = 1; panX = panY = 0; applyFilters(); applyTransform(); sh.close(); } }, t('reset')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { const p0 = getPrefs(); const was = { filters: { ...p0.filters }, filterPreset: p0.filterPreset, brightness, rotate, flipH, flipV, crop, zoom, panX, panY }; const plain = () => { updatePrefs({ filters: { ...DEFAULT_FILTERS }, filterPreset: '' }); brightness = 1; rotate = 0; flipH = flipV = false; crop = ''; zoom = 1; panX = panY = 0; applyFilters(); applyTransform(); }; plain(); sh.close();
+      offerUndo(t('pictureReset'), () => { updatePrefs({ filters: { ...was.filters }, filterPreset: was.filterPreset }); ({ brightness, rotate, flipH, flipV, crop, zoom, panX, panY } = was); applyFilters(); applyTransform(); }, plain, { scope: 'player' }); } }, t('reset')));
   }
 
   // ---- speed, bookmarks, jump, playlist, more
@@ -889,7 +897,7 @@ export function openPlayer(src: PlayerSource): void {
   function bookmarksSheet() {
     const sh = openSheet(t('bookmarks'), t('close')); const list = h('div', { class: 'dest-list' });
     const draw = () => list.replaceChildren(...(marks.length ? marks.map((m, i) => h('div', { class: 'dest-row' }, h('button', { type: 'button', class: 'grow plain', onclick: () => { seekTo(m.t); sh.close(); } }, h('span', { class: 'ep-num' }, localDigits(i + 1)), h('span', { class: 'name', dir: 'auto' }, m.label), h('small', { class: 'src' }, fmtTime(m.t))),
-      iconButton('pen', t('rename'), () => { const v = prompt(t('rename'), m.label); if (v !== null) { m.label = v.trim() || fmtTime(m.t); remember(key, { marks }); draw(); drawMarks(); } }), iconButton('trash', t('delete'), () => { marks = marks.filter((x) => x !== m); remember(key, { marks }); draw(); drawMarks(); }))) : [h('p', { class: 'src' }, t('bookmarksNone'))]));
+      iconButton('pen', t('rename'), () => { const v = prompt(t('rename'), m.label); if (v !== null) { m.label = v.trim() || fmtTime(m.t); remember(key, { marks }); draw(); drawMarks(); } }), iconButton('trash', t('delete'), () => { const was = [...marks]; const put = (l: Bookmark[]) => { marks = [...l]; remember(key, { marks }); draw(); drawMarks(); }; const left = marks.filter((x) => x !== m); put(left); offerUndo(t('bookmarkRemoved', { t: m.label }), () => put(was), () => put(left), { scope: 'player' }); }))) : [h('p', { class: 'src' }, t('bookmarksNone'))]));
     draw(); sh.body.append(list); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { addBookmark(); draw(); } }, icon('bookmarkAdd'), t('bookmarkHere', { t: fmtTime(video.currentTime) })));
   }
   function jumpSheet() {
@@ -1006,7 +1014,7 @@ export function openPlayer(src: PlayerSource): void {
           h('span', { class: 'kt-place' }, seg('bar', t('layoutBottom')), seg('topTools', t('layoutTop'))),
           pl ? iconButton('arrowUp', t('moveUp'), () => move(-1)) : null, pl ? iconButton('arrowDown', t('moveDown'), () => move(1)) : null); })); };
     draw(); sh.body.prepend(h('p', { class: 'hint' }, t('playerLayoutHint2'))); sh.body.append(list);
-    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { updatePrefs({ bar: [...DEFAULT_PREFS.bar], topTools: [...(DEFAULT_PREFS.topTools ?? [])] }); draw(); drawTools(); } }, t('reset')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => { const p0 = getPrefs(); const was = { bar: [...p0.bar], topTools: [...(p0.topTools ?? [])] }; const dflt = () => { updatePrefs({ bar: [...DEFAULT_PREFS.bar], topTools: [...(DEFAULT_PREFS.topTools ?? [])] }); draw(); drawTools(); }; dflt(); offerUndo(t('layoutReset'), () => { updatePrefs({ bar: [...was.bar], topTools: [...was.topTools] }); draw(); drawTools(); }, dflt, { scope: 'player' }); } }, t('reset')));
   }
   /** Frame by frame (REX Player's frame navigation): a frame back or on, ten at a time, the frame's number and time,
    *  saved as a picture, made A or B of the cut. */
@@ -1131,7 +1139,7 @@ export function openPlayer(src: PlayerSource): void {
   function customSheet() {
     const sh = openSheet(t('customButtons'), t('close')); const list = h('div', { class: 'dest-list' });
     const acts: [PlayerPrefs['customButtons'][number]['act'], string][] = [['seek', t('cbSeek')], ['speed', t('cbSpeed')], ['jump', t('cbJump')], ['ab', t('cbAb')], ['shot', t('screenshot')], ['sub', t('cbSub')], ['audio', t('cbAudio')], ['subline', t('subNextLine')]];
-    const draw = () => list.replaceChildren(...(getPrefs().customButtons.length ? getPrefs().customButtons.map((b, i) => h('div', { class: 'dest-row' }, h('b', { class: 'kt-chip' }, customLabel(b)), h('span', { class: 'grow' }, acts.find((a) => a[0] === b.act)?.[1] ?? b.act), iconButton('trash', t('delete'), () => { const l = [...getPrefs().customButtons]; l.splice(i, 1); updatePrefs({ customButtons: l }); draw(); drawCustom(); }))) : [h('p', { class: 'src' }, t('cbNone'))]));
+    const draw = () => list.replaceChildren(...(getPrefs().customButtons.length ? getPrefs().customButtons.map((b, i) => h('div', { class: 'dest-row' }, h('b', { class: 'kt-chip' }, customLabel(b)), h('span', { class: 'grow' }, acts.find((a) => a[0] === b.act)?.[1] ?? b.act), iconButton('trash', t('delete'), () => { const was = [...getPrefs().customButtons]; const l = [...was]; l.splice(i, 1); const put = (x: typeof l) => { updatePrefs({ customButtons: [...x] }); draw(); drawCustom(); }; put(l); offerUndo(t('cbRemoved', { name: customLabel(b) }), () => put(was), () => put(l), { scope: 'player' }); }))) : [h('p', { class: 'src' }, t('cbNone'))]));
     let act: PlayerPrefs['customButtons'][number]['act'] = 'seek';
     const val = h('input', { type: 'text', dir: 'ltr', value: '85', style: { width: '7em' } }) as HTMLInputElement;
     const hint = h('small', { class: 'src' }, t('cbSeekHint'));

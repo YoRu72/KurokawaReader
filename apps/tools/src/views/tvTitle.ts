@@ -3,6 +3,8 @@
 // now (the best release from Torrentio, played while it comes), download it, or choose a release; a film the same.
 import { h, icon, iconButton, toast, openSheet , onLongPress } from '../ui/dom';
 import { t, localDigits, formatBytes, dateLocale } from '../i18n';
+import { offerUndo } from '../ui/undo';
+import { updateSettings } from '../settings';
 import { back, navigate } from '../router';
 import { getEngine } from '../engine';
 import type { Task } from '../engine/types';
@@ -66,7 +68,10 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
         h('div', { class: 'card-head' }, h('h3', null, t('episodes')), h('div', { class: 'grow' }),
           next ? h('button', { type: 'button', class: 'btn primary small', onclick: () => void watch(mm, next) }, icon('play'), `${t('epWatchNow')} · S${localDigits(next.season)}E${localDigits(next.episode)}`) : null),
         h('div', { class: 'chip-row wrap ep-ranges' }, ...seasons.map((s) => h('button', { type: 'button', class: 'chip small' + (s === sel ? ' on' : ''), onclick: () => { sel = s; draw(); } }, s === 0 ? t('tvSpecials') : t('tvSeasonN', { n: localDigits(s) })))),
-        h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn text small', onclick: () => { const all = eps.filter((v) => cm.aired(v)); const allSeen = all.every((v) => lib.isSeen(epKey(mm, v))); for (const v of all) lib.setSeen(epKey(mm, v), !allSeen); draw(); } }, icon('check'), t('tvSeasonSeen'))),
+        h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn text small', onclick: () => { const all = eps.filter((v) => cm.aired(v)); const allSeen = all.every((v) => lib.isSeen(epKey(mm, v)));
+          // (undo-redo) Undo: each episode's seen mark — and when — exactly as it was.
+          const was = { ...lib.seen() }; const mark = () => { for (const v of all) lib.setSeen(epKey(mm, v), !allSeen); draw(); }; mark();
+          offerUndo(allSeen ? t('tvSeasonUnmarked') : t('tvSeasonMarked'), () => { const now = lib.seen(); for (const v of all) { const k = epKey(mm, v); if (was[k]) now[k] = was[k]; else delete now[k]; } localStorage.setItem('kt.tv.seen', JSON.stringify(now)); draw(); }, mark); } }, icon('check'), t('tvSeasonSeen'))),
         ...eps.map((v) => {
           const aired = cm.aired(v); const seen = lib.isSeen(epKey(mm, v)); const got = tasks.find((x) => x.meta?.season === v.season && x.meta?.episode === v.episode);
           const rowEl = h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { se: `${v.season}:${v.episode}` }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined, onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(mm, v, got); } },
@@ -203,6 +208,6 @@ function followSheet(m: TvMeta, changed: () => void): void {
   const num = (labelTxt: string, val: number, set: (n: number) => void) => h('label', { class: 'num-field' }, h('span', null, labelTxt), h('input', { type: 'number', min: '0', value: String(val), inputmode: 'numeric', onchange: (e: Event) => set(Math.max(0, Number((e.target as HTMLInputElement).value) || 0)) }));
   const q = h('div', { class: 'chip-row wrap' }); const drawQ = () => q.replaceChildren(...['', '2160', '1080', '720', '480'].map((x) => h('button', { type: 'button', class: 'chip small' + (f.quality === x ? ' on' : ''), onclick: () => { f.quality = x; drawQ(); } }, x ? `${x}p` : t('allQualities')))); drawQ();
   sh.body.append(h('p', { class: 'hint' }, t('tvFollowHint')), h('div', { class: 'num-row' }, num(t('tvSeason'), f.season, (n) => { f.season = n; }), num(t('fromEpisode'), f.episode, (n) => { f.episode = n; })), h('span', { class: 'label' }, t('animeQuality')), q);
-  sh.actions.append(...(cur ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => { lib.dropFollow(m.id); sh.close(); changed(); toast(t('autoOff')); } }, icon('trash'), t('autoStop'))] : []),
+  sh.actions.append(...(cur ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => { /* (undo-redo) */ const was = lib.follows(); lib.dropFollow(m.id); sh.close(); changed(); offerUndo(t('autoOff'), () => { updateSettings({ tvFollows: was }); changed(); }, () => { lib.dropFollow(m.id); changed(); }); } }, icon('trash'), t('autoStop'))] : []),
     h('button', { type: 'button', class: 'btn primary', onclick: async () => { lib.saveFollow({ ...f, enabled: true }); sh.close(); changed(); toast(t('autoOn')); const a = await import('../tv/auto'); a.startTvAuto(); await a.checkFollows(false); } }, icon('bell'), t('autoSave')));
 }

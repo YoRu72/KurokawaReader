@@ -85,7 +85,7 @@ export async function makeArchiveSheet(paths: string[], dir: string, started: (i
   let splitMb = 0; const splitLabel = (mb: number) => (mb === 0 ? t('filesSplitNone') : mb >= 1024 ? `${localDigits(mb / 1024)} GB` : `${localDigits(mb)} MB`);
   const splitBtn = pickButton(t('filesSplit'), splitSizes.map((mb): [string, string] => [String(mb), splitLabel(mb)]), '0', (v) => { splitMb = Number(v); }, t('close'));
   const comment = h('input', { type: 'text', placeholder: t('filesCommentOptional'), dir: 'auto' }) as HTMLInputElement;
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
+  sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'), h('small', { class: 'src' }, t('noUndoHint')))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => {
     const n = (name.value.trim() || stem).replace(/\.(zip|7z|tar|tar\.gz|tgz|tar\.xz)$/i, ''); const out = `${dir}/${n}.${format}`; sh.close();
     const done = createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
@@ -114,7 +114,8 @@ export function trashSheet(refresh: () => void): void {
       list.replaceChildren(...r.items.map((it) => h('div', { class: 'dest-row files-trash-row' }, icon(it.dir ? 'folder' : 'file'), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, it.name), h('small', { class: 'src', dir: 'ltr' }, `${it.size ? formatBytes(it.size) + ' · ' : ''}${formatDate(it.at)} · ${it.from.slice(0, it.from.length - it.name.length - 1)}`)),
         iconButton('undo', t('filesRestore'), async () => { try { await plug().filesTrashRestore({ slot: it.slot }); toast(t('filesRestored', { name: it.name })); refresh(); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }),
         iconButton('trash', t('filesDeleteForever'), async () => { try { await plug().filesTrashEmpty({ slots: [it.slot] }); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } }))));
-      sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', disabled: !r.items.length, onclick: async () => { try { await plug().filesTrashEmpty({}); toast(t('filesTrashEmptied')); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('filesEmptyTrash')));
+      // (undo-redo) Emptying is for good — no Undo can bring it back —: asked first, with how many go.
+      sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', disabled: !r.items.length, onclick: async () => { const { confirmSheet } = await import('../ui/undo'); if (!(await confirmSheet(t('filesEmptyTrash'), [t('emptyBinAsk', { n: localDigits(r.items.length) })], t('emptyBinGo')))) return; try { await plug().filesTrashEmpty({}); toast(t('filesTrashEmptied')); void load(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('trash'), t('filesEmptyTrash')));
     } catch (err) { status.textContent = String((err as Error).message ?? err); }
   };
   void load();
@@ -134,10 +135,26 @@ export function batchRenameSheet(items: Entry[], refresh: () => void): void {
   // (Two new names the same — letter case aside — would have the second refused or, worse, one over the other: shown, and Rename held back.)
   const clash = h('p', { class: 'hint error', hidden: true }, t('filesNamesClash'));
   const draw = () => { const ns = names(); const bad = clashes(ns); preview.replaceChildren(...items.slice(0, 40).map((e, i) => h('div', { class: 'files-preview-row' + (bad.has(i) ? ' bad' : ''), dir: 'auto' }, h('small', { class: 'src' }, e.name), h('span', null, ns[i])))); clash.hidden = !bad.size; go.disabled = bad.size > 0 || ns.some((n) => !n); };
-  const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => { const ns = names(); sh.close(); let ok = 0; const failed: string[] = []; for (let i = 0; i < items.length; i++) { if (ns[i] === items[i].name) continue; try { await plug().filesRename({ path: items[i].path, name: ns[i] }); ok++; } catch (err) { failed.push(`${items[i].name}: ${String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err)}`); } } toast(failed.length ? t('filesSomeFailed', { n: localDigits(failed.length), why: failed[0] }) : t('filesRenamedN', { n: localDigits(ok) }), failed.length ? 'error' : 'info', failed.length ? 5000 : 2200); refresh(); } }, icon('pen'), t('rename')) as HTMLButtonElement;
+  const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => { const ns = names(); sh.close(); let ok = 0; const failed: string[] = []; const did: Ren[] = []; for (let i = 0; i < items.length; i++) { if (ns[i] === items[i].name) continue; try { await plug().filesRename({ path: items[i].path, name: ns[i] }); ok++; did.push({ dir: items[i].path.slice(0, items[i].path.length - items[i].name.length - 1), from: items[i].name, to: ns[i] }); } catch (err) { failed.push(`${items[i].name}: ${String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err)}`); } }
+    if (failed.length) toast(t('filesSomeFailed', { n: localDigits(failed.length), why: failed[0] }), 'error', 5000);
+    // (undo-redo) Undo renames each back — only when every one can be (its new name still there, its old one free), checked by listing the folder.
+    else if (did.length) { const { offerUndo } = await import('../ui/undo'); offerUndo(t('filesRenamedN', { n: localDigits(ok) }), async () => { await renameAll(did.map((d) => ({ dir: d.dir, from: d.to, to: d.from })).reverse()); refresh(); }, async () => { await renameAll(did); refresh(); }); }
+    refresh(); } }, icon('pen'), t('rename')) as HTMLButtonElement;
   for (const el of [pattern, start, find, repl]) el.addEventListener('input', draw);
   sh.body.append(h('label', { class: 'field' }, h('span', null, t('filesPattern')), pattern), vars, h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, h('span', { class: 'label' }, t('filesStartAt')), start), h('div', { class: 'row', style: { gap: '8px' } }, find, repl), h('p', { class: 'hint' }, countItems(items.length)), clash, preview);
   sh.actions.append(go); draw();
+}
+
+type Ren = { dir: string; from: string; to: string };
+/** (undo-redo) Renames made (or taken back) together, after a look at each folder: every `from` there and every `to`
+ *  free, or nothing is touched; and looked at again after, so a rename the storage did not do is told. */
+async function renameAll(rs: Ren[]): Promise<void> {
+  const pl = plug() as Plug & { filesList(o: { path: string }): Promise<{ entries: { name: string }[] }> };
+  const names = async (dir: string) => new Set((await pl.filesList({ path: dir })).entries.map((e) => e.name.toLowerCase()));
+  const dirs = new Map<string, Set<string>>(); for (const r of rs) if (!dirs.has(r.dir)) dirs.set(r.dir, await names(r.dir));
+  for (const r of rs) { const n = dirs.get(r.dir)!; if (!n.has(r.from.toLowerCase()) || (n.has(r.to.toLowerCase()) && r.to.toLowerCase() !== r.from.toLowerCase())) throw new Error(t('renameBackBlocked', { name: r.from })); n.delete(r.from.toLowerCase()); n.add(r.to.toLowerCase()); }
+  for (const r of rs) await pl.filesRename({ path: `${r.dir}/${r.from}`, name: r.to });
+  for (const [dir] of dirs) { const n = await names(dir); const miss = rs.find((r) => r.dir === dir && !n.has(r.to.toLowerCase())); if (miss) throw new Error(t('renameBackBlocked', { name: miss.from })); }
 }
 
 /* ---------- properties, told whole ---------- */
@@ -155,18 +172,21 @@ export async function richProperties(rows: HTMLElement, e: Entry, line: (k: stri
 
 /* ---------- the text editor ---------- */
 export async function editorSheet(e: Entry, refresh: () => void): Promise<void> {
-  const pl = plug(); const sh = openSheet(e.name, t('close')); sh.el.classList.add('files-editor');
+  // (undo-redo) Unsaved changes are asked about before the editor closes (its button, Back, Escape, a drag): Save, Discard, Keep editing.
+  const { dirtyGuard } = await import('../ui/undo');
+  const pl = plug(); const sh = openSheet(e.name, t('close'), { beforeClose: dirtyGuard(() => !ta.readOnly && ta.value !== original, () => doSave(), () => e.name) }); sh.el.classList.add('files-editor');
   const ta = h('textarea', { class: 'files-ta', dir: 'auto', spellcheck: 'false' }) as HTMLTextAreaElement; let original = '';
   const findBox = h('input', { type: 'search', placeholder: t('filesFind'), hidden: true, dir: 'auto' }) as HTMLInputElement;
   const status = h('small', { class: 'src files-ed-status' });
-  const save = h('button', { type: 'button', class: 'btn primary', disabled: true, onclick: async () => { try { await pl.filesWrite({ path: e.path, text: ta.value }); original = ta.value; save.disabled = true; toast(t('filesSaved')); refresh(); } catch (err) { toast(String((err as Error).message ?? err), 'error'); } } }, icon('check'), t('save')) as HTMLButtonElement;
+  const doSave = async (): Promise<boolean> => { try { await pl.filesWrite({ path: e.path, text: ta.value }); original = ta.value; save.disabled = true; toast(t('filesSaved')); refresh(); return true; } catch (err) { toast(String((err as Error).message ?? err), 'error'); return false; } };
+  const save = h('button', { type: 'button', class: 'btn primary', disabled: true, onclick: () => void doSave() }, icon('check'), t('save')) as HTMLButtonElement;
   const wrapBtn = iconButton('scroll', t('filesWrap'), () => { ta.classList.toggle('nowrap'); }); const monoBtn = iconButton('type', t('filesMono'), () => { ta.classList.toggle('mono'); });
   const findBtn = iconButton('search', t('filesFind'), () => { findBox.hidden = !findBox.hidden; if (!findBox.hidden) findBox.focus(); });
   findBox.addEventListener('keydown', (ev) => { if (ev.key !== 'Enter') return; const q = findBox.value; if (!q) return; const from = ta.selectionEnd; let i = ta.value.indexOf(q, from); if (i < 0) i = ta.value.indexOf(q); if (i >= 0) { ta.focus(); ta.setSelectionRange(i, i + q.length); } });
   ta.addEventListener('input', () => { save.disabled = ta.value === original; status.textContent = `${localDigits(ta.value.length)} ${t('filesChars')}`; });
   sh.body.append(h('div', { class: 'row files-ed-tools' }, findBtn, wrapBtn, monoBtn, status), findBox, ta);
   sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void pl.openWith({ path: e.path, mime: 'text/plain', title: e.name }) }, icon('external'), t('openWith')), save);
-  try { const r = await pl.filesHead({ path: e.path, max: 2_000_000 }); original = r.text; ta.value = r.text; status.textContent = `${localDigits(r.text.length)} ${t('filesChars')}${r.size > 2_000_000 ? ' · ' + t('filesTooBigToEdit') : ''}`; if (r.size > 2_000_000) ta.readOnly = true; } catch (err) { ta.value = String((err as Error).message ?? err); ta.readOnly = true; }
+  try { const r = await pl.filesHead({ path: e.path, max: 2_000_000 }); original = r.text; ta.value = r.text; status.textContent = `${localDigits(r.text.length)} ${t('filesChars')}${r.size > 2_000_000 ? ' · ' + t('filesTooBigToEdit') : ''}`; if (r.size > 2_000_000) ta.readOnly = true; } catch (err) { ta.value = String((err as Error).message ?? err); ta.readOnly = true; original = ta.value; }
 }
 
 /* ---------- the picture viewer: pinch to zoom; a swipe — the picture following the finger — to the folder's next or
@@ -277,8 +297,8 @@ export const isLockedName = (n: string): boolean => /\.kurokawa$/i.test(n);
 let sessionPw = '';
 export const forgetVaultPassword = (): void => { sessionPw = ''; };
 function passwordSheet(title: string, hint: string, confirm: boolean, cb: (pw: string, deleteAfter: boolean) => void, deleteLabel?: string): void {
-  const sh = openSheet(title, t('cancel')); const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'new-password', value: sessionPw }) as HTMLInputElement; const pw2 = h('input', { type: 'password', dir: 'ltr', autocomplete: 'new-password' }) as HTMLInputElement; const del = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement;
-  sh.body.append(h('p', { class: 'hint' }, hint), h('label', { class: 'field' }, h('span', null, t('password')), pw), ...(confirm ? [h('label', { class: 'field' }, h('span', null, t('vaultAgain')), pw2)] : []), ...(deleteLabel ? [h('label', { class: 'check-row' }, del, h('span', null, deleteLabel))] : []));
+  const sh = openSheet(title, t('cancel')); const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'new-password', value: sessionPw }) as HTMLInputElement; const pw2 = h('input', { type: 'password', dir: 'ltr', autocomplete: 'new-password' }) as HTMLInputElement; const del = h('input', { type: 'checkbox', checked: false }) as HTMLInputElement; /* (undo-redo) unticked by default: deleting the originals cannot be undone, and a forgotten password would lose them */
+  sh.body.append(h('p', { class: 'hint' }, hint), h('label', { class: 'field' }, h('span', null, t('password')), pw), ...(confirm ? [h('label', { class: 'field' }, h('span', null, t('vaultAgain')), pw2)] : []), ...(deleteLabel ? [h('label', { class: 'check-row' }, del, h('span', null, deleteLabel, h('small', { class: 'src vault-risk' }, confirm ? t('vaultDeleteRisk') : t('vaultUnlockRisk'))))] : []));
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { const v = pw.value; if (!v) { pw.focus(); return; } if (confirm && v !== pw2.value) { toast(t('vaultMismatch'), 'error'); pw2.focus(); return; } if (confirm && v.length < 4) { toast(t('vaultShort'), 'error'); return; } sessionPw = v; sh.close(); cb(v, del.checked); } }, icon('lock'), title));
   setTimeout(() => (sessionPw ? (confirm ? pw2 : pw) : pw).focus(), 60);
 }

@@ -3,6 +3,7 @@
 // add-on's key used or not, or a configuration copied from Torrentio's own page; the series followed.
 import { h, icon, pickButton, toast } from '../ui/dom';
 import { t } from '../i18n';
+import { offerUndo } from '../ui/undo';
 import { updateSettings } from '../settings';
 import { PROVIDERS, QUALITY_OUT, tvPrefs, type TvPrefs } from '../tv/torrentio';
 import { follows, dropFollow } from '../tv/library';
@@ -22,5 +23,5 @@ export function tvSettingsCard(rerender: () => void): HTMLElement {
     row(t('tvLanguage'), pickButton(t('tvLanguage'), LANGS, p.language, (v) => set({ language: v }), t('close')), t('tvLanguageHint')),
     h('label', { class: 'row switch-row' }, h('span', null, t('tvUseDebrid'), h('small', { class: 'src' }, t('tvUseDebridHint'))), h('input', { type: 'checkbox', checked: p.debrid, onchange: (e: Event) => set({ debrid: (e.target as HTMLInputElement).checked }) })),
     row(t('tvCustom'), h('input', { type: 'text', dir: 'ltr', value: p.custom, placeholder: 'https://torrentio.strem.fun/…/manifest.json', autocomplete: 'off', onchange: (e: Event) => { set({ custom: (e.target as HTMLInputElement).value.trim() }); toast(t('save')); } }), t('tvCustomHint')),
-    ...(fl.length ? [h('h4', null, t('tvFollowed')), ...fl.map((f) => h('div', { class: 'dest-row' }, icon('bell'), h('span', { class: 'grow' }, h('span', { dir: 'auto' }, f.name), h('small', { class: 'src' }, ` · S${f.season}E${f.episode}${f.quality ? ` · ${f.quality}p` : ''}`)), h('button', { type: 'button', class: 'btn text small', onclick: () => { dropFollow(f.id); rerender(); } }, t('autoStop'))))] : []));
+    ...(fl.length ? [h('h4', null, t('tvFollowed')), ...fl.map((f) => h('div', { class: 'dest-row' }, icon('bell'), h('span', { class: 'grow' }, h('span', { dir: 'auto' }, f.name), h('small', { class: 'src' }, ` · S${f.season}E${f.episode}${f.quality ? ` · ${f.quality}p` : ''}`)), h('button', { type: 'button', class: 'btn text small', onclick: () => { /* (undo-redo) */ const was = follows(); dropFollow(f.id); rerender(); offerUndo(t('autoOff'), () => { updateSettings({ tvFollows: was }); rerender(); }, () => { dropFollow(f.id); rerender(); }); } }, t('autoStop'))))] : []));
 }
