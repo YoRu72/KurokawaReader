@@ -769,6 +769,8 @@ ipcMain.handle('kr:print-pdf', async (_e, html, opts) => {
   } finally { w.destroy(); }
 });
 ipcMain.handle('kr:copy-image', (_e, b64) => { const img = nativeImage.createFromBuffer(Buffer.from(String(b64), 'base64')); if (img.isEmpty()) return false; clipboard.writeImage(img); return true; });
+// A linked book's original moved to the Recycle Bin / Trash (never erased): { ok, gone, error }.
+ipcMain.handle('kr:trash-file', async (_e, p) => { const f = String(p); if (!require('fs').existsSync(f)) return { ok: false, gone: true }; try { await require('electron').shell.trashItem(f); return { ok: true, gone: false }; } catch (err) { return { ok: false, gone: false, error: String((err && err.message) || err) }; } });
 ipcMain.handle('kr:read-file', async (_e, p) => { const buf = await require('fs/promises').readFile(String(p)); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); });
 
 // (Stage R6a: the hand-over to the Rust build — the page writes the whole library into <userData>/handover/,

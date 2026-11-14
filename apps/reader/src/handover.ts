@@ -376,7 +376,7 @@ export async function restoreHandover(f: Found, onProgress?: (p: RestoreProgress
   say('records');
   const haveFile = async (key: string) => { const d = await rawDb(); try { return (await valueOf<unknown>(d, 'files', key)) !== undefined; } finally { d.close(); } };
   for (const x of files) if (!x.book && (copy || !(await haveFile(x.key)))) await db.putFile(x.key, await blobAt(x.rel, x.type, x.name));
-  const MERGED_BY_BACKUP = new Set(['folders', 'tags', 'fonts']);
+  const MERGED_BY_BACKUP = new Set(['folders', 'tags', 'fonts', 'pins']);
   for (const [i, m] of meta.entries()) {
     if (i % 50 === 0) say('records', i, meta.length);
     if (!copy && (MERGED_BY_BACKUP.has(m.key) || (await db.getMeta(m.key)) !== undefined)) continue;

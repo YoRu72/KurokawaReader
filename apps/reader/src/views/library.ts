@@ -17,6 +17,8 @@ import { getSettings, updateSettings, onSettingsChange } from '../settings';
 import { openScanSheet, FORMAT_GROUPS, groupOf, canScan, canScanWhole } from '../ui/scan';
 import { pickDestination, type Destination } from '../ui/destination';
 import { todayKey, liveStatsOf } from '../stats';
+import * as P from '../pins';
+import { heldBooks, actionSnack, type UndoEntry } from '../ui/deletebooks';
 
 type Sort = 'title' | 'recent' | 'added' | 'author' | 'size' | 'rating' | 'progress' | 'length' | 'updated';
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -307,6 +309,92 @@ export function libraryView(): HTMLElement {
     return (s0.shelves ?? []).some((sh) => same(sh.formats, f) && same(sh.statuses, st) && (sh.tag ?? null) === (tagFilter ?? null));
   }
 
+  /* ---------- Pins (src/pins.ts): a book, a folder or a series first in its PLACE, in the order the reader gives ---------- */
+  // The place is the innermost level Back would leave (a folder, else a tag or a saved shelf, else the main page); a
+  // series' own volumes keep their order and a search lists by relevance: no place there (format and status filters
+  // keep the pinned first among what they let through). Long hold (a book: choosing, the bar's Pin second; a folder or
+  // a series: its menu, Pin first), right-click, P on a computer; «Move pin earlier / later» to reorder.
+  function savedShelfNow(): { id: string } | undefined {
+    const s0 = getSettings(); const f = s0.formatFilter ?? [], st = s0.statusFilter ?? [];
+    const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
+    return (f.length || st.length) ? (s0.shelves ?? []).find((sh) => same(sh.formats, f) && same(sh.statuses, st) && (sh.tag ?? null) === (tagFilter ?? null)) : undefined;
+  }
+  function pinPlace(): string | null {
+    if (activeSeries || queryWords.length) return null;
+    if (activeFolder) return P.placeFolder(activeFolder);
+    const shelf = savedShelfNow(); if (shelf) return P.placeShelf(shelf.id);
+    if (tagFilter) return P.placeTag(tagFilter);
+    return P.placeMain;
+  }
+  /** Series shown as one card in the grid last drawn: key → its volumes' ids (a whole series chosen pins the series). */
+  let shownGroups = new Map<string, string[]>();
+  const pinnedHere = (item: string, place = pinPlace()) => !!place && P.pinnedIn(place).includes(item);
+  /** The chosen books as pin items: a series whose every volume shown is chosen, as the series. */
+  function selectionItems(): string[] {
+    const ids = new Set(selected); const out: string[] = [];
+    for (const [key, vols] of shownGroups) if (vols.length && vols.every((id) => ids.has(id))) { out.push(P.pinSeries(key)); vols.forEach((id) => ids.delete(id)); }
+    for (const b of sorted()) if (ids.has(b.id)) out.push(P.pinBook(b.id));
+    return out;
+  }
+  /* The library's own undo (its actions only, while it is open): pins pinned, unpinned and moved, and books deleted
+   * while they are held (src/ui/deletebooks.ts). The snackbar's «Undo»; on a computer Ctrl+Z, and Ctrl+Shift+Z or
+   * Ctrl+Y to redo. */
+  const undoStack: UndoEntry[] = []; const redoStack: UndoEntry[] = [];
+  const remember = (e: UndoEntry) => { undoStack.push(e); if (undoStack.length > 30) undoStack.shift(); redoStack.length = 0; };
+  async function undoEntry(e?: UndoEntry): Promise<void> {
+    const at = e ? undoStack.lastIndexOf(e) : undoStack.length - 1; if (at < 0) { if (e) await e.undo(); return; }
+    const [x] = undoStack.splice(at, 1); if (await x.undo()) redoStack.push(x);
+  }
+  async function redoLast(): Promise<void> { const x = redoStack.pop(); if (!x) return; await x.redo(); undoStack.push(x); }
+  /** A change of one place's pins, made undoable: the list before and after kept. */
+  async function pinChange(place: string, fn: () => Promise<unknown>, msg: string): Promise<void> {
+    const before = [...P.pinnedIn(place)]; await fn(); const after = [...P.pinnedIn(place)];
+    const set = async (list: string[]) => { await P.setPlaceList(place, list); renderGrid(); };
+    const e: UndoEntry = { undo: async () => { await set(before); return true; }, redo: () => set(after) };
+    remember(e); renderGrid();
+    actionSnack(msg, t('undo'), () => void undoEntry(e), 6000);
+  }
+  /** Pinned (or, when every one already is, unpinned) in the place. */
+  async function togglePins(items: string[], place = pinPlace()): Promise<void> {
+    if (!place || !items.length) return;
+    const on = !items.every((x) => P.pinnedIn(place).includes(x));
+    await pinChange(place, () => P.setPinned(place, items, on), on ? t('pinnedToast', { n: localDigits(items.length, 'prose') }) : t('unpinnedToast', { n: localDigits(items.length, 'prose') }));
+  }
+  async function moveOnePin(item: string, delta: number, place = pinPlace()): Promise<void> { if (!place) return; await pinChange(place, () => P.movePin(place, item, delta), t('pinMoved')); }
+  /** Books deleted from the library through the dialog (held for «Undo» unless their files went too). */
+  async function askDelete(list: Book[]): Promise<boolean> {
+    const { deleteBooksDialog } = await import('../ui/deletebooks');
+    return deleteBooksDialog(list, async (ids) => { await removeBooks(ids); ids.forEach(forgetCover); }, { changed: () => void refresh(), remember });
+  }
+  /** The pin's actions for what is chosen: Pin / Unpin, and — one pinned item among several — move it earlier or later. */
+  function pinActs(): { pin: Act[]; move: Act[] } {
+    const place = pinPlace(); if (!place) return { pin: [], move: [] };
+    const items = selectionItems(); const list = P.pinnedIn(place);
+    const all = items.length > 0 && items.every((x) => list.includes(x));
+    const pin: Act[] = [[all ? 'pinOff' : 'pin', all ? t('unpin') : t('pin'), () => void togglePins(items, place).then(() => setSelecting(false))]];
+    const move: Act[] = [];
+    if (items.length === 1 && all && list.length > 1) {
+      const i = list.indexOf(items[0]);
+      if (i > 0) move.push(['chevronUp', t('pinEarlier'), () => void moveOnePin(items[0], -1, place)]);
+      if (i < list.length - 1) move.push(['chevronDown', t('pinLater'), () => void moveOnePin(items[0], 1, place)]);
+    }
+    return { pin, move };
+  }
+  /** The small mark on a pinned card (named for screen readers; beside the format badge, never over it). */
+  const pinMark = () => h('span', { class: 'badge pin-mark', role: 'img', 'aria-label': t('pinnedHere'), title: t('pinnedHere') }, icon('pin'));
+  /** A menu's rows for one item (a folder's or a series' menu): Pin / Unpin, then move earlier / later. */
+  function pinRows(item: string, place: string | null, close: () => void, cls = 'dest-row'): HTMLElement[] {
+    if (!place) return [];
+    const list = P.pinnedIn(place); const on = list.includes(item); const i = list.indexOf(item);
+    const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: cls + ' pin-row', onclick: () => { close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
+    return [
+      row(on ? 'pinOff' : 'pin', on ? t('unpin') : t('pin'), () => void togglePins([item], place)),
+      ...(on && i > 0 ? [row('chevronUp', t('pinEarlier'), () => void moveOnePin(item, -1, place))] : []),
+      ...(on && i >= 0 && i < list.length - 1 ? [row('chevronDown', t('pinLater'), () => void moveOnePin(item, 1, place))] : []),
+    ];
+  }
+  /* ---------- (end of pins) ---------- */
+
   function setSelecting(v: boolean) {
     selecting = v;
     if (!v) selected.clear();
@@ -319,8 +407,10 @@ export function libraryView(): HTMLElement {
   function bookActions(): Act[] {
     const n = selected.size;
     const one = () => books.find((x) => x.id === [...selected][0]);
+    const pins = pinActs();
     return [
       ['books', n > 1 ? t('openTogether') : t('open'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); navigate(`/read/${ids.join(',')}`); }, 'primary'],
+      ...pins.pin,
       ...(n > 1 ? [['sort', t('readInOrder'), () => { const ids = sorted().filter((b) => selected.has(b.id)).map((b) => b.id); void import('../ui/queue').then((m) => m.queueSheet(ids, { start: true })); }] as Act] : []),
       ['heart', t('favorite'), () => void Promise.all([...selected].map((id) => setTag([id], FAV_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
       ['clock', t('toRead'), () => void Promise.all([...selected].map((id) => setTag([id], TOREAD_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
@@ -330,11 +420,11 @@ export function libraryView(): HTMLElement {
       ['convert', t('convertFile'), () => { if (n === 1) { const b = one(); if (b) void import('../ui/convert').then((m) => m.convertSheet(b, () => void refresh())); } else { const list = books.filter((x) => selected.has(x.id)); void import('../ui/convert').then((m) => m.convertManySheet(list, () => void refresh())); } }],
       ['folder', t('moveToFolder'), () => moveSheet([...selected])],
       ['external', t('shareFile'), () => void shareBooks([...selected])],
+      ...pins.move,
       ['trash', t('delete'), async () => {
-        // (Many at once: said that it cannot be undone.)
-        if (!confirm(t(n > 3 ? 'deleteConfirmMany' : 'deleteConfirm', { n }))) return;
-        await removeBooks([...selected]);
-        selected.forEach(forgetCover);
+        // (Asked in the app's own dialog — how many, that it cannot be undone, and the originals outside the app:
+        // src/ui/deletebooks.ts.)
+        if (!(await askDelete(books.filter((b) => selected.has(b.id))))) return;
         setSelecting(false);
         await refresh();
       }, 'danger'],
@@ -347,7 +437,7 @@ export function libraryView(): HTMLElement {
     // (Closed without a choice: nothing stays chosen.)
     const mo = new MutationObserver(() => { if (sh.el.isConnected) return; mo.disconnect(); if (!acted && !selecting) selected.clear(); }); mo.observe(document.body, { childList: true });
     const acts = bookActions();
-    const rows = acts.filter(([, , , cls]) => cls !== 'danger').map(([ic, label, fn]) => h('button', { type: 'button', class: 'dest-row', onclick: () => { acted = true; sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label)));
+    const rows = acts.filter(([, , , cls]) => cls !== 'danger').map(([ic, label, fn]) => h('button', { type: 'button', class: 'dest-row', onclick: () => { acted = true; sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label), ic === 'pin' || ic === 'pinOff' ? h('span', { class: 'key-cap', dir: 'ltr', 'aria-hidden': 'true' }, 'P') : null));
     sh.body.append(h('div', { class: 'dest-list' }, ...rows));
     for (const [ic, label, fn] of acts.filter(([, , , cls]) => cls === 'danger')) sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { acted = true; sh.close(); fn(); } }, icon(ic), label));
   }
@@ -417,12 +507,13 @@ export function libraryView(): HTMLElement {
   function folderCard(f: Folder): HTMLElement {
     const inside = books.filter((b) => b.folderId === f.id);
     const covers = inside.slice(0, 4).map((b) => coverUrl(b));
-    const el = h('button', { class: 'book-card folder-card', type: 'button', title: f.name, dataset: { folder: f.id } },
-      h('div', { class: 'cover folder' }, h('div', { class: 'stack' }, ...covers.map((u, i) => u ? h('img', { src: u, alt: '' }) : h('div', { class: 'ph', style: { background: coverColors(inside[i].title)[0] } }))), icon('folder')),
+    const pinned = pinnedHere(P.pinFolder(f.id), P.placeMain);
+    const el = h('button', { class: 'book-card folder-card', type: 'button', title: f.name, dataset: { folder: f.id, ...(pinned ? { pinned: '1' } : {}) } },
+      h('div', { class: 'cover folder' }, h('div', { class: 'stack' }, ...covers.map((u, i) => u ? h('img', { src: u, alt: '' }) : h('div', { class: 'ph', style: { background: coverColors(inside[i].title)[0] } }))), icon('folder'), pinned ? h('span', { class: 'badges' }, pinMark()) : null),
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, f.name), h('div', { class: 'ba' }, t('booksInFolder', { n: inside.length }))));
     el.addEventListener('click', () => openFolder(f.id));
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); folderSheet(f.id); });
-    let pt: number | undefined; el.addEventListener('pointerdown', () => { pt = window.setTimeout(() => folderSheet(f.id), 560); }); const cancel = () => window.clearTimeout(pt); el.addEventListener('pointerup', cancel); el.addEventListener('pointerleave', cancel);
+    // (A hold or a right-click: its menu — Pin first. ui/tags onHoldOrContext: the click of letting go is the hold's.)
+    onHoldOrContext(el, () => folderSheet(f.id));
     el.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('text/kr-book')) { e.preventDefault(); el.classList.add('drop'); } });
     el.addEventListener('dragleave', () => el.classList.remove('drop'));
     el.addEventListener('drop', async (e) => { e.preventDefault(); el.classList.remove('drop'); const ids = (e.dataTransfer?.getData('text/kr-book') ?? '').split(',').filter(Boolean); await moveBooks(ids, f.id); });
@@ -437,9 +528,10 @@ export function libraryView(): HTMLElement {
     const unread = vols.filter((b) => !isDone(b));
     const next = unread.find((b) => (b.progress?.pct ?? 0) > 0) ?? unread[0];
     const [c1, c2] = coverColors(name);
-    const el = h('button', { class: 'book-card series-card', type: 'button', title: name, dataset: { series: key } },
+    const pinned = pinnedHere(P.pinSeries(key));
+    const el = h('button', { class: 'book-card series-card', type: 'button', title: name, dataset: { series: key, ...(pinned ? { pinned: '1' } : {}) } },
       h('div', { class: 'cover folder series' }, h('div', { class: 'stack' }, ...covers.map((u, i) => u ? h('img', { src: u, alt: '' }) : h('div', { class: 'ph', style: { background: coverColors(vols[i].title)[0] } }))),
-        h('span', { class: 'badges' }, vols.some((b) => b.remote?.newChapters) ? h('span', { class: 'badge alert' }, '!') : null),
+        h('span', { class: 'badges' }, pinned ? pinMark() : null, vols.some((b) => b.remote?.newChapters) ? h('span', { class: 'badge alert' }, '!') : null),
         h('span', { class: 'badge count' }, localDigits(vols.length)),
         selecting ? h('div', { class: 'check' }, icon('check')) : null),
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, name), h('div', { class: 'ba' }, t('seriesCardVolumes', { n: countVolumes(vols.length), read: localDigits(read) }))));
@@ -458,6 +550,7 @@ export function libraryView(): HTMLElement {
       sh.body.style.fontFamily = 'var(--font-ui)';
       sh.body.append(h('p', { class: 'src' }, t('seriesCardVolumes', { n: countVolumes(vols.length), read: localDigits(read) })));
       sh.body.append(h('div', { class: 'dest-list' },
+        ...pinRows(P.pinSeries(key), pinPlace(), () => sh.close()),
         next ? h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); navigate(`/read/${next.id}`); } }, icon('play'), h('span', { class: 'name' }, `${t('continueReading')} · `, h('bdi', null, next.title))) : null,
         h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); openSeriesHere(key); } }, icon('books'), h('span', { class: 'name' }, t('seriesVolumes'))),
         from?.source ? h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); openSeries(); } }, icon('globe'), h('span', { class: 'name' }, t('seriesInSource'))) : null,
@@ -466,6 +559,8 @@ export function libraryView(): HTMLElement {
     return el;
   }
 
+  /** The book a hold has just chosen (its lifting's click is not a tap). */
+  let heldBook = '';
   function card(book: Book): HTMLElement {
     const url = coverUrl(book);
     const [c1, c2] = coverColors(book.title);
@@ -476,7 +571,7 @@ export function libraryView(): HTMLElement {
     const doneBadge = done && getSettings().showDone ? h('span', { class: `badge done at-${doneAt}` }, icon('check'), t('doneBadge')) : !done && pct > 0 && getSettings().showProgress ? h('span', { class: `badge done pct at-${doneAt}` }, getLang() === 'ar' ? `٪${localDigits(pct)}` : `${pct}%`) : null;
     const cover = h('div', { class: 'cover' + (!url && doneBadge && doneAt === 'below' ? ' mark-below' : '') },
       url ? h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' }) : h('div', { class: 'gen', style: { '--c1': c1, '--c2': c2 } as unknown as Record<string, string> }, h('div', { class: 't', dir: 'auto' }, book.title), h('div', { class: 'a', dir: 'auto' }, book.author ?? '')),
-      h('span', { class: 'badges' }, book.remote?.newChapters ? h('span', { class: 'badge alert', title: countChapters(book.remote.newChapters) }, '!', h('small', null, localDigits(book.remote.newChapters))) : null, h('span', { class: 'badge' }, formatLabel(book.format)), book.remote?.online ? h('span', { class: 'badge online', title: t('onlineBook') }, icon('cloud')) : null, doneBadge && doneAt === 'beside' ? doneBadge : null, isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null),
+      h('span', { class: 'badges' }, pinnedHere(P.pinBook(book.id)) ? pinMark() : null, book.remote?.newChapters ? h('span', { class: 'badge alert', title: countChapters(book.remote.newChapters) }, '!', h('small', null, localDigits(book.remote.newChapters))) : null, h('span', { class: 'badge' }, formatLabel(book.format)), book.remote?.online ? h('span', { class: 'badge online', title: t('onlineBook') }, icon('cloud')) : null, doneBadge && doneAt === 'beside' ? doneBadge : null, isNew ? h('span', { class: 'badge new' }, t('newBadge')) : null),
       (book.tags ?? []).includes(FAV_TAG) ? h('span', { class: 'badge fav', 'aria-label': t('favorites') }, icon('heartFill')) : null,
       doneBadge && doneAt !== 'beside' ? doneBadge : null,
       !done && pct > 0 && getSettings().showProgress ? h('div', { class: 'progress', 'aria-label': `${pct}%` }, h('i', { style: { width: `${pct}%` } })) : null,
@@ -484,7 +579,7 @@ export function libraryView(): HTMLElement {
     );
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c1', c1);
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c2', c2);
-    const el = h('button', { class: 'book-card', role: 'listitem', type: 'button', dataset: { book: book.id }, 'aria-selected': String(selecting && selected.has(book.id)), title: `${book.title}${book.author ? ' — ' + book.author : ''}` },
+    const el = h('button', { class: 'book-card', role: 'listitem', type: 'button', dataset: { book: book.id, ...(pinnedHere(P.pinBook(book.id)) ? { pinned: '1' } : {}) }, 'aria-selected': String(selecting && selected.has(book.id)), title: `${book.title}${book.author ? ' — ' + book.author : ''}` },
       cover,
       h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size))), book.rating ? h('div', { class: 'stars-badge', 'aria-label': `${book.rating}/5` }, '★'.repeat(book.rating) + '☆'.repeat(5 - book.rating)) : null),
     );
@@ -496,7 +591,9 @@ export function libraryView(): HTMLElement {
       el.addEventListener('dragend', endDrag);
     }
     let pressTimer: number | undefined;
-    el.addEventListener('pointerdown', () => { pressTimer = window.setTimeout(() => { if (!selecting) { setSelecting(true); selected.add(book.id); renderGrid(); } }, 520); });
+    // (A hold that chose the book: the click its lifting may bring — a WebView that sends no «contextmenu» — let go.)
+    // (Kept by the view, not the card: choosing draws the grid again, and the click comes to the new card.)
+    el.addEventListener('pointerdown', () => { heldBook = ''; pressTimer = window.setTimeout(() => { if (!selecting) { heldBook = book.id; setSelecting(true); selected.add(book.id); renderGrid(); } }, 520); });
     const cancel = () => window.clearTimeout(pressTimer);
     el.addEventListener('pointerup', cancel); el.addEventListener('pointerleave', cancel); el.addEventListener('pointercancel', cancel);
     // Right-click: on a computer the book's menu at the pointer (the selection bar's actions, for this one book); while
@@ -507,6 +604,7 @@ export function libraryView(): HTMLElement {
       if (!selecting) { setSelecting(true); } selected.add(book.id); renderGrid();
     });
     el.addEventListener('click', (e) => {
+      if (heldBook === book.id) { heldBook = ''; return; }
       // (Ctrl/⌘ + click on a computer: pick several without entering selection first.)
       if (!selecting && (e.ctrlKey || e.metaKey)) { setSelecting(true); selected.add(book.id); renderGrid(); return; }
       if (selecting) {
@@ -550,7 +648,7 @@ export function libraryView(): HTMLElement {
         h('button', { class: 'btn small', onclick: () => { void shareBooks([book.id]); } }, icon('external'), t('shareFile')),
         ...(!['image', 'cbz', 'anki', 'audio', 'unknown'].includes(book.format) ? [h('button', { class: 'btn small', onclick: () => { s.close(); void import('../ui/convert').then((m) => m.convertSheet(book, () => void refresh())); } }, icon('convert'), t('convertFile'))] : []),
         ...(book.format === 'pdf' ? [h('button', { class: 'btn small', onclick: () => { s.close(); void import('../ui/pdftools').then(async (m) => m.pdfToolsSheet(await db.allBooks(), book, () => void refresh())); } }, icon('file'), t('pdfTools'))] : []),
-        h('button', { class: 'btn danger small', onclick: async () => { if (confirm(t('deleteConfirm', { n: 1 }))) { await removeBooks([book.id]); forgetCover(book.id); s.close(); await refresh(); } } }, icon('trash'), t('delete')),
+        h('button', { class: 'btn danger small', onclick: async () => { if (await askDelete([book])) await refresh(); } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
     });
@@ -621,7 +719,7 @@ export function libraryView(): HTMLElement {
     if (shelves.length || active.size || st.size || tagFilter) fmtChips.prepend(h('span', { class: 'chip-sep' }));
     for (const sh of [...shelves].reverse()) {
       const chip = h('button', { type: 'button', class: 'chip small shelf' + (onShelf(sh) ? ' on' : ''), 'aria-pressed': String(onShelf(sh)), title: sh.name, onclick: () => { if (onShelf(sh)) { updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); } else { updateSettings({ formatFilter: sh.formats, statusFilter: sh.statuses }); setTagFilter(sh.tag); } } }, icon(onShelf(sh) ? 'check' : 'bookmark'), h('span', { dir: 'auto' }, sh.name));
-      onHoldOrContext(chip, () => { if (confirm(t('shelfRemoveConfirm', { name: sh.name }))) { updateSettings({ shelves: getSettings().shelves.filter((x) => x.id !== sh.id) }); renderGrid(); } });
+      onHoldOrContext(chip, () => { if (confirm(t('shelfRemoveConfirm', { name: sh.name }))) { updateSettings({ shelves: getSettings().shelves.filter((x) => x.id !== sh.id) }); void P.forgetPlace(P.placeShelf(sh.id)); renderGrid(); } });
       fmtChips.prepend(chip);
     }
     if ((active.size || st.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: async () => {
@@ -655,11 +753,7 @@ export function libraryView(): HTMLElement {
       const fav = tag.name === FAV_TAG; const toRead = tag.name === TOREAD_TAG;
       const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : '') + (fav ? ' fav' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon(fav ? 'heartFill' : toRead ? 'clock' : 'tag'), h('span', { dir: 'auto' }, fav ? t('favorites') : toRead ? t('toRead') : tag.name));
       if (fav || toRead) { tagChips.append(c); continue; }
-      c.addEventListener('contextmenu', (e) => { e.preventDefault(); tagSheet(tag.name); });
-      let pt: number | undefined;
-      c.addEventListener('pointerdown', () => { pt = window.setTimeout(() => tagSheet(tag.name), 560); });
-      const cancel = () => window.clearTimeout(pt);
-      c.addEventListener('pointerup', cancel); c.addEventListener('pointerleave', cancel);
+      onHoldOrContext(c, () => tagSheet(tag.name));
       tagChips.append(c);
     }
     if (tagFilter) tagChips.append(h('button', { type: 'button', class: 'chip small add', 'aria-label': t('addBooks'), title: t('addBooks'), onclick: () => void addBooksToTag(tagFilter!) }, icon('plus'), h('span', null, t('addBooks'))));
@@ -820,6 +914,7 @@ export function libraryView(): HTMLElement {
       b.tags = tags; b.tagsAt = at;
     }
     await saveTagDefs([...tagDefs.filter((x) => x.name !== from && x.name !== to), { name: to, createdAt: Date.now() }]);
+    await P.renamePlace(P.placeTag(from), P.placeTag(to));
     void import('../sync').then((m) => m.markDeleted(`tag:${from}`)).catch(() => {});
     if (tagFilter === from) setTagFilter(to); else renderGrid();
   }
@@ -834,6 +929,7 @@ export function libraryView(): HTMLElement {
       b.tagsAt = at;
     }
     await saveTagDefs(tagDefs.filter((x) => x.name !== name));
+    await P.forgetPlace(P.placeTag(name));
     void import('../sync').then((m) => m.markDeleted(`tag:${name}`)).catch(() => {});
     if (tagFilter === name) setTagFilter(null); else renderGrid();
   }
@@ -930,6 +1026,7 @@ export function libraryView(): HTMLElement {
       const s = openSheet(f.name, t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
+        ...(getSettings().libraryView === 'cards' ? pinRows(P.pinFolder(id), P.placeMain, () => s.close(), '').map((b) => h('li', null, b)) : []),
         h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const name = await askName(t('renameFolder'), f.name); if (name) { folders = await renameFolder(id, name); renderChips(); renderGrid(); } } }, icon('type'), t('renameFolder'))),
         h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteFolderConfirm', { name: f.name }))) return; folders = await deleteFolder(id); for (const b of books) if (b.folderId === id) delete b.folderId; if (activeFolder === id) { activeFolder = null; localStorage.removeItem('kr.folder'); } renderChips(); renderGrid(); s.close(); } }, icon('trash'), t('deleteFolder')))));
     });
@@ -1035,26 +1132,37 @@ export function libraryView(): HTMLElement {
     }
     if (!list.length) { grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('p', null, tagFilter && !query ? t('noTaggedBooks') : activeFolder && !query ? t('emptyFolder') : t('noResults')),
       tagFilter && !query ? h('button', { class: 'btn small', onclick: () => setTagFilter(null) }, icon('close'), t('clearFilters')) : activeFolder && !query ? h('button', { class: 'btn small', onclick: () => input.click() }, icon('import'), t('importHere')) : null)); return; }
-    if (getSettings().libraryView === 'cards' && !activeFolder && !activeSeries && !query && !tagFilter) { folders.forEach((f) => grid.appendChild(folderCard(f))); if (canScanWhole() && getSettings().deviceShelf) grid.appendChild(deviceCard()); }
+    // (Folder cards and the device's shelf: cells below, after the pinned ones — src/pins.ts.)
+    const lead: Cell[] = [];
+    if (getSettings().libraryView === 'cards' && !activeFolder && !activeSeries && !query && !tagFilter) { folders.forEach((f) => lead.push({ folder: f })); if (canScanWhole() && getSettings().deviceShelf) lead.push({ device: true }); }
     // Inside a tag or a folder: the book last read there, to pick up where it was left.
     if ((tagFilter || activeFolder || activeSeries) && !query && !selecting) { const last = list.filter((b) => b.progress && (b.progress.pct ?? 0) < 0.98 && !b.done).sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))[0]; if (last && last.lastOpenedAt) grid.appendChild(continueCard(last)); }
     // A big library's cards come in batches as the grid is scrolled (a thousand cards at once would hold the
     // page for seconds); the first batch fills the screen and more.
     // A series as one card (its volumes inside), where the shelf is the library's own page.
-    type Group = { series: string; key: string; vols: Book[]; group: true };
-    type Cell = Book | Group;
     let cells: Cell[] = list;
+    // Pins of this place (src/pins.ts): a pinned book stands on its own, out of its series' card.
+    const place = pinPlace(); const pinList = place ? P.pinnedIn(place) : [];
+    const pinnedBooks = new Set(pinList.filter((x) => x.startsWith('b:')).map((x) => x.slice(2)));
     if (getSettings().groupSeries && !activeSeries && !query && getSettings().libraryView === 'cards') {
       const groups = new Map<string, Group>();
-      for (const b of list) { const p = partOf(b); if (!p) continue; const g = groups.get(p.key); if (g) g.vols.push(b); else groups.set(p.key, { series: p.name, key: p.key, vols: [b], group: true }); }
+      for (const b of list) { const p = partOf(b); if (!p || pinnedBooks.has(b.id)) continue; const g = groups.get(p.key); if (g) g.vols.push(b); else groups.set(p.key, { series: p.name, key: p.key, vols: [b], group: true }); }
       const placed = new Set<string>();
       cells = [];
       for (const b of list) {
-        const p = partOf(b); const g = p ? groups.get(p.key) : undefined;
+        const p = partOf(b); const g = p && !pinnedBooks.has(b.id) ? groups.get(p.key) : undefined;
         if (!g || g.vols.length < 2) { cells.push(b); continue; }
         if (!placed.has(g.key)) { placed.add(g.key); cells.push(g); }
       }
     }
+    shownGroups = new Map(cells.filter((c): c is Group => 'group' in c).map((g) => [g.key, g.vols.map((b) => b.id)]));
+    // The pinned first, in their order, whatever the sort; then the folders, the device's shelf, the rest.
+    const pinKey = (c: Cell) => ('group' in c ? P.pinSeries(c.key) : 'folder' in c ? P.pinFolder(c.folder.id) : 'device' in c ? '' : P.pinBook(c.id));
+    if (pinList.length) {
+      const byKey = new Map([...lead, ...cells].map((c) => [pinKey(c), c]));
+      const head = pinList.map((x) => byKey.get(x)).filter((c): c is Cell => !!c); const inHead = new Set(head);
+      cells = [...head, ...lead.filter((c) => !inHead.has(c)), ...cells.filter((c) => !inHead.has(c))];
+    } else cells = [...lead, ...cells];
     if (activeSeries) {
       const name = list.length ? partOf(list[0])?.name ?? '' : '';
       if (!list.length) { activeSeries = null; localStorage.removeItem('kr.series'); renderGrid(); return; }
@@ -1064,16 +1172,19 @@ export function libraryView(): HTMLElement {
     }
     const BATCH = 60;
     let at = 0;
-    const cellEl = (c: Cell) => ('group' in c ? seriesCard(c.series, c.key, c.vols) : card(c));
+    const cellEl = (c: Cell) => ('group' in c ? seriesCard(c.series, c.key, c.vols) : 'folder' in c ? folderCard(c.folder) : 'device' in c ? deviceCard() : card(c));
     const more = () => { const end = Math.min(cells.length, at + BATCH); for (; at < end; at++) grid.appendChild(cellEl(cells[at])); if (at < cells.length) grid.appendChild(sentinel); else sentinel.remove(); };
     const sentinel = h('div', { class: 'grid-more', 'aria-hidden': 'true' });
     gridMore?.disconnect();
     gridMore = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) more(); }, { rootMargin: '150% 0px' });
     more();
-    if (at < list.length) gridMore.observe(sentinel);
+    if (at < cells.length) gridMore.observe(sentinel);
     paintBusy();
   }
   let gridMore: IntersectionObserver | null = null;
+  // What the grid lists: a book, a series as one card, a folder, the device's shelf.
+  type Group = { series: string; key: string; vols: Book[]; group: true };
+  type Cell = Book | Group | { folder: Folder } | { device: true };
 
   // What is on its way into the library (busy.ts): a file being downloaded as a dimmed card of its own at the
   // head of the shelf, a book being filled (a novel's chapters) dimmed under its progress — clear once done.
@@ -1120,7 +1231,7 @@ export function libraryView(): HTMLElement {
     if (!root.isConnected) { window.removeEventListener('kr:books', booksChanged); return; }
     clearTimeout(booksTimer);
     booksTimer = window.setTimeout(async () => {
-      const now = await db.allBooks(); const had = new Set(books.map((b) => b.id));
+      const held = heldBooks(); const now = (await db.allBooks()).filter((b) => !held.has(b.id)); const had = new Set(books.map((b) => b.id));
       if (now.length !== had.size || now.some((b) => !had.has(b.id))) void refresh();
     }, 300);
   };
@@ -1139,9 +1250,11 @@ export function libraryView(): HTMLElement {
   }
 
   async function refresh() {
-    books = await listBooks();
+    // (Books deleted a moment ago are held for «Undo»: left out — src/ui/deletebooks.ts.)
+    { const held = heldBooks(); books = (await listBooks()).filter((b) => !held.has(b.id)); }
     folders = (await db.getMeta<Folder[]>('folders')) ?? [];
     tagDefs = (await db.getMeta<TagDef[]>('tags')) ?? [];
+    await P.loadPins();
     if (activeFolder && !folders.some((f) => f.id === activeFolder)) activeFolder = null;
     if (tagFilter && !tagDefs.some((x) => x.name === tagFilter) && !books.some((b) => (b.tags ?? []).includes(tagFilter!))) { tagFilter = null; localStorage.removeItem('kr.tag'); }
     renderGrid();
@@ -1192,6 +1305,17 @@ export function libraryView(): HTMLElement {
     else if (mod && k === 'f') { e.preventDefault(); search.focus(); }
     else if (e.key === 'Escape' && selecting) { e.preventDefault(); setSelecting(false); }
     else if (e.key === 'Delete' && selecting && selected.size) { e.preventDefault(); const del = bookActions().find(([, , , cls]) => cls === 'danger'); del?.[2](); }
+    // (Ctrl+Z: the library's last action undone; Ctrl+Shift+Z or Ctrl+Y: redone.)
+    else if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); void undoEntry(); }
+    else if (mod && ((k === 'z' && e.shiftKey) || k === 'y')) { e.preventDefault(); void redoLast(); }
+    // (P: pin or unpin what is chosen, or the card that has the focus — src/pins.ts.)
+    else if (k === 'p' && !mod && !e.altKey && !e.shiftKey) {
+      const card = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.book-grid > .book-card');
+      if (selecting && selected.size) { e.preventDefault(); void togglePins(selectionItems()).then(() => setSelecting(false)); }
+      else if (card?.dataset.book) { e.preventDefault(); void togglePins([P.pinBook(card.dataset.book)]); }
+      else if (card?.dataset.series) { e.preventDefault(); void togglePins([P.pinSeries(card.dataset.series)]); }
+      else if (card?.dataset.folder) { e.preventDefault(); void togglePins([P.pinFolder(card.dataset.folder)], P.placeMain); }
+    }
     else if (e.key === 'Enter' && selecting && selected.size === 1) { e.preventDefault(); const id = [...selected][0]; setSelecting(false); navigate(`/read/${id}`); }
   };
   document.addEventListener('keydown', onKeys);

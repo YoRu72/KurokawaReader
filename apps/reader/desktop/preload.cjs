@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('kurokawaDesktop', {
   writeTextFile(p, text) { return ipcRenderer.invoke('kr:folder-write', p, text); },
   download(url, name, id) { return ipcRenderer.invoke('kr:download', url, name, id); },
   deleteDownload(p) { return ipcRenderer.invoke('kr:delete-download', p); },
+  // (A linked book's original moved to the Recycle Bin / Trash, when its deletion is asked for: src/devicefiles.ts.)
+  trashFile(p) { return ipcRenderer.invoke('kr:trash-file', p); },
   onDownloadProgress(cb) { ipcRenderer.removeAllListeners('kr:download-progress'); ipcRenderer.on('kr:download-progress', (_e, p) => cb(p)); },
   // (Several downloads at once: each caller keeps its own listener and reads its own id.)
   addDownloadListener(cb) { const fn = (_e, p) => cb(p); ipcRenderer.on('kr:download-progress', fn); return () => ipcRenderer.removeListener('kr:download-progress', fn); },

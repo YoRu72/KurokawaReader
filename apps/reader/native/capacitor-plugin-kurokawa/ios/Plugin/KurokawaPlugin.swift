@@ -98,6 +98,34 @@ public class KurokawaPlugin: CAPPlugin, UIDocumentPickerDelegate {
         call.resolve(["data": data.base64EncodedString()])
     }
 
+    // MARK: a linked book's original deleted (the library's «Also delete the file from the device»: src/devicefiles.ts)
+
+    /// { can, gone }: a file inside a folder picked in Files (its bookmark gives access) that may be deleted.
+    @objc func canDeleteDocument(_ call: CAPPluginCall) {
+        guard let uriStr = call.getString("uri"), let url = URL(string: uriStr), url.isFileURL else { call.resolve(["can": false, "gone": false]); return }
+        guard let tree = call.getString("tree").flatMap({ treeURL($0) }) else { call.resolve(["can": false, "gone": false]); return }
+        let scoped = tree.startAccessingSecurityScopedResource()
+        defer { if scoped { tree.stopAccessingSecurityScopedResource() } }
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        call.resolve(["can": exists && FileManager.default.isDeletableFile(atPath: url.path), "gone": !exists])
+    }
+
+    /// { deleted, gone }: the file removed for good, through a file coordinator (iOS keeps no app-reachable trash).
+    @objc func deleteDocument(_ call: CAPPluginCall) {
+        guard let uriStr = call.getString("uri"), let url = URL(string: uriStr), url.isFileURL else { call.reject("uri required"); return }
+        let tree = call.getString("tree").flatMap { treeURL($0) }
+        let scoped = tree?.startAccessingSecurityScopedResource() ?? url.startAccessingSecurityScopedResource()
+        defer { if scoped { (tree ?? url).stopAccessingSecurityScopedResource() } }
+        if !FileManager.default.fileExists(atPath: url.path) { call.resolve(["deleted": false, "gone": true]); return }
+        var coordError: NSError?
+        var failure: Error?
+        NSFileCoordinator().coordinate(writingItemAt: url, options: .forDeleting, error: &coordError) { target in
+            do { try FileManager.default.removeItem(at: target) } catch { failure = error }
+        }
+        if let e: Error = failure ?? (coordError as Error?) { call.reject("delete failed: \(e.localizedDescription)"); return }
+        call.resolve(["deleted": true, "gone": false])
+    }
+
     // MARK: images
 
     @objc func saveToGallery(_ call: CAPPluginCall) {

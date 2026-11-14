@@ -159,6 +159,21 @@ pub async fn kr_delete_download(app: AppHandle, p: String) -> Result<bool, Strin
     Ok(download::delete(&app, &p))
 }
 
+/// kr:trash-file(p): a linked book's original moved to the Recycle Bin / Trash (trash.rs; never erased) →
+/// { ok: true } / { ok: false, gone: true } (no longer there) / { ok: false, error } (left where it is).
+#[tauri::command]
+pub async fn kr_trash_file(p: String) -> Result<Value, String> {
+    let path = std::path::PathBuf::from(&p);
+    if !path.exists() {
+        return Ok(json!({ "ok": false, "gone": true }));
+    }
+    let r = tauri::async_runtime::spawn_blocking(move || crate::trash::to_trash(&path)).await.map_err(|e| e.to_string())?;
+    Ok(match r {
+        Ok(()) => json!({ "ok": true, "gone": false }),
+        Err(e) => json!({ "ok": false, "gone": false, "error": e }),
+    })
+}
+
 /// (This shell's own: the bridge's cancelDownload(id).) The download with that id stopped — it rejects with
 /// «cancelled» — → whether one was under way.
 #[tauri::command]
