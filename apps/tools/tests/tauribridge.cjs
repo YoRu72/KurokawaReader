@@ -436,6 +436,25 @@ function loadBridge(boot) {
       : o.act === 'second' ? (D.openLog.push(o.args[0], 'data:application/x-bittorrent;base64,ZDQ6aW5mb2Rl'), { ended: true, code: 0 }) : undefined);
     const env = { openLog: () => D.openLog, sleep: () => new Promise((ok) => setTimeout(ok, 2)), invoke: (cmd, args) => { sent2.push({ cmd, args }); if (cmd === 'kt_selftest_desk') return Promise.resolve(deskAct(args.o)); if (cmd === 'kt_selftest_site') return Promise.resolve(siteAct(args.o)); if (cmd === 'kt_selftest_browse') return Promise.resolve(brAct(args.o)); return Promise.resolve(cmd === 'kt_boot_times' ? { paint: 180, ready: 420, now: 900, line: 'paint 180 ms · ready 420 ms', colourAtStart: true } : cmd === 'kt_selftest_icon' ? { png: kt2.__icon() ? 9 : null, ico: [], dir: '/c', last: { window: true }, setIcon: true } : cmd === 'kt_selftest_write' ? kt2.__write(args) : cmd === 'kt_selftest_updatedl' ? { size: cfg.largeSize, resumedFrom: 1048576, ok: true, refused: 'kt-update:checksum', removedWhenRefused: true, noChecksum: 'kt-update:nochecksum', kind: 'bare', file: null } : undefined); }, doc, now: () => Date.now() };
     { const inv0 = env.invoke; env.invoke = (cmd, args) => (cmd === 'kt_selftest_screen' ? (sent2.push({ cmd, args }), Promise.resolve().then(() => SCR.act(args.o))) : inv0(cmd, args)); env.pixels = SCR.pixels; }
+    // (The hybrid — hybridtest.rs, notifier.rs, mediawatch.rs, cookiecarry.rs, packadopt.rs — as their rules answer: the
+    // notice's click sent as kt:openTask, the probe naming /h/clip a video, a made-up cookie set, the stand-ins taken.)
+    {
+      const HB = 'http://127.0.0.1:9'; const opened = []; kt2.onOpenTask = (cb) => { opened.push(cb); return () => { opened.splice(opened.indexOf(cb), 1); }; };
+      const tell = (id) => setTimeout(() => opened.forEach((f) => f(id)), 3);
+      const hyb = (o) => (o.act === 'server' ? { base: HB, other: 'http://localhost:10' } : o.act === 'state' ? { notice: '', media: 'the header probe only', cookieSet: true, cookieRead: true, notifyWait: false, webviewGtk: false, wv2: false }
+        : o.act === 'probe' ? { added: 1, links: [{ href: HB + '/h/clip', text: '', kind: 'video' }], how: 'the header probe only' } : o.act === 'hits' ? 0
+        : o.act === 'cookies' ? { result: { set: 1, skipped: 2, failed: 0, api: true }, wrong: { set: 0 }, gone: true, wrongGone: true, inStore: true, sessionLeft: true, expiredLeft: true, api: true, readApi: true }
+        : o.act === 'adopt' ? { taken: { 'yt-dlp': 'taken', 'gallery-dl': 'taken', ffmpeg: 'taken', listsRead: true }, refused: { 'yt-dlp': 'not the listed program', 'gallery-dl': 'not the listed program', ffmpeg: 'no digest', listsRead: true }, gallery: true, ytSame: true, gdlSame: true, ffSame: true, marker: '7.1-test', stamp: true, leftNone: true, electronKept: true } : undefined);
+      const inv1 = env.invoke;
+      env.invoke = (cmd, args) => {
+        if (cmd === 'kt_selftest_hybrid') { sent2.push({ cmd, args }); return Promise.resolve(hyb(args.o)); }
+        if (cmd === 'kt_selftest_desk' && args.o.act === 'notifyClick') { sent2.push({ cmd, args }); tell(args.o.id); return Promise.resolve(true); }
+        if (cmd === 'kt_selftest_desk' && args.o.act === 'notifyNative') { sent2.push({ cmd, args }); return Promise.resolve({ native: false, how: 'no notification server' }); }
+        if (cmd === 'kt_selftest_desk' && args.o.act === 'second' && /^kurokawatools:\/\/task\?id=/.test(args.o.args[0])) { sent2.push({ cmd, args }); tell(args.o.args[0].split('=')[1]); return Promise.resolve({ ended: true, code: 0 }); }
+        if (cmd === 'kt_selftest_browse' && args.o.act === 'cmd' && D.br && /\/h\/page/.test(D.br.url)) { sent2.push({ cmd, args }); brTell({ kind: 'links', url: D.br.url, title: 'KT hybrid', links: [{ href: HB + '/h/clip', text: '', kind: 'video' }], ua: 'UA' }); return Promise.resolve(true); }
+        return inv1(cmd, args);
+      };
+    }
     const res = JSON.parse(JSON.stringify(await lib.run(kt2, Object.assign({}, cfg, { part }), env)));
     const last = sent2[sent2.length - 1];
     assert.equal(last.cmd, 'kt_selftest_done');
@@ -456,6 +475,9 @@ function loadBridge(boot) {
     const p3 = res.filter((r) => /^(files|deletePath|archiveFree|font|megaDecrypt)/.test(r.name));
     assert.ok(p3.length >= 15 && p3.every((r) => r.ok), 'the P3 checks against the pretend disk: ' + JSON.stringify(p3.filter((r) => !r.ok)));
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_progress'));
+    const hy = res.filter((r) => /^hybrid:/.test(r.name));
+    assert.ok(hy.length === 8 && hy.filter((r) => !/reported/.test(r.name)).every((r) => r.ok) && hy.filter((r) => /reported/.test(r.name)).every((r) => !r.required), 'the hybrid\'s checks against the pretend shell: ' + JSON.stringify(hy.filter((r) => !r.ok)));
+    assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_desk' && c.args.o.act === 'second' && c.args.o.args[0] === 'kurokawatools://task?id=kt-hybrid-2'), 'the toast\'s click address driven through a second launch');
     const scr = res.filter((r) => /^screen:/.test(r.name));
     assert.ok(scr.length === 13 && scr.every((r) => r.ok), 'the screen translator\'s checks against the pretend screen: ' + JSON.stringify(scr.filter((r) => !r.ok)));
   }

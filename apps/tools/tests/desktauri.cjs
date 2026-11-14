@@ -24,7 +24,9 @@ const web = http.createServer((req, res) => { let p = decodeURIComponent(req.url
     const sent = await p.evaluate(() => window.__prefs[0]);
     const toasts = await p.$$eval('.toast, [class*="toast"]', (els) => els.map((e) => e.textContent.trim()).filter(Boolean));
     const L = sent.labels || {};
-    const okLabels = typeof L.quit === 'string' && L.quit && typeof L.app === 'string' && L.app && Object.keys(L).length >= 20 && (lang !== 'ar' || /[؀-ۿ]/.test(L.quit));
+    const okLabels = typeof L.quit === 'string' && L.quit && typeof L.app === 'string' && L.app && Object.keys(L).length >= 20 && (lang !== 'ar' || /[؀-ۿ]/.test(L.quit))
+      // (The hybrid: the Linux notice's action that opens the finished download, in the interface's language.)
+      && typeof L.noticeOpen === 'string' && !!L.noticeOpen && (lang !== 'ar' || /[؀-ۿ]/.test(L.noticeOpen));
     const okSent = sent.tray === true && sent.hotkeys.clip === 'CommandOrControl+Shift+V';
     const okToasts = answer ? toasts.some((t) => t.includes('AltGr+V')) && toasts.some((t) => t.includes('CommandOrControl+Shift+V')) && (lang === 'en' ? toasts.some((t) => /another program holds it/.test(t)) : true) : !toasts.some((t) => t.includes('AltGr+V'));
     if (answer) await p.screenshot({ path: path.join(__dirname, `shot-desktauri-${lang}.png`) });

@@ -16,7 +16,9 @@ const wrapFmt = /let js = format!\(\s*"(\(function\(\)\{\{var S=window\[\{\}\];[
 const N = 'n0nce'; const CMD = 'cmdtok'; const K = '__kt' + N; const CH = 1500;
 const words = { back: 'رجوع', forward: 'تقدّم', reload: 'إعادة', address: 'عنوان', grab: 'التقاط', copy: 'نسخ', external: 'خارجي', rtl: true };
 const init = INIT.replace('__S__', `${SENDER}(${JSON.stringify(K)},${JSON.stringify(N)},${CH})`).replace('__CMD__', JSON.stringify(CMD)).replace('__C__', JSON.stringify(words));
-const grabCall = (rid) => { let i = 0; const args = [JSON.stringify(K), GRAB, JSON.stringify(rid)]; return wrapFmt[1].replace(/\{\{/g, '\u0001').replace(/\}\}/g, '\u0002').replace(/\{\}/g, () => args[i++]).replace(/\u0001/g, '{').replace(/\u0002/g, '}'); };
+// (The hybrid: the page's resource timing listed beside the grab — mediawatch.rs CAND_JS — for the header probe.)
+const CAND = /pub const CAND_JS: &str = "((?:[^"\\]|\\.)*)";/.exec(fs.readFileSync(path.join(SRC, 'mediawatch.rs'), 'utf8')); assert.ok(CAND, 'CAND_JS');
+const grabCall = (rid) => { let i = 0; const args = [JSON.stringify(K), GRAB, JSON.parse('"' + CAND[1] + '"'), JSON.stringify(rid)]; return wrapFmt[1].replace(/\{\{/g, '\u0001').replace(/\}\}/g, '\u0002').replace(/\{\}/g, () => args[i++]).replace(/\u0001/g, '{').replace(/\u0002/g, '}'); };
 
 const links = Array.from({ length: 120 }, (_, i) => `<a href="/files/f${i}.mkv">file ${i}</a>`).join(' ');
 const site = http.createServer((req, res) => {
@@ -66,6 +68,7 @@ const site = http.createServer((req, res) => {
   const page = JSON.parse(g.body.toString('utf8'));
   assert.ok(g.n > 3, 'the grab came in pieces: ' + g.n);
   assert.equal(page.url, base + '/'); assert.equal(page.title, 'KT site'); assert.ok(/Chrome|Mozilla/.test(page.ua));
+  assert.ok(Array.isArray(page.cand) && page.cand.every((c) => Array.isArray(c) && typeof c[0] === 'string' && typeof c[1] === 'string'), 'the resource timing listed for the probe: ' + JSON.stringify(page.cand).slice(0, 200));
   assert.ok(page.links.some((l) => l.href === base + '/v/movie.mp4' && l.kind === 'video'), 'the video');
   assert.ok(page.links.some((l) => l.href === base + '/files/f119.mkv' && l.kind === 'video'), 'the last link');
   // (An answer not asked for is not taken.)

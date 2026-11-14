@@ -65,6 +65,16 @@ mod ownerlock;
 mod boot;
 #[path = "../../../../reader/desktop-tauri/src-tauri/src/bootlogic.rs"]
 mod bootlogic;
+// (The hybrid — four losses against Electron closed by whichever native piece each system has, with an honest
+// fallback; ../PORTING.md «Closed by the hybrid»: notifier.rs a notice's click, mediawatch.rs media told by content
+// type, cookiecarry.rs the browser's sign-ins carried at the hand-over, packadopt.rs Electron's programs taken over;
+// their rules in hybridlogic.rs (std only); hybridtest.rs the self-test's side.)
+mod cookiecarry;
+mod hybridlogic;
+mod hybridtest;
+mod mediawatch;
+mod notifier;
+mod packadopt;
 
 use std::path::PathBuf;
 
@@ -252,7 +262,9 @@ fn main() {
             ownerlock::kt_downloads_owner,
             ownerlock::kt_downloads_take,
             boot::kt_boot_mark,
-            boot::kt_boot_times
+            boot::kt_boot_times,
+            // (The hybrid's self-test side.)
+            hybridtest::kt_selftest_hybrid
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -287,6 +299,13 @@ fn main() {
             // (Stage P5: the video tools' folders and jobs; yt-dlp brought up to date now and then, as main.cjs does.)
             vtools::init(&handle);
             vtools::schedule_updates();
+            // (The hybrid: yt-dlp, gallery-dl and the ffmpeg pack the Electron build fetched, taken over when a trusted
+            // list names them — packadopt.rs, in the background —; cookie files left in old hand-overs wiped.)
+            packadopt::at_start(&handle);
+            {
+                let h2 = handle.clone();
+                let _ = std::thread::Builder::new().name("kt-handover-tidy".into()).spawn(move || handover::cookies_at_start(&h2));
+            }
             let data_dir = match app.path().app_data_dir() {
                 Ok(d) => d,
                 Err(_) => std::env::temp_dir().join("kurokawa-tools"),

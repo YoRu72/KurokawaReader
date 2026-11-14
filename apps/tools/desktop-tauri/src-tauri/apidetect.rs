@@ -188,6 +188,83 @@ pub fn detect_tauri_scr(src: &str) -> Vec<Found> {
     ]
 }
 
+/* ---------- the hybrid closures (notifier.rs, mediawatch.rs, cookiecarry.rs) ---------- */
+
+/// The cfg names of the hybrid's native calls: a Linux notice's click waited for (notify-rust), the web view's own
+/// object reached (with_webview; WebKitGTK's on Linux), WebKitGTK's responses watched, a cookie put into the browser's
+/// store (set_cookie), a cookie read from its Set-Cookie line (the cookie crate's FromStr).
+pub const CFGS_HYB: [&str; 5] = ["kt_notify_wait", "kt_webview_gtk", "kt_wk_resources", "kt_cookie_set", "kt_cookie_fromstr"];
+
+/// Every version of `name` in a Cargo.lock's text (a crate the shell names itself must be the one its users resolve:
+/// one version, or its types are not theirs).
+pub fn locked_versions(lock: &str, name: &str) -> Vec<String> {
+    let want = format!("name = \"{}\"", name);
+    let mut out: Vec<String> = Vec::new();
+    let mut lines = lock.lines();
+    while let Some(l) = lines.next() {
+        if l.trim() == want {
+            if let Some(v) = lines.next().and_then(|v| v.trim().strip_prefix("version = \"").and_then(|v| v.strip_suffix('"')).map(String::from)) {
+                out.push(v);
+            }
+        }
+    }
+    out
+}
+
+/// Two versions compared by their numbers («0.18.1» after «0.16.2»; a pre-release tag ignored).
+pub fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let n = |v: &str| v.split(['-', '+']).next().unwrap_or("").split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect::<Vec<u64>>();
+    n(a).cmp(&n(b))
+}
+
+/// What the squeezed source of notify-rust offers on Linux: a notice with an action, shown, and its answer waited for.
+pub fn detect_notify(src: &str) -> Vec<Found> {
+    let has = |s: &str| src.contains(&squeeze(s));
+    let on = has("pub fn action(&mut self, identifier: &str, label: &str) -> &mut Notification")
+        && has("pub fn summary(&mut self, summary: &str) -> &mut Notification")
+        && has("pub fn body(&mut self, body: &str) -> &mut Notification")
+        && has("pub fn appname(&mut self, appname: &str) -> &mut Notification")
+        && (has("pub fn show(&self) -> Result<NotificationHandle>") || has("pub fn show(&self) -> Result<xdg::NotificationHandle>"))
+        && has("pub fn wait_for_action<F>(self")
+        && has("FnOnce(&str)");
+    vec![Found { cfg: "kt_notify_wait", what: "a Linux notice's click (notify-rust wait_for_action)", on }]
+}
+
+/// What the squeezed tauri source offers the hybrid: the web view's own object (with_webview, on Webview and
+/// WebviewWindow; WebKitGTK's WebView on Linux), a cookie put into a web view's store (set_cookie, on both).
+pub fn detect_tauri_hyb(src: &str) -> Vec<Found> {
+    let has = |s: &str| src.contains(&squeeze(s));
+    let twice = |s: &str| src.matches(&squeeze(s)).count() >= 2;
+    let with = twice("pub fn with_webview<F: FnOnce(PlatformWebview) + Send + 'static>(");
+    let set = twice("pub fn set_cookie(&self, cookie: Cookie<'_>) -> crate::Result<()>") || twice("pub fn set_cookie(&self, cookie: Cookie<'static>) -> crate::Result<()>");
+    vec![
+        Found { cfg: "kt_webview_gtk", what: "the web view's own object (with_webview; WebKitGTK's inner)", on: with && has("pub fn inner(&self) -> webkit2gtk::WebView") },
+        Found { cfg: "kt_cookie_set", what: "a cookie put into the browser's store (set_cookie)", on: set },
+    ]
+}
+
+/// What the squeezed source of webkit2gtk offers: each resource a page loads, its end, its response's MIME type.
+pub fn detect_webkit(src: &str) -> Vec<Found> {
+    let has = |s: &str| src.contains(&squeeze(s));
+    let on = has("fn connect_resource_load_started<F: Fn(&Self, &WebResource, &URIRequest) + 'static>(")
+        && has("fn connect_finished<F: Fn(&Self) + 'static>(")
+        && has("fn response(&self) -> Option<URIResponse>")
+        && has("fn mime_type(&self) -> Option<glib::GString>")
+        && has("fn uri(&self) -> Option<glib::GString>")
+        // (Each as a trait the code imports — a final class's methods would be its own, and the import would fail.)
+        && has("pub trait WebViewExt")
+        && has("pub trait WebResourceExt")
+        && has("pub trait URIResponseExt");
+    vec![Found { cfg: "kt_wk_resources", what: "WebKitGTK's responses watched (resource-load-started, mime_type)", on }]
+}
+
+/// What the squeezed source of the cookie crate offers: a Cookie read from a Set-Cookie line by `str::parse`.
+pub fn detect_cookie(src: &str) -> Vec<Found> {
+    let has = |s: &str| src.contains(&squeeze(s));
+    let on = has("impl FromStr for Cookie<'static> {") || has("impl<'c> FromStr for Cookie<'c> {");
+    vec![Found { cfg: "kt_cookie_fromstr", what: "a cookie read from its Set-Cookie line (FromStr)", on }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,5 +346,37 @@ mod tests {
         assert!(crate_src(&d, "tauri-plugin-opener", "2.0.0").is_none());
         assert!(detect_opener(&squeeze_tree(&src))[0].on);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn hybrid() {
+        let l = "[[package]]\nname = \"cookie\"\nversion = \"0.16.2\"\n\n[[package]]\nname = \"cookie\"\nversion = \"0.18.1\"\n";
+        assert_eq!(locked_versions(l, "cookie"), vec!["0.16.2".to_string(), "0.18.1".to_string()]);
+        assert!(locked_versions(l, "wry").is_empty());
+        assert_eq!(version_cmp("0.18.1", "0.16.2"), std::cmp::Ordering::Greater);
+        assert_eq!(version_cmp("2.0.10", "2.0.9"), std::cmp::Ordering::Greater);
+        assert_eq!(version_cmp("1.0.0-rc.1", "1.0.0"), std::cmp::Ordering::Equal);
+        let n = squeeze("pub fn appname(&mut self, appname: &str) -> &mut Notification {\npub fn summary(&mut self, summary: &str) -> &mut Notification {\npub fn body(&mut self, body: &str) -> &mut Notification {\npub fn action(&mut self, identifier: &str, label: &str) -> &mut Notification {\npub fn show(&self) -> Result<NotificationHandle> {\npub fn wait_for_action<F>(self, invocation_closure: F)\nwhere\n F: FnOnce(&str),\n{");
+        assert!(detect_notify(&n)[0].on);
+        assert!(!detect_notify(&squeeze("pub fn show(&self) -> Result<NotificationHandle> {"))[0].on);
+        let w = "pub fn with_webview<F: FnOnce(PlatformWebview) + Send + 'static>(\n &self,\n f: F,\n ) -> crate::Result<()> {\npub fn set_cookie(&self, cookie: Cookie<'_>) -> crate::Result<()> {\n";
+        let t = detect_tauri_hyb(&squeeze(&format!("{}{}pub fn inner(&self) -> webkit2gtk::WebView {{", w, w)));
+        assert!(t[0].on && t[1].on);
+        let t1 = detect_tauri_hyb(&squeeze(w));
+        assert!(!t1[0].on && !t1[1].on);
+        let k = squeeze("fn connect_resource_load_started<F: Fn(&Self, &WebResource, &URIRequest) + 'static>(\n &self, f: F) -> SignalHandlerId;\nfn connect_finished<F: Fn(&Self) + 'static>(&self, f: F) -> SignalHandlerId;\nfn response(&self) -> Option<URIResponse>;\nfn mime_type(&self) -> Option<glib::GString>;\nfn uri(&self) -> Option<glib::GString>;");
+        assert!(!detect_webkit(&k)[0].on, "the traits not found");
+        let k = format!("{}{}", k, squeeze("pub trait WebViewExt: 'static {\npub trait WebResourceExt: 'static {\npub trait URIResponseExt: 'static {"));
+        assert!(detect_webkit(&k)[0].on && !detect_webkit("")[0].on);
+        assert!(detect_cookie(&squeeze("impl FromStr for Cookie<'static> {\n type Err = ParseError;"))[0].on);
+        assert!(!detect_cookie("")[0].on);
+        let mut all: Vec<&str> = detect_notify("").iter().map(|x| x.cfg).collect();
+        all.extend(detect_tauri_hyb("").iter().map(|x| x.cfg));
+        all.extend(detect_webkit("").iter().map(|x| x.cfg));
+        all.extend(detect_cookie("").iter().map(|x| x.cfg));
+        let mut want = CFGS_HYB.to_vec();
+        want.sort();
+        all.sort();
+        assert_eq!(all, want);
     }
 }

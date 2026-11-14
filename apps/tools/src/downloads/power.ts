@@ -12,7 +12,9 @@ function deskLabels(): Record<string, string | boolean> {
     view: t('menuView'), fullscreen: t('menuFullscreen'), window: t('menuWindow'), minimize: t('menuMinimize'), zoom: t('menuZoom'),
     // (Stage P7: the in-app browser's bar.)
     browserBack: t('browserBarBack'), browserForward: t('browserBarForward'), browserReload: t('browserBarReload'), browserAddress: t('browserBarAddress'),
-    browserGrab: t('browserBarGrab'), browserCopy: t('browserBarCopy'), browserExternal: t('browserBarExternal'), rtl: document.documentElement.dir === 'rtl' };
+    browserGrab: t('browserBarGrab'), browserCopy: t('browserBarCopy'), browserExternal: t('browserBarExternal'), rtl: document.documentElement.dir === 'rtl',
+    // (The hybrid: a Linux notice's action that opens the finished download.)
+    noticeOpen: t('noticeOpen') };
 }
 
 export interface Power { wifiOnly?: boolean; batteryGuard?: boolean; keepAwake?: boolean; whenDone?: 'nothing' | 'quit' | 'sleep' | 'shutdown';

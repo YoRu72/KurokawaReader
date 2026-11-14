@@ -385,12 +385,20 @@ fn notify(app: &AppHandle, list: &[(String, String, String)]) {
     if list.is_empty() {
         return;
     }
-    use tauri_plugin_notification::NotificationExt;
     let front = app.get_webview_window("main").and_then(|w| w.is_focused().ok()).unwrap_or(false);
-    for (id, title, body) in list.iter() {
-        if app.notification().builder().title(title).body(body).show().is_ok() {
-            desk().notice.told(id, now_ms(), front);
-        }
+    // (The hybrid: the system's own notice with its click wired where it can — notifier.rs —, else the plugin's with
+    // the stand-in for its click. Off this thread: the native way may wait for the system's answer.)
+    for (id, title, body) in list.iter().cloned() {
+        let app = app.clone();
+        let _ = std::thread::Builder::new().name("kt-notify".into()).spawn(move || {
+            if crate::notifier::show(&app, &id, &title, &body).is_ok() {
+                return;
+            }
+            use tauri_plugin_notification::NotificationExt;
+            if app.notification().builder().title(&title).body(&body).show().is_ok() {
+                desk().notice.told(&id, now_ms(), front);
+            }
+        });
     }
 }
 
@@ -785,6 +793,16 @@ static LINKS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// A launch's arguments (the program's name left out): links kept for the page (kt:open), .torrent files read into
 /// data: addresses (main.cjs's takeArg); the page told (kt:openPending).
 pub fn queue(app: &AppHandle, args: &[String], cwd: &Path) {
+    // (The hybrid: a Windows notice's click comes back as its kurokawatools://task address — that download opened,
+    // nothing handed to the page as a link. At a cold start the page is not listening yet: the app just opens.)
+    let mut rest: Vec<String> = Vec::with_capacity(args.len());
+    for a in args.iter() {
+        match crate::hybridlogic::task_link_id(a) {
+            Some(id) => crate::notifier::clicked(app, &id),
+            None => rest.push(a.clone()),
+        }
+    }
+    let args: &[String] = &rest;
     let items = logic::sort_args(args, cwd, cfg!(windows), &|p: &Path| p.is_file());
     let mut add: Vec<String> = Vec::new();
     for it in items {
@@ -928,6 +946,18 @@ pub async fn kt_selftest_desk(app: AppHandle, o: Value) -> Result<Value, String>
         "notify" => {
             use tauri_plugin_notification::NotificationExt;
             Ok(json!(app.notification().builder().title(APP).body("Self-test notice").show().is_ok()))
+        }
+        // (The hybrid's notifier: a notice shown the system's own way → { native, how }; and its click's callback run
+        // as the system runs it — a CI runner has no notification centre to click.)
+        "notifyNative" => {
+            let id = o.get("id").and_then(|v| v.as_str()).unwrap_or("kt-selftest").to_string();
+            let a2 = app.clone();
+            let r = tauri::async_runtime::spawn_blocking(move || crate::notifier::show(&a2, &id, APP, "Self-test notice")).await.map_err(|e| e.to_string())?;
+            Ok(json!({ "native": r.is_ok(), "how": crate::notifier::last() }))
+        }
+        "notifyClick" => {
+            crate::notifier::clicked(&app, o.get("id").and_then(|v| v.as_str()).unwrap_or(""));
+            Ok(json!(true))
         }
         "hotkey" => {
             hotkey_fired(&app, o.get("mode").and_then(|v| v.as_str()).unwrap_or("test"));

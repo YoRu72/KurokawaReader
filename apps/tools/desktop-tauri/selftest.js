@@ -139,6 +139,8 @@
     await runIcon(kt, cfg, env, check, must);
     /* stage P5: the video tools (stand-in programs, a loopback release server) */
     await runP5(kt, cfg, env, check, must, waitFor);
+    /* the hybrid: four losses against Electron closed natively where each system can (its own loopback server) */
+    await runHybrid(kt, cfg, env, check, must, waitFor);
     }
     if (part !== 1) {
     /* the engine */
@@ -503,6 +505,102 @@
       return 'closed';
     }, 15000);
     off();
+  }
+
+  /* The hybrid (notifier.rs, mediawatch.rs, cookiecarry.rs, packadopt.rs; rules in hybridlogic.rs — PORTING.md «Closed
+     by the hybrid»), against a loopback server of its own (hybridtest.rs) and made-up data only:
+     - a notice's click opens its download: the callback the system runs (a CI runner has no notification centre to
+       click) and, on Windows, the address a toast's click hands Windows (kurokawatools://task?id=…) through a second
+       launch; the system's own notice reported (no notification server on CI's Linux; the bare build is not the
+       kurokawatools: handler — the installed one is);
+     - media a server names only by its Content-Type: the header probe as Grab runs it (HEAD, one request each, no
+       redirect to another host), then the browser's Grab on a page whose script fetched such a medium;
+     - the browser's sign-ins carried: a hand-over's made-up cookie put into the browser's store, the session-only and
+       expired ones left out, the file gone;
+     - Electron's programs taken over: stand-ins taken only when the lists name their digests, never otherwise. */
+  async function runHybrid(kt, cfg, env, check, must, waitFor) {
+    var H = function (o) { return env.invoke('kt_selftest_hybrid', { o: o }); };
+    var win = cfg.os === 'win32';
+    var srv = null; var st = {};
+    var up = await check('hybrid: its loopback server, and how this build closes each loss', true, async function () {
+      srv = await H({ act: 'server' }); must(srv && /^http:\/\/127\.0\.0\.1:\d+$/.test(srv.base), short(srv));
+      st = (await H({ act: 'state' })) || {}; return short(st);
+    });
+    if (!up) return;
+    if (typeof kt.onOpenTask === 'function') {
+      var opened = []; var off = kt.onOpenTask(function (id) { opened.push(id); });
+      await check('hybrid: a notice\'s click opens its download (kt:openTask, as Electron\'s)', true, async function () {
+        await env.invoke('kt_selftest_desk', { o: { act: 'notifyClick', id: 'kt-hybrid-1' } });
+        await waitFor(function () { return opened.indexOf('kt-hybrid-1') >= 0; }, 10000, 'kt:openTask kt-hybrid-1');
+        return 'kt:openTask kt-hybrid-1';
+      });
+      var s0 = (await env.invoke('kt_selftest_desk', { o: { act: 'state' } })) || {};
+      await check('hybrid: a toast\'s click address (kurokawatools://task) through a second launch opens its download', win && !!s0.single, async function () {
+        must(s0.single, 'no single-instance here');
+        var r = await env.invoke('kt_selftest_desk', { o: { act: 'second', args: ['kurokawatools://task?id=kt-hybrid-2'] } });
+        must(r && r.ended, 'the second launch did not end: ' + short(r));
+        await waitFor(function () { return opened.indexOf('kt-hybrid-2') >= 0; }, 10000, 'kt:openTask kt-hybrid-2');
+        var log = (env.openLog ? env.openLog() : root.__KT_OPEN_LOG__) || [];
+        must(!log.some(function (x) { return /kurokawatools:\/\/task/i.test(x); }), 'handed to the page as a link: ' + short(log));
+        return 'kt:openTask kt-hybrid-2, no link';
+      }, 30000);
+      await check('hybrid: a notice the system\'s own way, its click wired (reported)', false, async function () {
+        var r = await env.invoke('kt_selftest_desk', { o: { act: 'notifyNative', id: 'kt-hybrid-3' } });
+        must(r && r.native === true, 'the plugin\'s notice and the focus stand-in here: ' + short(r && r.how));
+        return 'shown natively';
+      }, 30000);
+      off();
+    }
+    await check('hybrid: the header probe names a medium by its Content-Type (HEAD, one each, no other host)', true, async function () {
+      var before = await H({ act: 'hits' });
+      var page = srv.base + '/h/page';
+      var r = await H({ act: 'probe', page: page, cand: [[srv.base + '/h/clip', 'fetch'], [srv.base + '/h/note', 'fetch'], [srv.base + '/h/away', 'xmlhttprequest'], [srv.base + '/h/app.js', 'script'], [srv.base + '/h/clip', 'fetch']] });
+      var links = (r && r.links) || [];
+      must(links.length === 1 && links[0].href === srv.base + '/h/clip' && links[0].kind === 'video', short(r));
+      var again = await H({ act: 'probe', page: page, cand: [[srv.base + '/h/clip', 'fetch']] });
+      must(again && again.links && again.links.length === 1, 'the kept answer: ' + short(again));
+      var after = await H({ act: 'hits' }); must(after === before, 'the other host was reached ' + (after - before) + ' times');
+      return '/h/clip → video; /h/note, the redirect away and the script left; ' + r.how;
+    }, 30000);
+    if (typeof kt.browse === 'function' && typeof kt.onBrowser === 'function') {
+      var b = function (o) { return env.invoke('kt_selftest_browse', { o: o }); };
+      var seen = []; var offB = kt.onBrowser(function (o) { seen.push(o); });
+      await check('hybrid: Grab in the browser lists a medium named only by its Content-Type', win, async function () {
+        must(await kt.browse({ url: srv.base + '/h/page' }) === true, 'browse did not answer true');
+        var w = null; for (var i = 0; i < 80 && !w; i++) { w = ((await b({ act: 'list' })) || []).filter(function (x) { return x.label.indexOf('ktb-browse') === 0 && x.url.indexOf('/h/page') > 0; })[0] || null; if (!w) await env.sleep(250); }
+        must(w, 'no browser window on /h/page');
+        await env.sleep(2500);
+        seen.length = 0; await b({ act: 'cmd', cmd: 'grab' });
+        var o = await waitFor(function () { return seen.filter(function (x) { return x && x.kind === 'links'; })[0]; }, 25000, 'kt:browser links');
+        must(!('cand' in o), 'the probe\'s list left in the answer');
+        var hit = (o.links || []).filter(function (l) { return l.href === srv.base + '/h/clip'; })[0];
+        must(hit && hit.kind === 'video', 'not listed as a video: ' + short(o.links));
+        return (o.links || []).length + ' links, /h/clip a video';
+      }, 45000);
+      await b({ act: 'close' }).catch(function () {});
+      offB();
+    }
+    var ck = null; // eslint-disable-line no-unused-vars
+    // (Required on Windows where this build can set and read the browser's cookies; reported elsewhere.)
+    await check('hybrid: the browser\'s sign-ins carried — a made-up cookie in its store, session and expired ones left out, the file gone', win && !!st.cookieSet && !!st.cookieRead, async function () {
+      ck = await H({ act: 'cookies' });
+      must(ck && ck.gone && ck.wrongGone, 'the file was not wiped: ' + short(ck));
+      must(ck.wrong && ck.wrong.set === 0, 'another hand-over\'s note taken: ' + short(ck.wrong));
+      must(ck.api, 'no set_cookie in this build (wiped all the same)');
+      must(ck.result && ck.result.set === 1 && ck.result.skipped === 2, short(ck.result));
+      must(ck.readApi ? ck.inStore && ck.sessionLeft && ck.expiredLeft : true, 'not in the browser\'s store: ' + short(ck));
+      return 'set 1, left out 2' + (ck.readApi ? ', read back' : '');
+    }, 45000);
+    await check('hybrid: Electron\'s programs taken over only when the lists name their digests (nothing run)', true, async function () {
+      var r = await H({ act: 'adopt' });
+      must(r && r.taken && r.taken['yt-dlp'] === 'taken' && r.ytSame, 'yt-dlp: ' + short(r && r.taken));
+      must(r.taken.ffmpeg === 'taken' && r.ffSame && r.marker === '7.1-test', 'ffmpeg: ' + short(r.taken) + ' marker ' + short(r.marker));
+      if (r.gallery) must(r.taken['gallery-dl'] === 'taken' && r.gdlSame, 'gallery-dl: ' + short(r.taken));
+      must(r.stamp, 'no yt-dlp stamp');
+      must(r.leftNone && r.refused && r.refused['yt-dlp'] !== 'taken' && r.refused.ffmpeg !== 'taken' && r.refused['gallery-dl'] !== 'taken', 'taken against other lists: ' + short(r.refused));
+      must(r.electronKept, 'Electron\'s copy changed');
+      return 'taken: yt-dlp, ffmpeg (marker ' + r.marker + ')' + (r.gallery ? ', gallery-dl' : '') + '; other lists: none';
+    }, 60000);
   }
 
   /* stage P6 (desktop.rs): prefs, the tray, the clipboard hotkeys (one registered, one refused plainly; a press's way to

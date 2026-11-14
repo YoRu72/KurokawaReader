@@ -318,4 +318,47 @@ async function prepare({ app, webContents }) {
   return { ok: true, dir: st.dir, id: st.marker.id, counts: st.marker.counts || {} };
 }
 
-module.exports = { install, prepare, Writer, status, safeRel, tauriDataDir, freeBytes, dirSize, pauseEngine, resumeEngine, SHELL_FILES, ENGINE_FILES, APP, FORMAT, DIR, PART, MARKER, POINTER, PORTABLE_POINTER, IDENTIFIER, MARGIN };
+/* ---------- Tools' own: the in-app browser's sign-ins (the hybrid, desktop-tauri/PORTING.md «Closed by the hybrid») ---------- */
+/** The browser's cookies handed over, and their note — beside the marker, NOT in its list: the Rust build deletes them
+ *  once read (handover.rs / cookiecarry.rs), and the rest of the hand-over must still check out. */
+const COOKIE_FILE = 'browser-cookies.json'; const COOKIE_NOTE = 'browser-cookies.note.json';
+/** A file overwritten with zeros, flushed, removed (cookie values never left in the clear). */
+async function wipeFile(p) {
+  let st; try { st = await fsp.stat(p); } catch { return; }
+  try { const fh = await fsp.open(p, 'r+'); try { if (st.size > 0) await fh.write(Buffer.alloc(st.size), 0, st.size, 0); await fh.sync(); } finally { await fh.close(); } } catch { /* removed below */ }
+  await fsp.rm(p, { force: true });
+}
+/** The bridge build only (main.cjs rustSwitch, behind RUST_SWITCH): the in-app browser's cookies (Electron's
+ *  session.cookies.get) written into the hand-over `dir` — those that outlive the session and have not expired; the
+ *  file readable by this user only (POSIX 0600; on Windows its inherited rights replaced by this user's alone) —, with a
+ *  note naming the hand-over's id, their count and the file's SHA-256 → { count }. Never logged. */
+async function exportCookies(dir, id, cookies) {
+  const now = Date.now() / 1000;
+  const list = (Array.isArray(cookies) ? cookies : []).filter((c) => c && !c.session && Number(c.expirationDate) > now + 60 && typeof c.name === 'string' && c.name && typeof c.value === 'string' && typeof c.domain === 'string' && c.domain)
+    .map((c) => ({ name: c.name, value: c.value, domain: c.domain, hostOnly: !!c.hostOnly, path: typeof c.path === 'string' && c.path ? c.path : '/', secure: !!c.secure, httpOnly: !!c.httpOnly, expirationDate: Number(c.expirationDate), sameSite: String(c.sameSite || 'unspecified') }));
+  await dropCookies(dir);
+  const body = Buffer.from(JSON.stringify(list)); const file = path.join(dir, COOKIE_FILE);
+  const fh = await fsp.open(file, 'wx', 0o600); try { await fh.writeFile(body); await fh.sync(); } finally { await fh.close(); }
+  if (process.platform === 'win32') {
+    try { require('node:child_process').execFileSync('icacls', [file, '/inheritance:r', '/grant:r', `${os.userInfo().username}:F`], { windowsHide: true, stdio: 'ignore' }); } catch { /* the profile's own rights stay */ }
+  }
+  const note = { app: APP, kind: 'browser-cookies', id: String(id || ''), count: list.length, size: body.length, sha256: crypto.createHash('sha256').update(body).digest('hex') };
+  await writeAtomic(path.join(dir, COOKIE_NOTE), JSON.stringify(note));
+  return { count: list.length };
+}
+/** (The bridge build, at its start) a hand-over's cookies older than 14 days wiped — the Rust build wipes them once it
+ *  has read them; these were never taken → whether any were. */
+async function tidyCookies(root, now = Date.now()) {
+  const st = status(root); const dir = path.join(root, DIR);
+  if (!fs.existsSync(path.join(dir, COOKIE_FILE)) && !fs.existsSync(path.join(dir, COOKIE_NOTE))) return false;
+  if (st && now - Number(st.marker.createdAt || 0) <= 14 * 86400000) return false;
+  return dropCookies(dir);
+}
+/** The cookies' file and note wiped (the switch did not happen) → true. */
+async function dropCookies(dir) {
+  if (!dir) return false;
+  for (const n of [COOKIE_FILE, COOKIE_NOTE]) await wipeFile(path.join(dir, n)).catch(() => undefined);
+  return true;
+}
+
+module.exports = { install, prepare, exportCookies, dropCookies, tidyCookies, COOKIE_FILE, COOKIE_NOTE, Writer, status, safeRel, tauriDataDir, freeBytes, dirSize, pauseEngine, resumeEngine, SHELL_FILES, ENGINE_FILES, APP, FORMAT, DIR, PART, MARKER, POINTER, PORTABLE_POINTER, IDENTIFIER, MARGIN };

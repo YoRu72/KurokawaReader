@@ -15,8 +15,9 @@
 //
 // What differs, said plainly: Electron's bar is the window's menu; here a small bar floats in a corner of the page (a
 // closed shadow root), in the interface's words (the page's desktopPrefs labels). Electron also listed what the page
-// loaded by the answers' content types (webRequest.onCompleted); no system web view gives that, so «Grab» has what
-// GRAB_JS finds (elements, links, the page's resource timing — which already holds the media it loaded by address).
+// loaded by the answers' content types (webRequest.onCompleted); here «Grab» has what GRAB_JS finds (elements, links,
+// the page's resource timing — the media it loaded by address) and, the hybrid's (mediawatch.rs), what WebKitGTK saw
+// on Linux and the header probe's answers for the page's other addresses everywhere.
 // A site's own scripts can see the channel's token (it lives in their page), so they can send what the page sends —
 // a title — and nothing else: the bar's commands carry a second token that lives only inside the bar's closure, and a
 // grab's answer is taken only when asked for.
@@ -287,6 +288,10 @@ fn handle(app: &AppHandle, win: &Arc<Win>, rid: &str, meta: Value, body: Vec<u8>
                 let url = page.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let _ = site_cookies(&app, &url);
                 let mut o = page;
+                // (The hybrid: media the server named only by its content type — what the web view saw, then the header
+                // probe of the page's other addresses; mediawatch.rs. Its list `cand` is taken off here.)
+                let ua = lock(&UA).clone();
+                crate::mediawatch::complete(&mut o, &ua, &|u: &str| site_cookies(&app, u));
                 o["kind"] = json!("links");
                 to_app(&app, o);
             });
@@ -309,9 +314,10 @@ fn command(app: &AppHandle, win: &Arc<Win>, act: &str) {
                 }
             }
             let js = format!(
-                "(function(){{var S=window[{}];if(!S)return;try{{var r={};r.ua=navigator.userAgent;S.send({},{{kind:'grab'}},new TextEncoder().encode(JSON.stringify(r)));}}catch(e){{}}}})();",
+                "(function(){{var S=window[{}];if(!S)return;try{{var r={};r.ua=navigator.userAgent;r.cand={};S.send({},{{kind:'grab'}},new TextEncoder().encode(JSON.stringify(r)));}}catch(e){{}}}})();",
                 js_str(&win.key()),
                 GRAB_JS.trim(),
+                crate::mediawatch::CAND_JS,
                 js_str(&rid)
             );
             eval_in(app, &win.label, &js);
@@ -493,7 +499,26 @@ pub fn open(app: &AppHandle, url: &str) -> Result<(), String> {
         *lock(&BROWSER) = None;
         return Err(e.to_string());
     }
+    // (The hybrid: its answers' content types watched where the web view tells them — mediawatch.rs.)
+    crate::mediawatch::attach(app, &win.label);
     Ok(())
+}
+
+/* ---------- the hybrid's (cookiecarry.rs, the self-test) ---------- */
+
+/// The window whose web view holds the browser's cookie store: the keeper (made when missing) on Windows and Linux —
+/// the browser's own profile —; a Mac's browser shares the app's store: the main window.
+pub fn store_window(app: &AppHandle) -> Option<String> {
+    if !KEEPS_PROFILE {
+        return app.get_webview_window("main").map(|_| "main".to_string());
+    }
+    keep_profile(app);
+    lock(&KEEPER).clone().filter(|l| app.get_webview_window(l).is_some())
+}
+
+/// The browser's cookies of the site of `url` as a Cookie header ("" where Tauri lists none). Off the main thread.
+pub fn cookie_header(app: &AppHandle, url: &str) -> String {
+    site_cookies(app, url)
 }
 
 /// kt:browse({ url }) → true.

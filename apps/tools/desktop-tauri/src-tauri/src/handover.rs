@@ -317,7 +317,55 @@ pub async fn kt_handover_mark(app: AppHandle, o: Value) -> Result<bool, String> 
     let f = state_file(&app).ok_or_else(|| "no data folder".to_string())?;
     let v = json!({ "id": id, "state": st, "at": now_ms(), "counts": o.get("counts").cloned().unwrap_or(Value::Null) });
     write_atomic(&f, v.to_string().as_bytes())?;
+    // (The hybrid: the in-app browser's sign-ins the Electron build handed over — put into this build's browser when
+    // the hand-over is taken, wiped unread when it is declined; cookiecarry.rs. In the background: the page goes on.)
+    if let Some(dir) = dir_of(&app, &id) {
+        let app2 = app.clone();
+        let _ = std::thread::Builder::new().name("kt-cookies".into()).spawn(move || {
+            if st == "restored" {
+                let r = crate::cookiecarry::import(&app2, &dir, &id);
+                eprintln!("[handover] the browser's sign-ins: {} set, {} left out, {} refused", r.get("set").and_then(|x| x.as_u64()).unwrap_or(0), r.get("skipped").and_then(|x| x.as_u64()).unwrap_or(0), r.get("failed").and_then(|x| x.as_u64()).unwrap_or(0));
+            } else {
+                crate::cookiecarry::drop_file(&dir);
+            }
+        });
+    }
     Ok(true)
+}
+
+/// The hand-over folder whose marker has id `id`, where the Electron build leaves them.
+fn dir_of(app: &AppHandle, id: &str) -> Option<PathBuf> {
+    logic::candidates(env_get("KT_HANDOVER_FROM").map(PathBuf::from), pointed(app), logic::electron_app_data(os_name(), &env_get))
+        .into_iter()
+        .find(|d| read_json(&d.join(logic::MARKER)).and_then(|m| m.get("id").and_then(|x| x.as_str()).map(|x| x == id)).unwrap_or(false))
+}
+
+/// (The hybrid, at a start) cookie files left in hand-overs this build took or declined before, or old ones, wiped —
+/// cookiecarry.rs tidy. Blocking: called on a thread of its own.
+pub fn cookies_at_start(app: &AppHandle) {
+    let taken = state_file(app).and_then(|f| read_json(&f)).and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from));
+    let dirs = logic::candidates(env_get("KT_HANDOVER_FROM").map(PathBuf::from), pointed(app), logic::electron_app_data(os_name(), &env_get));
+    crate::cookiecarry::tidy(&dirs, taken.as_deref());
+}
+
+/// The Electron build's data folders this build looks in for its programs (packadopt.rs): the one the hand-over names
+/// first, then Electron's default ones.
+pub fn electron_dirs(app: &AppHandle) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    if let Some((_, m)) = first_found(app) {
+        if let Some(u) = m.get("from").and_then(|f| f.get("userData")).and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
+            out.push(PathBuf::from(u));
+        }
+    }
+    if let Some(base) = logic::electron_app_data(os_name(), &env_get) {
+        for n in logic::ELECTRON_NAMES.iter() {
+            let d = base.join(n);
+            if !out.contains(&d) {
+                out.push(d);
+            }
+        }
+    }
+    out
 }
 
 /// «Free the space», after the person said yes: the hand-over folder deleted — only a folder named `handover` that
@@ -390,6 +438,8 @@ pub fn engine_prestart(app: &AppHandle) {
     if !bad.is_empty() {
         eprintln!("[handover] the engine's files are damaged, not carried: {}", bad.join("; "));
         note("damaged", json!({ "bad": bad.into_iter().take(5).collect::<Vec<String>>() }));
+        // (The hybrid: a damaged hand-over is not taken — its browser cookies wiped unread.)
+        crate::cookiecarry::drop_file(&dir);
         return;
     }
     // Screen fonts: each copied in under its own name (never over a font of the same name).

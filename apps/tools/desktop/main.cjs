@@ -153,6 +153,9 @@ else {
     videos = new Ytdlp.VideoJobs(() => send('kt:tasks', allTasks()));
     // (Stage P9, the bridge build only: the downloads handed over to the Rust build kept paused here while it runs them.)
     if (RUST_SWITCH) ownerAtStart(userData);
+    // (The hybrid, the bridge build only: browser cookies handed over and never taken — the Rust build gone, or the
+    // hand-over old — wiped after 14 days; handover.cjs tidyCookies.)
+    if (RUST_SWITCH) void Handover.tidyCookies(userData).catch(() => undefined);
     engine.onTasks((tasks) => { lastAria = tasks; const all = allTasks(); send('kt:tasks', all); onDesktopTasks(all); });
     setTimeout(() => void Ytdlp.maybeUpdate(), 15000); setInterval(() => void Ytdlp.maybeUpdate(), 6 * 3600000);
     createWindow();
@@ -570,6 +573,10 @@ async function rustSwitch(e) {
   // (Start at log-in: this program's own entry taken away now — the new one starts with the computer when the settings
   // that came over say so; never both. Put back below if nothing is installed. A portable copy and a Mac keep it off.)
   const loginWas = loginOffForSwitch();
+  // (The in-app browser's sign-ins: its cookies that outlive the session, into the hand-over for the Rust build's
+  // browser — handover.cjs exportCookies, a file for this user only; the Rust build sets them into its browser's store
+  // and deletes the file. Wiped again below when nothing is installed. Failing here only means signing in again.)
+  try { await Handover.exportCookies(h.dir, h.id, await require('electron').session.defaultSession.cookies.get({})); } catch { /* asked again there */ }
   // (A portable copy installs nothing: its data is now handed over — the new portable build brings it on its first
   // start — and the sheet says where to download it. Its downloads STAY PAUSED here: the new copy takes them up from the
   // same files, and two engines must never write one download at once; the person can resume them here by hand.)
@@ -608,7 +615,7 @@ async function rustSwitch(e) {
     throw new Error('kt-update:mac-opened');
   } catch (err) {
     // (Not installed: this app keeps working, its downloads going on.)
-    if (!opened) { await handoverCh.resume(); loginBack(loginWas); }
+    if (!opened) { await handoverCh.resume(); loginBack(loginWas); await Handover.dropCookies(h.dir).catch(() => undefined); }
     throw err;
   }
 }

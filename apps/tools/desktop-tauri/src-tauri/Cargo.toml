@@ -38,10 +38,22 @@ sha2 = "0.10"
 # (Stage P7: raw deflate for the archives' own ZIP reader and writer — archives.rs over the shared archive.rs. Pure Rust
 # (miniz_oxide); already in the build through reqwest's gzip; the Reader's shell names it the same way.)
 flate2 = "1"
+# (The hybrid, ../PORTING.md «Closed by the hybrid»: mediawatch.rs's header probe builds its own client — no redirect
+# to another host, no cookie jar — so it names reqwest itself: the shared crate's "0.12", no feature of its own, no new
+# crate.)
+reqwest = { version = "0.12", default-features = false }
 
 # (Stage P3: the free space of a disk — statvfs; already in the build through Tauri.)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# (The hybrid, Linux: notify-rust — the notification plugin's own crate — for a notice's default action and its
+# ActionInvoked (notifier.rs); webkit2gtk — wry's own — for each response's MIME type (mediawatch.rs). Both resolve to
+# the version already in the build ("4", "2": one semver slot each); build.rs uses them only when the lock holds that
+# ONE version and their calls are found (kt_notify_wait, kt_wk_resources).)
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = "4"
+webkit2gtk = "2"
 
 # (Stage P4: torrent streaming with librqbit — OFF. The main build never names librqbit, so it never even resolves it:
 # an API or a version that moved can never break it, and aria2 streams meanwhile (src/stream_engine.rs). To build with
@@ -54,6 +66,10 @@ libc = "0.2"
 # Tauri).)
 [features]
 rqbit = []
+# (The hybrid, Windows: WebView2's WebResourceResponseReceived — mediawatch.rs wv2_watch. OFF: webview2-com and windows
+# must be wry's exact versions, which only the lock knows; CI's «hybrid try» step pins them from it, turns this on and
+# prints what the compiler says. Until it is green and flipped, Windows finds such media by the header probe.)
+wv2 = []
 
 [profile.release]
 opt-level = "s"

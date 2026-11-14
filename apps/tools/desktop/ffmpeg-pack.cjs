@@ -21,8 +21,10 @@ function publish(arch) {
   if (!fs.existsSync(bin)) throw new Error('no ffmpeg at ' + bin);
   const got = archOf(bin); if (got !== arch) { console.warn(`::warning::ffmpeg for ${arch} not published: the binary is ${got}`); return; }
   const key = `${process.platform}-${arch}`; const name = `KurokawaTools-pack-ffmpeg-${key}.gz`;
-  const gz = zlib.gzipSync(fs.readFileSync(bin), { level: 9 }); fs.writeFileSync(path.join(out, name), gz);
-  const part = { [key]: { file: name, size: gz.length, sha256: crypto.createHash('sha256').update(gz).digest('hex'), unpacked: fs.statSync(bin).size } };
+  const raw = fs.readFileSync(bin); const gz = zlib.gzipSync(raw, { level: 9 }); fs.writeFileSync(path.join(out, name), gz);
+  // (unpackedSha256: the program's own digest — what the Rust build checks an Electron copy against before it takes it
+  // over instead of fetching the pack again; desktop-tauri/src-tauri/src/packadopt.rs. The page reads file, size, sha256.)
+  const part = { [key]: { file: name, size: gz.length, sha256: crypto.createHash('sha256').update(gz).digest('hex'), unpacked: raw.length, unpackedSha256: crypto.createHash('sha256').update(raw).digest('hex') } };
   fs.writeFileSync(path.join(out, `ffmpeg-${key}.packpart.json`), JSON.stringify(part));
   console.log(`ffmpeg pack ${key}: ${(gz.length / 1048576).toFixed(1)} MB (${(part[key].unpacked / 1048576).toFixed(1)} MB unpacked)`);
 }

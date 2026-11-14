@@ -721,10 +721,8 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
 
 ## Known losses against Electron (so far)
 
-- **A notice's click** (P6): the plugin gives no click on a computer; the window brought to the front within two
-  minutes opens the download instead.
-- **Media told by content type** (P7 browser): no system web view gives response headers; Grab finds media by address,
-  by the page's elements and by resource timing — media a server marks only by `Content-Type` is missed.
+- (A notice's click and media told by content type: closed by the hybrid where each system can — see «Closed by the
+  hybrid» below, with what remains per system.)
 - **yt-dlp's JavaScript runtime** (P5; answered after P9): Electron handed yt-dlp its own Node; this shell names the
   «deno» pack when it is there (`--js-runtimes deno:<path>`, the option Electron's `node:<path>` already uses, and its
   folder first on yt-dlp's PATH), else the first of deno / node / bun on the PATH. With none, the page is told ONCE in
@@ -754,9 +752,33 @@ The stage names are docs/RUST-PORT.md's (P1–P9); the table above says which ch
   An X11 session works as on Windows.
 - (Screen translator.) **«Auto» on several monitors**: the region is taken off the monitor it was drawn on (Electron took
   it off the monitor under the mouse at each look — a fix, not a loss).
-- **(P9) At the switch-over, once**: sites' sign-ins in the sign-in window and the in-app browser are asked again
-  (cookies stay in Electron's encrypted profile; AniList and the debrid key are tokens and cross); yt-dlp, gallery-dl and
-  the ffmpeg / mpv packs are downloaded again when first needed; the window opens at its default size once.
+- **(P9) At the switch-over, once**: sign-ins in the sign-in windows are asked again (AniList and the debrid key are
+  tokens and cross); the in-app browser's lasting ones cross, and its programs when they are the official files — see
+  «Closed by the hybrid»; the window opens at its default size once.
+
+## Closed by the hybrid (the Rust shell stays the one program; per gap, one small interface, the native piece each system has, an honest fallback)
+
+Rules std only in `src-tauri/src/hybridlogic.rs` (11 tests, `rustc --test`); each native call behind a cfg build.rs
+sets only when the resolved crate has it (`apidetect.rs` CFGS_HYB: `kt_notify_wait`, `kt_webview_gtk`,
+`kt_wk_resources`, `kt_cookie_set`, `kt_cookie_fromstr` — the build's log says which: «KT build (hybrid): …»);
+notify-rust and webkit2gtk, which this shell names too, count only when the lock holds ONE version of each (the
+plugin's, wry's). Self-test rows «hybrid: …» (selftest.js runHybrid, its own loopback server in `hybridtest.rs`).
+
+| Gap | Interface | Windows | Linux | macOS | Fallback / what still differs |
+|---|---|---|---|---|---|
+| **A notice's click** (`notifier.rs`) | `show(app, id, title, body)` → Ok (its click wired) or Err(why); the click → `clicked(id)` → the window to the front and `kt:openTask` (Electron's event: the page unchanged) | a toast through Windows PowerShell's WinRT (std only), its click a *protocol* activation of `kurokawatools://task?id=<id>` — Windows starts this program with it, the single-instance plugin hands it over (`desktop.rs queue`), never to the page as a link; only where the `kurokawatools:` links open THIS program (the installer's registration), under the AppUserModelID `app.kurokawa.tools` (registered for the user under `HKCU\Software\Classes\AppUserModelId` when missing — left there after an uninstall) | org.freedesktop.Notifications with a default action («Open», the page's `noticeOpen`), its ActionInvoked waited for on a thread (notify-rust, the plugin's own crate; at most 16 waiting) | none: a click reaches only a signed bundle's own delegate | the plugin's notice + the two-minute focus stand-in, wherever the native way says no (a portable .exe without the link registration, a Linux without a notification server, a Mac). A click on a toast after the app was closed starts it, but the page is not listening yet: it opens on its downloads, not on that one. Self-test: the click's callback (required), the toast's address through a second launch (required on Windows), the native notice itself reported (CI has no notification centre; the bare build is not the link handler — the installed run is) |
+| **Media told by content type** (`mediawatch.rs`) | Grab's answer `complete(page, ua, cookie_for)`: what the web view saw on this page, then the header probe; Electron's `seen` rule unchanged (`classify`) | the header probe; WebView2's `WebResourceResponseReceived` written behind the `wv2` feature (OFF: webview2-com / windows must be wry's exact versions — CI's «Hybrid try» pins them from the lock and prints the compiler's word) | WebKitGTK's resource-load-started → each response's MIME type, as the page loads; and the probe | the header probe (WKWebView tells no responses) | **the header probe**, every system: at Grab the page lists its resource timing (`CAND_JS`, beside GRAB_JS, which stays Electron's); only addresses the page itself fetched and no rule could name are asked — ONE request each (HEAD for what a script fetched, else a GET of the first byte), the browser's own User-Agent, the page as Referer and the site's cookies (what a download from the browser carries), a redirect followed only on the same host, at most 12 per Grab, 24 per page, 4 started per second, each address once (kept); a local-network address only from a local page; a 403 / 503 is no answer — nothing retried, no header varied. Differs: Electron saw every response as it came; the probe asks after the fact (a signed address that has expired, or a server that answers HEAD wrongly, is missed), and it adds up to a few seconds to Grab |
+| **The browser's sign-ins** (`cookiecarry.rs`; Electron: `handover.cjs exportCookies`) | Electron's bridge build (behind RUST_SWITCH) writes `handover/browser-cookies.json` (POSIX 0600; Windows: icacls, this user only) + its note (hand-over id, count, size, SHA-256) — outside the marker's list; the Rust build, at «Bring it now» (`kt_handover_mark` restored), puts them into the browser's store and wipes the file (zeros, flush, delete) | Tauri's `Webview::set_cookie` on the browser's keeper window (its own profile) | the same | the same, on the main window (a Mac's browser shares the app's store) | only cookies that outlive the session and have not expired; the file wiped unread when the hand-over is declined, found damaged, its switch fails in Electron, or at a later start (taken / declined before, or older than 14 days). Where build.rs finds no `set_cookie` + FromStr, nothing is set and the file is still wiped — sign in again, as before. Differs: a domain cookie is set as the web view's set call takes it (wry may pass its domain without the leading dot — then it covers that host only); the sign-in windows' own profile is not filled. No native CookieManager fallback (WebView2 / WKHTTPCookieStore / WebKit) yet: those need wry's exact crates, as `wv2` |
+| **Programs fetched again** (`packadopt.rs`) | at a start after the hand-over or beside an Electron data folder: yt-dlp, gallery-dl (`<userData>/bin`), the ffmpeg pack (`<userData>/packs/ffmpeg`, with its marker) | the same | the same | the same (no gallery-dl there) | taken ONLY when byte for byte what a trusted list names: yt-dlp's SHA2-256SUMS of its newest release, gallery-dl's release digest and size, this release's packs file (`unpackedSha256` + `unpacked`, which `desktop/ffmpeg-pack.cjs` now adds — a release-time script; the page reads only file/size/sha256). Never run to ask what it is; copied beside its place, hashed again, renamed in (no hard link: Electron's rollback rewrites its file in place); yt-dlp's stamp and the pack's marker (the version the page expects) written. Else — an older yt-dlp, a list that cannot be read (retried at the next start, 3 at most) — the normal fetch when first needed. `<app data>/programs-adopted.json` says what happened |
+
+
+Left, and how: (1) WebView2's response watch — once CI's «Hybrid try» compiles `--features wv2`, put the two crates it
+pinned into Cargo.toml (`[target.'cfg(windows)'.dependencies]`, the exact versions it printed) and make `wv2` default;
+(2) native cookie-store fallbacks (WebView2 CookieManager, WKHTTPCookieStore, WebKitGTK's CookieManager) the same way,
+should a Tauri without `set_cookie` ever be resolved; (3) a Mac's notice click needs a signed bundle with its own
+notification delegate — not before the Mac build is signed. Nothing of the hybrid changes the Electron build:
+`exportCookies` / `dropCookies` / `tidyCookies` run only in the bridge build (RUST_SWITCH, still false), and
+`ffmpeg-pack.cjs` only adds a field to the release's packs file (tests/hybridcookies.cjs checks both).
 
 ## Stage P9 — the switch-over, prepared (the switch stays OFF)
 
@@ -789,12 +811,12 @@ profile under `%LOCALAPPDATA%\app.kurokawa.tools\EBWebView`, WebKit's `…/Websi
 | The downloaded files, partial files and aria2's `.aria2` control files; `.torrent` files aria2 saved for magnets | the person's download folders | the same folders (`<Downloads>/Kurokawa` by default, as Electron's) | **not moved, not copied**: the session names them where they are; aria2 here takes each up from its control file |
 | Torrents and their state (pieces, selected files, seeding choice) | aria2's session + control files | the same | as above. A torrent being **streamed** at the switch: the bridge build ends every stream first (`webstream.cjs stopAll` hands it back to aria2 with `check-integrity`, as closing the player does), then pauses; the Rust build's aria2 resumes it from the file and its control file — pieces WebTorrent fetched while watching are kept by that check |
 | Video jobs (yt-dlp, gallery-dl) — `video-jobs.json`; their `.part` files | userData; download folders | `<app data>/video-jobs.json` | `engine/video-jobs.json` with the engine's files; a job that was running comes back paused (both builds' loaders do that) and yt-dlp continues its `.part` |
-| yt-dlp, gallery-dl (`userData/bin`), the ffmpeg / mpv packs (`userData/packs`) | userData | `<app data>/bin`, `<app data>/packs` | **not carried: fetched again when first needed** (each build checks its own downloads and markers; an unverified program is never copied into the new one) — tens of MB once |
+| yt-dlp, gallery-dl (`userData/bin`), the ffmpeg / mpv packs (`userData/packs`) | userData | `<app data>/bin`, `<app data>/packs` | **taken over when they are the official files** (the hybrid, `packadopt.rs`: SHA-256 against the official lists, never run); otherwise fetched again when first needed — an unverified program is never copied into the new one |
 | Screen translator: its settings (`screen.json`), last region (`screen-region.json`), its own fonts (`screen-fonts/*`) | userData | `<app data>/screen-fonts` (P3) | fonts → `shell/screen-fonts/<n>` with their names in `shell/screen-fonts.json`, copied in under their own names at the Rust start; `kt.screen`'s font paths moved to the new folder by the page; `screen.json` and the region kept in the hand-over for the screen translator's stage (not ported yet) |
 | The custom icon (`custom-icon.png` + `.ico`) | userData | `appicon.rs`'s file | `shell/custom-icon.png` kept; restored through `appIcon({ set })` from `app.icon` (localStorage) |
 | Window state (`window-state.json`), the mini window's (`mini-state.json`) | userData | `<app config>/window-state.json`, `mini-state.json` | kept in `shell/`, not applied (the first window opens at the default size once) |
 | The title bar's choice | localStorage / `titlebar.json` | `<app config>/titlebar.json` | the page's setting crosses; the shell's file is made again |
-| Cookies and sessions (sign-in windows, the in-app browser, the app's own requests) | Chromium's profile (encrypted by the system's key store) | `cookies.txt` (P3), the browser's profile (P7) | **not carried**: a site asks to sign in again once (AniList and the debrid service are tokens: they cross) |
+| Cookies and sessions (sign-in windows, the in-app browser, the app's own requests) | Chromium's profile (encrypted by the system's key store) | `cookies.txt` (P3), the browser's profile (P7) | the in-app browser's lasting cookies **carried** (the hybrid: `handover/browser-cookies.json`, this user's only, set into the browser's store at «Bring it now», then wiped — `cookiecarry.rs`); the rest not: a site asks to sign in again once (AniList and the debrid service are tokens: they cross) |
 | Cache Storage, the HTTP cache, service worker caches | the profile | — | not carried: fetched again |
 | Shared-file lists (the Wi-Fi share's picks) | in memory | in memory | nothing to carry (a share ends with the app) |
 | Hotkeys | `kt.settings` (desktop prefs) | the same | crosses with the settings; re-registered at start |

@@ -65,5 +65,41 @@ fn main() {
         println!("cargo:rustc-cfg={}", bootdetect::CFG);
     }
     println!("cargo:warning=KT build (start-up): {} the window's colour before the page paints (background_color)", if bg { "yes" } else { "no" });
+    // (The hybrid closures — notifier.rs, mediawatch.rs, cookiecarry.rs: each native call where the resolved crate has
+    // it. notify-rust and webkit2gtk are named by this shell too (Cargo.toml), so they count only when the lock holds ONE
+    // version of each — the plugin's and wry's —; else their types would not be the ones Tauri hands over.)
+    for c in apidetect::CFGS_HYB.iter() {
+        println!("cargo:rustc-check-cfg=cfg({})", c);
+    }
+    let mut hyb: Vec<String> = Vec::new();
+    for (krate, single, detect) in [
+        ("tauri", false, apidetect::detect_tauri_hyb as fn(&str) -> Vec<apidetect::Found>),
+        ("notify-rust", true, apidetect::detect_notify as fn(&str) -> Vec<apidetect::Found>),
+        ("webkit2gtk", true, apidetect::detect_webkit as fn(&str) -> Vec<apidetect::Found>),
+        ("cookie", false, apidetect::detect_cookie as fn(&str) -> Vec<apidetect::Found>),
+    ] {
+        let all = apidetect::locked_versions(&lock, krate);
+        if single && all.len() > 1 {
+            hyb.push(format!("{}: {} versions resolved ({}) — left out", krate, all.len(), all.join(", ")));
+            continue;
+        }
+        // (The newest resolved, for a crate several users name in different versions — cookie.)
+        let v = all.iter().max_by(|a, b| apidetect::version_cmp(a, b)).cloned();
+        match v.and_then(|v| home.as_ref().and_then(|h| apidetect::crate_src(h, krate, &v)).map(|s| (v, s))) {
+            None => hyb.push(format!("{}: its source not found here", krate)),
+            Some((v, s)) => {
+                let found = detect(&apidetect::squeeze_tree(&s));
+                let mut parts: Vec<String> = Vec::new();
+                for f in found.iter() {
+                    if f.on {
+                        println!("cargo:rustc-cfg={}", f.cfg);
+                    }
+                    parts.push(format!("{} {}", if f.on { "yes" } else { "no" }, f.what));
+                }
+                hyb.push(format!("{} {} — {}", krate, v, parts.join("; ")));
+            }
+        }
+    }
+    println!("cargo:warning=KT build (hybrid): {}", hyb.join(" | "));
     tauri_build::build()
 }
