@@ -90,7 +90,7 @@ ok('the constants are ownerlogic.rs\'s', (() => { const rs = fs.readFileSync(pat
     && (main.match(/ownerAtStart\(|ownerResume\(/g) || []).length === 4);
 
   ok('main.cjs: at the switch its own start-at-log-in entry is taken away after the hand-over, put back if nothing is installed',
-    /if \(!h \|\| h\.ok !== true\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const loginWas = loginOffForSwitch\(\);/.test(main) && main.includes('if (!opened) { await handoverCh.resume(); loginBack(loginWas); }') && (main.match(/loginOffForSwitch\(|loginBack\(/g) || []).length === 4);
+    /if \(!h \|\| h\.ok !== true\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const loginWas = loginOffForSwitch\(\);/.test(main) && main.includes('if (!opened) { await handoverCh.resume(); loginBack(loginWas);') && (main.match(/loginOffForSwitch\(|loginBack\(/g) || []).length === 4);
   const nsh = fs.readFileSync(path.join(ROOT, "desktop-tauri", "src-tauri", "installer", "hooks.nsh"), "utf8");
   const repl = nsh.slice(nsh.indexOf('${AndIf} $KrOld == "replace"'));
   ok('installer: the old program\'s Run values removed only when it is replaced (and only where they name it)', repl.includes('!insertmacro KR_OLD_RUN_GONE "app.kurokawa.tools"') && !nsh.slice(0, nsh.indexOf('${AndIf} $KrOld == "replace"')).includes('!insertmacro KR_OLD_RUN_GONE "') && /!macro KR_OLD_RUN_GONE NAME[\s\S]*?KR_NAMES_OLD[\s\S]*?DeleteRegValue/.test(nsh));
