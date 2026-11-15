@@ -93,6 +93,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (r.page) sizeLine.append(h('b', { class: 'danger' }, ` · ${t('linkIsPage')}`));
     void showStorage();
   };
+  // (A script's link on a site yt-dlp knows that gave a file: looked at now as the plain link it is.)
+  const onDirect = (e: Event) => { const u = (e as CustomEvent<string>).detail; if (!sh.el.isConnected) { window.removeEventListener('kt:direct', onDirect); return; } if (sources()[0]?.url === u) probing = lookAt(u, sources()[0]?.headers); };
+  window.addEventListener('kt:direct', onDirect);
   const recent = (): string[] => (getSettings().recentDirs ?? []).filter((d) => d && d !== getSettings().downloadDir).slice(0, 5);
   const dirMenu = h('div', { class: 'folder-chips', hidden: !recent().length }, ...recent().map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d)));
   const drawDirs = () => { const r = recent(); dirMenu.hidden = !r.length; dirMenu.replaceChildren(...r.map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d))); };

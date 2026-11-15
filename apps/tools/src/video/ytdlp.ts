@@ -4,6 +4,7 @@
 // their SHA2-256SUMS); on Android it runs inside the app. Both are brought up to date on their own.
 import { nativePlatform as getPlatform, ktPlugin } from '../native';
 import { getSettings } from '../settings';
+import { isDirectFile } from '../downloads/direct';
 
 export const VIDEO_ADDON = 'video';
 export interface VideoChoice { id: string; kind: 'video' | 'audio'; label: string; ext?: string; height?: number; fps?: number; size?: number; vcodec?: string; acodec?: string; note?: string }
@@ -14,7 +15,8 @@ export type PageInfo = VideoInfo | PlaylistInfo;
 /** Sites yt-dlp is always asked about (others are, too, when the link is a web page rather than a file). */
 // (The one list: desktop/ytdlp.cjs and core/kt-core videotools.rs hold copies — tests/videohosts.cjs fails when they differ.)
 export const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|bilibili\.tv|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|vkvideo\.ru|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv|tver\.jp|kick\.com|archive\.org|ted\.com|bitchute\.com|mixcloud\.com|vlive\.tv|weibo\.com|douyin\.com|ixigua\.com|youku\.com|zhihu\.com|naver\.com|kakao\.com|aparat\.com|shahid\.mbc\.net)$/i;
-export const isVideoHost = (url: string): boolean => { try { return VIDEO_HOSTS.test(new URL(url).hostname); } catch { return false; } };
+/** A page of one of those sites — never a plain file they serve (a PDF on archive.org's download host is a file: downloads/direct.ts). */
+export const isVideoHost = (url: string): boolean => { try { return VIDEO_HOSTS.test(new URL(url).hostname) && !isDirectFile(url); } catch { return false; } };
 /** A link whose path names a file (an extension that is not a page): a plain download, not a page for yt-dlp. */
 export const looksLikeFile = (url: string): boolean => { try { const p = new URL(url).pathname; return /\.[a-z0-9]{1,5}$/i.test(p) && !/\.(html?|php|aspx?|jsp|cgi)$/i.test(p); } catch { return false; } };
 

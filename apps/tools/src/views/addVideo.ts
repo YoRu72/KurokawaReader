@@ -11,6 +11,7 @@ import { defaultOptions, hasSavedChoice, saveDefaults, ffmpegHere, gateFfmpeg, b
 import { chooser, summary, heightsOf } from './videoChooser';
 import { safeRange, type VideoOptions } from '../downloads/videoArgs';
 import type { AddOptions } from '../engine/types';
+import { isDirectFile, scriptNamed, probeSaysFile, markDirect } from '../downloads/direct';
 import { VIDEO_ADDON, isVideoHost, looksLikeFile, pageInfo, forgetPageInfo, videoEnabled, videoSupported, videoShell, healOnce, type PageInfo, type PlaylistInfo, type VideoInfo } from '../video/ytdlp';
 import { videoError, healable } from '../video/errors';
 
@@ -39,7 +40,7 @@ export function preferredFormat(): Pick<VideoPick, 'format' | 'audioOnly' | 'lab
   return { format: undefined, audioOnly: o.mode === 'audio', label: summary(o) };
 }
 /** A link worth asking yt-dlp about: a web page (a video site's, or any page not naming a file). */
-export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && (isVideoHost(url) || (/\.(m3u8|mpd)(\?|$)/i.test(url) && !nativeHls(url)) || !looksLikeFile(url));
+export const pageLike = (url: string): boolean => /^https?:\/\//i.test(url) && !isDirectFile(url) && (isVideoHost(url) || (/\.(m3u8|mpd)(\?|$)/i.test(url) && !nativeHls(url)) || !looksLikeFile(url));
 /** An HLS playlist the app fetches itself (pieces joined here), unless yt-dlp was chosen for streams. */
 export const nativeHls = (url: string): boolean => getPlatform() === 'android' && !!ktPlugin() && getSettings().hlsNative !== false && /\.m3u8(\?|#|$)/i.test(url);
 
@@ -121,7 +122,7 @@ export function videoPanel(onChange: () => void): VideoPanel {
       i.duration && !i.live ? h('div', { class: 'video-part' }, h('input', { type: 'text', class: 'video-part-more', dir: 'auto', value: chap.match, placeholder: t('videoChapterMatchHint'), 'aria-label': t('videoChapterMatch'), oninput: (e: Event) => { chap.match = (e.target as HTMLInputElement).value; } })) : null,
       askRow()].filter((x): x is NonNullable<typeof x> => !!x));
   };
-  let autoTried = false;
+  let autoTried = false; const asked = new Set<string>();
   const offerAddon = () => {
     el.hidden = false;
     el.replaceChildren(h('div', { class: 'video-card offer' }, h('span', { class: 'video-thumb none' }, icon('film')), h('div', { class: 'video-text' }, h('span', null, t('videoYtdlpMissingLong'))),
@@ -132,6 +133,12 @@ export function videoPanel(onChange: () => void): VideoPanel {
   const check = (u: string | null) => {
     if (u === url) return; url = u; if (!u) { look?.abort(); look = null; } info = null; listInfo = null; withList = false; open = getSettings().videoAsk !== false; const my = ++token; void ffmpegHere().then((v) => { ff = v; });
     if (!u || !pageLike(u)) { el.hidden = true; el.replaceChildren(); onChange(); return; }
+    // (A script's name — file.php — on a site yt-dlp knows: the link is asked first; a file it gives is a plain download, never yt-dlp's.)
+    if (scriptNamed(u) && isVideoHost(u) && !asked.has(u)) {
+      asked.add(u); el.hidden = false; el.replaceChildren(h('div', { class: 'center small' }, h('div', { class: 'spinner small' }), ` ${t('videoChecking')}`));
+      running = import('../downloads/probe').then((m) => m.probeUrl(u)).then((p) => { if (probeSaysFile(p)) { markDirect(u); window.dispatchEvent(new CustomEvent('kt:direct', { detail: u })); } }, () => undefined).then(() => { if (my !== token) return; url = null; check(u); });
+      return;
+    }
     // (A video site's link with the video add-on off: it is set up at once — yt-dlp fetched — and the link read, once a
     // session; turned down, the offer stays. What was asked for is a video, never the site's page.)
     if (!videoEnabled()) {

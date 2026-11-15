@@ -21,6 +21,8 @@ export interface Probe {
   finalUrl?: string;
   /** The HTTP status the site answered (the HEAD's, else the range's), when it answered. */
   status?: number;
+  /** The site sends it as a download (Content-Disposition: attachment). */
+  attachment?: boolean;
 }
 
 const JUNK = /^(bin|dat|tmp|file|download|dl|php|aspx?|jsp|cgi|octet-stream|unknown|htm|html)$/;
@@ -98,7 +100,7 @@ const header = (hs: Record<string, string> | undefined, k: string): string | und
 /** The link looked at: a HEAD for the size and the name, then its first bytes (a range) for what it is. */
 export async function probeUrl(url: string, headers: Record<string, string> = {}): Promise<Probe> {
   let name = nameFromUrl(url); let size: number | undefined; let type: string | undefined; let resumable: boolean | undefined; let finalUrl: string | undefined;
-  let headOk = false; let status: number | undefined;
+  let headOk = false; let status: number | undefined; let attachment = false;
   try {
     const r = await within(request(url, { method: 'HEAD', headers }), 8000); status = r.status;
     if (r.status >= 200 && r.status < 400) {
@@ -106,6 +108,7 @@ export async function probeUrl(url: string, headers: Record<string, string> = {}
       const len = Number(header(r.headers, 'content-length')); if (len > 0) size = len;
       type = (header(r.headers, 'content-type') ?? '').split(';')[0].trim().toLowerCase() || undefined;
       resumable = /bytes/i.test(header(r.headers, 'accept-ranges') ?? '');
+      attachment = /^\s*attachment/i.test(header(r.headers, 'content-disposition') ?? '');
       const dn = dispositionName(header(r.headers, 'content-disposition')); if (dn) name = dn; else if (r.url && r.url !== url) name = nameFromUrl(r.url);
     }
   } catch { /* no HEAD: the bytes say */ }
@@ -122,6 +125,7 @@ export async function probeUrl(url: string, headers: Record<string, string> = {}
         if (!headOk) {
           finalUrl = r.url; const cr = /\/(\d+)\s*$/.exec(header(r.headers, 'content-range') ?? ''); if (cr) size = Number(cr[1]); else if (r.status === 200) { const len = Number(header(r.headers, 'content-length')); if (len > 0) size = len; }
           type = (header(r.headers, 'content-type') ?? '').split(';')[0].trim().toLowerCase() || undefined; resumable = r.status === 206;
+          attachment = /^\s*attachment/i.test(header(r.headers, 'content-disposition') ?? '');
           const dn = dispositionName(header(r.headers, 'content-disposition')); if (dn) { name = dn; ({ stem, ext } = splitName(name)); }
         }
         const sn = sniffBytes(bytes);
@@ -131,5 +135,5 @@ export async function probeUrl(url: string, headers: Record<string, string> = {}
     } catch { /* the name decides */ }
   }
   if (weakExt(ext) && type && TYPES[type] && type !== 'application/octet-stream') { ext = TYPES[type]; extFrom = 'type'; }
-  return { size, name, stem, ext, extFrom, type, resumable, page, finalUrl, status };
+  return { size, name, stem, ext, extFrom, type, resumable, page, finalUrl, status, attachment };
 }
