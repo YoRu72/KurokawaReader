@@ -1168,7 +1168,7 @@ html.picking { --nav-h: 0px; }
 /* ---------- a download's page: its error, its actions (one main action; real gaps; the same height and shape) ---------- */
 .task-error { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 14px 0 0; }
 .task-error > p { margin: 0; max-width: 100%; }
-.task-error .err-line { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; text-align: start; }
+.task-error .err-line { color: var(--md-error); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; text-align: start; }
 .task-error .err-raw { font-size: 12px; overflow-wrap: anywhere; opacity: .8; }
 .task-error .err-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .task-error .err-actions .btn, .task-error > .btn { margin-top: 0; }
@@ -1180,7 +1180,7 @@ html.picking { --nav-h: 0px; }
 @media (max-width: 600px) {
   .task-detail-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .task-detail-actions .btn { width: 100%; padding: 0 12px; overflow: hidden; text-overflow: ellipsis; }
-  .task-detail-actions .btn.primary:first-child { grid-column: 1 / -1; }
+  .task-detail-actions .btn.primary:first-child, .task-detail-actions .btn.text { grid-column: 1 / -1; }
 }
 /* Names (of the file, in the header and the card): their own direction, never mixed with the page's; the cut («…») at their end. */
 .kt-name, .task-view .topbar .title > span:first-child, .kt-url .sel { unicode-bidi: isolate; text-align: start; }

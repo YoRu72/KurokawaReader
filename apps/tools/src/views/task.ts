@@ -11,6 +11,7 @@ import { getSettings } from '../settings';
 import { t, localDigits } from '../i18n';
 import { liveLine } from '../downloads/live';
 import { plainEngineError } from '../downloads/errors';
+import { nameNodes, setName, nameDir } from '../ui/fileName';
 import { getEngine, displayName, isVideo, mainFilePath } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
 import type { Task } from '../engine/types';
@@ -31,12 +32,12 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
   const draw = () => {
     if (!task) return;
     const x = task; const name = displayName(x); const hst = historyOf(x);
-    (title.firstChild as HTMLElement).textContent = name;
+    setName(title.firstChild as HTMLElement, name);
     const link = x.source.url ?? x.source.magnet ?? '';
     const live = x.state === 'downloading' || x.state === 'metadata';
     const hero = h('section', { class: 'card kt-hero' },
       h('span', { class: 'task-kind big' }, icon(x.kind === 'torrent' ? 'magnet' : categoryOf(name, x.kind).icon)),
-      h('div', { class: 'grow' }, h('div', { class: 'kt-name', dir: 'auto' }, name),
+      h('div', { class: 'grow' }, h('div', { class: 'kt-name', dir: nameDir(name) }, ...nameNodes(name)),
         link ? h('div', { class: 'kt-url' }, icon('link'), h('span', { class: 'sel', dir: 'ltr' }, link), h('button', { type: 'button', class: 'kt-copy', 'aria-label': t('copyLink'), onclick: () => void navigator.clipboard?.writeText(link).then(() => toast(t('copied'))) }, icon('copy'))) : null,
         h('div', { class: 'kt-badges' }, h('span', { class: `kt-badge state-${x.state}` }, live ? h('span', { class: 'kt-live' }) : null, stateLabel(x.state)),
           x.kind !== 'torrent' && (x.segments?.length ?? 0) > 1 ? h('span', { class: 'kt-badge ok' }, icon('check'), t('badgeResumable')) : null)));

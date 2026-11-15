@@ -23,6 +23,7 @@ import { torEngineBadge } from './engineInfo';
 import { offerUndo } from '../ui/undo';
 import { onBack } from '../ui/backstack';
 import { plainEngineError } from '../downloads/errors';
+import { nameNodes, setName, nameDir } from '../ui/fileName';
 // (undo-redo) Downloads taken off the list with an Undo are only held out of sight until it is over — every kind,
 // a video or a .torrent's too, which the trash cannot put back —, then removed for real; Undo shows them again as
 // they were (still downloading, if they were). The list's own files are never deleted this way.
@@ -233,7 +234,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
         oncontextmenu: (e: Event) => { e.preventDefault(); const cur = tasks.find((y) => y.id === x.id) ?? x; // (A computer's right-click: its menu at the pointer; a phone's long press: choosing.)
           if (document.documentElement.classList.contains('pc') && !selecting) { taskMenu(cur, e); return; } if (!selecting) setSelecting(true); pick(cur); } },
         h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : catOf(x).icon)),
-        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: 'auto' }, displayName(x)), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i')))),
+        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: nameDir(displayName(x)) }, ...nameNodes(displayName(x))), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i')))),
       h('span', { class: 'task-actions' }));
     // (A phone: swiped to the right, its first action — pause, resume, retry —; to the left, removed (asked first).)
     swipeable(el, () => { const cur = tasks.find((y) => y.id === x.id) ?? x; const eng = getEngine();
@@ -251,7 +252,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const actsKey = `${x.state}|${x.heldBy ?? ''}|${displayName(x)}|${x.files?.length ?? 0}`;
     { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
     { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); }
-    (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
+    setName(el.querySelector('.task-name') as HTMLElement, displayName(x));
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
     // (The fill is a full-width bar scaled — eased by the compositor, not by laying out the whole list on every frame
     // as an eased width did: tests/rowpatch.cjs.)
