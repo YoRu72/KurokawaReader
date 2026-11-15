@@ -19,7 +19,7 @@ import { allCategories, categoryOf, categoryName } from '../downloads/categories
 import { updateSettings } from '../settings';
 import { dlPrefs, applyFilters, sortTasks, groupOf, activeFilters, downloadsOptionsSheet } from './downloadsOptions';
 import { historyOf, sparkline } from './taskmap';
-import { torEngineBadge } from './engineSettings';
+import { torEngineBadge } from './engineInfo';
 import { offerUndo } from '../ui/undo';
 // (undo-redo) Downloads taken off the list with an Undo are only held out of sight until it is over — every kind,
 // a video or a .torrent's too, which the trash cannot put back —, then removed for real; Undo shows them again as

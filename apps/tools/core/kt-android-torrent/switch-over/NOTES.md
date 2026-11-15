@@ -1,5 +1,10 @@
 # The Rust torrent engine in the released APKs (stage M3)
 
+**Held — the loopback swarm must pass first.** (0.19.0, 2026-11-15: run 43684755996 built `libkt_torrent.so` for all
+three ABIs with every call — arm64 6.05 MB `.so` / +2.67 MB APK, armeabi-v7a 3.66 / +1.98, x86_64 6.79 / +2.75, universal
++7.40 — but «M3: librqbit for the computer — loopback swarm» failed: the download stopped one 32 KiB piece short of the
+12 582 912-byte file, peers coming and going, never «done» in 300 s. 0.19.0 ships without it; the patch stays unapplied.)
+
 **Not applied.** `release-tools-torrent.patch` (beside this file) adds one step to the Android job of
 `.github/workflows/release-tools.yml`, right after «Rust core for Android (optional)»: build `libkt_torrent.so` for the
 three ABIs (`core/kt-android-torrent/build-android.sh`) and copy it into `android/app/src/main/jniLibs/<abi>/`

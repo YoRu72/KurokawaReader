@@ -19,7 +19,7 @@ name: Android Rust check (Tools)
 # killed before each of its records and resumed or rolled back.
 on:
   push:
-    branches: ['work-tt-p5', 'work-tauri']
+    branches: ['work-tt-p5', 'work-tauri', 'work-and-all']
     paths:
       - 'apps/tools/core/**'
       - 'apps/tools/native/**'

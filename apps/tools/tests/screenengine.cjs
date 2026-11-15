@@ -37,7 +37,7 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   const txt = await p.$eval('#advanced', (e) => e.textContent);
   check('it names the screen translator engine, Classic chosen by default', /Screen translator engine/.test(txt) && /Classic/.test(await p.$eval('#advanced .screen-engine-row button', (e) => e.textContent)), txt);
   check('the engine in use and the count handed back', /in use: Classic · handed back to Classic: 3/.test(txt), txt);
-  check('the download engine\'s row is still there, untouched', /Java/.test(await p.$eval('#advanced .dl-engine-row button', (e) => e.textContent)));
+  check('the download engine\'s row is still there, untouched', /Classic/.test(await p.$eval('#advanced .dl-engine-row button', (e) => e.textContent)));
   await p.click('#advanced .screen-engine-row button'); await p.waitForTimeout(300);
   await p.locator('label.dest-row', { hasText: 'Rust' }).first().click(); await p.waitForTimeout(500);
   const calls = await p.evaluate(() => window.__calls);

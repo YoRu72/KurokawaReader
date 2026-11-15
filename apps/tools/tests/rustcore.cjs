@@ -3,6 +3,8 @@
 // fileEngine })) and kept; the status lists the core, every engine deviceInfo reports (the download engine and the
 // file jobs', and a sister stage's «torEngine» it has never heard of), their counters, the journal's jobs, and «Copy
 // report» puts them on the clipboard; with only M2's fields (a build before M5) the status still shows what there is.
+// After the merge of M3–M5: the torrent engine (Director) with the director's plans, the screen translator with its
+// Rust calls, patch cache and shadow checks, HLS as an engine following the download engine — one card, one report.
 // A phone without the core: neither; a computer: never, even with a bridge that claims a core.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
@@ -19,7 +21,9 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
     await p.addInitScript((o) => {
       localStorage.setItem('kr.lang', o.lang || 'en'); localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.update.lastCheck', String(Date.now()));
       window.__calls = []; let engine = 'java'; let fallbacks = 2; let fileEngine = 'classic';
-      const m5 = () => (o.old ? {} : { fileEngineChoice: fileEngine, fileEngine: o.core ? fileEngine : 'classic', fileEngineFallbacks: 0, fileChecks: 7, fileMismatches: 0, fileDisputed: 0, fileJournalResumable: 1, fileJournalUndoable: 3, torEngine: 'java', torEngineChoice: 'java', torEngineFallbacks: 4 });
+      const m5 = () => (o.old ? {} : { fileEngineChoice: fileEngine, fileEngine: o.core ? fileEngine : 'classic', fileEngineFallbacks: 0, fileChecks: 7, fileMismatches: 0, fileDisputed: 0, fileJournalResumable: 1, fileJournalUndoable: 3, torEngine: 'director', torEngineChoice: 'director', torEngineFallbacks: 4, rustTorrent: null, rustTorrentStatus: 'absent', torDirectorPlans: 31, torDirectorFallbacks: 1, torEngineHeld: 0,
+        screenEngine: 'rust', screenEngineChoice: 'rust', screenEngineFallbacks: 0, screenEngineCalls: 812, screenCache: { cacheHits: 40, cacheMisses: 9, cacheBytes: 65536, cacheItems: 9 }, screenChecks: 300, screenMismatches: 0, screenFirst: [],
+        hlsEngine: 'java', hlsEngineChoice: 'java', hlsEngineFallbacks: 0, hlsEngineCalls: 0, hlsChecks: 6, hlsMismatches: 0, dlChecks: 6, dlMismatches: 0 });
       const info = async () => ({ abis: ['arm64-v8a'], rustCore: o.core, rustCoreStatus: o.core ? 'Rust core: ' + o.core : 'Rust core: absent', rustShadow: { on: true, calls: 12, mismatches: 0, first: [] }, dlEngineChoice: engine, dlEngine: o.core ? engine : 'java', dlEngineFallbacks: fallbacks, ...m5() });
       if (o.kind === 'pc') {
         window.kurokawaTools = new Proxy({ platform: 'desktop', available: true, os: 'win32', list: async () => [], onTasks: () => () => {}, deviceInfo: info }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) });
@@ -43,10 +47,13 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   const st = await p.$eval('#rust-status', (e) => e.textContent);
   check('the status: the core, the download engine and the file jobs engine', /Rust core status/.test(st) && /Rust core 0\.3\.0/.test(st) && !!(await p.$('#rust-status .rust-engine[data-area="dl"]')) && !!(await p.$('#rust-status .rust-engine[data-area="file"]')), st);
   check('…an engine of a stage it does not know (torEngine) shown too, with its fallbacks', !!(await p.$('#rust-status .rust-engine[data-area="tor"]')) && /fell back: 4/.test(await p.$eval('#rust-status .rust-engine[data-area="tor"]', (e) => e.textContent)));
+  check('…the torrent engine shown as Director, its plans and fallbacks; no torrent library', /Director/.test(await p.$eval('#rust-status .rust-engine[data-area="tor"]', (e) => e.textContent)) && /Director plans: 31/.test(st) && /Classic's own rules: 1/.test(st) && /library: —/.test(st), st);
+  check('…the screen translator: engine, checks, Rust calls and the patch cache', /checked: 300/.test(await p.$eval('#rust-status .rust-engine[data-area="screen"]', (e) => e.textContent)) && /Rust calls: 812/.test(st) && /40 found, 9 new/.test(st), st);
+  check('…HLS as an engine of its own', !!(await p.$('#rust-status .rust-engine[data-area="hls"]')));
   check('…the shadow checks and the journal', /Shadow checks: 12/.test(st) && /resumed: 1/.test(st) && /undone: 3/.test(st), st);
   await p.click('#rust-status .rust-copy'); await p.waitForTimeout(300);
   const clip = await p.evaluate(() => navigator.clipboard.readText().catch(() => ''));
-  check('«Copy report»: every engine and counter on the clipboard', /fileEngineFallbacks/.test(clip) && /dl: in use java/.test(clip) && /tor: in use java/.test(clip), clip.slice(0, 300));
+  check('«Copy report»: every engine and counter on the clipboard', /fileEngineFallbacks/.test(clip) && /dl: in use java/.test(clip) && /tor: in use director/.test(clip) && /tor director: plans 31, fallbacks 1/.test(clip) && /screen: Rust calls 812, patch cache hits 40/.test(clip) && /screen: in use rust, chosen rust, fallbacks 0, checks 300/.test(clip) && /hls: in use java/.test(clip) && /torrent library: absent/.test(clip), clip.slice(0, 600));
   await p.click('#rust-status .rust-jobs-open'); await p.waitForTimeout(300);
   check('the interrupted jobs listed, Resume and Roll back', /Movies/.test(await p.$eval('#rust-status .rust-jobs', (e) => e.textContent)) && (await p.$$('#rust-status .rust-job button')).length === 2);
   await p.click('#rust-status .rust-job button'); await p.waitForTimeout(300);
@@ -68,7 +75,7 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', lang: 'ar' }));
   if (await p.$('#advanced.collapsed')) await p.click('#advanced h3');
   const ar = await p.$eval('#advanced', (e) => e.textContent);
-  check('Arabic: the row and the status in Arabic, counts as «العدد»', /محرّك مهامّ الملفّات/.test(ar) && /حالُ نواة Rust/.test(ar) && /العدد: ٤|العدد: 4/.test(ar), ar.slice(0, 400));
+  check('Arabic: the row and the status in Arabic, counts as «العدد»', /محرّك مهامّ الملفّات/.test(ar) && /حالُ نواة Rust/.test(ar) && /العدد: ٤|العدد: 4/.test(ar) && /خططُ «الموجِّه»، العدد: (٣١|31)/.test(ar), ar.slice(0, 400));
   await ctx.close();
   // No core: nothing.
   ({ p, ctx } = await open({ kind: 'phone', core: null }));

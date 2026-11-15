@@ -404,6 +404,11 @@ public class KtPlugin extends Plugin {
         try { String sc = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("screenEngine", "classic")) ? "rust" : "classic"; KtScreenRs.rust = "rust".equals(sc); r.put("screenEngineChoice", sc); r.put("screenEngine", "rust".equals(sc) && KtCore.available() ? "rust" : "classic"); r.put("screenEngineFallbacks", KtScreenRs.FALLBACKS.get()); r.put("screenEngineCalls", KtScreenRs.CALLS.get()); r.put("hlsRustFallbacks", KtHlsRs.FALLBACKS.get()); if (KtCore.available()) r.put("screenCache", new JSObject(KtCore.json(KtCore.r("scr.stats")))); } catch (Throwable ignored) {}
         // (Stage M5: the file jobs' engine, its fallbacks, the two planners' comparisons, the journals — KtFileExec.report.)
         try { org.json.JSONObject m5 = KtFileExec.report(); for (java.util.Iterator<String> it = m5.keys(); it.hasNext();) { String k = it.next(); r.put(k, m5.get(k)); } } catch (Throwable ignored) {}
+        // (The three stages' merge, for the «Rust core status» card — ANDROID-PORT.md «M6», one prefix per area: HLS as an
+        // engine of its own (it follows the download engine), and the shadow's checks per area where a stage has none of
+        // its own — screen, hls, dl, tr, tor —, never over M5's own file / remote counters.)
+        try { r.put("hlsEngineChoice", r.optString("dlEngineChoice", "java")); r.put("hlsEngine", "rust".equals(r.optString("dlEngine", "java")) ? "rust" : "java"); r.put("hlsEngineFallbacks", KtHlsRs.FALLBACKS.get()); r.put("hlsEngineCalls", KtHlsRs.CALLS.get()); } catch (Throwable ignored) {}
+        try { for (java.util.Map.Entry<String, java.util.Map<String, Object>> e : KtCore.shadowByArea().entrySet()) { String a = e.getKey(); if (r.has(a + "Checks")) continue; r.put(a + "Checks", e.getValue().get("checks")); r.put(a + "Mismatches", e.getValue().get("mismatches")); org.json.JSONArray fa = new org.json.JSONArray(); for (Object f : (java.util.List<?>) e.getValue().get("first")) fa.put(f); r.put(a + "First", fa); } } catch (Throwable ignored) {}
         call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {

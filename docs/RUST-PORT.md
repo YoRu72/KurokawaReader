@@ -138,8 +138,12 @@ Classic), HLS following the download engine; +70 KB compressed per ABI. **M5 wri
 `work-and-m5`, waiting for CI): the Files jobs planned by kt-core (`fileplan.rs`), executed by Java, every destructive
 step checked against Java's own plan, and journaled (`filejournal.rs`: a job cut short resumed or rolled back, a
 finished one undone); the network storages' rules (`remoterules.rs`); «File jobs engine: Classic / Rust» and a «Rust
-core status» readout under Settings → Advanced, default Classic. M6's checklist is written. Details, sizes and the
-plans: `apps/tools/core/kt-android/ANDROID-PORT.md`.
+core status» readout under Settings → Advanced, default Classic. M6's checklist is written. **M3 written 2026-11-15**
+(branch `work-and-m3`): torrents — a streaming «Director» in kt-core steering libtorrent4j's piece priorities and
+deadlines, and an experimental librqbit engine in a library of its own (libkt_torrent.so), which CI built for the three
+ABIs but whose loopback swarm does not yet finish a download. **The three merged as Tools 0.19.0** (branch
+`work-and-all`, kt-android 0.3.0): Director ships, the Rust torrent engine is held, every default stays Classic.
+Details, sizes and the plans: `apps/tools/core/kt-android/ANDROID-PORT.md`.
 
 **What Rust on Android will and will not give.**
 - One engine to fix instead of two: a download or torrent bug is fixed once for PC and phone.

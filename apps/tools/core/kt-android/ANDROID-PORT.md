@@ -97,6 +97,15 @@ size really moves.
 the journal's reader and rules, the remote rules, and their JSON. M2's CI run (43617047751) measured arm64 +234.3 KB in
 the APK for a host build of 236.5 KB compressed, so expect ≈ +50 KB per ABI more: arm64 ≈ 285 KB, **about 35 KB over
 the 250 KB budget** — CI's size table decides; if it holds, M6's removals pay it back, or `fj.*`'s JSON can be slimmed.
+**M3 + M4 + M5 merged (0.3.0, 2026-11-15), host: 765 624 bytes `.so`, 385 660 gzip -9** (+149 KB compressed over M2's
+236 501), measured merge by merge here: M5's planner and journal +50.6 KB; M4's screen and HLS rules with
+`opt-level = 3` for kt-core +86.8 KB (for speed: at «z» Rust lost to Java's JIT); M3's director and torrent rules +11.7 KB. M3's own CI run (43684755996)
+measured the core at +243 KB arm64-v8a / +231 KB armeabi-v7a / +253 KB x86_64 for M3 alone. **Budget, from 0.19.0:
+under 400 KB compressed per ABI for libkt_android** (expected ≈ 385–400 KB arm64 in the APK from the host figure, by the
+ratio every CI run so far has shown) — raised from 250 KB because the screen translator's speed needs `opt-level = 3`
+and the file jobs' safety checks are worth their size; nothing was shrunk to meet the old line. M6's removals of Java
+classes pay some of it back in dex. The torrent library (`libkt_torrent.so`, librqbit) is not counted here and does not
+ship in 0.19.0 (its own section below): it would add 2.0–2.75 MB per APK.
 
 ## Next stages
 
@@ -137,6 +146,18 @@ the 250 KB budget** — CI's size table decides; if it holds, M6's removals pay 
 
 **M3 — torrents: written 2026-11-15, waiting for CI and the owner's phone. Nothing of it has run on a phone; librqbit
 has never run anywhere as a whole-download engine (the PC uses it only to stream, beside aria2).**
+
+*Status after CI (run 43684755996, 2026-11-15) — what ships in 0.19.0.* **The director ships** (in libkt_android.so,
+every release since the core); «Torrent engine» therefore offers **Classic / Director** in 0.19.0, default Classic.
+**The Rust engine does not ship.** libkt_torrent.so built for all three ABIs with every call (rust-tls + ring under
+the NDK works): `.so` arm64-v8a 6.05 MB / armeabi-v7a 3.66 MB / x86_64 6.79 MB, adding 2.67 / 1.98 / 2.75 MB to the
+APKs (universal +7.40 MB). But its own loopback swarm failed on the real library: the download stopped at 12 550 144 of
+12 582 912 bytes — exactly one 32 KiB piece short —, the peer count flapping 0/1, never «done» within 300 s. So
+`release-tools-torrent.patch` stays unapplied (its NOTES.md: «held — the loopback swarm must pass first»); the CI
+steps stay as tries (continue-on-error) so the day it passes shows. Without the library the «Rust» choice does not
+appear (tests/advancedrows.cjs checks the release's configuration: core present, torrent library absent → two choices).
+Next for the Rust engine: find why the last piece never completes (a last-piece-shorter-than-the-others case, the
+seeder's choking, or the stats' «finished» rule), then the loopback again, then the phone list below.
 
 *The choice.* librqbit for Android with the NDK is possible but unproven on every axis that matters here: the PC built
 it only with its default features (native-tls and sha1 through OpenSSL, which Android lacks), so Android needs
@@ -417,11 +438,12 @@ the defaults are still Java/Classic.
 | `KtFilePlan` (M5, Java's planner) | — **keep it** as the data-safety guard (Rust's destructive steps are checked against it), unless the owner decides otherwise after the row above holds for a further release | — | ≈ 6 KB dex (estimate) |
 | `KtRemoteRules`'s Java half (M5) | `remoterules.rs` through `rm.*` | `remoteMismatches` = 0 and `remoteEngineFallbacks` = 0 over ≥ 30 remote sessions (WebDAV and Nextcloud listings with spaces/Arabic names, ≥ 5 uploads of folders) | < 5 KB dex (estimate) |
 | `KtScreenTrack`, `KtScreenMotion`, `KtLettering`, `KtInpaint`, `KtHls` (M4, sister stage) | their kt-core modules | the M4 plan's CI rows (TkT, MoT, InT, HlsT ported, through the host library); its shadow counters (fields below) at 0 over ≥ 1 hour of screen translation and ≥ 20 HLS videos on the phone; NFC decided (crate or Java) | tens of KB dex (estimate) |
-| **libtorrent4j** (M3, sister stage) | the Rust torrent engine (librqbit, M3) — not built yet | the M3 parity list (downloads, seeding, magnets, DHT/LSD/UPnP/NAT-PMP, encryption, proxy, binding, priorities, sequential, ratio/time limits, resume data) each proven in CI or on the phone; `torEngineFallbacks` = 0 over ≥ 30 torrents (incl. magnets, a seed to ratio, a resume after reboot); the Rust torrent engine the default for one release | **≈ 5.9 MB per ABI — an estimate** from docs/RUST-PORT.md: the CI logs readable here (runs 43617047751, 43651129552) list neither the APK's contents nor libtorrent4j's size; measure with `unzip -l` on the APK in CI before deciding |
+| **libtorrent4j** (M3) | the Rust torrent engine (librqbit, M3) — **blocked**: built for the three ABIs (CI run 43684755996) but its loopback swarm does not finish a download (one 32 KiB piece short), so it is not in 0.19.0; nothing below starts until that test passes | the M3 parity list (downloads, seeding, magnets, DHT/LSD/UPnP/NAT-PMP, encryption, proxy, binding, priorities, sequential, ratio/time limits, resume data) each proven in CI or on the phone; `torEngineFallbacks` = 0 over ≥ 30 torrents (incl. magnets, a seed to ratio, a resume after reboot); the Rust torrent engine the default for one release | **≈ 5.9 MB per ABI — an estimate** from docs/RUST-PORT.md: the CI logs readable here (runs 43617047751, 43651129552) list neither the APK's contents nor libtorrent4j's size; measure with `unzip -l` on the APK in CI before deciding |
 
 **Order of removal** (lowest risk first, each its own release): M1's rules (after a stage that uses them) → M5's
 classic executor and KtRemoteRules's Java half → M2's KrDownloader for user downloads (the updater's path last, or
-never) → M4's classes → libtorrent4j last (it is the biggest and the riskiest, and M3 is not built). After each: the
+never) → M4's classes → libtorrent4j last (it is the biggest and the riskiest, and the Rust torrent engine does not yet
+finish its own loopback download — blocked until it does). After each: the
 full suite, the size table, the owner's phone run.
 
 **The diagnostics readout** — Settings → Advanced → «Rust core status» (built in M5, `src/views/rustStatus.ts`,
@@ -438,5 +460,12 @@ Already exposed: M1 `rustCore`, `rustCoreStatus`, `rustShadow{on, calls, mismatc
 `dlEngineChoice`, `dlEngineFallbacks` (M2 has no `dlChecks`/`dlMismatches` — its decisions are not shadowed; the
 fallback count is its evidence); M5 `fileEngine*`, `fileChecks`, `fileMismatches`, `fileFirst`, `fileDisputed`,
 `fileJobsRust`, `fileReplanErrors`, `fileJournalResumable`, `fileJournalUndoable`, `fileJournalSkipped`,
-`remoteEngine*`, `remoteChecks`, `remoteMismatches`. M3 and M4 must add theirs under `tor`, `screen`, `hls` (the
-card already has names for them in all five languages).
+`remoteEngine*`, `remoteChecks`, `remoteMismatches`; M3 `torEngine*` (in use: `classic`/`director`/`rust`),
+`rustTorrent`, `rustTorrentStatus`, `torEngineHeld`, `torDirectorPlans`, `torDirectorFallbacks`; M4 `screenEngine*`,
+`screenEngineCalls`, `screenCache{cacheHits, cacheMisses, cacheBytes, cacheItems}`, `hlsRustFallbacks`. Added at the
+merge (KtPlugin's last block): `hlsEngine*` (HLS follows the download engine; fallbacks = KtHlsRs's) and
+`hlsEngineCalls`, and from KtCore's shadow counted per area (`KtCore.shadowByArea`, by method prefix) `<area>Checks`,
+`<area>Mismatches`, `<area>First` for `dl`, `tr`, `screen`, `hls`, `tor` — never over M5's own `file`/`remote`
+counters. The card shows one row per engine (download, torrent, screen, HLS, file jobs, network storages), a torrent
+line (director plans and fallbacks, the torrent library's version or «—») and a screen line (Rust calls, the patch
+cache); «Copy report» carries every field.

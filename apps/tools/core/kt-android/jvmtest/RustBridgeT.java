@@ -106,6 +106,11 @@ public class RustBridgeT {
     KtCore.shadow("dl.holds", Boolean.TRUE, "reason", "metered", "wifiOnlyAll", false, "taskWifiOnly", false);
     rep = KtCore.shadowReport();
     check("shadow: a difference counted and kept for the diagnostics", Long.valueOf(1).equals(rep.get("mismatches")) && ((List<?>) rep.get("first")).size() == 1 && String.valueOf(((List<?>) rep.get("first")).get(0)).startsWith("dl.holds"), rep);
+    // (The merge: the same checks per area, for the «Rust core status» card — dl and tr here, the difference under dl.)
+    Map<String, Map<String, Object>> areas = KtCore.shadowByArea();
+    check("shadow per area: dl and tr counted, the difference under dl", areas.containsKey("dl") && areas.containsKey("tr") && Long.valueOf(1).equals(areas.get("dl").get("mismatches")) && Long.valueOf(0).equals(areas.get("tr").get("mismatches"))
+      && ((Long) areas.get("dl").get("checks")) + ((Long) areas.get("tr").get("checks")) == ((Long) rep.get("calls")), areas);
+    eq("areas: a screen, an HLS and a torrent method", KtCore.areaOf("bytes.inpaint") + KtCore.areaOf("bytes.hlsMedia") + KtCore.areaOf("tdir.plan") + KtCore.areaOf("fj.plan") + KtCore.areaOf("rm.join"), "screenhlstorfileremote");
     KtCore.shadow = false;
     m2();
     System.out.println(fails == 0 ? "rust bridge: all passed" : "rust bridge: " + fails + " FAILED"); System.exit(fails == 0 ? 0 : 1);

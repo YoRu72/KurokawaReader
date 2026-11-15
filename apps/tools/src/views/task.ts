@@ -16,7 +16,7 @@ import type { Task } from '../engine/types';
 import { back, navigate } from '../router';
 import { stateLabel } from './downloads';
 import { historyOf, fileMap, lanes, speedChart, logList, meter, infoList } from './taskmap';
-import { torEngineBadge } from './engineSettings';
+import { torEngineBadge } from './engineInfo';
 /** (Stage M3: the torrent's engine in its details, debuggable builds only.) */
 const torEngineInfo = (x: Task): [string, string][] => { const b = torEngineBadge(x); return b ? [[t('torEngine'), b]] : []; };
 import { categoryOf } from '../downloads/categories';

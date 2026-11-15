@@ -38,13 +38,13 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   let { p, ctx } = await open({ kind: 'phone', core: '0.3.0', tor: '0.1.0' });
   check('phone with both: «Torrent engine» in Advanced', /Torrent engine/.test(await p.$eval('#advanced', (e) => e.textContent)));
   check('…Classic by default', /Classic/.test(await p.$eval('#advanced .tor-engine-row button', (e) => e.textContent)));
-  check('…the status line: engine, version, fallbacks', /New torrents: Classic/.test(await p.$eval('#advanced .tor-engine-status', (e) => e.textContent)) && /0\.1\.0/.test(await p.$eval('#advanced .tor-engine-status', (e) => e.textContent)) && /Classic: 3/.test(await p.$eval('#advanced .tor-engine-status', (e) => e.textContent)));
+  check('…the status line: engine in use, handed back; the library\'s version in the status block', /in use: Classic · handed back to Classic: 3/.test(await p.$eval('#advanced .tor-engine-status', (e) => e.textContent)) && /0\.1\.0/.test(await p.$eval('#rust-status .rust-tor', (e) => e.textContent)));
   const all = await choices(p);
   check('…Classic, Director and Rust offered', all.some((x) => /Classic/.test(x)) && all.some((x) => /Director/.test(x)) && all.some((x) => /^Rust/.test(x)), all);
   await p.locator('label.dest-row', { hasText: /^Rust$/ }).first().click(); await p.waitForTimeout(500);
   check('Rust picked: told to the engine', (await p.evaluate(() => window.__calls)).some((c) => c.torEngine === 'rust'));
   check('…kept in the settings', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings') || '{}').torEngine) === 'rust');
-  check('…the hint says what Rust refuses (SAF folders)', /SAF/.test(await p.$eval('#advanced', (e) => e.textContent)));
+  check('…the hint says what Director does, in one line', /Director the Rust core picks the pieces/.test(await p.$eval('#advanced .tor-engine-row', (e) => e.textContent)));
   await ctx.close();
   // The core only: Director, no Rust.
   ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', tor: null }));

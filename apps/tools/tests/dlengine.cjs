@@ -35,8 +35,8 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('phone with the core: «Advanced» is there', !!(await p.$('#advanced')));
   if (await p.$('#advanced.collapsed')) await p.click('#advanced h3');
   const txt = await p.$eval('#advanced', (e) => e.textContent);
-  check('it names the download engine, Java chosen by default', /Download engine/.test(txt) && /Java/.test(await p.$eval('#advanced .dl-engine-row button', (e) => e.textContent)), txt);
-  check('the core\'s version, the engine in use, the fallbacks', /Rust core 0\.3\.0/.test(txt) && /in use: Java/.test(txt) && /handed back to Java: 2/.test(txt), txt);
+  check('it names the download engine, Classic (Java) chosen by default', /Download engine/.test(txt) && /Classic/.test(await p.$eval('#advanced .dl-engine-row button', (e) => e.textContent)), txt);
+  check('the core\'s version, the engine in use, the fallbacks', /Rust core 0\.3\.0/.test(txt) && /in use: Classic/.test(txt) && /handed back to Classic: 2/.test(txt), txt);
   await p.click('#advanced .dl-engine-row button'); await p.waitForTimeout(300);
   await p.locator('label.dest-row', { hasText: 'Rust' }).first().click(); await p.waitForTimeout(500);
   const calls = await p.evaluate(() => window.__calls);

@@ -1,15 +1,12 @@
-// Settings → Advanced (stage M5 of the Rust port, docs/RUST-PORT.md §5): two pieces the Advanced card shows on a phone
-// that carries the Rust core — never on a computer, never without the core (engineSettings.ts decides that):
-//  - «File jobs engine: Classic / Rust» (copy, move, delete in the Files add-on): Rust plans, Java does the work, any
-//    step that deletes or overwrites checked against the classic plan first (an item they disagree on is skipped and
-//    told); default Classic. The choice goes to the engine (configure({ fileEngine })).
-//  - «Rust core status»: the core's version, every engine in use and chosen, every fallback and mismatch counter, the
-//    file jobs' journal (jobs that can be resumed or undone), and «Copy report» — one text the owner can send. It reads
-//    deviceInfo() as it comes and shows what is there: a stage not merged yet simply has no line (see ANDROID-PORT.md
-//    «M6 — what removal needs» for the fields each stage reports).
-import { h, pickButton, toast } from '../ui/dom';
+// Settings → Advanced (stage M5 of the Rust port, docs/RUST-PORT.md §5; the engine rows are engineSettings.ts's): the
+// «Rust core status» block the Advanced card ends with on a phone that carries a Rust library — never on a computer.
+// The core's version, every engine in use and chosen (download, torrent, screen translator, HLS, file jobs, network
+// storages) with its fallbacks, checks and mismatches, the torrent director's plans and the Rust torrent library, the
+// screen translator's Rust calls and patch cache, the shadow's totals, the file jobs' journal (jobs that can be resumed
+// or undone), and «Copy report» — one text the owner can send. It reads deviceInfo() as it comes and shows what is
+// there (ANDROID-PORT.md «M6 — what removal needs» lists the fields each stage reports).
+import { h, toast } from '../ui/dom';
 import { t, localDigits } from '../i18n';
-import { getSettings, updateSettings } from '../settings';
 
 export type CoreInfo = Record<string, unknown> & { rustCore?: string | null };
 type Api = {
@@ -20,17 +17,6 @@ type Journal = { id: string; op?: string; dest?: string; steps?: number; done?: 
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
-
-/** The «File jobs engine» row. */
-export function fileEngineRow(info: CoreInfo, api: Api, refresh: (r: CoreInfo) => void): HTMLElement {
-  const cur = getSettings().fileEngine === 'rust' ? 'rust' : 'classic';
-  const pick = pickButton(t('fileEngine'), [['classic', t('fileEngineClassic')], ['rust', t('fileEngineRust')]], cur, (v) => {
-    updateSettings({ fileEngine: v });
-    void api.configure({ fileEngine: v }).catch(() => undefined).then(() => api.deviceInfo?.()).then((r) => { if (r) refresh(r); }).catch(() => undefined);
-  }, t('close'));
-  void info;
-  return h('div', { class: 'row file-engine-row' }, h('span', null, t('fileEngine'), h('small', { class: 'src' }, t('fileEngineHint'))), pick);
-}
 
 /** The engines deviceInfo reports: every «<area>Engine» field (dlEngine, fileEngine, and the sister stages' when they
  *  come), and any rows of a `rustEngines` list. */
@@ -46,12 +32,15 @@ export function enginesOf(info: CoreInfo): { area: string; inUse: string; choice
 }
 const AREAS: Record<string, () => string> = { dl: () => t('dlEngine'), file: () => t('fileEngine'), remote: () => t('rustAreaRemote'), tor: () => t('rustAreaTor'), screen: () => t('rustAreaScreen'), hls: () => t('rustAreaHls') };
 const areaName = (a: string): string => AREAS[a]?.() ?? a;
-const engineName = (v: string): string => (v === 'rust' ? 'Rust' : v === 'java' ? 'Java' : v === 'classic' ? t('fileEngineClassic') : v || t('rustStatusNone'));
+const engineName = (v: string): string => (v === 'rust' ? 'Rust' : v === 'java' || v === 'classic' ? t('fileEngineClassic') : v === 'director' ? t('torEngineDirector') : v || t('rustStatusNone'));
 
 /** The report «Copy report» puts on the clipboard: plain text, every field deviceInfo gave (no secret is among them). */
 export function reportText(info: CoreInfo): string {
-  const lines = [`Kurokawa Tools — ${t('rustStatusTitle')}`, `core: ${str(info.rustCore) || 'absent'} (${str(info.rustCoreStatus)})`];
+  const lines = [`Kurokawa Tools — ${t('rustStatusTitle')}`, `core: ${str(info.rustCore) || 'absent'} (${str(info.rustCoreStatus)})`, `torrent library: ${str(info.rustTorrent) || 'absent'}${info.rustTorrentStatus ? ` (${str(info.rustTorrentStatus)})` : ''}`];
   for (const e of enginesOf(info)) lines.push(`${e.area}: in use ${e.inUse || '?'}, chosen ${e.choice || '?'}, fallbacks ${e.fallbacks}, checks ${e.checks}, mismatches ${e.mismatches}`);
+  if ('torDirectorPlans' in info) lines.push(`tor director: plans ${num(info.torDirectorPlans)}, fallbacks ${num(info.torDirectorFallbacks)}, held by the Rust engine ${num(info.torEngineHeld)}`);
+  const sc = (info.screenCache ?? {}) as Record<string, unknown>;
+  if ('screenEngineCalls' in info) lines.push(`screen: Rust calls ${num(info.screenEngineCalls)}, patch cache hits ${num(sc.cacheHits)}, misses ${num(sc.cacheMisses)}, ${num(sc.cacheItems)} items, ${num(sc.cacheBytes)} bytes`);
   lines.push('', JSON.stringify(info, null, 1));
   return lines.join('\n');
 }
@@ -60,11 +49,15 @@ export function reportText(info: CoreInfo): string {
 export function rustStatusCard(info: CoreInfo, api: Api): HTMLElement {
   const box = h('div', { class: 'rust-status', id: 'rust-status' });
   const shadow = (info.rustShadow ?? {}) as Record<string, unknown>;
-  const rows: (HTMLElement | string)[] = [h('h4', null, t('rustStatusTitle')), h('div', { class: 'src' }, t('rustStatusCore', { version: str(info.rustCore) }))];
+  const rows: (HTMLElement | string)[] = [h('h4', null, t('rustStatusTitle'))];
+  if (info.rustCore) rows.push(h('div', { class: 'src' }, t('rustStatusCore', { version: str(info.rustCore) })));
   for (const e of enginesOf(info)) {
     rows.push(h('div', { class: 'rust-engine', 'data-area': e.area }, h('b', null, areaName(e.area)), ' ', h('span', null, t('rustStatusEngine', { engine: engineName(e.inUse), choice: engineName(e.choice) })),
       h('small', { class: 'src' }, ' · ', t('rustStatusCounts', { fallbacks: localDigits(e.fallbacks), checks: localDigits(e.checks), mismatches: localDigits(e.mismatches) }))));
   }
+  if ('torDirectorPlans' in info || info.rustTorrent) rows.push(h('div', { class: 'src rust-tor' }, t('rustStatusTor', { plans: localDigits(num(info.torDirectorPlans)), fallbacks: localDigits(num(info.torDirectorFallbacks)), version: str(info.rustTorrent) || '—' })));
+  const cache = (info.screenCache ?? {}) as Record<string, unknown>;
+  if ('screenEngineCalls' in info) rows.push(h('div', { class: 'src rust-screen' }, t('rustStatusScreen', { calls: localDigits(num(info.screenEngineCalls)), hits: localDigits(num(cache.cacheHits)), misses: localDigits(num(cache.cacheMisses)) })));
   if (typeof shadow.calls === 'number') rows.push(h('div', { class: 'src rust-shadow' }, t('rustStatusShadow', { checks: localDigits(num(shadow.calls)), mismatches: localDigits(num(shadow.mismatches)) })));
   if ('fileJournalResumable' in info) rows.push(h('div', { class: 'src rust-journal' }, t('rustStatusJournal', { n: localDigits(num(info.fileJournalResumable)), u: localDigits(num(info.fileJournalUndoable)) })));
   if ('fileDisputed' in info && num(info.fileDisputed) > 0) rows.push(h('div', { class: 'src rust-disputed' }, t('rustStatusDisputed', { n: localDigits(num(info.fileDisputed)) })));
