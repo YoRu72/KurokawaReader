@@ -82,7 +82,8 @@ export function meter(x: Task): HTMLElement {
     h('div', { class: 'kt-meter-row' },
       // (No percentage where there is nothing to say: the size unknown, or a failed one with nothing received.)
       pct == null || (x.state === 'failed' && !(x.done > 0)) ? null : h('div', { class: 'kt-pct', dir: 'ltr' }, localDigits(pct >= 99.95 || pct === 0 ? Math.round(pct) : pct.toFixed(1)), h('small', null, '%')),
-      h('div', { class: 'kt-of' }, t('bytesOf', { done: formatBytes(x.done), total: x.total > 0 ? formatBytes(x.total) : '?' })),
+      // (Each amount is one left-to-right run inside the sentence; an unknown total is not printed — only what is here, and nothing for a failed one with nothing.)
+      x.total > 0 ? h('div', { class: 'kt-of' }, t('bytesOf', { done: formatBytes(x.done), total: formatBytes(x.total) })) : x.done > 0 || (x.state !== 'failed' && x.state !== 'paused') ? h('div', { class: 'kt-of', dir: 'ltr' }, formatBytes(x.done)) : null,
       h('div', { class: 'kt-kpis' },
         kpi(t('statSpeed'), live ? perSec(x.downSpeed) : '—'), kpi(t('statLeft'), live && x.eta ? fmtSecs(x.eta) : '—'),
         ...(x.kind === 'torrent' ? [kpi(t('statPeers'), `${localDigits(x.peers ?? 0)} · ${localDigits(x.seeds ?? 0)}`)] : x.connections || act ? [kpi(t('connectionsTitle'), `${localDigits(act || x.connections || 0)}${x.connections ? ` / ${localDigits(x.connections)}` : ''}`)] : []))),

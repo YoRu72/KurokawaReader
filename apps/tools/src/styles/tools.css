@@ -1166,13 +1166,13 @@ html.picking { --nav-h: 0px; }
 .pick-bar .btn { flex: none; min-height: 44px; }
 
 /* ---------- a download's page: its error, its actions (one main action; real gaps; the same height and shape) ---------- */
-.task-error { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 14px 0 0; }
+.task-error { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 0; }
 .task-error > p { margin: 0; max-width: 100%; }
 .task-error .err-line { color: var(--md-error); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; text-align: start; }
 .task-error .err-raw { font-size: 12px; overflow-wrap: anywhere; opacity: .8; }
 .task-error .err-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .task-error .err-actions .btn, .task-error > .btn { margin-top: 0; }
-.task-detail-actions { gap: 10px; margin-top: 18px; }
+.task-detail-actions { gap: 10px; margin-top: 4px; }
 .task-detail-actions .btn { height: 44px; min-width: 0; padding: 0 20px; border-radius: var(--sh-full); white-space: nowrap; }
 .task-detail-actions .btn.text { padding: 0 20px; }
 .btn.text.danger { background: transparent; color: var(--md-error); }
@@ -1184,3 +1184,12 @@ html.picking { --nav-h: 0px; }
 }
 /* Names (of the file, in the header and the card): their own direction, never mixed with the page's; the cut («…») at their end. */
 .kt-name, .task-view .topbar .title > span:first-child, .kt-url .sel { unicode-bidi: isolate; text-align: start; }
+
+/* A right-to-left file name: its words, then the left-to-right run (tail and extension) at the visual end; a long one is cut
+   between them (the ellipsis where the cut is), the run whole. */
+.nm { display: flex; align-items: baseline; min-width: 0; max-width: 100%; }
+.nm-stem { padding-inline-end: .18em; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.nm-run { flex: none; white-space: pre; unicode-bidi: isolate; }
+.kt-name .nm { display: block; } .kt-name .nm-stem { display: inline; white-space: pre-wrap; overflow: visible; } .kt-name .nm-run { display: inline; white-space: pre-wrap; }
+.kt-hero .kt-name:has(> .nm) { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.task-name:has(> .nm) { display: block; }

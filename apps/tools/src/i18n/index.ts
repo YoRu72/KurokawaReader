@@ -160,7 +160,7 @@ export function formatDate(ts: number | undefined): string {
 
 export function formatBytes(n: number): string {
   const arabic = current === 'ar' && visualPref('sizeUnits') === 'arabic';
-  if (n < 1024) return `${localDigits(n)} ${arabic ? 'بايت' : 'B'}`;
+  if (n < 1024) return arabic ? `${localDigits(n)} بايت` : `\u2066${localDigits(n)} B\u2069`;
   const units = arabic ? ['كيلوبايت', 'ميغابايت', 'قيقابايت', 'تيرابايت'] : ['KB', 'MB', 'GB', 'TB'];
   let i = -1;
   do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
