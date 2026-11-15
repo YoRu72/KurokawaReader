@@ -117,7 +117,7 @@ export function openPlayer(src: PlayerSource): void {
   // screen is a layer of its own above it — Back leaves the full screen first.)
   const unBackPlayer = pushLayer({ kind: 'player', name: 'player', on: () => root.isConnected, back: () => { if (locked) { unlockBtn.hidden = false; unlockBtn.classList.remove('faded'); return true; } close(); return true; } });
   let unBackFull: (() => void) | null = null;
-  // (The full screen: the browser's own when it is allowed; else — a web view that refuses one not asked by a tap, as
+  // (The full screen: on a phone the player's own — the system bars away —; on a computer the browser's, else the own.
   // when the phone was turned — the player's own: the system bars away, the same layer on the back stack.)
   let pseudoFull = false; let wasFull = false;
   const isFull = () => document.fullscreenElement === root || pseudoFull;
@@ -428,7 +428,11 @@ export function openPlayer(src: PlayerSource): void {
     await enterFull();
   }
   async function enterFull() {
-    try { await root.requestFullscreen(); } catch { pseudoFull = true; void barsPlug?.systemBars?.({ mode: 'both' }).catch(() => undefined); onFullChange(); }
+    // (A phone: the player covers the screen already — its full screen is the system bars away, so the sheets opened
+    // over it still show (the browser's own full screen hides all but the player); a computer: the browser's.)
+    const own = () => { pseudoFull = true; void barsPlug?.systemBars?.({ mode: 'both' }).catch(() => undefined); onFullChange(); };
+    if (isPhone()) { own(); return; }
+    try { await root.requestFullscreen(); } catch { own(); }
   }
   async function exitFull() {
     if (pseudoFull) { pseudoFull = false; if (getPrefs().immersive === 'none') void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined); onFullChange(); return; }
