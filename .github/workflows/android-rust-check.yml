@@ -11,6 +11,9 @@ name: Android Rust check (Tools)
 # Stage M2 (the HTTP downloader): kt-core's httpdl.rs tested alone; tests/native/T.java's runs 1–19 run twice against
 # their loopback server — once through Java's KrDownloader (the reference, unchanged) and once through KrDownloaderRs,
 # every decision asked of the host library (jvmtest/downloader-rust.sh, strict: no silent Java fallback).
+# Stage M5 (the Files jobs): kt-core's fileplan / filejournal / remoterules tested alone; FilesT.java's cases through
+# Java's planner and through Rust's (jvmtest/filejobs-rust.sh), the two planners compared on random trees, the journal
+# killed before each of its records and resumed or rolled back.
 on:
   push:
     branches: ['work-tt-p5', 'work-tauri']
@@ -76,6 +79,22 @@ jobs:
       - name: The same runs 1–19 through the Rust engine (M2; host library, strict)
         working-directory: apps/tools/core/kt-android
         run: sh jvmtest/downloader-rust.sh target/release/libkt_android.so
+
+      # ---- Stage M5: the Files jobs (copy / move / delete) planned by Rust, executed by Java; their journal; the
+      # network storages' rules. Required: each step fails the job.
+      - name: M5 — std-only tests (fileplan, filejournal, remoterules; rustc alone)
+        run: |
+          d="$RUNNER_TEMP/rs-tests-m5"; mkdir -p "$d"
+          for f in apps/tools/core/kt-core/src/fileplan.rs apps/tools/core/kt-core/src/filejournal.rs apps/tools/core/kt-core/src/remoterules.rs; do
+            n=$(basename "$f" .rs); rustc --edition 2021 --test "$f" -o "$d/$n"; "$d/$n"
+          done
+      - name: M5 — Java's file jobs alone (the classic engine, and Java's plan through the executor; no library)
+        working-directory: apps/tools
+        run: sh tests/native/files.sh && sh tests/native/fileplan.sh
+      - name: M5 — the file jobs through the Rust engine (host library, strict; planners compared, the journal killed at every record)
+        working-directory: apps/tools/core/kt-android
+        run: sh jvmtest/filejobs-rust.sh target/release/libkt_android.so
+      # ---- (end of stage M5)
 
       - name: The library for Android (arm64-v8a, armeabi-v7a, x86_64)
         run: bash apps/tools/core/kt-android/build-android.sh "$RUNNER_TEMP/jniLibs"

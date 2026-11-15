@@ -79,6 +79,8 @@ public class KtPlugin extends Plugin {
     private void rustCore() {
         try { KtCore.log = (line) -> android.util.Log.i("KtCore", line); KtCore.shadow = (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0; } catch (Throwable ignored) {}
         bg.execute(() -> { try { KtCore.available(); } catch (Throwable ignored) {} });
+        // (Stage M5: the file jobs' engine as chosen, their shadow on debuggable builds, their journals in private storage.)
+        try { KtFileExec.choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("fileEngine", "classic")) ? "rust" : "classic"; KtFileExec.shadow = KtCore.shadow; KtFileExec.journalDir = new File(getContext().getFilesDir(), "filejobs"); } catch (Throwable ignored) {}
     }
     /** The web views pointed at the app's own proxy (KrDohProxy) while DoH is on — every connection they make resolved
      *  through the resolver, the hello split — and set free of it when off. The app's own page (localhost) and the home
@@ -395,6 +397,8 @@ public class KtPlugin extends Plugin {
         // (Stage M2: the download engine — the one chosen in Settings → Advanced, the one new downloads use (Java when the
         // core is absent), and how many downloads the Rust engine handed back to Java before their first byte.)
         try { String choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; r.put("dlEngineChoice", choice); r.put("dlEngine", "rust".equals(choice) && KtCore.available() ? "rust" : "java"); r.put("dlEngineFallbacks", KrDownloaderRs.FALLBACKS.get()); } catch (Throwable ignored) {}
+        // (Stage M5: the file jobs' engine, its fallbacks, the two planners' comparisons, the journals — KtFileExec.report.)
+        try { org.json.JSONObject m5 = KtFileExec.report(); for (java.util.Iterator<String> it = m5.keys(); it.hasNext();) { String k = it.next(); r.put(k, m5.get(k)); } } catch (Throwable ignored) {}
         call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {
@@ -865,6 +869,11 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void filesAnalyzeStop(PluginCall call) { analyzeStop.set(true); call.resolve(); }
     @PluginMethod public void filesCancel(PluginCall call) { KtFiles.cancel(call.getString("id", "")); call.resolve(); }
     @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
+    // (Stage M5: the Rust engine's journals — the list, a job cut short resumed or rolled back, a finished one undone.)
+    @PluginMethod public void filesJournals(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("items", new JSArray(KtFileExec.journals().toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesJournalResume(PluginCall call) { final String jid = call.getString("journal", ""); final String id = call.getString("id", "resume-" + System.currentTimeMillis()); new Thread(() -> KtFileExec.resume(jid, id, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-resume").start(); JSObject r = new JSObject(); r.put("id", id); call.resolve(r); }
+    @PluginMethod public void filesJournalRollback(PluginCall call) { final String jid = call.getString("journal", ""); final boolean undo = Boolean.TRUE.equals(call.getBoolean("undo", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFileExec.rollback(jid, undo))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesJournalDismiss(PluginCall call) { final String jid = call.getString("journal", ""); bg.execute(() -> { JSObject r = new JSObject(); r.put("ok", KtFileExec.dismiss(jid)); call.resolve(r); }); }
     /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */
     @PluginMethod public void filesAccess(PluginCall call) {
         boolean all = Build.VERSION.SDK_INT >= 30 ? android.os.Environment.isExternalStorageManager() : getContext().checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;

@@ -7,6 +7,8 @@ import { h, pickButton } from '../ui/dom';
 import { t, localDigits } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
 import { nativePlatform, ktPlugin } from '../native';
+// (Stage M5: the file jobs' engine and the «Rust core status» block.)
+import { fileEngineRow, rustStatusCard, type CoreInfo } from './rustStatus';
 
 type Info = { rustCore?: string | null; dlEngine?: string; dlEngineChoice?: string; dlEngineFallbacks?: number };
 type Api = { deviceInfo?(): Promise<Info>; configure(o: Record<string, unknown>): Promise<void> };
@@ -34,8 +36,10 @@ export function advancedCard(rerender: () => void): HTMLElement | null {
     updateSettings({ dlEngine: v });
     void api.configure({ dlEngine: v }).catch(() => undefined).then(() => api.deviceInfo?.()).then((r) => { if (r) { info = r; rerender(); } }).catch(() => undefined);
   }, t('close'));
+  // (Stage M5: the file jobs' engine row and the «Rust core status» block — views/rustStatus.ts.)
+  const m5 = [fileEngineRow(info as CoreInfo, api as never, (r) => { info = r as Info; rerender(); }), rustStatusCard(info as CoreInfo, api as never)];
   return h('section', { class: 'card', id: 'advanced' }, h('h3', null, t('advancedSection')),
     h('p', { class: 'hint' }, t('advancedHint')),
     h('div', { class: 'row dl-engine-row' }, h('span', null, t('dlEngine'), h('small', { class: 'src' }, t('dlEngineHint'))), pick),
-    status);
+    status, ...m5);
 }
