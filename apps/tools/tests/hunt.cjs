@@ -9,7 +9,7 @@ const ROUNDS = Number(process.env.KT_HUNT_ROUNDS || 40);
 // Every place of the app a reader can reach (the add-ons all on, the desktop bridge absent, so the pages draw their own fallbacks).
 const ROUTES = ['/', '/?f=active', '/add', '/search?q=test', '/addons', '/subs?q=naruto', '/anime', '/anime?tab=season', '/anime?tab=schedule', '/tv', '/tv?tab=watchlist', '/videos', '/videos?tab=folders', '/files', '/files?c=recent', '/screen', '/settings', '/settings/general', '/settings/downloads', '/settings/addons', '/settings/updates', '/settings/about'];
 (async () => {
-  await new Promise((r) => server.listen(5483, r));
+  await new Promise((r) => server.listen(0, r)); const ORIGIN = `http://localhost:${server.address().port}`;
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 412, height: 900 }, deviceScaleFactor: 1 });
   const errors = []; p.on('pageerror', (e) => errors.push(String(e))); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|CORS policy/.test(m.text())) errors.push(m.text()); });
   await p.addInitScript(() => {
@@ -29,9 +29,9 @@ const ROUTES = ['/', '/?f=active', '/add', '/search?q=test', '/addons', '/subs?q
     }
     localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['anime', 'tv', 'videos', 'subtitles', 'player', 'files', 'archives', 'screen'], autoUpdateCheck: false }));
   });
-  await p.goto('http://localhost:5483/#/'); await p.waitForSelector('.view'); await p.waitForTimeout(600);
+  await p.goto(ORIGIN + '/#/'); await p.waitForSelector('.view'); await p.waitForTimeout(600);
   const snap = async () => p.evaluate(() => ({ ...window.__hunt, nodes: document.getElementsByTagName('*').length, views: document.querySelectorAll('.view').length, sheets: document.querySelectorAll('.sheet, .sheet-scrim').length }));
-  const warm = async () => { for (const r of ROUTES) { await p.goto('http://localhost:5483/#' + r); await p.waitForTimeout(120); } await p.goto('http://localhost:5483/#/'); await p.waitForTimeout(300); };
+  const warm = async () => { for (const r of ROUTES) { await p.goto(ORIGIN + '/#' + r); await p.waitForTimeout(120); } await p.goto(ORIGIN + '/#/'); await p.waitForTimeout(300); };
   await warm(); await warm(); const before = await snap();
   for (let i = 0; i < ROUNDS; i++) { await warm(); }
   await p.evaluate(() => new Promise((r) => setTimeout(r, 500)));
@@ -45,13 +45,13 @@ const ROUTES = ['/', '/?f=active', '/add', '/search?q=test', '/addons', '/subs?q
   // Sheets: opened and closed by the top bar's buttons on each page, the scrim cleaning up after each.
   let opened = 0;
   for (const r of ROUTES) {
-    await p.goto('http://localhost:5483/#' + r); await p.waitForTimeout(150);
+    await p.goto(ORIGIN + '/#' + r); await p.waitForTimeout(150);
     const buttons = await p.$$('.topbar button, .fab');
     for (let i = 0; i < Math.min(buttons.length, 6); i++) {
       const bs = await p.$$('.topbar button, .fab'); if (!bs[i]) break;
       try { await bs[i].click({ timeout: 800 }); } catch { continue; }
       await p.waitForTimeout(120); const sheet = await p.$('.sheet'); if (sheet) { opened++; await p.keyboard.press('Escape'); await p.waitForTimeout(80); if (await p.$('.sheet')) { const x = await p.$('.sheet-head button'); if (x) await x.click().catch(() => undefined); } }
-      if (!(await p.url()).includes('#' + r)) { await p.goto('http://localhost:5483/#' + r); await p.waitForTimeout(120); }
+      if (!(await p.url()).includes('#' + r)) { await p.goto(ORIGIN + '/#' + r); await p.waitForTimeout(120); }
     }
   }
   ok(`sheets opened and closed from the pages (${opened})`, opened >= 6 && (await p.$$('.sheet')).length === 0);

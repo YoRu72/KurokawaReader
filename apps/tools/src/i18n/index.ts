@@ -3,14 +3,31 @@ import { en, type Strings } from './en';
 export type Lang = 'en' | 'ar' | 'ja' | 'zh' | 'ko';
 // (English is always here, the fallback for any string; the language in use is fetched before the first view is
 // drawn, and another when chosen — not all five read at every start: a third of the startup's code.)
+// (In the build each table is cut in two — scripts/build.mjs splitStrings —: what the first screen uses, here at once,
+// and the rest, fetched by loadRest() before any other screen's code runs (./gate.ts); filled by English where the
+// language has no string of its own. In the source the first part is the whole table and the rest adds nothing.)
 const tables: Partial<Record<Lang, Partial<Strings>>> = { en };
 const loaders: Record<Exclude<Lang, 'en'>, () => Promise<Partial<Strings>>> = {
   ar: () => import('./ar').then((m) => m.ar), ja: () => import('./ja').then((m) => m.ja), zh: () => import('./zh').then((m) => m.zh), ko: () => import('./ko').then((m) => m.ko),
 };
+const restLoaders: Record<Lang, () => Promise<Partial<Strings>>> = {
+  en: () => import('./rest/en').then((m) => m.rest), ar: () => import('./rest/ar').then((m) => m.rest), ja: () => import('./rest/ja').then((m) => m.rest), zh: () => import('./rest/zh').then((m) => m.rest), ko: () => import('./rest/ko').then((m) => m.rest),
+};
+const restHere = new Map<Lang, Promise<void>>(); let restWanted = false;
+function fetchRest(lang: Lang): Promise<void> {
+  let p = restHere.get(lang);
+  if (!p) {
+    p = restLoaders[lang]().then((more) => { if (lang === 'en') Object.assign(en, more); else tables[lang] = { ...more, ...tables[lang] }; }, () => { restHere.delete(lang); });
+    restHere.set(lang, p);
+  }
+  return p;
+}
+/** The rest of the strings of the language in use (and of any chosen later) fetched: every screen but the first. */
+export function loadRest(): Promise<void> { restWanted = true; return fetchRest(current); }
 /** The strings of `lang` fetched (at once when already here). */
 export async function loadLang(lang: Lang): Promise<void> {
-  if (tables[lang]) return;
-  try { tables[lang] = await loaders[lang as Exclude<Lang, 'en'>](); } catch { /* English meanwhile */ }
+  if (!tables[lang]) { try { tables[lang] = await loaders[lang as Exclude<Lang, 'en'>](); } catch { /* English meanwhile */ } }
+  if (restWanted) await fetchRest(lang);
 }
 /** Interface languages, each named in its own language (the picker lists these). */
 export const LANGS: [Lang, string][] = [['en', 'English'], ['ar', 'العربية'], ['ja', '日本語'], ['zh', '简体中文'], ['ko', '한국어']];

@@ -42,7 +42,7 @@ export function tvView(tab?: TvTab, q?: string): HTMLElement & { dispose?: () =>
     stopSched?.(); stopSched = null;
     drawChips(); const my = ++token; body.replaceChildren(); body.classList.remove('dc-page'); root.classList.toggle('dc-on', current === 'discover');
     if (current === 'discover') {
-      void import('./tvDiscover').then((m) => { if (my === token) m.tvDiscover(body, { live: () => my === token, browse: (p) => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch { /* full */ } current = 'browse'; try { localStorage.setItem(TAB_KEY, 'browse'); } catch { /* none */ } navigate('/tv?tab=browse', true); draw(); body.scrollTop = 0; } }); });
+      void import('./tvDiscover').then((m) => { if (my === token) stopSched = m.tvDiscover(body, { live: () => my === token, browse: (p) => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch { /* full */ } current = 'browse'; try { localStorage.setItem(TAB_KEY, 'browse'); } catch { /* none */ } navigate('/tv?tab=browse', true); draw(); body.scrollTop = 0; } }); });
     } else if (current === 'schedule') {
       void import('./tvSchedule').then((m) => { if (my === token) stopSched = m.tvSchedule(body, () => my === token); });
     } else if (current === 'search') {

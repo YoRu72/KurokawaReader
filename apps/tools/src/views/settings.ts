@@ -119,7 +119,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   };
   search.addEventListener('input', applySearch);
   // (The sticky head's height, so a card scrolled to lands below it, not under it.)
-  if (typeof ResizeObserver === 'function') new ResizeObserver(() => body.style.setProperty('--head-h', `${head.offsetHeight}px`)).observe(head);
+  const headRo = typeof ResizeObserver === 'function' ? new ResizeObserver(() => body.style.setProperty('--head-h', `${head.offsetHeight}px`)) : null; headRo?.observe(head);
   const rerender = () => { const all = sections(); drawTabs(all); body.replaceChildren(head, ...inTab(all)); decorate(); };
 
   const sections = (): HTMLElement[] => {
@@ -388,7 +388,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   rerender();
   // (Back: a search typed is let go first, then a tab of the bar back to «All»; then Settings is left.)
   const unBack = onBack(() => { if (!root.isConnected) return false; if (search.value) { search.value = ''; applySearch(); return true; } if (tab !== 'all') { tab = 'all'; rerender(); return true; } return false; }, 'search', 'settings');
-  const was = root.dispose; root.dispose = () => { unBack(); was?.(); };
+  const was = root.dispose; root.dispose = () => { unBack(); headRo?.disconnect(); was?.(); };
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
   void decorate;
   void s; void navigate; void localDigits; void formatBytes; void openSheet; void countAddons;
