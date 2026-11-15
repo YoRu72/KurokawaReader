@@ -1,0 +1,18 @@
+{
+  "_": "Tests that fail on the untouched baseline. The preflight reports them as KNOWN, a NEW failure fails the run, and one that starts passing is reported as FIXED (remove it here). name, reason (the true one), how (how to run it properly), date, loadSensitive, mode: run (default) or skip (not run).",
+  "failures": [
+    {
+      "name": "hunt.cjs",
+      "reason": "A real small leak, found on the untouched main (0.64.0): listeners on window/document grow 64 -> 105 over 40 rounds of opening and leaving the 7 pages; the test allows 40 (one per round), so it fails by one. The test is right; some page adds about one listener per visit.",
+      "how": "node tests/hunt.cjs (KT_HUNT_ROUNDS=... for more rounds)",
+      "date": "2026-11-15"
+    },
+    {
+      "name": "glassperf.cjs",
+      "reason": "Counts long tasks under a 6x CPU slow-down: on this machine pdf, bars hidden: Classic 25, Off 51, Full 54, so 'no more than Classic + 1' fails. Load-sensitive (a 2-CPU box shared by several test runs); not yet shown to be a product regression.",
+      "how": "on a quiet machine: node tests/glassperf.cjs, then KR_REVERSE=1 node tests/glassperf.cjs to see whether the order matters",
+      "date": "2026-11-15",
+      "loadSensitive": true
+    }
+  ]
+}

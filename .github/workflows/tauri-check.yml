@@ -11,6 +11,8 @@ name: Tauri check
 # choosing, DNS over HTTPS and the updater's download and checks (against the test server). Nothing is signed or
 # released: no workflow publishes this shell's builds yet (stage P9).
 on:
+  # (Also called by preflight.yml, which runs it on a work branch before the final push.)
+  workflow_call:
   push:
     branches: ['work-tauri*']
     paths:
@@ -424,7 +426,8 @@ jobs:
         shell: pwsh
         working-directory: apps/tools/desktop-tauri/src-tauri
         env:
-          KT_SELFTEST_TIMEOUT: '290'
+          # (330 s, not 290: a screen row that failed once may be tried again — tools/desktop-tauri/selftest.js «PASSED ON RETRY» —, which takes up to ~45 s more.)
+          KT_SELFTEST_TIMEOUT: '330'
           KT_SELFTEST_BUNDLED: '1'
         run: |
           if (Test-Path 'target/release/aria2') { Get-ChildItem 'target/release/aria2' -Recurse -File | Format-Table FullName, Length } else { 'no aria2/ beside the executable' }
@@ -437,7 +440,7 @@ jobs:
             $env:KT_SELFTEST_PART = "$part"
             $p = Start-Process -FilePath $exe -PassThru
             $null = $p.Handle
-            if ($p.WaitForExit(340000)) { $c = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $c = 124 }
+            if ($p.WaitForExit(390000)) { $c = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $c = 124 }
             node ../selftest-report.cjs $out $c "${{ matrix.name }} (part $part of 2)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             if ($c -ne 0 -and $code -eq 0) { $code = $c }
           }

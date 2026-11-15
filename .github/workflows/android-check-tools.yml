@@ -4,6 +4,8 @@ name: Android compile check (Tools)
 # a mistake in the native files is found here, not in a release that then has no APK. What failed is left as a
 # comment on the commit.
 on:
+  # (Also called by preflight.yml, which runs it on a work branch before the final push.)
+  workflow_call:
   workflow_dispatch:
   push:
     branches: ['work-*']

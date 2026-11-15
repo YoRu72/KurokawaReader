@@ -10,7 +10,7 @@ const KEYS = { region: 'Alt+Shift+T', full: 'Alt+Shift+F', repeat: 'Alt+Shift+R'
 module.exports = function fakeScreen(cfg, opts) {
   const o = Object.assign({ capture: 'x11', ocr: 'tesseract', trayPossible: true, paint: 'shown', captionFocused: false }, opts || {});
   const MON = { id: 'M@0,0', x: 0, y: 0, w: 1280, h: 900, scale: 1 };
-  const S = { conf: {}, on: false, tray: false, auto: false, region: null, wins: new Map(), job: null, drawn: null, sent: 0, calls: [], closing: 0 };
+  const S = { conf: {}, on: false, tray: false, auto: false, region: null, wins: new Map(), job: null, drawn: null, sent: 0, calls: [], closing: 0, draws: 0, autos: 0 };
   const pic = (x, y, w, h) => `data:image/png;base64,iVBORw0KGgo#${x},${y},${w},${h}`;
   const colour = (x, y) => {
     const d = S.drawn;
@@ -35,6 +35,7 @@ module.exports = function fakeScreen(cfg, opts) {
     },
     screenAction: async (a) => {
       S.calls.push(['action', a]);
+      if (a === 'auto' && !S.auto && S.region && o.flaky && ++S.autos === 2) { S.auto = true; return true; }
       if (a === 'auto') { if (S.auto) stopAuto(); else if (S.region) { S.closing = 0; S.wins.delete('kts-caption'); S.auto = true; S.wins.set('kts-caption', { label: 'kts-caption', visible: true, focused: !!o.captionFocused, decorated: false }); S.sent++; } return true; }
       if (a === 'clipboard') return true;
       S.job = { mode: a === 'full' ? 'full' : a === 'repeat' && S.region ? 'result' : 'region', image: pic(0, 0, MON.w, MON.h), width: MON.w, height: MON.h, scale: MON.scale, cfg: S.conf };
@@ -66,12 +67,15 @@ module.exports = function fakeScreen(cfg, opts) {
     // (As screentr.rs: where the screen can be looked at, whether the window got painted and how — `paint`: 'shown',
     // 'nudge' (only after a size nudge) or 'never' (then nothing of it is on the screen).)
     if (x.act === 'draw') {
+      S.draws++;
       const look = o.capture === 'x11' || o.capture === 'gdi';
       S.drawn = o.paint === 'never' ? null : { x: 60, y: 60, w: x.w || 480, h: x.h || 240 };
       const how = !look ? '' : o.paint === 'never' ? 'never painted in 16400 ms (shown, a size nudge, hidden and shown again)' : o.paint === 'nudge' ? 'painted after a size nudge (8700 ms)' : 'painted shown (420 ms)';
       return Object.assign({ monitor: MON.id, scale: 1, mx: 0, my: 0, painted: look ? o.paint !== 'never' : null, how }, { x: 60, y: 60, w: x.w || 480, h: x.h || 240 });
     }
-    if (x.act === 'grab') return { w: x.w, h: x.h, png: pic(x.x, x.y, x.w, x.h), monitor: MON.id };
+    // (`flaky`: what a slow runner did on Windows — the first drawn window is taken one bar too low however long one waits
+    // (the self-test then draws again and says «PASSED ON RETRY»), and the first «auto» shows no caption in time.)
+    if (x.act === 'grab') return { w: x.w, h: x.h, png: pic(x.x, x.y + (o.flaky && S.draws === 1 ? 80 : 0), x.w, x.h), monitor: MON.id };
     if (x.act === 'ocr') return { kind: o.ocr, lines: o.ocr === 'none' ? [] : ['TOOLS', '2468'] };
     if (x.act === 'popup') { S.job = { mode: 'text', text: x.text, cfg: S.conf }; S.wins.set('kts-popup', { label: 'kts-popup', visible: true, focused: true, decorated: false }); return true; }
     if (x.act === 'undraw') { S.drawn = null; return true; }

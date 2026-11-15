@@ -1,0 +1,71 @@
+{
+  "_": "Tests that are deliberately not in the release workflow's test chain (they may be in a check workflow). name, reason (required); run:false = the preflight does not run it (a helper, or it needs something this machine lacks); args/env = how the preflight runs it properly (env value $TMPZIP = a small zip made by the preflight).",
+  "tests": [
+    {
+      "name": "addprobe.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "debrid.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "desktauri.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision). Takes a language argument (default en)."
+    },
+    {
+      "name": "filesphone-fixture.cjs",
+      "reason": "A helper (the pretend phone for filesclip.cjs and filesback.cjs), not a test.",
+      "run": false
+    },
+    {
+      "name": "filestauri.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "hunt.cjs",
+      "reason": "The bug hunt: 40 rounds over every page; slow (minutes), meant to be run by hand before a release, not on every push."
+    },
+    {
+      "name": "market.cjs",
+      "reason": "Needs MARKET_DIR, a folder with local copies of two third-party GitHub repositories (Bas1874/Seanime-Marketplace, tanzim2000/hayase-extension) that are not in this repository; run by hand with MARKET_DIR set.",
+      "run": false
+    },
+    {
+      "name": "prism.cjs",
+      "reason": "Needs ZIP_FILE, any zip; the preflight makes a small one.",
+      "env": {
+        "ZIP_FILE": "$TMPZIP"
+      }
+    },
+    {
+      "name": "screenfake.cjs",
+      "reason": "A helper (the pretend screen for tauribridge.cjs and screentauri.cjs), not a test.",
+      "run": false
+    },
+    {
+      "name": "screentauri.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "search.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "stream.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "streamtauri.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "subs.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "video.cjs",
+      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+    }
+  ]
+}

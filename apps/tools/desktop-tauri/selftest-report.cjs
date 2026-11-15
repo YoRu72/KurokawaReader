@@ -19,8 +19,12 @@ if (!doc) {
   if (doc.note) out.push(`Note: ${cell(doc.note)}`, '');
   out.push(`${cell(doc.os)}/${cell(doc.arch)}, written with code ${cell(doc.code)}.`, '');
   const rows = Array.isArray(doc.results) ? doc.results : [];
+  // (A check that failed once and passed on its second attempt — screen rows whose windows the runner was slow to paint or
+  // show — is a pass that must not look like a plain one: named here above the table, with the first failure in the row.)
+  const retried = rows.filter((r) => r.ok && /^PASSED ON RETRY/.test(String(r.detail)));
+  if (retried.length) out.push(`**PASSED ON RETRY: ${retried.length} check(s)** — each failed once and then passed with no change; see docs/RELEASING.md before releasing.`, '', ...retried.map((r) => `- ${cell(r.name)}`), '');
   out.push('| Check | Result | Required | Detail |', '|---|---|---|---|');
-  for (const r of rows) out.push(`| ${cell(r.name)} | ${r.ok ? 'ok' : 'FAIL'} | ${r.required === false ? 'no' : 'yes'} | ${cell(r.detail)} |`);
+  for (const r of rows) out.push(`| ${cell(r.name)} | ${r.ok ? (/^PASSED ON RETRY/.test(String(r.detail)) ? 'ok (PASSED ON RETRY)' : 'ok') : 'FAIL'} | ${r.required === false ? 'no' : 'yes'} | ${cell(r.detail)} |`);
   if (!rows.length) out.push('| (none) | | | |');
 }
 out.push('');

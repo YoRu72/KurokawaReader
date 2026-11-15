@@ -1,0 +1,113 @@
+{
+  "_": "Tests that are deliberately not in the release workflow's test chain (they may be in a check workflow). name, reason (required); run:false = the preflight does not run it (a helper, or it needs something this machine lacks); args/env = how the preflight runs it properly (env value $TMPZIP = a small zip made by the preflight).",
+  "tests": [
+    {
+      "name": "autobackup.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "coverview.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "doh.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "fixes054.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "furigana.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "back.cjs",
+      "reason": "Takes two book files as arguments; the preflight gives it the two sample EPUBs. Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision).",
+      "args": [
+        "public/samples/alice-in-wonderland.epub",
+        "public/samples/maqamat-al-hariri.epub"
+      ]
+    },
+    {
+      "name": "history.cjs",
+      "reason": "Takes two book files as arguments; the preflight gives it the two sample EPUBs. Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision).",
+      "args": [
+        "public/samples/alice-in-wonderland.epub",
+        "public/samples/maqamat-al-hariri.epub"
+      ]
+    },
+    {
+      "name": "glassperf.cjs",
+      "reason": "A performance measurement (CPU slowed 6x, counts long tasks): depends on the machine's load, so not in CI; run by hand on a quiet machine."
+    },
+    {
+      "name": "hunt.cjs",
+      "reason": "The bug hunt: 40 rounds over every page; slow, meant to be run by hand before a release."
+    },
+    {
+      "name": "jobs.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "librarysearch.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "linkopen.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "nextvolume.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "notesfold.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "offline.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "pdf2docxlanes.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "pdfink.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "pdftextrules.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "smartjustify.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "startup.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "sweep.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "tauribrowser.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "textpic.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "textpicfmt.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "updaterules.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    }
+  ]
+}

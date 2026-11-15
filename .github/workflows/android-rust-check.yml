@@ -18,6 +18,8 @@ name: Android Rust check (Tools)
 # Java's planner and through Rust's (jvmtest/filejobs-rust.sh), the two planners compared on random trees, the journal
 # killed before each of its records and resumed or rolled back.
 on:
+  # (Also called by preflight.yml, which runs it on a work branch before the final push.)
+  workflow_call:
   push:
     branches: ['work-tt-p5', 'work-tauri', 'work-and-all']
     paths:
