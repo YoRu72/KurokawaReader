@@ -79,6 +79,8 @@ public class KtPlugin extends Plugin {
     private void rustCore() {
         try { KtCore.log = (line) -> android.util.Log.i("KtCore", line); KtCore.shadow = (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0; } catch (Throwable ignored) {}
         bg.execute(() -> { try { KtCore.available(); } catch (Throwable ignored) {} });
+        // (Stage M5: the file jobs' engine as chosen, their shadow on debuggable builds, their journals in private storage.)
+        try { KtFileExec.choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("fileEngine", "classic")) ? "rust" : "classic"; KtFileExec.shadow = KtCore.shadow; KtFileExec.journalDir = new File(getContext().getFilesDir(), "filejobs"); } catch (Throwable ignored) {}
     }
     /** The web views pointed at the app's own proxy (KrDohProxy) while DoH is on — every connection they make resolved
      *  through the resolver, the hello split — and set free of it when off. The app's own page (localhost) and the home
@@ -395,6 +397,18 @@ public class KtPlugin extends Plugin {
         // (Stage M2: the download engine — the one chosen in Settings → Advanced, the one new downloads use (Java when the
         // core is absent), and how many downloads the Rust engine handed back to Java before their first byte.)
         try { String choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; r.put("dlEngineChoice", choice); r.put("dlEngine", "rust".equals(choice) && KtCore.available() ? "rust" : "java"); r.put("dlEngineFallbacks", KrDownloaderRs.FALLBACKS.get()); } catch (Throwable ignored) {}
+        // (Stage M3: the torrent engine — the choice for new torrents, the Rust torrent library's version or null, how many
+        // torrents it handed to libtorrent, how many it holds now; the director's plans and fallbacks.)
+        try { String tc = engine().torEngineChoice(); r.put("torEngineChoice", tc); r.put("torEngine", "rust".equals(tc) && KtTorrentRs.available() ? "rust" : "director".equals(tc) && KtCore.available() ? "director" : "classic"); r.put("rustTorrent", KtTorrentRs.available() ? KtTorrentCore.version() : JSObject.NULL); r.put("rustTorrentStatus", KtTorrentCore.status()); r.put("torEngineFallbacks", KtTorrentRs.FALLBACKS.get()); r.put("torEngineHeld", engine().rsTor.count()); r.put("torDirectorPlans", KtTorDirector.PLANS.get()); r.put("torDirectorFallbacks", KtTorDirector.FALLBACKS.get()); r.put("debuggable", KtCore.shadow); } catch (Throwable ignored) {}
+        // (Stage M4: the screen translator's engine — chosen, in use, Rust calls handed back to Java, the patch cache — and HLS's hand-backs.)
+        try { String sc = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("screenEngine", "classic")) ? "rust" : "classic"; KtScreenRs.rust = "rust".equals(sc); r.put("screenEngineChoice", sc); r.put("screenEngine", "rust".equals(sc) && KtCore.available() ? "rust" : "classic"); r.put("screenEngineFallbacks", KtScreenRs.FALLBACKS.get()); r.put("screenEngineCalls", KtScreenRs.CALLS.get()); r.put("hlsRustFallbacks", KtHlsRs.FALLBACKS.get()); if (KtCore.available()) r.put("screenCache", new JSObject(KtCore.json(KtCore.r("scr.stats")))); } catch (Throwable ignored) {}
+        // (Stage M5: the file jobs' engine, its fallbacks, the two planners' comparisons, the journals — KtFileExec.report.)
+        try { org.json.JSONObject m5 = KtFileExec.report(); for (java.util.Iterator<String> it = m5.keys(); it.hasNext();) { String k = it.next(); r.put(k, m5.get(k)); } } catch (Throwable ignored) {}
+        // (The three stages' merge, for the «Rust core status» card — ANDROID-PORT.md «M6», one prefix per area: HLS as an
+        // engine of its own (it follows the download engine), and the shadow's checks per area where a stage has none of
+        // its own — screen, hls, dl, tr, tor —, never over M5's own file / remote counters.)
+        try { r.put("hlsEngineChoice", r.optString("dlEngineChoice", "java")); r.put("hlsEngine", "rust".equals(r.optString("dlEngine", "java")) ? "rust" : "java"); r.put("hlsEngineFallbacks", KtHlsRs.FALLBACKS.get()); r.put("hlsEngineCalls", KtHlsRs.CALLS.get()); } catch (Throwable ignored) {}
+        try { for (java.util.Map.Entry<String, java.util.Map<String, Object>> e : KtCore.shadowByArea().entrySet()) { String a = e.getKey(); if (r.has(a + "Checks")) continue; r.put(a + "Checks", e.getValue().get("checks")); r.put(a + "Mismatches", e.getValue().get("mismatches")); org.json.JSONArray fa = new org.json.JSONArray(); for (Object f : (java.util.List<?>) e.getValue().get("first")) fa.put(f); r.put(a + "First", fa); } } catch (Throwable ignored) {}
         call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {
@@ -865,6 +879,11 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void filesAnalyzeStop(PluginCall call) { analyzeStop.set(true); call.resolve(); }
     @PluginMethod public void filesCancel(PluginCall call) { KtFiles.cancel(call.getString("id", "")); call.resolve(); }
     @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
+    // (Stage M5: the Rust engine's journals — the list, a job cut short resumed or rolled back, a finished one undone.)
+    @PluginMethod public void filesJournals(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("items", new JSArray(KtFileExec.journals().toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesJournalResume(PluginCall call) { final String jid = call.getString("journal", ""); final String id = call.getString("id", "resume-" + System.currentTimeMillis()); new Thread(() -> KtFileExec.resume(jid, id, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-resume").start(); JSObject r = new JSObject(); r.put("id", id); call.resolve(r); }
+    @PluginMethod public void filesJournalRollback(PluginCall call) { final String jid = call.getString("journal", ""); final boolean undo = Boolean.TRUE.equals(call.getBoolean("undo", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFileExec.rollback(jid, undo))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesJournalDismiss(PluginCall call) { final String jid = call.getString("journal", ""); bg.execute(() -> { JSObject r = new JSObject(); r.put("ok", KtFileExec.dismiss(jid)); call.resolve(r); }); }
     /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */
     @PluginMethod public void filesAccess(PluginCall call) {
         boolean all = Build.VERSION.SDK_INT >= 30 ? android.os.Environment.isExternalStorageManager() : getContext().checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;

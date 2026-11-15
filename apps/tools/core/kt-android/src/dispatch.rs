@@ -50,6 +50,58 @@ pub const METHODS: &[&str] = &[
     "http.close",
     "http.record",
     "bytes.megaCtr",
+    // M3: torrents — the streaming director (src/m3call.rs; kt-core's tordirector) and the engine rules (tormobile)
+    "tdir.open",
+    "tdir.hint",
+    "tdir.rate",
+    "tdir.read",
+    "tdir.plan",
+    "tdir.close",
+    "tor.choose",
+    "tor.onFail",
+    // M4: the screen translator (tracking, motion, inpaint, lettering's rules) and HLS playlists (src/m4call.rs)
+    "bytes.scrTrack",
+    "bytes.moShift",
+    "bytes.inpaint",
+    "bytes.hlsVariants",
+    "bytes.hlsMedia",
+    "hls.choose",
+    "scr.ahead",
+    "lt.kinds",
+    "lt.restore",
+    "lt.prompt",
+    "scr.stats",
+    "scr.cacheClear",
+    // M5: the file jobs' planner and journal, the bin's, archives' and the vault's small rules, the network storages'
+    // rules (src/m5call.rs; kt-core's fileplan, filejournal, remoterules)
+    "fj.plan",
+    "fj.keepBoth",
+    "fj.ext",
+    "fj.renameBad",
+    "fj.trashSlot",
+    "fj.trashExpired",
+    "fj.trashRoot",
+    "fj.journal",
+    "fj.repair",
+    "fj.rollback",
+    "fj.prune",
+    "fj.line",
+    "ar.unsafe",
+    "ar.wanted",
+    "ar.bothName",
+    "vt.takes",
+    "vt.nameOk",
+    "rm.norm",
+    "rm.join",
+    "rm.smbSplit",
+    "rm.davPath",
+    "rm.davBase",
+    "rm.hrefs",
+    "rm.isCollection",
+    "rm.tryAgain",
+    "rm.downName",
+    "rm.fetchDir",
+    "rm.upload",
 ];
 
 /// Bytes in, bytes out: what the JNI function hands over.
@@ -72,6 +124,8 @@ fn call_raw(m: &str, args: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
     match m {
         "bytes.echo" => Ok(data.to_vec()),
         "bytes.megaCtr" => crate::httpcall::mega_ctr(args, data),
+        // (M4)
+        "bytes.scrTrack" | "bytes.moShift" | "bytes.inpaint" | "bytes.hlsVariants" | "bytes.hlsMedia" => crate::m4call::call_raw(m, args, data),
         _ => Err(format!("no such method: {}", m)),
     }
 }
@@ -117,6 +171,13 @@ pub fn call_json(m: &str, a: &J) -> Result<J, String> {
         "tr.cacheKey" => Ok(J::s(&translatekey::cache_key(&config(a)?, &string(a, "text")?))),
 
         m if m.starts_with("http.") => crate::httpcall::call(m, a),
+        // (Stage M3: torrents.)
+        m if m.starts_with("tdir.") || m.starts_with("tor.") => crate::m3call::call(m, a),
+        // (M4)
+        "hls.choose" | "scr.ahead" | "lt.kinds" | "lt.restore" | "lt.prompt" | "scr.stats" | "scr.cacheClear" => crate::m4call::call(m, a),
+
+        // (Stage M5: file jobs, the bin, archives, the vault, network storages — src/m5call.rs.)
+        m if m.starts_with("fj.") || m.starts_with("ar.") || m.starts_with("vt.") || m.starts_with("rm.") => crate::m5call::call(m, a),
 
         _ => Err(format!("no such method: {}", m)),
     }
@@ -202,7 +263,7 @@ mod tests {
     #[test]
     fn core_methods() {
         let v = call("core.version", "").unwrap();
-        assert!(v.starts_with("{\"r\":{\"version\":\"0.2.0\",\"protocol\":1,"), "{}", v);
+        assert!(v.starts_with("{\"r\":{\"version\":\"0.3.0\",\"protocol\":1,"), "{}", v);
         assert_eq!(call("core.sum", r#"{"a":2,"b":40}"#).unwrap(), r#"{"r":42}"#);
         assert_eq!(call("core.sum", r#"{"a":-7,"b":3}"#).unwrap(), r#"{"r":-4}"#);
         assert!(call("core.sum", r#"{"a":1}"#).unwrap_err().contains("«b» missing"));

@@ -1,0 +1,142 @@
+// Java's Character answers over the tables of javachar.in (stage M4), included by the modules that must judge text
+// exactly as the Android Java does (screentrack.rs, lettering.rs, hls.rs). Java works on UTF-16 units: a lone unit of
+// a surrogate pair is neither a letter nor a digit, so text is handled here as `&[u16]` too.
+
+#[allow(dead_code)]
+fn in_ranges(t: &[(u32, u32)], c: u32) -> bool {
+    let (mut lo, mut hi) = (0usize, t.len());
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let (a, b) = t[mid];
+        if c < a {
+            hi = mid;
+        } else if c > b {
+            lo = mid + 1;
+        } else {
+            return true;
+        }
+    }
+    false
+}
+/// Character.isLetter(int codePoint)
+#[allow(dead_code)]
+pub fn j_is_letter(c: u32) -> bool {
+    in_ranges(J_LETTER, c)
+}
+/// Character.isDigit(int codePoint)
+#[allow(dead_code)]
+pub fn j_is_digit(c: u32) -> bool {
+    in_ranges(J_DIGIT, c)
+}
+#[allow(dead_code)]
+fn surrogate(u: u16) -> bool {
+    (0xD800..=0xDFFF).contains(&u)
+}
+/// Character.isLetter(char)
+#[allow(dead_code)]
+pub fn j_is_letter_unit(u: u16) -> bool {
+    !surrogate(u) && j_is_letter(u as u32)
+}
+/// Character.isLetterOrDigit(char)
+#[allow(dead_code)]
+pub fn j_is_letter_or_digit_unit(u: u16) -> bool {
+    !surrogate(u) && (j_is_letter(u as u32) || j_is_digit(u as u32))
+}
+/// Character.toLowerCase(char)
+#[allow(dead_code)]
+pub fn j_lower_unit(u: u16) -> u16 {
+    let (mut lo, mut hi) = (0usize, J_LOWER.len());
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let (a, b, d, step) = J_LOWER[mid];
+        if u < a {
+            hi = mid;
+        } else if u > b {
+            lo = mid + 1;
+        } else {
+            return if (u - a) % step == 0 { (u as i32 + d) as u16 } else { u };
+        }
+    }
+    u
+}
+/// Character.digit(char, radix) for radix 10 or 16: a decimal digit of any script, or a Latin letter (ASCII or
+/// full-width) for 10 and above; None when it is not a digit of that radix.
+#[allow(dead_code)]
+pub fn j_digit(u: u16, radix: u32) -> Option<u32> {
+    let c = u as u32;
+    let v = if !surrogate(u) && j_is_digit(c) {
+        // (Every run of decimal digits starts at its zero and comes in tens: the run's start found in the table.)
+        let mut start = c;
+        let (mut lo, mut hi) = (0usize, J_DIGIT.len());
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let (a, b) = J_DIGIT[mid];
+            if c < a {
+                hi = mid;
+            } else if c > b {
+                lo = mid + 1;
+            } else {
+                start = a;
+                break;
+            }
+        }
+        (c - start) % 10
+    } else if (0x41..=0x5A).contains(&c) {
+        c - 0x41 + 10
+    } else if (0x61..=0x7A).contains(&c) {
+        c - 0x61 + 10
+    } else if (0xFF21..=0xFF3A).contains(&c) {
+        c - 0xFF21 + 10
+    } else if (0xFF41..=0xFF5A).contains(&c) {
+        c - 0xFF41 + 10
+    } else {
+        return None;
+    };
+    if v < radix { Some(v) } else { None }
+}
+/// Long.parseLong / Integer.parseInt (by `min`/`max`): an optional sign, then one or more digits of `radix`; None
+/// where Java throws NumberFormatException.
+#[allow(dead_code)]
+pub fn j_parse(s: &[u16], radix: u32, min: i64, max: i64) -> Option<i64> {
+    if s.is_empty() {
+        return None;
+    }
+    let (neg, digits) = match s[0] {
+        0x2D => (true, &s[1..]),
+        0x2B => (false, &s[1..]),
+        _ => (false, s),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut v: i128 = 0;
+    for &u in digits {
+        v = v * radix as i128 + j_digit(u, radix)? as i128;
+        if v > max as i128 + 1 {
+            return None;
+        }
+    }
+    let v = if neg { -v } else { v };
+    if v < min as i128 || v > max as i128 {
+        None
+    } else {
+        Some(v as i64)
+    }
+}
+/// String.trim(): units up to U+0020 taken off both ends.
+#[allow(dead_code)]
+pub fn j_trim(s: &[u16]) -> &[u16] {
+    let mut a = 0;
+    let mut b = s.len();
+    while a < b && s[a] <= 0x20 {
+        a += 1;
+    }
+    while b > a && s[b - 1] <= 0x20 {
+        b -= 1;
+    }
+    &s[a..b]
+}
+#[allow(dead_code)]
+pub fn u16s(s: &str) -> Vec<u16> {
+    s.encode_utf16().collect()
+}

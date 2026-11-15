@@ -232,7 +232,8 @@ final class KtRemote {
         Dav(JSONObject o) throws Exception {
             this.o = o; String u = o.getString("host"); if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u; if (u.endsWith("/")) u = u.substring(0, u.length() - 1);
             if (o.optString("kind", "").equals("nextcloud") && !u.contains("/remote.php/")) u = u + "/remote.php/dav/files/" + enc(o.optString("user", ""));
-            base = u; auth = o.optString("user", "").isEmpty() ? null : "Basic " + android.util.Base64.encodeToString((o.optString("user", "") + ":" + o.optString("pass", "")).getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
+            base = KtRemoteRules.davBase(o.getString("host"), o.optString("kind", ""), o.optString("user", ""));   // (stage M5: the same rule as the two lines above, asked of Rust too)
+            auth = o.optString("user", "").isEmpty() ? null : "Basic " + android.util.Base64.encodeToString((o.optString("user", "") + ":" + o.optString("pass", "")).getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
             HttpURLConnection c = req("PROPFIND", "/", 0); c.setRequestProperty("Depth", "0"); int code = c.getResponseCode(); if (code == 401) throw new IOException("login"); if (code >= 400) throw new IOException("http " + code); c.disconnect();
         }
         HttpURLConnection req(String method, String path, long offset) throws Exception {
@@ -255,7 +256,7 @@ final class KtRemote {
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("<(?:\\w+:)?response>(.*?)</(?:\\w+:)?response>", java.util.regex.Pattern.DOTALL).matcher(xml);
             while (m.find()) {
                 String r = m.group(1); String href = tag(r, "href"); if (href == null) continue;
-                String p = java.net.URLDecoder.decode(href.replaceFirst("^https?://[^/]+", ""), "UTF-8"); String basePath = new URL(base).getPath(); if (!basePath.isEmpty() && p.startsWith(basePath)) p = p.substring(basePath.length());
+                String basePath = new URL(base).getPath(); String p = KtRemoteRules.href(href, basePath);   // (stage M5: KtRemoteRules.hrefJava is the line that was here)
                 boolean dir = r.contains("<d:collection") || r.contains("<D:collection") || r.matches("(?s).*<(?:\\w+:)?collection\\s*/?>.*"); p = norm(p);
                 if (p.equals(self)) continue;
                 Entry e = new Entry(); e.name = p.substring(p.lastIndexOf('/') + 1); e.dir = dir; String len = tag(r, "getcontentlength"); e.size = len == null || len.trim().isEmpty() ? 0 : Long.parseLong(len.trim()); String lm = tag(r, "getlastmodified"); e.mtime = lm == null ? 0 : parseHttpDate(lm.trim()); out.add(e);
@@ -318,7 +319,7 @@ final class KtRemote {
                 List<String[]> files = new ArrayList<>(); for (String p : paths) collectRemote(c, p, new File(dest), files, total, stop);
                 for (String[] pf : files) { if (stop.get()) break; File out = KtFiles.keepBoth(new File(pf[1])); out.getParentFile().mkdirs(); File part = new File(out.getPath() + ".part"); try { try (InputStream in = c.read(pf[0], 0); OutputStream os = new FileOutputStream(part)) { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) { os.write(b, 0, n); done[0] += n; if (stop.get()) throw new IOException("stopped"); tell(ev, id, done, total, out.getName(), told); } } if (!part.renameTo(out)) throw new IOException("rename"); done[1]++; if (deleteAfter) c.delete(pf[0], false); } catch (Exception e) { part.delete(); failed.add(pf[0]); if ("stopped".equals(e.getMessage())) break; } }
             } else {
-                List<File[]> files = new ArrayList<>(); for (String p : paths) { File f = new File(p); collectLocal(f, norm(dest), files, total); }
+                List<File[]> files = KtRemoteRules.upload(paths, dest, total);   // (stage M5: collectLocal's order, asked of Rust too)
                 java.util.Set<String> made = new java.util.HashSet<>();
                 for (File[] pf : files) { if (stop.get()) break; String rp = pf[1].getPath().replace('\\', '/'); String rdir = rp.substring(0, rp.lastIndexOf('/')); if (!rdir.isEmpty() && made.add(rdir)) mkdirs(c, rdir); try (InputStream in = new FileInputStream(pf[0])) { final String name = pf[0].getName(); c.write(rp, in, pf[0].length(), new Progress() { public void on(long n) { done[0] += n; tell(ev, id, done, total, name, told); } public boolean stopped() { return stop.get(); } }); done[1]++; if (deleteAfter) pf[0].delete(); } catch (Exception e) { failed.add(pf[0].getPath()); if (stop.get()) break; } }
             }

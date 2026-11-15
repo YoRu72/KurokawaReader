@@ -31,12 +31,12 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   };
 
   // A phone with the core: the card, Java by default.
-  let { p, ctx } = await open({ kind: 'phone', core: '0.2.0' });
+  let { p, ctx } = await open({ kind: 'phone', core: '0.3.0' });
   check('phone with the core: «Advanced» is there', !!(await p.$('#advanced')));
   if (await p.$('#advanced.collapsed')) await p.click('#advanced h3');
   const txt = await p.$eval('#advanced', (e) => e.textContent);
-  check('it names the download engine, Java chosen by default', /Download engine/.test(txt) && /Java/.test(await p.$eval('#advanced .dl-engine-row button', (e) => e.textContent)), txt);
-  check('the core\'s version, the engine in use, the fallbacks', /Rust core 0\.2\.0/.test(txt) && /in use: Java/.test(txt) && /handed back to Java: 2/.test(txt), txt);
+  check('it names the download engine, Classic (Java) chosen by default', /Download engine/.test(txt) && /Classic/.test(await p.$eval('#advanced .dl-engine-row button', (e) => e.textContent)), txt);
+  check('the core\'s version, the engine in use, the fallbacks', /Rust core 0\.3\.0/.test(txt) && /in use: Classic/.test(txt) && /handed back to Classic: 2/.test(txt), txt);
   await p.click('#advanced .dl-engine-row button'); await p.waitForTimeout(300);
   await p.locator('label.dest-row', { hasText: 'Rust' }).first().click(); await p.waitForTimeout(500);
   const calls = await p.evaluate(() => window.__calls);
@@ -45,7 +45,7 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('…and the line says it is in use', /in use: Rust/.test(await p.$eval('#advanced', (e) => e.textContent)));
   await ctx.close();
   // The same phone in Arabic: the card in its words.
-  ({ p, ctx } = await open({ kind: 'phone', core: '0.2.0', lang: 'ar' }));
+  ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', lang: 'ar' }));
   if (await p.$('#advanced.collapsed')) await p.click('#advanced h3');
   const ar = await p.$eval('#advanced', (e) => e.textContent);
   check('Arabic: the card in Arabic, the count as «العدد»', /محرّك التنزيل/.test(ar) && /العدد: ٢|العدد: 2/.test(ar), ar);
@@ -56,7 +56,7 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('…and nothing about the engine anywhere', !/Download engine/.test(await p.$eval('.settings-body', (e) => e.textContent)));
   await ctx.close();
   // A computer: never, even with a bridge that claims a core.
-  ({ p, ctx } = await open({ kind: 'pc', core: '0.2.0' }));
+  ({ p, ctx } = await open({ kind: 'pc', core: '0.3.0' }));
   const ids = await p.$$eval('.settings-body > .card', (e) => e.map((c) => c.id));
   check('computer: no «Advanced» card', !ids.includes('advanced'), ids);
   await p.fill('.settings-search', 'engine'); await p.waitForTimeout(200);

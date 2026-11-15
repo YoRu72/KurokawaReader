@@ -13,6 +13,15 @@ final class KtInpaint {
 
     /** `px` (w × h ARGB, a block with a few pixels of margin all round) with its text taken off; a new array. */
     static int[] clean(int[] px, int w, int h) {
+        // (Stage M4: the Rust engine when chosen — through its patch cache: a patch cleaned before answers at once —,
+        // per call back to Java on any error; on debuggable builds both, compared within KtScreenRs.PIXEL_TOL.)
+        if (KtScreenRs.use(KtScreenRs.INPAINT_ON_RUST) && w >= 4 && h >= 4 && px.length >= w * h) { int[] r = KtScreenRs.inpaint(px, w, h); if (r != null) return r; }
+        int[] j = cleanJava(px, w, h);
+        if (KtScreenRs.shadowing() && w >= 4 && h >= 4 && px.length >= w * h) KtScreenRs.shadowInpaint(px, w, h, j);
+        return j;
+    }
+    /** Java's clean (the reference and the fallback). */
+    static int[] cleanJava(int[] px, int w, int h) {
         if (w < 4 || h < 4 || px.length < w * h) return px.clone();
         int[][] top = edge(px, w, h, 0), bottom = edge(px, w, h, 1), left = edge(px, w, h, 2), right = edge(px, w, h, 3);
         int[] guess = new int[w * h];

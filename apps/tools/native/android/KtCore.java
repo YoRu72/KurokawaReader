@@ -111,7 +111,8 @@ public final class KtCore {
         try {
             shadowCalls.incrementAndGet();
             Object rust; try { rust = r(method, kv); } catch (Failure f) { rust = "error: " + f.getMessage(); }
-            if (!same(javaAnswer, rust)) {
+            boolean alike = same(javaAnswer, rust); countArea(method, alike, "java=" + javaAnswer + " rust=" + rust);   // (per area: the merge)
+            if (!alike) {
                 shadowMismatches.incrementAndGet();
                 synchronized (firstMismatches) { if (firstMismatches.size() < 5) { StringBuilder b = new StringBuilder(); write(b, java.util.Arrays.asList(kv)); firstMismatches.add(method + " " + b + " java=" + javaAnswer + " rust=" + rust); } }
                 java.util.function.Consumer<String> l = log; if (l != null) l.accept("Rust core shadow: " + method + " differs (java=" + javaAnswer + ", rust=" + rust + ")");
@@ -129,8 +130,55 @@ public final class KtCore {
         synchronized (firstMismatches) { m.put("first", new ArrayList<>(firstMismatches)); }
         return m;
     }
+    /* (Stage M4: a shadow check whose answers are not JSON — pixels, a tracking update — compared by its caller,
+       KtScreenRs / KtHlsRs, and counted here with the others.) */
+    /** One shadow comparison made by the caller: counted, and the first differences kept. Never throws. */
+    public static void shadowNote(String method, boolean same, String detail) {
+        try {
+            shadowCalls.incrementAndGet(); countArea(method, same, detail); if (same) return;   // (per area: the merge)
+            shadowMismatches.incrementAndGet();
+            synchronized (firstMismatches) { if (firstMismatches.size() < 5) firstMismatches.add(method + " " + detail); }
+            java.util.function.Consumer<String> l = log; if (l != null) l.accept("Rust core shadow: " + method + " differs (" + detail + ")");
+        } catch (Throwable ignored) {}
+    }
+    /* (The three stages' merge, for the «Rust core status» card: the same checks counted again per area — the prefix a
+       stage's deviceInfo fields carry (ANDROID-PORT.md «M6»): dl, tr, screen, hls, tor, file, remote.) */
+    private static final Map<String, long[]> byArea = new java.util.LinkedHashMap<>();
+    private static final Map<String, List<String>> firstByArea = new java.util.LinkedHashMap<>();
+    /** The area a method belongs to («dl.pickName» → dl, «bytes.inpaint» → screen, «bytes.hlsMedia» → hls…). */
+    public static String areaOf(String m) {
+        if (m == null) return "other";
+        if (m.startsWith("bytes.hls") || m.startsWith("hls.")) return "hls";
+        if (m.startsWith("bytes.scr") || m.startsWith("bytes.mo") || m.startsWith("bytes.inpaint") || m.startsWith("scr.") || m.startsWith("lt.")) return "screen";
+        if (m.startsWith("tdir.") || m.startsWith("tor.")) return "tor";
+        if (m.startsWith("fj.") || m.startsWith("ar.") || m.startsWith("vt.")) return "file";
+        if (m.startsWith("rm.")) return "remote";
+        if (m.startsWith("dl.") || m.startsWith("http.")) return "dl";
+        if (m.startsWith("tr.")) return "tr";
+        return "other";
+    }
+    private static void countArea(String method, boolean same, String detail) {
+        try {
+            String a = areaOf(method);
+            synchronized (byArea) {
+                long[] c = byArea.get(a); if (c == null) { c = new long[2]; byArea.put(a, c); } c[0]++; if (same) return; c[1]++;
+                List<String> f = firstByArea.get(a); if (f == null) { f = new ArrayList<>(); firstByArea.put(a, f); } if (f.size() < 5) f.add(method + " " + detail);
+            }
+        } catch (Throwable ignored) {}
+    }
+    /** The shadow's figures per area: {area: {checks, mismatches, first}}. */
+    public static Map<String, Map<String, Object>> shadowByArea() {
+        Map<String, Map<String, Object>> out = new java.util.LinkedHashMap<>();
+        synchronized (byArea) {
+            for (Map.Entry<String, long[]> e : byArea.entrySet()) {
+                Map<String, Object> m = new java.util.LinkedHashMap<>(); m.put("checks", e.getValue()[0]); m.put("mismatches", e.getValue()[1]);
+                List<String> f = firstByArea.get(e.getKey()); m.put("first", f == null ? new ArrayList<String>() : new ArrayList<>(f)); out.put(e.getKey(), m);
+            }
+        }
+        return out;
+    }
     /** (Tests: the shadow's figures back to zero.) */
-    static void shadowReset() { shadowCalls.set(0); shadowMismatches.set(0); synchronized (firstMismatches) { firstMismatches.clear(); } }
+    static void shadowReset() { shadowCalls.set(0); shadowMismatches.set(0); synchronized (firstMismatches) { firstMismatches.clear(); } synchronized (byArea) { byArea.clear(); firstByArea.clear(); } }
 
     /* ---------- a little JSON: written ASCII-only (\\u escapes), read for what the Rust side writes ---------- */
 

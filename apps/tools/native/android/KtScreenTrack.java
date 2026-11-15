@@ -62,7 +62,7 @@ final class KtScreenTrack {
 
     /** Within this many pixels a box stays where it is (a reading's box wobbles); beyond `GLIDE` it is put there at once. */
     static final int STILL = 3, GLIDE = 32;
-    final List<Item> items = new ArrayList<>(); private int nextId = 1;
+    final List<Item> items = new ArrayList<>(); /* (stage M4: KtScreenRs gives the Rust engine's new pieces their ids) */ int nextId = 1;
     /** Readings a piece may be missed in before it goes (OCR misses a line now and then; the text tree does not). */
     int keepMisses = 1; /** Pieces scrolled out of view kept (for when the page comes back) — by a picture's reading. */ boolean keepOff = true; int cap = 400;
     int vw = 1080, vh = 2400;
@@ -85,6 +85,14 @@ final class KtScreenTrack {
     Update update(List<Obs> obs, int[] area) { return update(obs, area, null); }
     /** `blind`: pieces this reading could not see (under our own box, for a reading that left the boxes showing) — not missed. */
     Update update(List<Obs> obs, int[] area, java.util.function.Predicate<Item> blind) {
+        // (Stage M4: the Rust engine when chosen — any error and this reading is Java's —; on a debuggable build Rust is
+        // also asked beside Java and a difference counted. Java's own rules below are the reference.)
+        if (KtScreenRs.use(KtScreenRs.TRACK_ON_RUST)) { Update r = KtScreenRs.track(this, obs, area, blind); if (r != null) return r; }
+        if (KtScreenRs.shadowing()) { KtScreenRs.Pre p = KtScreenRs.before(this, obs, area, blind); Update u = updateJava(obs, area, blind); KtScreenRs.shadowTrack(this, p, obs, u); return u; }
+        return updateJava(obs, area, blind);
+    }
+    /** Java's update (the reference and the fallback). */
+    Update updateJava(List<Obs> obs, int[] area, java.util.function.Predicate<Item> blind) {
         Update u = new Update(); int n = obs.size(); u.of = new Item[n];
         String[] lo = new String[n]; boolean[] own = new boolean[n];
         Map<String, List<Item>> byText = new HashMap<>(); for (Item i : items) byText.computeIfAbsent(loose(i.text), k -> new ArrayList<>()).add(i);
@@ -227,6 +235,12 @@ final class KtScreenTrack {
      *  `screens` screens when their place is known; nothing already translated (`known`), nothing twice, none hidden
      *  between the lines on the screen (another tab's page). */
     static List<String> ahead(List<Cand> all, int vh, int dir, int max, int maxChars, double screens, java.util.function.Predicate<String> known) {
+        List<String> out = aheadJava(all, vh, dir, max, maxChars, screens, known);
+        // (Stage M4: kept on Java by design — the cache it asks is Java's —, checked against Rust on debuggable builds.)
+        if (KtScreenRs.shadowing()) KtScreenRs.shadowAhead(all, vh, dir, max, maxChars, screens, known, out);
+        return out;
+    }
+    static List<String> aheadJava(List<Cand> all, int vh, int dir, int max, int maxChars, double screens, java.util.function.Predicate<String> known) {
         List<String> out = new ArrayList<>(); int first = Integer.MAX_VALUE, last = Integer.MIN_VALUE;
         for (Cand c : all) if (c.on) { first = Math.min(first, c.order); last = Math.max(last, c.order); }
         if (last == Integer.MIN_VALUE || max <= 0) return out;

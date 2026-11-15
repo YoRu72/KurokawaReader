@@ -1,5 +1,7 @@
 package app.kurokawa.tools;
 
+import app.kurokawa.tools.KtCore;   // (the same package; named so tests/native/screen.sh compiles this file outside it)
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -45,11 +47,22 @@ final class KtLettering {
     }
     private static final Pattern MARK = Pattern.compile("\\[\\s*\\[\\s*(\\d+)\\s*\\]\\s*\\]");
     static List<String> restore(List<String> texts, Map<Integer, String> used) {
+        List<String> out = restoreJava(texts, used);
+        // (Stage M4: kept on Java by design — microseconds, less than the call to Rust —, checked on debuggable builds.)
+        if (KtCore.shadowing() && !used.isEmpty()) { List<Object> u = new ArrayList<>(); for (Map.Entry<Integer, String> e : used.entrySet()) u.add(java.util.Arrays.asList((long) e.getKey(), e.getValue())); KtCore.shadow("lt.restore", out, "texts", texts, "used", u); }
+        return out;
+    }
+    static List<String> restoreJava(List<String> texts, Map<Integer, String> used) {
         if (used.isEmpty()) return texts; List<String> out = new ArrayList<>();
         for (String s : texts) { if (s == null) { out.add(null); continue; } Matcher m = MARK.matcher(s); StringBuffer b = new StringBuffer(); while (m.find()) { String to = used.get(Integer.parseInt(m.group(1))); m.appendReplacement(b, Matcher.quoteReplacement(to == null ? m.group() : to)); } m.appendTail(b); out.add(b.toString()); }
         return out;
     }
     static String prompt(List<Entry> g) {
+        String p = promptJava(g);
+        if (KtCore.shadowing()) { List<Object> l = new ArrayList<>(); for (Entry e : g) l.add(java.util.Arrays.asList(e.from, e.to)); KtCore.shadow("lt.prompt", p, "g", l); }   // (stage M4)
+        return p;
+    }
+    static String promptJava(List<Entry> g) {
         StringBuilder b = new StringBuilder(); int n = 0;
         for (Entry e : g) { if (e.to.isEmpty() || n++ >= 200) continue; b.append('\n').append(e.from).append(" → ").append(e.to); }
         return b.length() == 0 ? "" : "\n\nGlossary — always translate these terms exactly this way:" + b;
