@@ -5,7 +5,8 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
 import { BUILT_IN, getSettings, updateSettings } from '../settings';
 import { appearanceCard } from './appearance';
-import { back, navigate } from '../router';
+import { navigate } from '../router';
+import { onBack } from '../ui/backstack';
 import { APP_VERSION, REPO, SITE_URL } from '../repo';
 import { nativePlatform, ktPlugin, openExternal } from '../native';
 import { Aria2Rpc } from '../engine/aria2';
@@ -50,7 +51,7 @@ const numberField = (value: number, set: (v: number) => void, o: { min?: number;
 export function settingsView(section?: string): HTMLElement & { dispose?: () => void } {
   const s = getSettings();
   const body = h('div', { class: 'body settings-body' });
-  const root = h('div', { class: 'view settings-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/')), h('div', { class: 'title' }, h('span', null, t('settings')))), body) as HTMLElement & { dispose?: () => void };
+  const root = h('div', { class: 'view settings-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => void import('../ui/backnav').then((m) => m.leaveTab())), h('div', { class: 'title' }, h('span', null, t('settings')))), body) as HTMLElement & { dispose?: () => void };
   // The reader's way: every card folded to its heading (a short page of sections), chips to jump to one, a
   // search box that opens and filters the rows that mention what is typed. What is open stays open on redraw.
   const open = new Set<string>(section ? [section] : ['updates']);
@@ -385,6 +386,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
+  // (Back: a search typed is let go first, then a tab of the bar back to «All»; then Settings is left.)
+  const unBack = onBack(() => { if (!root.isConnected) return false; if (search.value) { search.value = ''; applySearch(); return true; } if (tab !== 'all') { tab = 'all'; rerender(); return true; } return false; }, 'search', 'settings');
+  const was = root.dispose; root.dispose = () => { unBack(); was?.(); };
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
   void decorate;
   void s; void navigate; void localDigits; void formatBytes; void openSheet; void countAddons;

@@ -1,5 +1,6 @@
 // Tiny DOM helpers — no framework, so the bundle stays small and offline-friendly.
 import { dragToClose } from './gestures';
+import { pushLayer } from './backstack';
 
 type Child = Node | string | number | null | undefined | false | Child[];
 
@@ -218,7 +219,7 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   const depth = opts.stack ? document.querySelectorAll('.sheet').length : 0;
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
-  let closed = false; const shut = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
+  let closed = false; const shut = () => { el.remove(); scrim.remove(); unLayer(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
   // (undo-redo) With `beforeClose`: asked first; kept open, a sheet dragged half away comes back.
   const close = () => { if (!opts.beforeClose || closed) { shut(); return; } void Promise.resolve(opts.beforeClose()).then((go) => { if (go) shut(); else { el.style.transform = ''; scrim.style.opacity = ''; } }); };
   // Escape closes the top-most sheet (capture phase, so the reader's own shortcuts don't fire underneath).
@@ -229,6 +230,8 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
     body, actions);
   const scrim = h('div', { class: 'scrim sheet-scrim', style: depth ? { zIndex: String(69 + depth * 2) } : undefined, onclick: close });
   (el as HTMLElement & { __close?: () => void }).__close = shut;
+  // (On the back stack: Back closes the newest sheet first, through its own close — its question about unsaved work too.)
+  const unLayer = pushLayer({ kind: opts.at ? 'menu' : 'sheet', back: () => { close(); return true; }, on: () => el.isConnected, name: title });
   document.body.append(scrim, el);
   if (opts.at && document.documentElement.classList.contains('pc')) placeMenu(el, scrim, opts.at);
   else dragToClose(el, scrim, close);

@@ -167,6 +167,26 @@ ${process.env.KT_A11Y === '1' ? A11Y_SERVICE : ''}    <service android:name=".Kt
     <activity android:name=".KtScreenLaunch" android:exported="true" android:enabled="false" android:label="@string/kt_screen_tile" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity="app.kurokawa.tools.screen" android:launchMode="singleInstance">
       <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
     </activity>
+    <!-- «Kurokawa Tools» as a file picker for other apps (Open / Attach a file): GET_CONTENT and PICK, one file or
+         several; the answer carried back by this invisible activity in the caller's task. -->
+    <activity android:name=".KtPickActivity" android:exported="true" android:label="@string/kt_pick" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize">
+      <intent-filter android:label="@string/kt_pick">
+        <action android:name="android.intent.action.GET_CONTENT" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.OPENABLE" />
+        <data android:mimeType="*/*" />
+      </intent-filter>
+      <intent-filter android:label="@string/kt_pick">
+        <action android:name="android.intent.action.GET_CONTENT" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="*/*" />
+      </intent-filter>
+      <intent-filter android:label="@string/kt_pick">
+        <action android:name="android.intent.action.PICK" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="*/*" />
+      </intent-filter>
+    </activity>
     <activity android:name=".KtScreenCapture$Consent" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:taskAffinity="app.kurokawa.tools.capture" android:launchMode="singleInstance" />
     </application>`);
 }
@@ -204,6 +224,8 @@ for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin
 for (const f of ['KtTorDirector.java', 'KtTorrentCore.java', 'KtTorrentRs.java', 'KtTorrentRsEngine.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 // (Stage M5 of the Rust port: the file jobs' planner and executor, the network storages' rules.)
 for (const f of ['KtFilePlan.java', 'KtFileExec.java', 'KtRemoteRules.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+// (Other apps' «pick a file»: the invisible activity that carries the answer back; the picker is the Files page.)
+await fs.copyFile(path.join(root, 'native/android', 'KtPickActivity.java'), path.join(pkgDir, 'KtPickActivity.java'));
 
 // mpv's Java side (its native libraries come with the mpv pack): the class name its JNI code binds to.
 { const d = path.join(app, 'src/main/java/is/xyz/mpv'); await fs.mkdir(d, { recursive: true }); await fs.copyFile(path.join(root, 'native/android/mpv/MPVLib.java'), path.join(d, 'MPVLib.java')); }

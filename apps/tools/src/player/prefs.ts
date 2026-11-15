@@ -6,7 +6,7 @@ export interface PlayerPrefs {
   doubleTapSeek: number; swipeSeek: boolean; swipeVolume: boolean; swipeBrightness: boolean; longPressSpeed: number; pinchZoom: boolean;
   speedPresets: number[]; defaultSpeed: number; pitchCorrection: boolean; volumeBoost: number;
   subSize: number; subColor: string; subBackground: 'none' | 'shadow' | 'box'; subPos: number; subFont: string; /** The main font in styled (ASS) subtitles too. */ subFontAss: boolean; /** Subtitles from the voice: the speech-to-text service, its key, the spoken language; and the language to translate them into ('' none). */ voice: import('./voiceSubs').VoiceConfig; voiceTo: string; subBold: boolean; subCodepage: string; subAssOverride: boolean; subDelay: number;
-  resume: 'always' | 'ask' | 'never'; watchedAt: number; markWatched: boolean; autoplayNext: boolean; keepScreenOn: boolean; orientation: 'auto' | 'landscape' | 'sensor';
+  resume: 'always' | 'ask' | 'never'; watchedAt: number; markWatched: boolean; autoplayNext: boolean; keepScreenOn: boolean; orientation: 'auto' | 'landscape' | 'sensor'; /** (Phones) the player's full screen follows the phone's turn; the button's picks the video's shape. */ autoRotateFull: boolean;
   aspect: 'fit' | 'fill' | 'stretch' | '16:9' | '4:3' | '21:9';
   sleepTimer: number;
   /** REX Player's extras: a skip button's amount, skipping openings/endings (AniSkip, chapters), the picture's filters, the ambient glow, the remaining time, the double-tap zones' width (%), shuffle. */
@@ -63,7 +63,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   doubleTapSeek: 10, swipeSeek: true, swipeVolume: true, swipeBrightness: true, longPressSpeed: 2, pinchZoom: true,
   speedPresets: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4], defaultSpeed: 1, pitchCorrection: true, volumeBoost: 30,
   subSize: 100, subColor: '#ffffff', subBackground: 'shadow', subPos: 100, subFont: '', subFontAss: false, voice: { provider: 'groq', key: '', base: '', model: '', lang: 'auto' }, voiceTo: '', subBold: false, subCodepage: '', subAssOverride: false, subDelay: 0,
-  resume: 'always', watchedAt: 90, markWatched: true, autoplayNext: true, keepScreenOn: true, orientation: 'auto',
+  resume: 'always', watchedAt: 90, markWatched: true, autoplayNext: true, keepScreenOn: true, orientation: 'auto', autoRotateFull: true,
   aspect: 'fit', sleepTimer: 0,
   skipAmount: 85, autoSkip: 'button', skipSponsor: 'button', skipSilence: false, heatmap: true, filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
   tapLeft: 'seek', tapCentre: 'playpause', tapRight: 'seek', swapSides: false, swipeSensitivity: 100, holdSwipeSpeed: true, rememberHoldSpeed: false,
@@ -107,3 +107,6 @@ export function remember(key: string, m: Partial<VideoMemory>): void {
 /** Every remembered video, newest first (the player's history). */
 export function history(): (VideoMemory & { key: string })[] { const all = memory(); return Object.entries(all).map(([key, v]) => ({ key, ...v })).sort((a, b) => b.at - a.at); }
 export function forget(key?: string): void { if (!key) { localStorage.removeItem(MEM); return; } const all = memory(); delete all[key]; try { localStorage.setItem(MEM, JSON.stringify(all)); } catch { /* full */ } }
+/** A phone (the app on Android, or a touch screen in the phone layout) — never a computer's window: the options about
+ *  turning the phone are shown there only. */
+export const isPhone = (): boolean => !document.documentElement.classList.contains('pc') && (window.Capacitor?.getPlatform?.() === 'android' || matchMedia('(pointer: coarse)').matches);

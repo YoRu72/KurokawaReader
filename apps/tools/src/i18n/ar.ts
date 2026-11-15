@@ -351,6 +351,8 @@ export const ar: Partial<Strings> = {
   castTo: "شغّل على شاشة أخرى",
   speedMakeDefault: "ابدأ كلّ مقطع بهذه السرعة",
   speedDefaultSet: "تبدأ المقاطع الآن بسرعة {s}×",
+  pickTitle: 'اختر ملفًّا', pickTitleMany: 'اختر ملفات', pickFor: 'لتطبيق «{app}»', pickKinds: 'المطلوب: {kinds}', pickSelect: 'اختيار', pickSelectN: 'اختيار ({n})', pickNothingYet: 'لم تختر شيئًا بعد', pickWrongKind: 'طلب التطبيقُ نوعًا آخر من الملفات', pickNotHere: 'ليس هذا الملفُّ على الهاتف، فلا يُسلَّم', pickNothingAsked: 'لا تطبيقَ ينتظر ملفًّا الآن.', pickOther: 'ملفات أخرى',
+  ppAutoRotateFull: 'ملء الشاشة بالتدوير', ppAutoRotateFullHint: 'إذا أدرتَ الهاتفَ أفقيًّا والمقطعُ يعمل ملأ الشاشة، فإذا رددتَه عموديًّا عاد كما كان؛ وزرُّ ملء الشاشة يُديرها على هيئة المقطع، عريضًا كان أو طويلًا.',
   doubleTapSeek: 'القفز بالنقر المزدوج (ث)', longPressSpeed: 'سرعة الضغط المطوّل (×)', volumeBoost: 'تعزيز الصوت (%)', swipeSeek: 'السحب للتقديم', swipeVolume: 'السحب لمستوى الصوت', swipeBrightness: 'السحب للسطوع', pinchZoom: 'القرص للتكبير', resumePlayback: 'المتابعة من حيث توقفت', resumeAlways: 'دائمًا', resumeAsk: 'اسألني', resumeNever: 'أبدًا', watchedAt: 'تُعدّ مشاهَدةً عند (%)', markWatchedAuto: 'تعليم الحلقة مشاهَدةً في AniList', autoplayNext: 'تشغيل الملف التالي تلقائيًا', keepScreenOn: 'إبقاء الشاشة مضاءة', orientation: 'الاتجاه', orientationAuto: 'حسب الجهاز', orientationLandscape: 'أفقي', orientationSensor: 'أفقي (بالاتجاهين)', defaultAspect: 'النسبة الافتراضية',
   direction: 'اتجاه الواجهة', dirAuto: 'بحسب اللغة', dirLtr: 'من اليسار إلى اليمين', dirRtl: 'من اليمين إلى اليسار', crashTitle: 'حدث خطأ ما', crashBody: 'تعذّر رسم الصفحة. التفاصيل أدناه تساعد على إصلاحه.',
   uiScale: 'حجم الواجهة', uiScaleHint: 'أصغر حين يعرض الهاتف الأشياء كبيرةً.',

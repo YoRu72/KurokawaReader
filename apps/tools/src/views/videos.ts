@@ -5,14 +5,15 @@
 import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '../ui/dom';
 import { offerUndo } from '../ui/undo';
 import { t, formatBytes, localDigits } from '../i18n';
-import { navigate } from '../router';
+import { navigate, up, back } from '../router';
+import { onBack } from '../ui/backstack';
 import { ktPlugin, nativePlatform } from '../native';
 import { getSettings, updateSettings } from '../settings';
 import { request } from '../http';
 import type { Route } from '../router';
 
 type Vid = { id: number; path: string; name: string; folder: string; duration: number; size: number; width: number; height: number; mtime: number };
-type Plug = { mediaAccess?(o: { ask?: boolean }): Promise<{ granted: boolean; partial?: boolean }>; mediaVideos?(): Promise<{ videos: Vid[] }>; videoThumb?(o: { id: number }): Promise<{ url: string }>; localUrl?(o: { path: string }): Promise<{ url: string }>; proxyUrl?(o: { url: string; headers?: Record<string, string> }): Promise<{ url: string }> };
+type Plug = { mediaAccess?(o: { ask?: boolean }): Promise<{ granted: boolean; partial?: boolean }>; mediaVideos?(): Promise<{ videos: Vid[] }>; videoThumb?(o: { id: number; path?: string; mtime?: number; size?: number }): Promise<{ url: string }>; localUrl?(o: { path: string }): Promise<{ url: string }>; proxyUrl?(o: { url: string; headers?: Record<string, string> }): Promise<{ url: string }> };
 const plug = () => ktPlugin() as unknown as Plug | null;
 type Server = NonNullable<ReturnType<typeof getSettings>['mediaServers']>[number];
 type Mem = { pos: number; duration: number; watched?: boolean; at: number };
@@ -22,7 +23,6 @@ const resName = (w: number, hgt: number) => { const p = Math.min(w, hgt); return
 const VIDEO_RE = /\.(mp4|mkv|webm|avi|mov|m4v|ts|m2ts|wmv|flv|3gp|mpg|mpeg|ogv)$/i;
 
 let cache: Vid[] | null = null;
-const thumbs = new Map<number, string>();
 
 export function videosView(route: Extract<Route, { name: 'videos' }>): HTMLElement & { dispose?: () => void } {
   const tab = route.tab ?? (localStorage.getItem('kt.videos.tab') || 'phone');
@@ -32,10 +32,18 @@ export function videosView(route: Extract<Route, { name: 'videos' }>): HTMLEleme
   const TABS: [string, string, string][] = [['phone', nativePlatform() === 'android' ? t('videosPhone') : t('videosFiles'), 'folder'], ['recent', t('videosRecent'), 'history'], ['servers', t('videosServers'), 'cloud'], ...(getSettings().addons.includes('video') ? [['followed', t('videosFollowed'), 'bell'] as [string, string, string]] : [])];
   const chips = h('div', { class: 'chips filter-chips' }, ...TABS.map(([k, label, ic]) => h('button', { type: 'button', class: 'chip' + (tab === k ? ' on' : ''), onclick: () => { try { localStorage.setItem('kt.videos.tab', k); } catch { /* */ } navigate(`/videos?tab=${k}`, true); } }, icon(ic), label)));
   body.append(chips);
-  const content = h('div', { class: 'videos-content' }); body.append(content);
-  if (tab === 'recent') recent(content); else if (tab === 'followed') void followed(content); else if (tab === 'servers') { if (route.srv) void browse(content, route.srv, route.p); else servers(content); } else void phone(content, route.folder);
+  const content = h('div', { class: 'videos-content' }); body.append(content); const offs: (() => void)[] = [];
+  if (tab === 'recent') recent(content); else if (tab === 'followed') void followed(content); else if (tab === 'servers') { if (route.srv) void browse(content, route.srv, route.p); else servers(content); } else void phone(content, route.folder, offs);
+  // Back inside a folder (the phone's, a server's): up one level, as the arrow beside its name does — the tab is
+  // left only from its top. (A kept view, out of the page, answers nothing.)
+  const unBack = onBack(() => { if (!root.isConnected) return false; if (tab === 'phone' && route.folder !== undefined) { upFolder(); return true; } if (tab === 'servers' && route.srv) { upServer(); return true; } return false; }, 'drill', 'videos folder');
+  root.dispose = () => { unBack(); offs.forEach((f) => f()); };
   return root;
 }
+
+/** Up from a phone folder to the folders; up from a server's folder to the one above it (or the servers). */
+const upFolder = () => up('/videos?tab=phone');
+const upServer = () => back('/videos?tab=servers');
 
 /* ---------- playing ---------- */
 async function play(url: string, name: string, o: { localPath?: string; playlist?: { url: string; name: string; localPath?: string }[] } = {}): Promise<void> {
@@ -51,12 +59,12 @@ async function playLocal(list: Vid[], i: number): Promise<void> {
 }
 
 /* ---------- the phone's videos ---------- */
-async function phone(out: HTMLElement, folder?: string): Promise<void> {
+async function phone(out: HTMLElement, folder?: string, offs: (() => void)[] = []): Promise<void> {
   const p = plug();
   if (!p?.mediaVideos) { out.append(h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('playCircle')), h('p', null, t('videosNoIndex')), h('button', { type: 'button', class: 'btn primary', onclick: () => (document.querySelector('.videos-view input[type=file]') as HTMLInputElement)?.click() }, icon('upload'), t('videosOpenFile')))); return; }
   const acc: { granted: boolean; partial?: boolean } = await p.mediaAccess?.({}).catch(() => ({ granted: false })) ?? { granted: false };
   if (!acc.granted && !acc.partial) {
-    const ask = h('button', { type: 'button', class: 'btn primary', onclick: async () => { await p.mediaAccess?.({ ask: true }); for (let k = 0; k < 60; k++) { await new Promise((r) => setTimeout(r, 1000)); const a = await p.mediaAccess?.({}).catch(() => null); if (a?.granted || a?.partial) { cache = null; out.replaceChildren(); void phone(out, folder); return; } } } }, icon('key'), t('videosAllow'));
+    const ask = h('button', { type: 'button', class: 'btn primary', onclick: async () => { await p.mediaAccess?.({ ask: true }); for (let k = 0; k < 60; k++) { await new Promise((r) => setTimeout(r, 1000)); const a = await p.mediaAccess?.({}).catch(() => null); if (a?.granted || a?.partial) { cache = null; out.replaceChildren(); void phone(out, folder, offs); return; } } } }, icon('key'), t('videosAllow'));
     out.append(h('div', { class: 'empty' }, h('div', { class: 'glyph' }, icon('playCircle')), h('p', null, t('videosAllowWhy')), ask)); return;
   }
   out.append(h('div', { class: 'center' }, h('div', { class: 'spinner' })));
@@ -79,16 +87,19 @@ async function phone(out: HTMLElement, folder?: string): Promise<void> {
     list.replaceChildren(...(folders.length ? folders.map(([name, vs]) => h('button', { type: 'button', class: 'video-folder', onclick: () => navigate(`/videos?tab=phone&folder=${encodeURIComponent(name)}`) }, thumb(vs[0]), h('span', { class: 'grow' }, h('b', { dir: 'auto' }, name), h('small', { class: 'src' }, `${t('videosCount', { n: localDigits(vs.length) })} · ${formatBytes(vs.reduce((s, v) => s + v.size, 0))}`)), icon('chevronRight'))) : [h('p', { class: 'empty small' }, t('videosNone'))]));
   };
   search.addEventListener('input', draw);
+  // (Back with a search typed: the search let go first, the folder stays.)
+  offs.push(onBack(() => { if (!out.isConnected || !search.value) return false; search.value = ''; draw(); return true; }, 'search', 'videos search'));
   out.replaceChildren(...(partialNote ? [partialNote] : []),
-    ...(folder !== undefined ? [h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), () => navigate('/videos?tab=phone', true)), h('b', { class: 'grow', dir: 'auto' }, folder))] : []),
+    ...(folder !== undefined ? [h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), upFolder), h('b', { class: 'grow', dir: 'auto' }, folder))] : []),
     h('div', { class: 'videos-tools' }, search, sortBtn), list);
   draw();
 }
+/** A video's picture: from Android's media index (kept on disk by the plugin), asked for when its row comes near
+ *  the screen, a few at a time; the film icon stays when there is none. Its badges (length, progress) stay on it. */
 function thumb(v: Vid): HTMLElement {
   const box = h('span', { class: 'video-thumb' }, icon('film'));
-  const set = (u: string) => { box.replaceChildren(h('img', { src: u, alt: '', loading: 'lazy' })); };
-  const have = thumbs.get(v.id); if (have) set(have);
-  else { const io = new IntersectionObserver((es) => { if (!es.some((e) => e.isIntersecting)) return; io.disconnect(); void plug()?.videoThumb?.({ id: v.id }).then((r) => { thumbs.set(v.id, r.url); set(r.url); }).catch(() => undefined); }); requestAnimationFrame(() => io.observe(box)); }
+  const p = plug(); if (!p?.videoThumb) return box;
+  void import('../ui/thumbs').then((m) => m.lazyThumb(box, `v:${v.id}:${v.mtime}:${v.size}`, async () => (await p.videoThumb!({ id: v.id, path: v.path, mtime: v.mtime, size: v.size })).url || null, (u) => m.placeImg(box, u)));
   return box;
 }
 function videoRow(v: Vid, list: Vid[]): HTMLElement {
@@ -179,7 +190,7 @@ function addServer(): void {
 type Entry = { id: string; name: string; folder: boolean; video: boolean; size?: number; image?: string; url?: string; headers?: Record<string, string>; sub?: string; seen?: boolean; progress?: number };
 async function browse(out: HTMLElement, srvId: string, at?: string): Promise<void> {
   const s = servers_().find((x) => x.id === srvId); if (!s) { navigate('/videos?tab=servers', true); return; }
-  const crumb = h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), () => history.back()), h('b', { class: 'grow', dir: 'auto' }, s.name), h('small', { class: 'src', dir: 'auto' }, at && s.type === 'webdav' ? decodeURIComponent(at) : ''));
+  const crumb = h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), upServer), h('b', { class: 'grow', dir: 'auto' }, s.name), h('small', { class: 'src', dir: 'auto' }, at && s.type === 'webdav' ? decodeURIComponent(at) : ''));
   const list = h('div', { class: 'videos-list' }, h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   out.append(crumb, list);
   try {

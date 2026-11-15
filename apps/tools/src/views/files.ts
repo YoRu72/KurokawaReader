@@ -11,12 +11,14 @@ import { pullToRefresh } from '../ui/gestures';
 import { h, icon, iconButton, toast, openSheet, pickSheet, onLongPress } from '../ui/dom';
 import { t, formatBytes, formatDate, formatDateShort, localDigits, countFiles, countItems, countFolders } from '../i18n';
 import { ktPlugin, listen, nativePlatform } from '../native';
-import { navigate, previousPath, cameFrom } from '../router';
+import { navigate, previousPath } from '../router';
 import { onBack as onBackStep } from '../ui/backstack';
+import { lazyThumb, placeImg, drawThumb, pcThumbable } from '../ui/thumbs';
+import { mimeMatches, mimeOfName, pickResult, kindsAsked, type PickRequest } from './pickLogic';
 import { kindOfFile } from './taskFiles';
 import { isArc, arcPath, parseArc, arcName, looksArchive } from './filesArc';
 import { isApps, appsPath, parseApps, appsAvailable } from './filesApps';
-import { splitExt, nameParts, joinMeta, readablePath, placeName } from './filesNames';
+import { splitExt, nameParts, joinMeta, readablePath, placeName, readShared, readSaved } from './filesNames';
 type AppEntry = Entry & { pkg?: string; sub?: string; special?: 'data' | 'obb' | 'media' };
 
 export interface Entry { name: string; path: string; dir: boolean; size: number; mtime: number; ext?: string; hidden?: boolean; count?: number }
@@ -38,7 +40,7 @@ type Plug = {
   openChooser(o: { path: string; mime?: string; title: string }): Promise<void>; openWith(o: { path: string; mime: string; title: string }): Promise<void>; shareFile(o: { path: string; title: string }): Promise<void>;
   defaultDir(): Promise<{ dir: string }>;
 };
-type Desk = { listDir?(p: string): Promise<{ entries: Entry[] }>; openPath?(p: string): Promise<unknown>; homeDir?(): Promise<string> };
+type Desk = { fileUrl?(p: string): Promise<string>; listDir?(p: string): Promise<{ entries: Entry[] }>; openPath?(p: string): Promise<unknown>; homeDir?(): Promise<string> };
 const plug = (): Plug | null => { const p = ktPlugin() as unknown as Partial<Plug> | null; return p?.filesList ? (p as Plug) : null; };
 const desk = (): Desk | null => (window.kurokawaTools as unknown as Desk | undefined) ?? null;
 export const canBrowseFiles = (): boolean => !!(plug() || desk()?.listDir);
@@ -146,7 +148,9 @@ const dayOf = (ms: number): string => { const d = new Date(ms); const now = new 
 /** A pane of the Files page: its own place, selection and history. Standing alone it writes where it is into the
  *  address; embedded (two panes) it keeps quiet and tells the other pane through `peer`. */
 export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void };
-type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null };
+/** Another app's «pick a file» (views/pick.ts): the page as a picker — files of the kind asked chosen, folders walked. */
+export type PickMode = { req: PickRequest; done: (paths: string[]) => void; cancel: () => void };
+type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null; pick?: PickMode };
 /** Two panes when the reader asked and the screen is wide enough, else one. */
 export function filesView(route: { p?: string; save?: string; c?: string }): HTMLElement {
   const wide = () => window.matchMedia('(min-width: 840px)').matches;
@@ -161,6 +165,8 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
   return root;
 }
 export function filesPane(route: { p?: string; save?: string; c?: string }, po: PaneOpts = {}): Pane {
+  // (A picker, like a pane beside another, keeps the address as it is: its folders are walked inside the page.)
+  const pk = po.pick; const quiet = !!po.embedded || !!pk;
   const body = h('div', { class: 'files-body' });
   const crumbs = h('div', { class: 'files-crumbs', dir: 'ltr' }); const rootsRow = h('div', { class: 'chip-row files-roots' }); const kindRow = h('div', { class: 'chip-row files-kinds' });
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
@@ -177,7 +183,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' },
       iconButton('search', t('search'), () => { if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
-      iconButton(prefs.view === 'grid' ? 'list' : 'grid', t('filesView'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); if (po.embedded) { draw(); po.peer?.()?.reload(); } else navigate(`/files?p=${encodeURIComponent(at)}`, true); }),
+      iconButton(prefs.view === 'grid' ? 'list' : 'grid', t('filesView'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); if (quiet) { draw(); po.peer?.()?.reload(); } else navigate(`/files?p=${encodeURIComponent(at)}`, true); }),
       iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
     clipBar, search, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
@@ -185,8 +191,17 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let at = mendScheme(route.p ?? (route.c ? '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? ''))); let remotes: Conn[] = [];
   let vroots: VRoots = { shell: null, trees: [], shizuku: false };
   const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); void remoteNow; let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
-  const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const el = e.target as HTMLElement; io.unobserve(el); const p = el.dataset.thumb; if (p) void thumbInto(el, p); } }, { rootMargin: '300px 0px' });
-  const thumbInto = async (el: HTMLElement, path: string) => { const pl = plug(); if (!pl) return; try { const px = prefs.view === 'grid' ? 240 : 96; const r = isArc(path) ? { url: await (await import('./filesArc')).arcThumb(path, px) } : isApps(path) ? { url: await (await import('./filesApps')).appIcon(parseApps(path).pkg) } : await pl.filesThumb({ path, px }); if (r.url && el.isConnected) { el.replaceChildren(h('img', { src: r.url, alt: '', loading: 'lazy' })); el.classList.add('has-img'); } } catch { /* the icon stays */ } };
+  // (Pictures: asked for only as rows come near the screen, a few at a time — ui/thumbs.ts —; the phone's from its
+  // plugin, which keeps them on disk; a computer's drawn here from the shell's address of the file.)
+  const thumbOf = async (path: string, name: string, px: number): Promise<string | null> => {
+    const pl = plug();
+    if (isArc(path)) return (await import('./filesArc')).arcThumb(path, px);
+    if (isApps(path)) return (await import('./filesApps')).appIcon(parseApps(path).pkg);
+    if (pl) return (await pl.filesThumb({ path, px })).url;
+    const u = await desk()?.fileUrl?.(path); return u ? drawThumb(u, name, px) : null;
+  };
+  const thumbInto = (el: HTMLElement, e: Entry) => { const px = prefs.view === 'grid' ? 240 : 96; lazyThumb(el, `f:${e.path}:${e.mtime}:${e.size}:${px}`, () => thumbOf(e.path, e.name, px), (u) => placeImg(el, u)); };
+  const pcThumbs = () => !plug() && !!desk()?.fileUrl;
 
   // ---- the storages and the way here
   const loadRoots = async () => {
@@ -228,8 +243,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const scrollNow = (): number => Math.max(window.scrollY, body.scrollTop);
   let movedOn = false; // (this page has gone elsewhere: its scroll was kept then, not again when it is taken down)
   const keepScroll = () => { if (movedOn) return; const k = collection ? `c:${collection}` : at; if (k && shownAt === k) scrollMemo.set(k, scrollNow()); };
-  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!po.embedded) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
-  const openCollection = (kind: string) => { if (gone) return; keepScroll(); collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!po.embedded) { movedOn = true; navigate(`/files?c=${kind}`); } void load(); };
+  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
+  const openCollection = (kind: string) => { if (gone) return; keepScroll(); collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!quiet) { movedOn = true; navigate(`/files?c=${kind}`); } void load(); };
   /** The place above `p`: the folder up; inside an archive the folder up there, and from its top the folder that holds
    *  the archive; null at a storage's top (the top of Files). */
   const upOf = (p: string): string | null => {
@@ -239,7 +254,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const up = parentOf(p); return up && up !== p ? up : null;
   };
   /** Up one place, by Back: through the history when the place above is the step before (so Forward still works). */
-  const goUp = (to: string) => { const url = `/files?p=${encodeURIComponent(mendScheme(to))}`; go(to, !po.embedded && previousPath() === url ? 'back' : 'replace'); };
+  const goUp = (to: string) => { const url = `/files?p=${encodeURIComponent(mendScheme(to))}`; go(to, !quiet && previousPath() === url ? 'back' : 'replace'); };
   /** One step of Back inside Files: what is open first (the selection, the filter), then up a folder — out of an archive to
    *  the folder that holds it — to the top of Files; false there (Files is left for where the reader came from). */
   const backStep = (): boolean => {
@@ -287,19 +302,29 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const row = (e: Entry): HTMLElement => {
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
     const ae = e as AppEntry; const appIc = !!ae.pkg && isApps(e.path) && e.dir;
-    const ic = h('span', { class: 'files-ic' + ((thumbable && (!isVirtual(e.path) || isArc(e.path)) || appIc) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': (thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc ? e.path : undefined }, icon(e.dir ? (ae.special ? 'folder' : appIc ? 'apps' : 'folder') : ICON[k] ?? 'file'));
+    const canThumb = (thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc || (thumbable && pcThumbs() && !isVirtual(e.path) && pcThumbable(e.name));
+    const ic = h('span', { class: 'files-ic' + ((thumbable && (!isVirtual(e.path) || isArc(e.path)) || appIc) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': canThumb ? e.path : undefined }, icon(e.dir ? (ae.special ? 'folder' : appIc ? 'apps' : 'folder') : ICON[k] ?? 'file'));
     // (The second line: only what is known — an archive's entry without a date shows its size alone, never «10 MB ·».)
     const when = e.mtime > 0 ? (prefs.view === 'grid' ? formatDateShort(e.mtime) : formatDate(e.mtime)) : '';
     const meta = ae.sub ? joinMeta([ae.sub, ae.pkg && e.dir && !ae.special ? formatBytes(e.size) : '']) : e.dir ? joinMeta([e.count !== undefined && e.count >= 0 ? countItems(e.count) : '', isArc(e.path) ? when : '']) : collection ? joinMeta([formatBytes(e.size), baseOf(parentOf(e.path))]) : joinMeta([e.size >= 0 ? formatBytes(e.size) : '', when]);
+    if (pk) {
+      // (The picker's row: a folder opens; a file is chosen — or, of another kind than asked, greyed and said so.)
+      const ok = e.dir || pickable(e);
+      const pr = h('div', { class: 'files-row' + (chosen.has(e.path) ? ' picked' : '') + (ok ? '' : ' pick-off') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', 'aria-pressed': e.dir ? undefined : String(chosen.has(e.path)), onclick: () => void open(e) },
+        ic, h('span', { class: 'grow files-main' }, nameEl(e.name, e.dir), h('small', { class: 'src' }, ...metaNodes(meta))),
+        h('span', { class: 'pick-mark' }, icon(e.dir ? 'chevronRight' : chosen.has(e.path) ? 'check' : 'circle')));
+      if (canThumb && prefs.thumbs !== false) thumbInto(ic, e);
+      return pr;
+    }
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, nameEl(e.name, e.dir), h('small', { class: 'src' }, ...metaNodes(meta))),
       selecting ? h('span', { class: 'files-check' }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }));
     // (A computer's right-click: the item's menu at the pointer; a long press — or a right-click while choosing —: choosing.)
     onLongPress(el, (ev) => { if (ev.type === 'contextmenu' && !selecting && document.documentElement.classList.contains('pc')) { itemSheet(e, ev); return; } if (!selecting) { selecting = true; } toggle(e); });
-    if (((thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc) && prefs.thumbs !== false) io.observe(ic);
+    if (canThumb && prefs.thumbs !== false) thumbInto(ic, e);
     // (A phone: a row swiped back toward the reading's start is deleted (asked first, as always) — the other way
     // is the drawer's.)
-    if (!po.embedded && !ae.special && !isApps(e.path) && !isVirtual(e.path) && plug()) {
+    if (!quiet && !ae.special && !isApps(e.path) && !isVirtual(e.path) && plug()) {
       const del = { label: t('delete'), icon: 'trash', run: () => void confirmDelete([e.path]) }; const back = () => (getComputedStyle(document.documentElement).direction === 'rtl' ? { right: del } : { left: del });
       swipeable(el, back, icon, () => !selecting && !collection);
     }
@@ -341,9 +366,27 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     setClip({ op: o, paths }); if (fromArc && op === 'move') toast(t('arcCutAsCopy')); if (selecting) leaveSel(); // (the clipboard bar says the rest)
   };
 
+  // ---- the picker: what is chosen (kept while folders are walked), the bar with Cancel and Select
+  const chosen = new Map<string, Entry>();
+  const pickable = (e: Entry): boolean => !!pk && !e.dir && !isVirtual(e.path) && !isApps(e.path) && mimeMatches(mimeOfName(e.name), pk.req.mimes);
+  const pickCount = h('span', { class: 'pick-count' });
+  const pickGo = h('button', { type: 'button', class: 'btn primary', onclick: () => { if (pk && chosen.size) pk.done(pickResult(pk.req, [...chosen.keys()])); } }) as HTMLButtonElement;
+  const drawPick = () => {
+    if (!pk) return; const n = chosen.size; const one = n === 1 ? [...chosen.values()][0] : undefined;
+    pickCount.classList.toggle('has', n > 0); pickCount.textContent = !n ? t('pickNothingYet') : one ? one.name : countFiles(n);
+    pickGo.replaceChildren(icon('check'), pk.req.multiple && n > 1 ? t('pickSelectN', { n: localDigits(n) }) : t('pickSelect')); pickGo.disabled = !n;
+  };
+  const choose = (e: Entry) => {
+    if (!pk) return;
+    if (!pickable(e)) { toast(isVirtual(e.path) || isApps(e.path) ? t('pickNotHere') : t('pickWrongKind')); return; }
+    if (chosen.has(e.path)) chosen.delete(e.path); else { if (!pk.req.multiple) chosen.clear(); chosen.set(e.path, e); }
+    draw(); drawPick();
+  };
+
   // ---- opening
   const open = async (e: Entry) => {
     const ae = e as AppEntry;
+    if (pk && !e.dir) { choose(e); return; }
     if (ae.special) { const m = await import('./filesApps'); const to = m.resolveSpecial(ae, vroots.trees, vroots.shell); if (to) { go(to); return; } if (vplug()) { try { await vplug()!.vfsGrant({ start: ae.special === 'obb' ? 'Android/obb' : 'Android/data' }); await loadRoots(); const again = m.resolveSpecial(ae, vroots.trees, vroots.shell); if (again) go(again); } catch { /* declined */ } } else toast(t('appsNeedsGrant'), 'error'); return; }
     if (e.dir) { go(e.path); return; }
     if (isArc(e.path)) { const m = await import('./filesArc'); await openInArc(e, m); return; }
@@ -725,13 +768,22 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- what other apps shared to «Save to device»
   const saveSharedSheet = async () => {
-    const pl = plug(); if (!pl) return; const r = await pl.sharedPending().catch(() => ({ items: [] }));
+    const pl = plug(); if (!pl) return; const r = { items: readShared(await pl.sharedPending().catch(() => null)) };
     const sh = openSheet(t('filesSaveToDevice'), t('close'));
     if (!r.items.length) { sh.body.append(h('p', { class: 'hint' }, t('filesNothingShared'))); return; }
-    sh.body.append(h('div', { class: 'dest-list' }, ...r.items.map((it) => h('div', { class: 'dest-row' }, icon(ICON[kindOfFile(it.name)] ?? 'file'), h('span', { class: 'name', dir: 'auto' }, it.name), h('small', { class: 'src' }, it.size >= 0 ? formatBytes(it.size) : '')))), h('p', { class: 'hint', dir: 'ltr' }, at));
-    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); /* (undo-redo) held: cleared for real only once its Undo is over; Undo brings the sheet back */ void import('../ui/undo').then((u) => u.offerUndo(t('sharedDiscarded', { n: localDigits(r.items.length) }), () => void saveSharedSheet(), undefined, { commit: () => pl.sharedClear() })); } }, t('filesDiscard')), h('button', { type: 'button', class: 'btn primary', onclick: async () => { sh.close(); const el = jobRow('shared', t('filesSaving', { n: localDigits(r.items.length) }), () => undefined); try { const res = await pl.sharedSave({ dir: at }); el.remove(); void load(); toast(res.failed.length ? t('filesSomeFailed', { n: localDigits(res.failed.length), why: res.failed[0] }) : t('filesSavedN', { n: localDigits(res.saved.length) }), res.failed.length ? 'error' : 'info'); } catch (err) { el.remove(); toast(String((err as Error).message ?? err), 'error'); } } }, icon('download'), t('filesSaveHere')));
+    sh.body.append(h('div', { class: 'dest-list' }, ...r.items.map((it) => h('div', { class: 'dest-row shared-row' }, icon(ICON[kindOfFile(it.name)] ?? 'file'), nameEl(it.name), h('small', { class: 'src shared-size' }, it.size >= 0 ? formatBytes(it.size) : '')))), h('p', { class: 'hint', dir: 'ltr' }, at));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); /* (undo-redo) held: cleared for real only once its Undo is over; Undo brings the sheet back */ void import('../ui/undo').then((u) => u.offerUndo(t('sharedDiscarded', { n: localDigits(r.items.length) }), () => void saveSharedSheet(), undefined, { commit: () => pl.sharedClear() })); } }, t('filesDiscard')), h('button', { type: 'button', class: 'btn primary', onclick: async () => { sh.close(); const el = jobRow('shared', t('filesSaving', { n: localDigits(r.items.length) }), () => undefined); try { const res = readSaved(await pl.sharedSave({ dir: at })); el.remove(); void load(); toast(res.failed.length ? t('filesSomeFailed', { n: localDigits(res.failed.length), why: res.failed[0] }) : t('filesSavedN', { n: localDigits(res.saved.length) }), res.failed.length ? 'error' : 'info'); } catch (err) { el.remove(); toast(String((err as Error).message ?? err), 'error'); } } }, icon('download'), t('filesSaveHere')));
   };
 
+  if (pk) {
+    // (The picker: who asked and for what, above; Cancel and Select below; nothing that changes files.)
+    root.classList.add('picker'); fab.remove(); root.querySelector('.topbar-actions button[data-icon="more"]')?.remove();
+    const kinds = kindsAsked(pk.req.mimes, { image: t('filesKindImages'), video: t('filesKindVideo'), audio: t('filesKindMusic'), text: t('filesKindDocs') });
+    const sub = [pk.req.caller ? t('pickFor', { app: pk.req.caller }) : '', kinds.length ? t('pickKinds', { kinds: kinds.join(document.documentElement.lang === 'ar' ? '، ' : ', ') }) : ''].filter(Boolean).join(' · ');
+    crumbs.before(h('div', { class: 'pick-head' }, icon(pk.req.multiple ? 'copy' : 'file'), h('span', { class: 'grow' }, h('b', null, pk.req.multiple ? t('pickTitleMany') : t('pickTitle')), sub ? h('small', { dir: 'auto' }, sub) : null)));
+    root.append(h('div', { class: 'pick-bar', role: 'toolbar' }, pickCount, h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), pickGo));
+    drawPick();
+  }
   // ---- start
   let sub: { remove(): void } | null = null;
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
@@ -747,9 +799,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (gone || !root.isConnected) return false;
     if (po.peer?.() && (activePane ? activePane !== me : po.side === 'b')) return false;
     if (backStep()) return true;
+    // (A picker at its top: Back is «Cancel» — the asking app gets nothing.)
+    if (pk) { pk.cancel(); return true; }
     if (po.embedded && po.side === 'b') return false;
-    const from = cameFrom('files'); if (from === '/' ) return false; navigate(from); return true;
-  });
+    // (Its top: the dispatcher's own way out — to the tab the reader came from, else the downloads; never round.)
+    return false;
+  }, 'drill', 'files');
   // A computer's keys, as a file manager's: Ctrl+A all, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste, Delete to the
   // bin, F2 rename the one chosen, Ctrl+F filter this folder, Alt+↑ (or Backspace) the folder above, Escape let go.
   const onKeys = (ev: KeyboardEvent) => {
@@ -773,7 +828,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); io.disconnect(); moreIo?.disconnect(); sub?.remove(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); moreIo?.disconnect(); sub?.remove(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };

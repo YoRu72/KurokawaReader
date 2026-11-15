@@ -58,3 +58,23 @@ export function placeName(p: string): string {
   if (m) { const inner = (m[2] ?? '').replace(/\/+$/, ''); if (inner) return inner.split('/').pop() ?? inner; let a = m[1]; try { a = decodeURIComponent(m[1]); } catch { /* as it is */ } return a.replace(/\/+$/, '').split('/').pop() ?? a; }
   return p.replace(/\/+$/, '').split('/').pop() ?? p;
 }
+
+/* ---------- «Save to device»: what the phone answers, read once into the shapes the sheet uses ---------- */
+export type SharedItem = { uri: string; name: string; size: number; mime: string };
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const strOf = (v: unknown): string => (typeof v === 'string' ? v : '');
+/** The files shared in: each with a name (its link's last part when the sending app gave none) and a size (−1 unknown). */
+export function readShared(raw: unknown): SharedItem[] {
+  return arr((raw as { items?: unknown } | null)?.items).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object').map((x) => {
+    const uri = strOf(x.uri); const nm = strOf(x.name);
+    const name = nm && nm !== 'null' ? nm : decodeURIComponent(uri.split(/[/?#]/).filter(Boolean).pop() ?? '') || 'file';
+    const size = typeof x.size === 'number' && isFinite(x.size) ? x.size : -1;
+    return { uri, name, size, mime: strOf(x.mime) };
+  });
+}
+/** What saving did: the paths saved, the reasons for those that failed, where. */
+export function readSaved(raw: unknown): { saved: string[]; failed: string[]; dir: string } {
+  const o = (raw ?? {}) as { saved?: unknown; failed?: unknown; dir?: unknown };
+  return { saved: arr(o.saved).map(String), failed: arr(o.failed).map(String), dir: strOf(o.dir) };
+}
+

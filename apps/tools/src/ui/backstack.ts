@@ -1,47 +1,31 @@
-// "Back", the same everywhere: Android's back gesture, a mouse's back button, Alt+← on a PC, the desktop
-// shell's back command. What is open on top closes first (the camera, a sheet, a side panel, a full-screen
-// view); then a place inside the view that the view itself keeps — a series opened in the library, the books
-// selected — then the view's own back; then the downloads. Only at the downloads' top does the app go away.
-import { navigate } from '../router';
-
-const handlers: (() => boolean)[] = [];
-/** A view's own step back (a series opened inside it): `fn` returns true when it went back. The latest first;
- *  the returned function takes it away (the view left, the place closed). */
-export function onBack(fn: () => boolean): () => void {
-  handlers.push(fn);
-  return () => { const i = handlers.lastIndexOf(fn); if (i >= 0) handlers.splice(i, 1); };
+// "Back", the same everywhere — one stack every layer registers with. This part is the small register the first
+// screen carries; the dispatcher that walks it (Android's back, the in-page arrows, a mouse's back button, Alt+←,
+// Esc on a computer) is ui/backnav.ts, loaded once the app has started.
+//   Modal layers (a sheet, a menu, a dialog, the player, its full screen, an editor) close first, the newest first;
+//   then what a view keeps inside itself (a selection, a search, a folder drilled into, a sub-page), the newest
+//   first; then the view's own arrow; then, at a tab's top, the tab the reader came from — else the downloads.
+export type LayerKind = 'sheet' | 'menu' | 'dialog' | 'overlay' | 'player' | 'fullscreen' | 'editor' | 'selection' | 'search' | 'drill' | 'subpage' | 'view';
+export interface Layer {
+  kind: LayerKind;
+  /** A step back: true when it went back (false lets the next layer take it). */
+  back: () => boolean;
+  /** Whether it is there at all (a view kept out of the page answers false). */
+  on?: () => boolean;
+  /** A name for the tests and the audit. */
+  name?: string;
 }
-
-/** One step back; false at the downloads' top (nothing left to go back from). */
-export function goBack(): boolean {
-  const sheets = document.querySelectorAll('.sheet .sheet-head button');
-  if (sheets.length) { (sheets[sheets.length - 1] as HTMLButtonElement).click(); return true; }
-  const panelClose = document.querySelector('.panel.open .panel-head button') as HTMLButtonElement | null;
-  if (panelClose) { panelClose.click(); return true; }
-  // Full-screen overlays (gallery, pages grid, lightbox, a cover) carry a dialog role and a close in their top bar.
-  // (Shown, by its boxes: a fixed overlay — the cover view — has no offset parent though it is on the screen.)
-  const overlays = Array.from(document.querySelectorAll('[role="dialog"]')).filter((d) => !d.classList.contains('panel') && d.getClientRects().length > 0 && getComputedStyle(d).visibility !== 'hidden');
-  const overlayBtn = overlays.length ? (overlays[overlays.length - 1].querySelector('.lb-close, .topbar button, button[aria-label]') as HTMLButtonElement | null) : null;
-  if (overlayBtn) { overlayBtn.click(); return true; }
-  for (let i = handlers.length - 1; i >= 0; i--) { const fn = handlers[i]; if (fn()) return true; }
-  const viewBack = document.querySelector<HTMLButtonElement>('.view .topbar button[data-icon="back"]');
-  if (viewBack) { viewBack.click(); return true; }
-  if (location.hash && location.hash !== '#/' && location.hash !== '#') { navigate('/'); return true; }
-  return false;
+export const layers: Layer[] = [];
+/** A layer on the stack; the returned function takes it away (closed, left). */
+export function pushLayer(l: Layer): () => void {
+  layers.push(l);
+  return () => { const i = layers.lastIndexOf(l); if (i >= 0) layers.splice(i, 1); };
 }
+/** A view's own step back (a place inside it): `fn` returns true when it went back. */
+export const onBack = (fn: () => boolean, kind: LayerKind = 'view', name?: string): (() => void) => pushLayer({ kind, back: fn, name });
 
-let wired = false;
-/** A PC's ways back: the mouse's back button, Alt+← (not while typing). */
-export function wirePcBack(): void {
-  if (wired) return; wired = true;
-  // (The mouse's back button: its press kept from the page, so no text is selected and the browser does not
-  // go back a page on its own.)
-  // (Its forward button, and Alt+→: forward again to where back came from.)
-  window.addEventListener('mousedown', (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); }, true);
-  window.addEventListener('mouseup', (e) => { if (e.button === 3) { e.preventDefault(); goBack(); } else if (e.button === 4) { e.preventDefault(); history.forward(); } }, true);
-  window.addEventListener('keydown', (e) => {
-    if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    if ((e.target as HTMLElement).matches?.('input, textarea, select, [contenteditable]')) return;
-    e.preventDefault(); if (e.key === 'ArrowLeft') goBack(); else history.forward();
-  });
+/** The tabs in the order last visited (each once) and where each one was — for Back at a tab's top. */
+export const tabTrail: string[] = [];
+export const tabPath = new Map<string, string>();
+export function noteTab(sec: string, path: string): void {
+  const i = tabTrail.indexOf(sec); if (i >= 0) tabTrail.splice(i, 1); tabTrail.push(sec); tabPath.set(sec, path);
 }

@@ -4,7 +4,7 @@ import { fontRows as subFontRows } from './subFont';
 import { h, pickButton } from '../ui/dom';
 import { t, localDigits } from '../i18n';
 import { offerUndo } from '../ui/undo';
-import { getPrefs, updatePrefs, resetPrefs, DEFAULT_PREFS, type PlayerPrefs, type TapAction } from './prefs';
+import { getPrefs, updatePrefs, resetPrefs, isPhone, DEFAULT_PREFS, type PlayerPrefs, type TapAction } from './prefs';
 import { getSettings, updateSettings } from '../settings';
 import { nativePlatform } from '../native';
 
@@ -64,12 +64,14 @@ export function playerPrefsPanel(onChange: (keys: K[]) => void = () => undefined
     group(t('ppControls'), ['controlsTimeout', 'seekPreview', 'skipAmount', 'autoSkip', 'skipSponsor', 'skipSilence', 'heatmap'],
       num(t('controlsTimeout'), 'controlsTimeout', 1, 30, 0.5, t('secondsUnit')), sw(t('seekPreview'), 'seekPreview', t('seekPreviewHint')),
       num(t('skipAhead'), 'skipAmount', 5, 300, 5), pick(t('autoSkip'), 'autoSkip', [['button', t('autoSkipButton')], ['auto', t('autoSkipAuto')], ['off', t('autoSkipOff')]]), pick(t('skipSponsor'), 'skipSponsor', [['button', t('autoSkipButton')], ['auto', t('autoSkipAuto')], ['off', t('autoSkipOff')]]), sw(t('skipSilence'), 'skipSilence', t('skipSilenceHint')), sw(t('heatmap'), 'heatmap', t('heatmapHint'))),
-    group(t('ppPlayback'), ['resume', 'defaultSpeed', 'autoplayNext', 'repeat', 'closeAtEnd', 'watchedAt', 'markWatched', 'keepScreenOn', 'backgroundPlay', 'pipOnLeave', 'orientation', 'rememberBrightness', 'pitchCorrection', 'rememberAspect', 'autoQueueFolder', 'immersive'],
+    group(t('ppPlayback'), ['resume', 'defaultSpeed', 'autoplayNext', 'repeat', 'closeAtEnd', 'watchedAt', 'markWatched', 'keepScreenOn', 'backgroundPlay', 'pipOnLeave', 'orientation', 'autoRotateFull', 'rememberBrightness', 'pitchCorrection', 'rememberAspect', 'autoQueueFolder', 'immersive'],
       sw(t('ppRememberAspect'), 'rememberAspect'), sw(t('ppAutoQueue'), 'autoQueueFolder', t('ppAutoQueueHint')), pick(t('ppImmersive'), 'immersive', [['both', t('ppImmersiveBoth')], ['status', t('ppImmersiveStatus')], ['none', t('ppImmersiveNone')]]),
       pick(t('resumePlayback'), 'resume', [['always', t('resumeAlways')], ['ask', t('resumeAsk')], ['never', t('resumeNever')]]), num(t('defaultSpeed'), 'defaultSpeed', 0.25, 4, 0.05), sw(t('pitchCorrection'), 'pitchCorrection'),
       sw(t('autoplayNext'), 'autoplayNext'), pick(t('repeatMode'), 'repeat', [['off', t('repeatOff')], ['all', t('repeatAll')], ['one', t('repeatOne')]]), sw(t('closeAtEnd'), 'closeAtEnd'),
       num(t('watchedAt'), 'watchedAt', 50, 100, 5), sw(t('markWatchedAuto'), 'markWatched'), sw(t('keepScreenOn'), 'keepScreenOn'), sw(t('backgroundPlay'), 'backgroundPlay', t('backgroundPlayHint')), sw(t('pipOnLeave'), 'pipOnLeave', t('pipOnLeaveHint')), sw(t('rememberBrightness'), 'rememberBrightness'),
-      pick(t('orientation'), 'orientation', [['auto', t('orientationAuto')], ['landscape', t('orientationLandscape')], ['sensor', t('orientationSensor')]])),
+      pick(t('orientation'), 'orientation', [['auto', t('orientationAuto')], ['landscape', t('orientationLandscape')], ['sensor', t('orientationSensor')]]),
+      // (Phones only: a computer has no turn to follow.)
+      ...(isPhone() ? [sw(t('ppAutoRotateFull'), 'autoRotateFull', t('ppAutoRotateFullHint'))] : [])),
     group(t('ppSubtitles'), ['autoSubs', 'subSize', 'subColor', 'subOutline', 'subOutlineWidth', 'subBackground', 'subBgOpacity', 'subFont', 'subFontAss', 'subBold', 'subItalic', 'subPos', 'sub2Pos', 'sub2Size', 'subSpeed', 'subForceLtr', 'subAssOverride', 'subCodepage'],
       langList(t('subPreferredLangs'), t('subPreferredLangsHint'), () => getSettings().subLangs ?? [], (v) => updateSettings({ subLangs: v })),
       sw(t('autoSubs'), 'autoSubs', t('autoSubsHint')),

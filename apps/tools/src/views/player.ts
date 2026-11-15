@@ -3,6 +3,7 @@
 // time until a choice is remembered (Settings → Player). The web has only the in-app way.
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t } from '../i18n';
+import { pushLayer } from '../ui/backstack';
 import { openExternal, ktPlugin, nativePlatform, openFolder } from '../native';
 import { getSettings, updateSettings } from '../settings';
 import { getEngine, isVideo } from '../engine';
@@ -61,7 +62,8 @@ function bare(url: string, name: string): void {
   const video = h('video', { src: url, controls: true, autoplay: true, playsinline: true, class: 'kt-video' }) as HTMLVideoElement;
   const root = h('div', { class: 'player-view', role: 'dialog', 'aria-label': name },
     h('div', { class: 'player-bar' }, iconButton('back', t('back'), close), h('span', { class: 'grow', dir: 'auto' }, name)), video);
-  function close() { video.pause(); video.removeAttribute('src'); video.load(); root.remove(); }
+  const unBack = pushLayer({ kind: 'player', name: 'plain player', on: () => root.isConnected, back: () => { close(); return true; } });
+  function close() { unBack(); video.pause(); video.removeAttribute('src'); video.load(); root.remove(); }
   video.addEventListener('error', () => { toast(t('stateFailed'), 'error'); close(); void openExternal(url); });
   document.body.append(root);
 }
