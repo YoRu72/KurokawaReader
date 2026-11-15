@@ -44,7 +44,7 @@ export function editorDeps(rerender: () => void): EditorDeps {
     preview: (p) => setThemePreview(p), use: (id, own) => { useTheme(id, own); rerender(); }, inUse: () => getSettings().theme ?? '',
     choose: (title, actions) => { const x = openSheet(title, t('close')); x.body.append(h('div', { class: 'te-choices' }, ...actions.map((a) => h('button', { type: 'button', class: 'dest-row te-choice' + (a.danger ? ' danger' : ''), onclick: () => { x.close(); a.run(); } }, a.icon ? icon(a.icon) : null, h('span', null, a.label))))); },
     toast: (m, k, action, ms) => toast(m, k ?? 'info', ms ?? 4200, action),
-    onBack, pickFile, saveText: (n, txt) => saveText(n, txt, 'text/plain'),
+    onBack: (fn) => onBack(fn, 'editor', 'theme editor'), pickFile, saveText: (n, txt) => saveText(n, txt, 'text/plain'),
     packPictures: async () => {
       const { installed, pictureUrls } = await import('../theme/packs'); const { themeIo } = await import('../themeIo');
       const have = await installed(themeIo); const out: { id: string; asset: string; label: string; url: string }[] = [];

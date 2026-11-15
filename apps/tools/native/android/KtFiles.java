@@ -132,26 +132,70 @@ final class KtFiles {
         File[] old = dir.listFiles(); if (old != null && old.length > 40) { java.util.Arrays.sort(old, (x, y) -> Long.compare(x.lastModified(), y.lastModified())); for (int i = 0; i < old.length - 30; i++) old[i].delete(); }
         return out;
     }
-    static String thumb(Context ctx, File f, int px) {
-        String key = f.getAbsolutePath() + "|" + f.lastModified() + "|" + px; String had = thumbs.get(key); if (had != null) return had;
-        Bitmap b = null; String name = f.getName().toLowerCase(Locale.ROOT);
+    /* ---------- the small pictures kept on disk, by path, time and size (and the picture's size), so a folder seen once
+       shows its pictures at once next time — and a changed file is drawn again ---------- */
+    static File thumbFile(Context ctx, String key) {
+        File dir = new File(ctx.getCacheDir(), "kt-thumbs"); if (!dir.isDirectory()) dir.mkdirs();
+        String name;
+        try { byte[] d = java.security.MessageDigest.getInstance("SHA-1").digest(key.getBytes("UTF-8")); StringBuilder sb = new StringBuilder(); for (byte x : d) sb.append(String.format(Locale.ROOT, "%02x", x)); name = sb.toString(); }
+        catch (Exception e) { name = Integer.toHexString(key.hashCode()) + "-" + key.length(); }
+        return new File(dir, name + ".img");
+    }
+    /** A kept picture as a data: URL, or null. */
+    static String diskThumb(Context ctx, String key) {
         try {
-            if (name.matches(".*\\.(jpe?g|png|webp|gif|bmp|heic|heif|hif|avif|tiff?|ico|wbmp)$")) {
+            File f = thumbFile(ctx, key); long n = f.length(); if (n <= 0 || n > (4L << 20)) return null;
+            byte[] b = new byte[(int) n]; int at = 0; try (FileInputStream in = new FileInputStream(f)) { while (at < b.length) { int k = in.read(b, at, b.length - at); if (k <= 0) break; at += k; } }
+            if (at != b.length) return null;
+            f.setLastModified(System.currentTimeMillis());
+            boolean png = b.length > 4 && (b[0] & 0xff) == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G';
+            return (png ? "data:image/png;base64," : "data:image/jpeg;base64,") + Base64.encodeToString(b, Base64.NO_WRAP);
+        } catch (Throwable e) { return null; }
+    }
+    private static long thumbsTrimmedAt = 0;
+    /** A picture kept; the oldest let go once there are too many. */
+    static void keepThumb(Context ctx, String key, byte[] bytes) {
+        try {
+            File f = thumbFile(ctx, key); try (FileOutputStream o = new FileOutputStream(f)) { o.write(bytes); }
+            long now = System.currentTimeMillis(); if (now - thumbsTrimmedAt < 60000) return; thumbsTrimmedAt = now;
+            File[] all = f.getParentFile().listFiles(); if (all == null || all.length <= 3000) return;
+            java.util.Arrays.sort(all, (x, y) -> Long.compare(x.lastModified(), y.lastModified()));
+            for (int i = 0; i < all.length - 2400; i++) all[i].delete();
+        } catch (Throwable ignored) {}
+    }
+    /** Android's own small picture of a photo or a video, from its media index (a file the app may not open itself). */
+    static Bitmap mediaStoreThumb(Context ctx, File f, int px, boolean video) {
+        if (Build.VERSION.SDK_INT < 29) return null;
+        android.net.Uri table = video ? android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI : android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        try (android.database.Cursor c = ctx.getContentResolver().query(table, new String[] { android.provider.MediaStore.MediaColumns._ID }, android.provider.MediaStore.MediaColumns.DATA + "=?", new String[] { f.getAbsolutePath() }, null)) {
+            if (c == null || !c.moveToFirst()) return null;
+            return ctx.getContentResolver().loadThumbnail(android.content.ContentUris.withAppendedId(table, c.getLong(0)), new android.util.Size(px, px), null);
+        } catch (Throwable e) { return null; }
+    }
+    static String thumb(Context ctx, File f, int px) {
+        String key = f.getAbsolutePath() + "|" + f.lastModified() + "|" + f.length() + "|" + px; String had = thumbs.get(key); if (had != null) return had;
+        String kept = diskThumb(ctx, key); if (kept != null) { if (thumbs.size() > 600) thumbs.clear(); thumbs.put(key, kept); return kept; }
+        Bitmap b = null; String name = f.getName().toLowerCase(Locale.ROOT); boolean isVideo = false, isImage = false;
+        try {
+            if (name.matches(".*\\.(jpe?g|png|webp|gif|bmp|heic|heif|hif|avif|tiff?|ico|wbmp)$")) { isImage = true;
                 BitmapFactory.Options o = new BitmapFactory.Options(); o.inJustDecodeBounds = true; BitmapFactory.decodeFile(f.getAbsolutePath(), o);
                 int s = 1; while (o.outWidth / s > px * 2 && o.outHeight / s > px * 2) s *= 2;
                 BitmapFactory.Options o2 = new BitmapFactory.Options(); o2.inSampleSize = s; Bitmap full = BitmapFactory.decodeFile(f.getAbsolutePath(), o2);
                 if (full == null && Build.VERSION.SDK_INT >= 28) { try { full = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(f), (dec, info, s2) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); dec.setTargetSampleSize(Math.max(1, Math.min(info.getSize().getWidth(), info.getSize().getHeight()) / Math.max(1, px * 2))); }); } catch (Throwable ignored) {} }
                 if (full != null) { b = ThumbnailUtils.extractThumbnail(full, px, px, ThumbnailUtils.OPTIONS_RECYCLE_INPUT); }
-            } else if (name.matches(".*\\.(mp4|mkv|webm|m4v|mov|avi|3gp|ts|flv|wmv)$")) {
+            } else if (name.matches(".*\\.(mp4|mkv|webm|m4v|mov|avi|3gp|ts|flv|wmv)$")) { isVideo = true;
                 b = Build.VERSION.SDK_INT >= 29 ? ThumbnailUtils.createVideoThumbnail(f, new android.util.Size(px, px), null) : ThumbnailUtils.createVideoThumbnail(f.getAbsolutePath(), android.provider.MediaStore.Images.Thumbnails.MINI_KIND);
             } else if (name.endsWith(".apk")) {
                 android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), 0);
                 if (pi != null) { pi.applicationInfo.sourceDir = f.getAbsolutePath(); pi.applicationInfo.publicSourceDir = f.getAbsolutePath(); android.graphics.drawable.Drawable d = pi.applicationInfo.loadIcon(ctx.getPackageManager()); b = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888); android.graphics.Canvas c = new android.graphics.Canvas(b); d.setBounds(0, 0, px, px); d.draw(c); }
             }
         } catch (Throwable ignored) {}
+        // (A file the app cannot decode itself — not readable to it, a format its decoder lacks —: Android's own picture.)
+        if (b == null && (isImage || isVideo)) b = mediaStoreThumb(ctx, f, px, isVideo);
         if (b == null) return null;
         ByteArrayOutputStream bo = new ByteArrayOutputStream(); b.compress(name.endsWith(".apk") || name.endsWith(".png") ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG, 80, bo); b.recycle();
-        String url = "data:image/" + (name.endsWith(".apk") || name.endsWith(".png") ? "png" : "jpeg") + ";base64," + Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP);
+        byte[] bytes = bo.toByteArray(); keepThumb(ctx, key, bytes);
+        String url = "data:image/" + (name.endsWith(".apk") || name.endsWith(".png") ? "png" : "jpeg") + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP);
         if (thumbs.size() > 600) thumbs.clear(); thumbs.put(key, url); return url;
     }
 

@@ -311,11 +311,11 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void move(PluginCall call) { run(call, () -> { engine().move(call.getString("id", ""), call.getInt("how", 0)); call.resolve(); }); }
     @PluginMethod public void setUrl(PluginCall call) { run(call, () -> { JSObject hd = call.getObject("headers", null); engine().setUrl(call.getString("id", ""), call.getString("url", ""), hd == null ? null : new JSONObject(hd.toString())); call.resolve(); }); }
     @PluginMethod public void hosts(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("hosts", engine().hosts()); call.resolve(r); }); }
-    @PluginMethod public void setLimits(PluginCall call) { run(call, () -> { engine().setLimits(call.getLong("down", 0L), call.getLong("up", 0L)); call.resolve(); }); }
+    @PluginMethod public void setLimits(PluginCall call) { run(call, () -> { engine().setLimits(longArg(call, "down", 0L), longArg(call, "up", 0L)); call.resolve(); }); }
     @PluginMethod public void configure(PluginCall call) { run(call, () -> { engine().configure(new JSONObject(call.getData().toString())); call.resolve(); }); }
     @PluginMethod public void torrentInfo(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("info", obj(engine().torrentInfo(new JSONObject(call.getObject("source").toString())))); call.resolve(r); }); }
     /** The player's word on a video being watched while it comes: its length, so the window ahead is sized from its byte rate. */
-    @PluginMethod public void streamHint(PluginCall call) { try { engine().stream().hint(call.getString("id", ""), call.getInt("fileIndex", 0), call.getDouble("duration", 0.0), call.getLong("size", 0L)); } catch (Throwable ignored) {} call.resolve(); }
+    @PluginMethod public void streamHint(PluginCall call) { try { engine().stream().hint(call.getString("id", ""), call.getInt("fileIndex", 0), call.getDouble("duration", 0.0), longArg(call, "size", 0L)); } catch (Throwable ignored) {} call.resolve(); }
     @PluginMethod public void streamUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().url(call.getString("id", ""), call.getInt("fileIndex", 0))); call.resolve(r); }); }
     @PluginMethod public void defaultDir(PluginCall call) { JSObject r = new JSObject(); r.put("dir", engine().defaultDir().getAbsolutePath()); call.resolve(r); }
 
@@ -892,6 +892,22 @@ public class KtPlugin extends Plugin {
         }
         JSObject r = new JSObject(); r.put("all", all); call.resolve(r);
     }
+    /* ---------- the Files page as another app's file picker (KtPickActivity carries the answer back) ---------- */
+    /** What the other app asked for (JSON: action, multiple, mimes, caller), or none. */
+    @PluginMethod public void pickRequest(PluginCall call) { JSObject r = new JSObject(); String q = KtPickActivity.current != null ? KtPickActivity.request : null; r.put("request", q); call.resolve(r); }
+    /** The files chosen (`paths`), or none (`cancel`): handed to the other app, and this app steps back so it is in front again. */
+    @PluginMethod public void pickDone(PluginCall call) {
+        final java.util.List<File> files = new java.util.ArrayList<>(); JSArray a = call.getArray("paths");
+        if (a != null) for (int i = 0; i < a.length(); i++) { String p = a.optString(i, ""); if (!p.isEmpty()) files.add(fileOf(p)); }
+        final KtPickActivity pick = KtPickActivity.current; final android.app.Activity me = getActivity();
+        if (pick == null) { call.reject("no request"); return; }
+        final String forId = call.getString("id", ""); if (forId != null && !forId.isEmpty() && !forId.equals(pick.id)) { call.resolve(); return; }
+        pick.runOnUiThread(() -> {
+            try { pick.answer(files.isEmpty() ? null : files); } catch (Throwable ignored) {}
+            try { if (me != null) me.moveTaskToBack(true); } catch (Throwable ignored) {}
+            call.resolve();
+        });
+    }
     /* Shared to «Save to device»: what other apps sent (kept until saved or dismissed), and the saving. */
     static final java.util.List<Uri> shared = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     static void sharedIn(java.util.List<Uri> us) { shared.addAll(us); KtPlugin p = self; if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
@@ -958,18 +974,43 @@ public class KtPlugin extends Plugin {
             } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
         });
     }
-    /** A video's small picture (Android's own thumbnail), as a data: URL. */
+    /** A whole number the page sent. (Not call.getLong: the bridge's JSON reads a number that fits in an int as an
+     *  Integer, which getLong's cast to Long turns into its default — every video's id came as 0, so no video had a
+     *  picture.) */
+    static long longArg(PluginCall call, String key, long def) {
+        Object v = call.getData().opt(key);
+        if (v instanceof Number) return ((Number) v).longValue();
+        if (v instanceof String) { try { return Long.parseLong((String) v); } catch (NumberFormatException ignored) {} }
+        return def;
+    }
+    /** A video's small picture as a data: URL: kept on disk (by its id, path, time and size); else Android's own
+     *  thumbnail from its media index; else a frame read from the file itself. */
     @PluginMethod public void videoThumb(PluginCall call) {
-        final long id = call.getLong("id", 0L);
+        final long id = longArg(call, "id", 0L); final String path = call.getString("path", ""); final long mtime = longArg(call, "mtime", 0L); final long size = longArg(call, "size", 0L);
         bg.execute(() -> {
             try {
-                Uri u = android.content.ContentUris.withAppendedId(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id); android.graphics.Bitmap b;
-                if (Build.VERSION.SDK_INT >= 29) b = getContext().getContentResolver().loadThumbnail(u, new android.util.Size(320, 180), null);
-                else b = android.provider.MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), id, android.provider.MediaStore.Video.Thumbnails.MINI_KIND, null);
+                String key = "v|" + id + "|" + path + "|" + mtime + "|" + size;
+                String kept = KtFiles.diskThumb(getContext(), key);
+                if (kept != null) { JSObject r = new JSObject(); r.put("url", kept); call.resolve(r); return; }
+                android.graphics.Bitmap b = null;
+                if (id > 0) {
+                    try {
+                        Uri u = android.content.ContentUris.withAppendedId(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+                        if (Build.VERSION.SDK_INT >= 29) b = getContext().getContentResolver().loadThumbnail(u, new android.util.Size(320, 180), null);
+                        else b = android.provider.MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), id, android.provider.MediaStore.Video.Thumbnails.MINI_KIND, null);
+                    } catch (Throwable ignored) {}
+                }
+                if (b == null && path != null && !path.isEmpty()) {
+                    try {
+                        if (Build.VERSION.SDK_INT >= 29) b = android.media.ThumbnailUtils.createVideoThumbnail(new File(path), new android.util.Size(320, 180), null);
+                        else b = android.media.ThumbnailUtils.createVideoThumbnail(path, android.provider.MediaStore.Images.Thumbnails.MINI_KIND);
+                    } catch (Throwable ignored) {}
+                }
                 if (b == null) { call.reject("none"); return; }
-                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 72, bo);
-                JSObject r = new JSObject(); r.put("url", "data:image/jpeg;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)); call.resolve(r);
-            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 72, bo); b.recycle();
+                byte[] bytes = bo.toByteArray(); KtFiles.keepThumb(getContext(), key, bytes);
+                JSObject r = new JSObject(); r.put("url", "data:image/jpeg;base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)); call.resolve(r);
+            } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
         });
     }
 

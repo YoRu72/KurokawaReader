@@ -50,6 +50,8 @@ public class MainActivity extends BridgeActivity {
             // (From the floating translator's menu or its tile: its page in the app.)
             // (A folder pinned to the home screen: the Files page at it.)
             if ("kurokawatools".equals(d.getScheme()) && "files".equals(d.getHost())) { final String q = d.getQuery() == null ? "" : d.getQuery(); if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash=" + org.json.JSONObject.quote("#/files?" + q), null), 400); return; }
+            // (Another app asked for a file and chose this app — KtPickActivity —: the Files page as a picker.)
+            if ("kurokawatools".equals(d.getScheme()) && "pick".equals(d.getHost())) { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/pick?t=" + System.currentTimeMillis() + "'", null), 400); return; }
             if ("kurokawatools".equals(d.getScheme()) && "screen".equals(d.getHost())) { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/screen'", null), 400); return; }
             // (A video or a sound file opened with «Kurokawa Player»: straight into the player, with what the caller
             // says — where to start, the title, subtitles, headers (MX Player's extras) —, the position handed back.)

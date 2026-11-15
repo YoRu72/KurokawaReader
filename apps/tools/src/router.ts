@@ -16,7 +16,8 @@ export type Route =
   | { name: 'courses'; url?: string }
   | { name: 'screen' }
   | { name: 'files'; p?: string; save?: string; c?: string; /** A stamp that only forces the page to be built anew (panes toggled). */ t?: string }
-  | { name: 'install'; p: string };
+  | { name: 'install'; p: string }
+  | { name: 'pick' };
 
 const listeners = new Set<(r: Route) => void>();
 export function parseRoute(hash = location.hash): Route {
@@ -32,6 +33,7 @@ export function parseRoute(hash = location.hash): Route {
   if (p.startsWith('/subs')) return { name: 'subs', q: sp.get('q') ?? undefined };
   const tvt = /^\/tv\/(movie|series)\/(tt\d+)/.exec(p); if (tvt) return { name: 'tvTitle', type: tvt[1] as 'movie', id: tvt[2], season: sp.get('s') ? Number(sp.get('s')) : undefined };
   if (p.startsWith('/screen')) return { name: 'screen' };
+  if (p.startsWith('/pick')) return { name: 'pick' };
   if (p.startsWith('/files')) return { name: 'files', p: sp.get('p') ?? undefined, save: sp.get('save') ?? undefined, c: sp.get('c') ?? undefined, t: sp.get('t') ?? undefined };
   // (An app opened with «Kurokawa Installer»: the app's installer for it.)
   if (p.startsWith('/install') && sp.get('p')) return { name: 'install', p: sp.get('p')! };
@@ -48,8 +50,6 @@ let pushing: string | null = null; let move: 'push' | 'pop' | 'replace' | 'start
 export const lastMove = () => move;
 /** The place before this one in the app's own history (what the browser's Back would show), if any. */
 export const previousPath = (): string | undefined => stack[stack.length - 2];
-/** The latest place in the history outside `section` — where the reader came from before it — else the downloads. */
-export function cameFrom(section: string): string { for (let i = stack.length - 1; i >= 0; i--) if (sectionOf(stack[i]) !== section) return stack[i]; return '/'; }
 export function navigate(path: string, replace = false): void {
   const target = `#${path}`;
   if (replace) { move = 'replace'; stack[stack.length - 1] = path; location.replace(target); return; }
@@ -63,7 +63,7 @@ export function sectionOfRoute(r: Route): string {
     case 'anime': case 'animeEntry': case 'animeStudio': return 'anime';
     case 'tv': case 'tvTitle': return 'tv';
     case 'videos': case 'courses': return 'videos';
-    case 'files': return 'files';
+    case 'files': case 'pick': return 'files';
     case 'subs': return 'subs';
     case 'search': return 'search';
     default: { const never: never = r; return never; }

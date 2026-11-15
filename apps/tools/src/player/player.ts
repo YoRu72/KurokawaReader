@@ -22,10 +22,11 @@ import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress, closeSh
 import { t, localDigits, formatBytes } from '../i18n';
 import { offerUndo } from '../ui/undo';
 import type { Task } from '../engine/types';
-import { getPrefs, updatePrefs, memoryOf, remember, DEFAULT_FILTERS, DEFAULT_PREFS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
+import { getPrefs, updatePrefs, isPhone, memoryOf, remember, DEFAULT_FILTERS, DEFAULT_PREFS, type PlayerPrefs, type Bookmark, type TapAction } from './prefs';
 import { parseCues, cuesAt, sniffFormat, decodeSubtitle, createAssRenderer, langOfTrack, cuesToSrt, type Cue, type AssRenderer } from './subs';
 import { request } from '../http';
 import { ktPlugin } from '../native';
+import { pushLayer } from '../ui/backstack';
 import { siblingFiles, readLocal } from './files';
 import { SoundGraph, EQ_FREQS, EQ_PRESETS, presetValues } from './audio';
 import { Picture, FILTER_PRESETS, CROPS } from './vfx';
@@ -112,6 +113,38 @@ export function openPlayer(src: PlayerSource): void {
   const unlockBtn = iconButton('lock', t('unlock'), () => lock(false)); unlockBtn.classList.add('kt-unlock'); unlockBtn.hidden = true;
   const root = h('div', { class: 'player-view kt-player', role: 'dialog', 'aria-label': src.name }, stage, centre, ripple, top, bottom, unlockBtn, skipOp);
   document.body.append(root);
+  // (On the back stack: Back with the screen locked only shows the unlock button; else the player closes. Its full
+  // screen is a layer of its own above it — Back leaves the full screen first.)
+  const unBackPlayer = pushLayer({ kind: 'player', name: 'player', on: () => root.isConnected, back: () => { if (locked) { unlockBtn.hidden = false; unlockBtn.classList.remove('faded'); return true; } close(); return true; } });
+  let unBackFull: (() => void) | null = null;
+  // (The full screen: the browser's own when it is allowed; else — a web view that refuses one not asked by a tap, as
+  // when the phone was turned — the player's own: the system bars away, the same layer on the back stack.)
+  let pseudoFull = false; let wasFull = false;
+  const isFull = () => document.fullscreenElement === root || pseudoFull;
+  const onFullChange = () => {
+    const on = isFull(); root.classList.toggle('kt-full', on);
+    if (on && !unBackFull) unBackFull = pushLayer({ kind: 'fullscreen', name: 'player full screen', on: () => root.isConnected, back: () => { void exitFull(); return true; } });
+    else if (!on && unBackFull) { unBackFull(); unBackFull = null; }
+    if (wasFull && !on) afterFull(); wasFull = on;
+  };
+  document.addEventListener('fullscreenchange', onFullChange);
+  // ---- the phone's turn («Rotate for full screen», phones only): turned sideways while playing, the full screen;
+  // turned upright again, out of it. A full screen left while sideways (Back, the button) is not opened again until the
+  // phone has been upright once. The button picks the turn from the video's shape — wide: either landscape side, as
+  // the phone's sensor has it; tall: portrait —, given back when the full screen ends.
+  const landscape = matchMedia('(orientation: landscape)');
+  let autoFull = false; let turnedByButton = false; let armed = !landscape.matches;
+  const rotateOn = () => isPhone() && getPrefs().autoRotateFull !== false;
+  const onTurn = () => {
+    if (!root.isConnected || !rotateOn()) return;
+    if (!landscape.matches) { armed = true; if (autoFull && isFull()) void exitFull(); return; }
+    if (armed && !isFull() && !locked) { armed = false; autoFull = true; void enterFull(); }
+  };
+  landscape.addEventListener('change', onTurn);
+  function afterFull() {
+    autoFull = false; armed = !landscape.matches;
+    if (turnedByButton) { turnedByButton = false; void turnScreen(getPrefs().orientation !== 'auto' ? 'landscape' : 'auto').catch(() => undefined); }
+  }
   const pic = new Picture(video, root);
   const wake = navigator.wakeLock && P.keepScreenOn ? navigator.wakeLock.request('screen').catch(() => null) : null;
   // (The system bars away while the player is up, as chosen; back when it closes.)
@@ -331,7 +364,7 @@ export function openPlayer(src: PlayerSource): void {
     else if (k === 'ArrowUp') setVolume(Math.min(1 + P.volumeBoost / 100, video.volume * boost + 0.05)); else if (k === 'ArrowDown') setVolume(Math.max(0, video.volume * boost - 0.05));
     else if (k === 'f') void fullscreen(); else if (k === 'm') { video.muted = !video.muted; flashText(video.muted ? '🔇' : '🔊'); } else if (k === '.' || k === 'e') frameStep(1); else if (k === ',') frameStep(-1);
     else if (k === '>' || k === ']' || k === '+') setSpeed(speed + (k === '+' ? 0.05 : 0.1)); else if (k === '<' || k === '[' || k === '-') setSpeed(speed - (k === '-' ? 0.05 : 0.1)); else if (k === '=') setSpeed(1);
-    else if (k === 'Escape') { if (document.fullscreenElement) void document.exitFullscreen(); else close(); }
+    else if (k === 'Escape') { e.preventDefault(); if (isFull()) void exitFull(); else close(); }
     else if (k === 'a') abPress(); else if (k === 's' || k === 'S') screenshot(); else if (k === 'v') cycleSub(); else if (k === 'b') cycleAudio(); else if (k === 'c') cycleCrop(); else if (k === 'r') { rotate = ((rotate + 90) % 360) as 0; applyTransform(); flashText(`${localDigits(rotate)}°`); }
     else if (k === 'z' || k === 'g') nudgeSub(-0.1); else if (k === 'x' || k === 'h') nudgeSub(0.1); else if (k === 'H') syncMark('heard'); else if (k === 'J') syncMark('seen');
     else if (k === 'n') neighbour(1); else if (k === 'p') neighbour(-1); else if (k === 't') flashText(`${fmtTime(video.currentTime)} / ${fmtTime(video.duration)}`, true); else if (k === 'i') infoSheet(); else if (k === 'B') addBookmark();
@@ -389,7 +422,18 @@ export function openPlayer(src: PlayerSource): void {
   const onPipChange = (e: Event) => { const on = !!(e as CustomEvent<boolean>).detail; root.classList.toggle('kt-pip', on); if (on) { controlsOn = false; root.classList.add('hide-ui'); preview?.hide(); closeSheets(); } };
   window.addEventListener('ktpip', onPipChange);
   video.addEventListener('play', () => pipArm(true)); video.addEventListener('pause', () => pipArm(false));
-  async function fullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.requestFullscreen(); } catch { /* not allowed */ } }
+  async function fullscreen() {
+    if (isFull()) { await exitFull(); return; }
+    if (rotateOn()) { const tall = video.videoHeight > video.videoWidth * 1.05; turnedByButton = true; autoFull = false; void turnScreen(tall ? 'portrait' : 'landscape').catch(() => undefined); }
+    await enterFull();
+  }
+  async function enterFull() {
+    try { await root.requestFullscreen(); } catch { pseudoFull = true; void barsPlug?.systemBars?.({ mode: 'both' }).catch(() => undefined); onFullChange(); }
+  }
+  async function exitFull() {
+    if (pseudoFull) { pseudoFull = false; if (getPrefs().immersive === 'none') void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined); onFullChange(); return; }
+    try { if (document.fullscreenElement) await document.exitFullscreen(); } catch { /* not ours */ }
+  }
   const remote = (video as HTMLVideoElement & { remote?: { prompt(): Promise<void>; state: string } }).remote;
   async function cast() { try { await remote!.prompt(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
 
@@ -1262,7 +1306,7 @@ export function openPlayer(src: PlayerSource): void {
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    converted?.stop(); converted = null; if (src.task?.kind === 'torrent') { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
+    converted?.stop(); converted = null; if (src.task?.kind === 'torrent') { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void turnScreen('auto').catch(() => undefined);

@@ -21,6 +21,7 @@ import { dlPrefs, applyFilters, sortTasks, groupOf, activeFilters, downloadsOpti
 import { historyOf, sparkline } from './taskmap';
 import { torEngineBadge } from './engineInfo';
 import { offerUndo } from '../ui/undo';
+import { onBack } from '../ui/backstack';
 // (undo-redo) Downloads taken off the list with an Undo are only held out of sight until it is over — every kind,
 // a video or a .torrent's too, which the trash cannot put back —, then removed for real; Undo shows them again as
 // they were (still downloading, if they were). The list's own files are never deleted this way.
@@ -318,12 +319,14 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRow.hidden = false; searchIn.focus(); }
     else if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); if (!selecting) setSelecting(true); for (const x of shown()) picked.add(x.id); draw(); }
-    else if (e.key === 'Escape' && selecting) setSelecting(false);
+    else if (e.key === 'Escape' && selecting) { e.preventDefault(); setSelecting(false); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && selecting && picked.size) { e.preventDefault(); const xs = tasks.filter((x) => picked.has(x.id)); setSelecting(false); removeWithUndo(xs, t('tasksRemoved', { n: countItems(xs.length) })); }
     else if (e.key === ' ' && selecting && picked.size) { e.preventDefault(); const eng = getEngine(); void Promise.all(tasks.filter((x) => picked.has(x.id)).map((x) => (x.state === 'paused' || x.state === 'failed' ? eng.resume(x.id) : ACTIVE.includes(x.state) ? eng.pause(x.id) : Promise.resolve()))); }
   };
   window.addEventListener('keydown', onKey);
-  root.dispose = () => { document.removeEventListener('scroll', onScroll, { capture: true }); window.removeEventListener('resize', onScroll); cancelAnimationFrame(scrollFrame); document.removeEventListener('visibilitychange', onVis); cancelAnimationFrame(paintFrame); window.clearTimeout(paintTimer); heldWatch.delete(reheld); off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
+  // (Back: out of the selection first, then the search closed — before the app is left.)
+  const unBack = onBack(() => { if (!root.isConnected) return false; if (selecting) setSelecting(false); else if (!searchRow.hidden) { searchIn.value = ''; query = ''; searchRow.hidden = true; draw(); } else return false; return true; }, 'selection');
+  root.dispose = () => { unBack(); document.removeEventListener('scroll', onScroll, { capture: true }); window.removeEventListener('resize', onScroll); cancelAnimationFrame(scrollFrame); document.removeEventListener('visibilitychange', onVis); cancelAnimationFrame(paintFrame); window.clearTimeout(paintTimer); heldWatch.delete(reheld); off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
   return root;
 }
 /** The next time the scheduler starts, as «HH:MM» (with the weekday when it is not today). */

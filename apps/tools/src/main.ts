@@ -9,7 +9,8 @@ import './styles/glass-tools.css';
 import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './router';
 import { h, icon, closeSheets } from './ui/dom';
-import { goBack, wirePcBack } from './ui/backstack';
+import { noteTab, tabPath } from './ui/backstack';
+const backNav = () => import('./ui/backnav');
 import { applyChrome, onSettingsChange, getSettings } from './settings';
 import { navPlacesAll } from './ui/navPlaces';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
@@ -76,11 +77,10 @@ function placeNav(): void {
 const destOf = sectionOfRoute;
 /* Each tab remembers where it was (a show's page in Anime, a section of Settings…): going back to the tab
    brings that screen back as it was, scrolled where it was; tapping the tab that is open goes to its start. */
-const lastPath = new Map<string, string>();
 const kept = new Map<string, { key: string; el: HTMLElement & { dispose?: () => void }; scroll: number; inner: number }>();
 function goTab(dest: string, root: string): void {
   const here = destOf(parseRoute());
-  const want = here === dest ? root : lastPath.get(dest) ?? root;
+  const want = here === dest ? root : tabPath.get(dest) ?? root;
   navigate(want);
 }
 function markNav(r: Route): void {
@@ -97,9 +97,9 @@ function mountInner(route: Route): void {
   if (key === currentKey && current) return;
   const prevRoute = currentKey ? (JSON.parse(currentKey) as Route) : null;
   currentKey = key;
-  const dest = destOf(route); lastPath.set(dest, location.hash.replace(/^#/, '') || '/');
+  const dest = destOf(route); if (route.name !== 'pick') noteTab(dest, location.hash.replace(/^#/, '') || '/');
   // Leaving a tab: its screen kept (not torn down) to come back to; staying in the tab: replaced as before.
-  if (current && prevRoute && destOf(prevRoute) !== dest && prevRoute.name !== 'add') {
+  if (current && prevRoute && destOf(prevRoute) !== dest && prevRoute.name !== 'add' && prevRoute.name !== 'pick') {
     const pd = destOf(prevRoute); const old = kept.get(pd); if (old && old.el !== current) { old.el.dispose?.(); old.el.remove(); }
     kept.set(pd, { key: JSON.stringify(prevRoute), el: current, scroll: window.scrollY, inner: current.querySelector<HTMLElement>('.body')?.scrollTop ?? 0 });
     current.remove();
@@ -123,6 +123,7 @@ function mountInner(route: Route): void {
     case 'install': { const pth = route.p; current = downloadsView(); setTimeout(() => void import('./views/apk').then((m) => m.installSheet(pth)), 80); break; }
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
     case 'files': current = lazyView(() => import('./views/files').then((m) => m.filesView(route))); break;
+    case 'pick': current = lazyView(() => import('./views/pick').then((m) => m.pickView())); break;
     case 'videos': current = lazyView(() => import('./views/videos').then((m) => m.videosView(route))); break;
     case 'courses': current = lazyView(() => import('./views/courses').then((m) => m.coursesView(route))); break;
     case 'tv': current = lazyView(() => import('./views/tv').then((m) => m.tvView(route.tab as 'discover' | undefined, route.q))); break;
@@ -179,7 +180,7 @@ else {
   // (At the start, before the first screen — each a listener or a setting another flow reads at once: a key, a
   // download's «done» or a shell's event in the first moments must find someone listening; the network and power
   // choices are in force before any download moves; the hand-over's hooks are there for the shell and the tests.)
-  wirePcBack();
+  void backNav().then((m) => m.wirePcBack());
   wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
   onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   void import('./downloads/power').then((m) => m.applyPower());
@@ -206,7 +207,7 @@ else {
   void import('./downloads/sidecars').then((m) => m.startSidecars());
   void import('./downloads/hotkeys').then((m) => m.startHotkeys());
   void import('./downloads/done').then((m) => m.startDoneWatch());
-  void import('./browser').then((m) => m.startBrowserEvents());
+  void import('./downloads/browserEvents').then((m) => m.startBrowserEvents());
   void import('./downloads/net').then((m) => m.applyNet());
   void import('./ui/dropzone').then((m) => m.startDropAndKeys());
   // (A download finishing in the first moments still unpacked, an episode still marked watched; the video limit in force before a job can start.)
@@ -249,7 +250,7 @@ else {
   document.documentElement.dataset.platform = nativePlatform();
 
   // Android's back: the native side asks the page (through the plugin's `backButton` event when present).
-  window.addEventListener('kt:back', () => { if (!goBack()) (window.Capacitor?.Plugins?.App as { exitApp?(): void } | undefined)?.exitApp?.(); });
+  window.addEventListener('kt:back', () => void backNav().then((m) => { if (!m.goBack()) (window.Capacitor?.Plugins?.App as { exitApp?(): void } | undefined)?.exitApp?.(); }));
   // (Android's own back, taken from the WebView — which otherwise stepped back through every tab switched to,
   // round and round between two of them —: the open sheet first, then up a level, then the downloads; only from
   // the downloads' top does the app go to the background.)
@@ -262,7 +263,7 @@ else {
     // (Nothing left to close: the app is put away only on a second press within two seconds — a Back that lands
     // right after a file picker or a sheet that was lost no longer throws the reader out of the app.)
     let backAt = 0;
-    if (App) void call(() => App.addListener('backButton', () => { if (goBack()) return; if (Date.now() - backAt > 2000) { backAt = Date.now(); void import('./ui/dom').then(({ toast }) => toast(t('pressAgainToExit'))); return; } void call(() => App.minimizeApp()).catch(() => call(() => App.exitApp())).catch(() => undefined); })).catch(() => undefined);
+    if (App) void call(() => App.addListener('backButton', () => void backNav().then((m) => { if (m.goBack()) return; if (Date.now() - backAt > 2000) { backAt = Date.now(); void import('./ui/dom').then(({ toast }) => toast(t('pressAgainToExit'))); return; } void call(() => App.minimizeApp()).catch(() => call(() => App.exitApp())).catch(() => undefined); }))).catch(() => undefined);
   }
   // Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
   // (A video or a sound opened with «Kurokawa Player» from another app: straight into the player, where it asked.)
