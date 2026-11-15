@@ -23,6 +23,9 @@ day).
 | `sizes.py` | each APK checked for its library; the size table |
 | `switch-over/` | the patch for release-tools.yml and how to flip it |
 | `.github/workflows/android-rust-check.yml` | all of the above in CI |
+| `kt-core/src/tordirector.rs`, `tormobile.rs`; `kt-android/src/m3call.rs` | M3: the streaming director (`tdir.*`) and the torrent engines' rules (`tor.choose`, `tor.onFail`) |
+| `../kt-android-torrent/` | M3: libkt_torrent.so — librqbit as the phone's Rust torrent engine, its own JNI door, build, tests, size table, release patch |
+| `native/android/KtTorDirector.java`, `KtTorrentCore.java`, `KtTorrentRs.java`, `KtTorrentRsEngine.java` | M3: the Java side |
 
 ## The call shape (one for every stage)
 
@@ -132,25 +135,118 @@ the 250 KB budget** — CI's size table decides; if it holds, M6's removals pay 
   back to Java mid-download and resume (the shared record), a MEGA link, a host that refuses connections; watch speed,
   battery and that «handed back to Java» stays 0. Default changes only after that run (and its fixes).
 
-**M3 — torrents (refreshed 2026-11-14).** The plan was «the engine proven on PC in P4 replaces libtorrent4j». What P4
-became (branch `work-tt-p4`, commit 2ef84b6) changes that: the PC's torrent engine is a **hybrid** — aria2 (a C++
-program run beside the app) keeps every torrent *download* and seed; librqbit (8.1.1, behind a cargo feature, with
-tokio) only *streams* a torrent the player opens (far seeks) and hands it back to aria2 on any failure. So:
-- *What PC proves is narrower than Android needs.* libtorrent4j does everything on the phone (downloads, seeding, magnet
-  metadata, DHT/LSD/UPnP/NAT-PMP, encryption modes, proxy, interface binding, file priorities, sequential, ratio and
-  time limits, resume data). Android has no aria2 to fall back to, so librqbit would have to be the whole engine there,
-  with libtorrent4j as the fallback behind the switch — a parity list PC never ran (RUST-PORT.md §1a).
-- *Size.* librqbit pulls tokio, its own HTTP stack for trackers (reqwest with rustls → ring, which builds C/assembly with
-  the NDK's clang — workable, but the first C in this library), sha1, serde and more: on PC it is «a few MB». Per ABI on
-  Android expect roughly 2–4 MB of `.so` (≈1–2 MB compressed) against libtorrent4j's 5.9 MB, so the APK could shrink
-  only once libtorrent4j is removed (M6); while both ship (the switch), it grows by that much per ABI. CI must measure
-  it (a `cargo build` of librqbit for the three targets, as P4's «what it adds» step) before any decision.
-- *Shape.* Not sans-I/O like M2: librqbit owns its sockets and its runtime, so the JNI side needs a long-lived session,
-  polling of its state (`tor.*` methods answering JSON through the same one native call), and its HTTP made to honour
-  the app's DNS over HTTPS and proxy — or those options documented as not applying to the Rust engine.
-- *Order.* Measure size and build first (no app change), then a streaming-only use mirroring PC (the player's torrent
-  through librqbit, libtorrent4j for the rest), then downloads behind «Torrent engine», then the phone run. Not before
-  P4 is merged.
+**M3 — torrents: written 2026-11-15, waiting for CI and the owner's phone. Nothing of it has run on a phone; librqbit
+has never run anywhere as a whole-download engine (the PC uses it only to stream, beside aria2).**
+
+*The choice.* librqbit for Android with the NDK is possible but unproven on every axis that matters here: the PC built
+it only with its default features (native-tls and sha1 through OpenSSL, which Android lacks), so Android needs
+`default-features = false, features = ["rust-tls"]` (rustls → ring, C and assembly through the NDK's clang), a
+combination nobody built; and it cannot follow the phone's SAF folders, proxy, bound interface or forced encryption.
+So M3 is two things: **(1) the director** — an original streaming brain in kt-core (std, tested here with a simulated
+swarm) that drives libtorrent4j's existing wires (piece priorities and deadlines) — certain to build, in
+libkt_android.so; and **(2) the Rust engine** — librqbit in a library of its own (libkt_torrent.so), a CI try-step that
+can fail without touching anything.
+
+*Setting.* Settings → Advanced, «Torrent engine: Classic / Director / Rust», phones only; Director listed when
+libkt_android.so is here, Rust when libkt_torrent.so is; neither → the row is absent (no card at all when both are).
+Default **Classic** (unchanged behaviour). Kept in the `kt` preferences (`configure({torEngine})`), read when a torrent
+is **added**; the torrent keeps that engine in its meta (`torEngine`); torrents from before M3 stay classic.
+`deviceInfo`: `torEngineChoice`, `torEngine`, `rustTorrent` (version or null), `rustTorrentStatus`,
+`torEngineFallbacks`, `torEngineHeld`, `torDirectorPlans`, `torDirectorFallbacks`, `debuggable`. In a debuggable build a
+torrent's row and details show «engine: Rust / Director».
+
+*The director* (kt-core `tordirector.rs`; kt-android `m3call.rs` `tdir.open/hint/rate/read/plan/close`; Java
+`KtTorDirector` with `KtStream.wires(th)`). For a torrent on «director», `prepareStream` and `KtStream.waitForPiece`
+ask it instead of Java's fixed rules: the file's tail (index) asked with its head; a read-ahead window of 8–60 s of
+video (the player's byte rate, else measured from the reads) — 20 s when the swarm gives less than the video needs or
+at the start, 60 s when it gives 3× more, 8 s while scrubbing (≥ 2 seeks in 30 s); deadlines from when playback reaches
+each piece (½ of that time, ≥ 80 ms); a seek (backwards, or beyond the window) drops the old deadlines at once; the
+next window's worth at high priority. Peer choking, request queues and end-game duplicate requests stay libtorrent's
+(libtorrent4j gives Java no per-peer choke; its time-critical picking does end-game for deadline pieces). Any Rust error
+→ Java's rules for that stream, counted. Simulated swarm (`tordirector.rs` tests, 12 peers, 400 MB file, 256 KiB
+pieces, a 1 MB/s video, first frame = first 2 MB + last 1 MB, seek to 65 % at 30 s; mean of 5 seeds; tuned on this
+simulator, so it shows direction, not phone numbers):
+
+| swarm | strategy | time to first frame | time to seek target | stalls in 90 s after |
+|---|---|---:|---:|---:|
+| 4 MB/s | plain sequential | 109.7 s | 42.1 s | 0.0 s |
+| 4 MB/s | Java today | 11.1 s | 1.8 s | 0.0 s |
+| 4 MB/s | director | **3.0 s** | **1.7 s** | 0.0 s |
+| 1.4 MB/s | plain sequential | > 400 s (never) | 172.1 s | 0.0 s |
+| 1.4 MB/s | Java today | 77.8 s | 4.5 s | 0.0 s |
+| 1.4 MB/s | director | **8.1 s** | **4.3 s** | 0.3 s |
+
+The gain is the first frame (the index no longer waits behind the head and the 32 MB «soon» stretch); seeks are on a par
+with Java's rules (both drop deadlines at once); on the tight swarm the director stalls 0.3 s where Java does not.
+
+*The Rust engine* (`apps/tools/core/kt-android-torrent`: `src/dispatch.rs` std-only `tor.*` table, `src/rqbit.rs`
+librqbit glue, `src/fake.rs` stand-in for host tests; kt-core `tormobile.rs` decides; Java `KtTorrentCore` (loader,
+own PROTOCOL 1), `KtTorrentRs` (calls), `KtTorrentRsEngine` (KtEngine's torrent surface)). One JNI call shape as
+kt-android (`KtTorrentCore.nCall`), catch_unwind on every call and every librqbit call, panic = "unwind". One tokio
+runtime (2 workers) entered for every call, as on the PC. `tor.start` (fresh data dir, DHT on/off, UPnP, port),
+`tor.add` (magnet or .torrent bytes, folder, wanted files, paused; the add runs on its own thread), `tor.poll` (every
+changed task and every failure in one call, ~0.7 s, seeding rules applied), `tor.pause/resume/remove/files/limits`,
+`bytes.tor.read(id, file, off, len, timeout)` for the stream, `tor.shutdown` (every torrent let go, files kept, list
+handed back). **Stream: `bytes.tor.read` behind Java's existing KtStream server** (not a second HTTP server in Rust):
+KtStream keeps its ranges, headers, signed URLs and player hints; only the byte source changes, and librqbit's file
+stream already fetches the pieces under the reader first — the fewest new moving parts.
+*Ownership and fallback.* One engine per info-hash (a hash libtorrent holds is never given to Rust; Rust refuses a
+duplicate). Not eligible (SAF folder, proxy, bound interface, anonymous mode, forced encryption, library absent) →
+director or classic at add time. A failure with nothing written → the same source restarted on libtorrent at once,
+counted; with bytes → paused with «rust: …», marked classic: resume gives libtorrent the same folder. **Existing files:
+librqbit is added with `overwrite: true` and checks what is there, keeping good pieces; libtorrent with no resume data
+hashes the files in its save path and keeps good pieces.** librqbit's folder is chosen so its files are where
+libtorrent puts them (`tormobile::rqbit_folder`: multi-file under `<dir>/<name>`). The foreground service, wake locks,
+notifications and Wi-Fi-only / battery holds are KtEngine's and act through pause/resume, which route to the Rust
+engine for its tasks. Recheck, reannounce, add trackers, rename, sequential and per-torrent limits do nothing on a Rust
+task.
+
+*What differs from libtorrent4j, feature by feature (Rust engine).* DHT: on/off as set; no saved node table (cold
+start each run), no custom bootstrap, no «turn DHT on when no peers» nudge. PEX: librqbit's own, not configurable
+(unverified). LSD: none. uTP: none in 8.1.1 as far as known (TCP) — unverified. Encryption: none (forced → refused,
+classic). Proxy: not used → refused. IPv6: as librqbit does (unverified). Sequential/streaming: no sequential flag; the
+file stream prioritises under the reader. Seeding limits: ours (tormobile), ratio needs librqbit's upload count
+(«upload» feature). Resume: no librqbit persistence; each start re-adds every Rust torrent and **re-checks its files**
+(slow on big torrents) — libtorrent has fastresume. Magnet metadata: fetched twice (list-only, then add) and only in a
+build with «listonly». Port mapping: UPnP only (no NAT-PMP). Limits: session-wide, at session start only; none per
+torrent. File priorities: wanted / not wanted (no «high»). Interface binding, anonymous mode: refused.
+
+*Calls the PC never compiled* (each behind its own cargo feature, built with all, again with none on failure —
+`build-android.sh`; `build.txt` says which): the dependency set itself (no default features + rust-tls; ring or
+aws-lc with the NDK), `Session::pause/unpause`, `SessionOptions.listen_port_range`, `.disable_dht_persistence`,
+`.ratelimits` (`librqbit::limits::LimitsConfig`), `AddTorrentOptions.trackers`, `.list_only` +
+`AddTorrentResponse::ListOnly(r)` with `r.info.name/.files/.length`, `TorrentStats.file_progress`, `.uploaded_bytes`.
+
+*Size.* Measured here: libkt_android.so host 480 240 bytes (+20 KB for the director), 246 932 gzip (+10 KB).
+libkt_torrent.so: not measurable here; estimate **+2–4 MB .so, ≈ 1–2 MB compressed per ABI** while both engines ship
+(libtorrent4j is 5.9 MB) — the CI step «M3: the torrent library's size» prints the real per-ABI table and the APKs with
+and without it.
+
+*Proof.* Here: `tordirector.rs` 8 and `tormobile.rs` 10 std tests; kt-android `m3call.rs` 3; the torrent library's
+dispatch with the stand-in backend (`test-host.sh`) and its Java door from a JVM (`jvmtest/torrent.sh`: add →
+metadata → bytes identical, pause/resume with and without librqbit's pause, both failures, SAF refused, remove,
+shutdown hand-back, a panic as an error, the director with made-up wires, no library → Failure only);
+`KtTorrentRsEngine` compiled against KtEngine.Task's fields; KtEngine/KtStream checked differentially (no new javac
+error but the Android/libtorrent4j classes absent here). CI (`android-rust-check.yml` «M3» blocks): the same, then
+librqbit built for the computer with `tests/loopback.rs` — a made-up file, a private torrent, a loopback tracker and
+aria2c seeding on 127.0.0.1, DHT off: add → metadata → done with identical bytes, a far range streamed before the
+middle is in, pause/resume, remove, a forced failure told — and the JVM call shape on the real build; then the three
+ABIs, packed only if all built; the size table. The release patch: `../kt-android-torrent/switch-over/`.
+
+*Phone test list (owner).* Debug APK with both libraries. Director: a torrent video opened at once (first frame time
+vs Classic), seeks far ahead and back, scrubbing; the row says «engine: Director». Rust: a .torrent and a magnet into
+Download/Kurokawa, on Wi-Fi and mobile data with «Wi-Fi only» on and off; pause/resume; stop the app mid-download and
+reopen (it re-checks); watch while downloading and seek far; a torrent with several files, some unticked; remove with
+and without files; a SAF folder and a proxy set (must go to Classic, counted); battery and heat over 30 min; that
+`torEngineFallbacks` stays 0 on healthy torrents.
+
+*Before libtorrent4j can be removed (M6).* The Rust engine must be the default after a clean phone run, and all of
+this must hold: every ABI builds «every call» (not «proven only»); resume without re-hashing (librqbit persistence
+wired, or our own resume record); NAT-PMP or proof UPnP suffices; encryption support (or proof peers do without);
+proxy and bound-interface support or the owner's word that they may go; uTP or measured speeds on a par; SAF folders
+(librqbit writing through file descriptors Java opens, or a copy-out step); magnet metadata once; per-torrent limits,
+recheck, trackers, rename and the peer list on the Rust engine; the director's rules moved onto librqbit if it keeps
+streaming. Until then libtorrent4j ships and stays the default.
 
 **M4 — screen translator and HLS logic: written 2026-11-15 (branch `work-and-m4`), waiting for CI and the phone.**
 - *What moved* (kt-core, std only, each module alone under `rustc --test`): `screentrack.rs` — KtScreenTrack's update

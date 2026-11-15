@@ -1,0 +1,26 @@
+--- a/.github/workflows/release-tools.yml
++++ b/.github/workflows/release-tools.yml
+@@ -87,6 +87,23 @@
+           j=android/app/src/main/jniLibs
+           if ! { mkdir -p "$j" && cp -R "$RUNNER_TEMP/jniLibs"/. "$j"/; }; then find "$j" -name 'libkt_android.so' -delete 2>/dev/null; exit 1; fi
+           find "$j" -name 'libkt_android.so' -exec ls -la {} \;
++      # (Stage M3: the Rust torrent engine — librqbit in a library of its own, libkt_torrent.so; apps/tools/core/
++      # kt-android-torrent/switch-over/NOTES.md. Unconditional but safe exactly like the Rust core above: it never stops
++      # a release — continue-on-error, and copied into the APKs only when all three ABIs built; without it the app's
++      # «Torrent engine» setting simply has no «Rust» choice and every torrent stays on libtorrent4j (the default).)
++      - name: Rust torrent engine for Android (optional)
++        continue-on-error: true
++        shell: bash
++        run: |
++          rm -rf "$RUNNER_TEMP/jniTor"
++          bash core/kt-android-torrent/build-android.sh "$RUNNER_TEMP/jniTor"
++          for abi in arm64-v8a armeabi-v7a x86_64; do [ -s "$RUNNER_TEMP/jniTor/$abi/libkt_torrent.so" ] || { echo "::warning::the Rust torrent engine did not build for $abi — the APKs are built without it (libtorrent4j only)"; exit 1; }; done
++          j=android/app/src/main/jniLibs
++          # (A copy broken off midway takes every torrent library it put back out: all three or none.)
++          ok=1; for abi in arm64-v8a armeabi-v7a x86_64; do { mkdir -p "$j/$abi" && cp "$RUNNER_TEMP/jniTor/$abi/libkt_torrent.so" "$j/$abi/"; } || { ok=0; break; }; done
++          [ "$ok" = 1 ] || { find "$j" -name 'libkt_torrent.so' -delete 2>/dev/null; exit 1; }
++          cat "$RUNNER_TEMP/jniTor/build.txt"
++          find "$j" -name 'libkt_torrent.so' -exec ls -la {} \;
+       - name: Signing key
+         env:
+           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

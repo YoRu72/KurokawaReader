@@ -7,6 +7,8 @@ mod jni;
 pub mod dispatch;
 // (Stage M2: the downloader's `http.*` methods and `bytes.megaCtr`.)
 mod httpcall;
+// (Stage M3: the torrent director's `tdir.*` methods and `tor.choose` / `tor.onFail`.)
+mod m3call;
 // (Stage M4: the screen translator's `bytes.scrTrack` / `bytes.moShift` / `bytes.inpaint`, HLS, lettering's rules.)
 mod m4call;
 // (Stage M5: the file jobs' `fj.*`, archives' `ar.*`, the vault's `vt.*`, network storages' `rm.*`.)

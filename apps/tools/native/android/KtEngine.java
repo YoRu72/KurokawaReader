@@ -241,6 +241,7 @@ final class KtEngine {
 
     private void addTorrent(Task x) throws Exception {
         if (!x.dir.startsWith("content:") && !writable(new File(x.dir))) { x.state = "failed"; x.error = "noFolderAccess"; x.paused = true; synchronized (this) { tasks.put(x.id, x); } if (x.infoHash == null && x.source.has("magnet")) { try { x.infoHash = hashOf(AddTorrentParams.parseMagnetUri(x.source.getString("magnet"))); } catch (Exception ignored) {} } return; }
+        if (torRust(x)) return;   // (stage M3: the Rust engine took it — torEngine «rust»)
         SessionManager s = session();
         AddTorrentParams p;
         if (x.source.has("torrent")) {
@@ -289,13 +290,13 @@ final class KtEngine {
     }
     private void applyPriorities(Task x) { if (x.th == null || !x.th.isValid()) return; TorrentInfo ti = infoOf(x); if (ti == null) return; if (x.priorities != null && x.priorities.length < ti.numFiles()) { int[] np = new int[ti.numFiles()]; System.arraycopy(x.priorities, 0, np, 0, x.priorities.length); x.priorities = np; } x.th.prioritizeFiles(prioArray(x, ti)); }
 
-    void pause(String id) { Task x = task(id); if (x == null) return; x.paused = true; x.heldBy = null; x.anyway = false; if ("video".equals(x.kind)) { KtVideo.cancel(x.id); bg.execute(this::pumpVideo); } if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
+    void pause(String id) { Task x = task(id); if (x == null) return; if (rsTor.holds(x)) rsTor.pause(x); x.paused = true; x.heldBy = null; x.anyway = false; if ("video".equals(x.kind)) { KtVideo.cancel(x.id); bg.execute(this::pumpVideo); } if (x.th != null) { x.th.unsetFlags(TorrentFlags.AUTO_MANAGED); x.th.pause(); x.th.saveResumeData(TorrentHandle.SAVE_INFO_DICT); } if (x.cancel != null) { x.cancel.set(true); } x.state = "paused"; persist(); tell(true); if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); }); }
     void resume(String id) throws Exception { resume(id, false); }
     /** `anyway`: the user's «Download now» on one held — started in spite of the holds. Otherwise a hold that applies
      *  keeps it paused, marked with its reason (resumed by itself when the hold passes). */
     void resume(String id, boolean anyway) throws Exception { Task x = task(id); if (x == null) return; if (anyway) x.anyway = true;
         String h = holdFor(x); if (h != null) { x.paused = true; x.heldBy = h; x.state = "paused"; persist(); tell(true); return; }
-        x.heldBy = null; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); persist(); tell(true); }
+        x.heldBy = null; x.paused = false; x.error = null; if ("torrent".equals(x.kind)) { if (rsTor.holds(x)) rsTor.resume(x); else if (x.th != null && x.th.isValid()) { x.th.setFlags(TorrentFlags.AUTO_MANAGED); x.th.resume(); x.state = x.th.status().hasMetadata() ? "downloading" : "metadata"; } else addTorrent(x); KtService.ensure(ctx); } else if ("video".equals(x.kind)) startVideo(x); else if (busyHttp() >= maxActive) x.state = "queued"; else startHttp(x); persist(); tell(true); }
     /* ---------- everything at once, and the app's own pauses (Wi-Fi only, a low battery) ---------- */
     void pauseAll() { for (Task x : snapshot()) if (!x.paused && isMoving(x)) pause(x.id); }
     void resumeAll() { for (Task x : snapshot()) if (x.paused && !"done".equals(x.state) && !"seeding".equals(x.state)) { try { resume(x.id); } catch (Exception e) { Log.w(TAG, "resume all", e); } } }
@@ -346,6 +347,7 @@ final class KtEngine {
     }
     void remove(String id, boolean deleteFiles) {
         Task x; synchronized (this) { x = tasks.remove(id); } if (x == null) return;
+        if (rsTor.holds(x)) rsTor.remove(x, deleteFiles);   // (stage M3)
         boolean loaded = x.th != null && x.th.isValid() && session != null;
         // (A finished torrent not loaded after a restart: its files found from the copy kept, and deleted here.)
         TorrentInfo kept = deleteFiles && !loaded && "torrent".equals(x.kind) ? infoOf(x) : null;
@@ -361,6 +363,7 @@ final class KtEngine {
     }
     void setFiles(String id, int[] prios) {
         Task x = task(id); if (x == null) return; x.priorities = prios; applyPriorities(x);
+        if (rsTor.holds(x)) rsTor.setFiles(x, prios);   // (stage M3)
         // (A finished torrent given more files to fetch: woken up again, unless it was paused by hand.)
         try { if (!x.paused && x.th != null && x.th.isValid()) { long[] prog = x.th.fileProgress(); TorrentInfo ti = infoOf(x); boolean more = false;
             if (ti != null) for (int i = 0; i < Math.min(prios.length, ti.numFiles()); i++) if (prios[i] > 0 && prog[i] < ti.files().fileSize(i)) { more = true; break; }
@@ -368,7 +371,7 @@ final class KtEngine {
         persist(); tell(true);
     }
     void setSequential(String id, boolean on) { Task x = task(id); if (x == null || x.th == null) return; x.sequential = on; if (on) x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); else x.th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); persist(); }
-    void setLimits(long down, long up) { KrDownloader.GLOBAL.set(down); SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
+    void setLimits(long down, long up) { rsTor.setLimits(down, up); KrDownloader.GLOBAL.set(down); SessionManager s = session(); s.downloadRateLimit((int) Math.min(Integer.MAX_VALUE, down)); s.uploadRateLimit((int) Math.min(Integer.MAX_VALUE, up)); }
     /** A torrent's own settings on its handle: speed limits, its share of connections. */
     private void applyOwn(Task x) {
         try { TorrentHandle h = x.th; if (h == null || !h.isValid()) return; h.setDownloadLimit(x.limitDown > 0 ? x.limitDown : -1); h.setUploadLimit(x.limitUp > 0 ? x.limitUp : -1); h.swig().set_max_connections(connsPerTorrent > 0 ? connsPerTorrent : 16777215); } catch (Throwable e) { Log.w(TAG, "own", e); }
@@ -416,6 +419,8 @@ final class KtEngine {
             Task x = task(id); if (x == null || x.th == null || !x.th.isValid()) return; TorrentInfo ti = infoOf(x); if (ti == null) return;
             FileStorage fs = ti.files(); if (fileIndex < 0 || fileIndex >= fs.numFiles()) return; long size = fs.fileSize(fileIndex); if (size <= 0) return;
             int first = fs.mapFile(fileIndex, 0, 1).piece(), last = fs.mapFile(fileIndex, size - 1, 1).piece();
+            // (Stage M3: a torrent on «director» — its first plan laid by kt-core's director; its own rules below otherwise, or when the director fails.)
+            if (directed(x) && director.open(x.id + ":" + fileIndex, ti.pieceLength(), ti.numPieces(), fs.fileOffset(fileIndex), size, System.currentTimeMillis()) && director.read(x.id + ":" + fileIndex, 0, stream.wires(x.th), System.currentTimeMillis(), true)) { if (!x.sequential) { x.sequential = true; x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); } return; }
             int now = fs.mapFile(fileIndex, Math.min(size - 1, 8L << 20), 1).piece(), soon = fs.mapFile(fileIndex, Math.min(size - 1, 32L << 20), 1).piece(), tail = fs.mapFile(fileIndex, Math.max(0, size - (4L << 20)), 1).piece();
             for (int k = first; k <= last; k++) { if (x.th.havePiece(k)) continue; if (k <= now) { x.th.piecePriority(k, Priority.TOP_PRIORITY); x.th.setPieceDeadline(k, (k - first) * 300); } else if (k <= soon || k >= tail) x.th.piecePriority(k, Priority.SIX); }
             if (!x.sequential) { x.sequential = true; x.th.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD); }
@@ -515,6 +520,7 @@ final class KtEngine {
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
         if (o.has("screenEngine")) try { boolean rs = "rust".equals(o.optString("screenEngine")); ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putString("screenEngine", rs ? "rust" : "classic").apply(); KtScreenRs.rust = rs; } catch (Throwable ignored) {}   // (stage M4: the screen translator's engine)
         if (o.has("dlEngine")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putString("dlEngine", "rust".equals(o.optString("dlEngine")) ? "rust" : "java").apply(); } catch (Throwable ignored) {}   // (stage M2: read when a download starts)
+        if (o.has("torEngine")) try { String v = o.optString("torEngine"); ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putString("torEngine", "rust".equals(v) || "director".equals(v) ? v : "classic").apply(); } catch (Throwable ignored) {}   // (stage M3: read when a torrent is added)
         if (o.has("fileEngine")) try { String v = "rust".equals(o.optString("fileEngine")) ? "rust" : "classic"; ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putString("fileEngine", v).apply(); KtFileExec.choice = v; } catch (Throwable ignored) {}   // (stage M5: from the next job)
         if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", true)).apply(); } catch (Throwable ignored) {}   // (from the next start)
         if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 150)); for (Task t : snapshot()) applyOwn(t); }
@@ -674,9 +680,9 @@ final class KtEngine {
     }
     /* ---------- stage M2: the download engine, Java's or the Rust core's (Settings → Advanced, phones) ---------- */
 
-    /** The engine chosen in the settings («java» unless «rust» was chosen; kept in the «kt» preferences). */
     /** Stage M4: HLS follows the download engine (Rust chosen and the core here: the playlists read by Rust). */
     private boolean useRustHls() { try { return "rust".equals(dlEngineChoice()) && KtCore.available(); } catch (Throwable e) { return false; } }
+    /** The engine chosen in the settings («java» unless «rust» was chosen; kept in the «kt» preferences). */
     String dlEngineChoice() { try { return "rust".equals(ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; } catch (Throwable e) { return "java"; } }
     /** The engine this download's run uses: Rust when chosen and the core is here, unless the Rust engine already
      *  failed it once (then Java, from its record). */
@@ -697,6 +703,62 @@ final class KtEngine {
             try { if (x.meta == null) x.meta = new JSONObject(); x.meta.put("dlEngine", "java"); } catch (Exception ignored) {}
             return KrDownloader.fetch(u, info.out != null ? info.out : out, conns, op, cancel, got, info, tick, opt);
         }
+    }
+
+    /* ---------- stage M3: the torrent engine per torrent — Classic, Director or Rust (Settings → Advanced, phones) ---------- */
+
+    /** The engine chosen in the settings for new torrents («classic» unless «director» or «rust»; the «kt» preferences). */
+    String torEngineChoice() { try { String v = ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getString("torEngine", "classic"); return "rust".equals(v) || "director".equals(v) ? v : "classic"; } catch (Throwable e) { return "classic"; } }
+    /** The streaming director (kt-core's tordirector through libkt_android), for torrents on «director». */
+    final KtTorDirector director = new KtTorDirector();
+    /** Whether a torrent's stream is steered by the director (its engine «director», the core here). */
+    boolean directed(Task x) { return x != null && x.meta != null && "director".equals(x.meta.optString("torEngine", "")) && KtCore.available(); }
+    /** The Rust engine (librqbit, libkt_torrent.so), for torrents on «rust». */
+    final KtTorrentRsEngine rsTor = new KtTorrentRsEngine(new KtTorrentRsEngine.Host() {
+        @Override public File stateDir() { return stateDir; }
+        @Override public boolean seedAfterDone() { return seedAfterDone; }
+        @Override public double seedRatio() { return seedRatio; }
+        @Override public int seedMinutes() { return seedMinutes; }
+        @Override public boolean held() { synchronized (holds) { return !holds.isEmpty(); } }
+        @Override public int listenPort() { return listenPort; }
+        @Override public boolean dht() { return dht; }
+        @Override public boolean upnp() { return upnp; }
+        @Override public boolean addTrackers() { return addTrackers; }
+        @Override public List<String> trackers() { return java.util.Arrays.asList(extraTrackers); }
+        @Override public void toClassic(Task x, boolean start) { try { if (start) addTorrent(x); else if (x.infoHash != null) byHash.put(x.infoHash, x); } catch (Throwable e) { x.state = "failed"; x.error = errOf(e); } persist(); }
+        @Override public void changed() { persist(); tell(true); KtService.maybeStop(ctx, KtEngine.this); }
+        @Override public Map<String, Task> byId() { synchronized (KtEngine.this) { return new LinkedHashMap<>(tasks); } }
+    });
+    /** A torrent's engine decided when it is first added (kept in its meta as torEngine) and, when that is «rust», the
+     *  torrent given to librqbit — true then (libtorrent is not touched). A torrent marked «rust» whose library is gone
+     *  or that cannot be taken now goes to libtorrent (marked classic; its files there are checked). */
+    private boolean torRust(Task x) {
+        String eng = x.meta == null ? "" : x.meta.optString("torEngine", "");
+        if (eng.isEmpty()) {
+            // (Only a torrent added now is given a choice: one kept from before this stage — its info-hash known — stays classic.)
+            eng = x.infoHash != null && !x.infoHash.isEmpty() ? "classic" : KtTorrentRsEngine.choose(torEngineChoice(), x.dir, torrentProxy && proxyOf(proxy) != null, bindIface, anonymous, enc, false);
+            try { if (x.meta == null) x.meta = new JSONObject(); x.meta.put("torEngine", eng); } catch (Exception ignored) {}
+        }
+        if (!"rust".equals(eng)) return false;
+        if (x.meta.optBoolean("rustFailed", false) || !KtTorrentRs.available()) { try { x.meta.put("torEngine", "classic"); } catch (Exception ignored) {} return false; }
+        String name = x.name; boolean multi = false;
+        try {
+            if (x.source.has("torrent")) {
+                x.torrentBytes = android.util.Base64.decode(x.source.getString("torrent"), android.util.Base64.DEFAULT); TorrentInfo ti = TorrentInfo.bdecode(x.torrentBytes);
+                name = ti.name(); multi = ti.numFiles() > 1; if (x.name == null) x.name = name; x.total = ti.totalSize(); x.infoHash = ti.infoHash().toHex(); x.info = ti;
+                try (FileOutputStream fo = new FileOutputStream(new File(stateDir, x.id + ".torrent"))) { fo.write(x.torrentBytes); }
+            } else {
+                x.magnet = x.source.getString("magnet"); AddTorrentParams mp = AddTorrentParams.parseMagnetUri(x.magnet);
+                if (x.name == null) { String dn = mp.getName(); x.name = dn != null && !dn.isEmpty() ? dn : "magnet"; } x.infoHash = hashOf(mp); name = null;
+            }
+        } catch (Throwable e) { Log.w(TAG, "rust engine: not read", e); try { x.meta.put("torEngine", "classic"); } catch (Exception ignored) {} return false; }
+        // (One engine per info-hash: one libtorrent already has is left to it.)
+        if (x.infoHash == null || x.infoHash.isEmpty() || (byHash.containsKey(x.infoHash) && byHash.get(x.infoHash) != x)) { try { x.meta.put("torEngine", "classic"); } catch (Exception ignored) {} return false; }
+        synchronized (this) { tasks.put(x.id, x); }
+        if (!rsTor.add(x, name, multi)) { Log.w(TAG, "rust engine refused the torrent: libtorrent takes it"); return false; }
+        byHash.put(x.infoHash, x);
+        KtService.ensure(ctx);
+        return true;
     }
 
     /** A run ended: started again when it was resumed while stopping (from another thread, once this one is gone). */
@@ -869,6 +931,7 @@ final class KtEngine {
     }
     private JSONArray files(Task x) {
         JSONArray arr = new JSONArray();
+        { JSONArray rf = rsTor.holds(x) ? rsTor.files(x) : null; if (rf != null) return rf; }   // (stage M3: the Rust engine's)
         try {
             if (x.th != null && x.th.isValid()) {
                 TorrentInfo ti = infoOf(x);
@@ -906,6 +969,7 @@ final class KtEngine {
     }
     File fileOf(Task x, int index) {
         if ("http".equals(x.kind) || "video".equals(x.kind)) return x.httpOut != null ? x.httpOut : new File(x.dir, x.name);
+        if (rsTor.holds(x)) { File rf = rsTor.fileOf(x, index); if (rf != null) return rf; }   // (stage M3)
         TorrentInfo ti = infoOf(x); if (ti == null) return null;
         if (index < 0 || index >= ti.numFiles()) index = mainFile(x, ti);
         return new File(ti.files().filePath(index, x.th != null && x.th.isValid() ? x.th.savePath() : x.dir));

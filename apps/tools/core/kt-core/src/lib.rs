@@ -44,6 +44,11 @@ pub mod translatekey;
 // (Android stage M2: the HTTP downloader's decisions — KrDownloader.java's rules as a state machine; Java moves the
 // bytes and asks this for every choice, through kt-android's `http.*` methods.)
 pub mod httpdl;
+// (Android stage M3: torrents — the streaming director that drives libtorrent4j's piece priorities and deadlines
+// (tordirector), and the phone's engine choice, ownership, failure, stats and hand-over rules (tormobile), used by
+// kt-android's `tor.*` methods and by the torrent library kt-android-torrent.)
+pub mod tordirector;
+pub mod tormobile;
 // (Android stage M4: the screen translator's rules — KtScreenTrack's following and translating ahead, KtScreenMotion's
 // scroll finder, KtInpaint's cleaning (and a patch cache), KtLettering / KtLetterFace's text rules — and KtHls's
 // playlists with java.net.URL's way of resolving; javachar.in holds Java's Character tables they share.)

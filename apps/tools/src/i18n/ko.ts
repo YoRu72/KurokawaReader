@@ -1222,6 +1222,14 @@ export const ko: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust 코어 {version} · 사용 중: {engine} · Java로 넘긴 수: {n}",
+  // (Stage M3 of the Rust port: Settings → Advanced, the phone's torrent engine — views/engineSettings.ts.)
+  torEngine: "토렌트 엔진",
+  torEngineHint: "토렌트를 추가할 때 정해지는 엔진으로, 이후 그대로 유지됩니다. 클래식은 검증된 엔진이고, 디렉터는 클래식에 Rust 코어가 시청 중 먼저 받을 조각을 고르는 방식이라 먼 위치로 이동할 때 더 빨리 시작됩니다. Rust는 완전히 새로운 엔진입니다. Rust는 시스템에서 고른 폴더(SAF)에 저장하거나 프록시, 고정된 네트워크 인터페이스, 강제 암호화를 쓰는 토렌트는 맡지 않고 클래식으로 넘깁니다. 실패하면 같은 폴더에서 클래식으로 돌아갑니다.",
+  torEngineClassic: "클래식",
+  torEngineDirector: "디렉터",
+  torEngineRust: "Rust",
+  torEngineStatus: "새 토렌트: {engine} · Rust 토렌트 엔진 {version} · 클래식으로 넘긴 수: {n}",
+  torEngineBadge: "엔진: {e}",
   // (stage M4)
   screenEngine: "화면 번역 엔진",
   screenEngineHint: "떠 있는 번역기가 화면을 따라가고 그림에서 글자를 지우는 방식입니다. 클래식은 검증된 방식이고 Rust는 새롭고 더 빠릅니다. 만화와 스크롤되는 페이지에서 써 보고, 상자가 어긋나거나 깜빡이면 되돌리세요.",
