@@ -45,31 +45,53 @@ export function reportText(info: CoreInfo): string {
   return lines.join('\n');
 }
 
-/** The «Rust core status» block. */
+/** One formatted line as pieces that never break inside (the « · » between them is where a line may wrap); a piece
+ *  whose count is not zero and is one of `warnAt` gets the warning colour. Every language joins its pieces with « · ». */
+function pieces(text: string, warnAt: number[] = [], counts: number[] = []): HTMLElement {
+  const parts = text.split(' · ');
+  return h('div', { class: 'rs-pieces' }, ...parts.map((x, i) => h('span', { class: warnAt.includes(i) && (counts[warnAt.indexOf(i)] ?? 0) > 0 ? 'rs-piece warn' : 'rs-piece' }, x)));
+}
+/** A labelled sub-block: its title, then one line per piece. */
+function group(cls: string, title: string, text: string, warnAt: number[] = [], counts: number[] = []): HTMLElement {
+  const parts = text.split(' · ');
+  return h('div', { class: `rs-group ${cls}` }, h('div', { class: 'rs-name' }, title),
+    ...parts.map((x, i) => h('div', { class: warnAt.includes(i) && (counts[warnAt.indexOf(i)] ?? 0) > 0 ? 'rs-line warn' : 'rs-line' }, x)));
+}
+
+/** The «Rust core status» block: the core and the shadow's totals; one block per engine (its name, then «in use ·
+ *  chosen», then its counters); labelled blocks for the torrents, the screen translator and the file jobs; then the
+ *  actions in one row. Counters that are not zero where they should be (fell back, differed) in the warning colour. */
 export function rustStatusCard(info: CoreInfo, api: Api): HTMLElement {
   const box = h('div', { class: 'rust-status', id: 'rust-status' });
   const shadow = (info.rustShadow ?? {}) as Record<string, unknown>;
-  const rows: (HTMLElement | string)[] = [h('h4', null, t('rustStatusTitle'))];
-  if (info.rustCore) rows.push(h('div', { class: 'src' }, t('rustStatusCore', { version: str(info.rustCore) })));
+  const head = h('div', { class: 'rs-head' }, h('h4', null, t('rustStatusTitle')));
+  if (info.rustCore) head.append(h('div', { class: 'rs-line' }, t('rustStatusCore', { version: str(info.rustCore) })));
+  if (typeof shadow.calls === 'number') head.append(h('div', { class: 'rust-shadow' }, pieces(t('rustStatusShadow', { checks: localDigits(num(shadow.calls)), mismatches: localDigits(num(shadow.mismatches)) }), [1], [num(shadow.mismatches)])));
+  const rows: HTMLElement[] = [head];
+  const list = h('div', { class: 'rs-list' });
   for (const e of enginesOf(info)) {
-    rows.push(h('div', { class: 'rust-engine', 'data-area': e.area }, h('b', null, areaName(e.area)), ' ', h('span', null, t('rustStatusEngine', { engine: engineName(e.inUse), choice: engineName(e.choice) })),
-      h('small', { class: 'src' }, ' · ', t('rustStatusCounts', { fallbacks: localDigits(e.fallbacks), checks: localDigits(e.checks), mismatches: localDigits(e.mismatches) }))));
+    list.append(h('div', { class: 'rust-engine rs-block', 'data-area': e.area }, h('div', { class: 'rs-name' }, areaName(e.area)),
+      pieces(t('rustStatusEngine', { engine: engineName(e.inUse), choice: engineName(e.choice) })),
+      pieces(t('rustStatusCounts', { fallbacks: localDigits(e.fallbacks), checks: localDigits(e.checks), mismatches: localDigits(e.mismatches) }), [0, 2], [e.fallbacks, e.mismatches])));
   }
-  if ('torDirectorPlans' in info || info.rustTorrent) rows.push(h('div', { class: 'src rust-tor' }, t('rustStatusTor', { plans: localDigits(num(info.torDirectorPlans)), fallbacks: localDigits(num(info.torDirectorFallbacks)), version: str(info.rustTorrent) || '—' })));
+  if (list.childElementCount) rows.push(list);
+  if ('torDirectorPlans' in info || info.rustTorrent) rows.push(group('rust-tor', t('rustStatusTorTitle'), t('rustStatusTor', { plans: localDigits(num(info.torDirectorPlans)), fallbacks: localDigits(num(info.torDirectorFallbacks)), version: str(info.rustTorrent) || '—' }), [1], [num(info.torDirectorFallbacks)]));
   const cache = (info.screenCache ?? {}) as Record<string, unknown>;
-  if ('screenEngineCalls' in info) rows.push(h('div', { class: 'src rust-screen' }, t('rustStatusScreen', { calls: localDigits(num(info.screenEngineCalls)), hits: localDigits(num(cache.cacheHits)), misses: localDigits(num(cache.cacheMisses)) })));
-  if (typeof shadow.calls === 'number') rows.push(h('div', { class: 'src rust-shadow' }, t('rustStatusShadow', { checks: localDigits(num(shadow.calls)), mismatches: localDigits(num(shadow.mismatches)) })));
-  if ('fileJournalResumable' in info) rows.push(h('div', { class: 'src rust-journal' }, t('rustStatusJournal', { n: localDigits(num(info.fileJournalResumable)), u: localDigits(num(info.fileJournalUndoable)) })));
-  if ('fileDisputed' in info && num(info.fileDisputed) > 0) rows.push(h('div', { class: 'src rust-disputed' }, t('rustStatusDisputed', { n: localDigits(num(info.fileDisputed)) })));
+  if ('screenEngineCalls' in info) rows.push(group('rust-screen', t('rustStatusScreenTitle'), t('rustStatusScreen', { calls: localDigits(num(info.screenEngineCalls)), hits: localDigits(num(cache.cacheHits)), misses: localDigits(num(cache.cacheMisses)) })));
+  if ('fileJournalResumable' in info) {
+    const g = group('rust-journal', t('rustStatusFilesTitle'), t('rustStatusJournal', { n: localDigits(num(info.fileJournalResumable)), u: localDigits(num(info.fileJournalUndoable)) }));
+    if (num(info.fileDisputed) > 0) g.append(h('div', { class: 'rs-line warn rust-disputed' }, t('rustStatusDisputed', { n: localDigits(num(info.fileDisputed)) })));
+    rows.push(g);
+  }
   const jobs = h('div', { class: 'rust-jobs' });
-  const copy = h('button', { type: 'button', class: 'btn small tonal rust-copy', onclick: () => {
+  const copy = h('button', { type: 'button', class: 'btn tonal rust-copy', onclick: () => {
     const text = reportText(info);
     const done = () => toast(t('rustStatusCopied'));
     try { void navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done)); } catch { fallbackCopy(text, done); }
   } }, t('rustStatusCopy'));
   const actions: HTMLElement[] = [copy];
-  if (num(info.fileJournalResumable) > 0 && api.filesJournals) actions.push(h('button', { type: 'button', class: 'btn small tonal rust-jobs-open', onclick: () => void listJobs(api, jobs) }, t('rustJobsTitle')));
-  rows.push(h('div', { class: 'row rust-actions' }, ...actions), jobs);
+  if (num(info.fileJournalResumable) > 0 && api.filesJournals) actions.push(h('button', { type: 'button', class: 'btn tonal rust-jobs-open', onclick: () => void listJobs(api, jobs) }, t('rustJobsTitle')));
+  rows.push(h('div', { class: 'rust-actions' }, ...actions), jobs);
   box.append(...rows);
   return box;
 }
@@ -83,8 +105,8 @@ async function listJobs(api: Api, into: HTMLElement): Promise<void> {
   let items: Journal[] = [];
   try { items = (await api.filesJournals?.())?.items ?? []; } catch { items = []; }
   const cut = items.filter((j) => j.resumable);
-  into.replaceChildren(...cut.map((j) => h('div', { class: 'row rust-job' },
+  into.replaceChildren(...cut.map((j) => h('div', { class: 'rust-job' },
     h('span', { class: 'grow', dir: 'auto' }, t('rustJobLine', { op: j.op === 'move' ? t('rustOpMove') : j.op === 'delete' ? t('rustOpDelete') : t('rustOpCopy'), dest: str(j.dest), done: localDigits(num(j.done)), steps: localDigits(num(j.steps)) })),
-    h('button', { type: 'button', class: 'btn small tonal', onclick: () => void api.filesJournalResume?.({ journal: j.id }).then(() => toast(t('rustJobsStarted')), () => toast(t('rustJobsFailed'))) }, t('rustJobsResume')),
-    h('button', { type: 'button', class: 'btn small', onclick: () => void api.filesJournalRollback?.({ journal: j.id }).then(() => { toast(t('rustJobsRolledBack')); void listJobs(api, into); }, () => toast(t('rustJobsFailed'))) }, t('rustJobsRollback')))));
+    h('button', { type: 'button', class: 'btn tonal', onclick: () => void api.filesJournalResume?.({ journal: j.id }).then(() => toast(t('rustJobsStarted')), () => toast(t('rustJobsFailed'))) }, t('rustJobsResume')),
+    h('button', { type: 'button', class: 'btn', onclick: () => void api.filesJournalRollback?.({ journal: j.id }).then(() => { toast(t('rustJobsRolledBack')); void listJobs(api, into); }, () => toast(t('rustJobsFailed'))) }, t('rustJobsRollback')))));
 }

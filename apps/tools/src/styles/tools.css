@@ -1112,3 +1112,23 @@ html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
 
 .task-list .task-bar i { width: 100%; border-radius: 0; transform-origin: left center; transition: transform .4s ease; }
 html[dir='rtl'] .task-list .task-bar i { transform-origin: right center; }
+
+/* ---------- Settings → Advanced: the engine rows and the «Rust core status» block (phones; views/engineSettings.ts,
+   views/rustStatus.ts). Spacing on the 8 / 12 / 16 scale; logical properties, so right-to-left needs nothing more. */
+#advanced .engine { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+#advanced .engine > .row { margin: 0; }
+.rust-status { display: flex; flex-direction: column; gap: 16px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--md-outline-variant); }
+.rust-status h4 { margin: 0; font-size: 16px; font-weight: 600; }
+.rust-status .rs-head { display: flex; flex-direction: column; gap: 4px; }
+.rust-status .rs-list { display: flex; flex-direction: column; gap: 12px; }
+.rust-status .rs-block, .rust-status .rs-group { display: flex; flex-direction: column; gap: 4px; }
+.rust-status .rs-name { font-weight: 600; color: var(--md-on-surface); }
+.rust-status .rs-line, .rust-status .rs-pieces { font-size: 13px; line-height: 1.45; color: var(--md-on-surface-dim); }
+.rust-status .rs-pieces { display: flex; flex-wrap: wrap; column-gap: 12px; row-gap: 2px; }
+.rust-status .rs-piece { white-space: nowrap; }
+.rust-status .warn { color: var(--md-error); font-weight: 600; }
+.rust-status .rust-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 0; }
+.rust-status .rust-jobs:empty { display: none; }
+.rust-status .rust-jobs { display: flex; flex-direction: column; gap: 12px; }
+.rust-status .rust-job { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px; border-radius: var(--sh-md); background: var(--md-surface-container-high); }
+.rust-status .rust-job > .grow { flex: 1 1 100%; font-size: 13px; }
