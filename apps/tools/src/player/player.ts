@@ -117,8 +117,8 @@ export function openPlayer(src: PlayerSource): void {
   // screen is a layer of its own above it — Back leaves the full screen first.)
   const unBackPlayer = pushLayer({ kind: 'player', name: 'player', on: () => root.isConnected, back: () => { if (locked) { unlockBtn.hidden = false; unlockBtn.classList.remove('faded'); return true; } close(); return true; } });
   let unBackFull: (() => void) | null = null;
-  // (The full screen: on a phone the player's own — the system bars away —; on a computer the browser's, else the own.
-  // when the phone was turned — the player's own: the system bars away, the same layer on the back stack.)
+  // (The full screen: on a phone the player's own — the system bars away —; on a computer the browser's, else the own —
+  // one layer on the back stack either way.)
   let pseudoFull = false; let wasFull = false;
   const isFull = () => document.fullscreenElement === root || pseudoFull;
   const onFullChange = () => {
