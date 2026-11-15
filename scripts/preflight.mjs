@@ -77,15 +77,21 @@ function run(cmd, args, { cwd, env = {}, timeoutMs = 180000 } = {}) {
 // (Packages are looked up on disk, not with require.resolve: a package whose «exports» hides «bin/tsc», or an ES-module-only
 // typescript, must not make the preflight crash.)
 function findPkg(appDir, name) {
-  if (process.env.PREFLIGHT_HIDE === name) return null; // (a test hook: pretend this package is not installed)
-  for (const base of [path.join(appDir, 'node_modules'), path.join(ROOT, 'node_modules'), GLOBAL_ROOT]) { if (!base) continue; const d = path.join(base, name); if (fs.existsSync(path.join(d, 'package.json'))) return d; }
+  if ((process.env.PREFLIGHT_HIDE || '').split(',').includes(name)) return null; // (a test hook: pretend this package is not installed)
+  for (const base of [process.env.PREFLIGHT_NODE_MODULES, path.join(appDir, 'node_modules'), path.join(ROOT, 'node_modules'), GLOBAL_ROOT]) { if (!base) continue; const d = path.join(base, name); if (fs.existsSync(path.join(d, 'package.json'))) return d; }
   return null;
 }
+// The TypeScript compiler API (createSourceFile, ScriptTarget). TypeScript 7, which a fresh «typescript >=5.6» install gives,
+// has a working tsc but no such API, so «ts-api» (the alias release-tools.yml installs: typescript@6.0.3) comes first, and
+// «typescript» is used only if it really exposes the API.
 async function loadTs(appDir) {
-  const d = findPkg(appDir, 'typescript'); if (!d) return null;
-  const ok = (m) => (m && m.createSourceFile ? m : m && m.default && m.default.createSourceFile ? m.default : null);
-  try { const t = ok(createRequire(path.join(d, 'x.js'))(d)); if (t) return t; } catch {}
-  try { const main = readJson(path.join(d, 'package.json'), {}).main || './lib/typescript.js'; return ok(await import(pathToFileURL(path.resolve(d, main)).href)); } catch { return null; }
+  const ok = (m) => { const t = m && m.createSourceFile ? m : m && m.default && m.default.createSourceFile ? m.default : null; return t && t.ScriptTarget ? t : null; };
+  for (const name of ['ts-api', 'typescript']) {
+    const d = findPkg(appDir, name); if (!d) continue;
+    try { const t = ok(createRequire(path.join(d, 'x.js'))(d)); if (t) return t; } catch {}
+    try { const main = readJson(path.join(d, 'package.json'), {}).main || './lib/typescript.js'; const t = ok(await import(pathToFileURL(path.resolve(d, main)).href)); if (t) return t; } catch {}
+  }
+  return null;
 }
 const pkgVersion = (appDir, name) => { const d = findPkg(appDir, name); return d ? readJson(path.join(d, 'package.json'), {}).version || '?' : null; };
 // A step that must never take the run down: a crash becomes one FAIL row and the other steps go on.
@@ -144,9 +150,9 @@ async function preflight(app) {
   // 0. the tools the steps need (versions; a missing one is named once here and again, plainly, by the step that needs it)
   {
     const py = spawnSync('python3', ['--version'], { encoding: 'utf8' });
-    const v = { node: process.versions.node, typescript: pkgVersion(APP, 'typescript'), esbuild: pkgVersion(APP, 'esbuild'), playwright: pkgVersion(APP, 'playwright') || pkgVersion(APP, 'playwright-core'), python3: py.status === 0 ? (py.stdout || py.stderr).trim().replace(/^Python /, '') : null };
-    const missing = Object.entries(v).filter(([k, x]) => !x && k !== 'python3').map(([k]) => k);
-    add('tools present', missing.length ? 'FAIL' : 'PASS', Object.entries(v).map(([k, x]) => `${k} ${x || 'MISSING'}`).join(', ') + (missing.length ? ` — run npm install in apps/${app} (the release workflows do), then npx playwright install chromium` : ''));
+    const v = { node: process.versions.node, tsc: pkgVersion(APP, 'typescript'), 'compiler API': pkgVersion(APP, 'ts-api') || pkgVersion(APP, 'typescript'), esbuild: pkgVersion(APP, 'esbuild'), playwright: pkgVersion(APP, 'playwright') || pkgVersion(APP, 'playwright-core'), python3: py.status === 0 ? (py.stdout || py.stderr).trim().replace(/^Python /, '') : null };
+    const missing = Object.entries(v).filter(([k, x]) => !x && k !== 'python3' && k !== 'compiler API').map(([k]) => k);
+    add('tools present', missing.length ? 'FAIL' : 'PASS', Object.entries(v).map(([k, x]) => `${k} ${x || 'MISSING'}`).join(', ') + (missing.length ? ` — run npm install in apps/${app} (the release workflows do), then npx playwright install chromium` : '') + ' (the i18n step needs a typescript with the compiler API: ts-api, else typescript)');
   }
 
   // 1. build
@@ -179,7 +185,7 @@ async function preflight(app) {
       const visit = (n) => { if (ts.isVariableDeclaration(n) && n.initializer) { let o = n.initializer; while (o && (ts.isAsExpression(o) || ts.isParenthesizedExpression(o))) o = o.expression; if (o && ts.isObjectLiteralExpression(o)) { for (const p of o.properties) { const nm = p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : null; if (nm) { if (keys.has(nm)) dup++; keys.add(nm); } } return; } } ts.forEachChild(n, visit); };
       visit(sf); return { keys, dup };
     };
-    if (!ts) add('i18n parity', 'FAIL', `typescript is not installed: run npm install in apps/${app}`);
+    if (!ts) add('i18n parity', 'FAIL', 'the TypeScript compiler API is missing (TypeScript 7 has none): npm install --no-save ts-api@npm:typescript@6.0.3 in apps/' + app);
     else {
       const dir = path.join(APP, 'src/i18n'); const en = keysOf(path.join(dir, 'en.ts')); const basePath = path.join(TESTS, 'i18n-baseline.json');
       const baseline = readJson(basePath, null); const now = {}; const detail = [];
