@@ -95,6 +95,17 @@ export function wirePcBack(): void {
   // is left alone). Read once every listener has had it.
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.isComposing || e.repeat) return;
+    // (Typing in a field, or a list of choices open: Esc is the field's — a search emptied, else the field left —, never
+    // a step back.)
+    const f = e.target as HTMLElement | null;
+    if (f && (f.matches?.('input, textarea, select') || f.isContentEditable)) {
+      window.setTimeout(() => {
+        if (e.defaultPrevented) return;
+        const i = f as HTMLInputElement;
+        if (i.type === 'search' && i.value) { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); } else f.blur();
+      }, 0);
+      return;
+    }
     window.setTimeout(() => { if (!e.defaultPrevented) { diagBack('back-esc'); goBack('esc'); } }, 0);
   });
 }
