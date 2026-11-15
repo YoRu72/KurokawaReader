@@ -38,6 +38,9 @@ export interface ModeTokens {
   blur: number; sat: number; edge: string; sheen: string; shadow: string;
   /** The scrim under a sheet. */
   scrim?: string;
+  /** A theme of the reader's whose background moves (a computer, when the animated background matches the theme):
+   *  the design and its three colours; `bg` is then its still stand-in. */
+  anim?: 'drift' | 'flow'; animColors?: [string, string, string];
 }
 export type Tint = string | { from: keyof Surfaces; a: number };
 export interface ThemeDef {
@@ -368,7 +371,7 @@ export function applyTheme(html: HTMLElement, st: ApplyState): { mode: Mode; gro
   for (const k of SET) html.style.removeProperty(k); SET.clear();
   const r = resolve(st);
   html.dataset.theme = r.def.id;
-  if (!r.tokens) { delete html.dataset.glass; delete html.dataset.picture; return { mode: r.mode, ground: r.surfaces.ground, glass: false }; }
+  if (!r.tokens) { delete html.dataset.glass; delete html.dataset.picture; delete html.dataset.anim; return { mode: r.mode, ground: r.surfaces.ground, glass: false }; }
   const t = r.tokens; html.dataset.glass = st.blur;
   const S = r.surfaces; const g = parseColor(S.ground);
   put(html, '--md-surface', S.ground); put(html, '--th-ground', S.ground);
@@ -388,6 +391,7 @@ export function applyTheme(html: HTMLElement, st: ApplyState): { mode: Mode; gro
   put(html, '--th-bg', [t.veil && pic ? t.veil : '', pic ? `url("${pic}")` : '', t.bg].filter(Boolean).join(', ') || 'none');
   if (pic && t.bgBlur) { put(html, '--th-bg-filter', `blur(${t.bgBlur}px)`); put(html, '--th-bg-bleed', `${Math.round(t.bgBlur * 2)}px`); }
   if (pic) html.dataset.picture = '1'; else delete html.dataset.picture;
+  if (t.anim) { html.dataset.anim = t.anim; (t.animColors ?? []).forEach((c, i) => put(html, `--th-anim-${'abc'[i]}`, c)); } else delete html.dataset.anim;
   for (const [k, v] of Object.entries(r.def.radius ?? {})) put(html, `--sh-${k}`, `${v}px`);
   return { mode: r.mode, ground: S.ground, glass: true };
 }

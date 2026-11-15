@@ -10,7 +10,9 @@
 import { themeById, resolve, GRAPHITE, e3Roles, modesOf, contrastReport, parseColor, over, luminance, type ThemeDef, type ModeTokens, type Mode, type DarkTone, type Surfaces, type TextRoles, type Roles, type RGBA } from './themes';
 import { parsePack, buildPack, sha256Hex, PackError, type PackIO } from './packs';
 
-export type BgKind = 'theme' | 'mesh' | 'solid' | 'picture' | 'pack';
+/** 'drift' and 'flow' (0.21): the animated backgrounds, in the theme's three colours — still, as the mesh of those
+ *  colours, wherever they do not move (a phone, the animated background off). */
+export type BgKind = 'theme' | 'mesh' | 'solid' | 'picture' | 'pack' | 'drift' | 'flow';
 export interface MyBg { kind: BgKind; colors: [string, string, string]; solid: string; veil: number; picBlur: number; /** The reader's picture: its brightest and darkest colour (measured when it was chosen). */ extremes?: [string, string]; /** A downloaded pack's picture. */ pack?: { id: string; asset: string } }
 export interface MyMode { surfaces: Surfaces; text: TextRoles; roles: Roles | null; tint: string; strength: number; blur: number; sat: number; edge: number; sheen: number; shadow: number; bg: MyBg }
 export interface MyTheme { v: 1; id: string; name: string; base: string; radius: number; accent: 'app' | 'theme'; force?: Mode; dark?: MyMode; light?: MyMode; at: number }
@@ -73,14 +75,16 @@ export function toDef(my: MyTheme): ThemeDef {
       extremes = v.bg.kind === 'pack' && !v.bg.extremes ? (m === 'dark' ? ['#5a5f6b', '#000002'] : ['#fefbf4', '#4c6abe']) : v.bg.extremes ?? [g, g];
       bg = `linear-gradient(${rgb(g)}, ${rgb(g)})`;
     } else {
+      // (A mesh, and the still stand-in of a moving background.)
       const [a, b, c] = v.bg.colors;
       bg = `radial-gradient(90% 48% at 0% -6%, ${rgb(a, 0.62)}, transparent 72%), radial-gradient(70% 46% at 104% 46%, ${rgb(b, 0.5)}, transparent 70%), radial-gradient(100% 48% at 20% 108%, ${rgb(c, 0.55)}, transparent 72%)`;
       extremes = ex([rgb(a, 0.62), rgb(b, 0.5), rgb(c, 0.55)]);
     }
     const tint = (a: number): string => rgb(v.tint, Math.min(0.98, a));
     const light = m === 'light'; const d = v.shadow;
+    const anim = v.bg.kind === 'drift' || v.bg.kind === 'flow' ? { anim: v.bg.kind, animColors: [...v.bg.colors] as [string, string, string] } : {};
     return {
-      surfaces: v.surfaces, text: v.text, roles: v.roles ?? undefined, bg, picture, veil, extremes: extremes!, bgBlur: picture && v.bg.kind !== 'theme' ? v.bg.picBlur : undefined,
+      ...anim, surfaces: v.surfaces, text: v.text, roles: v.roles ?? undefined, bg, picture, veil, extremes: extremes!, bgBlur: picture && v.bg.kind !== 'theme' ? v.bg.picBlur : undefined,
       pane: tint(v.strength), card: tint(v.strength * 0.8), sheet: tint(Math.min(0.96, v.strength + 0.18)), fill: Math.min(0.9, 0.35 + v.strength * 0.4),
       blur: v.blur, sat: v.sat, edge: `rgb(255 255 255 / ${v.edge})`, sheen: `inset 0 1px 0 rgb(255 255 255 / ${v.sheen})`,
       shadow: d <= 0 ? 'none' : `0 ${Math.round(18 * d)}px ${Math.round(44 * d)}px -${Math.round(16 * d)}px rgb(0 0 0 / ${(light ? 0.28 : 0.75) * d}), 0 1px ${Math.round(3 * d)}px rgb(0 0 0 / ${(light ? 0.08 : 0.35) * d})`,
@@ -119,7 +123,7 @@ export function fixContrast(my: MyTheme, mode: Mode, darkTone: DarkTone): MyThem
   for (let i = 0; i < 16 && low() < 4.5; i++) {
     if (v.bg.kind === 'picture' || v.bg.kind === 'pack') v.bg.veil = Math.min(RANGES.veil[1], +(v.bg.veil + 0.06).toFixed(2));
     else if (v.bg.kind === 'solid') v.bg.solid = toward(v.bg.solid, v.surfaces.ground, 0.25);
-    else if (v.bg.kind === 'mesh') v.bg.colors = v.bg.colors.map((c) => toward(c, v.surfaces.ground, 0.25)) as [string, string, string];
+    else if (v.bg.kind === 'mesh' || v.bg.kind === 'drift' || v.bg.kind === 'flow') v.bg.colors = v.bg.colors.map((c) => toward(c, v.surfaces.ground, 0.25)) as [string, string, string];
     else break;
   }
   for (let i = 0; i < 20 && low() < 4.5; i++) { v.text.dim = toward(v.text.dim, v.text.on, 0.2); v.text.variant = toward(v.text.variant, v.text.on, 0.2); if (i > 6) v.text.on = toward(v.text.on, mode === 'dark' ? '#ffffff' : '#000000', 0.3); }
@@ -152,7 +156,7 @@ function sanitiseMode(x: unknown, where: string): MyMode {
     roles: x.roles === null || x.roles === undefined ? null : (colours(x.roles, ROLES, `${where}.roles`) as unknown as Roles),
     tint: colour(x.tint, `${where}.tint`), strength: num(x.strength, 'strength', `${where}.strength`), blur: num(x.blur, 'blur', `${where}.blur`), sat: num(x.sat, 'sat', `${where}.sat`),
     edge: num(x.edge, 'edge', `${where}.edge`), sheen: num(x.sheen, 'sheen', `${where}.sheen`), shadow: num(x.shadow, 'shadow', `${where}.shadow`),
-    bg: { kind: word(bg.kind, ['theme', 'mesh', 'solid', 'picture', 'pack'] as const, `${where}.bg.kind`), colors: (bg.colors as unknown[]).map((c, i) => colour(c, `${where}.bg.colors[${i}]`)) as [string, string, string], solid: colour(bg.solid, `${where}.bg.solid`), veil: num(bg.veil, 'veil', `${where}.bg.veil`), picBlur: num(bg.picBlur, 'picBlur', `${where}.bg.picBlur`), extremes, pack },
+    bg: { kind: word(bg.kind, ['theme', 'mesh', 'solid', 'picture', 'pack', 'drift', 'flow'] as const, `${where}.bg.kind`), colors: (bg.colors as unknown[]).map((c, i) => colour(c, `${where}.bg.colors[${i}]`)) as [string, string, string], solid: colour(bg.solid, `${where}.bg.solid`), veil: num(bg.veil, 'veil', `${where}.bg.veil`), picBlur: num(bg.picBlur, 'picBlur', `${where}.bg.picBlur`), extremes, pack },
   };
 }
 /** A theme read from anywhere (storage, a backup, a file): strictly checked, rebuilt from its colours and numbers. */

@@ -62,6 +62,9 @@ function buildNav(): HTMLElement {
   return h('nav', { class: 'bottom-nav', 'aria-label': t('appName') }, ...items);
 }
 const RAIL_KEY = 'kt.rail.mini';
+/** The animated background (a computer, when chosen): its module fetched only then, after the first screen. */
+let abg = false;
+function animBg(): void { const s = getSettings(); if (!abg && !(isPc() && s.animBg && s.animBg !== 'off')) return; abg = true; void import('./theme/animbg').then((m) => m.syncAnimBg()); }
 /** The sidebar folded: as chosen, or by itself in a window too narrow for it. */
 function fitRail(): void {
   let chosen: string | null = null; try { chosen = localStorage.getItem(RAIL_KEY); } catch { /* private */ }
@@ -72,7 +75,7 @@ function placeNav(): void {
   nav?.remove(); nav = buildNav(); nav.dataset.addons = navKey(getSettings()); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
   document.documentElement.classList.toggle('pc', isPc()); if (isPc()) fitRail();
   if (isPc()) document.body.prepend(nav); else document.body.append(nav); void import('./ui/keyboard').then((m) => m.watchKeyboard());
-  markNav(parseRoute());
+  markNav(parseRoute()); if (abg) animBg();
 }
 const destOf = sectionOfRoute;
 /* Each tab remembers where it was (a show's page in Anime, a section of Settings…): going back to the tab
@@ -183,7 +186,7 @@ else {
   // choices are in force before any download moves; the hand-over's hooks are there for the shell and the tests.)
   void backNav().then((m) => m.wirePcBack());
   wireUndoKeys();
-  onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
+  onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); animBg(); });
   void import('./downloads/power').then((m) => m.applyPower());
   // (Once after 0.21 moved an install back to «Expressive 3»: the snackbar that says so and can undo it.)
   try { if (localStorage.getItem(MAIN_NOTE_KEY)) afterFirstPaint(() => window.setTimeout(() => void import('./theme/mainNote').then((m) => m.showMainNote()), 700)); } catch { /* private mode */ }
@@ -222,6 +225,7 @@ else {
   mount(parseRoute());
   // (The rest — heavy or periodic work nobody waits for — once the first screen is drawn.)
   afterFirstPaint(() => {
+  animBg();
   // (The rest of the strings — every screen but this one waits for them — fetched once the list is up and the page idle,
   // so the first other screen opened does not wait for them.)
   { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (idle) idle(() => void loadRest(), { timeout: 1500 }); else setTimeout(() => void loadRest(), 300); }

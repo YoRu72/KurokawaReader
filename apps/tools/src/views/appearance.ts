@@ -56,7 +56,36 @@ export function editorDeps(rerender: () => void): EditorDeps {
     keys: (handler) => undoScope(handler),
   };
 }
-const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours'] as const;
+const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel'] as const;
+type AnimPref = NonNullable<Settings['animBg']>; type AnimLevel = NonNullable<Settings['animBgLevel']>;
+/** A computer's animated background: the choice, how much it moves, a live preview and one line saying what it does
+ *  now and why (paused, still). Its engine (theme/animbg.ts) is fetched only once it is chosen. */
+function animRows(rerender: () => void): (HTMLElement | null)[] {
+  const s = getSettings(); const pref: AnimPref = s.animBg ?? 'off';
+  // (The hint says what the choice made does; a pick's third value would be an icon, so the words go here.)
+  const what = { off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') }[pref];
+  const choice = row(t('animBg'), pickButton(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')]], pref, (v) => { updateSettings({ animBg: v as AnimPref }); rerender(); }, t('close')), what);
+  if (pref === 'off') return [choice];
+  const level: AnimLevel = s.animBgLevel ?? 'full';
+  const levelRow = row(t('animBgLevel'), pickButton(t('animBgLevel'), [['full', t('animBgFull')], ['reduced', t('animBgReduced')], ['still', t('animBgStill')]], level, (v) => { updateSettings({ animBgLevel: v as AnimLevel }); rerender(); }, t('close')), level === 'full' ? t('animBgHint') : t(level === 'reduced' ? 'animBgReducedHint' : 'animBgStillHint'));
+  const box = h('div', { class: 'abg-preview', role: 'img', 'aria-label': t('animBgPreview') }, h('div', { class: 'abg-sample' }, h('b', null, t('animBgSample')), h('small', null, t('animBgSampleDim'))));
+  const now = h('small', { class: 'src abg-now', 'aria-live': 'polite' });
+  void import('../theme/animbg').then((m) => {
+    if (!box.isConnected) return;
+    const html = document.documentElement; const kind = m.kindFor(pref, html.dataset.theme, html.dataset.anim);
+    if (!kind) { box.hidden = true; now.textContent = t('animBgNone'); return; }
+    const stop = m.previewAnimBg(box, kind);
+    const say = (): void => {
+      if (!now.isConnected) { off(); stop(); return; }
+      const st = m.animState(); const lv = getSettings().animBgLevel ?? 'full';
+      now.textContent = st.paused ? t(({ hidden: 'animBgPausedHidden', focus: 'animBgPausedFocus', video: 'animBgPausedVideo', fullscreen: 'animBgPausedFull' } as const)[st.paused])
+        : lv === 'still' ? t('animBgStillChosen') : st.still ? t(({ motion: 'animBgStillMotion', battery: 'animBgStillBattery', slow: 'animBgStillSlow' } as const)[st.still])
+        : t(lv === 'reduced' ? 'animBgMovingReduced' : 'animBgMoving');
+    };
+    const off = m.watchAnim(say); say();
+  });
+  return [choice, levelRow, h('div', { class: 'row abg-row' }, box, now)];
+}
 
 export function appearanceCard(rerender: () => void): HTMLElement {
   const s = getSettings(); const def = themeById(s.theme);
@@ -89,12 +118,13 @@ export function appearanceCard(rerender: () => void): HTMLElement {
     def.classic ? null : row(t('glassBlur'), pickButton(t('glassBlur'), [['auto', t('glassBlurAuto')], ['full', t('glassBlurFull'), t('glassBlurFullHint')], ['reduced', t('glassBlurReduced'), t('glassBlurReducedHint')], ['off', t('glassBlurOff'), t('glassBlurOffHint')]], (s.glassBlur ?? 'auto') as BlurPref, (v) => { updateSettings({ glassBlur: v }); rerender(); }, t('close')), glassHint),
     !def.classic && !pc ? toggle(t('glassBattery'), s.glassBattery !== false, (v) => { updateSettings({ glassBattery: v }); rerender(); }, t('glassBatteryHint')) : null,
     !def.classic && pc ? toggle(t('glassRail'), s.glassRail !== false, (v) => updateSettings({ glassRail: v }), t('glassRailHint')) : null,
+    ...(pc ? animRows(rerender) : []),
     def.force ? row(t('uiMode'), h('span', { class: 'src' }, t(def.force === 'dark' ? 'themeDarkOnly' : 'themeLightOnly'))) : row(t('uiMode'), pickButton(t('uiMode'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode, (v) => { updateSettings({ uiMode: v as UiMode }); rerender(); }, t('close')), t('uiModeHint')),
     followsTone ? row(t('darkTone'), pickButton(t('darkTone'), [['default', t('darkToneDefault')], ['grey', t('darkToneGrey')], ['black', t('darkToneBlack')]], s.darkTone, (v) => { updateSettings({ darkTone: v as DarkTone }); rerender(); }, t('close'))) : null,
     row(t('accent'), swatches, ownColours ? t('accentThemeHint') : undefined),
     h('div', { class: 'row' }, h('span', null, t('appearanceReset'), h('small', { class: 'src' }, t('appearanceResetHint'))), h('button', { type: 'button', class: 'btn text small', onclick: () => {
       const cur = getSettings(); const before = Object.fromEntries(RESET_KEYS.map((k) => [k, cur[k]])) as Partial<Settings>;
-      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined }); reloadThemePictures(); rerender();
+      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined, animBg: undefined, animBgLevel: undefined }); reloadThemePictures(); rerender();
       toast(t('appearanceResetDone'), 'info', 6000, { label: t('undo'), run: () => { updateSettings(before); reloadThemePictures(); rerender(); } });
     } }, icon('refresh'), t('appearanceReset'))),
     def.by ? h('div', { class: 'row theme-credit' }, h('span', null, t('themeBy', { who: def.by }), h('small', { class: 'src' }, t('themeLicence'))), h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses'))) : null);

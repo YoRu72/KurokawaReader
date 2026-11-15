@@ -232,6 +232,8 @@ export function openEditor(d: EditorDeps, start: { my: MyTheme; existing: boolea
     nameIn.addEventListener('change', () => hist.seal());
     const kinds: [BgKind, string][] = [['theme', t('bgTheme')], ['mesh', t('bgMesh')], ['solid', t('bgSolid')], ['picture', t('bgPicture')]];
     if (packPics.length) kinds.push(['pack', t('bgPack')]);
+    // (A computer: the two moving backgrounds, in the three colours below — still wherever they do not move.)
+    if (d.isPc()) kinds.push(['drift', t('animBgDrift')], ['flow', t('animBgFlow')]);
     const bg = m.bg;
     const setKind = (k: BgKind) => change((x) => { const b = x.my[mode]!.bg; b.kind = k; if (k === 'pack' && !b.pack && packPics[0]) b.pack = { id: packPics[0].id, asset: packPics[0].asset }; }, undefined, true);
     const pickPicture = async () => {
@@ -256,7 +258,8 @@ export function openEditor(d: EditorDeps, start: { my: MyTheme; existing: boolea
       slider(t('editorShadow'), 'shadow', 'shadow', pct),
       el('h3', { class: 'te-h' }, t('editorBackground')),
       el('div', { class: 'te-chips', role: 'radiogroup', 'aria-label': t('editorBackground') }, ...kinds.map(([k, l]) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(bg.kind === k), class: 'chip' + (bg.kind === k ? ' on' : ''), onclick: () => setKind(k) }, l))),
-      ...(bg.kind === 'mesh' ? [colour(t('editorColour1'), 'bg.colors.0'), colour(t('editorColour2'), 'bg.colors.1'), colour(t('editorColour3'), 'bg.colors.2')] : []),
+      ...((bg.kind === 'drift' || bg.kind === 'flow') && d.isPc() ? [el('p', { class: 'te-note' }, d.icon('info'), el('span', null, t('editorAnimNote')))] : []),
+      ...(bg.kind === 'mesh' || bg.kind === 'drift' || bg.kind === 'flow' ? [colour(t('editorColour1'), 'bg.colors.0'), colour(t('editorColour2'), 'bg.colors.1'), colour(t('editorColour3'), 'bg.colors.2')] : []),
       ...(bg.kind === 'solid' ? [colour(t('editorColour1'), 'bg.solid')] : []),
       ...(bg.kind === 'picture' ? [
         el('div', { class: 'te-row te-pic' }, s.pics[mode] ? el('img', { class: 'te-thumb', src: urlOf(s.pics[mode]!), alt: '' }) : el('span', { class: 'te-thumb none' }, d.icon('images')),
