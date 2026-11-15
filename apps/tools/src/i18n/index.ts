@@ -13,11 +13,18 @@ const loaders: Record<Exclude<Lang, 'en'>, () => Promise<Partial<Strings>>> = {
 const restLoaders: Record<Lang, () => Promise<Partial<Strings>>> = {
   en: () => import('./rest/en').then((m) => m.rest), ar: () => import('./rest/ar').then((m) => m.rest), ja: () => import('./rest/ja').then((m) => m.rest), zh: () => import('./rest/zh').then((m) => m.rest), ko: () => import('./rest/ko').then((m) => m.rest),
 };
-const restHere = new Map<Lang, Promise<void>>(); let restWanted = false;
+const coreHere = new Map<Lang, Promise<void>>(); const restHere = new Map<Lang, Promise<void>>(); let restWanted = false;
+function fetchCore(lang: Lang): Promise<void> {
+  if (tables[lang]) return Promise.resolve();
+  let p = coreHere.get(lang);
+  if (!p) { p = loaders[lang as Exclude<Lang, 'en'>]().then((t) => { tables[lang] = { ...t, ...tables[lang] }; }, () => { coreHere.delete(lang); /* English meanwhile */ }); coreHere.set(lang, p); }
+  return p;
+}
 function fetchRest(lang: Lang): Promise<void> {
   let p = restHere.get(lang);
   if (!p) {
-    p = restLoaders[lang]().then((more) => { if (lang === 'en') Object.assign(en, more); else tables[lang] = { ...more, ...tables[lang] }; }, () => { restHere.delete(lang); });
+    // (After the language's first part: the rest never stands in for it.)
+    p = fetchCore(lang).then(() => restLoaders[lang]()).then((more) => { if (lang === 'en') Object.assign(en, more); else tables[lang] = { ...more, ...tables[lang] }; }, () => { restHere.delete(lang); });
     restHere.set(lang, p);
   }
   return p;
@@ -26,7 +33,7 @@ function fetchRest(lang: Lang): Promise<void> {
 export function loadRest(): Promise<void> { restWanted = true; return fetchRest(current); }
 /** The strings of `lang` fetched (at once when already here). */
 export async function loadLang(lang: Lang): Promise<void> {
-  if (!tables[lang]) { try { tables[lang] = await loaders[lang as Exclude<Lang, 'en'>](); } catch { /* English meanwhile */ } }
+  await fetchCore(lang);
   if (restWanted) await fetchRest(lang);
 }
 /** Interface languages, each named in its own language (the picker lists these). */
@@ -121,21 +128,30 @@ export const dateLocale = (ctx: 'data' | 'prose' = 'data'): string => {
 export function calendarPref(): 'gregory' | 'hijri' | 'both' {
   try { const v = (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as { calendar?: string }).calendar; return v === 'hijri' || v === 'both' ? v : 'gregory'; } catch { return 'gregory'; }
 }
+// (A date formatter is costly to make — a list of thousands of files made one per row —: each kind made once per
+// locale and kept.)
+const dtfs = new Map<string, Intl.DateTimeFormat>();
+const MEDIUM: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }; const SHORT_THIS_YEAR: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' }; const SHORT_OTHER_YEAR: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'numeric', year: '2-digit' };
+function dtf(locale: string, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const k = `${locale}|${JSON.stringify(opts)}`; let f = dtfs.get(k);
+  if (!f) { if (dtfs.size > 64) dtfs.clear(); f = new Intl.DateTimeFormat(locale, opts); dtfs.set(k, f); }
+  return f;
+}
 /** A date in the Hijri (Umm al-Qura) calendar, in the current language. */
 export function formatHijri(d: Date, opts: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }): string {
   const base = DATE_LOCALE[current].split('-u-')[0];
   const nu = current === 'ar' ? (digitsPref() === 'western' ? '-nu-latn' : '-nu-arab') : '';
-  return new Intl.DateTimeFormat(`${base}-u-ca-islamic-umalqura${nu}`, opts).format(d);
+  return dtf(`${base}-u-ca-islamic-umalqura${nu}`, opts).format(d);
 }
 /** A date kept short (a grid's narrow cells): the day and month this year, with a two-digit year before. */
 export function formatDateShort(ts: number | undefined): string {
   if (!ts) return ''; if (calendarPref() !== 'gregory') return formatDate(ts);
   const d = new Date(ts); const same = d.getFullYear() === new Date().getFullYear();
-  return new Intl.DateTimeFormat(dateLocale(), same ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'numeric', year: '2-digit' }).format(d);
+  return dtf(dateLocale(), same ? SHORT_THIS_YEAR : SHORT_OTHER_YEAR).format(d);
 }
 export function formatDate(ts: number | undefined): string {
   if (!ts) return '';
-  const civil = new Intl.DateTimeFormat(dateLocale(), { dateStyle: 'medium' }).format(new Date(ts));
+  const civil = dtf(dateLocale(), MEDIUM).format(new Date(ts));
   const cal = calendarPref();
   if (cal === 'gregory') return civil;
   const hijri = formatHijri(new Date(ts));

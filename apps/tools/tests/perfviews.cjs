@@ -35,7 +35,7 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
   if (kind === 'pc') {
     window.kurokawaTools = new Proxy({ platform: 'desktop', available: true, os: 'linux', ready: async () => ({}), list: async () => ts, onTasks: (cb) => { cbs.add(cb); cb(ts); return () => cbs.delete(cb); }, defaultDir: async () => '/d',
       listDir: async (p) => { W.calls++; await wait(30); return { entries: entries(p).map(({ name, path, dir, size, mtime }) => ({ name, path, dir, size, mtime })) }; },
-      fileUrl: async () => { W.thumbs++; return null; } }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) });
+      fileUrl: async () => { W.thumbs++; await wait(40); return null; } }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) });
   } else {
     const ls = {};
     const api = {
@@ -43,8 +43,8 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
       list: async () => ({ tasks: ts }),
       filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'phone', path: '/storage/emulated/0', name: 'Phone', readable: true, free: 12e9, total: 64e9 }] }),
       filesList: async ({ path }) => { W.calls++; await wait(30); return { exists: true, entries: entries(path) }; },
-      filesThumb: async () => { W.thumbs++; return { url: null }; }, filesAccess: async () => ({ all: true }), filesCollection: async () => ({ entries: [] }),
-      mediaAccess: async () => ({ granted: true }), mediaVideos: async () => { await wait(30); return { videos: vids }; }, videoThumb: async () => { W.thumbs++; return { url: null }; },
+      filesThumb: async () => { W.thumbs++; await wait(40); return { url: null }; }, filesAccess: async () => ({ all: true }), filesCollection: async () => ({ entries: [] }),
+      mediaAccess: async () => ({ granted: true }), mediaVideos: async () => { await wait(30); return { videos: vids }; }, videoThumb: async () => { W.thumbs++; await wait(40); return { url: null }; },
     };
     const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
@@ -62,6 +62,8 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
     await p.addInitScript(STAND_IN, { kind, nTasks: 0, nFiles: 0, nVideos: 0, ...data });
     const metric = async (n) => (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === n).value;
     const heapMB = async () => { await cdp.send('HeapProfiler.collectGarbage').catch(() => undefined); return (await metric('JSHeapUsedSize')) / 1048576; };
+    // (KT_PROFILE=1: the functions that took the most time in the case, printed when it ends.)
+    if (process.env.KT_PROFILE) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 200 }); await cdp.send('Profiler.start'); const close = ctx.close.bind(ctx); ctx.close = async () => { const { profile } = await cdp.send('Profiler.stop'); const self = new Map(); const dt = (profile.endTime - profile.startTime) / 1000 / Math.max(1, profile.samples.length); for (const n of profile.nodes) { const f = n.callFrame; const k = `${f.functionName || '(anon)'} ${f.url.split('/').pop()}:${f.lineNumber}`; self.set(k, (self.get(k) || 0) + n.hitCount * dt); } console.log('   top self time (ms):', [...self].sort((a, b) => b[1] - a[1]).slice(0, 18).map(([k, v]) => `${v.toFixed(0)} ${k}`).join('\n     ')); return close(); }; }
     return { ctx, p, errs, metric, heapMB };
   };
   // (Opening a place: from the hash set till its rows are on screen, a frame drawn after.)
@@ -69,15 +71,16 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
   // (Scrolled to the end a screen at a time, a frame each, till it no longer moves: the longest frame, the time.)
   const scrollEnd = (p) => p.evaluate(async () => {
     const pick = () => { const c = [...document.querySelectorAll('#app .view .body, #app .view, #app .files-list, #app [class*=list]')].filter((e) => e.scrollHeight > e.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)); return c.sort((a, b) => b.scrollHeight - a.scrollHeight)[0] || document.scrollingElement; };
+    const frame = () => new Promise((r) => { const t = setTimeout(r, 1000); requestAnimationFrame(() => { clearTimeout(t); r(); }); });
     let max = 0; let last = performance.now(); const t0 = last; let still = 0; let steps = 0;
-    while (still < 8 && steps < 600) { const el = pick(); const before = el.scrollTop; el.scrollTop = before + el.clientHeight; await new Promise((r) => requestAnimationFrame(() => r())); const now = performance.now(); max = Math.max(max, now - last); last = now; steps++; still = el.scrollTop === before ? still + 1 : 0; if (still) await new Promise((r) => setTimeout(r, 30)); }
-    return { maxFrame: max, ms: performance.now() - t0, steps };
+    let el = pick(); while (still < 6 && steps < 200) { if (still === 3) el = pick(); const before = el.scrollTop; el.scrollTop = before + el.clientHeight * 2; await frame(); const now = performance.now(); max = Math.max(max, now - last); steps++; still = Math.abs(el.scrollTop - before) < 1 ? still + 1 : 0; (window.__trace ??= []).push([el.className || el.tagName, before, el.scrollTop, el.scrollHeight]); if (still) await new Promise((r) => setTimeout(r, 150)); last = performance.now(); }
+    if (window.__trace && location.search.includes("trace")) console.log(JSON.stringify(window.__trace)); return { maxFrame: max, ms: performance.now() - t0, steps, trace: JSON.stringify(window.__trace.slice(-8)) };
   });
   const R = {}; const only = process.env.KT_ONLY;
   const want = (n) => !only || n.includes(only);
   const put = (name, kind, r) => { (R[name] ??= {})[kind] = r; console.log(`${name} · ${kind}: ${Object.entries(r).filter(([k]) => k !== 'errs').map(([k, v]) => `${k} ${typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(1)) : v}`).join(' · ')}`); };
 
-  for (const kind of ['phone', 'pc']) {
+  for (const kind of ['phone', 'pc'].filter((k) => !process.env.KT_KIND || k === process.env.KT_KIND)) {
     if (want('downloads')) {
       const { ctx, p, errs } = await open(kind, { nTasks: 2000 });
       await p.goto(base + '#/settings'); await p.waitForSelector('.settings-search');
@@ -97,8 +100,7 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
     }
     if (want('files')) {
       const { ctx, p, errs } = await open(kind, { nFiles: 5000 });
-      await p.goto(base + '#/'); await p.waitForSelector('.downloads-view');
-      await p.evaluate(() => { location.hash = '#/files'; }); await p.waitForSelector('.files-view'); await p.waitForTimeout(600);
+      await p.goto(base + '#/'); await p.waitForSelector('.downloads-view'); await p.waitForTimeout(600);
       const dir = kind === 'pc' ? '/home/me/Big' : '/storage/emulated/0/Big';
       await p.evaluate(() => { window.__perf.thumbs = 0; });
       const openMs = await goTo(p, '#/files?p=' + encodeURIComponent(dir), '.files-view .files-row', 20); await p.waitForTimeout(800);
@@ -108,13 +110,14 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
       const lastRow = await p.$$eval('.files-view .files-row', (x) => x.some((e) => /file-04999/.test(e.textContent)));
       // (All selected: by the keyboard on a computer, from the selection's own menu on a phone — the time till the bar says 4,980.)
       const selectAllMs = await p.evaluate(async (kind) => {
-        const t0 = performance.now(); const two = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const y0 = Math.max(window.scrollY, document.querySelector('#app .view .body')?.scrollTop || 0); const t0 = performance.now(); const two = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         if (kind === 'pc') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
         else { document.querySelector('.files-view .files-row').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); await two(); [...document.querySelectorAll('.files-view button')].find((b) => b.getAttribute('aria-label') === 'Select all')?.click(); }
         await two();
-        return { ms: performance.now() - t0, sel: document.querySelectorAll('.files-view .files-row.picked').length, bar: (document.querySelector('.files-view .files-selcount')?.textContent || '') };
+        const y1 = Math.max(window.scrollY, document.querySelector('#app .view .body')?.scrollTop || 0);
+        return { kept: Math.abs(y1 - y0) < 50 && y0 > 1000 ? 1 : 0, ms: performance.now() - t0, sel: document.querySelectorAll('.files-view .files-row.picked').length, bar: (document.querySelector('.files-view .files-selcount')?.textContent || '') };
       }, kind);
-      put('files 5,000', kind, { openMs, rows, thumbsAtOpen, scrollMaxFrameMs: sc.maxFrame, scrollMs: sc.ms, scrollEndNodes: endNodes, thumbsAfterScroll, lastRowReached: lastRow ? 1 : 0, selectAllMs: selectAllMs.ms, selectedShown: selectAllMs.sel, selCount: Number((selectAllMs.bar.match(/[\d,]+/) || ['0'])[0].replace(/,/g, '')), errs: errs.length });
+      put('files 5,000', kind, { openMs, rows, thumbsAtOpen, scrollMaxFrameMs: sc.maxFrame, scrollMs: sc.ms, scrollSteps: sc.steps, scrollEndNodes: endNodes, thumbsAfterScroll, ...(process.env.KT_TRACE ? { trace: sc.trace } : {}), lastRowReached: lastRow ? 1 : 0, selectAllMs: selectAllMs.ms, selectKeptScroll: selectAllMs.kept, selectedShown: selectAllMs.sel, selCount: Number((selectAllMs.bar.match(/[\d,]+/) || ['0'])[0].replace(/,/g, '')), errs: errs.length });
       if (process.env.KT_DETAIL) console.log('   select bar:', selectAllMs.bar);
       await ctx.close();
     }
@@ -141,10 +144,12 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
       const TABS = ['#/', '#/files', '#/videos', '#/search', '#/anime', '#/tv', '#/subs', '#/settings'];
       await p.goto(base + '#/'); await p.waitForSelector('.downloads-view'); await p.waitForTimeout(600);
       const round = async () => { for (const h of TABS) { await p.evaluate((x) => { location.hash = x; }, h); await p.waitForTimeout(kind === 'phone' ? 140 : 80); } };
-      await round(); await round(); await p.waitForTimeout(500);
+      // (Each snapshot taken on Downloads with nothing still loading — a view half drawn is not a leak.)
+      const settle = async () => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForFunction(() => !document.querySelector('#app .spinner'), null, { timeout: 15000 }).catch(() => undefined); await p.waitForTimeout(1500); };
+      await round(); await round(); await settle();
       const h0 = await heapMB(); const n0 = await metric('Nodes'); const l0 = await metric('JSEventListeners');
       for (let i = 0; i < 20; i++) await round();
-      await p.evaluate(() => { location.hash = '#/'; }); await p.waitForTimeout(800);
+      await settle();
       const h1 = await heapMB(); const n1 = await metric('Nodes'); const l1 = await metric('JSEventListeners');
       put('tabs ×20', kind, { heapMB: h0, heapGrowMB: h1 - h0, nodesGrow: n1 - n0, listenersGrow: l1 - l0, errs: errs.length });
       await ctx.close();
@@ -154,8 +159,9 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
     const k = { phone: 0, pc: 1 };
     for (const [name, b] of Object.entries(BUDGET)) for (const kind of ['phone', 'pc']) {
       const r = R[name]?.[kind]; if (!r) continue;
-      for (const [m, lim] of Object.entries(b)) { const L = lim[k[kind]]; if (L === null || r[m] === undefined) continue; ok(`${name} · ${kind}: ${m} ${typeof r[m] === 'number' ? r[m].toFixed(1) : r[m]} ≤ ${L}`, r[m] >= 0 && r[m] <= L, r); }
+      for (const [m, lim] of Object.entries(b)) { const L = lim[k[kind]]; if (L === null || r[m] === undefined) continue; ok(`${name} · ${kind}: ${m} ${typeof r[m] === 'number' ? r[m].toFixed(1) : r[m]} ≤ ${L}`, (r[m] >= 0 || /Grow/.test(m)) && r[m] <= L, r); }
       if (r.lastRowReached !== undefined) ok(`${name} · ${kind}: scrolled to the end, the last row there`, r.lastRowReached === 1);
+      if (name === 'files 5,000') ok(`${name} · ${kind}: choosing far down the folder leaves it where it was scrolled to`, r.selectKeptScroll === 1, r);
       if (name === 'files 5,000') ok(`${name} · ${kind}: «select all» picked every entry (the bar counts 5,000)`, r.selCount === 5000 && r.selectedShown > 0, r);
       ok(`${name} · ${kind}: no page errors`, !r.errs);
     }

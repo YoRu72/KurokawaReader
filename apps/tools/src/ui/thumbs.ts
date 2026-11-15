@@ -24,6 +24,11 @@ function pump(): void {
     void j.load().then((u) => { if (u) { remember(j.key, u); if (j.el.isConnected) j.put(u); } }).catch(() => undefined).finally(() => { running--; pump(); });
   }
 }
+/** The pictures of the rows inside `box` no longer asked for (the rows taken out of the page): not watched, not waiting. */
+export function dropThumbs(box: Element): void {
+  if (!io || !box.firstElementChild) return;
+  for (const el of box.querySelectorAll('[data-thumb]')) { const j = jobOf.get(el); if (!j) continue; io.unobserve(el); jobOf.delete(el); const i = waiting.indexOf(j); if (i >= 0) waiting.splice(i, 1); }
+}
 /** `el`'s picture: at once from memory, else `load`ed when it comes near the screen; `put` places it. */
 export function lazyThumb(el: HTMLElement, key: string, load: () => Promise<string | null>, put: (url: string) => void): void {
   const have = cache.get(key); if (have) { put(have); return; }

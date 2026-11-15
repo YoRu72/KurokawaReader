@@ -6,7 +6,7 @@ import './theme/glass.css';
 import './theme/gallery.css';
 import './theme/editor.css';
 import './styles/glass-tools.css';
-import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
+import { applyDocumentLang, onLangChange, loadLang, loadRest, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './router';
 import { h, icon, closeSheets } from './ui/dom';
 import { noteTab, tabPath } from './ui/backstack';
@@ -219,6 +219,9 @@ else {
   mount(parseRoute());
   // (The rest — heavy or periodic work nobody waits for — once the first screen is drawn.)
   afterFirstPaint(() => {
+  // (The rest of the strings — every screen but this one waits for them — fetched once the list is up and the page idle,
+  // so the first other screen opened does not wait for them.)
+  { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (idle) idle(() => void loadRest(), { timeout: 1500 }); else setTimeout(() => void loadRest(), 300); }
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   void import('./ui/gestures').then((g) => g.pageSwipe({
     enabled: () => getSettings().swipeTabs !== false,

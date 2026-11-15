@@ -77,10 +77,22 @@ async function phone(out: HTMLElement, folder?: string, offs: (() => void)[] = [
   const sortBtn = pickButton(t('sortBy'), [['date', t('sortNewest')], ['name', t('sortName')], ['size', t('sortSize')], ['length', t('videosSortLength')]], sort, (v) => { sort = v; try { localStorage.setItem('kt.videos.sort', v); } catch { /* */ } draw(); }, t('close'));
   const list = h('div', { class: 'videos-list' });
   const sorted = (vs: Vid[]) => [...vs].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name, undefined, { numeric: true }) : sort === 'size' ? b.size - a.size : sort === 'length' ? b.duration - a.duration : b.mtime - a.mtime));
+  // (A long list drawn a slice at a time: the first screenfuls at once, the next as the list is scrolled toward them —
+  // a folder of a thousand videos opens as fast as one of twenty.)
+  let moreIo: IntersectionObserver | null = null; offs.push(() => moreIo?.disconnect());
+  const fill = (vs: Vid[], cap = vs.length) => {
+    moreIo?.disconnect(); moreIo = null; const end = Math.min(vs.length, cap); let n = Math.min(end, 120);
+    list.replaceChildren(...vs.slice(0, n).map((v) => videoRow(v, vs)));
+    if (n >= end || typeof IntersectionObserver !== 'function') { if (n < end) list.append(...vs.slice(n, end).map((v) => videoRow(v, vs))); return; }
+    const more = h('div', { class: 'videos-more', 'aria-hidden': 'true' }); list.append(more);
+    moreIo = new IntersectionObserver((es) => { if (!es.some((x) => x.isIntersecting)) return; const m = Math.min(end, n + 100); more.before(...vs.slice(n, m).map((v) => videoRow(v, vs))); n = m; if (n >= end) { moreIo?.disconnect(); moreIo = null; more.remove(); return; } moreIo?.unobserve(more); moreIo?.observe(more); }, { rootMargin: '1500px 0px' });
+    moreIo.observe(more);
+  };
   const draw = () => {
     const q = search.value.trim().toLowerCase();
-    if (q) { const hits = sorted(all.filter((v) => v.name.toLowerCase().includes(q))); list.replaceChildren(...(hits.length ? hits.slice(0, 300).map((v) => videoRow(v, hits)) : [h('p', { class: 'empty small' }, t('noResults'))])); return; }
-    if (folder !== undefined) { const vs = sorted(all.filter((v) => v.folder === folder)); list.replaceChildren(...vs.map((v) => videoRow(v, vs))); return; }
+    if (q) { const hits = sorted(all.filter((v) => v.name.toLowerCase().includes(q))); if (hits.length) fill(hits, 300); else { moreIo?.disconnect(); list.replaceChildren(h('p', { class: 'empty small' }, t('noResults'))); } return; }
+    if (folder !== undefined) { const vs = sorted(all.filter((v) => v.folder === folder)); fill(vs); return; }
+    moreIo?.disconnect(); moreIo = null;
     // Folders, the newest first; each with its count, its size, and its newest video's picture.
     const by = new Map<string, Vid[]>(); for (const v of all) { const k = v.folder || '—'; (by.get(k) ?? by.set(k, []).get(k)!).push(v); }
     const folders = [...by.entries()].sort((a, b) => (sort === 'name' ? a[0].localeCompare(b[0]) : sort === 'size' ? b[1].reduce((s, v) => s + v.size, 0) - a[1].reduce((s, v) => s + v.size, 0) : Math.max(...b[1].map((v) => v.mtime)) - Math.max(...a[1].map((v) => v.mtime))));

@@ -29,7 +29,14 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
     ok('back at the top: the first row', (await p.$$eval('.task-card', (x) => x.map((c) => c.dataset.id))).includes('t0'));
     // (Select all: every one of the 2,000, rendered or not.)
     await p.keyboard.press('Control+a'); await p.waitForTimeout(200); const bar = await p.$eval('.select-bar, .dl-select, [class*=select]', (e) => e.textContent).catch(() => '');
-    ok('«select all» picks all 2,000', /2,?000/.test(bar), bar); await p.keyboard.press('Escape');
+    ok('«select all» picks all 2,000', /2,?000/.test(bar), bar);
+    // (Scrolled while all are chosen: the rows the scroll brings in are drawn chosen too — the window moves without the
+    // whole list being drawn again.)
+    for (let i = 0; i < 6; i++) { await p.mouse.wheel(0, 100000); await p.waitForTimeout(120); }
+    const marks = await p.$$eval('.task-card', (x) => [x.length, x.filter((c) => c.classList.contains('picked')).length, x.some((c) => c.dataset.id === 't1999')]);
+    ok('scrolled to the end while choosing: every row there shown chosen', marks[2] && marks[0] > 0 && marks[0] === marks[1], marks);
+    for (let i = 0; i < 6; i++) { await p.mouse.wheel(0, -100000); await p.waitForTimeout(120); }
+    await p.keyboard.press('Escape');
     // (A filter: the failed ones only — 40 —, no windowing below the threshold.)
     await p.click('.chip:has-text("Failed")'); await p.waitForTimeout(200); ok('a filter applies (40 failed)', (await p.$$eval('.task-card', (x) => x.length)) === 40);
     ok('no page errors', !errs.length, errs);

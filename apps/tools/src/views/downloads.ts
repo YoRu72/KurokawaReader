@@ -142,13 +142,31 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const measureRows = () => { const cs = [...list.querySelectorAll<HTMLElement>(':scope > .task-card')]; if (cs.length < 2) return; const a = cs[0].getBoundingClientRect().top, b = cs[cs.length - 1].getBoundingClientRect().top; const hgt = (b - a) / (cs.length - 1); if (hgt > 20 && Math.abs(hgt - rowH) > 1) rowH = hgt; };
   let scrollFrame = 0;
-  const onScroll = () => { if (!win || scrollFrame || !root.isConnected) return; scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; if (!win) return; const r = windowOf(shown().length); if (Math.abs(r.start - win.start) >= 4 || Math.abs(r.end - win.end) >= 4) draw(); }); };
+  // (Scrolled: only the window moved over the list as last drawn — not the whole draw, which filters, sorts and counts
+  // every task: a frame of a fling over 2,000 rows cost that much each time.)
+  let lastVis: Task[] = [];
+  const onScroll = () => { if (!win || scrollFrame || !root.isConnected) return; scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; if (!win) return; const r = windowOf(lastVis.length); if (Math.abs(r.start - win.start) >= 4 || Math.abs(r.end - win.end) >= 4) placeRows(windowRows(lastVis)); }); };
+  const windowRows = (vis: Task[]): HTMLElement[] => {
+    const r = windowOf(vis.length); win = r;
+    topPad.style.height = `${Math.max(0, r.start * rowH - 10)}px`; bottomPad.style.height = `${Math.max(0, (vis.length - r.end) * rowH - 10)}px`;
+    return [...(r.start > 0 ? [topPad] : []), ...vis.slice(r.start, r.end).map((x) => cardFor(x)), ...(r.end < vis.length ? [bottomPad] : [])];
+  };
+  const placeRows = (nodes: HTMLElement[]) => {
+    const keep = new Set(nodes);
+    for (const [id, el] of cards) if (!keep.has(el)) { el.remove(); cards.delete(id); }
+    for (const pad of [topPad, bottomPad]) if (!keep.has(pad)) pad.remove();
+    if (win) measureRows();
+    for (const [k, el] of heads) if (!keep.has(el)) { el.remove(); heads.delete(k); }
+    nodes.forEach((el, i) => { if (list.children[i] !== el) list.insertBefore(el, list.children[i] ?? null); });
+    // (Rows brought in by a scroll while choosing: their marks as chosen.)
+    if (selecting) for (const [id, el] of cards) { const on = picked.has(id); if (el.classList.contains('picked') !== on) { el.classList.toggle('picked', on); const cb = el.querySelector<HTMLInputElement>('.task-pick'); if (cb) cb.checked = on; } }
+  };
   document.addEventListener('scroll', onScroll, { capture: true, passive: true }); window.addEventListener('resize', onScroll);
   let places = new Map<string, number>();
   const draw = () => {
     places = queuePlaces(tasks);
     drawChips(); drawRecovery();
-    const P = dlPrefs(); const vis = shown();
+    const P = dlPrefs(); const vis = shown(); lastVis = vis;
     optBtn.dataset.n = String(activeFilters(P));
     list.className = `task-list look-${P.look}`;
     (title.querySelector('.count') as HTMLElement).textContent = tasks.length ? (vis.length !== tasks.length ? t('dlCountOf', { n: localDigits(vis.length), all: countItems(tasks.length) }) : countItems(tasks.length)) : '';
@@ -160,21 +178,14 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     // standing for the rest: 2,000 finished downloads are a screenful of rows, not 56,000 nodes. Selection, search,
     // filters, sort and Undo work on the data, so they see every row; the rows come back as they are scrolled to.)
     if (P.group === 'none' && vis.length > WINDOW_MIN) {
-      const r = windowOf(vis.length); win = r;
-      topPad.style.height = `${Math.max(0, r.start * rowH - 10)}px`; bottomPad.style.height = `${Math.max(0, (vis.length - r.end) * rowH - 10)}px`;
-      nodes.push(...(r.start > 0 ? [topPad] : []), ...vis.slice(r.start, r.end).map((x) => cardFor(x)), ...(r.end < vis.length ? [bottomPad] : []));
+      nodes.push(...windowRows(vis));
     } else if (P.group === 'none') { win = null; nodes.push(...vis.map((x) => cardFor(x))); }
     else {
       const groups = new Map<string, { label: string; items: Task[] }>();
       for (const x of vis) { const g = groupOf(x, P.group)!; const e = groups.get(g.key) ?? groups.set(g.key, { label: g.label, items: [] }).get(g.key)!; e.items.push(x); }
       for (const [key, g] of groups) { let hd = heads.get(key); if (!hd) { hd = h('h3', { class: 'task-group' }); heads.set(key, hd); } hd.replaceChildren(h('span', null, g.label), h('small', null, localDigits(g.items.length))); nodes.push(hd, ...g.items.map((x) => cardFor(x))); }
     }
-    const keep = new Set(nodes);
-    for (const [id, el] of cards) if (!keep.has(el)) { el.remove(); cards.delete(id); }
-    for (const pad of [topPad, bottomPad]) if (!keep.has(pad)) pad.remove();
-    if (win) measureRows();
-    for (const [k, el] of heads) if (!keep.has(el)) { el.remove(); heads.delete(k); }
-    nodes.forEach((el, i) => { if (list.children[i] !== el) list.insertBefore(el, list.children[i] ?? null); });
+    placeRows(nodes);
     if (!vis.length && tasks.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
     else list.querySelector(':scope > p.empty')?.remove();
     drawSelectBar(); drawStatus();
