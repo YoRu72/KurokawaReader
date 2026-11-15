@@ -159,7 +159,8 @@ final class KtFiles {
     interface Events extends KtFileJobs.Events {}
     static void cancel(String id) { KtFileJobs.cancel(id); }
     static void answer(String id, String what) { KtFileJobs.answer(id, what); }
-    static void run(String id, String op, List<File> paths, File dest, String conflict, Events ev) { KtFileJobs.run(id, op, paths, dest, conflict, ev); }
+    // (Stage M5: by way of KtFileExec — the classic KtFileJobs.run unless «File jobs engine: Rust» is chosen.)
+    static void run(String id, String op, List<File> paths, File dest, String conflict, Events ev) { KtFileExec.run(id, op, paths, dest, conflict, ev); }
     static File keepBoth(File to) { return KtFileJobs.keepBoth(to); }
     private static void walkSize(File d, long[] t, AtomicBoolean cancel) { KtFileJobs.walkSize(d, t, cancel); }
     private static void deleteTree(File f) throws Exception { KtFileJobs.deleteTree(f, new KtFileJobs.Job("x"), new long[2], new long[2], null, new long[1]); }

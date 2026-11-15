@@ -13,6 +13,8 @@ day).
 | `kt-android/src/httpcall.rs` | M2: the downloader's `http.*` methods (a table of downloads under way, by number) and `bytes.megaCtr` |
 | `native/android/KrDownloaderRs.java` | M2: the second download engine — KrDownloader's surface, every decision asked of Rust |
 | `native/android/KtCore.java` | Java's door: lazy load, `available()`, `version()`, `call`, `callBytes`, `r`, shadow mode |
+| `kt-android/src/m5call.rs` | M5: `fj.*` (the file jobs' planner and journal), `ar.*`, `vt.*`, `rm.*` (kt-core's `fileplan.rs`, `filejournal.rs`, `remoterules.rs`) |
+| `native/android/KtFilePlan.java`, `KtFileExec.java`, `KtRemoteRules.java` | M5: Java's planner (the reference), the executor with the engine choice, the cross-check and the journal; the network storages' rules in two hands |
 | `jvmtest/` | the library built for the computer, loaded by a plain JVM through `KtCore` (no emulator); `downloader-rust.sh` runs T.java's runs 1–19 through the Rust engine |
 | `build-android.sh` | the three ABIs with the runner's NDK |
 | `sizes.py` | each APK checked for its library; the size table |
@@ -85,6 +87,10 @@ Measured here, host build (x86_64 glibc): **358 KB** `.so`, 189 KB compressed af
 MEGA. Expected on Android from that ratio: about +40–50 KB per ABI in the APK (≈ +235–250 KB arm64), the universal APK
 ≈ +0.7 MB in all; CI's size table is the measure. Budget kept: under 250 KB compressed per ABI. M3 (torrents) is where
 size really moves.
+**M5, host: 569 288 bytes (+108 872 from M2's 460 416 rebuilt here), 287 129 gzip -9 (+50 565)** — the planner,
+the journal's reader and rules, the remote rules, and their JSON. M2's CI run (43617047751) measured arm64 +234.3 KB in
+the APK for a host build of 236.5 KB compressed, so expect ≈ +50 KB per ABI more: arm64 ≈ 285 KB, **about 35 KB over
+the 250 KB budget** — CI's size table decides; if it holds, M6's removals pay it back, or `fj.*`'s JSON can be slimmed.
 
 ## Next stages
 
@@ -147,8 +153,77 @@ tokio) only *streams* a torrent the player opens (far seeks) and hands it back t
 their tests (TkT, MoT, InT, HlsT) ported; shadow first, then switched. NFC (Unicode tables) decided then: a crate or
 kept in Java.
 
-**M5 — file jobs and remote storage**: KtFileJobs's rules are already kt-core's `filejobs.rs` (P3, the same rules):
-wire them through the bridge with FilesT's cases; KtRemote's protocol-free logic after.
+**M5 — file jobs and remote storage: written 2026-11-15 (branch `work-and-m5`), waiting for CI and the owner's phone.**
+- *The claim checked.* The plan said KtFileJobs's rules «are already kt-core's `filejobs.rs`». They are — rule for
+  rule — but `filejobs.rs` is the PC's port *with its I/O inside* (std::fs copies, renames, deletes), and Android must
+  keep every byte in Java (plain files today; SAF, which only Java can do, tomorrow). So the rules are taken a second
+  time as a **planner**: kt-core's new `fileplan.rs` plans a job from a snapshot Java takes (the trees, what stands at
+  each target, the folder listings for «keep both») into ordered steps (`ask`, `rename`, `dir`, `copy`, `skip`, `fail`,
+  `endDir`, `del`, `end`, each a JSON array with fixed places); Java's `KtFileExec` executes them; Java's `KtFilePlan`
+  (built on KtFileJobs's own helpers: extOf, keepBoth's split, inside, same, sameStorage, link) is the reference
+  planner. `filejobs.rs` is untouched (the PC keeps it). Where it and Android differ, the planner follows Android:
+  1. a standing answer other than ask/skip/replace/keep is kept as Java keeps it (and acts as «replace»), where
+     filejobs.rs turns it into «ask»; an unknown page answer is «replace» in both Java and the planner;
+  2. a move's `left` on a **cancel** is counted on the disk (the files still under the chosen paths) by the executor,
+     where KtFileJobs adds up each `leave()`: they differ only for empty folders in flight at the cancel;
+  3. a folder replacing a file: KtFileJobs deletes the file then renames the folder in; the executor sets the file
+     aside first (journaled) and drops it only once the folder stands there — same end, no window where both are gone;
+  4. «exists» is the snapshot's stat plus what the job itself made; a name the case-blind volume takes for another
+     spelling is not foreseen by either planner — the executor's re-check (below) catches it.
+  The bin's slot names and expiry, a rename's checks, the archive's path safety, `wanted` and its own «keep both»
+  (KtArchive's: any extension length, case kept — not KtFileJobs's), the vault's choice of files and its name check
+  are ported too (`fj.trash*`, `fj.renameBad`, `ar.*`, `vt.*`), compared with Java's in FileJobsRustT; not yet wired
+  into KtFiles/KtArchive/KtVault (no executor change there in M5). **Batch rename is not Java**: it is
+  `src/views/filesNames.ts` + `filesMore.ts` in the web view (one `filesRename` per item), like subtitle matching —
+  nothing to port on Android. Java has **no** reserved-name or per-filesystem length rules and **no** free-space
+  check in its file jobs (only KtArchive and KtApk check space); none were invented — the plan reports `copyBytes`
+  (what the copies will write) for a later check, and a full disk ends a copy as Java's does (proved with a quota hook).
+- *Remote storage* (`KtRemote`: FTP/FTPS, SFTP, SMB, WebDAV/Nextcloud, Google Drive): kt-core's `remoterules.rs` has
+  its protocol-free rules — `norm`/`join`, SMB's share split, WebDAV's URL encoding (java.net.URLEncoder's exactly),
+  the base URL (Nextcloud's files root from the user's *name*), a PROPFIND href made a path (URLDecoder's errors kept),
+  the «collection» test, the one retry on a new connection, an upload's order, a download's local names, the cache's
+  «already whole» rule. KtRemote asks `KtRemoteRules` for the base URL, each href and the upload order (Java's lines
+  kept there as the reference; Rust's answer used with the Rust engine, Java's on any error, both compared on debuggable
+  builds). **Secrets never cross**: the Authorization header, passwords, keys, tokens and the Keystore stay in KtRemote.
+- *Switch*: Settings → Advanced, «File jobs engine: Classic / Rust», phones with the core only; default **Classic**
+  (`configure({fileEngine})`, kept in the `kt` preferences, read when a job starts). Classic is KtFileJobs.run,
+  unchanged; on a debuggable build with the core both planners also plan each classic job (≤ 20 000 entries) and the
+  difference is counted. With Rust: a Rust error before the first step → Java's plan runs (counted); later (a re-plan
+  after an answer or a failed rename) a Rust error ends the job, never switching planner mid-job. **Data safety**:
+  every step of Rust's plan that deletes, overwrites or moves must be, exactly, in Java's plan for that item —
+  computed in Java, every time — or the item is skipped whole and reported («the two planners disagree»); and every
+  step re-checks the disk before it touches anything (a copy never lands on a file the plan did not expect; a rename
+  never over anything). Said in the setting's hint.
+- *New, not in Java: the journal* (`filejournal.rs`, written by KtFileExec in the app's private files, `filejobs/`):
+  the plan written as ordered, CRC-checked lines before it runs, each step marked as it begins, at its risky moments
+  (an old file set aside, a new one in place) and as it ends; fsync before every risky step; a torn last line is not
+  believed and is cut off before anything is appended; no file contents, only paths, sizes, times; at most 200 000
+  steps (larger jobs run unjournaled, counted); finished journals kept 30 / 14 days. A job cut short (crash, kill, card
+  pulled) can be **resumed** — its half-done steps settled by what is really on the disk, then the rest of its plan —
+  or **rolled back**; a finished job can be **undone** when all its steps can (copies, moves, renames, new folders; a
+  replace or a delete cannot — the bin is for those). `deviceInfo().fileJournalResumable/Undoable`; the status card
+  lists the interrupted jobs with Resume / Roll back; `filesJournals`, `filesJournalResume`, `filesJournalRollback`
+  (`undo: true` for a finished one), `filesJournalDismiss`. The end event of a Rust job carries `journal` and
+  `undoable`, the foundation for the page's Undo (not wired into the page's undo bar in M5).
+- *Proof (all passed here):* fileplan.rs 9, filejournal.rs 7, remoterules.rs 3 std-only tests; m5call.rs 3 through the
+  table; `tests/native/fileplan.sh` (FilesT through Java's plan + the executor, no library) beside `files.sh`;
+  `jvmtest/filejobs-rust.sh`: FilesT's cases through the Rust engine (strict), FileJobsRustT — 198 plans of random
+  trees (Arabic, emoji, trailing dots/spaces, 255-byte names, files where folders are, missing paths, a folder into
+  itself) identical step for step; 60 random jobs leaving the same trees and ends on both engines; a failed rename
+  re-planned as copy+delete; a full disk; odd names; a tampered Rust plan (the victim untouched, the item skipped);
+  the journal killed before each of its records (and torn in half) over 24 random jobs — 531 kills, every resume
+  equal to the whole job, every rollback without a replace back at the start, never a file lost, never a part left;
+  a finished move undone; the small rules and the remote rules against Java's. CI block «Stage M5» in
+  android-rust-check.yml.
+- *Not built:* the second candidate (a transfer order that minimises peak extra space for moves on a nearly full
+  device); the page's Undo bar for Rust jobs; journaling of the bin's own moves (KtFiles.trash, which has its restore);
+  SAF jobs (KtFileJobs has none today); wiring the archive/vault rules into their classes.
+- *Owner's phone run* (APK with the library): Settings → Advanced → File jobs engine → Rust. Copy and move a folder of
+  photos inside the phone (renames) and to an SD card or USB stick (copies); paste where a name is taken and answer
+  each of Skip / Replace / Keep both (and «for all»); move a large video to the card and swipe the app away mid-move,
+  open it again → Settings → Advanced → Interrupted jobs → Resume (and once Roll back); delete a folder; an Arabic- and
+  emoji-named folder; a WebDAV/Nextcloud listing and an upload; then «Copy report» and send it — every «differed»,
+  «fell back» and «planners disagree» should read 0.
 
 **M6 — removal**: the replaced Java and libtorrent4j removed one release after each Rust default ran without
 problems; final size and speed table.
@@ -156,3 +231,44 @@ problems; final size and speed table.
 **Subtitle matching** (listed under M1 in RUST-PORT.md) has no Java side: it is `src/player/subMatch.ts`, run in
 the web view on every platform, so there is no Java to shadow and nothing on Android calls it natively. It moves
 when a Rust caller needs it.
+
+## M6 — what removal needs (checklist, written with M5 on 2026-11-15; nothing removed yet)
+
+A Java engine goes only when (a) its Rust twin has been the **default** for one release with no problem reported,
+(b) the evidence below is in, and (c) the owner says so. Until then every Java class stays as reference and fallback.
+Note: the Release tools run 43651129552 (main, 2026-11-14) already packs `libkt_android.so` («Unable to strip …
+libkt_android.so, … libtorrent4j.so») — released APKs carry the core, so released users can pick the Rust engines;
+the defaults are still Java/Classic.
+
+| What goes | Replaced by | Evidence required before removal | Saves (APK) |
+|---|---|---|---|
+| `KtDlRules` (M1) | kt-core `dlrules.rs` through `dl.*` | first a stage that **uses** Rust's answers (M1 only shadows); CI: «Std-only unit tests», «The JNI door from a plain JVM» (RustBridgeT); `rustShadow.mismatches` = 0 with `rustShadow.calls` ≥ 5 000 on the owner's debug build over ≥ 2 weeks | a few KB of dex (estimate) |
+| `KtTranslate`'s cache key (M1) | `translatekey.rs` through `tr.*` | as KtDlRules; plus a translator session with a glossary on the phone (no cache miss after the switch) | < 5 KB (estimate) |
+| `KrDownloader` (M2) — **not the in-app updater's use**, which stays Java unless moved | `KrDownloaderRs` + `httpdl.rs` | CI: «Java's downloader, runs 1–19» and «The same runs 1–19 through the Rust engine»; `dlEngineFallbacks` = 0 over ≥ 50 real downloads by the owner (Wi-Fi and mobile data, a signed GitHub redirect, a MEGA link, pause/resume, app killed mid-download, a refusing host); Rust the default for one release | ≈ 20–40 KB dex (estimate); the class itself stays while the updater uses it |
+| `KtFileJobs.run` / `transfer` (M5) — its helpers (`inside`, `same`, `link`, `keepBoth`, `count`, `moveWhole`, `rename`) stay: the bin, KtFilePlan and KtFiles use them | `KtFileExec` executing `fileplan.rs`'s plan | CI: the «Stage M5» block (std-only, `fileplan.sh`, `filejobs-rust.sh`); `fileMismatches` = 0, `fileDisputed` = 0, `fileEngineFallbacks` = 0 and `fileReplanErrors` = 0 over ≥ 200 real jobs by the owner, with ≥ 20 moves to an SD card/USB stick, every conflict answer, ≥ 1 resume and ≥ 1 rollback after a kill; Rust the default for one release | ≈ 8 KB dex (estimate) |
+| `KtFilePlan` (M5, Java's planner) | — **keep it** as the data-safety guard (Rust's destructive steps are checked against it), unless the owner decides otherwise after the row above holds for a further release | — | ≈ 6 KB dex (estimate) |
+| `KtRemoteRules`'s Java half (M5) | `remoterules.rs` through `rm.*` | `remoteMismatches` = 0 and `remoteEngineFallbacks` = 0 over ≥ 30 remote sessions (WebDAV and Nextcloud listings with spaces/Arabic names, ≥ 5 uploads of folders) | < 5 KB dex (estimate) |
+| `KtScreenTrack`, `KtScreenMotion`, `KtLettering`, `KtInpaint`, `KtHls` (M4, sister stage) | their kt-core modules | the M4 plan's CI rows (TkT, MoT, InT, HlsT ported, through the host library); its shadow counters (fields below) at 0 over ≥ 1 hour of screen translation and ≥ 20 HLS videos on the phone; NFC decided (crate or Java) | tens of KB dex (estimate) |
+| **libtorrent4j** (M3, sister stage) | the Rust torrent engine (librqbit, M3) — not built yet | the M3 parity list (downloads, seeding, magnets, DHT/LSD/UPnP/NAT-PMP, encryption, proxy, binding, priorities, sequential, ratio/time limits, resume data) each proven in CI or on the phone; `torEngineFallbacks` = 0 over ≥ 30 torrents (incl. magnets, a seed to ratio, a resume after reboot); the Rust torrent engine the default for one release | **≈ 5.9 MB per ABI — an estimate** from docs/RUST-PORT.md: the CI logs readable here (runs 43617047751, 43651129552) list neither the APK's contents nor libtorrent4j's size; measure with `unzip -l` on the APK in CI before deciding |
+
+**Order of removal** (lowest risk first, each its own release): M1's rules (after a stage that uses them) → M5's
+classic executor and KtRemoteRules's Java half → M2's KrDownloader for user downloads (the updater's path last, or
+never) → M4's classes → libtorrent4j last (it is the biggest and the riskiest, and M3 is not built). After each: the
+full suite, the size table, the owner's phone run.
+
+**The diagnostics readout** — Settings → Advanced → «Rust core status» (built in M5, `src/views/rustStatus.ts`,
+tested by `tests/rustcore.cjs`): the core's version, each engine in use and chosen with its fallbacks, checks and
+mismatches, the shadow's calls and mismatches, the file jobs' journal (resumable / undoable), the items skipped for
+disagreement, and «Copy report» (every deviceInfo field as text; deviceInfo carries no secret). It reads whatever
+deviceInfo gives and shows a line per engine it finds, so a stage not merged yet simply has none. **The contract each
+stage's deviceInfo must follow** (one prefix per area: `dl`, `file`, `remote`, `tor`, `screen`, `hls`):
+- `<area>Engine` (in use: `java`/`classic`/`rust`), `<area>EngineChoice`, `<area>EngineFallbacks` (number);
+- `<area>Checks`, `<area>Mismatches` (numbers: comparisons with the Java reference and their differences) and
+  `<area>First` (≤ 5 strings) when the stage compares;
+- or, instead, rows in a list `rustEngines: [{area, inUse, choice, fallbacks, checks, mismatches}]`.
+Already exposed: M1 `rustCore`, `rustCoreStatus`, `rustShadow{on, calls, mismatches, first}`; M2 `dlEngine`,
+`dlEngineChoice`, `dlEngineFallbacks` (M2 has no `dlChecks`/`dlMismatches` — its decisions are not shadowed; the
+fallback count is its evidence); M5 `fileEngine*`, `fileChecks`, `fileMismatches`, `fileFirst`, `fileDisputed`,
+`fileJobsRust`, `fileReplanErrors`, `fileJournalResumable`, `fileJournalUndoable`, `fileJournalSkipped`,
+`remoteEngine*`, `remoteChecks`, `remoteMismatches`. M3 and M4 must add theirs under `tor`, `screen`, `hls` (the
+card already has names for them in all five languages).

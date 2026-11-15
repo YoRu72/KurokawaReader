@@ -46,6 +46,8 @@ export interface Settings {
   /** The phone's file-download engine (stage M2): Java's (the default) or the Rust core's decisions. Phones only, and
    *  only offered when the app carries the core; read by the engine when a download starts. */
   dlEngine?: 'java' | 'rust';
+  /** (Stage M5: the Files jobs' engine on a phone with the Rust core — Settings → Advanced; default classic.) */
+  fileEngine?: 'classic' | 'rust';
   /** Streams (HLS playlists) fetched by the app itself — pieces joined here — rather than by yt-dlp. Default on. */
   hlsNative?: boolean;
   /** A computer: a yt-dlp binary of the reader's own instead of the managed one (empty: managed). */

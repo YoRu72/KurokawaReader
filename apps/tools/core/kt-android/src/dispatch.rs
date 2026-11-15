@@ -50,6 +50,36 @@ pub const METHODS: &[&str] = &[
     "http.close",
     "http.record",
     "bytes.megaCtr",
+    // M5: the file jobs' planner and journal, the bin's, archives' and the vault's small rules, the network storages'
+    // rules (src/m5call.rs; kt-core's fileplan, filejournal, remoterules)
+    "fj.plan",
+    "fj.keepBoth",
+    "fj.ext",
+    "fj.renameBad",
+    "fj.trashSlot",
+    "fj.trashExpired",
+    "fj.trashRoot",
+    "fj.journal",
+    "fj.repair",
+    "fj.rollback",
+    "fj.prune",
+    "fj.line",
+    "ar.unsafe",
+    "ar.wanted",
+    "ar.bothName",
+    "vt.takes",
+    "vt.nameOk",
+    "rm.norm",
+    "rm.join",
+    "rm.smbSplit",
+    "rm.davPath",
+    "rm.davBase",
+    "rm.hrefs",
+    "rm.isCollection",
+    "rm.tryAgain",
+    "rm.downName",
+    "rm.fetchDir",
+    "rm.upload",
 ];
 
 /// Bytes in, bytes out: what the JNI function hands over.
@@ -117,6 +147,9 @@ pub fn call_json(m: &str, a: &J) -> Result<J, String> {
         "tr.cacheKey" => Ok(J::s(&translatekey::cache_key(&config(a)?, &string(a, "text")?))),
 
         m if m.starts_with("http.") => crate::httpcall::call(m, a),
+
+        // (Stage M5: file jobs, the bin, archives, the vault, network storages — src/m5call.rs.)
+        m if m.starts_with("fj.") || m.starts_with("ar.") || m.starts_with("vt.") || m.starts_with("rm.") => crate::m5call::call(m, a),
 
         _ => Err(format!("no such method: {}", m)),
     }
