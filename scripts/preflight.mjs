@@ -12,7 +12,7 @@
 //            · FLAKY  failed, then passed on --retry (exit 0, shown loudly).
 //
 // Options:  --quick                build, tsc, budgets, parity checks, tests touched by the diff + the smoke set
-//           --only <name>          run only tests whose file name contains <name> (e.g. --only hunt)
+//           --only <a,b>         run only these tests (file names, .cjs optional; e.g. --only hunt,smoke)
 //           --timeout-scale <n>    multiply every test's time limit (a busy or small machine; or PREFLIGHT_TIMEOUT_SCALE)
 //           --port-wait <s>        how long to wait for a test's fixed port to be free (default 90)
 //           --list-ports           print every test that listens on a fixed port, and exit
@@ -226,9 +226,9 @@ async function preflight(app) {
     if (fs.existsSync(path.join(APP, 'scripts/themes.mjs')) && app === 'tools') { const th = await run('node', ['scripts/themes.mjs', '--check'], { cwd: APP }); add('themes up to date (themes.mjs --check)', th.code === 0 ? 'PASS' : 'FAIL', th.code === 0 ? '' : tail(th.out, 6)); }
     // what to run: the workflow's chain with its arguments; then tests not in the chain, run bare unless not-in-ci.json says otherwise
     const plan = chain.map((c) => ({ ...c, from: 'ci' }));
-    for (const t of allTests) { if (inChain.has(t)) continue; const n = notInCi.find((x) => x.name === t); if (n && n.run === false) { plan.push({ file: t, args: [], from: 'skip', reason: n.reason }); continue; } plan.push({ file: t, args: n?.args || [], env: n?.env, from: n ? 'not-in-ci' : 'extra' }); }
+    for (const t of allTests) { if (inChain.has(t)) continue; const n = notInCi.find((x) => x.name === t); if (n && n.run === false) { plan.push({ file: t, args: [], from: 'skip', reason: n.reason }); continue; } plan.push({ file: t, args: (n?.args || []).map((a) => (a === '$TMP' ? tmpDir() : a)), env: n?.env, fixtures: !!n?.needsFixtures, from: n ? 'not-in-ci' : 'extra' }); }
     let sel = plan;
-    if (ONLY) sel = plan.filter((p) => p.file.includes(ONLY));
+    if (ONLY) sel = plan.filter((p) => ONLY.split(',').some((o) => p.file === o + '.cjs' || p.file === o));
     else if (QUICK) {
       const smoke = new Set((cfg.smoke || []).map((s) => s.split(' ')[0]));
       const touched = new Set(); const srcChanged = [...changed.keys()].filter((f) => f.startsWith(`apps/${app}/src/`) || f.startsWith('shared/'));
@@ -240,6 +240,8 @@ async function preflight(app) {
       console.log(`  quick: ${sel.length} of ${plan.length} test runs (${touched.size} touched by the diff, ${smoke.size} smoke/budget)`);
     }
     const timeouts = cfg.timeoutSec || {};
+    // (Tests that read tests/fixtures, which scripts/make-fixtures.py makes — Python with PIL, docx, openpyxl, pptx, reportlab — and git ignores.)
+    if (sel.some((x) => x.fixtures) && !fs.existsSync(path.join(TESTS, 'fixtures'))) { const f = await run('python3', ['scripts/make-fixtures.py'], { cwd: APP, timeoutMs: 120000 }); add('fixtures (scripts/make-fixtures.py)', f.code === 0 ? 'PASS' : 'FAIL', f.code === 0 ? 'made' : tail(f.out, 4)); }
     let i = 0;
     for (const p of sel) {
       i++; const label = [p.file, ...p.args].join(' '); const name = `test ${label}`;
@@ -256,8 +258,8 @@ async function preflight(app) {
       if (status === 'FAIL' && RETRY && !kn) { const r2 = await exec(); if (r2.code === 0) { status = 'FLAKY'; detail = `passed on retry (first run: ${tail(r.out, 2).replace(/\n/g, ' | ').slice(0, 160)})`; r = r2; } }
       if (status === 'PASS' && /^FAIL /m.test(r.out)) { status = 'WARN'; detail = 'exit 0 but the output has FAIL lines'; }
       let shown = '';
-      if (status === 'FAIL') { detail = r.timedOut ? `timed out after ${sec(tmo)}` : `exit ${r.code} after ${sec(r.ms)}`; shown = tail(r.out, VERBOSE ? 60 : 8); }
-      if (kn) { if (status === 'FAIL') { status = 'KNOWN'; detail = kn.reason; shown = ''; } else if (status === 'PASS') { status = 'FIXED'; detail = 'now passes, remove it from known-failures.json'; } }
+      if (status === 'FAIL') { detail = r.timedOut ? `timed out after ${sec(tmo)}` : `exit ${r.code} after ${sec(r.ms)}`; const fl = r.out.split('\n').filter((l) => /^FAIL |\bFAILED\b|Error/.test(l)).slice(0, 6); shown = [...new Set([...fl, ...tail(r.out, VERBOSE ? 60 : 4).split('\n')])].join('\n'); }
+      if (kn) { if (status === 'FAIL') { status = 'KNOWN'; detail = kn.reason; shown = ''; } else if (status === 'PASS' && !kn.flaky) { status = 'FIXED'; detail = 'now passes, remove it from known-failures.json'; } }
       add(`${name}  (${i}/${sel.length})`, status, detail);
       for (const l of shown.split('\n').filter(Boolean)) console.log('        ' + l.slice(0, 220));
       rows[rows.length - 1].tests = true;
@@ -269,6 +271,9 @@ async function preflight(app) {
   }
   return { app, version, rows };
 }
+
+let TMPDIR_ = null;
+function tmpDir() { return TMPDIR_ || (TMPDIR_ = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-preflight-out-'))); }
 
 // A small ZIP made here (stored entries) for the tests that want «any zip» (env value "$TMPZIP" in not-in-ci.json).
 let TMPZIP = null;

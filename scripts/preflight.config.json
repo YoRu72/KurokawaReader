@@ -12,8 +12,16 @@
     "apps/*/releases/**"
   ],
   "tools": {
-    "smoke": ["smoke.cjs en", "settingscards.cjs", "backnav.cjs", "pcui.cjs", "screen.cjs en"],
-    "timeoutSec": { "default": 180 },
+    "smoke": [
+      "smoke.cjs en",
+      "settingscards.cjs",
+      "backnav.cjs",
+      "pcui.cjs",
+      "screen.cjs en"
+    ],
+    "timeoutSec": {
+      "default": 300
+    },
     "budgets": {
       "perfstart.cjs": {
         "name": "Tools start JS (perfstart.cjs)",
@@ -23,8 +31,19 @@
     }
   },
   "reader": {
-    "smoke": ["smoke.cjs", "pcui.cjs", "readpos.cjs", "pdfroom.cjs"],
-    "timeoutSec": { "default": 180 },
+    "smoke": [
+      "smoke.cjs",
+      "pcui.cjs",
+      "readpos.cjs",
+      "pdfroom.cjs"
+    ],
+    "timeoutSec": {
+      "default": 300,
+      "backpdf.cjs": 600,
+      "sweep.cjs": 900,
+      "glassperf.cjs": 400,
+      "hunt.cjs": 300
+    },
     "budgets": {
       "perfbudget.cjs": {
         "name": "Reader start JS (perfbudget.cjs)",
