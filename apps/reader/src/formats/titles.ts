@@ -17,7 +17,7 @@ import { searchFormOf } from './types';
 /* The book's own layout                                              */
 /* ------------------------------------------------------------------ */
 
-type Align = 'center' | 'right' | 'end' | 'none';
+type Align = 'center' | 'right' | 'end' | 'justify' | 'none';
 interface Rule { sel: string; spec: number; order: number; align?: Align; size?: number; bold?: boolean; italic?: boolean; need: { cls: string[]; tag: string; id: string } }
 interface Sheet { rules: Rule[]; basePx: number }
 
@@ -29,6 +29,8 @@ function alignOf(v: string): Align | undefined {
   if (v === 'center' || v === '-webkit-center') return 'center';
   if (v === 'right' || v === '-webkit-right') return 'right';
   if (v === 'end') return 'end';
+  // (Justified kept as a mark too: the reader's «Book's own» alignment justifies only what the book justifies.)
+  if (v === 'justify') return 'justify';
   return 'none';
 }
 /** A font-size as a ratio to the parent's (em, %, keywords), or to the book's body (rem, px, pt). */
