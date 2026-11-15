@@ -61,6 +61,22 @@
   }
   function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s); }
 
+  /** The one place that knows how a check is tried twice: built on any harness's own `check(name, required, fn, ms)`
+   *  (this script's, tests/screentauri.cjs's, …), so every harness gets the same retry. The two attempts are one row; a pass
+   *  the second time says «PASSED ON RETRY» with the first failure, a double failure «FAILED TWICE». `between()` puts
+   *  things back as they were before the second attempt. */
+  function retryOf(check) {
+    return function (name, required, fn, ms, between) {
+      return check(name, required, async function () {
+        var first = '';
+        try { return await fn(); } catch (e) { first = (e && e.message) || String(e); }
+        try { if (between) await between(); } catch (e) { first += ' [put back: ' + ((e && e.message) || String(e)) + ']'; }
+        try { return 'PASSED ON RETRY — the first attempt failed: ' + first + ' — the second: ' + await fn(); }
+        catch (e2) { throw new Error('FAILED TWICE — the first attempt: ' + first + ' — the second: ' + ((e2 && e2.message) || String(e2))); }
+      }, (ms || 20000) * 2 + 25000);
+    };
+  }
+
   /**
    * The checks. kt: window.kurokawaTools. env: { sleep(ms), invoke(cmd, args), doc (document), now() }.
    * Resolves with the results, after kt_selftest_done was sent.
@@ -69,7 +85,7 @@
     results = results || [];
     var sleep = env.sleep;
     function progress() { try { Promise.resolve(env.invoke('kt_selftest_progress', { results: results })).catch(function () {}); } catch (e) { /* none */ } }
-    function rec(name, ok, detail, required, max) { results.push({ name: name, ok: !!ok, detail: (max || (/^PASSED ON RETRY/.test(String(detail)) ? 1500 : 0)) ? String(detail).slice(0, max || 1500) : short(detail === undefined ? '' : detail), required: required !== false }); progress(); return !!ok; }
+    function rec(name, ok, detail, required, max) { results.push({ name: name, ok: !!ok, detail: (max || (/^(PASSED ON RETRY|FAILED TWICE)/.test(String(detail)) ? 1500 : 0)) ? String(detail).slice(0, max || 1500) : short(detail === undefined ? '' : detail), required: required !== false }); progress(); return !!ok; }
     function within(p, ms, what) {
       var t = null;
       var limit = new Promise(function (_ok, no) { t = setTimeout(function () { no(new Error('timeout: ' + what)); }, ms); });
@@ -84,13 +100,7 @@
     // was. A pass the second time is recorded as «PASSED ON RETRY» with the first attempt's failure in full, so the table
     // shows it — never a plain pass — and a fault that is really there fails twice and says so. Windows' screen rows
     // failed on one run in three with no change of code: runs of 2026-11-15.)
-    check.retry = async function (name, required, fn, ms, between) {
-      var first = '';
-      try { var d = await within(Promise.resolve().then(fn), ms || 20000, name); return rec(name, true, d, required); } catch (e) { first = (e && e.message) || String(e); }
-      try { if (between) await within(Promise.resolve().then(between), 25000, name + ' (between the attempts)'); } catch (e) { first += ' [put back: ' + ((e && e.message) || String(e)) + ']'; }
-      try { var d2 = await within(Promise.resolve().then(fn), ms || 20000, name); return rec(name, true, 'PASSED ON RETRY — the first attempt failed: ' + first + ' — the second: ' + d2, required, 1500); }
-      catch (e2) { return rec(name, false, 'FAILED TWICE — the first attempt: ' + first + ' — the second: ' + ((e2 && e2.message) || String(e2)), required, 1500); }
-    };
+    check.retry = retryOf(check);
     function must(cond, what) { if (!cond) throw new Error(what); }
     async function waitFor(fn, ms, what) { var until = env.now() + ms; for (;;) { var v = fn(); if (v) return v; if (env.now() > until) throw new Error('timeout: ' + what); await sleep(200); } }
 
@@ -305,7 +315,7 @@
       }
       return st0.capture + ': ' + got.w + '×' + got.h + ' at ' + drawn.x + ',' + drawn.y + ' on ' + drawn.monitor + (drawn.how ? '; ' + drawn.how : '') + (tries > 2 ? '; right only at grab ' + (tries - 1) + ' (the first wrong: ' + firstBad + ')' : '');
     };
-    await check.retry('screen: a window the test draws, captured as the app captures it — its pixels', can, drawAttempt, 45000, async function () {
+    await (check.retry || retryOf(check))('screen: a window the test draws, captured as the app captures it — its pixels', can, drawAttempt, 45000, async function () {
       try { await S({ act: 'undraw' }); } catch (e) { /* gone */ }
       await waitA(gone('kts-test'), 8000, 'the test window closed');
       await env.sleep(500);
@@ -1711,7 +1721,7 @@
     off();
   }
 
-  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP4: runP4, runP5: runP5, runScreen: runScreen };
+  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP4: runP4, runP5: runP5, runScreen: runScreen, retryOf: retryOf };
   try { Object.defineProperty(root, '__KT_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KT_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KT_SELFTEST__;
