@@ -5,7 +5,8 @@
 import { h, icon, iconButton, toast, openSheet, pickButton, onLongPress } from '../ui/dom';
 import { offerUndo } from '../ui/undo';
 import { t, formatBytes, localDigits } from '../i18n';
-import { navigate } from '../router';
+import { navigate, up, back } from '../router';
+import { onBack } from '../ui/backstack';
 import { ktPlugin, nativePlatform } from '../native';
 import { getSettings, updateSettings } from '../settings';
 import { request } from '../http';
@@ -34,8 +35,16 @@ export function videosView(route: Extract<Route, { name: 'videos' }>): HTMLEleme
   body.append(chips);
   const content = h('div', { class: 'videos-content' }); body.append(content);
   if (tab === 'recent') recent(content); else if (tab === 'followed') void followed(content); else if (tab === 'servers') { if (route.srv) void browse(content, route.srv, route.p); else servers(content); } else void phone(content, route.folder);
+  // Back inside a folder (the phone's, a server's): up one level, as the arrow beside its name does — the tab is
+  // left only from its top. (A kept view, out of the page, answers nothing.)
+  const unBack = onBack(() => { if (!root.isConnected) return false; if (tab === 'phone' && route.folder !== undefined) { upFolder(); return true; } if (tab === 'servers' && route.srv) { upServer(); return true; } return false; });
+  root.dispose = () => unBack();
   return root;
 }
+
+/** Up from a phone folder to the folders; up from a server's folder to the one above it (or the servers). */
+const upFolder = () => up('/videos?tab=phone');
+const upServer = () => back('/videos?tab=servers');
 
 /* ---------- playing ---------- */
 async function play(url: string, name: string, o: { localPath?: string; playlist?: { url: string; name: string; localPath?: string }[] } = {}): Promise<void> {
@@ -80,7 +89,7 @@ async function phone(out: HTMLElement, folder?: string): Promise<void> {
   };
   search.addEventListener('input', draw);
   out.replaceChildren(...(partialNote ? [partialNote] : []),
-    ...(folder !== undefined ? [h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), () => navigate('/videos?tab=phone', true)), h('b', { class: 'grow', dir: 'auto' }, folder))] : []),
+    ...(folder !== undefined ? [h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), upFolder), h('b', { class: 'grow', dir: 'auto' }, folder))] : []),
     h('div', { class: 'videos-tools' }, search, sortBtn), list);
   draw();
 }
@@ -179,7 +188,7 @@ function addServer(): void {
 type Entry = { id: string; name: string; folder: boolean; video: boolean; size?: number; image?: string; url?: string; headers?: Record<string, string>; sub?: string; seen?: boolean; progress?: number };
 async function browse(out: HTMLElement, srvId: string, at?: string): Promise<void> {
   const s = servers_().find((x) => x.id === srvId); if (!s) { navigate('/videos?tab=servers', true); return; }
-  const crumb = h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), () => history.back()), h('b', { class: 'grow', dir: 'auto' }, s.name), h('small', { class: 'src', dir: 'auto' }, at && s.type === 'webdav' ? decodeURIComponent(at) : ''));
+  const crumb = h('div', { class: 'row videos-crumb' }, iconButton('back', t('back'), upServer), h('b', { class: 'grow', dir: 'auto' }, s.name), h('small', { class: 'src', dir: 'auto' }, at && s.type === 'webdav' ? decodeURIComponent(at) : ''));
   const list = h('div', { class: 'videos-list' }, h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   out.append(crumb, list);
   try {

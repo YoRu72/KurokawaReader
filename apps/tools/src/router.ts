@@ -79,6 +79,12 @@ export function back(fallback = '/'): void {
   if (stack.length > 1 && prev !== undefined && sectionOf(prev) === sectionOf(current()) && prev !== current()) { history.back(); return; }
   navigate(fallback, true);
 }
+/** Up one level of a drill-down to `parent`: back through the history when that is where it came from, else
+ *  the parent put in place of this one — so a folder left does not stay behind in the history. */
+export function up(parent: string): void {
+  if (stack.length > 1 && stack[stack.length - 2] === parent) { history.back(); return; }
+  navigate(parent, true);
+}
 window.addEventListener('hashchange', () => {
   const now = current();
   if (pushing === now) { stack.push(now); move = 'push'; pushing = null; }
