@@ -143,6 +143,27 @@ html[data-dark='grey']:not([data-ui='light']) { --md-surface: #1c1b1f; --md-surf
 html[data-dark='black']:not([data-ui='light']) { --md-surface: #000000; --md-surface-container-lowest: #000000; --md-surface-container-low: #0e0f10; --md-surface-container: #151617; --md-surface-container-high: #1f2022; --md-surface-container-highest: #2a2b2e; }
 html[data-ui='light'] { --md-surface: #f7f8fa; --md-surface-container-lowest: #ffffff; --md-surface-container-low: #f1f3f5; --md-surface-container: #eaedf0; --md-surface-container-high: #e3e6ea; --md-surface-container-highest: #dcdfe4; --md-on-surface: #1a1c1e; --md-on-surface-variant: #43474c; --md-on-surface-dim: #6b7077; --md-outline: #767a80; --md-outline-variant: #c5c8cd; --md-inverse-surface: #2e3033; --md-inverse-on-surface: #f0f1f3; }
 
+/* «Expressive 3» — the main theme (data-theme='classic', theme/themes.ts E3_LIGHT / E3_DARK: the same values). Dark is the
+   graphite above, untouched. Light: soft cool neutrals (never glaring white), cards raised by tone (lighter than the
+   ground, fields and chips darker), an indigo accent with a teal third, cool shadows kept faint — depth by tone. */
+html[data-theme='classic'][data-ui='light'] {
+  --md-surface: #eef0f6; --md-surface-bright: #fbfcfe; --md-surface-container-lowest: #fbfcfe; --md-surface-container-low: #f8f9fc; --md-surface-container: #e7eaf2; --md-surface-container-high: #dfe3ed; --md-surface-container-highest: #d6dbe7;
+  --md-on-surface: #181b23; --md-on-surface-variant: #3d4352; --md-on-surface-dim: #545b6b; --md-outline: #5b6272; --md-outline-variant: #c4c9d6;
+  --md-inverse-surface: #2b2f39; --md-inverse-on-surface: #eef0f6; --md-inverse-primary: #b9c3ff;
+  --md-secondary: #545b72; --md-on-secondary: #ffffff; --md-tertiary: #2b6870; --md-on-tertiary: #ffffff;
+  --md-scrim: rgba(20, 24, 36, .36);
+  --el-1: 0 1px 2px rgba(24,30,52,.10), 0 1px 3px rgba(24,30,52,.06);
+  --el-2: 0 1px 3px rgba(24,30,52,.10), 0 4px 12px rgba(24,30,52,.07);
+  --el-3: 0 8px 24px rgba(24,30,52,.13), 0 2px 6px rgba(24,30,52,.08);
+}
+html[data-theme='classic'][data-ui='light'][data-accent='graphite'] { --md-primary: #3d4e99; --md-on-primary: #ffffff; --md-primary-container: #dce1fa; --md-on-primary-container: #121a45; --md-secondary-container: #d3daf6; --md-on-secondary-container: #1b2033; --md-tertiary-container: #d2e9ec; --md-on-tertiary-container: #0b2a2f; }
+/* (Dark: the snackbar's action on the light inverse surface was the fallback lilac, hard to read; a slate ink instead.
+   The warm root's sand secondary never shows: a cool one.) */
+html[data-theme='classic']:not([data-ui='light']) { --md-inverse-primary: #3d4656; --md-secondary: #b9c0cc; --md-on-secondary: #1f2329; }
+/* (Today's standard: a chosen chip or place told from the others at a glance — the graphite's selected tone a step
+   lighter and cooler than the chips' own, its character unchanged.) */
+html[data-theme='classic']:not([data-ui='light'])[data-accent='graphite'] { --md-secondary-container: #3a404b; }
+
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
 /* Every icon is a stroked line drawing (the few filled ones say so on their paths): drawn so wherever it lands,

@@ -48,7 +48,7 @@ const getLoop = (port, p) => new Promise((resolve, reject) => http.get({ host: '
     r.fulfill({ status: got.status, body: got.body, headers: { 'content-type': got.type || 'application/octet-stream', 'access-control-allow-origin': '*', 'content-length': String(got.body.length) } });
   });
   await p.addInitScript(() => {
-    if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player'], theme: 'frost' })); localStorage.setItem('kt.themeMigrated', '1'); }
+    if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player'], theme: 'frost', themeChosen: true })); localStorage.setItem('kt.themeMigrated', '1'); }
     // (Storage full, when the test asks: every IndexedDB write refused as a full disk would.)
     const put = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function (...a) { if (localStorage.getItem('test.full') && this.name === 'files') throw new DOMException('The quota has been exceeded.', 'QuotaExceededError'); return put.apply(this, a); };

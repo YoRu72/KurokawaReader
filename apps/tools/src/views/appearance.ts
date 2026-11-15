@@ -8,7 +8,7 @@ import { undoScope } from '../ui/undo';
 import { saveText } from '../native';
 import { myStore } from '../myStore';
 import type { EditorDeps } from '../theme/editor';
-import { themeById, type BlurPref } from '../theme/themes';
+import { themeById, DEFAULT_THEME, type BlurPref } from '../theme/themes';
 import { themeGallery } from '../theme/gallery';
 import { themeIo } from '../themeIo';
 
@@ -22,7 +22,7 @@ function useTheme(id: string, own: boolean): void {
   const hasRoles = !next.classic && !!(next.dark?.roles || next.light?.roles);
   const takeOwn = own && hasRoles;
   const accent: Accent = takeOwn ? 'theme' : cur.accent === 'theme' ? (cur.accentPrev ?? 'graphite') : cur.accent;
-  updateSettings({ theme: id, accent, accentPrev: takeOwn && cur.accent !== 'theme' ? cur.accent : cur.accentPrev });
+  updateSettings({ theme: id, themeChosen: true, accent, accentPrev: takeOwn && cur.accent !== 'theme' ? cur.accent : cur.accentPrev });
   reloadThemePictures();
 }
 /** A file chosen by the reader (null when the chooser was closed). */
@@ -56,7 +56,7 @@ export function editorDeps(rerender: () => void): EditorDeps {
     keys: (handler) => undoScope(handler),
   };
 }
-const RESET_KEYS = ['theme', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours'] as const;
+const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours'] as const;
 
 export function appearanceCard(rerender: () => void): HTMLElement {
   const s = getSettings(); const def = themeById(s.theme);
@@ -89,12 +89,12 @@ export function appearanceCard(rerender: () => void): HTMLElement {
     def.classic ? null : row(t('glassBlur'), pickButton(t('glassBlur'), [['auto', t('glassBlurAuto')], ['full', t('glassBlurFull'), t('glassBlurFullHint')], ['reduced', t('glassBlurReduced'), t('glassBlurReducedHint')], ['off', t('glassBlurOff'), t('glassBlurOffHint')]], (s.glassBlur ?? 'auto') as BlurPref, (v) => { updateSettings({ glassBlur: v }); rerender(); }, t('close')), glassHint),
     !def.classic && !pc ? toggle(t('glassBattery'), s.glassBattery !== false, (v) => { updateSettings({ glassBattery: v }); rerender(); }, t('glassBatteryHint')) : null,
     !def.classic && pc ? toggle(t('glassRail'), s.glassRail !== false, (v) => updateSettings({ glassRail: v }), t('glassRailHint')) : null,
-    def.force ? row(t('uiMode'), h('span', { class: 'src' }, t(def.force === 'dark' ? 'themeDarkOnly' : 'themeLightOnly'))) : row(t('uiMode'), pickButton(t('uiMode'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode, (v) => { updateSettings({ uiMode: v as UiMode }); rerender(); }, t('close'))),
+    def.force ? row(t('uiMode'), h('span', { class: 'src' }, t(def.force === 'dark' ? 'themeDarkOnly' : 'themeLightOnly'))) : row(t('uiMode'), pickButton(t('uiMode'), [['system', t('uiSystem')], ['light', t('uiLight')], ['dark', t('uiDark')]], s.uiMode, (v) => { updateSettings({ uiMode: v as UiMode }); rerender(); }, t('close')), t('uiModeHint')),
     followsTone ? row(t('darkTone'), pickButton(t('darkTone'), [['default', t('darkToneDefault')], ['grey', t('darkToneGrey')], ['black', t('darkToneBlack')]], s.darkTone, (v) => { updateSettings({ darkTone: v as DarkTone }); rerender(); }, t('close'))) : null,
     row(t('accent'), swatches, ownColours ? t('accentThemeHint') : undefined),
     h('div', { class: 'row' }, h('span', null, t('appearanceReset'), h('small', { class: 'src' }, t('appearanceResetHint'))), h('button', { type: 'button', class: 'btn text small', onclick: () => {
       const cur = getSettings(); const before = Object.fromEntries(RESET_KEYS.map((k) => [k, cur[k]])) as Partial<Settings>;
-      updateSettings({ theme: 'frost', glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'dark', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined }); reloadThemePictures(); rerender();
+      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'dark', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined }); reloadThemePictures(); rerender();
       toast(t('appearanceResetDone'), 'info', 6000, { label: t('undo'), run: () => { updateSettings(before); reloadThemePictures(); rerender(); } });
     } }, icon('refresh'), t('appearanceReset'))),
     def.by ? h('div', { class: 'row theme-credit' }, h('span', null, t('themeBy', { who: def.by }), h('small', { class: 'src' }, t('themeLicence'))), h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses'))) : null);

@@ -1,6 +1,6 @@
 // The app's settings: kept in localStorage under one key, applied to the document (theme, accent) on change.
 import type { Limits } from './engine/types';
-import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
+import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, migrateMain, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
 import { loadMine, toDef, pictureKey, pictureAsset } from './theme/custom';
 import { myStore } from './myStore';
 import { nativePlatform } from './native';
@@ -18,8 +18,10 @@ export interface Settings {
   accentCustom: string;
   /** The accent before a theme's own colours were taken (given back when a theme that follows the accent is chosen). */
   accentPrev?: Accent;
-  /** The theme (theme/themes.ts): the glass look, its colours and background; 'classic' = the look before themes. */
+  /** The theme (theme/themes.ts): 'classic' = «Expressive 3», the main theme (the app's own look); the others glass. */
   theme?: string;
+  /** The reader chose the theme (the gallery, the editor), so no move to a new default ever touches it (from 0.21). */
+  themeChosen?: boolean;
   /** Set once by the move to themes for those who had chosen their own dark tone or accent: Frost keeps those colours. */
   themeKeepColours?: boolean;
   /** How much glass is blurred: chosen, or 'auto' (by the device, the system's wishes, the battery). */
@@ -179,6 +181,8 @@ export interface Settings {
 }
 
 const KEY = 'kt.settings';
+/** The snackbar owed after the main theme came back (0.21): what was in use before, for its «Use Frost». */
+export const MAIN_NOTE_KEY = 'kt.mainThemeNote';
 const DEFAULTS: Settings = {
   uiMode: 'dark', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff', theme: DEFAULT_THEME, glassBlur: 'auto',
   downloadDir: '', maxActive: 3, connections: 0, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: false,
@@ -194,21 +198,34 @@ const DEFAULTS: Settings = {
 export const BUILT_IN = ['player'];
 const withBuiltIn = (s: Settings): Settings => (BUILT_IN.every((b) => s.addons.includes(b)) ? s : { ...s, addons: [...s.addons, ...BUILT_IN.filter((b) => !s.addons.includes(b))] });
 let current: Settings = load();
-migrateTheme();
 // (The reader's own themes, among the others from the start.)
-for (const m of loadMine(myStore)) upsertTheme(toDef(m));
+const mine0 = loadMine(myStore);
+migrateTheme(mine0.length > 0);
+for (const m of mine0) upsertTheme(toDef(m));
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
-/** Once: the move to themes (kt.themeMigrated). A fresh install and untouched settings get the new default; who had
- *  chosen a dark tone or an accent gets it too, with those colours kept inside the glass. */
-function migrateTheme(): void {
+/** Once: the move to themes (kt.themeMigrated, 0.17). Then once (kt.mainTheme, 0.21): «Expressive 3» the main theme
+ *  again — an install Frost was given without asking goes back to it (theme/themes.ts migrateMain), a snackbar then
+ *  says so and can undo it (kt.mainThemeNote, theme/mainNote.ts); a theme chosen is kept, and marked as chosen. */
+function migrateTheme(hasMine: boolean): void {
   // (A theme that is no longer in the app — «ember» was taken out before release — falls back to the default.)
   if (current.theme === 'ember') { current = { ...current, theme: DEFAULT_THEME }; try { localStorage.setItem(KEY, JSON.stringify(current)); } catch { /* private mode */ } }
   try {
-    if (localStorage.getItem('kt.themeMigrated')) return;
-    const raw = localStorage.getItem(KEY); const stored = raw ? (JSON.parse(raw) as Partial<Settings>) : null;
-    if (!stored?.theme) { const m = migrateLook(stored); current = { ...current, theme: m.theme, themeKeepColours: m.keepColours || undefined }; if (raw) localStorage.setItem(KEY, JSON.stringify(current)); }
-    localStorage.setItem('kt.themeMigrated', '1');
+    const raw = localStorage.getItem(KEY);
+    let stored: Partial<Settings> | null = null;
+    try { const v: unknown = raw ? JSON.parse(raw) : null; stored = v && typeof v === 'object' && !Array.isArray(v) ? (v as Partial<Settings>) : null; } catch { stored = null; }
+    let dirty = false;
+    if (!localStorage.getItem('kt.themeMigrated')) {
+      if (!stored?.theme) { const m = migrateLook(stored); current = { ...current, theme: m.theme, themeKeepColours: m.keepColours || undefined }; dirty = true; }
+      localStorage.setItem('kt.themeMigrated', '1');
+    }
+    if (!localStorage.getItem('kt.mainTheme')) {
+      const m = migrateMain(stored, hasMine);
+      if (m.moved) { current = { ...current, theme: m.theme, themeKeepColours: undefined }; localStorage.setItem(MAIN_NOTE_KEY, JSON.stringify(m.prev)); dirty = true; }
+      else if (m.chosen && !current.themeChosen) { current = { ...current, themeChosen: true }; dirty = true; }
+      localStorage.setItem('kt.mainTheme', '1');
+    }
+    if (dirty && stored) localStorage.setItem(KEY, JSON.stringify(current));
   } catch { /* private mode: the defaults */ }
 }
 function load(): Settings {
@@ -263,7 +280,8 @@ export function applyChrome(s: Settings = current): void {
   const roles = ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'];
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light); else if (!useThemeColours) roles.forEach((k) => html.style.removeProperty(k));
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', got.glass ? got.ground : light ? '#f7f8fa' : s.darkTone === 'black' ? '#000000' : s.darkTone === 'grey' ? '#1c1b1f' : '#121314');
+  // (The theme's ground: glass themes their own, Expressive 3 the dark tone's or its soft light one.)
+  if (meta) meta.setAttribute('content', got.ground);
 }
 // (The system's wishes and the battery change while the app is open: the blur follows.)
 if (typeof matchMedia === 'function') for (const q of ['(prefers-reduced-transparency: reduce)', '(prefers-reduced-motion: reduce)']) matchMedia(q).addEventListener?.('change', () => applyChrome());

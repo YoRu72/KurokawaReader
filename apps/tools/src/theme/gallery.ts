@@ -2,7 +2,7 @@
 // marked, a download button on those whose pictures are fetched on demand (progress, then usable), remove to free
 // the room, and «Add themes» for those in the repository's list. Shared by the Kurokawa apps: the app hands in its
 // words, icons and storage (`GalleryDeps`); styles are in glass.css's companion block, gallery.css.
-import { THEMES, themeById, previewOf, modesOf, registerTheme, type ThemeDef, type Mode, type DarkTone, type Preview } from './themes';
+import { THEMES, DEFAULT_THEME, themeById, previewOf, modesOf, registerTheme, type ThemeDef, type Mode, type DarkTone, type Preview } from './themes';
 import { deferred } from './history';
 import { loadIndex, installPack, removePack, installed, pictureUrls, PackError, forgetIndex, type PackIO, type Installed, type IndexEntry } from './packs';
 
@@ -101,7 +101,7 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
     },
     el('div', { class: 'tg-pair', 'data-n': String(minis.length) }, ...minis),
     on ? el('span', { class: 'tg-check', 'aria-hidden': 'true' }, d.icon('check')) : null,
-    el('span', { class: 'tg-meta' }, el('b', { class: 'tg-name' }, name), def.by ? el('small', { class: 'tg-by' }, d.t('themeBy', { who: def.by })) : null,
+    el('span', { class: 'tg-meta' }, el('b', { class: 'tg-name' }, name, def.id === DEFAULT_THEME ? el('span', { class: 'tg-tag' }, d.t('themeDefaultTag')) : null), def.by ? el('small', { class: 'tg-by' }, d.t('themeBy', { who: def.by })) : null,
       el('small', { class: 'tg-state' + (err ? ' err' : ''), id: `tg-s-${def.id}`, role: err ? 'alert' : undefined }, state)));
     const act = prog ? el('span', { class: 'tg-progress', role: 'progressbar', 'aria-label': d.t('themeDownloadingShort') }, el('i', { style: { width: `${prog.total ? Math.min(100, (prog.done / prog.total) * 100) : 8}%` } }))
       : need ? el('button', { type: 'button', class: 'tg-act tg-dl' + (err ? ' retry' : ''), title: err ? d.t('themeRetry') : d.t('themeDownload', { size: d.formatBytes(sizeOf(def)) }), 'aria-label': `${err ? d.t('themeRetry') : d.t('themeDownload', { size: d.formatBytes(sizeOf(def)) })} — ${name}`, onclick: () => void fetchIt(def, false) }, d.icon(err ? 'refresh' : 'download'))

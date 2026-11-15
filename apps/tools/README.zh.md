@@ -13,4 +13,4 @@
 - **应用安装（Android）:** 直接从文件安装 APK 与分包（.apks / .xapk / .apkm）。
 - **播放器:** REX Player 手势、A/B 剪辑（烧录字幕）、在线字幕、跳过片头片尾（AniSkip、章节）、画面滤镜、环境光、画中画。
 
-阿拉伯语 · 英语 · 日语 · 韩语 · 中文，RTL/LTR，Material 3 Expressive，默认深色。
+阿拉伯语 · 英语 · 日语 · 韩语 · 中文，RTL/LTR，Material 3 Expressive（默认主题为“Expressive 3”，浅色模式柔和；另有磨砂玻璃主题可选），默认深色。

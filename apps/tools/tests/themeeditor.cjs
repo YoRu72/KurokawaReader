@@ -58,7 +58,7 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
     const ctx = await br.newContext({ viewport: { width: o.width, height: o.height }, isMobile: !!o.isMobile, hasTouch: !!o.hasTouch, locale: lang, serviceWorkers: 'block', acceptDownloads: true });
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(`${lang}: ${e.message}`));
     let offline = false; await ctx.route(/raw\.githubusercontent\.com/, (r) => (offline ? r.abort('internetdisconnected') : r.fulfill({ status: 404, body: '' })));
-    await p.addInitScript((l) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player'], theme: 'frost', glassBlur: 'full' })); localStorage.setItem('kt.themeMigrated', '1'); }, lang);
+    await p.addInitScript((l) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player'], theme: 'frost', themeChosen: true, glassBlur: 'full' })); localStorage.setItem('kt.themeMigrated', '1'); }, lang);
     const tag = `(${lang}, ${size})`;
     const css = (k) => p.evaluate((k) => getComputedStyle(document.documentElement).getPropertyValue(k).trim(), k);
     const gallery = async () => { await p.goto(`http://127.0.0.1:${port}/#/settings/appearance`); await p.waitForSelector('.tg-card[data-theme="frost"] .tg-edit'); };
@@ -152,7 +152,7 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
 
     // Reset appearance, with Undo.
     await p.locator('#appearance .row', { hasText: lang === 'ar' ? 'أعِد ضبط المظهر' : 'Reset appearance' }).locator('button').click();
-    await p.waitForFunction(() => document.documentElement.dataset.theme === 'frost');
+    await p.waitForFunction(() => document.documentElement.dataset.theme === 'classic');
     await p.click('.toast .toast-act'); await p.waitForFunction((id) => document.documentElement.dataset.theme === id, id1);
     ok(`Reset appearance shows a snackbar; «Undo» puts the theme back ${tag}`, true);
     await ctx.close();

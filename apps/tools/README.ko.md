@@ -13,4 +13,4 @@
 - **앱 설치(Android):** APK와 분할 번들(.apks / .xapk / .apkm)을 파일에서 바로 설치.
 - **플레이어:** REX Player 제스처, A/B 자르기(자막 입히기), 온라인 자막, 오프닝·엔딩 건너뛰기(AniSkip·챕터), 화면 필터, 앰비언트, PIP.
 
-아랍어 · 영어 · 일본어 · 한국어 · 중국어, RTL/LTR, Material 3 Expressive, 기본 어두운 테마.
+아랍어 · 영어 · 일본어 · 한국어 · 중국어, RTL/LTR, Material 3 Expressive(기본 테마는 차분한 라이트 모드를 갖춘 «Expressive 3», 유리 테마도 선택 가능), 기본 어두운 테마.

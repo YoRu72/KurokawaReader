@@ -11,7 +11,7 @@ import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './rou
 import { h, icon, closeSheets } from './ui/dom';
 import { noteTab, tabPath } from './ui/backstack';
 const backNav = () => import('./ui/backnav');
-import { applyChrome, onSettingsChange, getSettings } from './settings';
+import { applyChrome, onSettingsChange, getSettings, MAIN_NOTE_KEY } from './settings';
 import { navPlacesAll } from './ui/navPlaces';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
@@ -184,6 +184,8 @@ else {
   wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
   onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   void import('./downloads/power').then((m) => m.applyPower());
+  // (Once after 0.21 moved an install back to «Expressive 3»: the snackbar that says so and can undo it.)
+  try { if (localStorage.getItem(MAIN_NOTE_KEY)) afterFirstPaint(() => window.setTimeout(() => void import('./theme/mainNote').then((m) => m.showMainNote()), 700)); } catch { /* private mode */ }
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).
   { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined);
     // (The phone: the app's Settings alone decide the app's DNS over HTTPS — «off» sent as much as a resolver, so the old
