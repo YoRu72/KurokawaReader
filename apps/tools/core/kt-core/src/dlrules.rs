@@ -118,6 +118,78 @@ pub fn restart_after_stop(resumed_while_stopping: bool, paused: bool, state: &st
     resumed_while_stopping && !paused && state != "done" && state != "removed" && state != "seeding"
 }
 
+/* ---------- a link that names a plain file ---------- */
+
+/// Extensions of files that are never web pages (the page's src/downloads/direct.ts, the same table: tests/directfile.cjs
+/// holds them to each other).
+pub const DIRECT_EXTS: &[&str] = &[
+    "pdf", "epub", "mobi", "azw3", "djvu", "cbz", "cbr", "docx", "xlsx", "pptx", "txt", "zip", "7z", "rar", "tar", "gz", "xz", "bz2", "zst", "iso", "apk", "xapk", "apks", "apkm",
+    "exe", "msi", "dmg", "deb", "appimage", "ass", "ssa", "srt", "vtt", "sub", "ttf", "otf", "jpg", "jpeg", "png", "gif", "webp", "avif", "bmp", "svg", "torrent", "mkv", "mp4", "webm",
+    "avi", "mov", "m4v", "ts", "flac", "mp3", "m4a", "opus", "ogg", "wav", "aac",
+];
+
+/// `%XX` sequences decoded as UTF-8 (a broken sequence or bytes that are not UTF-8 left as they are); `+` stays.
+pub fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = |c: u8| (c as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    match String::from_utf8(out) {
+        Ok(d) => d,
+        Err(_) => s.to_string(),
+    }
+}
+
+/// The path of an http(s) address (no query, no fragment), still percent-encoded; None for any other address.
+fn http_path(u: &str) -> Option<&str> {
+    let t = u.trim();
+    let lower = t.get(..8).map(|p| p.to_ascii_lowercase()).unwrap_or_default();
+    let rest = if lower.starts_with("https://") {
+        &t[8..]
+    } else if lower.starts_with("http://") {
+        &t[7..]
+    } else {
+        return None;
+    };
+    let rest = &rest[..rest.find(|c| c == '?' || c == '#').unwrap_or(rest.len())];
+    Some(match rest.find('/') {
+        Some(i) => &rest[i..],
+        None => "",
+    })
+}
+
+/// A link whose last path part (percent-decoded) ends in an extension of a plain file — on any host, even one a video
+/// extractor knows — and that is not a page which only looks like a file (a repository's «blob» view, a wiki's file page,
+/// a Drive viewer). A manifest (m3u8, mpd) is none; no extension (or .php …): the link has to be asked.
+pub fn is_direct_file_url(u: &str) -> bool {
+    let path = match http_path(u) {
+        Some(p) => percent_decode(p),
+        None => return false,
+    };
+    let last = path.rsplit('/').next().unwrap_or("").trim();
+    let dot = match last.rfind('.') {
+        Some(d) if d > 0 => d,
+        _ => return false,
+    };
+    let ext = last[dot + 1..].to_ascii_lowercase();
+    if !DIRECT_EXTS.contains(&ext.as_str()) {
+        return false;
+    }
+    let p = path.to_ascii_lowercase();
+    !(p.contains("/blob/") || p.contains("/wiki/file:") || p.contains("/wiki/image:") || p.contains("/wiki/media:") || p.contains("/file/d/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +297,25 @@ mod tests {
         assert_eq!(free_name_with(&ex, "x", None), "x (3)");
         let all = |_: &str| true;
         assert!(free_name_with(&all, "y.txt", None).starts_with("y ("), "past 9999: the time stands in");
+    }
+
+    #[test]
+    fn direct_file_links() {
+        // (The owner's: an Internet Archive download host, an Arabic name percent-encoded with double spaces and U+060C.)
+        assert!(is_direct_file_url("https://dn721300.ca.archive.org/0/items/x-1/%D8%AB%D9%84%D8%A7%D8%AB%20%20%D8%B1%D8%B3%D8%A7%D8%A6%D9%84%D8%8C%201688.pdf"));
+        assert!(is_direct_file_url("https://example.org/a/B.PDF?dl=1#x"));
+        assert!(is_direct_file_url("HTTPS://example.org/a%2Bb.zip"));
+        assert!(!is_direct_file_url("https://example.org/a.pdf/"));
+        assert!(!is_direct_file_url("https://example.org/page.html"));
+        assert!(!is_direct_file_url("https://example.org/get.php?file=a.pdf"));
+        assert!(!is_direct_file_url("https://example.org/live/master.m3u8"));
+        assert!(!is_direct_file_url("https://example.org/manifest.mpd"));
+        assert!(!is_direct_file_url("https://www.youtube.com/watch?v=a.mp4"));
+        assert!(!is_direct_file_url("https://github.com/o/r/blob/main/a.pdf"));
+        assert!(!is_direct_file_url("ftp://example.org/a.pdf"));
+        assert!(!is_direct_file_url("https://example.org"));
+        assert!(is_direct_file_url("https://example.org/x/a b.mkv"));
+        assert_eq!(percent_decode("a%20%20b%D8%8C%2Bc+d%"), "a  b\u{60c}+c+d%");
+        assert_eq!(percent_decode("%ff%fe"), "%ff%fe");
     }
 }

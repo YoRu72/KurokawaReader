@@ -1446,4 +1446,8 @@ export const ja: Partial<Strings> = {
   maxVideoHint: "同時に実行する動画ダウンロードの数。ほかは順番を待ちます。",
   vQueuedAt: "待ち順: {n}",
   vPageNotSaved: "動画サイトのページはファイルとして保存しません。動画を読めるまでダウンロードは押せません。",
+  errExtractorNoFile: "サイトの抽出機能はファイルを作成できませんでした。",
+  errExtractorUnsupported: "サイトの抽出機能はこのリンクに対応していません。",
+  logDirectRetry: "抽出機能はファイルを作成しませんでしたが、リンクはファイルを返します。通常のダウンロードとしてやり直します。",
+  errNothingYet: "まだ何も受信していません。",
 };

@@ -1446,4 +1446,8 @@ export const zh: Partial<Strings> = {
   maxVideoHint: "同时运行的视频下载数量，其余的排队等候。",
   vQueuedAt: "队列位置：{n}",
   vPageNotSaved: "不会把视频网站的页面另存为文件：在能读取到视频之前，“下载”不可用。",
+  errExtractorNoFile: "网站提取器未生成任何文件。",
+  errExtractorUnsupported: "网站提取器不支持此链接。",
+  logDirectRetry: "提取器未生成文件，但该链接返回的是文件：改用普通下载重试。",
+  errNothingYet: "尚未收到任何内容。",
 };

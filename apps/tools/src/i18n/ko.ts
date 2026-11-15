@@ -1446,4 +1446,8 @@ export const ko: Partial<Strings> = {
   maxVideoHint: "한 번에 실행할 동영상 다운로드 수입니다. 나머지는 차례를 기다립니다.",
   vQueuedAt: "대기 순서: {n}",
   vPageNotSaved: "동영상 사이트의 페이지는 파일로 저장하지 않습니다. 동영상을 읽을 수 있을 때까지 다운로드는 기다립니다.",
+  errExtractorNoFile: "사이트 추출기가 파일을 만들지 못했습니다.",
+  errExtractorUnsupported: "사이트 추출기가 이 링크를 지원하지 않습니다.",
+  logDirectRetry: "추출기가 파일을 만들지 못했지만 링크가 파일을 반환합니다. 일반 다운로드로 다시 시도합니다.",
+  errNothingYet: "아직 받은 것이 없습니다.",
 };

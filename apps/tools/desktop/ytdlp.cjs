@@ -264,6 +264,16 @@ class VideoJobs {
 }
 // (A copy of src/video/ytdlp.ts's list — tests/videohosts.cjs keeps the three equal.)
 const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|reddit\.com|bilibili\.com|bilibili\.tv|nicovideo\.jp|soundcloud\.com|bandcamp\.com|ok\.ru|vk\.com|vkvideo\.ru|rumble\.com|odysee\.com|streamable\.com|imgur\.com|pinterest\.com|threads\.net|9gag\.com|crunchyroll\.com|iwara\.tv|nhk\.or\.jp|abema\.tv|tver\.jp|kick\.com|archive\.org|ted\.com|bitchute\.com|mixcloud\.com|vlive\.tv|weibo\.com|douyin\.com|ixigua\.com|youku\.com|zhihu\.com|naver\.com|kakao\.com|aparat\.com|shahid\.mbc\.net)$/i;
+// (A copy of src/downloads/direct.ts's table — tests/directfile.cjs keeps the three equal: a plain file such a site serves is a file, not a page.)
+const DIRECT_EXTS = ['pdf', 'epub', 'mobi', 'azw3', 'djvu', 'cbz', 'cbr', 'docx', 'xlsx', 'pptx', 'txt', 'zip', '7z', 'rar', 'tar', 'gz', 'xz', 'bz2', 'zst', 'iso', 'apk', 'xapk', 'apks', 'apkm', 'exe', 'msi', 'dmg', 'deb', 'appimage', 'ass', 'ssa', 'srt', 'vtt', 'sub', 'ttf', 'otf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg', 'torrent', 'mkv', 'mp4', 'webm', 'avi', 'mov', 'm4v', 'ts', 'flac', 'mp3', 'm4a', 'opus', 'ogg', 'wav', 'aac'];
+function isDirectFile(u) {
+  let p; try { p = new URL(String(u)); } catch { return false; } if (!/^https?:$/.test(p.protocol)) return false;
+  let path = p.pathname; try { path = decodeURIComponent(path); } catch { path = path.replace(/(%[0-9a-f]{2})+/gi, (m) => { try { return decodeURIComponent(m); } catch { return m; } }); }
+  const last = path.slice(path.lastIndexOf('/') + 1).trim(); const dot = last.lastIndexOf('.'); if (dot <= 0 || !/^[a-z0-9]{1,8}$/i.test(last.slice(dot + 1))) return false;
+  return DIRECT_EXTS.includes(last.slice(dot + 1).toLowerCase()) && !/\/blob\/|\/wiki\/(file|image|media):|\/file\/d\//i.test(path);
+}
+/** A page of a site yt-dlp is always asked about (never a plain file such a site serves). */
+const isVideoPage = (u) => { try { return VIDEO_HOSTS.test(new URL(String(u)).hostname) && !isDirectFile(u); } catch { return false; } };
 /** The video jobs' pushes (kt-core PushGate): a transition — a phase, a state, an error — sent at once (carrying any
  *  waiting progress); progress numbers at most every `every` ms, merged. No phase is ever lost to the merging. */
 function pusher(sendNow, every = 250) {
@@ -272,7 +282,7 @@ function pusher(sendNow, every = 250) {
 }
 /** kt-core videotools.rs healable: a failure a newer yt-dlp often mends. */
 const healable = (line) => /unable to extract|failed to extract|failed to parse|nsig extraction failed|player response|please report this issue|update yt-dlp|yt-dlp -u|signature solving failed|n challenge solving failed/i.test(line);
-module.exports = { pusher, vetArgs, ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, setBusy, VIDEO_HOSTS, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION, cookieSite, cookieFileFor, saveCookies, listCookies, removeCookies, withShellInputs, infoId, freshInfo, healable };
+module.exports = { pusher, vetArgs, ensure, haveBinary, version, update, info, normalise, VideoJobs, maybeUpdate, setBusy, VIDEO_HOSTS, DIRECT_EXTS, isDirectFile, isVideoPage, binPath, rollback, olds, setCustomPath, isManaged, MIN_VERSION, cookieSite, cookieFileFor, saveCookies, listCookies, removeCookies, withShellInputs, infoId, freshInfo, healable };
 
 /* ---------- a bilingual subtitle: two .srt files beside the video (yt-dlp's «stem.lang.srt») merged, cue by cue ---------- */
 const TIMES = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/;

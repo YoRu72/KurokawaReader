@@ -10,6 +10,7 @@ import { ktPlugin, nativePlatform } from '../native';
 import { getSettings } from '../settings';
 import { t, localDigits } from '../i18n';
 import { liveLine } from '../downloads/live';
+import { plainEngineError } from '../downloads/errors';
 import { getEngine, displayName, isVideo, mainFilePath } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
 import type { Task } from '../engine/types';
@@ -44,7 +45,8 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const hlsLine = (x.meta?.hls || x.kind === 'video') && (x.state === 'downloading' || x.state === 'metadata') ? h('p', { class: 'src' }, icon('film'), ' ', liveLine(x)) : null;
     const acts = h('div', { class: 'task-detail-actions' });
     // (One held by the app — Wi‑Fi only on mobile data, a low battery —: «Download now», started in spite of the hold.)
-    if (x.state === 'paused' || x.state === 'failed') acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.resume(x.id, !!x.heldBy) }, icon('play'), t(x.heldBy ? 'downloadNow' : 'resume')));
+    // (One main action: a failed download with nothing in the file is «Try again»; with part of it here, «Resume»; a held or paused one, «Resume» / «Download now».)
+    if (x.state === 'paused' || x.state === 'failed') { const fresh = x.state === 'failed' && !(x.done > 0) && !x.heldBy; acts.append(h('button', { type: 'button', class: 'btn primary', 'data-act': fresh ? 'try-again' : 'resume', onclick: () => void eng.resume(x.id, !!x.heldBy) }, icon(fresh ? 'refresh' : 'play'), t(x.heldBy ? 'downloadNow' : fresh ? 'retry' : 'resume'))); }
     if (x.state !== 'done') acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/rules').then((m) => m.clockSheet(x)) }, icon('clock'), t('clockTitle')));
     else if (x.state !== 'done' && eng.can.pause) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void eng.pause(x.id) }, icon('pause'), t('pause')));
     // What the main file is decides the first button: a video or a sound plays in the app, an app installs, an
@@ -81,7 +83,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const panel = h('section', { class: 'card kt-panel' },
       x.kind !== 'torrent' ? h('div', { class: 'kt-conn' }, h('div', { class: 'kt-ph' }, t('connectionsTitle')), lanes(x)) : null,
       speedChart(hst, x));
-    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('p', { class: 'plan-note bad' }, errorText(x.error), /^HTTP (401|403|410)$/.test(x.error) && x.kind === 'http' ? h('span', { class: 'row-actions wrap expired-acts' },
+    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('div', { class: 'plan-note bad task-error' }, h('p', { class: 'err-line', dir: 'auto' }, errorText(x.error)), plainEngineError(x.error) ? h('p', { class: 'err-raw src', dir: 'ltr' }, x.error) : null, /^HTTP (401|403|410)$/.test(x.error) && x.kind === 'http' ? h('span', { class: 'err-actions expired-acts' },
         h('small', { class: 'src' }, t('errExpiredHint')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'relink', onclick: () => void import('../browser').then((m) => m.relinkFromBrowser(x)) }, icon('globe'), t('relinkBrowser')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : h('span'), hlsLine ?? h('span'), limitRow ?? h('span'), acts),
@@ -124,13 +126,13 @@ function commandCard(x: Task): HTMLElement {
  *  network will not resolve, or an unreachable site → tried through the resolver (DoH); a cut-short file → tried again. */
 function remedies(x: Task): HTMLElement | null {
   const e = x.error ?? ''; const eng = getEngine(); const again = (label: string) => h('button', { type: 'button', class: 'btn tonal small', onclick: () => void eng.resume(x.id).catch(() => undefined) }, icon('refresh'), label);
-  if (/ENOSPC|No space|noSpace/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errNoSpaceHint')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/files') }, icon('chart'), t('filesAnalyzer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('folder'), t('changeFolder')));
-  if (/^HTTP (429|50\d)$/.test(e)) { const wait = /429/.test(e) ? 60 : 20; const b = again(t('errRetryIn', { s: localDigits(wait) })); setTimeout(() => { if (b.isConnected) b.click(); }, wait * 1000); return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errBusyHint')), b); }
-  if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), again(t('retry')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
+  if (/ENOSPC|No space|noSpace/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errNoSpaceHint')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/files') }, icon('chart'), t('filesAnalyzer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('folder'), t('changeFolder')));
+  if (/^HTTP (429|50\d)$/.test(e)) { const wait = /429/.test(e) ? 60 : 20; const b = again(t('errRetryIn', { s: localDigits(wait) })); setTimeout(() => { if (b.isConnected) b.click(); }, wait * 1000); return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errBusyHint')), b); }
+  if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
   // (A DRM-protected lecture or stream: nothing to retry; the app does not go around protection.)
-  if (/DRM|drm:|SAMPLE-AES|Widevine|protected/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errDrmHint')));
+  if (/DRM|drm:|SAMPLE-AES|Widevine|protected/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errDrmHint')));
   if (/^HTTP 4(04|10)$/.test(e)) return null;
-  return again(t('retry'));
+  return null;
 }
-export const errorText = (e: string): string => (e === 'page' ? t('errPage') : e === 'noFolderAccess' ? t('errNoFolderAccess') : isCut(e) ? `${e} — ${t('errCut')}` : e);
+export const errorText = (e: string): string => (plainEngineError(e) ?? (e === 'page' ? t('errPage') : e === 'noFolderAccess' ? t('errNoFolderAccess') : isCut(e) ? `${e} — ${t('errCut')}` : e));
 

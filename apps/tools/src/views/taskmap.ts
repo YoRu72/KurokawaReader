@@ -7,6 +7,7 @@
 import { h, icon, toast } from '../ui/dom';
 import { countSegments, t, formatBytes, localDigits, formatDate } from '../i18n';
 import type { Task } from '../engine/types';
+import { plainEngineError, wasRetried } from '../downloads/errors';
 
 const SPECTRUM = ['#5ac8fa', '#64d2a0', '#ffb340', '#bf8cff', '#ff6b6b', '#40c8c0', '#ffd60a', '#9aa7b8'];
 const colourOf = (i: number) => (i < 0 ? 'var(--md-outline)' : SPECTRUM[i % SPECTRUM.length]); // (-1: done before a resume)
@@ -15,14 +16,14 @@ const histories = new Map<string, TaskHistory>();
 const CAP = 120;
 /** The task's history, one speed sample a second (the last two minutes kept). */
 export function historyOf(x: Task): TaskHistory {
-  let hst = histories.get(x.id); if (!hst) { hst = { speeds: [], ups: [], at: 0, log: [{ t: x.addedAt, text: t('logAdded') }] }; histories.set(x.id, hst); }
+  let hst = histories.get(x.id); if (!hst) { hst = { speeds: [], ups: [], at: 0, log: [{ t: x.addedAt, text: t('logAdded') }, ...(wasRetried(x) ? [{ t: x.addedAt, text: t('logDirectRetry') }] : [])] }; histories.set(x.id, hst); }
   const now = Date.now();
   if ((x.state === 'downloading' || x.state === 'seeding' || x.state === 'metadata') && now - hst.at >= 900) {
     hst.at = now; hst.speeds.push(x.downSpeed || 0); hst.ups.push(x.upSpeed || 0);
     if (hst.speeds.length > CAP) { hst.speeds.shift(); hst.ups.shift(); }
     hst.startedAt ??= now;
   }
-  if (hst.lastState !== x.state) { if (hst.lastState !== undefined) hst.log.push({ t: now, text: t('logState', { s: x.state === 'done' ? t('stateDone') : x.state === 'failed' ? t('stateFailed') + (x.error ? `: ${x.error}` : '') : x.state === 'paused' ? t('statePaused') : x.state === 'downloading' ? t('stateDownloading') : x.state }) }); hst.lastState = x.state; }
+  if (hst.lastState !== x.state) { if (hst.lastState !== undefined) hst.log.push({ t: now, text: t('logState', { s: x.state === 'done' ? t('stateDone') : x.state === 'failed' ? t('stateFailed') + (x.error ? `: ${plainEngineError(x.error) ? `${plainEngineError(x.error)} (${x.error})` : x.error}` : '') : x.state === 'paused' ? t('statePaused') : x.state === 'downloading' ? t('stateDownloading') : x.state }) }); hst.lastState = x.state; }
   if (x.connections !== undefined && x.connections !== hst.lastConn && x.state === 'downloading') { if (hst.lastConn !== undefined) hst.log.push({ t: now, text: t('logConnections', { n: x.connections }) }); hst.lastConn = x.connections; }
   if (hst.log.length > 60) hst.log.splice(0, hst.log.length - 60);
   return hst;
@@ -79,12 +80,13 @@ export function meter(x: Task): HTMLElement {
   const act = (x.segments ?? []).filter((s) => s.active && s.pos < s.end).length;
   return h('div', { class: 'kt-meter' },
     h('div', { class: 'kt-meter-row' },
-      h('div', { class: 'kt-pct', dir: 'ltr' }, pct == null ? '—' : localDigits(pct >= 99.95 || pct === 0 ? Math.round(pct) : pct.toFixed(1)), h('small', null, '%')),
+      // (No percentage where there is nothing to say: the size unknown, or a failed one with nothing received.)
+      pct == null || (x.state === 'failed' && !(x.done > 0)) ? null : h('div', { class: 'kt-pct', dir: 'ltr' }, localDigits(pct >= 99.95 || pct === 0 ? Math.round(pct) : pct.toFixed(1)), h('small', null, '%')),
       h('div', { class: 'kt-of' }, t('bytesOf', { done: formatBytes(x.done), total: x.total > 0 ? formatBytes(x.total) : '?' })),
       h('div', { class: 'kt-kpis' },
         kpi(t('statSpeed'), live ? perSec(x.downSpeed) : '—'), kpi(t('statLeft'), live && x.eta ? fmtSecs(x.eta) : '—'),
         ...(x.kind === 'torrent' ? [kpi(t('statPeers'), `${localDigits(x.peers ?? 0)} · ${localDigits(x.seeds ?? 0)}`)] : x.connections || act ? [kpi(t('connectionsTitle'), `${localDigits(act || x.connections || 0)}${x.connections ? ` / ${localDigits(x.connections)}` : ''}`)] : []))),
-    h('div', { class: 'task-bar big' + (x.total > 0 || x.state === 'done' ? '' : ' busy-any') + ` state-${x.state}` }, h('i', { style: { width: `${pct ?? 0}%` } })));
+    h('div', { class: 'task-bar big' + (x.total > 0 || x.state === 'done' || !live ? '' : ' busy-any') + ` state-${x.state}` }, h('i', { style: { width: `${pct ?? 0}%` } })));
 }
 const kpi = (k: string, v: string) => h('div', { class: 'kt-kpi' }, h('div', { class: 'k' }, k), h('div', { class: 'v', dir: 'ltr' }, v));
 

@@ -22,6 +22,7 @@ import { historyOf, sparkline } from './taskmap';
 import { torEngineBadge } from './engineInfo';
 import { offerUndo } from '../ui/undo';
 import { onBack } from '../ui/backstack';
+import { plainEngineError } from '../downloads/errors';
 // (undo-redo) Downloads taken off the list with an Undo are only held out of sight until it is over — every kind,
 // a video or a .torrent's too, which the trash cannot put back —, then removed for real; Undo shows them again as
 // they were (still downloading, if they were). The list's own files are never deleted this way.
@@ -221,7 +222,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
     if (show.peers && x.kind === 'torrent' && (x.peers !== undefined || x.seeds !== undefined) && x.state !== 'done') parts.push(t('peersSeeds', { peers: localDigits(x.peers ?? 0), seeds: localDigits(x.seeds ?? 0) }));
     { const b = torEngineBadge(x); if (b) parts.push(b); }   // (stage M3: debuggable builds only)
-    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : x.error);
+    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : (plainEngineError(x.error) ?? x.error));
     { const n = noteOf(x.id); if (n) parts.push(`✎ ${n}`); }
     return parts.join(' · ');
   };

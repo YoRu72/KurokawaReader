@@ -54,8 +54,11 @@ export const ambiguousName = (url: string): boolean => /^https?:\/\//i.test(url)
 const proved = new Set<string>();
 export const markDirect = (url: string): void => { proved.add(url); };
 export const forgetDirect = (url: string): void => { proved.delete(url); };
-/** A direct file: by its name, or because the link answered with a file. */
-export const isDirectFile = (url: string): boolean => proved.has(url) || directByName(url);
+/** Links the reader sent to the extractor on purpose (the «Video» entry of the + menu): never taken for plain files. */
+const forced = new Set<string>();
+export const forcePage = (url: string): void => { forced.add(url); };
+/** A direct file: by its name, or because the link answered with a file — unless the reader chose the extractor for it. */
+export const isDirectFile = (url: string): boolean => !forced.has(url) && (proved.has(url) || directByName(url));
 
 /** From a probe: a file came (not a page), its type is not text/html and it is not a manifest. */
 export function probeSaysFile(p: { page?: boolean; type?: string; status?: number; ext?: string; attachment?: boolean }): boolean {
@@ -69,3 +72,13 @@ export function probeSaysFile(p: { page?: boolean; type?: string; status?: numbe
 }
 /** A script's name (.php, .aspx …): on a site yt-dlp knows it may be a page or a file; the link is asked before yt-dlp is. */
 export const scriptNamed = (url: string): boolean => /^https?:\/\//i.test(url) && AMBIGUOUS.has(extOf(url));
+
+/** A file name that fits a file system (255 bytes of UTF-8 in one name on Android, Linux and macOS): cut at a character
+ *  boundary — never in the middle of a UTF-8 sequence or a surrogate pair — and the extension kept. */
+export function clipName(name: string, maxBytes = 200): string {
+  const enc = new TextEncoder(); if (enc.encode(name).length <= maxBytes) return name;
+  const dot = name.lastIndexOf('.'); const hasExt = dot > 0 && name.length - dot <= 9; const ext = hasExt ? name.slice(dot) : ''; let stem = hasExt ? name.slice(0, dot) : name;
+  const room = maxBytes - enc.encode(ext).length; let out = ''; let n = 0;
+  for (const ch of stem) { const b = enc.encode(ch).length; if (n + b > room) break; out += ch; n += b; }
+  stem = out.trimEnd(); return (stem || 'download') + ext;
+}

@@ -195,6 +195,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
       if (u && isShortLink(u)) { const to = await resolveShort(u); if (to && sources()[0]?.url === u) { ta.value = ta.value.replace(u, to); one = sources(); u = to; } }
       // (A post the reader will read first: yt-dlp waits — peekHf asks it only if the reader lists nothing.)
       const readerFirst = !!u && one.length === 1 && getSettings().socialAuto !== false && !!socialOf(u);
+      if (how.video && u) { const { forcePage } = await import('../downloads/direct'); forcePage(u); }
       video.check(readerFirst ? null : u); void peekZip(u); peekHf(u); probing = lookAt(u, one[0]?.headers); saveAs.classList.toggle('many', one.length > 1 || !!(one[0]?.magnet || one[0]?.torrent)); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }

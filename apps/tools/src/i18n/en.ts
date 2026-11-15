@@ -2542,6 +2542,10 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   maxVideoHint: "Video downloads that run at once; the others wait their turn.",
   vQueuedAt: "Place in queue: {n}",
   vPageNotSaved: "A video site's page is not saved as a file: Download waits until the video can be read.",
+  errExtractorNoFile: "The site's extractor produced no file.",
+  errExtractorUnsupported: "The site's extractor does not support this link.",
+  logDirectRetry: "The extractor produced no file, but the link answers with a file: trying again as a plain download.",
+  errNothingYet: "Nothing was received yet.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

@@ -887,6 +887,10 @@ pub fn host_of(u: &str) -> Option<String> {
 }
 /// kt:isVideoHost: a page of a site yt-dlp is always asked about.
 pub fn is_video_host(u: &str) -> bool {
+    // (A plain file such a site serves — a PDF on archive.org's download host — is a file, not a page: dlrules.rs.)
+    if crate::dlrules::is_direct_file_url(u) {
+        return false;
+    }
     match host_of(u) {
         Some(h) => VIDEO_HOSTS.iter().any(|d| h == *d || h.ends_with(&format!(".{}", d))),
         None => false,
@@ -1690,6 +1694,8 @@ mod tests {
         assert!(!is_video_host("https://example.org/a.mp4"));
         assert!(!is_video_host("youtube.com/watch"));
         assert!(!is_video_host("not a url"));
+        assert!(!is_video_host("https://dn721300.ca.archive.org/0/items/x/a%20%20b.pdf"));
+        assert!(is_video_host("https://archive.org/details/x"));
     }
 
     #[test]

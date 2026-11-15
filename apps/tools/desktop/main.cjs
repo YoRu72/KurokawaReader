@@ -422,7 +422,7 @@ ipcMain.handle('kt:galleryList', async (_e, o) => { const G = require('./gallery
 ipcMain.handle('kt:galleryReady', async () => { const G = require('./gallerydl.cjs'); return { ready: G.haveBinary(), version: G.haveBinary() ? await G.version() : null }; });
 ipcMain.handle('kt:videoRollback', async () => ({ version: await Ytdlp.rollback() }));
 ipcMain.handle('kt:videoBinary', async (_e, o) => { if (o && typeof o.path === 'string') Ytdlp.setCustomPath(o.path); return { path: Ytdlp.binPath(), managed: Ytdlp.isManaged(), olds: Ytdlp.olds().map((x) => x.version), min: Ytdlp.MIN_VERSION }; });
-ipcMain.handle('kt:isVideoHost', (_e, u) => { try { return Ytdlp.VIDEO_HOSTS.test(new URL(String(u)).hostname); } catch { return false; } });
+ipcMain.handle('kt:isVideoHost', (_e, u) => { return Ytdlp.isVideoPage(u); });
 
 /* ---------- the player: ffmpeg for clips, files beside a video, a file's bytes ---------- */
 ipcMain.handle('kt:avScan', (_e, o) => Antivirus.scan(o.cfg || {}, String(o.file)));
