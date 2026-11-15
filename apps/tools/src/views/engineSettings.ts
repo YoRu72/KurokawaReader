@@ -8,7 +8,8 @@ import { t, localDigits } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
 import { nativePlatform, ktPlugin } from '../native';
 
-type Info = { rustCore?: string | null; dlEngine?: string; dlEngineChoice?: string; dlEngineFallbacks?: number };
+type Info = { rustCore?: string | null; dlEngine?: string; dlEngineChoice?: string; dlEngineFallbacks?: number;
+  /* (stage M4) */ screenEngine?: string; screenEngineChoice?: string; screenEngineFallbacks?: number };
 type Api = { deviceInfo?(): Promise<Info>; configure(o: Record<string, unknown>): Promise<void> };
 
 let info: Info | null | undefined;   // undefined: not asked yet; null: asked, nothing came
@@ -34,8 +35,18 @@ export function advancedCard(rerender: () => void): HTMLElement | null {
     updateSettings({ dlEngine: v });
     void api.configure({ dlEngine: v }).catch(() => undefined).then(() => api.deviceInfo?.()).then((r) => { if (r) { info = r; rerender(); } }).catch(() => undefined);
   }, t('close'));
+  // (Stage M4: the screen translator's engine — Classic (Java) or Rust; the jobs Rust takes and its fallbacks are the
+  // engine's (KtScreenRs). The same card, the same conditions: a phone carrying the core.)
+  const scur = getSettings().screenEngine === 'rust' ? 'rust' : 'classic';
+  const sstatus = h('small', { class: 'src screen-engine-status' }, t('screenEngineStatus', { engine: info.screenEngine === 'rust' ? t('screenEngineRust') : t('screenEngineClassic'), n: localDigits(info.screenEngineFallbacks ?? 0) }));
+  const spick = pickButton(t('screenEngine'), [['classic', t('screenEngineClassic')], ['rust', t('screenEngineRust')]], scur, (v) => {
+    updateSettings({ screenEngine: v });
+    void api.configure({ screenEngine: v }).catch(() => undefined).then(() => api.deviceInfo?.()).then((r) => { if (r) { info = r; rerender(); } }).catch(() => undefined);
+  }, t('close'));
   return h('section', { class: 'card', id: 'advanced' }, h('h3', null, t('advancedSection')),
     h('p', { class: 'hint' }, t('advancedHint')),
     h('div', { class: 'row dl-engine-row' }, h('span', null, t('dlEngine'), h('small', { class: 'src' }, t('dlEngineHint'))), pick),
-    status);
+    status,
+    h('div', { class: 'row screen-engine-row' }, h('span', null, t('screenEngine'), h('small', { class: 'src' }, t('screenEngineHint'))), spick),
+    sstatus);
 }

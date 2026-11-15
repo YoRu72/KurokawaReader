@@ -50,6 +50,19 @@ pub const METHODS: &[&str] = &[
     "http.close",
     "http.record",
     "bytes.megaCtr",
+    // M4: the screen translator (tracking, motion, inpaint, lettering's rules) and HLS playlists (src/m4call.rs)
+    "bytes.scrTrack",
+    "bytes.moShift",
+    "bytes.inpaint",
+    "bytes.hlsVariants",
+    "bytes.hlsMedia",
+    "hls.choose",
+    "scr.ahead",
+    "lt.kinds",
+    "lt.restore",
+    "lt.prompt",
+    "scr.stats",
+    "scr.cacheClear",
 ];
 
 /// Bytes in, bytes out: what the JNI function hands over.
@@ -72,6 +85,8 @@ fn call_raw(m: &str, args: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
     match m {
         "bytes.echo" => Ok(data.to_vec()),
         "bytes.megaCtr" => crate::httpcall::mega_ctr(args, data),
+        // (M4)
+        "bytes.scrTrack" | "bytes.moShift" | "bytes.inpaint" | "bytes.hlsVariants" | "bytes.hlsMedia" => crate::m4call::call_raw(m, args, data),
         _ => Err(format!("no such method: {}", m)),
     }
 }
@@ -117,6 +132,8 @@ pub fn call_json(m: &str, a: &J) -> Result<J, String> {
         "tr.cacheKey" => Ok(J::s(&translatekey::cache_key(&config(a)?, &string(a, "text")?))),
 
         m if m.starts_with("http.") => crate::httpcall::call(m, a),
+        // (M4)
+        "hls.choose" | "scr.ahead" | "lt.kinds" | "lt.restore" | "lt.prompt" | "scr.stats" | "scr.cacheClear" => crate::m4call::call(m, a),
 
         _ => Err(format!("no such method: {}", m)),
     }

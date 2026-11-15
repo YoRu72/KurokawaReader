@@ -1222,6 +1222,12 @@ export const ko: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust 코어 {version} · 사용 중: {engine} · Java로 넘긴 수: {n}",
+  // (stage M4)
+  screenEngine: "화면 번역 엔진",
+  screenEngineHint: "떠 있는 번역기가 화면을 따라가고 그림에서 글자를 지우는 방식입니다. 클래식은 검증된 방식이고 Rust는 새롭고 더 빠릅니다. 만화와 스크롤되는 페이지에서 써 보고, 상자가 어긋나거나 깜빡이면 되돌리세요.",
+  screenEngineClassic: "클래식",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "사용 중: {engine} · 클래식으로 넘긴 수: {n}",
   // Themes and glass (theme/)
   themeGallery: "테마",
   themeGalleryHint: "고른 색 위에 얹히는 유리 테마입니다. 눌러서 사용하세요. 사진이 있는 테마는 먼저 내려받습니다.",

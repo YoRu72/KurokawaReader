@@ -395,6 +395,8 @@ public class KtPlugin extends Plugin {
         // (Stage M2: the download engine — the one chosen in Settings → Advanced, the one new downloads use (Java when the
         // core is absent), and how many downloads the Rust engine handed back to Java before their first byte.)
         try { String choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; r.put("dlEngineChoice", choice); r.put("dlEngine", "rust".equals(choice) && KtCore.available() ? "rust" : "java"); r.put("dlEngineFallbacks", KrDownloaderRs.FALLBACKS.get()); } catch (Throwable ignored) {}
+        // (Stage M4: the screen translator's engine — chosen, in use, Rust calls handed back to Java, the patch cache — and HLS's hand-backs.)
+        try { String sc = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("screenEngine", "classic")) ? "rust" : "classic"; KtScreenRs.rust = "rust".equals(sc); r.put("screenEngineChoice", sc); r.put("screenEngine", "rust".equals(sc) && KtCore.available() ? "rust" : "classic"); r.put("screenEngineFallbacks", KtScreenRs.FALLBACKS.get()); r.put("screenEngineCalls", KtScreenRs.CALLS.get()); r.put("hlsRustFallbacks", KtHlsRs.FALLBACKS.get()); if (KtCore.available()) r.put("screenCache", new JSObject(KtCore.json(KtCore.r("scr.stats")))); } catch (Throwable ignored) {}
         call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {

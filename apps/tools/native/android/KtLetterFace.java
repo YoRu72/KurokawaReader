@@ -31,6 +31,13 @@ final class KtLetterFace {
             }
             k.kind = kind;
         }
+        // (Stage M4: the look rules are kt-core's lettering::kinds too — kept on Java by design, checked on debuggable
+        // builds; the glossary's match stays Java's regex and is handed over.)
+        if (KtCore.shadowing()) {
+            List<Object> bs = new ArrayList<>(); List<Object> want = new ArrayList<>();
+            for (KtScreenA11y.Block k : blocks) { String gk = null; for (KtLettering.Entry e : g) if (!e.kind.isEmpty() && e.p.matcher(k.text).find()) { gk = e.kind; break; } bs.add(java.util.Arrays.asList(k.text, (long) k.r.height(), (long) k.bg, gk)); want.add(k.kind); }
+            KtCore.shadow("lt.kinds", want, "blocks", bs);
+        }
     }
     private static final Map<String, Typeface> faces = new HashMap<>();
     /** The typeface set for a kind (its own, else the default one); null for the system's. */

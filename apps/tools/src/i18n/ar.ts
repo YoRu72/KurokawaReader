@@ -2314,6 +2314,12 @@ export const ar: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "نواة Rust ‏{version} · المستعمَل الآن: {engine} · ما أُعيد إلى Java، العدد: {n}",
+  // (stage M4)
+  screenEngine: "محرّك مترجم الشاشة",
+  screenEngineHint: "به يتتبّعُ المترجمُ العائم ما على الشاشة، ويمحو الكلامَ عن الصور. فأمّا الكلاسيكيّ فمجرَّب، وأمّا Rust فجديدٌ أسرع؛ فجرِّبه على قصّةٍ مصوَّرة وعلى صفحةٍ تُمرَّر، وارجِعْ عنه إن زاغت المربّعات أو اضطربت.",
+  screenEngineClassic: "الكلاسيكيّ",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "المستعمَل الآن: {engine} · ما أُعيد إلى الكلاسيكيّ، العدد: {n}",
   // Themes and glass (theme/)
   themeGallery: "السِّمات",
   themeGalleryHint: "اختر السمة: سِماتٌ زجاجيّةٌ فوق الألوان التي تختارها. اضغط إحداها لتستعملها، وما كان منها ذا صورٍ يُنزَّل أوّلًا.",

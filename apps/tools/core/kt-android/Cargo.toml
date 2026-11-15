@@ -30,3 +30,9 @@ codegen-units = 1
 strip = true
 debug = false
 incremental = false
+
+# (Stage M4: kt-core's rules built for speed, the JNI layer above stays small. The screen translator's pixel and text
+# loops run several times a second on the phone; at opt-level "z" they were up to 2.6× slower than Java's JIT, at 3
+# they beat it (ANDROID-PORT.md, M4). Cost: some 19 KB compressed per ABI.)
+[profile.release.package.kt-core]
+opt-level = 3

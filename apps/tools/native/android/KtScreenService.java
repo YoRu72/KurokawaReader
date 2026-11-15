@@ -76,6 +76,7 @@ public class KtScreenService extends Service {
 
     @Override public IBinder onBind(Intent i) { return null; }
     @Override public void onCreate() {
+        try { KtScreenRs.rust = "rust".equals(getSharedPreferences("kt", MODE_PRIVATE).getString("screenEngine", "classic")); } catch (Throwable ignored) {}   // (stage M4: Settings → Advanced)
         super.onCreate(); self = this; wm = (WindowManager) getSystemService(WINDOW_SERVICE); dp = getResources().getDisplayMetrics().density; measure(); cfg = config(this);
     }
     private void measure() { DisplayMetrics dm = new DisplayMetrics(); wm.getDefaultDisplay().getRealMetrics(dm); sw = dm.widthPixels; sh = dm.heightPixels; }

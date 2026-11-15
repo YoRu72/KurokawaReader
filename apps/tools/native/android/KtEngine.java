@@ -513,6 +513,7 @@ final class KtEngine {
         if (o.has("connBudget")) budget = Math.max(4, Math.min(128, o.optInt("connBudget", 24)));
         if (o.has("net")) { JSONObject n = o.optJSONObject("net"); if (n != null) { String u = n.optString("ua", "").trim(); ua = u.isEmpty() ? APP_UA : u; retries = Math.max(0, Math.min(30, n.optInt("retries", 5))); timeoutS = Math.max(5, Math.min(600, n.optInt("timeout", 60))); proxy = n.optString("proxy", "").trim(); conflict = n.optString("conflict", "rename"); } }
         if (o.optBoolean("forgetHosts", false)) { hostLimit.clear(); saveHosts(); }
+        if (o.has("screenEngine")) try { boolean rs = "rust".equals(o.optString("screenEngine")); ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putString("screenEngine", rs ? "rust" : "classic").apply(); KtScreenRs.rust = rs; } catch (Throwable ignored) {}   // (stage M4: the screen translator's engine)
         if (o.has("dlEngine")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putString("dlEngine", "rust".equals(o.optString("dlEngine")) ? "rust" : "java").apply(); } catch (Throwable ignored) {}   // (stage M2: read when a download starts)
         if (o.has("simpleDisk")) try { ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).edit().putBoolean("simpleDisk", o.optBoolean("simpleDisk", true)).apply(); } catch (Throwable ignored) {}   // (from the next start)
         if (o.has("connsPerTorrent")) { connsPerTorrent = Math.max(0, o.optInt("connsPerTorrent", 150)); for (Task t : snapshot()) applyOwn(t); }
@@ -673,6 +674,8 @@ final class KtEngine {
     /* ---------- stage M2: the download engine, Java's or the Rust core's (Settings → Advanced, phones) ---------- */
 
     /** The engine chosen in the settings («java» unless «rust» was chosen; kept in the «kt» preferences). */
+    /** Stage M4: HLS follows the download engine (Rust chosen and the core here: the playlists read by Rust). */
+    private boolean useRustHls() { try { return "rust".equals(dlEngineChoice()) && KtCore.available(); } catch (Throwable e) { return false; } }
     String dlEngineChoice() { try { return "rust".equals(ctx.getSharedPreferences("kt", Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; } catch (Throwable e) { return "java"; } }
     /** The engine this download's run uses: Rust when chosen and the core is here, unless the Rust engine already
      *  failed it once (then Java, from its record). */
@@ -719,7 +722,7 @@ final class KtEngine {
             KtHls.Result r = KtHls.run(ctx, url, new File(dir, safe), work, Math.max(1, Math.min(x.wantConnections, 8)), height, u -> open(u, headers, false), x.cancel, (piece, pieces, bytes, phase) -> {
                 x.got.set(bytes); x.done = bytes; if (pieces > 0) x.total = (long) (bytes * (double) pieces / Math.max(1, piece)); try { x.meta.put("frag", piece); x.meta.put("frags", pieces); x.meta.put("phase", phase); } catch (Exception ignored) {}
                 long now = System.currentTimeMillis(); if (now - lastT[0] >= 700) { x.downSpeed = lastT[0] == 0 ? 0 : (long) ((bytes - lastT[1]) / ((now - lastT[0]) / 1000.0)); lastT[0] = now; lastT[1] = bytes; tell(false); }
-            });
+            }, useRustHls());   // (stage M4: the playlists read by Rust when the download engine is Rust)
             if (x.cancel.get() || r.out == null) { x.downSpeed = 0; persist(); tell(true); pumpQueue(); KtService.maybeStop(ctx, KtEngine.this); return; }
             x.httpOut = r.out; x.name = r.out.getName(); x.done = x.total = r.out.length(); x.state = "done"; x.doneAt = System.currentTimeMillis(); x.downSpeed = 0; x.meta.remove("phase"); scan(x); KtHls.deleteTree(work);
         } catch (Throwable e) { if (!x.cancel.get()) { x.state = "failed"; x.error = e instanceof KrDownloader.Status ? "HTTP " + ((KrDownloader.Status) e).code : errOf(e); } x.downSpeed = 0; }

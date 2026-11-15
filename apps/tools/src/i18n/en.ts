@@ -2319,6 +2319,12 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust core {version} · in use: {engine} · handed back to Java: {n}",
+  // (stage M4)
+  screenEngine: "Screen translator engine",
+  screenEngineHint: "How the floating translator follows the screen and takes the words off pictures. Classic is the tried one; Rust is new and faster — try it on a comic and on a scrolling page, and switch back if the boxes drift or flicker.",
+  screenEngineClassic: "Classic",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "in use: {engine} · handed back to Classic: {n}",
   // Themes and glass (theme/)
   themeGallery: "Themes",
   themeGalleryHint: "Glass themes over the colours you choose. Tap one to use it; those with pictures download first.",

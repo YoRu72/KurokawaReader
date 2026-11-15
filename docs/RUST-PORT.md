@@ -131,7 +131,11 @@ M0+M1's first CI run (43596554460) passed: the three libraries built with the ND
 HTTP downloader's decisions in kt-core (`httpdl.rs`), Java moving the bytes (`KrDownloaderRs`), the downloader's runs
 1–19 passing through the Rust engine on the host beside Java's; «Download engine: Java / Rust» under Settings →
 Advanced on phones with the core, default Java until the owner's phone run on Wi-Fi and mobile data. M3 re-planned
-for P4's hybrid engine. Details, sizes and the plans: `apps/tools/core/kt-android/ANDROID-PORT.md`.
+for P4's hybrid engine. **M4 written 2026-11-15** (branch `work-and-m4`, waiting for CI): the screen translator's
+tracking, scroll finder, inpaint (with a patch cache) and lettering rules and KtHls's playlists in kt-core, alike with
+Java on every test and fuzz case; «Screen translator engine: Classic / Rust» under Settings → Advanced (default
+Classic), HLS following the download engine; +70 KB compressed per ABI. Details, sizes and the plans:
+`apps/tools/core/kt-android/ANDROID-PORT.md`.
 
 **What Rust on Android will and will not give.**
 - One engine to fix instead of two: a download or torrent bug is fixed once for PC and phone.

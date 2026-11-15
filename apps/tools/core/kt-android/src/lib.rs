@@ -7,6 +7,8 @@ mod jni;
 pub mod dispatch;
 // (Stage M2: the downloader's `http.*` methods and `bytes.megaCtr`.)
 mod httpcall;
+// (Stage M4: the screen translator's `bytes.scrTrack` / `bytes.moShift` / `bytes.inpaint`, HLS, lettering's rules.)
+mod m4call;
 
 /// The answer as Java reads it: one status byte (0 ok, 1 error), then the payload (the method's answer, or a UTF-8
 /// error message).

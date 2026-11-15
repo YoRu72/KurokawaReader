@@ -1222,6 +1222,12 @@ export const ja: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust コア {version} · 使用中: {engine} · Java に戻した数: {n}",
+  // (stage M4)
+  screenEngine: "画面翻訳エンジン",
+  screenEngineHint: "フローティング翻訳が画面を追い、画像から文字を消す仕組みです。クラシックは実績のあるもの、Rust は新しく高速なものです。漫画とスクロールするページで試し、枠がずれたりちらついたりしたら元に戻してください。",
+  screenEngineClassic: "クラシック",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "使用中: {engine} · クラシックに戻した数: {n}",
   // Themes and glass (theme/)
   themeGallery: "テーマ",
   themeGalleryHint: "選んだ色の上に重なるガラスのテーマです。タップで使用します。画像付きのものは先にダウンロードします。",

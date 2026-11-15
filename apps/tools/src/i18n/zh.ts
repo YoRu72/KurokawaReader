@@ -1222,6 +1222,12 @@ export const zh: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust 核心 {version} · 正在使用：{engine} · 交回 Java 的次数：{n}",
+  // (stage M4)
+  screenEngine: "屏幕翻译引擎",
+  screenEngineHint: "悬浮翻译跟随屏幕、从图片上擦除文字的方式。经典版久经考验，Rust 是新的、更快——请在漫画和滚动页面上都试一试，若框体偏移或闪烁就切换回来。",
+  screenEngineClassic: "经典",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "正在使用：{engine} · 交回经典版的次数：{n}",
   // Themes and glass (theme/)
   themeGallery: "主题",
   themeGalleryHint: "叠在你所选颜色之上的玻璃主题。轻点即可使用；带图片的主题会先下载。",

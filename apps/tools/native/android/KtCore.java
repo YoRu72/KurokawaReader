@@ -129,6 +129,17 @@ public final class KtCore {
         synchronized (firstMismatches) { m.put("first", new ArrayList<>(firstMismatches)); }
         return m;
     }
+    /* (Stage M4: a shadow check whose answers are not JSON — pixels, a tracking update — compared by its caller,
+       KtScreenRs / KtHlsRs, and counted here with the others.) */
+    /** One shadow comparison made by the caller: counted, and the first differences kept. Never throws. */
+    public static void shadowNote(String method, boolean same, String detail) {
+        try {
+            shadowCalls.incrementAndGet(); if (same) return;
+            shadowMismatches.incrementAndGet();
+            synchronized (firstMismatches) { if (firstMismatches.size() < 5) firstMismatches.add(method + " " + detail); }
+            java.util.function.Consumer<String> l = log; if (l != null) l.accept("Rust core shadow: " + method + " differs (" + detail + ")");
+        } catch (Throwable ignored) {}
+    }
     /** (Tests: the shadow's figures back to zero.) */
     static void shadowReset() { shadowCalls.set(0); shadowMismatches.set(0); synchronized (firstMismatches) { firstMismatches.clear(); } }
 
