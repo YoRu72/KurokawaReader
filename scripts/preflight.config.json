@@ -1,0 +1,55 @@
+{
+  "_": "Settings of scripts/preflight.mjs. timeoutSec: seconds one test may run (per file name, else default). smoke: tests --quick always runs (they must be in the release workflow's chain). budgets: the tests that carry a start-JS budget — output is a regex over the test's output whose first group is the size in KB, limit a regex over the test's source whose first group is the limit.",
+  "maxAddedFileKB": 1024,
+  "allowBig": [
+    "apps/*/public/samples/**",
+    "apps/*/public/fonts/**",
+    "apps/*/tests/fixtures/**",
+    "apps/*/tests/data/**",
+    "apps/*/tests/samples/**",
+    "apps/*/docs/**/*.png",
+    "apps/*/docs/**/*.jpg",
+    "apps/*/releases/**"
+  ],
+  "tools": {
+    "smoke": [
+      "smoke.cjs en",
+      "settingscards.cjs",
+      "backnav.cjs",
+      "pcui.cjs",
+      "screen.cjs en"
+    ],
+    "timeoutSec": {
+      "default": 300
+    },
+    "budgets": {
+      "perfstart.cjs": {
+        "name": "Tools start JS (perfstart.cjs)",
+        "output": "start JS \\(app\\.js and its static imports\\): ([\\d.]+) KB",
+        "limit": "const START_KB = ([\\d.]+)"
+      }
+    }
+  },
+  "reader": {
+    "smoke": [
+      "smoke.cjs",
+      "pcui.cjs",
+      "readpos.cjs",
+      "pdfroom.cjs"
+    ],
+    "timeoutSec": {
+      "default": 300,
+      "backpdf.cjs": 600,
+      "sweep.cjs": 900,
+      "glassperf.cjs": 400,
+      "hunt.cjs": 300
+    },
+    "budgets": {
+      "perfbudget.cjs": {
+        "name": "Reader start JS (perfbudget.cjs)",
+        "output": "the scripts loaded before the library shows are under \\d+ KB\\s+\"(\\d+) KB in",
+        "limit": "startJsKB: ([\\d.]+)"
+      }
+    }
+  }
+}

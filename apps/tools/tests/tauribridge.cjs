@@ -421,11 +421,11 @@ function loadBridge(boot) {
   // (Also the two halves CI launches since P5 merged — cfg.part 1 and 2 (KT_SELFTEST_PART): each passes, and together
   // they hold every check of the whole run.)
   const byPart = {};
-  for (const [bad, part] of [[false, 0], [true, 0], [false, 1], [false, 2]]) {
+  for (const [bad, part, flaky] of [[false, 0], [true, 0], [false, 1], [false, 2], [false, 0, true]]) {
     const sent2 = [];
     const kt2 = fakeKt(bad);
     // (Screen translator: a pretend screen — tests/screenfake.cjs.)
-    const SCR = require('./screenfake.cjs')(cfg); Object.assign(kt2, SCR.kt);
+    const SCR = require('./screenfake.cjs')(cfg, flaky ? { flaky: true } : undefined); Object.assign(kt2, SCR.kt);
     const D = kt2.__desk;
     const siteAct = (o) => (o.act === 'list' ? (D.capture ? [{ label: 'kt-site-capture-1', url: D.capture.o.url }] : []) : o.act === 'go' ? (D.capture && D.capture.o.marker && o.url.includes(D.capture.o.marker) ? (D.capture.ok(o.url), D.capture = null, true) : true) : o.act === 'close' ? (D.capture && (D.capture.ok(null), D.capture = null), true) : undefined);
     const brTell = (o) => setTimeout(() => (D.brSubs || []).forEach((f) => f(o)), 5);
@@ -486,6 +486,11 @@ function loadBridge(boot) {
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_desk' && c.args.o.act === 'second' && c.args.o.args[0] === 'kurokawatools://task?id=kt-hybrid-2'), 'the toast\'s click address driven through a second launch');
     const scr = res.filter((r) => /^screen:/.test(r.name));
     assert.ok(scr.length === 13 && scr.every((r) => r.ok), 'the screen translator\'s checks against the pretend screen: ' + JSON.stringify(scr.filter((r) => !r.ok)));
+    // (A runner that was slow — the first drawn window taken one bar too low, the first «auto» with no caption in time —: the two
+    // rows pass on their second attempt and SAY so; with a good screen no row does.)
+    const retried = scr.filter((r) => /^PASSED ON RETRY/.test(r.detail));
+    if (flaky) assert.deepEqual(retried.map((r) => r.name.replace(/^screen: ([a-z ]+).*/, '$1').trim()), ['a window the test draws', 'auto'], 'the slow screen: the two rows passed on retry, and said so: ' + JSON.stringify(scr.map((r) => [r.name, r.detail.slice(0, 80)])));
+    else assert.equal(retried.length, 0, 'a good screen needs no retry: ' + JSON.stringify(retried));
   }
   {
     const whole = new Set(byPart[0]); const one = new Set(byPart[1]); const two = new Set(byPart[2]);

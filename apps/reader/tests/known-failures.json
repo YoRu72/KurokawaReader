@@ -1,0 +1,47 @@
+{
+  "_": "Tests that fail on the untouched baseline. The preflight reports them as KNOWN, a NEW failure fails the run, and one that starts passing is reported as FIXED (remove it here). name, reason (the true one), how (how to run it properly), date, loadSensitive, mode: run (default) or skip (not run).",
+  "failures": [
+    {
+      "name": "hunt.cjs",
+      "reason": "A real small leak, found on the untouched main (0.64.0): listeners on window/document grow 64 -> 105 over 40 rounds of opening and leaving the 7 pages; the test allows 40 (one per round), so it fails by one. The test is right; some page adds about one listener per visit.",
+      "how": "node tests/hunt.cjs (KT_HUNT_ROUNDS=... for more rounds)",
+      "date": "2026-11-15"
+    },
+    {
+      "name": "glassperf.cjs",
+      "reason": "Counts long tasks under a 6x CPU slow-down: on this machine pdf, bars hidden: Classic 25, Off 51, Full 54, so 'no more than Classic + 1' fails. Load-sensitive (a 2-CPU box shared by several test runs); not yet shown to be a product regression.",
+      "how": "on a quiet machine: node tests/glassperf.cjs, then KR_REVERSE=1 node tests/glassperf.cjs to see whether the order matters",
+      "date": "2026-11-15",
+      "loadSensitive": true
+    },
+    {
+      "name": "jobs.cjs",
+      "reason": "Stale: the test waits for a '.job-chip' element after starting a PDF to Word conversion, but nothing in src/ creates that element any more (only base.css still styles it), so it times out at 10 s with any PDF. A manual screenshot demo, not in CI. Fix the test or delete it.",
+      "how": "node tests/jobs.cjs <outdir> <file.pdf> (the preflight passes a temp folder and tests/fixtures/sample.pdf)",
+      "date": "2026-11-15"
+    },
+    {
+      "name": "handover.cjs",
+      "flaky": true,
+      "loadSensitive": true,
+      "reason": "Fails about one run in three on the untouched main: 'the text book opens at the same paragraph' gets {electron: P120, rust: P119}, a one-paragraph difference in where a text book's place is restored (passes alone and in other runs). A timing or rounding race in the place restore, or in the test's wait; not found yet. It is in the release chain, so a release run can hit it.",
+      "how": "node tests/handover.cjs (repeat 3 times)",
+      "date": "2026-11-15"
+    },
+    {
+      "name": "pdfzoom.cjs",
+      "flaky": true,
+      "loadSensitive": true,
+      "reason": "Failed once in a full run (72 s, machine loaded by other test runs) and passed alone and in the first full run; cause not looked at beyond that.",
+      "how": "node tests/pdfzoom.cjs",
+      "date": "2026-11-15"
+    },
+    {
+      "name": "handover-electron.cjs",
+      "mode": "skip",
+      "reason": "Not a test to run bare: needs arguments (<expected.json> [work folder]), the real Electron (desktop/node_modules) and a display; it is the first half of tauri-check-reader.yml's hand-over step.",
+      "how": "see tauri-check-reader.yml, Hand-over",
+      "date": "2026-11-15"
+    }
+  ]
+}
