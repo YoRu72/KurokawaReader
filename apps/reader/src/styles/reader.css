@@ -39,13 +39,18 @@
 .reader ::selection { background: var(--r-sel, color-mix(in srgb, var(--md-primary) 35%, transparent)); }
 .kr-content p { text-indent: var(--r-indent, 0); }
 /* Book formatting: paragraphs told apart by their indent, with only a breath between them. */
-.reader.book-format .kr-content p { margin-block: 0 calc(var(--r-para, .9em) * .5); text-align: justify; text-align-last: start; hyphenate-limit-chars: 5 2 2; -webkit-hyphenate-limit-before: 2; -webkit-hyphenate-limit-after: 2; }
+.reader.book-format .kr-content p { margin-block: 0 calc(var(--r-para, .9em) * .5); }
+/* Alignment (src/settings.ts align): justified lines end at the start; a paragraph whose justified gaps would be too
+   wide is set ragged (src/ui/smartjustify.ts, «Smart justify» and the book's own justified blocks); «Book's own» justifies
+   only what the book justifies. Table cells are never justified. */
+.reader[data-align='book'] .kr-content [data-kr-align='justify'] { text-align: justify; }
+.reader:is([data-align='smart'], [data-align='book']) .kr-content [data-kr-rag] { text-align: start !important; }
+.reader:is([data-align='smart'], [data-align='justify']) .kr-content :is(td, th) { text-align: start; }
 .reader.book-format .kr-content p:has(> img:only-child), .reader.book-format .kr-content p.center, .reader.book-format .kr-content [style*='text-align: center'] { text-indent: 0; }
 .reader.book-format .kr-content p + p { margin-block-start: 0; }
 /* … but not inside list items, table cells or captions (no indent, table cells not justified), and not in Japanese, Chinese or
    Korean text, which keeps its own paragraph spacing and the reader's own indent (those books often indent with a full-width space). */
 .reader.book-format .kr-content :is(li, dd, dt, td, th, figcaption) p { text-indent: 0; }
-.reader.book-format .kr-content :is(td, th) p { text-align: start; }
 .reader.book-format .kr-content p:where(:lang(ja), :lang(zh), :lang(ko)) { margin-block: 0 var(--r-para, .9em); text-indent: var(--r-indent-own, 0); }
 .reader.drop-cap .kr-chapter > p:first-of-type::first-letter, .reader.drop-cap .kr-content > p:first-of-type::first-letter, .reader.drop-cap .kr-content > .kr-run:first-child > p:first-of-type::first-letter { float: inline-start; font-size: 3.1em; line-height: .85; padding-inline-end: .08em; font-weight: 600; }
 .reader.has-bg-override { --r-bg: var(--r-bg-override); --r-rule: color-mix(in srgb, var(--r-fg) 18%, var(--r-bg-override)); }
@@ -143,7 +148,11 @@
   font-family: var(--r-font); font-size: var(--r-size); font-weight: var(--r-weight, 400); line-height: var(--r-lh); text-align: var(--r-align);
   word-spacing: var(--r-word); letter-spacing: var(--r-letter); hyphens: var(--r-hyphens); -webkit-hyphens: var(--r-hyphens);
   overflow-wrap: break-word; text-rendering: optimizeLegibility; font-kerning: normal;
+  /* (Words broken only when long enough, three letters kept on each side: fewer ugly breaks, fewer wide gaps.) */
+  hyphenate-limit-chars: 6 3 3; -webkit-hyphenate-limit-before: 3; -webkit-hyphenate-limit-after: 3;
 }
+/* Lines balanced so a paragraph does not end on one stranded word (Chromium 117+; elsewhere the usual breaking). */
+.kr-content :is(p, li, dd, blockquote) { text-wrap: pretty; }
 .kr-content[dir='rtl'], .kr-content [dir='rtl'], .kr-content :lang(ar), .kr-content :lang(fa), .kr-content :lang(ur) {
   font-family: var(--r-font-rtl); line-height: calc(var(--r-lh) * 1.12);
   /* Letter-spacing breaks Arabic joining and the lam-alef ligature (لا → ل‌ا); never apply it to RTL text. */

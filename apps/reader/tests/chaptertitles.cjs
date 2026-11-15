@@ -3,7 +3,8 @@
 //  1. a title made of styled paragraphs (a «Chapter 1:» paragraph and a title paragraph, as light novels make them), a
 //     heading holding <span>label</span><br/>title, one block «Chapter 3: Title», a title alone, a label alone, Arabic
 //     «الفصل الأول» + title (right to left) and Japanese «第一話　…» are centred on the column, without the first-line
-//     indent, never hyphenated — while the body keeps its indent and is hyphenated (book formatting on by default, with a
+//     indent, never hyphenated — while the body keeps its indent and is hyphenated (book formatting on by default, justified
+//     or, with a river, set ragged by «Smart justify», with a
 //     language on the text);
 //  2. a long first paragraph that merely begins with «Chapter» is body text (not centred, not marked);
 //  3. the shape of a real light novel: one <p class> holding a bold 1.17em «Chapter 7:<br/>Title», empty spacer
@@ -108,7 +109,7 @@ const block = (p, needle, sel = 'p, h1, h2, h3') => p.evaluate(([needle, sel]) =
   const cl = box.left + parseFloat(cs.paddingLeft), cr = box.right - parseFloat(cs.paddingRight);
   const L = rs.length ? Math.min(...rs.map((x) => x.left)) : 0, R = rs.length ? Math.max(...rs.map((x) => x.right)) : 0;
   const shown = (s) => { const n = [...b.querySelectorAll('*')].filter((e) => plain(e).includes(s)); return n.length ? n.every((e) => e.getClientRects().length > 0) : rs.length > 0; };
-  return { off: Math.round(Math.abs((L + R) / 2 - (cl + cr) / 2)), startGap: Math.round(cs.direction === 'rtl' ? cr - R : L - cl), endGap: Math.round(cs.direction === 'rtl' ? L - cl : cr - R), indent: cs.textIndent, hyphens: cs.hyphens, align: cs.textAlign, weight: Number(cs.fontWeight), size: parseFloat(cs.fontSize), height: Math.round(box.height), lines: rs.map((x) => x.top + x.height / 2).sort((a, b) => a - b).filter((c, i, a) => i === 0 || c - a[i - 1] > 10).length, mark: b.getAttribute('data-kr-title'), lang: b.closest('[lang]')?.getAttribute('lang') ?? '', dir: cs.direction, text: plain(b), ruby: !!b.querySelector('ruby'), visibleText: rs.length > 0 && box.height > 1, shownLabel: shown('Chapter') };
+  return { off: Math.round(Math.abs((L + R) / 2 - (cl + cr) / 2)), startGap: Math.round(cs.direction === 'rtl' ? cr - R : L - cl), endGap: Math.round(cs.direction === 'rtl' ? L - cl : cr - R), indent: cs.textIndent, hyphens: cs.hyphens, align: cs.textAlign, weight: Number(cs.fontWeight), size: parseFloat(cs.fontSize), height: Math.round(box.height), lines: rs.map((x) => x.top + x.height / 2).sort((a, b) => a - b).filter((c, i, a) => i === 0 || c - a[i - 1] > 10).length, mark: b.getAttribute('data-kr-title'), rag: b.hasAttribute('data-kr-rag'), lang: b.closest('[lang]')?.getAttribute('lang') ?? '', dir: cs.direction, text: plain(b), ruby: !!b.querySelector('ruby'), visibleText: rs.length > 0 && box.height > 1, shownLabel: shown('Chapter') };
 }, [needle, sel]);
 /** The size and weight of the element holding exactly `text` (an inline span). */
 const inline = (p, text) => p.evaluate((text) => { const e = [...document.querySelectorAll('.reader-flow .kr-content span, .reader-flow .kr-content b')].reverse().find((x) => x.textContent.trim() === text); if (!e) return null; const cs = getComputedStyle(e); const pcs = getComputedStyle(e.closest('p')); return { ratio: parseFloat(cs.fontSize) / parseFloat(pcs.fontSize), weight: Number(cs.fontWeight) }; }, text);
@@ -142,7 +143,7 @@ async function session(dist, fn) {
     const bk = await importFile(p, en, 'Lantern'); ok('the English book imported', !!bk); if (!bk) return;
     await openReader(p, bk.id); await p.waitForTimeout(1500);
     const bodyP = await block(p, '[P3]');
-    ok('fresh profile: book formatting is on the body is hyphenated, justified and indented (with a language)', bodyP && bodyP.hyphens === 'auto' && bodyP.align === 'justify' && bodyP.indent !== '0px' && bodyP.lang === 'en', { bodyP, visual });
+    ok('fresh profile: book formatting is on the body is hyphenated, justified and indented (with a language)', bodyP && bodyP.hyphens === 'auto' && (bodyP.align === 'justify' || bodyP.rag) && bodyP.indent !== '0px' && bodyP.lang === 'en', { bodyP, visual });
 
     // ---- 1. the title shapes
     const c1l = await block(p, 'Chapter 1:'), c1t = await block(p, 'The Lantern Road');
@@ -191,13 +192,13 @@ async function session(dist, fn) {
     ok('a highlight made in chapter 3', hlMade);
 
     // ---- 5. hyphenation off: titles still centred
-    await setVisual(p, { bookFormat: false }); await openReader(p, bk.id);
+    await setVisual(p, { bookFormat: false, hyphenate: false }); await openReader(p, bk.id);
     const offT = await block(p, 'The Lantern Road'), offB = await block(p, '[P3]');
-    ok('book formatting off: body not hyphenated, not indented, titles still centred', offB?.hyphens === 'manual' && offB.indent === '0px' && isCentred(offT), { offB: offB?.hyphens, offT });
+    ok('book formatting and hyphenation off (a switch of its own since 0.64): body not hyphenated, not indented, titles still centred', offB?.hyphens === 'manual' && offB.indent === '0px' && isCentred(offT), { offB: offB?.hyphens, offT });
     // Book formatting (justified, indented, hyphenated body — the owner's own setup): titles still centred, unindented.
-    await setVisual(p, { bookFormat: true }); await openReader(p, bk.id);
+    await setVisual(p, { bookFormat: true, hyphenate: true }); await openReader(p, bk.id);
     const bfT = await block(p, 'The Lantern Road'), bfL = await block(p, 'Chapter 1:'), bfB = await block(p, '[P3]');
-    ok('book formatting on: body indented, justified and hyphenated, the title block centred with no indent, not hyphenated', bfB && bfB.indent !== '0px' && bfB.align === 'justify' && bfB.hyphens === 'auto' && bfT.hyphens === 'manual' && bfL.hyphens === 'manual' && isCentred(bfT) && isCentred(bfL), { bfB: bfB && [bfB.indent, bfB.align], bfT, bfL });
+    ok('book formatting on: body indented, justified and hyphenated, the title block centred with no indent, not hyphenated', bfB && bfB.indent !== '0px' && (bfB.align === 'justify' || bfB.rag) && bfB.hyphens === 'auto' && bfT.hyphens === 'manual' && bfL.hyphens === 'manual' && isCentred(bfT) && isCentred(bfL), { bfB: bfB && [bfB.indent, bfB.align], bfT, bfL });
     await shot(p, 'made-en-c1-bookformat.png', 'Chapter 1:');
     // «At the start», «As the book says»
     await setVisual(p, { bookFormat: false, chapterTitles: 'start' }); await openReader(p, bk.id);
@@ -250,7 +251,7 @@ async function session(dist, fn) {
       ok('Arabic «الفصل الأول» + title, right to left: centred, no indent', isCentred(al) && isCentred(at) && at.dir === 'rtl', { al, at });
       ok('Arabic «الفصل الثاني: …» in one block: centred', isCentred(a2), a2);
       const abody = await block(p, '[P2]');
-      ok('Arabic body under book formatting (on by default): justified, indented, no hyphen characters inserted (no Arabic hyphenation)', abody && abody.align === 'justify' && abody.indent !== '0px' && abody.dir === 'rtl' && !/[\u00ad-]/.test(abody.text.replace('[P2]', '')), abody);
+      ok('Arabic body under book formatting (on by default): justified, indented, no hyphen characters inserted (no Arabic hyphenation)', abody && (abody.align === 'justify' || abody.rag) && abody.indent !== '0px' && abody.dir === 'rtl' && !/[\u00ad-]/.test(abody.text.replace('[P2]', '')), abody);
       await shot(p, 'made-ar.png', 'الفصل الأول');
       await setVisual(p, { hideChapterWord: true }); await openReader(p, ba.id);
       const hal = await block(p, 'الفصل الأول'), ha2 = await block(p, 'ليل المدينة');

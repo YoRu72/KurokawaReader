@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import type { ImageRef } from '../formats/types';
 import { shareFile, fetchAsBlob, saveImage, copyImage } from '../ui/share';
 import { toast } from '../ui/dom';
+import { pushLayer } from '../ui/backstack';
 
 /** `startAt` opens straight into the lightbox; with `lightboxOnly` the grid never shows and closing the picture closes everything. */
 export function openGallery(images: ImageRef[], onJump: (anchor: string) => void, opts: { startAt?: number; lightboxOnly?: boolean; /** a line over the pictures, with a button (a novel's chapters still to fetch) */ note?: { text: string; action?: { label: string; run(say: (text: string) => void): Promise<void> } } } = {}): () => void {
@@ -21,7 +22,7 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
     }
     body.prepend(box);
   }
-  const close = () => { root.remove(); window.removeEventListener('keydown', onKey); };
+  const close = () => { root.remove(); offRoot(); window.removeEventListener('keydown', onKey); };
   const root = h('div', { class: 'view', style: { position: 'fixed', inset: '0', zIndex: '45', background: 'var(--bg)' }, role: 'dialog', 'aria-label': t('galleryTitle') },
     h('header', { class: 'topbar' }, iconButton('back', t('back'), close), h('div', { class: 'title' }, t('galleryTitle'), h('small', null, t('galleryCount', { n: images.length })))),
     body);
@@ -39,7 +40,9 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
   let lb: HTMLElement | null = null;
   let current = 0;
   let zoom: Zoomable | null = null;
-  const closeLb = () => { zoom?.dispose(); zoom = null; lb?.remove(); lb = null; if (opts.lightboxOnly) close(); };
+  // (The picture's full view and the grid: each a layer of Back's stack — src/ui/backstack.ts —, the picture over the grid.)
+  let offLb: (() => void) | null = null;
+  const closeLb = () => { zoom?.dispose(); zoom = null; lb?.remove(); lb = null; offLb?.(); offLb = null; if (opts.lightboxOnly) close(); };
   const blobOf = async (src: string) => { const blob = await fetchAsBlob(src); const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg'); return { blob, ext }; };
   function lightbox(i: number) {
     current = i;
@@ -67,16 +70,18 @@ export function openGallery(images: ImageRef[], onJump: (anchor: string) => void
     };
     lb = h('div', { class: 'lightbox', role: 'dialog' });
     document.body.append(lb);
+    offLb?.(); offLb = pushLayer(closeLb, lb);
     render();
     void img;
   }
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { if (lb) closeLb(); else close(); }
+    if (e.key === 'Escape') { e.preventDefault(); if (lb) closeLb(); else close(); }
     else if (lb && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { current = (current + (e.key === 'ArrowRight' ? 1 : -1) + images.length) % images.length; lightbox(current); lb?.previousElementSibling?.remove(); document.querySelectorAll('.lightbox').forEach((x, j, all) => { if (j < all.length - 1) x.remove(); }); }
   };
   window.addEventListener('keydown', onKey);
   if (opts.lightboxOnly) root.style.display = 'none';
   document.body.append(root);
+  const offRoot = opts.lightboxOnly ? () => undefined : pushLayer(close, root);
   if (opts.startAt !== undefined && images[opts.startAt]) lightbox(opts.startAt);
   return close;
 }

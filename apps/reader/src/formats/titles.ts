@@ -17,7 +17,7 @@ import { searchFormOf } from './types';
 /* The book's own layout                                              */
 /* ------------------------------------------------------------------ */
 
-type Align = 'center' | 'right' | 'end' | 'none';
+type Align = 'center' | 'right' | 'end' | 'justify' | 'none';
 interface Rule { sel: string; spec: number; order: number; align?: Align; size?: number; bold?: boolean; italic?: boolean; need: { cls: string[]; tag: string; id: string } }
 interface Sheet { rules: Rule[]; basePx: number }
 
@@ -29,6 +29,8 @@ function alignOf(v: string): Align | undefined {
   if (v === 'center' || v === '-webkit-center') return 'center';
   if (v === 'right' || v === '-webkit-right') return 'right';
   if (v === 'end') return 'end';
+  // (Justified kept as a mark too: the reader's «Book's own» alignment justifies only what the book justifies.)
+  if (v === 'justify') return 'justify';
   return 'none';
 }
 /** A font-size as a ratio to the parent's (em, %, keywords), or to the book's body (rem, px, pt). */
@@ -368,7 +370,7 @@ export function applyTitleSettings(root: HTMLElement, s: { chapterTitles?: strin
 const CJK_RE = /[぀-ヿ㐀-鿿가-힯]/;
 /**
  * What a flowing book needs before its blocks are counted: a language for hyphenation where it has none (the book's
- * own, else the interface's when the text is in the same script — Latin text with an English interface), and the
+ * own, else English for Latin text with an English interface or that reads as English), and the
  * chapter titles of formats that are not marked as they are made (each chapter once; EPUB chapters are already).
  */
 export function prepareFlow(el: HTMLElement, bookLang: string | undefined, uiLang: string): void {
@@ -377,7 +379,10 @@ export function prepareFlow(el: HTMLElement, bookLang: string | undefined, uiLan
     let sample = ''; const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n && sample.length < 3000; n = w.nextNode()) sample += n.textContent ?? '';
     const latin = !!sample.trim() && el.getAttribute('dir') !== 'rtl' && !CJK_RE.test(sample) && !/[֐-ࣿ]/.test(sample);
-    const lang = bookLang || (uiLang === 'en' && latin ? 'en' : '');
+    // (Latin text whose commonest words are English's is English, whatever the interface's language: hyphenated so.)
+    const words = latin ? sample.match(/\p{L}+/gu) ?? [] : [];
+    const english = words.length > 20 && words.filter((x) => /^(the|and|of|to|a|in|is|was|that|he|she|it|you|i|his|her|for|with|on)$/i.test(x)).length / words.length > 0.12;
+    const lang = bookLang || (latin && (uiLang === 'en' || english) ? 'en' : '');
     if (lang) el.setAttribute('lang', lang.split('-')[0]);
   }
   const sections = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')];

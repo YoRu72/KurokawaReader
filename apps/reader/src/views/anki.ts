@@ -138,7 +138,7 @@ export async function mountAnki(root: HTMLElement, book: Book, onDispose: (fn: (
       if (side === 'a' && /^[1-4]$/.test(e.key)) { e.preventDefault(); void answer(Number(e.key) as Grade); return; }
       if (side === 'a' && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); void answer(3); return; }
       if (e.key === 'r' && card) { const r = renderCard(deck, card, side, false); if (r.sounds.length) void play(...r.sounds); }
-      if (e.key === 'Escape') { window.removeEventListener('keydown', onKey); overview(); }
+      if (e.key === 'Escape') { e.preventDefault(); window.removeEventListener('keydown', onKey); overview(); }
     };
     window.addEventListener('keydown', onKey);
     onDispose(() => window.removeEventListener('keydown', onKey));

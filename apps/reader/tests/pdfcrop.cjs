@@ -143,7 +143,9 @@ async function pinch(p, cdp, cx, cy, d0, d1, steps = 10) {
   // (Line 5's baseline is 560 - (480 - 160) = 240 pt from the top; the word's middle a few points above it; "needle" follows "line 5 of page 300: ".)
   console.log('search highlight:', JSON.stringify(hl));
   ok('search with the margins cropped: the highlight is on the word, inside the page', !!hl && hl.inside && near(hl.y, 236, 6) && hl.x > 100 && hl.x < 260);
-  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  // (Out of the search field first: Esc typing in a field is the field's own since 0.64 — src/ui/backstack.ts.)
+  // (The panel let go after the hit was tapped: Esc only when it is still open — with nothing open, Esc leaves the book.)
+  await p.evaluate(() => document.activeElement?.blur?.()); if (await p.$('.panel.open')) await p.keyboard.press('Escape'); await p.waitForTimeout(300);
   // Zoom buttons: the point at the middle stays.
   await idle(p, 800); const z0 = await at(p, 0.5, 0.5); await p.evaluate(() => document.querySelector('.pdf-bar button[aria-label="Zoom in"]').click()); await p.waitForTimeout(700); const z1 = await at(p, 0.5, 0.5);
   console.log(`zoom in: page ${z0.n} at ${z0.wx.toFixed(3)}, ${z0.wy.toFixed(3)} w ${z0.ww} → page ${z1.n} at ${z1.wx.toFixed(3)}, ${z1.wy.toFixed(3)} w ${z1.ww}`);

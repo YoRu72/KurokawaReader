@@ -106,7 +106,8 @@ const chapter = (lang, n) => Array.from({ length: n }, (_, i) => para(i + 1, lan
     await p.click('.panel.open button[data-action="customise"]'); await visible(p, '.buttons-sheet');
     if (kind) { await p.click(`.buttons-sheet .buttons-kind button[data-kind="${kind}"]`); await settle(p, 200); }
   };
-  const closeSheet = async (p) => { await p.keyboard.press('Escape'); await settle(p, 400); };
+  // (Out of a field first: Esc typing in one is the field's own — src/ui/backstack.ts, 0.64 —, not the panel's.)
+  const closeSheet = async (p) => { await p.evaluate(() => document.activeElement?.blur?.()); await p.keyboard.press('Escape'); await settle(p, 400); };
   const placeIn = async (p, id, at) => { await p.click(`.buttons-sheet .placed-row[data-id="${id}"] button[data-place="${at}"]`); await settle(p, 250); };
   const shot = async (p, name) => { if (SHOTS) await p.screenshot({ path: path.join(SHOTS, name) }); };
   const firstPara = (p) => p.evaluate(() => { const sc = document.querySelector('.reader-scroll').getBoundingClientRect(); const ps = [...document.querySelectorAll('.reader-flow .kr-chapter:not([hidden]) p, .reader-flow .kr-content p')]; const q = ps.find((x) => { const r = x.getBoundingClientRect(); return r.top >= sc.top - 2; }); return q ? q.textContent.slice(0, 6) : null; });

@@ -30,6 +30,9 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
     await img.dblclick(); await p.waitForTimeout(700); const two = !!(await p.$('.gallery-view, .lightbox, .gallery, .view.gallery'));
     check('a picture: no on one click, opened on a double-click', !one && two, { one, two });
     await p.keyboard.press('Escape'); await p.waitForTimeout(400);
+    // (Esc is Back since 0.64 — src/ui/backstack.ts —: it closes the picture only, one layer; the bars the clicks hid are
+    // shown again by the reader's own toggle.)
+    if (await p.$eval('.reader-view', (e) => e.classList.contains('immersive'))) await p.evaluate(() => document.querySelector('.reader-view').classList.remove('immersive'));
   } else check('a picture in the book', false);
   // Contents docked: no scrim, the text narrowed, open after a jump.
   await p.click('.float-toolbar .icon-btn[aria-label="Contents"]'); await p.waitForSelector('.panel.open'); await p.waitForTimeout(300);

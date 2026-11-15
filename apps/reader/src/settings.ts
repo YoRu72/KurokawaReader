@@ -58,10 +58,12 @@ export interface VisualSettings {
   paragraphSpacing: number; // em
   textWidth: number;      // px
   margin: number;         // px
-  align: 'start' | 'justify' | 'center';
+  /** «book»: as the book sets each block; «smart»: justified, a paragraph whose stretched gaps would be too wide set
+   *  ragged (src/ui/smartjustify.ts); «justify»: justified whatever the gaps. */
+  align: 'book' | 'smart' | 'justify' | 'start' | 'center';
   publisherStyles: boolean;
   dimImages: boolean;
-  hyphenate: boolean;      // (no longer a switch of its own: hyphenation follows book formatting; kept so stored settings and backups load)
+  hyphenate: boolean;      // words broken at line ends (with or without book formatting)
   /** Chapter titles and heading-like lines: centred, at the start, or as the book places them. */
   chapterTitles: 'center' | 'start' | 'book';
   /** The label of a chapter's title («Chapter 1», «الفصل الأول») hidden when the title has more (the name shown too). */
@@ -164,6 +166,8 @@ export interface VisualSettings {
   translator: 'builtin' | 'system';
   snapStyle: 'plain' | 'card';
   snapWatermark: boolean;
+  /** «Text as image» drawn with the book's own formatting (its paragraphs, alignment, bold, italic, sizes), not plain. */
+  snapBookFormat: boolean;
   pdfSnapKind: 'page' | 'card';      // «Text as image» on a PDF: the page itself cut out, or the words set again on a card
   pdfSnapCut: 'column' | 'words';    // the cut: whole lines across the text column, or only the words picked (the rest masked)
   pdfSnapCaption: boolean;           // the book's title and the page number under the cut
@@ -290,7 +294,7 @@ export const DEFAULTS: VisualSettings = {
   paragraphSpacing: 0.9,
   textWidth: 720,
   margin: 22,
-  align: 'start',
+  align: 'smart',
   publisherStyles: false,
   dimImages: true,
   hyphenate: true,
@@ -364,7 +368,7 @@ export const DEFAULTS: VisualSettings = {
   importMode: 'link',
   translator: 'builtin',
   snapStyle: 'plain',
-  snapWatermark: false,
+  snapWatermark: false, snapBookFormat: false,
   pdfSnapKind: 'page',
   pdfSnapCut: 'column',
   pdfSnapCaption: true,
@@ -470,6 +474,8 @@ function load(): VisualSettings {
     // change, so a «false» left by the old default cannot be told from one chosen: it is turned on once for everyone;
     // turned off again after that, it stays off. (A book with a «bookFormat» of its own keeps it.)
     if (!localStorage.getItem('kr.bookFormatMigrated')) { s.bookFormat = true; localStorage.setItem('kr.bookFormatMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
+    // 0.64: alignment is no longer forced by book formatting; what it justified (and «Justified») is «Smart justify».
+    if (!localStorage.getItem('kr.alignMigrated')) { if (s.bookFormat || s.align === 'justify') s.align = 'smart'; localStorage.setItem('kr.alignMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
     // 0.59.8: the dots and polka textures are gone; a page that had one is plain again.
     if (!['none', 'paper', 'linen', 'parchment'].includes(s.texture as string)) s.texture = 'none';
     // 0.61.1: the edge guard is off by default; 0.61.0 stored the old default (on) with every other setting, so it is
@@ -873,10 +879,11 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   root.style.setProperty('--r-para', `${s.paragraphSpacing}em`);
   root.style.setProperty('--r-width', `${s.textWidth}px`);
   root.style.setProperty('--r-margin', `${s.margin}px`);
-  root.style.setProperty('--r-align', s.bookFormat ? 'justify' : s.align);
+  root.dataset.align = s.align;
+  root.style.setProperty('--r-align', s.align === 'smart' || s.align === 'justify' ? 'justify' : s.align === 'center' ? 'center' : 'start');
   root.style.setProperty('--r-word', s.wordSpacing ? `${s.wordSpacing}em` : 'normal');
   root.style.setProperty('--r-letter', s.letterSpacing ? `${s.letterSpacing}em` : 'normal');
-  root.style.setProperty('--r-hyphens', s.bookFormat ? 'auto' : 'manual');
+  root.style.setProperty('--r-hyphens', s.hyphenate ? 'auto' : 'manual');
   root.classList.toggle('publisher-styles', s.publisherStyles);
   applyCustomCss(s.customCss);
 }

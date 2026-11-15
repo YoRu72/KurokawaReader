@@ -10,6 +10,8 @@ import { canvasToBlob, saveImage, shareFile, copyImage } from './share';
 import { h, icon, openSheet, toast } from './dom';
 
 export interface TextCardOptions { text: string; title: string; author?: string; appName: string; style?: 'plain' | 'card';
+  /** The words as the book sets them (styledBlocks), drawn so when `bookFormat` is on; else the plain text in the reader's look. */
+  blocks?: SnapBlock[]; bookFormat?: boolean;
   /** A picture the selection touched (see pictureNear): drawn before the text, after it, or between its two parts. */
   picture?: PictureNear; pictureOn?: boolean }
 /** A picture beside the words picked: inside the selection (the words before it and after it apart), right after
@@ -42,6 +44,69 @@ export function pictureNear(range: Range | undefined): PictureNear | null {
   return null;
 }
 export const pictureOnByDefault = (p: PictureNear | null): boolean => !!p && p.where !== 'before';
+
+/** A block of the words picked as the book sets it: its alignment, first-line indent (a share of the text's size) and
+ *  direction, and its runs of text each with its weight, slant, size (a share of the reader's) and face. */
+export interface SnapRun { text: string; bold: boolean; italic: boolean; scale: number; family: string }
+export interface SnapBlock { align: 'start' | 'center' | 'end' | 'justify'; indent: number; rtl: boolean; runs: SnapRun[] }
+const BLOCK = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, dd, dt, figcaption, td, th, pre, div';
+/** The words of `range` as the page shows them (read at once: a selection does not last). The alignment is the book's
+ *  own (its centred, right-aligned and justified blocks — src/formats/titles.ts marks), else at the start. */
+export function styledBlocks(range: Range | undefined, base: number): SnapBlock[] | undefined {
+  if (!range || range.collapsed) return undefined;
+  const root = range.commonAncestorContainer;
+  const w = document.createTreeWalker(root.nodeType === 1 ? root : root.parentNode!, NodeFilter.SHOW_TEXT);
+  const out: SnapBlock[] = []; let cur: Element | null = null;
+  for (let n = w.nextNode() as Text | null; n; n = w.nextNode() as Text | null) {
+    if (!range.intersectsNode(n)) continue;
+    const el = n.parentElement; if (!el || el.closest('rt, rp, script, style')) continue;
+    const a = n === range.startContainer ? range.startOffset : 0, b = n === range.endContainer ? range.endOffset : n.data.length;
+    const text = n.data.slice(a, b).replace(/\s+/g, ' '); if (!text) continue;
+    const blk = el.closest(BLOCK) ?? el;
+    if (blk !== cur) {
+      cur = blk; const cs = getComputedStyle(blk);
+      const mark = blk.closest('[data-kr-align]')?.getAttribute('data-kr-align');
+      const align = mark === 'center' ? 'center' : mark === 'right' || mark === 'end' ? 'end' : mark === 'justify' || (cs.textAlign === 'justify' && !blk.hasAttribute('data-kr-rag')) ? 'justify' : 'start';
+      out.push({ align, indent: (parseFloat(cs.textIndent) || 0) / (parseFloat(cs.fontSize) || base), rtl: cs.direction === 'rtl', runs: [] });
+    }
+    const cs = getComputedStyle(el);
+    out[out.length - 1].runs.push({ text, bold: (parseInt(cs.fontWeight, 10) || 400) >= 600, italic: cs.fontStyle !== 'normal', scale: (parseFloat(cs.fontSize) || base) / base, family: cs.fontFamily });
+  }
+  for (const bl of out) { const f = bl.runs[0]; if (f) f.text = f.text.trimStart(); const l = bl.runs[bl.runs.length - 1]; if (l) l.text = l.text.trimEnd(); }
+  return out.filter((bl) => bl.runs.some((r) => r.text.trim()));
+}
+
+interface Piece { text: string; font: string; w: number }
+interface Word { pieces: Piece[]; w: number }
+interface SetLine { words: Word[]; w: number; size: number; last: boolean; first: boolean; block: SnapBlock }
+const fontOf = (r: SnapRun, size: number) => `${r.italic ? 'italic ' : ''}${r.bold ? '700 ' : ''}${Math.round(size * r.scale)}px ${r.family}`;
+/** Each block's lines, words kept whole (a word whose pieces differ in weight or slant one word). */
+function setBlocks(ctx: CanvasRenderingContext2D, blocks: SnapBlock[], maxW: number, size: number, maxLines = 60): SetLine[][] {
+  let count = 0; const all: SetLine[][] = [];
+  for (const bl of blocks) {
+    const words: Word[] = []; let cur: Word | null = null;
+    for (const r of bl.runs) for (const part of r.text.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) { cur = null; continue; }
+      ctx.font = fontOf(r, size); const pc = { text: part, font: ctx.font, w: ctx.measureText(part).width };
+      if (!cur) { cur = { pieces: [], w: 0 }; words.push(cur); }
+      cur.pieces.push(pc); cur.w += pc.w;
+    }
+    const sizeOf = (ws: Word[]) => Math.max(size, ...ws.flatMap((x) => x.pieces.map((p) => parseFloat(/(\d+)px/.exec(p.font)?.[1] ?? '0'))));
+    ctx.font = `${size}px serif`; const space = ctx.measureText(' ').width;
+    const lines: SetLine[] = []; let line: Word[] = [], lw = 0;
+    const indent = Math.max(0, bl.indent * size);
+    for (const wd of words) {
+      const room = maxW - (lines.length ? 0 : indent);
+      if (line.length && lw + space + wd.w > room) { lines.push({ words: line, w: lw, size: sizeOf(line), last: false, first: !lines.length, block: bl }); line = []; lw = 0; }
+      lw += (line.length ? space : 0) + wd.w; line.push(wd);
+    }
+    if (line.length) lines.push({ words: line, w: lw, size: sizeOf(line), last: true, first: !lines.length, block: bl });
+    count += lines.length; all.push(lines);
+    if (count >= maxLines) break;
+  }
+  return all;
+}
 
 interface Look { bg: string; fg: string; dim: string; rule: string; font: string; fontRtl: string; size: number; lh: number; align: string }
 
@@ -126,16 +191,21 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
   const measure = document.createElement('canvas').getContext('2d')!;
   measure.font = `${fontSize}px ${family}`;
   const pic = o.picture && o.pictureOn ? o.picture : null;
+  const set = o.bookFormat && o.blocks?.length ? setBlocks(measure, o.blocks, W - pad * 2, fontSize) : null;
   // (With a picture inside the words: the words before it and after it as two runs, the picture between.)
   const runs: (string[] | 'pic')[] = [];
   const wrapText = (tx: string) => { const ls = wrap(measure, tx.trim(), W - pad * 2); const maxLines = 60; const out = ls.slice(0, maxLines); if (ls.length > maxLines) out[maxLines - 1] += ' …'; return out; };
-  if (pic?.where === 'inside') { if (pic.before) runs.push(wrapText(pic.before)); runs.push('pic'); if (pic.after) runs.push(wrapText(pic.after)); }
+  if (set) { if (pic?.where === 'before') runs.push('pic'); runs.push([]); if (pic && pic.where !== 'before') runs.push('pic'); }
+  else if (pic?.where === 'inside') { if (pic.before) runs.push(wrapText(pic.before)); runs.push('pic'); if (pic.after) runs.push(wrapText(pic.after)); }
   else if (pic?.where === 'before') { runs.push('pic', wrapText(o.text)); }
   else { runs.push(wrapText(o.text)); if (pic) runs.push('pic'); }
   const picW = W - pad * 2; const picH = pic ? Math.round(Math.min(picW * (pic.img.naturalHeight / Math.max(1, pic.img.naturalWidth)), 1400)) : 0;
   const gap = Math.round(lh * 0.8);
   const plain = (o.style ?? s.snapStyle) === 'plain';
-  const textH = runs.reduce((n, r, i) => n + (r === 'pic' ? picH : r.length * lh - (lh - fontSize)) + (i ? gap : 0), 0);
+  // (Set as the book sets it: each line as high as its largest letters, a paragraph's breath between blocks.)
+  const lineH = (ln: SetLine) => Math.round(ln.size * L.lh);
+  const setH = set ? set.reduce((n, ls, i) => n + ls.reduce((m, ln) => m + lineH(ln), 0) + (i ? Math.round(fontSize * 0.5) : 0), 0) - (lh - fontSize) : 0;
+  const textH = runs.reduce((n, r, i) => n + (r === 'pic' ? picH : set ? setH : r.length * lh - (lh - fontSize)) + (i ? gap : 0), 0);
   const H = plain ? pad * 2 + textH : pad * 2 + 110 + textH + 150;
   const c = document.createElement('canvas');
   c.width = W; c.height = H; c.dataset.text = o.text; c.dataset.dir = rtl ? 'rtl' : 'ltr';   // (what it was given: for the tests)
@@ -163,6 +233,7 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
       const top = y - fontSize; ctx.save(); ctx.beginPath(); const rad = 18; ctx.roundRect(pad, top, picW, picH, rad); ctx.clip();
       try { ctx.drawImage(pic!.img, pad, top, picW, picH); } catch { /* tainted: skipped */ } ctx.restore(); y += picH; continue;
     }
+    if (set) { y = drawSet(ctx, set, y, pad, W - pad * 2, fontSize, lineH, L.fg) + fontSize; ctx.font = `${fontSize}px ${family}`; continue; }
     for (const line of r) { ctx.fillText(line, x, y); y += lh; }
     y -= lh - fontSize;
   }
@@ -182,6 +253,36 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
   return c;
 }
 
+/** Draws the set lines from `y` (the first baseline); returns the last baseline. Justified lines are spread only while a
+ *  gap stays within a word space and 0.8 em (as src/ui/smartjustify.ts): a line that would open a river is left at the start. */
+function drawSet(ctx: CanvasRenderingContext2D, set: SetLine[][], y: number, left: number, maxW: number, size: number, lineH: (l: SetLine) => number, fg: string): number {
+  ctx.fillStyle = fg; ctx.textBaseline = 'alphabetic';
+  ctx.font = `${size}px serif`; const space = ctx.measureText(' ').width;
+  let first = true;
+  set.forEach((lines, bi) => {
+    if (bi) y += Math.round(size * 0.5);
+    for (const ln of lines) {
+      if (!first) y += lineH(ln);
+      first = false;
+      const { align, rtl } = ln.block;
+      const indent = ln.first ? Math.max(0, ln.block.indent * size) : 0;
+      const room = maxW - indent; const gaps = ln.words.length - 1;
+      let gapW = space;
+      if (align === 'justify' && !ln.last && gaps > 0) { const extra = (room - ln.w) / gaps; if (extra > 0 && extra <= 0.8 * size) gapW = space + extra; }
+      const used = ln.w + (gapW - space) * gaps;
+      let pos = indent + (align === 'center' ? (room - used) / 2 : align === 'end' ? room - used : 0);
+      ctx.direction = rtl ? 'rtl' : 'ltr'; ctx.textAlign = rtl ? 'right' : 'left';
+      for (const wd of ln.words) {
+        let px = pos;
+        for (const pc of wd.pieces) { ctx.font = pc.font; ctx.fillText(pc.text, rtl ? left + maxW - px : left + px, y); px += pc.w; }
+        pos += wd.w + gapW;
+      }
+    }
+  });
+  ctx.direction = 'ltr';
+  return y;
+}
+
 export async function renderTextCard(o: TextCardOptions): Promise<Blob> {
   return canvasToBlob(await renderTextCanvas(o), 'image/png');
 }
@@ -192,7 +293,7 @@ export type SnapKind = 'page' | 'card';
 export interface SnapChoice { kind: SnapKind; kinds: SnapKind[]; draw(kind: SnapKind): Promise<HTMLCanvasElement>; options(kind: SnapKind, redraw: () => void): HTMLElement | null; picked(kind: SnapKind): void }
 
 /** Preview the snapshot with Save / Share / Copy and a style switch (and, with `choice`, the kinds to choose from). */
-export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }, choice?: SnapChoice): void {
+export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean, bookFormat?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }, choice?: SnapChoice, format?: { has: boolean }): void {
   const sheet = openSheet(t('textAsImage'), t('close'));
   sheet.body.style.fontFamily = 'var(--font-ui)';
   const holder = h('div', { class: 'snap-holder' });
@@ -203,7 +304,7 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
   let kind: SnapKind = choice?.kind ?? 'card';
   const opts = h('div', { class: 'snap-options' });
   let seq = 0;
-  const redraw = async () => { const my = ++seq; const c = kind === 'card' ? await rerender(getSettings().snapStyle, picOn) : await choice!.draw(kind); if (my === seq) mount(c); else c.width = c.height = 0; };
+  const redraw = async () => { const my = ++seq; const c = kind === 'card' ? await rerender(getSettings().snapStyle, picOn, fmtOn) : await choice!.draw(kind); if (my === seq) mount(c); else c.width = c.height = 0; };
   const fillOpts = () => { opts.replaceChildren(); const o = choice?.options(kind, () => void redraw().catch((e) => toast(String((e as Error).message ?? e), 'error'))); if (o) opts.append(o); };
   if (choice && choice.kinds.length > 1) {
     const seg = h('div', { class: 'segmented snap-kind', role: 'radiogroup', 'aria-label': t('textAsImage') });
@@ -215,11 +316,21 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
   sheet.body.appendChild(holder);
   if (choice) { fillOpts(); sheet.body.appendChild(opts); }
   let picOn = picture?.on ?? false;
+  // (The book's own formatting, or the plain text in the reader's look: the choice remembered — settings snapBookFormat.)
+  let fmtOn = !!format?.has && getSettings().snapBookFormat;
   // (A picture the words touched: shown with them, or not — on unless it only came before the words.)
   if (picture?.has) {
     const box = h('input', { type: 'checkbox', checked: picOn }) as HTMLInputElement;
-    box.addEventListener('change', async () => { picOn = box.checked; mount(await rerender(getSettings().snapStyle, picOn)); });
+    box.addEventListener('change', async () => { picOn = box.checked; mount(await rerender(getSettings().snapStyle, picOn, fmtOn)); });
     sheet.body.appendChild(h('label', { class: 'check-row snap-pic-row' }, box, h('span', null, t('snapIncludePicture'))));
+  }
+  if (format?.has) {
+    // (The app's own switch row — its name and a line under it, the switch at the end — as in the Visual Options.)
+    const box = h('input', { type: 'checkbox', checked: fmtOn }) as HTMLInputElement;
+    box.addEventListener('change', async () => { fmtOn = box.checked; updateSettings({ snapBookFormat: fmtOn }); mount(await rerender(getSettings().snapStyle, picOn, fmtOn)); });
+    sheet.body.appendChild(h('div', { class: 'options-grid snap-fmt', style: { marginTop: '14px' } },
+      h('label', { class: 'row snap-fmt-row' }, h('span', { class: 'label' }, t('snapBookFormat')), h('span', { class: 'switch' }, box, h('i'))),
+      h('p', { class: 'hint', style: { marginTop: '-16px' } }, t('snapBookFormatHint'))));
   }
   const png = async () => blob ?? (blob = await canvasToBlob(canvas, 'image/png'));
   const styleBtn = h('button', { class: 'btn small', type: 'button' }, t(getSettings().snapStyle === 'plain' ? 'snapCard' : 'snapPlain'));
@@ -228,7 +339,7 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
     const next = getSettings().snapStyle === 'plain' ? 'card' : 'plain';
     updateSettings({ snapStyle: next });
     styleBtn.textContent = t(next === 'plain' ? 'snapCard' : 'snapPlain');
-    mount(await rerender(next, picOn));
+    mount(await rerender(next, picOn, fmtOn));
   });
   const copy = h('button', { class: 'btn small', type: 'button', onclick: async () => { if (await copyImage(await png())) toast(t('copied')); } }, icon('copy'), t('copyImage'));
   const share = h('button', { class: 'btn small', type: 'button', onclick: async () => { const b = await png(); sheet.close(); void shareFile(b, filename, title); } }, icon('share'), t('shareText'));

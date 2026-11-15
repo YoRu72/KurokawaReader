@@ -1,4 +1,5 @@
 // Tiny DOM helpers — no framework, so the bundle stays small and offline-friendly.
+import { pushLayer } from './backstack';
 
 type Child = Node | string | number | null | undefined | false | Child[];
 
@@ -167,7 +168,7 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   const body = h('div', { class: 'sheet-body' });
   const actions = h('div', { class: 'sheet-actions' });
   let closed = false;
-  const close = () => { el.remove(); scrim.remove(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
+  const close = () => { el.remove(); scrim.remove(); offLayer(); window.removeEventListener('keydown', onEsc, true); if (!closed) { closed = true; opts.onClose?.(); } };
   // Escape closes the top-most sheet (capture phase, so the reader's own shortcuts don't fire underneath).
   const onEsc = (e: KeyboardEvent) => { if (!el.isConnected) { close(); return; } if (e.key !== 'Escape') return; const all = document.querySelectorAll('.sheet'); if (all[all.length - 1] !== el) return; e.preventDefault(); e.stopPropagation(); close(); };
   window.addEventListener('keydown', onEsc, true);
@@ -177,6 +178,8 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   const scrim = h('div', { class: 'scrim sheet-scrim', style: depth ? { zIndex: String(69 + depth * 2) } : undefined, onclick: close });
   (el as HTMLElement & { __close?: () => void }).__close = close;
   document.body.append(scrim, el);
+  // (A layer of Back's stack: src/ui/backstack.ts.)
+  const offLayer = pushLayer(close, el);
   if (opts.at && document.documentElement.classList.contains('pc')) placeMenu(el, scrim, opts.at);
   return { body, actions, close, el };
 }

@@ -56,6 +56,8 @@ export function navigate(path: string, replace = false): void {
   window.setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL, newURL })), 0);
 }
 
+/** The view beneath the one shown (null: none in this session). */
+export const viewBelow = (): string | null => (stack.length > 1 ? stack[stack.length - 2] : null);
 /** Whether a view was opened from another in this session (there is something to go back to). */
 export function canGoBack(): boolean { return stack.length > 1; }
 
