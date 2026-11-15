@@ -202,6 +202,16 @@ file stream prioritises under the reader. Seeding limits: ours (tormobile), rati
 build with «listonly». Port mapping: UPnP only (no NAT-PMP). Limits: session-wide, at session start only; none per
 torrent. File priorities: wanted / not wanted (no «high»). Interface binding, anonymous mode: refused.
 
+*First CI run (43684755996).* libkt_torrent.so built for all three ABIs with every call (6.05 / 3.66 / 6.79 MB .so;
++2.67 / +1.98 / +2.75 MB per APK, +7.40 MB universal). The loopback download stopped **one 32 KiB piece short**
+(12 550 144 of 12 582 912) with its only peer connecting and dropping every ~10 s and nothing requested; that run had
+streamed the file's last 64 KiB and paused/resumed the torrent early, so it could not tell which did it. Since then:
+the cases run apart, each with its own swarm (`whole_file` — nothing but the download, the row to make required —,
+`far_read_then_done`, `pause_resume_done`, `remove_and_failure`), and a stalled download prints the pieces missing on
+the disk, a stream read of the first, the seeder's log about it and librqbit's own log; and the library has a
+**watchdog**: a live torrent short of its end with no verified byte for 60 s is dropped (files kept) and added again,
+at most 3 times, counted in its row (`nudges`). The Rust torrent library does not ship in this release.
+
 *Calls the PC never compiled* (each behind its own cargo feature, built with all, again with none on failure —
 `build-android.sh`; `build.txt` says which): the dependency set itself (no default features + rust-tls; ring or
 aws-lc with the NDK), `Session::pause/unpause`, `SessionOptions.listen_port_range`, `.disable_dht_persistence`,

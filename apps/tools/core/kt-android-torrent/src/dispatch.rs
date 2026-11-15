@@ -50,6 +50,12 @@ struct Entry {
     done_at: i64,
     /// Bumped by each add, so an add that ends after a remove or a newer add is dropped.
     gen: u64,
+    /// The stall watchdog: the verified bytes last seen, since when (poll's `now`), and how many times this torrent
+    /// was dropped and added again because it stood still short of its end (CI run 43684755996: librqbit 8.1.1 stopped
+    /// one 32 KiB piece short with its only peer connected and never asked for it again).
+    seen: u64,
+    seen_at: i64,
+    nudges: u32,
 }
 
 #[derive(Default)]
@@ -188,7 +194,7 @@ fn add(a: &J) -> Result<J, String> {
     let gen = t.gen;
     // (A .torrent's folder is known now; a magnet's only after its metadata — the thread asks for it first.)
     let folder = if have_meta { tormobile::rqbit_folder(&dir, multi, &name) } else { dir.clone() };
-    t.t.insert(id.clone(), Entry { hash, src, folder, only, phase: Phase::Adding, paused, have_meta, name, files: Vec::new(), bytes: 0, last: None, files_sent: false, done_at: 0, gen });
+    t.t.insert(id.clone(), Entry { hash, src, folder, only, phase: Phase::Adding, paused, have_meta, name, files: Vec::new(), bytes: 0, last: None, files_sent: false, done_at: 0, gen, seen: 0, seen_at: 0, nudges: 0 });
     drop(t);
     spawn_add(id, gen, !have_meta, dir);
     Ok(obj(vec![("again", J::Bool(false))]))
@@ -374,6 +380,7 @@ fn poll(a: &J) -> Result<J, String> {
     }
     let mut rows = Vec::new();
     let mut to_stop = Vec::new();
+    let mut to_nudge = Vec::new();
     let mut t = table();
     let mut gone = Vec::new();
     for (id, e) in t.t.iter_mut() {
@@ -398,6 +405,19 @@ fn poll(a: &J) -> Result<J, String> {
             continue;
         }
         e.bytes = e.bytes.max(stats.progress_bytes);
+        // (The watchdog: live, not paused, short of its end, and not one verified byte more for STALL_MS — dropped from
+        // librqbit with its files kept and added again (its files checked, its requests made anew), at most
+        // MAX_NUDGES times. The rows carry the count.)
+        if stats.progress_bytes != e.seen || e.seen_at == 0 {
+            e.seen = stats.progress_bytes;
+            e.seen_at = now;
+        } else if let Phase::Ready(rid) = e.phase {
+            if stall_due(&stats, e.paused, now - e.seen_at, e.nudges) {
+                e.nudges += 1;
+                e.seen_at = now;
+                to_nudge.push((id.clone(), rid));
+            }
+        }
         let mut v = tormobile::task_view(&stats, e.paused, rules.seed_after_done);
         if v.state == "done" || v.state == "seeding" {
             if e.done_at == 0 {
@@ -428,6 +448,7 @@ fn poll(a: &J) -> Result<J, String> {
                 ("peers", num(v.peers as i64)),
                 ("metadata", J::Bool(e.have_meta)),
                 ("folder", J::s(&e.folder)),
+                ("nudges", num(e.nudges as i64)),
             ];
             if !e.files.is_empty() {
                 let fd = file_done.as_ref();
@@ -461,10 +482,40 @@ fn poll(a: &J) -> Result<J, String> {
         })
         .collect();
     drop(t);
+    for (id, rid) in to_nudge {
+        nudge(&id, rid);
+    }
     for (id, rid) in to_stop {
         let _ = do_pause(&id, rid);
     }
     Ok(obj(vec![("rows", J::Arr(rows)), ("failed", J::Arr(failed))]))
+}
+
+pub const STALL_MS: i64 = 60_000;
+pub const MAX_NUDGES: u32 = 3;
+
+/// Whether a torrent that stood still `still_ms` is given the watchdog's nudge.
+fn stall_due(s: &Stats, paused: bool, still_ms: i64, nudges: u32) -> bool {
+    !paused && s.state == "live" && s.total_bytes > 0 && s.progress_bytes < s.total_bytes && still_ms >= STALL_MS && nudges < MAX_NUDGES
+}
+
+/// Dropped from librqbit (files kept) and added again on its thread.
+fn nudge(id: &str, rid: usize) {
+    let _ = safe(|| be::remove(rid, false));
+    let gen = {
+        let mut t = table();
+        t.gen += 1;
+        let g = t.gen;
+        match t.t.get_mut(id) {
+            Some(e) if e.phase == Phase::Ready(rid) => {
+                e.phase = Phase::Adding;
+                e.gen = g;
+                g
+            }
+            _ => return,
+        }
+    };
+    spawn_add(id.to_string(), gen, false, String::new());
 }
 
 fn read(a: &J) -> Result<Vec<u8>, String> {
@@ -613,6 +664,28 @@ mod tests {
         c("tor.add", r#"{"id":"f2","hash":"4444444444444444444444444444444444444444","magnet":"magnet:?dn=g&xl=4000000&kt-fail=after","dir":"/tmp","paused":false}"#).unwrap();
         let f = wait_failed("f2");
         assert_eq!(f.get("then").unwrap().as_str(), Some("pauseForClassic"));
+        // (the watchdog: a torrent that stands still one piece short for 60 s is dropped and added again, and ends)
+        c("tor.add", r#"{"id":"k","hash":"6666666666666666666666666666666666666666","magnet":"magnet:?dn=k&xl=400000&kt-stuck=1","dir":"/tmp","paused":false}"#).unwrap();
+        let mut now = 10_000i64;
+        let mut seen_nudge = false;
+        let mut finished = false;
+        for _ in 0..200 {
+            now += 20_000;
+            let p = c("tor.poll", &format!(r#"{{"now":{},"seed":false,"ratioPct":0,"minutes":0,"held":false}}"#, now)).unwrap();
+            for r in p.get("rows").unwrap().as_arr().unwrap() {
+                if r.get("id").and_then(|x| x.as_str()) == Some("k") {
+                    if r.get("nudges").map(|x| x.number()).unwrap_or(0.0) >= 1.0 { seen_nudge = true; }
+                    if r.get("state").and_then(|x| x.as_str()) == Some("done") { finished = true; }
+                }
+            }
+            if finished { break; }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(seen_nudge && finished, "nudged {} finished {}", seen_nudge, finished);
+        c("tor.remove", r#"{"id":"k","deleteFiles":false}"#).unwrap();
+        assert!(!stall_due(&Stats { state: "live".into(), total_bytes: 10, progress_bytes: 5, ..Default::default() }, true, STALL_MS, 0), "not when paused");
+        assert!(!stall_due(&Stats { state: "live".into(), total_bytes: 10, progress_bytes: 10, ..Default::default() }, false, STALL_MS, 0), "not when whole");
+        assert!(!stall_due(&Stats { state: "live".into(), total_bytes: 10, progress_bytes: 5, ..Default::default() }, false, STALL_MS, MAX_NUDGES), "not past the limit");
         // (a SAF folder refused; remove; shutdown hands back what is left)
         assert_eq!(c("tor.add", r#"{"id":"s","hash":"5555555555555555555555555555555555555555","magnet":"magnet:?dn=s","dir":"content://x","paused":false}"#).unwrap_err(), "safFolder");
         assert_eq!(c("tor.remove", r#"{"id":"a","deleteFiles":false}"#).unwrap(), J::Bool(true));

@@ -105,8 +105,18 @@ jobs:
           sudo apt-get install -y aria2 > /dev/null
           f=""; cargo build --release || { echo "::warning::librqbit (every call) did not build for the computer — the proven calls only"; f="--no-default-features"; cargo build --release $f; }
           ls -la target/release/libkt_torrent.so
-          cargo test --release $f --test loopback -- --nocapture 2>&1 | tee "$RUNNER_TEMP/m3-loopback.txt"
+          # (Each loopback case alone, so one stuck case cannot hide the others: its own swarm, a stall report — the
+          # pieces missing on the disk, a stream read of the first, the seeder's log about it, librqbit's own log with
+          # «testtrace» — whenever nothing moves for 10 s. whole_file is the row to make required once it is green.)
+          t="--features testtrace"; cargo test --release $f $t --test loopback --no-run || { echo "::warning::the test's librqbit log (tracing-subscriber) did not build — without it"; t=""; }
+          : > "$RUNNER_TEMP/m3-loopback.txt"; bad=0
+          for case in whole_file far_read_then_done pause_resume_done remove_and_failure; do
+            echo "::group::loopback: $case"
+            if timeout 420 cargo test --release $f $t --test loopback "$case" -- --exact --test-threads=1 --nocapture 2>&1 | tee -a "$RUNNER_TEMP/m3-loopback.txt"; then r=passed; else r=FAILED; bad=1; fi
+            echo "::endgroup::"; echo "loopback $case: $r" | tee -a "$RUNNER_TEMP/m3-loopback.txt" "$RUNNER_TEMP/m3-cases.txt"
+          done
           sh jvmtest/torrent.sh target/release/libkt_torrent.so ../kt-android/target/release/libkt_android.so real
+          exit $bad
       - name: "M3: libkt_torrent.so for Android — three ABIs or none (a try)"
         id: m3android
         continue-on-error: true
@@ -162,5 +172,5 @@ jobs:
         working-directory: apps/tools
         run: |
           { echo "### Stage M3 — librqbit: computer build + loopback swarm: ${{ steps.m3host.outcome }}; Android three ABIs: ${{ steps.m3android.outcome }}"; echo; } >> "$GITHUB_STEP_SUMMARY"
-          [ -f "$RUNNER_TEMP/m3-loopback.txt" ] && { echo '```'; grep -E "far range|whole file|forced failure|library:" "$RUNNER_TEMP/m3-loopback.txt" | head -20; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          [ -f "$RUNNER_TEMP/m3-loopback.txt" ] && { echo '```'; cat "$RUNNER_TEMP/m3-cases.txt" 2>/dev/null; grep -E "far range|whole file|done, watchdog|forced failure|library:|STALL|on the disk:|piece [0-9]+:|stream read of piece|identical bytes" "$RUNNER_TEMP/m3-loopback.txt" | cut -c1-300 | head -60; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
           if [ -d "$RUNNER_TEMP/jniTor" ]; then python3 core/kt-android-torrent/sizes.py --jni "$RUNNER_TEMP/jniTor" --apks android/app/build/outputs/apk/release | tee -a "$GITHUB_STEP_SUMMARY" || true; else echo "No libkt_torrent.so was built: the APKs are without it." | tee -a "$GITHUB_STEP_SUMMARY"; fi

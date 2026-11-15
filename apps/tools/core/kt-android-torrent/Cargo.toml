@@ -28,6 +28,9 @@ kt-core = { path = "../kt-core" }
 librqbit = { version = "=8.1.1", default-features = false, features = ["rust-tls"] }
 # (What the PC's rqbit-feature.cjs names: the runtime with several workers, the file stream's reads and the timeouts.)
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "time"] }
+# (tests/loopback.rs only, feature «testtrace»: librqbit's own log to a file whose tail a stalled download's report
+# prints. Optional — never in the APK's build — and a feature so a failure to build it costs only the log.)
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
 
 # Each librqbit call the PC never compiled sits behind one feature, so CI can build with all of them and, if that
 # fails, again with none (only the calls stream_rqbit.rs proved) — see build-android.sh. Without a feature its job is
@@ -44,6 +47,7 @@ listonly = []
 trackers = []
 nodhtfile = []
 upload = []
+testtrace = ["dep:tracing-subscriber"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kt_fake)'] }

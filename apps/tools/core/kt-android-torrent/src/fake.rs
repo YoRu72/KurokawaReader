@@ -2,7 +2,7 @@
 //! only in memory, so the JNI shape, the dispatch's table, the polls, the pause paths, the failures and the hand-back
 //! are tested on a machine without crates.io. A magnet's own parameters steer it: `dn` its name, `xl` its size,
 //! `kt-fail=meta` (no metadata), `kt-fail=after` (fails once bytes came), `kt-nopause=1` (a build without librqbit's
-//! pause). Its file's byte at offset i is (i·31 + 7) mod 251. It is never in an APK.
+//! pause), `kt-stuck=1` (stands still one 32 KiB piece short until it is dropped and added again — CI run 43684755996). Its file's byte at offset i is (i·31 + 7) mod 251. It is never in an APK.
 
 use crate::contract::{Added, Live, Meta, Src};
 use kt_core::tormobile::Stats;
@@ -18,7 +18,14 @@ struct T {
     paused: bool,
     fail_after: bool,
     nopause: bool,
+    stuck: bool,
     name: String,
+}
+
+/// Names that were stuck once and dropped: added again they finish.
+fn unstuck() -> std::sync::MutexGuard<'static, std::collections::HashSet<String>> {
+    static U: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    U.get_or_init(|| Mutex::new(Default::default())).lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn m() -> std::sync::MutexGuard<'static, (bool, usize, HashMap<usize, T>)> {
@@ -65,7 +72,7 @@ pub fn add(src: &Src, _folder: &str, _only: Option<&[usize]>) -> Result<Added, S
     }
     let rid = g.1;
     g.1 += 1;
-    g.2.insert(rid, T { size: me.files[0].1, have: 0, paused: false, fail_after: param(&mag, "kt-fail").as_deref() == Some("after"), nopause: param(&mag, "kt-nopause").is_some(), name: me.name.clone() });
+    g.2.insert(rid, T { size: me.files[0].1, have: 0, paused: false, fail_after: param(&mag, "kt-fail").as_deref() == Some("after"), nopause: param(&mag, "kt-nopause").is_some(), stuck: param(&mag, "kt-stuck").is_some() && !unstuck().contains(&me.name), name: me.name.clone() });
     Ok(Added { rid, name: me.name, files: me.files })
 }
 pub fn stats(rid: usize) -> Result<Live, String> {
@@ -75,7 +82,7 @@ pub fn stats(rid: usize) -> Result<Live, String> {
         return Err("peer connection broke the disk".into());
     }
     if !t.paused {
-        t.have = (t.have + t.size / 4).min(t.size);
+        t.have = (t.have + t.size / 4).min(if t.stuck { t.size.saturating_sub(32768) } else { t.size });
     }
     let _ = &t.name;
     Ok(Live {
@@ -99,7 +106,11 @@ pub fn unpause(rid: usize) -> Result<bool, String> {
     Ok(true)
 }
 pub fn remove(rid: usize, _delete: bool) -> Result<(), String> {
-    m().2.remove(&rid).map(|_| ()).ok_or_else(|| "gone".into())
+    let t = m().2.remove(&rid).ok_or_else(|| "gone".to_string())?;
+    if t.stuck {
+        unstuck().insert(t.name);
+    }
+    Ok(())
 }
 pub fn only_files(rid: usize, _only: &[usize]) -> Result<(), String> {
     m().2.get(&rid).map(|_| ()).ok_or_else(|| "gone".into())
