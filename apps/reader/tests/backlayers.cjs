@@ -114,6 +114,56 @@ const keyOn = async (p, k) => { await p.evaluate(() => document.activeElement?.b
         ok(`${kind} · ${name} · ${way}`, expect(w), { before, after: w });
       }
     }
+    if (kind === 'pc') {
+      // Esc's order, one press at a time: a layer (the contents) → the full screen → auto-scroll → the words selected →
+      // «Next volume»'s question (come from another volume) → out of the book. (The full screen as the browser has it.)
+      await reader();
+      await p.evaluate((id) => sessionStorage.setItem('kr.fromVolume', JSON.stringify({ from: 'some-other-volume', to: id })), id);
+      await reader();
+      await p.evaluate(() => { const e = document.querySelector('.reader-flow .kr-content p:nth-of-type(3)'); const r = document.createRange(); r.selectNodeContents(e); getSelection().removeAllRanges(); getSelection().addRange(r); });
+      await keyOn(p, 'a'); await p.waitForSelector('.autoscroll-hud');
+      await p.evaluate(() => document.documentElement.requestFullscreen?.().catch(() => undefined)); await p.waitForTimeout(400);
+      const full = await p.evaluate(() => !!document.fullscreenElement);
+      // (The words selected again: starting auto-scroll may let them go.)
+      await p.evaluate(() => { const e = document.querySelector('.reader-flow .kr-content p:nth-of-type(3)'); const r = document.createRange(); r.selectNodeContents(e); getSelection().removeAllRanges(); getSelection().addRange(r); });
+      await keyOn(p, 'c'); await p.waitForSelector('.panel.open');
+      const state = () => p.evaluate(() => ({ panel: !!document.querySelector('.panel.open'), full: !!document.fullscreenElement, auto: !!document.querySelector('.autoscroll-hud'), words: !getSelection().isCollapsed, ask: !!document.querySelector('.sheet.vol-back'), reader: !!document.querySelector('.reader-view'), hash: location.hash }));
+      const seq = [await state()];
+      for (let i = 0; i < (full ? 5 : 4); i++) { await p.keyboard.press('Escape'); await p.waitForTimeout(600); seq.push(await state()); }
+      const st = (i) => seq[i];
+      let k = 1;
+      const okOrder = !st(k).panel && st(k).auto && (full ? st(k).full : true) && st(k).words
+        && (full ? (k++, !st(k).full && st(k).auto) : true)
+        && (k++, !st(k).auto && st(k).words)
+        && (k++, !st(k).words && !st(k).ask && st(k).reader)
+        && (k++, st(k).ask && st(k).reader);
+      ok(`pc · Esc's order: layer → ${full ? 'full screen → ' : ''}auto-scroll → selection → «Next volume»'s question`, okOrder, { full, seq });
+      await p.click('.sheet.vol-back .vol-back-home'); await p.waitForTimeout(900);
+      ok('pc · … and from the question, out (Main page)', (await where(p)).library);
+      // Esc while typing in a field: the field's only — a search emptied, never a step back.
+      await reader(); await keyOn(p, 'c'); await p.waitForSelector('.panel.open');
+      const field = await p.$('.panel.open input[type=search], .panel.open input[type=text]');
+      if (!field) { await p.evaluate(() => { const i = document.createElement('input'); i.type = 'search'; i.className = 'kr-test-field'; document.querySelector('.panel.open .panel-body').prepend(i); }); }
+      const sel = field ? '.panel.open input[type=search], .panel.open input[type=text]' : '.kr-test-field';
+      await p.fill(sel, 'lamp'); await p.focus(sel); await p.keyboard.press('Escape'); await p.waitForTimeout(500);
+      const f1 = await p.evaluate((sel) => ({ v: document.querySelector(sel)?.value, panel: !!document.querySelector('.panel.open') }), sel);
+      await p.focus(sel); await p.keyboard.press('Escape'); await p.waitForTimeout(500);
+      const f2 = await p.evaluate((sel) => ({ focused: document.activeElement === document.querySelector(sel), panel: !!document.querySelector('.panel.open') }), sel);
+      ok('pc · Esc typing in a field: the search emptied, the panel stays; again: the field left, the panel stays', f1.v === '' && f1.panel && !f2.focused && f2.panel, { f1, f2 });
+      await p.keyboard.press('Escape'); await p.waitForTimeout(500);
+      ok('pc · … the next Esc (out of the field) closes the panel', !(await where(p)).panel);
+      // «Back twice to leave a book»: Esc is guarded (a reminder, stays; a second within 2 s leaves); the arrow is not.
+      await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kr.visual')); v.backTwiceLeave = true; localStorage.setItem('kr.visual', JSON.stringify(v)); });
+      await home(); await p.reload(); await p.waitForSelector('.library-view');
+      await reader(); await p.keyboard.press('Escape'); await p.waitForTimeout(500);
+      const t1 = await where(p); const toast1 = await p.evaluate(() => [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('|'));
+      await p.keyboard.press('Escape'); await p.waitForTimeout(900);
+      const t2 = await where(p);
+      ok('pc · Back twice on: Esc once shows the reminder and stays; twice leaves', t1.reader && /again/i.test(toast1) && !t2.reader, { t1: t1.hash, toast1, t2: t2.hash });
+      await reader(); await p.click('.view .topbar button[data-icon="back"]'); await p.waitForTimeout(900);
+      ok('pc · Back twice on: the arrow leaves at once', !(await where(p)).reader);
+      await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kr.visual')); v.backTwiceLeave = false; localStorage.setItem('kr.visual', JSON.stringify(v)); });
+    }
     ok(`${kind}: no page errors`, errors.length === 0, errors);
     await br.close();
   }
