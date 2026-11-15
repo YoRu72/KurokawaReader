@@ -1222,6 +1222,14 @@ export const ja: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust コア {version} · 使用中: {engine} · Java に戻した数: {n}",
+  // (Stage M3 of the Rust port: Settings → Advanced, the phone's torrent engine — views/engineSettings.ts.)
+  torEngine: "トレントエンジン",
+  torEngineHint: "トレントを追加したときに割り当てるエンジンで、以後そのまま使われます。クラシックは実績のあるもの、ディレクターはクラシックに Rust コアが視聴中に先に取るピースを選ぶもの（遠くへのシークが早く始まります）、Rust はすべてが新しいエンジンです。Rust は、システムで選んだフォルダー（SAF）への保存や、プロキシ・ネットワークインターフェースの固定・暗号化の強制があるトレントは扱わず、クラシックに回します。失敗した場合は同じフォルダーからクラシックに戻ります。",
+  torEngineClassic: "クラシック",
+  torEngineDirector: "ディレクター",
+  torEngineRust: "Rust",
+  torEngineStatus: "新しいトレント: {engine} · Rust トレントエンジン {version} · クラシックに戻した数: {n}",
+  torEngineBadge: "エンジン: {e}",
   // Themes and glass (theme/)
   themeGallery: "テーマ",
   themeGalleryHint: "選んだ色の上に重なるガラスのテーマです。タップで使用します。画像付きのものは先にダウンロードします。",

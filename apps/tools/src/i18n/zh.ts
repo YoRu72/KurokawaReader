@@ -1222,6 +1222,14 @@ export const zh: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust 核心 {version} · 正在使用：{engine} · 交回 Java 的次数：{n}",
+  // (Stage M3 of the Rust port: Settings → Advanced, the phone's torrent engine — views/engineSettings.ts.)
+  torEngine: "种子引擎",
+  torEngineHint: "添加种子时为其选定的引擎，之后保持不变。经典是久经考验的引擎；导演模式是经典引擎加上 Rust 核心在观看时决定优先下载哪些分块，远距离跳转会更快开始；Rust 是全新的引擎。Rust 不接受保存到通过系统选择的文件夹（SAF）的种子，也不接受使用代理、绑定网络接口或强制加密的种子，这些会交给经典引擎；若失败，种子会从同一文件夹交回经典引擎。",
+  torEngineClassic: "经典",
+  torEngineDirector: "导演",
+  torEngineRust: "Rust",
+  torEngineStatus: "新种子：{engine} · Rust 种子引擎 {version} · 交回经典的次数：{n}",
+  torEngineBadge: "引擎：{e}",
   // Themes and glass (theme/)
   themeGallery: "主题",
   themeGalleryHint: "叠在你所选颜色之上的玻璃主题。轻点即可使用；带图片的主题会先下载。",

@@ -175,6 +175,7 @@ final class KtStream {
             }
             KtEngine.Task x = parts.length >= 1 ? engine.task(parts[0]) : null; int index = parts.length >= 2 ? Integer.parseInt(parts[1]) : 0;
             if (x == null) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+            if (engine.rsTor.holds(x)) { serveRust(x, index, req[0], ranged, rangeStart, rangeEnd, out); return; }   // (stage M3: a torrent on the Rust engine)
             File f = engine.fileOf(x, index); long size;
             TorrentHandle th = x.th; TorrentInfo ti = th != null && th.isValid() ? engine.infoOf(x) : null;
             if (ti != null) size = ti.files().fileSize(index); else if (f != null && f.exists()) size = f.length(); else { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
@@ -215,7 +216,7 @@ final class KtStream {
     }
     /** The video's byte rate (file size ÷ length) per task and file, told by the player once it knows the length. */
     final java.util.Map<String, Long> byteRate = new java.util.concurrent.ConcurrentHashMap<>();
-    void hint(String taskId, int index, double seconds, long size) { if (seconds > 1 && size > 0) byteRate.put(taskId + ":" + index, (long) (size / seconds)); }
+    void hint(String taskId, int index, double seconds, long size) { if (seconds > 1 && size > 0) { byteRate.put(taskId + ":" + index, (long) (size / seconds)); engine.director.hint(taskId + ":" + index, size / seconds); } }
     private final java.util.Map<TorrentHandle, String> ids = new java.util.concurrent.ConcurrentHashMap<>();
     private String task(TorrentHandle th) { String id = ids.get(th); return id == null ? "" : id; }
     private void waitForPiece(TorrentHandle th, TorrentInfo ti, int index, long pos, long end, Socket sock, String key, long me) throws InterruptedException {
@@ -226,7 +227,11 @@ final class KtStream {
         // one already here — so the download stays ahead of what is watched instead of stopping to wait at each
         // gap: about 48 MB after it, on deadlines that grow with the distance.)
         Integer at = windowAt.get(key);
-        if (steer && (at == null || at != piece)) {
+        // (Stage M3: a torrent on «director» — kt-core's director lays the window; Java's own below when it is not, or fails.)
+        boolean directed = false;
+        if (steer) { KtEngine.Task dx = engine.task(task(th)); String dk = dx == null ? null : dx.id + ":" + index;
+            if (dx != null && engine.directed(dx) && engine.director.isOpen(dk)) { long now = System.currentTimeMillis(); directed = engine.director.read(dk, pos, wires(th), now, false); if (directed) { try { engine.director.rate(dk, th.status().downloadPayloadRate(), now); } catch (Throwable ignored) {} engine.streaming(th); } } }
+        if (!directed && steer && (at == null || at != piece)) {
             // (About half a minute of the video ahead (torrentplayer's window), at its byte rate when the player has said
             // it — its length known —, else the old 48 MB; never under 16 MB nor over 256 MB.)
             Long rate = byteRate.get(task(th) + ":" + index); long want = rate != null && rate > 0 ? rate * 30 : (48L << 20);
@@ -247,6 +252,38 @@ final class KtStream {
             if (++n % 8 == 0 && gone(sock)) throw new InterruptedException("gone");
             Thread.sleep(100);
         }
+    }
+
+    /* ---------- stage M3 ---------- */
+    /** libtorrent4j's handle as the director's wires: top priority with a deadline, high priority, deadlines dropped. */
+    KtTorDirector.Wires wires(TorrentHandle th) {
+        return new KtTorDirector.Wires() {
+            @Override public boolean have(int k) { return th.havePiece(k); }
+            @Override public void deadline(int k, int ms) { th.piecePriority(k, Priority.TOP_PRIORITY); th.setPieceDeadline(k, ms); }
+            @Override public void high(int k) { th.piecePriority(k, Priority.SIX); }
+            @Override public void clearDeadlines() { try { th.clearPieceDeadlines(); } catch (Throwable ignored) {} }
+        };
+    }
+    /** A file of a torrent on the Rust engine: its bytes asked of librqbit (`bytes.tor.read`, which fetches the pieces
+     *  under the reader first and waits for them), the same ranges and headers as the libtorrent path. */
+    private void serveRust(KtEngine.Task x, int index, String method, boolean ranged, long rangeStart, long rangeEnd, OutputStream out) throws Exception {
+        // (A .torrent's files are known from its own description; a magnet's from the Rust engine's rows.)
+        long size = engine.rsTor.sizeOf(x, index); File f = engine.fileOf(x, index);
+        if (size < 0) { TorrentInfo ti = engine.infoOf(x); if (ti != null && index >= 0 && index < ti.numFiles()) size = ti.files().fileSize(index); }
+        if (size < 0) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+        if (rangeEnd < 0 || rangeEnd >= size) rangeEnd = size - 1;
+        if (rangeStart > rangeEnd) { out.write(("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + size + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+        long len = rangeEnd - rangeStart + 1;
+        out.write(((ranged ? "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + rangeStart + "-" + rangeEnd + "/" + size + "\r\n" : "HTTP/1.1 200 OK\r\n") + "Content-Type: " + mimeOf(f != null ? f.getName() : "") + "\r\nAccept-Ranges: bytes\r\nContent-Length: " + len + "\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+        if ("HEAD".equals(method)) { out.flush(); return; }
+        long pos = rangeStart;
+        while (pos <= rangeEnd) {
+            byte[] b = engine.rsTor.read(x, index, pos, (int) Math.min(1 << 17, rangeEnd - pos + 1));
+            if (b.length == 0) break;
+            out.write(b); pos += b.length;
+            if (pos % (1 << 20) < b.length) out.flush();
+        }
+        out.flush();
     }
 
     static String readLine(InputStream in) throws IOException {

@@ -2319,6 +2319,14 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust core {version} · in use: {engine} · handed back to Java: {n}",
+  // (Stage M3 of the Rust port: Settings → Advanced, the phone's torrent engine — views/engineSettings.ts.)
+  torEngine: "Torrent engine",
+  torEngineHint: "The engine a torrent is given when it is added; it keeps it. Classic is the tried one; Director is Classic with the Rust core choosing which pieces come first while you watch, so a far seek starts sooner; Rust is a new engine throughout. Rust does not take a torrent saved to a folder picked through the system (SAF), or one with a proxy, a bound network interface or forced encryption — those go to Classic; if it fails, the torrent goes back to Classic from the same folder.",
+  torEngineClassic: "Classic",
+  torEngineDirector: "Director",
+  torEngineRust: "Rust",
+  torEngineStatus: "New torrents: {engine} · Rust torrent engine {version} · handed back to Classic: {n}",
+  torEngineBadge: "engine: {e}",
   // Themes and glass (theme/)
   themeGallery: "Themes",
   themeGalleryHint: "Glass themes over the colours you choose. Tap one to use it; those with pictures download first.",

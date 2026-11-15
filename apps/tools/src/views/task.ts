@@ -16,6 +16,9 @@ import type { Task } from '../engine/types';
 import { back, navigate } from '../router';
 import { stateLabel } from './downloads';
 import { historyOf, fileMap, lanes, speedChart, logList, meter, infoList } from './taskmap';
+import { torEngineBadge } from './engineSettings';
+/** (Stage M3: the torrent's engine in its details, debuggable builds only.) */
+const torEngineInfo = (x: Task): [string, string][] => { const b = torEngineBadge(x); return b ? [[t('torEngine'), b]] : []; };
 import { categoryOf } from '../downloads/categories';
 
 export function taskView(id: string): HTMLElement & { dispose?: () => void } {
@@ -82,7 +85,7 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
         h('small', { class: 'src' }, t('errExpiredHint')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'relink', onclick: () => void import('../browser').then((m) => m.relinkFromBrowser(x)) }, icon('globe'), t('relinkBrowser')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : h('span'), hlsLine ?? h('span'), limitRow ?? h('span'), acts),
-      panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x)), (x.kind === 'video' && ktPlugin() ? commandCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
+      panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x, torEngineInfo(x))), (x.kind === 'video' && ktPlugin() ? commandCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
   // (The files' card: made once and kept, so a search typed or a folder opened survives the redraws.)
   let filesBox: FilesCard | undefined;

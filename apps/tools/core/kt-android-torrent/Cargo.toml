@@ -1,0 +1,63 @@
+[package]
+name = "kt-android-torrent"
+# (The version Java's KtTorrentCore reports: «Rust torrent engine: 0.1.0».)
+version = "0.1.0"
+description = "Kurokawa Tools' Android torrent engine (stage M3): librqbit behind the same one-call JNI shape as kt-android, in a library of its own"
+edition = "2021"
+publish = false
+
+[lib]
+name = "kt_torrent"
+path = "src/lib.rs"
+# The libkt_torrent.so packed into the APK beside libkt_android.so — only when it built for all three ABIs (rlib: for
+# tests/loopback.rs, which calls the dispatch directly).
+crate-type = ["cdylib", "rlib"]
+
+# The ONE place stage M3 takes crates.io dependencies (docs: ../kt-android/ANDROID-PORT.md, M3), so libkt_android.so
+# stays dependency-free and a librqbit that does not build can never touch it. It cannot be compiled on the machine
+# this was written on (no crates.io there): CI is its compiler. Everything it decides is kt-core's tormobile (std,
+# tested alone); src/dispatch.rs is std only too and is tested here with the stand-in backend (src/fake.rs, built by
+# rustc with `--cfg kt_fake`, see test-host.sh).
+[dependencies]
+kt-core = { path = "../kt-core" }
+# librqbit 8.1.1: the version the PC's stream_rqbit.rs compiled against (CI runs 43586049375, 43597302499) — but the
+# PC builds it with its DEFAULT features (default-tls → native-tls → OpenSSL, and sha1 through crypto-hash → OpenSSL),
+# which Android does not have. Here: no default features, «rust-tls» (reqwest with rustls → ring; sha1 from ring) — a
+# combination the PC never built. ring compiles C and assembly with the NDK's clang (build-android.sh sets CC/AR per
+# target).
+librqbit = { version = "=8.1.1", default-features = false, features = ["rust-tls"] }
+# (What the PC's rqbit-feature.cjs names: the runtime with several workers, the file stream's reads and the timeouts.)
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "time"] }
+
+# Each librqbit call the PC never compiled sits behind one feature, so CI can build with all of them and, if that
+# fails, again with none (only the calls stream_rqbit.rs proved) — see build-android.sh. Without a feature its job is
+# done with proven calls (pause = drop the torrent keeping its files, resume = add it again and check them) or the
+# number is left out (file progress, upload), and deviceInfo says which build it is.
+[features]
+default = ["unproven"]
+unproven = ["pause", "listen", "limits", "fileprog", "listonly", "trackers", "nodhtfile", "upload"]
+pause = []
+listen = []
+limits = []
+fileprog = []
+listonly = []
+trackers = []
+nodhtfile = []
+upload = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kt_fake)'] }
+
+# Its own workspace root, so no Cargo.toml above it is taken for one.
+[workspace]
+
+# panic = "unwind" on purpose (the default; written out): every JNI entry and every librqbit call is inside
+# catch_unwind, so a librqbit panic becomes an error answer and the torrent goes back to libtorrent.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+debug = false
+incremental = false
+panic = "unwind"

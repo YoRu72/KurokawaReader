@@ -395,6 +395,9 @@ public class KtPlugin extends Plugin {
         // (Stage M2: the download engine — the one chosen in Settings → Advanced, the one new downloads use (Java when the
         // core is absent), and how many downloads the Rust engine handed back to Java before their first byte.)
         try { String choice = "rust".equals(getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getString("dlEngine", "java")) ? "rust" : "java"; r.put("dlEngineChoice", choice); r.put("dlEngine", "rust".equals(choice) && KtCore.available() ? "rust" : "java"); r.put("dlEngineFallbacks", KrDownloaderRs.FALLBACKS.get()); } catch (Throwable ignored) {}
+        // (Stage M3: the torrent engine — the choice for new torrents, the Rust torrent library's version or null, how many
+        // torrents it handed to libtorrent, how many it holds now; the director's plans and fallbacks.)
+        try { String tc = engine().torEngineChoice(); r.put("torEngineChoice", tc); r.put("torEngine", "rust".equals(tc) && KtTorrentRs.available() ? "rust" : "director".equals(tc) && KtCore.available() ? "director" : "classic"); r.put("rustTorrent", KtTorrentRs.available() ? KtTorrentCore.version() : JSObject.NULL); r.put("rustTorrentStatus", KtTorrentCore.status()); r.put("torEngineFallbacks", KtTorrentRs.FALLBACKS.get()); r.put("torEngineHeld", engine().rsTor.count()); r.put("torDirectorPlans", KtTorDirector.PLANS.get()); r.put("torDirectorFallbacks", KtTorDirector.FALLBACKS.get()); r.put("debuggable", KtCore.shadow); } catch (Throwable ignored) {}
         call.resolve(r);
     }
     @PluginMethod public void isInstalled(PluginCall call) {

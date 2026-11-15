@@ -50,6 +50,15 @@ pub const METHODS: &[&str] = &[
     "http.close",
     "http.record",
     "bytes.megaCtr",
+    // M3: torrents — the streaming director (src/m3call.rs; kt-core's tordirector) and the engine rules (tormobile)
+    "tdir.open",
+    "tdir.hint",
+    "tdir.rate",
+    "tdir.read",
+    "tdir.plan",
+    "tdir.close",
+    "tor.choose",
+    "tor.onFail",
 ];
 
 /// Bytes in, bytes out: what the JNI function hands over.
@@ -117,6 +126,8 @@ pub fn call_json(m: &str, a: &J) -> Result<J, String> {
         "tr.cacheKey" => Ok(J::s(&translatekey::cache_key(&config(a)?, &string(a, "text")?))),
 
         m if m.starts_with("http.") => crate::httpcall::call(m, a),
+        // (Stage M3: torrents.)
+        m if m.starts_with("tdir.") || m.starts_with("tor.") => crate::m3call::call(m, a),
 
         _ => Err(format!("no such method: {}", m)),
     }

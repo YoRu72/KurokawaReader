@@ -2314,6 +2314,14 @@ export const ar: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "نواة Rust ‏{version} · المستعمَل الآن: {engine} · ما أُعيد إلى Java، العدد: {n}",
+  // (Stage M3 of the Rust port: Settings → Advanced, the phone's torrent engine — views/engineSettings.ts.)
+  torEngine: "محرّك التورنت",
+  torEngineHint: "المحرّكُ الذي يُعطاه التورنت حين يُضاف، ويبقى عليه. فأمّا الكلاسيكيّ فهو المجرَّب، وأمّا «الموجِّه» فهو الكلاسيكيّ تختار له نواةُ Rust ما يُقدَّم من القِطَع وأنت تشاهد، فيبدأ القفزُ البعيد أسرع، وأمّا Rust فمحرّكٌ جديدٌ كلُّه. ولا يأخذ Rust تورنتًا يُحفَظ في مجلّدٍ اختِير من النظام (SAF)، ولا ما كان معه وكيلٌ أو واجهةُ شبكةٍ مقيَّدة أو تعميةٌ مفروضة، فذلك كلُّه للكلاسيكيّ؛ وإن أخفق رجع التورنت إلى الكلاسيكيّ من المجلّد نفسه.",
+  torEngineClassic: "الكلاسيكيّ",
+  torEngineDirector: "الموجِّه",
+  torEngineRust: "Rust",
+  torEngineStatus: "التورنت الجديد: {engine} · محرّك Rust للتورنت ‏{version} · ما أُعيد إلى الكلاسيكيّ، العدد: {n}",
+  torEngineBadge: "المحرّك: {e}",
   // Themes and glass (theme/)
   themeGallery: "السِّمات",
   themeGalleryHint: "اختر السمة: سِماتٌ زجاجيّةٌ فوق الألوان التي تختارها. اضغط إحداها لتستعملها، وما كان منها ذا صورٍ يُنزَّل أوّلًا.",

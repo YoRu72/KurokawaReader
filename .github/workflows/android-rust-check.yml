@@ -29,7 +29,7 @@ jobs:
   android-rust:
     name: Rust core for Android
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 100   # (stage M3: librqbit built four times — the computer and three ABIs — with LTO; was 50)
     defaults:
       run:
         shell: bash
@@ -80,6 +80,44 @@ jobs:
       - name: The library for Android (arm64-v8a, armeabi-v7a, x86_64)
         run: bash apps/tools/core/kt-android/build-android.sh "$RUNNER_TEMP/jniLibs"
 
+      # ===== Stage M3 — torrents (apps/tools/core/kt-android-torrent; ANDROID-PORT.md «M3»). The director and the rules
+      # are std only and required; librqbit (its own library, libkt_torrent.so, crates.io dependencies) is a try:
+      # continue-on-error, and its .so files join $RUNNER_TEMP/jniLibs — so «Pack the library into the app» below
+      # carries them — only when all three ABIs built. The size table is the last step of this job. =====
+      - name: "M3: the director (simulated swarm) and the phone's torrent rules — rustc alone"
+        run: |
+          d="$RUNNER_TEMP/m3-tests"; mkdir -p "$d"
+          for f in tordirector tormobile; do rustc --edition 2021 -O --test "apps/tools/core/kt-core/src/$f.rs" -o "$d/$f"; done
+          "$d/tormobile"
+          "$d/tordirector" --nocapture | tee "$d/sim.txt"
+          { echo "### Stage M3 — the director against plain sequential and Java's rules (simulated swarm, 5 seeds each; 400 s = never in the run)"; echo; grep '^|' "$d/sim.txt"; echo; } >> "$GITHUB_STEP_SUMMARY"
+      - name: "M3: the torrent library's std part (stand-in backend) and its Java door from a JVM"
+        working-directory: apps/tools/core/kt-android-torrent
+        run: |
+          sh test-host.sh "$RUNNER_TEMP/kttor-fake"
+          sh jvmtest/torrent.sh "$RUNNER_TEMP/kttor-fake/libkt_torrent.so" ../kt-android/target/release/libkt_android.so fake
+      - name: "M3: librqbit for the computer — loopback swarm, JVM call shape (a try)"
+        id: m3host
+        continue-on-error: true
+        working-directory: apps/tools/core/kt-android-torrent
+        run: |
+          set -o pipefail
+          sudo apt-get install -y aria2 > /dev/null
+          f=""; cargo build --release || { echo "::warning::librqbit (every call) did not build for the computer — the proven calls only"; f="--no-default-features"; cargo build --release $f; }
+          ls -la target/release/libkt_torrent.so
+          cargo test --release $f --test loopback -- --nocapture 2>&1 | tee "$RUNNER_TEMP/m3-loopback.txt"
+          sh jvmtest/torrent.sh target/release/libkt_torrent.so ../kt-android/target/release/libkt_android.so real
+      - name: "M3: libkt_torrent.so for Android — three ABIs or none (a try)"
+        id: m3android
+        continue-on-error: true
+        run: |
+          rm -rf "$RUNNER_TEMP/jniTor"
+          bash apps/tools/core/kt-android-torrent/build-android.sh "$RUNNER_TEMP/jniTor"
+          for abi in arm64-v8a armeabi-v7a x86_64; do [ -s "$RUNNER_TEMP/jniTor/$abi/libkt_torrent.so" ] || { echo "::warning::libkt_torrent did not build for $abi — no APK carries it"; exit 1; }; done
+          for abi in arm64-v8a armeabi-v7a x86_64; do cp "$RUNNER_TEMP/jniTor/$abi/libkt_torrent.so" "$RUNNER_TEMP/jniLibs/$abi/"; done
+          cat "$RUNNER_TEMP/jniTor/build.txt" >> "$GITHUB_STEP_SUMMARY"
+      # ===== end of stage M3's first block =====
+
       - name: Web build
         working-directory: apps/tools
         run: |
@@ -117,3 +155,12 @@ jobs:
       # (An emulator run — the library loaded on Android itself, the shadow mode in a debuggable build — is not done
       # here: it would add 10+ minutes for what the JVM test already proves of the call shape. The owner's phone run
       # with a debug APK is the check on a device.)
+      # ===== Stage M3 (its second block: after the APKs exist) — the size table per ABI with and without the torrent
+      # library, and what the two tries above came to. =====
+      - name: "M3: the torrent library's size, and the tries' verdict"
+        if: always()
+        working-directory: apps/tools
+        run: |
+          { echo "### Stage M3 — librqbit: computer build + loopback swarm: ${{ steps.m3host.outcome }}; Android three ABIs: ${{ steps.m3android.outcome }}"; echo; } >> "$GITHUB_STEP_SUMMARY"
+          [ -f "$RUNNER_TEMP/m3-loopback.txt" ] && { echo '```'; grep -E "far range|whole file|forced failure|library:" "$RUNNER_TEMP/m3-loopback.txt" | head -20; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          if [ -d "$RUNNER_TEMP/jniTor" ]; then python3 core/kt-android-torrent/sizes.py --jni "$RUNNER_TEMP/jniTor" --apks android/app/build/outputs/apk/release | tee -a "$GITHUB_STEP_SUMMARY" || true; else echo "No libkt_torrent.so was built: the APKs are without it." | tee -a "$GITHUB_STEP_SUMMARY"; fi
