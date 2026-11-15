@@ -1222,6 +1222,12 @@ export const ko: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust 코어 {version} · 사용 중: {engine} · Java로 넘긴 수: {n}",
+  // (stage M4)
+  screenEngine: "화면 번역 엔진",
+  screenEngineHint: "떠 있는 번역기가 화면을 따라가고 그림에서 글자를 지우는 방식입니다. 클래식은 검증된 방식이고 Rust는 새롭고 더 빠릅니다. 만화와 스크롤되는 페이지에서 써 보고, 상자가 어긋나거나 깜빡이면 되돌리세요.",
+  screenEngineClassic: "클래식",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "사용 중: {engine} · 클래식으로 넘긴 수: {n}",
   // (Stage M5 of the Rust port: the file jobs' engine and the «Rust core status» block — views/rustStatus.ts.)
   fileEngine: "파일 작업 엔진",
   fileEngineHint: "「파일」에서 복사·이동·삭제를 하는 엔진입니다. 클래식은 검증된 방식입니다. Rust를 고르면 Rust가 각 작업의 계획을 세우고 앱이 실행합니다. 삭제하거나 덮어쓰는 단계는 모두 먼저 클래식 계획과 대조하며, 서로 다른 항목은 건너뛰고 알려 줄 뿐 건드리지 않습니다. Rust 작업은 기록되므로 중단된 작업을 이어 하거나 되돌릴 수 있습니다. 변경 후 시작한 작업에 적용됩니다.",

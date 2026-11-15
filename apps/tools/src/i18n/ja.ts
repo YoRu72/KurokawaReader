@@ -1222,6 +1222,12 @@ export const ja: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust コア {version} · 使用中: {engine} · Java に戻した数: {n}",
+  // (stage M4)
+  screenEngine: "画面翻訳エンジン",
+  screenEngineHint: "フローティング翻訳が画面を追い、画像から文字を消す仕組みです。クラシックは実績のあるもの、Rust は新しく高速なものです。漫画とスクロールするページで試し、枠がずれたりちらついたりしたら元に戻してください。",
+  screenEngineClassic: "クラシック",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "使用中: {engine} · クラシックに戻した数: {n}",
   // (Stage M5 of the Rust port: the file jobs' engine and the «Rust core status» block — views/rustStatus.ts.)
   fileEngine: "ファイル処理エンジン",
   fileEngineHint: "「ファイル」でコピー・移動・削除を行うエンジンです。クラシックは実績のある方式です。Rust では Rust が各処理の計画を立て、アプリが実行します。削除や上書きを行う手順はすべて先にクラシックの計画と照合され、食い違った項目はスキップして報告され、触れられません。Rust の処理は記録されるため、中断した処理を再開したり元に戻したりできます。変更後に始めた処理に適用されます。",

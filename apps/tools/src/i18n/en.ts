@@ -2319,6 +2319,12 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust core {version} · in use: {engine} · handed back to Java: {n}",
+  // (stage M4)
+  screenEngine: "Screen translator engine",
+  screenEngineHint: "How the floating translator follows the screen and takes the words off pictures. Classic is the tried one; Rust is new and faster — try it on a comic and on a scrolling page, and switch back if the boxes drift or flicker.",
+  screenEngineClassic: "Classic",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "in use: {engine} · handed back to Classic: {n}",
   // (Stage M5 of the Rust port: the file jobs' engine and the «Rust core status» block — views/rustStatus.ts.)
   fileEngine: "File jobs engine",
   fileEngineHint: "The engine that copies, moves and deletes in Files. Classic is the tried one. With Rust, Rust plans each job and the app carries it out; every step that deletes or overwrites is first checked against the classic plan, and an item on which the two disagree is skipped and reported, never touched. Rust jobs are journaled, so one cut short can be resumed or rolled back. Applies to jobs started after the change.",

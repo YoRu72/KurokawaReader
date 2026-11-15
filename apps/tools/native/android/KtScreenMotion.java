@@ -31,6 +31,14 @@ final class KtScreenMotion {
     /** How many pixels the content moved up from `a` to `b` (scrolling down the page: positive), 0 when it stood
      *  still, NONE when the two do not match at any shift (another page, a video playing). */
     static int shift(short[][] a, short[][] b, int maxPx) {
+        // (Stage M4: the Rust engine when chosen, per call back to Java on any error; shadow-checked on debuggable builds.)
+        if (KtScreenRs.use(KtScreenRs.SHIFT_ON_RUST)) { Integer r = KtScreenRs.shift(a, b, maxPx); if (r != null) return r; }
+        int j = shiftJava(a, b, maxPx);
+        if (KtScreenRs.shadowing()) KtScreenRs.shadowShift(a, b, maxPx, j);
+        return j;
+    }
+    /** Java's shift (the reference and the fallback). */
+    static int shiftJava(short[][] a, short[][] b, int maxPx) {
         if (a == null || b == null || a.length != b.length || a.length < 8) return NONE;
         int rows = a.length, max = Math.min(rows - rows / 4, maxPx / STEP);
         double still = diff(a, b, 0, rows, 1);

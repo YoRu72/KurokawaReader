@@ -45,16 +45,21 @@ final class KtHls {
 
     /** The whole thing: playlist(s) read, pieces fetched to {@code work}, joined into {@code out} (its extension put right). */
     static Result run(android.content.Context ctx, String url, File out, File work, int threads, int wantHeight, KrDownloader.Opener opener, AtomicBoolean cancelled, Progress progress) throws Exception {
+        return run(ctx, url, out, work, threads, wantHeight, opener, cancelled, progress, false);
+    }
+    /** `rust`: the playlists read by the Rust core (stage M4, KtHlsRs: the download engine chosen is Rust), Java's
+     *  reading on any error; otherwise Java's, shadow-checked on debuggable builds. */
+    static Result run(android.content.Context ctx, String url, File out, File work, int threads, int wantHeight, KrDownloader.Opener opener, AtomicBoolean cancelled, Progress progress, boolean rust) throws Exception {
         work.mkdirs();
         String text = textOf(url, opener); URL base = new URL(url);
         if (!text.contains("#EXTM3U")) throw new IOException("not a playlist");
-        List<Variant> vs = variants(text, base);
+        List<Variant> vs = KtHlsRs.variants(text, base, rust);
         if (!vs.isEmpty()) {
-            Variant pick = choose(vs, wantHeight);
+            Variant pick = KtHlsRs.choose(vs, wantHeight, rust);
             progress.on(0, 0, 0, "variant " + (pick.height > 0 ? pick.height + "p" : pick.bandwidth / 1000 + " kb/s"));
             base = new URL(pick.url); text = textOf(pick.url, opener);
         }
-        Playlist pl = media(text, base);
+        Playlist pl = KtHlsRs.media(text, base, rust);
         if (pl.pieces.isEmpty()) throw new IOException("empty playlist");
         if (pl.live) throw new IOException("live");
         final int n = pl.pieces.size(); final AtomicLong bytes = new AtomicLong(); final java.util.concurrent.atomic.AtomicInteger doneN = new java.util.concurrent.atomic.AtomicInteger();

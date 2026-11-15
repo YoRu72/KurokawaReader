@@ -44,6 +44,14 @@ pub mod translatekey;
 // (Android stage M2: the HTTP downloader's decisions — KrDownloader.java's rules as a state machine; Java moves the
 // bytes and asks this for every choice, through kt-android's `http.*` methods.)
 pub mod httpdl;
+// (Android stage M4: the screen translator's rules — KtScreenTrack's following and translating ahead, KtScreenMotion's
+// scroll finder, KtInpaint's cleaning (and a patch cache), KtLettering / KtLetterFace's text rules — and KtHls's
+// playlists with java.net.URL's way of resolving; javachar.in holds Java's Character tables they share.)
+pub mod screentrack;
+pub mod screenmotion;
+pub mod inpaint;
+pub mod lettering;
+pub mod hls;
 // (Android stage M5: the file jobs as a planner — KtFileJobs.java's rules as ordered steps Java executes —, their
 // journal (resume, roll back, undo), and the network storages' rules that need no network — KtRemote.java's.)
 pub mod fileplan;

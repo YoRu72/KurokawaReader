@@ -50,6 +50,19 @@ pub const METHODS: &[&str] = &[
     "http.close",
     "http.record",
     "bytes.megaCtr",
+    // M4: the screen translator (tracking, motion, inpaint, lettering's rules) and HLS playlists (src/m4call.rs)
+    "bytes.scrTrack",
+    "bytes.moShift",
+    "bytes.inpaint",
+    "bytes.hlsVariants",
+    "bytes.hlsMedia",
+    "hls.choose",
+    "scr.ahead",
+    "lt.kinds",
+    "lt.restore",
+    "lt.prompt",
+    "scr.stats",
+    "scr.cacheClear",
     // M5: the file jobs' planner and journal, the bin's, archives' and the vault's small rules, the network storages'
     // rules (src/m5call.rs; kt-core's fileplan, filejournal, remoterules)
     "fj.plan",
@@ -102,6 +115,8 @@ fn call_raw(m: &str, args: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
     match m {
         "bytes.echo" => Ok(data.to_vec()),
         "bytes.megaCtr" => crate::httpcall::mega_ctr(args, data),
+        // (M4)
+        "bytes.scrTrack" | "bytes.moShift" | "bytes.inpaint" | "bytes.hlsVariants" | "bytes.hlsMedia" => crate::m4call::call_raw(m, args, data),
         _ => Err(format!("no such method: {}", m)),
     }
 }
@@ -147,6 +162,8 @@ pub fn call_json(m: &str, a: &J) -> Result<J, String> {
         "tr.cacheKey" => Ok(J::s(&translatekey::cache_key(&config(a)?, &string(a, "text")?))),
 
         m if m.starts_with("http.") => crate::httpcall::call(m, a),
+        // (M4)
+        "hls.choose" | "scr.ahead" | "lt.kinds" | "lt.restore" | "lt.prompt" | "scr.stats" | "scr.cacheClear" => crate::m4call::call(m, a),
 
         // (Stage M5: file jobs, the bin, archives, the vault, network storages — src/m5call.rs.)
         m if m.starts_with("fj.") || m.starts_with("ar.") || m.starts_with("vt.") || m.starts_with("rm.") => crate::m5call::call(m, a),

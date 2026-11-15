@@ -11,6 +11,9 @@ name: Android Rust check (Tools)
 # Stage M2 (the HTTP downloader): kt-core's httpdl.rs tested alone; tests/native/T.java's runs 1–19 run twice against
 # their loopback server — once through Java's KrDownloader (the reference, unchanged) and once through KrDownloaderRs,
 # every decision asked of the host library (jvmtest/downloader-rust.sh, strict: no silent Java fallback).
+# Stage M4 (the screen translator and HLS): kt-core's screentrack / screenmotion / inpaint / lettering / hls tested alone;
+# Java's screen and HLS tests run under shadow mode and through the Rust engine (jvmtest/screen-rust.sh, strict), the
+# parity cases, the host benchmark printed, and Java alone with no library.
 # Stage M5 (the Files jobs): kt-core's fileplan / filejournal / remoterules tested alone; FilesT.java's cases through
 # Java's planner and through Rust's (jvmtest/filejobs-rust.sh), the two planners compared on random trees, the journal
 # killed before each of its records and resumed or rolled back.
@@ -80,6 +83,20 @@ jobs:
         working-directory: apps/tools/core/kt-android
         run: sh jvmtest/downloader-rust.sh target/release/libkt_android.so
 
+      # ---- stage M4: the screen translator and HLS (required) ----
+      - name: M4 — std-only unit tests of the screen translator's and HLS's rules (rustc alone)
+        run: |
+          d="$RUNNER_TEMP/rs-tests-m4"; mkdir -p "$d"
+          for f in screentrack screenmotion inpaint lettering hls; do
+            rustc --edition 2021 -O --test "apps/tools/core/kt-core/src/$f.rs" -o "$d/$f"; "$d/$f"
+          done
+      - name: M4 — Java's HLS reader (the reference, unchanged; no library here)
+        working-directory: apps/tools
+        run: sh tests/native/hls.sh
+      - name: M4 — tracking, motion, inpaint, lettering and HLS through the Rust core (host library; shadow, strict, parity, benchmark)
+        working-directory: apps/tools/core/kt-android
+        run: sh jvmtest/screen-rust.sh target/release/libkt_android.so
+      # ---- (end of stage M4) ----
       # ---- Stage M5: the Files jobs (copy / move / delete) planned by Rust, executed by Java; their journal; the
       # network storages' rules. Required: each step fails the job.
       - name: M5 — std-only tests (fileplan, filejournal, remoterules; rustc alone)

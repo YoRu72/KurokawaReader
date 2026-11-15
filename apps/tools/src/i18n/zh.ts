@@ -1222,6 +1222,12 @@ export const zh: Partial<Strings> = {
   dlEngineJava: "Java",
   dlEngineRust: "Rust",
   dlEngineStatus: "Rust 核心 {version} · 正在使用：{engine} · 交回 Java 的次数：{n}",
+  // (stage M4)
+  screenEngine: "屏幕翻译引擎",
+  screenEngineHint: "悬浮翻译跟随屏幕、从图片上擦除文字的方式。经典版久经考验，Rust 是新的、更快——请在漫画和滚动页面上都试一试，若框体偏移或闪烁就切换回来。",
+  screenEngineClassic: "经典",
+  screenEngineRust: "Rust",
+  screenEngineStatus: "正在使用：{engine} · 交回经典版的次数：{n}",
   // (Stage M5 of the Rust port: the file jobs' engine and the «Rust core status» block — views/rustStatus.ts.)
   fileEngine: "文件任务引擎",
   fileEngineHint: "在「文件」中复制、移动和删除所用的引擎。经典是久经验证的方式。选择 Rust 时，由 Rust 规划每个任务，应用负责执行；凡是删除或覆盖的步骤，都会先与经典计划核对，两者不一致的项目会被跳过并报告，绝不触动。Rust 任务会记入日志，中断的任务可以继续或撤回。更改后开始的任务生效。",
