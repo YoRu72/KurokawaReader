@@ -325,9 +325,12 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
     sheet.body.appendChild(h('label', { class: 'check-row snap-pic-row' }, box, h('span', null, t('snapIncludePicture'))));
   }
   if (format?.has) {
+    // (The app's own switch row — its name and a line under it, the switch at the end — as in the Visual Options.)
     const box = h('input', { type: 'checkbox', checked: fmtOn }) as HTMLInputElement;
     box.addEventListener('change', async () => { fmtOn = box.checked; updateSettings({ snapBookFormat: fmtOn }); mount(await rerender(getSettings().snapStyle, picOn, fmtOn)); });
-    sheet.body.appendChild(h('label', { class: 'check-row snap-fmt-row', style: { alignItems: 'flex-start' } }, (box.style.marginTop = '3px', box), h('span', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, t('snapBookFormat'), h('small', { class: 'hint' }, t('snapBookFormatHint')))));
+    sheet.body.appendChild(h('div', { class: 'options-grid snap-fmt', style: { marginTop: '14px' } },
+      h('label', { class: 'row snap-fmt-row' }, h('span', { class: 'label' }, t('snapBookFormat')), h('span', { class: 'switch' }, box, h('i'))),
+      h('p', { class: 'hint', style: { marginTop: '-16px' } }, t('snapBookFormatHint'))));
   }
   const png = async () => blob ?? (blob = await canvasToBlob(canvas, 'image/png'));
   const styleBtn = h('button', { class: 'btn small', type: 'button' }, t(getSettings().snapStyle === 'plain' ? 'snapCard' : 'snapPlain'));

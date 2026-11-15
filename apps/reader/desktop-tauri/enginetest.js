@@ -300,7 +300,8 @@
     });
   }
   async function bookById(id) { return (await allBooks()).filter(function (b) { return b.id === id; })[0] || null; }
-  function closeSheets() { for (var i = 0; i < 3; i++) key('Escape'); }
+  // (Each open layer by its own close: Esc is Back since 0.64, and with nothing open it would leave the view.)
+  function closeSheets() { for (var i = 0; i < 3; i++) { var b = $('.sheet .sheet-head button[data-icon="close"]') || $('.lightbox .lb-close') || $('.panel.open .panel-head > button[data-icon="close"]'); if (b) b.click(); } }
   async function toLibrary() {
     if (!/^#\/?$/.test(root.location.hash)) root.location.hash = '#/';
     await waitFor(function () { return visible($('.library-view')); }, 20000, 'the library view');

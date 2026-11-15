@@ -64,14 +64,15 @@ const server = http.createServer((req, res) => {
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${SHOTS}/${lang}-05-toc.png` });
   console.log('toc entries:', await page.$$eval('.toc-list li', (l) => l.length));
-  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);  // (Esc is Back, taken a moment after the key: src/ui/backstack.ts)
   // Search
   await page.keyboard.press('/');
   await page.fill('.panel input[type=search]', lang === 'ar' ? 'الحارث' : 'white rabbit');
   await page.waitForTimeout(600);
   console.log('search:', await page.textContent('.panel-body div'));
   await page.screenshot({ path: `${SHOTS}/${lang}-06-search.png` });
-  await page.keyboard.press('Escape');
+  // (Out of the search field first: Esc typing in a field is the field's own since 0.64 — src/ui/backstack.ts.)
+  await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
   // Visual options
   await page.keyboard.press('v');
   await page.waitForTimeout(300);
@@ -79,13 +80,13 @@ const server = http.createServer((req, res) => {
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${SHOTS}/${lang}-07-options-sepia.png` });
   await page.click('.theme-swatches button >> nth=0');
-  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);  // (Esc is Back, taken a moment after the key: src/ui/backstack.ts)
   // Gallery
   await page.keyboard.press('g');
   await page.waitForTimeout(500);
   console.log('gallery images:', await page.$$eval('.gallery-grid img', (l) => l.length));
   await page.screenshot({ path: `${SHOTS}/${lang}-08-gallery.png` });
-  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);  // (Esc is Back, taken a moment after the key: src/ui/backstack.ts)
   // Selection toolbar
   await page.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const ps = [...document.querySelectorAll('.kr-content p')]; const top = sc.getBoundingClientRect().top; let p = ps.find((x) => x.textContent.trim().length > 40 && x.getBoundingClientRect().top > top + 20 && x.getBoundingClientRect().bottom < top + sc.clientHeight - 20); if (!p) { p = ps.find((x) => x.textContent.trim().length > 40 && x.getBoundingClientRect().top > top) || ps[0]; p.scrollIntoView({ block: 'center' }); } const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
   await page.waitForTimeout(500);
@@ -128,11 +129,11 @@ const server = http.createServer((req, res) => {
   await page.waitForTimeout(1500);
   console.log('pdf search:', await page.textContent('.panel-body div'));
   await page.screenshot({ path: `${SHOTS}/${lang}-11-pdf-search.png` });
-  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);  // (Esc is Back, taken a moment after the key: src/ui/backstack.ts)
   await page.click('[aria-label="' + (lang === 'ar' ? 'الفهرس' : 'Contents') + '"]');
   await page.waitForTimeout(500);
   console.log('pdf outline:', await page.$$eval('.toc-list li', (l) => l.length));
-  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);  // (Esc is Back, taken a moment after the key: src/ui/backstack.ts)
   await page.goto('http://localhost:5180/#/');
   await page.waitForSelector('.book-card');
   await page.waitForTimeout(300);

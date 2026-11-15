@@ -184,7 +184,9 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   // Alignment, under book formatting as without it: the book's own, smart justify (justified, a paragraph with too wide
   // gaps set ragged — src/ui/smartjustify.ts), justified whatever the gaps, at the start, centred; words broken at line ends.
   const aligns: [VisualSettings['align'], string][] = [['book', t('alignBook')], ['smart', t('alignSmart')], ['justify', t('alignJustify')], ['start', t('alignStart')], ['center', t('alignCenter')]];
-  grid.append(section([t('textAlign'), 'align'], segmented(aligns, s.align, (v) => { updateSettings({ align: v }); rerender(); })), ...(s.align === 'smart' ? [h('p', { class: 'hint' }, t('alignSmartHint'))] : []));
+  // (Five choices: separate pills of one size and shape, a gap between them — src/styles/base.css .segmented.pills.)
+  const alignSeg = segmented(aligns, s.align, (v) => { updateSettings({ align: v }); rerender(); }); alignSeg.classList.add('pills');
+  grid.append(section([t('textAlign'), 'align'], alignSeg), ...(s.align === 'smart' ? [h('p', { class: 'hint' }, t('alignSmartHint'))] : []));
   grid.append(toggle([t('hyphenate'), 'hyphenate'], s.hyphenate, (v) => updateSettings({ hyphenate: v })));
   grid.append(toggle([t('bookFormat'), 'bookFormat'], s.bookFormat, (v) => { updateSettings({ bookFormat: v }); rerender(); }), h('p', { class: 'hint' }, t('bookFormatHint')));
   grid.append(stepper([t('firstLineIndent'), 'indent'], s.indent, 0, 3, 0.5, (v) => updateSettings({ indent: v }), (v) => (v ? `${v}em` : s.bookFormat ? '2em' : '—')));  // (Book formatting indents by 2em when the reader's own indent is none.)

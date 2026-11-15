@@ -296,6 +296,9 @@ html[dir='rtl'] .switch input:checked + i::after { transform: translateX(-20px);
 .segmented button:active { transform: scale(.95); }
 .segmented button[aria-pressed='true'] { background: var(--md-primary); color: var(--md-on-primary); border-radius: var(--sh-full); font-weight: 600; }
 .segmented button:disabled { opacity: .55; pointer-events: none; }
+/* Many choices of one kind (the alignment): separate pills of one width, height and shape, wrapping in even columns. */
+.segmented.pills { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 6px; }
+.segmented.pills button, .segmented.pills button:first-child, .segmented.pills button:last-child { border-radius: var(--sh-full); height: 44px; padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- Library ---------- */
 .library-body { flex: 1; overflow: auto; padding: 8px 20px 0; padding-bottom: calc(110px + var(--safe-bottom)); }

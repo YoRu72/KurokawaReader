@@ -1,6 +1,6 @@
 // node tests/textpicfmt.cjs: «Text as image» with «Use book formatting» (src/ui/textcard.ts styledBlocks / drawSet,
 // src/views/reader.ts textImage) on an imitated phone (412×915):
-//  1. offered for words picked in a book, off at first: the picture is the plain text in the reader's face (one face,
+//  1. offered for words picked in a book (the app's switch row: a name, a line under it, the switch), off at first: the picture is the plain text in the reader's face (one face,
 //     no bold, the book's centred line not centred);
 //  2. turned on: the picture is drawn as the book sets the words — its paragraphs apart, its centred line centred, its bold
 //     and italic words bold and italic, the first-line indent kept, a justified line spread within a word space and 0.8 em;
@@ -57,10 +57,12 @@ async function makeEpub(file) {
 
   await open();
   const box = await p.$('.snap-fmt-row input');
+  const sw = await p.evaluate(() => { const r = document.querySelector('.snap-fmt-row'); return !!r && r.classList.contains('row') && !!r.querySelector('.switch i') && !!r.closest('.options-grid')?.querySelector(':scope > p.hint'); });
+  ok('the choice is the app\'s switch row (name, hint, switch), not a bare checkbox', sw);
   const d0 = await drawn();
   const fonts0 = new Set(d0.map((x) => x.font));
   ok('offered, off at first; off: plain text — one face, no bold, nothing centred', !!box && !(await box.isChecked()) && fonts0.size === 1 && !d0.some((x) => /700|bold/.test(x.font)) && !d0.some((x) => x.align === 'center'), { box: !!box, fonts: [...fonts0], n: d0.length });
-  await box.click(); await p.waitForTimeout(700);
+  await p.click('.snap-fmt-row .switch'); await p.waitForTimeout(700);
   const d1 = await drawn();
   const mira = d1.find((x) => x.t === 'Mira'), copper = d1.find((x) => x.t.startsWith('copper')), harbour = d1.find((x) => x.t.startsWith('harbour'));
   const firstOf = (w) => d1.find((x) => x.t === w);
@@ -80,7 +82,7 @@ async function makeEpub(file) {
   await open();
   const box2 = await p.$('.snap-fmt-row input'); const d2 = await drawn();
   ok('remembered: stored, and the sheet opened again starts with it on and draws so', stored === true && !!box2 && await box2.isChecked() && d2.some((x) => x.t === 'Mira' && /700|bold/.test(x.font)), { stored });
-  await box2.click(); await p.waitForTimeout(500);
+  await p.click('.snap-fmt-row .switch'); await p.waitForTimeout(500);
   ok('turned off again: stored off', (await p.evaluate(() => JSON.parse(localStorage.getItem('kr.visual')).snapBookFormat)) === false);
   await close();
   ok('no page errors', errors.length === 0, errors);

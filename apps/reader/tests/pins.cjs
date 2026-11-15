@@ -101,7 +101,8 @@ const sheetShown = () => !!document.querySelector('.sheet');
   await p.evaluate(() => [...document.querySelectorAll('.sheet .dest-row')].find((e) => e.textContent.trim() === 'Move pin earlier').click());
   await p.waitForFunction(() => document.querySelectorAll('.book-grid > .book-card')[3]?.dataset.book === 'b4');
   ok('moved earlier: …, Distant Bells, Autumn Letters', (await H.order(p)).slice(0, 5).join() === `b:b3*,f:f1*,s:${series}*,b:b4*,b:b1*`, await H.order(p));
-  await p.keyboard.press('Escape').catch(() => {}); if (await p.$('.selection-bar:not([hidden])')) await p.click('.sel-head [aria-label="Close"]');
+  // (Esc is Back since 0.64 — src/ui/backstack.ts —: it lets the selection go itself, a moment after the key.)
+  await p.keyboard.press('Escape').catch(() => {}); await p.waitForTimeout(300); if (await p.$('.selection-bar:not([hidden])')) await p.click('.sel-head [aria-label="Close"]');
   // The sort changed (newest added, reversed) and the app reloaded: the pins first, in their order.
   await p.evaluate(() => { localStorage.setItem('kr.sort', 'size'); localStorage.setItem('kr.sortDesc', '1'); }); await ready(p);
   ok('another sort, and a reload: the pins first, in their order', (await H.order(p)).slice(0, 5).join() === `b:b3*,f:f1*,s:${series}*,b:b4*,b:b1*`, await H.order(p));

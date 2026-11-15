@@ -75,6 +75,8 @@ const gaps = (p, needle, near = 0) => p.evaluate(([needle, near]) => {
   }
   return out;
 }, [needle, near]);
+const pills = (p) => p.evaluate(() => { const g = [...document.querySelectorAll('.panel.open .options-grid .segmented.pills')][0]; if (!g) return null; return [...g.querySelectorAll('button')].map((b) => { const r = b.getBoundingClientRect(); return { t: b.textContent, w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.left), y: Math.round(r.top), clipped: b.scrollWidth > b.clientWidth + 1, rad: getComputedStyle(b).borderTopLeftRadius === getComputedStyle(b).borderBottomRightRadius }; }); });
+const pillsOk = (ps) => !!ps && ps.length === 5 && ps.every((b) => !b.clipped && b.rad && b.h === ps[0].h && Math.abs(b.w - ps[0].w) <= 1) && ps.every((b, i) => ps.every((c, j) => i === j || c.y !== b.y || Math.abs(c.x - b.x) >= b.w + 5));
 const reloadLib = async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.reload(); await p.waitForSelector('.library-view'); };
 const toCase = (p) => p.evaluate((n) => { const el = [...document.querySelectorAll('.reader-flow .kr-content p')].find((x) => x.textContent.includes(n)); el?.scrollIntoView({ block: 'center' }); }, 'hypothetically');
 
@@ -126,6 +128,7 @@ const toCase = (p) => p.evaluate((n) => { const el = [...document.querySelectorA
   if (!panel) { await p.evaluate(() => document.querySelector('.reader-flow')?.click()); await p.waitForTimeout(400); const b = await p.$('[data-act="options"], button[aria-label="Visual options"]'); if (b) await b.click(); await p.waitForSelector('.panel.open .options-grid', { timeout: 10000 }); panel = await p.$('.panel.open .options-grid'); }
   const seg = await p.evaluate(() => { const f = [...document.querySelectorAll('.panel.open .options-grid .field, .panel.open .options-grid .row')].find((x) => x.querySelector('.label')?.textContent.includes('Alignment')); if (!f) return null; f.scrollIntoView({ block: 'center' }); return [...f.querySelectorAll('.segmented button')].map((b) => ({ t: b.textContent, on: b.getAttribute('aria-pressed'), dis: b.disabled })); });
   ok('the alignment control: Book\'s own, Smart justify, Justified, Natural, Centred — Smart chosen, none locked under book formatting', !!seg && seg.length === 5 && seg[1].on === 'true' && seg.every((b) => !b.dis) && /Book/.test(seg[0].t) && /Smart/.test(seg[1].t), seg);
+  { const ps = await pills(p); ok('the alignment pills: five apart (a gap between each), one width, one height, fully rounded, none cut', pillsOk(ps), ps); }
   if (SHOTS) { await p.evaluate(() => [...document.querySelectorAll('.panel.open .options-grid .field, .panel.open .options-grid .row')].find((x) => x.querySelector('.label')?.textContent.includes('Alignment')).scrollIntoView({ block: 'start' })); await p.waitForTimeout(300); await p.screenshot({ path: path.join(SHOTS, 'text-settings.png') }); }
   const clickSeg = (label) => p.evaluate((label) => { const f = [...document.querySelectorAll('.panel.open .options-grid .field, .panel.open .options-grid .row')].find((x) => x.querySelector('.label')?.textContent.includes('Alignment')); [...f.querySelectorAll('.segmented button')].find((b) => b.textContent === label).click(); }, label);
   const stored = () => p.evaluate(() => JSON.parse(localStorage.getItem('kr.visual')));
@@ -168,6 +171,12 @@ const toCase = (p) => p.evaluate((n) => { const el = [...document.querySelectorA
   const nl = await importFile(p, nolang, 'No Language'); await openReader(p, nl.id);
   const n0 = (await gaps(p))[1];
   ok('a book without a language that reads as English, Arabic interface: lang «en», hyphens auto', !!n0 && n0.lang === 'en' && n0.hyphens === 'auto', n0);
+  // The alignment pills in Arabic (longer names), at 360 px.
+  await p.keyboard.press('Control+Shift+v'); await p.waitForSelector('.panel.open .options-grid', { timeout: 10000 });
+  await p.evaluate(() => document.querySelector('.panel.open .options-grid .segmented.pills')?.closest('.field')?.scrollIntoView({ block: 'start' })); await p.waitForTimeout(400);
+  { const ps = await pills(p); ok('Arabic: the alignment pills likewise (none cut)', pillsOk(ps), ps); }
+  if (SHOTS) await p.screenshot({ path: path.join(SHOTS, 'text-settings-ar.png') });
+  await p.evaluate(() => document.querySelector('.panel.open .panel-head > button[data-icon="close"]')?.click()); await p.waitForTimeout(300);
   await p.evaluate(() => localStorage.setItem('kr.lang', 'en'));
 
   // 6. An old profile: book formatting on, «Natural» stored → Smart justify, once.
