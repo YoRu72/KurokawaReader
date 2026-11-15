@@ -3,15 +3,15 @@
   "tests": [
     {
       "name": "addprobe.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "debrid.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "desktauri.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision). Takes a language argument (default en)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "filesphone-fixture.cjs",
@@ -20,7 +20,7 @@
     },
     {
       "name": "filestauri.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "hunt.cjs",
@@ -45,27 +45,27 @@
     },
     {
       "name": "screentauri.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "search.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "stream.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Needs outside network hosts (see known-failures.json); not in any workflow."
     },
     {
       "name": "streamtauri.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "subs.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "video.cjs",
-      "reason": "Not in any workflow's test chain; a candidate to add to the release workflow once confirmed green (orchestrator's decision)."
+      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     }
   ]
 }

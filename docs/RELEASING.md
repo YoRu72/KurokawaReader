@@ -17,13 +17,28 @@ command here and by the **Preflight** workflow on the work branch.
    ```
    (`--quick` while working: build, type check, budgets, parity checks, the tests your diff touches and a small smoke
    set. Run the full one before you push for the last time.) Exit code 0 means no new failure.
-5. **Push the work branch** (`work-*`). The **Preflight** workflow runs by itself when `apps/**`, `shared/**` or `repo/**`
-   change. Wait for it to be green. It runs the same preflight on Linux, and also compiles what cannot be compiled
+5. **Push the work branch** (`work-*`) with `[full]` in the head commit's message, or start the **Preflight** workflow by
+   hand, and wait for it to be green. It runs the full preflight on Linux, and also compiles what cannot be compiled
    anywhere else: the Android code, the Rust (Tauri) shells with their runtime self-test, and, for Tools, the Rust core
    for Android. You can also start it by hand: Actions → Preflight → Run workflow (app: tools, reader or all).
 6. **Read the Windows self-test** (see «Passed on retry» below).
 7. **Merge to `main`.** The release workflows start by themselves (see «How a push releases»).
 8. After the release is built, report the file sizes.
+
+## What runs on a push to a work branch
+
+The **Preflight** workflow is cheap on an ordinary push and complete on request:
+
+- **Every push** to a `work-*` branch that changes `apps/**`, `shared/**` or `repo/**`: the **quick** preflight on Linux
+  (build, type check, string parity, version and notes, budgets, the tests your diff touches and a smoke set), and the
+  Android compile check of the app when the branch changes `native/android/**`, `capacitor.config.*` or `package.json`
+  of that app (Tools also `tests/native/**`). That is the intended rule for the «skipped» Android jobs you see on a
+  push that touched no Android paths. When a push itself already starts the Android check by its own trigger, the
+  preflight does not start it a second time.
+- **Full run**: Actions → Preflight → Run workflow (app: tools, reader or all), or a push whose head commit message
+  contains **`[full]`**. It runs the full preflight (every test the release workflow runs) and also the Tauri checks
+  (Windows, Linux, macOS, with the runtime self-test) and, for Tools, the Rust core for Android, when the branch changes
+  that Rust code (always, when started by hand). Do this before the final push.
 
 ## What the preflight checks
 

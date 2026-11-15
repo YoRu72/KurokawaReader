@@ -1,15 +1,13 @@
 name: Preflight
 
-# One run that tells a work branch is ready for the final push, so release day is boring. On every push to a work-*
-# branch that touches apps/**, shared/** or the preflight itself, and by hand (Actions → Preflight → Run workflow,
-# choose tools, reader or all):
-#   1. the preflight (scripts/preflight.mjs): build, type check, every test the release workflow runs, the start-JS
-#      budgets, string parity, version and notes, tests missing from the workflow, leftovers, big files — on Linux;
-#   2. the Java side: the Android compile check of the app (android-check-tools.yml / android-check-reader.yml, called
-#      as they are), when the branch changes anything the APK is made from — or always when started by hand;
-#   3. the Rust side: the Tauri check of the app (tauri-check.yml / tauri-check-reader.yml, Linux, Windows and macOS,
-#      the runtime self-test included) and, for Tools, the Rust core for Android (android-rust-check.yml), when the
-#      branch changes the Rust code — or always when started by hand.
+# One run that tells a work branch is ready for the final push, so release day is boring. It costs little on an
+# ordinary push and is complete when you ask for it:
+#   · a push to a work-* branch (apps/**, shared/**, repo/** or the preflight itself): the QUICK preflight on Linux
+#     (build, type check, string parity, version and notes, budgets, the tests the diff touches and a smoke set), and the
+#     Android compile check of the app when the branch changes what the APK is made from;
+#   · the FULL preflight (every test of the release workflow), the Tauri checks (Windows, Linux and macOS, runtime
+#     self-test included) and, for Tools, the Rust core for Android: by hand (Actions → Preflight → Run workflow, app
+#     tools, reader or all), or on a push whose head commit message contains «[full]».
 # A newer push cancels the older run of the same branch. Nothing here publishes, tags or releases anything, and no
 # secret is used (the check workflows sign with a throw-away key). docs/RELEASING.md says how to read the result.
 #
@@ -61,6 +59,7 @@ jobs:
       tauri_tools: ${{ steps.p.outputs.tauri_tools }}
       tauri_reader: ${{ steps.p.outputs.tauri_reader }}
       rust_android: ${{ steps.p.outputs.rust_android }}
+      quick: ${{ steps.p.outputs.quick }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -72,6 +71,8 @@ jobs:
           COMPILE: ${{ inputs.compile }}
           REF: ${{ github.ref_name }}
           BEFORE: ${{ github.event.before }}
+          QUICK_IN: ${{ inputs.quick }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
         run: |
           set -u
           out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; echo "$1=$2"; }
@@ -80,6 +81,7 @@ jobs:
             case "$APP" in tools) t=true;; reader) r=true;; *) t=true; r=true;; esac
             c=$COMPILE
             out tools $t; out reader $r
+            out quick $([ "$QUICK_IN" = true ] && echo true || echo false)
             out android_tools $([ $t = true ] && [ "$c" = true ] && echo true || echo false)
             out android_reader $([ $r = true ] && [ "$c" = true ] && echo true || echo false)
             out tauri_tools $([ $t = true ] && [ "$c" = true ] && echo true || echo false)
@@ -93,6 +95,9 @@ jobs:
           base=$(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD~1)
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/branch.txt"
           if echo "$BEFORE" | grep -qE '^0+$'; then cp "$RUNNER_TEMP/branch.txt" "$RUNNER_TEMP/push.txt"; else git diff --name-only "$BEFORE" HEAD > "$RUNNER_TEMP/push.txt" 2>/dev/null || cp "$RUNNER_TEMP/branch.txt" "$RUNNER_TEMP/push.txt"; fi
+          # Cheap by default: only a «[full]» in the head commit's message turns on the full preflight, the Tauri checks and the Rust core for Android.
+          if printf '%s' "$HEAD_MSG" | grep -qF '[full]'; then full=true; else full=false; fi
+          out quick $([ $full = true ] && echo false || echo true)
           has() { grep -qE "$2" "$1"; }
           tf() { if "$@"; then echo true; else echo false; fi; }
           B="$RUNNER_TEMP/branch.txt"; P="$RUNNER_TEMP/push.txt"
@@ -104,9 +109,9 @@ jobs:
           if has "$B" "$ar" && ! has "$P" "$ar"; then out android_reader true; else out android_reader false; fi
           # Rust: Tauri shells (and the crate they share); their own triggers are the work-tauri* / work-reader-tauri* branches.
           tt='^(apps/tools/(desktop-tauri|core)/|shared/shell-rs/)'; rt='^(apps/reader/desktop-tauri/|shared/shell-rs/)'
-          case "$REF" in work-tauri*) out tauri_tools false;; *) out tauri_tools $(tf has "$B" "$tt");; esac
-          case "$REF" in work-reader-tauri*) out tauri_reader false;; *) out tauri_reader $(tf has "$B" "$rt");; esac
-          case "$REF" in work-tt-p5|work-tauri|work-and-all) out rust_android false;; *) out rust_android $(tf has "$B" '^apps/tools/(core|native)/');; esac
+          if [ $full != true ]; then out tauri_tools false; else case "$REF" in work-tauri*) out tauri_tools false;; *) out tauri_tools $(tf has "$B" "$tt");; esac; fi
+          if [ $full != true ]; then out tauri_reader false; else case "$REF" in work-reader-tauri*) out tauri_reader false;; *) out tauri_reader $(tf has "$B" "$rt");; esac; fi
+          if [ $full != true ]; then out rust_android false; else case "$REF" in work-tt-p5|work-tauri|work-and-all) out rust_android false;; *) out rust_android $(tf has "$B" '^apps/tools/(core|native)/');; esac; fi
 
   preflight:
     name: Preflight (${{ matrix.app }})
@@ -139,11 +144,15 @@ jobs:
           npm install
           if [ "${{ matrix.app }}" = tools ]; then npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3; else npm install --no-save playwright@1.64.1; fi
           npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium
+      # (Reader's smoke test reads fixtures that scripts/make-fixtures.py makes: Python modules the runner does not have.)
+      - name: Python modules for the fixtures
+        if: steps.gate.outputs.on == 'true' && matrix.app == 'reader'
+        run: pip install --quiet pillow python-docx openpyxl python-pptx reportlab
       - name: Preflight
         if: steps.gate.outputs.on == 'true'
         shell: bash
         env:
-          QUICK: ${{ inputs.quick && '--quick' || '' }}
+          QUICK: ${{ needs.plan.outputs.quick == 'true' && '--quick' || '' }}
         run: |
           git fetch --no-tags origin main || true
           set +e

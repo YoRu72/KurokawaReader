@@ -21,6 +21,13 @@
       "reason": "Needs arguments <Electron userData> <expected.json> <out.json> and a live Tauri app holding the owner file; a step of tauri-check.yml (Windows).",
       "how": "see tauri-check.yml, Hand-over, the Windows step",
       "date": "2026-11-15"
+    },
+    {
+      "name": "stream.cjs",
+      "reason": "Needs the network: it fails after about 33 s because it reaches outside hosts (the mock Seanime extension's fetches are not all served locally). Not a product fault; fails the same on untouched main.",
+      "how": "run on a machine with internet: node tests/stream.cjs [en|ar]",
+      "date": "2026-11-15",
+      "needsNetwork": true
     }
   ]
 }
