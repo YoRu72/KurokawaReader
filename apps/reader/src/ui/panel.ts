@@ -1,6 +1,7 @@
 // A sliding side panel with optional tabs.
 import { h, iconButton, clear } from './dom';
 import { t } from '../i18n';
+import { pushLayer } from './backstack';
 
 export interface PanelTab { id: string; label: string; render(body: HTMLElement): void }
 
@@ -16,6 +17,7 @@ export class SidePanel {
   /** Told when the panel is shut (its button, the scrim, Escape) — not when a docked panel stays open after a jump. */
   onClose?: () => void;
   private host: HTMLElement;
+  private offLayer?: () => void;
 
   constructor(host: HTMLElement) {
     this.host = host;
@@ -40,6 +42,8 @@ export class SidePanel {
     this.el.classList.toggle('docked', dock); this.host.classList.toggle('panel-docked', dock);
     this.scrim.hidden = dock;
     this.el.classList.add('open');
+    // (A layer of Back's stack — src/ui/backstack.ts —, once however often it is opened again while open.)
+    if (!this.isOpen) this.offLayer = pushLayer(() => this.close(), this.el);
     this.isOpen = true;
     this.show(activeId ?? tabs[0]?.id ?? '');
     // (Said aloud for the reader's keys — src/readkeys.ts: nothing is taken from the phone's keys while a panel is open.)
@@ -64,6 +68,7 @@ export class SidePanel {
     this.el.classList.remove('open', 'docked'); this.host.classList.remove('panel-docked');
     this.scrim.hidden = true;
     this.isOpen = false;
+    this.offLayer?.(); this.offLayer = undefined;
     if (was) { this.onClose?.(); document.dispatchEvent(new Event('kr:panel')); }
   }
 

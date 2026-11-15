@@ -662,7 +662,7 @@ export const en = {
   bookOnly: 'Settings for this book only',
   bookOnlyHint: 'Turn on to give this book its own font, size, theme and layout; the other books keep the shared settings.',
   bookOnlyOn: 'Changes below apply to this book only. Turn off to return to the shared settings.',
-  bookFormatHint: 'Justified lines, words broken at line ends and indented paragraphs, as in a printed book.', alignBookHint: 'Book formatting sets the lines to Justified. Turn it off to choose another alignment.',
+  bookFormatHint: 'Indented paragraphs with only a breath between them, and printed punctuation, as in a book.', alignBook: 'Book\'s own', alignSmart: 'Smart justify', alignSmartHint: 'Justified, but a paragraph whose gaps would grow too wide is set ragged.', snapBookFormat: 'Use book formatting', snapBookFormatHint: 'Paragraphs, alignment, bold and italics as the book sets them; off: plain text in your reading font.', backToPrevVolume: 'Back to the previous volume', backToMainPage: 'Main page', stayHere: 'Stay here', hyphenate: 'Hyphenation',
   myDecks: 'My decks',
   myDecksBody: 'Your own Anki decks (.apkg or .colpkg) go into the library and open as cards here, with their audio and pictures.',
   importDeck: 'Import a deck',

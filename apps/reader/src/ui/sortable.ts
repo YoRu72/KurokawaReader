@@ -125,7 +125,7 @@ export function placeNumber(k: number, n: number, move: (from: number, to: numbe
       input.replaceWith(b);
       if (ok && Number.isFinite(v)) { const to = Math.max(1, Math.min(n, v)) - 1; if (to !== k) move(k, to); }
     };
-    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); commit(true); } else if (ev.key === 'Escape') commit(false); });
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); commit(true); } else if (ev.key === 'Escape') { ev.preventDefault(); commit(false); } });
     input.addEventListener('blur', () => commit(true));
     input.addEventListener('click', (ev) => ev.stopPropagation());
     b.replaceWith(input); input.focus(); input.select();

@@ -277,7 +277,8 @@ const chapter = (lang, n) => Array.from({ length: n }, (_, i) => para(i + 1, lan
     // The option «keep in immersive» off: the bar hides with the rest.
     await p.click('.float-toolbar [aria-label="Visual Options"]'); await visible(p, '.options-grid'); await p.locator('.placed-list').scrollIntoViewIfNeeded(); await settle(p, 300);
     { const sw = p.locator('.options-grid label', { hasText: 'Keep the reading bar when the bars are hidden' }); await sw.scrollIntoViewIfNeeded(); await sw.locator('.switch').click(); await settle(p, 300); }
-    await p.evaluate(() => document.querySelector('.panel .panel-head > button[data-icon="close"], .panel [aria-label="Close"]')?.click()); await p.keyboard.press('Escape'); await settle(p, 600);
+    // (The panel closed by its button only: Esc is Back since 0.64 — src/ui/backstack.ts —, and with nothing open it leaves the book.)
+    await p.evaluate(() => document.querySelector('.panel .panel-head > button[data-icon="close"], .panel [aria-label="Close"]')?.click()); await settle(p, 600);
     await p.touchscreen.tap(206, 460); await settle(p, 900);
     const immOff = await p.evaluate(() => { const s = document.querySelector('.reader-scroll').getBoundingClientRect(); return { on: document.querySelector('.reader-view').classList.contains('immersive'), scrollBottom: s.bottom, h: innerHeight }; });
     ok('immersive, the option off: the bar hides with the rest', immOff.on && !(await isShown(p, '.read-status')), immOff);

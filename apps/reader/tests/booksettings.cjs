@@ -29,7 +29,7 @@ ok('«Reset» in a book\'s reading options: the book\'s settings back to the fac
 // off (the old default, kept with every other setting) gets it on once; turned off after that, it stays off.
 const fresh = (visual) => { for (const k of Object.keys(store)) delete store[k]; if (visual) store['kr.visual'] = JSON.stringify(visual); return load(); };
 let F = fresh();
-ok('book formatting: on in a fresh profile (and hyphenation follows it: no switch of its own)', F.getSettings().bookFormat === true);
+ok('book formatting: on in a fresh profile', F.getSettings().bookFormat === true);
 F = fresh({ bookFormat: false, fontSize: 21 });
 ok('an old profile that stored it off (no migration flag yet): on once, its other settings kept', F.getSettings().bookFormat === true && F.getSettings().fontSize === 21 && store['kr.bookFormatMigrated'] === '1' && glob().bookFormat === true);
 F.updateSettings({ bookFormat: false });

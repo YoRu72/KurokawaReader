@@ -226,7 +226,7 @@ export function initNativeBridges(): void {
     (window.kurokawaDesktop as DesktopBridge & { onCommand?(cb: (c: string | { open: string }) => void): void }).onCommand?.((c) => {
       if (typeof c === 'object') { if (c?.open) navigate(c.open); return; }
       if (c === 'library') navigate('/');
-      else if (c === 'back') { diagBack('back-pc'); goBack(); }
+      else if (c === 'back') { diagBack('back-pc'); goBack('pc'); }
       else if (c === 'settings') navigate('/settings');
       else if (c === 'update') void import('./updates').then((u) => u.checkForUpdate().then((rel) => { if (rel) u.showUpdateSheet(rel); else toast(t('upToDate')); }).catch(() => toast(t('updateFailed'), 'error')));
       // (Stage R6b: Electron's shell found the Tauri build — desktop/main.cjs RUST_SWITCH — and offers the switch.)
@@ -410,7 +410,7 @@ export function onGestureInsets(fn: (g: GestureInsets) => void): void {
 /** Full screen: the window itself on the desktop app (so it also leaves the immersive fullscreen), the document elsewhere. */
 export async function toggleFullscreen(view?: HTMLElement): Promise<void> {
   const desk = window.kurokawaDesktop as (DesktopBridge & { setFullscreen?(v: 'toggle' | boolean): Promise<boolean> }) | undefined;
-  if (desk?.setFullscreen) { try { await desk.setFullscreen('toggle'); } catch { /* ignore */ } return; }
+  if (desk?.setFullscreen) { try { deskFull = !!(await desk.setFullscreen('toggle')); } catch { /* ignore */ } return; }
   // Phones and tablets (and browsers without the Fullscreen API): full screen means the
   // reader's immersive mode — chrome and system bars hidden — toggled from the view.
   const native = nativePlatform() === 'android' || nativePlatform() === 'ios';
@@ -423,10 +423,14 @@ export async function toggleFullscreen(view?: HTMLElement): Promise<void> {
   catch { if (view) view.classList.toggle('immersive'); }
 }
 
+/** The desktop window made full screen by the app (its shell's answer), for Back: a full screen is left first. */
+let deskFull = false;
+/** Whether a full screen is on: the desktop window, the document, or the reader's immersive mode (`view`). */
+export function isFullscreen(view?: HTMLElement): boolean { return deskFull || !!document.fullscreenElement || !!view?.classList.contains('immersive'); }
 /** Escape: leave window/HTML fullscreen or the reader's immersive mode, whichever is on. */
 export async function leaveFullscreen(view?: HTMLElement): Promise<void> {
   const desk = window.kurokawaDesktop as (DesktopBridge & { setFullscreen?(v: 'toggle' | boolean): Promise<boolean> }) | undefined;
-  if (desk?.setFullscreen) { try { await desk.setFullscreen(false); } catch { /* ignore */ } }
+  if (desk?.setFullscreen) { deskFull = false; try { await desk.setFullscreen(false); } catch { /* ignore */ } }
   else if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch { /* ignore */ } }
   if (view?.classList.contains('immersive')) { view.classList.remove('immersive'); if (!getSettings().hideSystemBars) void setImmersive(false); }
 }

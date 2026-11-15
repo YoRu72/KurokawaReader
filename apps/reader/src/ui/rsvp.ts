@@ -47,7 +47,7 @@ export function speedReader(host: HTMLElement, units: string[], opts: { start?: 
   const pause = () => { playing = false; window.clearTimeout(timer); playBtn.replaceChildren(icon('play')); playBtn.setAttribute('aria-label', t('play')); };
   const step = (n: number) => { pause(); i = Math.max(0, Math.min(units.length - 1, i + n)); show(); };
   speed.addEventListener('input', () => { wpm = Number(speed.value); localStorage.setItem(KEY, String(wpm)); show(); });
-  const onKey = (e: KeyboardEvent) => { if (e.key === ' ') { e.preventDefault(); playing ? pause() : play(); } else if (e.key === 'ArrowLeft') step(-1); else if (e.key === 'ArrowRight') step(1); else if (e.key === 'Escape') close(); };
+  const onKey = (e: KeyboardEvent) => { if (e.key === ' ') { e.preventDefault(); playing ? pause() : play(); } else if (e.key === 'ArrowLeft') step(-1); else if (e.key === 'ArrowRight') step(1); else if (e.key === 'Escape') { e.preventDefault(); close(); } };
   const close = () => { pause(); window.removeEventListener('keydown', onKey); el.remove(); opts.onClose?.(i); };
   window.addEventListener('keydown', onKey);
   el.querySelector('.rsvp-stage')!.addEventListener('click', () => (playing ? pause() : play()));

@@ -3,7 +3,7 @@
 // while PDFs get the page-based viewer.
 import { markReading } from '../resume';
 import { diagOpen, diagLeaveIntent, diagEvent, diagBackHeld } from '../diag';
-import { onBack } from '../ui/backstack';
+import { onBack, arrowBack } from '../ui/backstack';
 import { readingKeys, refreshReadingKeys, swipeTurned, inSystemZone, overBook } from '../readkeys';
 import { takeJump, setJump, type Jump } from '../jump';
 export { setJump, type Jump };
@@ -37,10 +37,10 @@ const DOCK_KEY = 'kr.reader.dock';
  *  up or down, whatever the speed.) */
 export const SWIPE = { SLOP: 10, LOCK_DEG: 30, VEL_MS: 100, BACK_V: 0.3, low: { dist: 120, flick: 50, speed: 0.6 }, normal: { dist: 90, flick: 36, speed: 0.45 }, high: { dist: 60, flick: 24, speed: 0.3 } };
 import { touchBook, coverUrl, shareBooks } from '../library';
-import { navigate, back as goBackView, leaveView, parseRoute } from '../router';
+import { navigate, back as goBackView, leaveView, parseRoute, viewBelow } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
-import { renderTextCanvas, showSnapshot, pictureNear, pictureOnByDefault } from '../ui/textcard';
+import { renderTextCanvas, showSnapshot, pictureNear, pictureOnByDefault, styledBlocks } from '../ui/textcard';
 import { exportNotes, exportNotesAnki } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
 import { attachTranslator } from '../ui/translator';
@@ -57,7 +57,7 @@ import { mountBars, moreList, type ActionRun } from '../ui/buttonbars';
 import { buttonSheet } from '../ui/buttonsheet';
 import { shareFile, saveImage, copyImage } from '../ui/share';
 import { applyOrientation } from '../settings';
-import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, nativePlatform } from '../native';
+import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, isFullscreen, nativePlatform } from '../native';
 import { onPhone, fits } from '../platform';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet, askText } from '../ui/dom';
@@ -90,6 +90,7 @@ interface PairHit { bookId: string; label: string; pct: number; block: HTMLEleme
  *  back the browser does not take —, still on the book a moment later, the view beneath is put in its place. No gate,
  *  no "close what is open first": a tap on the arrow is a wish to leave. */
 export function leaveBook(book: Book | undefined, many: boolean): void {
+  if (book && !many && askVolumeBack(book.id)) return;
   diagLeaveIntent('top-back', true);
   if (book && leaveToCaller(book.id)) return;
   // (The reader on screen now: still there later — not another opened since — is what the check below looks at.)
@@ -97,6 +98,37 @@ export function leaveBook(book: Book | undefined, many: boolean): void {
   if (book && !many) void import('./book').then((m) => goBackView(m.wantsBookPage(book) ? `/book/${book.id}` : '/')).catch(() => goBackView('/'));
   else goBackView('/');
   window.setTimeout(() => { if (view?.isConnected && parseRoute().name === 'read') { diagEvent('backfix', { why: 'arrow' }); leaveView('/'); } }, LEAVE_CHECK_MS);
+}
+/* «Next volume» and the way back. The next volume opens in the place of the one ended (the way back does not grow: no
+ * A → B → A → B … of volumes beneath each other), remembered for this session; the first Back of any kind from it — the
+ * arrow, the phone's Back or gesture, Esc or the mouse's back button on a computer — asks where to: the volume before, at
+ * the place it was left, or the main page; or stays. Chosen, the volume before opens in its place, no longer «come from»
+ * anything: Back from it goes on down. */
+const FROM_VOLUME = 'kr.fromVolume';
+/** Open `toId` after `fromId` (its «Next volume», or scrolled on past its end when reading in order). */
+export function goNextVolume(fromId: string, toId: string): void {
+  diagLeaveIntent('next-book');
+  try { sessionStorage.setItem(FROM_VOLUME, JSON.stringify({ from: fromId, to: toId })); } catch { /* the way back plain */ }
+  navigate(`/read/${toId}`, true);
+}
+/** The volume `id` was opened after (by «Next volume»), else null. */
+export function volumeBefore(id: string): string | null {
+  try { const v = JSON.parse(sessionStorage.getItem(FROM_VOLUME) ?? 'null') as { from?: string; to?: string } | null; return v?.to === id && v.from ? v.from : null; } catch { return null; }
+}
+const forgetVolume = () => { try { sessionStorage.removeItem(FROM_VOLUME); } catch { /* none */ } };
+/** Back from a volume opened by «Next volume»: the sheet asking where to (true: asked — the Back taken). One at a time. */
+export function askVolumeBack(id: string): boolean {
+  const from = volumeBefore(id); if (!from) return false;
+  if (document.querySelector('.sheet.vol-back')) return true;
+  diagBackHeld('volume');
+  const sh = openSheet(t('back'), t('close'));
+  sh.el.classList.add('vol-back'); sh.body.style.fontFamily = 'var(--font-ui)';
+  void db.getBook(from).then((b) => { if (b && prev.isConnected) prev.querySelector('span')?.append(h('small', { dir: 'auto' }, b.title)); });
+  const prev = h('button', { type: 'button', class: 'btn tonal vol-back-prev', onclick: () => { sh.close(); forgetVolume(); diagLeaveIntent('prev-volume'); navigate(`/read/${from}`, true); } }, icon('back'), h('span', null, t('backToPrevVolume')));
+  const home = h('button', { type: 'button', class: 'btn tonal vol-back-home', onclick: () => { sh.close(); forgetVolume(); diagLeaveIntent('top-back'); if (viewBelow() === '/') goBackView('/'); else navigate('/', true); } }, icon('library'), h('span', null, t('backToMainPage')));
+  sh.body.append(h('div', { class: 'vol-back-list' }, prev, home));
+  sh.actions.append(h('button', { type: 'button', class: 'btn small vol-back-stay', onclick: () => sh.close() }, t('stayHere')));
+  return true;
 }
 /** How long the book may stay on screen after its arrow is tapped (ms): longer than the way back's own check. */
 const LEAVE_CHECK_MS = 900;
@@ -116,8 +148,8 @@ export function readerView(ids: string[]): HTMLElement {
   // is open over the book is closed (src/ui/backstack.ts does that first) and a selection let go — shows a reminder
   // the first time; a second Back within 2 s leaves. The top bar's arrow does not come here: it leaves at once.
   let backAt = 0;
-  onDispose(onBack(() => {
-    if (!getSettings().backTwiceLeave) return false;
+  onDispose(onBack((src) => {
+    if (!getSettings().backTwiceLeave || src === 'arrow') return false;
     const sel = document.getSelection();
     if (sel && !sel.isCollapsed && sel.anchorNode && root.contains(sel.anchorNode)) { sel.removeAllRanges(); diagBackHeld('selection'); return true; }
     if (Date.now() - backAt <= 2000) { backAt = 0; return false; }
@@ -126,6 +158,9 @@ export function readerView(ids: string[]): HTMLElement {
     toast(t('backAgainToLeave'), 'info', 2000);
     return true;
   }));
+
+  // (Come by «Next volume»: Back asks where to — before «Back twice», src/ui/backstack.ts asks the latest first.)
+  if (ids.length === 1) onDispose(onBack(() => askVolumeBack(ids[0])));
 
   void (async () => {
     const books = (await Promise.all(ids.map((id) => db.getBook(id)))).filter((b): b is Book => !!b);
@@ -190,7 +225,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   // The top bar — the back arrow (always there), the buttons placed at its start, the title, those at its end — and
   // the M3 Expressive floating toolbar: what each holds is the reader's choice (src/readbuttons.ts), drawn below
   // once the reader's state is there (mountBars).
-  const backBtn = iconButton('back', t('back'), goBack);
+  // (The arrow is Back — src/ui/backstack.ts: what is open closes first —, and Back's last step leaves the book.)
+  const backBtn = iconButton('back', t('back'), arrowBack(goBack));
   const topbar = h('header', { class: 'topbar' }, backBtn, title);
   const toolbar = h('nav', { class: 'float-toolbar', 'aria-label': t('more') });
   const moreBtn = iconButton('more', t('more'), () => openMore());
@@ -402,11 +438,23 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   /** The book's blocks, its chapters and the one shown (chapter by chapter), its text rules, typography and highlights:
    *  what the reader keeps of a book once its text is made — and again once the rest of its chapters are, for a book
    *  opened at a chapter first (`target`: the element whose chapter is shown; else the place read last). */
+  /** «Smart justify» (src/ui/smartjustify.ts, fetched only when the alignment asks for it): each book's text watched
+   *  once; asked again (`again`) when what lays its lines out changed. */
+  const justifyWatched = new WeakSet<HTMLElement>();
+  let justifyKey = '';
+  function justify(again = false, el?: HTMLElement): void {
+    const st = getSettings(); if (st.align !== 'smart' && st.align !== 'book') return;
+    void import('../ui/smartjustify').then((m) => {
+      for (const e of [el, ...docs.map((d) => d.render?.element)]) if (e && !justifyWatched.has(e)) { justifyWatched.add(e); onDispose(m.watchJustify(e)); }
+      if (again) m.rejudge();
+    });
+  }
   function layDoc(doc: OpenDoc, target?: Element | null): void {
     const el = doc.render!.element;
     if (textRules().length) applyTextRules(el, doc.book.id);
     if (getSettings().bookFormat || getSettings().smartTypography) applyTypography(el);
     prepareFlow(el, doc.book.language, getLang());
+    justify(false, el);
     doc.allBlocks = blocksIn(el);
     const all = [...el.querySelectorAll<HTMLElement>(':scope > .kr-chapter')];
     const sections = all.filter((c) => !c.classList.contains('kr-shell') && hasContent(c));
@@ -1169,12 +1217,12 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const offerNext = (pct: number) => {
     if (!nextVol || nextPill || pct < 0.985) return;
     const next = nextVol;
-    nextPill = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { diagLeaveIntent('next-book'); navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queued ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight'));
+    nextPill = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => goNextVolume(books[books.length - 1].id, next.id) }, h('span', { dir: 'auto' }, `${queued ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight'));
     root.appendChild(nextPill);
   };
   // Reading in order: scrolling on past the end goes to the next book.
   const lastUnitShown = () => { const d = docs[docs.length - 1]; return !chapterMode() || d.chapters.length <= 1 || (d.chapter >= d.chapters.length - 1 && !d.wrapper.hidden); };
-  onDispose(overscrollNext(scroll, () => (queued && nextVol && lastUnitShown() ? nextVol.id : null)));
+  onDispose(overscrollNext(scroll, () => (queued && nextVol && lastUnitShown() ? nextVol.id : null), (id) => goNextVolume(books[books.length - 1].id, id)));
 
 
   // (All reads first, then all writes: a write between two reads would make the browser lay the page out
@@ -1524,6 +1572,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     // turned back the text came out doubled.)
     if (want !== typoOn) { typoOn = want; for (const d of docs) if (d.render) { unmarkHighlights(d); (want ? applyTypography : revertTypography)(d.render.element); applyHighlights(d); } }
     syncFocus();
+    { const k = JSON.stringify([s.align, s.fontSize, s.fontWeight, s.latinFont, s.arabicFont, s.cjkFont, s.wordSpacing, s.letterSpacing, s.textWidth, s.margin, s.hyphenate, s.indent, s.bookFormat, s.publisherStyles, s.customCss, s.bookSizes]); if (k !== justifyKey) { justifyKey = k; justify(true); } }
     // Text size, line spacing, margins, a font: the text flows again, and the paragraph being read is kept at the top.
     for (const d of docs) if (d.render) sizeRuns(d.render.element);
     if (before) { const after = currentLocator(); if (after && (after.doc !== before.doc || after.loc.block !== before.loc.block || Math.abs((after.loc.offset ?? 0) - (before.loc.offset ?? 0)) > 0.02)) scrollToLocator(before.loc); }
@@ -1669,8 +1718,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const book = cur?.doc.book ?? docs[0].book;
     try {
       const picture = pictureNear(range); const on = pictureOnByDefault(picture);
-      const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '', picture: picture ?? undefined, pictureOn: on };
-      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on }), { has: !!picture, on });
+      // (The words as the book sets them, read now — the selection does not last —: drawn so when «Use book formatting» is on.)
+      const blocks = styledBlocks(range, getSettings().fontSize);
+      const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '', picture: picture ?? undefined, pictureOn: on, blocks, bookFormat: !!blocks?.length && getSettings().snapBookFormat };
+      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn, bookFormat) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on, bookFormat: bookFormat ?? opts.bookFormat }), { has: !!picture, on }, undefined, { has: !!blocks?.length });
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 
@@ -2356,8 +2407,20 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     if (chapterMode()) { const k = currentUnitIndex(); if (!back && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2 && units()[k + 1]) { readerTurn(k + 1); return; } if (back && scroll.scrollTop <= 1 && units()[k - 1]) { readerTurn(k - 1, true); return; } }
     readerScroll({ by: back ? -page : page, smooth: true });
   }
+  // Back's steps in the book (src/ui/backstack.ts), before leaving it — the same from the arrow, the phone's Back, Esc:
+  // the full screen left (the window's or the document's — not the bars hidden by a tap, which is reading, not a layer),
+  // auto-scroll stopped, reading aloud stopped, the words selected let go.
+  onDispose(onBack(() => {
+    if (isFullscreen()) { void leaveFullscreen(root); return true; }
+    if (autoScrollRaf) { stopAutoScroll(); return true; }
+    if (speaking) { stopSpeaking(); return true; }
+    const sel = document.getSelection();
+    if (sel && !sel.isCollapsed && sel.anchorNode && root.contains(sel.anchorNode)) { sel.removeAllRanges(); document.querySelectorAll('.sel-toolbar').forEach((x) => x.remove()); return true; }
+    return false;
+  }));
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else if (autoScrollRaf) stopAutoScroll(); else if (speaking) stopSpeaking(); else void leaveFullscreen(root); return; }
+    // (Esc is Back — src/ui/backstack.ts —: the reader’s own steps above.)
+    if (e.key === 'Escape') return;
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {
@@ -2449,7 +2512,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   const relayout = () => { const s = getSettings(); bar.dataset.layout = barLayout(); bar.dataset.side = s.pdfBarSide; bar.dataset.row = s.pdfBarRow; bar.dataset.look = s.pdfBarLook === 'docked' ? 'docked' : 'pill'; };
   relayout();
   onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
-  const backBtn = iconButton('back', t('back'), () => leaveBook(book, false));
+  const backBtn = iconButton('back', t('back'), arrowBack(() => leaveBook(book, false)));
   const moreBtn = iconButton('more', t('more'), () => openMore());
   const topbar = h('header', { class: 'topbar' }, backBtn, title, moreBtn);
   // Every action of a PDF (src/readbuttons.ts PDF_ACTIONS), wherever the reader has put it — or nowhere (its key still
@@ -2580,8 +2643,8 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   let nextVolPdf: Book | null = null; let nextPillPdf: HTMLElement | null = null; let queuedPdf = false;
   const findNextPdf = () => nextQueued(book.id).then(async (q) => { if (q) { nextVolPdf = q; queuedPdf = true; return; } queuedPdf = false; nextVolPdf = nextVolume(book, await db.allBooks()); }).catch(() => undefined);
   void findNextPdf();
-  const offerNextPdf = () => { if (!nextVolPdf || nextPillPdf) return; const next = nextVolPdf; nextPillPdf = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => { diagLeaveIntent('next-book'); navigate(`/read/${next.id}`); } }, h('span', { dir: 'auto' }, `${queuedPdf ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight')); root.appendChild(nextPillPdf); };
-  onDispose(overscrollNext(viewer.scroll, () => (queuedPdf && nextVolPdf ? nextVolPdf.id : null)));
+  const offerNextPdf = () => { if (!nextVolPdf || nextPillPdf) return; const next = nextVolPdf; nextPillPdf = h('button', { type: 'button', class: 'jump-back next-volume', onclick: () => goNextVolume(book.id, next.id) }, h('span', { dir: 'auto' }, `${queuedPdf ? t('nextInOrder') : t('nextVolume')}: ${next.title}`), icon('arrowRight')); root.appendChild(nextPillPdf); };
+  onDispose(overscrollNext(viewer.scroll, () => (queuedPdf && nextVolPdf ? nextVolPdf.id : null), (id) => goNextVolume(book.id, id)));
   const back = jumpBack(root, (loc) => { const l = loc as { page: number; offset: number }; viewer.goTo(l.page, l.offset); }, () => ({ page: viewer.current, offset: viewer.currentOffset() }), viewer.scroll);
   onDispose(back.dispose);
   viewer.pinchZoom = getSettings().pdfPinchZoom;
@@ -2743,7 +2806,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     const close = () => { overlay.remove(); window.removeEventListener('keydown', onKey); io.disconnect(); (viewer as { dropThumbs?(): void }).dropThumbs?.(); };
     // (Two fingers on the grid — a pinch — are not a tap on a page: the cell under them is not opened.)
     let multi = false; grid.addEventListener('touchstart', (e) => { if (e.touches.length > 1) multi = true; }, { passive: true }); grid.addEventListener('touchend', (e) => { if (!e.touches.length) setTimeout(() => { multi = false; }, 300); }, { passive: true });
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
     const overlay = h('div', { class: 'view', style: { position: 'fixed', inset: '0', zIndex: '45', background: 'var(--md-surface)' }, role: 'dialog' },
       h('header', { class: 'topbar' }, iconButton('back', t('back'), close), h('div', { class: 'title' }, t('pagesGrid'), h('small', null, t('pageOf', { n: viewer.current, total: viewer.total })))),
       h('div', { class: 'gallery-body' }, grid));
@@ -3093,8 +3156,10 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
     } }]);
   }
 
+  // (Back's step in a PDF before leaving it: the full screen left. Esc is Back: src/ui/backstack.ts.)
+  onDispose(onBack(() => { if (!isFullscreen()) return false; void leaveFullscreen(root); return true; }));
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { if (panel.isOpen) panel.close(); else void leaveFullscreen(root); return; }
+    if (e.key === 'Escape') return;
     if ((e.target as HTMLElement).matches('input, textarea, select')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {
