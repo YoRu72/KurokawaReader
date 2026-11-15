@@ -142,14 +142,16 @@ export const FROST_LIGHT: Surfaces = { ground: '#ebebe9', lowest: '#fbfbfa', low
  *  Dark: the graphite it always had. Light: soft cool neutrals, never glaring white, cards raised by tone, an indigo
  *  accent (base.css «Expressive 3 in light»; these constants are the same values, for previews and tests). */
 const CLASSIC: ThemeDef = { id: 'classic', nameKey: 'themeExpressive', classic: true, followsAccent: true };
-export const E3_LIGHT: { surfaces: Surfaces; text: TextRoles; roles: Roles; tertiary: string; inverse: { surface: string; on: string; primary: string } } = {
+export const E3_LIGHT: { surfaces: Surfaces; text: TextRoles; roles: Roles; tertiary: string; inverse: { surface: string; on: string; primary: string }; onHighest: { dim: string; outline: string } } = {
   surfaces: { ground: '#eef0f6', lowest: '#fbfcfe', low: '#f8f9fc', mid: '#e7eaf2', high: '#dfe3ed', highest: '#d6dbe7' },
   text: { on: '#181b23', variant: '#3d4352', dim: '#545b6b', outline: '#5b6272', outlineVariant: '#c4c9d6' },
   roles: { primary: '#3d4e99', onPrimary: '#ffffff', primaryContainer: '#dce1fa', onPrimaryContainer: '#121a45', secondaryContainer: '#d3daf6', onSecondaryContainer: '#1b2033', tertiaryContainer: '#d2e9ec', onTertiaryContainer: '#0b2a2f' },
   tertiary: '#2b6870', inverse: { surface: '#2b2f39', on: '#eef0f6', primary: '#b9c3ff' },
+  /** On the brightest surface: the outline a step darker. */ onHighest: { dim: '#545b6b', outline: '#525969' },
 };
 /** Expressive 3 in dark: the old default's graphite (base.css :root and data-accent='graphite'), exactly. */
-export const E3_DARK = { surfaces: { ground: '#121314', lowest: '#0c0d0e', low: '#1a1b1d', mid: '#1e2022', high: '#282a2d', highest: '#323437' } as Surfaces, inverse: { surface: '#e4e4e6', on: '#2e3033', primary: '#3d4656' }, secondaryContainer: '#3a404b' };
+export const E3_DARK = { surfaces: { ground: '#121314', lowest: '#0c0d0e', low: '#1a1b1d', mid: '#1e2022', high: '#282a2d', highest: '#323437' } as Surfaces, inverse: { surface: '#e4e4e6', on: '#2e3033', primary: '#3d4656' }, secondaryContainer: '#3a404b',
+  /** On the brightest surface (selection bars, the add field): the muted inks a step lighter. */ onHighest: { dim: '#a3a5aa', outline: '#9fa2a7' } };
 
 /** Aurora: a polar night with the faintest curtains of sea-green and lilac, close to grey; in light, the same on ice. */
 const AURORA: ThemeDef = {
@@ -427,10 +429,12 @@ export const GRAPHITE: Record<Mode, Roles> = {
   dark: { primary: '#c9ccd2', onPrimary: '#1f2226', primaryContainer: '#3a3e45', onPrimaryContainer: '#e6e8ec', secondaryContainer: '#2e3237', onSecondaryContainer: '#dfe2e6', tertiaryContainer: '#2b3540', onTertiaryContainer: '#d6e1ec' },
   light: { primary: '#3f444b', onPrimary: '#ffffff', primaryContainer: '#dfe2e6', onPrimaryContainer: '#15181b', secondaryContainer: '#e6e8ec', onSecondaryContainer: '#1a1d20', tertiaryContainer: '#d8e3ee', onTertiaryContainer: '#0f1d2a' },
 };
+/** Expressive 3's colour roles with its default accent, by mode (the gallery's miniature, a copy made of it). */
+export const e3Roles = (m: Mode): Roles => (m === 'light' ? E3_LIGHT.roles : { ...GRAPHITE.dark, secondaryContainer: E3_DARK.secondaryContainer });
 export interface Preview { mode: Mode; ground: string; bg: string; picture?: string; veil?: string; pane: string; card: string; text: string; dim: string; edge: string; vars: Record<string, string> }
 export function previewOf(def: ThemeDef, mode: Mode, darkTone: DarkTone): Preview {
   const r = resolve({ theme: def.id, mode, darkTone, useThemeColours: true });
-  const t = r.tokens; const roles = r.roles ?? (def.classic ? (r.mode === 'light' ? E3_LIGHT.roles : { ...GRAPHITE.dark, secondaryContainer: E3_DARK.secondaryContainer }) : GRAPHITE[r.mode]);
+  const t = r.tokens; const roles = r.roles ?? (def.classic ? e3Roles(r.mode) : GRAPHITE[r.mode]);
   const vars: Record<string, string> = {}; for (const [k, v] of ROLE_VARS) vars[v] = roles[k];
   return { mode: r.mode, ground: r.surfaces.ground, bg: t?.bg ?? 'none', picture: t?.picture, veil: t?.veil, pane: t ? css(r.pane) : r.surfaces.mid, card: t ? css(r.card) : r.surfaces.low, text: r.text.on, dim: r.text.dim, edge: t?.edge ?? r.text.outlineVariant, vars };
 }

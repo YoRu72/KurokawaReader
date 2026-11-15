@@ -108,8 +108,8 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
       : packId && removing.has(packId) ? null
       : packId ? el('button', { type: 'button', class: 'tg-act tg-rm', title: d.t('themeRemove'), 'aria-label': `${d.t('themeRemove')} — ${name}`, onclick: () => void remove(def) }, d.icon('trash'))
       : null;
-    // (Customise: a pencil on every theme but Classic; a saved theme's ⋮ holds its own actions.)
-    const edit = !d.mine || def.classic ? null : def.custom
+    // (Customise: a pencil on every theme — Expressive 3's makes a copy of it among My themes —; a saved theme's ⋮ holds its own actions.)
+    const edit = !d.mine ? null : def.custom
       ? el('button', { type: 'button', class: 'tg-edit tg-more', title: d.t('myMore'), 'aria-label': `${d.t('myMore')} — ${name}`, onclick: () => d.mine!.menu(def.id) }, d.icon('more'))
       : el('button', { type: 'button', class: 'tg-edit', title: d.t('editorCustomise'), 'aria-label': `${d.t('editorCustomise')} — ${name}`, onclick: () => d.mine!.customise(def.id) }, d.icon('pencil'));
     return el('div', { class: 'tg-card' + (on ? ' on' : '') + (need ? ' needs' : '') + (prog ? ' busy' : '') + (err ? ' failed' : '') + (def.custom ? ' mine' : ''), 'data-theme': def.id, 'data-pack': def.custom ? undefined : packId }, pick, edit, act);

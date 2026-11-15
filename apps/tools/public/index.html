@@ -9,6 +9,16 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <script>
+    /* The mode and theme before the first paint (settings.ts applyChrome sets them fully a moment later): no flash of
+       the wrong mode. The same defaults as settings.ts — the system's mode, Expressive 3 («classic»). */
+    (function () { try { var s = {}; try { s = JSON.parse(localStorage.getItem('kt.settings') || '{}') || {}; } catch (e) { s = {}; }
+      var m = s.uiMode || 'system'; var l = m === 'light' || (m === 'system' && !!window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
+      var h = document.documentElement; h.dataset.ui = l ? 'light' : 'dark'; h.dataset.theme = typeof s.theme === 'string' && s.theme ? s.theme : 'classic';
+      h.dataset.accent = s.accent && s.accent !== 'theme' && s.accent !== 'custom' ? s.accent : 'graphite'; h.dataset.dark = s.darkTone || 'default';
+      if (h.dataset.theme === 'classic' && l) { var c = document.querySelector('meta[name="theme-color"]'); if (c) c.setAttribute('content', '#eef0f6'); }
+    } catch (e) { /* the app's defaults */ } })();
+  </script>
   <link rel="stylesheet" href="assets/app.css" />
 </head>
 <body>

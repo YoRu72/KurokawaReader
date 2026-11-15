@@ -163,6 +163,10 @@ html[data-theme='classic']:not([data-ui='light']) { --md-inverse-primary: #3d465
 /* (Today's standard: a chosen chip or place told from the others at a glance — the graphite's selected tone a step
    lighter and cooler than the chips' own, its character unchanged.) */
 html[data-theme='classic']:not([data-ui='light'])[data-accent='graphite'] { --md-secondary-container: #3a404b; }
+/* (On the brightest surface — the selection bars, the add field, badges, key caps —: the muted inks a step lighter in
+   the dark and the outline a step darker in the light, so muted text keeps 4.5:1 there too. Only on that surface.) */
+html[data-theme='classic']:not([data-ui='light']) :is(.add-input, .select-bar, .files-selbar, .kt-badge, .upd-chip, .key-cap, kbd, .crash-card .crash-text, .crash-text, .mini-bar, .kt-file-bar, .files-list.grid .files-check, .usage-bar) { --md-on-surface-dim: #a3a5aa; --md-outline: #9fa2a7; }
+html[data-theme='classic'][data-ui='light'] :is(.add-input, .select-bar, .files-selbar, .kt-badge, .upd-chip, .key-cap, kbd, .crash-card .crash-text, .crash-text, .mini-bar, .kt-file-bar, .files-list.grid .files-check, .usage-bar) { --md-outline: #525969; }
 
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
@@ -1910,11 +1914,13 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 
 
 /* The Add sheet's «Save as»: the name and the extension apart; what the link says of itself; the folders used lately. */
-.save-as { display: grid; gap: 8px; margin-top: 4px; }
+.save-as { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 4px; } .save-as > .field { min-width: 0; }
 .save-as.many .field, .save-as.many .add-size { display: none; }
 .save-as-row { display: flex; align-items: center; gap: 4px; }
 .save-as-row .dot { opacity: .6; font-weight: 600; }
 .save-as-row .ext-in { width: 6em; flex: none; text-align: start; }
+/* (The name takes what is left and may shrink: the extension never pushed off a narrow screen.) */
+.save-as-row > input.grow { flex: 1 1 auto; min-width: 0; width: auto; }
 .add-size, .add-storage { display: flex; align-items: center; gap: 6px; font-size: 13px; min-height: 20px; }
 .add-size svg, .add-storage svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; flex: none; }
 .add-size .danger, .add-storage .danger { color: var(--md-error); }

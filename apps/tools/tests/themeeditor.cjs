@@ -55,7 +55,7 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
   web.listen(0, '127.0.0.1'); await new Promise((r) => web.once('listening', r)); const port = web.address().port;
   const br = await chromium.launch(); const errors = [];
   for (const [lang, size, o] of [['en', 'phone', { width: 400, height: 860, isMobile: true, hasTouch: true }], ['ar', 'pc', { width: 1280, height: 860 }]]) {
-    const ctx = await br.newContext({ viewport: { width: o.width, height: o.height }, isMobile: !!o.isMobile, hasTouch: !!o.hasTouch, locale: lang, serviceWorkers: 'block', acceptDownloads: true });
+    const ctx = await br.newContext({ viewport: { width: o.width, height: o.height }, isMobile: !!o.isMobile, hasTouch: !!o.hasTouch, locale: lang, serviceWorkers: 'block', acceptDownloads: true, colorScheme: 'dark' }); // (A dark system: the default mode follows it.)
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(`${lang}: ${e.message}`));
     let offline = false; await ctx.route(/raw\.githubusercontent\.com/, (r) => (offline ? r.abort('internetdisconnected') : r.fulfill({ status: 404, body: '' })));
     await p.addInitScript((l) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player'], theme: 'frost', themeChosen: true, glassBlur: 'full' })); localStorage.setItem('kt.themeMigrated', '1'); }, lang);

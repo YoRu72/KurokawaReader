@@ -7,7 +7,7 @@
 // base's background as the app draws it today (chosen by the reader as «the theme's own»; the base id is kept).
 // Only colours (#rrggbb / #rrggbbaa), numbers in ranges and fixed words are ever stored or read back: every CSS
 // value is built here from them, never taken from storage or from a file (see `sanitise`).
-import { themeById, resolve, GRAPHITE, contrastReport, parseColor, over, luminance, type ThemeDef, type ModeTokens, type Mode, type DarkTone, type Surfaces, type TextRoles, type Roles, type RGBA } from './themes';
+import { themeById, resolve, GRAPHITE, e3Roles, modesOf, contrastReport, parseColor, over, luminance, type ThemeDef, type ModeTokens, type Mode, type DarkTone, type Surfaces, type TextRoles, type Roles, type RGBA } from './themes';
 import { parsePack, buildPack, sha256Hex, PackError, type PackIO } from './packs';
 
 export type BgKind = 'theme' | 'mesh' | 'solid' | 'picture' | 'pack';
@@ -28,7 +28,15 @@ export const uidTheme = (): string => `my-${Date.now().toString(36)}${Math.rando
 /** A mode's values as the base theme has them (what «reset» goes back to). */
 export function modeFromBase(base: ThemeDef, mode: Mode, darkTone: DarkTone): MyMode {
   const r = resolve({ theme: base.id, mode, darkTone, useThemeColours: true });
-  const t = r.tokens!;
+  // (Expressive 3 has no glass: a copy of it starts solid — its surfaces and text, its roles, panes all but opaque, no
+  //  blur, a plain ground — and the editor can add glass from there.)
+  if (!r.tokens) {
+    const S = Object.fromEntries(Object.entries(r.surfaces).map(([k, v]) => [k, hexOf(v)])) as unknown as Surfaces; const R = e3Roles(mode);
+    return { surfaces: S, text: Object.fromEntries(Object.entries(r.text).map(([k, v]) => [k, hexOf(v)])) as unknown as TextRoles, roles: R,
+      tint: S.low.slice(0, 7), strength: 0.96, blur: 0, sat: 1, edge: mode === 'dark' ? 0.04 : 0.3, sheen: 0, shadow: 0.3,
+      bg: { kind: 'solid', colors: [R.primaryContainer, R.tertiaryContainer, R.secondaryContainer].map((x) => hexOf(x).slice(0, 7)) as [string, string, string], solid: S.ground.slice(0, 7), veil: 0.2, picBlur: 0 } };
+  }
+  const t = r.tokens;
   const pane = r.pane; const edgeA = (() => { try { const e = parseColor(t.edge); return e[0] > 200 && e[1] > 200 ? e[3] : 0.1; } catch { return 0.1; } })();
   const sheenA = (() => { const m = /inset 0 1px 0 rgba?\(([^)]*)\)/.exec(t.sheen); if (!m) return mode === 'dark' ? 0.06 : 0.6; try { return parseColor(`rgb(${m[1]})`)[3]; } catch { return 0.06; } })();
   const roles = r.roles ? (Object.fromEntries(Object.entries(r.roles).map(([k, v]) => [k, hexOf(v)])) as unknown as Roles) : null;
@@ -43,8 +51,8 @@ export function modeFromBase(base: ThemeDef, mode: Mode, darkTone: DarkTone): My
 export function fromBase(base: ThemeDef, darkTone: DarkTone, name: string): MyTheme {
   const src = base.custom ? undefined : base;
   const b = src ?? themeById(base.base);
-  const modes: Mode[] = b.force ? [b.force] : (['dark', 'light'] as Mode[]).filter((m) => (m === 'dark' ? b.dark : b.light));
-  const scale = (b.radius?.lg ?? 20) / 20;
+  const modes: Mode[] = modesOf(b);
+  const scale = (b.radius?.lg ?? 18) / 20;
   const my: MyTheme = { v: 1, id: uidTheme(), name, base: b.id, radius: +scale.toFixed(2), accent: b.followsAccent ? 'app' : 'theme', force: b.force, at: Date.now() };
   for (const m of modes) my[m] = modeFromBase(b, m, darkTone);
   return my;

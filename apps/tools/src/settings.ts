@@ -184,7 +184,7 @@ const KEY = 'kt.settings';
 /** The snackbar owed after the main theme came back (0.21): what was in use before, for its «Use Frost». */
 export const MAIN_NOTE_KEY = 'kt.mainThemeNote';
 const DEFAULTS: Settings = {
-  uiMode: 'dark', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff', theme: DEFAULT_THEME, glassBlur: 'auto',
+  uiMode: 'system', uiScale: 100, darkTone: 'default', accent: 'graphite', accentCustom: '#7fb8ff', theme: DEFAULT_THEME, glassBlur: 'auto',
   downloadDir: '', maxActive: 3, connections: 0, limits: { down: 0, up: 0 }, seedAfterDone: false, listenPort: 0, sequentialVideo: false,
   aria2: { url: 'http://127.0.0.1:6800/jsonrpc', secret: '', use: false },
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},

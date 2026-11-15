@@ -2369,7 +2369,7 @@ export const ar: Partial<Strings> = {
   themeFrost: "صقيع × Material 3 Expressive",
   themeExpressive: "التعبيريّة ٣",
   themeDefaultTag: "الافتراضيّة",
-  uiModeHint: "«النظام» يتبع جهازك، أمّا «فاتحة» و«داكنة» فتُثبّتان مظهرًا واحدًا لا يتبدّل.",
+  uiModeHint: "«النظام» — وهو الافتراضيّ — يتبع جهازك، أمّا «فاتحة» و«داكنة» فتُثبّتان مظهرًا واحدًا لا يتبدّل.",
   mainThemeBack: "عادت «التعبيريّة ٣» سِمةً رئيسةً، وما تزال «صقيع» في المظهر.",
   mainThemeUseFrost: "استعمل «صقيع»",
   themeAurora: "الشَّفَق القطبيّ",

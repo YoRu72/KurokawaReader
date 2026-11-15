@@ -57,6 +57,8 @@ const T = require(path.join(tmp, 'themes.js'));
     for (const k of ['ground', 'low', 'mid', 'high']) { need(mode, `on-surface on ${k}`, X.on, S[k], 4.5); need(mode, `on-surface-variant on ${k}`, X.variant, S[k], 4.5); need(mode, `outline (icons, large) on ${k}`, X.outline, S[k], 3); }
     for (const k of ['ground', 'low', 'mid']) need(mode, `on-surface-dim on ${k}`, X.dim, S[k], 4.5);
     need(mode, 'on-surface on highest (selection bar)', X.on, S.highest, 4.5);
+    const OH = mode === 'dark' ? T.E3_DARK.onHighest : T.E3_LIGHT.onHighest;
+    need(mode, 'on-surface-dim on highest (nudged there)', OH.dim, S.highest, 4.5); need(mode, 'outline as muted text on highest (nudged there)', OH.outline, S.highest, 4.5);
     need(mode, 'primary (icons, bars) on ground', R.primary, S.ground, 3); need(mode, 'primary (icons, bars) on card', R.primary, S.low, 3);
     need(mode, 'on-primary on primary', R.onPrimary, R.primary, 4.5);
     need(mode, 'on-primary-container on its container', R.onPrimaryContainer, R.primaryContainer, 4.5);
@@ -81,7 +83,7 @@ const T = require(path.join(tmp, 'themes.js'));
   // light by its indigo (saturation ≥ 30 points over the chips' neutral).
   ok('a selected chip is told from the others at a glance (dark by tone, light by hue)', c(RD.secondaryContainer, D.high) >= 1.15 && hsl(RL.secondaryContainer).s - hsl(L.high).s >= 0.3, `${c(RD.secondaryContainer, D.high).toFixed(2)} / ${(hsl(RL.secondaryContainer).s - hsl(L.high).s).toFixed(2)}`);
   const inCss = (v) => block.toLowerCase().includes(v.toLowerCase());
-  const missing = [...Object.values(L), ...Object.values(TL), ...Object.values(RL), T.E3_LIGHT.tertiary, ...Object.values(T.E3_LIGHT.inverse), T.E3_DARK.secondaryContainer, T.E3_DARK.inverse.primary].filter((v) => !inCss(v));
+  const missing = [...Object.values(L), ...Object.values(TL), ...Object.values(RL), T.E3_LIGHT.tertiary, ...Object.values(T.E3_LIGHT.inverse), T.E3_DARK.secondaryContainer, T.E3_DARK.inverse.primary, T.E3_DARK.onHighest.dim, T.E3_DARK.onHighest.outline, T.E3_LIGHT.onHighest.outline].filter((v) => !inCss(v));
   ok('base.css carries the same values as themes.ts (previews, tests and the app agree)', !missing.length, missing.join(', '));
 
   /* 3. in the app */
@@ -105,9 +107,15 @@ const T = require(path.join(tmp, 'themes.js'));
     const r = await look(p);
     ok(`default with «${ui}» (system ${scheme}): Expressive 3 ${wantUi}`, r.theme === 'classic' && r.ui === wantUi && r.bg === wantBg && r.meta === (wantUi === 'light' ? '#eef0f6' : '#121314'), JSON.stringify(r)); await ctx.close();
   }
-  { const { p, ctx } = await page({ settings: null }); await start(p); const r = await look(p);
-    ok('a fresh install: Expressive 3 dark, the flag set, no snackbar', r.theme === 'classic' && r.ui === 'dark' && r.main === '1' && !r.note && !(await p.$('.main-note')), JSON.stringify(r)); await ctx.close(); }
-
+  for (const scheme of ['dark', 'light']) { const { p, ctx } = await page({ settings: null }, scheme); await start(p); const r = await look(p);
+    ok(`a fresh install follows the system (${scheme}): Expressive 3 ${scheme}, the flag set, no snackbar`, r.theme === 'classic' && r.ui === scheme && r.main === '1' && !r.note && !(await p.$('.main-note')), JSON.stringify(r)); await ctx.close(); }
+  // The first paint: the page as drawn before the app's script runs (held back here) is already in the right mode.
+  for (const [seed, scheme, want, bg] of [[null, 'light', 'light', 'rgb(238, 240, 246)'], [null, 'dark', 'dark', 'rgb(18, 19, 20)'], [{ uiMode: 'dark' }, 'light', 'dark', 'rgb(18, 19, 20)'], [{ uiMode: 'light' }, 'dark', 'light', 'rgb(238, 240, 246)'], ['{broken', 'light', 'light', 'rgb(238, 240, 246)']]) {
+    const { p, ctx } = await page({ settings: seed }, scheme); await p.route(/\/assets\/app\.js/, () => { /* never answered: the first paint without the app */ });
+    await p.goto(URL0, { waitUntil: 'commit' }); await p.waitForFunction(() => !!document.body && document.styleSheets.length > 0 && getComputedStyle(document.body).backgroundColor !== 'rgba(0, 0, 0, 0)');
+    const r = await p.evaluate(() => ({ ui: document.documentElement.dataset.ui, theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.body).backgroundColor, app: !!document.querySelector('#app .view') }));
+    ok(`first paint, before the app runs (${JSON.stringify(seed)}, system ${scheme}): already ${want}`, !r.app && r.ui === want && r.theme === 'classic' && r.bg === bg, JSON.stringify(r)); await ctx.close();
+  }
   // Moved to Frost by itself: back to Expressive 3 once, the snackbar, «Use Frost».
   const AUTO = { settings: { theme: 'frost', uiMode: 'dark', darkTone: 'default', accent: 'graphite', glassBlur: 'auto', addons: ['player'] }, flags: { 'kt.themeMigrated': '1' } };
   {
@@ -153,10 +161,20 @@ const T = require(path.join(tmp, 'themes.js'));
   {
     const { p, ctx } = await page({ settings: { theme: 'aurora', themeChosen: true, uiMode: 'light' }, flags: { 'kt.themeMigrated': '1', 'kt.mainTheme': '1' } }, 'light'); await start(p, '#/settings/appearance');
     await p.waitForSelector('#appearance .tg-card[data-theme]');
-    const g = await p.evaluate(() => ({ first: document.querySelector('#appearance .tg-card[data-theme]').dataset.theme, tag: document.querySelector('#appearance .tg-card[data-theme="classic"] .tg-tag')?.textContent, tags: document.querySelectorAll('#appearance .tg-tag').length, hint: document.querySelector('#appearance').textContent.includes('System follows your device') }));
+    const g = await p.evaluate(() => ({ first: document.querySelector('#appearance .tg-card[data-theme]').dataset.theme, tag: document.querySelector('#appearance .tg-card[data-theme="classic"] .tg-tag')?.textContent, tags: document.querySelectorAll('#appearance .tg-tag').length, hint: document.querySelector('#appearance').textContent.includes('System (the default) follows your device') }));
     ok('the gallery: Expressive 3 first, the only one tagged «Default»; the light/dark line explained', g.first === 'classic' && g.tag === 'Default' && g.tags === 1 && g.hint, JSON.stringify(g));
     await p.locator('#appearance .row', { hasText: 'Reset' }).locator('button').click(); await p.waitForFunction(() => document.documentElement.dataset.theme === 'classic');
-    const r = await look(p); ok('Reset: Expressive 3, the choice-marker cleared', r.theme === 'classic' && r.s.theme === 'classic' && !r.s.themeChosen, JSON.stringify(r));
+    const r = await look(p); ok('Reset: Expressive 3 following the system, the choice-marker cleared', r.theme === 'classic' && r.s.theme === 'classic' && !r.s.themeChosen && r.s.uiMode === 'system', JSON.stringify(r));
+    await ctx.close();
+  }
+  // Every card has its pencil: Expressive 3's opens the editor on a copy of it (solid, its own colours).
+  {
+    const { p, ctx } = await page({ settings: { uiMode: 'light' }, flags: { 'kt.themeMigrated': '1', 'kt.mainTheme': '1' } }, 'light'); await start(p, '#/settings/appearance');
+    await p.waitForSelector('#appearance .tg-card[data-theme="classic"]');
+    const pens = await p.evaluate(() => [...document.querySelectorAll('#appearance .tg-card[data-theme]:not(.mine)')].map((c) => !!c.querySelector('.tg-edit')));
+    await p.click('#appearance .tg-card[data-theme="classic"] .tg-edit'); await p.waitForSelector('.te-panel');
+    const r = await p.evaluate(() => ({ theme: document.documentElement.dataset.theme, ground: getComputedStyle(document.documentElement).getPropertyValue('--md-surface').trim(), glass: document.documentElement.dataset.glass }));
+    ok('every built-in card has a pencil; Expressive 3\'s opens the editor on a copy, its own light ground, no blur', pens.length >= 8 && pens.every(Boolean) && r.theme === 'my-preview' && r.ground === '#eef0f6', JSON.stringify({ pens, r }));
     await ctx.close();
   }
   ok('no page errors', !errors.length, errors.slice(0, 3).join(' | '));

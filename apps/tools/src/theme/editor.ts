@@ -307,7 +307,6 @@ export function openEditor(d: EditorDeps, start: { my: MyTheme; existing: boolea
 export function customise(d: EditorDeps, defId: string): void {
   const def = themeById(defId);
   if (def.custom) { const my = myTheme(def.id); if (my) { void blobsOf(d.store, my).then((p) => openEditor(d, { my, existing: true, pictures: p })); return; } }
-  if (def.classic) return;
   const my = fromBase(def, d.darkTone(), d.t('myDefaultName', { base: themeName(def, d.t) }).slice(0, 60));
   openEditor(d, { my, existing: false });
 }

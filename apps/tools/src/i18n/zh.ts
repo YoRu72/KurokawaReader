@@ -1277,7 +1277,7 @@ export const zh: Partial<Strings> = {
   themeFrost: "霜玻璃 × Material 3 Expressive",
   themeExpressive: "Expressive 3",
   themeDefaultTag: "默认",
-  uiModeHint: "“系统”跟随设备设置；“浅色”和“深色”始终保持同一外观。",
+  uiModeHint: "“系统”（默认）跟随设备设置；“浅色”和“深色”始终保持同一外观。",
   mainThemeBack: "主主题已恢复为 Expressive 3。霜玻璃仍可在“外观”中选择。",
   mainThemeUseFrost: "使用霜玻璃",
   themeAurora: "极光",

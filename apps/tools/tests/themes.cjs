@@ -67,7 +67,7 @@ const OLD = {
   const web = serve().listen(0, '127.0.0.1'); await new Promise((r) => web.once('listening', r)); const port = web.address().port; const URL0 = `http://127.0.0.1:${port}/`;
   const br = await chromium.launch(); const errors = [];
   const page = async (o, settings, lang = 'en') => {
-    const ctx = await br.newContext({ viewport: { width: o.w, height: o.h }, deviceScaleFactor: o.dpr || 1, isMobile: !!o.mobile, hasTouch: !!o.mobile, locale: lang, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    const ctx = await br.newContext({ viewport: { width: o.w, height: o.h }, deviceScaleFactor: o.dpr || 1, isMobile: !!o.mobile, hasTouch: !!o.mobile, locale: lang, reducedMotion: 'reduce', serviceWorkers: 'block', colorScheme: 'dark' }); // (A dark system: «system», the default mode since 0.21, shows these in dark as they were measured.)
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
     await p.addInitScript(([s, l]) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); if (s !== null) localStorage.setItem('kt.settings', s); if (s && s.includes('"__migrated"')) { localStorage.setItem('kt.themeMigrated', '1'); localStorage.setItem('kt.mainTheme', '1'); } }, [settings === null ? null : JSON.stringify({ addons: ['player'], ...settings }), lang]);
     // (raw.githubusercontent.com — the theme list — is not reached: answered 404 here.)

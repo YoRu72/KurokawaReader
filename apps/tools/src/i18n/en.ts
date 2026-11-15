@@ -2374,7 +2374,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   themeFrost: "Frost × Material 3 Expressive",
   themeExpressive: "Expressive 3",
   themeDefaultTag: "Default",
-  uiModeHint: "System follows your device; Light and Dark keep one look all the time.",
+  uiModeHint: "System (the default) follows your device; Light and Dark keep one look all the time.",
   mainThemeBack: "The main theme is Expressive 3 again. Frost is still in Appearance.",
   mainThemeUseFrost: "Use Frost",
   themeAurora: "Aurora",

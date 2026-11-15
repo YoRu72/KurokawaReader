@@ -1277,7 +1277,7 @@ export const ko: Partial<Strings> = {
   themeFrost: "프로스트 × Material 3 Expressive",
   themeExpressive: "Expressive 3",
   themeDefaultTag: "기본",
-  uiModeHint: "'시스템'은 기기 설정을 따르고, '라이트'와 '다크'는 늘 같은 모습을 유지합니다.",
+  uiModeHint: "'시스템'(기본값)은 기기 설정을 따르고, '라이트'와 '다크'는 늘 같은 모습을 유지합니다.",
   mainThemeBack: "기본 테마가 다시 Expressive 3이 되었습니다. 프로스트는 '모양'에서 계속 고를 수 있습니다.",
   mainThemeUseFrost: "프로스트 사용",
   themeAurora: "오로라",

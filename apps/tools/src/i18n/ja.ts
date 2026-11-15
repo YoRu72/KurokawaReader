@@ -1277,7 +1277,7 @@ export const ja: Partial<Strings> = {
   themeFrost: "フロスト × Material 3 Expressive",
   themeExpressive: "Expressive 3",
   themeDefaultTag: "既定",
-  uiModeHint: "「システム」は端末の設定に従い、「ライト」と「ダーク」はいつも同じ見た目のままです。",
+  uiModeHint: "「システム」（既定）は端末の設定に従い、「ライト」と「ダーク」はいつも同じ見た目のままです。",
   mainThemeBack: "メインテーマが Expressive 3 に戻りました。フロストは「外観」で引き続き選べます。",
   mainThemeUseFrost: "フロストを使う",
   themeAurora: "オーロラ",

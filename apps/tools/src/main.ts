@@ -176,12 +176,13 @@ else {
   // (The window's own bar: the Tauri shell has the page draw all of it, its buttons too — ui/winbar.ts, the Reader's —;
   // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
   if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
-  else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
+  // (Only where the shell draws a title bar at all — a phone or the web never fetches it.)
+  else if ((window.kurokawaTools as unknown as { titleBar?: unknown } | undefined)?.titleBar) void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
   // (At the start, before the first screen — each a listener or a setting another flow reads at once: a key, a
   // download's «done» or a shell's event in the first moments must find someone listening; the network and power
   // choices are in force before any download moves; the hand-over's hooks are there for the shell and the tests.)
   void backNav().then((m) => m.wirePcBack());
-  wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
+  wireUndoKeys();
   onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
   void import('./downloads/power').then((m) => m.applyPower());
   // (Once after 0.21 moved an install back to «Expressive 3»: the snackbar that says so and can undo it.)
@@ -225,6 +226,9 @@ else {
   // so the first other screen opened does not wait for them.)
   { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (idle) idle(() => void loadRest(), { timeout: 1500 }); else setTimeout(() => void loadRest(), 300); }
   void import('./downloads/relink').then((m) => m.startAutoRelink());
+  // (The offer to undo a restore, and the update check's code — it waits 3 s before it asks anyway —: nobody waits for them.)
+  void import('./backup').then((m) => m.offerRestoreUndo());
+  void import('./updates').then((m) => m.scheduleAutoCheck());
   void import('./ui/gestures').then((g) => g.pageSwipe({
     enabled: () => getSettings().swipeTabs !== false,
     view: () => current,
@@ -250,8 +254,6 @@ else {
   });
   // (Everything that works in the background starts once the first screen is drawn — not before it: the list is
   // usable sooner. A window that opens hidden — no frames — starts it all the same, a moment later.)
-  // (The app's update check: its code fetched after the first screen — it waits 3 s before it asks anyway.)
-  void import('./updates').then((m) => m.scheduleAutoCheck());
   document.documentElement.dataset.platform = nativePlatform();
 
   // Android's back: the native side asks the page (through the plugin's `backButton` event when present).

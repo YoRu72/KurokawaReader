@@ -23,7 +23,8 @@ const toBase64 = (buf: ArrayBuffer): string => { const b = new Uint8Array(buf); 
 /** The Add sheet; `pickTorrent` opens the file picker at once, `video` says a video page is wanted (from the + menu). */
 export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boolean; torrent?: File; headers?: Record<string, string>; name?: string } = {}): void {
   const eng = getEngine();
-  const sh = openSheet(t('addTitle'), t('close'));
+  // (Its listener for «a link turned out to be a file» let go however the sheet goes — it piled up one per opening.)
+  const sh = openSheet(t('addTitle'), t('close'), { onClose: () => window.removeEventListener('kt:direct', onDirect) });
   sh.el.classList.add('add-sheet');
   const ta = h('textarea', { rows: 3, class: 'add-input', dir: 'ltr', placeholder: t('addHint'), spellcheck: 'false', autocapitalize: 'off' }) as HTMLTextAreaElement; ta.value = initial;
   const fileIn = h('input', { type: 'file', accept: '.torrent,application/x-bittorrent', hidden: true }) as HTMLInputElement;
