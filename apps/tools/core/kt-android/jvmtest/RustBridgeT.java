@@ -23,7 +23,7 @@ public class RustBridgeT {
     // --- M0: the plumbing ---
     check("library loaded", KtCore.available(), KtCore.status());
     System.out.println("     " + KtCore.status());
-    eq("version", KtCore.version(), "0.2.0");
+    eq("version", KtCore.version(), "0.3.0");
     eq("core.sum 2 + 40", KtCore.r("core.sum", "a", 2, "b", 40), 42L);
     eq("core.sum negative", KtCore.r("core.sum", "a", -7, "b", 3), -4L);
     String odd = "مرحبا \u0000 \t \"q\" \\ 😀 　 é";

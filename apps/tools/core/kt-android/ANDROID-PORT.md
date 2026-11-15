@@ -319,7 +319,7 @@ streaming. Until then libtorrent4j ships and stays the default.
 - *Before the Java can go*: the phone run with 0 shadow mismatches over real apps, CI on Java 17's Unicode and on an
   emulator if feasible, one release with Rust as default; the Java stays for what Rust leaves to it (other URL
   schemes, ahead, lettering) unless those move too.
-- *Not changed*: the kt-android version (0.2.0 — the three stages' merge raises it once; RustBridgeT checks it).
+- *Version*: kt-android stayed 0.2.0 through M3–M5; the merge of the three raised it once, to 0.3.0 (RustBridgeT and dispatch.rs check it).
 
 **M5 — file jobs and remote storage: written 2026-11-15 (branch `work-and-m5`), waiting for CI and the owner's phone.**
 - *The claim checked.* The plan said KtFileJobs's rules «are already kt-core's `filejobs.rs`». They are — rule for

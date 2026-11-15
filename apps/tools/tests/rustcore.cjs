@@ -35,13 +35,13 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   };
 
   // A phone with the core.
-  let { p, ctx } = await open({ kind: 'phone', core: '0.2.0' });
+  let { p, ctx } = await open({ kind: 'phone', core: '0.3.0' });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => undefined);
   if (await p.$('#advanced.collapsed')) await p.click('#advanced h3');
   check('phone with the core: the file jobs engine row', !!(await p.$('#advanced .file-engine-row')));
   check('…Classic chosen by default', /Classic/.test(await p.$eval('#advanced .file-engine-row button', (e) => e.textContent)));
   const st = await p.$eval('#rust-status', (e) => e.textContent);
-  check('the status: the core, the download engine and the file jobs engine', /Rust core status/.test(st) && /Rust core 0\.2\.0/.test(st) && !!(await p.$('#rust-status .rust-engine[data-area="dl"]')) && !!(await p.$('#rust-status .rust-engine[data-area="file"]')), st);
+  check('the status: the core, the download engine and the file jobs engine', /Rust core status/.test(st) && /Rust core 0\.3\.0/.test(st) && !!(await p.$('#rust-status .rust-engine[data-area="dl"]')) && !!(await p.$('#rust-status .rust-engine[data-area="file"]')), st);
   check('…an engine of a stage it does not know (torEngine) shown too, with its fallbacks', !!(await p.$('#rust-status .rust-engine[data-area="tor"]')) && /fell back: 4/.test(await p.$eval('#rust-status .rust-engine[data-area="tor"]', (e) => e.textContent)));
   check('…the shadow checks and the journal', /Shadow checks: 12/.test(st) && /resumed: 1/.test(st) && /undone: 3/.test(st), st);
   await p.click('#rust-status .rust-copy'); await p.waitForTimeout(300);
@@ -60,12 +60,12 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('the download engine row is still the first one', /Download engine/.test(await p.$eval('#advanced .dl-engine-row', (e) => e.textContent)));
   await ctx.close();
   // A build before M5 (only M2's fields): the status shows what there is, without errors.
-  ({ p, ctx } = await open({ kind: 'phone', core: '0.2.0', old: true }));
+  ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', old: true }));
   if (await p.$('#advanced.collapsed')) await p.click('#advanced h3');
   check('older fields only: the status still there, the download engine in it, no journal line', !!(await p.$('#rust-status .rust-engine[data-area="dl"]')) && !(await p.$('#rust-status .rust-journal')) && !(await p.$('#rust-status .rust-jobs-open')));
   await ctx.close();
   // Arabic.
-  ({ p, ctx } = await open({ kind: 'phone', core: '0.2.0', lang: 'ar' }));
+  ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', lang: 'ar' }));
   if (await p.$('#advanced.collapsed')) await p.click('#advanced h3');
   const ar = await p.$eval('#advanced', (e) => e.textContent);
   check('Arabic: the row and the status in Arabic, counts as «العدد»', /محرّك مهامّ الملفّات/.test(ar) && /حالُ نواة Rust/.test(ar) && /العدد: ٤|العدد: 4/.test(ar), ar.slice(0, 400));
@@ -75,7 +75,7 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('phone without the core: no file jobs engine, no status', !(await p.$('.file-engine-row')) && !(await p.$('#rust-status')));
   await ctx.close();
   // A computer: never.
-  ({ p, ctx } = await open({ kind: 'pc', core: '0.2.0' }));
+  ({ p, ctx } = await open({ kind: 'pc', core: '0.3.0' }));
   check('computer: no file jobs engine, no status', !(await p.$('.file-engine-row')) && !(await p.$('#rust-status')));
   await p.fill('.settings-search', 'file jobs'); await p.waitForTimeout(200);
   check('computer: a search finds no file jobs engine', !/File jobs engine/.test(await p.$eval('.settings-body', (e) => e.textContent)));

@@ -35,7 +35,7 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   const choices = async (p) => { await p.click('#advanced .tor-engine-row button'); await p.waitForTimeout(300); const l = await p.$$eval('label.dest-row', (e) => e.map((x) => x.textContent.trim())); return l; };
 
   // A phone with both libraries: three choices, Classic by default; Rust picked → told and kept.
-  let { p, ctx } = await open({ kind: 'phone', core: '0.2.0', tor: '0.1.0' });
+  let { p, ctx } = await open({ kind: 'phone', core: '0.3.0', tor: '0.1.0' });
   check('phone with both: «Torrent engine» in Advanced', /Torrent engine/.test(await p.$eval('#advanced', (e) => e.textContent)));
   check('…Classic by default', /Classic/.test(await p.$eval('#advanced .tor-engine-row button', (e) => e.textContent)));
   check('…the status line: engine, version, fallbacks', /New torrents: Classic/.test(await p.$eval('#advanced .tor-engine-status', (e) => e.textContent)) && /0\.1\.0/.test(await p.$eval('#advanced .tor-engine-status', (e) => e.textContent)) && /Classic: 3/.test(await p.$eval('#advanced .tor-engine-status', (e) => e.textContent)));
@@ -47,7 +47,7 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('…the hint says what Rust refuses (SAF folders)', /SAF/.test(await p.$eval('#advanced', (e) => e.textContent)));
   await ctx.close();
   // The core only: Director, no Rust.
-  ({ p, ctx } = await open({ kind: 'phone', core: '0.2.0', tor: null }));
+  ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', tor: null }));
   const some = await choices(p);
   check('core only: Classic and Director, no Rust', some.some((x) => /Director/.test(x)) && !some.some((x) => /^Rust$/.test(x)), some);
   await ctx.close();
@@ -60,24 +60,24 @@ const serve = () => http.createServer((req, res) => { let p = decodeURIComponent
   check('neither library: no «Advanced», no torrent engine', !(await p.$('#advanced')) && !/Torrent engine/.test(await p.$eval('.settings-body', (e) => e.textContent)));
   await ctx.close();
   // Arabic.
-  ({ p, ctx } = await open({ kind: 'phone', core: '0.2.0', tor: '0.1.0', lang: 'ar' }));
+  ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', tor: '0.1.0', lang: 'ar' }));
   const ar = await p.$eval('#advanced', (e) => e.textContent);
   check('Arabic: the row in Arabic, the count as «العدد»', /محرّك التورنت/.test(ar) && /العدد: (٣|3)/.test(ar), ar.slice(0, 400));
   await ctx.close();
   // A computer: never, even with a bridge that claims both.
-  ({ p, ctx } = await open({ kind: 'pc', core: '0.2.0', tor: '0.1.0' }));
+  ({ p, ctx } = await open({ kind: 'pc', core: '0.3.0', tor: '0.1.0' }));
   check('computer: no «Advanced» card', !(await p.$$eval('.settings-body > .card', (e) => e.map((c) => c.id))).includes('advanced'));
   await p.fill('.settings-search', 'torrent engine'); await p.waitForTimeout(200);
   check('computer: a search finds no torrent-engine switch', !/Torrent engine/.test(await p.$eval('.settings-body', (e) => e.textContent)));
   await ctx.close();
   // The badge on a torrent's row: a debuggable build only.
-  ({ p, ctx } = await open({ kind: 'phone', core: '0.2.0', tor: '0.1.0', debug: true, tasks: true }, '#/'));
+  ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', tor: '0.1.0', debug: true, tasks: true }, '#/'));
   // (The rows are drawn again on the next change of the tasks — every ~0.7 s on a phone while one downloads.)
   await p.waitForTimeout(800); await p.evaluate((t) => window.__emit && window.__emit({ tasks: [{ ...t, done: 20 }] }), torrent); await p.waitForTimeout(500);
   const body0 = await p.evaluate(() => document.body.textContent); let body = body0;
   check('debuggable build: the row says «engine: Rust»', /engine: Rust/.test(body), body.slice(0, 300));
   await ctx.close();
-  ({ p, ctx } = await open({ kind: 'phone', core: '0.2.0', tor: '0.1.0', debug: false, tasks: true }, '#/'));
+  ({ p, ctx } = await open({ kind: 'phone', core: '0.3.0', tor: '0.1.0', debug: false, tasks: true }, '#/'));
   await p.waitForTimeout(1500);
   body = await p.evaluate(() => document.body.textContent);
   check('released build: no engine badge', /Made-up Ep 01/.test(body) && !/engine: Rust/.test(body), body.slice(0, 300));

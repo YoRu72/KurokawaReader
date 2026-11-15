@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn core_methods() {
         let v = call("core.version", "").unwrap();
-        assert!(v.starts_with("{\"r\":{\"version\":\"0.2.0\",\"protocol\":1,"), "{}", v);
+        assert!(v.starts_with("{\"r\":{\"version\":\"0.3.0\",\"protocol\":1,"), "{}", v);
         assert_eq!(call("core.sum", r#"{"a":2,"b":40}"#).unwrap(), r#"{"r":42}"#);
         assert_eq!(call("core.sum", r#"{"a":-7,"b":3}"#).unwrap(), r#"{"r":-4}"#);
         assert!(call("core.sum", r#"{"a":1}"#).unwrap_err().contains("«b» missing"));

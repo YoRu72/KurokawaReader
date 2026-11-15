@@ -1,7 +1,7 @@
 [package]
 name = "kt-android"
-# (The version Java's KtCore reports: «Rust core: 0.2.0». Raise it with each Android stage.)
-version = "0.2.0"
+# (The version Java's KtCore reports: «Rust core: 0.3.0». Raise it with each Android stage.)
+version = "0.3.0"
 description = "Kurokawa Tools' Android library: kt-core called from Java through one JNI function (docs/RUST-PORT.md §5)"
 edition = "2021"
 publish = false
