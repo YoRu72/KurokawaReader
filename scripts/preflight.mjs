@@ -37,7 +37,7 @@ import os from 'node:os';
 import zlib from 'node:zlib';
 import net from 'node:net';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -74,10 +74,22 @@ function run(cmd, args, { cwd, env = {}, timeoutMs = 180000 } = {}) {
     p.on('close', (code) => { clearTimeout(timer); resolve({ code: timedOut ? 124 : code, out, ms: Date.now() - t0, timedOut }); });
   });
 }
-const resolveFrom = (appDir, spec, load) => {
-  for (const base of [appDir, ROOT, GLOBAL_ROOT]) { if (!base) continue; try { const rq = createRequire(path.join(base, 'x.js')); return load ? rq(spec) : rq.resolve(spec); } catch {} }
+// (Packages are looked up on disk, not with require.resolve: a package whose «exports» hides «bin/tsc», or an ES-module-only
+// typescript, must not make the preflight crash.)
+function findPkg(appDir, name) {
+  if (process.env.PREFLIGHT_HIDE === name) return null; // (a test hook: pretend this package is not installed)
+  for (const base of [path.join(appDir, 'node_modules'), path.join(ROOT, 'node_modules'), GLOBAL_ROOT]) { if (!base) continue; const d = path.join(base, name); if (fs.existsSync(path.join(d, 'package.json'))) return d; }
   return null;
-};
+}
+async function loadTs(appDir) {
+  const d = findPkg(appDir, 'typescript'); if (!d) return null;
+  const ok = (m) => (m && m.createSourceFile ? m : m && m.default && m.default.createSourceFile ? m.default : null);
+  try { const t = ok(createRequire(path.join(d, 'x.js'))(d)); if (t) return t; } catch {}
+  try { const main = readJson(path.join(d, 'package.json'), {}).main || './lib/typescript.js'; return ok(await import(pathToFileURL(path.resolve(d, main)).href)); } catch { return null; }
+}
+const pkgVersion = (appDir, name) => { const d = findPkg(appDir, name); return d ? readJson(path.join(d, 'package.json'), {}).version || '?' : null; };
+// A step that must never take the run down: a crash becomes one FAIL row and the other steps go on.
+const guardFor = (add) => async (name, fn) => { try { await fn(); } catch (e) { add(name, 'FAIL', 'crashed: ' + ((e && e.message) || e)); } };
 
 // ---------- fixed ports and the run lock ----------
 // Many tests listen on a fixed port (5480-5499, 5180-5499 in Reader, 6899). Two test runs at once (another preflight, a
@@ -106,6 +118,7 @@ async function preflight(app) {
   const TESTS = path.join(APP, 'tests');
   const rows = []; // { step, status, detail }
   const add = (step, status, detail = '') => { rows.push({ step, status, detail }); console.log(`  ${status.padEnd(5)} ${step}${detail ? '  — ' + detail.split('\n')[0].slice(0, 200) : ''}`); };
+  const guard = guardFor(add);
   const cfg = { ...(CONFIG.defaults || {}), ...(CONFIG[app] || {}) };
   const pkg = readJson(path.join(APP, 'package.json'), {});
   const version = pkg.version;
@@ -128,17 +141,25 @@ async function preflight(app) {
     return out;
   };
 
+  // 0. the tools the steps need (versions; a missing one is named once here and again, plainly, by the step that needs it)
+  {
+    const py = spawnSync('python3', ['--version'], { encoding: 'utf8' });
+    const v = { node: process.versions.node, typescript: pkgVersion(APP, 'typescript'), esbuild: pkgVersion(APP, 'esbuild'), playwright: pkgVersion(APP, 'playwright') || pkgVersion(APP, 'playwright-core'), python3: py.status === 0 ? (py.stdout || py.stderr).trim().replace(/^Python /, '') : null };
+    const missing = Object.entries(v).filter(([k, x]) => !x && k !== 'python3').map(([k]) => k);
+    add('tools present', missing.length ? 'FAIL' : 'PASS', Object.entries(v).map(([k, x]) => `${k} ${x || 'MISSING'}`).join(', ') + (missing.length ? ` — run npm install in apps/${app} (the release workflows do), then npx playwright install chromium` : ''));
+  }
+
   // 1. build
   const b = await run('node', ['scripts/build.mjs'], { cwd: APP, env: { KR_META: '1', NODE_PATH }, timeoutMs: 300000 });
   add('build', b.code === 0 ? 'PASS' : 'FAIL', b.code === 0 ? sec(b.ms) : tail(b.out, 8));
 
   // 2. tsc
-  const tsc = resolveFrom(APP, 'typescript/bin/tsc');
-  if (!tsc) add('tsc --noEmit', 'FAIL', 'typescript not found (apps/<app>/node_modules or global)');
-  else { const t = await run('node', [tsc, '--noEmit', '-p', '.'], { cwd: APP, timeoutMs: 600000 }); add('tsc --noEmit', t.code === 0 ? 'PASS' : 'FAIL', t.code === 0 ? sec(t.ms) : tail(t.out, 10)); }
+  const tscDir = findPkg(APP, 'typescript');
+  if (!tscDir) add('tsc --noEmit', 'FAIL', `typescript is not installed: run npm install in apps/${app}`);
+  else { const t = await run('node', [path.join(tscDir, 'bin', 'tsc'), '--noEmit', '-p', '.'], { cwd: APP, timeoutMs: 600000 }); add('tsc --noEmit', t.code === 0 ? 'PASS' : 'FAIL', t.code === 0 ? sec(t.ms) : tail(t.out, 10)); }
 
   // 3. version parity + notes
-  {
+  await guard('version and notes', async () => {
     const desk = readJson(path.join(APP, 'desktop/package.json'), {});
     const baseVer = BASE ? (() => { try { return JSON.parse(git(['show', `${BASE}:apps/${app}/package.json`])).version; } catch { return null; } })() : null;
     if (desk.version !== version) add('version parity', 'FAIL', `package.json ${version} ≠ desktop/package.json ${desk.version}`);
@@ -147,18 +168,18 @@ async function preflight(app) {
     const nf = path.join(APP, 'docs/notes', `v${version}.md`);
     if (!fs.existsSync(nf)) add('release notes', 'FAIL', `missing apps/${app}/docs/notes/v${version}.md`);
     else { const t = fs.readFileSync(nf, 'utf8'); if (t.trim().length < 40) add('release notes', 'FAIL', 'notes file is empty'); else if (t.includes('«—»')) add('release notes', 'FAIL', 'contains a «—» placeholder'); else if (/\b(TODO|TBD|XXX|FIXME)\b/.test(t)) add('release notes', 'WARN', 'contains TODO/TBD/XXX/FIXME'); else add('release notes', 'PASS', `v${version}.md, ${t.split('\n').length} lines`); }
-  }
+  });
 
   // 4. i18n parity
-  {
-    const ts = resolveFrom(APP, 'typescript', true);
+  await guard('i18n parity', async () => {
+    const ts = await loadTs(APP);
     const keysOf = (file) => {
-      const src = fs.readFileSync(file, 'utf8'); const sf = ts.createSourceFile(file, src, ts.ScriptTarget.ES2022, true);
+      const src = fs.readFileSync(file, 'utf8'); const sf = ts.createSourceFile(file, src, (ts.ScriptTarget ? ts.ScriptTarget.ES2022 : 9), true);
       const keys = new Set(); let dup = 0;
       const visit = (n) => { if (ts.isVariableDeclaration(n) && n.initializer) { let o = n.initializer; while (o && (ts.isAsExpression(o) || ts.isParenthesizedExpression(o))) o = o.expression; if (o && ts.isObjectLiteralExpression(o)) { for (const p of o.properties) { const nm = p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : null; if (nm) { if (keys.has(nm)) dup++; keys.add(nm); } } return; } } ts.forEachChild(n, visit); };
       visit(sf); return { keys, dup };
     };
-    if (!ts) add('i18n parity', 'FAIL', 'typescript not found');
+    if (!ts) add('i18n parity', 'FAIL', `typescript is not installed: run npm install in apps/${app}`);
     else {
       const dir = path.join(APP, 'src/i18n'); const en = keysOf(path.join(dir, 'en.ts')); const basePath = path.join(TESTS, 'i18n-baseline.json');
       const baseline = readJson(basePath, null); const now = {}; const detail = [];
@@ -183,7 +204,7 @@ async function preflight(app) {
         if (status !== 'PASS') for (const d of detail) console.log('        ' + d.slice(0, 700));
       }
     }
-  }
+  });
 
   // 5. which tests the release workflow runs, and which it does not
   const wf = app === 'tools' ? 'release-tools.yml' : 'release.yml';
@@ -206,7 +227,7 @@ async function preflight(app) {
   }
 
   // 6. leftovers, big files, yellow
-  {
+  await guard('leftovers, big files, colours', async () => {
     const hits = [], mark = /^(<<<<<<<|>>>>>>>) |\b(describe|it|test)\.only\s*\(|\bdebugger\s*;|console\.log\(\s*['"`](DEBUG|XXX|TMPDEBUG)/;
     for (const [f, st] of changed) { if (st === 'D' || !/\.(ts|tsx|js|mjs|cjs|css|html|rs|java|kt|yml)$/.test(f) || /(^|\/)(node_modules|dist)\//.test(f) || f === 'scripts/preflight.mjs') continue; for (const l of addedLines(f)) if (mark.test(l.text)) hits.push(`${f}:${l.n}`); }
     add('no leftovers added (.only, debugger, merge markers)', hits.length ? 'FAIL' : 'PASS', hits.slice(0, 8).join(', '));
@@ -219,7 +240,7 @@ async function preflight(app) {
     for (const [f, st] of changed) { if (st === 'D' || !/\.css$/.test(f)) continue; for (const l of addedLines(f)) if (isYellow(l.text)) y.push(`${f}:${l.n} ${l.text.trim().slice(0, 70)}`); }
     add('no yellow/amber colours added (house rule, report only)', y.length ? 'WARN' : 'PASS', y.length ? `${y.length} line(s): ${y.slice(0, 3).join(' | ')}` : '');
     if (y.length) for (const l of y.slice(0, 20)) console.log('        ' + l);
-  }
+  });
 
   // 7. tests
   if (!NO_TESTS) {
@@ -323,7 +344,7 @@ if (flag('--list-ports')) { // every test that listens on a fixed port, and the 
 }
 const apps = target === 'all' ? ['tools', 'reader'] : [target];
 const results = []; const t0 = Date.now();
-for (const a of apps) results.push(await preflight(a));
+for (const a of apps) { try { results.push(await preflight(a)); } catch (e) { results.push({ app: a, version: '?', rows: [{ step: 'preflight', status: 'FAIL', detail: 'crashed: ' + ((e && e.stack) || e) }] }); } }
 console.log('\n================ PREFLIGHT ' + (QUICK ? '(quick) ' : '') + '================');
 let fail = 0;
 for (const r of results) {
