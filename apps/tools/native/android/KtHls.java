@@ -44,6 +44,20 @@ final class KtHls {
     static boolean looksLike(String url) { String p = url.toLowerCase(Locale.ROOT); int q = p.indexOf('?'); if (q > 0) p = p.substring(0, q); return p.endsWith(".m3u8") || p.endsWith(".m3u"); }
 
     /** The whole thing: playlist(s) read, pieces fetched to {@code work}, joined into {@code out} (its extension put right). */
+    /** Whether the variant at `pick` takes its sound from an EXT-X-MEDIA audio rendition with its own playlist. */
+    static boolean separateAudio(String master, URL base, String pick) {
+        String[] ls = master.split("\r?\n"); String group = null;
+        for (int i = 0; i < ls.length; i++) {
+            String l = ls[i].trim(); if (!l.startsWith("#EXT-X-STREAM-INF:")) continue;
+            for (int j = i + 1; j < ls.length; j++) { String u = ls[j].trim(); if (u.isEmpty() || u.startsWith("#")) continue; try { if (new URL(base, u).toString().equals(pick)) group = attr(l.substring(18), "AUDIO"); } catch (Exception ignored) { /* */ } break; }
+            if (group != null) break;
+        }
+        if (group == null) return false;
+        for (String l0 : ls) { String l = l0.trim(); if (!l.startsWith("#EXT-X-MEDIA:")) continue; String a = l.substring(13); if ("AUDIO".equals(attr(a, "TYPE")) && group.equals(attr(a, "GROUP-ID")) && attr(a, "URI") != null) return true; }
+        return false;
+    }
+    /** How many different init sections (EXT-X-MAP URIs) a media playlist names. */
+    static int mapsIn(String media) { java.util.Set<String> u = new java.util.HashSet<>(); for (String l0 : media.split("\r?\n")) { String l = l0.trim(); if (l.startsWith("#EXT-X-MAP:")) u.add(String.valueOf(attr(l.substring(11), "URI"))); } return u.size(); }
     static Result run(android.content.Context ctx, String url, File out, File work, int threads, int wantHeight, KrDownloader.Opener opener, AtomicBoolean cancelled, Progress progress) throws Exception {
         return run(ctx, url, out, work, threads, wantHeight, opener, cancelled, progress, false);
     }
@@ -56,10 +70,14 @@ final class KtHls {
         List<Variant> vs = KtHlsRs.variants(text, base, rust);
         if (!vs.isEmpty()) {
             Variant pick = KtHlsRs.choose(vs, wantHeight, rust);
+            // (Its sound kept apart in an audio rendition this downloader does not fetch: refused, never a silent file.)
+            if (separateAudio(text, base, pick.url)) throw new IOException("hls: the sound is a separate audio rendition");
             progress.on(0, 0, 0, "variant " + (pick.height > 0 ? pick.height + "p" : pick.bandwidth / 1000 + " kb/s"));
             base = new URL(pick.url); text = textOf(pick.url, opener);
         }
         Playlist pl = KtHlsRs.media(text, base, rust);
+        // (Init sections that change mid-stream would join pieces of one encoding to the head of another: refused.)
+        if (mapsIn(text) > 1) throw new IOException("hls: the init section changes mid-stream");
         if (pl.pieces.isEmpty()) throw new IOException("empty playlist");
         if (pl.live) throw new IOException("live");
         final int n = pl.pieces.size(); final AtomicLong bytes = new AtomicLong(); final java.util.concurrent.atomic.AtomicInteger doneN = new java.util.concurrent.atomic.AtomicInteger();

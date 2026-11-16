@@ -3,6 +3,11 @@ import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import jav
 public class HlsT {
   static int fails = 0; static void ok(String w, boolean c) { System.out.println((c ? "ok   " : "FAIL ") + w); if (!c) fails++; }
   public static void main(String[] a) throws Exception {
+    { java.net.URL b = new java.net.URL("http://h.test/m/master.m3u8");
+      String m = "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"ja\",URI=\"audio/ja.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"aud\"\nv720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2\nv1080.m3u8\n";
+      ok("a variant whose sound is a separate audio rendition: told (refused, never a silent file)", KtHls.separateAudio(m, b, "http://h.test/m/v720.m3u8"));
+      ok("…a variant with its sound inside: not", !KtHls.separateAudio(m, b, "http://h.test/m/v1080.m3u8"));
+      ok("init sections counted (two different: refused)", KtHls.mapsIn("#EXT-X-MAP:URI=\"a.mp4\"\np1\n#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI=\"b.mp4\"\np2\n") == 2 && KtHls.mapsIn("#EXT-X-MAP:URI=\"a.mp4\"\np1\n") == 1); }
     byte[] key = new byte[16]; new Random(7).nextBytes(key); Random rnd = new Random(1);
     byte[][] plain = new byte[6][]; for (int i = 0; i < 6; i++) { plain[i] = new byte[188 * (20 + i)]; for (int k = 0; k < plain[i].length; k += 188) { plain[i][k] = 0x47; for (int j = 1; j < 188; j++) plain[i][k + j] = (byte) rnd.nextInt(256); } }
     byte[] ivGiven = new byte[16]; ivGiven[15] = 9;

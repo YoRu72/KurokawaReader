@@ -132,6 +132,8 @@ function remedies(x: Task): HTMLElement | null {
   if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
   // (A DRM-protected lecture or stream: nothing to retry; the app does not go around protection.)
   if (/DRM|drm:|SAMPLE-AES|Widevine|protected/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errDrmHint')));
+  // (An HLS stream whose sound is a separate rendition, or whose init section changes: refused, never a silent or broken file.)
+  if (/separate audio rendition|init section changes/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errHlsSplitHint')));
   if (/^HTTP 4(04|10)$/.test(e)) return null;
   return null;
 }

@@ -136,10 +136,11 @@ export interface Settings {
   doh: string; dohSplit?: 'auto' | 'always' | 'off'; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
   playerWith: 'ask' | 'app' | 'external';
-  /** Another app as the player (src/player/external): for each kind of source, the player's id, «ask» or «app» —
+  /** Another app as the player (src/player/external): for each kind of source «ask», «app» or «out» (the outside way) —
    *  the phone's and the computer's apart (phone-only apps never offered on a computer, and the reverse). */
   extPlayers?: Partial<Record<'android' | 'desktop', Partial<Record<'torrent' | 'online' | 'http' | 'local', string>>>>;
-  /** (Computer) one's own player command, with {url} {title} {start} {sub} {ua} {referrer}. */ extCustom?: string;
+  /** (Computer) which player the outside way uses: «auto» (the first known one found), a known player's id, or «chosen»
+   *  (the program picked in the shell's own dialog — kept by the shell, never here). */ extPcPlayer?: string;
   /** «Mark as watched?» after an app that tells nothing: undefined — for a tracked episode; true — always; false — never. */ extAskWatched?: boolean;
   /** Sounds and the «Download complete» card (downloads/done.ts). */
   sounds?: import('./downloads/done').SoundPrefs;

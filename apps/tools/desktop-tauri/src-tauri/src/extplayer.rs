@@ -1,13 +1,16 @@
-// Another program as the player (desktop/extplayer.cjs and desktop/relay.cjs's twin; the page's side is
-// src/player/external): which known players are on this computer, the chosen one started with its arguments (no
-// shell: each argument one item), whether it still runs, and for mpv where it is — its JSON IPC observed
-// (time-pos, duration, eof-reached), mpv telling each change. And the relay: a session per playback on the stream
-// server (/<token>/r/<session>/…), closed when the playback ends; the plain logic is relaylogic.rs.
-// Compiled in CI only (tauri, reqwest); kept thin.
+// A player on this computer (desktop/extplayer.cjs and desktop/relay.cjs's twin; the page's side is
+// src/player/external; the plain rules — the players known, the request's checks, the arguments — are relaylogic.rs).
+// The shell finds the players it knows (absolute paths, or a bare name on the PATH's absolute folders), keeps the
+// program the user picked in its own dialog in the app's data folder (never in the page's settings: no backup or
+// import can bring a program to run), and starts one only from a typed request it checks and turns into arguments
+// itself (no shell: each argument one item). How it goes: running or ended, and for mpv where it is (its JSON IPC
+// observed). And the relay: a session per playback on the stream server (/<token>/r/<session>/…), closed when the
+// playback ends or after six idle hours (a sweeper marks such sessions gone); the cookie and the page's other headers
+// only to the source's own origin; no CORS. Compiled in CI only (tauri, reqwest); kept thin.
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -15,25 +18,62 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use tauri::{AppHandle, Manager};
 
 use kt_core::streamlogic as sl;
-use kurokawa_shell::{net, reqwest};
+use kurokawa_shell::{net, reqwest, shell};
 
-use crate::relaylogic::{self as rl, Ask, MpvNote, Session, Sub};
-use crate::streamserver::{self, simple, write_head};
+use crate::relaylogic::{self as rl, Ask, MpvNote, Req, Session, Sub};
+use crate::streamserver;
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36";
 const IDLE: Duration = Duration::from_secs(6 * 3600);
 
+/// A head with no CORS (the relay serves players, not pages).
+fn head(s: &mut TcpStream, code: u16, mut h: Vec<(String, String)>) -> std::io::Result<()> {
+    h.push(("Connection".into(), "close".into()));
+    s.write_all(sl::head_text(code, &h).as_bytes())
+}
+fn plain(s: &mut TcpStream, code: u16) {
+    let _ = head(s, code, vec![("Content-Length".into(), "0".into())]);
+}
+
 /* ---------- the relay ---------- */
 struct Live {
     s: Session,
+    origin: String,
     last: Instant,
+    last_ms: u64,
+    reads: u64,
+    reading: Arc<AtomicU64>,
     gone: Arc<AtomicBool>,
 }
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+static SESS: OnceLock<Mutex<HashMap<String, Live>>> = OnceLock::new();
 fn sessions() -> &'static Mutex<HashMap<String, Live>> {
-    static S: OnceLock<Mutex<HashMap<String, Live>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(HashMap::new()))
+    SESS.get_or_init(|| {
+        thread::spawn(sweep);
+        Mutex::new(HashMap::new())
+    })
+}
+/// Idle sessions dropped on a timer, marked gone so a read under way stops.
+fn sweep() {
+    loop {
+        thread::sleep(Duration::from_secs(300));
+        if let Some(m) = SESS.get() {
+            if let Ok(mut g) = m.lock() {
+                g.retain(|_, l| {
+                    let keep = l.last.elapsed() < IDLE;
+                    if !keep {
+                        l.gone.store(true, Ordering::SeqCst);
+                    }
+                    keep
+                });
+            }
+        }
+    }
 }
 fn pairs(v: Option<&Value>) -> Vec<(String, String)> {
     match v {
@@ -47,36 +87,32 @@ fn name_part(n: &str, d: &str) -> String {
     sl::encode_component(&n)
 }
 
-/// kt:relayOpen({ url, headers, subs: [{ url | path, name, headers }], name }) → { token, url, subs }.
+/// kt:relayOpen({ url, headers, subs: [{ url, name, headers }], name }) → { token, url, subs }. http(s) only.
 #[tauri::command]
 pub async fn kt_relay_open(o: Value) -> Result<Value, String> {
     let (port, token) = streamserver::ensure()?;
-    let id = sl::new_token();
-    let id: String = id.chars().filter(|c| c.is_ascii_hexdigit()).take(32).collect();
-    let id = if id.len() == 32 { id } else { format!("{:0>32}", id) };
+    let id: String = format!("{}{}", sl::new_token(), sl::new_token()).chars().filter(|c| c.is_ascii_hexdigit()).take(32).collect();
+    if id.len() != 32 {
+        return Err("token".into());
+    }
     let url = o.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let subs: Vec<Sub> = o.get("subs").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().map(|x| Sub {
-        url: x.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        path: x.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        name: x.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        headers: pairs(x.get("headers")),
+    if !url.is_empty() && !rl::is_http(&url) {
+        return Err("refused: target".into());
+    }
+    let subs: Vec<Sub> = o.get("subs").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().take(20).map(|x| {
+        let u = x.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        Sub { url: if rl::is_http(&u) { u } else { String::new() }, path: String::new(), name: x.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(), headers: pairs(x.get("headers")) }
     }).collect();
     let at = format!("http://127.0.0.1:{}/{}/r/{}", port, token, id);
     let name = o.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let sub_urls: Vec<String> = subs.iter().enumerate().map(|(i, s)| {
-        let base = if !s.name.is_empty() { s.name.clone() } else { Path::new(&s.path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default() };
-        format!("{}/s/{}/{}", at, i, name_part(&base, &format!("sub{}.srt", i)))
-    }).collect();
+    let sub_urls: Vec<String> = subs.iter().enumerate().map(|(i, s)| if s.url.is_empty() { String::new() } else { format!("{}/s/{}/{}", at, i, name_part(&s.name, &format!("sub{}.srt", i))) }).collect();
     let main = if url.is_empty() { String::new() } else { format!("{}/v/{}", at, name_part(name, "video")) };
-    let live = Live { s: Session::new(url, pairs(o.get("headers")), subs), last: Instant::now(), gone: Arc::new(AtomicBool::new(false)) };
-    if let Ok(mut m) = sessions().lock() {
-        m.retain(|_, l| l.last.elapsed() < IDLE);
-        m.insert(id.clone(), live);
-    }
+    let live = Live { origin: rl::origin(&url), s: Session::new(url, pairs(o.get("headers")), subs), last: Instant::now(), last_ms: now_ms(), reads: 0, reading: Arc::new(AtomicU64::new(0)), gone: Arc::new(AtomicBool::new(false)) };
+    sessions().lock().map_err(|e| e.to_string())?.insert(id.clone(), live);
     Ok(json!({ "token": id, "url": main, "subs": sub_urls }))
 }
 
-/// kt:relayClose({ token }) → { closed }: the session's addresses answer 403 from now on; reads under way stop.
+/// kt:relayClose({ token }) → { closed }.
 #[tauri::command]
 pub async fn kt_relay_close(o: Value) -> Result<Value, String> {
     let t = o.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -87,6 +123,17 @@ pub async fn kt_relay_close(o: Value) -> Result<Value, String> {
     Ok(json!({ "closed": gone.is_some() }))
 }
 
+/// kt:relayStatus({ token }) → { open, lastRead, reads, reading }.
+#[tauri::command]
+pub async fn kt_relay_status(o: Value) -> Result<Value, String> {
+    let t = o.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let m = sessions().lock().map_err(|e| e.to_string())?;
+    Ok(match m.get(&t) {
+        Some(l) => json!({ "open": true, "lastRead": l.last_ms, "reads": l.reads, "reading": l.reading.load(Ordering::SeqCst) }),
+        None => json!({ "open": false }),
+    })
+}
+
 /// Called by streamserver::handle for /<token>/r/…: true when it was a relay address (answered here).
 pub fn serve(s: &mut TcpStream, path: &str, token: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) -> bool {
     let (tok, id, ask) = match rl::parse(path) {
@@ -94,99 +141,100 @@ pub fn serve(s: &mut TcpStream, path: &str, token: &str, req: &sl::Head, head_on
         None => return false,
     };
     if !sl::same_token(&sl::decode_component(&tok, false), token) {
-        simple(s, 403, "");
+        plain(s, 403);
         return true;
     }
     let port = streamserver::ensure().map(|(p, _)| p).unwrap_or(0);
     let at = format!("http://127.0.0.1:{}/{}/r/{}", port, token, id);
-    // (What to fetch, read under the lock and let go of it before any network.)
-    let (target, headers, gone, is_sub) = {
+    let (target, headers, origin, gone, reading, is_sub) = {
         let mut m = match sessions().lock() {
             Ok(m) => m,
             Err(_) => {
-                simple(s, 500, "");
+                plain(s, 500);
                 return true;
             }
         };
         let l = match m.get_mut(&id) {
             Some(l) => l,
             None => {
-                simple(s, 403, "closed");
+                plain(s, 403);
                 return true;
             }
         };
         l.last = Instant::now();
-        match ask {
-            Ask::Video => (l.s.url.clone(), l.s.headers.clone(), l.gone.clone(), false),
-            Ask::Url(n) => (l.s.urls.get(n).cloned().unwrap_or_default(), l.s.headers.clone(), l.gone.clone(), false),
+        l.last_ms = now_ms();
+        l.reads += 1;
+        let (t, h, sub) = match ask {
+            Ask::Video => (l.s.url.clone(), l.s.headers.clone(), false),
+            Ask::Url(n) => (l.s.urls.get(n).cloned().unwrap_or_default(), l.s.headers.clone(), false),
             Ask::Sub(i) => match l.s.subs.get(i) {
-                Some(sub) if !sub.path.is_empty() => {
-                    let p = sub.path.clone();
-                    drop(m);
-                    match std::fs::read(&p) {
-                        Ok(b) => {
-                            let h = vec![("Content-Type".to_string(), "text/plain; charset=utf-8".to_string()), ("Content-Length".to_string(), b.len().to_string())];
-                            if write_head(s, 200, h).is_ok() && !head_only {
-                                let _ = s.write_all(&b);
-                            }
-                        }
-                        Err(_) => simple(s, 404, ""),
-                    }
-                    return true;
-                }
                 Some(sub) => {
                     let mut h = l.s.headers.clone();
                     h.extend(sub.headers.iter().cloned());
-                    (sub.url.clone(), h, l.gone.clone(), true)
+                    (sub.url.clone(), h, true)
                 }
-                None => (String::new(), vec![], l.gone.clone(), true),
+                None => (String::new(), vec![], true),
             },
-        }
+        };
+        (t, h, l.origin.clone(), l.gone.clone(), l.reading.clone(), sub)
     };
-    if target.is_empty() {
-        simple(s, 404, "");
+    if target.is_empty() || !rl::is_http(&target) {
+        plain(s, 404);
         return true;
     }
+    reading.fetch_add(1, Ordering::SeqCst);
+    relay_one(s, &id, &at, &target, &headers, &origin, req, head_only, stop, &gone, is_sub);
+    reading.fetch_sub(1, Ordering::SeqCst);
+    true
+}
+#[allow(clippy::too_many_arguments)]
+fn relay_one(s: &mut TcpStream, id: &str, at: &str, target: &str, headers: &[(String, String)], origin: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>, gone: &Arc<AtomicBool>, is_sub: bool) {
     let client = match net::client() {
         Ok(c) => c,
-        Err(e) => {
-            simple(s, 502, &e);
-            return true;
+        Err(_) => {
+            plain(s, 502);
+            return;
         }
     };
-    let range = if rl::is_playlist("", &target) { None } else { req.header("range") };
-    let mut rb = client.request(if head_only { reqwest::Method::HEAD } else { reqwest::Method::GET }, target.as_str());
-    for (k, v) in rl::fetch_headers(&headers, range, UA) {
+    let range = if rl::is_playlist("", target) { None } else { req.header("range") };
+    let same = rl::origin(target) == origin;
+    let mut rb = client.request(if head_only { reqwest::Method::HEAD } else { reqwest::Method::GET }, target);
+    for (k, v) in rl::fetch_headers(headers, range, UA, same) {
         if reqwest::header::HeaderName::from_bytes(k.as_bytes()).is_ok() && reqwest::header::HeaderValue::from_str(&v).is_ok() {
             rb = rb.header(k.as_str(), v.as_str());
         }
     }
+    // (reqwest follows redirects itself and drops the cookie and authorisation on another host.)
     let mut resp = match tauri::async_runtime::block_on(rb.send()) {
         Ok(r) => r,
-        Err(e) => {
-            simple(s, 502, &e.to_string());
-            return true;
+        Err(_) => {
+            plain(s, 502);
+            return;
         }
     };
     let ctype = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let final_url = resp.url().to_string();
+    if !rl::is_http(&final_url) {
+        plain(s, 502);
+        return;
+    }
     if !is_sub && resp.status().as_u16() < 400 && rl::is_playlist(&ctype, &final_url) {
         let text = if head_only { String::new() } else { tauri::async_runtime::block_on(resp.text()).unwrap_or_default() };
         let body = match sessions().lock() {
-            Ok(mut m) => match m.get_mut(&id) {
-                Some(l) => rl::rewrite(&text, &final_url, &at, &mut l.s),
+            Ok(mut m) => match m.get_mut(id) {
+                Some(l) => rl::rewrite(&text, &final_url, at, &mut l.s),
                 None => {
-                    simple(s, 403, "closed");
-                    return true;
+                    plain(s, 403);
+                    return;
                 }
             },
             Err(_) => String::new(),
         };
         let h = vec![("Content-Type".to_string(), "application/vnd.apple.mpegurl".to_string()), ("Content-Length".to_string(), body.len().to_string()), ("Cache-Control".to_string(), "no-store".to_string())];
-        if write_head(s, 200, h).is_ok() && !head_only {
+        if head(s, 200, h).is_ok() && !head_only {
             let _ = s.write_all(body.as_bytes());
         }
-        return true;
+        return;
     }
     let mut pass: Vec<(String, String)> = Vec::new();
     for k in sl::PASS_HEADERS.iter() {
@@ -194,8 +242,8 @@ pub fn serve(s: &mut TcpStream, path: &str, token: &str, req: &sl::Head, head_on
             pass.push((k.to_string(), v.to_string()));
         }
     }
-    if write_head(s, resp.status().as_u16(), pass).is_err() || head_only {
-        return true;
+    if head(s, resp.status().as_u16(), pass).is_err() || head_only {
+        return;
     }
     while !stop.load(Ordering::SeqCst) && !gone.load(Ordering::SeqCst) {
         match tauri::async_runtime::block_on(resp.chunk()) {
@@ -207,26 +255,27 @@ pub fn serve(s: &mut TcpStream, path: &str, token: &str, req: &sl::Head, head_on
             _ => break,
         }
     }
-    true
 }
 
 /* ---------- the players ---------- */
 struct Proc {
     child: Option<Child>,
     running: Arc<AtomicBool>,
-    code: Arc<Mutex<Option<i32>>>,
+    code: Option<i32>,
     pos: Arc<Mutex<Option<f64>>>,
     dur: Arc<Mutex<Option<f64>>>,
     eof: Arc<AtomicBool>,
     ipc: String,
+    started: Instant,
 }
 fn procs() -> &'static Mutex<HashMap<String, Proc>> {
     static P: OnceLock<Mutex<HashMap<String, Proc>>> = OnceLock::new();
     P.get_or_init(|| Mutex::new(HashMap::new()))
 }
 static SEQ: AtomicU64 = AtomicU64::new(0);
+const OS: &str = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
 
-/// %VAR% from the environment; a bare name on the PATH (with PATHEXT on Windows).
+/// %VAR% from the environment; an absolute path that is a file; a bare name on the PATH's absolute folders only.
 fn resolve(p: &str) -> Option<PathBuf> {
     let mut x = String::new();
     let mut rest = p;
@@ -256,6 +305,9 @@ fn resolve(p: &str) -> Option<PathBuf> {
         vec![String::new()]
     };
     for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        if !dir.is_absolute() {
+            continue;
+        }
         for e in &exts {
             let f = if x.to_ascii_lowercase().ends_with(e.as_str()) { dir.join(&x) } else { dir.join(format!("{}{}", x, e)) };
             if f.is_file() {
@@ -265,52 +317,116 @@ fn resolve(p: &str) -> Option<PathBuf> {
     }
     None
 }
-
-/// kt:extPlayers({ cands: [{ id, paths }] }) → { found: [{ id, path }] }.
-#[tauri::command]
-pub async fn kt_ext_players(o: Value) -> Result<Value, String> {
-    let mut found = Vec::new();
-    for c in o.get("cands").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
-        let id = c.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        for p in c.get("paths").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
-            if let Some(r) = p.as_str().and_then(resolve) {
-                found.push(json!({ "id": id, "path": r.to_string_lossy() }));
-                break;
-            }
-        }
+fn path_of(id: &str) -> Option<PathBuf> {
+    let k = rl::known(id)?;
+    let list = k.paths.iter().find(|(os, _)| *os == OS)?.1;
+    list.iter().find_map(|p| resolve(p))
+}
+fn store_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("ext-player.json"))
+}
+fn store(app: &AppHandle) -> Value {
+    store_file(app).ok().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| json!({}))
+}
+fn save(app: &AppHandle, v: &Value) -> Result<(), String> {
+    let f = store_file(app)?;
+    if let Some(d) = f.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
-    Ok(json!({ "found": found }))
+    std::fs::write(f, v.to_string()).map_err(|e| e.to_string())
 }
 
-/// kt:extPlayerStart({ exe, args, ipc }) → { id }; «${ipc}» in an argument becomes mpv's socket.
+/// kt:extPlayers() → { found: [{ id, name }], chosen: { path, args, there } | null }.
 #[tauri::command]
-pub async fn kt_ext_player_start(o: Value) -> Result<Value, String> {
-    let exe = o.get("exe").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let exe_path = resolve(&exe).unwrap_or_else(|| PathBuf::from(&exe));
-    if exe.is_empty() {
-        return Err("no program".into());
+pub async fn kt_ext_players(app: AppHandle) -> Result<Value, String> {
+    let found: Vec<Value> = rl::KNOWN.iter().filter(|k| path_of(k.id).is_some()).map(|k| json!({ "id": k.id, "name": k.name })).collect();
+    let s = store(&app);
+    let chosen = s.get("path").and_then(|v| v.as_str()).filter(|p| !p.is_empty()).map(|p| json!({ "path": p, "args": s.get("args").and_then(|v| v.as_str()).unwrap_or(""), "there": PathBuf::from(p).is_file() }));
+    Ok(json!({ "found": found, "chosen": chosen }))
+}
+/// kt:extPlayerChoose({ title }) → { path } | null: the program picked in this shell's own dialog, kept here.
+#[tauri::command]
+pub async fn kt_ext_player_choose(app: AppHandle, o: Value) -> Result<Value, String> {
+    let picked = shell::pick_files(&app, &json!({ "title": o.get("title").cloned().unwrap_or(Value::Null) }))?;
+    let p = match picked.and_then(|v| v.into_iter().next()) {
+        Some(p) => PathBuf::from(p),
+        None => return Ok(Value::Null),
+    };
+    if !p.is_absolute() || !p.is_file() {
+        return Err("not a program".into());
     }
-    let want_ipc = o.get("ipc").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut s = store(&app);
+    s["path"] = json!(p.to_string_lossy());
+    save(&app, &s)?;
+    Ok(json!({ "path": p.to_string_lossy() }))
+}
+/// kt:extPlayerArgs({ args }): the chosen program's arguments line, kept with it here.
+#[tauri::command]
+pub async fn kt_ext_player_args(app: AppHandle, o: Value) -> Result<Value, String> {
+    let a: String = o.get("args").and_then(|v| v.as_str()).unwrap_or("").chars().take(2000).collect();
+    let mut s = store(&app);
+    s["args"] = json!(a);
+    save(&app, &s)?;
+    Ok(json!({ "ok": true }))
+}
+#[tauri::command]
+pub async fn kt_ext_player_forget(app: AppHandle) -> Result<Value, String> {
+    save(&app, &json!({}))?;
+    Ok(json!({ "ok": true }))
+}
+
+fn strs(v: Option<&Value>) -> Vec<String> {
+    v.and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default()
+}
+/// kt:extPlayerStart({ player, target, title, start, subs, headers, slang, alang }) → { id, reports }.
+#[tauri::command]
+pub async fn kt_ext_player_start(app: AppHandle, o: Value) -> Result<Value, String> {
+    let player = o.get("player").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let (exe, template) = if player == "chosen" {
+        let s = store(&app);
+        let p = s.get("path").and_then(|v| v.as_str()).map(PathBuf::from).filter(|p| p.is_absolute() && p.is_file());
+        (p, s.get("args").and_then(|v| v.as_str()).unwrap_or("").to_string())
+    } else {
+        (path_of(&player), String::new())
+    };
+    let exe = exe.ok_or("not installed")?;
+    let h = o.get("headers").cloned().unwrap_or(json!({}));
+    let req = Req {
+        target: o.get("target").and_then(|v| v.as_str()).unwrap_or("").into(),
+        title: o.get("title").and_then(|v| v.as_str()).unwrap_or("").into(),
+        start: o.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        subs: o.get("subs").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().map(|x| (x.get("at").and_then(|v| v.as_str()).unwrap_or("").to_string(), x.get("isDefault").and_then(|v| v.as_bool()).unwrap_or(false))).collect(),
+        ua: h.get("ua").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        referer: h.get("referer").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        others: h.get("others").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().filter_map(|kv| Some((kv.get(0)?.as_str()?.to_string(), kv.get(1)?.as_str()?.to_string()))).collect(),
+        slang: strs(o.get("slang")),
+        alang: strs(o.get("alang")),
+    };
+    let tmp = std::env::temp_dir();
+    let q = rl::check(req, &[tmp.clone(), tmp.join("kurokawa-clip")]).map_err(|e| format!("refused: {}", e))?;
+    let (args, ipc) = rl::build(if player == "chosen" { "custom" } else { &player }, &q, &template);
     let rnd: String = sl::new_token().chars().take(12).collect();
-    let ipc = if !want_ipc {
+    let ipc_path = if !ipc {
         String::new()
     } else if cfg!(windows) {
         format!(r"\\.\pipe\kt-mpv-{}", rnd)
     } else {
-        std::env::temp_dir().join(format!("kt-mpv-{}.sock", rnd)).to_string_lossy().to_string()
+        tmp.join(format!("kt-mpv-{}.sock", rnd)).to_string_lossy().to_string()
     };
-    let args: Vec<String> = o.get("args").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().map(|a| a.as_str().unwrap_or("").replace("${ipc}", &ipc)).collect();
-    let child = Command::new(&exe_path).args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+    let args: Vec<String> = args.into_iter().map(|a| if ipc { a.replace("${ipc}", &ipc_path) } else { a }).collect();
+    let child = Command::new(&exe).args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     let id = (SEQ.fetch_add(1, Ordering::SeqCst) + 1).to_string();
-    let p = Proc { child: Some(child), running: Arc::new(AtomicBool::new(true)), code: Arc::new(Mutex::new(None)), pos: Arc::new(Mutex::new(None)), dur: Arc::new(Mutex::new(None)), eof: Arc::new(AtomicBool::new(false)), ipc: ipc.clone() };
-    if !ipc.is_empty() {
+    let p = Proc { child: Some(child), running: Arc::new(AtomicBool::new(true)), code: None, pos: Arc::new(Mutex::new(None)), dur: Arc::new(Mutex::new(None)), eof: Arc::new(AtomicBool::new(false)), ipc: ipc_path.clone(), started: Instant::now() };
+    if ipc {
         let (running, pos, dur, eof) = (p.running.clone(), p.pos.clone(), p.dur.clone(), p.eof.clone());
-        thread::spawn(move || observe(&ipc, running, pos, dur, eof));
+        thread::spawn(move || observe(&ipc_path, running, pos, dur, eof));
     }
-    procs().lock().map_err(|e| e.to_string())?.insert(id.clone(), p);
-    Ok(json!({ "id": id }))
+    let mut m = procs().lock().map_err(|e| e.to_string())?;
+    // (Records a reloaded page no longer asks about: let go after a day.)
+    m.retain(|_, x| x.started.elapsed() < Duration::from_secs(24 * 3600));
+    m.insert(id.clone(), p);
+    Ok(json!({ "id": id, "reports": ipc }))
 }
-/// mpv's socket, tried for ten seconds after the start; then each line it writes read as it comes.
 fn observe(ipc: &str, running: Arc<AtomicBool>, pos: Arc<Mutex<Option<f64>>>, dur: Arc<Mutex<Option<f64>>>, eof: Arc<AtomicBool>) {
     let open = || -> Option<(Box<dyn std::io::Read + Send>, Box<dyn Write + Send>)> {
         #[cfg(unix)]
@@ -378,9 +494,7 @@ pub async fn kt_ext_player_status(o: Value) -> Result<Value, String> {
     if let Some(c) = p.child.as_mut() {
         if let Ok(Some(st)) = c.try_wait() {
             p.running.store(false, Ordering::SeqCst);
-            if let Ok(mut g) = p.code.lock() {
-                *g = st.code();
-            }
+            p.code = st.code();
             p.child = None;
             if !p.ipc.is_empty() && !cfg!(windows) {
                 let _ = std::fs::remove_file(&p.ipc);
@@ -388,7 +502,9 @@ pub async fn kt_ext_player_status(o: Value) -> Result<Value, String> {
         }
     }
     let running = p.running.load(Ordering::SeqCst);
-    let r = json!({ "running": running, "code": *p.code.lock().unwrap_or_else(|e| e.into_inner()), "pos": *p.pos.lock().unwrap_or_else(|e| e.into_inner()), "dur": *p.dur.lock().unwrap_or_else(|e| e.into_inner()), "eof": p.eof.load(Ordering::SeqCst) });
+    let pos = *p.pos.lock().unwrap_or_else(|e| e.into_inner());
+    let dur = *p.dur.lock().unwrap_or_else(|e| e.into_inner());
+    let r = json!({ "running": running, "code": p.code, "pos": pos, "dur": dur, "eof": p.eof.load(Ordering::SeqCst) });
     if !running {
         m.remove(&id);
     }

@@ -174,31 +174,62 @@ pub fn rewrite(text: &str, from: &str, at: &str, s: &mut Session) -> String {
             r.push_str(rest);
             out.push(r);
         } else {
-            out.push(to(t, from, at, s));
+            let r = to(t, from, at, s);
+            if !r.is_empty() {
+                out.push(r);
+            }
         }
     }
     out.join("\n")
 }
 fn to(u: &str, from: &str, at: &str, s: &mut Session) -> String {
     let a = join(from, u);
+    if !is_http(&a) {
+        return String::new();
+    }
     match s.id_of(&a) {
         Some(n) => format!("{}/u/{}", at, n),
-        None => u.to_string(),
+        None => String::new(),
     }
 }
 
-/// Request headers for a fetch: the page's (lower-cased; Range and Host never), a Chrome-like user agent unless given.
-pub fn fetch_headers(page: &[(String, String)], range: Option<&str>, ua: &str) -> Vec<(String, String)> {
+/// The origin of an address (scheme://host:port, the default port filled in), "" when it is none.
+pub fn origin(u: &str) -> String {
+    let i = match u.find("://") {
+        Some(i) => i,
+        None => return String::new(),
+    };
+    let scheme = u[..i].to_ascii_lowercase();
+    let rest = &u[i + 3..];
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
+    let host = host.rsplit('@').next().unwrap_or("").to_string();
+    if host.contains(':') && !host.ends_with(']') {
+        return format!("{}://{}", scheme, host);
+    }
+    let port = if scheme == "https" { 443 } else { 80 };
+    format!("{}://{}:{}", scheme, host, port)
+}
+pub fn is_http(u: &str) -> bool {
+    let l = u.to_ascii_lowercase();
+    (l.starts_with("http://") || l.starts_with("https://")) && !u.contains(['\r', '\n', ' '])
+}
+
+/// Request headers for a fetch: to the source's own origin all of the page's (lower-cased; Range and Host never);
+/// to any other host only User-Agent and Referer — a cookie or an authorisation never leaves the source's origin.
+/// A Chrome-like user agent unless one is given.
+pub fn fetch_headers(page: &[(String, String)], range: Option<&str>, ua: &str, same_origin: bool) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     if !page.iter().any(|(k, _)| k.eq_ignore_ascii_case("user-agent")) {
         out.push(("user-agent".into(), ua.into()));
     }
     for (k, v) in page {
         let l = k.to_ascii_lowercase();
-        if l == "range" || l == "host" {
+        if l == "range" || l == "host" || v.contains(['\r', '\n']) {
             continue;
         }
-        out.push((l, v.clone()));
+        if same_origin || l == "user-agent" || l == "referer" {
+            out.push((l, v.clone()));
+        }
     }
     if let Some(r) = range {
         out.push(("range".into(), r.into()));
@@ -240,9 +271,293 @@ pub fn mpv_line(line: &str) -> Option<MpvNote> {
     }
 }
 
+/* ---------- a player on this computer (desktop/extcmd.cjs's twin) ---------- */
+
+/// A known player: its id, name, where it usually is per OS ("windows" / "macos" / "linux"), whether it tells where
+/// it is (mpv's IPC). The order is «Automatic»'s.
+pub struct Known {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub ipc: bool,
+    pub paths: &'static [(&'static str, &'static [&'static str])],
+}
+pub const KNOWN: &[Known] = &[
+    Known { id: "mpv", name: "mpv", ipc: true, paths: &[("windows", &["mpv.exe", "%ProgramFiles%\\mpv\\mpv.exe", "%LOCALAPPDATA%\\Programs\\mpv\\mpv.exe", "%USERPROFILE%\\scoop\\apps\\mpv\\current\\mpv.exe"]), ("macos", &["/opt/homebrew/bin/mpv", "/usr/local/bin/mpv", "/Applications/mpv.app/Contents/MacOS/mpv"]), ("linux", &["mpv", "/usr/bin/mpv", "/usr/local/bin/mpv"])] },
+    Known { id: "vlc", name: "VLC", ipc: false, paths: &[("windows", &["%ProgramFiles%\\VideoLAN\\VLC\\vlc.exe", "%ProgramFiles(x86)%\\VideoLAN\\VLC\\vlc.exe", "vlc.exe"]), ("macos", &["/Applications/VLC.app/Contents/MacOS/VLC"]), ("linux", &["vlc", "/usr/bin/vlc"])] },
+    Known { id: "iina", name: "IINA", ipc: false, paths: &[("macos", &["/Applications/IINA.app/Contents/MacOS/iina-cli", "/opt/homebrew/bin/iina", "/usr/local/bin/iina"])] },
+    Known { id: "mpc-hc", name: "MPC-HC", ipc: false, paths: &[("windows", &["%ProgramFiles%\\MPC-HC\\mpc-hc64.exe", "%ProgramFiles(x86)%\\MPC-HC\\mpc-hc.exe", "%ProgramFiles%\\K-Lite Codec Pack\\MPC-HC64\\mpc-hc64.exe"])] },
+    Known { id: "mpc-be", name: "MPC-BE", ipc: false, paths: &[("windows", &["%ProgramFiles%\\MPC-BE x64\\mpc-be64.exe", "%ProgramFiles(x86)%\\MPC-BE\\mpc-be.exe"])] },
+    Known { id: "potplayer", name: "PotPlayer", ipc: false, paths: &[("windows", &["%ProgramFiles%\\DAUM\\PotPlayer\\PotPlayerMini64.exe", "%ProgramFiles(x86)%\\DAUM\\PotPlayer\\PotPlayerMini.exe"])] },
+];
+pub fn known(id: &str) -> Option<&'static Known> {
+    KNOWN.iter().find(|k| k.id == id)
+}
+
+/// A checked request (extcmd.cjs's check()).
+#[derive(Debug, Default, Clone)]
+pub struct Req {
+    pub target: String,
+    pub title: String,
+    pub start: f64,
+    pub subs: Vec<(String, bool)>,
+    pub ua: Option<String>,
+    pub referer: Option<String>,
+    pub others: Vec<(String, String)>,
+    pub slang: Vec<String>,
+    pub alang: Vec<String>,
+}
+fn no_break(s: &str) -> bool {
+    !s.contains(['\r', '\n', '\0']) && s.len() < 4096
+}
+/// Subtitles: http(s), or a subtitle file directly inside one of `temp_dirs` (where the app saves them).
+pub fn check_sub(at: &str, temp_dirs: &[std::path::PathBuf]) -> bool {
+    if is_http(at) {
+        return true;
+    }
+    let p = std::path::Path::new(at);
+    let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    p.is_absolute() && !at.contains("..") && ["srt", "ass", "ssa", "vtt", "sub"].contains(&ext.as_str()) && p.parent().map(|d| temp_dirs.iter().any(|t| t == d)).unwrap_or(false)
+}
+pub fn langs(v: &[String]) -> Vec<String> {
+    v.iter().filter(|x| (2..=3).contains(&x.len()) && x.bytes().all(|b| b.is_ascii_lowercase())).take(10).cloned().collect()
+}
+/// The request's parts checked; Err(reason) when refused.
+pub fn check(mut r: Req, temp_dirs: &[std::path::PathBuf]) -> Result<Req, &'static str> {
+    if !is_http(&r.target) || r.target.len() > 8192 {
+        return Err("target");
+    }
+    if r.subs.len() > 20 || !r.subs.iter().all(|(a, _)| check_sub(a, temp_dirs)) {
+        return Err("subtitle");
+    }
+    if r.ua.as_deref().map(|v| !no_break(v)).unwrap_or(false) || r.referer.as_deref().map(|v| !no_break(v) || !is_http(v)).unwrap_or(false) {
+        return Err("header");
+    }
+    if r.others.len() > 30 || !r.others.iter().all(|(k, v)| !k.is_empty() && k.len() <= 64 && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') && no_break(v)) {
+        return Err("header");
+    }
+    r.title = r.title.chars().map(|c| if c.is_control() { ' ' } else { c }).take(300).collect();
+    if !r.start.is_finite() || r.start < 0.0 {
+        r.start = 0.0;
+    }
+    r.slang = langs(&r.slang);
+    r.alang = langs(&r.alang);
+    Ok(r)
+}
+fn secs(s: f64) -> String {
+    let x = (s * 10.0).round() / 10.0;
+    if x.fract() == 0.0 { format!("{}", x as i64) } else { format!("{}", x) }
+}
+fn hms(s: f64) -> String {
+    let t = s.floor() as i64;
+    format!("{:02}:{:02}:{:02}", t / 3600, (t / 60) % 60, t % 60)
+}
+/// The arguments for a known player, or for the chosen program with its arguments line ("custom"); and whether it
+/// tells where it is (mpv: «${ipc}» to fill with its socket).
+pub fn build(id: &str, q: &Req, template: &str) -> (Vec<String>, bool) {
+    let mut a: Vec<String> = Vec::new();
+    let def = q.subs.iter().find(|s| s.1).or(q.subs.first()).map(|s| s.0.clone());
+    match id {
+        "mpv" | "iina" => {
+            let o = |x: String| if id == "iina" { format!("--mpv-{}", x.trim_start_matches("--")) } else { x };
+            if id == "iina" {
+                a.push("--keep-running".into());
+            }
+            if !q.title.is_empty() {
+                a.push(o(format!("--force-media-title={}", q.title)));
+            }
+            if q.start > 0.0 {
+                a.push(o(format!("--start={}", secs(q.start))));
+            }
+            for (s, _) in &q.subs {
+                a.push(o(format!("--sub-file={}", s)));
+            }
+            if !q.slang.is_empty() {
+                a.push(o(format!("--slang={}", q.slang.join(","))));
+            }
+            if !q.alang.is_empty() {
+                a.push(o(format!("--alang={}", q.alang.join(","))));
+            }
+            if let Some(ua) = &q.ua {
+                a.push(o(format!("--user-agent={}", ua)));
+            }
+            if let Some(r) = &q.referer {
+                a.push(o(format!("--referrer={}", r)));
+            }
+            for (k, v) in &q.others {
+                a.push(o(format!("--http-header-fields-append={}: {}", k, v)));
+            }
+            if id == "mpv" {
+                for x in ["--hwdec=auto-safe", "--input-ipc-server=${ipc}", "--idle=no", "--keep-open=no", "--"] {
+                    a.push(x.into());
+                }
+            }
+            a.push(q.target.clone());
+            (a, id == "mpv")
+        }
+        "vlc" => {
+            if !q.title.is_empty() {
+                a.push(format!("--meta-title={}", q.title));
+            }
+            if q.start > 0.0 {
+                a.push(format!("--start-time={}", secs(q.start)));
+            }
+            if let Some(d) = &def {
+                a.push(format!("--sub-file={}", d));
+            }
+            if !q.slang.is_empty() {
+                a.push(format!("--sub-language={}", q.slang.join(",")));
+            }
+            if !q.alang.is_empty() {
+                a.push(format!("--audio-language={}", q.alang.join(",")));
+            }
+            if let Some(ua) = &q.ua {
+                a.push(format!("--http-user-agent={}", ua));
+            }
+            if let Some(r) = &q.referer {
+                a.push(format!("--http-referrer={}", r));
+            }
+            a.push("--play-and-exit".into());
+            a.push("--no-one-instance".into());
+            a.push(q.target.clone());
+            (a, false)
+        }
+        "mpc-hc" | "mpc-be" => {
+            a.push(q.target.clone());
+            a.push("/play".into());
+            a.push("/close".into());
+            if q.start > 0.0 {
+                a.push("/start".into());
+                a.push(format!("{}", (q.start * 1000.0).round() as i64));
+            }
+            for (s, _) in &q.subs {
+                a.push("/sub".into());
+                a.push(s.clone());
+            }
+            (a, false)
+        }
+        "potplayer" => {
+            a.push(q.target.clone());
+            if q.start > 0.0 {
+                a.push(format!("/seek={}", hms(q.start)));
+            }
+            if let Some(d) = &def {
+                a.push(format!("/sub={}", d));
+            }
+            (a, false)
+        }
+        _ => (custom(template, q), false),
+    }
+}
+/// The chosen program's arguments line (extcmd.cjs's custom()).
+pub fn custom(line: &str, q: &Req) -> Vec<String> {
+    let def = q.subs.iter().find(|s| s.1).or(q.subs.first()).map(|s| s.0.clone()).unwrap_or_default();
+    let start = if q.start > 0.0 { secs(q.start) } else { String::new() };
+    let startms = if q.start > 0.0 { format!("{}", (q.start * 1000.0).round() as i64) } else { String::new() };
+    let vals: Vec<(&str, String)> = vec![("url", q.target.clone()), ("title", q.title.clone()), ("startms", startms), ("start", start), ("sub", def), ("ua", q.ua.clone().unwrap_or_default()), ("referrer", q.referer.clone().unwrap_or_default())];
+    let mut had_url = false;
+    let mut out = Vec::new();
+    for w in split_args(line) {
+        let mut f = String::new();
+        let mut any = false;
+        let mut empty = false;
+        let mut rest = w.as_str();
+        while let Some(i) = rest.find('{') {
+            f.push_str(&rest[..i]);
+            let after = &rest[i + 1..];
+            let hit = vals.iter().find(|(k, _)| after.starts_with(k) && after[k.len()..].starts_with('}'));
+            match hit {
+                Some((k, v)) => {
+                    any = true;
+                    if *k == "url" {
+                        had_url = true;
+                    }
+                    if v.is_empty() {
+                        empty = true;
+                    }
+                    f.push_str(v);
+                    rest = &after[k.len() + 1..];
+                }
+                None => {
+                    f.push('{');
+                    rest = after;
+                }
+            }
+        }
+        f.push_str(rest);
+        if any && empty {
+            continue;
+        }
+        out.push(f);
+    }
+    if !had_url {
+        out.push(q.target.clone());
+    }
+    out
+}
+pub fn split_args(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut q: Option<char> = None;
+    let mut has = false;
+    let cs: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        if let Some(qc) = q {
+            if c == qc {
+                q = None;
+            } else if c == '\\' && qc == '"' && i + 1 < cs.len() && (cs[i + 1] == '"' || cs[i + 1] == '\\') {
+                i += 1;
+                cur.push(cs[i]);
+            } else {
+                cur.push(c);
+            }
+        } else if c == '"' || c == '\'' {
+            q = Some(c);
+            has = true;
+        } else if c.is_whitespace() {
+            if !cur.is_empty() || has {
+                out.push(std::mem::take(&mut cur));
+            }
+            has = false;
+        } else {
+            cur.push(c);
+            has = true;
+        }
+        i += 1;
+    }
+    if !cur.is_empty() || has {
+        out.push(cur);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn players() {
+        let tmp = vec![std::path::PathBuf::from("/tmp")];
+        let q = Req { target: "https://cdn.test/v/a.m3u8".into(), title: "Show - 03".into(), start: 90.4, subs: vec![("/tmp/en.vtt".into(), true)], ua: Some("UA-1".into()), referer: Some("https://site.test/".into()), others: vec![("Cookie".into(), "k=v".into())], slang: vec!["ar".into(), "EN".into()], alang: vec!["ja".into()] };
+        let q = check(q, &tmp).unwrap();
+        assert_eq!(q.slang, vec!["ar"]);
+        let (m, ipc) = build("mpv", &q, "");
+        assert!(ipc && m.contains(&"--start=90.4".to_string()) && m.contains(&"--http-header-fields-append=Cookie: k=v".to_string()) && m[m.len() - 2] == "--" && m[m.len() - 1] == q.target);
+        let (ii, _) = build("iina", &q, "");
+        assert_eq!(ii[0], "--keep-running");
+        assert!(ii.contains(&"--mpv-referrer=https://site.test/".to_string()) && !ii.contains(&"-w".to_string()));
+        let (mpc, _) = build("mpc-hc", &q, "");
+        assert_eq!(mpc.join(" "), "https://cdn.test/v/a.m3u8 /play /close /start 90400 /sub /tmp/en.vtt");
+        let (pot, _) = build("potplayer", &q, "");
+        assert_eq!(pot, vec!["https://cdn.test/v/a.m3u8", "/seek=00:01:30", "/sub=/tmp/en.vtt"]);
+        let (c, _) = build("custom", &Req { subs: vec![], ..q.clone() }, "\"--title={title}\" --sub={sub} --from={start} --hdr '{referrer}'");
+        assert_eq!(c, vec!["--title=Show - 03", "--from=90.4", "--hdr", "https://site.test/", "https://cdn.test/v/a.m3u8"]);
+        assert_eq!(custom("p {url}; rm -rf $(x)", &Req { subs: vec![], ..q.clone() }), vec!["p", "https://cdn.test/v/a.m3u8;", "rm", "-rf", "$(x)"]);
+        assert!(check(Req { target: "file:///etc/passwd".into(), ..Req::default() }, &tmp).is_err());
+        assert!(check(Req { target: "https://a/b".into(), subs: vec![("/home/u/.ssh/id.srt".into(), false)], ..Req::default() }, &tmp).is_err());
+        assert!(check(Req { target: "https://a/b".into(), ua: Some("a\r\nX: y".into()), ..Req::default() }, &tmp).is_err());
+        assert_eq!(split_args("a \"b c\" 'd \"e\"' \"f\\\"g\" \"\""), vec!["a", "b c", "d \"e\"", "f\"g", ""]);
+    }
     #[test]
     fn joins() {
         assert_eq!(join("https://a.test/x/y/list.m3u8?k=1", "seg1.ts"), "https://a.test/x/y/seg1.ts");
@@ -262,6 +577,10 @@ mod tests {
         assert!(out.lines().any(|l| l == "http://127.0.0.1:9/T/r/S/u/2"));
         assert!(out.lines().any(|l| l == "http://127.0.0.1:9/T/r/S/u/3"));
         assert_eq!(out.lines().last(), Some("http://127.0.0.1:9/T/r/S/u/2"));
+        let mut s2 = Session::new("https://a.test/v/m.m3u8".into(), vec![], vec![]);
+        let o2 = rewrite("#EXTM3U\n#EXT-X-KEY:URI=\"file:///etc/x\"\nfile:///etc/passwd\nok.ts", "https://a.test/v/m.m3u8", "http://h/T/r/S", &mut s2);
+        assert_eq!(s2.urls, vec!["https://a.test/v/ok.ts"]);
+        assert!(!o2.contains("file:") && o2.contains("URI=\"\""));
         assert_eq!(s.urls, vec!["https://a.test/v/key.bin", "https://a.test/init.mp4", "https://a.test/v/seg0.ts", "https://cdn.test/seg1.ts"]);
     }
     #[test]
@@ -279,8 +598,15 @@ mod tests {
     }
     #[test]
     fn headers_and_mpv() {
-        let h = fetch_headers(&[("Referer".into(), "https://a.test/".into()), ("Range".into(), "bytes=0-".into())], Some("bytes=5-"), "UA");
-        assert_eq!(h, vec![("user-agent".to_string(), "UA".to_string()), ("referer".into(), "https://a.test/".into()), ("range".into(), "bytes=5-".into())]);
+        let page = vec![("Referer".to_string(), "https://a.test/".to_string()), ("Range".into(), "bytes=0-".into()), ("Cookie".into(), "k=v".into()), ("X-Key".into(), "s".into())];
+        let h = fetch_headers(&page, Some("bytes=5-"), "UA", true);
+        assert_eq!(h, vec![("user-agent".to_string(), "UA".to_string()), ("referer".into(), "https://a.test/".into()), ("cookie".into(), "k=v".into()), ("x-key".into(), "s".into()), ("range".into(), "bytes=5-".into())]);
+        let other = fetch_headers(&page, None, "UA", false);
+        assert_eq!(other, vec![("user-agent".to_string(), "UA".to_string()), ("referer".into(), "https://a.test/".into())]);
+        assert_eq!(origin("https://A.test/x?y"), "https://a.test:443");
+        assert_eq!(origin("http://a.test:8080/x"), "http://a.test:8080");
+        assert_ne!(origin("https://a.test/x"), origin("https://cdn.test/x"));
+        assert!(is_http("https://a/b") && !is_http("file:///etc/passwd") && !is_http("data:x"));
         assert_eq!(mpv_line(r#"{"event":"property-change","id":1,"name":"time-pos","data":12.5}"#), Some(MpvNote::Pos(12.5)));
         assert_eq!(mpv_line(r#"{"event":"property-change","id":2,"name":"duration","data":1440.0}"#), Some(MpvNote::Dur(1440.0)));
         assert_eq!(mpv_line(r#"{"event":"property-change","id":3,"name":"eof-reached","data":true}"#), Some(MpvNote::Eof));

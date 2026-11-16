@@ -8,7 +8,27 @@ const { net } = require('electron');
 const Ffmpeg = require('./ffmpeg.cjs');
 const Transcode = require('./transcode.cjs');
 const Relay = require('./relay.cjs');
-Relay.setFetch((u, o) => net.fetch(u, o));
+// (The relay follows redirects itself, one hop at a time, so the page's cookie never reaches another host: Electron's
+// net.request tells each redirect; net.fetch would hide it.)
+Relay.setFetch(manualFetch);
+function manualFetch(u, o) {
+  const { Readable } = require('node:stream');
+  return new Promise((res, rej) => {
+    const rq = net.request({ url: u, method: o.method || 'GET', redirect: 'manual' });
+    for (const [k, v] of Object.entries(o.headers || {})) { try { rq.setHeader(k, v); } catch { /* not settable */ } }
+    const wrap = (status, hd, body) => ({ status, url: u, headers: { get: (k) => { const v = hd[k.toLowerCase()]; return Array.isArray(v) ? v.join(', ') : v ?? null; } }, body, text: async () => { if (!body) return ''; const chunks = []; const rd = body.getReader(); for (;;) { const x = await rd.read(); if (x.done) break; chunks.push(Buffer.from(x.value)); } return Buffer.concat(chunks).toString('utf8'); } });
+    rq.on('redirect', (code, _m, to) => { try { rq.abort(); } catch { /* */ } res(wrap(code, { location: to }, null)); });
+    rq.on('response', (r) => res(wrap(r.statusCode, r.headers, Readable.toWeb(r))));
+    rq.on('error', rej); rq.end();
+  });
+}
+/** /p addresses are signed (HMAC over the source and its headers, with an expiry), as /f is by its token: no other
+ *  program on this computer can use the server as a proxy, nor change where a signed one goes. */
+const PSECRET = require('node:crypto').randomBytes(32);
+const psign = (u, h, e) => require('node:crypto').createHmac('sha256', PSECRET).update(`${u}\n${h}\n${e}`).digest('hex').slice(0, 32);
+const psigned = (u, h, e, t) => { if (!(Number(e) > Date.now())) return false; const want = Buffer.from(psign(u, h, e)); const got = Buffer.from(String(t || '')); return got.length === want.length && require('node:crypto').timingSafeEqual(got, want); };
+/** CORS only for the app's own page (app://), never «*». */
+const appOrigin = (req) => { const o = req.headers.origin; return o && /^app:\/\/kurokawa$/.test(o) ? { 'access-control-allow-origin': o, vary: 'origin' } : {}; };
 
 let server = null; let port = 0;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
@@ -21,11 +41,13 @@ function start() {
     server.listen(0, '127.0.0.1', () => { port = server.address().port; res(port); });
   });
 }
-async function url(u, headers) { await start(); return `http://127.0.0.1:${port}/p?u=${encodeURIComponent(u)}&h=${encodeURIComponent(JSON.stringify(headers || {}))}`; }
+async function url(u, headers) { if (!/^https?:\/\//i.test(String(u))) throw new Error('refused: not http(s)'); await start(); const h = JSON.stringify(headers || {}); const e = String(Date.now() + 12 * 3600e3); return `http://127.0.0.1:${port}/p?u=${encodeURIComponent(u)}&h=${encodeURIComponent(h)}&e=${e}&t=${psign(u, h, e)}`; }
 
 async function serve(req, out) {
   const q = new URL(req.url, 'http://x'); if (q.pathname.startsWith('/r/')) { if (!(await Relay.handle(req, out, `http://127.0.0.1:${port}`))) { out.writeHead(404); out.end(); } return; } if (q.pathname === '/f') { localFile(q, req, out); return; } if (q.pathname === '/audio') { audio(q, req, out); return; } if (q.pathname === '/video') { await Transcode.serve(q, req, out); return; } if (q.pathname !== '/p') { out.writeHead(404); out.end(); return; }
-  const u = q.searchParams.get('u'); let h = {}; try { h = JSON.parse(q.searchParams.get('h') || '{}'); } catch { /* none */ }
+  const u = q.searchParams.get('u') || ''; const hs = q.searchParams.get('h') || '{}';
+  if (!psigned(u, hs, q.searchParams.get('e'), q.searchParams.get('t')) || !/^https?:\/\//i.test(u)) { out.writeHead(403); out.end(); return; }
+  let h = {}; try { h = JSON.parse(hs); } catch { /* none */ }
   const headers = { 'user-agent': UA, ...Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), String(v)])) };
   const isPlaylist = (type, href) => /mpegurl/i.test(type || '') || /\.m3u8(\?|$)/i.test(href);
   if (isPlaylist('', u)) { remux(u, headers, req, out); return; }
@@ -33,7 +55,7 @@ async function serve(req, out) {
   const r = await net.fetch(u, { headers, method: req.method === 'HEAD' ? 'HEAD' : 'GET' });
   const type = r.headers.get('content-type') || '';
   if (isPlaylist(type, r.url)) { try { await r.body?.cancel(); } catch { /* fine */ } remux(r.url, headers, req, out); return; }
-  const pass = { 'access-control-allow-origin': '*' };
+  const pass = { ...appOrigin(req) };
   for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges']) { const v = r.headers.get(k); if (v) pass[k] = v; }
   out.writeHead(r.status, pass);
   if (!r.body || req.method === 'HEAD') { out.end(); return; }
@@ -47,7 +69,7 @@ function remux(u, headers, req, out) {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-user_agent', ua, ...(rest ? ['-headers', rest] : []), '-i', u, '-map', '0:v:0?', '-map', '0:a:0?', '-c', 'copy', '-bsf:a', 'aac_adtstoasc', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'pipe:1'];
   const p = spawn(Ffmpeg.binary(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); let err = '';
   p.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-  out.writeHead(200, { 'content-type': 'video/mp4', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+  out.writeHead(200, { 'content-type': 'video/mp4', ...appOrigin(req), 'cache-control': 'no-store' });
   if (req.method === 'HEAD') { p.kill(); out.end(); return; }
   p.stdout.pipe(out);
   req.on('close', () => { try { p.kill('SIGKILL'); } catch { /* gone */ } });
@@ -85,5 +107,6 @@ async function fileUrl(p) { await start(); return `http://127.0.0.1:${port}/f?t=
 /** Another app's player (relay.cjs): a session of its own, with its token; closed when that playback ends. */
 async function relayOpen(o) { await start(); return Relay.open(o || {}, `http://127.0.0.1:${port}`); }
 function relayClose(o) { return { closed: Relay.close(String(o && o.token || '')) }; }
+function relayStatus(o) { return Relay.status(String(o && o.token || '')); }
 function stop() { Relay.closeAll(); try { server?.close(); } catch { /* fine */ } server = null; }
-module.exports = { url, stop, audioBase, videoBase, fileUrl, relayOpen, relayClose };
+module.exports = { url, stop, audioBase, videoBase, fileUrl, relayOpen, relayClose, relayStatus };

@@ -183,7 +183,7 @@ final class KtFiles {
                 BitmapFactory.Options o2 = new BitmapFactory.Options(); o2.inSampleSize = s; Bitmap full = BitmapFactory.decodeFile(f.getAbsolutePath(), o2);
                 if (full == null && Build.VERSION.SDK_INT >= 28) { try { full = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(f), (dec, info, s2) -> { dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE); dec.setTargetSampleSize(Math.max(1, Math.min(info.getSize().getWidth(), info.getSize().getHeight()) / Math.max(1, px * 2))); }); } catch (Throwable ignored) {} }
                 if (full != null) { b = ThumbnailUtils.extractThumbnail(full, px, px, ThumbnailUtils.OPTIONS_RECYCLE_INPUT); }
-            } else if (name.matches(".*\\.(mp4|mkv|webm|m4v|mov|avi|3gp|ts|flv|wmv)$")) { isVideo = true;
+            } else if (name.matches(".*\\.(mp4|mkv|webm|m4v|mov|avi|3gp|ts|m2ts|mts|flv|wmv)$")) { isVideo = true;
                 b = Build.VERSION.SDK_INT >= 29 ? ThumbnailUtils.createVideoThumbnail(f, new android.util.Size(px, px), null) : ThumbnailUtils.createVideoThumbnail(f.getAbsolutePath(), android.provider.MediaStore.Images.Thumbnails.MINI_KIND);
             } else if (name.endsWith(".apk")) {
                 android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), 0);

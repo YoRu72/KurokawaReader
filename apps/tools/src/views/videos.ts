@@ -20,14 +20,14 @@ type Mem = { pos: number; duration: number; watched?: boolean; at: number };
 const memory = (): Record<string, Mem> => { try { return JSON.parse(localStorage.getItem('kt.player.memory') ?? '{}') as Record<string, Mem>; } catch { return {}; } };
 const dur = (ms: number) => { const s = Math.round(ms / 1000); const hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return localDigits(hh ? `${hh}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`); };
 const resName = (w: number, hgt: number) => { const p = Math.min(w, hgt); return p >= 2000 ? '4K' : p >= 1400 ? '1440p' : p >= 1000 ? '1080p' : p >= 700 ? '720p' : p >= 450 ? '480p' : p ? `${p}p` : ''; };
-const VIDEO_RE = /\.(mp4|mkv|webm|avi|mov|m4v|ts|m2ts|wmv|flv|3gp|mpg|mpeg|ogv)$/i;
+const VIDEO_RE = /\.(mp4|mkv|webm|avi|mov|m4v|ts|m2ts|mts|wmv|flv|3gp|mpg|mpeg|ogv)$/i;
 
 let cache: Vid[] | null = null;
 
 export function videosView(route: Extract<Route, { name: 'videos' }>): HTMLElement & { dispose?: () => void } {
   const tab = route.tab ?? (localStorage.getItem('kt.videos.tab') || 'phone');
   const body = h('div', { class: 'body videos-body' });
-  const fileIn = h('input', { type: 'file', accept: 'video/*,.mkv,.ts,.m2ts', hidden: true, onchange: () => { const f = fileIn.files?.[0]; if (f) void play(URL.createObjectURL(f), f.name); } }) as HTMLInputElement;
+  const fileIn = h('input', { type: 'file', accept: 'video/*,.mkv,.ts,.m2ts,.mts', hidden: true, onchange: () => { const f = fileIn.files?.[0]; if (f) void play(URL.createObjectURL(f), f.name); } }) as HTMLInputElement;
   const root = h('div', { class: 'view videos-view' }, h('header', { class: 'topbar' }, h('div', { class: 'title' }, h('span', null, t('navVideos'))), h('div', { class: 'topbar-actions' }, iconButton('upload', t('videosOpenFile'), () => fileIn.click()))), fileIn, body) as HTMLElement & { dispose?: () => void };
   const TABS: [string, string, string][] = [['phone', nativePlatform() === 'android' ? t('videosPhone') : t('videosFiles'), 'folder'], ['recent', t('videosRecent'), 'history'], ['servers', t('videosServers'), 'cloud'], ...(getSettings().addons.includes('video') ? [['followed', t('videosFollowed'), 'bell'] as [string, string, string]] : [])];
   const chips = h('div', { class: 'chips filter-chips' }, ...TABS.map(([k, label, ic]) => h('button', { type: 'button', class: 'chip' + (tab === k ? ' on' : ''), onclick: () => { try { localStorage.setItem('kt.videos.tab', k); } catch { /* */ } navigate(`/videos?tab=${k}`, true); } }, icon(ic), label)));

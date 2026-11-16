@@ -1181,47 +1181,58 @@ public class KtPlugin extends Plugin {
     /** relayOpen({ url, headers, subs, name }) → { token, url, subs }; relayClose({ token }) → { closed }. */
     @PluginMethod public void relayOpen(PluginCall call) { run(call, () -> call.resolve(obj(engine().stream().relayOpen(call.getData())))); }
     @PluginMethod public void relayClose(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("closed", engine().stream().relayClose(call.getString("token", ""))); call.resolve(r); }); }
-    /** playerApps({ pkgs }) → { installed }: which of these players' packages are on the phone. */
-    @PluginMethod public void playerApps(PluginCall call) {
-        JSArray in = call.getArray("pkgs", new JSArray()); JSArray out = new JSArray(); PackageManager pm = getContext().getPackageManager();
-        for (int i = 0; i < in.length(); i++) { String n = in.optString(i, ""); try { pm.getPackageInfo(n, 0); out.put(n); } catch (Exception ignored) { /* not here */ } }
-        JSObject r = new JSObject(); r.put("installed", out); call.resolve(r);
+    @PluginMethod public void relayStatus(PluginCall call) { run(call, () -> call.resolve(obj(engine().stream().relayStatus(call.getString("token", ""))))); }
+    /** A path another app may be given: not inside this app's own folders (its data, cache, files, external private ones). */
+    private boolean shareable(File f) {
+        try {
+            String c = f.getCanonicalPath(); android.content.Context x = getContext();
+            java.util.List<File> own = new java.util.ArrayList<>(java.util.Arrays.asList(x.getFilesDir(), x.getCacheDir(), x.getNoBackupFilesDir(), new File(x.getApplicationInfo().dataDir)));
+            File[] ext = x.getExternalFilesDirs(null); if (ext != null) own.addAll(java.util.Arrays.asList(ext)); File ec = x.getExternalCacheDir(); if (ec != null) own.add(ec);
+            for (File o : own) { if (o == null) continue; String op = o.getCanonicalPath(); if (c.equals(op) || c.startsWith(op + File.separator)) return false; }
+            return f.isFile();
+        } catch (Exception e) { return false; }
     }
-    /** openPlayerApp({ pkg, chooser, data | path, mime, title, extras: [{ k, t, v }], result }): ACTION_VIEW with each
-     *  app's documented extras (t: s string, i int, l long, b boolean, sa String[], ua Uri[]). With `result`, the
-     *  call answers when the player closes: { code, extras } (VLC's extra_position / extra_duration, MX's, mpv's and
-     *  Just Player's position / duration / end_by); the phone's chooser answers at once. */
+    /** openPlayerApp({ data | path, mime, title, extras: [{ k, t, v }] }): ACTION_VIEW through the phone's own app list,
+     *  with the union of the documented extras of the players the app knows (t: s string, i int, l long, b boolean, sa
+     *  String[], ua Uri[] — Uri[] http(s) only). Answers when the chosen app closes: { code, action, extras } with only
+     *  the known result keys, each type-checked (VLC's extra_position / extra_duration, MX's and Just Player's
+     *  position / duration / end_by, mpv-android's position / duration). A file is shared by its FileProvider address,
+     *  and only outside this app's own folders; an address only when it is http(s). */
     @PluginMethod public void openPlayerApp(PluginCall call) {
         try {
-            String path = call.getString("path", null), data = call.getString("data", ""), mime = call.getString("mime", "video/*"), pkg = call.getString("pkg", null);
+            String path = call.getString("path", null), data = call.getString("data", ""), mime = call.getString("mime", "video/*");
             Intent i = new Intent(Intent.ACTION_VIEW);
-            if (path != null && !path.isEmpty()) { Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", fileOf(path)); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
-            else i.setDataAndType(Uri.parse(data), mime);
-            if (pkg != null && !pkg.isEmpty()) i.setPackage(pkg);
+            if (path != null && !path.isEmpty()) { File f = fileOf(path); if (!shareable(f)) { call.reject("refused: path"); return; } Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            else { if (!KtStream.isHttp(data)) { call.reject("refused: target"); return; } i.setDataAndType(Uri.parse(data), mime); }
             JSArray ex = call.getArray("extras", new JSArray());
-            for (int n = 0; n < ex.length(); n++) {
+            for (int n = 0; n < ex.length() && n < 40; n++) {
                 JSONObject e = ex.getJSONObject(n); String k = e.getString("k"), t = e.getString("t");
                 switch (t) {
                     case "i": i.putExtra(k, e.getInt("v")); break;
                     case "l": i.putExtra(k, e.getLong("v")); break;
                     case "b": i.putExtra(k, e.getBoolean("v")); break;
-                    case "sa": { JSONArray a = e.getJSONArray("v"); String[] o = new String[a.length()]; for (int j = 0; j < o.length; j++) o[j] = a.getString(j); i.putExtra(k, o); break; }
-                    case "ua": { JSONArray a = e.getJSONArray("v"); android.os.Parcelable[] o = new android.os.Parcelable[a.length()]; for (int j = 0; j < o.length; j++) o[j] = Uri.parse(a.getString(j)); i.putExtra(k, o); break; }
+                    case "sa": { JSONArray a = e.getJSONArray("v"); String[] o = new String[Math.min(a.length(), 20)]; for (int j = 0; j < o.length; j++) o[j] = a.getString(j); i.putExtra(k, o); break; }
+                    case "ua": { JSONArray a = e.getJSONArray("v"); java.util.List<android.os.Parcelable> o = new java.util.ArrayList<>(); for (int j = 0; j < a.length() && j < 20; j++) { String u = a.getString(j); if (KtStream.isHttp(u)) o.add(Uri.parse(u)); } i.putExtra(k, o.toArray(new android.os.Parcelable[0])); break; }
                     default: i.putExtra(k, e.optString("v", "")); break;
                 }
             }
-            if (call.getBoolean("chooser", false) || !call.getBoolean("result", false)) {
-                Intent ch = call.getBoolean("chooser", false) ? Intent.createChooser(i, call.getString("title", "")) : i; ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); JSObject r = new JSObject(); r.put("code", 0); call.resolve(r); return;
-            }
-            startActivityForResult(call, i, "playerAppDone");
+            // (The chooser forwards the chosen app's result to this call.)
+            startActivityForResult(call, Intent.createChooser(i, call.getString("title", "")), "playerAppDone");
         } catch (android.content.ActivityNotFoundException e) { call.reject("not installed"); }
         catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
     @ActivityCallback private void playerAppDone(PluginCall call, ActivityResult result) {
         if (call == null) return;
-        JSObject r = new JSObject(); r.put("code", result.getResultCode()); JSObject ex = new JSObject();
-        Intent d = result.getData(); android.os.Bundle b = d == null ? null : d.getExtras();
-        if (b != null) for (String k : b.keySet()) { Object v = b.get(k); if (v instanceof Number || v instanceof String || v instanceof Boolean) ex.put(k, v); }
+        JSObject r = new JSObject(); JSObject ex = new JSObject();
+        try {
+            r.put("code", result.getResultCode());
+            Intent d = result.getData(); r.put("action", d == null || d.getAction() == null ? "" : d.getAction());
+            android.os.Bundle b = d == null ? null : d.getExtras();
+            if (b != null) {
+                for (String k : new String[] { "extra_position", "extra_duration", "position", "duration" }) { try { Object v = b.get(k); if (v instanceof Integer || v instanceof Long) ex.put(k, ((Number) v).longValue()); } catch (Throwable ignored) { /* a value that would not unparcel */ } }
+                try { Object v = b.get("end_by"); if (v instanceof String && ((String) v).length() < 40) ex.put("end_by", v); } catch (Throwable ignored) { /* */ }
+            }
+        } catch (Throwable ignored) { /* a result that cannot be read: nothing told */ }
         r.put("extras", ex); call.resolve(r);
     }
     @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
