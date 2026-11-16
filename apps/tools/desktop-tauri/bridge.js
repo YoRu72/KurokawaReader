@@ -136,6 +136,7 @@
     remove: function (id, del) { return call('kt_remove', { id: orNull(id), del: !!del }); },
     setFiles: function (id, p) { return call('kt_set_files', { id: orNull(id), p: Array.isArray(p) ? p : [] }); },
     setUrl: function (id, url) { return call('kt_set_url', { id: orNull(id), url: str(url) }); },
+    ignoreCert: function (id) { return call('kt_ignore_cert', { id: orNull(id) }); },
     move: function (id, how) { return call('kt_move', { id: orNull(id), how: orNull(how) }); },
     setLimits: function (l) { return call('kt_set_limits', { l: obj(l) }); },
     configure: function (o) { return call('kt_configure', { o: obj(o) }); },

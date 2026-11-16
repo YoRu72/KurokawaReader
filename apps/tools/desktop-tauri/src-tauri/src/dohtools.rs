@@ -31,6 +31,31 @@ struct State {
     system: u64,
 }
 
+static DATA_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+static INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Where the choice is kept (doh.json), so aria2 — started before the page sets it — gets the proxy from its start.
+pub fn set_data_dir(dir: &std::path::Path) {
+    let _ = DATA_DIR.set(dir.to_path_buf());
+}
+
+/// The saved choice put in force once, before aria2 starts (the page sets it again when it comes up).
+pub fn init_from_disk(dir: &std::path::Path) {
+    set_data_dir(dir);
+    if INITED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    if let Ok(t) = std::fs::read_to_string(dir.join("doh.json")) {
+        if let Ok(v) = serde_json::from_str::<Value>(&t) {
+            let p = v.get("provider").and_then(|x| x.as_str()).unwrap_or("off").to_string();
+            let a = v.get("allowSystem").and_then(|x| x.as_bool()).unwrap_or(false);
+            if p != "off" {
+                apply(&p, a);
+            }
+        }
+    }
+}
+
 fn st() -> MutexGuard<'static, State> {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
     let m = S.get_or_init(|| {
@@ -144,13 +169,6 @@ pub fn lookup_blocking(host: &str) -> Result<Vec<IpAddr>, String> {
     for (id, ok, ms, why) in asked {
         dc::note(&mut g.health, &id, ok, ms, &why, t);
     }
-    if let Ok(res) = &r {
-        for (id, why) in &res.failed {
-            if why == "blocked" {
-                dc::note(&mut g.health, id, false, 0, "blocked", t);
-            }
-        }
-    }
     let out = match r {
         Ok(res) => {
             if res.via == dc::Via::System {
@@ -163,10 +181,15 @@ pub fn lookup_blocking(host: &str) -> Result<Vec<IpAddr>, String> {
             g.used.insert(host.to_ascii_lowercase(), (format!("none:{}", by), t));
             Err(format!("no such host: {} (answered by {})", host, by))
         }
+        Err(dc::ChainError::Blocked { by }) => {
+            g.used.insert(host.to_ascii_lowercase(), (format!("blocked:{}", by), t));
+            Err(format!("DNS over HTTPS: {} is blocked by {}", host, by))
+        }
         Err(dc::ChainError::AllFailed { failed, system_allowed }) => {
             g.fails += 1;
             g.chain_failed = true;
-            g.used.insert(host.to_ascii_lowercase(), ("failed".to_string(), t));
+            let private = !failed.is_empty() && failed.iter().all(|(_, w)| w == "private");
+            g.used.insert(host.to_ascii_lowercase(), ((if private { "private" } else { "failed" }).to_string(), t));
             let why: Vec<String> = failed.iter().take(3).map(|(id, e)| format!("{}: {}", id, e)).collect();
             Err(format!("DNS over HTTPS: no resolver answered for {} ({}){}", host, why.join("; "), if system_allowed { "" } else { " — the system's DNS is not allowed in Settings" }))
         }
@@ -180,13 +203,15 @@ pub fn lookup_blocking(host: &str) -> Result<Vec<IpAddr>, String> {
     let due = !g.probing && dc::probe_due(g.choice != Choice::Off, g.last_probe, g.chain_failed, t);
     drop(g);
     if due {
-        tauri::async_runtime::spawn(async { let _ = probe().await; });
+        tauri::async_runtime::spawn(async { let _ = probe(false).await; });
     }
     out
 }
 
-/// The probe: PROBE_NAME asked of every resolver at once (5 s each); each one's health noted; the order follows.
-pub async fn probe() -> Value {
+/// The probe: PROBE_NAME asked at once (5 s each) of every resolver («Check now», `all`) or of those the chain asks
+/// first (the automatic one: dohchain::probe_ids); each one's health noted; the order follows. (A computer's
+/// metered connection cannot be told from here, so the automatic probe does not look for one.)
+pub async fn probe(all: bool) -> Value {
     let choice = {
         let mut g = st();
         if g.probing {
@@ -195,12 +220,10 @@ pub async fn probe() -> Value {
         g.probing = true;
         g.choice.clone()
     };
-    let mut ids: Vec<String> = dc::catalog().iter().map(|p| p.id.clone()).collect();
-    if let Choice::Custom(_) = choice {
-        ids.insert(0, "custom".to_string());
-    }
+    let ids: Vec<String> = dc::probe_ids(&choice, all);
     // (The addresses found off the async threads: the user's resolver's own name may have to be asked first.)
     let servers: Vec<(String, (String, Vec<IpAddr>))> = tauri::async_runtime::spawn_blocking(move || ids.into_iter().filter_map(|id| server(&id, &choice).map(|s| (id, s))).collect()).await.unwrap_or_default();
+    let started = Instant::now();
     let mut tasks = Vec::new();
     for (id, (url, ips)) in servers {
         tasks.push(tauri::async_runtime::spawn(async move {
@@ -238,12 +261,14 @@ pub async fn probe() -> Value {
         o["ms"] = json!(ms);
     } else {
         o["why"] = json!("no resolver answered");
+        o["ms"] = json!(started.elapsed().as_millis() as u64);
     }
     o
 }
 
 /// The provider set in force: the hook installed (or removed), the proxy for aria2 started (or stopped).
 pub fn apply(provider: &str, allow_system: bool) -> Value {
+    INITED.store(true, std::sync::atomic::Ordering::SeqCst);
     let choice = dc::parse_choice(provider);
     let on = choice != Choice::Off;
     {
@@ -257,9 +282,8 @@ pub fn apply(provider: &str, allow_system: bool) -> Value {
         if !on {
             g.proxy = None;
         } else if g.proxy.is_none() {
-            let secret = format!("{:x}{:x}", now(), std::process::id() as u64 * 2654435761);
             let resolve: dohproxy::Resolve = Arc::new(|h: &str| lookup_blocking(h));
-            g.proxy = dohproxy::start(resolve, &format!("kt{}{}", secret, secret)).ok();
+            g.proxy = dohproxy::start(resolve).ok();
         }
     }
     if on {
@@ -277,21 +301,51 @@ pub fn apply(provider: &str, allow_system: bool) -> Value {
         net::set_doh_hook(None);
         net::set_doh("off");
     }
-    crate::engine::set_doh_proxy(proxy_url());
+    let px = st().proxy.as_ref().map(|p| (p.address(), p.user().to_string(), p.password().to_string()));
+    crate::engine::set_doh_proxy(px);
+    if let Some(d) = DATA_DIR.get() {
+        let _ = std::fs::write(d.join("doh.json"), json!({ "provider": provider, "allowSystem": allow_system }).to_string());
+    }
     json!({ "provider": provider, "allowSystem": allow_system, "on": on })
 }
 
-/// What aria2's all-proxy gets while DoH is on (empty when off).
-pub fn proxy_url() -> String {
-    st().proxy.as_ref().map(|p| p.url()).unwrap_or_default()
-}
-
-/// A magnet's UDP trackers by address (blocking; the magnet as it was while DoH is off).
+/// A magnet's UDP trackers by address (blocking; the magnet as it was while DoH is off): every host asked at once,
+/// at most TRACKER_BUDGET for all of them; one the chain could not answer in time is left out (never a name for aria2
+/// to look up by the network's DNS).
 pub fn rewrite_magnet(m: &str) -> String {
+    const TRACKER_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
     if st().choice == Choice::Off {
         return m.to_string();
     }
-    dc::magnet_rewrite(m, &mut |h| lookup_blocking(h).ok().and_then(|ips| ips.into_iter().next()))
+    let mut hosts: Vec<String> = Vec::new();
+    let _ = dc::magnet_rewrite(m, &mut |h| {
+        if !hosts.iter().any(|x| x == h) {
+            hosts.push(h.to_string());
+        }
+        None
+    });
+    let (tx, rx) = std::sync::mpsc::channel::<(String, Option<IpAddr>)>();
+    for h in hosts.iter().cloned() {
+        let tx = tx.clone();
+        let _ = std::thread::Builder::new().name("kt-doh-tracker".into()).spawn(move || {
+            let ip = lookup_blocking(&h).ok().and_then(|ips| ips.into_iter().next());
+            let _ = tx.send((h, ip));
+        });
+    }
+    drop(tx);
+    let until = Instant::now() + TRACKER_BUDGET;
+    let mut got: HashMap<String, IpAddr> = HashMap::new();
+    while got.len() < hosts.len() {
+        let left = until.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok((h, Some(ip))) => {
+                got.insert(h, ip);
+            }
+            Ok((_, None)) => {}
+            Err(_) => break,
+        }
+    }
+    dc::magnet_rewrite(m, &mut |h| got.get(h).copied())
 }
 
 /// Everything the settings page shows.
@@ -311,7 +365,7 @@ pub fn status() -> Value {
         "on": g.choice != Choice::Off, "allowSystem": g.allow_system, "order": order, "providers": provs, "custom": custom,
         "lastProbe": g.last_probe.map(|x| x * 1000), "queries": g.queries, "fails": g.fails, "system": g.system,
         "cached": g.cache.len(), "proxy": { "running": g.proxy.is_some(), "port": g.proxy.as_ref().map(|p| p.port()).unwrap_or(0), "tunnels": g.proxy.as_ref().map(|p| p.tunnels.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(0) },
-        "covers": { "http": true, "downloads": true, "trackersHttp": true, "trackersUdp": "magnet", "webview": false, "system": "allowed-only" }
+        "covers": { "http": true, "downloads": true, "trackersHttp": true, "trackersUdp": "magnet", "webview": false, "ftp": false, "system": "allowed-only" }
     })
 }
 

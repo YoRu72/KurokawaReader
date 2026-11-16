@@ -1,9 +1,11 @@
 // The small HTTP proxy aria2 is pointed at while DNS over HTTPS is on (stage 0.21 P9) — aria2 has no hook for a
 // resolver of ours, but it takes a proxy (all-proxy): its downloads (CONNECT for https, a plain GET for http) and its
 // HTTP trackers' announces come here, and here each site's name is found by the shell's resolver (the DoH chain:
-// dohchain.rs's rules), never by the network's DNS. On 127.0.0.1 only, with a user and password of its own (aria2 is
-// given them in the proxy address), so another program on the computer cannot borrow it. desktop/dohchain.cjs is
-// Electron's twin. Std only: `rustc --edition 2021 --test dohproxy.rs`.
+// dohchain.rs's rules), never by the network's DNS. On 127.0.0.1 only, with a password of its own from the system's
+// randomness (handed to aria2 in its config file or over RPC — never on its command line, which other programs can
+// read), checked whole and in constant time before a thread is given to the connection; at most MAX_CONNS at once; the
+// proxy's own headers (Proxy-Authorization) never reach a site. FTP is not carried (aria2 is given it as http-proxy and
+// https-proxy only). desktop/dohchain.cjs is Electron's twin. Std only: `rustc --edition 2021 --test dohproxy.rs`.
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -17,9 +19,42 @@ pub type Resolve = Arc<dyn Fn(&str) -> Result<Vec<IpAddr>, String> + Send + Sync
 const HEAD_MAX: usize = 32 * 1024;
 const IDLE: Duration = Duration::from_secs(300);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Connections served at once (aria2 opens at most 16 a download, a few downloads at a time).
+pub const MAX_CONNS: u64 = 128;
+/// How long a new connection has to send its request head (read before a thread is given to it).
+const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 16 bytes from the system's randomness, as hex: /dev/urandom where there is one; elsewhere (Windows) std's
+/// hasher keys, which std seeds from the system's generator (ProcessPrng / BCryptGenRandom), run as a keyed PRF.
+pub fn os_secret() -> String {
+    let mut b = [0u8; 16];
+    let mut got = false;
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        got = f.read_exact(&mut b).is_ok();
+    }
+    if !got {
+        use std::hash::{BuildHasher, Hasher};
+        for (i, chunk) in b.chunks_mut(8).enumerate() {
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_usize(i);
+            h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+            chunk.copy_from_slice(&h.finish().to_le_bytes());
+        }
+    }
+    b.iter().map(|x| format!("{:02x}", x)).collect()
+}
+
+/// Equal, in time that depends on the lengths only.
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
 
 pub struct Proxy {
     port: u16,
+    bound: SocketAddr,
     user: String,
     pass: String,
     stop: Arc<AtomicBool>,
@@ -32,9 +67,23 @@ impl Proxy {
     pub fn port(&self) -> u16 {
         self.port
     }
-    /// What aria2's all-proxy is given.
+    /// The address the listening socket is bound to.
+    pub fn bound(&self) -> SocketAddr {
+        self.bound
+    }
+    /// The proxy with its user and password (for aria2's RPC, never its command line).
     pub fn url(&self) -> String {
         format!("http://{}:{}@127.0.0.1:{}", self.user, self.pass, self.port)
+    }
+    /// The proxy alone, and its user and password apart (aria2's http-proxy, http-proxy-user, http-proxy-passwd).
+    pub fn address(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+    pub fn user(&self) -> &str {
+        &self.user
+    }
+    pub fn password(&self) -> &str {
+        &self.pass
     }
     /// The listener closed (connections under way end by themselves: their reads time out or their ends close).
     pub fn stop(mut self) {
@@ -71,33 +120,67 @@ pub fn b64(d: &[u8]) -> String {
     s
 }
 
-/// The proxy started on 127.0.0.1 (a free port), its user and password `secret`-derived.
-pub fn start(resolve: Resolve, secret: &str) -> io::Result<Proxy> {
+/// The proxy started on 127.0.0.1 (a free port), its password from the system's randomness (`os_secret`).
+pub fn start(resolve: Resolve) -> io::Result<Proxy> {
     let l = TcpListener::bind(("127.0.0.1", 0))?;
-    let port = l.local_addr()?.port();
+    let bound = l.local_addr()?;
+    let port = bound.port();
     let user = "kt".to_string();
-    let pass: String = secret.chars().filter(|c| c.is_ascii_alphanumeric()).take(32).collect();
-    if pass.len() < 8 {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "secret too short"));
-    }
-    let want = format!("basic {}", b64(format!("{}:{}", user, pass).as_bytes())).to_ascii_lowercase();
+    let pass = os_secret();
+    let want = b64(format!("{}:{}", user, pass).as_bytes());
     let stop = Arc::new(AtomicBool::new(false));
     let tunnels = Arc::new(AtomicU64::new(0));
     let refused = Arc::new(AtomicU64::new(0));
+    let open = Arc::new(AtomicU64::new(0));
     let (s2, t2, r2) = (stop.clone(), tunnels.clone(), refused.clone());
     let accept = thread::Builder::new().name("kt-doh-proxy".into()).spawn(move || {
         for c in l.incoming() {
             if s2.load(Ordering::SeqCst) {
                 break;
             }
-            let Ok(c) = c else { continue };
-            let (res, want, t, r) = (resolve.clone(), want.clone(), t2.clone(), r2.clone());
-            let _ = thread::Builder::new().name("kt-doh-proxy-c".into()).spawn(move || {
-                let _ = serve(c, &res, &want, &t, &r);
+            let Ok(mut c) = c else { continue };
+            if open.load(Ordering::SeqCst) >= MAX_CONNS {
+                r2.fetch_add(1, Ordering::Relaxed);
+                reply(&mut c, "503 Service Unavailable", "busy");
+                continue;
+            }
+            // (The head read and the password checked here, before a thread is given to the connection.)
+            let _ = c.set_read_timeout(Some(HEAD_TIMEOUT));
+            let Ok((head, rest)) = read_head(&mut c) else { continue };
+            if !authorized(&head, &want) {
+                r2.fetch_add(1, Ordering::Relaxed);
+                reply(&mut c, "407 Proxy Authentication Required", "auth");
+                continue;
+            }
+            let (res, t, o) = (resolve.clone(), t2.clone(), open.clone());
+            o.fetch_add(1, Ordering::SeqCst);
+            let spawned = thread::Builder::new().name("kt-doh-proxy-c".into()).spawn(move || {
+                let _ = serve(c, head, rest, &res, &t);
+                o.fetch_sub(1, Ordering::SeqCst);
             });
+            if spawned.is_err() {
+                open.fetch_sub(1, Ordering::SeqCst);
+            }
         }
     })?;
-    Ok(Proxy { port, user, pass, stop, tunnels, refused, accept: Some(accept) })
+    Ok(Proxy { port, bound, user, pass, stop, tunnels, refused, accept: Some(accept) })
+}
+
+/// The head carries «Proxy-Authorization: Basic <exactly the proxy's own>» (the scheme in any case, the
+/// credential compared whole, in constant time).
+fn authorized(head: &str, want_b64: &str) -> bool {
+    let mut ok = false;
+    for h in head.split("\r\n").skip(1) {
+        if let Some((k, v)) = h.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("proxy-authorization") {
+                let v = v.trim();
+                if v.len() > 6 && v[..6].eq_ignore_ascii_case("basic ") {
+                    ok |= ct_eq(v[6..].trim().as_bytes(), want_b64.as_bytes());
+                }
+            }
+        }
+    }
+    ok
 }
 
 /// The request's head (up to the blank line) and whatever came after it.
@@ -177,9 +260,8 @@ fn pump(mut from: TcpStream, mut to: TcpStream) {
     let _ = to.shutdown(Shutdown::Write);
 }
 
-fn serve(mut c: TcpStream, resolve: &Resolve, want: &str, tunnels: &AtomicU64, refused: &AtomicU64) -> io::Result<()> {
+fn serve(mut c: TcpStream, head: String, rest: Vec<u8>, resolve: &Resolve, tunnels: &AtomicU64) -> io::Result<()> {
     c.set_read_timeout(Some(Duration::from_secs(30)))?;
-    let (head, rest) = read_head(&mut c)?;
     let mut lines = head.split("\r\n");
     let first = lines.next().unwrap_or("");
     let parts: Vec<&str> = first.split(' ').collect();
@@ -188,15 +270,6 @@ fn serve(mut c: TcpStream, resolve: &Resolve, want: &str, tunnels: &AtomicU64, r
         return Ok(());
     }
     let headers: Vec<&str> = lines.filter(|l| !l.is_empty()).collect();
-    let authed = headers.iter().any(|h| match h.split_once(':') {
-        Some((k, v)) => k.trim().eq_ignore_ascii_case("proxy-authorization") && v.trim().to_ascii_lowercase() == want,
-        None => false,
-    });
-    if !authed {
-        refused.fetch_add(1, Ordering::Relaxed);
-        reply(&mut c, "407 Proxy Authentication Required", "auth");
-        return Ok(());
-    }
     let (method, target) = (parts[0], parts[1]);
     if method.eq_ignore_ascii_case("CONNECT") {
         let Some((host, port)) = split_host_port(target, 443) else {
@@ -283,7 +356,18 @@ mod tests {
     }
 
     fn auth(p: &Proxy) -> String {
-        format!("Proxy-Authorization: Basic {}\r\n", b64(format!("kt:{}", p.pass).as_bytes()))
+        format!("Proxy-Authorization: basic {}\r\n", b64(format!("{}:{}", p.user(), p.password()).as_bytes()))
+    }
+
+    #[test]
+    fn secrets_and_compare() {
+        let (a, b) = (os_secret(), os_secret());
+        assert_eq!(a.len(), 32);
+        assert_ne!(a, b);
+        assert!(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"abc", b"abcd"));
+        assert!(authorized("CONNECT x:1 HTTP/1.1\r\nProxy-Authorization: BASIC a3Q6eA==", "a3Q6eA=="));
+        assert!(!authorized("CONNECT x:1 HTTP/1.1\r\nProxy-Authorization: Basic a3Q6eA==x", "a3Q6eA=="));
+        assert!(!authorized("CONNECT x:1 HTTP/1.1\r\nProxy-Authorization: Bearer a3Q6eA==", "a3Q6eA=="));
     }
 
     fn read_all(s: &mut TcpStream) -> String {
@@ -332,8 +416,10 @@ mod tests {
             }
         });
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let p = start(resolver(asked.clone()), "s3cretS3cretS3cret").unwrap();
-        assert!(p.url().starts_with("http://kt:s3cretS3cretS3cret@127.0.0.1:"));
+        let p = start(resolver(asked.clone())).unwrap();
+        assert_eq!(p.address(), format!("http://127.0.0.1:{}", p.port()));
+        // (Bound to the loopback address itself: not reachable from another machine.)
+        assert_eq!(p.bound().ip(), IpAddr::from([127, 0, 0, 1]));
         // CONNECT by name: resolved by the resolver, the tunnel carries bytes both ways.
         let mut c = TcpStream::connect(("127.0.0.1", p.port())).unwrap();
         write!(c, "CONNECT files.test:{} HTTP/1.1\r\nHost: files.test\r\n{}\r\nHELLO-TLS", sport, auth(&p)).unwrap();
@@ -343,10 +429,10 @@ mod tests {
         assert!(got.ends_with("ECHO HELLO-TLS"), "{}", got);
         // A plain GET: origin form, the proxy's headers gone, Connection: close.
         let mut g = TcpStream::connect(("127.0.0.1", p.port())).unwrap();
-        write!(g, "GET http://files.test:{}/a/b?c=1 HTTP/1.1\r\nHost: files.test\r\nProxy-Connection: keep-alive\r\n{}X-Q: 1\r\n\r\n", sport, auth(&p)).unwrap();
+        write!(g, "GET http://files.test:{}/a/b?c=1 HTTP/1.1\r\nHost: files.test\r\nProxy-Connection: keep-alive\r\n{}PROXY-AUTHORIZATION: Basic eA==\r\nX-Q: 1\r\n\r\n", sport, auth(&p)).unwrap();
         let got = read_all(&mut g);
         assert!(got.contains("GET /a/b?c=1 HTTP/1.1|Host: files.test|X-Q: 1|Connection: close"), "{}", got);
-        assert!(!got.contains("Proxy-"), "{}", got);
+        assert!(!got.to_ascii_lowercase().contains("proxy-"), "{}", got);
         assert_eq!(asked.lock().unwrap().clone(), vec!["files.test".to_string(), "files.test".to_string()]);
         assert_eq!(p.tunnels.load(Ordering::Relaxed), 2);
         // Without the password: refused, nothing resolved.
@@ -364,6 +450,6 @@ mod tests {
         p.stop();
         thread::sleep(Duration::from_millis(100));
         assert!(TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(500)).is_err());
-        assert!(start(resolver(asked), "short").is_err());
+        let _ = asked;
     }
 }

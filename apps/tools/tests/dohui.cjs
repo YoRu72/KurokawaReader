@@ -10,9 +10,9 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
 const AR = LANG === 'ar'; const W = (en, ar) => (AR ? ar : en);
 
 // (The status every shell hands back: the table's resolvers in order, three checked.)
-const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','adguard-unfiltered','dnssb','controld','opendns','wikimedia','dns4eu']; const now = Date.now();
+const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','adguard-unfiltered','dnssb','controld','wikimedia','dns4eu']; const now = Date.now();
   const h = { cloudflare: { ok: true, ms: 21, at: now - 90000 }, quad9: { ok: true, ms: 48, at: now - 90000 }, google: { ok: false, ms: 6000, at: now - 90000, reason: 'timeout' } };
-  return { on: true, allowSystem: !!window.__allow, order: ['cloudflare','quad9','adguard','adguard-unfiltered','dnssb','controld','opendns','wikimedia','dns4eu','google'], providers: ids.map((id) => ({ id, label: id, ok: h[id] ? h[id].ok : null, ms: h[id] ? h[id].ms : null, at: h[id] ? h[id].at : null, reason: (h[id] && h[id].reason) || '' })), lastProbe: now - 90000, queries: 42, fails: 1, system: 0 }; })()`;
+  return { on: true, allowSystem: !!window.__allow, order: ['cloudflare','quad9','adguard','adguard-unfiltered','dnssb','controld','wikimedia','dns4eu','google'], providers: ids.map((id) => ({ id, label: id, ok: h[id] ? h[id].ok : null, ms: h[id] ? h[id].ms : null, at: h[id] ? h[id].at : null, reason: (h[id] && h[id].reason) || '' })), lastProbe: now - 90000, queries: 42, fails: 1, system: 0 }; })()`;
 
 (async () => {
   const web = serve(DIST).listen(0); const port = web.address().port; const base = `http://127.0.0.1:${port}/`;
@@ -36,7 +36,8 @@ const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','a
         dohUsed: async (o) => { window.__calls.push(['dohUsed', o]); return { on: true, hosts: Object.fromEntries((o.hosts || []).map((h) => [h, { via: 'doh:cloudflare:23', at: Date.now() }])) }; },
         torrentDetail: async () => ({ seeds: 4, peersConnected: 9, seedsInSwarm: 50, peersInSwarm: 20, ratio: 0.1, peers: [], trackers: [
           { url: 'udp://203.0.113.7:1337/announce', name: 'udp://tracker.test:1337/announce', dns: 'doh:cloudflare:19', tier: 0, state: 'working', message: '', fails: 0 },
-          { url: 'https://web.test/announce', dns: 'engine', tier: 1, state: 'waiting', message: '', fails: 0 }] }),
+          { url: 'https://web.test/announce', dns: 'engine', tier: 1, state: 'waiting', message: '', fails: 0 },
+          { url: 'udp://gone.test:80/announce', dns: 'dropped', tier: 0, state: 'waiting', message: '', fails: 0 }] }),
       };
       window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) }) }, PluginHeaders: [] };
     }, [LANG, settings({}), STATUS]);
@@ -44,14 +45,14 @@ const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','a
     if (await p.$('#privacy.collapsed')) { await p.click('#privacy h3'); await p.waitForTimeout(200); }
     await p.locator('#privacy').scrollIntoViewIfNeeded(); await p.waitForSelector('#privacy .doh-hrow'); await p.waitForTimeout(300);
     const rows = await p.$$eval('#privacy .doh-hrow', (e) => e.map((r) => ({ id: r.dataset.id, cls: r.className, txt: r.innerText.replace(/\s+/g, ' ') })));
-    check('every resolver listed with its health, in the order asked', rows.length === 10 && rows[0].id === 'cloudflare' && rows[9].id === 'google', rows.map((r) => r.id));
-    check('healthy: its time; failing: the reason; the rest not checked', /h-ok/.test(rows[0].cls) && /21/.test(rows[0].txt) && /h-fail/.test(rows[9].cls) && /timeout/.test(rows[9].txt) && /h-none/.test(rows[2].cls), rows.slice(0, 3));
+    check('every resolver listed with its health, in the order asked', rows.length === 9 && rows[0].id === 'cloudflare' && rows[8].id === 'google', rows.map((r) => r.id));
+    check('healthy: its time; failing: the reason in words (not the raw «timeout»); the rest not checked', /h-ok/.test(rows[0].cls) && /21|٢١/.test(rows[0].txt) && /h-fail/.test(rows[8].cls) && /no answer in time|لم يأتِ الجواب/.test(rows[8].txt) && !/timeout/.test(rows[8].txt) && /h-none/.test(rows[2].cls), [rows[0], rows[8]]);
     check('the first marked «asked first»', !!(await p.$('#privacy .doh-hrow[data-id="cloudflare"] .doh-first')));
     check('a filter said (Quad9 blocks malware)', /malware|البرمجيات الخبيثة/.test(rows[1].txt), rows[1]);
     const sw = p.locator('#privacy .switch-row', { hasText: W('system’s DNS', 'DNS النظام') });
     check('the system-DNS switch, off by default, explained', (await sw.count()) === 1 && !(await sw.locator('input').isChecked()) && /privacy|safer|الأسلم/.test(await sw.innerText()));
     check('the phone\'s hello-split row is here', /Split the TLS hello|TLS/.test(await p.$eval('#privacy', (e) => e.innerText)));
-    const cover = await p.$$eval('#privacy .doh-cover-list li', (e) => e.map((x) => x.className)); check('what goes through DoH on the phone: six lines, trackers by HTTP the engine\'s own', cover.length === 6 && cover.includes('c-engine') && cover.includes('c-hidden'), cover);
+    const cover = await p.$$eval('#privacy .doh-cover-list li', (e) => e.map((x) => x.className)); check('what goes through DoH on the phone: seven lines — HTTP trackers the engine\'s own, cloud accounts the system\'s, UDP trackers left out when unanswered', cover.length === 7 && cover.includes('c-engine') && cover.includes('c-system') && cover.includes('c-yesDrop') && !cover.includes('c-hidden'), cover);
     await shot(p.locator('#privacy'), 'phone-settings');
     // Check now.
     await p.locator('#privacy .doh-health-head button').click(); await p.waitForTimeout(400);
@@ -76,7 +77,7 @@ const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','a
     await p.goto(base + '#/task/t2'); await p.waitForSelector('.kt-swarm', { timeout: 4000 }).catch(() => undefined); await p.waitForTimeout(600);
     await p.evaluate(() => { const d = document.querySelector('.kt-swarm details.swarm-sec:last-of-type') || [...document.querySelectorAll('.kt-swarm details')].pop(); if (d) d.open = true; }); await p.waitForTimeout(2300);
     const tr = await p.$eval('.kt-swarm', (e) => e.innerText.replace(/\s+/g, ' ')).catch(() => '');
-    check('trackers: the name kept, the resolver said, the engine\'s own said', /tracker\.test/.test(tr) && /Cloudflare/.test(tr) && /engine|المحرّك|محرّك/.test(tr) && !/203\.0\.113\.7/.test(tr), tr.slice(0, 300));
+    check('trackers: the name kept, the resolver said, the engine\'s own said, an unanswered one said left out', /left out|تُرك/.test(tr) && /tracker\.test/.test(tr) && /Cloudflare/.test(tr) && /engine|المحرّك|محرّك/.test(tr) && !/203\.0\.113\.7/.test(tr), tr.slice(0, 300));
     await shot(p.locator('.kt-swarm'), 'phone-trackers');
     await ctx.close();
   }
@@ -87,19 +88,20 @@ const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','a
     await ctx.route(/raw\.githubusercontent\.com|api\.github\.com/, (r) => r.fulfill({ status: 404 }));
     await p.addInitScript(([lang, st, status, sh]) => {
       localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.settings', st); window.__calls = [];
-      const api = { platform: 'desktop', available: true, os: 'win32', ...(sh === 'electron' ? { shell: 'electron' } : {}), list: async () => [{ id: 'g1', kind: 'http', name: 'Episode 01.mkv', source: { url: 'https://files.test/ep01.mkv' }, dir: 'C:\\D', state: 'downloading', done: 4e8, total: 1e9, downSpeed: 3e6, upSpeed: 0, files: [], addedAt: Date.now() }], onTasks: (fn) => { setTimeout(() => api.list().then(fn), 30); return () => {}; },
+      const api = { platform: 'desktop', available: true, os: 'win32', ...(sh === 'electron' ? { shell: 'electron' } : {}), list: async () => [{ id: 'g1', kind: 'http', name: 'Episode 01.mkv', source: { url: 'https://files.test/ep01.mkv' }, dir: 'C:\\D', state: 'downloading', done: 4e8, total: 1e9, downSpeed: 3e6, upSpeed: 0, files: [], addedAt: Date.now() }, { id: 'g2', kind: 'http', name: 'Notes.pdf', source: { url: 'https://self.test/notes.pdf' }, dir: 'C:\\D', state: 'failed', error: 'SSL/TLS handshake failure: unable to get local issuer certificate (1)', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now() }, { id: 'g3', kind: 'http', name: 'Ads.zip', source: { url: 'https://ads.test/a.zip' }, dir: 'C:\\D', state: 'failed', error: 'DNS over HTTPS: ads.test is blocked by adguard', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now() }],
+        ignoreCert: async (id) => { window.__calls.push(['ignoreCert', id]); return id; }, onTasks: (fn) => { setTimeout(() => api.list().then(fn), 30); return () => {}; },
         setDoh: async (o) => { window.__calls.push(['setDoh', o]); window.__allow = o.allowSystem; return o; }, dohStatus: async () => eval(status), dohProbe: async () => { window.__calls.push(['dohProbe']); return { ...eval(status), ok: true, resolver: 'cloudflare', ms: 21 }; },
         dohUsed: async (o) => ({ on: true, hosts: Object.fromEntries((o.hosts || []).map((h) => [h, { via: 'system', at: Date.now() }])) }) };
       window.kurokawaTools = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) });
     }, [LANG, settings({ doh: 'quad9' }), STATUS, shell]);
     await p.goto(base + '#/settings/privacy'); await p.waitForSelector('#privacy .doh-hrow', { timeout: 6000 }).catch(() => undefined); await p.waitForTimeout(400);
     const txt = await p.$eval('#privacy', (e) => e.innerText).catch(() => '');
-    check(`${shell}: the health list and the switch`, (await p.$$('#privacy .doh-hrow')).length === 10 && /system’s DNS|DNS النظام/.test(txt));
+    check(`${shell}: the health list and the switch`, (await p.$$('#privacy .doh-hrow')).length === 9 && /system’s DNS|DNS النظام/.test(txt));
     check(`${shell}: pinned — the hint names it`, /Quad9/.test(txt));
     check(`${shell}: no phone-only rows (hello split, the live feed)`, !/Split the TLS hello|قسّم|تقسيم/.test(txt) && !(await p.$('#privacy .doh-card')));
     await p.click('#privacy .doh-cover summary'); await p.waitForTimeout(150);
     const cover = await p.$$eval('#privacy .doh-cover-list li', (e) => e.map((x) => x.className));
-    check(`${shell}: what goes through DoH here (${cover.join(' ')})`, cover.length === 7 && (shell === 'electron' ? cover.filter((c) => c === 'c-system').length === 1 : cover.filter((c) => c === 'c-system').length === 2), cover);
+    check(`${shell}: what goes through DoH here (${cover.join(' ')})`, cover.length === 8 && (shell === 'electron' ? cover.filter((c) => c === 'c-system').length === 2 : cover.filter((c) => c === 'c-system').length === 3), cover);
     await shot(p.locator('#privacy'), `pc-${shell}-settings`);
     await p.locator('#privacy .doh-health-head button').click(); await p.waitForTimeout(300);
     check(`${shell}: «Check now» probes`, await p.evaluate(() => window.__calls.some(([k]) => k === 'dohProbe')));
@@ -108,6 +110,16 @@ const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','a
     const line = await p.$eval('.doh-line', (e) => (e.hidden ? '' : e.textContent)).catch(() => '');
     check(`${shell}: the download's line says when the system's DNS was used`, /system|النظام/.test(line), line);
     if (shell === 'electron') await shot(p.locator('.kt-hero'), 'pc-task-line-system');
+    // A certificate failure: the plain words, and «Ignore certificate errors for this download», asked first.
+    p.on('dialog', (d) => void d.accept()); await p.goto(base + '#/task/g2'); await p.waitForSelector('.task-error', { timeout: 4000 }).catch(() => undefined);
+    const err = await p.$eval('.task-error', (e) => e.innerText).catch(() => '');
+    check(`${shell}: a certificate failure in plain words, with the per-download choice`, /certificate could not be verified|تعذّر التحقّق من شهادة/.test(err) && !!(await p.$('[data-act="ignore-cert"]')), err);
+    if (shell === 'electron') await shot(p.locator('.task-error'), 'pc-cert-error');
+    if (await p.$('[data-act="ignore-cert"]')) { await p.click('[data-act="ignore-cert"]'); await p.waitForTimeout(300); }
+    check(`${shell}: the choice asked first, then made for this download alone`, await p.evaluate(() => window.__calls.some(([k, id]) => k === 'ignoreCert' && id === 'g2')));
+    await p.goto(base + '#/task/g3'); await p.waitForSelector('.task-error', { timeout: 4000 }).catch(() => undefined);
+    const blk = await p.$eval('.task-error', (e) => e.innerText).catch(() => '');
+    check(`${shell}: blocked by the chosen resolver — said with its name, no raw text`, /AdGuard/.test(blk) && /blocked|يحجبه/.test(blk) && !/DNS over HTTPS: ads\.test/.test(blk), blk);
     await ctx.close();
   }
   await br.close(); web.close();

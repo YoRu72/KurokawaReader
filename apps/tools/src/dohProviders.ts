@@ -8,14 +8,15 @@ export const DOH_PROVIDERS: DohProvider[] = [
   { id: 'quad9', label: 'Quad9', url: 'https://dns.quad9.net/dns-query', filters: 'malware' },
   { id: 'adguard', label: 'AdGuard', url: 'https://dns.adguard-dns.com/dns-query', filters: 'ads' },
   { id: 'adguard-unfiltered', label: 'AdGuard (unfiltered)', url: 'https://unfiltered.adguard-dns.com/dns-query', filters: 'none' },
-  { id: 'dnssb', label: 'DNS.SB', url: 'https://doh.dns.sb/dns-query', filters: 'none' },
+  { id: 'dnssb', label: 'DNS.SB', url: 'https://185.222.222.222/dns-query', filters: 'none' },
   { id: 'controld', label: 'Control D', url: 'https://freedns.controld.com/p0', filters: 'none' },
-  { id: 'opendns', label: 'OpenDNS', url: 'https://doh.opendns.com/dns-query', filters: 'phishing' },
   { id: 'wikimedia', label: 'Wikimedia DNS', url: 'https://wikimedia-dns.org/dns-query', filters: 'none' },
   { id: 'dns4eu', label: 'DNS4EU', url: 'https://unfiltered.joindns4.eu/dns-query', filters: 'legal' },
 ];
 /** A provider's name as shown (the id when it is not in the table: «custom», an old one). */
 export const dohLabel = (id: string): string => DOH_PROVIDERS.find((p) => p.id === id)?.label ?? id;
+/** A saved choice no longer offered (Mullvad, discontinued; OpenDNS, removed) is «auto». */
+export const dohChoice = (v: string): string => (v === 'mullvad' || v === 'opendns' ? 'auto' : v);
 
 /** The user's own address checked — kt-core dohchain.rs validate_custom's twin: 'ok' or why it is refused. */
 export function validateDohUrl(url: string): 'ok' | 'notHttps' | 'noHost' | 'badPort' | 'userinfo' | 'badPath' | 'space' | 'tooLong' {

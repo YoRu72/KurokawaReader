@@ -25,7 +25,7 @@ public class CT {
     byte[] ptr = { (byte) 0xc0, 12 };
     if (mode.equals("loop")) { recs.add(rec(ptr, 5, 60, wire("b.test"))); recs.add(rec(wire("b.test"), 5, 60, wire(qn[0]))); }
     else if (!mode.equals("nx") && qtype == 1) {
-      byte[] ip = qn[0].startsWith("resolver-") ? new byte[] { 127, 0, 0, 1 } : mode.equals("private") ? new byte[] { 10, 0, 0, 5 } : new byte[] { (byte) 203, 0, 113, (byte) (5 + mode.length()) };
+      byte[] ip = qn[0].startsWith("resolver-") ? new byte[] { 127, 0, 0, 1 } : mode.equals("private") ? new byte[] { 10, 0, 0, 5 } : mode.startsWith("zero") ? new byte[] { 0, 0, 0, 0 } : new byte[] { (byte) 203, 0, 113, (byte) (5 + mode.length()) };
       if (mode.equals("cname")) { recs.add(rec(ptr, 5, 300, wire("cdn.test"))); recs.add(rec(wire("cdn.test"), 1, 5, ip)); } else recs.add(rec(ptr, 1, 120, ip));
     }
     b.write(id >> 8); b.write(id); b.write(flags >> 8); b.write(flags); b.write(0); b.write(1); b.write(0); b.write(recs.size()); b.write(new byte[4]); b.write(q, 12, q.length - 12);
@@ -36,7 +36,9 @@ public class CT {
   static byte[] wire(String n) { ByteArrayOutputStream b = new ByteArrayOutputStream(); for (String l : n.split("\\.")) { b.write(l.length()); b.write(l.getBytes(), 0, l.length()); } b.write(0); return b.toByteArray(); }
   static byte[] rec(byte[] owner, int type, int ttl, byte[] data) { ByteArrayOutputStream b = new ByteArrayOutputStream(); b.write(owner, 0, owner.length); b.write(0); b.write(type); b.write(0); b.write(1); b.write(ttl >> 24); b.write(ttl >> 16); b.write(ttl >> 8); b.write(ttl); b.write(data.length >> 8); b.write(data.length); b.write(data, 0, data.length); return b.toByteArray(); }
 
-  static KrDoh.Resolver mock(String mode) { return new KrDoh.Resolver(mode, mode, "http://resolver-" + mode + ".test:" + port + "/" + mode + "/dns-query", new String[] { "127.0.0.1" }, mode.equals("json") || mode.equals("ok"), "none"); }
+  static KrDoh.Resolver mock(String mode) { return new KrDoh.Resolver(mode, mode, "http://resolver-" + mode + ".test:" + port + "/" + mode + "/dns-query", new String[] { "127.0.0.1" }, mode.equals("json") || mode.equals("ok"), mode.equals("zero") ? "ads" : "none"); }
+  static String kindOf(String e) { String[][] k = { { "id", "(id)" }, { "question", "another question" }, { "trunc", "truncated" }, { "notanswer", "not a DNS answer" }, { "server", "(code" }, { "loop", "loop" }, { "toomany", "too many" }, { "short", "cut short" }, { "pointer", "points at itself" }, { "size", "wrong size" } }; for (String[] x : k) if (e.contains(x[1])) return x[0]; return "other"; }
+  static String canon(String ip) { try { return InetAddress.getByName(ip).getHostAddress(); } catch (Exception e) { return ip; } }
   static int hit(String mode) { AtomicInteger a = hits.get(mode); return a == null ? 0 : a.get(); }
   static void reset(KrDoh.Resolver... rs) { for (KrDoh.Resolver r : rs) { r.lastAt = 0; r.lastOk = false; r.lastMs = -1; r.shape = ""; } }
 
@@ -57,14 +59,21 @@ public class CT {
         case "magnet": { Map<String, String> m = new HashMap<>(); for (String kv : f[2].split(",")) if (!kv.isEmpty()) m.put(kv.substring(0, kv.indexOf('=')), kv.substring(kv.indexOf('=') + 1)); String got = KrDoh.magnetRewrite(f[1], m::get); ok("magnet " + f[1].substring(0, 40) + "… " + (got.equals(f[3]) ? "" : " → " + got), got.equals(f[3])); n++; break; }
         case "addr": { boolean got = KrDoh.addressOk(InetAddress.getByName(f[1]), f[2].equals("custom")); ok("addr " + f[1] + " " + f[2], (got ? "kept" : "dropped").equals(f[3])); n++; break; }
         case "local": { ok("local " + f[1], KrDoh.isLocalName(f[1]) == f[2].equals("yes")); n++; break; }
+        case "probe": { KrDoh.table = KrDoh.KNOWN; StringBuilder got = new StringBuilder(); for (KrDoh.Resolver r : KrDoh.probeSet(f[1], f[2].equals("all"))) got.append(got.length() > 0 ? "," : "").append(r.id); ok("probe " + f[1] + " " + f[2] + (got.toString().equals(f[3]) ? "" : " → " + got), got.toString().equals(f[3])); n++; break; }
+        case "wire": {
+          byte[] m = new byte[f[5].length() / 2]; for (int i = 0; i < m.length; i++) m[i] = (byte) Integer.parseInt(f[5].substring(2 * i, 2 * i + 2), 16);
+          String got; try { long[] ttl = { 0 }; InetAddress[] ips = KrDoh.parseStrict(m, f[2], Integer.parseInt(f[3]), Integer.parseInt(f[4]), ttl); StringBuilder b = new StringBuilder(); for (InetAddress x : ips) b.append(b.length() > 0 ? "," : "").append(x.getHostAddress()); got = "ok:" + b + ":" + (ips.length == 0 ? 0 : ttl[0]); }
+          catch (UnknownHostException e) { got = "err:nx"; } catch (IOException e) { got = "err:" + kindOf(String.valueOf(e.getMessage())); }
+          String want = f[6]; if (want.startsWith("ok:")) { int c = want.lastIndexOf(':'); String[] ips = want.substring(3, c).split(","); StringBuilder b = new StringBuilder(); for (String x : ips) if (!x.isEmpty()) b.append(b.length() > 0 ? "," : "").append(canon(x)); want = "ok:" + b + want.substring(c); }
+          ok("wire " + f[1] + (got.equals(want) ? "" : " → " + got + " (want " + want + ")"), got.equals(want)); n++; break; }
         default: ok("a known kind of line: " + f[0], false);
       }
     }
-    ok("cases read: " + n, n >= 60);
+    ok("cases read: " + n, n >= 100);
 
     // ---------- the loopback resolvers ----------
     HttpServer srv = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 16);
-    for (String mode : new String[] { "ok", "fail", "badid", "trunc", "big", "loop", "private", "nx", "slow", "cname", "json" }) {
+    for (String mode : new String[] { "ok", "fail", "badid", "trunc", "big", "loop", "private", "nx", "slow", "cname", "json", "zero", "zeroU" }) {
       hits.put(mode, new AtomicInteger());
       srv.createContext("/" + mode + "/", ex -> {
         try {
@@ -79,6 +88,7 @@ public class CT {
         } catch (Exception e) { e.printStackTrace(); ex.close(); }
       });
     }
+    srv.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());   // (each request on its own thread: a slow resolver holds none of the others back)
     srv.start(); port = srv.getAddress().getPort();
     KrDoh.lastProbeAt = System.currentTimeMillis();   // (the automatic probe later, on its own)
     final AtomicInteger sysCalls = new AtomicInteger(); KrDoh.sys = h -> { sysCalls.incrementAndGet(); return new InetAddress[] { InetAddress.getByName("198.51.100.99") }; };
@@ -107,10 +117,10 @@ public class CT {
     KrDoh.Resolver[] chain = { mock("fail"), mock("badid"), mock("private"), mock("ok") }; reset(chain); KrDoh.table = chain;
     InetAddress[] got = KrDoh.resolve("site.test");
     ok("failover: the healthy one answered", got.length == 1 && got[0].getHostAddress().startsWith("203.0.113."));
-    ok("failover: the others failing, private refused as «blocked»", !chain[0].lastOk && !chain[1].lastOk && !chain[2].lastOk && "blocked".equals(chain[2].lastError) && chain[3].lastOk);
+    ok("failover: the failing ones noted; the private answer passed over, its resolver not marked failing", !chain[0].lastOk && !chain[1].lastOk && chain[2].lastOk && chain[3].lastOk);
     String via = KrDoh.usedFor(Arrays.asList("site.test")).optJSONObject("hosts").get("site.test").toString();
     ok("per-use: which one answered (" + via + ")", via.contains("doh:ok:"));
-    ok("auto now asks the healthy one first", KrDoh.resolvers("auto").get(0).id.equals("ok"));
+    { List<KrDoh.Resolver> o2 = KrDoh.resolvers("auto"); ok("auto now asks the healthy ones first, the failing last (" + o2.get(0).id + ")", (o2.get(0).id.equals("ok") || o2.get(0).id.equals("private")) && o2.get(3).id.matches("fail|badid") && o2.get(2).id.matches("fail|badid")); }
     int before = hit("ok"); KrDoh.resolve("SITE.test"); ok("cached: not asked again", hit("ok") == before && KrDoh.usedFor(Arrays.asList("site.test")).toString().contains("cache:ok"));
     // A name that does not exist: no other resolver asked; kept briefly.
     KrDoh.forget(); KrDoh.Resolver[] nx = { mock("nx"), mock("ok") }; reset(nx); KrDoh.table = nx; int okb = hit("ok");
@@ -156,6 +166,34 @@ public class CT {
     for (int i = 0; i < 50 && KrDoh.lastProbeAt == 0; i++) Thread.sleep(100);
     ok("the probe ran by itself once a name was asked", KrDoh.lastProbeAt > 0 && hit("ok") >= probesBefore + 2);
     long lp = KrDoh.lastProbeAt; KrDoh.resolve("again2.test"); Thread.sleep(200); ok("…and not again within the half hour", KrDoh.lastProbeAt == lp);
+
+    // A filtering resolver's 0.0.0.0: blocked by it — an answer: the next one not asked, its health untouched.
+    KrDoh.provider = "auto"; KrDoh.forget(); KrDoh.Resolver[] flt = { mock("zero"), mock("ok") }; reset(flt); KrDoh.table = flt; int okz = hit("ok"); String bmsg = "";
+    try { InetAddress[] z = KrDoh.resolve("ads.test"); bmsg = "resolved " + z[0] + " " + KrDoh.usedFor(Arrays.asList("ads.test")); } catch (UnknownHostException e) { bmsg = e.getMessage(); } catch (IOException e) { bmsg = "io " + e.getMessage(); }
+    ok("filtered 0.0.0.0: «blocked by» it, the next not asked, still healthy (" + bmsg + ")", bmsg.contains("blocked by zero") && hit("ok") == okz && flt[0].lastOk && KrDoh.usedFor(Arrays.asList("ads.test")).toString().contains("blocked:zero"));
+    // An unfiltered resolver's 0.0.0.0 / private answer for a public name: the next one asked («private»).
+    KrDoh.forget(); KrDoh.Resolver[] unf = { mock("zeroU"), mock("ok") }; reset(unf); KrDoh.table = unf;
+    ok("unfiltered 0.0.0.0: the next one asked", KrDoh.resolve("lan.test")[0].getHostAddress().startsWith("203.0.113."));
+    // A blackholed resolver: the lookup ends at its deadline, whatever the shapes, addresses and AAAA retries.
+    ServerSocket hole = new ServerSocket(0, 50, InetAddress.getLoopbackAddress()); List<Socket> held = Collections.synchronizedList(new ArrayList<>());
+    Thread ht = new Thread(() -> { try { while (!hole.isClosed()) held.add(hole.accept()); } catch (IOException ignored) {} }); ht.setDaemon(true); ht.start();
+    KrDoh.Resolver bh = new KrDoh.Resolver("hole", "hole", "http://resolver-hole.test:" + hole.getLocalPort() + "/dns-query", new String[] { "127.0.0.1", "127.0.0.1" }, false, "none");
+    KrDoh.forget(); reset(bh); KrDoh.table = new KrDoh.Resolver[] { bh }; KrDoh.chainDeadlineMs = 1500; long tb = System.currentTimeMillis(); String hmsg = "";
+    try { KrDoh.resolve("slow.test"); } catch (IOException e) { hmsg = e.getMessage(); }
+    long took = System.currentTimeMillis() - tb; ok("blackhole: the lookup ends at its deadline (" + took + " ms)", took < 2600 && !hmsg.isEmpty());
+    KrDoh.chainDeadlineMs = 20000; hole.close(); for (Socket x : held) try { x.close(); } catch (IOException ignored) {}
+    // UDP trackers no resolver answers: left out, listed — never a name for the engine.
+    KrDoh.forget(); KrDoh.Resolver[] nxr = { mock("nx") }; reset(nxr); KrDoh.table = nxr; KrDoh.droppedTrackers.clear();
+    List<String> tr2 = KrDoh.trackersViaDoh(Arrays.asList("udp://gone.test:80/announce", "https://web.test/a"), 3000);
+    ok("an unanswered UDP tracker is left out and listed", tr2.equals(Arrays.asList("https://web.test/a")) && KrDoh.droppedTrackers.contains("udp://gone.test:80/announce"));
+    // The JSON form: a record of another name, and an address that is not written as one, both left out (never looked up).
+    byte[] q7 = KrDoh.withId(KrDoh.query("site.test", 1), 77);
+    long[] t7 = { 0 }; InetAddress[] j7 = KrDoh.parseStrict(KrDoh.fromJson("{\"Status\":0,\"Answer\":[{\"name\":\"other.test\",\"type\":1,\"TTL\":5,\"data\":\"203.0.113.9\"},{\"name\":\"site.test\",\"type\":1,\"TTL\":5,\"data\":\"attacker.test\"}]}", q7), "site.test", 1, 77, t7);
+    ok("JSON: another name's record and a non-address left out", j7.length == 0);
+    InetAddress[] j8 = KrDoh.parseStrict(KrDoh.fromJson("{\"Status\":0,\"Answer\":[{\"name\":\"site.test.\",\"type\":5,\"TTL\":50,\"data\":\"cdn.test.\"},{\"name\":\"cdn.test.\",\"type\":1,\"TTL\":7,\"data\":\"203.0.113.10\"}]}", q7), "site.test", 1, 77, t7);
+    ok("JSON: a CNAME chain followed", j8.length == 1 && j8[0].getHostAddress().equals("203.0.113.10") && t7[0] == 7);
+    // A single label: this network's name — the system's lookup, by rule.
+    KrDoh.forget(); KrDoh.table = pub; KrDoh.resolve("router"); ok("a single label: never a public resolver", KrDoh.usedFor(Arrays.asList("router")).toString().contains("local"));
 
     // No thread of ours left behind.
     srv.stop(0); Thread.sleep(300); int left = 0; for (Thread t : Thread.getAllStackTraces().keySet()) if (t.getName().startsWith("kt-doh") && t.isAlive()) { left++; System.out.println("left: " + t.getName()); }

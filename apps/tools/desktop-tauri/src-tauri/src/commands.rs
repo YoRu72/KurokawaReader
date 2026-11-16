@@ -171,6 +171,14 @@ pub async fn kt_set_url(id: Value, url: Value) -> Result<String, String> {
     with_engine(move |e| e.set_url(&id, &url)).await
 }
 
+/// kt:ignoreCert(id) → the download's id: «Ignore certificate errors for this download» (0.21 P9; the page asks
+/// first, and only after a certificate failure).
+#[tauri::command]
+pub async fn kt_ignore_cert(id: Value) -> Result<String, String> {
+    let id = id_text(&id);
+    with_engine(move |e| e.ignore_cert(&id)).await
+}
+
 /// kt:move(id, how): −2 first, −1 up, 1 down, 2 last in the queue.
 #[tauri::command]
 pub async fn kt_move(id: Value, how: Value) -> Result<(), String> {
@@ -382,7 +390,7 @@ pub async fn kt_set_doh(o: Value) -> Result<Value, String> {
 /// known name at once, each one's time and health kept — «auto» then asks the quickest healthy one first.
 #[tauri::command]
 pub async fn kt_doh_probe() -> Result<Value, String> {
-    Ok(crate::dohtools::probe().await)
+    Ok(crate::dohtools::probe(true).await)
 }
 
 /// kt:dohStatus() → the resolvers and their health, the order, the counters, the proxy aria2 uses.

@@ -10,7 +10,7 @@ import { ktPlugin, nativePlatform } from '../native';
 import { getSettings } from '../settings';
 import { t, localDigits } from '../i18n';
 import { liveLine } from '../downloads/live';
-import { plainEngineError } from '../downloads/errors';
+import { plainEngineError, hideRaw, CERT } from '../downloads/errors';
 import { nameNodes, setName, nameDir } from '../ui/fileName';
 import { getEngine, displayName, isVideo, mainFilePath } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
@@ -86,10 +86,10 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const panel = h('section', { class: 'card kt-panel' },
       x.kind !== 'torrent' ? h('div', { class: 'kt-conn' }, h('div', { class: 'kt-ph' }, t('connectionsTitle')), lanes(x)) : null,
       speedChart(hst, x));
-    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x), x.state === 'failed' && x.error ? h('div', { class: 'plan-note bad task-error' }, h('p', { class: 'err-line', dir: 'auto' }, errorText(x.error)), plainEngineError(x.error) ? h('p', { class: 'err-raw src', dir: 'ltr' }, x.error) : null, /^HTTP (401|403|410)$/.test(x.error) && x.kind === 'http' ? h('span', { class: 'err-actions expired-acts' },
+    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x), x.state === 'failed' && x.error ? h('div', { class: 'plan-note bad task-error' }, h('p', { class: 'err-line', dir: 'auto' }, errorText(x.error)), plainEngineError(x.error) && !hideRaw(x.error) ? h('p', { class: 'err-raw src', dir: 'ltr' }, x.error) : null, /^HTTP (401|403|410)$/.test(x.error) && x.kind === 'http' ? h('span', { class: 'err-actions expired-acts' },
         h('small', { class: 'src' }, t('errExpiredHint')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'relink', onclick: () => void import('../browser').then((m) => m.relinkFromBrowser(x)) }, icon('globe'), t('relinkBrowser')),
-        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : null, hlsLine, limitRow, acts),
+        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || (isCut(x.error) && !CERT.test(x.error))) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : null, hlsLine, limitRow, acts),
       panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x, torEngineInfo(x))), (x.kind === 'video' && ktPlugin() ? commandCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
   // (The files' card: made once and kept, so a search typed or a folder opened survives the redraws.)
@@ -132,6 +132,10 @@ function remedies(x: Task): HTMLElement | null {
   if (/ENOSPC|No space|noSpace/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errNoSpaceHint')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/files') }, icon('chart'), t('filesAnalyzer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('folder'), t('changeFolder')));
   if (/^HTTP (429|50\d)$/.test(e)) { const wait = /429/.test(e) ? 60 : 20; const b = again(t('errRetryIn', { s: localDigits(wait) })); setTimeout(() => { if (b.isConnected) b.click(); }, wait * 1000); return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errBusyHint')), b); }
   if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
+  // (0.21 P9: a certificate the engine refused — on a computer, «Ignore certificate errors for this download», asked first.)
+  const ig = (eng as unknown as { ignoreCert?(id: string): Promise<unknown> }).ignoreCert;
+  if (CERT.test(e) && x.kind === 'http') return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errCertHint')), ...(ig ? [h('button', { type: 'button', class: 'btn tonal small danger', 'data-act': 'ignore-cert', onclick: () => { if (!confirm(t('certIgnoreAsk'))) return; void ig.call(eng, x.id).then(() => toast(t('certIgnored'))).catch((er) => toast(String((er as Error).message ?? er), 'error')); } }, icon('alert'), t('certIgnore'))] : []));
+  if (/DNS over HTTPS:/.test(e)) return h('span', { class: 'err-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/privacy') }, icon('globe'), t('errDohSettings')));
   // (A DRM-protected lecture or stream: nothing to retry; the app does not go around protection.)
   if (/DRM|drm:|SAMPLE-AES|Widevine|protected/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errDrmHint')));
   if (/^HTTP 4(04|10)$/.test(e)) return null;

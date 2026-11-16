@@ -146,7 +146,7 @@ else {
     const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true }); Archive.setRegistry(path.join(userData, 'extract-jobs'));
     engine = new Aria2Engine({ userData, resources: process.resourcesPath || path.join(__dirname, 'resources'), defaultDir: path.join(app.getPath('downloads'), 'Kurokawa') });
     engine.watching = (hash) => (WebStream.watching(hash.toLowerCase()) ? WebStream.stats(hash.toLowerCase()) : null); engine.handedOver = (gid) => handed.has(gid);
-    engine.onState = () => send('kt:engineState', engineState()); engine.dohMagnet = (m) => doh.rewriteMagnet(m);
+    engine.onState = () => send('kt:engineState', engineState()); engine.dohMagnet = (m) => doh.rewriteMagnet(m); engine.beforeStart = initDohFromDisk;
     // (Not waited for: the window opens at once; the page is told when aria2c is up — it may take a while on a
     // first start under Windows' antivirus.)
     void engine.ensure();
@@ -240,6 +240,7 @@ function openBrowser(url) {
 ipcMain.handle('kt:browse', (_e, o) => { openBrowser(String(o && o.url || '')); return true; });
 ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
+ipcMain.handle('kt:ignoreCert', (_e, id) => E().ignoreCert(id));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
 ipcMain.handle('kt:configure', (_e, o) => { if (o && o.maxVideo !== undefined) { videos?.setMax(o.maxVideo); const { maxVideo, ...rest } = o; if (!Object.keys(rest).length) return undefined; o = rest; } return E().configure(o); });
 ipcMain.handle('kt:torrentInfo', (_e, s) => E().ensure().then(() => E().torrentInfo(s)));
@@ -369,17 +370,22 @@ ipcMain.handle('kt:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : 
 // for the app's requests, given the chain's order (the quickest healthy first; «secure» — no system DNS — unless the
 // user allowed it), and the chain itself for aria2 (pointed at its small proxy) and the health probe.
 const DohChain = require('./dohchain.cjs'); const doh = new DohChain.DohChain();
-const applyChromium = () => {
-  const servers = doh.order().map((id) => (id === 'custom' ? (doh.choice.url || '') : doh.server(id)?.url || '')).filter((u) => /^https:\/\//.test(u));
-  app.configureHostResolver(!doh.on || !servers.length ? { secureDnsMode: 'off' } : { secureDnsMode: doh.allowSystem ? 'automatic' : 'secure', secureDnsServers: servers });
-};
+// (Chromium takes https resolvers only: a resolver on this device — http://127.0.0.1… — cannot be given to it, so the
+// app's own requests then use the public resolvers in the chain's order, still «secure» — never DoH silently off; the
+// settings' coverage list says so. aria2 goes through the chain, which asks the device's resolver alone.)
+const chromiumServers = () => { const ord = doh.order(); const list = ord.length === 1 && ord[0] === 'custom' && DohChain.isOnDevice(doh.choice.url) ? DohChain.order({ kind: 'auto' }, doh.health, Math.floor(Date.now() / 1000)) : ord; return list.map((id) => (id === 'custom' ? (doh.choice.url || '') : doh.server(id)?.url || '')).filter((u) => /^https:\/\//.test(u)); };
+const applyChromium = () => { const servers = chromiumServers(); app.configureHostResolver(!doh.on ? { secureDnsMode: 'off' } : { secureDnsMode: doh.allowSystem ? 'automatic' : 'secure', secureDnsServers: servers }); };
 const applyProxy = async () => {
   if (doh.on && !doh.proxy) { doh.proxy = await DohChain.startProxy((h) => doh.lookup(h)); }
   else if (!doh.on && doh.proxy) { const p = doh.proxy; doh.proxy = null; await p.close(); }
-  require('./aria2.cjs').setDohProxy(doh.proxy ? doh.proxy.url : '', engine instanceof Aria2Engine ? engine : null);
+  require('./aria2.cjs').setDohProxy(doh.proxy, engine instanceof Aria2Engine ? engine : null);
 };
-ipcMain.handle('kt:setDoh', async (_e, o) => { const r = doh.configure({ provider: String(o?.provider || 'off'), allowSystem: !!o?.allowSystem }); try { applyChromium(); } catch (err) { throw new Error(String(err.message || err)); } await applyProxy(); return r; });
-ipcMain.handle('kt:dohProbe', async () => { const r = await doh.probe(); try { applyChromium(); } catch { /* the order kept */ } return r; });
+// (The choice kept in userData, so the main process puts it in force before aria2 starts — the page sets it again.)
+const dohFile = () => path.join(app.getPath('userData'), 'doh.json');
+let dohInit = null;
+const initDohFromDisk = () => (dohInit ??= (async () => { try { const j = JSON.parse(fs.readFileSync(dohFile(), 'utf8')); if (j && j.provider && j.provider !== 'off') { doh.configure({ provider: String(j.provider), allowSystem: !!j.allowSystem }); try { applyChromium(); } catch { /* the page sets it again */ } await applyProxy(); } } catch { /* none saved */ } })());
+ipcMain.handle('kt:setDoh', async (_e, o) => { dohInit ??= Promise.resolve(); const r = doh.configure({ provider: String(o?.provider || 'off'), allowSystem: !!o?.allowSystem }); try { fs.writeFileSync(dohFile(), JSON.stringify({ provider: r.provider, allowSystem: r.allowSystem })); } catch { /* kept for this run */ } try { applyChromium(); } catch (err) { throw new Error(String(err.message || err)); } await applyProxy(); return r; });
+ipcMain.handle('kt:dohProbe', async () => { const r = await doh.probe(true); try { applyChromium(); } catch { /* the order kept */ } return r; });
 ipcMain.handle('kt:dohStatus', () => doh.status());
 ipcMain.handle('kt:dohUsed', (_e, o) => doh.usedFor(Array.isArray(o?.hosts) ? o.hosts.slice(0, 64).map(String) : []));
 app.on('will-quit', () => { if (doh.proxy) void doh.proxy.close(); });

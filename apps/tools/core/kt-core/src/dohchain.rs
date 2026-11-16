@@ -97,10 +97,10 @@ pub enum Choice {
 }
 
 /// The setting as saved («off», «auto», a provider's id, or an address) → the choice. A name no longer offered
-/// (Mullvad, discontinued) → Auto; anything else unknown, or an address that fails `validate_custom` → Off.
+/// (Mullvad, discontinued; OpenDNS, removed) → Auto; anything else unknown, or an address that fails `validate_custom` → Off.
 pub fn parse_choice(s: &str) -> Choice {
     let p = s.trim();
-    if p == "auto" || p == "mullvad" {
+    if p == "auto" || p == "mullvad" || p == "opendns" {
         return Choice::Auto;
     }
     if find(p).is_some() {
@@ -233,32 +233,68 @@ pub fn probe_due(on: bool, last_probe: Option<u64>, chain_failed_since: bool, no
 /// is not a fall-back — they have no public answer).
 pub fn is_local_name(name: &str) -> bool {
     let n = name.trim_end_matches('.').to_ascii_lowercase();
-    n == "localhost" || [".localhost", ".local", ".home.arpa", ".lan", ".internal"].iter().any(|s| n.ends_with(s))
+    // (A single label — «router», «nas» — is a name of the network the device is on: it has no public answer.)
+    (!n.is_empty() && !n.contains('.')) || n == "localhost" || [".localhost", ".local", ".home.arpa", ".lan", ".internal"].iter().any(|s| n.ends_with(s))
 }
 
-/// An answered address worth connecting to: never the unspecified, this device, a link-local, a multicast or a
-/// broadcast address; from a public resolver not a private network's either (10/8, 172.16/12, 192.168/16, 100.64/10,
-/// fc00::/7) — a filter's «blocked» answer, or a rebinding. The user's own resolver may know private names.
+/// An answered address worth connecting to: never the unspecified, this device, a link-local, a multicast, a
+/// broadcast or a reserved (240/4) address; from a public resolver not this device's (loopback) nor a private network's either (10/8, 172.16/12,
+/// 192.168/16, 100.64/10, the benchmarking 198.18/15, fc00::/7) — a filter's «blocked» answer, or a rebinding. An IPv6
+/// form that carries an IPv4 address (mapped ::ffff:0:0/96, IPv4-compatible ::/96, NAT64 64:ff9b::/96, 6to4
+/// 2002::/16) is judged by the address it carries. The user's own resolver may know private names.
 pub fn address_ok(ip: &IpAddr, from_custom: bool) -> bool {
     match ip {
         IpAddr::V4(a) => {
             let o = a.octets();
-            if a.is_unspecified() || a.is_loopback() || a.is_link_local() || a.is_multicast() || a.is_broadcast() || o[0] == 0 {
+            if a.is_unspecified() || a.is_link_local() || a.is_multicast() || o[0] >= 240 || o[0] == 0 {
                 return false;
             }
-            let private = o[0] == 10 || (o[0] == 172 && (16..=31).contains(&o[1])) || (o[0] == 192 && o[1] == 168) || (o[0] == 100 && (64..=127).contains(&o[1]));
+            if a.is_loopback() {
+                return from_custom;
+            }
+            let private = o[0] == 10 || (o[0] == 172 && (16..=31).contains(&o[1])) || (o[0] == 192 && o[1] == 168) || (o[0] == 100 && (64..=127).contains(&o[1])) || (o[0] == 198 && (o[1] == 18 || o[1] == 19));
             from_custom || !private
         }
         IpAddr::V6(a) => {
+            let s = a.segments();
+            let carried = |hi: u16, lo: u16| IpAddr::V4(std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8));
             if let Some(v4) = a.to_ipv4_mapped() {
                 return address_ok(&IpAddr::V4(v4), from_custom);
             }
-            let s = a.segments();
-            if a.is_unspecified() || a.is_loopback() || a.is_multicast() || (s[0] & 0xffc0) == 0xfe80 {
+            if a.is_unspecified() || a.is_multicast() || (s[0] & 0xffc0) == 0xfe80 {
                 return false;
+            }
+            if a.is_loopback() {
+                return from_custom;
+            }
+            if s[..6].iter().all(|x| *x == 0) || (s[0] == 0x64 && s[1] == 0xff9b && s[2..6].iter().all(|x| *x == 0)) {
+                return address_ok(&carried(s[6], s[7]), from_custom);
+            }
+            if s[0] == 0x2002 {
+                return address_ok(&carried(s[1], s[2]), from_custom);
             }
             from_custom || (s[0] & 0xfe00) != 0xfc00
         }
+    }
+}
+
+/// Whether `id`'s resolver blocks names by itself (its «blocked» answer is an answer, not a failure): the table's
+/// filters, and the user's own resolver (a filter of one's own, as often as not).
+pub fn filters(id: &str) -> bool {
+    id == "custom" || find(id).map(|p| p.filters != "none").unwrap_or(false)
+}
+
+/// The resolvers the health probe asks: «Check now» (`all`) every one (the user's own first); the automatic probe
+/// only those the chain asks first — all of them in «auto», the chosen one alone when one is pinned or one's own. A
+/// resolver on this device is asked alone either way (the chain never sends its names elsewhere).
+pub fn probe_ids(choice: &Choice, all: bool) -> Vec<String> {
+    let table: Vec<String> = catalog().iter().map(|p| p.id.clone()).collect();
+    match choice {
+        Choice::Off => Vec::new(),
+        Choice::Custom(u) if all && !is_on_device(u) => std::iter::once("custom".to_string()).chain(table).collect(),
+        Choice::Custom(_) => vec!["custom".to_string()],
+        Choice::Pinned(id) if !all => vec![id.clone()],
+        _ => table,
     }
 }
 
@@ -390,6 +426,9 @@ pub struct Resolved {
 pub enum ChainError {
     /// A resolver said so.
     NoSuchName { by: String },
+    /// A resolver that filters (`filters`) answered with the unspecified address: blocked by it, on purpose — not
+    /// asked of another (that would undo the filter the user chose).
+    Blocked { by: String },
     /// Every resolver failed, and the system's DNS was not allowed (or failed too).
     AllFailed { failed: Vec<(String, String)>, system_allowed: bool },
 }
@@ -417,7 +456,10 @@ pub fn resolve(
     }
     if let Some((ips, by)) = cache.get(name, now) {
         if ips.is_empty() {
-            return Err(ChainError::NoSuchName { by });
+            return Err(match by.strip_prefix("blocked:") {
+                Some(b) => ChainError::Blocked { by: b.to_string() },
+                None => ChainError::NoSuchName { by },
+            });
         }
         return Ok(Resolved { ips, via: Via::Cache { id: by }, failed: Vec::new() });
     }
@@ -431,9 +473,13 @@ pub fn resolve(
         match ask(id) {
             Ok((ips, ttl)) => {
                 let custom = id == "custom";
+                if !ips.is_empty() && filters(id) && ips.iter().all(|ip| ip.is_unspecified()) {
+                    cache.put(name, Vec::new(), 0, &format!("blocked:{}", id), now);
+                    return Err(ChainError::Blocked { by: id.clone() });
+                }
                 let kept: Vec<IpAddr> = ips.iter().copied().filter(|ip| address_ok(ip, custom)).collect();
                 if kept.is_empty() && !ips.is_empty() {
-                    failed.push((id.clone(), "blocked".to_string()));
+                    failed.push((id.clone(), "private".to_string()));
                     continue;
                 }
                 if kept.is_empty() {
@@ -530,23 +576,21 @@ fn pct_encode(s: &str) -> String {
     out
 }
 
-/// A magnet's UDP trackers (tr=) given by address: each host asked of `resolve` (the chain), and when it answers,
-/// the tracker rewritten (`tracker_rewrite`); everything else of the magnet left exactly as it was.
+/// A magnet's UDP trackers (tr=) given by address: each host asked of `resolve` (the chain); when it answers, the
+/// tracker rewritten (`tracker_rewrite`); when it cannot, the tracker left out — never a name for the engine to look
+/// up by the network's DNS. Everything else of the magnet left exactly as it was.
 pub fn magnet_rewrite(magnet: &str, resolve: &mut dyn FnMut(&str) -> Option<IpAddr>) -> String {
     let Some((head, query)) = magnet.split_once('?') else { return magnet.to_string() };
     let parts: Vec<String> = query
         .split('&')
-        .map(|p| {
-            let Some((k, v)) = p.split_once('=') else { return p.to_string() };
+        .filter_map(|p| {
+            let Some((k, v)) = p.split_once('=') else { return Some(p.to_string()) };
             if !k.eq_ignore_ascii_case("tr") {
-                return p.to_string();
+                return Some(p.to_string());
             }
             let url = pct_decode(v);
-            let Some(host) = tracker_host(&url) else { return p.to_string() };
-            match resolve(&host).and_then(|ip| tracker_rewrite(&url, &ip)) {
-                Some(n) => format!("{}={}", k, pct_encode(&n)),
-                None => p.to_string(),
-            }
+            let Some(host) = tracker_host(&url) else { return Some(p.to_string()) };
+            resolve(&host).and_then(|ip| tracker_rewrite(&url, &ip)).map(|n| format!("{}={}", k, pct_encode(&n)))
         })
         .collect();
     format!("{}?{}", head, parts.join("&"))
@@ -558,6 +602,58 @@ mod tests {
 
     const CASES: &str = include_str!("doh-cases.txt");
 
+    fn ids_has(c: &[Provider], id: &str) -> bool {
+        c.iter().any(|p| p.id == id)
+    }
+
+    /// The Tauri self-test's case («DNS over HTTPS: a made-up name found through the chosen resolver»): a resolver on
+    /// this device (http://127.0.0.1:<port>/dns-query) is asked alone, and its loopback answer for a made-up name is
+    /// used — not refused as a public resolver's would be; the probe asks it alone too.
+    #[test]
+    fn on_device_resolver_like_the_self_test() {
+        let choice = parse_choice("http://127.0.0.1:41234/dns-query");
+        let ord = order(&choice, &HashMap::new(), 1000);
+        assert_eq!(ord, vec!["custom".to_string()]);
+        assert_eq!(probe_ids(&choice, true), vec!["custom".to_string()]);
+        let mut cache = Cache::new();
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        let r = resolve("kr-doh-selftest.test", &ord, &mut cache, 1000, false, &mut |id| { assert_eq!(id, "custom"); Ok((vec![lo], 60)) }, &mut || 0, &mut || panic!("system")).unwrap();
+        assert_eq!(r.ips, vec![lo]);
+        assert!(matches!(r.via, Via::Doh { ref id, .. } if id == "custom"));
+        // (A public resolver's loopback answer for a public name is still refused.)
+        let mut c2 = Cache::new();
+        assert!(resolve("x.test", &ord_of(&["google"]), &mut c2, 1000, false, &mut |_| Ok((vec![lo], 60)), &mut || 0, &mut || panic!("system")).is_err());
+    }
+
+    fn ord_of(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn probe_cases() {
+        let cs = cases("probe");
+        assert!(cs.len() >= 5);
+        for c in cs {
+            assert_eq!(probe_ids(&parse_choice(&c[0]), c[1] == "all").join(","), c[2], "probe {} {}", c[0], c[1]);
+        }
+    }
+
+    #[test]
+    fn filtered_block_is_an_answer() {
+        let mut cache = Cache::new();
+        let mut asked = Vec::new();
+        // (Quad9 blocks malware: its 0.0.0.0 stands — the next resolver is not asked, Quad9 not marked failing.)
+        let e = resolve("bad.test", &ord(&["quad9", "google"]), &mut cache, 1000, true, &mut |id| { asked.push(id.to_string()); Ok((vec!["0.0.0.0".parse().unwrap()], 60)) }, &mut || 0, &mut || panic!("system")).unwrap_err();
+        assert_eq!(e, ChainError::Blocked { by: "quad9".into() });
+        assert_eq!(asked, vec!["quad9".to_string()]);
+        assert!(matches!(resolve("bad.test", &ord(&["google"]), &mut cache, 1005, true, &mut |_| panic!("asked"), &mut || 0, &mut || panic!("system")), Err(ChainError::Blocked { .. })));
+        // (An unfiltered one's private answer for a public name: the next one asked, the reason «private».)
+        let ip: IpAddr = "203.0.113.5".parse().unwrap();
+        let mut c2 = Cache::new();
+        let r = resolve("lan.test", &ord(&["google", "cloudflare"]), &mut c2, 1000, false, &mut |id| if id == "google" { Ok((vec!["192.168.1.4".parse().unwrap()], 60)) } else { Ok((vec![ip], 60)) }, &mut || 0, &mut || panic!("system")).unwrap();
+        assert_eq!(r.failed, vec![("google".to_string(), "private".to_string())]);
+    }
+
     fn cases(kind: &str) -> Vec<Vec<String>> {
         CASES.lines().filter(|l| l.starts_with(&format!("{}|", kind))).map(|l| l.split('|').skip(1).map(|s| s.to_string()).collect()).collect()
     }
@@ -565,7 +661,10 @@ mod tests {
     #[test]
     fn table() {
         let c = catalog();
-        assert_eq!(c.len(), 10);
+        assert_eq!(c.len(), 9);
+        assert!(!ids_has(c, "opendns"));
+        // (IPv6 bootstrap for every provider that documents it.)
+        assert!(c.iter().filter(|p| p.id != "dnssb").all(|p| p.ips.iter().any(|ip| ip.is_ipv6())));
         let ids: Vec<&str> = c.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids[0], "cloudflare");
         assert!(!ids.contains(&"mullvad"));
@@ -742,7 +841,7 @@ mod tests {
         assert_eq!(asked, ord(&["cloudflare", "google", "quad9"]));
         assert_eq!(r.ips, vec![ip]);
         assert!(matches!(r.via, Via::Doh { ref id, .. } if id == "quad9"));
-        assert_eq!(r.failed, vec![("cloudflare".to_string(), "timeout".to_string()), ("google".to_string(), "blocked".to_string())]);
+        assert_eq!(r.failed, vec![("cloudflare".to_string(), "timeout".to_string()), ("google".to_string(), "private".to_string())]);
         assert!(!system_called);
         // (Answered from the cache next, by the one that gave it.)
         let again = resolve("SITE.test", &ord(&["cloudflare"]), &mut cache, 1050, false, &mut |_| panic!("asked"), &mut || 0, &mut || panic!("system")).unwrap();

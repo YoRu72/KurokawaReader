@@ -40,6 +40,10 @@
       "name": "webstream.cjs",
       "reason": "Needs the webtorrent package from desktop/package.json (cd desktop && npm install), which the preflight and release-tools.yml jobs do not install; it runs in webstream-check.yml, which installs it on three systems.",
       "run": false
+    },
+    {
+      "name": "aria2cert.cjs",
+      "reason": "Needs a real aria2c (the bundle's, fetched by desktop/fetch-aria2.mjs only in the build jobs, or one on the PATH) and openssl; it skips with a message without them. Run by hand after fetch-aria2."
     }
   ]
 }

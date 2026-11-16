@@ -145,6 +145,7 @@ fn main() {
             commands::kt_remove,
             commands::kt_set_files,
             commands::kt_set_url,
+            commands::kt_ignore_cert,
             commands::kt_move,
             commands::kt_set_limits,
             commands::kt_configure,
@@ -337,6 +338,8 @@ fn main() {
                     res_dirs.push(d.to_path_buf());
                 }
             }
+            // (0.21 P9: the DoH choice kept beside the engine's files, read before aria2 starts.)
+            dohtools::set_data_dir(&data_dir);
             engine::init(
                 handle.clone(),
                 data_dir,

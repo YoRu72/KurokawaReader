@@ -525,6 +525,36 @@ mod tests {
         assert_eq!(decode_strict(&raw(id, 0x8180, &q, &[]), "site.test", TYPE_A, id).unwrap().ips.len(), 0);
     }
 
+    /// The shared wire vectors (Tools' core/kt-core/src/doh-cases.txt «wire» lines): the same answers through this
+    /// decoder, KrDoh.parseStrict and dohchain.cjs decodeStrict.
+    #[test]
+    fn shared_wire_vectors() {
+        let text = include_str!("../../../apps/tools/core/kt-core/src/doh-cases.txt");
+        let mut n = 0;
+        for line in text.lines().filter(|l| l.starts_with("wire|")) {
+            let f: Vec<&str> = line.split('|').collect();
+            let (what, qname, qtype, id, hex, want) = (f[1], f[2], f[3].parse::<u16>().unwrap(), f[4].parse::<u16>().unwrap(), f[5], f[6]);
+            let m: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+            let got = match decode_strict(&m, qname, qtype, id) {
+                Ok(a) => format!("ok:{}:{}", a.ips.iter().map(|ip| ip.to_string()).collect::<Vec<_>>().join(","), a.ttl),
+                Err(Refused::NoSuchName) => "err:nx".to_string(),
+                Err(Refused::Bad(e)) => format!("err:{}", kind_of(&e)),
+            };
+            assert_eq!(got, want, "wire {}", what);
+            n += 1;
+        }
+        assert!(n >= 15, "{}", n);
+    }
+
+    fn kind_of(e: &str) -> &'static str {
+        for (k, s) in [("id", "(id)"), ("question", "another question"), ("trunc", "truncated"), ("notanswer", "not a DNS answer"), ("server", "(code"), ("loop", "loop"), ("toomany", "too many"), ("short", "cut short"), ("pointer", "points at itself"), ("size", "wrong size")] {
+            if e.contains(s) {
+                return k;
+            }
+        }
+        "other"
+    }
+
     #[test]
     fn local_names() {
         assert_eq!(local_answer("127.0.0.1").unwrap(), vec!["127.0.0.1".parse::<IpAddr>().unwrap()]);
