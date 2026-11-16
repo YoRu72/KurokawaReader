@@ -61,44 +61,55 @@ function readLayout(ex: Exports): Layout {
 }
 
 /** One instantiated engine; poisoned by a trap (nothing calls into it after). */
-class Engine { poisoned = false; constructor(readonly ex: Exports, readonly L: Layout) {} }
+class Engine { poisoned = false; constructor(readonly ex: Exports, readonly L: Layout, readonly slot: EngineSlot) {} }
 /** The scene id was not in this build (the caller says so, not «engine unavailable»). `ktKind` survives minifying. */
 export class UnknownScene extends Error { readonly ktKind = 'unknown'; }
 /** The engine threw (a trap): the caller falls back. */
 export class SceneTrap extends Error { readonly ktKind = 'trap'; }
 
-/** The engine, compiled and instantiated once a page; a failure is kept for a while, then tried again. */
-let engine: Promise<Engine> | null = null; let failedAt = 0;
+/** Where an engine instance serves: the page's background (and its preview), or the picker's thumbnails — two
+ *  instances of the one compiled module, so a trap while a thumbnail is drawn never stops the live background. */
+export type EngineSlot = 'main' | 'thumb';
+/** The module, fetched and compiled once a page; a failure is kept for a while, then tried again. */
+let modP: Promise<WebAssembly.Module | WebAssembly.Instance> | null = null; let failedAt = 0;
+const engines: Record<EngineSlot, Promise<Engine> | null> = { main: null, thumb: null };
 const RETRY_MS = 30_000;
-function loadEngine(): Promise<Engine> {
-  if (engine && !(failedAt && performance.now() - failedAt > RETRY_MS)) return engine;
+function loadModule(): Promise<WebAssembly.Module | WebAssembly.Instance> {
+  if (modP && !(failedAt && performance.now() - failedAt > RETRY_MS)) return modP;
   failedAt = 0;
-  const p = (async () => {
+  const p = (async (): Promise<WebAssembly.Module | WebAssembly.Instance> => {
     const url = new URL('scene/ktscene.wasm', document.baseURI).href;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`ktscene.wasm: HTTP ${res.status}`);
-    let inst: WebAssembly.Instance | null = null;
     // (Streaming compiles while it downloads, but only from a response typed application/wasm; otherwise the bytes.)
-    if (typeof WebAssembly.instantiateStreaming === 'function' && /application\/wasm/i.test(res.headers.get('content-type') ?? '')) {
-      try { inst = (await WebAssembly.instantiateStreaming(res.clone(), {})).instance; } catch { inst = null; }
+    if (typeof WebAssembly.compileStreaming === 'function' && /application\/wasm/i.test(res.headers.get('content-type') ?? '')) {
+      try { return await WebAssembly.compileStreaming(res.clone()); } catch { /* the bytes, below */ }
     }
-    if (!inst) {
-      const buf = await res.arrayBuffer(); const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-      if (b.length < 4 || b[0] !== 0 || b[1] !== 0x61 || b[2] !== 0x73 || b[3] !== 0x6d) throw new Error('ktscene.wasm: not a wasm file');
-      inst = (await WebAssembly.instantiate(buf, {})).instance;
-    }
+    const buf = await res.arrayBuffer(); const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+    if (b.length < 4 || b[0] !== 0 || b[1] !== 0x61 || b[2] !== 0x73 || b[3] !== 0x6d) throw new Error('ktscene.wasm: not a wasm file');
+    return WebAssembly.compile(buf);
+  })();
+  p.catch(() => { if (modP === p) failedAt = performance.now(); });
+  modP = p; return p;
+}
+/** An engine instance for `slot`, made once (again after a trap). */
+function loadEngine(slot: EngineSlot = 'main'): Promise<Engine> {
+  const cur = engines[slot]; if (cur) return cur;
+  const p = (async () => {
+    const m = await loadModule();
+    const inst = m instanceof WebAssembly.Instance ? m : await WebAssembly.instantiate(m, {});
     const ex = inst.exports as unknown as Exports;
     const miss = NEEDED.filter((k) => !(k in ex)); if (miss.length) throw new Error(`ktscene.wasm: no export ${miss[0]} (an older engine?)`);
     if (ex.kt_abi() !== ABI) throw new Error(`ktscene.wasm: ABI ${ex.kt_abi()}, this page speaks ${ABI}`);
-    return new Engine(ex, readLayout(ex));
+    return new Engine(ex, readLayout(ex), slot);
   })();
-  p.catch(() => { if (engine === p) failedAt = performance.now(); });
-  engine = p; return p;
+  p.catch(() => { if (engines[slot] === p) engines[slot] = null; });
+  engines[slot] = p; return p;
 }
-/** A trap: this engine is never called again; the next scene loads a new one. */
+/** A trap: this engine is never called again; the next scene on its slot loads a new instance. */
 function poison(e: Engine): void {
   e.poisoned = true;
-  void engine?.then((cur) => { if (cur === e) engine = null; }, () => undefined);
+  const p = engines[e.slot]; void p?.then((cur) => { if (cur === e && engines[e.slot] === p) engines[e.slot] = null; }, () => undefined);
 }
 
 /** A scene file into the engine: a handle (> 0), or the engine's error code thrown. */
@@ -139,13 +150,14 @@ function palSpecs(def: unknown, light: boolean): PalSpec[] {
 /* ---------- sprites ---------- */
 function mk(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D | null] { const c = document.createElement('canvas'); c.width = w; c.height = h; return [c, c.getContext('2d')]; }
 /** Sprite `id` in colour `c` (64 px, drawn scaled): 0 soft dot, 1 crisp dot, 2 streak, 3 ring, 4 puff, 5–7 crystal
- *  flakes (six arms, three shapes), 8 petal, 9 leaf, 10 feather, 11 curtain (a ribbon's slice), 12 comet. `edge`: a faint cool
- *  rim for light particles on a light sky (snow must read as snow, not as a hole). */
+ *  flakes (six arms, three shapes), 8 petal, 9 leaf, 10 feather, 11 curtain (a ribbon's slice), 12 comet, 13 glow (a small
+ *  bright heart in a wide soft halo: a firefly), 14 star (a crisp core with four faint rays). `edge`: a faint cool rim for
+ *  light particles on a light sky (snow must read as snow, not as a hole). (The engine takes sprite ids 0–15.) */
 function sprite(id: number, c: RGBA, edge: RGBA | null): HTMLCanvasElement {
   const n = 64, m = n / 2; const [cv, g] = mk(n, n); if (!g) return cv;
   const radial = (stops: [number, number][]): void => { const grd = g.createRadialGradient(m, m, 0, m, m, m); for (const [s, a] of stops) grd.addColorStop(s, css(c, a)); g.fillStyle = grd; g.fillRect(0, 0, n, n); };
   const rim = (r: number): void => { if (!edge) return; g.strokeStyle = css(edge, 0.32); g.lineWidth = n * 0.06; g.beginPath(); g.arc(m, m, r, 0, Math.PI * 2); g.stroke(); };
-  if (id === 1) { rim(n * 0.2); radial([[0, 1], [0.3, 0.95], [0.42, 0.35], [1, 0]]); }
+  if (id === 1) { rim(n * 0.24); radial([[0, 1], [0.38, 1], [0.52, 0.5], [0.75, 0.12], [1, 0]]); }
   else if (id === 2) { const grd = g.createLinearGradient(0, 0, 0, n); grd.addColorStop(0, css(c, 0)); grd.addColorStop(0.6, css(c, 0.55)); grd.addColorStop(0.92, css(c, 0.95)); grd.addColorStop(1, css(c, 0)); g.fillStyle = grd; g.fillRect(m - n * 0.06, 0, n * 0.12, n); }
   else if (id === 3) { g.strokeStyle = css(c, 0.85); g.lineWidth = n * 0.045; g.beginPath(); g.ellipse(m, m, n * 0.44, n * 0.44, 0, 0, Math.PI * 2); g.stroke(); }
   else if (id === 4) radial([[0, 0.9], [0.4, 0.55], [0.75, 0.18], [1, 0]]);
@@ -182,6 +194,13 @@ function sprite(id: number, c: RGBA, edge: RGBA | null): HTMLCanvasElement {
     const halo = g.createRadialGradient(m, n * 0.86, 0, m, n * 0.86, n * 0.3); halo.addColorStop(0, css(c, 0.45)); halo.addColorStop(1, css(c, 0)); g.fillStyle = halo; g.fillRect(m - n * 0.3, n * 0.56, n * 0.6, n * 0.44);
     const core = g.createRadialGradient(m, n * 0.86, 0, m, n * 0.86, n * 0.14); core.addColorStop(0, css(mix(c, [255, 255, 255, 1], 0.6), 1)); core.addColorStop(0.35, css(c, 0.95)); core.addColorStop(1, css(c, 0));
     g.fillStyle = core; g.fillRect(m - n * 0.14, n * 0.72, n * 0.28, n * 0.28);
+  } else if (id === 13) { // glow: a white-hot heart, the colour round it, a wide faint halo
+    radial([[0, 1], [0.1, 0.95], [0.2, 0.55], [0.42, 0.2], [0.7, 0.06], [1, 0]]);
+    const heart = g.createRadialGradient(m, m, 0, m, m, n * 0.12); heart.addColorStop(0, css(mix(c, [255, 255, 255, 1], 0.7), 1)); heart.addColorStop(1, css(c, 0)); g.fillStyle = heart; g.fillRect(m - n * 0.12, m - n * 0.12, n * 0.24, n * 0.24);
+  } else if (id === 14) { // star: four thin rays fading out, a crisp bright core
+    for (const [dx, dy] of [[1, 0], [0, 1]]) { const grd = dx ? g.createLinearGradient(0, 0, n, 0) : g.createLinearGradient(0, 0, 0, n); grd.addColorStop(0, css(c, 0)); grd.addColorStop(0.5, css(c, 0.7)); grd.addColorStop(1, css(c, 0)); g.fillStyle = grd; if (dx) g.fillRect(0, m - n * 0.02, n, n * 0.04); else g.fillRect(m - n * 0.02, 0, n * 0.04, n); }
+    rim(n * 0.14);
+    const core = g.createRadialGradient(m, m, 0, m, m, n * 0.22); core.addColorStop(0, css(mix(c, [255, 255, 255, 1], 0.5), 1)); core.addColorStop(0.45, css(c, 0.95)); core.addColorStop(1, css(c, 0)); g.fillStyle = core; g.fillRect(m - n * 0.22, m - n * 0.22, n * 0.44, n * 0.44);
   } else { // 0: a soft core that holds its colour, then a smooth fall-off: a dot of a pixel or two still shows its tint
     rim(n * 0.3);
     const st: [number, number][] = []; for (let i = 0; i <= 8; i++) { const s = i / 8; const u = s < 0.3 ? 0 : (s - 0.3) / 0.7; st.push([s, Math.max(0, (1 - u) * (1 - u) * (1 + 2 * u) * (1 - u * 0.15))]); } radial(st);
@@ -239,18 +258,21 @@ function drawStatic(g: CanvasRenderingContext2D, kind: number, geo: Float32Array
     grd.addColorStop(0, css(P(top), a0)); grd.addColorStop(1, css(P(bottom), a1)); g.fillStyle = grd; g.fillRect(b.x0, y0, b.x1 - b.x0, Math.max(b.y1, y1) - y0);
   } else if (kind === 6) { // bokeh
     const n = geo[0] | 0; for (let i = 0; i < n; i++) { const [x, y, r, ci, a] = [geo[1 + i * 5], geo[2 + i * 5], geo[3 + i * 5], geo[4 + i * 5], geo[5 + i * 5]]; const c = P(ci); const rg = g.createRadialGradient(x, y, 0, x, y, r); rg.addColorStop(0, css(c, a)); rg.addColorStop(0.7, css(c, a * 0.8)); rg.addColorStop(1, css(c, 0)); g.fillStyle = rg; g.fillRect(x - r, y - r, r * 2, r * 2); }
-  } else if (kind === 7 || kind === 8) { // grain / halftone: screen overlays, seeded
-    const a = geo[0]; const cell = kind === 8 ? Math.max(2, geo[1]) : 2; let s = 12345;
-    const rnd = (): number => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
-    for (let y = b.y0; y < b.y1; y += cell) for (let x = b.x0; x < b.x1; x += cell) { const v = rnd(); if (kind === 7) { if (v < 0.5) continue; g.fillStyle = v > 0.75 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`; g.fillRect(x, y, cell, cell); } else { g.fillStyle = `rgba(0,0,0,${a})`; g.beginPath(); g.arc(x + cell / 2, y + cell / 2, cell * 0.22 * (0.6 + v * 0.6), 0, 6.2832); g.fill(); } }
+  } else if (kind === 7 || kind === 8) { // grain / halftone: screen overlays from a small seeded tile, laid as a pattern
+    const tile = overlayTile(kind, geo[0], kind === 8 ? geo[1] : 2); const pat = tile && g.createPattern(tile, 'repeat');
+    if (pat) { g.fillStyle = pat; g.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); }
   } else if (kind === 12) { // shafts: soft beams, brightest at the top, fading along their length and to both sides
     const n = geo[0] | 0; const c = P(geo[1]); const ang = geo[2 + n * 5] ?? 0; const prev = g.globalCompositeOperation; g.globalCompositeOperation = 'lighter';
     for (let i = 0; i < n; i++) {
       const [x, y, w, len, a] = [geo[2 + i * 5], geo[3 + i * 5], geo[4 + i * 5], geo[5 + i * 5], geo[6 + i * 5]];
       g.save(); g.translate(x, y); g.rotate(-ang);
-      const along = g.createLinearGradient(0, 0, 0, len); along.addColorStop(0, css(c, a)); along.addColorStop(0.55, css(c, a * 0.45)); along.addColorStop(1, css(c, 0));
-      g.fillStyle = along; g.beginPath(); g.moveTo(-w * 0.35, 0); g.lineTo(w * 0.35, 0); g.lineTo(w * 0.8, len); g.lineTo(-w * 0.8, len); g.closePath();
-      g.shadowColor = css(c, a * 0.8); g.shadowBlur = Math.max(4, w * 0.6 * Math.abs(g.getTransform().a)); g.fill(); g.restore();
+      // (Soft on both sides: the beam drawn only as its blurred shadow — the shape itself far off the canvas, its shadow
+      //  brought back —, its strength along the beam in the shape's own alpha.)
+      const along = g.createLinearGradient(0, 0, 0, len); along.addColorStop(0, `rgba(0,0,0,${a})`); along.addColorStop(0.55, `rgba(0,0,0,${a * 0.45})`); along.addColorStop(1, 'rgba(0,0,0,0)');
+      const tr = g.getTransform(); const sc = Math.hypot(tr.a, tr.b); const off = Math.round((b.x1 - b.x0 + len + w) * sc) + 400;
+      g.setTransform(tr.a, tr.b, tr.c, tr.d, tr.e - off, tr.f);
+      g.fillStyle = along; g.beginPath(); g.moveTo(-w * 0.3, 0); g.lineTo(w * 0.3, 0); g.lineTo(w * 0.6, len); g.lineTo(-w * 0.6, len); g.closePath();
+      g.shadowColor = css(c, 1); g.shadowOffsetX = off; g.shadowOffsetY = 0; g.shadowBlur = Math.min(240, Math.max(4, w * 0.5 * sc)); g.fill(); g.restore();
     }
     g.globalCompositeOperation = prev;
   } else if (kind === 13) { // arcs: thin lines of light, each with a faint glow
@@ -263,6 +285,22 @@ function drawStatic(g: CanvasRenderingContext2D, kind: number, geo: Float32Array
   }
   g.globalAlpha = 1;
 }
+/** Grain and halftone tiles, by kind, alpha and cell: at most 64×64 cells and 512 scene units a side — a few
+ *  thousand marks however large the values a scene file (one day the reader's own) asks for —, laid as a pattern. */
+const tiles = new Map<string, HTMLCanvasElement | null>();
+function overlayTile(kind: number, alpha: number, cell0: number): HTMLCanvasElement | null {
+  const a = Math.max(0, Math.min(0.6, Number.isFinite(alpha) ? alpha : 0)), cell = Math.max(2, Math.min(64, Number.isFinite(cell0) ? cell0 : 2));
+  const key = `${kind}|${a.toFixed(3)}|${cell.toFixed(2)}`; if (tiles.has(key)) return tiles.get(key) ?? null;
+  const N = Math.max(4, Math.min(64, Math.floor(512 / cell))); const P = Math.ceil(N * cell);
+  const [cv, t] = mk(P, P); if (!t) { tiles.set(key, null); return null; }
+  let s = 12345; const rnd = (): number => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const v = rnd(), x = i * cell, y = j * cell;
+    if (kind === 7) { if (v < 0.5) continue; t.fillStyle = v > 0.75 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`; t.fillRect(x, y, cell, cell); }
+    else { t.fillStyle = `rgba(0,0,0,${a})`; t.beginPath(); t.arc(x + cell / 2, y + cell / 2, cell * 0.22 * (0.6 + v * 0.6), 0, 6.2832); t.fill(); }
+  }
+  if (tiles.size > 8) tiles.clear(); tiles.set(key, cv); return cv;
+}
 /** The contrast the scrim aims at, above 4.5: the static layers' cell mean leaves out the moving particles (snow over
  *  a lit slope adds a little light) and a text's own rectangle is smaller than a cell. */
 const PANEL_TARGET = 4.9, BARE_TARGET = 4.8;
@@ -273,10 +311,16 @@ export const HALO = 0.35;
 const PANEL_MAX = 0.9;
 const BLEND: GlobalCompositeOperation[] = ['source-over', 'lighter', 'screen', 'multiply', 'soft-light'];
 
-export interface SceneStats { steps: number; stepMs: number; draws: number; drawMs: number; instances: number; live: number; statics: number; scrimMax: number; panelScrim: number }
-/** A run of consecutive static layers with the same parallax, drawn into one canvas at the transform of its making;
- *  blitted after at the transform of the frame (the camera's shift and a small zoom need no redraw). */
-interface StaticGroup { first: number; clean: HTMLCanvasElement; cv: HTMLCanvasElement; bx: number; by: number; scale: number; tx: number; ty: number }
+export interface SceneStats { steps: number; stepMs: number; draws: number; drawMs: number; instances: number; live: number; statics: number; staticPx: number; builds: number; scrimMax: number; panelScrim: number }
+/** A resize rests this long before the static canvases are made again (meanwhile the old ones, scaled). */
+const RESIZE_MS = 200;
+/** The least size a particle is drawn at, in device pixels. */
+const MIN_PX = 2;
+/** A run of consecutive static layers with the same parallax (with the mouse Off, the same transform: the camera never
+ *  moves, so a whole run becomes one), drawn into one canvas at the transform of its making; blitted after at the
+ *  transform of the frame (the camera's shift and zoom, a window being resized, need no redraw). Only one canvas a
+ *  group: the scrim is baked into it, and a new scrim draws the group again from its geometry. */
+interface StaticGroup { first: number; last: number; cv: HTMLCanvasElement; bx: number; by: number; scale: number; tx: number; ty: number; k: number; zoom: number }
 /** What the page gives the scrim: its panels (rectangles in the canvas's CSS pixels, each with its own tint) and its
  *  bare texts (rectangles); null: no page around (a preview): everything counts as bare text. */
 /** The page under a scene: each panel (with the text it holds — measured there, not under its whole surface — when the
@@ -293,6 +337,13 @@ export class SceneRun {
   theme: SceneTheme | null = null; private groundCss = 'rgb(0,0,0)';
   private f32: Float32Array | null = null; private u32: Uint32Array | null = null; private buf: ArrayBuffer | null = null;
   private count = 0; private dead = false; private statics: StaticGroup[] = []; private scrimMax = 0; private needBake = true;
+  /** The viewport told to the engine; when the static canvases are made again after a resize (0: not due). */
+  private vw = 0; private vh = 0; private rebuildAt = 0; private zoom = 1; private reactK = -1;
+  private built = false;
+  /** The static canvases let go: made again at the next frame. */
+  private drop(): void { this.statics = []; this.built = false; }
+  /** The static canvases made so far (tests: a click's zoom or an unchanged resize must not add to it). */
+  builds = 0;
   private mirrorCv: HTMLCanvasElement | null = null; private reflCv: HTMLCanvasElement | null = null; private reflAt = -1; private reflWy = 0; private accumBumps = new Map<number, Float32Array>(); private t0 = performance.now();
   /** The page's panels and bare text, asked when the scrim is made; null: everywhere bare (a preview). */
   dom: (() => SceneDom) | null = null;
@@ -304,6 +355,8 @@ export class SceneRun {
   /** The scene has large moving layers (ribbons, a mirror, settled snow): its frames are measured too. */
   private wide = false;
   private ribCv: HTMLCanvasElement | null = null;
+  /** The bare text's dimming of a scene measured from its frames, laid over every frame (null: none, or baked). */
+  private dimCv: HTMLCanvasElement | null = null;
   /** The colour the veils and halos are made of (the page puts it on the panels too). */
   veil: RGBA = [0, 0, 0, 1];
   private st = { steps: 0, stepMs: 0, draws: 0, drawMs: 0 };
@@ -334,13 +387,21 @@ export class SceneRun {
     if (b !== this.buf || !this.f32 || !this.u32) { this.buf = b; this.f32 = new Float32Array(b); this.u32 = new Uint32Array(b); }
     return [this.f32, this.u32];
   }
-  viewport(w: number, h: number): void { this.call(() => this.ex.scene_viewport(this.h, w, h)); this.statics = []; }
+  /** The size of the space in CSS pixels. Unchanged: nothing. Changed (a window being dragged larger): the static
+   *  canvases kept and blitted scaled, made again once the size has rested RESIZE_MS. */
+  viewport(w: number, h: number): void {
+    if (w === this.vw && h === this.vh) return;
+    this.call(() => this.ex.scene_viewport(this.h, w, h));
+    const first = !this.vw; this.vw = w; this.vh = h;
+    if (first) this.drop(); else this.rebuildAt = performance.now() + RESIZE_MS;
+  }
   pointer(x: number, y: number, buttons: number): void { this.call(() => this.ex.scene_pointer(this.h, x, y, buttons)); }
   click(x: number, y: number): void { this.call(() => this.ex.scene_click(this.h, x, y)); }
   /** The camera: a shift −1…1 each way (× each layer's parallax), a zoom 1–1.5. */
-  camera(px: number, py: number, zoom: number): void { this.call(() => this.ex.scene_camera(this.h, px, py, zoom)); }
-  /** How much the pointer and clicks move things: 0 off, 1 subtle, 2.2 lively. */
-  react(k: number): void { this.call(() => this.ex.scene_param(this.h, PARAM_REACT, k)); }
+  camera(px: number, py: number, zoom: number): void { this.call(() => this.ex.scene_camera(this.h, px, py, zoom)); this.zoom = zoom; }
+  /** How much the pointer and clicks move things: 0 off, 1 subtle, 2.2 lively. Off or on again: the static runs grouped
+   *  anew (one canvas a run while nothing moves the camera). */
+  react(k: number): void { this.call(() => this.ex.scene_param(this.h, PARAM_REACT, k)); if ((k > 0) !== (this.reactK > 0) && this.reactK >= 0) this.drop(); this.reactK = k; }
   /** 1 normal, 0.6 Reduced, 0 stopped. */
   setSpeed(k: number): void { this.call(() => this.ex.scene_param(this.h, PARAM_SPEED, k)); }
   /** The theme's colours for the scene's palette: resolved, the no-yellow rule applied, told to the engine. Returns
@@ -367,7 +428,7 @@ export class SceneRun {
       return c;
     });
     this.edge = t.light ? [92, 112, 150, 1] : null;
-    this.sprites.clear(); this.statics = [];
+    this.sprites.clear(); this.drop();
     return true;
   }
   /** Time passes (ms); true when anything moved (only then is a frame worth drawing). */
@@ -390,24 +451,25 @@ export class SceneRun {
     }
     return s;
   }
-  /** The static layers drawn into canvases: runs of consecutive ones with the same parallax into one, at the frame's
-   *  transform. A clean copy is kept: the scrim is laid over a copy of it, so it can be made again (the page's text
-   *  moved) without drawing the art again. */
-  private buildStatics(cmds: Float32Array, base: number, n: number, k: number): void {
+  /** The static layers drawn into canvases at the frame's transform: runs of consecutive ones with the same parallax
+   *  into one — with the mouse Off (the camera still), runs with the same transform, whatever their parallax. */
+  private buildStatics(cmds: Float32Array, base: number, n: number, k: number): StaticGroup[] {
     const L = this.L; const groups: { first: number; last: number; scale: number; tx: number; ty: number; par: number }[] = [];
-    this.wide = false; for (let i = 0; i < n; i++) { const kd = cmds[base + i * L.CS + L.KIND] | 0; if (cmds[base + i * L.CS + L.KNOWN] && kd >= 9 && kd <= 11) this.wide = true; }
+    const still = this.reactK <= 0; this.builds++;
+    this.wide = false; for (let i = 0; i < n; i++) { const kd = cmds[base + i * L.CS + L.KIND] | 0; if (cmds[base + i * L.CS + L.KNOWN] && (kd === 4 || (kd >= 9 && kd <= 11))) this.wide = true; }
     for (let i = 0; i < n; i++) {
       const o = base + i * L.CS; if (!cmds[o + L.STATIC] || !cmds[o + L.KNOWN]) continue;
       const [s, tx, ty, bl, par] = [cmds[o + L.SCALE], cmds[o + L.TX], cmds[o + L.TY], cmds[o + L.BLEND], cmds[o + 4]];
       const g = groups[groups.length - 1];
-      if (g && g.last === i - 1 && Math.abs(g.par - par) < 1e-4 && !bl) g.last = i; else groups.push({ first: i, last: i, scale: s, tx, ty, par });
+      const same = g && (Math.abs(g.par - par) < 1e-4 || (still && Math.abs(g.scale - s) < 1e-5 && Math.abs(g.tx - tx) < 1e-3 && Math.abs(g.ty - ty) < 1e-3));
+      if (g && g.last === i - 1 && same && !bl) g.last = i; else groups.push({ first: i, last: i, scale: s, tx, ty, par });
     }
     const { w: SW, h: SH, ov } = this.space; const bnd: Bounds = { x0: -SW * ov, y0: -SH * ov, x1: SW * (1 + ov), y1: SH * (1 + ov), w: SW, h: SH };
     const out: StaticGroup[] = [];
     for (const gr of groups) {
       const S = gr.scale * k; const bx = Math.floor((bnd.x0 * gr.scale + gr.tx) * k), by = Math.floor((bnd.y0 * gr.scale + gr.ty) * k);
       const W = Math.min(4096, Math.ceil((bnd.x1 - bnd.x0) * S) + 2), H = Math.min(4096, Math.ceil((bnd.y1 - bnd.y0) * S) + 2);
-      const [clean, g] = mk(W, H); if (!g) continue;
+      const [cv, g] = mk(W, H); if (!g) continue;
       g.setTransform(S, 0, 0, S, (gr.tx * k - bx), (gr.ty * k - by));
       for (let i = gr.first; i <= gr.last; i++) {
         const o = base + i * L.CS; if (!cmds[o + L.STATIC] || !cmds[o + L.KNOWN]) continue;
@@ -418,11 +480,9 @@ export class SceneRun {
         drawStatic(g, cmds[o + L.KIND] | 0, geo, this.pal, bnd, cmds[o + L.OPACITY]);
       }
       g.globalCompositeOperation = 'source-over';
-      // (Ready to blit at once: a scene measured from its frames bakes after the first one is drawn.)
-      const [cv, cg] = mk(W, H); cg?.drawImage(clean, 0, 0);
-      out.push({ first: gr.first, clean, cv, bx, by, scale: gr.scale, tx: gr.tx, ty: gr.ty });
+      out.push({ first: gr.first, last: gr.last, cv, bx, by, scale: gr.scale, tx: gr.tx, ty: gr.ty, k, zoom: this.zoom });
     }
-    this.statics = out; this.needBake = true;
+    return out;
   }
   /** The contrast rule, from the static layers' local mean (cells of about two text heights; the particles left out):
    *  - PANELS: each panel its own veil — the least share of the ground laid over its tint that keeps every text role
@@ -431,14 +491,13 @@ export class SceneRun {
    *  - BARE TEXT (no panel under it): a halo first (the page gives such text a soft text-shadow in the ground colour,
    *    counted as HALO), then, only as far as still needed for 5:1, a soft dimming of the art under it — a feathered
    *    shape of the text block, no edge — laid into the static canvases. With no page (a preview), everything is bare. */
-  private bake(cw: number, ch: number, k: number, frame?: HTMLCanvasElement): void {
+  private bake(groups: StaticGroup[], cw: number, ch: number, k: number, frame?: HTMLCanvasElement): void {
     this.needBake = false;
-    const t = this.theme; if (!t || !this.statics.length) { this.scrimMax = 0; this.panelScrim = 0; return; }
-    for (const s of this.statics) { const g = s.cv.getContext('2d'); if (!g) continue; g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'copy'; g.drawImage(s.clean, 0, 0); g.globalCompositeOperation = 'source-over'; }
+    const t = this.theme; if (!t || !groups.length) { this.scrimMax = 0; this.panelScrim = 0; return; }
     const GW = Math.max(4, Math.round(cw / 20)), GH = Math.max(3, Math.round(ch / 20));
     const [, mg] = mk(GW, GH); if (!mg) return;
     mg.fillStyle = this.groundCss; mg.fillRect(0, 0, GW, GH); mg.imageSmoothingQuality = 'high';
-    for (const st of this.statics) mg.drawImage(st.clean, st.bx * GW / cw, st.by * GH / ch, st.clean.width * GW / cw, st.clean.height * GH / ch);
+    for (const st of groups) mg.drawImage(st.cv, st.bx * GW / cw, st.by * GH / ch, st.cv.width * GW / cw, st.cv.height * GH / ch);
     const d = mg.getImageData(0, 0, GW, GH).data;
     // (Scenes with large moving layers — aurora curtains, a mirrored lake —: the frame just drawn is measured too, each
     //  cell taking the worse of the two and of its neighbours above and below — the curtains sway.)
@@ -448,7 +507,7 @@ export class SceneRun {
     const at = (src: Uint8ClampedArray, x: number, y: number): RGBA => { const i = (Math.min(GH - 1, Math.max(0, y)) * GW + Math.min(GW - 1, Math.max(0, x))) * 4; return [src[i], src[i + 1], src[i + 2], 1]; };
     const cell = (x: number, y: number): RGBA => {
       let c = at(d, x, y); if (!fd) return c;
-      for (const dy of [-1, 0, 1]) { const e = at(fd, x, y + dy); if (far(e) > far(c)) c = e; }
+      for (const dy of [-1, 0, 1]) for (const dx of [-1, 0, 1]) { const e = at(fd, x + dx, y + dy); if (far(e) > far(c)) c = e; }
       return c;
     };
     const texts = t.texts.length ? t.texts : [[128, 128, 128, 1] as RGBA];
@@ -474,7 +533,7 @@ export class SceneRun {
       const need = least((x) => { const b = mix(mix(worst, this.veil, x), this.veil, dom ? HALO : 0); return texts.every((tx) => contrast(tx, b) >= BARE_TARGET); });
       if (need > 0) dims.push({ ...r, a: need });
     }
-    this.scrimMax = dims.reduce((a, b) => Math.max(a, b.a), 0);
+    this.scrimMax = dims.reduce((a, b) => Math.max(a, b.a), 0); this.dimCv = null;
     if (dims.length) {
       // (Feathered: each block drawn only as its shadow — blurred by about two text heights —, the block grown by the
       //  blur so its core still covers the text fully; no edge anywhere.)
@@ -486,7 +545,10 @@ export class SceneRun {
           const x = r.x * k - blur * 0.6, y = r.y * k - blur * 0.6, w = r.w * k + blur * 1.2, h = r.h * k + blur * 1.2;
           mpg.beginPath(); mpg.roundRect ? mpg.roundRect(x - off, y, w, h, blur) : mpg.rect(x - off, y, w, h); mpg.fill();
         }
-        for (const s of this.statics) { const g = s.cv.getContext('2d'); if (!g) continue; g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-atop'; g.drawImage(mp, -s.bx, -s.by); g.restore(); }
+        // (A scene with large moving layers — curtains, veils of fog over the art —: the dimming laid over each whole frame
+        //  instead, so it holds over what moves too; the others: baked into the static canvases, free each frame.)
+        if (this.wide) this.dimCv = mp;
+        else for (const s of groups) { const g = s.cv.getContext('2d'); if (!g) continue; g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-atop'; g.drawImage(mp, -s.bx, -s.by); g.restore(); }
       }
     }
     this.onScrim?.({ panels, max: this.panelScrim });
@@ -501,9 +563,13 @@ export class SceneRun {
     const [f, u] = this.views();
     const pc = this.call(() => this.ex.scene_cmds(this.h)), n = this.call(() => this.ex.scene_ncmd(this.h)), pi = this.call(() => this.ex.scene_inst(this.h));
     if (pc && n > 0) {
-      const cb = pc >>> 2, ib = pi >>> 2;
-      if (!this.statics.length) this.buildStatics(f, cb, n, k);
-      const after = this.needBake && this.wide; if (this.needBake && !after) this.bake(w, h, k);
+      const cb = pc >>> 2, ib = pi >>> 2; const now = performance.now();
+      // (Made again: none yet, a new scrim asked, or a resize that has rested. A scene measured from its frames — large
+      //  moving layers — bakes the new canvases after this frame, drawn meanwhile with the old ones when there are.)
+      let fresh: StaticGroup[] | null = null;
+      if (!this.built || this.needBake || (this.rebuildAt && now >= this.rebuildAt)) { this.rebuildAt = 0; fresh = this.buildStatics(f, cb, n, k); }
+      const after = !!fresh && this.wide;
+      if (fresh && !after) { this.bake(fresh, w, h, k); this.statics = fresh; this.built = true; fresh = null; } else if (fresh && !this.built) { this.statics = fresh; this.built = true; }
       let si = 0; let stale = false;
       for (let c = 0; c < n; c++) {
         const o = cb + c * L.CS; if (!f[o + L.KNOWN]) continue;
@@ -511,13 +577,17 @@ export class SceneRun {
         if (f[o + L.STATIC]) {
           const s = this.statics[si];
           if (s && s.first === c) {
-            // (The camera moved it: blitted where the frame's transform puts it; a zoom past 4 % made again.)
-            const r = f[o + L.SCALE] / s.scale; if (Math.abs(r - 1) > 0.04) stale = true;
+            // (The camera moved it: blitted where the frame's transform puts it. Its scale off by more than 4 % — not
+            //  counting the camera's zoom, a click's pulse — made again, once the size rests.)
+            const r = (f[o + L.SCALE] / s.scale) * (k / s.k); if (Math.abs((r * s.zoom) / this.zoom - 1) > 0.04) stale = true;
             const { w: SW, h: SH, ov } = this.space; const x0 = -SW * ov, y0 = -SH * ov;
             const bx = (x0 * f[o + L.SCALE] + f[o + L.TX]) * k, by = (y0 * f[o + L.SCALE] + f[o + L.TY]) * k;
             g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
             if (Math.abs(r - 1) < 1e-4 && Math.abs(bx - s.bx) < 0.01 && Math.abs(by - s.by) < 0.01) g.drawImage(s.cv, s.bx, s.by); else g.drawImage(s.cv, bx, by, s.cv.width * r, s.cv.height * r);
             si++;
+          } else if (s && c > s.first && c <= s.last && this.reactK <= 0) {
+            // (A merged run: its other layers must still sit where the first does; the camera moved after all: regrouped.)
+            const o0 = cb + s.first * L.CS; if (Math.abs(f[o + L.TX] - f[o0 + L.TX]) > 1e-3 || Math.abs(f[o + L.TY] - f[o0 + L.TY]) > 1e-3 || Math.abs(f[o + L.SCALE] - f[o0 + L.SCALE]) > 1e-5) stale = true;
           }
           continue;
         }
@@ -532,17 +602,23 @@ export class SceneRun {
           if (!(sx * px >= 0.25) || !(a > 0.004)) continue;
           const sp = f[q + L.SPRITE] | 0;
           // (The peak cap: big soft particles at half alpha at most; fog puffs at a quarter.)
-          if (sp === 4) { if (a > 0.25) a = 0.25; } else if (sp !== 11 && sp !== 12 && sx * S > 12 && a > 0.5) a = 0.5;
+          if (sp === 4) { if (a > 0.25) a = 0.25; } else if (sp !== 11 && sp !== 12 && sp !== 13 && sx * S > 12 && a > 0.5) a = 0.5;
+          // (Drawn at MIN_PX device pixels at least — a star of a pixel's fraction would not show —, a little fainter.)
+          const big = Math.max(sx, sy) * px; let dw = sx, dh = sy;
+          if (big < MIN_PX) { const m = MIN_PX / big; dw = sx * m; dh = sy * m; a *= 0.55 + 0.45 * (big / MIN_PX); }
           const ci = this.palIndexOf(u[q + L.RGBA], f[q + L.COLOUR]);
           g.globalAlpha = a > 1 ? 1 : a;
           const rot = f[q + L.ROT];
-          if (rot) { const x = f[q + L.X], y = f[q + L.Y]; const cs = Math.cos(rot), sn = Math.sin(rot); g.setTransform(px * cs, px * sn, -px * sn, px * cs, (x * S + tx) * k, (y * S + ty) * k); g.drawImage(this.sprite(sp, ci), -sx / 2, -sy / 2, sx, sy); g.setTransform(px, 0, 0, px, tx * k, ty * k); }
-          else g.drawImage(this.sprite(sp, ci), f[q + L.X] - sx / 2, f[q + L.Y] - sy / 2, sx, sy);
+          if (rot) { const x = f[q + L.X], y = f[q + L.Y]; const cs = Math.cos(rot), sn = Math.sin(rot); g.setTransform(px * cs, px * sn, -px * sn, px * cs, (x * S + tx) * k, (y * S + ty) * k); g.drawImage(this.sprite(sp, ci), -dw / 2, -dh / 2, dw, dh); g.setTransform(px, 0, 0, px, tx * k, ty * k); }
+          else g.drawImage(this.sprite(sp, ci), f[q + L.X] - dw / 2, f[q + L.Y] - dh / 2, dw, dh);
         }
       }
       g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
-      if (after) this.bake(w, h, k, g.canvas as HTMLCanvasElement);
-      if (stale) this.statics = [];
+      if (this.dimCv && !(after && fresh)) g.drawImage(this.dimCv, 0, 0, w, h);
+      // (Measured from this frame — drawn with the canvases before them —: drawn again at once with the new ones, so a
+      //  still frame never keeps the scrim of the view before.)
+      if (after && fresh) { this.bake(fresh, w, h, k, g.canvas as HTMLCanvasElement); this.statics = fresh; this.st.drawMs += performance.now() - t0; this.render(g, w, h, k); return; }
+      if (stale && !this.rebuildAt) this.rebuildAt = now + RESIZE_MS;
     }
     this.st.drawMs += performance.now() - t0; this.st.draws++;
   }
@@ -611,22 +687,25 @@ export class SceneRun {
     if (ci >= 0 && ci < this.pal.length) return ci;
     const i = this.pal.findIndex((c) => pack(c) === rgba); return i < 0 ? 0 : i;
   }
-  stats(): SceneStats { return { steps: this.st.steps, stepMs: this.st.steps ? this.st.stepMs / this.st.steps : 0, draws: this.st.draws, drawMs: this.st.draws ? this.st.drawMs / this.st.draws : 0, instances: this.count, live: this.alive ? this.ex.scene_live(this.h) : 0, statics: this.statics.length, scrimMax: +this.scrimMax.toFixed(3), panelScrim: +this.panelScrim.toFixed(3) }; }
+  /** An engine read for the numbers (tests, the perf hook): through call() — a trap poisons as anywhere —, a default
+   *  instead of a throw. */
+  private peek<T>(f: () => T, d: T): T { if (!this.alive) return d; try { return this.call(f); } catch { return d; } }
+  stats(): SceneStats { const px = this.statics.reduce((a, s) => a + s.cv.width * s.cv.height, 0); return { steps: this.st.steps, stepMs: this.st.steps ? this.st.stepMs / this.st.steps : 0, draws: this.st.draws, drawMs: this.st.draws ? this.st.drawMs / this.st.draws : 0, instances: this.count, live: this.peek(() => this.ex.scene_live(this.h), 0), statics: this.statics.length, staticPx: px, builds: this.builds, scrimMax: +this.scrimMax.toFixed(3), panelScrim: +this.panelScrim.toFixed(3) }; }
   resetStats(): void { this.st = { steps: 0, stepMs: 0, draws: 0, drawMs: 0 }; }
   /** The state hash (tests: the same seed and steps give the same hash). */
-  hash(): number { return this.alive ? this.ex.scene_state_hash(this.h) >>> 0 : 0; }
+  hash(): number { return this.peek(() => this.ex.scene_state_hash(this.h) >>> 0, 0); }
   /** The palette as the engine holds it (tests). */
-  palette(): RGBA[] { return this.alive ? this.pal.map((_, i) => unpack(this.ex.scene_palette_get(this.h, i) >>> 0)) : []; }
+  palette(): RGBA[] { return this.peek(() => this.pal.map((_, i) => unpack(this.ex.scene_palette_get(this.h, i) >>> 0)), []); }
   /** Freed in the engine (when it is still sound) and here. */
   free(): void { if (this.dead) return; if (!this.eng.poisoned) { try { this.ex.scene_free(this.h); } catch { poison(this.eng); } } this.abandon(); }
   /** Dropped here without calling the engine (it trapped). */
-  private abandon(): void { if (this.dead) return; this.dead = true; this.sprites.clear(); this.statics = []; this.mirrorCv = this.reflCv = null; this.accumBumps.clear(); this.f32 = this.u32 = null; this.buf = null; live--; }
+  private abandon(): void { if (this.dead) return; this.dead = true; this.sprites.clear(); this.drop(); this.ribCv = this.dimCv = null; this.mirrorCv = this.reflCv = null; this.accumBumps.clear(); this.f32 = this.u32 = null; this.buf = null; live--; }
 }
 
 /** A built-in scene started in the engine (throws UnknownScene, or when the engine or the scene cannot be loaded). */
-export async function openScene(id: string, seed: number): Promise<SceneRun> {
+export async function openScene(id: string, seed: number, slot: EngineSlot = 'main'): Promise<SceneRun> {
   const def = SCENES[id]; if (!def) throw new UnknownScene(`no scene «${id}» in this build`);
-  const eng = await loadEngine();
+  const eng = await loadEngine(slot);
   let h: number;
   try { h = loadInto(eng.ex, JSON.stringify(def), seed); } catch (e) { poison(eng); throw e; }
   if (h <= 0) throw new Error(`ktscene: «${id}» refused (${h})`);
@@ -635,21 +714,28 @@ export async function openScene(id: string, seed: number): Promise<SceneRun> {
 
 /** The wasm step for a scene of 4,096 particles (the perf gate's number): ms a step, averaged over `n` steps of 1/60 s. */
 export async function bench4096(n = 240): Promise<{ stepMs: number; live: number }> {
-  const { ex } = await loadEngine();
+  const eng = await loadEngine(); const { ex } = eng;
   const em = (id: string): unknown => ({ id, max: 2048, rate: 300, prewarm: 1, initializers: [{ kind: 'lifetime', min: 8, max: 14 }, { kind: 'size', min: 2, max: 6 }, { kind: 'velocity', min: [-9, -9], max: [9, 9] }], operators: [{ kind: 'drift' }, { kind: 'gravity', y: -1 }, { kind: 'drag', k: 0.3 }, { kind: 'bounds' }, { kind: 'fade' }] });
-  const h = loadInto(ex, JSON.stringify({ format: 'ktscene/1', emitters: [em('a'), em('b')] }), 1); if (h <= 0) throw new Error(`ktscene: bench refused (${h})`);
+  if (eng.poisoned) throw new SceneTrap('ktscene: the engine trapped');
+  // (Every call as in a scene: a throw poisons the engine.)
+  let h = 0;
   try {
+    h = loadInto(ex, JSON.stringify({ format: 'ktscene/1', emitters: [em('a'), em('b')] }), 1); if (h <= 0) throw new Error(`ktscene: bench refused (${h})`);
     ex.scene_viewport(h, 1920, 1080); ex.scene_step(h, 1000 / 60);
     const t0 = performance.now(); for (let i = 0; i < n; i++) ex.scene_step(h, 1000 / 60);
-    return { stepMs: (performance.now() - t0) / n, live: ex.scene_live(h) };
-  } finally { ex.scene_free(h); }
+    const out = { stepMs: (performance.now() - t0) / n, live: ex.scene_live(h) }; ex.scene_free(h); h = 0; return out;
+  } catch (e) { if (!(e instanceof Error && /bench refused/.test(e.message))) poison(eng); throw e; }
 }
 
 /** The sky of a scene file as a gradient (its first sky layer's stops, resolved for the mode): what a thumbnail shows
  *  when the engine cannot run here. */
 export function sceneSky(id: string, light: boolean): string[] {
   const def = SCENES[id] as { palette?: unknown; layers?: { kind?: string; params?: { stops?: [number, string | number][] } }[] } | undefined; if (!def) return [];
-  const specs = palSpecs(def, light); const ids = (Array.isArray(def.palette) ? def.palette : []).map((p: unknown, i: number) => (typeof p === 'object' && p && 'id' in p ? String((p as { id: unknown }).id) : String(i)));
-  const sky = def.layers?.find((l) => l.kind === 'sky')?.params?.stops ?? [];
-  return sky.map(([at, ref]) => { const i = typeof ref === 'number' ? ref : ids.indexOf(String(ref)); const c = specs[i]?.lit ?? [96, 104, 128, 1]; return `${css(c)} ${Math.round(at * 100)}%`; });
+  // (A malformed stop — not a pair, no number — is left out; nothing here may throw: the picker draws on after it.)
+  try {
+    const specs = palSpecs(def, light); const ids = (Array.isArray(def.palette) ? def.palette : []).map((p: unknown, i: number) => (typeof p === 'object' && p && 'id' in p ? String((p as { id: unknown }).id) : String(i)));
+    const layers = Array.isArray(def.layers) ? def.layers : []; const sky = layers.find((l) => l && l.kind === 'sky')?.params?.stops;
+    if (!Array.isArray(sky)) return [];
+    return sky.flatMap((st) => { if (!Array.isArray(st) || st.length < 2 || typeof st[0] !== 'number' || !Number.isFinite(st[0])) return []; const [at, ref] = st; const i = typeof ref === 'number' ? ref : ids.indexOf(String(ref)); const c = specs[i]?.lit ?? [96, 104, 128, 1]; return [`${css(c)} ${Math.round(Math.max(0, Math.min(1, at)) * 100)}%`]; });
+  } catch { return []; }
 }

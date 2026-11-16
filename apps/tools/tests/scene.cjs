@@ -10,8 +10,10 @@
 //         scene left (sceneHost's liveScenes back to 0);
 //      4. a trap (the engine throwing — the host's test hook, as a real trap would): «drift» drawn instead, one quiet
 //         line, no page error, the engine let go; chosen again later, a new engine instance runs the scene;
-//      5. readability, measured on the REAL text: every visible text's rectangle, the scene's pixels under it averaged,
-//         every panel between composited over them — 4.5:1 or more; no yellow; Motes clearly visible in dark;
+//      5. readability, measured on the REAL text, for EVERY scene in dark and light, running and still (after another
+//         view): every visible text's rectangle, the scene's pixels under it averaged, every panel between composited
+//         over them — 4.5:1 or more; no yellow; each scene clearly visible by its own measure (5b: views changed many
+//         times leave nothing marked behind; a click's zoom, an unchanged resize remake nothing; a drag-resize, once);
 //      6. the page round a scene: «Where the background shows» (whole window: the sidebar a measured panel; content
 //         only: the theme's own surfaces), «Match the app's colours» (on: the scene's accent, ≥ 4.5:1, no yellow; off:
 //         the reader's accent back exactly), «Reacts to the mouse» (Off: no click listener);
@@ -232,7 +234,7 @@ function init({ settings, phone, lang, trapAfter }) {
     ok('Night snowfall: running', await waitState(p, 'running', 4000));
     if (HAVE) {
       const perf = await p.evaluate(() => window.__ktAnimPerf());
-      ok('static layers composited into canvases once (sky…pines), snow as instances', perf.scene && perf.scene.statics >= 2 && perf.scene.instances > 500, perf.scene);
+      ok('static layers composited into canvases once (sky, moon, ridges, hills), snow as instances', perf.scene && perf.scene.statics >= 2 && perf.scene.instances > 500, perf.scene);
       const d0 = (await snap()).sprites; await p.waitForTimeout(800); const d1 = (await snap()).sprites;
       ok('the snow moves (sprites drawn each frame)', d1 - d0 > 1000, { d0, d1 });
       // (The sky, at the top of the window: the scene's own palette — a deep blue, not the theme's grey ground.)
@@ -258,51 +260,101 @@ function init({ settings, phone, lang, trapAfter }) {
     ok('no page errors (trap)', !errs.length, errs); await ctx.close();
   }
 
-  /* ---------- 5. readability, on the real text ---------- */
+  /* ---------- 5. readability, on the real text: EVERY scene, dark and light, running and still ---------- */
   if (HAVE) {
-    const worst = []; const yellow = [];
-    for (const [scene, mode, accent, route] of [['scene:night-snowfall', 'dark', 'graphite', '#/'], ['scene:night-snowfall', 'dark', 'graphite', '#/settings/appearance'], ['scene:night-snowfall', 'light', 'graphite', '#/'], ['scene:night-snowfall', 'light', 'teal', '#/settings/appearance'], ['scene:night-snowfall', 'dark', 'violet', '#/'], ['scene:motes', 'dark', 'graphite', '#/'], ['scene:motes', 'light', 'teal', '#/settings/appearance'], ['scene:motes', 'dark', 'gold', '#/settings/appearance'], ['scene:aurora-lake', 'dark', 'graphite', '#/'], ['scene:aurora-lake', 'light', 'graphite', '#/settings/appearance']]) {
-      const { p, ctx, errs } = await open(PC, { settings: { theme: 'frost', uiMode: mode, accent, animBg: scene } }, route);
-      await waitState(p, 'running', 6000); await p.waitForTimeout(3200);
-      const r = await p.evaluate(() => {
-        const cv = document.querySelector('#kt-animbg .abg-canvas'); const k = cv.width / (innerWidth + 32); const img = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-        const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
-        const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-        const parse = (s) => { let m = /rgba?\(([^)]+)\)/.exec(s); if (m) { const v = m[1].split(/[ ,/]+/).filter(Boolean).map(parseFloat); return [v[0], v[1], v[2], v[3] ?? 1]; } m = /color\(srgb ([^)]+)\)/.exec(s); if (m) { const v = m[1].split(/[ /]+/).filter(Boolean).map(parseFloat); return [v[0] * 255, v[1] * 255, v[2] * 255, v[3] ?? 1]; } return [0, 0, 0, 0]; };
-        const over = (t, u) => [t[0] * t[3] + u[0] * (1 - t[3]), t[1] * t[3] + u[1] * (1 - t[3]), t[2] * t[3] + u[2] * (1 - t[3]), 1];
-        // (The ground under the canvas, for the rare pixel the canvas leaves: the scene fills it all anyway.)
-        let w = 99, at = null, n = 0; const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let node;
-        while ((node = walker.nextNode())) {
-          if (!node.nodeValue.trim()) continue; const el = node.parentElement; if (!el || el.closest('#kt-animbg,script,style,[hidden],[aria-hidden="true"]')) continue;
-          const st = getComputedStyle(el); if (st.visibility === 'hidden' || +st.opacity === 0) continue;
-          const range = document.createRange(); range.selectNodeContents(node); const rr = range.getBoundingClientRect();
-          if (rr.width < 2 || rr.height < 2 || rr.top < 0 || rr.left < 0 || rr.bottom > innerHeight || rr.right > innerWidth) continue;
-          // (The scene under the text, averaged — the local mean the rule speaks of.)
-          let sum = [0, 0, 0], c = 0; const x0 = Math.floor((rr.left + 16) * k), x1 = Math.ceil((rr.right + 16) * k), y0 = Math.floor((rr.top + 16) * k), y1 = Math.ceil((rr.bottom + 16) * k);
-          for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const j = (y * cv.width + x) * 4; sum[0] += img[j]; sum[1] += img[j + 1]; sum[2] += img[j + 2]; c++; }
-          if (!c) continue; let back = [sum[0] / c, sum[1] / c, sum[2] / c, 1];
-          // (Every panel between, outermost first, composited over it.)
-          const chain = []; for (let a = el; a && a !== document.documentElement; a = a.parentElement) chain.push(a);
-          // (Its colour, then a flat colour layered over it as a background image — the scenes' veil on themed surfaces.)
-          for (const a of chain.reverse()) { const cs = getComputedStyle(a); back = over(parse(cs.backgroundColor), back); const m = /^linear-gradient\((rgba?\([^)]*\)|color\([^)]*\)), \1\)$/.exec(cs.backgroundImage); if (m) back = over(parse(m[1]), back); }
-          // (Text with the scenes' halo: its soft shadow in the veil colour counted as the host counts it, 0.35.)
-          if (el.closest('[data-abg-halo]')) { const g = getComputedStyle(document.documentElement).getPropertyValue('--abg-g').trim().split(/\s+/).map(Number); if (g.length === 3) back = over([g[0], g[1], g[2], 0.35], back); }
-          const fg = parse(st.color); if (fg[3] < 0.05) continue; const ratio = cr(over(fg, back), back); n++;
-          if (ratio < w) { w = ratio; at = { text: node.nodeValue.trim().slice(0, 30), ratio: +ratio.toFixed(2), back: back.map(Math.round), fg: fg.map((v) => +v.toFixed(2)) }; }
-        }
-        // (Colours: any yellow, amber or gold in the scene's pixels; how far the brightest particles stand from the ground.)
-        const yel = []; const g0 = [img[0], img[1], img[2]]; let lit = 0, peak = 1;
-        for (let j = 0; j < img.length; j += 4 * 3) { const px = [img[j], img[j + 1], img[j + 2]]; const mx = Math.max(...px), mn = Math.min(...px); if ((mx - mn) / 255 > 0.08) { let h = mx === px[0] ? ((px[1] - px[2]) / (mx - mn)) % 6 : mx === px[1] ? (px[2] - px[0]) / (mx - mn) + 2 : (px[0] - px[1]) / (mx - mn) + 4; h *= 60; if (h < 0) h += 360; if (h >= 42 && h <= 68 && yel.length < 3) yel.push([...px, Math.round(h)]); } const q = cr(px, g0); if (q > 1.5) lit++; peak = Math.max(peak, q); }
-        return { w: +w.toFixed(2), at, n, yel, lit: lit / (img.length / 12), peak: +peak.toFixed(2) };
-      });
-      worst.push(`${scene.slice(6)}/${mode}/${accent}${route.length > 2 ? '/settings' : ''}: ${r.w} over ${r.n} texts`);
-      ok(`${scene.slice(6)} ${mode} ${accent} ${route}: every text ≥ 4.5:1 over the scene and its panels (lowest ${r.w}, ${r.n} texts)`, r.w >= 4.5 && r.n > 20, r);
-      if (scene === 'scene:motes' && mode === 'dark' && route === '#/') ok('Motes clearly visible in dark: particles stand out from the ground (peak ≥ 2:1)', r.peak >= 2 && r.lit > 0.001, { peak: r.peak, lit: r.lit });
-      if (r.yel.length) yellow.push({ scene, mode, accent, px: r.yel });
-      ok(`no page errors (${scene} ${mode} ${accent})`, !errs.length, errs); await ctx.close();
+    // (What the scene's pixels and the real text give: the lowest text contrast over the scene and its panels; any yellow;
+    //  `detail` — the share of pixels standing ≥ 1.3:1 off their own row's median (stars, flakes, glows, silhouettes,
+    //  shafts: what the scene draws on its sky) — and `span` — the 2nd to 98th percentile's contrast (the sky's depth).)
+    const READ = () => {
+      const cv = document.querySelector('#kt-animbg .abg-canvas'); const k = cv.width / (innerWidth + 32); const img = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+      const parse = (s) => { let m = /rgba?\(([^)]+)\)/.exec(s); if (m) { const v = m[1].split(/[ ,/]+/).filter(Boolean).map(parseFloat); return [v[0], v[1], v[2], v[3] ?? 1]; } m = /color\(srgb ([^)]+)\)/.exec(s); if (m) { const v = m[1].split(/[ /]+/).filter(Boolean).map(parseFloat); return [v[0] * 255, v[1] * 255, v[2] * 255, v[3] ?? 1]; } return [0, 0, 0, 0]; };
+      const over = (t, u) => [t[0] * t[3] + u[0] * (1 - t[3]), t[1] * t[3] + u[1] * (1 - t[3]), t[2] * t[3] + u[2] * (1 - t[3]), 1];
+      let w = 99, at = null, n = 0; const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let node;
+      while ((node = walker.nextNode())) {
+        if (!node.nodeValue.trim()) continue; const el = node.parentElement; if (!el || el.closest('#kt-animbg,script,style,[hidden],[aria-hidden="true"]')) continue;
+        const st = getComputedStyle(el); if (st.visibility === 'hidden' || +st.opacity === 0) continue;
+        const range = document.createRange(); range.selectNodeContents(node); const rr = range.getBoundingClientRect();
+        if (rr.width < 2 || rr.height < 2 || rr.top < 0 || rr.left < 0 || rr.bottom > innerHeight || rr.right > innerWidth) continue;
+        // (The scene under the text, averaged — the local mean the rule speaks of.)
+        let sum = [0, 0, 0], c = 0; const x0 = Math.floor((rr.left + 16) * k), x1 = Math.ceil((rr.right + 16) * k), y0 = Math.floor((rr.top + 16) * k), y1 = Math.ceil((rr.bottom + 16) * k);
+        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const j = (y * cv.width + x) * 4; sum[0] += img[j]; sum[1] += img[j + 1]; sum[2] += img[j + 2]; c++; }
+        if (!c) continue; let back = [sum[0] / c, sum[1] / c, sum[2] / c, 1];
+        // (Every panel between, outermost first, composited over it: its colour, then a flat colour laid over it as a
+        //  background image — the scenes' veil on themed surfaces.)
+        const chain = []; for (let a = el; a && a !== document.documentElement; a = a.parentElement) chain.push(a);
+        for (const a of chain.reverse()) { const cs = getComputedStyle(a); back = over(parse(cs.backgroundColor), back); const m = /^linear-gradient\((rgba?\([^)]*\)|color\([^)]*\)), \1\)$/.exec(cs.backgroundImage); if (m) back = over(parse(m[1]), back); }
+        // (Text with the scenes' halo: its soft shadow in the veil colour counted as the host counts it, 0.35.)
+        if (el.closest('[data-abg-halo]')) { const g = getComputedStyle(document.documentElement).getPropertyValue('--abg-g').trim().split(/\s+/).map(Number); if (g.length === 3) back = over([g[0], g[1], g[2], 0.35], back); }
+        const fg = parse(st.color); if (fg[3] < 0.05) continue; const ratio = cr(over(fg, back), back); n++;
+        if (ratio < w) { w = ratio; at = { text: node.nodeValue.trim().slice(0, 30), ratio: +ratio.toFixed(2), back: back.map(Math.round), fg: fg.map((v) => +v.toFixed(2)) }; }
+      }
+      const yel = []; const ls = []; let detail = 0, cnt = 0;
+      for (let y = 0; y < cv.height; y += 2) {
+        const row = []; for (let x = 0; x < cv.width; x += 2) { const j = (y * cv.width + x) * 4; row.push(lum([img[j], img[j + 1], img[j + 2]])); }
+        const med = [...row].sort((a, b) => a - b)[row.length >> 1];
+        for (let x = 0; x < row.length; x++) { const L = row[x]; ls.push(L); cnt++; if ((Math.max(L, med) + 0.05) / (Math.min(L, med) + 0.05) >= 1.3) detail++;
+          const j = (y * cv.width + x * 2) * 4; const px = [img[j], img[j + 1], img[j + 2]]; const mx = Math.max(...px), mn = Math.min(...px);
+          if ((mx - mn) / 255 > 0.08) { let h = mx === px[0] ? ((px[1] - px[2]) / (mx - mn)) % 6 : mx === px[1] ? (px[2] - px[0]) / (mx - mn) + 2 : (px[0] - px[1]) / (mx - mn) + 4; h *= 60; if (h < 0) h += 360; if (h >= 42 && h <= 68 && yel.length < 3) yel.push([...px, Math.round(h)]); } }
+      }
+      ls.sort((a, b) => a - b); const lo = ls[Math.floor(ls.length * 0.02)], hi = ls[Math.floor(ls.length * 0.98)];
+      return { w: +w.toFixed(2), at, n, yel, detail: +(detail / cnt).toFixed(4), span: +((hi + 0.05) / (lo + 0.05)).toFixed(2) };
+    };
+    // (Per scene, what «clearly visible» means: the least share of standing-out pixels and the least depth of the sky,
+    //  about half of what each scene measured here when it was made — sparse skies ask less, busy ones more.)
+    const SEEN = {
+      'motes': [0.002, 1.15], 'night-snowfall': [0.025, 1.8], 'aurora-lake': [0.04, 2], 'snowflakes': [0.003, 1.3], 'blizzard': [0.025, 1.6], 'first-snow': [0.025, 1.6], 'rain': [0.004, 1.15],
+      'waves': [0.012, 1.3], 'underwater': [0.0005, 1.3], 'fireflies': [0.003, 1.5], 'starfield': [0.0012, 1.2], 'meteors': [0.007, 1.6], 'petals': [0.007, 1.5], 'neon-night': [0.002, 1.15],
+    };
+    const IDS = Object.keys(SEEN); const worst = []; const yellow = []; const seen = [];
+    const ACC = ['graphite', 'teal', 'violet', 'gold']; const ROUTES = ['#/', '#/settings/appearance'];
+    let i = 0;
+    for (const id of IDS) for (const mode of ['dark', 'light']) {
+      const accent = ACC[i % ACC.length], route = ROUTES[i % 2], other = ROUTES[(i + 1) % 2]; i++;
+      const { p, ctx, errs } = await open(PC, { settings: { theme: 'frost', uiMode: mode, accent, animBg: `scene:${id}` } }, route);
+      await waitState(p, 'running', 6000); await p.waitForTimeout(3000);
+      const r = await p.evaluate(READ);
+      // (Still — «less motion» —, then another view: the scrim measured again for it without a running frame.)
+      await p.emulateMedia({ reducedMotion: 'reduce' }); await waitState(p, 'still', 3000);
+      await p.evaluate((h) => { location.hash = h; }, other); await p.waitForTimeout(3200);
+      const q = await p.evaluate(READ);
+      const tag = `${id} ${mode} ${accent}`;
+      worst.push(`${id}/${mode}: ${r.w} running (${route}) · ${q.w} still (${other})`);
+      ok(`${tag} running ${route}: every text ≥ 4.5:1 over the scene and its panels (lowest ${r.w}, ${r.n} texts)`, r.w >= 4.5 && r.n > 20, r);
+      ok(`${tag} still, after going to ${other}: every text ≥ 4.5:1 (lowest ${q.w}, ${q.n} texts)`, q.w >= 4.5 && q.n > 20, q);
+      const [dMin, sMin] = SEEN[id];
+      ok(`${tag}: clearly visible — ${(r.detail * 100).toFixed(2)} % of pixels stand out (≥ ${(dMin * 100).toFixed(1)}), sky depth ${r.span}:1 (≥ ${sMin})`, r.detail >= dMin && r.span >= sMin, { detail: r.detail, span: r.span });
+      seen.push(`${id}/${mode} ${(r.detail * 100).toFixed(2)}% ${r.span}`);
+      if (r.yel.length || q.yel.length) yellow.push({ id, mode, accent, px: [...r.yel, ...q.yel] });
+      ok(`no page errors (${tag})`, !errs.length, errs); await ctx.close();
     }
     console.log('     lowest text contrast: ' + worst.join(' | '));
-    ok('no yellow, amber or gold in any scene', !yellow.length, yellow);
+    console.log('     visible (detail, depth): ' + seen.join(' | '));
+    ok('no yellow, amber or gold in any scene, dark or light, running or still', !yellow.length, yellow);
+  }
+
+  /* ---------- 5b. a scene running while the views change: nothing of the old views kept, no static canvas remade
+     for a click's zoom or an unchanged resize; a drag-resize remakes them once it rests ---------- */
+  if (HAVE) {
+    const { p, ctx, errs } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark', animBg: 'scene:night-snowfall', animBgReact: 'lively' } });
+    await waitState(p, 'running', 6000); await p.waitForTimeout(3000);
+    const routes = ['#/settings/appearance', '#/', '#/settings', '#/', '#/settings/appearance', '#/settings'];
+    const t0 = await p.evaluate(() => window.__ktAnimPerf.touched()); const nodes = [];
+    for (let k = 0; k < 24; k++) { await p.evaluate((h) => { location.hash = h; }, routes[k % routes.length]); await p.waitForTimeout(k % 6 === 5 ? 3000 : 900); if (k % 6 === 5) nodes.push(await p.evaluate(() => window.__ktAnimPerf.touched())); }
+    ok('views changed 24 times: no element the scene marked has left the page, and the marked sets do not grow', nodes.every((x) => x.gone === 0) && nodes[3].bare <= nodes[0].bare + 2 && nodes[3].halos <= nodes[0].halos + 40 && nodes[3].panels <= nodes[0].panels + 40, { t0, nodes });
+    const builds = async () => (await p.evaluate(() => window.__ktAnimPerf())).scene.builds;
+    await p.evaluate(() => { location.hash = '#/'; }); await p.waitForTimeout(3200);
+    const b0 = await builds();
+    for (let k = 0; k < 3; k++) { await p.evaluate((x) => window.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: 400, bubbles: true })), 600 + k * 40); await p.waitForTimeout(600); }
+    await p.waitForTimeout(400); const b1 = await builds();
+    ok('Lively clicks (the zoom pulse): no static canvas made again', b1 === b0, { b0, b1 });
+    await p.evaluate(() => { for (let k = 0; k < 10; k++) window.dispatchEvent(new Event('resize')); }); await p.waitForTimeout(700);
+    const b2 = await builds(); ok('resize events with the size unchanged: nothing made again', b2 === b1, { b1, b2 });
+    for (let k = 0; k < 8; k++) { await p.setViewportSize({ width: 1180 + k * 15, height: 760 + k * 6 }); await p.waitForTimeout(40); }
+    const b3 = await builds(); await p.waitForTimeout(900); const b4 = await builds();
+    ok('a window dragged larger: the old canvases scaled meanwhile, made again once (or twice: the scrim) when it rests', b3 - b2 <= 1 && b4 - b2 >= 1 && b4 - b2 <= 3, { b2, b3, b4 });
+    ok('no page errors (5b)', !errs.length, errs); await ctx.close();
   }
 
   /* ---------- 6. the page round a scene: where it shows, the app's colours, the mouse ---------- */

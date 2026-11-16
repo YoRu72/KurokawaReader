@@ -45,6 +45,8 @@ export const UNFOCUSED_MS = 4000;
 /** After a scroll, a wheel or a drag: this long before moving again. */
 const BUSY_MS = 450;
 const GRAIN_A = 0.028;
+/** The scenes' scrim: measured again at most this often for page changes, and this often with none seen. */
+const BAKE_GAP_MS = 1500, RARE_BAKE_MS = 20_000;
 
 /** «Match the theme»: Frost drifts, Expressive 3 flows, a theme of the reader's its own choice; the others none. */
 export function kindFor(pref: AnimPref | undefined, theme: string | undefined, themeAnim: string | undefined): AnimKind | null {
@@ -260,19 +262,23 @@ const gate = {
     const add = (tg: EventTarget, ev: string, fn: EventListener, o: AddEventListenerOptions | boolean = false) => { tg.addEventListener(ev, fn, o); this.off.push(() => tg.removeEventListener(ev, fn, o)); };
     const upd = () => this.update();
     add(document, 'visibilitychange', upd);
-    add(window, 'blur', () => { clearTimeout(this.focusTimer); this.focusTimer = window.setTimeout(() => { this.focusTimer = 0; this.unfocused = true; this.update(); }, UNFOCUSED_MS); });
+    add(window, 'blur', () => { for (const i of insts) i.pointerGone(); clearTimeout(this.focusTimer); this.focusTimer = window.setTimeout(() => { this.focusTimer = 0; this.unfocused = true; this.update(); }, UNFOCUSED_MS); });
     add(window, 'focus', () => { clearTimeout(this.focusTimer); this.focusTimer = 0; if (this.unfocused) { this.unfocused = false; this.update(); } });
     add(document, 'fullscreenchange', upd);
     const vid = () => { const v = Array.from(document.querySelectorAll('video')).some((x) => !x.paused && !x.ended && x.readyState > 1); if (v !== this.video) { this.video = v; this.update(); } };
     for (const ev of ['playing', 'play', 'pause', 'ended', 'emptied']) add(document, ev, () => queueMicrotask(vid), true);
     const busy = () => { this.st.busyUntil = performance.now() + BUSY_MS; };
-    add(document, 'scroll', busy, { capture: true, passive: true });
+    // (A scroll moves the page's text: the scenes' scrim measured again once it has settled.)
+    add(document, 'scroll', () => { busy(); for (const i of insts) i.bakeIn(BUSY_MS + 150, true); }, { capture: true, passive: true });
     add(window, 'wheel', busy, { passive: true });
     add(window, 'pointermove', ((e: PointerEvent) => { if (e.buttons) busy(); for (const i of insts) i.pointer(e); }) as EventListener, { passive: true });
+    // (The pointer out of the window: the scene lets it go — nothing leans toward where it left.)
+    add(document, 'pointerout', ((e: PointerEvent) => { if (!e.relatedTarget) for (const i of insts) i.pointerGone(); }) as EventListener, { passive: true });
     add(document, 'dragover', busy, { capture: true, passive: true });
     add(window, 'resize', () => { for (const i of insts) i.resize(); }, { passive: true });
-    // (Another view: the scenes' scrim made again for its text, once it is drawn and once more when it has settled.)
-    add(window, 'hashchange', () => { prune(); const t = performance.now(); for (const i of insts) if (i.scene) i.rebakeAt = [t + 700, t + 2500]; });
+    // (Another view: the scenes' scrim made again for its text, once it is drawn and once more when it has settled —
+    //  running or still.)
+    add(window, 'hashchange', () => { prune(); for (const i of insts) if (i.scene) i.bakeTwice(700, 2500); });
     add(window, 'kt:animbg', ((e: CustomEvent<{ seek?: number | null }>) => { for (const i of insts) i.seek(e.detail?.seek ?? null); }) as EventListener);
     const mq = matchMedia('(prefers-reduced-motion: reduce)'); add(mq, 'change', upd);
     const nb = navigator as Navigator & { getBattery?(): Promise<EventTarget & { level: number; charging: boolean }> };
@@ -357,6 +363,8 @@ function perfHook(): void {
     bench: (): Promise<unknown> => import('./sceneHost').then((m) => m.bench4096()),
     hash: (): number | null => globalInst?.scene?.hash() ?? null,
     liveScenes: (): Promise<number> => import('./sceneHost').then((m) => m.liveScenes()),
+    /** What the scene's veils and halos are kept on: sizes, and how many of them have left the page (must be 0). */
+    touched: (): Record<string, number> => { const all = [...touched.panels, ...touched.halos, ...touched.bare]; return { panels: touched.panels.size, halos: touched.halos.size, bare: touched.bare.size, gone: all.filter((e) => !e.isConnected).length, lastPanels: lastPanels.length }; },
   });
 }
 
@@ -381,15 +389,28 @@ function surfaced(el: Element): boolean {
   return (!!bf && bf !== 'none') || parseCol(st.backgroundColor)[3] >= 0.05;
 }
 let lastPanels: HTMLElement[] = [];
+/** The panels' places when the scrim was last measured: a page change that moved none of them needs no new one. */
+let lastSig = '';
+function pageSig(): string {
+  const out: number[] = [];
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(PANELS))) {
+    if (el.closest('#kt-animbg')) continue; const r = el.getBoundingClientRect();
+    if (r.width >= 1 && r.height >= 1 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) out.push(Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height));
+  }
+  return out.join(',');
+}
 /** The page as the scrim needs it: each visible panel (its rectangle in the background canvas's CSS pixels — the canvas
  *  reaches 16 px past the window — and its own tint), and each text with no panel under it (marked for a halo). */
 function sceneDom(): { panels: { x: number; y: number; w: number; h: number; tint: RGBA; text: { x: number; y: number; w: number; h: number }[] }[]; bare: { x: number; y: number; w: number; h: number }[] } {
   const panels: { x: number; y: number; w: number; h: number; tint: RGBA; text: { x: number; y: number; w: number; h: number }[] }[] = []; lastPanels = [];
+  // (Marked bare this pass; the ones of earlier passes kept only while still on the page — a view's old tree let go.)
+  const bares = new Set<Element>(); const sig: number[] = [];
   const inView = (r: DOMRect): boolean => r.width >= 1 && r.height >= 1 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
   for (const el of Array.from(document.querySelectorAll<HTMLElement>(PANELS))) {
     if (el.closest('#kt-animbg')) continue; const r = el.getBoundingClientRect(); if (!inView(r)) continue;
+    sig.push(Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height));
     // (A «panel» with no surface of its own — a menu item drawn as bare text — is bare text: a halo, not a veiled pill.)
-    if (!surfaced(el)) { if (!el.hasAttribute('data-abg-bare')) el.setAttribute('data-abg-bare', ''); touched.bare.add(el); continue; }
+    if (!surfaced(el)) { if (!el.hasAttribute('data-abg-bare')) el.setAttribute('data-abg-bare', ''); bares.add(el); continue; }
     if (el.hasAttribute('data-abg-bare')) el.removeAttribute('data-abg-bare');
     lastPanels.push(el); panels.push({ x: r.left + 16, y: r.top + 16, w: r.width, h: r.height, tint: parseCol(getComputedStyle(el).backgroundColor), text: [] });
   }
@@ -418,12 +439,16 @@ function sceneDom(): { panels: { x: number; y: number; w: number; h: number; tin
   for (const el of touched.halos) if (!halos.has(el)) el.removeAttribute('data-abg-halo');
   for (const el of halos) if (!el.hasAttribute('data-abg-halo')) el.setAttribute('data-abg-halo', '');
   touched.halos = halos;
+  for (const el of touched.bare) if (el.isConnected && !bares.has(el)) bares.add(el);
+  touched.bare = bares; lastSig = sig.join(',');
   return { panels, bare };
 }
 /** Each panel's veil, as the scrim measured it; the most of them for panels not yet measured (new rows). */
 function applyScrim(s: { panels: number[]; max: number }, ground: RGBA): void {
   const html = document.documentElement;
-  html.style.setProperty('--abg-g', `${Math.round(ground[0])} ${Math.round(ground[1])} ${Math.round(ground[2])}`); html.style.setProperty('--abg-p0', s.max.toFixed(3));
+  // (Written only when they change: a write on <html> wakes its watcher, which would sync the whole background again.)
+  const gv = `${Math.round(ground[0])} ${Math.round(ground[1])} ${Math.round(ground[2])}`, pv = s.max.toFixed(3);
+  if (html.style.getPropertyValue('--abg-g') !== gv) html.style.setProperty('--abg-g', gv); if (html.style.getPropertyValue('--abg-p0') !== pv) html.style.setProperty('--abg-p0', pv);
   const now = new Set<HTMLElement>();
   lastPanels.forEach((el, i) => { const v = (s.panels[i] ?? s.max).toFixed(3); if (el.style.getPropertyValue('--abg-p') !== v) el.style.setProperty('--abg-p', v); now.add(el); });
   for (const el of touched.panels) if (!now.has(el)) el.style.removeProperty('--abg-p');
@@ -433,7 +458,7 @@ function applyScrim(s: { panels: number[]; max: number }, ground: RGBA): void {
 function clearScene(): void {
   const html = document.documentElement;
   for (const el of touched.panels) el.style.removeProperty('--abg-p'); for (const el of touched.halos) el.removeAttribute('data-abg-halo'); for (const el of touched.bare) el.removeAttribute('data-abg-bare');
-  touched.panels = new Set(); touched.halos = new Set(); touched.bare = new Set(); lastPanels = [];
+  touched.panels = new Set(); touched.halos = new Set(); touched.bare = new Set(); lastPanels = []; lastSig = '';
   for (const v of ['--abg-g', '--abg-p0', '--abg-g-on']) html.style.removeProperty(v);
   for (const c of ['abg-scene', 'abg-whole', 'abg-content']) if (html.classList.contains(c)) html.classList.remove(c);
   untint();
@@ -468,14 +493,17 @@ const trapAfter = (): number => { const v = (window as unknown as { __ktSceneTra
 class Inst {
   canvas: HTMLCanvasElement; g: CanvasRenderingContext2D | null; grainEl: HTMLElement; pal: Palette | null = null;
   vt: number; last = 0; timer = 0; raf = 0; drawn = false; held: number | null = null; dead = false;
-  px = 0; py = 0; tx = 0; ty = 0; w = 0; h = 0;
+  px = 0; py = 0; tx = 0; ty = 0; w = 0; h = 0; vw = 0; vh = 0;
   /** Self-throttle: how late the asked frames come (a running average, ms) and the slow-down it led to (1, 2 or 4). */
   raf2 = 0; late = 0; slow = 1; tooSlow = false; stepAt = 0;
   /** The design drawn (a scene's fallback: drift); a scene once loaded, and device pixels per CSS pixel of its canvas. */
   kind: Design; scene: SceneRun | null = null; sceneState: 'loading' | 'ready' | 'failed' | null = null; k = 1;
   pf: PerfCount = perfNew();
-  /** When to make the scene's static canvases and scrim again (the page's text moved); the panels' scrim set now. */
-  rebakeAt: number[] = []; nextBake = 0;
+  /** The scrim made again: its timer (one at a time), when it is due, a second one asked after it, when it was last made,
+   *  and the rare one with nothing seen to change (a running scene only). The page watched while a scene runs on it. */
+  bakeTimer = 0; bakeDue = 0; bakeAgain = 0; lastBake = 0; nextBake = 0; pageObs: MutationObserver | null = null;
+  /** The pointer's last place, told to the engine at the next frame (one call a frame, however many moves). */
+  ptr: [number, number, number] | null = null;
   /** The camera (a scene on the whole window): where the pointer pulls it (−1…1), where it is, the click's zoom pulse. */
   cam = { tx: 0, ty: 0, x: 0, y: 0, pulse: 0, sent: '' }; react = 0;
   constructor(public host: HTMLElement, public asked: AnimKind, public level: AnimLevel, public seed: number, public global: boolean) {
@@ -497,8 +525,8 @@ class Inst {
       run.trapAfter = trapAfter();
       if (this.global) { run.dom = sceneDom; run.onScrim = (sc) => applyScrim(sc, run.veil); }
       run.setTheme(sceneTheme(this.host)); run.setSpeed(this.level === 'reduced' ? 0.6 : 1);
-      this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene'; const t = performance.now(); this.rebakeAt = [t + 800, t + 2500]; this.nextBake = t + 6000;
-      this.page();
+      this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene'; this.nextBake = performance.now() + RARE_BAKE_MS;
+      this.page(); this.watchPage(); this.bakeTwice(800, 2500);
       this.w = this.h = 0; this.resize();
     } catch (e) { this.sceneFailed(e); }
   }
@@ -506,9 +534,47 @@ class Inst {
   sceneFailed(e: unknown): void {
     if (this.dead) return;
     const run = this.scene; this.scene = null; try { run?.free(); } catch { /* a poisoned engine: nothing to free */ }
+    clearTimeout(this.bakeTimer); this.bakeTimer = 0; this.pageObs?.disconnect(); this.pageObs = null; this.ptr = null;
     if (this.global) clearScene();
     this.sceneState = 'failed'; this.host.dataset.engine = 'canvas'; this.host.dataset.fallback = 'drift'; noteFallback(e);
     this.w = this.h = 0; this.drawn = false; this.resize(); this.paint(); for (const w of watchers) w();
+  }
+  /** The page under a scene watched (the whole window only): a view drawn late, rows added or taken — elements, not a
+   *  number's text — make the scrim again, at most every BAKE_GAP_MS, and only when a panel moved. */
+  watchPage(): void {
+    if (!this.global || this.pageObs || this.dead) return;
+    this.pageObs = new MutationObserver((list) => {
+      const real = list.some((m) => !(m.target as Element).closest?.('#kt-animbg') && [...Array.from(m.addedNodes), ...Array.from(m.removedNodes)].some((x) => x.nodeType === 1));
+      if (real) this.bakeIn(Math.max(300, this.lastBake + BAKE_GAP_MS - performance.now()), false, true);
+    });
+    this.pageObs.observe(document.body, { childList: true, subtree: true });
+  }
+  /** The scrim made again in `ms`: the earliest asked wins (`debounce`: each ask pushes it back); `ifMoved`: only when
+   *  a panel has moved since the last one. */
+  bakeIn(ms: number, debounce = false, ifMoved = false): void {
+    if (!this.scene || this.dead) return;
+    const due = performance.now() + ms;
+    if (this.bakeTimer) { if (!debounce && this.bakeDue <= due) return; clearTimeout(this.bakeTimer); }
+    this.bakeDue = due; this.bakeCheck = ifMoved && (!this.bakeTimer || this.bakeCheck);
+    this.bakeTimer = window.setTimeout(this.bakeNow, Math.max(0, ms));
+  }
+  bakeCheck = false;
+  /** Twice: once the page is drawn, once more when it has settled. */
+  bakeTwice(a: number, b: number): void { this.bakeAgain = performance.now() + b; this.bakeIn(a); }
+  bakeNow = (): void => {
+    this.bakeTimer = 0; const check = this.bakeCheck; this.bakeCheck = false; if (this.dead || !this.scene) return;
+    const now = performance.now();
+    if (!(check && pageSig() === lastSig)) {
+      this.lastBake = now; this.nextBake = now + RARE_BAKE_MS; this.scene.rebake(); this.drawn = false;
+      // (Not moving — still —: drawn now, once; a running scene takes it at its next frame.)
+      const st = gate.st; if (!st.paused && this.held === null && (this.level === 'still' || st.still || this.tooSlow)) this.draw(this.vt);
+    }
+    if (this.bakeAgain) { const ms = this.bakeAgain - now; this.bakeAgain = 0; if (ms > 0) this.bakeIn(ms); }
+  };
+  /** The pointer left the window, or the window its focus: the scene lets it go. */
+  pointerGone(): void {
+    this.cam.tx = this.cam.ty = 0;
+    if (this.scene && this.global && this.react > 0) { this.ptr = [NaN, NaN, 0]; if (!this.timer && !this.raf) { try { this.scene.pointer(NaN, NaN, 0); this.ptr = null; } catch (e) { this.sceneFailed(e); } } }
   }
   /** Drawing a scene (loaded, or still loading), not a design. */
   get sceneMode(): boolean { return isScene(this.asked) && this.sceneState !== 'failed'; }
@@ -522,6 +588,9 @@ class Inst {
       if (W * k * H * k > cap) k = Math.sqrt(cap / (W * H));
       w = Math.max(16, Math.ceil(W * k)); h = Math.max(16, Math.ceil(H * k)); this.k = w / W;
       try { this.scene.viewport(W, H); } catch (e) { this.sceneFailed(e); return; }
+      // (The page's text moved with the window: measured again once the resize rests — still or running.)
+      if (this.global && this.drawn && (W !== this.vw || H !== this.vh)) this.bakeIn(260, true);
+      this.vw = W; this.vh = H;
     } else {
       const f = this.kind === 'drift' ? 1 / 16 : 1 / 4; const cap = this.kind === 'drift' ? 24_000 : 260_000;
       w = Math.max(16, Math.ceil(W * f)); h = Math.max(16, Math.ceil(H * f)); const k = Math.min(1, Math.sqrt(cap / (w * h))); w = Math.ceil(w * k); h = Math.ceil(h * k);
@@ -541,7 +610,7 @@ class Inst {
       if (this.global && this.react > 0) {
         // (The camera leans toward the pointer: a little (Subtle) or more (Lively); the near layers most.)
         const a = this.react > 1.5 ? 0.9 : 0.45; this.cam.tx = ((e.clientX / innerWidth) * 2 - 1) * a; this.cam.ty = ((e.clientY / innerHeight) * 2 - 1) * a * 0.6;
-        try { this.scene.pointer(e.clientX + 16, e.clientY + 16, e.buttons); } catch (err) { this.sceneFailed(err); }
+        this.ptr = [e.clientX + 16, e.clientY + 16, e.buttons];
       }
       return;
     }
@@ -579,15 +648,15 @@ class Inst {
     if (this.sceneMode) {
       if (!this.scene) { if (!this.drawn) { const c = this.pal.ground; this.g.setTransform(1, 0, 0, 1, 0, 0); this.g.fillStyle = `rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])})`; this.g.fillRect(0, 0, this.w, this.h); this.drawn = true; } return; }
       try {
+        if (this.ptr) { const [x, y, b] = this.ptr; this.ptr = null; this.scene.pointer(x, y, b); }
         const moved = this.scene.step(dtMs); const now = performance.now();
-        if (this.rebakeAt.length && now > this.rebakeAt[0]) { this.rebakeAt.shift(); this.scene.rebake(); this.drawn = false; }
-        // (The page changes under the scene — rows come and go —: the veils measured again every few seconds.)
-        else if (this.global && now > this.nextBake) { this.nextBake = now + 4000; this.scene.rebake(); this.drawn = false; }
+        // (Seldom, whatever was seen: the veils measured again — what no watcher catches, a panel grown by its text.)
+        if (this.global && now > this.nextBake) { this.nextBake = now + RARE_BAKE_MS; this.lastBake = now; this.scene.rebake(); this.drawn = false; }
         const c = this.cam;
         if (this.react || c.x || c.y || c.pulse) {
           c.x += (c.tx - c.x) * 0.08; c.y += (c.ty - c.y) * 0.08; c.pulse = c.pulse > 0.01 ? c.pulse * 0.85 : 0;
           if (Math.abs(c.x) < 1e-3 && !c.tx) c.x = 0; if (Math.abs(c.y) < 1e-3 && !c.ty) c.y = 0;
-          const z = 1 + (this.react > 1.5 ? 0.05 : 0.025) * c.pulse; const key = `${c.x.toFixed(3)},${c.y.toFixed(3)},${z.toFixed(4)}`;
+          const z = 1 + (this.react > 1.5 ? 0.035 : 0.02) * c.pulse; const key = `${c.x.toFixed(3)},${c.y.toFixed(3)},${z.toFixed(4)}`;
           if (key !== c.sent) { c.sent = key; this.scene.camera(c.x, c.y, z); this.drawn = false; }
         }
         if (moved || !this.drawn) { this.scene.render(this.g, this.w, this.h, this.k); this.drawn = true; }
@@ -638,7 +707,7 @@ class Inst {
     this.schedule(1000 / this.fps() * this.slow - Math.max(0, performance.now() - p) - 6);
   };
   destroy(): void {
-    if (this.dead) return; this.dead = true; this.cancel(); this.scene?.free(); this.scene = null; this.scrim(-1); this.canvas.width = this.canvas.height = 0; this.canvas.remove(); this.grainEl.remove(); insts.delete(this);
+    if (this.dead) return; this.dead = true; this.cancel(); clearTimeout(this.bakeTimer); this.bakeTimer = 0; this.pageObs?.disconnect(); this.pageObs = null; this.scene?.free(); this.scene = null; this.scrim(-1); this.canvas.width = this.canvas.height = 0; this.canvas.remove(); this.grainEl.remove(); insts.delete(this);
     if (globalInst === this) globalInst = null;
     if (!insts.size) { gate.stop(); clickGate(false); document.getElementById(CSS_ID)?.remove(); }
   }

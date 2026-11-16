@@ -18,7 +18,7 @@ export function sceneThumb(id: string): Promise<string> {
     const again = cache.get(key); if (again) return again;
     let out: string;
     try {
-      const run = await openScene(id, 7);
+      const run = await openScene(id, 7, 'thumb');
       try {
         run.thumb = true; run.setTheme(th); run.viewport(W, H); run.step(1000 / 60);
         const cv = document.createElement('canvas'); cv.width = Math.round(W * PX); cv.height = Math.round(H * PX);

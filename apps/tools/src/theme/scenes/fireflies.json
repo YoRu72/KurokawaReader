@@ -6,7 +6,7 @@
  },
  "view": {
   "fps": 24,
-  "resolution": 0.5
+  "resolution": 1
  },
  "space": {
   "w": 1600,
@@ -17,48 +17,53 @@
  "palette": [
   {
    "id": "sky0",
-   "dark": "#01060c",
-   "light": "#8fa9b8"
+   "dark": "#010409",
+   "light": "#456a7a"
   },
   {
    "id": "sky1",
-   "dark": "#05182a",
-   "light": "#aac0cb"
+   "dark": "#04121c",
+   "light": "#7fa2ac"
   },
   {
    "id": "sky2",
-   "dark": "#0f3442",
-   "light": "#c9d9df"
+   "dark": "#0b2a33",
+   "light": "#c3d9d6"
   },
   {
-   "id": "far",
-   "dark": "#0a2230",
-   "light": "#7d97a6"
-  },
-  {
-   "id": "near",
-   "dark": "#020a10",
-   "light": "#5c7a8a"
+   "id": "haze",
+   "dark": "#17504f",
+   "light": "#e6f2ee"
   },
   {
    "id": "water",
-   "dark": "#01070d",
-   "light": "#7690a0"
+   "dark": "#01080f",
+   "light": "#557884"
+  },
+  {
+   "id": "mist",
+   "dark": "#2f6f70",
+   "light": "#ffffff"
+  },
+  {
+   "id": "star",
+   "dark": "#dff7f2",
+   "light": "#ffffff"
   },
   {
    "id": "fly",
-   "dark": "#a6ffe0",
-   "light": "#f0fffa"
+   "dark": "#9effd6",
+   "light": "#c4fff0"
   },
   {
    "id": "fly2",
    "dark": "#8ff0ff",
-   "light": "#eafdff"
+   "light": "#c6f6ff"
   },
   {
-   "id": "reed",
-   "dark": "#010508",
-   "light": "#3e5f6e"
+   "id": "fly3",
+   "dark": "#d6c2ff",
+   "light": "#ebe2ff"
   }
  ],
  "ui": {
@@ -95,38 +100,52 @@
       "sky0"
      ],
      [
-      0.45,
+      0.5,
       "sky1"
      ],
      [
-      0.6,
+      0.62,
       "sky2"
      ]
+    ],
+    "glow": {
+     "x": 0.5,
+     "y": 0.62,
+     "r": 0.8,
+     "colour": "haze",
+     "alpha": 0.38
+    }
+   }
+  },
+  {
+   "id": "stars",
+   "kind": "bokeh",
+   "depth": 0.02,
+   "parallax": 0.02,
+   "params": {
+    "count": 110,
+    "y0": -0.05,
+    "y1": 0.5,
+    "rmin": 0.5,
+    "rmax": 1.2,
+    "alpha": 0.5,
+    "colours": [
+     "star"
     ]
    }
   },
   {
-   "id": "hills",
-   "kind": "silhouette",
-   "depth": 0.15,
+   "id": "horizon-mist",
+   "kind": "fog",
+   "depth": 0.2,
    "params": {
-    "form": "hills",
-    "base": 0.58,
-    "amp": 0.06,
-    "colour": "far",
-    "hazeColour": "sky2",
-    "haze": 0.25
-   }
-  },
-  {
-   "id": "shore",
-   "kind": "silhouette",
-   "depth": 0.3,
-   "params": {
-    "form": "hills",
-    "base": 0.615,
-    "amp": 0.015,
-    "colour": "near"
+    "y": 0.605,
+    "h": 0.02,
+    "count": 10,
+    "size": 620,
+    "speed": 3,
+    "alpha": 0.2,
+    "colour": "mist"
    }
   },
   {
@@ -138,46 +157,45 @@
    "kind": "mirror",
    "depth": 0.5,
    "params": {
-    "y": 0.62,
+    "y": 0.625,
     "ripple": 4,
-    "alpha": 0.7,
+    "alpha": 0.75,
     "tint": "water",
-    "strength": 0.4
+    "strength": 0.42
+   }
+  },
+  {
+   "id": "water-mist",
+   "kind": "fog",
+   "depth": 0.6,
+   "params": {
+    "y": 0.7,
+    "h": 0.06,
+    "count": 10,
+    "size": 900,
+    "speed": 4,
+    "alpha": 0.12,
+    "colour": "mist"
    }
   },
   {
    "id": "flies-near",
-   "depth": 0.75
-  },
-  {
-   "id": "reeds",
-   "kind": "silhouette",
-   "depth": 0.92,
-   "params": {
-    "form": "reeds",
-    "base": 1.0,
-    "count": 80,
-    "h0": 0.1,
-    "h1": 0.3,
-    "colour": "reed"
-   }
+   "depth": 0.8
   }
  ],
  "emitters": [
   {
    "id": "flies",
    "layer": "flies",
-   "max": 46,
-   "rate": 2,
-   "align": true,
+   "max": 56,
+   "rate": 2.4,
    "prewarm": 1,
-   "wind": 0.1,
    "shape": {
     "kind": "rect",
     "x": 0,
-    "y": 0.28,
+    "y": 0.22,
     "w": 1,
-    "h": 0.32
+    "h": 0.38
    },
    "initializers": [
     {
@@ -187,13 +205,8 @@
     },
     {
      "kind": "size",
-     "min": 11,
-     "max": 15
-    },
-    {
-     "kind": "stretch",
-     "min": 1.8,
-     "max": 2.4
+     "min": 26,
+     "max": 40
     },
     {
      "kind": "alpha",
@@ -215,12 +228,14 @@
      "kind": "colour",
      "roles": [
       "fly",
-      "fly2"
+      "fly2",
+      "fly3",
+      "fly"
      ]
     },
     {
      "kind": "sprite",
-     "id": 12
+     "id": 13
     }
    ],
    "operators": [
@@ -236,8 +251,8 @@
     },
     {
      "kind": "twinkle",
-     "speed": 0.32,
-     "depth": 0.9
+     "speed": 0.3,
+     "depth": 0.8
     },
     {
      "kind": "pointer",
@@ -267,15 +282,13 @@
    "layer": "flies-near",
    "max": 16,
    "rate": 0.7,
-   "align": true,
    "prewarm": 1,
-   "wind": 0.1,
    "shape": {
     "kind": "rect",
     "x": 0,
     "y": 0.66,
     "w": 1,
-    "h": 0.25
+    "h": 0.28
    },
    "initializers": [
     {
@@ -285,13 +298,8 @@
     },
     {
      "kind": "size",
-     "min": 16,
-     "max": 22
-    },
-    {
-     "kind": "stretch",
-     "min": 1.8,
-     "max": 2.4
+     "min": 44,
+     "max": 66
     },
     {
      "kind": "alpha",
@@ -312,12 +320,14 @@
     {
      "kind": "colour",
      "roles": [
-      "fly"
+      "fly",
+      "fly2",
+      "fly3"
      ]
     },
     {
      "kind": "sprite",
-     "id": 12
+     "id": 13
     }
    ],
    "operators": [
@@ -333,8 +343,8 @@
     },
     {
      "kind": "twinkle",
-     "speed": 0.28,
-     "depth": 0.9
+     "speed": 0.26,
+     "depth": 0.8
     },
     {
      "kind": "pointer",

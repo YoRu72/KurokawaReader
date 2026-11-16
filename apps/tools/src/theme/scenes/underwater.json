@@ -18,12 +18,12 @@
   {
    "id": "sky0",
    "dark": "#0b4a66",
-   "light": "#7fcbe0"
+   "light": "#4fa6c2"
   },
   {
    "id": "sky1",
    "dark": "#06304a",
-   "light": "#9fd9e8"
+   "light": "#8bcfe0"
   },
   {
    "id": "sky2",
@@ -36,19 +36,14 @@
    "light": "#ffffff"
   },
   {
-   "id": "bed",
-   "dark": "#021220",
+   "id": "deep",
+   "dark": "#010a14",
    "light": "#5fa7b8"
   },
   {
-   "id": "reed",
-   "dark": "#031d2c",
-   "light": "#2f7f8c"
-  },
-  {
-   "id": "reed2",
-   "dark": "#052a3a",
-   "light": "#4c99a5"
+   "id": "murk",
+   "dark": "#0f5a72",
+   "light": "#e6f7fa"
   },
   {
    "id": "bubble",
@@ -58,6 +53,11 @@
   {
    "id": "mote",
    "dark": "#7fd3e8",
+   "light": "#ffffff"
+  },
+  {
+   "id": "caustic",
+   "dark": "#9feeff",
    "light": "#ffffff"
   }
  ],
@@ -108,8 +108,26 @@
      "y": -0.1,
      "r": 0.8,
      "colour": "shaft",
-     "alpha": 0.18
+     "alpha": 0.2
     }
+   }
+  },
+  {
+   "id": "caustics",
+   "kind": "arcs",
+   "depth": 0.03,
+   "parallax": 0.04,
+   "params": {
+    "count": 26,
+    "y0": -0.12,
+    "y1": 0.1,
+    "rmin": 70,
+    "rmax": 240,
+    "width": 1.4,
+    "alpha": 0.13,
+    "colours": [
+     "caustic"
+    ]
    }
   },
   {
@@ -118,14 +136,14 @@
    "depth": 0.1,
    "parallax": 0.06,
    "params": {
-    "count": 8,
-    "x0": 0.05,
-    "x1": 0.95,
+    "count": 9,
+    "x0": 0.02,
+    "x1": 0.98,
     "y0": -0.08,
-    "len": 1.05,
+    "len": 1.1,
     "angle": 0.22,
     "width": 0.08,
-    "alpha": 0.11,
+    "alpha": 0.12,
     "colour": "shaft"
    }
   },
@@ -134,47 +152,53 @@
    "depth": 0.3
   },
   {
-   "id": "bed",
-   "kind": "silhouette",
-   "depth": 0.45,
+   "id": "murk",
+   "kind": "fog",
+   "depth": 0.4,
    "params": {
-    "form": "hills",
-    "base": 0.93,
-    "amp": 0.05,
-    "colour": "bed",
-    "hazeColour": "sky1",
-    "haze": 0.35
+    "y": 0.6,
+    "h": 0.3,
+    "count": 10,
+    "size": 900,
+    "speed": 3,
+    "alpha": 0.08,
+    "colour": "murk"
    }
   },
   {
-   "id": "reeds-far",
-   "kind": "silhouette",
-   "depth": 0.55,
+   "id": "deep",
+   "kind": "band",
+   "depth": 0.5,
    "params": {
-    "form": "reeds",
-    "base": 0.95,
-    "count": 60,
-    "h0": 0.08,
-    "h1": 0.24,
-    "colour": "reed2"
+    "y0": 0.55,
+    "y1": 1.05,
+    "top": "sky2",
+    "bottom": "deep",
+    "a0": 0,
+    "a1": 0.85
+   }
+  },
+  {
+   "id": "particulate",
+   "kind": "bokeh",
+   "depth": 0.6,
+   "parallax": 0.6,
+   "params": {
+    "count": 40,
+    "y0": 0.05,
+    "y1": 1.0,
+    "rmin": 4,
+    "rmax": 16,
+    "alpha": 0.12,
+    "colours": [
+     "mote",
+     "bubble"
+    ]
    }
   },
   {
    "id": "bubbles",
    "depth": 0.7
-  },
-  {
-   "id": "reeds",
-   "kind": "silhouette",
-   "depth": 0.9,
-   "params": {
-    "form": "reeds",
-    "base": 1.0,
-    "count": 70,
-    "h0": 0.12,
-    "h1": 0.38,
-    "colour": "reed"
-   }
   }
  ],
  "emitters": [

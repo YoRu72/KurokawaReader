@@ -31,19 +31,19 @@
    "light": "#b9c6d4"
   },
   {
-   "id": "far",
-   "dark": "#2d3e57",
-   "light": "#8396ae"
-  },
-  {
-   "id": "mid",
-   "dark": "#1a283c",
-   "light": "#66798f"
+   "id": "pale",
+   "dark": "#8fa0b8",
+   "light": "#f4f7fb"
   },
   {
    "id": "veil",
-   "dark": "#7f93ad",
+   "dark": "#6f83a0",
    "light": "#e8edf3"
+  },
+  {
+   "id": "haze",
+   "dark": "#42546e",
+   "light": "#dfe6ee"
   },
   {
    "id": "snow",
@@ -101,30 +101,30 @@
    }
   },
   {
-   "id": "ridge",
-   "kind": "silhouette",
-   "depth": 0.15,
+   "id": "moon",
+   "kind": "disc",
+   "depth": 0.02,
+   "parallax": 0.04,
    "params": {
-    "form": "ridge",
-    "base": 0.72,
-    "amp": 0.12,
-    "rough": 0.4,
-    "colour": "far",
-    "hazeColour": "veil",
-    "haze": 0.7
+    "x": 0.72,
+    "y": 0.22,
+    "r": 0.045,
+    "halo": 6,
+    "colour": "pale",
+    "glow": 0.3
    }
   },
   {
-   "id": "veil-far",
+   "id": "veil-high",
    "kind": "fog",
-   "depth": 0.25,
+   "depth": 0.1,
    "params": {
-    "y": 0.62,
-    "h": 0.3,
+    "y": 0.28,
+    "h": 0.22,
     "count": 10,
-    "size": 900,
-    "speed": 70,
-    "alpha": 0.18,
+    "size": 1000,
+    "speed": 55,
+    "alpha": 0.14,
     "colour": "veil"
    }
   },
@@ -133,17 +133,16 @@
    "depth": 0.3
   },
   {
-   "id": "hills",
-   "kind": "silhouette",
-   "depth": 0.45,
+   "id": "haze",
+   "kind": "band",
+   "depth": 0.35,
    "params": {
-    "form": "hills",
-    "base": 0.9,
-    "amp": 0.06,
-    "colour": "mid",
-    "hazeColour": "veil",
-    "haze": 0.55,
-    "snow": "snow"
+    "y0": 0.5,
+    "y1": 1.05,
+    "top": "haze",
+    "bottom": "veil",
+    "a0": 0,
+    "a1": 0.45
    }
   },
   {
@@ -151,18 +150,32 @@
    "kind": "fog",
    "depth": 0.55,
    "params": {
-    "y": 0.5,
-    "h": 0.8,
+    "y": 0.62,
+    "h": 0.28,
     "count": 12,
     "size": 1100,
-    "speed": 120,
-    "alpha": 0.14,
+    "speed": 95,
+    "alpha": 0.15,
     "colour": "veil"
    }
   },
   {
    "id": "mid",
    "depth": 0.6
+  },
+  {
+   "id": "veil-low",
+   "kind": "fog",
+   "depth": 0.8,
+   "params": {
+    "y": 0.9,
+    "h": 0.12,
+    "count": 10,
+    "size": 1300,
+    "speed": 130,
+    "alpha": 0.18,
+    "colour": "veil"
+   }
   },
   {
    "id": "near",

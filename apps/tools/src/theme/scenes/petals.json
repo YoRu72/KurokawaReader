@@ -17,53 +17,58 @@
  "palette": [
   {
    "id": "sky0",
-   "dark": "#1c1233",
-   "light": "#c9b6d8"
+   "dark": "#170f2b",
+   "light": "#8f7ab8"
   },
   {
    "id": "sky1",
-   "dark": "#3b2558",
-   "light": "#dccbe4"
+   "dark": "#2f1d4c",
+   "light": "#b9a2d4"
   },
   {
    "id": "sky2",
-   "dark": "#7a4a86",
-   "light": "#efdfec"
+   "dark": "#5a3570",
+   "light": "#e0cbe4"
+  },
+  {
+   "id": "sky3",
+   "dark": "#86507f",
+   "light": "#f4e1ec"
   },
   {
    "id": "glow",
-   "dark": "#d78ab4",
-   "light": "#fbe6f0"
+   "dark": "#c27aa6",
+   "light": "#fdeef5"
   },
   {
-   "id": "far",
-   "dark": "#3a2756",
-   "light": "#bba6cd"
+   "id": "light",
+   "dark": "#f3c6dc",
+   "light": "#ffffff"
   },
   {
-   "id": "mid",
-   "dark": "#281a42",
-   "light": "#9e88b8"
+   "id": "bok",
+   "dark": "#e59cc2",
+   "light": "#f3bfd8"
   },
   {
-   "id": "near",
-   "dark": "#170f2a",
-   "light": "#7c69a0"
+   "id": "bok2",
+   "dark": "#a994f0",
+   "light": "#d2c4f6"
   },
   {
    "id": "petal",
    "dark": "#f4a9cb",
-   "light": "#e783ae"
+   "light": "#d2689c"
   },
   {
    "id": "petal2",
    "dark": "#fbd0e2",
-   "light": "#f0a5c6"
+   "light": "#e48ab4"
   },
   {
    "id": "petal3",
    "dark": "#ffffff",
-   "light": "#d97aa8"
+   "light": "#c45d92"
   }
  ],
  "ui": {
@@ -91,8 +96,8 @@
   {
    "id": "sky",
    "kind": "sky",
-   "depth": 0,
-   "parallax": 0,
+   "depth": 0.05,
+   "parallax": 0.05,
    "params": {
     "stops": [
      [
@@ -100,35 +105,60 @@
       "sky0"
      ],
      [
-      0.55,
+      0.45,
       "sky1"
      ],
      [
-      1,
+      0.82,
       "sky2"
+     ],
+     [
+      1,
+      "sky3"
      ]
     ],
     "glow": {
-     "x": 0.5,
-     "y": 0.9,
+     "x": 0.2,
+     "y": 0.12,
      "r": 0.9,
      "colour": "glow",
-     "alpha": 0.35
+     "alpha": 0.32
     }
    }
   },
   {
-   "id": "ridge",
-   "kind": "silhouette",
-   "depth": 0.2,
+   "id": "light",
+   "kind": "shafts",
+   "depth": 0.05,
+   "parallax": 0.05,
    "params": {
-    "form": "ridge",
-    "base": 0.74,
-    "amp": 0.08,
-    "rough": 0.4,
-    "colour": "far",
-    "hazeColour": "glow",
-    "haze": 0.35
+    "count": 6,
+    "x0": -0.08,
+    "x1": 0.55,
+    "y0": -0.12,
+    "len": 1.35,
+    "angle": -0.42,
+    "width": 0.09,
+    "alpha": 0.2,
+    "colour": "light"
+   }
+  },
+  {
+   "id": "haze-far",
+   "kind": "bokeh",
+   "depth": 0.12,
+   "parallax": 0.12,
+   "params": {
+    "count": 34,
+    "y0": 0.05,
+    "y1": 1.0,
+    "rmin": 18,
+    "rmax": 64,
+    "alpha": 0.13,
+    "colours": [
+     "bok",
+     "bok2"
+    ]
    }
   },
   {
@@ -136,16 +166,16 @@
    "depth": 0.3
   },
   {
-   "id": "hills",
-   "kind": "silhouette",
-   "depth": 0.5,
+   "id": "floor-glow",
+   "kind": "band",
+   "depth": 0.4,
    "params": {
-    "form": "hills",
-    "base": 0.86,
-    "amp": 0.06,
-    "colour": "mid",
-    "hazeColour": "glow",
-    "haze": 0.15
+    "y0": 0.62,
+    "y1": 1.05,
+    "top": "sky3",
+    "bottom": "glow",
+    "a0": 0,
+    "a1": 0.4
    }
   },
   {
@@ -153,14 +183,21 @@
    "depth": 0.6
   },
   {
-   "id": "near-hills",
-   "kind": "silhouette",
-   "depth": 0.75,
+   "id": "haze-near",
+   "kind": "bokeh",
+   "depth": 0.85,
+   "parallax": 0.85,
    "params": {
-    "form": "hills",
-    "base": 0.97,
-    "amp": 0.04,
-    "colour": "near"
+    "count": 9,
+    "y0": 0.1,
+    "y1": 1.0,
+    "rmin": 90,
+    "rmax": 170,
+    "alpha": 0.07,
+    "colours": [
+     "bok",
+     "bok2"
+    ]
    }
   },
   {
@@ -172,10 +209,9 @@
   {
    "id": "far",
    "layer": "far",
-   "max": 60,
-   "rate": 3,
+   "max": 70,
+   "rate": 3.5,
    "prewarm": 1,
-   "wind": 0.5,
    "initializers": [
     {
      "kind": "lifetime",
@@ -252,10 +288,9 @@
   {
    "id": "mid",
    "layer": "mid",
-   "max": 40,
-   "rate": 2,
+   "max": 44,
+   "rate": 2.2,
    "prewarm": 1,
-   "wind": 0.8,
    "initializers": [
     {
      "kind": "lifetime",
@@ -346,7 +381,6 @@
    "max": 12,
    "rate": 0.6,
    "prewarm": 1,
-   "wind": 1,
    "initializers": [
     {
      "kind": "lifetime",

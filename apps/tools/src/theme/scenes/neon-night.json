@@ -18,37 +18,37 @@
   {
    "id": "sky0",
    "dark": "#05041a",
-   "light": "#e2eef6"
+   "light": "#dfe6f4"
   },
   {
    "id": "sky1",
    "dark": "#0d0930",
-   "light": "#d3e5ef"
+   "light": "#ced9ee"
   },
   {
    "id": "sky2",
    "dark": "#1a0f40",
-   "light": "#c4dbe9"
+   "light": "#bccbe8"
   },
   {
    "id": "cyan",
    "dark": "#38e3ff",
-   "light": "#7fd6ea"
+   "light": "#2fa6c8"
   },
   {
    "id": "magenta",
    "dark": "#ff4fd8",
-   "light": "#f2a6dd"
+   "light": "#cf5aa8"
   },
   {
    "id": "violet",
    "dark": "#8a6bff",
-   "light": "#b9a8f2"
+   "light": "#7a62dc"
   },
   {
    "id": "arc",
    "dark": "#4ff0ff",
-   "light": "#2a9fb8"
+   "light": "#2a86ab"
   },
   {
    "id": "red",
