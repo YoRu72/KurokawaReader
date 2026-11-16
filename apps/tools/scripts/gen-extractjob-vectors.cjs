@@ -18,7 +18,7 @@ const F = [
   facts({}), facts({ free: 70000, sameVolume: false }), facts({ free: 75000 }), facts({ free: 1e9 }), facts({ archiveWritable: false, free: 1e9 }), facts({ saf: true, free: 1e9 }),
   facts({ entries: [{ path: 'bomb', usize: 5 * 1024 ** 3, csize: 5 * 1024 ** 2, method: 8 }], free: 1e12 }), facts({ volumes: { missing: ['x.zip.003'], odd: [] }, free: 1e9 }), facts({ existing: ['a'], free: 1e9 }),
   facts({ free: 1e9, entries: [{ path: 'x.zst', usize: 10, csize: 10, method: 93 }, { path: 'y', usize: 1, csize: 1, method: 8 }] }), facts({ free: 1e9, external: [93], entries: [{ path: 'x.zst', usize: 10, csize: 10, method: 93 }] }),
-  facts({ free: 1e9, encrypted: true, password: 'wrong' }), facts({ free: 1e9, encrypted: true, password: 'ok' }), facts({ free: 1e9, busy: true }), facts({ free: 1e9, destWritable: false }),
+  facts({ free: 1e9, encrypted: true, password: 'wrong' }), facts({ free: 1e9, encrypted: true, password: 'ok' }), facts({ free: 1e9, busy: true }), facts({ free: 1e9, oldJob: true }), facts({ free: 1e9, destWritable: false }),
   facts({ free: 1e9, platform: 'windows', entries: [{ path: 'a:b.txt', usize: 1, csize: 1, method: 0 }, { path: 'CON.txt', usize: 1, csize: 1, method: 0 }, { path: '../up', usize: 1, csize: 1, method: 0 }] }),
   facts({ free: 1e9, platform: 'windows', entries: [{ path: 'A.txt', usize: 1, csize: 1, method: 0 }, { path: 'a.txt', usize: 1, csize: 1, method: 0 }, { path: 'd/', dir: true }, { path: 'D', usize: 1, csize: 1, method: 0 }] }),
   facts({ free: 1e9, entries: [{ path: 'l', link: 'sym', target: '../../etc' }, { path: 'x\u202eb.txt', usize: 1, csize: 1, method: 0 }] }),
@@ -52,6 +52,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-genvec-'));
     [['A.txt', 'a.txt'], [], { default: 'both' }, 0, 'windows'], [['x.tar.gz', 'noext', '.hidden'], ['x.tar.gz', 'noext', '.hidden'], { default: 'both' }, 0, 'linux'], [['ok.txt', '../up.txt'], [], null, 0, 'linux'],
     [['meeting 10:30.txt'], ['meeting 10_30.txt'], { default: 'both' }, 1, 'windows'],
     [['d', 'x.txt'], ['d/', 'x.txt'], { default: 'replace' }, 0, 'linux'], [['d', 'x.txt'], ['d/', 'x.txt'], { default: 'replace' }, 1, 'linux'],
+    // (Round four: «keep both» of a name at the limit stays within it — the base is cut.)
+    [['n'.repeat(243) + '.txt', 'd/' + 'n'.repeat(247)], ['n'.repeat(243) + '.txt', 'd/' + 'n'.repeat(247), 'd/' + 'n'.repeat(243) + ' (2)'], { default: 'both' }, 1, 'linux'],
   ];
   for (const [names, ex, answers, ip, plat] of P) {
     const dest = fs.mkdtempSync(path.join(tmp, 'd-')); for (const e of ex) { if (e.endsWith('/')) { fs.mkdirSync(path.join(dest, e), { recursive: true }); continue; } fs.mkdirSync(path.dirname(path.join(dest, e)), { recursive: true }); fs.writeFileSync(path.join(dest, e), 'old'); }
@@ -65,8 +67,14 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-genvec-'));
   const plan = { format: 'zip', size: 100, tailStart: 60, idCrc: 7, dest: '/o', units: [{ i: 0, name: 'a', start: 0, dataStart: 31, dataEnd: 40, end: 40, method: 0, crc: 5, usize: 9, csize: 9, dir: false, link: null, encrypted: false, dd: false, time: 0, kind: 'file', out: 'a', head: Buffer.from('h').toString('base64'), trail: '', cd: Buffer.from('cd!').toString('base64') }] };
   for (const raw of [Buffer.alloc(0), Buffer.from('504b0506', 'hex')]) { const j = Buffer.from(JSON.stringify(plan), 'utf8'); const tb = Buffer.concat([Buffer.from(`KTTAIL2\n${j.length}\n`), j, raw]); out.push(['tail', JSON.stringify(plan), raw.toString('hex') || '-', S.crc32(tb).toString(16).padStart(8, '0')].join('\t')); }
   const logs = ['{"i":0,"out":"a.txt","crc":5}\n{"i":1,"out":"x\\n0\\t/etc/passwd\\t9","crc":7}\n', 'x\n0\t/etc/victim\t123\n{"i":2,"out":"b (2).txt","crc":4294967295}', '{"i":-1,"out":"a","crc":1}\n{"i":1.5,"out":"a","crc":1}\n{"i":1,"out":5,"crc":1}\n{"i":1,"out":"a","crc":4294967296}\n[1,2]\n{"i":3,"out":"c","crc":0}\n'];
+  logs.push('0\ta (2).txt\t4294967295\n1\tb\t4294967296\n2\tc\t5\textra\n-1\td\t5\n3\te\tff\n4\tf\t7\n{"i":5,"out":"g","crc":1}\n');
   for (const l of logs) out.push(['log', JSON.stringify(l), JSON.stringify(E.parseLog(l))].join('\t'));
   for (const [a, b] of [['a.txt', 'a.txt'], ['a.txt', 'a (2).txt'], ['d/a.txt', 'd/a (12).txt'], ['d/a.txt', 'a (2).txt'], ['a.txt', 'a (02).txt'], ['a.txt', 'a ().txt'], ['a.txt', '/etc/passwd'], ['a.txt', '../a (2).txt'], ['noext', 'noext (3)'], ['a.tar.gz', 'a.tar (2).gz'], ['a.txt', 'a (2).txt/x']]) out.push(['own', a, b, E.ownOutput(a, b) ? 1 : 0].join('\t'));
+  const L = 'n'.repeat(243) + '.txt'; const AR = 'ب'.repeat(121) + '.txt'; const EM = '😀'.repeat(60) + '.txt'; const LE = 'a.' + 'e'.repeat(244);
+  for (const [a, b, plat] of [[L, S.bothForm(L, 2, 247), 'linux'], [L, 'n'.repeat(243) + ' (2).txt', 'linux'], [L, 'n'.repeat(238) + ' (2).txt', 'linux'], [L, 'n'.repeat(236) + ' (12).txt', 'linux'], [L, S.bothForm(L, 12, 247), 'linux'],
+    [AR, S.bothForm(AR, 2, 247), 'linux'], [AR, S.bothForm(AR, 2, 247, 'utf16'), 'linux'], ['ب'.repeat(243) + '.txt', S.bothForm('ب'.repeat(243) + '.txt', 3, 247, 'utf16'), 'windows'], ['ب'.repeat(243) + '.txt', S.bothForm('ب'.repeat(243) + '.txt', 3, 247), 'windows'],
+    [EM, S.bothForm(EM, 2, 247), 'linux'], [LE, S.bothForm(LE, 2, 247), 'linux'], [LE, 'a (2)', 'linux'], ['abc.txt', 'ab (2).txt', 'linux'], ['d/' + L, 'd/' + S.bothForm(L, 2, 247), 'linux'], ['d/' + L, S.bothForm(L, 2, 247), 'linux']])
+    out.push(['own', a, b, E.ownOutput(a, b, plat) ? 1 : 0, plat].join('\t'));
   for (const [c, l, o] of [[2, 100, 300], [0, 0, 0], [70000, 5000000, 123456], [3, 10, 5e9]]) out.push(['zipend', c, l, o, E.zipEnd(c, l, o).toString('hex')].join('\t'));
   fs.writeFileSync(path.join(ROOT, 'tests/data/extractjob-vectors.tsv'), out.join('\n') + '\n'); fs.rmSync(tmp, { recursive: true, force: true }); console.log(out.length, 'lines');
 })();

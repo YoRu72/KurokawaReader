@@ -81,7 +81,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   const load = async () => { try { const r = await listArchiveAuto(path, password || undefined); info = r.info; password = r.password ?? ''; if (password) savePassword(password); draw(); } catch (e) { const m = String((e as Error).message ?? e); if (/password/i.test(m)) { drawPassword(m); return; } sh.body.replaceChildren(h('p', { class: 'empty small' }, errText(m))); } };
   const drawPassword = (why: string) => { const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off' }) as HTMLInputElement; sh.body.replaceChildren(h('p', { class: 'hint' }, /wrong/i.test(why) ? t('wrongPassword') : t('passwordNeeded')), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('label', { class: 'row switch-row' }, h('span', null, t('archiveRememberPw')), h('input', { type: 'checkbox', checked: rememberPasswords(), onchange: (e: Event) => setRememberPasswords((e.target as HTMLInputElement).checked) }))); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { password = pw.value; void load(); } }, t('open'))); };
   let destMode: 'here' | 'folder' | 'other' = opts.dest ? 'other' : 'here'; let other = opts.dest ? `${opts.dest.replace(/\/+$/, '')}/${stem(baseName(path))}` : ''; let inPlace = false; let deleteAfter = false; let verifyFirst = getSettings().archiveVerifyFirst !== false;
-  let report: Report | null = null; let existing: string[] = []; let answers: Answers | undefined; let skip: string[] | undefined;
+  let report: Report | null = null; let existing: string[] = []; let answers: Answers | undefined; let skip: string[] | undefined; let finishBeside = false;
   const destOf = () => (destMode === 'here' ? (topLevel(info.entries) === 'one' ? parentOf(path) : `${parentOf(path)}/${stem(baseName(path))}`) : destMode === 'folder' ? `${parentOf(path)}/${stem(baseName(path))}` : other);
   const draw = () => {
     const files = info.entries.filter((e) => !e.dir);
@@ -152,6 +152,12 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
     try { const left = await restoreArchive(path); toast(left === -2 ? t('restoredWhole') : left >= 0 ? t('archiveRestored', { n: countFiles(left) }) : t('archiveRestoredTar')); void load(); }
     catch (e) { failed(String((e as Error).message ?? e)); }
   };
+  /** An unfinished job beside the archive that this app did not start: where its files go, then Finish, Restore the archive or Leave it. */
+  const besideChoice = (dest: string) => {
+    sh.body.replaceChildren(h('div', { class: 'pf-report' }, h('div', { class: 'pf-head' }, icon('info'), h('span', null, t('besideAsk'))), h('p', { class: 'src', dir: 'ltr' }, dest)));
+    sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('shelfLeave')), h('button', { type: 'button', class: 'btn tonal', onclick: () => void giveUp() }, t('shelfRestore')),
+      h('button', { type: 'button', class: 'btn primary', onclick: () => { finishBeside = true; void start(); } }, t('shelfFinish')));
+  };
   /** A damaged file found before anything changed: extract the rest normally, or stop. */
   const damagedChoice = (names: string[]) => {
     sh.body.replaceChildren(h('div', { class: 'pf-report' }, h('div', { class: 'pf-head' }, icon('info'), h('span', null, t('pf_damaged'))), ...names.slice(0, 5).map((n) => h('div', { class: 'pf-name', dir: 'auto' }, n)), h('p', { class: 'pf-fix' }, t('fixDamaged'))));
@@ -160,7 +166,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   const start = async () => {
     const dest = destOf(); if (!dest) { toast(t('chooseFolder'), 'error'); return; }
     if (existing.length && !answers && !info.resumable) { const a = await askConflicts(existing); if (!a) return; answers = a; }
-    const job = extractArchiveJob({ path, dest, inPlace, deleteAfter, replace: answers?.default ?? 'both', answers, skip, password: password || undefined, verifyFirst: inPlace && verifyFirst, keepFree: keepFreeNow() }, progressUi(t('extracting')));
+    const job = extractArchiveJob({ path, dest, inPlace, deleteAfter, replace: answers?.default ?? 'both', answers, skip, password: password || undefined, verifyFirst: inPlace && verifyFirst, keepFree: keepFreeNow(), ...(finishBeside ? { finishBeside } : {}) }, progressUi(t('extracting')));
     sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => void cancelArchive(job.id) }, t('cancel')));
     try {
       const r = await job.done; opts.onDone?.(r.dest);
@@ -174,6 +180,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
       if (m === 'stopped') { toast(t(inPlace ? 'extractPausedInPlace' : 'cancelled')); sh.close(); return; }
       if (/password/i.test(m)) { drawPassword(m); return; }
       if (m === 'conflictsUnanswered') { answers = undefined; void load(); return; }
+      { const ab = /(?:^|: )askBeside (.+)$/s.exec(m); if (ab) { besideChoice(ab[1]); return; } }
       if (/^refused damaged /.test(m) || /^damaged /.test(m)) { damagedChoice(m.replace(/^refused damaged |^damaged /, '').split(', ')); return; }
       failed(m);
     }

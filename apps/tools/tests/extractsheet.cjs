@@ -38,7 +38,7 @@ const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1',
         archiveList: async () => ({ format: 'zip', entries: [{ path: 'Season 1/', size: 0, dir: true }, ...Array.from({ length: 6 }, (_, i) => ({ path: `Season 1/Episode ${i + 1}.mkv`, size: 4e8, compressed: 3.9e8, dir: false }))], total: 2.4e9, encrypted: false, inPlaceOk: true, platform: 'windows' }),
         pickFile: async () => ['/home/u/Downloads/Show.zip'], pathInfo: async () => ({ exists: true }), archiveTest: async () => ({ ok: true, files: 6, bad: [] }),
         archivePreflight: async () => ({ report: rep, facts: {} }), archiveFree: async () => ({ free: rep.space.free }), archiveExisting: async () => ({ existing: ex }),
-        archiveExtract: async (o) => { calls.push(o); return { files: 6, dest: o.dest, job: '/x/job.kurokawa-unzip' }; }, archiveJob: async (o) => { calls.push(o); return { identical: true }; }, archiveShelf: async () => shelf, onArchiveProgress: () => () => {}, archiveCancel: async () => {} };
+        archiveExtract: async (o) => { calls.push(o); if (window.__askOnce) { window.__askOnce = false; throw new Error('askBeside /home/u/Elsewhere/out'); } return { files: 6, dest: o.dest, job: '/x/job.kurokawa-unzip' }; }, archiveJob: async (o) => { calls.push(o); return { identical: true }; }, archiveShelf: async () => shelf, onArchiveProgress: () => () => {}, archiveCancel: async () => {} };
       window.kurokawaTools = new Proxy(t, { get: (o, k) => (k in o ? o[k] : k === 'then' || ['filesJob', 'onFilesJob', 'titleBar', 'filesRoots', 'filesStat', 'filesMkdir', 'filesRename'].includes(k) ? undefined : async () => undefined) });
     }, [lang, report, extra.shelf ?? [], extra.existing ?? (which === 'conflicts' || which === 'problems' ? ['Season 1/Episode 1.mkv', 'Season 1/Episode 2.mkv', 'Season 1/Episode 3.mkv'].slice(0, which === 'problems' ? 2 : 3) : [])]);
     return { p, ctx };
@@ -68,6 +68,15 @@ const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1',
       const overflow = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1 || [...document.querySelectorAll('.extract-sheet *')].some((e) => e.getBoundingClientRect().right > window.innerWidth + 1 && getComputedStyle(e).position !== 'fixed'));
       ok(`${lang} ${kind} ${which}: nothing runs off the screen`, !overflow);
       if (which === 'ok') { ok(`${lang} ok: «ready», normal recommended`, (await p.$('.pf-head.good')) && (await p.$$('.fit-row')).length === 2 && (await p.$('.fit-row:first-child .fit-rec'))); if (lang === 'en' && kind === 'phone') await shot(p, { path: path.join(SHOTS, 'extract-preflight-ok.png') }); }
+      // (Round four: an unfinished job beside the archive that this app did not start — the sheet says where its files go; Finish / Restore / Leave;
+      //  Finish sends the job again with the user's confirmation.)
+      if (which === 'ok' && kind === 'phone') {
+        await p.evaluate(() => { window.__askOnce = true; }); await p.click('.extract-sheet .sheet-actions .btn.primary');
+        await p.waitForSelector('.extract-sheet .pf-report .src'); const at = await p.$eval('.extract-sheet .pf-report', (e) => e.innerText); const btns = await p.$$eval('.extract-sheet .sheet-actions .btn', (b) => b.length);
+        ok(`${lang} beside: asked first, the destination shown, three choices`, at.includes('/home/u/Elsewhere/out') && at.length > 40 && btns === 3 && !/\bbesideAsk\b|shelf[A-Z]/.test(at), at);
+        await p.click('.extract-sheet .sheet-actions .btn.primary'); await p.waitForFunction(() => window.__calls.some((c) => c.finishBeside === true));
+        ok(`${lang} beside: Finish sends the job with the confirmation`, (await p.evaluate(() => window.__calls.filter((c) => c.path).length)) === 2);
+      }
       if (which === 'problems') {
         const groups = await p.$$eval('.pf-group', (g) => g.map((x) => x.className.split(' ')[1] + ':' + x.querySelector('.pf-title b').textContent));
         ok(`${lang} ${kind} problems: grouped by kind, blocking first in colour`, groups.length >= 3 && groups[0].startsWith("block") && groups.some((g) => g.startsWith('block')), groups);

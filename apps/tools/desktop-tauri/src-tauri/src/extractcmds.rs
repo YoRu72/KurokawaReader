@@ -80,22 +80,35 @@ pub fn extract(app: &AppHandle, path: &Path, dest: &Path, o: &Value, on: &dyn Fn
     let pr = ej::Pr { on, stopped: &stopped };
     let password = o.get("password").and_then(|v| v.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string());
     let journal = ej::journal_of(path);
+    let mut old_job = false;
     if journal.exists() {
-        return match ej::journal_version(path) {
+        match ej::journal_version(path) {
             2 => {
-                // (Finished: with its journal, so the page offers Undo — main.cjs hands back the job the same way.)
-                // (Only an in-place job of this very archive, its journal validated: anything else there is never replayed.)
-                let r = ej::finish_beside(path, &env(), &pr, password.as_deref(), keep_free(o)).map_err(|f| f.msg)?;
-                let mut v = value(&r);
-                if let Some(m) = v.as_object_mut() {
-                    m.remove("undo");
-                    m.insert("dest".into(), json!(dest.to_string_lossy()));
+                // (Only an in-place job of this very archive, its journal validated: anything else there is never
+                // replayed. This app's job — its registry points at the journal — is finished at once; another's only
+                // once the page's sheet showed where its files go and the user chose Finish («finishBeside»), else
+                // «askBeside <dest>». A finished job's journal beside a new archive of that name: left out — the archive
+                // is extracted as usual, never in place while that job is on the shelf.)
+                let reg = registry(app);
+                match ej::finish_beside(path, reg.as_deref(), flag(o, "finishBeside"), &env(), &pr, password.as_deref(), keep_free(o)).map_err(|f| f.msg)? {
+                    Some(r) => {
+                        // (Finished: with its journal, so the page offers Undo — main.cjs hands back the job the same way.)
+                        let mut v = value(&r);
+                        if let Some(m) = v.as_object_mut() {
+                            m.remove("undo");
+                            m.insert("dest".into(), json!(dest.to_string_lossy()));
+                        }
+                        return Ok(Some(v));
+                    }
+                    None => old_job = true,
                 }
-                Ok(Some(v))
             }
-            1 => Ok(None),
-            _ => Err("journalCorrupt".to_string()),
-        };
+            1 => return Ok(None),
+            _ => return Err("journalCorrupt".to_string()),
+        }
+    }
+    if old_job && flag(o, "inPlace") && o.get("only").map(|v| v.is_null()).unwrap_or(true) {
+        return Err("journalExists".to_string());
     }
     let fmt = archive::format_of(path)?;
     if (fmt != "zip" && fmt != "tar") || numbered(&path.to_string_lossy()) {
@@ -130,19 +143,24 @@ pub fn extract(app: &AppHandle, path: &Path, dest: &Path, o: &Value, on: &dyn Fn
 
 /// kt:archiveList for an archive with an unfinished engine job beside it (journal v2): what is still in it, from the
 /// job's plan (archive.cjs list's v2 branch) — the page's ArchiveInfo.
-pub fn list_v2(path: &Path) -> Result<Value, String> {
-    let left = ej::left_entries(path).map_err(|f| f.msg)?;
+/// None: the journal beside it is a finished job's and this is a new archive of that name — listed as itself.
+pub fn list_v2(path: &Path) -> Result<Option<Value>, String> {
+    let left = match ej::left_beside(path).map_err(|f| f.msg)? {
+        Some(l) => l,
+        None => return Ok(None),
+    };
     let format = ej::open_job(&ej::journal_of(path)).map(|j| j.format).unwrap_or_else(|_| "zip".into());
     let total: u64 = left.iter().map(|e| e.1).sum();
     let largest = left.iter().filter(|e| !e.3).map(|e| e.1).max().unwrap_or(0);
     let entries: Vec<Value> = left.iter().map(|(p, s, c, d)| json!({ "path": p, "size": s, "compressed": c, "dir": d })).collect();
     let free = ej::Io::free_space(&DISK, path.parent().unwrap_or(Path::new(".")));
-    Ok(json!({ "format": format, "entries": entries, "total": total, "encrypted": false, "inPlaceOk": true, "resumable": true, "largest": largest, "free": free, "platform": ej::host_platform() }))
+    Ok(Some(json!({ "format": format, "entries": entries, "total": total, "encrypted": false, "inPlaceOk": true, "resumable": true, "largest": largest, "free": free, "platform": ej::host_platform() })))
 }
 /// kt:archiveRestore for an archive with an engine journal (v2) beside it → archive.cjs restore's number: -2 when the
 /// archive came back whole, else how many files stayed extracted.
 pub fn restore_v2(path: &Path) -> Result<i64, String> {
-    let r = ej::restore(&ej::journal_of(path), &env()).map_err(|f| f.msg)?;
+    // (Only the in-place job of this very archive — restore_beside; a finished job's beside a new archive: «nothingToRestore».)
+    let r = ej::restore_beside(path, &env()).map_err(|f| f.msg)?;
     Ok(if r.get("identical").map(|x| x.truthy()).unwrap_or(false) { -2 } else { r.get("keptOut").and_then(|x| x.as_arr()).map(|a| a.len() as i64).unwrap_or(0) })
 }
 
@@ -164,7 +182,7 @@ pub async fn kt_archive_preflight(o: Value) -> Result<Value, String> {
             let pr = ej::Pr { on: &|_, _, _| {}, stopped: &|| false };
             return ej::preflight_of(p, Path::new(&dest), &fo, kf, &env(), &pr).map(|j| value(&j)).map_err(|f| f.msg);
         }
-        let info = archive::list(p, password.as_deref(), &archives::ctx())?;
+        let info = if old_job_beside(p) { archive::list_fresh(p, password.as_deref(), &archives::ctx())? } else { archive::list(p, password.as_deref(), &archives::ctx())? };
         let entries: Vec<(String, bool, i64, i64)> = info.entries.iter().map(|e| (e.path.clone(), e.dir, e.size, e.compressed.map(|c| c as i64).unwrap_or(0))).collect();
         let names: Vec<String> = info.entries.iter().filter(|e| !e.dir).map(|e| e.path.clone()).collect();
         let existing = archive::existing(Path::new(&dest), &names);
@@ -215,4 +233,10 @@ pub async fn kt_archive_job(app: AppHandle, o: Value) -> Result<Value, String> {
     .await;
     archives::end_job(&id);
     r
+}
+
+/// Whether the journal beside `path` is a finished job's and a new archive of that name is there (kt-core Beside::Old):
+/// then the shared reader lists and extracts the archive itself (list_fresh, extract_fresh), never the old job's tail.
+pub fn old_job_beside(path: &Path) -> bool {
+    ej::journal_version(path) == 2 && matches!(ej::beside(path, None), Ok(ej::Beside::Old))
 }

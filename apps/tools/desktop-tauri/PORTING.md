@@ -158,6 +158,29 @@ Do the same once before a local `tauri build` / `tauri dev`.
   folder aside (a file over a folder is kept beside); a Finish proves the password first (`passwordNeeded` /
   `wrongPassword`). The cross-engine test now crosses a «keep both» conflict and Undo of a finished job.
 
+- **P11 review, round 4 (both engines, shared vectors):** «keep both» keeps the new name within the platform's limit (the
+  name limit less `.kt-part`: 247 UTF-8 bytes, or UTF-16 units on Windows / FAT): the base is cut between characters
+  (`both_form` / `bothForm`; an extension too long to leave one character goes with it), and a journal accepts a file
+  unit's output when its name as the rules make it is safe and the output is that name or its «keep both» form — cut, or
+  whole as builds before round four wrote it, so their journals still open. A journal found beside an archive is
+  finished without asking only when this app's registry holds a `<id>.ref` pointing at that very journal; any other is
+  «askBeside <dest>» until the page's sheet (where its files go; Finish / Restore the archive / Leave) is answered
+  (`finishBeside`). Restore and listing from an archive's page reach only the in-place job of that very archive
+  (`restore_beside`, `left_beside`). The archive is removed *before* «done» is saved, so a done job never owns a file at
+  the archive's path and nothing there is ever removed (the old «leftover» removal is gone); a done job's journal beside
+  a new archive of that name is left out of its extraction — listed and extracted as itself (`list_fresh` /
+  `extract_fresh`, additive in the shared crate), a normal extraction goes ahead, in place waits (pre-flight «oldJob»)
+  — and that job keeps its Undo on the shelf, which makes its archive again beside the new one under a free name. Both
+  engines refuse journals and tails with a key named twice and `outs`/`raws` keyed other than by plain unit numbers; an
+  older build's tab-separated unit log is still read (each name still under the own-name rule). Paths are compared
+  resolved; when only one side resolves the answer is «not the same» (refused); when neither does, their absolute
+  spellings are compared.
+- **Known limit — two registries.** Electron keeps its jobs' pointers in `<userData>/extract-jobs`, Tauri in
+  `<app data>/extract-jobs` (different folders on every system). A job started by one shell is therefore *not* «ours»
+  for the other: opening that archive in the other shell asks first (the sheet above) instead of finishing silently, and
+  its shelf does not list it. Left as is on purpose (no shared folder between the two apps); the journal format is
+  shared, so Finish / Restore / Undo work across them once asked.
+
 ## After P3: the Files page's gaps, P7 archives, P8 DoH and updater, P6 app icon
 
 - **Files on a computer** (`filecmds.rs`, kt-core `places.rs`): the shell's own `homeDir`, `filesRoots` (home, Downloads,

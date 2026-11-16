@@ -362,7 +362,11 @@ pub async fn kt_archive_list(o: Value) -> Result<Value, String> {
         // (Tools 0.21 P11: an unfinished engine job beside it — journal v2 — is listed from its plan; the shared crate's
         // reader knows only the first design's journal and would read the saved tail as a directory.)
         if kt_core::extractjob::journal_version(Path::new(&path)) == 2 {
-            return crate::extractcmds::list_v2(Path::new(&path));
+            if let Some(v) = crate::extractcmds::list_v2(Path::new(&path))? {
+                return Ok(v);
+            }
+            // (Round four: a finished job's journal beside a new archive of that name — the archive listed as itself.)
+            return archive::list_fresh(Path::new(&path), password.as_deref(), &ctx()).map(|i| info_value(&i));
         }
         archive::list(Path::new(&path), password.as_deref(), &ctx()).map(|i| info_value(&i))
     })
@@ -399,8 +403,10 @@ pub async fn kt_archive_extract(app: AppHandle, o: Value) -> Result<Value, Strin
         let pr = Pr { on: &on, stop: &stop };
         // Pre-flight before anything is written: every name through the table for this computer (a refused name or,
         // in place, a clash stops the job here — nothing changed yet; «nothing was modified»).
-        if !archive::has_journal(Path::new(&path)) {
-            let info = archive::list(Path::new(&path), opts.password.as_deref(), &ctx())?;
+        // (Round four: a finished job's journal beside a new archive of that name says nothing about it — checked as itself.)
+        let old_job = crate::extractcmds::old_job_beside(Path::new(&path));
+        if !archive::has_journal(Path::new(&path)) || old_job {
+            let info = if old_job { archive::list_fresh(Path::new(&path), opts.password.as_deref(), &ctx())? } else { archive::list(Path::new(&path), opts.password.as_deref(), &ctx())? };
             let (bad, clash) = name_check(&info);
             if let Some(b) = bad.or(info.unsafe_path.clone()) { return Err(format!("unsafePath {}", b)); }
             if opts.in_place { if let Some(c) = clash { return Err(format!("duplicateEntry {}", c)); } }
@@ -410,6 +416,9 @@ pub async fn kt_archive_extract(app: AppHandle, o: Value) -> Result<Value, Strin
         // appeared, damaged }; the rest — 7-Zip's formats, a first-design journal — as before.)
         if let Some(v) = crate::extractcmds::extract(&app2, Path::new(&path), Path::new(&d2), &o2, &on, &stop)? {
             return Ok(v);
+        }
+        if old_job {
+            return archive::extract_fresh(Path::new(&path), Path::new(&d2), &opts, &ctx(), &pr).map(|files| json!({ "files": files, "dest": d2 }));
         }
         archive::extract(Path::new(&path), Path::new(&d2), &opts, &ctx(), &pr).map(|files| json!({ "files": files, "dest": d2 }))
     })

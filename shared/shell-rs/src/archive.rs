@@ -1471,19 +1471,27 @@ fn parent_dir(file: &Path) -> PathBuf {
 
 /// archive.cjs's list.
 pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, String> {
+    list_with(file, password, ctx, has_journal(file))
+}
+/// The archive itself listed as if no journal were beside it (Tools 0.21 P11 round four: a finished engine job's journal
+/// beside a new archive of the same name says nothing about it; `list` would read that job's saved tail).
+pub fn list_fresh(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, String> {
+    list_with(file, password, ctx, false)
+}
+fn list_with(file: &Path, password: Option<&str>, ctx: &Ctx, journal: bool) -> Result<ListInfo, String> {
     let mut entries: Vec<Entry> = Vec::new();
     let mut total = 0u64;
     let mut encrypted = false;
     let mut bad_link: Option<String> = None;
     let format: String;
-    if has_journal(file) && is_tar(file) {
+    if journal && is_tar(file) {
         format = "tar".to_string();
         let mut f = File::open(file).map_err(es)?;
         for it in scan_tar(&mut f)? {
             total += it.size;
             entries.push(Entry { path: it.name, size: it.size as i64, compressed: None, dir: it.kind == '5', mtime: None });
         }
-    } else if has_journal(file) {
+    } else if journal {
         format = "zip".to_string();
         let j = fs::read_to_string(journal_of(file)).map_err(es)?;
         let committed = json_num(&j, "committed").ok_or_else(|| "badJournal".to_string())?;
@@ -1579,7 +1587,7 @@ pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, 
         zip_overlap(&mut f, &ix)?.is_some()
     };
     let sfv = sfv_of(file).and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()));
-    let resumable = has_journal(file);
+    let resumable = journal;
     Ok(ListInfo {
         in_place_ok: ((format == "zip" && !encrypted) || format == "tar") && !overlap,
         format,
@@ -1612,6 +1620,17 @@ pub struct ExtractOpts {
 
 /// archive.cjs's extract → the files written.
 pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    extract_with(file, dest, o, ctx, pr, has_journal(file))
+}
+/// The archive extracted as if no journal were beside it (see list_fresh) — never in place: the journal's place is
+/// taken («journalExists»), so nothing beside the archive is written over.
+pub fn extract_fresh(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    if o.in_place && o.only.is_none() {
+        return Err("journalExists".to_string());
+    }
+    extract_with(file, dest, o, ctx, pr, false)
+}
+fn extract_with(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr, journal: bool) -> Result<u64, String> {
     // (A partial extraction is never in place: main.cjs's `inPlace: !!o.inPlace && !o.only`.)
     let partial;
     let o = if o.only.is_some() && o.in_place {
@@ -1621,13 +1640,13 @@ pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) ->
         o
     };
     fs::create_dir_all(dest).map_err(es)?;
-    if has_journal(file) {
+    if journal {
         return if is_tar(file) { tar_in_place(file, dest, o, ctx, pr) } else { zip_in_place(file, dest, o, ctx, pr) };
     }
     let fmt = format_of(file)?;
     // HatchZip's rules before anything is touched: a hostile archive refused, an .sfv beside it checked, and with
     // «verify first» every checksum read before the archive is cut.
-    let info = list(file, o.password.as_deref(), ctx)?;
+    let info = list_with(file, o.password.as_deref(), ctx, journal)?;
     if let Some(u) = info.unsafe_path {
         return Err(format!("unsafePath {}", u));
     }
@@ -2759,6 +2778,28 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, long);
         assert_eq!(items[0].head, 0);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// Tools 0.21 P11 round four: an archive with another job's journal and tail beside it (a finished engine job's, of
+    /// an older archive of that name) listed and extracted as itself — never from that tail, never in place.
+    #[test]
+    fn fresh_ignores_a_journal_beside() {
+        let d = tmp("fresh");
+        let z = d.join("a.zip");
+        fs::write(&z, zip_store(&[("new.txt", b"new"), ("two.txt", b"22")])).unwrap();
+        fs::write(journal_of(&z), "{\"kt\":\"extract\",\"version\":2}\n00000000\n").unwrap();
+        fs::write(tail_of(&z), zip_store(&[("old.txt", b"old")])).unwrap();
+        let stop = AtomicBool::new(false);
+        let pr = Pr { on: &quiet, stop: &stop };
+        let l = list_fresh(&z, None, &ctx()).unwrap();
+        assert_eq!(l.entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["new.txt", "two.txt"]);
+        assert!(!l.resumable);
+        let o = ExtractOpts { replace: "replace".to_string(), ..Default::default() };
+        assert_eq!(extract_fresh(&z, &d.join("o"), &o, &ctx(), &pr).unwrap(), 2);
+        assert_eq!(fs::read(d.join("o").join("new.txt")).unwrap(), b"new");
+        assert_eq!(extract_fresh(&z, &d.join("o2"), &ExtractOpts { in_place: true, ..o.clone() }, &ctx(), &pr).unwrap_err(), "journalExists");
+        assert!(z.exists() && journal_of(&z).exists() && tail_of(&z).exists());
         let _ = fs::remove_dir_all(&d);
     }
 

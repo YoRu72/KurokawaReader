@@ -301,7 +301,14 @@ function loadBridge(boot) {
     for (const [cmd, old] of [['kt_archive_list', 'archive::list('], ['kt_archive_restore', 'archive::restore('], ['kt_archive_extract', 'archive::extract(']]) {
       const b = body(cmd); const v2 = cmd === 'kt_archive_extract' ? b.indexOf('crate::extractcmds::extract(') : b.indexOf('journal_version('); assert.ok(v2 > 0 && v2 < b.indexOf(old), `${cmd}: the journal's version asked before ${old}`); }
     const ex = fs.readFileSync(path.join(src, 'extractcmds.rs'), 'utf8'); const fx = ex.slice(ex.indexOf('pub fn extract('), ex.indexOf('pub fn list_v2('));
-    assert.ok(fx.indexOf('journal_version(') > 0 && fx.indexOf('journal_version(') < fx.indexOf('archive::format_of('), 'extract: a v2 journal finished by the engine before anything else'); }
+    assert.ok(fx.indexOf('journal_version(') > 0 && fx.indexOf('journal_version(') < fx.indexOf('archive::format_of('), 'extract: a v2 journal finished by the engine before anything else');
+    // (Round four: finished without asking only when this app's registry points at the journal — or the page's sheet confirmed; restore and listing
+    // only for the in-place job of that very archive; a finished job's journal beside a new archive: the archive listed and extracted as itself.)
+    assert.ok(/ej::finish_beside\(path, reg\.as_deref\(\), flag\(o, "finishBeside"\)/.test(fx) && /let reg = registry\(app\);/.test(fx), 'extract: finish_beside with this app\'s registry and the page\'s confirmation');
+    const fn = (name) => ex.slice(ex.indexOf(`pub fn ${name}(`), ex.indexOf('\n}\n', ex.indexOf(`pub fn ${name}(`)));
+    assert.ok(fn('restore_v2').includes('ej::restore_beside(') && !fn('restore_v2').includes('ej::restore('), 'restore_v2: only the job of that very archive');
+    assert.ok(fn('list_v2').includes('ej::left_beside(') && !fn('list_v2').includes('ej::left_entries('), 'list_v2: only the job of that very archive');
+    assert.ok(body('kt_archive_list').includes('archive::list_fresh(') && body('kt_archive_extract').includes('archive::extract_fresh(') && body('kt_archive_extract').includes('archive::list_fresh('), 'a finished job\'s journal beside a new archive: listed and extracted as itself'); }
   // The self-test script: inert without its settings; its verdict; a full run against a fake bridge passes, and fails
   // when one answer is wrong.
   const stSrc = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'selftest.js'), 'utf8');
