@@ -6,6 +6,7 @@
 // here so that it can move behind a native «rename» job unchanged.
 import { splitExt } from './filesNames';
 import { clipName } from '../downloads/direct';
+import NAMES from '../../desktop/namesafe.json';
 
 export type BItem = { path: string; name: string; dir: boolean; size: number; mtime: number };
 export type NameMode = 'keep' | 'replace' | 'before' | 'after' | 'pattern';
@@ -38,7 +39,8 @@ export type Plan = {
 };
 export type Ctx = { existing?: (dir: string) => Set<string> | undefined; sortIndex?: Map<string, number>; fmtSize?: (n: number) => string; now?: number };
 
-const ILLEGAL = /[\\/:*?"<>|\u0000-\u001f]+/g;
+// (The characters no portable name holds: the one name table's set, desktop/namesafe.json, and the control characters.)
+const ILLEGAL = new RegExp(`[${NAMES.portableIllegal.replace(/[\\\]^-]/g, '\\$&')}\\u0000-\\u001f]+`, 'g');
 const lc = (s: string): string => s.toLowerCase();
 export const dirOf = (p: string): string => { const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')); return i < 0 ? '' : i === 0 ? '/' : p.slice(0, i); };
 export const joinPath = (dir: string, name: string): string => (!dir ? name : dir === '/' ? `/${name}` : `${dir}${dir.includes('\\') && !dir.includes('/') ? '\\' : '/'}${name}`);

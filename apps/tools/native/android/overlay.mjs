@@ -45,7 +45,7 @@ for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin
 // (Stage M3, torrents: the streaming director's Java side, the Rust torrent library's door and the Rust torrent engine.)
 for (const f of ['KtTorDirector.java', 'KtTorrentCore.java', 'KtTorrentRs.java', 'KtTorrentRsEngine.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 // (Stage M5 of the Rust port: the file jobs' planner and executor, the network storages' rules.)
-for (const f of ['KtFilePlan.java', 'KtFileExec.java', 'KtRemoteRules.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtFilePlan.java', 'KtFileExec.java', 'KtRemoteRules.java', /* (Tools 0.21 P5: the one name table, KtArchive's and the downloader's) */ 'KtNameSafe.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 // (Other apps' «pick a file»: the invisible activity that carries the answer back; the picker is the Files page.)
 for (const f of ['KtPickActivity.java', /* (others' «Open with» / «Share»: the same, for files handed in) */ 'KtOpenActivity.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 

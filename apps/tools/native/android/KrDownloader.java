@@ -192,7 +192,7 @@ final class KrDownloader {
         String s = b.toString().replaceAll("\\s+$", ""); return (s.isEmpty() ? "download" : s) + ext;
     }
     /** A file name the file system takes: what it refuses made a space, trimmed, and cut between characters to fit 255 bytes (the extension kept). */
-    static String cleanName(String n) { return clipName(n.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(), 200); }
+    static String cleanName(String n) { return clipName(n.replaceAll(KtNameSafe.PORTABLE_RUN, " ").trim(), 200); }   // (the characters from the one name table, desktop/namesafe.json)
     static String nameFromUrl(String url) {
         try {
             URL u = new URL(url); String p = u.getPath(); String n = java.net.URLDecoder.decode(p.substring(p.lastIndexOf('/') + 1).replace("+", "%2B"), "UTF-8");

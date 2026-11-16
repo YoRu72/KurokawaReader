@@ -41,7 +41,15 @@ async function readZip(fd, length) {
   return { items, cdStart: cdOff, length };
 }
 async function dataStart(fd, it) { const h = Buffer.alloc(30); await fd.read(h, 0, 30, it.offset); if (h.readUInt32LE(0) !== 0x04034b50) throw new Error('badLocalHeader ' + it.name); return it.offset + 30 + h.readUInt16LE(26) + h.readUInt16LE(28); }
-const unsafe = (name) => name.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(name) || /^[a-zA-Z]:/.test(name);
+// (Names: the one table, archsafe.cjs over namesafe.json, for this computer — refused here, rewritten where the target
+// needs it and shown first in the sheet; ZIP and tar go through inplace.cjs, which checks everything before any change.)
+const Safe = require('./archsafe.cjs'); const Engine = require('./inplace.cjs');
+const PLATFORM = Engine.hostPlatform();
+const unsafe = (name) => Safe.pathRule(name, PLATFORM).action === 'refuse';
+let REGISTRY = null; /** Where the PC keeps its extraction jobs' pointers (main.cjs: <userData>/extract-jobs). */
+const setRegistry = (d) => { REGISTRY = d; };
+/** The decoders 7-Zip adds for a normal extraction (ZIP methods: deflate64, bzip2, LZMA, XZ, PPMd, AES), when it is there. */
+const external = () => { try { return fs.existsSync(sevenZip()) ? [9, 12, 14, 95, 98, 99] : []; } catch { return []; } };
 const journalOf = (file) => file + '.kurokawa-unzip'; const tailOf = (file) => file + '.kurokawa-tail';
 const hasJournal = (file) => fs.existsSync(journalOf(file));
 
@@ -61,10 +69,10 @@ async function list(file, password) {
     let cur = null; for (const line of out.split(/\r?\n/)) { const m = /^(\w[\w ]*) = (.*)$/.exec(line); if (!m) { if (cur) { entries.push(cur); cur = null; } continue; } if (m[1] === 'Path') cur = { path: m[2].replace(/\\/g, '/'), size: 0, dir: false }; else if (!cur) continue; else if (m[1] === 'Size') { cur.size = Number(m[2]) || 0; total += cur.size; } else if (m[1] === 'Packed Size' && m[2]) cur.compressed = Number(m[2]); else if (m[1] === 'Modified' && m[2]) { const t = Date.parse(m[2].replace(' ', 'T').replace(/\.\d+$/, '')); if (t > 0) cur.mtime = t; } else if (m[1] === 'Folder' || m[1] === 'Attributes') { if (m[2] === '+' || /^D/.test(m[2])) cur.dir = true; } else if (m[1] === 'Encrypted' && m[2] === '+') encrypted = true; }
     if (cur) entries.push(cur);
   }
-  let largest = 0; const seen = new Set(); let duplicate, bad;
-  for (const e of entries) { if (!e.dir) largest = Math.max(largest, e.size); if (!bad && unsafe(e.path)) bad = e.path; if (!e.dir) { const k = e.path.toLowerCase(); if (seen.has(k) && !duplicate) duplicate = e.path; seen.add(k); } }
+  let largest = 0; for (const e of entries) if (!e.dir) largest = Math.max(largest, e.size);
+  const chk = Safe.checkSet(entries.map((e) => ({ path: e.path, dir: e.dir })), PLATFORM); const bad = chk.problems.find((p) => Safe.NAME_REFUSALS.has(p.kind))?.path; const duplicate = chk.problems.find((p) => ['duplicate', 'caseClash', 'rewriteClash', 'fileDir'].includes(p.kind))?.path;
   const sfv = sfvOf(file);
-  return { format, entries, total, encrypted, inPlaceOk: (format === 'zip' && !encrypted) || format === 'tar', resumable: hasJournal(file), largest, free: await freeSpace(path.dirname(file)), ...(bad ? { unsafe: bad } : {}), ...(duplicate ? { duplicate } : {}), ...(sfv ? { sfv: path.basename(sfv) } : {}) };
+  return { format, platform: PLATFORM, entries, total, encrypted, inPlaceOk: (format === 'zip' && !encrypted) || format === 'tar', resumable: hasJournal(file), largest, free: await freeSpace(path.dirname(file)), ...(bad ? { unsafe: bad } : {}), ...(duplicate ? { duplicate } : {}), ...(sfv ? { sfv: path.basename(sfv) } : {}) };
 }
 
 /* ---------- 7-Zip ---------- */
@@ -179,10 +187,17 @@ async function extract7z(file, dest, o, pr) {
   });
   void out; pr.on(100, 100, ''); return n;
 }
+/** A journal beside the archive: the new engine's (version 2) or the first design's. */
+async function journalVersion(file) { try { const r = Safe.journalRead(await fsp.readFile(journalOf(file), 'utf8')); return r.ok ? 2 : r.why === 'v1' ? 1 : 0; } catch { return 0; } }
 async function extract(file, dest, o, pr) {
-  await fsp.mkdir(dest, { recursive: true });
-  if (hasJournal(file)) return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr);
+  if (hasJournal(file)) { const v = await journalVersion(file); if (v === 2) return (await Engine.finish(journalOf(file), pr, undefined, { password: o.password, keepFree: o.keepFree })).files; if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
   const fmt = await formatOf(file); let n;
+  // ZIP (one file, methods the app decodes itself, ZipCrypto too) and tar: the engine that checks everything first.
+  if ((fmt === 'zip' || fmt === 'tar') && !/\.\d{3}$/.test(file)) {
+    const scan = await Engine.unitsOf(file); const own = scan.units.every((u) => u.dir || Engine.OWN_METHODS.includes(u.method));
+    if (own || o.inPlace) { const r = await Engine.extract(file, dest, { ...o, registry: REGISTRY || path.join(path.dirname(file), '.kurokawa-jobs') }, pr); last = r; if (o.deleteAfter && !o.inPlace && !pr.stopped()) await fsp.rm(file, { force: true }); return r.files; }
+  }
+  await fsp.mkdir(dest, { recursive: true });
   // HatchZip's rules before anything is touched: a hostile archive refused, an .sfv beside it checked, and with
   // «verify first» every checksum read before the archive is cut.
   const info = await list(file, o.password); if (info.unsafe) throw new Error('unsafePath ' + info.unsafe); if (info.duplicate && o.inPlace) throw new Error('duplicateEntry ' + info.duplicate);
@@ -258,6 +273,10 @@ async function test(file, password, pr) {
 /** Giving up an extraction in place: what is left becomes a normal ZIP again (the remaining entries' directory
  *  records written after them, then the end records); a cut tar is a valid tar already. */
 async function restore(file) {
+  if (await journalVersion(file) === 2) { const r = await Engine.restore(journalOf(file)); return r.identical ? -2 : r.keptOut.length; }
+  return restoreV1(file);
+}
+async function restoreV1(file) {
   const journal = journalOf(file), tail = tailOf(file); if (!fs.existsSync(journal)) throw new Error('nothingToRestore');
   if (isTar(file)) { await fsp.rm(journal, { force: true }); return -1; }
   const committed = JSON.parse(await fsp.readFile(journal, 'utf8')).committed;
@@ -327,6 +346,27 @@ async function extractTarInPlace(file, dest, o, pr) {
   await fsp.rm(file, { force: true }); await fsp.rm(journal, { force: true });
   return n;
 }
+let last = null; /** The last engine job's result (its journal for Undo, files that appeared, damaged ones). */
+const lastJob = () => last;
+/** The pre-flight report for the sheet (nothing written). */
+async function preflight(file, dest, o = {}) {
+  const fmt = await formatOf(file);
+  if ((fmt === 'zip' || fmt === 'tar') && !/\.\d{3}$/.test(file)) { const r = await Engine.preflightOf(file, dest, { ...o, external: external(), platform: PLATFORM }); return { report: r.report, facts: { ...r.facts, entries: undefined } }; }
+  const info = await list(file, o.password); const entries = info.entries.map((e) => ({ path: e.path, dir: e.dir, usize: e.size, csize: e.compressed }));
+  const f = { format: fmt, platform: PLATFORM, entries, supported: [], external: [], encrypted: info.encrypted, password: info.encrypted && !o.password ? 'missing' : 'ok', archiveWritable: true, destWritable: true, sameVolume: true, free: await freeSpace(dest), existing: await existing(dest, entries.filter((e) => !e.dir).map((e) => e.path)), inPlaceFormat: false };
+  const report = Safe.preflight(f, { margin: o.keepFree || 0 }); report.problems = report.problems.filter((p) => p.kind !== 'method');   // (7-Zip decodes what it lists)
+  report.normal.why = report.normal.why.filter((w) => w !== 'method'); report.normal.ok = !report.normal.why.length; report.ok = report.normal.ok; if (report.recommend === 'none' && report.normal.ok) { report.recommend = 'normal'; report.why = 'normalOnly'; }
+  return { report, facts: { format: fmt, platform: PLATFORM } };
+}
+/** The shelf of unfinished (and just finished) jobs; a job acted on: finish, restore, undo, dismiss, restoreV1. */
+async function shelf(o = {}) { return REGISTRY ? Engine.shelf(REGISTRY, o) : []; }
+async function jobAct(journal, act, pr) {
+  if (act === 'finish') return Engine.finish(journal, pr);
+  if (act === 'restore' || act === 'undo') return Engine.restore(journal);
+  if (act === 'dismiss') return Engine.dismiss(journal);
+  if (act === 'restoreV1') { const file = journal.replace(/\.kurokawa-unzip$/, ''); const left = await restoreV1(file); return { left }; }
+  return {};
+}
 async function existing(dest, names) { const out = []; for (const n of names) { try { if (fs.statSync(path.join(dest, n)).isFile()) out.push(n); } catch { /* not there */ } } return out; }
 
-module.exports = { formatOf, list, extract, createZip, hasJournal, BATCH, test, restore, checkSfv, freeSpace, existing };
+module.exports = { formatOf, list, extract, createZip, hasJournal, BATCH, test, restore, checkSfv, freeSpace, existing, preflight, shelf, jobAct, setRegistry, lastJob };

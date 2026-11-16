@@ -269,16 +269,36 @@ pub fn info_value(i: &archive::ListInfo) -> Value {
         "largest": i.largest,
         "free": i.free,
     });
-    if let Some(u) = &i.unsafe_path {
+    // (The one name table — kt-core's archsafe, the twin of desktop/archsafe.cjs and KtNameSafe.java — for this
+    // computer: a name it refuses or a clash it finds is told the page even where the shared reader let it pass.)
+    let (bad, clash) = name_check(i);
+    if let Some(u) = i.unsafe_path.clone().or(bad) {
         v["unsafe"] = json!(u);
     }
-    if let Some(d) = &i.duplicate {
+    if let Some(d) = i.duplicate.clone().or(clash) {
         v["duplicate"] = json!(d);
     }
+    v["platform"] = json!(host_platform());
     if let Some(f) = &i.sfv {
         v["sfv"] = json!(f);
     }
     v
+}
+
+/// This computer's line of the name table.
+pub fn host_platform() -> &'static str {
+    if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" }
+}
+
+/// The archive's names through the one table (kt_core::archsafe::check_set): the first refused name, the first clash.
+pub fn name_check(i: &archive::ListInfo) -> (Option<String>, Option<String>) {
+    use kt_core::archsafe as s;
+    let p = match s::platform(host_platform()) { Some(p) => p, None => return (None, None) };
+    let es: Vec<s::Entry> = i.entries.iter().map(|e| s::Entry { path: e.path.clone(), dir: e.dir, link: None, target: String::new() }).collect();
+    let probs = s::check_set(&es, p, 0);
+    let bad = probs.iter().find(|x| ["empty", "nul", "dot", "dotdot", "absolute", "drive", "reservedSuffix", "pathLong"].contains(&x.kind)).map(|x| x.path.clone());
+    let clash = probs.iter().find(|x| ["duplicate", "caseClash", "rewriteClash", "fileDir"].contains(&x.kind)).map(|x| x.path.clone());
+    (bad, clash)
 }
 
 /// Where «cache:» extracts to: main.cjs's <temp>/kurokawa-archive-view.
@@ -323,6 +343,14 @@ pub async fn kt_archive_extract(app: AppHandle, o: Value) -> Result<Value, Strin
     let d2 = dest.clone();
     let r = blocking(move || {
         let pr = Pr { on: &on, stop: &stop };
+        // Pre-flight before anything is written: every name through the table for this computer (a refused name or,
+        // in place, a clash stops the job here — nothing changed yet; «nothing was modified»).
+        if !archive::has_journal(Path::new(&path)) {
+            let info = archive::list(Path::new(&path), opts.password.as_deref(), &ctx())?;
+            let (bad, clash) = name_check(&info);
+            if let Some(b) = bad.or(info.unsafe_path.clone()) { return Err(format!("unsafePath {}", b)); }
+            if opts.in_place { if let Some(c) = clash { return Err(format!("duplicateEntry {}", c)); } }
+        }
         archive::extract(Path::new(&path), Path::new(&d2), &opts, &ctx(), &pr)
     })
     .await;

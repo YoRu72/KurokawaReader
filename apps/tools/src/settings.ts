@@ -194,7 +194,7 @@ const DEFAULTS: Settings = {
   autoUpdateCheck: true, updateChannel: 'stable', notifyDone: true, notifyFailed: true, incognito: false, addons: [], addonSettings: {},
   anilistClientId: '', anilistPending: {}, anilistAutoProgress: true, animeRepos: [], animeAuto: [], animeQuality: '1080', animeAdult: false, animeTitleLang: 'preferred',
   subLangs: [], settingsLayout: 'tabs', autoUnpackSubs: true, autoUnpackAll: false, debridDefault: false, debridTransfers: [],
-  categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, torrent: { dht: true, lsd: true, upnp: true, natpmp: true, enc: 'enabled', seedRatio: 0, seedMinutes: 0 }, doh: 'off', secureScreen: false, playerWith: 'ask', archiveKeepFree: -1, archiveVerifyFirst: false, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
+  categories: [], useCategoryFolders: false, sort: 'added', clipboardWatch: false, torrent: { dht: true, lsd: true, upnp: true, natpmp: true, enc: 'enabled', seedRatio: 0, seedMinutes: 0 }, doh: 'off', secureScreen: false, playerWith: 'ask', archiveKeepFree: -1, archiveVerifyFirst: true, archiveCloseWhenDone: true, videoQuality: 'best', videoContainer: 'mp4', videoEmbedThumb: true, videoSponsor: false, schedule: { enabled: false, start: '01:00', stop: '07:00', days: [] },
   titleBarKind: 'own', titleBarClear: false, titleBarName: true,
 };
 

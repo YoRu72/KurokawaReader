@@ -128,4 +128,120 @@ let TABLE; function crcTable() { if (TABLE) return TABLE; TABLE = new Uint32Arra
 /** CRC-32 of bytes (a Uint8Array) or of a string's UTF-8; `prev` continues one. */
 function crc32(data, prev = 0) { const T = crcTable(); const b = typeof data === 'string' ? new TextEncoder().encode(data) : data; let c = (prev ^ 0xffffffff) >>> 0; for (let i = 0; i < b.length; i++) c = T[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 
-module.exports = { SPEC, PLATFORMS, measure, cutName, nameRule, pathRule, foldKey, checkSet, crc32, crcTable };
+
+/* ---------- the space a job needs ---------- */
+/** `n` bytes as the disk keeps them: whole blocks (an empty file still costs its entry, counted as nothing). */
+const blocks = (n, bs = 4096) => (n <= 0 ? 0 : Math.ceil(n / bs) * bs);
+/**
+ * The replay: units in the order they are taken out (in place: last first), each `out` bytes written and `freed`
+ * archive bytes given back once it is committed. → { normal, inPlace, peakAt } where `normal` is what extracting keeping
+ * the archive needs and `inPlace` the most the disk holds at once while the archive shrinks (only when archive and
+ * destination share a volume: across volumes the archive's bytes free nothing there). `overhead`: the journal and the
+ * saved tail; `margin` is added by the caller (the setting).
+ */
+function replaySpace(units, { sameVolume = true, blockSize = 4096, overhead = 0 } = {}) {
+  let written = 0; let freed = 0; let peak = overhead; let peakAt = -1; let normal = overhead;
+  units.forEach((u, i) => { written += blocks(u.out, blockSize); const now = overhead + written - (sameVolume ? freed : 0); if (now > peak) { peak = now; peakAt = i; } freed += u.freed; });
+  for (const u of units) normal += blocks(u.out, blockSize);
+  return { normal, inPlace: sameVolume ? peak : normal, peakAt };
+}
+
+/* ---------- conflicts ---------- */
+/** «name (2).ext» from 2 on, the first `taken` does not hold (the batch rename's numbering: the last dot, the extension's case kept; a folder takes no extension). */
+function keepBothName(name, taken, dir = false) {
+  const dot = dir ? -1 : name.lastIndexOf('.'); const base = dot > 0 ? name.slice(0, dot) : name; const ext = dot > 0 ? name.slice(dot) : '';
+  for (let i = 2; ; i++) { const c = `${base} (${i})${ext}`; if (!taken(c)) return c; }
+}
+/**
+ * One conflict model (extraction now, copy/move later): each item that meets an existing one gets «replace», «skip» or
+ * «both». `answers`: { default, files?, folders?, per: { [path]: choice } } — what the user said for one item, for the
+ * rest of its kind, for the rest. → the choice for `path`.
+ */
+function conflictChoice(answers, path, isDir) {
+  const a = answers || {}; if (a.per && a.per[path]) return a.per[path];
+  const kind = isDir ? a.folders : a.files; return kind || a.default || null;
+}
+
+/* ---------- the pre-flight ---------- */
+const NAME_REFUSALS = new Set(['empty', 'nul', 'dot', 'dotdot', 'absolute', 'drive', 'reservedSuffix', 'pathLong']);
+/** What the user can do about each kind of problem (a key the page words; the same in every language file). */
+const FIX = { method: 'fixMethod', password: 'fixPassword', names: 'fixNames', clash: 'fixClash', links: 'fixLinks', space: 'fixSpace', layout: 'fixLayout', damaged: 'fixDamaged', volumes: 'fixVolumes', readonly: 'fixReadonly', saf: 'fixSaf', busy: 'fixBusy', ratio: 'fixRatio', existing: 'fixExisting', rewrite: 'fixRewrite', otherVolume: 'fixOtherVolume', resume: 'fixResume' };
+/**
+ * Everything checked before anything is written. `f` (facts the engine gathered, nothing changed yet): { format, size,
+ * entries: [{ path, dir, link?, target?, method?, encrypted?, csize?, usize, crc?, headerOk? }], supported: [methods the
+ * device decodes itself], external?: [methods a helper (7-Zip) decodes — normal mode only], encrypted, password: 'none'|
+ * 'ok'|'wrong'|'missing', damaged?: [names] (verify-first), layoutBad?: [names] (directory vs local header, overlap),
+ * volumes?: { missing: [], odd: [] }, archiveWritable, destWritable, saf, sameVolume, free, existing: [paths], busy,
+ * platform, destLen, inPlaceFormat (zip/tar), blockSize }. `o`: { margin, answers }. → the report the sheet shows.
+ */
+function preflight(f, o = {}) {
+  const P = []; const add = (kind, severity, names, extra = {}) => { if (!names.length) return; P.push({ kind, severity, count: names.length, names: names.slice(0, 5), fix: FIX[kind], ...extra }); };
+  const files = f.entries.filter((e) => !e.dir);
+  // Names, for the real destination.
+  const set = checkSet(f.entries.map((e) => ({ path: e.path, dir: !!e.dir, link: e.link, target: e.target })), f.platform, f.destLen || 0);
+  const refusedNames = set.problems.filter((p) => NAME_REFUSALS.has(p.kind)).map((p) => p.path);
+  const clashes = set.problems.filter((p) => ['duplicate', 'caseClash', 'rewriteClash', 'fileDir'].includes(p.kind));
+  const links = set.problems.filter((p) => p.kind === 'linkOutside' || p.kind === 'throughLink').map((p) => p.path);
+  const rewrites = set.items.filter((x) => x.action === 'rewrite' && x.reasons.length).map((x) => ({ from: x.path, to: x.out, reasons: x.reasons }));
+  const flagged = set.items.filter((x) => x.flags.includes('bidi') || x.flags.includes('control')).map((x) => x.path);
+  add('names', 'block', refusedNames); add('clash', 'inPlace', clashes.map((p) => p.path), { kinds: [...new Set(clashes.map((p) => p.kind))] }); add('links', 'block', links);
+  add('rewrite', 'info', rewrites.map((r) => r.from), { rewrites: rewrites.slice(0, 50) });
+  if (flagged.length) add('bidi', 'info', flagged);
+  // Methods: what this device decodes (in place needs our own decoder; a helper may do a normal extraction).
+  const sup = new Set(f.supported || []); const ext = new Set(f.external || []);
+  const own = files.filter((e) => e.method != null && !sup.has(e.method)); const none = own.filter((e) => !ext.has(e.method));
+  if (own.length) P.push({ kind: 'method', severity: none.length ? 'block' : 'inPlace', count: own.length, names: own.slice(0, 5).map((e) => e.path), methods: [...new Set(own.map((e) => e.method))], fix: FIX.method });
+  // Encryption: the password proved on the smallest locked file before anything is written.
+  if (f.encrypted && f.password !== 'ok') add('password', 'block', [f.password === 'wrong' ? 'wrong' : 'missing']);
+  if (f.encrypted) P.push({ kind: 'encryptedInPlace', severity: 'inPlace', count: 1, names: [], fix: FIX.password });
+  if (f.damaged && f.damaged.length) add('damaged', 'inPlace', f.damaged);
+  if (f.layoutBad && f.layoutBad.length) add('layout', 'inPlace', f.layoutBad);
+  if (f.volumes && (f.volumes.missing.length || f.volumes.odd.length)) add('volumes', 'block', [...f.volumes.missing, ...f.volumes.odd]);
+  if (f.busy) add('busy', 'block', ['busy']);
+  if (f.saf) add('saf', 'inPlace', ['saf']);
+  if (!f.archiveWritable) add('readonly', 'inPlace', ['archive']);
+  if (!f.destWritable) add('readonly', 'block', ['destination']);
+  if (!f.inPlaceFormat) P.push({ kind: 'formatInPlace', severity: 'inPlace', count: 1, names: [], fix: 'fixFormat' });
+  // Already there: counted, each to be asked about (or the «for the rest» answer).
+  const exist = new Set((f.existing || []).map((x) => foldKey(x, f.platform))); const there = set.items.filter((x) => x.action !== 'refuse' && exist.has(foldKey(x.out, f.platform))).map((x) => x.path);
+  add('existing', 'ask', there);
+  // A calm word about extreme squeeze (a «zip bomb»): the numbers, nothing refused.
+  const packed = files.reduce((a, e) => a + (e.csize || 0), 0); const total = files.reduce((a, e) => a + Math.max(0, e.usize || 0), 0);
+  const ratio = packed > 0 ? total / packed : 0; if (ratio > 100 && total > 1024 ** 3) P.push({ kind: 'ratio', severity: 'info', count: 1, names: [], ratio: Math.round(ratio), total, packed, fix: FIX.ratio });
+  // Space: normal = every output; in place = the replay's peak (last unit first), plus the saved tail and journal.
+  const order = f.inPlaceFormat ? [...files].sort((a, b) => (b.offset ?? 0) - (a.offset ?? 0)) : files;
+  const tail = f.tailBytes || 0; const overhead = 65536 + tail; const margin = o.margin || 0;
+  const sp = replaySpace(order.map((e) => ({ out: Math.max(0, e.usize || 0), freed: e.unitBytes ?? e.csize ?? 0 })), { sameVolume: !!f.sameVolume, blockSize: f.blockSize || 4096, overhead });
+  const space = { free: f.free, normal: sp.normal, inPlace: sp.inPlace, margin, sameVolume: !!f.sameVolume, fitsNormal: f.free < 0 || sp.normal + margin <= f.free, fitsInPlace: f.free < 0 || sp.inPlace + margin <= f.free };
+  const blockers = P.filter((p) => p.severity === 'block');
+  const inPlaceBlockers = P.filter((p) => p.severity === 'inPlace' || p.severity === 'block');
+  const normal = { ok: !blockers.length && space.fitsNormal, why: blockers.map((p) => p.kind).concat(space.fitsNormal ? [] : ['space']) };
+  const inPlace = { ok: !inPlaceBlockers.length && space.fitsInPlace && !!f.sameVolume, why: inPlaceBlockers.map((p) => p.kind).concat(space.fitsInPlace ? [] : ['space']).concat(f.sameVolume ? [] : ['otherVolume']) };
+  if (!normal.ok && !inPlace.ok && !space.fitsNormal) add('space', 'block', ['space']);
+  if (!f.sameVolume && !space.fitsNormal) add('otherVolume', 'info', ['otherVolume']);
+  // What the sheet recommends, and why.
+  const recommend = normal.ok && (!inPlace.ok || space.fitsNormal) ? 'normal' : inPlace.ok ? 'inPlace' : 'none';
+  const why = recommend === 'normal' ? (inPlace.ok ? 'bothFit' : 'normalOnly') : recommend === 'inPlace' ? 'onlyInPlaceFits' : space.fitsNormal || space.fitsInPlace ? 'blocked' : normal.why.includes('space') && !f.sameVolume ? 'otherVolume' : 'nothingFits';
+  return { ok: normal.ok || inPlace.ok, files: files.length, total, problems: P, rewrites, space, normal, inPlace, recommend, why };
+}
+
+/* ---------- the journal's text (version 2) ---------- */
+const JOURNAL_VERSION = 2;
+/** The journal as written: its JSON, a newline, its CRC-32 in hex (a cut or edited journal never passes). */
+function journalText(body) { const j = JSON.stringify({ ...body, kt: 'extract', version: JOURNAL_VERSION }); return `${j}\n${crc32(j).toString(16).padStart(8, '0')}\n`; }
+/**
+ * A journal read back: { ok: true, body } or { ok: false, why } where why is 'corrupt' (a cut, a changed byte, not ours),
+ * 'future' (a later version: never replayed by this one) or 'v1' (the first design: { committed, output, length? }).
+ */
+function journalRead(text) {
+  const nl = text.indexOf('\n'); const j = nl < 0 ? text : text.slice(0, nl); const sum = nl < 0 ? '' : text.slice(nl + 1).trim();
+  let o; try { o = JSON.parse(j); } catch { return { ok: false, why: 'corrupt' }; }
+  if (!o || typeof o !== 'object') return { ok: false, why: 'corrupt' };
+  if (o.version === 1 && !sum && typeof o.committed === 'number') return { ok: false, why: 'v1', body: o };
+  if (typeof o.version !== 'number' || o.kt !== 'extract') return { ok: false, why: 'corrupt' };
+  if (sum !== crc32(j).toString(16).padStart(8, '0')) return { ok: false, why: 'corrupt' };
+  if (o.version > JOURNAL_VERSION) return { ok: false, why: 'future', body: o };
+  return { ok: true, body: o };
+}
+
+module.exports = { SPEC, PLATFORMS, measure, cutName, nameRule, pathRule, foldKey, checkSet, crc32, crcTable, blocks, replaySpace, keepBothName, conflictChoice, preflight, journalText, journalRead, JOURNAL_VERSION, NAME_REFUSALS };

@@ -230,6 +230,8 @@ else {
   // (The rest of the strings — every screen but this one waits for them — fetched once the list is up and the page idle,
   // so the first other screen opened does not wait for them.)
   { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (idle) idle(() => void loadRest(), { timeout: 1500 }); else setTimeout(() => void loadRest(), 300); }
+  // (Extractions a crash or a stop left half done: the computer tidies finished ones whose Undo offer ended, once, when idle; Files shows the rest.)
+  if ((window.kurokawaTools as unknown as { archiveShelf?: unknown } | undefined)?.archiveShelf) { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; const run = () => void import('./views/extractShelf').then((m) => m.shelfAtStart()).catch(() => {}); if (idle) idle(run, { timeout: 5000 }); else setTimeout(run, 2000); }
   void import('./downloads/relink').then((m) => m.startAutoRelink());
   // (The offer to undo a restore, and the update check's code — it waits 3 s before it asks anyway —: nobody waits for them.)
   void import('./backup').then((m) => m.offerRestoreUndo());

@@ -143,7 +143,7 @@ else {
       return net.fetch(require('node:url').pathToFileURL(file).href).then((r) => new Response(r.body, { headers: { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' } }));
     });
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]));
-    const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true });
+    const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true }); Archive.setRegistry(path.join(userData, 'extract-jobs'));
     engine = new Aria2Engine({ userData, resources: process.resourcesPath || path.join(__dirname, 'resources'), defaultDir: path.join(app.getPath('downloads'), 'Kurokawa') });
     engine.watching = (hash) => (WebStream.watching(hash.toLowerCase()) ? WebStream.stats(hash.toLowerCase()) : null); engine.handedOver = (gid) => handed.has(gid);
     engine.onState = () => send('kt:engineState', engineState());
@@ -278,7 +278,7 @@ const archiveJobs = new Map();
 ipcMain.handle('kt:archiveList', (_e, o) => Archive.list(String(o.path), o.password));
 ipcMain.handle('kt:archiveExtract', async (e, o) => {
   const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
-  try { const dest = o.dest === 'cache:' ? path.join(require('os').tmpdir(), 'kurokawa-archive-view') : o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { only: Array.isArray(o.only) ? o.only.map(String) : undefined, inPlace: !!o.inPlace && !o.only, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', password: o.password, verifyFirst: !!o.verifyFirst, ...(typeof o.keepFree === 'number' && o.keepFree >= 0 ? { keepFree: o.keepFree } : {}) }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, dest }; }
+  try { const dest = o.dest === 'cache:' ? path.join(require('os').tmpdir(), 'kurokawa-archive-view') : o.dest || path.dirname(String(o.path)); const files = await Archive.extract(String(o.path), dest, { only: Array.isArray(o.only) ? o.only.map(String) : undefined, inPlace: !!o.inPlace && !o.only, deleteAfter: !!o.deleteAfter, replace: o.replace || 'replace', answers: o.answers || (o.replace ? { default: o.replace } : undefined), skip: Array.isArray(o.skip) ? o.skip.map(String) : undefined, password: o.password, verifyFirst: !!o.verifyFirst, ...(typeof o.keepFree === 'number' && o.keepFree >= 0 ? { keepFree: o.keepFree } : {}) }, { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); const j = Archive.lastJob(); return { files, dest, ...(j && j.dest === path.resolve(dest) ? { job: j.job, appeared: j.appeared, damaged: j.damaged } : {}) }; }
   finally { if (o.id) archiveJobs.delete(o.id); }
 });
 ipcMain.handle('kt:archiveTest', async (e, o) => {
@@ -381,6 +381,9 @@ ipcMain.handle('kt:dohProbe', async () => {
 let _dohProvider = 'off';
 ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); _dohProvider = p; try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: p === 'auto' ? Object.values(DOH) : [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
 ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(NP(String(p))); if (err) throw new Error(err); });
+ipcMain.handle('kt:archivePreflight', async (_e, o) => Archive.preflight(String(o.path), String(o.dest), { password: o.password, verify: !!o.verify, keepFree: typeof o.keepFree === 'number' ? o.keepFree : 0 }));
+ipcMain.handle('kt:archiveShelf', async (_e, o) => Archive.shelf({ atStart: !!o?.atStart }));
+ipcMain.handle('kt:archiveJob', async (e, o) => { const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); try { return await Archive.jobAct(String(o.journal), String(o.act), { on: (done, total, file) => e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }), stopped: () => stop.v }); } finally { if (o.id) archiveJobs.delete(o.id); } });
 ipcMain.handle('kt:archiveRestore', async (_e, o) => ({ left: await Archive.restore(String(o.path)) }));
 ipcMain.handle('kt:archiveFree', async (_e, o) => { let d = String(o.dir || '') || engine?.defaultDir || app.getPath('downloads'); while (d && !fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } return { free: await Archive.freeSpace(d) }; });
 ipcMain.handle('kt:archiveExisting', async (_e, o) => ({ existing: await Archive.existing(String(o.dest), (o.names || []).map(String)) }));

@@ -182,7 +182,10 @@ public final class KtArchive {
         ByteBuffer b = ByteBuffer.wrap(h).order(ByteOrder.LITTLE_ENDIAN); if (b.getInt(0) != 0x04034b50) throw new IOException("badLocalHeader " + it.name);
         return it.offset + 30 + u16(b, 26) + u16(b, 28);
     }
-    static boolean unsafe(String name) { return name.startsWith("/") || name.contains("../") || name.equals("..") || name.contains(":") && name.indexOf(':') < 3 && name.length() > 1 && Character.isLetter(name.charAt(0)) && name.charAt(1) == ':'; }
+    /** A name refused on the phone's own storage (the one table: KtNameSafe, desktop/namesafe.json — absolute, «..», a drive letter, NUL, our temp suffix…). */
+    static boolean unsafe(String name) { return KtNameSafe.refused(name, "android"); }
+    /** The same for the volume `dest` is on (an SD card: FAT/exFAT rules, «:» and the like rewritten). */
+    static KtNameSafe.Verdict nameFor(File dest, String name) { return KtNameSafe.pathRule(name, KtNameSafe.platform(KtNameSafe.platformOf(dest.getAbsolutePath())), 0); }
 
     /* ---------- listing ---------- */
     public static JSONObject list(File f, String password) throws Exception {
@@ -196,7 +199,7 @@ public final class KtArchive {
         } else if ((fmt = formatOf(f)).equals("zip") && splitZip(f)) {
             net.lingala.zip4j.ZipFile z = zip4j(f, password); for (net.lingala.zip4j.model.FileHeader h : z.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getUncompressedSize(), h.getCompressedSize(), h.isDirectory(), h.getLastModifiedTimeEpoch())); total += h.getUncompressedSize(); enc |= h.isEncrypted(); }
         } else if (fmt.equals("zip")) {
-            try (Rnd r = Rnd.open(f, "r")) { for (ZipItem it : readZip(r).items) { arr.put(item(it.name, it.usize, it.csize, it.dir, it.mtime)); total += it.usize; enc |= it.encrypted; } }
+            try (Rnd r = Rnd.open(f, "r")) { for (ZipItem it : readZip(r).items) { JSONObject x = item(it.name, it.usize, it.csize, it.dir, it.mtime); x.put("method", it.method); x.put("offset", it.offset); if (it.encrypted) x.put("encrypted", true); arr.put(x); total += it.usize; enc |= it.encrypted; } }
         } else if (fmt.equals("7z")) {
             try (SevenZFile z = open7z(f, password == null ? null : password.toCharArray())) { SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getHasLastModifiedDate() ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
         } else if (fmt.equals("rar")) {
@@ -204,9 +207,11 @@ public final class KtArchive {
         } else if (fmt.startsWith("tar")) {
             try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, rawStream(f)))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getLastModifiedDate() != null ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
         } else { String inner = f.getName().replaceAll("\\.(gz|xz|bz2)$", ""); arr.put(item(inner, -1, f.length(), false, f.lastModified())); }
-        long largest = 0; java.util.Set<String> seen = new java.util.HashSet<>(); String dup = null, bad = null;
-        for (int i = 0; i < arr.length(); i++) { JSONObject e = arr.getJSONObject(i); if (!e.getBoolean("dir")) largest = Math.max(largest, e.optLong("size")); String n = e.getString("path"); if (unsafe(n) && bad == null) bad = n; if (!e.getBoolean("dir") && !seen.add(n.toLowerCase(java.util.Locale.ROOT)) && dup == null) dup = n; }
-        JSONObject o = new JSONObject(); o.put("format", fmt); o.put("entries", arr); o.put("total", total); o.put("encrypted", enc);
+        long largest = 0; String dup = null, bad = null; String plat = KtNameSafe.platformOf(f.getAbsoluteFile().getParent()); List<KtNameSafe.Entry> names = new ArrayList<>();
+        for (int i = 0; i < arr.length(); i++) { JSONObject e = arr.getJSONObject(i); if (!e.getBoolean("dir")) largest = Math.max(largest, e.optLong("size")); names.add(new KtNameSafe.Entry(e.getString("path"), e.getBoolean("dir"), null, null)); }
+        // (Names through the one table for the volume beside the archive: the first refused, the first clash — case only where that volume folds it.)
+        for (KtNameSafe.Problem p : KtNameSafe.checkSet(names, KtNameSafe.platform(plat), 0)) { boolean clash = p.kind.equals("duplicate") || p.kind.equals("caseClash") || p.kind.equals("rewriteClash") || p.kind.equals("fileDir"); if (clash) { if (dup == null) dup = p.path; } else if (!p.kind.equals("linkOutside") && !p.kind.equals("throughLink") && bad == null) bad = p.path; }
+        JSONObject o = new JSONObject(); o.put("format", fmt); o.put("platform", plat); o.put("entries", arr); o.put("total", total); o.put("encrypted", enc);
         boolean linked = hardLinked(f); String overlap = fmt.equals("zip") && !splitZip(f) ? overlapping(f) : null;
         o.put("inPlaceOk", ((fmt.equals("zip") && !enc && !splitZip(f) && overlap == null) || fmt.equals("tar")) && !linked);
         if (linked) o.put("hardLinked", true); if (overlap != null) o.put("overlap", overlap);
@@ -275,15 +280,15 @@ public final class KtArchive {
     }
     /** The file to write for an entry: null when it is to be skipped (exists and replace=skip); `name (2).ext` for keep-both. */
     static File target(File dest, String name, Options o) throws IOException {
-        if (unsafe(name)) throw new IOException("unsafePath " + name);
+        KtNameSafe.Verdict v = nameFor(dest, name); if (v.refused()) throw new IOException("unsafePath " + name);
         if (!wanted(o, name)) return null;
-        File out = new File(dest, name); File parent = out.getParentFile(); if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IOException("cannotCreate " + parent);
+        File out = new File(dest, v.out); /* (rewritten only where the volume needs it, as the sheet showed) */ File parent = out.getParentFile(); if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IOException("cannotCreate " + parent);
         if (!out.getCanonicalPath().startsWith(dest.getCanonicalPath() + File.separator)) throw new IOException("unsafePath " + name);
         if (out.exists()) { if ("skip".equals(o.replace)) return null; if ("both".equals(o.replace)) { String base = out.getName(), ext = ""; int dot = base.lastIndexOf('.'); if (dot > 0) { ext = base.substring(dot); base = base.substring(0, dot); } for (int i = 2; ; i++) { File alt = new File(out.getParentFile(), base + " (" + i + ")" + ext); if (!alt.exists()) return alt; } } }
         return out;
     }
     static long writeAll(InputStream in, File out, long crcWant, Progress pr, long tick) throws IOException {
-        File part = new File(out.getPath() + ".part"); CRC32 crc = new CRC32(); long n = 0; byte[] buf = new byte[1 << 16];
+        File part = new File(out.getPath() + KtNameSafe.TEMP_SUFFIX); CRC32 crc = new CRC32(); long n = 0; byte[] buf = new byte[1 << 16];
         try (OutputStream os = new BufferedOutputStream(new FileOutputStream(part), 1 << 16)) { int r; while ((r = in.read(buf)) > 0) { if (pr.stopped()) throw new IOException("stopped"); os.write(buf, 0, r); crc.update(buf, 0, r); n += r; } }
         catch (IOException e) { part.delete(); throw e; }
         if (crcWant >= 0 && crc.getValue() != crcWant) { part.delete(); throw new IOException("crcMismatch " + out.getName()); }
@@ -297,7 +302,7 @@ public final class KtArchive {
             ZipIndex ix = readZip(r); long total = 0; for (ZipItem it : ix.items) total += it.usize;
             for (ZipItem it : ix.items) {
                 if (pr.stopped()) throw new IOException("stopped");
-                if (it.dir) { if (!wanted(o, it.name)) continue; File d = new File(dest, it.name); if (unsafe(it.name)) throw new IOException("unsafePath"); d.mkdirs(); continue; }
+                if (it.dir) { if (!wanted(o, it.name)) continue; File d = new File(dest, nameFor(dest, it.name).out); if (unsafe(it.name)) throw new IOException("unsafePath"); d.mkdirs(); continue; }
                 File out = target(dest, it.name, o); if (out == null) { done += it.usize; continue; }
                 pr.on(done, total, it.name);
                 try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total); }
@@ -411,6 +416,9 @@ public final class KtArchive {
                 List<ZipItem> left = new ArrayList<>(); for (ZipItem it : ix.items) if (it.offset < committed) left.add(it); ix.items.clear(); ix.items.addAll(left);
             } else {
                 ix = readZip(r); committed = ix.length;
+                // Pre-flight, before the first change: every entry decodable here, not locked, its local header where the
+                // directory says, its name allowed on this volume — or the job stops now and nothing was modified.
+                preflightZip(r, ix, dest);
                 // The tail (central directory + end record) saved first: it is cut away with the last batch.
                 byte[] cd = new byte[(int) (ix.length - ix.cdStart)]; r.seek(ix.cdStart); r.readFully(cd);
                 // (A standalone copy of the directory needs its offsets to stay valid: the tail file is the directory
@@ -429,7 +437,7 @@ public final class KtArchive {
                 if (items.get(i).usize > free) throw new IOException("noSpace");
                 for (int k = i; k < end; k++) {
                     ZipItem it = items.get(k);
-                    if (it.dir) { if (unsafe(it.name)) throw new IOException("unsafePath"); new File(dest, it.name).mkdirs(); continue; }
+                    if (it.dir) { if (unsafe(it.name)) throw new IOException("unsafePath"); new File(dest, nameFor(dest, it.name).out).mkdirs(); continue; }
                     File out = target(dest, it.name, o); if (out == null) { done += it.usize; continue; }
                     pr.on(done, total, it.name);
                     try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total); }
@@ -448,8 +456,23 @@ public final class KtArchive {
         tail.delete(); journal.delete();
         return n;
     }
+    /** The in-place ZIP pre-flight (nothing written): throws «<code> <name> — nothing was modified». */
+    static void preflightZip(Rnd r, ZipIndex ix, File dest) throws IOException {
+        List<KtNameSafe.Entry> names = new ArrayList<>();
+        for (ZipItem it : ix.items) {
+            names.add(new KtNameSafe.Entry(it.name, it.dir, null, null));
+            if (it.dir) continue;
+            if (it.encrypted) throw new IOException("encryptedInPlace " + it.name + " — nothing was modified");
+            boolean ok = it.method == 0 || it.method == 8; if (!ok && (it.method == 12 || it.method == 9 || it.method == 14 || it.method == 95)) { org.apache.commons.compress.archivers.zip.ZipArchiveEntry e = r.cc().getEntry(it.name); ok = e != null && r.cc().canReadEntryData(e); }
+            if (!ok) throw new IOException("unsupportedMethod " + it.method + " " + it.name + " — nothing was modified");
+            try { dataStart(r, it); } catch (IOException e) { throw new IOException("badLocalHeader " + it.name + " — nothing was modified"); }
+        }
+        for (KtNameSafe.Problem p : KtNameSafe.checkSet(names, KtNameSafe.platform(KtNameSafe.platformOf(dest.getAbsolutePath())), 0)) throw new IOException((p.kind.equals("duplicate") || p.kind.equals("caseClash") || p.kind.equals("rewriteClash") || p.kind.equals("fileDir") ? "duplicateEntry " : "unsafePath ") + p.path);
+    }
     static byte[] readFile(File f) throws IOException { try (Rnd r = Rnd.open(f, "r")) { byte[] b = new byte[(int) r.length()]; r.readFully(b); return b; } }
-    static void writeAtomic(File f, byte[] data) throws IOException { File tmp = new File(f.getPath() + ".tmp"); try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(data); o.getFD().sync(); } if (!tmp.renameTo(f)) { f.delete(); if (!tmp.renameTo(f)) throw new IOException("journal"); } }
+    static void writeAtomic(File f, byte[] data) throws IOException { File tmp = new File(f.getPath() + ".tmp"); try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(data); o.getFD().sync(); } if (!tmp.renameTo(f)) { f.delete(); if (!tmp.renameTo(f)) throw new IOException("journal"); } syncDir(f.getAbsoluteFile().getParentFile()); }
+    /** The folder's entry for a renamed file made durable (Linux and Android allow a directory fsync; elsewhere it is skipped). */
+    static void syncDir(File dir) { if (dir == null) return; try (java.nio.channels.FileChannel c = java.nio.channels.FileChannel.open(dir.toPath(), java.nio.file.StandardOpenOption.READ)) { c.force(true); } catch (Exception ignored) {} }
     /** Is there a half-done in-place extraction of this archive to continue? */
     public static boolean hasJournal(File f) { return new File(f.getPath() + ".kurokawa-unzip").exists(); }
 
@@ -538,14 +561,17 @@ public final class KtArchive {
     static int extractTarInPlace(File f, File dest, Options o, Progress pr) throws Exception {
         File journal = new File(f.getPath() + ".kurokawa-unzip"); int n = 0;
         try (Rnd r = Rnd.open(f, "rw")) {
-            if (journal.exists()) { long c = new JSONObject(new String(readFile(journal), StandardCharsets.UTF_8)).getLong("committed"); if (r.length() > c) r.setLength(c); }
-            else { JSONObject j = new JSONObject(); j.put("version", 1); j.put("format", "tar"); j.put("committed", r.length()); j.put("output", dest.getPath()); writeAtomic(journal, j.toString().getBytes(StandardCharsets.UTF_8)); }
+            boolean fresh = !journal.exists();
+            if (!fresh) { long c = new JSONObject(new String(readFile(journal), StandardCharsets.UTF_8)).getLong("committed"); if (r.length() > c) r.setLength(c); }
             List<TarItem> items = scanTar(r); long total = 0; for (TarItem it : items) total += it.size; long done = 0;
-            for (TarItem it : items) if (unsafe(it.name)) throw new IOException("unsafePath " + it.name);
+            // (Names checked for this volume BEFORE the journal exists: a refusal leaves nothing behind — no stale journal.)
+            List<KtNameSafe.Entry> names = new ArrayList<>(); for (TarItem it : items) names.add(new KtNameSafe.Entry(it.name, it.type == '5', null, null));
+            for (KtNameSafe.Problem p : KtNameSafe.checkSet(names, KtNameSafe.platform(KtNameSafe.platformOf(dest.getAbsolutePath())), 0)) throw new IOException((p.kind.equals("duplicate") || p.kind.equals("caseClash") || p.kind.equals("rewriteClash") || p.kind.equals("fileDir") ? "duplicateEntry " : "unsafePath ") + p.path + (fresh ? " — nothing was modified" : ""));
+            if (fresh) { JSONObject j = new JSONObject(); j.put("version", 1); j.put("format", "tar"); j.put("committed", r.length()); j.put("output", dest.getPath()); writeAtomic(journal, j.toString().getBytes(StandardCharsets.UTF_8)); }
             List<String> links = new ArrayList<>();
             for (int i = items.size() - 1; i >= 0; i--) {
                 TarItem it = items.get(i); if (pr.stopped()) throw new IOException("stopped");
-                if (it.type == '5') new File(dest, it.name).mkdirs();
+                if (it.type == '5') new File(dest, nameFor(dest, it.name).out).mkdirs();
                 else if (it.type == '0' || it.type == '7') {
                     if (it.size > dest.getUsableSpace() - o.keepFree) throw new IOException("noSpace");
                     File out = target(dest, it.name, o);
@@ -571,7 +597,7 @@ public final class KtArchive {
             SevenZArchiveEntry e;
             while ((e = z.getNextEntry()) != null) {
                 if (pr.stopped()) throw new IOException("stopped");
-                if (e.isDirectory()) { if (unsafe(e.getName())) throw new IOException("unsafePath"); new File(dest, e.getName()).mkdirs(); continue; }
+                if (e.isDirectory()) { if (unsafe(e.getName())) throw new IOException("unsafePath"); new File(dest, nameFor(dest, e.getName()).out).mkdirs(); continue; }
                 File out = target(dest, e.getName(), o); if (out == null) { done += e.getSize(); continue; }
                 pr.on(done, total, e.getName());
                 final SevenZFile zz = z; InputStream in = new InputStream() { @Override public int read() throws IOException { return zz.read(); } @Override public int read(byte[] b, int off, int len) throws IOException { return zz.read(b, off, len); } };
@@ -587,10 +613,10 @@ public final class KtArchive {
             for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) {
                 if (pr.stopped()) throw new IOException("stopped");
                 String name = h.getFileName().replace('\\', '/');
-                if (h.isDirectory()) { if (unsafe(name)) throw new IOException("unsafePath"); new File(dest, name).mkdirs(); continue; }
+                if (h.isDirectory()) { if (unsafe(name)) throw new IOException("unsafePath"); new File(dest, nameFor(dest, name).out).mkdirs(); continue; }
                 File out = target(dest, name, o); if (out == null) { done += h.getFullUnpackSize(); continue; }
                 pr.on(done, total, name);
-                File part = new File(out.getPath() + ".part");
+                File part = new File(out.getPath() + KtNameSafe.TEMP_SUFFIX);
                 try (OutputStream os = new BufferedOutputStream(new FileOutputStream(part), 1 << 16)) { a.extractFile(h, os); }
                 if (out.exists() && !out.delete()) throw new IOException("cannotReplace"); if (!part.renameTo(out)) throw new IOException("cannotRename");
                 done += h.getFullUnpackSize(); n++;
@@ -604,7 +630,7 @@ public final class KtArchive {
             ArchiveEntry e;
             while ((e = t.getNextEntry()) != null) {
                 if (pr.stopped()) throw new IOException("stopped");
-                if (e.isDirectory()) { if (unsafe(e.getName())) throw new IOException("unsafePath"); new File(dest, e.getName()).mkdirs(); continue; }
+                if (e.isDirectory()) { if (unsafe(e.getName())) throw new IOException("unsafePath"); new File(dest, nameFor(dest, e.getName()).out).mkdirs(); continue; }
                 if (!((org.apache.commons.compress.archivers.tar.TarArchiveEntry) e).isFile()) continue;
                 File out = target(dest, e.getName(), o); if (out == null) { done += e.getSize(); continue; }
                 pr.on(Math.min(done, total), total, e.getName());
@@ -620,7 +646,7 @@ public final class KtArchive {
         List<net.lingala.zip4j.model.FileHeader> hs = z.getFileHeaders(); long total = 0; for (net.lingala.zip4j.model.FileHeader h : hs) total += h.getUncompressedSize(); long done = 0; int n = 0;
         for (net.lingala.zip4j.model.FileHeader h : hs) {
             if (pr.stopped()) throw new IOException("stopped");
-            if (h.isDirectory()) { if (unsafe(h.getFileName())) throw new IOException("unsafePath"); new File(dest, h.getFileName()).mkdirs(); continue; }
+            if (h.isDirectory()) { if (unsafe(h.getFileName())) throw new IOException("unsafePath"); new File(dest, nameFor(dest, h.getFileName()).out).mkdirs(); continue; }
             File out = target(dest, h.getFileName(), o); if (out == null) { done += h.getUncompressedSize(); continue; }
             pr.on(done, total, h.getFileName());
             try (InputStream in = z.getInputStream(h)) { writeAll(in, out, h.getCrc(), pr, total); } catch (net.lingala.zip4j.exception.ZipException ex) { if (String.valueOf(ex.getMessage()).toLowerCase().contains("password")) throw new IOException("wrongPassword"); throw ex; }
@@ -635,7 +661,7 @@ public final class KtArchive {
         List<File[]> files = new ArrayList<>(); long total = 0;
         for (File in : inputs) { if (in.isDirectory()) { collect(in, in.getName() + "/", files); } else files.add(new File[]{ in, new File(in.getName()) }); }
         for (File[] p : files) total += p[0].length();
-        File part = new File(out.getPath() + ".part"); long done = 0; int n = 0; byte[] buf = new byte[1 << 16];
+        File part = new File(out.getPath() + KtNameSafe.TEMP_SUFFIX); long done = 0; int n = 0; byte[] buf = new byte[1 << 16];
         try (ZipOutputStream z = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(part), 1 << 16))) {
             for (File[] p : files) {
                 if (pr.stopped()) throw new IOException("stopped");
@@ -656,7 +682,7 @@ public final class KtArchive {
         List<File[]> files = new ArrayList<>(); long total = 0;
         for (File in : inputs) { if (in.isDirectory()) { collect(in, in.getName() + "/", files); } else files.add(new File[]{ in, new File(in.getName()) }); }
         for (File[] p : files) total += p[0].length();
-        File part = new File(out.getPath() + ".part"); long done = 0; int n = 0; byte[] buf = new byte[1 << 16]; String fmt = o.format == null ? "zip" : o.format;
+        File part = new File(out.getPath() + KtNameSafe.TEMP_SUFFIX); long done = 0; int n = 0; byte[] buf = new byte[1 << 16]; String fmt = o.format == null ? "zip" : o.format;
         if (fmt.equals("zip") && o.splitMb > 0) {
             // Volumes: zip4j writes «name.z01», «name.z02»… and «name.zip» last, in one go.
             if (out.exists() && !out.delete()) throw new IOException("cannotReplace");

@@ -159,6 +159,36 @@ pub fn crc32(data: &[u8], prev: u32) -> u32 {
     !c
 }
 
+/// `n` bytes as the disk keeps them: whole blocks.
+pub fn blocks(n: u64, bs: u64) -> u64 { if n == 0 { 0 } else { n.div_ceil(bs) * bs } }
+/// The space replay (archsafe.cjs replaySpace): units as (bytes written, archive bytes freed once committed), in the
+/// order they come out. → (normal, in place peak, index of the peak or -1).
+pub fn replay_space(units: &[(u64, u64)], same_volume: bool, block_size: u64, overhead: u64) -> (u64, u64, i64) {
+    let (mut written, mut freed, mut peak, mut peak_at, mut normal) = (0u64, 0u64, overhead, -1i64, overhead);
+    for (i, &(out, fr)) in units.iter().enumerate() {
+        written += blocks(out, block_size);
+        let now = (overhead + written).saturating_sub(if same_volume { freed } else { 0 });
+        if now > peak { peak = now; peak_at = i as i64; }
+        freed += fr;
+    }
+    for &(out, _) in units { normal += blocks(out, block_size); }
+    (normal, if same_volume { peak } else { normal }, peak_at)
+}
+
+pub const JOURNAL_VERSION: u64 = 2;
+/// A journal's text checked (archsafe.cjs journalRead): «ok», «corrupt», «future» or «v1». (Std only: the JSON is
+/// checked by its shape — one object, `kt` and `version` where the writer puts them — and by the CRC-32 that follows it.)
+pub fn journal_read(text: &str) -> &'static str {
+    let (j, sum) = match text.find('\n') { Some(i) => (&text[..i], text[i + 1..].trim()), None => (text, "") };
+    if !(j.starts_with('{') && j.ends_with('}')) { return "corrupt"; }
+    let version = j.find("\"version\":").map(|i| j[i + 10..].chars().take_while(|c| c.is_ascii_digit()).collect::<String>()).and_then(|v| v.parse::<u64>().ok());
+    if version == Some(1) && sum.is_empty() && j.contains("\"committed\":") { return "v1"; }
+    let v = match version { Some(v) => v, None => return "corrupt" };
+    if !j.contains("\"kt\":\"extract\"") { return "corrupt"; }
+    if sum != format!("{:08x}", crc32(j.as_bytes(), 0)) { return "corrupt"; }
+    if v > JOURNAL_VERSION { "future" } else { "ok" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +221,20 @@ mod tests {
         }
         assert!(n > 100, "vectors read: {}", n);
         assert_eq!(bad, 0, "{} of {} vectors differ", bad, n);
+    }
+    #[test]
+    fn replay_and_journal_vectors() {
+        let text = include_str!("../../../tests/data/extractsafe-vectors.tsv"); let mut n = 0;
+        for line in text.lines() {
+            if line.is_empty() || line.starts_with('#') { continue; }
+            let f: Vec<&str> = line.split('\t').collect(); n += 1;
+            if f[0] == "replay" {
+                let units: Vec<(u64, u64)> = if f[1] == "-" { vec![] } else { f[1].split(',').map(|u| { let mut p = u.split(':'); (p.next().unwrap().parse().unwrap(), p.next().unwrap().parse().unwrap()) }).collect() };
+                let got = replay_space(&units, f[2] == "1", f[3].parse().unwrap(), f[4].parse().unwrap());
+                assert_eq!(got, (f[5].parse().unwrap(), f[6].parse().unwrap(), f[7].parse().unwrap()), "{}", line);
+            } else { assert_eq!(journal_read(&f[1].replace("\\n", "\n")), f[2], "{}", line); }
+        }
+        assert!(n >= 10);
     }
     #[test]
     fn crc() { assert_eq!(crc32(b"123456789", 0), 0xcbf4_3926); assert_eq!(crc32(b"6789", crc32(b"12345", 0)), 0xcbf4_3926); }

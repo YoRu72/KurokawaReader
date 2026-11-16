@@ -50,6 +50,9 @@
         ]
       },
       "archive.cjs",
+      "archsafe.cjs",
+      "inplace.cjs",
+      "namesafe.json",
       "ffmpeg.cjs",
       "ytdlp.cjs",
       "streamproxy.cjs",

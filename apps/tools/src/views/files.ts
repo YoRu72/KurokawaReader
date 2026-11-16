@@ -175,6 +175,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
   const search = h('input', { type: 'search', class: 'files-search', placeholder: t('filesSearchHere'), hidden: true, oninput: () => { query = search.value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
   const selBar = h('div', { class: 'files-selbar', hidden: true });
+  const shelfEl = h('div', { class: 'files-shelf', hidden: true });
   // (What is on the clipboard, while it is: how many — or the one's name —, copied or to be moved, Paste here and Cancel.)
   const clipBar = h('div', { class: 'files-clipbar', role: 'toolbar', 'aria-label': t('filesClipboard'), hidden: true });
   const backBtn = iconButton('back', t('back'), () => { backStep(); }); backBtn.classList.add('files-back'); backBtn.hidden = true;
@@ -192,7 +193,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       viewBtn,
       iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
-    clipBar, search, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
+    clipBar, search, shelfEl, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
+  // (Extractions left half done — a stop, a crash, a full disk: Finish, Restore the archive, or Leave as is.)
+  if (!quiet) void import('./extractShelf').then((m) => m.shelfBanner(shelfEl)).catch(() => {});
   body.append(listEl, status, jobsEl);
   let at = mendScheme(route.p ?? (route.c ? '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? ''))); let remotes: Conn[] = [];
   let vroots: VRoots = { shell: null, trees: [], shizuku: false };
