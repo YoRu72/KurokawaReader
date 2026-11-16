@@ -1455,3 +1455,29 @@ html:not(.pc) .files-view.has-fast .files-body:has(> .files-list:not(.gallery)) 
 .files-dup-tick { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--md-outline); color: transparent; }
 .files-dup-tick > svg { width: 16px; height: 16px; }
 .files-dup-file.on .files-dup-tick { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
+
+/* ---- the Jobs button (only while there is a job) and its sheet */
+.files-jobs-btn { position: relative; }
+.files-jobs-badge { position: absolute; top: 4px; inset-inline-end: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; box-sizing: border-box; background: var(--md-primary); color: var(--md-on-primary); font-size: 10px; line-height: 16px; font-weight: 700; text-align: center; pointer-events: none; }
+.files-qlist { display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; }
+.files-qlist > .files-sec { margin: 6px 0 0; }
+.files-qrow { padding: 12px; border-radius: 16px; background: var(--md-surface-container); }
+.files-qmain { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.files-qhead { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.files-qhead svg { flex: none; width: 18px; height: 18px; color: var(--md-primary); }
+.files-qlabel { min-width: 0; overflow-wrap: anywhere; }
+.files-qline { display: flex; gap: 6px; min-width: 0; }
+.files-qline .files-qk { flex: 0 0 3.4em; opacity: .75; }
+.files-qline bdi { min-width: 0; overflow-wrap: break-word; }
+.files-qacts { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.files-qacts .icon-btn { width: 40px; height: 40px; }
+.files-qacts .icon-btn:disabled { opacity: .35; }
+.files-qcancel { white-space: nowrap; }
+.files-qnote { display: flex; gap: 8px; align-items: flex-start; margin: 0; }
+.files-qnote svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
+.files-unfinished .grow { min-width: 0; }
+.files-qwhat { overflow-wrap: anywhere; opacity: .9; }
+.files-7z-note { display: flex; gap: 8px; align-items: flex-start; }
+.files-7z-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
+:dir(rtl) .files-qline bdi { text-align: right; }
+html.pc .sheet .chip-row.files-filters { display: flex; flex-direction: column; gap: 10px; }

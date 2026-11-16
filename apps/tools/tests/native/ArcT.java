@@ -80,6 +80,56 @@ public class ArcT {
     File pz = new File(d, "part.zip"); try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(pz))) { z.putNextEntry(new java.util.zip.ZipEntry("Other/")); z.closeEntry(); z.putNextEntry(new java.util.zip.ZipEntry("Fonts/")); z.closeEntry(); z.putNextEntry(new java.util.zip.ZipEntry("Fonts/Empty/")); z.closeEntry(); z.putNextEntry(new java.util.zip.ZipEntry("Fonts/a.ttf")); z.write(1); z.closeEntry(); }
     File po = new File(d, "part-out"); KtArchive.Options op = new KtArchive.Options(); op.only = new java.util.HashSet<>(java.util.Arrays.asList("Fonts/")); KtArchive.extract(pz, po, op, P);
     ok("one folder taken out: it (and its empty folder), not the others", new File(po, "Fonts/a.ttf").isFile() && new File(po, "Fonts/Empty").isDirectory() && !new File(po, "Other").exists());
+
+    // ---- read-only formats of the phone from the libraries already in the app: lzma and .Z (alone and as tar), cpio, ar, a tar without a name's help
+    byte[] text = ("to be or not to be, that is the question; whether 'tis nobler in the mind to suffer; " .repeat(6)).getBytes("UTF-8");
+    byte[] tarBytes; { ByteArrayOutputStream bo = new ByteArrayOutputStream(); try (org.apache.commons.compress.archivers.tar.TarArchiveOutputStream t = new org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(bo)) { for (String nm : new String[] { "docs/one.txt", "two.txt" }) { org.apache.commons.compress.archivers.tar.TarArchiveEntry e = new org.apache.commons.compress.archivers.tar.TarArchiveEntry(nm); e.setSize(text.length); t.putArchiveEntry(e); t.write(text); t.closeArchiveEntry(); } } tarBytes = bo.toByteArray(); }
+    // single compressed files
+    byte[][] singles = { lzma(text), zLzw(text) }; String[] sname = { "poem.txt.lzma", "poem.txt.Z" }; String[] sfmt = { "lzma", "Z" };
+    for (int i = 0; i < 2; i++) {
+      File sf = new File(d, sname[i]); Files.write(sf.toPath(), singles[i]);
+      org.json.JSONObject si = KtArchive.list(sf, null); ok(sname[i] + " listed as «" + si.getString("format") + "», one file «" + si.getJSONArray("entries").getJSONObject(0).getString("path") + "»", si.getString("format").equals(sfmt[i]) && si.getJSONArray("entries").getJSONObject(0).getString("path").equals("poem.txt"));
+      File so = new File(d, "single-" + i); int sn = KtArchive.extract(sf, so, new KtArchive.Options(), P); ok(sname[i] + " extracted whole", sn == 1 && Arrays.equals(Files.readAllBytes(new File(so, "poem.txt").toPath()), text));
+    }
+    // tar inside lzma / lz4, a tar whose name says nothing, cpio, ar
+    Object[][] multi = { { "box.tar.lzma", lzma(tarBytes), "tar.lzma" }, { "box.tar.Z", zLzw(tarBytes), "tar.Z" }, { "box.dat", tarBytes, "tar" }, { "box.cpio", cpio(new String[] { "docs/one.txt", "two.txt" }, text), "cpio" }, { "box.ar", ar(new String[] { "one.txt", "a-rather-long-member-name.txt" }, text), "ar" } };
+    for (Object[] m : multi) {
+      File mf = new File(d, (String) m[0]); Files.write(mf.toPath(), (byte[]) m[1]);
+      org.json.JSONObject mi = KtArchive.list(mf, null); ok(m[0] + " listed as «" + mi.getString("format") + "» with " + mi.getJSONArray("entries").length() + " files", mi.getString("format").equals(m[2]) && mi.getJSONArray("entries").length() == 2 && !mi.has("unsafe"));
+      File mo = new File(d, "multi-" + m[0]); int mn = KtArchive.extract(mf, mo, new KtArchive.Options(), P);
+      String a0 = m[2].equals("ar") ? "one.txt" : "docs/one.txt", a1 = m[2].equals("ar") ? "a-rather-long-member-name.txt" : "two.txt";
+      ok(m[0] + " extracted: both files whole", mn == 2 && Arrays.equals(Files.readAllBytes(new File(mo, a0).toPath()), text) && Arrays.equals(Files.readAllBytes(new File(mo, a1).toPath()), text));
+      try (KtArchive.Opened o = KtArchive.open(mf, null, a1)) { ok(m[0] + " one entry opened", Arrays.equals(o.in.readAllBytes(), text)); }
+      org.json.JSONObject tr = KtArchive.test(mf, null, P); ok(m[0] + " tested", tr.getJSONArray("bad").length() == 0);
+      org.json.JSONObject only = null; KtArchive.Options oo = new KtArchive.Options(); oo.only = new java.util.HashSet<>(java.util.Arrays.asList(a1)); File mo2 = new File(d, "only-" + m[0]); KtArchive.extract(mf, mo2, oo, P); ok(m[0] + " one chosen entry taken out, not the other", new File(mo2, a1).isFile() && !new File(mo2, a0).exists());
+    }
+    // hostile names are refused by the one name rule before anything is written (cpio and a tar in lzma)
+    File evil = new File(d, "evil.cpio"); Files.write(evil.toPath(), cpio(new String[] { "../escape.txt" }, text));
+    org.json.JSONObject ei = KtArchive.list(evil, null); ok("cpio with «../escape.txt»: flagged unsafe in the listing", ei.has("unsafe"));
+    try { KtArchive.extract(evil, new File(d, "evil-out"), new KtArchive.Options(), P); ok("cpio with «../escape.txt»: extraction refused", false); } catch (IOException e) { ok("cpio with «../escape.txt»: extraction refused (" + e.getMessage() + ")", e.getMessage().startsWith("unsafePath")); }
+    ok("nothing written outside", !new File(d, "escape.txt").exists() && !new File(d, "evil-out/escape.txt").exists());
+    byte[] evilTar; { ByteArrayOutputStream bo = new ByteArrayOutputStream(); try (org.apache.commons.compress.archivers.tar.TarArchiveOutputStream t = new org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(bo)) { org.apache.commons.compress.archivers.tar.TarArchiveEntry e = new org.apache.commons.compress.archivers.tar.TarArchiveEntry("a/../../up.txt"); e.setSize(3); t.putArchiveEntry(e); t.write(new byte[3]); t.closeArchiveEntry(); } evilTar = bo.toByteArray(); }
+    File evil2 = new File(d, "evil.tar.lzma"); Files.write(evil2.toPath(), lzma(evilTar));
+    try { KtArchive.extract(evil2, new File(d, "evil2-out"), new KtArchive.Options(), P); ok("tar.lzma with «a/../../up.txt»: extraction refused", false); } catch (IOException e) { ok("tar.lzma with «a/../../up.txt»: extraction refused (" + e.getMessage() + ")", e.getMessage().startsWith("unsafePath")); }
+    // an lzma asking for a 256 MiB dictionary is refused, not allocated
+    File big7 = new File(d, "huge-dict.lzma"); { byte[] h = new byte[13 + 20]; h[0] = 0x5d; h[1] = 0; h[2] = 0; h[3] = 0; h[4] = 0x10; for (int i = 5; i < 13; i++) h[i] = (byte) 0xff; Files.write(big7.toPath(), h); }
+    try { KtArchive.extract(big7, new File(d, "big7-out"), new KtArchive.Options(), P); ok("lzma with a 256 MiB dictionary refused", false); } catch (IOException e) { ok("lzma with a 256 MiB dictionary refused (" + e.getClass().getSimpleName() + ")", true); }
+    // not an archive at all, and a .zst (no decoder in the app): refused as such
+    File junk = new File(d, "junk.zst"); Files.write(junk.toPath(), new byte[] { 0x28, (byte) 0xb5, 0x2f, (byte) 0xfd, 0, 0, 0, 0, 0, 0 }); try { KtArchive.list(junk, null); ok("zstd refused", false); } catch (IOException e) { ok("zstd refused: " + e.getMessage(), e.getMessage().equals("notArchive")); }
     System.out.println(fails == 0 ? "all passed" : fails + " failed"); System.exit(fails == 0 ? 0 : 1);
   }
+
+  /** An LZMA «alone» file (the .lzma format): the header with an unknown size, then the data and an end marker. */
+  static byte[] lzma(byte[] in) throws IOException { ByteArrayOutputStream bo = new ByteArrayOutputStream(); org.tukaani.xz.LZMA2Options o = new org.tukaani.xz.LZMA2Options(); o.setDictSize(1 << 20); try (org.tukaani.xz.LZMAOutputStream z = new org.tukaani.xz.LZMAOutputStream(bo, o, -1L)) { z.write(in); } return bo.toByteArray(); }
+  /** compress(1)'s .Z by hand (LZW, block mode, 16 bits at most), the code width growing as compress does it. */
+  static byte[] zLzw(byte[] in) {
+    ByteArrayOutputStream bo = new ByteArrayOutputStream(); bo.write(0x1f); bo.write(0x9d); bo.write(0x90);
+    long[] acc = { 0 }; int[] nb = { 0 }; int[] width = { 9 }; int[] free = { 257 };
+    java.util.function.IntConsumer emit = (code) -> { acc[0] |= ((long) code) << nb[0]; nb[0] += width[0]; while (nb[0] >= 8) { bo.write((int) (acc[0] & 0xff)); acc[0] >>= 8; nb[0] -= 8; } if (free[0] > (1 << width[0]) - 1 && width[0] < 16) width[0]++; };
+    java.util.HashMap<Integer, Integer> dict = new java.util.HashMap<>(); int ent = in[0] & 0xff;
+    for (int i = 1; i < in.length; i++) { int c = in[i] & 0xff; Integer code = dict.get((ent << 8) | c); if (code != null) ent = code; else { emit.accept(ent); dict.put((ent << 8) | c, free[0]++); ent = c; } }
+    emit.accept(ent); if (nb[0] > 0) bo.write((int) (acc[0] & 0xff)); if (free[0] >= 65536) throw new IllegalStateException("test input too long (no table clearing here)"); return bo.toByteArray();
+  }
+  static byte[] cpio(String[] names, byte[] data) throws IOException { ByteArrayOutputStream bo = new ByteArrayOutputStream(); try (org.apache.commons.compress.archivers.cpio.CpioArchiveOutputStream z = new org.apache.commons.compress.archivers.cpio.CpioArchiveOutputStream(bo)) { for (String n : names) { org.apache.commons.compress.archivers.cpio.CpioArchiveEntry e = new org.apache.commons.compress.archivers.cpio.CpioArchiveEntry(n); e.setMode(0100644); e.setSize(data.length); e.setNumberOfLinks(1); z.putArchiveEntry(e); z.write(data); z.closeArchiveEntry(); } } return bo.toByteArray(); }
+  static byte[] ar(String[] names, byte[] data) throws IOException { ByteArrayOutputStream bo = new ByteArrayOutputStream(); try (org.apache.commons.compress.archivers.ar.ArArchiveOutputStream z = new org.apache.commons.compress.archivers.ar.ArArchiveOutputStream(bo)) { z.setLongFileMode(org.apache.commons.compress.archivers.ar.ArArchiveOutputStream.LONGFILE_BSD); for (String n : names) { org.apache.commons.compress.archivers.ar.ArArchiveEntry e = new org.apache.commons.compress.archivers.ar.ArArchiveEntry(n, data.length); z.putArchiveEntry(e); z.write(data); z.closeArchiveEntry(); } } return bo.toByteArray(); }
 }

@@ -16,7 +16,7 @@ import { onBack as onBackStep } from '../ui/backstack';
 import { lazyThumb, placeImg, drawThumb, pcThumbable, dropThumbs } from '../ui/thumbs';
 import { mimeMatches, mimeOfName, pickResult, kindsAsked, type PickRequest } from './pickLogic';
 import { kindOfFile } from './taskFiles';
-import { isArc, arcPath, parseArc, arcName, looksArchive } from './filesArc';
+import { isArc, arcPath, parseArc, arcName, looksArchive, canExtractName } from './filesArc';
 import { isApps, appsPath, parseApps, appsAvailable } from './filesApps';
 import { nameDotExt } from '../ui/nameExt';
 import { sizeOf, calcSize, watchSize, sizeRunning, type SizeInfo } from './filesSize';
@@ -67,6 +67,11 @@ const hashOf = (): ((p: string) => Promise<string>) | null => {
 };
 /** Whether «Verify after copying → Full check» can run here (jobs and a streaming checksum). */
 export const canVerifyFull = (): boolean => canJobs() && !!hashOf();
+/** Whether the Jobs queue and its setting apply here (the same jobs). */
+export const canRunJobs = (): boolean => canJobs();
+/** The job queue (views/filesQueue.ts), once loaded — the first job asked for loads it. */
+let Q: typeof import('./filesQueue') | null = null;
+let queueOffered = false;
 /** The storages and the one-item changes (new folder, rename, the facts of one path): the phone's plugin, or a computer's
  *  shell where it has them — the Tauri shell's filesRoots, filesStat (shallow), filesMkdir and filesRename, the same
  *  shapes; Electron's shell has none. */
@@ -85,7 +90,7 @@ const rootIcon = (kind: string): string => ({ app: 'download', downloads: 'downl
 
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
 export type Prefs = { view: 'list' | 'grid' | 'gallery'; /** Columns chosen by pinching, per view and kind of folder (`grid:media`, `gallery:plain`…). */ cols?: Record<string, number>; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string;
-  /** The folder the page opens on (empty: the last one when `rememberLast`, else the first storage). */ home?: string; rememberLast?: boolean; counts?: boolean; thumbs?: boolean; density?: 'comfortable' | 'compact'; /** The text of names and details in the lists (normal when not set). */ textSize?: 'small' | 'large' | 'larger'; confirmDelete?: boolean; /** A folder's size shown in its row once counted (Calculate size); on unless off. */ dirSizes?: boolean; keepOn?: boolean; eink?: boolean; backUp?: boolean; /** After copying or moving: the engine's size check (the default), or the content compared too. */ verify?: 'size' | 'full' };
+  /** The folder the page opens on (empty: the last one when `rememberLast`, else the first storage). */ home?: string; rememberLast?: boolean; counts?: boolean; thumbs?: boolean; density?: 'comfortable' | 'compact'; /** The text of names and details in the lists (normal when not set). */ textSize?: 'small' | 'large' | 'larger'; confirmDelete?: boolean; /** A folder's size shown in its row once counted (Calculate size); on unless off. */ dirSizes?: boolean; keepOn?: boolean; eink?: boolean; backUp?: boolean; /** After copying or moving: the engine's size check (the default), or the content compared too. */ verify?: 'size' | 'full'; /** Copy, move, delete and extract jobs: one at a time (waiting in the queue, the default) or together. */ jobsMode?: 'one' | 'together' };
 const PREFS = 'kt.files.prefs';
 /** The view button cycles list, grid, gallery; each says what a tap switches TO. */
 const NEXT_VIEW: Record<Prefs['view'], Prefs['view']> = { list: 'grid', grid: 'gallery', gallery: 'list' };
@@ -207,8 +212,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // (The list/grid button: the same button for good — its focus stays —, showing the view a tap switches TO, named by
   // what it does; it redraws the folder in place — the address stays the same, so a navigate() to it would draw nothing.)
   const viewBtn = iconButton(NEXT_VIEW[prefs.view] === 'list' ? 'list' : NEXT_VIEW[prefs.view] === 'gallery' ? 'images' : 'grid', t(VIEW_TO[NEXT_VIEW[prefs.view]]), () => { prefs.view = NEXT_VIEW[prefs.view]; savePrefs(); applyView(); po.peer?.()?.restyle(); });
+  // (The Jobs button: only while the queue holds a job — running or waiting — with their number on it.)
+  let offQ: (() => void) | null = null; let offUnfinished: (() => void) | null = null;
+  const jobsBadge = h('span', { class: 'files-jobs-badge', 'aria-hidden': 'true' });
+  const jobsBtn = iconButton('jobs', t('filesJobs'), () => void useQueue().then((m) => m.jobsSheet(() => (prefs.jobsMode === 'together' ? 'together' : 'one')))); jobsBtn.classList.add('files-jobs-btn'); jobsBtn.hidden = true; jobsBtn.append(jobsBadge);
+  const drawJobsBadge = () => { const n = Q?.count() ?? 0; jobsBtn.hidden = n === 0; jobsBadge.textContent = localDigits(n); const lbl = n ? t('filesJobsCount', { n: localDigits(n) }) : t('filesJobs'); jobsBtn.title = lbl; jobsBtn.setAttribute('aria-label', lbl); };
   const root = h('div', { class: 'view files-view' },
-    h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' },
+    h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' }, jobsBtn,
       iconButton('search', t('search'), () => { if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       viewBtn,
@@ -701,7 +711,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       ...(e.path.startsWith('root://') ? [act('terminal', t('filesPermissions'), () => rootOpsSheet(e))] : []),
       ...(pl && e.dir ? [act('eyeOff', t('filesHideFolder'), () => void import('./filesMore').then((m) => { m.hidePath(e.path); toast(t('filesHiddenNow')); void load(); })), act('images', t('filesNomedia'), () => void import('./filesMore').then((m) => m.toggleNomedia(e.path)).then((on) => toast(on ? t('filesNomediaOn') : t('filesNomediaOff'))).catch((err) => toast(String((err as Error).message ?? err), 'error')))] : []),
       ...(!e.dir && !isVirtual(e.path) && looksArchive(e.name) ? [act('folder', /\.(apk|apks|xapk|apkm)$/i.test(e.name) ? t('apkBrowse') : t('filesOpenAsArchive'), () => { sh.close(); go(arcPath(e.path)); })] : []),
-      ...(arcOk() && !e.dir && /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|001)$/i.test(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : []),
+      ...(arcOk() && !e.dir && canExtractName(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : []),
       ...(arcOk() ? [act('archive', t('filesCompress'), () => void compress([e.path]))] : []),
       act('check', t('filesSelect'), () => { selecting = true; picked.add(e.path); applySel(); drawSel(); }),
       ...(sizeable(e) ? [act('refresh', t('filesCalcSize'), () => void propertiesSheet(e, true))] : []),
@@ -862,7 +872,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: () => { sh.close(); void startJob('delete', left); } }, icon('trash'), t('filesDeleteForever')));
   };
   const shareMany = async (paths: string[]) => { const pl = plug(); if (!pl) return; if (paths.length === 1) { await pl.shareFile({ path: paths[0], title: baseOf(paths[0]) }).catch(() => undefined); return; } const { shareFiles } = await import('../ui/shareMany'); await shareFiles(paths); };
-  const extractHere = async (e: Entry) => { const { extractArchiveJob } = await import('../archives'); const job = extractArchiveJob({ path: e.path, dest: parentOf(e.path), replace: 'ask' as never }); watchArchiveJob(job.id, job.done, e.name); };
+  const extractHere = async (e: Entry) => {
+    const id = `fe-${Date.now()}`; const dest = parentOf(e.path);
+    const job: import('./filesQueue').QJob = { id, kind: 'extract', label: t('filesExtracting', { name: e.name }), what: e.name, from: e.path, to: dest, cancel: () => undefined, save: { op: 'extractHere', paths: [e.path], dest },
+      start: async () => { const a = await import('../archives'); const aj = a.extractArchiveJob({ path: e.path, dest, replace: 'ask' as never }); job.cancel = () => void a.cancelArchive(aj.id); watchArchiveJob(aj.id, aj.done, e.name); void aj.done.then(() => Q?.finish(id), () => Q?.finish(id)); return true; } };
+    await queued(job);
+  };
   const watchArchiveJob = (id: string, done: Promise<unknown>, name: string) => { const el = jobRow(id, t('filesExtracting', { name }), () => void import('../archives').then((m) => m.cancelArchive(id))); done.then(() => { el.remove(); void load(); toast(t('filesExtracted', { name })); }, (err) => { el.remove(); toast(String((err as Error).message ?? err), 'error'); }); };
   const compress = async (paths: string[]) => { const m = await import('./filesMore'); leaveSel(); await m.makeArchiveSheet(paths, at, (id, label, done, cancel) => { const el = jobRow(id, label, cancel); void done.then(() => el.remove(), () => el.remove()); }, () => void load()); };
   const zipSheet = async (paths: string[]) => {
@@ -881,8 +896,16 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     jobsEl.append(el); return el;
   };
   /** A job of this pane's: its row here, and it known as this pane's (the other pane only reads its folder again at the end). */
-  const ownRow = (id: string, label: string, cancel: () => void) => { liveJobs.set(id, { owner: me, label, cancel }); return jobRow(id, label, cancel); };
-  /** True when the job was started (its events will come). */
+  const ownRow = (id: string, label: string, cancel: () => void) => { liveJobs.set(id, { owner: gone ? null : me, label, cancel }); return jobRow(id, label, cancel); };
+  /** The first names of what a job is about, for the Jobs sheet. */
+  const whatOf = (paths: string[]): string => paths.slice(0, 2).map(baseOf).join(', ') + (paths.length > 2 ? ` +${localDigits(paths.length - 2)}` : '');
+  /** The queue's view of this page: how jobs run (the setting) and where the engine's events come from. */
+  const qhost = { mode: (): 'one' | 'together' => (prefs.jobsMode === 'together' ? 'together' : 'one'), events: () => jobs() as unknown as { addListener(ev: string, fn: (d: never) => void): unknown } | null };
+  /** The queue's chunk, and this pane listening to it for the Jobs button's badge. */
+  const useQueue = async () => { const m = await import('./filesQueue'); Q = m; if (!offQ && !gone) offQ = m.subscribe(drawJobsBadge); drawJobsBadge(); return m; };
+  /** A job given to the queue: it starts at once when it may, else waits its turn (and says so). */
+  const queued = async (job: import('./filesQueue').QJob): Promise<boolean> => { const m = await useQueue(); if (m.enqueue(job, qhost) === 'waiting') toast(t('filesJobQueued', { n: localDigits(m.snapshot().waiting.length) })); return true; };
+  /** True when the job was asked for: it starts now or waits its turn in the queue (its events come once it starts). */
   const startJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = `fj-${Date.now()}`, label0?: string): Promise<boolean> => {
     const pl = jobs(); if (!pl) return false;
     // (An archive's entries: taken out, as a copy — an archive is not changed from here, so never deleted or moved out of.)
@@ -890,8 +913,22 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (dest && isArc(dest)) { toast(t('arcNoPaste'), 'error'); return false; }
     const srcV = paths.some(isVirtual), dstV = !!dest && isVirtual(dest);
     if (op === 'delete' && srcV) { const dirs = paths.filter((p) => entries.find((e) => e.path === p)?.dir); try { await vfs.delete(paths, dirs); toast(t('filesDeleted', { n: localDigits(paths.length) })); void load(); } catch (err) { toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); } return false; }
+    if ((srcV || dstV) && op !== 'delete' && srcV && dstV) { toast(t('remoteNoBetween'), 'error'); return false; }
+    // (An extraction's move into place is a part of the extraction's own place in the queue.)
+    if (stagings.has(id)) return launchJob(op, paths, dest, id, label0);
+    const remote = (srcV || dstV) && op !== 'delete'; const n = localDigits(paths.length);
+    const label = label0 ?? (remote ? (srcV ? t('remoteDownloading', { n }) : t('remoteUploading', { n })) : op === 'delete' ? t('filesDeleting', { n }) : op === 'move' ? t('filesMoving', { n }) : t('filesCopying', { n }));
+    const dropped = () => { const c = clipboard; if (c?.busy === id) setClip({ op: 'move', paths: c.paths }); };
+    const job: import('./filesQueue').QJob = { id, kind: remote ? 'remote' : op, label, what: whatOf(paths), from: parentOf(paths[0]), to: dest, cancel: () => liveJobs.get(id)?.cancel(), dropped,
+      ...(!remote && !label0 && op !== 'delete' && dest ? { save: { op, paths, dest } } : {}),
+      start: async () => { const ok = await launchJob(op, paths, dest, id, label0); if (!ok) dropped(); return ok; } };
+    return queued(job);
+  };
+  /** The job itself, started now (what the queue calls when its turn comes). True when it was started. */
+  const launchJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = `fj-${Date.now()}`, label0?: string): Promise<boolean> => {
+    const pl = jobs(); if (!pl) return false;
+    const srcV = paths.some(isVirtual), dstV = !!dest && isVirtual(dest);
     if ((srcV || dstV) && op !== 'delete') {
-      if (srcV && dstV) { toast(t('remoteNoBetween'), 'error'); return false; }
       const label = srcV ? t('remoteDownloading', { n: localDigits(paths.length) }) : t('remoteUploading', { n: localDigits(paths.length) });
       ownRow(id, label, () => void vfs.cancel(id));
       try { await vfs.job(id, srcV ? 'down' : 'up', paths, dest!, op === 'move'); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); return false; }
@@ -921,7 +958,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     let run: { cancel(): void; done: Promise<import('./filesVerify').VerifyEnd> } | null = null; let stop = false;
     ownRow(id, label, () => { stop = true; run?.cancel(); });
     const mod = await import('./filesVerify'); if (stop) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); return false; }
-    const bar = (pct: number, meta: string) => { const el = jobsEl.querySelector(`[data-id="${id}"]`); if (!el) return; (el.querySelector('.files-job-bar i') as HTMLElement).style.width = `${pct}%`; (el.querySelector('.files-job-meta') as HTMLElement).textContent = meta; };
+    const bar = (pct: number, meta: string) => { Q?.progress(id, pct, meta); const el = jobsEl.querySelector(`[data-id="${id}"]`); if (!el) return; (el.querySelector('.files-job-bar i') as HTMLElement).style.width = `${pct}%`; (el.querySelector('.files-job-meta') as HTMLElement).textContent = meta; };
     const stage = `${dest.replace(/\/+$/, '')}/${STAGE}v-${id}`;
     run = mod.runVerified({
       start: async (sid, sop, sp, sd, conflict, on) => { subJobs.set(sid, (ev) => { on(ev); if (ev.status !== 'progress' && ev.status !== 'conflict') subJobs.delete(sid); }); try { await pl.filesJob({ id: sid, op: sop, paths: sp, dest: sd, conflict }); } catch (e) { subJobs.delete(sid); throw e; } },
@@ -992,19 +1029,29 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
    *  moved in by a job of the phone's — the same question when a name is taken, Cancel, the summary —, the hidden
    *  folder removed at the end, whatever happened. */
   const extractEntries = async (paths: string[], dest: string): Promise<void> => {
-    const jb = jobs(); if (!jb || !arcOk() || !paths.length) return; const m = await import('./filesArc'); const a = await import('../archives');
-    const id = `fx-${Date.now()}`; const stage = `${dest.replace(/\/+$/, '')}/${STAGE}${id}`; let stopped = false; let jobId = '';
-    const label = paths.length === 1 ? t('filesExtracting', { name: baseOf(paths[0]) }) : t('filesExtractingN', { n: localDigits(paths.length) });
-    const el = jobRow(id, label, () => { stopped = true; if (jobId) void a.cancelArchive(jobId); });
+    const jb = jobs(); if (!jb || !arcOk() || !paths.length) return;
+    const id = `fx-${Date.now()}`; const label = paths.length === 1 ? t('filesExtracting', { name: baseOf(paths[0]) }) : t('filesExtractingN', { n: localDigits(paths.length) });
+    const job: import('./filesQueue').QJob = { id, kind: 'extract', label, what: whatOf(paths), from: parseArc(paths[0]).archive, to: dest, cancel: () => undefined, save: { op: 'extract', paths, dest }, start: () => runExtract(paths, dest, id, label, job) };
+    await queued(job);
+  };
+  /** The extraction at its turn: unpacked (cancel = the archive job), then moved in (cancel = the move job). True when the
+   *  move was started — its end is the job's end; false when nothing is left to wait for. */
+  const runExtract = async (paths: string[], dest: string, id: string, label: string, qj: import('./filesQueue').QJob): Promise<boolean> => {
+    const jb = jobs(); if (!jb || !arcOk()) return false; const m = await import('./filesArc'); const a = await import('../archives');
+    const stage = `${dest.replace(/\/+$/, '')}/${STAGE}${id}`; let stopped = false; let jobId = '';
+    const el = jobRow(id, label, () => { stopped = true; if (jobId) void a.cancelArchive(jobId); }); qj.cancel = () => { stopped = true; if (jobId) void a.cancelArchive(jobId); };
     const dropStage = () => void jb.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: [stage] }).catch(() => undefined);
     try {
-      const job = m.arcExtract(paths, stage, (pr) => { const b = el.querySelector('.files-job-bar i') as HTMLElement | null; if (b && pr.total) b.style.width = `${Math.round((pr.done / pr.total) * 100)}%`; (el.querySelector('.files-job-meta') as HTMLElement).textContent = `${baseOf(pr.file || '')} · ${formatBytes(pr.done)}${pr.total ? ` / ${formatBytes(pr.total)}` : ''}`; });
+      const job = m.arcExtract(paths, stage, (pr) => { const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0; const b = el.querySelector('.files-job-bar i') as HTMLElement | null; if (b && pr.total) b.style.width = `${pct}%`; const meta = `${baseOf(pr.file || '')} · ${formatBytes(pr.done)}${pr.total ? ` / ${formatBytes(pr.total)}` : ''}`; (el.querySelector('.files-job-meta') as HTMLElement).textContent = meta; Q?.progress(id, pct, meta); });
       jobId = job.id; await job.done;
-    } catch (err) { el.remove(); dropStage(); if (!stopped && !/stopped|cancel/i.test(String((err as Error).message ?? err))) toast(String((err as Error).message ?? err), 'error', 5000); else toast(t('filesCancelled')); return; }
-    el.remove(); if (stopped) { dropStage(); toast(t('filesCancelled')); return; }
-    const moveId = `fj-${Date.now()}`; stagings.set(moveId, stage);
-    if (!(await startJob('move', paths.map((p) => `${stage}/${parseArc(p).inner}`), dest, moveId, t('filesExtractingN', { n: localDigits(paths.length) })))) { stagings.delete(moveId); dropStage(); }
+    } catch (err) { el.remove(); dropStage(); if (!stopped && !/stopped|cancel/i.test(String((err as Error).message ?? err))) toast(String((err as Error).message ?? err), 'error', 5000); else toast(t('filesCancelled')); return false; }
+    el.remove(); if (stopped) { dropStage(); toast(t('filesCancelled')); return false; }
+    const moveId = `fj-${Date.now()}`; stagings.set(moveId, stage); Q?.link(moveId, id); qj.cancel = () => void jb.filesCancel({ id: moveId });
+    if (!(await launchJob('move', paths.map((p) => `${stage}/${parseArc(p).inner}`), dest, moveId, t('filesExtractingN', { n: localDigits(paths.length) })))) { stagings.delete(moveId); dropStage(); return false; }
+    return true;
   };
+  /** «Resume» on the unfinished jobs of an earlier run: asked for again, in their order (a delete is never among them). */
+  const resumeSaved = (list: import('./filesQueue').Saved[]) => { for (const j of list) { if (j.op === 'extract') void extractEntries(j.paths, j.dest); else if (j.op === 'extractHere') void extractHere({ path: j.paths[0], name: baseOf(j.paths[0]) } as Entry); else void startJob(j.op, j.paths, j.dest); } };
   const extractTo = async (paths: string[]) => {
     let d: string | null = null;
     try { if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else d = (await ktPlugin()?.pickDir())?.dir ?? null; } catch { d = null; }
@@ -1018,6 +1065,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const ends = (ev: JobEvent) => ev.status === 'done' || ev.status === 'cancelled' || ev.status === 'failed';
   const onJob = (ev: JobEvent) => {
+    if (ends(ev)) Q?.finish(ev.id);
     const subJob = subJobs.get(ev.id); if (subJob) { subJob(ev); return; }
     const rec = liveJobs.get(ev.id);
     if (rec && rec.owner !== me) {
@@ -1078,6 +1126,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // ---- start
   let sub: { remove(): void } | null = null;
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
+  // (The queue: another pane's jobs show here too; jobs an earlier run left waiting are offered — never run — once per start.)
+  if (Q) { offQ = Q.subscribe(drawJobsBadge); drawJobsBadge(); }
+  if (!quiet && !pk && canJobs() && !queueOffered) { queueOffered = true; try { if (localStorage.getItem('kt.files.queue') || localStorage.getItem('kt.files.queue.unfinished')) void useQueue().then((m) => { if (!gone) offUnfinished = m.offerUnfinished(resumeSaved); }); } catch { /* none */ } }
   const pl = plug(); if (pl) void import('./filesMore').then((m) => m.pruneTrash());
   void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); if (!pk && po.side !== 'b' && localStorage.getItem('kt.files.renamejob')) void import('./filesBatchUi').then((m) => m.interruptedBanner(batchHost([]), body)); })();
   let wake: { release(): Promise<void> } | null = null;
@@ -1122,7 +1173,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };

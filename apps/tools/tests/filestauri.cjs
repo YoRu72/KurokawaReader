@@ -162,9 +162,10 @@ function fakeTauri({ lang, slow }) {
     await goTo('/home/u/src'); await page.locator('.files-row:has(.files-name[title="a.txt"]) button[data-icon="more"]').first().click(); await page.waitForSelector('.sheet', { timeout: 3000 });
     await page.click(`.sheet button:has-text("${T.filesCompress}")`); await page.waitForTimeout(300);
     const fmts = await page.evaluate(() => document.querySelector('.sheet')?.textContent ?? '');
+    const pwShown = await page.evaluate(() => [...document.querySelectorAll('.sheet input[type=password]')].some((e) => e.offsetParent !== null));
     await page.click(`.sheet button.primary:has-text("${T.filesCompress}")`); await page.waitForTimeout(600);
     const zips = await page.evaluate(() => window.__zips || []);
-    ok(L('Compress: a zip of it made through archiveCreate (zip only on a computer)'), zips.length === 1 && zips[0].out === '/home/u/src/a.zip' && JSON.stringify(zips[0].inputs) === '["/home/u/src/a.txt"]' && fmts.includes('ZIP') && !fmts.includes('7Z'), { zips, fmts: fmts.slice(0, 120) });
+    ok(L('Compress: a zip of it made through archiveCreate (the default; no 7z options sent, no password or volumes offered for a zip)'), zips.length === 1 && zips[0].out === '/home/u/src/a.zip' && JSON.stringify(zips[0].inputs) === '["/home/u/src/a.txt"]' && fmts.includes('ZIP') && !('format' in zips[0]) && !pwShown, { zips, fmts: fmts.slice(0, 120) });
     ok(L('no page errors'), !errors.length, errors);
     await page.close();
   }

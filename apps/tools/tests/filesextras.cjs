@@ -1,5 +1,5 @@
 // The smaller Files features of 0.21.0, one section each, on the pretend phone (tests/filesphone-fixture.cjs) at 360 px and,
-// where it matters, a computer's width; English and Arabic. Sections: foldersize, scroller, gallery, editor, verify, compare, duplicates, reader.
+// where it matters, a computer's width; English and Arabic. Sections: foldersize, scroller, gallery, editor, verify, compare, duplicates, reader, jobs, sevenz.
 // Run: NODE_PATH=$(npm root -g) node tests/filesextras.cjs [en|ar] [section ...]
 const { chromium } = require('playwright'); const F = require('./filesphone-fixture.cjs'); const { K } = F; const path = require('node:path');
 let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FAIL ') + what + (cond || x === undefined ? '' : '  ' + JSON.stringify(x).slice(0, 300))); if (!cond) fails++; };
@@ -320,8 +320,8 @@ async function verify(browser, port, z, lang) {
   // ---- the setting
   { const { p, errors } = await page(browser, port, z, lang);
     await p.click('.topbar-actions .icon-btn[data-icon="more"]'); await p.locator('.sheet .dest-row', { hasText: /Files settings|إعدادات الملفات/ }).click(); await p.waitForSelector('.sheet .files-verify-row');
-    ok(L('Files settings: «Verify after copying» with Size check chosen by default'), /Size check|فحص الحجم/.test(await p.textContent('.files-verify-row')) && !(await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').verify)));
-    await p.locator('.files-verify-row .pick-btn').click(); await p.waitForTimeout(250); await p.locator('.sheet button, .sheet .dest-row', { hasText: /^\s*(Full check|فحص كامل)\s*$/ }).last().click(); await p.waitForTimeout(300);
+    ok(L('Files settings: «Verify after copying» with Size check chosen by default'), /Size check|فحص الحجم/.test(await p.textContent('.files-verify-row:not(.files-runjobs-row)')) && !(await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').verify)));
+    await p.locator('.files-verify-row:not(.files-runjobs-row) .pick-btn').click(); await p.waitForTimeout(250); await p.locator('.sheet button, .sheet .dest-row', { hasText: /^\s*(Full check|فحص كامل)\s*$/ }).last().click(); await p.waitForTimeout(300);
     ok(L('choosing Full check is kept'), (await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.prefs')).verify)) === 'full');
     ok(L('no page errors (setting)'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
   // ---- Size check (the default): a plain job, and it says the sizes were checked
@@ -484,6 +484,175 @@ async function reader(browser, port, z, lang) {
   ok(L('PC: no «Open in Kurokawa Reader» entry'), (await pc.p.locator('.files-open-reader').count()) === 0); await pc.p.close();
 }
 
+// ---- the Jobs queue: waiting in order, the Jobs sheet, «Run file jobs», what survives a restart, the Full check in the queue
+async function jobs(browser, port, z, lang) {
+  const L = (s) => `[${lang}-jobs] ${s}`; const ar = lang === 'ar'; const sfx = ar ? '-ar' : '';
+  const dg = (n) => String(n);   // (the page writes Western digits in Arabic too)
+  const copies = (p) => p.evaluate(() => window.__calls.filter((c) => /^(copy|move|delete)/.test(c)));
+  const badge = (p) => p.evaluate(() => { const b = document.querySelector('.files-jobs-btn'); return b && !b.hidden ? b.textContent.trim() : null; });
+  const again = async (p, dest) => { await p.evaluate((d) => { location.hash = '#/files?p=' + encodeURIComponent(d); }, dest); await p.waitForSelector('.files-clip-paste:not([disabled])', { timeout: 5000 }); await p.click('.files-clip-paste'); await p.waitForTimeout(250); };
+  const openJobs = async (p) => { await p.click('.files-jobs-btn'); await p.waitForSelector('.files-qlist'); await p.waitForTimeout(200); };
+  const closeSheet = async (p) => { await p.keyboard.press('Escape'); await p.waitForTimeout(250); };
+  const toSub = (x) => new RegExp(x + '$');
+  // ---- one at a time (the default)
+  { const { p, errors } = await page(browser, port, z, lang);
+    ok(L('no jobs: no Jobs button'), (await badge(p)) === null && (await p.locator('.files-jobs-btn:visible').count()) === 0);
+    await p.evaluate(() => { window.__slow = 9000; });
+    await pasteTo(p, ['Song.mp3'], 'copy', K + '/Sub'); await p.waitForTimeout(300);
+    ok(L('one job: the button shows 1'), (await badge(p)) === dg(1), await badge(p));
+    await again(p, K + '/Many'); await again(p, P + '/Music'); await p.waitForTimeout(300);
+    const c = await copies(p); ok(L(`only the first job was started (${c.join(' | ')})`), c.length === 1 && /Sub$/.test(c[0]), c);
+    ok(L('three jobs: the button shows 3'), (await badge(p)) === dg(3), await badge(p));
+    ok(L('the second said it is waiting'), /Waiting|الانتظار/.test(await p.evaluate(() => document.querySelector('.toast')?.textContent ?? '')), await p.evaluate(() => document.querySelector('.toast')?.textContent));
+    await openJobs(p);
+    ok(L('the sheet: one running, two waiting'), (await p.locator('.files-qrow.running').count()) === 1 && (await p.locator('.files-qrow.waiting').count()) === 2);
+    const runTxt = await p.textContent('.files-qrow.running');
+    ok(L('the running job: what it is, where from, where to, Cancel — and no Pause'), /Song\.mp3/.test(runTxt) && /Sub/.test(runTxt) && /Download/.test(runTxt) && /Cancel|إلغاء/.test(runTxt) && !/Pause|إيقاف مؤقت\b(?!؛)/.test(await p.locator('.files-qrow.running .files-qacts').textContent()), runTxt);
+    ok(L('the no-pause note is said'), (await p.locator('.files-qnote', { hasText: /pause|الإيقاف المؤقت|إيقاف مؤقت/ }).count()) >= 1);
+    const wait = (i) => p.locator('.files-qrow.waiting').nth(i);
+    ok(L('waiting rows in order: Many first, Music second; the first cannot go up, the last cannot go down'), /Many/.test(await wait(0).textContent()) && /Music/.test(await wait(1).textContent()) && (await wait(0).locator('.files-qup').isDisabled()) && (await wait(1).locator('.files-qdown').isDisabled()) && !(await wait(0).locator('.files-qdown').isDisabled()));
+    ok(L('each waiting row tells its place in line'), /1/.test(await wait(0).locator('.files-qpos').textContent()) && /2/.test(await wait(1).locator('.files-qpos').textContent()));
+    await p.waitForTimeout(2400); await shot(p, `extras-jobs${sfx}.png`);
+    const geo = await p.evaluate(() => { const rs = [...document.querySelectorAll('.files-qrow')]; const bad = []; for (const r of rs) { const bs = [...r.querySelectorAll('.files-qacts .icon-btn, .files-qacts .btn')].map((b) => b.getBoundingClientRect()); bs.sort((a, b) => a.left - b.left); for (let i = 1; i < bs.length; i++) if (bs[i].left - bs[i - 1].right < 4) bad.push('touch'); const rr = r.getBoundingClientRect(); if (rr.right > innerWidth + 1 || rr.left < -1) bad.push('overflow'); } return { bad, w: document.documentElement.scrollWidth, iw: innerWidth }; });
+    ok(L('rows: the buttons keep a gap and nothing overflows at 360 px'), !geo.bad.length && geo.w <= geo.iw, geo);
+    await wait(1).locator('.files-qup').click(); await p.waitForTimeout(250);
+    ok(L('Move up: Music is now first'), /Music/.test(await wait(0).textContent()) && /Many/.test(await wait(1).textContent()));
+    await wait(0).locator('.files-qdown').click(); await p.waitForTimeout(250);
+    ok(L('Move down: back to Many, Music'), /Many/.test(await wait(0).textContent()));
+    await wait(1).locator('.files-qdel').click(); await p.waitForTimeout(250);
+    ok(L('Remove: Music leaves the queue (2 jobs left)'), (await p.locator('.files-qrow.waiting').count()) === 1 && (await p.locator('.files-qrow').count()) === 2);
+    await closeSheet(p); ok(L('closing the sheet keeps the queue: the button shows 2'), (await badge(p)) === dg(2), await badge(p));
+    await p.waitForFunction(() => window.__calls.filter((c) => /^copy/.test(c)).length >= 2, null, { timeout: 30000 }).catch(() => undefined);
+    const c2 = await copies(p); ok(L(`the first ended: the next started by itself (${c2.join(' | ')})`), c2.length === 2 && /Many$/.test(c2[1]), c2);
+    await p.waitForFunction(() => !document.querySelector('.files-jobs-btn') || document.querySelector('.files-jobs-btn').hidden, null, { timeout: 30000 }).catch(() => undefined);
+    ok(L('all done: the button is gone; Many holds the copy, Music none'), (await badge(p)) === null && (await p.evaluate((k) => window.__tree.has(k + '/Many/Song.mp3') && window.__tree.has(k + '/Sub/Song.mp3') && ![...window.__tree.keys()].some((x) => x.includes('/Music/Song.mp3')), K)));
+    ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+  // ---- Cancel on the running one: the next starts
+  { const { p, errors } = await page(browser, port, z, lang);
+    await p.evaluate(() => { window.__slow = 2500; });
+    await pasteTo(p, ['Song.mp3'], 'copy', K + '/Sub'); await again(p, K + '/Many'); await p.waitForTimeout(300);
+    await openJobs(p); await p.click('.files-qrow.running .files-qcancel'); await p.waitForTimeout(1200);
+    const c = await copies(p); ok(L(`Cancel the running job: the waiting one starts (${c.join(' | ')})`), c.length === 2 && /Many$/.test(c[1]) && (await p.evaluate(() => window.__calls.includes('cancel'))), c);
+    ok(L('the sheet follows: one running row, nothing waiting'), (await p.locator('.files-qrow.running').count()) === 1 && (await p.locator('.files-qrow.waiting').count()) === 0);
+    await closeSheet(p); await p.waitForTimeout(3200);
+    ok(L('then none: no button'), (await badge(p)) === null, await badge(p));
+    // a delete waiting behind a running job: kept out of storage; a copy waiting: kept
+    await p.evaluate(() => { window.__slow = 3000; }); await again(p, K + '/Sub/Deeper'); await again(p, K + '/Many/Inner').catch(() => undefined);
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.queue') || 'null'));
+    ok(L('a waiting copy is kept in storage (op, paths, destination)'), Array.isArray(saved) && saved.length === 1 && saved[0].op === 'copy' && /Song\.mp3$/.test(saved[0].paths[0]) && /Many\/Inner$|Many$/.test(saved[0].dest), saved);
+    ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+  // ---- Together: both start at once, chosen in Files settings
+  { const { p, errors } = await page(browser, port, z, lang);
+    await p.click('.topbar-actions .icon-btn[data-icon="more"]'); await p.locator('.sheet .dest-row', { hasText: /Files settings|إعدادات الملفات/ }).click(); await p.waitForSelector('.sheet .files-runjobs-row');
+    ok(L('Files settings: «Run file jobs» with One at a time by default'), /One at a time|واحدةً بعد أخرى/.test(await p.textContent('.files-runjobs-row')) && !(await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').jobsMode)));
+    await shot(p, `extras-jobs-setting${sfx}.png`);
+    await p.locator('.files-runjobs-row .pick-btn').click(); await p.waitForTimeout(250); await p.locator('.sheet button, .sheet .dest-row', { hasText: /^\s*(Together|معًا)\s*$/ }).last().click(); await p.waitForTimeout(300);
+    ok(L('choosing Together is kept'), (await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.prefs')).jobsMode)) === 'together');
+    await closeSheet(p); await closeSheet(p);
+    await p.evaluate(() => { window.__slow = 1500; });
+    await pasteTo(p, ['Song.mp3'], 'copy', K + '/Sub'); await again(p, K + '/Many'); await p.waitForTimeout(400);
+    const c = await copies(p); ok(L(`Together: both started at once (${c.join(' | ')})`), c.length === 2, c);
+    ok(L('Together: the button shows 2'), (await badge(p)) === dg(2), await badge(p));
+    await p.waitForTimeout(2500); ok(L('Together: both end, no button'), (await badge(p)) === null);
+    ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+  // ---- Together chosen while jobs wait: they start
+  { const { p, errors } = await page(browser, port, z, lang);
+    await p.evaluate(() => { window.__slow = 2000; });
+    await pasteTo(p, ['Song.mp3'], 'copy', K + '/Sub'); await again(p, K + '/Many'); await p.waitForTimeout(300);
+    ok(L('one at a time: the second waits'), (await copies(p)).length === 1);
+    await p.evaluate(() => { const o = JSON.parse(localStorage.getItem('kt.files.prefs')); o.jobsMode = 'together'; localStorage.setItem('kt.files.prefs', JSON.stringify(o)); });
+    await p.evaluate(() => location.hash = '#/files?p=' + encodeURIComponent('/storage/emulated/0/Download/Kurokawa')); await p.waitForTimeout(300);
+    await p.click('.topbar-actions .icon-btn[data-icon="more"]'); await p.locator('.sheet .dest-row', { hasText: /Files settings|إعدادات الملفات/ }).click(); await p.waitForSelector('.sheet .files-runjobs-row');
+    await p.locator('.files-runjobs-row .pick-btn').click(); await p.waitForTimeout(250); await p.locator('.sheet button, .sheet .dest-row', { hasText: /^\s*(One at a time|واحدةً بعد أخرى)\s*$/ }).last().click(); await p.waitForTimeout(200);
+    await p.locator('.files-runjobs-row .pick-btn').click(); await p.waitForTimeout(250); await p.locator('.sheet button, .sheet .dest-row', { hasText: /^\s*(Together|معًا)\s*$/ }).last().click(); await p.waitForTimeout(400);
+    ok(L('switching to Together starts the waiting job'), (await copies(p)).length === 2, await copies(p));
+    ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+  // ---- an app closed with jobs waiting: offered at the next start, never run by itself; Resume / Discard
+  for (const choice of ['resume', 'discard']) {
+    const { p, errors } = await page(browser, port, z, lang);
+    await p.evaluate(() => { window.__slow = 4000; });
+    await pasteTo(p, ['Song.mp3'], 'copy', K + '/Sub'); await again(p, K + '/Many'); await p.waitForTimeout(300);
+    const store = await p.evaluate(() => localStorage.getItem('kt.files.queue')); await p.close();
+    const seed = (k, v) => { localStorage.setItem('kt.files.queue', v); };
+    const n = await page(browser, port, z, lang, { seed: (k) => { localStorage.setItem('kt.files.queue', JSON.stringify([{ op: 'copy', paths: [k + '/Song.mp3'], dest: k + '/Many' }, { op: 'copy', paths: [k + '/photo.jpg'], dest: k + '/Sub' }])); } });
+    const q = n.p; await q.waitForSelector('.files-unfinished', { timeout: 4000 });
+    ok(L(`${choice}: the snackbar says how many are unfinished`), (await q.textContent('.files-unfinished')).includes(dg(2)) && /Unfinished jobs|لم تكتمل/.test(await q.textContent('.files-unfinished')), await q.textContent('.files-unfinished'));
+    ok(L(`${choice}: nothing ran by itself`), (await copies(q)).length === 0 && (await badge(q)) === null);
+    await shot(q, `extras-jobs-unfinished${sfx}.png`);
+    if (choice === 'resume') {
+      await q.evaluate(() => { window.__slow = 6000; }); await q.locator('.files-unfinished .toast-act', { hasText: /Resume|استئناف/ }).click(); await q.waitForTimeout(600);
+      ok(L('Resume: the first started, the second waits (the button shows 2)'), (await copies(q)).length === 1 && (await badge(q)) === dg(2), [await copies(q), await badge(q)]);
+      ok(L('Resume: the stored list holds only what still waits'), (await q.evaluate(() => JSON.parse(localStorage.getItem('kt.files.queue') || '[]').length)) === 1);
+      ok(L('Resume: the offer is gone and not asked again'), (await q.locator('.files-unfinished').count()) === 0 && (await q.evaluate(() => localStorage.getItem('kt.files.queue.unfinished'))) === null);
+    } else {
+      await q.locator('.files-unfinished .toast-act', { hasText: /Discard|تجاهَل/ }).click(); await q.waitForTimeout(400);
+      ok(L('Discard: nothing runs, nothing kept'), (await copies(q)).length === 0 && (await q.evaluate(() => localStorage.getItem('kt.files.queue.unfinished'))) === null && (await q.evaluate(() => localStorage.getItem('kt.files.queue'))) === null);
+    }
+    ok(L(`${choice}: no page errors`), !n.errors.filter((x) => !/favicon/.test(x)).length && !errors.length, [...errors, ...n.errors]); await q.close();
+  }
+  // ---- the Full check goes through the queue
+  { const { p, errors } = await page(browser, port, z, lang, { seed: (k) => { const o = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); o.verify = 'full'; localStorage.setItem('kt.files.prefs', JSON.stringify(o)); } });
+    await p.evaluate(() => { window.__hashPause = 4000; });
+    await pasteTo(p, ['Song.mp3'], 'copy', SD); await again(p, P + '/Music'); await p.waitForTimeout(400);
+    const c = await copies(p); ok(L(`Full check: the first job is checking, the second waits (${c.join(' | ')})`), c.length >= 1 && c.every((x) => !/Music/.test(x)), c);
+    ok(L('Full check: the queue shows both'), (await badge(p)) === dg(2), await badge(p));
+    await p.waitForFunction(() => window.__calls.some((c) => /^copy:Song.mp3>.*Music/.test(c)), null, { timeout: 40000 }).catch(() => undefined);
+    const c3 = await copies(p); ok(L(`Full check: the second started after the first ended (${c3.length} engine calls)`), c3.some((x) => /Music/.test(x)));
+    await p.waitForFunction(() => !document.querySelector('.files-jobs-btn') || document.querySelector('.files-jobs-btn').hidden, null, { timeout: 60000 }).catch(() => undefined);
+    ok(L('Full check: both finished, both copies there, the button gone'), (await badge(p)) === null && (await p.evaluate((a) => window.__tree.has(a[0] + '/Song.mp3') && window.__tree.has(a[1] + '/Song.mp3'), [SD, P + '/Music'])), await badge(p));
+    ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+}
+
+// ---- 7z on a computer: the compress sheet offers 7Z with a level and an optional password, and says what the password locks
+async function sevenz(browser, port, z, lang) {
+  const L = (s) => `[${lang}-7z] ${s}`; const ar = lang === 'ar'; const sfx = ar ? '-ar' : '';
+  const { p, errors } = await page(browser, port, z, lang, { pc: true, seed: (k) => { window.__put(k + '/Docs', true); window.__put(k + '/Docs/report.txt', false, 3000); window.__put(k + '/Docs/notes.txt', false, 1200); },
+    at: K + '/Docs' });
+  // (The pretend computer's archive bridge: only what the compress sheet calls.)
+  await p.addInitScript(() => { window.__mk = []; window.kurokawaTools = { archiveList: async () => ({ entries: [] }), archiveExtract: async () => ({}), archiveCancel: async () => undefined, onArchiveProgress: () => () => undefined, pickFile: async () => [], pathInfo: async () => ({ exists: false }),
+    archiveCreate: async (o) => { window.__mk.push(o); return { files: o.inputs.length, path: o.out, size: 10 }; } }; });
+  await p.reload(); await p.waitForSelector('.files-row'); await p.waitForTimeout(400);
+  const pickOne = async (label, option) => { await p.locator('.sheet button.pick, .sheet .chip-row button').filter({ hasText: label }).first().click(); await p.waitForTimeout(200); await p.locator('.sheet button, .sheet .dest-row').filter({ hasText: option }).last().click(); await p.waitForTimeout(200); };
+  await menu(p, 'report.txt'); await p.locator('.sheet button', { hasText: /^\s*(Compress|ضغط)/ }).first().click(); await p.waitForTimeout(400);
+  const txt = () => p.evaluate(() => document.querySelector('.sheet')?.textContent ?? '');
+  const shown = (sel) => p.evaluate((q) => [...document.querySelectorAll(q)].some((e) => e.offsetParent !== null), '.sheet ' + sel);
+  const sheet1 = await txt();
+  ok(L('the sheet offers ZIP and 7Z only (no tar, no volumes, no comment, no delete-after)'), /ZIP/.test(sheet1) && !/TAR/.test(sheet1) && !(await shown('.check-row')), sheet1.slice(0, 200));
+  ok(L('ZIP: no password field and a line saying a computer\'s ZIP has no password'), !(await shown('input[type=password]')) && (await p.locator('.sheet .hint').filter({ hasText: ar ? 'على الحاسوب بكلمة' : 'has no password' }).count()) === 1, sheet1.slice(0, 300));
+  await shot(p, 'extras-7z-zip-pc' + sfx + '.png');
+  // choose 7Z
+  await p.locator('.sheet .chip-row button').first().click(); await p.waitForTimeout(250);
+  await p.locator('.sheet button, .sheet .dest-row').filter({ hasText: /^\s*7Z\s*$/ }).last().click(); await p.waitForTimeout(300);
+  ok(L('7Z: the level and the password appear, with the note on what is locked'), (await shown('input[type=password]')) && (await shown('.files-7z-note')) && (await p.locator('.sheet .chip-row button').count()) === 2, (await txt()).slice(0, 300));
+  const note = await p.locator('.files-7z-note').textContent();
+  ok(L('the note says the file names are locked as well'), ar ? /أسماء ملفاته/.test(note) : /file names/.test(note), note);
+  await p.fill('.sheet input[type=password]', 'sesame');
+  // level: Best
+  await p.locator('.sheet .chip-row button').nth(1).click(); await p.waitForTimeout(250);
+  const opts = await p.locator('.sheet .dest-row, .sheet .sheet button').allTextContents().catch(() => []);
+  await p.locator('.sheet button, .sheet .dest-row').filter({ hasText: ar ? 'الأفضل' : 'Best' }).last().click(); await p.waitForTimeout(300);
+  await shot(p, 'extras-7z-pc' + sfx + '.png');
+  // geometry: nothing overlaps, nothing is cut off to the side, the footer does not cover the last row
+  const geo = await p.evaluate(() => { const sh = document.querySelector('.sheet'); const r = sh.getBoundingClientRect(); const kids = [...sh.querySelectorAll('.field, .chip-row, .hint, .chip-row button')].filter((e) => e.offsetParent !== null).map((e) => e.getBoundingClientRect()); const bad = []; for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) { const a = kids[i], b = kids[j]; if (a.width && b.width && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1 && !(a.left <= b.left && a.right >= b.right && a.top <= b.top && a.bottom >= b.bottom) && !(b.left <= a.left && b.right >= a.right && b.top <= a.top && b.bottom >= a.bottom)) bad.push([i, j]); } return { bad, over: sh.scrollWidth > sh.clientWidth + 1, w: r.width }; });
+  ok(L('the sheet: no overlapping controls, no sideways overflow'), !geo.bad.length && !geo.over, geo);
+  await p.locator('.sheet button.primary').click(); await p.waitForTimeout(500);
+  const mk = await p.evaluate(() => window.__mk);
+  ok(L('Compress sends the 7z request: format, Best (9) and the password'), mk.length === 1 && mk[0].format === '7z' && mk[0].level === 9 && mk[0].password === 'sesame' && /\.7z$/.test(mk[0].out), mk);
+  // a zip afterwards sends no 7z options and no password even if one was typed before
+  await p.evaluate(() => { window.__mk = []; });
+  await menu(p, 'notes.txt'); await p.locator('.sheet button', { hasText: /^\s*(Compress|ضغط)/ }).first().click(); await p.waitForTimeout(300);
+  await p.locator('.sheet button.primary').click(); await p.waitForTimeout(500);
+  const mk2 = await p.evaluate(() => window.__mk);
+  ok(L('ZIP on the computer: no format key, no password'), mk2.length === 1 && !('format' in mk2[0]) && !('password' in mk2[0]) && /\.zip$/.test(mk2[0].out), mk2);
+  ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close();
+  // the phone keeps its own sheet: no 7z level names of the computer, a comment and volumes are there
+  const ph = await page(browser, port, z, lang, { at: K });
+  await ph.p.locator('.files-row button.icon-btn[data-icon="more"]').first().click().catch(() => undefined); await ph.p.waitForTimeout(300);
+  await ph.p.locator('.sheet button', { hasText: /^\s*(Compress|ضغط)/ }).first().click().catch(() => undefined); await ph.p.waitForTimeout(400);
+  const pt = await ph.p.evaluate(() => document.querySelector('.sheet')?.textContent ?? '');
+  ok(L('the phone: its own options (split into volumes, a comment) and no computer-only note'), (await ph.p.locator('.sheet .chip-row button').count()) === 3 && (await ph.p.locator('.sheet input[type=checkbox]').count()) === 1 && (await ph.p.locator('.files-7z-note').count()) === 0, pt.slice(0, 200)); await ph.p.close();
+}
+
 (async () => {
   const z = await F.zipListing(); const srv = await F.serve(); const port = srv.address().port; const browser = await chromium.launch();
   try {
@@ -496,6 +665,8 @@ async function reader(browser, port, z, lang) {
       if (want('compare')) await compare(browser, port, z, lang);
       if (want('duplicates')) await duplicates(browser, port, z, lang);
       if (want('reader')) await reader(browser, port, z, lang);
+      if (want('jobs')) await jobs(browser, port, z, lang);
+      if (want('sevenz')) await sevenz(browser, port, z, lang);
     }
   } finally { await browser.close(); srv.close(); }
   console.log(fails ? `\n${fails} failed` : '\nall ok'); process.exit(fails ? 1 : 0);

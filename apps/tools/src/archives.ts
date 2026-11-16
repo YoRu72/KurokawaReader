@@ -10,7 +10,7 @@ export interface ExtractOptions { path: string; /** A folder, or «cache:» for 
 export type ExtractResult = { files: number; dest: string; /** The job's journal (Undo while it is offered). */ job?: string; appeared?: string[]; damaged?: string[] };
 export type ArchiveProgress = { id: string; done: number; total: number; file: string };
 
-type Bridge = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
+type Bridge = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[]; format?: string; level?: number; password?: string }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
 type Plugin = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(o: { id: string }): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<{ paths: string[] }>; addListener(ev: 'archiveProgress', fn: (p: ArchiveProgress) => void): Promise<{ remove(): void }> };
 const desk = () => (window.kurokawaTools as unknown as Bridge | undefined)?.archiveList ? (window.kurokawaTools as unknown as Bridge) : null;
 const plug = () => { const p = ktPlugin() as unknown as Plugin | null; return p?.archiveList ? p : null; };
@@ -23,7 +23,9 @@ export function firstVolume(path: string): string {
 }
 /** Whether a name is a later volume of a split archive (opened through its first). */
 export const isLaterVolume = (n: string): boolean => firstVolume(n) !== n;
-export const isArchiveName = (n: string): boolean => ARCHIVE_RE.test(n);
+/** Formats only the phone's engine reads (read-only: list and extract; from commons-compress and xz, already in the app): .lzma (and tar.lzma), compress's .Z (and tar.Z), cpio, ar, .deb. */
+export const PHONE_ARC_RE = /\.(lzma|tlz|taz|z|cpio|ar|deb)$/i;
+export const isArchiveName = (n: string): boolean => ARCHIVE_RE.test(n) || (!!plug() && PHONE_ARC_RE.test(n));
 
 export async function listArchive(path: string, password?: string, charset?: string): Promise<ArchiveInfo> {
   path = firstVolume(path);
@@ -81,11 +83,13 @@ export async function cancelArchive(id: string): Promise<void> { const d = desk(
 export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string; /** Volumes of this many MiB (0: one file). */ splitMb?: number }
 /** The volume sizes offered, in MiB (0: one file). */
 export const splitSizes: number[] = [0, 10, 25, 50, 100, 250, 700, 1024, 2048, 4096];
-/** The formats the engine here can make (the desktop makes zips only, for now). */
-export const makeFormats = (): MakeOptions['format'][] => (desk() ? ['zip'] : ['zip', '7z', 'tar.gz', 'tar.xz', 'tar']);
+/** The formats the engine here can make: the phone's zip, 7z and tar kinds; a computer's zip and 7z (the 7-Zip the app ships). */
+export const makeFormats = (): MakeOptions['format'][] => (desk() ? ['zip', '7z'] : ['zip', '7z', 'tar.gz', 'tar.xz', 'tar']);
+/** Making an archive here goes through a computer's shell (its options are fewer: no volumes, no comment). */
+export const makesOnComputer = (): boolean => !!desk();
 export async function createZip(out: string, inputs: string[], onProgress?: (p: ArchiveProgress) => void, o: MakeOptions = {}): Promise<{ files: number; path: string; size: number }> {
   wire(); const id = uid(); if (onProgress) listeners.set(id, onProgress);
-  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs }) : await (plug()!.archiveCreate as unknown as (x: MakeOptions & { id: string; out: string; inputs: string[] }) => Promise<{ files: number; path: string; size: number }>)({ id, out, inputs, ...o }); } finally { listeners.delete(id); }
+  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs, ...(o.format === '7z' ? { format: '7z', level: o.level, password: o.password } : {}) }) : await (plug()!.archiveCreate as unknown as (x: MakeOptions & { id: string; out: string; inputs: string[] }) => Promise<{ files: number; path: string; size: number }>)({ id, out, inputs, ...o }); } finally { listeners.delete(id); }
 }
 export async function pickFiles(multiple = false): Promise<string[]> {
   const d = desk(); if (d) return (await d.pickFile({ multiple })) ?? [];
@@ -95,7 +99,7 @@ export async function pickFiles(multiple = false): Promise<string[]> {
 export const parentOf = (p: string): string => p.replace(/[\\/][^\\/]*$/, '');
 export const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 /** `name.tar.gz` → `name`; `name.zip` → `name`. */
-export const stem = (n: string): string => n.replace(ARCHIVE_RE, '').replace(/\.tar$/i, '');
+export const stem = (n: string): string => n.replace(ARCHIVE_RE, '').replace(PHONE_ARC_RE, '').replace(/\.tar$/i, '');
 
 /* ---------- HatchZip's other verbs ---------- */
 type More = { archiveTest(o: { id: string; path: string; password?: string }): Promise<{ ok: boolean; files: number; bad: string[] }>; archiveRestore(o: { path: string }): Promise<{ left: number }>; archiveFree(o: { dir: string }): Promise<{ free: number }>; archiveExisting(o: { dest: string; names: string[] }): Promise<{ existing: string[] }> };

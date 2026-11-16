@@ -129,7 +129,14 @@ public final class KtArchive {
         if ((b[0] & 0xff) == 0x1f && (b[1] & 0xff) == 0x8b) return n.endsWith(".tar.gz") || n.endsWith(".tgz") ? "tar.gz" : "gz";
         if ((b[0] & 0xff) == 0xFD && b[1] == '7' && b[2] == 'z' && b[3] == 'X' && b[4] == 'Z') return n.endsWith(".tar.xz") || n.endsWith(".txz") ? "tar.xz" : "xz";
         if (b[0] == 'B' && b[1] == 'Z' && b[2] == 'h') return n.endsWith(".tar.bz2") || n.endsWith(".tbz2") ? "tar.bz2" : "bz2";
+        // Read-only formats of the phone that the libraries already in the app carry (commons-compress, xz): compress's .Z,
+        // .lzma (no magic: by its name and its first bytes), cpio, ar (.deb, .a) — and a tar by its «ustar» mark.
+        if ((b[0] & 0xff) == 0x1f && (b[1] & 0xff) == 0x9d) return n.endsWith(".tar.z") || n.endsWith(".taz") ? "tar.Z" : "Z";
+        if ((n.endsWith(".lzma") || n.endsWith(".tlz")) && (b[0] & 0xff) < 225) return n.endsWith(".tar.lzma") || n.endsWith(".tlz") ? "tar.lzma" : "lzma";
+        if (b[0] == '!' && b[1] == '<' && b[2] == 'a' && b[3] == 'r' && b[4] == 'c' && b[5] == 'h' && b[6] == '>') return "ar";
+        if (b[0] == '0' && b[1] == '7' && b[2] == '0' && b[3] == '7' && b[4] == '0' && (b[5] == '1' || b[5] == '2' || b[5] == '7')) return "cpio";
         if (n.endsWith(".tar")) return "tar";
+        byte[] us = new byte[5]; try (Rnd r = Rnd.open(f, "r")) { if (r.length() >= 262) { r.seek(257); r.readFully(us); if (new String(us, StandardCharsets.ISO_8859_1).equals("ustar")) return "tar"; } }
         throw new IOException("notArchive");
     }
 
@@ -204,9 +211,9 @@ public final class KtArchive {
             try (SevenZFile z = open7z(f, password == null ? null : password.toCharArray())) { SevenZArchiveEntry e; while ((e = z.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getHasLastModifiedDate() ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
         } else if (fmt.equals("rar")) {
             try (com.github.junrar.Archive a = password != null && !password.isEmpty() ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) { for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), h.getFullPackSize(), h.isDirectory(), h.getMTime() != null ? h.getMTime().getTime() : 0)); total += h.getFullUnpackSize(); enc |= h.isEncrypted(); } }
-        } else if (fmt.startsWith("tar")) {
-            try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, rawStream(f)))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getLastModifiedDate() != null ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
-        } else { String inner = f.getName().replaceAll("\\.(gz|xz|bz2)$", ""); arr.put(item(inner, -1, f.length(), false, f.lastModified())); }
+        } else if (streamed(fmt)) {
+            try (org.apache.commons.compress.archivers.ArchiveInputStream<?> t = streamOf(fmt, rawStream(f))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getLastModifiedDate() != null ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
+        } else { String inner = innerName(f.getName()); arr.put(item(inner, -1, f.length(), false, f.lastModified())); }
         long largest = 0; String dup = null, bad = null; String plat = KtNameSafe.platformOf(f.getAbsoluteFile().getParent()); List<KtNameSafe.Entry> names = new ArrayList<>();
         for (int i = 0; i < arr.length(); i++) { JSONObject e = arr.getJSONObject(i); if (!e.getBoolean("dir")) largest = Math.max(largest, e.optLong("size")); names.add(new KtNameSafe.Entry(e.getString("path"), e.getBoolean("dir"), null, null)); }
         // (Names through the one table for the volume beside the archive: the first refused, the first clash — case only where that volume folds it.)
@@ -248,8 +255,29 @@ public final class KtArchive {
         if (fmt.endsWith(".gz") || fmt.equals("gz")) return new GzipCompressorInputStream(in, true);
         if (fmt.endsWith(".xz") || fmt.equals("xz")) return new XZCompressorInputStream(in, true);
         if (fmt.endsWith(".bz2") || fmt.equals("bz2")) return new BZip2CompressorInputStream(in, true);
+        // (A dictionary or table larger than this is refused rather than allocated: 128 MiB.)
+        if (fmt.endsWith(".lzma") || fmt.equals("lzma")) return new org.tukaani.xz.LZMAInputStream(in, 128 * 1024);
+        if (fmt.endsWith(".Z") || fmt.equals("Z")) return new org.apache.commons.compress.compressors.z.ZCompressorInputStream(in, 128 * 1024);
         return in;
     }
+
+    /** A format read as a stream of entries: a tar (any of its compressions), cpio or ar. */
+    static boolean streamed(String fmt) { return fmt.startsWith("tar") || fmt.equals("cpio") || fmt.equals("ar"); }
+    /** The entries of a streamed format, in order. */
+    static org.apache.commons.compress.archivers.ArchiveInputStream<?> streamOf(String fmt, InputStream raw) throws IOException {
+        if (fmt.equals("cpio")) return new org.apache.commons.compress.archivers.cpio.CpioArchiveInputStream(raw);
+        if (fmt.equals("ar")) return new org.apache.commons.compress.archivers.ar.ArArchiveInputStream(raw);
+        return new TarArchiveInputStream(decompressor(fmt, raw));
+    }
+    /** An entry that is a file to write (not a link, device, folder). */
+    static boolean regular(ArchiveEntry e) {
+        if (e.isDirectory()) return false;
+        if (e instanceof org.apache.commons.compress.archivers.tar.TarArchiveEntry) return ((org.apache.commons.compress.archivers.tar.TarArchiveEntry) e).isFile();
+        if (e instanceof org.apache.commons.compress.archivers.cpio.CpioArchiveEntry) return ((org.apache.commons.compress.archivers.cpio.CpioArchiveEntry) e).isRegularFile();
+        return true;
+    }
+    /** The name of a one-file compressed file's content: its own without the compression's ending. */
+    static String innerName(String n) { return n.replaceAll("(?i)\\.(gz|xz|bz2|lzma|z)$", ""); }
 
     /* ---------- extracting ---------- */
     public static final class Options { public boolean inPlace, deleteAfter, verifyFirst; public String replace = "replace"; public String password; public long keepFree = 64L << 20; /** Only these entries (and what is under these folders); null: all. */ public java.util.Set<String> only; }
@@ -273,8 +301,8 @@ public final class KtArchive {
             if (enc) n = extractZip4j(f, dest, o, pr); else n = o.inPlace ? extractZipInPlace(f, dest, o, pr) : extractZip(f, dest, o, pr);
         } else if (fmt.equals("7z")) n = extract7z(f, dest, o, pr);
         else if (fmt.equals("rar")) n = extractRar(f, dest, o, pr);
-        else if (fmt.startsWith("tar")) n = extractTar(f, dest, fmt, o, pr);
-        else { File out = target(dest, f.getName().replaceAll("\\.(gz|xz|bz2)$", ""), o); if (out != null) { try (InputStream in = decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16))) { writeAll(in, out, -1, pr, f.length()); } n = 1; } else n = 0; }
+        else if (streamed(fmt)) n = extractTar(f, dest, fmt, o, pr);
+        else { File out = target(dest, innerName(f.getName()), o); if (out != null) { try (InputStream in = decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16))) { writeAll(in, out, -1, pr, f.length()); } n = 1; } else n = 0; }
         if (o.deleteAfter && !o.inPlace && !pr.stopped()) { if (!f.delete()) Log.w(TAG, "could not delete " + f); }
         return n;
     }
@@ -389,8 +417,8 @@ public final class KtArchive {
                 try (com.github.junrar.Archive a = pw != null ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) {
                     for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { if (h.isDirectory()) continue; try (InputStream in = a.getInputStream(h)) { if (!v.entry(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), in)) return; } }
                 }
-            } else if (fmt.startsWith("tar")) {
-                try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16)))) {
+            } else if (streamed(fmt)) {
+                try (org.apache.commons.compress.archivers.ArchiveInputStream<?> t = streamOf(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16))) {
                     ArchiveEntry e; while ((e = t.getNextEntry()) != null) { if (e.isDirectory()) continue; InputStream keep = new java.io.FilterInputStream(t) { @Override public void close() {} }; if (!v.entry(e.getName(), e.getSize(), keep)) return; }
                 }
             } else throw new IOException("notArchive");
@@ -626,15 +654,15 @@ public final class KtArchive {
     }
     static int extractTar(File f, File dest, String fmt, Options o, Progress pr) throws Exception {
         int n = 0; long done = 0, total = f.length() * (fmt.equals("tar") ? 1 : 3);
-        try (TarArchiveInputStream t = new TarArchiveInputStream(decompressor(fmt, rawStream(f)))) {
+        try (org.apache.commons.compress.archivers.ArchiveInputStream<?> t = streamOf(fmt, rawStream(f))) {
             ArchiveEntry e;
             while ((e = t.getNextEntry()) != null) {
                 if (pr.stopped()) throw new IOException("stopped");
                 if (e.isDirectory()) { if (unsafe(e.getName())) throw new IOException("unsafePath"); new File(dest, nameFor(dest, e.getName()).out).mkdirs(); continue; }
-                if (!((org.apache.commons.compress.archivers.tar.TarArchiveEntry) e).isFile()) continue;
+                if (!regular(e)) continue;
                 File out = target(dest, e.getName(), o); if (out == null) { done += e.getSize(); continue; }
                 pr.on(Math.min(done, total), total, e.getName());
-                final TarArchiveInputStream tt = t; InputStream in = new InputStream() { @Override public int read() throws IOException { return tt.read(); } @Override public int read(byte[] b, int off, int len) throws IOException { return tt.read(b, off, len); } };
+                final org.apache.commons.compress.archivers.ArchiveInputStream<?> tt = t; InputStream in = new InputStream() { @Override public int read() throws IOException { return tt.read(); } @Override public int read(byte[] b, int off, int len) throws IOException { return tt.read(b, off, len); } };
                 writeAll(in, out, -1, pr, total); done += e.getSize(); n++;
             }
         }

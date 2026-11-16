@@ -4,7 +4,8 @@
 // through the archive's pictures), videos and music in the app's player straight from the archive (the stream
 // server reads the entry; nothing is unpacked), the rest taken out to the cache and opened by its kind. Copying out
 // of an archive extracts; nothing is written into one from here.
-import { listArchiveAuto, entryUrl, entryThumb, extractArchiveJob, savePassword, type ArchiveEntry, type ArchiveInfo, type ArchiveProgress } from '../archives';
+import { listArchiveAuto, entryUrl, entryThumb, extractArchiveJob, savePassword, PHONE_ARC_RE, type ArchiveEntry, type ArchiveInfo, type ArchiveProgress } from '../archives';
+import { ktPlugin } from '../native';
 import { kindOfFile } from './taskFiles';
 import { t } from '../i18n';
 import type { Entry } from './files';
@@ -13,7 +14,10 @@ export const isArc = (p: string): boolean => p.startsWith('arc://');
 export const arcPath = (archive: string, inner = ''): string => `arc://${encodeURIComponent(archive)}${inner ? '/' + inner.replace(/^\/+/, '') : ''}`;
 export const parseArc = (p: string): { archive: string; inner: string } => { const m = /^arc:\/\/([^/]+)(?:\/(.*))?$/.exec(p); return { archive: decodeURIComponent(m?.[1] ?? ''), inner: (m?.[2] ?? '').replace(/\/+$/, '') }; };
 /** A browsable archive by its name (volumes' first part included). */
-export const looksArchive = (name: string): boolean => /\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|cbr|jar|apk|apks|xapk|apkm|epub|001)$/i.test(name) || kindOfFile(name) === 'archive';
+export const looksArchive = (name: string): boolean => /\.(zip|7z|rar|tar|gz|tgz|txz|tbz2|xz|bz2|cbz|cbr|jar|apk|apks|xapk|apkm|epub|001)$/i.test(name) || kindOfFile(name) === 'archive' || (!!ktPlugin() && PHONE_ARC_RE.test(name));
+/** An archive the page can take out (Extract here / Extract to…, the properties): the phone's engine reads a few more formats
+ *  than a computer's (.lzma, compress's .Z, cpio, ar and .deb: read-only, from the libraries already in the app). */
+export const canExtractName = (name: string): boolean => /\.(zip|7z|rar|tar|gz|tgz|txz|tbz2|xz|bz2|001)$/i.test(name) || (!!ktPlugin() && PHONE_ARC_RE.test(name));
 
 /** A folder inside: its size and count are of all below it; `mtime` its own date, else the newest below it (0: none kept). */
 interface Dir { name: string; path: string; dirs: Map<string, Dir>; files: ArchiveEntry[]; size: number; count: number; mtime: number }

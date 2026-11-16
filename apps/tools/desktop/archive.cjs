@@ -244,6 +244,27 @@ async function createZip(out, inputs, pr) {
   await write(Buffer.concat([z64, loc, eocd])); await new Promise((r) => ws.end(r));
   await fsp.rm(out, { force: true }); await fsp.rename(part, out); pr.on(total, total, ''); return files.length;
 }
+/** A 7z made by the 7-Zip the app ships: `o.level` 0 (store), 1 (fast), 5 (normal) or 9 (best); `o.password` → AES-256 on the contents AND the
+ *  names (`-mhe=on`: without the password the archive cannot even be listed). The inputs must share one folder (the sheet's own); they are
+ *  given to 7-Zip by name from that folder, so the archive holds `name/…` and never an absolute path. Written beside as «.part», put in
+ *  place when whole. The password reaches 7-Zip as its -p switch (as extraction does) and is never logged or kept. */
+async function create7z(out, inputs, o, pr) {
+  const parents = new Set(inputs.map((i) => path.dirname(i))); if (!inputs.length || parents.size !== 1) throw new Error('sevenZipOneFolder');
+  const cwd = [...parents][0]; const names = inputs.map((i) => path.basename(i));
+  for (const n of names) if (!fs.existsSync(path.join(cwd, n))) throw new Error('notFound ' + n);
+  const mx = [0, 1, 3, 5, 7, 9].includes(Number(o.level)) ? Number(o.level) : 5; const part = out + '.kurokawa-part';
+  await fsp.rm(part, { force: true });
+  const args = ['a', '-t7z', `-mx=${mx}`, '-y', '-bsp1', '-bb1', ...(o.password ? [`-p${o.password}`, '-mhe=on'] : []), '--', part, ...names];
+  let n = 0;
+  await new Promise((res, rej) => {
+    const proc = spawn(sevenZip(), args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let buf = '', err = '';
+    const timer = setInterval(() => { if (pr.stopped()) proc.kill(); }, 300);
+    proc.stdout.on('data', (d) => { buf += d; for (const l of String(d).split(/[\r\n]+/)) { const m = /^\s*(\d+)%(?:\s+\d+)?\s*(?:\+ (.*))?$/.exec(l); if (m) pr.on(Number(m[1]), 100, m[2] || ''); if (/^\+ /.test(l)) n++; } });
+    proc.stderr.on('data', (d) => { err += d; });
+    proc.on('error', rej); proc.on('close', (code) => { clearInterval(timer); if (pr.stopped()) rej(new Error('stopped')); else if (code === 0) res(); else rej(new Error(err.trim().split('\n').pop() || buf.trim().split('\n').pop() || `7z exit ${code}`)); });
+  }).catch(async (e) => { await fsp.rm(part, { force: true }); throw e; });
+  await fsp.rm(out, { force: true }); await fsp.rename(part, out); pr.on(100, 100, ''); return n;
+}
 async function walk(dir, prefix, out) { for (const e of await fsp.readdir(dir, { withFileTypes: true })) { if (e.isDirectory()) await walk(path.join(dir, e.name), prefix + e.name + '/', out); else if (e.isFile()) out.push([path.join(dir, e.name), prefix + e.name]); } }
 
 /* ---------- HatchZip: test, restore, .sfv, tar in place ---------- */
@@ -369,4 +390,4 @@ async function jobAct(journal, act, pr) {
 }
 async function existing(dest, names) { const out = []; for (const n of names) { try { if (fs.statSync(path.join(dest, n)).isFile()) out.push(n); } catch { /* not there */ } } return out; }
 
-module.exports = { formatOf, list, extract, createZip, hasJournal, BATCH, test, restore, checkSfv, freeSpace, existing, preflight, shelf, jobAct, setRegistry, lastJob };
+module.exports = { formatOf, list, extract, createZip, create7z, hasJournal, BATCH, test, restore, checkSfv, freeSpace, existing, preflight, shelf, jobAct, setRegistry, lastJob };

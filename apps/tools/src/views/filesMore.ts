@@ -7,6 +7,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { ktPlugin } from '../native';
 import type { Entry } from './files';
+import { canExtractName } from './filesArc';
 import { isVideo } from '../engine';
 
 type Plug = {
@@ -73,21 +74,35 @@ export function searchSheet(here: string, storageRoot: string, hidden: boolean, 
 
 /* ---------- the archive maker: a name, the format, how hard, a password, the sources removed after ---------- */
 export async function makeArchiveSheet(paths: string[], dir: string, started: (id: string, label: string, done: Promise<unknown>, cancel: () => void) => void, refresh: () => void): Promise<void> {
-  const { createZip, makeFormats, cancelArchive, splitSizes } = await import('../archives');
+  const { createZip, makeFormats, makesOnComputer, cancelArchive, splitSizes } = await import('../archives');
   const sh = openSheet(t('filesCompress'), t('cancel'));
+  // (A computer makes a zip (no password, no volumes, no note) or a 7z of the 7-Zip the app ships: its level — Store, Fast, Normal, Best —
+  // and its password, which locks the names as well; the phone's own options stay the phone's.)
+  const pc = makesOnComputer();
   const stem = paths.length === 1 ? baseOf(paths[0]).replace(/\.[^.]+$/, '') : baseOf(dir) || 'archive';
-  const formats = makeFormats() as string[]; let format = formats[0]; let level = 6;
+  const formats = makeFormats() as string[]; let format = formats[0]; let level = pc ? 5 : 6;
   const name = h('input', { type: 'text', value: stem, dir: 'auto' }) as HTMLInputElement;
-  const fmtBtn = pickButton(t('filesFormat'), formats.map((f): [string, string] => [f, f.toUpperCase()]), format, (v) => { format = v; }, t('close'));
-  const lvlBtn = pickButton(t('filesLevel'), [['0', t('filesLevelStore')], ['1', t('filesLevelFastest')], ['3', t('filesLevelFast')], ['6', t('filesLevelNormal')], ['8', t('filesLevelMax')], ['9', t('filesLevelUltra')]], '6', (v) => { level = Number(v); }, t('close'));
+  const only7z: HTMLElement[] = []; const onlyZip: HTMLElement[] = [];
+  const sync = () => { if (!pc) return; for (const el of only7z) el.hidden = format !== '7z'; for (const el of onlyZip) el.hidden = format === '7z'; };
+  const fmtBtn = pickButton(t('filesFormat'), formats.map((f): [string, string] => [f, f.toUpperCase()]), format, (v) => { format = v; sync(); }, t('close'));
+  const lvlBtn = pc
+    ? pickButton(t('filesLevel'), [['0', t('filesLevelStore')], ['1', t('filesLevelFast')], ['5', t('filesLevelNormal')], ['9', t('filesLevelBest')]], '5', (v) => { level = Number(v); }, t('close'))
+    : pickButton(t('filesLevel'), [['0', t('filesLevelStore')], ['1', t('filesLevelFastest')], ['3', t('filesLevelFast')], ['6', t('filesLevelNormal')], ['8', t('filesLevelMax')], ['9', t('filesLevelUltra')]], '6', (v) => { level = Number(v); }, t('close'));
   const pw = h('input', { type: 'password', placeholder: t('filesPasswordOptional'), autocomplete: 'off' }) as HTMLInputElement; const del = h('input', { type: 'checkbox' }) as HTMLInputElement;
   let splitMb = 0; const splitLabel = (mb: number) => (mb === 0 ? t('filesSplitNone') : mb >= 1024 ? `${localDigits(mb / 1024)} GB` : `${localDigits(mb)} MB`);
   const splitBtn = pickButton(t('filesSplit'), splitSizes.map((mb): [string, string] => [String(mb), splitLabel(mb)]), '0', (v) => { splitMb = Number(v); }, t('close'));
   const comment = h('input', { type: 'text', placeholder: t('filesCommentOptional'), dir: 'auto' }) as HTMLInputElement;
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'), h('small', { class: 'src' }, t('noUndoHint')))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
+  const pwField = h('label', { class: 'field' }, h('span', null, t('password')), pw);
+  if (pc) {
+    const pwHint = h('p', { class: 'hint files-7z-note' }, icon('lock'), h('span', null, t('files7zPasswordHint'))); const zipHint = h('p', { class: 'hint' }, t('filesZipNoPasswordPc'));
+    only7z.push(lvlBtn, pwField, pwHint); onlyZip.push(zipHint); sync();
+    sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn), pwField, pwHint, zipHint, h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })));
+  } else {
+    sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), pwField, h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'), h('small', { class: 'src' }, t('noUndoHint')))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
+  }
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => {
     const n = (name.value.trim() || stem).replace(/\.(zip|7z|tar|tar\.gz|tgz|tar\.xz)$/i, ''); const out = `${dir}/${n}.${format}`; sh.close();
-    const done = createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
+    const done = pc ? createZip(out, paths, undefined, { format: format as never, level, password: format === '7z' ? pw.value || undefined : undefined }) : createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
     const id = `mk-${Date.now()}`; started(id, t('filesZipping', { name: `${n}.${format}` }), done, () => void cancelArchive(id));
     void done.then(() => { refresh(); toast(t('filesZipped', { name: `${n}.${format}` })); }, (err) => toast(String((err as Error).message ?? err), 'error'));
   } }, icon('archive'), t('filesCompress')));
@@ -249,7 +264,7 @@ export async function analyzerSheet(root: { name: string; path: string; total?: 
 
 /** An archive's facts for the properties sheet: the format, how many files, the size inside, how far squeezed. */
 export async function archiveProperties(rows: HTMLElement, e: Entry, line: (k: string, v: string) => HTMLElement): Promise<void> {
-  if (e.dir || !/\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|001)$/i.test(e.name)) return;
+  if (e.dir || !(canExtractName(e.name) || /\.cbz$/i.test(e.name))) return;
   try { const { listArchive } = await import('../archives'); const info = await listArchive(e.path); const files = info.entries.filter((x) => !x.dir).length; const ratio = info.total > 0 && e.size > 0 ? Math.round((e.size / info.total) * 100) : 0; rows.append(line(t('filesArchive'), [info.format.toUpperCase(), countItems(files), info.total > 0 ? `${formatBytes(info.total)} ${t('filesInside')}` : '', ratio ? t('packedTo', { pct: localDigits(ratio) }) : '', info.encrypted ? t('encrypted') : ''].filter(Boolean).join(' · '))); } catch { /* not readable */ }
 }
 
@@ -318,10 +333,13 @@ export async function filesSettingsSheet(at: string, apply: () => void): Promise
   const { canVerifyFull } = await import('./files'); const canFull = canVerifyFull();
   const verifyBtn = pickButton(t('filesVerify'), [['size', t('filesVerifySize')], ['full', t('filesVerifyFull')]], prefs.verify === 'full' ? 'full' : 'size', (v) => { prefs.verify = v === 'full' ? 'full' : 'size'; savePrefs(); }, t('close'));
   const verifyRow = h('div', { class: 'row files-verify-row' }, h('span', { class: 'grow files-main' }, h('span', null, t('filesVerify')), h('small', { class: 'src' }, t('filesVerifyHint'))), verifyBtn);
+  const { canRunJobs } = await import('./files');
+  const runBtn = pickButton(t('filesRunJobs'), [['one', t('filesRunOne')], ['together', t('filesRunTogether')]], prefs.jobsMode === 'together' ? 'together' : 'one', (v) => { prefs.jobsMode = v === 'together' ? 'together' : 'one'; savePrefs(); void import('./filesQueue').then((q) => q.modeChanged()); }, t('close'));
+  const runRow = h('div', { class: 'row files-verify-row files-runjobs-row' }, h('span', { class: 'grow files-main' }, h('span', null, t('filesRunJobs')), h('small', { class: 'src' }, t('filesRunJobsHint'))), runBtn);
   sh.body.append(
     sec(t('filesLook')), h('div', { class: 'chip-row files-filters' }, viewBtn, sortBtn, densBtn, sizeBtn, toneBtn),
     tog(t('filesShowThumbs'), prefs.thumbs !== false, (v) => { prefs.thumbs = v; }), tog(t('filesShowCounts'), prefs.counts !== false, (v) => { prefs.counts = v; }, t('filesShowCountsHint')), tog(t('filesDirSizes'), prefs.dirSizes !== false, (v) => { prefs.dirSizes = v; }, t('filesDirSizesHint')), tog(t('filesShowHiddenSetting'), prefs.hidden, (v) => { prefs.hidden = v; }), tog(t('filesEink'), !!prefs.eink, (v) => { prefs.eink = v; }, t('filesEinkHint')),
-    sec(t('filesBehaviour')), ...(canFull ? [verifyRow] : []), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
+    sec(t('filesBehaviour')), ...(canFull ? [verifyRow] : []), ...(canRunJobs() ? [runRow] : []), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
     // (Kurokawa in other apps' «Open with» / «Share» lists: phones only — a computer has no such lists; the default
     // apps chosen in Files' own chooser: both.)
     sec(t('owSection')), ...(await import('./openWith').then((ow) => [
