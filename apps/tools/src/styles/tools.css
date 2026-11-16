@@ -783,7 +783,11 @@ html.pc .files-view.has-clip .files-body { padding-bottom: 96px; }
 .files-off { opacity: .5; cursor: default; }
 .dest-row.files-off .files-main small { white-space: normal; }
 .files-failed { margin: 8px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
-.files-check { color: var(--md-primary); display: grid; place-items: center; width: 40px; }
+.files-check { color: var(--md-primary); display: grid; place-items: center; width: 40px; flex: none; box-sizing: border-box; }
+.files-check:not(.order) { height: 40px; }
+.files-check:not(.order) > svg, .files-check:not(.order) > .icon { width: 26px; height: 26px; flex: none; }
+.files-list.grid .files-check:not(.order) { height: 28px; }
+.files-list.grid .files-check:not(.order) > svg, .files-list.grid .files-check:not(.order) > .icon { width: 22px; height: 22px; }
 .files-list > .empty { grid-column: 1 / -1; max-width: none; width: 100%; box-sizing: border-box; text-align: center; justify-content: center; padding: 48px 16px; }
 .files-list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
 /* (A block of a big folder's rows — views/files.ts draw —: in a list, one column; in a grid, whole lines of the list's own columns.) */
@@ -797,7 +801,9 @@ html.pc .files-view.has-clip .files-body { padding-bottom: 96px; }
 .files-list.grid .files-row > .icon-btn { position: absolute; top: 0; inset-inline-end: 0; width: 32px; height: 32px; opacity: .7; }
 .files-list.grid .files-check { position: absolute; top: 4px; inset-inline-end: 4px; width: 28px; height: 28px; border-radius: 50%; background: var(--md-surface-container-highest); }
 .files-status { padding: 8px 10px; }
-.files-selbar { position: fixed; left: 12px; right: 12px; bottom: calc(var(--nav-h, 64px) + 12px); display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-radius: 28px; background: var(--md-surface-container-highest); box-shadow: 0 6px 20px rgba(0,0,0,.25); z-index: 30; overflow-x: auto; }
+.files-selbar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--nav-h, 64px) + 12px); display: flex; align-items: center; gap: 2px; padding: 6px 6px; border-radius: 28px; background: var(--md-surface-container-highest); box-shadow: 0 6px 20px rgba(0,0,0,.25); z-index: 30; overflow: hidden; }
+.files-selbar > * { flex: none; }
+.files-selbar > .icon-btn { width: 40px; height: 40px; }
 .files-selcount { font-weight: 600; padding: 0 10px; white-space: nowrap; }
 .files-jobs { display: flex; flex-direction: column; gap: 6px; padding: 6px 4px; }
 .files-job { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 16px; background: var(--md-surface-container); }
@@ -967,6 +973,8 @@ html.pc .settings-view .card .row small.src, html.pc .settings-view .card .switc
 .view > .topbar > .topbar-actions.tb-stacked { order: 1; margin-inline-start: auto; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .view > .topbar > .topbar-actions.tb-stacked::-webkit-scrollbar { display: none; }
 .view > .topbar.stacked > .icon-btn:first-child { order: 0; }
+/* (The Files bar always has a subtitle line under its title: stacked, it is two rows of buttons and words — its height said so, or the list's chips slid under the words.) */
+.view.files-view > .topbar.stacked { min-height: calc(var(--topbar-h) + var(--safe-top) + 26px); }
 .view > .topbar > .title.tb-stacked { order: 2; flex: 1 0 100%; padding-inline: 10px; }
 /* The filters stay in sight above the list as it scrolls, instead of being cut in half under the bar. */
 .downloads-view .body > .chips { position: sticky; top: -8px; z-index: 6; margin-top: -8px; padding-top: 8px; padding-bottom: 8px; background: var(--md-surface); }
@@ -1196,7 +1204,7 @@ html.picking { --nav-h: 0px; }
 
 /* ---------- renaming many at once (views/filesBatchUi.ts) ---------- */
 /* The place each chosen item was picked in, where its tick was (two or more chosen). */
-.files-check.order, .files-row .pick-mark.order { width: 26px; height: 26px; margin: 7px; border-radius: 50%; background: var(--md-primary); color: var(--md-on-primary); font: 700 12px/1 var(--font-ui); font-variant-numeric: tabular-nums; display: grid; place-items: center; }
+.files-check.order, .files-row .pick-mark.order { flex: none; width: 26px; height: 26px; margin: 7px; border-radius: 50%; background: var(--md-primary); color: var(--md-on-primary); font: 700 12px/1 var(--font-ui); font-variant-numeric: tabular-nums; display: grid; place-items: center; }
 .files-list.grid .files-check.order, .files-list.grid .files-row .pick-mark.order { margin: 0; width: 28px; height: 28px; background: var(--md-primary); color: var(--md-on-primary); }
 .files-view.eink .files-check.order { background: var(--md-surface); color: var(--md-on-surface); }
 .batch-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin: 8px 16px; padding: 10px 14px; border-radius: var(--sh-md); background: var(--md-secondary-container); color: var(--md-on-secondary-container); font: 500 14px/1.4 var(--font-ui); }
@@ -1215,7 +1223,7 @@ html.picking { --nav-h: 0px; }
 .batch-numbox { display: flex; flex-direction: column; gap: 10px; }
 .batch-numbox[hidden], .batch-warn[hidden], .batch-sec [hidden] { display: none; }
 .batch-lab { font-size: 13px; color: var(--md-on-surface-dim); font-weight: 500; }
-.batch-echo { margin: 0; font-weight: 600; color: var(--md-on-surface); }
+.batch-field input.auto:not(:focus) { color: var(--md-on-surface-variant); }
 .batch-switches { display: flex; flex-direction: column; }
 .batch-warn { padding: 10px 14px; border-radius: var(--sh-md); background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); font-size: 14px; line-height: 1.45; }
 .batch-sec .hint { margin: 0; }

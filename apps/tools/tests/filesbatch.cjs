@@ -24,7 +24,11 @@ const tap = async (p, name) => { await rowOf(p, name).locator('.files-main').cli
 const badge = (p, name) => p.evaluate((n) => { const r = [...document.querySelectorAll('.files-row')].find((x) => x.querySelector('.files-name')?.title === n); const c = r?.querySelector('.files-check'); return c ? (c.classList.contains('order') ? c.textContent : c.dataset.on === 'true' ? 'tick' : '') : null; }, name);
 const treeNames = (p, dir = K) => p.evaluate((d) => [...window.__tree.keys()].filter((k) => k.startsWith(d + '/') && !k.slice(d.length + 1).includes('/')).map((k) => k.slice(d.length + 1)).sort(), dir);
 const sheet = (p) => p.locator('.sheet.batch-sheet');
-const openBatch = async (p) => { await p.click('.files-selbar button[aria-label="Rename all…"], .files-selbar button[aria-label="إعادة تسمية الكل…"]'); await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250); };
+const openBatch = async (p) => {
+  const direct = p.locator('.files-selbar button[aria-label="Rename all…"], .files-selbar button[aria-label="إعادة تسمية الكل…"]');
+  if (await direct.count()) await direct.first().click(); else { await p.click('.files-selbar [data-icon="more"]'); await p.locator('.sheet .dest-row', { hasText: /Rename all…|إعادة تسمية الكل…/ }).first().click(); } // (a narrow bar keeps it under ⋮)
+  await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250);
+};
 const prev = (p) => p.$$eval('.batch-sheet .batch-row', (rs) => rs.map((r) => ({ n: r.querySelector('.batch-n').textContent, old: r.querySelector('.batch-old').textContent, nw: r.querySelector('.batch-new').textContent, cls: r.className, flags: r.querySelector('.batch-flags')?.textContent ?? '' })));
 const chip = (p, label) => p.locator('.batch-sheet .chip', { hasText: label }).first();
 const goBtn = (p) => p.locator('.batch-sheet .sheet-actions .btn.primary');
@@ -84,7 +88,8 @@ async function sheets(browser, port, z, lang) {
   await radio(p, 'name', 1); await nameInputs(p).nth(0).fill('Show'); await p.waitForTimeout(150); ok(L('a new name for all 12: two results the same — told, Rename off'), !(await goes(p)) && (await prev(p)).some((r) => /bad/.test(r.cls)));
   await sw(p, 2); await p.waitForTimeout(250); pv = await prev(p);
   ok(L('numbered in the order picked: Show - 01 … from the first pick'), pv[0].nw === 'Show - 01.txt' && pv[1].nw === 'Show - 02.txt' && (await goes(p)), pv.slice(0, 2));
-  ok(L('«from … to …» echoed: 1 to 12'), (await p.textContent('.batch-echo')).includes(d(12)) && (await p.textContent('.batch-echo')).includes(d(1)), await p.textContent('.batch-echo'));
+  const toV = () => p.locator('.batch-sheet .batch-numbox input[type=number]').nth(1).inputValue();
+  ok(L('«To» shows the computed end, filled: 12'), (await toV()) === '12', await toV());
   await radio(p, 'order', 2); pv = await prev(p); ok(L('by name: file 010 is Show - 01, file 021 Show - 12'), pv[0].nw === 'Show - 12.txt' && pv[1].nw === 'Show - 01.txt', pv.slice(0, 2));
   await radio(p, 'order', 0); await radio(p, 'pos', 0); pv = await prev(p); ok(L('number before the name'), pv[0].nw === '01 - Show.txt', pv[0]);
   await radio(p, 'pos', 1); await p.locator('.batch-sheet .batch-numbox input[type=number]').nth(0).fill('5'); await p.locator('.batch-sheet .batch-numbox input[type=number]').nth(2).fill('5'); await p.waitForTimeout(250); pv = await prev(p);
@@ -185,7 +190,7 @@ async function pcTests(browser, port, z, lang) {
   const box = await p.evaluate(() => { const s = document.querySelector('.batch-sheet').getBoundingClientRect(); const o = document.querySelector('.batch-opts').getBoundingClientRect(); const v = document.querySelector('.batch-side').getBoundingClientRect(); return { sx: s.left + s.width / 2, vx: innerWidth / 2, sy: s.top + s.height / 2, vy: innerHeight / 2, w: s.width, optsLeft: o.left, sideLeft: v.left, optsRight: o.right, rtl: document.documentElement.dir === 'rtl' }; });
   ok(L('a centred dialog, the preview beside the options'), Math.abs(box.sx - box.vx) < 6 && Math.abs(box.sy - box.vy) < 80 && box.w > 900 && (box.rtl ? box.sideLeft < box.optsLeft : box.sideLeft > box.optsLeft), box);
   await radio(p, 'name', 1); const t1 = Date.now(); await nameInputs(p).nth(0).fill('Ep'); await sw(p, 2); await p.waitForFunction(() => document.querySelector('.batch-sheet .batch-row .batch-new')?.textContent.startsWith('Ep - '), null, { timeout: 8000 }); const typed = Date.now() - t1;
-  ok(L(`5,000 numbered: the preview follows in ${typed} ms, the last is Ep - 5001`), typed < 5000 && (await p.textContent('.batch-echo')).includes(D(lang)(5001)), typed);
+  ok(L(`5,000 numbered: the preview follows in ${typed} ms, the last is Ep - 5001`), typed < 5000 && (await p.locator('.batch-sheet .batch-numbox input[type=number]').nth(1).inputValue()) === '5001', typed);
   await p.evaluate(() => { document.querySelector('.batch-prev').scrollTop = 66 * 4990; }); await p.waitForTimeout(400); const last = await prev(p);
   ok(L('scrolled to the end: the last rows drawn, still only a screenful'), last.length < 40 && last.some((r) => r.nw === 'Ep - 5001.txt' || r.nw.includes('Ep - 5001')), last.slice(-2));
   await shot(p, 'batch-sheet-pc.png');
@@ -255,8 +260,26 @@ async function picker(browser, port, z, lang) {
   ok(L('picked across two folders: Song 1, (in.txt 2 in Sub), photo 3'), (await mark('Song.mp3')) === '1' && (await mark('photo.jpg')) === '3', [await mark('Song.mp3'), await mark('photo.jpg')]);
   const e = errors.filter((x) => !/favicon/.test(x)); ok(L('no page errors'), !e.length, e); await p.close();
 }
+// The selection bar never clips and its icons keep equal gaps (320, 360, 412 px); the empty circles share one size and one line with the badges.
+async function bar(browser, port, z, lang) {
+  for (const width of [320, 360, 412]) {
+    const L = (s) => `[${lang}-${width}] ${s}`; const { p, errors } = await open(browser, port, z, { lang, pc: false, many: 0, width });
+    await hold(p, 'photo.jpg'); await tap(p, 'Song.mp3'); await tap(p, 'broken.bin'); await p.waitForTimeout(300);
+    const g = await p.evaluate(() => { const b = document.querySelector('.files-selbar').getBoundingClientRect(); const kids = [...document.querySelectorAll('.files-selbar > *')].map((e) => e.getBoundingClientRect()); const bs = kids.slice(1); const gaps = []; for (let i = 2; i < kids.length; i++) gaps.push(Math.round(Math.max(kids[i].left - kids[i - 1].right, kids[i - 1].left - kids[i].right))); const ic = [...document.querySelectorAll('.files-selbar > button')]; const hs = new Set(ic.map((e) => Math.round(e.getBoundingClientRect().height))); return { clip: kids.some((k) => k.left < b.left - 0.5 || k.right > b.right + 0.5), sw: document.querySelector('.files-selbar').scrollWidth - document.querySelector('.files-selbar').clientWidth, gaps: [...new Set(gaps.map((x) => Math.abs(x)))], hs: [...hs], n: ic.length, more: !!document.querySelector('.files-selbar [data-icon="more"]') }; });
+    ok(L(`selection bar not clipped (${g.n} icons shown)`), !g.clip && g.sw <= 1 && g.n >= 3, g);
+    ok(L('equal gaps, equal heights, ⋮ present'), g.gaps.length === 1 && g.hs.length === 1 && g.more, g);
+    const c = await p.evaluate(() => { const rs = [...document.querySelectorAll('.files-row')]; const m = rs.map((r) => { const e = r.querySelector('.files-check'); const b = e.getBoundingClientRect(); const sv = e.querySelector('svg'); const sb = (sv || e).getBoundingClientRect(); return { n: e.classList.contains('order'), w: Math.round(sb.width), h: Math.round(sb.height), cx: Math.round(b.left + b.width / 2) }; }); return m; });
+    const empty = c.filter((x) => !x.n), full = c.filter((x) => x.n);
+    const hd = await p.evaluate(() => { const t = document.querySelector('.files-view .topbar').getBoundingClientRect(), h = document.querySelector('.files-head').getBoundingClientRect(); return [Math.round(t.bottom), Math.round(h.bottom)]; });
+    ok(L('header bar holds its title and count (nothing slides under the words)'), hd[0] >= hd[1], hd);
+    ok(L('empty circles one size (folders and files)'), new Set(empty.map((x) => x.w + 'x' + x.h)).size === 1, empty);
+    ok(L('circles on the same vertical line as the badges'), new Set(c.map((x) => x.cx)).size === 1 && full.length === 3, c);
+    if (width === 360) await shot(p, lang === 'en' ? 'batch-order-badges.png' : 'batch-order-badges-ar.png');
+    const e = errors.filter((x) => !/favicon/.test(x)); ok(L('no page errors'), !e.length, e); await p.close();
+  }
+}
 (async () => {
   const z = await F.zipListing(); const srv = await F.serve(); const port = srv.address().port; const browser = await chromium.launch();
-  for (const lang of process.argv[2] ? [process.argv[2]] : ['en', 'ar']) { await badges(browser, port, z, lang); await sheets(browser, port, z, lang); await runs(browser, port, z, lang); await rtl(browser, port, z, lang); await banner(browser, port, z, lang); await single(browser, port, z, lang); await picker(browser, port, z, lang); await pcTests(browser, port, z, lang); }
+  for (const lang of process.argv[2] ? [process.argv[2]] : ['en', 'ar']) { await bar(browser, port, z, lang); await badges(browser, port, z, lang); await sheets(browser, port, z, lang); await runs(browser, port, z, lang); await rtl(browser, port, z, lang); await banner(browser, port, z, lang); await single(browser, port, z, lang); await picker(browser, port, z, lang); await pcTests(browser, port, z, lang); }
   await browser.close(); srv.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

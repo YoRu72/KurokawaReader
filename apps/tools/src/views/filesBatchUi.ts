@@ -135,10 +135,10 @@ export async function batchSheet(host: BatchHost): Promise<void> {
   /* ----- number */
   const start = num(() => R.num.start, (v) => { R.num.start = v ?? 0; }); const end = num(() => R.num.end, (v) => { R.num.end = v; }, { ph: '' }); const step = num(() => R.num.step, (v) => { R.num.step = Math.max(1, v ?? 1); }, { min: 1 }); const width = num(() => (R.num.pad || null), (v) => { R.num.pad = v ?? 0; }, { ph: t('btWidthAuto') });
   const sep = text(() => R.num.sep, (v) => { R.num.sep = v; }, { dir: 'auto' });
-  const endNote = h('p', { class: 'hint', hidden: true }); const echo = h('p', { class: 'hint batch-echo' });
+  const endNote = h('p', { class: 'hint error', hidden: true });
   const numBox = h('div', { class: 'batch-numbox' },
     h('div', { class: 'batch-grid4' }, field(t('btFrom'), start), field(t('btTo'), end), field(t('btStep'), step), field(t('btWidth'), width)),
-    echo, endNote,
+    endNote,
     choice<'before' | 'after'>([['before', t('btPosBefore')], ['after', t('btPosAfter')]], () => R.num.pos, (v) => { R.num.pos = v; }, t('btPos')), field(t('btSep'), sep),
     h('span', { class: 'label batch-lab' }, t('btOrder')),
     choice<NumOrder>([['selected', t('btOrderPicked')], ['sort', t('btOrderSort')], ['name', t('btOrderName')], ['date', t('btOrderDate')]], () => R.num.order, (v) => { R.num.order = v; }, t('btOrder')),
@@ -199,7 +199,8 @@ export async function batchSheet(host: BatchHost): Promise<void> {
     if (R.ext.mode !== 'set' && R.ext.mode !== 'add' && document.activeElement !== extIn) extIn.value = R.ext.mode === 'keep' ? '' : ext0;
     sumLine.replaceChildren(h('span', null, t('btToRename', { n: localDigits(s.rename) })), h('span', null, t('btSkipped', { n: localDigits(s.skipped + s.unchanged) })), h('span', { class: s.blocking ? 'bad' : '' }, t('btProblems', { n: localDigits(s.blocking) })), ...(s.warnings ? [h('span', null, t('btWarnings', { n: localDigits(s.warnings) }))] : []));
     regexErr.hidden = !plan.error; regexErr.textContent = plan.error ? t('btRegexBad', { why: plan.error }) : '';
-    echo.textContent = R.num.on ? t('btEcho', { from: localDigits(R.num.start), to: localDigits(plan.last) }) : '';
+    // «To» shows the computed last number, filled and read-only-looking, until the person types an end of their own.
+    end.classList.toggle('auto', R.num.end === null); if (R.num.end === null && document.activeElement !== end) end.value = R.num.on ? String(plan.last) : '';
     endNote.hidden = !plan.endShort; endNote.textContent = plan.endShort ? t('btEndShort', { last: localDigits(plan.last) }) : '';
     const kc = R.ext.mode === 'set' || R.ext.mode === 'add' ? plan.kindChanges : 0; kindBox.hidden = kindAck.hidden = !kc; if (kc) kindBox.textContent = t('btKindWarn', { n: localDigits(kc) }); if (!kc) { ack = false; ackSw.checked = false; }
     foldersNote.hidden = !(R.ext.mode !== 'keep' && plan.folderExt.length); if (!foldersNote.hidden) foldersNote.textContent = t('btFoldersSkipped', { names: plan.folderExt.slice(0, 3).join(', ') + (plan.folderExt.length > 3 ? ` +${localDigits(plan.folderExt.length - 3)}` : '') });

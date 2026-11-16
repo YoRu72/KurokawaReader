@@ -388,33 +388,44 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     }
   };
   const toggle = (e: Entry) => { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); if (!picked.size) selecting = false; applySel(); drawSel(); };
+  /** The selection bar never clips: its actions are kept by priority (lower first) as many as fit, the rest wait under ⋮. */
+  type SelAct = { ic: string; label: string; prio: number; run?: () => void; off?: boolean; danger?: boolean };
+  let selActs: SelAct[] = []; let selMore = false;
+  const paintSelBar = (): void => {
+    const n = picked.size; let k = selActs.length;
+    const draw1 = (): SelAct[] => {
+      const keep = new Set([...selActs].sort((x, y) => x.prio - y.prio).slice(0, k)); const hid = selActs.filter((x) => !keep.has(x));
+      const btn = (x: SelAct) => { const b = iconButton(x.ic, x.label, x.run); if (x.off) { b.disabled = true; b.classList.add('files-off'); } return b; };
+      selBar.replaceChildren(h('span', { class: 'files-selcount' }, countItems(n)), ...selActs.filter((x) => keep.has(x)).map(btn),
+        ...(selMore || hid.length ? [iconButton('more', t('more'), () => selectionSheet(hid))] : []), iconButton('close', t('close'), leaveSel));
+      return hid;
+    };
+    draw1(); while (k > 0 && selBar.scrollWidth > selBar.clientWidth + 1) { k--; draw1(); }
+  };
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => { if (!selBar.hidden && selActs.length) paintSelBar(); }).observe(selBar);
   const drawSel = () => {
     selBar.hidden = !selecting; if (!selecting) { root.classList.remove('selecting'); return; } root.classList.add('selecting');
     const n = picked.size; const one = n === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
+    const all = (): void => { for (const e of shown()) picked.add(e.path); applySel(); drawSel(); };
     // (Inside an archive only what reads: copy (taken out on Paste), share, take out; cut shown greyed with its reason.)
     if (isArc(at)) {
-      const cut = iconButton('scissors', t('arcNoCut')); cut.disabled = true; cut.classList.add('files-off');
-      const ren = iconButton('pen', `${t('filesBatchRename')} — ${t('btWhyArchive')}`); ren.disabled = true; ren.classList.add('files-off');
-      selBar.replaceChildren(h('span', { class: 'files-selcount' }, countItems(n)),
-        iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }),
-        ...(canJobs() ? [iconButton('copy', t('filesCopy'), () => { copyPicked('copy'); }), cut, iconButton('archive', t('extractHere'), () => { const ps = [...picked]; leaveSel(); void extractEntries(ps, parentOf(parseArc(at).archive)); })] : []),
-        ...(n > 1 ? [ren] : []),
-        ...(plug() ? [iconButton('share', t('share'), () => { const ps = [...picked]; leaveSel(); void shareArc(ps); })] : []),
-        iconButton('close', t('close'), leaveSel));
-      return;
+      selMore = false;
+      selActs = [{ ic: 'check', label: t('filesSelectAll'), prio: 1, run: all },
+        ...(canJobs() ? [{ ic: 'copy', label: t('filesCopy'), prio: 2, run: () => copyPicked('copy') }, { ic: 'scissors', label: t('arcNoCut'), prio: 8, off: true }, { ic: 'archive', label: t('extractHere'), prio: 1, run: () => { const ps = [...picked]; leaveSel(); void extractEntries(ps, parentOf(parseArc(at).archive)); } }] : []),
+        ...(n > 1 ? [{ ic: 'pen', label: `${t('filesBatchRename')} — ${t('btWhyArchive')}`, prio: 9, off: true }] : []),
+        ...(plug() ? [{ ic: 'share', label: t('share'), prio: 3, run: () => { const ps = [...picked]; leaveSel(); void shareArc(ps); } }] : [])];
+      paintSelBar(); return;
     }
-    selBar.replaceChildren(
-      h('span', { class: 'files-selcount' }, countItems(n)),
-      iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }),
-      ...(canJobs() ? [iconButton('copy', t('filesCopy'), () => copyPicked('copy')), iconButton('scissors', t('filesCut'), () => copyPicked('move'))] : []),
-      ...(n > 1 ? [iconButton('pen', t('filesBatchRename'), () => void batchRename())] : []),
-      ...(po.peer?.() ? [iconButton('swap', t('filesToOtherPane'), () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); })] : []),
-      iconButton('trash', t('delete'), () => void confirmDelete([...picked])),
-      ...(plug() && !isVirtual(at) ? [iconButton('lock', t('vaultLock'), () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); })] : []),
-      ...(one ? [iconButton('pen', t('rename'), () => renameSheet(one))] : []),
-      iconButton('share', t('share'), () => void shareMany([...picked])),
-      iconButton('more', t('more'), () => selectionSheet()),
-      iconButton('close', t('close'), leaveSel));
+    selMore = true;
+    selActs = [{ ic: 'check', label: t('filesSelectAll'), prio: 1, run: all },
+      ...(canJobs() ? [{ ic: 'copy', label: t('filesCopy'), prio: 2, run: () => copyPicked('copy') }, { ic: 'scissors', label: t('filesCut'), prio: 3, run: () => copyPicked('move') }] : []),
+      ...(n > 1 ? [{ ic: 'pen', label: t('filesBatchRename'), prio: 4, run: () => void batchRename() }] : []),
+      ...(po.peer?.() ? [{ ic: 'swap', label: t('filesToOtherPane'), prio: 7, run: () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); } }] : []),
+      { ic: 'trash', label: t('delete'), prio: 5, danger: true, run: () => void confirmDelete([...picked]) },
+      ...(plug() && !isVirtual(at) ? [{ ic: 'lock', label: t('vaultLock'), prio: 8, run: () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); } }] : []),
+      ...(one ? [{ ic: 'pen', label: t('rename'), prio: 4, run: () => renameSheet(one) }] : []),
+      { ic: 'share', label: t('share'), prio: 6, run: () => void shareMany([...picked]) }];
+    paintSelBar();
   };
   const leaveSel = () => { selecting = false; picked.clear(); applySel(); drawSel(); };
   /** The chosen put on the clipboard — a cut inside an archive is a copy (an archive is not changed from here). */
@@ -579,10 +590,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       act('info', t('properties'), () => void propertiesSheet(e))),
       h('p', { class: 'hint' }, t('arcReadOnly')));
   };
-  const selectionSheet = () => {
+  const selectionSheet = (hid: SelAct[] = []) => {
     const sh = openSheet(countItems(picked.size), t('close')); const paths = [...picked];
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
-    sh.body.append(h('div', { class: 'dest-list' }, act('archive', t('filesCompress'), () => void compress(paths)), act('pen', t('filesBatchRename'), () => void batchRename()), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } applySel(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })));
+    const extra = [...hid.filter((x) => !x.danger), ...hid.filter((x) => x.danger)].map((x) => { const r = act(x.ic, x.label, x.run ?? (() => undefined)); if (x.off) { (r as HTMLButtonElement).disabled = true; r.classList.add('files-off'); } if (x.danger) r.classList.add('danger'); return r; });
+    if (isArc(at)) { sh.body.append(h('div', { class: 'dest-list' }, ...extra)); return; }
+    sh.body.append(h('div', { class: 'dest-list' }, ...extra, act('archive', t('filesCompress'), () => void compress(paths)), act('pen', t('filesBatchRename'), () => void batchRename()), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } applySel(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })));
   };
   const sortSheet = () => {
     const sh = openSheet(t('sortBy'), t('close'));

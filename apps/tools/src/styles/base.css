@@ -2036,3 +2036,7 @@ html.winbar.wb-clear .kr-winbar .wb-brand > * { display: none; }
 /* (Tools' own: the page's top bars keep room for the transparent bar's buttons; a Mac's sidebar starts below its lights.) */
 html.winbar.wb-clear:not(.wb-hide) .view > .topbar { border-inline-start: var(--wb-start, 0px) solid transparent; border-inline-end: var(--wb-end, 0px) solid transparent; }
 html.winbar.wb-clear.wb-mac:not(.wb-hide):not([dir='rtl']) .nav-rail { padding-top: calc(14px + var(--wb-h, 28px)); }
+
+/* No browser spinner arrows on number fields (white boxes inside the rounded field). */
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
