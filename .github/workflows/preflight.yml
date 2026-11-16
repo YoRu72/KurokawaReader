@@ -146,6 +146,12 @@ jobs:
           npm install
           if [ "${{ matrix.app }}" = tools ]; then npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3; else npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3; fi
           npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium
+      # (Tools, full runs only, once the scene engine is in the checkout: its wasm is built before the preflight builds the web app, so
+      # that tests/scene.cjs and the start-up budget run on the real engine, as the release does. The guard is the action's file,
+      # so a branch without the engine runs as before.)
+      - name: Scene engine (wasm)
+        if: steps.gate.outputs.on == 'true' && matrix.app == 'tools' && needs.plan.outputs.quick != 'true' && hashFiles('.github/actions/scene-wasm/action.yml') != ''
+        uses: ./.github/actions/scene-wasm
       # (Reader's smoke test reads fixtures that scripts/make-fixtures.py makes: Python modules the runner does not have.)
       - name: Python modules for the fixtures
         if: steps.gate.outputs.on == 'true' && matrix.app == 'reader'
@@ -155,6 +161,8 @@ jobs:
         shell: bash
         env:
           QUICK: ${{ needs.plan.outputs.quick == 'true' && '--quick' || '' }}
+          # (With the scene engine in the checkout a missing wasm is a failure here, as in the release, not a quiet fallback.)
+          KT_SCENE_REQUIRED: ${{ matrix.app == 'tools' && needs.plan.outputs.quick != 'true' && hashFiles('.github/actions/scene-wasm/action.yml') != '' && '1' || '' }}
         run: |
           git fetch --no-tags origin main || true
           set +e
