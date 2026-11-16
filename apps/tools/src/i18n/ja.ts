@@ -1981,4 +1981,10 @@ export const ja: Partial<Strings> = {
   petsErrNotZip: "このファイルは zip ではありません。",
   petsErrNothing: "画像が見つかりませんでした。",
   petsErrBad: "このパックは読み込めません（{why}）。",
+  petsMakingOf: "コマを準備中: {n} / {all}…",
+  petsErrComplex: "このしめじパックの動作は互いの参照が多すぎて読み込めません。",
+  petsErrLibraryFull: "ライブラリがいっぱいです（24匹または 256 MB）。先にペットを削除してください。",
+  petsNoDesktopWayland: "Wayland ではアプリが自分のウィンドウを配置できないため、デスクトップ上には表示できません。",
+  petsNoDesktopMac: "この版の Mac ではウィンドウを透明にできないため、デスクトップ上には表示できません。",
+  petsFailed: "「{name}」はパックに不具合があるため停止し、画面から外しました。",
 };

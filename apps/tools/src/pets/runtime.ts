@@ -4,7 +4,7 @@
 // so the tests drive it with a fake clock and fake rectangles. Coordinates: screen (or window) pixels, y downward; the
 // pet's position is its feet.
 import { compile, evaluate, truthy, type Expr, type Val } from './expr';
-import { COND_NAMES, type PetAnim, type PetChoice, type PetPack, type PetState } from './model';
+import { COND_NAMES, own, type PetAnim, type PetChoice, type PetPack, type PetState } from './model';
 
 /** A walkable top edge: from x to x+w at height y (a panel, a window's top, …); `id` keeps it known between frames. */
 export interface Surface { id: string; x: number; y: number; w: number }
@@ -26,6 +26,8 @@ export const MAX_SPEED = 2600;
 const BOUNCE_MIN = 520;
 const STEP_OFF = 0.3;
 const CHASE_EVERY = 6;
+/** At the screen's edge, how often a pack that climbs starts up the wall. */
+const CLIMB = 0.5;
 
 export function rng(seed: number): () => number {
   let a = (seed >>> 0) || 0x9e3779b9;
@@ -39,7 +41,8 @@ export class PetSim {
   /** Where it stands: a surface's id, 'floor', or null (in the air, or dragged). */
   on: string | null = null;
   private onX = 0;
-  private steps: { anim: string; left: number }[] = [];
+  private steps: { anim: string; left: number; alts?: { when: string; anim: string }[] }[] = [];
+  private cur: PetChoice | null = null;
   private anim = ''; private animT = 0;
   private chaseUntil = 0; private lastChase = -99; private fleeLeft = 0;
   private drag: { ox: number; oy: number; samples: [number, number, number][] } | null = null;
@@ -55,11 +58,12 @@ export class PetSim {
     this.enter('fall');
   }
   /* ---------- what it does ---------- */
-  private choices(s: PetState): PetChoice[] { return this.pack.states[s] ?? []; }
+  private choices(s: PetState): PetChoice[] { const l = own(this.pack.states as Record<string, PetChoice[]>, s); return Array.isArray(l) ? l : []; }
   private has(s: PetState): boolean { return this.choices(s).length > 0; }
   private env(): Record<string, Val> {
     const w = this.world; const p = w.pointer; const win = w.win;
-    return { onFloor: this.on === 'floor', onWindowTop: !!this.on && this.on !== 'floor', onWall: false, onCeiling: false, onWindowBottom: false, onWindowSide: false, windowVisible: !!win, x: this.x, y: this.y, lookRight: this.dir > 0, count: 1,
+    const hw = this.halfW();
+    return { onFloor: this.on === 'floor', onWindowTop: !!this.on && this.on !== 'floor' && this.on !== 'wall', onWall: this.on === 'wall', onAreaLeft: this.on === 'floor' && this.x <= hw + 2, onAreaRight: this.on === 'floor' && this.x >= w.width - hw - 2, onCeiling: false, onWindowBottom: false, onWindowSide: false, windowVisible: !!win, x: this.x, y: this.y, lookRight: this.dir > 0, count: 1,
       'area.left': 0, 'area.top': 0, 'area.right': w.width, 'area.bottom': w.floor, 'area.width': w.width, 'area.height': w.floor,
       'screen.left': 0, 'screen.top': 0, 'screen.right': w.width, 'screen.bottom': w.height, 'screen.width': w.width, 'screen.height': w.height,
       'win.left': win?.x ?? 0, 'win.top': win?.y ?? 0, 'win.right': win ? win.x + win.w : 0, 'win.bottom': win ? win.y + win.h : 0, 'win.width': win?.w ?? 0, 'win.height': win?.h ?? 0,
@@ -77,15 +81,39 @@ export class PetSim {
     for (const c of list) { v -= c.weight; if (v <= 0) return c; } void a; return list[list.length - 1];
   }
   private enter(s: PetState, c?: PetChoice | null): void {
-    this.state = s; const ch = c ?? this.pick(s) ?? (s === 'thrown' ? this.pick('fall') : null) ?? (s !== 'idle' ? this.pick('idle') : null) ?? this.pick('walk');
+    this.state = s; const mine = c ?? this.pick(s) ?? (s === 'thrown' ? this.pick('fall') : null);
+    // (Nothing of its own for this state: on a surface, what it may do there; in the air or held, only the pictures of
+    // its first idle — borrowed, so nothing «follows» it.)
+    const air = s === 'fall' || s === 'thrown' || s === 'dragged';
+    const ch = mine ?? (air ? (this.choices('idle')[0] ?? this.choices('walk')[0] ?? null) : (s !== 'idle' ? this.pick('idle') : null) ?? this.pick('walk'));
     const a = ACT[this.opts.activity] ?? ACT.normal; const mult = s === 'walk' ? 1 : s === 'idle' || s === 'sit' || s === 'sleep' ? a.idle : 1;
-    this.steps = (ch?.steps ?? []).map((st) => ({ anim: st.anim, left: (st.min + (st.max - st.min) * this.r()) * mult }));
-    this.setAnim(this.steps[0]?.anim ?? this.anim);
+    this.cur = mine ?? (air ? null : ch ?? null);
+    this.steps = (ch?.steps ?? []).map((st) => ({ anim: st.anim, left: (st.min + (st.max - st.min) * this.r()) * mult, alts: st.alts }));
+    this.stepAnim();
+  }
+  /** The current step's animation: the first of its conditional ones whose condition holds, else its own. */
+  private stepAnim(): void {
+    const st = this.steps[0]; if (!st) return;
+    let a = st.anim;
+    if (st.alts?.length) { const env = this.env(); for (const x of st.alts) if (this.allowed({ steps: [], weight: 1, when: x.when }, env)) { a = x.anim; break; } }
+    this.setAnim(own(this.pack.animations, a) ? a : st.anim);
+  }
+  /** After a choice with a «what follows» list: one of those named (by weight, where allowed); false when none. */
+  private follow(): boolean {
+    const c = this.cur; if (!c?.next?.length) return false;
+    if (c.nextAdd && this.r() < 0.5) return false;
+    const env = this.env(); const cands: { s: PetState; c: PetChoice; w: number }[] = [];
+    for (const n of c.next) for (const s of ['idle', 'walk', 'sit', 'sleep', 'climb'] as PetState[]) for (const ch of this.choices(s)) if (ch.name === n.name && this.allowed(ch, env)) cands.push({ s, c: ch, w: n.weight * Math.max(ch.weight, 1e-6) });
+    if (!cands.length) return false;
+    let v = this.r() * cands.reduce((x, y) => x + y.w, 0); for (const x of cands) { v -= x.w; if (v <= 0) { this.enter(x.s, x.c); return true; } }
+    const last = cands[cands.length - 1]; this.enter(last.s, last.c); return true;
   }
   private setAnim(n: string): void { if (n && n !== this.anim) { this.anim = n; this.animT = 0; } }
-  private animOf(): PetAnim | undefined { return this.pack.animations[this.anim]; }
+  private animOf(): PetAnim | undefined { return own(this.pack.animations, this.anim); }
   /** On a surface, the next thing to do: weighted among idle, walk, sit, sleep (by activity), maybe towards the pointer. */
   private next(): void {
+    // (On a wall: climb on where the pack says so, else let go.)
+    if (this.on === 'wall') { const c = this.r() < 0.7 ? this.pick('climb') : null; if (c) this.enter('climb', c); else this.letGo(); return; }
     const a = ACT[this.opts.activity] ?? ACT.normal; const env = this.env();
     const w = (s: PetState) => this.choices(s).filter((c) => this.allowed(c, env)).reduce((x, c) => x + c.weight, 0) * (s === 'walk' ? a.walk : 1);
     const p = this.world.pointer;
@@ -161,6 +189,12 @@ export class PetSim {
       }
       this.advanceSteps(dt, true); return;
     }
+    // On a wall (climbing): up the screen's edge, letting go at the top.
+    if (this.on === 'wall') {
+      this.x = this.dir > 0 ? world.width - hw : hw;
+      if (this.state === 'climb') { this.y -= Math.min(200, (this.animOf()?.speed ?? 30) * this.k) * dt; if (this.y < 8 + (this.sizes[this.frame()]?.[1] ?? this.pack.frameH) * this.k) { this.letGo(); return; } }
+      this.advanceSteps(dt, false); return;
+    }
     // On something: carried when it moves; falls when it is gone.
     if (this.on !== 'floor') {
       const s = world.surfaces.find((x) => x.id === this.on);
@@ -174,6 +208,8 @@ export class PetSim {
       const lo = s ? s.x : hw, hi = s ? s.x + s.w : world.width - hw;
       if (this.x < lo || this.x > hi) {
         if (s && this.fleeLeft <= 0 && this.r() < STEP_OFF) { this.on = null; this.vx = this.dir * 60; this.vy = 0; this.enter('fall'); }
+        // (The screen's edge, for a pack that climbs: up the wall, now and then.)
+        else if (!s && this.fleeLeft <= 0 && this.chaseUntil <= this.t && this.r() < CLIMB && this.startClimb()) return;
         else { this.x = clamp(this.x, lo, hi); this.dir = this.dir > 0 ? -1 : 1; }
       }
       this.x = clamp(this.x, hw, world.width - hw);
@@ -185,26 +221,59 @@ export class PetSim {
     const cur = this.steps[0]; cur.left -= dt;
     if (cur.left > 0) return;
     this.steps.shift();
-    if (this.steps.length) { this.setAnim(this.steps[0].anim); return; }
+    if (this.steps.length) { this.stepAnim(); return; }
     if (this.state === 'click') { this.enter('idle'); return; }
+    if (this.follow()) return;
     if (this.chaseUntil > this.t) { this.enter('walk'); return; }
     this.next();
   }
+  /** A climb started at the screen's edge where the pack has one allowed on a wall; false otherwise. */
+  private startClimb(): boolean {
+    const was = this.on; this.on = 'wall'; const c = this.pick('climb');
+    if (!c) { this.on = was; return false; }
+    this.vx = this.vy = 0; this.enter('climb', c); return true;
+  }
+  private letGo(): void { this.on = null; this.vx = (this.dir > 0 ? -1 : 1) * 80; this.vy = 0; this.enter('fall'); }
+  /** The window resized (or a pet woken where it was): kept inside, on the floor where it stood on it. */
+  fit(world: World): void {
+    this.world = world; const hw = this.halfW();
+    this.x = clamp(this.x, hw, Math.max(hw, world.width - hw));
+    if (this.on === 'floor') this.y = world.floor; else if (this.on === 'wall') this.x = this.dir > 0 ? world.width - hw : hw;
+    else if (this.y > world.floor) this.y = world.floor;
+  }
+  /** At rest: seconds until anything drawn changes by itself (the next picture, the end of what it does), else
+   *  Infinity; 0 while it moves. */
+  restFor(): number {
+    if (this.busy() || this.state === 'climb') return 0;
+    let t = this.steps[0] ? this.steps[0].left : Infinity;
+    const a = this.animOf();
+    if (a && a.frames.length > 1) {
+      if (a.durations) { const total = a.durations.reduce((x, y) => x + y, 0); let u = a.loop ? this.animT % total : this.animT; let i = 0; while (i < a.durations.length && u >= a.durations[i]) { u -= a.durations[i]; i++; } if (i < a.durations.length && (a.loop || i < a.durations.length - 1)) t = Math.min(t, a.durations[i] - u); }
+      else { const per = 1 / a.fps; const into = this.animT % per; if (a.loop || this.animT * a.fps < a.frames.length - 1) t = Math.min(t, per - into); }
+    }
+    if (this.opts.speech && this.sayLeft > 0) t = Math.min(t, this.sayLeft);
+    return Math.max(0, t);
+  }
   /* ---------- what is drawn ---------- */
+  /** The frames used now: the pictures for walking right where the pack has them. */
+  private right(a: PetAnim): boolean { return this.dir > 0 && !!a.framesRight && a.framesRight.length === a.frames.length; }
   frame(): number {
     const a = this.animOf(); if (!a) return 0;
     const n = a.frames.length; let i = 0;
     if (a.durations) { const total = a.durations.reduce((x, y) => x + y, 0); let t = a.loop ? this.animT % total : Math.min(this.animT, total - 1e-6); while (i < n - 1 && t >= a.durations[i]) { t -= a.durations[i]; i++; } }
     else { i = Math.floor(this.animT * a.fps); i = a.loop ? i % n : Math.min(i, n - 1); }
-    return a.frames[i];
+    return (this.right(a) ? a.framesRight! : a.frames)[i];
   }
   /** Moving (walking, in the air, held, reacting): drawn at 30 a second; else 10. */
-  busy(): boolean { return !this.on || this.state === 'walk' || this.state === 'click' || !!this.drag; }
+  busy(): boolean { return !this.on || this.state === 'walk' || this.state === 'climb' || this.state === 'click' || !!this.drag; }
   view(): PetView {
-    const a = this.animOf(); const f = this.frame(); const idx = a ? a.frames.indexOf(f) : -1;
+    const a = this.animOf(); const f = this.frame(); const rt = !!a && this.right(a);
+    const idx = a ? (rt ? a.framesRight! : a.frames).indexOf(f) : -1;
     const sz = this.sizes[f] ?? [this.pack.frameW, this.pack.frameH];
-    const anc = (idx >= 0 && a?.anchors?.[idx]) || [this.pack.anchor[0] * sz[0] / this.pack.frameW, this.pack.anchor[1] * sz[1] / this.pack.frameH];
-    const flip = a?.mirror !== false && ((this.pack.facing === 'left') === (this.dir > 0));
+    const anc = (idx >= 0 && (rt ? a?.anchorsRight?.[idx] : a?.anchors?.[idx])) || [this.pack.anchor[0] * sz[0] / this.pack.frameW, this.pack.anchor[1] * sz[1] / this.pack.frameH];
+    // (Drawn mirrored when facing away from the pictures' side — not the pictures made for the right, nor a climb, which
+    // faces the wall it holds.)
+    const flip = !rt && a?.mirror !== false && ((this.pack.facing === 'left') === (this.dir > 0));
     const w = sz[0] * this.k, h = sz[1] * this.k; const ax = (flip ? sz[0] - anc[0] : anc[0]) * this.k;
     return { x: this.x - ax, y: this.y - anc[1] * this.k, w, h, frame: f, flip, state: this.state, say: this.say };
   }

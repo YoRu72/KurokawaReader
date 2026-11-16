@@ -141,7 +141,20 @@ fn tray_menu(app: &AppHandle, l: &Value) -> tauri::Result<tauri::menu::Menu<taur
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     let show = MenuItem::with_id(app, "kt-tray-show", word(l, "app", APP), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "kt-tray-quit", word(l, "quit", "Quit"), true, None::<&str>)?;
+    // («Hide pets» while pets are shown — petwin.rs; in the page's words.)
+    if let Some(label) = crate::petwin::tray_label() {
+        let pets = MenuItem::with_id(app, "kt-tray-pets", label, true, None::<&str>)?;
+        return Menu::with_items(app, &[&show, &pets, &PredefinedMenuItem::separator(app)?, &quit]);
+    }
     Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit])
+}
+
+/// The tray's menu made again (pets shown or hidden).
+pub fn refresh_tray(app: &AppHandle) {
+    let labels = desk().labels.clone();
+    if let (Some(t), Ok(m)) = (tray_icon(app), tray_menu(app, &labels)) {
+        let _ = t.set_menu(Some(m));
+    }
 }
 
 /// main.cjs's trayUpdate: the icon made (once) or hidden; its tooltip the speed over every moving download.
@@ -196,6 +209,10 @@ fn build_tray(app: &AppHandle, labels: &Value) -> Result<tauri::tray::TrayIcon<t
         .on_menu_event(|app, ev| match ev.id().as_ref() {
             "kt-tray-show" => show_main(app),
             "kt-tray-quit" => app.exit(0),
+            "kt-tray-pets" => {
+                crate::petwin::close_all(app);
+                let _ = app.emit("kt:petHide", json!({}));
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, ev| {

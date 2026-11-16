@@ -3071,4 +3071,10 @@ export const ar: Partial<Strings> = {
   petsErrNotZip: "ليس هذا الملفُّ zip.",
   petsErrNothing: "لم تُوجد هنا صور.",
   petsErrBad: "تتعذّر قراءة هذه الحزمة ({why}).",
+  petsMakingOf: "تُهيّأ الصور: {n} من {all}…",
+  petsErrComplex: "تتشابك أفعالُ حزمة Shimeji هذه تشابكًا يتعذّر معه قراءتها.",
+  petsErrLibraryFull: "امتلأت المكتبة (أربعة وعشرون رفيقًا أو ٢٥٦ ميغابايت)؛ فأزِل رفيقًا أوّلًا.",
+  petsNoDesktopWayland: "لا يمكن الظهور على سطح المكتب في Wayland، إذ لا تملك التطبيقات فيه تحديدَ مواضع نوافذها.",
+  petsNoDesktopMac: "لا يتاح الظهور على سطح المكتب في هذا الإصدار على أجهزة ماك، إذ لا تكون نوافذه شفّافة.",
+  petsFailed: "توقّف «{name}» لعيبٍ في حزمته، فأُزيل من الشاشة.",
 };

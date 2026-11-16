@@ -40,7 +40,7 @@ const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel'
 // job actions. Electron only for now: the Tauri bridge deliberately has none, because the page asks for them by presence
 // (src/archives/safety.ts desk(), main.ts) and falls back to the plain extraction without them, showing no shelf.)
 const ELECTRON_ONLY = ['archivePreflight', 'archiveShelf', 'archiveJob'];
-const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption'];
+const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption', 'onPetHide'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
 // --- Electron's preload, with a fake electron that records each invoke.

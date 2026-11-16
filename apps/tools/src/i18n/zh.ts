@@ -1981,4 +1981,10 @@ export const zh: Partial<Strings> = {
   petsErrNotZip: "此文件不是 zip。",
   petsErrNothing: "这里没有找到图片。",
   petsErrBad: "无法读取此包（{why}）。",
+  petsMakingOf: "正在准备帧：{n} / {all}…",
+  petsErrComplex: "此 Shimeji 包的动作相互引用过多，无法读取。",
+  petsErrLibraryFull: "宠物库已满（24 只或 256 MB）。请先移除一只宠物。",
+  petsNoDesktopWayland: "Wayland 下应用无法放置自己的窗口，因此不能显示在桌面上。",
+  petsNoDesktopMac: "此版本在 Mac 上窗口无法透明，因此不能显示在桌面上。",
+  petsFailed: "“{name}”因其包有错误而停止，已从屏幕移除。",
 };

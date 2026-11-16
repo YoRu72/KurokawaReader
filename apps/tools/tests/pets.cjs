@@ -13,11 +13,11 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
 const throws = (f) => { try { f(); return null; } catch (e) { return String(e.message || e); } };
 
 const entry = `export * from './src/pets/xml'; export * from './src/pets/expr'; export * from './src/pets/model'; export * from './src/pets/source';
-export * from './src/pets/petJson'; export * from './src/pets/shimeji'; export * from './src/pets/frames'; export * from './src/pets/gif'; export * from './src/pets/runtime';`;
+export * from './src/pets/petJson'; export * from './src/pets/shimeji'; export * from './src/pets/frames'; export * from './src/pets/gif'; export * from './src/pets/runtime'; export * from './src/pets/prefs'; export { zipName } from './src/pets/load';`;
 const code = esbuild.buildSync({ stdin: { contents: entry, resolveDir: path.join(__dirname, '..'), loader: 'ts' }, bundle: true, write: false, format: 'cjs', platform: 'node', logLevel: 'silent' }).outputFiles[0].text;
 const M = { exports: {} }; new Function('module', 'exports', 'require', code)(M, M.exports, require); const P = M.exports;
 
-const { png, pngHeader, gif } = require('./pets-fixtures.cjs');
+const { png, pngHeader, gif, gifOf, gifBombs } = require('./pets-fixtures.cjs');
 const F = (p, b) => ({ path: p, bytes: typeof b === 'string' ? new TextEncoder().encode(b) : b });
 const rep = () => P.newReport();
 
@@ -176,7 +176,107 @@ const rep = () => P.newReport();
     ok('gif: size and frame count', info.w === 6 && info.h === 4 && info.frames === 3);
     ok('gif: frames decoded with their colours and transparency', JSON.stringify(px(d.frames[0], 2, 1)) === '[200,60,60,255]' && px(d.frames[0], 2, 0)[3] === 0 && JSON.stringify(px(d.frames[1], 3, 3)) === '[60,200,60,255]' && px(d.frames[1], 3, 1)[3] === 0 && Math.abs(d.frames[0].delay - 0.1) < 1e-9, [px(d.frames[0], 2, 1), px(d.frames[1], 3, 3)]);
     ok('gif: a truncated GIF refused', /truncated|badBlock/.test(throws(() => P.gifFrames(b.slice(0, 40)))));
-    ok('gif: a huge logical screen refused', /tooBig/.test(throws(() => P.gifInfo(new Uint8Array([...Buffer.from('GIF89a'), 255, 255, 255, 255, 0, 0, 0, 0x3b]), 1024 * 1024))));
+    ok('gif: a huge logical screen refused', /tooBig/.test(throws(() => P.gifInfo(new Uint8Array([...Buffer.from('GIF89a'), 255, 255, 255, 255, 0, 0, 0, 0x3b])))));
+    // The reviewer's hostile files, made here.
+    const B = gifBombs(); let t0 = Date.now();
+    ok('gif bomb: a 34-byte file whose frame claims 60000×60000 refused at once (nothing decoded)', /badFrame/.test(throws(() => P.gifInfo(B.huge))) && /badFrame/.test(throws(() => new P.GifDecoder(B.huge))) && Date.now() - t0 < 200, Date.now() - t0);
+    t0 = Date.now();
+    ok('gif bomb: frames wider than the screen (65535×1024) refused at once', /badFrame/.test(throws(() => new P.GifDecoder(B.wide))) && Date.now() - t0 < 200);
+    const mem0 = process.memoryUsage().arrayBuffers; const d3 = new P.GifDecoder(B.many); for (let i = 0; i < d3.count; i++) d3.frame(i);
+    const grown = (process.memoryUsage().arrayBuffers - mem0) / 1048576;
+    ok('gif bomb: 300 frames of 1×1 on a 1024² screen decode on ONE buffer (no copy per frame)', d3.count === 300 && grown < 40, { MB: grown.toFixed(1) });
+    ok('gif bomb: as pet frames, 300 such frames refused by the pixel budget before decoding', /tooManyPixels/.test(throws(() => P.checkFrameBudget(Array.from({ length: 300 }, (_, i) => ({ file: 'b.gif', gif: i })), () => P.picInfo({ path: 'b.gif', bytes: B.many })))));
+    ok('gif: more than 300 frames refused while the blocks are walked', /tooManyFrames/.test(throws(() => P.gifInfo(gifOf(4, 4, Array.from({ length: 301 }, () => ({ x: 0, y: 0, w: 1, h: 1, colour: 1 })))))));
+    // Lazy, in order, disposal «restore to previous» right.
+    const g = gifOf(6, 2, [{ x: 0, y: 0, w: 6, h: 2, colour: 1, disposal: 1 }, { x: 0, y: 0, w: 2, h: 2, colour: 2, disposal: 3 }, { x: 4, y: 0, w: 1, h: 1, colour: 3, disposal: 1 }]);
+    const dd = new P.GifDecoder(g); const at = (buf, x, y) => Array.from(buf.slice((y * 6 + x) * 4, (y * 6 + x) * 4 + 3)).join();
+    const f1 = at(dd.frame(1), 0, 0); const f2a = at(dd.frame(2), 0, 0), f2b = at(dd.frame(2), 4, 0); const f0 = at(dd.frame(0), 0, 0);
+    ok('gif: frames on request; «restore to previous» puts back what was under; earlier frames start again', f1 === '60,200,60' && f2a === '200,60,60' && f2b === '60,60,200' && f0 === '200,60,60', { f1, f2a, f2b, f0 });
+  }
+  /* ---------- 6b. Shimeji: fan-out, cycles, the budget; prototype names ---------- */
+  {
+    const enc = new TextEncoder(); const tiny = png(8, 8, 1);
+    const fan = (K, DEPTH) => { let xml = '<Mascot><ActionList>'; for (let d = 0; d < DEPTH; d++) { xml += `<Action Name="A${d}" Type="Sequence">`; for (let i = 0; i < K; i++) xml += `<ActionReference Name="A${d + 1}"/>`; xml += '</Action>'; } xml += `<Action Name="A${DEPTH}" Type="Stay"><Animation><Pose Image="/shime1.png" ImageAnchor="4,8" Velocity="0,0" Duration="10"/></Animation></Action></ActionList></Mascot>`; return xml; };
+    const beh = '<Mascot><BehaviorList><Behavior Name="Stand" Frequency="1" Action="A0"/></BehaviorList></Mascot>';
+    const pack = (actions, behaviors = beh, extra = []) => [F('img/shime1.png', tiny), F('conf/actions.xml', enc.encode(actions)), F('conf/behaviors.xml', enc.encode(behaviors)), ...extra];
+    let t0 = Date.now(); const r1 = P.fromShimeji(pack(fan(12, 6)));
+    ok('shimeji: 12-way fan-out six deep (the reviewer\'s hang) converts at once, steps capped', Date.now() - t0 < 500 && r1.pack.states.idle?.[0]?.steps.length === 8, { ms: Date.now() - t0 });
+    const many = `<Mascot><ActionList><Action Name="S" Type="Sequence">${'<ActionReference Name="L"/>'.repeat(6000)}</Action><Action Name="L" Type="Stay"><Animation><Pose Image="/shime1.png" Duration="5"/></Animation></Action></ActionList></Mascot>`;
+    ok('shimeji: over the step budget → the import refused with its reason', /tooComplex/.test(throws(() => P.fromShimeji(pack(many, '<Mascot><BehaviorList><Behavior Name="Go" Frequency="1" Action="S"/></BehaviorList></Mascot>')))));
+    const cyc = '<Mascot><ActionList><Action Name="A" Type="Sequence"><ActionReference Name="B"/><ActionReference Name="Stand"/></Action><Action Name="B" Type="Sequence"><ActionReference Name="A"/></Action><Action Name="Stand" Type="Stay"><Animation><Pose Image="/shime1.png" Duration="5"/></Animation></Action></ActionList></Mascot>';
+    const rc = P.fromShimeji(pack(cyc, '<Mascot><BehaviorList><Behavior Name="Loop" Frequency="1" Action="A"/></BehaviorList></Mascot>'));
+    ok('shimeji: a cycle of actions cut and reported', rc.report.skipped.some((x) => /^cycle: /.test(x)), rc.report);
+    const before = Object.prototype.toString;
+    const proto = '<Mascot><ActionList><Action Name="toString" Type="Animate"><Animation><Pose Image="/shime1.png" Duration="5"/></Animation></Action><Action Name="__proto__" Type="Stay"><Animation><Pose Image="/shime1.png" Duration="5"/></Animation></Action><Action Name="Stand" Type="Stay"><Animation><Pose Image="/shime1.png" Duration="5"/></Animation></Action></ActionList></Mascot>';
+    const rp = P.fromShimeji(pack(proto, '<Mascot><BehaviorList><Behavior Name="toString" Frequency="5"/><Behavior Name="Stand" Frequency="1"/></BehaviorList></Mascot>'));
+    ok('shimeji: actions named toString / __proto__ skipped; Object.prototype untouched', Object.prototype.toString === before && !('loop' in Object.prototype.toString) && rp.report.skipped.some((x) => /name: toString/.test(x)) && !Object.prototype.hasOwnProperty.call(rp.pack.animations, 'toString'), rp.report);
+  }
+  /* ---------- 6c. our format: prototype names; the runtime never trusts a name ---------- */
+  {
+    const tiny = png(16, 16, 1); const mk = (j) => throws(() => P.fromPetJson(P.cleanFiles([F('pet.json', JSON.stringify({ name: 'Box', ...j })), F('a.png', tiny)], rep())));
+    ok('pet.json: a state naming toString (the reviewer\'s probe) refused', /stateAnim/.test(mk({ animations: { a: { frames: ['a.png'] } }, states: { idle: ['toString'], walk: ['a'] } })));
+    ok('pet.json: animations named __proto__ / constructor / toString / hasOwnProperty refused', ['__proto__', 'constructor', 'toString', 'hasOwnProperty'].every((n) => /animation/.test(mk({ animations: JSON.parse(`{"${n}": {"frames": ["a.png"]}}`), states: { idle: [n] } }))));
+    ok('pet.json: a sheet named __proto__ refused', /sheet/.test(mk({ sheets: JSON.parse('{"__proto__": {"file": "a.png"}}'), animations: { a: { frames: ['a.png'] } }, states: { idle: ['a'] } })));
+    ok('checkPack: a stored pack whose state names toString refused (read back from storage)', /badPack/.test(throws(() => P.checkPack({ v: 1, name: 'x', credit: '', licence: '', source: 'pet', frameW: 8, frameH: 8, anchor: [4, 8], scale: 1, facing: 'right', frames: 1, animations: { a: { frames: [0], fps: 1, loop: true } }, states: { idle: [{ steps: [{ anim: 'toString', min: 1, max: 1 }], weight: 1 }] } }))));
+    const bad = { v: 1, name: 'x', credit: '', licence: '', source: 'pet', frameW: 8, frameH: 8, anchor: [4, 8], scale: 1, facing: 'right', frames: 1, animations: { a: { frames: [0], fps: 1, loop: true } }, states: { idle: [{ steps: [{ anim: 'toString', min: 0.2, max: 0.2 }], weight: 1 }], walk: [{ steps: [{ anim: 'constructor', min: 0.2, max: 0.2 }], weight: 1 }] } };
+    const w = { width: 800, height: 600, floor: 600, surfaces: [] }; const sim = new P.PetSim(bad, [[8, 8]], { scale: 1, activity: 'normal', chase: false, seed: 1 }, w, { x: 100, y: 599 });
+    ok('runtime: a pack naming toString / constructor (bypassing the checks) never throws', throws(() => { for (let i = 0; i < 2000; i++) { sim.step(0.05, w); sim.view(); } }) === null);
+  }
+  /* ---------- 6d. importer coverage: Select, NextBehaviorList, ImageRight, conditional animations, borders, climbing ---------- */
+  {
+    const enc = new TextEncoder(); const pics = Array.from({ length: 8 }, (_, i) => F(`img/K/shime${i + 1}.png`, png(16, 16, i + 1)));
+    const pose = (n, extra = '') => `<Pose Image="/shime${n}.png" ImageAnchor="8,16" Velocity="0,0" Duration="5" ${extra}/>`;
+    const actions = `<Mascot><ActionList>
+<Action Name="Stand" Type="Stay"><Animation Condition="#{mascot.environment.floor.isOn(mascot.anchor)}">${pose(7)}</Animation><Animation>${pose(1)}</Animation></Action>
+<Action Name="Walk" Type="Move"><Animation><Pose Image="/shime2.png" ImageRight="/shime8.png" ImageAnchor="8,16" Velocity="-2,0" Duration="5"/></Animation></Action>
+<Action Name="Sit" Type="Stay"><Animation>${pose(3)}</Animation></Action>
+<Action Name="Sprawl" Type="Stay"><Animation>${pose(4)}</Animation></Action>
+<Action Name="ClimbWall" Type="Move" BorderType="Wall"><Animation>${pose(5)}${pose(6)}</Animation></Action>
+<Action Name="Rest" Type="Sequence"><ActionReference Name="Stand" Duration="5"/><Select><ActionReference Name="Sit" Duration="25"/><ActionReference Name="Sprawl" Duration="25"/></Select></Action>
+</ActionList></Mascot>`;
+    const behaviors = `<Mascot><BehaviorList>
+<Behavior Name="Rest" Frequency="100" Condition="#{mascot.environment.floor.isOn(mascot.anchor)}"/>
+<Behavior Name="WalkAlong" Action="Walk" Frequency="100" Condition="#{!mascot.environment.workArea.leftBorder.isOn(mascot.anchor)}"><NextBehaviorList Add="false"><BehaviorReference Name="SitThen" Frequency="1"/></NextBehaviorList></Behavior>
+<Behavior Name="SitThen" Action="Sit" Frequency="1"/>
+<Behavior Name="ClimbWall" Frequency="100" Condition="#{mascot.environment.wall.isOn(mascot.anchor)}"/>
+</BehaviorList></Mascot>`;
+    const r = P.fromShimeji(P.cleanFiles([...pics, F('conf/actions.xml', enc.encode(actions)), F('conf/behaviors.xml', enc.encode(behaviors))], rep()));
+    const st = r.pack.states;
+    const rests = (st.idle ?? []).filter((c) => c.name === 'Rest');
+    ok('Select: one choice per branch (by weight), not always the first', rests.length === 2 && new Set(rests.map((c) => c.steps[1].anim)).size === 2 && Math.abs(rests[0].weight - 50) < 1e-9, rests.map((c) => c.steps.map((x) => x.anim)));
+    const walk = (st.walk ?? []).find((c) => c.name === 'WalkAlong');
+    ok('NextBehaviorList kept (only these next)', walk?.next?.[0]?.name === 'SitThen' && walk.nextAdd === false, walk);
+    ok('workArea borders read in conditions', /onAreaLeft/.test(walk?.when ?? ''), walk?.when);
+    ok('ImageRight: pictures of their own for walking right', r.pack.animations.Walk.framesRight?.length === 1 && r.pack.animations.Walk.framesRight[0] !== r.pack.animations.Walk.frames[0]);
+    const standStep = rests[0].steps[0];
+    ok('conditional animations: used while their condition holds', standStep.alts?.length === 1 && /onFloor/.test(standStep.alts[0].when), standStep);
+    ok('climbing behaviour read as a climb', (st.climb ?? []).some((c) => c.name === 'ClimbWall'));
+    // In the runtime.
+    const sizes = Array(r.pack.frames).fill([16, 16]); const W = { width: 400, height: 300, floor: 300, surfaces: [] };
+    const frameOf = (n) => r.frames.findIndex((f) => f.file === `img/K/shime${n}.png`);
+    const sim = new P.PetSim(r.pack, sizes, { scale: 2, activity: 'lively', chase: false, seed: 4 }, W, { x: 200, y: 299 });
+    const seen = new Set(), floorSeen = new Set(); let climbed = false, rightUnflipped = false, afterWalk = [], prevState = '', sawSitAfter = false, prevName = '';
+    for (let i = 0; i < 30 * 240; i++) {
+      sim.step(1 / 30, W); const v = sim.view(); seen.add(v.frame); if (sim.on === 'floor') floorSeen.add(v.frame);
+      if (sim.state === 'climb' && sim.on === 'wall') climbed = true;
+      if (sim.state === 'walk' && sim.dir > 0 && v.frame === frameOf(8) && !v.flip) rightUnflipped = true;
+      const nm = sim['cur']?.name ?? ''; if (prevName === 'WalkAlong' && nm !== 'WalkAlong' && sim.on === 'floor') { afterWalk.push(nm); if (nm === 'SitThen') sawSitAfter = true; } prevName = nm; prevState = sim.state;
+    }
+    ok('runtime: both Select branches happen (seeded random)', seen.has(frameOf(3)) && seen.has(frameOf(4)), [...seen]);
+    ok('runtime: the conditional animation shown on the floor (the plain one only off it)', floorSeen.has(frameOf(7)) && !floorSeen.has(frameOf(1)));
+    ok('runtime: walking right uses the ImageRight pictures, unmirrored', rightUnflipped);
+    ok('runtime: after WalkAlong, what its NextBehaviorList names (SitThen)', sawSitAfter && afterWalk.filter((x) => x !== 'SitThen').length === 0, [...new Set(afterWalk)]);
+    ok('runtime: at the screen\'s edge a climbing pack climbs the wall', climbed);
+  }
+  /* ---------- 6e. zip names, unused characters, stored choices ---------- */
+  {
+    ok('zip: a Shift_JIS name (no UTF-8 flag) read as such', P.zipName({ name: '��.xml', raw: new Uint8Array([0x93, 0xae, 0x8d, 0xec, 0x2e, 0x78, 0x6d, 0x6c]), utf8: false }) === '動作.xml' && P.zipName({ name: 'a.png', raw: new TextEncoder().encode('a.png'), utf8: false }) === 'a.png');
+    const chars = P.shimejiCharacters([F('img/unused/shime1.png', png(4, 4, 1)), F('img/Real/shime1.png', png(4, 4, 1)), F('img/__proto__/shime1.png', png(4, 4, 1))]);
+    ok('shimeji: img/unused (set aside) and reserved names are not characters', JSON.stringify(chars) === '["Real"]', chars);
+    const p = P.petPrefs({ where: 'moon', size: 'XXL', activity: 1, chase: 'yes', custom: 'NaN', active: ['ok_1', '../x', 5, 'ok_1'], links: [{ title: 'A‮evil', url: 'https://example.test/a' }, { title: 5, url: 'https://example.test/b' }, { title: 'x', url: 'http://example.test/' }, { title: 'x', url: 'javascript:alert(1)' }, { title: 'x', url: 'https://user:pw@example.test/' }, { url: 'https://' }, null] });
+    ok('stored choices: every value checked (enums, booleans, ids, numbers)', p.where === 'app' && p.size === 'M' && p.activity === 'normal' && p.chase === false && p.custom === 1 && JSON.stringify(p.active) === '["ok_1"]', p);
+    ok('stored links: https with a host only; titles strings without direction marks', p.links.length === 2 && p.links[0].title === 'Aevil' && p.links[1].title === 'example.test' && p.links.every((l) => /^https:\/\/example\.test\//.test(l.url)), p.links);
+    ok('the host shown apart from the title (punycode)', P.linkHost('https://exаmple.test/x') === 'xn--exmple-4nf.test', P.linkHost('https://exаmple.test/x'));
   }
   /* ---------- 7. the runtime ---------- */
   {

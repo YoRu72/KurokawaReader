@@ -11,7 +11,7 @@
 //     "speech": ["Hello"] }
 // A frame is a picture's path, "sheet:index" for a cell of a sheet, or "file.gif#n" for one frame of a GIF (a GIF
 // named alone gives all its frames).
-import { LIMITS, STATES, checkPack, newReport, type PetAnim, type PetChoice, type PetPack, type PetState } from './model';
+import { LIMITS, STATES, checkPack, dict, own, reservedName, newReport, type PetAnim, type PetChoice, type PetPack, type PetState } from './model';
 import { FrameList, PackError, checkFrameBudget, cleanText, picInfo, textOf, type ImportResult, type PackFile, type PicInfo } from './source';
 
 const KNOWN = new Set(['format', 'version', 'name', 'credit', 'licence', 'license', 'frameSize', 'anchor', 'scale', 'facing', 'sheets', 'animations', 'states', 'speech']);
@@ -45,7 +45,7 @@ export function fromPetJson(files: PackFile[]): ImportResult {
   if (j.sheets !== undefined) {
     if (!isObj(j.sheets)) bad('sheets');
     for (const [id, s] of Object.entries(j.sheets as Record<string, unknown>)) {
-      if (!SAFE_KEY.test(id) || !isObj(s) || typeof s.file !== 'string') bad(`sheet:${id}`);
+      if (!SAFE_KEY.test(id) || reservedName(id) || !isObj(s) || typeof s.file !== 'string') bad(`sheet:${id}`);
       const sh = s as Record<string, unknown>; const file = sh.file as string; const pi = info(file); if (!pi || pi.kind === 'gif') bad(`sheetFile:${id}`);
       const cols = num(sh.columns ?? 1, 1, 256, `sheetCols:${id}`), rows = num(sh.rows ?? 1, 1, 256, `sheetRows:${id}`);
       if (!Number.isInteger(cols) || !Number.isInteger(rows)) bad(`sheet:${id}`);
@@ -65,9 +65,9 @@ export function fromPetJson(files: PackFile[]): ImportResult {
     return [fl.add({ file: realPath(ref) })];
   };
   if (!isObj(j.animations)) bad('animations');
-  const animations: Record<string, PetAnim> = {};
+  const animations: Record<string, PetAnim> = dict<PetAnim>();
   for (const [an, a] of Object.entries(j.animations as Record<string, unknown>)) {
-    if (!SAFE_KEY.test(an) || !isObj(a) || !Array.isArray(a.frames) || !a.frames.length || a.frames.length > 300) bad(`animation:${an}`);
+    if (!SAFE_KEY.test(an) || reservedName(an) || !isObj(a) || !Array.isArray(a.frames) || !a.frames.length || a.frames.length > 300) bad(`animation:${an}`);
     const aa = a as Record<string, unknown>;
     const frames = (aa.frames as unknown[]).flatMap((r) => framesOf(r, `frame:${an}`));
     if (Object.keys(animations).length >= LIMITS.animations) bad('tooManyAnimations');
@@ -81,7 +81,7 @@ export function fromPetJson(files: PackFile[]): ImportResult {
     if (arr.length > 32) bad(`state:${sn}`);
     states[sn as PetState] = arr.map((c) => {
       const o = typeof c === 'string' ? { animation: c } : isObj(c) ? c : bad(`state:${sn}`);
-      const an = o.animation; if (typeof an !== 'string' || !animations[an]) return bad(`stateAnim:${sn}`);
+      const an = o.animation; if (typeof an !== 'string' || !own(animations, an)) return bad(`stateAnim:${sn}`);
       const dur = o.duration === undefined ? [2, 6] : typeof o.duration === 'number' ? [o.duration, o.duration] : pair(o.duration, 0.1, 600, `duration:${sn}`);
       num(dur[0], 0.1, 600, `duration:${sn}`); num(dur[1], 0.1, 600, `duration:${sn}`);
       return { steps: [{ anim: an, min: Math.min(dur[0], dur[1]), max: Math.max(dur[0], dur[1]) }], weight: num(o.weight ?? 1, 0, 1000, `weight:${sn}`) };

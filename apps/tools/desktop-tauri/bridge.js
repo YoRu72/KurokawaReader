@@ -279,6 +279,7 @@
     pet: function (o) { return call('kt_pet', { o: obj(o) }); },
     registerMagnet: function () { return call('kt_register_magnet'); },
     onHotkeyAdd: function (cb) { return subscribe('kt:hotkeyAdd', cb); },
+    onPetHide: function (cb) { return subscribe('kt:petHide', cb); },
     onOpenTask: function (cb) {
       var off = subscribe('kt:openTask', cb);
       /* (The original system, piece 1 — PORTING.md «The original Rust system — piece by piece»: a notice clicked before

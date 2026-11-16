@@ -98,5 +98,25 @@ function framesPack() {
   out['Hopper/tool.exe'] = 'MZ-not-a-program';
   return out;
 }
+/** A GIF of given frames: each { x, y, w, h, colour (1–3; 0 transparent), disposal } on a w×h screen of 4 colours. */
+function gifOf(W, H, frames) {
+  const out = [Buffer.from('GIF89a'), Buffer.from([W & 255, W >> 8, H & 255, H >> 8, 0x81, 0, 0]), Buffer.from([0, 0, 0, 200, 60, 60, 60, 200, 60, 60, 60, 200])];
+  for (const f of frames) {
+    out.push(Buffer.from([0x21, 0xf9, 4, ((f.disposal ?? 1) << 2) | 1, 10, 0, 0, 0]));
+    out.push(Buffer.from([0x2c, f.x & 255, f.x >> 8, f.y & 255, f.y >> 8, f.w & 255, f.w >> 8, f.h & 255, f.h >> 8, 0, 2]));
+    const codes = []; for (let i = 0; i < f.w * f.h; i++) { if (i % 2 === 0) codes.push(4); codes.push(f.colour); } codes.push(5);
+    const bytes = []; let acc = 0, bits = 0; for (const c of codes) { acc |= c << bits; bits += 3; while (bits >= 8) { bytes.push(acc & 255); acc >>= 8; bits -= 8; } } if (bits) bytes.push(acc & 255);
+    for (let i = 0; i < bytes.length; i += 255) { const part = bytes.slice(i, i + 255); out.push(Buffer.from([part.length, ...part])); } out.push(Buffer.from([0]));
+  }
+  out.push(Buffer.from([0x3b])); return new Uint8Array(Buffer.concat(out));
+}
+/** The reviewer's hostile GIFs, made here: a tiny file whose frame claims 60000×60000 pixels; N frames of 65535×1024 on a
+ *  1024² screen; 300 frames of 1×1 on a 1024² screen. */
+function gifBombs() {
+  const head = (w, h) => [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, w & 255, w >> 8, h & 255, h >> 8, 0x80, 0, 0, 0, 0, 0, 255, 255, 255];
+  const img = (w, h) => [0x2c, 0, 0, 0, 0, w & 255, w >> 8, h & 255, h >> 8, 0, 2, 1, 0x00, 0];
+  const many = (W, H, n, w, h) => { const b = [...head(W, H)]; for (let i = 0; i < n; i++) b.push(...img(w, h)); b.push(0x3b); return new Uint8Array(b); };
+  return { huge: many(16, 16, 1, 60000, 60000), wide: many(1024, 1024, 5, 65535, 1024), many: many(1024, 1024, 300, 1, 1) };
+}
 function writeDir(dir, files) { for (const [n, b] of Object.entries(files)) { const p = path.join(dir, n); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, b); } return dir; }
-module.exports = { shape, png, pngHeader, gif, zip, petPack, shimejiPack, framesPack, writeDir };
+module.exports = { shape, png, pngHeader, gif, gifOf, gifBombs, zip, petPack, shimejiPack, framesPack, writeDir };

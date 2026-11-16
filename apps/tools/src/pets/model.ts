@@ -21,11 +21,13 @@ export interface PetAnim {
   mirror?: boolean;
   /** Where the feet are in each frame (frame pixels), when they differ from the pack's anchor. */
   anchors?: [number, number][];
+  /** Pictures of their own for walking right (Shimeji's ImageRight), same length as `frames`: shown unflipped. */
+  framesRight?: number[]; anchorsRight?: [number, number][];
 }
 /** One step of something the pet does: an animation for a while (seconds, from min to max). */
-export interface PetStep { anim: string; min: number; max: number }
+export interface PetStep { anim: string; min: number; max: number; /** Animations used instead while their condition holds (the first that does). */ alts?: { when: string; anim: string }[] }
 /** One choice for a state: its steps, its weight among the others, and (Shimeji) a condition it needs. */
-export interface PetChoice { steps: PetStep[]; weight: number; when?: string; name?: string }
+export interface PetChoice { steps: PetStep[]; weight: number; when?: string; name?: string; /** What may follow (choices named so, by weight): only these, or (add) these among the usual. */ next?: { name: string; weight: number }[]; nextAdd?: boolean }
 
 export interface PetPack {
   v: 1;
@@ -54,11 +56,14 @@ export const LIMITS = {
   totalBytes: 64 << 20,
   fileBytes: 8 << 20,
   framePx: 1024,
-  /** One picture (a strip or sheet) before it is cut into frames. */
-  sheetPx: 8192,
+  /** One picture (a strip or sheet) before it is cut into frames, each side. */
+  sheetPx: 4096,
   frames: 600,
-  /** All frames together, in pixels (a guard on memory). */
-  totalPixels: 600 * 256 * 256,
+  /** All frames together, in pixels (what the pet holds in memory once shown). */
+  totalPixels: 16 << 20,
+  /** The pictures decoded to make the frames, in pixels: each sheet once, a GIF's screen once per frame composed up to
+   *  the last one used (checked before anything is decoded). */
+  decodePixels: 64 << 20,
   animations: 200,
   nameLen: 80,
   textLen: 4000,
@@ -101,6 +106,12 @@ export function imageSize(b: Uint8Array): [number, number] | null {
 export interface ImportReport { skipped: string[]; notes: string[] }
 export const newReport = (): ImportReport => ({ skipped: [], notes: [] });
 
+/** A name from a pack that would reach an object's own machinery (__proto__, constructor, toString…): refused. */
+export function reservedName(n: string): boolean { return n === '__proto__' || n === 'constructor' || n === 'prototype' || n in Object.prototype; }
+/** `o[k]` only when `k` is `o`'s own (a name from a pack never reaches an inherited member). */
+export function own<T>(o: Record<string, T> | undefined | null, k: string): T | undefined { return o && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined; }
+/** A map keyed by names from a pack: no prototype at all. */
+export const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
 /** A pack checked for consistency (frame numbers in range, animations named by states exist); throws on a fault. */
 export function checkPack(p: PetPack): PetPack {
   const bad = (w: string): never => { throw new Error(`badPack:${w}`); };
@@ -109,18 +120,23 @@ export function checkPack(p: PetPack): PetPack {
   if (!(p.frameW > 0 && p.frameW <= LIMITS.framePx && p.frameH > 0 && p.frameH <= LIMITS.framePx)) bad('frameSize');
   if (!(p.scale > 0 && p.scale <= 8)) bad('scale');
   const names = Object.keys(p.animations); if (!names.length || names.length > LIMITS.animations) bad('animations');
+  const okFrames = (l: unknown) => Array.isArray(l) && l.length > 0 && l.every((f) => Number.isInteger(f) && f >= 0 && f < p.frames);
   for (const [n, a] of Object.entries(p.animations)) {
-    if (!a.frames.length || a.frames.some((f) => !Number.isInteger(f) || f < 0 || f >= p.frames)) bad(`anim:${n}`);
+    if (reservedName(n) || !a || typeof a !== 'object' || !okFrames(a.frames)) bad(`anim:${n}`);
+    if (a.framesRight !== undefined && (!okFrames(a.framesRight) || a.framesRight.length !== a.frames.length)) bad(`anim:${n}`);
     if (!(a.fps > 0 && a.fps <= 60)) bad(`fps:${n}`);
     if (a.durations && (a.durations.length !== a.frames.length || a.durations.some((d) => !(d > 0 && d <= 60)))) bad(`durations:${n}`);
   }
-  for (const [s, cs] of Object.entries(p.states)) for (const c of cs ?? []) for (const st of c.steps) if (!p.animations[st.anim]) bad(`state:${s}`);
-  if (!p.states.idle?.length && !p.states.walk?.length) bad('noIdle');
+  for (const [s, cs] of Object.entries(p.states)) {
+    if (!(STATES as string[]).includes(s) || !Array.isArray(cs)) bad(`state:${s}`);
+    for (const c of cs ?? []) { if (!Array.isArray(c.steps) || !(c.weight >= 0)) bad(`state:${s}`); for (const st of c.steps) if (!own(p.animations, st.anim) || (st.alts ?? []).some((x) => !own(p.animations, x.anim))) bad(`state:${s}`); }
+  }
+  if (!own(p.states as Record<string, PetChoice[]>, 'idle')?.length && !own(p.states as Record<string, PetChoice[]>, 'walk')?.length) bad('noIdle');
   return p;
 }
 
 /** The names a converted condition may use (filled in by the runtime). */
 export const COND_NAMES: ReadonlySet<string> = new Set([
-  'onFloor', 'onCeiling', 'onWall', 'onWindowTop', 'onWindowBottom', 'onWindowSide', 'windowVisible', 'x', 'y', 'lookRight', 'count',
+  'onFloor', 'onCeiling', 'onWall', 'onWindowTop', 'onWindowBottom', 'onWindowSide', 'windowVisible', 'onAreaLeft', 'onAreaRight', 'x', 'y', 'lookRight', 'count',
   ...['left', 'right', 'top', 'bottom', 'width', 'height'].flatMap((k) => [`area.${k}`, `screen.${k}`, `win.${k}`]), 'cursor.x', 'cursor.y',
 ]);

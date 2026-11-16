@@ -1981,4 +1981,10 @@ export const ko: Partial<Strings> = {
   petsErrNotZip: "이 파일은 zip이 아닙니다.",
   petsErrNothing: "그림을 찾지 못했습니다.",
   petsErrBad: "이 팩을 읽을 수 없습니다({why}).",
+  petsMakingOf: "프레임 준비 중: {n} / {all}…",
+  petsErrComplex: "이 Shimeji 팩의 동작은 서로를 너무 많이 참조해서 읽을 수 없습니다.",
+  petsErrLibraryFull: "라이브러리가 가득 찼습니다(24마리 또는 256MB). 먼저 펫을 삭제하세요.",
+  petsNoDesktopWayland: "Wayland에서는 앱이 자기 창의 위치를 정할 수 없어 바탕 화면에 표시할 수 없습니다.",
+  petsNoDesktopMac: "이 버전의 Mac에서는 창을 투명하게 할 수 없어 바탕 화면에 표시할 수 없습니다.",
+  petsFailed: "“{name}”의 팩에 문제가 있어 멈추고 화면에서 내렸습니다.",
 };

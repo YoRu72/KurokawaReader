@@ -11,6 +11,11 @@ use tauri::{AppHandle, Manager};
 use crate::activewin;
 
 const PREFIX: &str = "pet-";
+/// «Hide pets» in the tray while pets are shown: its words (the page's), or None.
+static TRAY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+pub fn tray_label() -> Option<String> {
+    TRAY.lock().ok().and_then(|g| g.clone())
+}
 const MAIN_HASH: &str = "#/settings/pets";
 
 fn safe_id(id: &str) -> bool {
@@ -47,12 +52,7 @@ fn open(app: &AppHandle, id: &str, o: &Value) -> Result<Value, String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let hash = format!("#/pet/{}", id);
-        let script = format!(
-            "{}\n;try{{if(!String(location.hash).startsWith('#/pet/'))history.replaceState(null,'',{});}}catch(e){{}}",
-            crate::desktop::WEB_SCRIPT.get().map(|s| s.as_str()).unwrap_or(""),
-            Value::String(hash)
-        );
+        let script = pet_script(id);
         let title = title_of(id);
         let mut b = tauri::WebviewWindowBuilder::new(app, label.as_str(), tauri::WebviewUrl::App("index.html".into()))
             .title(title.as_str())
@@ -94,15 +94,62 @@ fn open(app: &AppHandle, id: &str, o: &Value) -> Result<Value, String> {
     }
 }
 
+/// The page script of a pet window: NOT the app's bridge — only `pet` (this file's command) and what the page reads
+/// at its start; the window lands on its own #/pet/<id>.
+fn pet_script(id: &str) -> String {
+    format!(
+        "window.__KT_SHELL__='tauri';window.__KT_BOOT__={{os:{os}}};(function(){{var inv=function(c,a){{var i=window.__TAURI_INTERNALS__;return i&&typeof i.invoke==='function'?i.invoke(c,a):Promise.reject(new Error('no bridge'));}};window.kurokawaTools=Object.freeze({{platform:'desktop',available:false,os:{os},ready:function(){{return Promise.resolve({{}});}},pet:function(o){{return inv('kt_pet',{{o:o&&typeof o==='object'?o:{{}}}});}}}});}})();\n;try{{if(!String(location.hash).startsWith('#/pet/'))history.replaceState(null,'',{hash});}}catch(e){{}}",
+        os = Value::String(kurokawa_shell::util::node_platform().to_string()),
+        hash = Value::String(format!("#/pet/{}", id))
+    )
+}
+
+/// A call from a pet window to any command but kt_pet: refused (main.rs wraps the app's handler with this).
+pub fn refused(invoke: &tauri::ipc::Invoke) -> bool {
+    invoke.message.webview().label().starts_with(PREFIX) && invoke.message.command() != "kt_pet"
+}
+
+/// Desktop pets where windows can be placed (not on Wayland itself, not on a Mac without the private API) and where
+/// the window in front can be known.
+fn caps() -> Value {
+    let env = |k: &str| std::env::var(k).ok();
+    let wayland = cfg!(all(unix, not(target_os = "macos"))) && activewin::wayland_session(env("XDG_SESSION_TYPE").as_deref(), env("WAYLAND_DISPLAY").as_deref(), env("GDK_BACKEND").as_deref());
+    let mac = cfg!(target_os = "macos");
+    json!({ "desktop": !wayland && !mac, "follow": !wayland && !mac, "why": if wayland { "wayland" } else if mac { "transparency" } else { "" } })
+}
+
 fn rect_json(r: activewin::Rect, k: f64) -> Value {
     json!({ "x": r.x as f64 / k, "y": r.y as f64 / k, "w": r.w as f64 / k, "h": r.h as f64 / k })
 }
 
 #[tauri::command]
-pub async fn kt_pet(app: AppHandle, o: Value) -> Result<Value, String> {
+pub async fn kt_pet(app: AppHandle, window: tauri::Window, o: Value) -> Result<Value, String> {
     let action = o.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let id = o.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // (A pet window: the screen, the window in front, itself — moved, made click-through, closed —, hide all, the main
+    // window; never another pet's window, never a new one. Any window but the main one and the pets: nothing.)
+    let label = window.label().to_string();
+    if let Some(own) = label.strip_prefix(PREFIX) {
+        if action == "open" || (matches!(action.as_str(), "move" | "through" | "close") && id != own) {
+            return Ok(json!({ "ok": false }));
+        }
+    } else if label != "main" {
+        return Ok(json!({ "ok": false }));
+    }
     match action.as_str() {
+        "caps" => Ok(caps()),
+        "tray" => {
+            if label != "main" {
+                return Ok(json!({ "ok": false }));
+            }
+            let shown = o.get("shown").and_then(|v| v.as_bool()).unwrap_or(false);
+            let words: String = o.get("label").and_then(|v| v.as_str()).unwrap_or("Hide pets").chars().filter(|c| !c.is_control() && !('\u{202a}'..='\u{202e}').contains(c) && !('\u{2066}'..='\u{2069}').contains(c)).take(60).collect();
+            if let Ok(mut g) = TRAY.lock() {
+                *g = if shown { Some(if words.trim().is_empty() { "Hide pets".to_string() } else { words }) } else { None };
+            }
+            crate::desktop::refresh_tray(&app);
+            Ok(json!({ "ok": true }))
+        }
         "screen" => {
             let k = scale(&app);
             let work = activewin::work_area().map(|r| rect_json(r, k)).or_else(|| {

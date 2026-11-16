@@ -137,7 +137,8 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler({
+            let handler = tauri::generate_handler![
             commands::kt_state,
             commands::kt_engine_retry,
             commands::kt_list,
@@ -283,7 +284,16 @@ fn main() {
             hybridtest::kt_selftest_hybrid,
             // (The original system: a notice's click kept until the page listens — the bridge's onOpenTask.)
             notifier::kt_task_take
-        ])
+            ];
+            // (A pet's own window may call kt_pet and nothing else — petwin.rs.)
+            move |invoke: tauri::ipc::Invoke| {
+                if petwin::refused(&invoke) {
+                    invoke.resolver.reject("not allowed from a pet window");
+                    return true;
+                }
+                handler(invoke)
+            }
+        })
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
             titlebar::on_event(window, event);

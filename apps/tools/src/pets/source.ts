@@ -41,20 +41,26 @@ export function picInfo(f: PackFile): PicInfo | null {
   const kind = imageKind(f.bytes); if (!kind) return null;
   const sz = imageSize(f.bytes); if (!sz || !sz[0] || !sz[1] || sz[0] > LIMITS.sheetPx || sz[1] > LIMITS.sheetPx) return null;
   let gifFrames = 1;
-  if (kind === 'gif') { try { const g = gifInfo(f.bytes, LIMITS.framePx * LIMITS.framePx); gifFrames = g.frames; } catch { return null; } if (sz[0] > LIMITS.framePx || sz[1] > LIMITS.framePx) return null; }
+  if (kind === 'gif') { try { const g = gifInfo(f.bytes, LIMITS.framePx); gifFrames = g.frames; } catch { return null; } }
   return { w: sz[0], h: sz[1], kind, gifFrames };
 }
 
-/** Frames and their sizes added up against the limits (count and pixels). */
+/** Frames and their sizes added up against the limits before anything is decoded: how many, their pixels, and the
+ *  pixels decoding them takes (each picture once; a GIF's screen for every frame composed up to the last one used). */
 export function checkFrameBudget(frames: FrameSrc[], info: (file: string) => PicInfo | null): void {
   if (frames.length > LIMITS.frames) throw new PackError('tooManyFrames');
-  let px = 0;
+  let px = 0; const work = new Map<string, number>();
   for (const fr of frames) {
     const i = info(fr.file); if (!i) throw new PackError('badPicture');
     const w = fr.cell ? fr.cell[2] : i.w, h = fr.cell ? fr.cell[3] : i.h;
-    if (w > LIMITS.framePx || h > LIMITS.framePx) throw new PackError('frameTooBig');
+    if (w > LIMITS.framePx || h > LIMITS.framePx || w < 1 || h < 1) throw new PackError('frameTooBig');
+    if (fr.cell && (fr.cell[0] < 0 || fr.cell[1] < 0 || fr.cell[0] + w > i.w || fr.cell[1] + h > i.h)) throw new PackError('badCell');
     px += w * h; if (px > LIMITS.totalPixels) throw new PackError('tooManyPixels');
+    const cost = fr.gif !== undefined ? (fr.gif + 1) * i.w * i.h : i.w * i.h;
+    work.set(fr.file, Math.max(work.get(fr.file) ?? 0, cost));
   }
+  let sum = 0; for (const v of work.values()) sum += v;
+  if (sum > LIMITS.decodePixels) throw new PackError('tooManyPixels');
 }
 /** Text of a file (UTF-8, a BOM taken off). */
 export const textOf = (f: PackFile): string => new TextDecoder('utf-8').decode(f.bytes).replace(/^﻿/, '');

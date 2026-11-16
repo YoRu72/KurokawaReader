@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "pets",
-  "description": "The pets' own windows on the desktop (src/petwin.rs): each runs the same page on #/pet/<id> with the bridge; the app's own kt_* commands need no permission, events need core's.",
-  "windows": ["pet-*"],
-  "permissions": ["core:default"]
-}

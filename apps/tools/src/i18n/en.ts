@@ -3076,6 +3076,12 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   petsErrNotZip: "This file is not a zip.",
   petsErrNothing: "No pictures were found here.",
   petsErrBad: "This pack cannot be read ({why}).",
+  petsMakingOf: "Preparing the frames: {n} of {all}…",
+  petsErrComplex: "This Shimeji pack's actions refer to each other too much to be read.",
+  petsErrLibraryFull: "The library is full (24 pets or 256 MB). Remove a pet first.",
+  petsNoDesktopWayland: "On the desktop is not possible on Wayland: apps cannot place their own windows there.",
+  petsNoDesktopMac: "On the desktop is not available in this build on a Mac (its windows cannot be transparent).",
+  petsFailed: "“{name}” stopped: its pack has a fault. It was taken off the screen.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

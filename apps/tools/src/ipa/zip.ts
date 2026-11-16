@@ -1,7 +1,7 @@
 // A ZIP read in place from a File or Blob (an IPA is one): its list of entries from the central directory at its
 // end, and any one entry's bytes on request — stored or deflated (the browser's own inflater) — without reading
 // the rest of what may be gigabytes.
-export interface ZipEntry { name: string; method: number; csize: number; usize: number; offset: number }
+export interface ZipEntry { name: string; method: number; csize: number; usize: number; offset: number; /** The name's own bytes, and whether the entry says they are UTF-8 (bit 11). */ raw?: Uint8Array; utf8?: boolean }
 
 const u16 = (d: DataView, o: number) => d.getUint16(o, true);
 const u32 = (d: DataView, o: number) => d.getUint32(o, true);
@@ -24,11 +24,11 @@ export async function zipEntries(b: Blob): Promise<ZipEntry[]> {
   for (let p = 0, n = 0; n < count && p + 46 <= cd.byteLength; n++) {
     if (u32(cd, p) !== 0x02014b50) break;
     const method = u16(cd, p + 10); let csize = u32(cd, p + 20), usize = u32(cd, p + 24); const nl = u16(cd, p + 28), xl = u16(cd, p + 30), cl = u16(cd, p + 32); let offset = u32(cd, p + 42);
-    const name = dec.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, nl));
+    const raw = new Uint8Array(cd.buffer.slice(cd.byteOffset + p + 46, cd.byteOffset + p + 46 + nl)); const name = dec.decode(raw); const utf8 = !!(u16(cd, p + 8) & 0x800);
     // (ZIP64 extra field: the sizes and offset that did not fit.)
     let x = p + 46 + nl; const xe = x + xl;
     while (x + 4 <= xe) { const id = u16(cd, x), sz = u16(cd, x + 2); if (id === 1) { let q = x + 4; if (usize === 0xffffffff) { usize = Number(cd.getBigUint64(q, true)); q += 8; } if (csize === 0xffffffff) { csize = Number(cd.getBigUint64(q, true)); q += 8; } if (offset === 0xffffffff) offset = Number(cd.getBigUint64(q, true)); } x += 4 + sz; }
-    out.push({ name, method, csize, usize, offset }); p += 46 + nl + xl + cl;
+    out.push({ name, method, csize, usize, offset, raw, utf8 }); p += 46 + nl + xl + cl;
   }
   return out;
 }

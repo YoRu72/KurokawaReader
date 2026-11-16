@@ -8,13 +8,17 @@
 // NOT VERIFIED AGAINST A REAL PACK: written from the publicly documented format (the tests use made-up packs).
 import { parseXml, findAll, type XNode } from './xml';
 import { compile, evaluate, num, ExprError } from './expr';
-import { COND_NAMES, LIMITS, checkPack, newReport, type PetAnim, type PetChoice, type PetPack, type PetState, type PetStep } from './model';
+import { COND_NAMES, LIMITS, dict, own, reservedName, checkPack, newReport, type PetAnim, type PetChoice, type PetPack, type PetState, type PetStep } from './model';
 import { FrameList, PackError, checkFrameBudget, cleanText, picInfo, textOf, type ImportResult, type PackFile, type PicInfo } from './source';
 
 /** Shimeji's clock: one tick is 40 ms (25 a second). */
 const TICK = 0.04;
 export { COND_NAMES };
 const TRANSLATE: [RegExp, string][] = [
+  [/mascot\.environment\.(?:workArea|screen)\.leftBorder\.isOn\(\s*mascot\.anchor\s*\)/g, 'onAreaLeft'],
+  [/mascot\.environment\.(?:workArea|screen)\.rightBorder\.isOn\(\s*mascot\.anchor\s*\)/g, 'onAreaRight'],
+  [/mascot\.environment\.(?:workArea|screen)\.bottomBorder\.isOn\(\s*mascot\.anchor\s*\)/g, 'onFloor'],
+  [/mascot\.environment\.(?:workArea|screen)\.topBorder\.isOn\(\s*mascot\.anchor\s*\)/g, 'onCeiling'],
   [/mascot\.environment\.floor\.isOn\(\s*mascot\.anchor\s*\)/g, 'onFloor'],
   [/mascot\.environment\.ceiling\.isOn\(\s*mascot\.anchor\s*\)/g, 'onCeiling'],
   [/mascot\.environment\.wall\.isOn\(\s*mascot\.anchor\s*\)/g, 'onWall'],
@@ -42,8 +46,9 @@ const JA_AT: Record<string, string> = { 名前: 'Name', 種類: 'Type', クラ�
 const JA_VAL: Record<string, string> = { 静止: 'Stay', 移動: 'Move', 固定: 'Animate', 複合: 'Sequence', 選択: 'Select', 組み込み: 'Embedded', 地面: 'Floor', 壁: 'Wall', 天井: 'Ceiling' };
 function english(n: XNode): XNode {
   const attrs: Record<string, string> = {};
-  for (const [k, v] of Object.entries(n.attrs)) attrs[JA_AT[k] ?? k] = JA_VAL[v] ?? v;
-  return { name: JA_EL[n.name] ?? n.name, attrs, text: n.text, kids: n.kids.map(english) };
+  // (Own entries only: a value such as «toString» must stay the text it is.)
+  for (const [k, v] of Object.entries(n.attrs)) attrs[own(JA_AT, k) ?? k] = own(JA_VAL, v) ?? v;
+  return { name: own(JA_EL, n.name) ?? n.name, attrs, text: n.text, kids: n.kids.map(english) };
 }
 
 /* ---------- where things are ---------- */
@@ -52,7 +57,8 @@ const lower = (s: string) => s.toLowerCase();
 export function shimejiCharacters(files: PackFile[]): string[] {
   const out = new Set<string>();
   for (const f of files) {
-    const m = /^img\/([^/]+)\/shime\d+\.(png|gif|webp)$/i.exec(f.path); if (m) { out.add(m[1]); continue; }
+    // (img/unused/ holds the characters a Shimeji install has set aside: not offered.)
+    const m = /^img\/([^/]+)\/shime\d+\.(png|gif|webp)$/i.exec(f.path); if (m) { if (!/^unused$/i.test(m[1]) && !reservedName(m[1])) out.add(m[1]); continue; }
     if (/^(img\/)?shime\d+\.(png|gif|webp)$/i.test(f.path)) out.add('');
   }
   return [...out].sort((a, b) => a.localeCompare(b));
@@ -89,9 +95,10 @@ export function fromShimeji(files: PackFile[], character?: string): ImportResult
   const info = (p: string): PicInfo | null => { const k = lower(p); if (!infos.has(k)) { const f = byPath.get(k); infos.set(k, f ? picInfo(f) : null); } return infos.get(k) ?? null; };
   const picPath = (img: string): string | null => { const p = imgDir + img.replace(/^[/\\]+/, '').replace(/\\/g, '/'); if (p.includes('..')) return null; const f = byPath.get(lower(p)); return f && info(f.path) ? f.path : null; };
   const fl = new FrameList();
-  const animations: Record<string, PetAnim> = {};
+  const animations: Record<string, PetAnim> = dict<PetAnim>();
   const states: Partial<Record<PetState, PetChoice[]>> = {};
   const push = (s: PetState, c: PetChoice) => { (states[s] ??= []).push(c); };
+  let anims = 0;
 
   const aFile = confFile(files, ch, 'actions'), bFile = confFile(files, ch, 'behaviors');
   let actionsDoc: XNode | null = null, behaviorsDoc: XNode | null = null;
@@ -100,28 +107,46 @@ export function fromShimeji(files: PackFile[], character?: string): ImportResult
 
   if (actionsDoc) {
     const acts = new Map<string, ActInfo>();
-    for (const a of findAll(actionsDoc, 'Action')) { const n = a.attrs.Name; if (n && !acts.has(n)) acts.set(n, { el: a, type: a.attrs.Type ?? '', cls: (a.attrs.Class ?? '').split('.').pop() ?? '', border: a.attrs.BorderType ?? '' }); }
-    // An animation from an action's poses (its first Animation without a condition, else its first).
-    const animOf = (name: string): string | null => {
-      if (animations[name]) return name;
-      const ai = acts.get(name); if (!ai) return null;
-      const anims = ai.el.kids.filter((k) => k.name === 'Animation'); if (!anims.length) return null;
-      if (anims.length > 1) report.notes.push(`firstAnimation: ${name}`);
-      const an = anims.find((x) => !x.attrs.Condition) ?? anims[0];
-      const frames: number[] = [], durations: number[] = [], anchors: [number, number][] = []; let vSum = 0;
+    for (const a of findAll(actionsDoc, 'Action')) {
+      const n = a.attrs.Name; if (!n || acts.has(n)) continue;
+      if (reservedName(n)) { report.skipped.push(`name: ${n.slice(0, 40)}`); continue; }
+      acts.set(n, { el: a, type: a.attrs.Type ?? '', cls: (a.attrs.Class ?? '').split('.').pop() ?? '', border: a.attrs.BorderType ?? '' });
+    }
+    const condOk = (c: string): string | null => { const w = translateExpr(c); try { compile(w, COND_NAMES); return w; } catch { return null; } };
+    // One <Animation>'s poses as an animation of ours (its pictures for walking right too, where given).
+    const poseAnim = (key: string, an: XNode): string | null => {
+      if (own(animations, key)) return key;
+      const frames: number[] = [], durations: number[] = [], anchors: [number, number][] = [], right: number[] = []; let vSum = 0; let allRight = true;
       for (const p of an.kids.filter((k) => k.name === 'Pose')) {
         const fp = picPath(p.attrs.Image ?? ''); if (!fp) { report.skipped.push(`picture: ${String(p.attrs.Image).slice(0, 60)}`); continue; }
         frames.push(fl.add({ file: fp }));
+        const rp = p.attrs.ImageRight ? picPath(p.attrs.ImageRight) : null; if (rp) right.push(fl.add({ file: rp })); else allRight = false;
         durations.push(Math.min(60, Math.max(TICK, (Number(p.attrs.Duration) || 1) * TICK)));
         const ia = (p.attrs.ImageAnchor ?? '').split(',').map(Number); const pi = info(fp)!;
         anchors.push(ia.length === 2 && ia.every(Number.isFinite) ? [ia[0], ia[1]] : [pi.w / 2, pi.h]);
         const v = (p.attrs.Velocity ?? '0,0').split(',').map(Number); if (Number.isFinite(v[0])) vSum += Math.abs(v[0]);
       }
       if (!frames.length) return null;
-      if (Object.keys(animations).length >= LIMITS.animations) { report.skipped.push(`tooManyAnimations: ${name}`); return null; }
+      if (++anims > LIMITS.animations) { report.skipped.push(`tooManyAnimations: ${key.slice(0, 60)}`); return null; }
       const speed = vSum / frames.length / TICK;
-      animations[name] = { frames, durations, anchors, fps: 25, loop: true, speed: speed > 0 ? Math.min(2000, speed) : undefined };
-      return name;
+      // (Right-facing pictures mirror the anchor: x measured from the other side.)
+      animations[key] = { frames, durations, anchors, fps: 25, loop: true, speed: speed > 0 ? Math.min(2000, speed) : undefined,
+        ...(allRight && right.length === frames.length ? { framesRight: right, anchorsRight: anchors.map(([x, y], i) => { const w = info(fl.list[right[i]].file)?.w ?? 0; return [w - x, y] as [number, number]; }) } : {}) };
+      return key;
+    };
+    /** An action's animation and the conditional ones used instead while their condition holds. */
+    const animOf = (name: string): { anim: string; alts?: { when: string; anim: string }[] } | null => {
+      const ai = acts.get(name); if (!ai) return null;
+      const list = ai.el.kids.filter((k) => k.name === 'Animation'); if (!list.length) return null;
+      const alts: { when: string; anim: string }[] = []; let base: string | null = null;
+      for (const [i, an] of list.entries()) {
+        const c = an.attrs.Condition;
+        if (!c) { base = poseAnim(i ? `${name}#${i}` : name, an); break; }
+        const w = condOk(c); if (!w) { report.skipped.push(`condition: ${name.slice(0, 40)} animation ${i + 1}`); continue; }
+        const k = poseAnim(`${name}#${i}`, an); if (k) alts.push({ when: w, anim: k });
+      }
+      if (!base) { const last = alts.pop(); if (!last) return null; base = last.anim; }
+      return { anim: base, alts: alts.length ? alts : undefined };
     };
     // Seconds from a Duration (ticks; an expression: its least and its most).
     const range = (d: string | undefined): [number, number] | null => {
@@ -129,30 +154,61 @@ export function fromShimeji(files: PackFile[], character?: string): ImportResult
       try { const tree = compile(translateExpr(d), COND_NAMES); const lo = num(evaluate(tree, {}, () => 0)), hi = num(evaluate(tree, {}, () => 0.999)); if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null; const a = Math.max(TICK, Math.min(lo, hi) * TICK), b = Math.max(TICK, Math.max(lo, hi) * TICK); return [Math.min(a, 600), Math.min(b, 600)]; }
       catch (e) { if (e instanceof ExprError) report.skipped.push(`duration: ${d.slice(0, 60)}`); return null; }
     };
-    const stepsOf = (name: string, dur: string | undefined, depth: number): PetStep[] => {
-      if (depth > 8) return [];
-      const ai = acts.get(name); if (!ai) { report.skipped.push(`action: ${name.slice(0, 60)}`); return []; }
-      const t = ai.type;
-      if (t === 'Sequence' || t === 'Select') {
-        const out: PetStep[] = [];
-        for (const k of ai.el.kids) {
-          if (out.length >= 8) break;
-          if (k.name === 'ActionReference' && k.attrs.Name) out.push(...stepsOf(k.attrs.Name, k.attrs.Duration, depth + 1));
-          else if (k.name === 'Action' && k.attrs.Name) out.push(...stepsOf(k.attrs.Name, k.attrs.Duration, depth + 1));
-          else if (k.name === 'Select') { const f = k.kids.find((x) => (x.name === 'ActionReference' || x.name === 'Action') && x.attrs.Name); if (f) out.push(...stepsOf(f.attrs.Name, f.attrs.Duration, depth + 1)); report.notes.push(`selectFirst: ${name}`); }
-          if (t === 'Select' && out.length) break;
+    // What an action does, as alternatives (a Select gives several, each with its condition): memoised per action and
+    // duration, cycles cut, and a budget on the whole walk — a pack that asks more is refused.
+    type Alt = { steps: PetStep[]; w: number; when?: string };
+    const memo = new Map<string, Alt[]>(); const visiting = new Set<string>(); let calls = 0;
+    const MAX_ALTS = 8, MAX_STEPS = 8, BUDGET = 5000;
+    const and = (a?: string, b?: string) => (a && b ? `(${a}) && (${b})` : a ?? b);
+    const altsOf = (name: string, dur: string | undefined): Alt[] => {
+      if (++calls > BUDGET) throw new PackError('shimeji:tooComplex');
+      const key = `${name}\u0000${dur ?? ''}`; const m = memo.get(key); if (m) return m;
+      if (visiting.has(name)) { report.skipped.push(`cycle: ${name.slice(0, 60)}`); return []; }
+      const ai = acts.get(name); if (!ai) { report.skipped.push(`action: ${name.slice(0, 60)}`); memo.set(key, []); return []; }
+      visiting.add(name);
+      try {
+        let out: Alt[];
+        const t = ai.type;
+        const childAlts = (k: XNode): Alt[] => {
+          if ((k.name === 'ActionReference' || k.name === 'Action') && k.attrs.Name) {
+            const got = altsOf(k.attrs.Name, k.attrs.Duration);
+            const c = k.attrs.Condition; if (!c) return got;
+            const w = condOk(c); if (!w) { report.skipped.push(`condition: ${k.attrs.Name.slice(0, 60)}`); return []; }
+            return got.map((g) => ({ ...g, when: and(w, g.when) }));
+          }
+          if (k.name === 'Select') return selectAlts(k.kids);
+          return [];
+        };
+        const selectAlts = (kids: XNode[]): Alt[] => { const all: Alt[] = []; for (const k of kids) all.push(...childAlts(k)); const sum = all.reduce((x, a) => x + a.w, 0) || 1; return all.slice(0, MAX_ALTS).map((a) => ({ ...a, w: a.w / sum })); };
+        if (t === 'Select') out = selectAlts(ai.el.kids);
+        else if (t === 'Sequence') {
+          out = [{ steps: [], w: 1 }];
+          for (const k of ai.el.kids) {
+            const parts = childAlts(k); if (!parts.length) continue;
+            const next: Alt[] = [];
+            for (const a of out) for (const b of parts) { if (next.length >= MAX_ALTS) break; next.push({ steps: [...a.steps, ...b.steps].slice(0, MAX_STEPS), w: a.w * b.w, when: and(a.when, b.when) }); }
+            out = next;
+          }
+          out = out.filter((a) => a.steps.length);
+        } else if (t === 'Embedded' && !['Fall', 'Dragged', 'Thrown', 'Regist'].includes(ai.cls)) {
+          if (!['Look', 'Offset'].includes(ai.cls)) report.skipped.push(`embedded: ${ai.cls || name}`);
+          out = [];
+        } else {
+          const an = animOf(name);
+          if (!an) out = [];
+          else {
+            const a = animations[an.anim]; const once = (a.durations ?? []).reduce((x, y) => x + y, 0) || 1;
+            const r = range(dur) ?? range(ai.el.attrs.Duration) ?? (t === 'Animate' ? [once, once] : t === 'Move' ? [2, 6] : [3, 8]);
+            if (t === 'Animate') a.loop = false;
+            out = [{ steps: [{ anim: an.anim, min: r[0], max: r[1], ...(an.alts ? { alts: an.alts } : {}) }], w: 1 }];
+          }
         }
-        return out.slice(0, 8);
-      }
-      if (t === 'Embedded' && !['Fall', 'Dragged', 'Thrown', 'Regist'].includes(ai.cls)) { if (!['Look', 'Offset'].includes(ai.cls)) report.skipped.push(`embedded: ${ai.cls || name}`); return []; }
-      const an = animOf(name); if (!an) return [];
-      const a = animations[an]; const once = (a.durations ?? []).reduce((x, y) => x + y, 0) || 1;
-      const r = range(dur) ?? range(ai.el.attrs.Duration) ?? (t === 'Animate' ? [once, once] : t === 'Move' ? [2, 6] : [3, 8]);
-      if (t === 'Animate') a.loop = false;
-      return [{ anim: an, min: r[0], max: r[1] }];
+        memo.set(key, out); return out;
+      } finally { visiting.delete(name); }
     };
+    const firstAnim = (name: string): string | null => { const a = altsOf(name, undefined)[0]; return a?.steps[0]?.anim ?? null; };
     const classify = (anim: string, beh: string): PetState => {
-      const ai = acts.get(anim); const nm = `${beh} ${anim}`.toLowerCase();
+      const ai = acts.get(anim.split('#')[0]); const nm = `${beh} ${anim}`.toLowerCase();
       if (ai?.border === 'Wall' || ai?.border === 'Ceiling' || /climb|wall|ceiling/.test(nm)) return 'climb';
       if (ai?.type === 'Move' || /walk|run|dash|creep|chase/.test(nm)) return 'walk';
       if (/sleep|lie|lying|sprawl/.test(nm)) return 'sleep';
@@ -160,7 +216,7 @@ export function fromShimeji(files: PackFile[], character?: string): ImportResult
       return 'idle';
     };
     // Special actions: the embedded classes, or their usual names.
-    const special = (cls: string, names: RegExp): string | null => { for (const [n, ai] of acts) if (ai.cls === cls || names.test(n)) { const a = animOf(n); if (a) return a; } return null; };
+    const special = (cls: string, names: RegExp): string | null => { for (const [n, ai] of acts) if (ai.cls === cls || names.test(n)) { const a = animOf(n); if (a) return a.anim; } return null; };
     const fall = special('Fall', /^falling$/i), drag = special('Dragged', /^(pinched|dragged)$/i), thrown = special('Thrown', /^thrown$/i), click = special('Regist', /^(resisting|regist|resist)$/i);
     if (fall) push('fall', { steps: [{ anim: fall, min: 1, max: 1 }], weight: 1 });
     if (drag) push('dragged', { steps: [{ anim: drag, min: 1, max: 1 }], weight: 1 });
@@ -174,6 +230,7 @@ export function fromShimeji(files: PackFile[], character?: string): ImportResult
           if (k.name !== 'Behavior') continue;
           const name = k.attrs.Name ?? ''; const freq = Number(k.attrs.Frequency ?? 0);
           if (!name || !(freq > 0)) continue;
+          if (reservedName(name)) { report.skipped.push(`name: ${name.slice(0, 40)}`); continue; }
           const all = k.attrs.Condition ? [...conds, k.attrs.Condition] : conds;
           let when: string | undefined;
           if (all.length) {
@@ -181,16 +238,23 @@ export function fromShimeji(files: PackFile[], character?: string): ImportResult
             try { compile(when, COND_NAMES); } catch { report.skipped.push(`condition: ${name.slice(0, 60)}`); continue; }
           }
           if (/^chasemouse/i.test(name) || /^jump/i.test(name)) { report.skipped.push(`behaviour: ${name.slice(0, 60)}`); continue; }
-          const steps = stepsOf(k.attrs.Action ?? name, undefined, 0);
-          if (!steps.length) { report.skipped.push(`behaviour: ${name.slice(0, 60)}`); continue; }
-          push(classify(steps[0].anim, name), { steps, weight: Math.min(1000, freq), when, name: name.slice(0, 60) });
+          const alts = altsOf(k.attrs.Action ?? name, undefined);
+          if (!alts.length) { report.skipped.push(`behaviour: ${name.slice(0, 60)}`); continue; }
+          // (What may follow it: its NextBehaviorList — only those, or those added among the usual.)
+          const nl = k.kids.find((x) => x.name === 'NextBehaviorList');
+          const next = nl ? nl.kids.filter((x) => x.name === 'BehaviorReference' && x.attrs.Name && !reservedName(x.attrs.Name)).map((x) => ({ name: x.attrs.Name.slice(0, 60), weight: Math.max(0, Math.min(1000, Number(x.attrs.Frequency ?? 1) || 0)) })).filter((x) => x.weight > 0).slice(0, 16) : [];
+          const sum = alts.reduce((x, a) => x + a.w, 0) || 1;
+          for (const a of alts) {
+            const w2 = a.when ? and(when, a.when) : when; if (w2 && w2.length > 480) { report.skipped.push(`condition: ${name.slice(0, 60)}`); continue; }
+            push(classify(a.steps[0].anim, name), { steps: a.steps, weight: Math.min(1000, freq) * (a.w / sum), when: w2, name: name.slice(0, 60), ...(next.length ? { next, nextAdd: nl?.attrs.Add !== 'false' } : {}) });
+          }
         }
       };
       visit(behaviorsDoc, []);
     } else report.notes.push('noBehaviors');
     // (A pack whose behaviours were all skipped still stands and walks: its Stand and Walk actions.)
-    if (!states.idle?.length) { const a = animOf('Stand') ?? animOf('Standing'); if (a) push('idle', { steps: [{ anim: a, min: 3, max: 8 }], weight: 1 }); }
-    if (!states.walk?.length) { const a = animOf('Walk') ?? animOf('Walking'); if (a) push('walk', { steps: [{ anim: a, min: 2, max: 6 }], weight: 1 }); }
+    if (!states.idle?.length) { const a = firstAnim('Stand') ?? firstAnim('Standing'); if (a) push('idle', { steps: [{ anim: a, min: 3, max: 8 }], weight: 1 }); }
+    if (!states.walk?.length) { const a = firstAnim('Walk') ?? firstAnim('Walking'); if (a) push('walk', { steps: [{ anim: a, min: 2, max: 6 }], weight: 1 }); }
   }
   if (!actionsDoc || (!states.idle?.length && !states.walk?.length)) {
     if (!aFile) report.notes.push('standardSlots');
@@ -199,11 +263,11 @@ export function fromShimeji(files: PackFile[], character?: string): ImportResult
     for (const [nm, d] of Object.entries(STANDARD)) {
       const frames = d.frames.map(slot).filter((x): x is number => x !== null);
       if (!frames.length) continue;
-      animations[`std-${nm}`] = { frames, fps: d.fps, loop: d.loop, speed: d.speed };
+      animations[`std-${nm}`] = { frames, fps: d.fps, loop: d.loop, speed: d.speed }; anims++;
       const st = (nm === 'landing' ? 'click' : nm) as PetState;
       if (!states[st]?.length) push(st, { steps: [{ anim: `std-${nm}`, min: st === 'walk' ? 2 : 3, max: st === 'walk' ? 6 : 8 }], weight: st === 'idle' ? 3 : 2 });
     }
-    if (!states.thrown?.length && animations['std-fall']) push('thrown', { steps: [{ anim: 'std-fall', min: 1, max: 1 }], weight: 1 });
+    if (!states.thrown?.length && own(animations, 'std-fall')) push('thrown', { steps: [{ anim: 'std-fall', min: 1, max: 1 }], weight: 1 });
   }
   if (!fl.list.length) throw new PackError('shimeji:noFrames');
   checkFrameBudget(fl.list, info);

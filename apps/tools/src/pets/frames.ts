@@ -3,7 +3,7 @@
 // GIFs give their frames and a strip (a picture several frames wide or tall) is cut into square cells; each group gets
 // a suggested state from its name. The mapping screen lets the user assign groups to states, and the choice becomes a
 // pack of our own format.
-import { CHOSEN, LIMITS, checkPack, newReport, type PetPack, type PetState, type PetChoice } from './model';
+import { CHOSEN, LIMITS, dict, checkPack, newReport, type PetPack, type PetState, type PetChoice } from './model';
 import { FrameList, PackError, checkFrameBudget, picInfo, type FrameSrc, type ImportResult, type PackFile, type PicInfo } from './source';
 
 export interface FrameGroup { key: string; label: string; frames: FrameSrc[]; suggested: PetState | null; fps: number }
@@ -78,7 +78,7 @@ export function buildFromMapping(files: PackFile[], groups: FrameGroup[], mappin
   const report = newReport(); const fl = new FrameList(); const byKey = new Map(groups.map((g) => [g.key, g]));
   const byPath = new Map(files.map((f) => [f.path, f])); const infos = new Map<string, PicInfo | null>();
   const info = (p: string) => { if (!infos.has(p)) { const f = byPath.get(p); infos.set(p, f ? picInfo(f) : null); } return infos.get(p) ?? null; };
-  const animations: PetPack['animations'] = {}; const states: Partial<Record<PetState, PetChoice[]>> = {};
+  const animations: PetPack['animations'] = dict<PetPack['animations'][string]>(); const states: Partial<Record<PetState, PetChoice[]>> = {};
   for (const st of MAP_STATES) {
     const g = mapping[st] ? byKey.get(mapping[st]!) : undefined; if (!g || !g.frames.length) continue;
     const fps = Math.min(60, Math.max(0.5, o.fps?.[st] ?? g.fps));

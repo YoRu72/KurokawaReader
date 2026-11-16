@@ -53,3 +53,5 @@ html.pet-window .pet-win-cv { position: absolute; left: 0; top: 0; touch-action:
 html.pet-window .pet-win-say { position: absolute; left: 50%; top: 4px; transform: translateX(-50%); max-width: 200px; padding: 6px 12px; border-radius: 16px; background: var(--md-surface-container-highest); color: var(--md-on-surface); font: 500 13px/1.35 var(--font-ui); }
 html.pet-window .pet-win-menu { position: absolute; left: 0; top: 0; min-width: 0; width: 196px; box-sizing: border-box; }
 .pet-map-sheet .sheet-body > .field { margin-top: 10px; }
+.pet-link .pet-link-host { font: 600 13px var(--font-ui); color: var(--md-primary); unicode-bidi: isolate; }
+.pet-busy.on { display: flex; align-items: center; gap: 12px; }

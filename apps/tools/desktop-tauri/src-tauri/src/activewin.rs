@@ -8,7 +8,8 @@
 //    process, or of this one. Points (the page's logical pixels). The work area is not read (the caller uses the
 //    monitor).
 //  - Linux, X11: libX11 loaded at run time (dlopen, so the build never links it): the root's _NET_ACTIVE_WINDOW, its
-//    place on the root and its frame (_NET_FRAME_EXTENTS); the root's _NET_WORKAREA. Physical pixels.
+//    place on the root and its frame (_NET_FRAME_EXTENTS); the root's _NET_WORKAREA. Physical pixels. Its own display
+//    connection; its error handler set only around each query and GDK's put back right after.
 //  - Wayland: no client may see other windows: «unsupported», the pet keeps to the screen's bottom edge.
 // Every path answers None or Unsupported rather than fail; this file compiles on Linux here (its tests), the other
 // systems' paths only in CI.
@@ -238,8 +239,10 @@ mod os {
         free: unsafe extern "C" fn(*mut c_void) -> c_int,
         geom: unsafe extern "C" fn(*mut Display, Window, *mut Window, *mut c_int, *mut c_int, *mut c_uint, *mut c_uint, *mut c_uint, *mut c_uint) -> c_int,
         translate: unsafe extern "C" fn(*mut Display, Window, Window, c_int, c_int, *mut c_int, *mut c_int, *mut Window) -> c_int,
-        set_handler: unsafe extern "C" fn(Option<unsafe extern "C" fn(*mut Display, *mut c_void) -> c_int>) -> *mut c_void,
+        set_handler: unsafe extern "C" fn(Option<Handler>) -> Option<Handler>,
+        sync: unsafe extern "C" fn(*mut Display, c_int) -> c_int,
     }
+    type Handler = unsafe extern "C" fn(*mut Display, *mut c_void) -> c_int;
     unsafe impl Send for X {}
     /// One connection, opened at the first ask (None: there is no X here); used under a lock.
     static CONN: Mutex<Option<Option<X>>> = Mutex::new(None);
@@ -281,12 +284,12 @@ mod os {
                 geom: sym(lib, "XGetGeometry")?,
                 translate: sym(lib, "XTranslateCoordinates")?,
                 set_handler: sym(lib, "XSetErrorHandler")?,
+                sync: sym(lib, "XSync")?,
             };
             let dpy = open_display(std::ptr::null());
             if dpy.is_null() {
                 return None;
             }
-            (x.set_handler)(Some(quiet));
             Some(X { dpy, root: root_of(dpy), ..x })
         }
     }
@@ -306,12 +309,22 @@ mod os {
         (x.free)(data as *mut c_void);
         out
     }
+    /// A query on this module's own connection (not GDK's), under the lock. Xlib's error handler is one for the whole
+    /// process: ours (which keeps a window gone between two calls from ending the program) is set only for the query —
+    /// its errors flushed with XSync — and the one before it (GDK's) put back at once.
     fn with<T>(f: impl FnOnce(&X) -> T) -> Option<T> {
         let mut g = CONN.lock().ok()?;
         if g.is_none() {
             *g = Some(open());
         }
-        g.as_ref().and_then(|o| o.as_ref()).map(f)
+        let x = g.as_ref().and_then(|o| o.as_ref())?;
+        unsafe {
+            let prev = (x.set_handler)(Some(quiet));
+            let out = f(x);
+            (x.sync)(x.dpy, 0);
+            (x.set_handler)(prev);
+            Some(out)
+        }
     }
     fn env(k: &str) -> Option<String> {
         std::env::var(k).ok()

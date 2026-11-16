@@ -42,10 +42,17 @@ function saveState() { if (!win) return; try { const b = win.getNormalBounds(); 
 let awakeId = -1; const deskPrefs = { keepAwake: true, whenDone: 'nothing', notifyDone: true, tray: false, hotkeys: {} }; let wasActive = false;
 /* ---------- the downloads' tray icon (the speed over all of them in its tooltip), finished-download notices, clipboard hotkeys ---------- */
 let dlTray = null; const doneSeen = new Set(); const human = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${Math.round(n)} B`);
+/** The tray's menu: the app, «Hide pets» while pets are shown (the page says so, in its words), Quit. */
+const petTray = { shown: false, label: 'Hide pets' };
+function trayMenu() {
+  return Menu.buildFromTemplate([{ label: 'Kurokawa Tools', click: () => { if (win) { win.show(); win.focus(); } } },
+    ...(petTray.shown ? [{ label: petTray.label, click: () => { closePets(); if (win && !win.isDestroyed()) win.webContents.send('kt:petHide'); } }] : []),
+    { type: 'separator' }, { label: 'Quit', click: () => { quitting = true; app.quit(); } }]);
+}
 function trayUpdate(moving) {
   if (!deskPrefs.tray) { if (dlTray) { dlTray.destroy(); dlTray = null; } return; }
   try {
-    if (!dlTray) { dlTray = new Tray(nativeImage.createFromPath(path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png')).resize({ width: 18, height: 18 })); dlTray.on('click', () => { if (win) { win.show(); win.focus(); } }); dlTray.setContextMenu(Menu.buildFromTemplate([{ label: 'Kurokawa Tools', click: () => { if (win) { win.show(); win.focus(); } } }, { type: 'separator' }, { label: 'Quit', click: () => { quitting = true; app.quit(); } }])); }
+    if (!dlTray) { dlTray = new Tray(nativeImage.createFromPath(path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png')).resize({ width: 18, height: 18 })); dlTray.on('click', () => { if (win) { win.show(); win.focus(); } }); dlTray.setContextMenu(trayMenu()); }
     const down = moving.reduce((n, x) => n + (Number(x.downSpeed) || 0), 0);
     dlTray.setToolTip(moving.length ? `Kurokawa Tools · ↓ ${human(down)}/s · ${moving.length}` : 'Kurokawa Tools');
   } catch { /* no tray here */ }
@@ -102,20 +109,35 @@ function closeMini() { if (mini) mini.close(); }
 // is in front without a native addon: no «follow the active window» here (the pet keeps to the work area's floor).
 const petWins = new Map();
 const PET_ID = /^[A-Za-z0-9_-]{1,40}$/;
+/** Electron on Wayland itself (not through XWayland): windows cannot be placed by the app — no desktop pets there. */
+function petWaylandOnly() {
+  if (process.platform !== 'linux') return false;
+  const ozone = String(app.commandLine.getSwitchValue('ozone-platform') || process.env.ELECTRON_OZONE_PLATFORM_HINT || '').toLowerCase();
+  return ozone === 'wayland' || (ozone === 'auto' && !!process.env.WAYLAND_DISPLAY);
+}
 const num = (v, d) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : d);
 function closePets() { for (const w of petWins.values()) { try { if (!w.isDestroyed()) w.close(); } catch { /* gone */ } } petWins.clear(); }
-ipcMain.handle('kt:pet', (_e, o) => {
+/** The pet window that sent `e` (its id), or '' for any other window. */
+const petOf = (e) => { for (const [id, w] of petWins) { try { if (!w.isDestroyed() && w.webContents === e.sender) return id; } catch { /* gone */ } } return ''; };
+ipcMain.handle('kt:pet', (e, o) => {
   const a = o && o.action; const id = String((o && o.id) || '');
+  // (A pet window may ask about the screen, move or close itself, switch its own click-through, hide all, show the
+  // main window — nothing about another pet, and it opens none.)
+  const from = petOf(e);
+  if (from && (a === 'open' || (['move', 'through', 'close'].includes(a) && id !== from))) return { ok: false };
+  if (!from && e.sender !== (win && !win.isDestroyed() ? win.webContents : null)) return { ok: false };
+  if (a === 'caps') return { desktop: !petWaylandOnly(), follow: false, why: petWaylandOnly() ? 'wayland' : 'electron' };
   if (a === 'screen') { const { screen } = require('electron'); const c = screen.getCursorScreenPoint(); const d = screen.getPrimaryDisplay(); const wa = d.workArea; return { work: { x: wa.x, y: wa.y, w: wa.width, h: wa.height }, cursor: { x: c.x, y: c.y }, scale: d.scaleFactor }; }
   if (a === 'active') return { rect: null, why: 'unsupported' };
   if (a === 'closeAll') { closePets(); return { ok: true }; }
+  if (a === 'tray') { if (from) return { ok: false }; petTray.shown = !!o.shown; if (typeof o.label === 'string' && o.label.trim()) petTray.label = o.label.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').slice(0, 60); try { if (dlTray) dlTray.setContextMenu(trayMenu()); } catch { /* no tray */ } return { ok: true }; }
   if (a === 'main') { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (o.hash === '#/settings/pets') win.webContents.executeJavaScript("location.hash='#/settings/pets'").catch(() => {}); } return { ok: true }; }
   if (!PET_ID.test(id)) return { ok: false };
   const w = petWins.get(id);
   if (a === 'open') {
     if (w && !w.isDestroyed()) return { ok: true };
     const pw = new BrowserWindow({ x: num(o.x, 0), y: num(o.y, 0), width: Math.max(4, num(o.w, 4)), height: Math.max(4, num(o.h, 4)), transparent: true, frame: false, resizable: false, movable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, hasShadow: false, fullscreenable: false, maximizable: false, minimizable: false, show: false, backgroundColor: '#00000000', title: 'Kurokawa Tools pet',
-      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+      webPreferences: { preload: path.join(__dirname, 'preload-pet.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
     pw.setAlwaysOnTop(true, 'floating'); pw.setVisibleOnAllWorkspaces?.(true); pw.setIgnoreMouseEvents(true, { forward: true });
     pw.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     pw.loadURL(`app://kurokawa/index.html#/pet/${id}`); pw.once('ready-to-show', () => { if (!pw.isDestroyed()) pw.showInactive(); });

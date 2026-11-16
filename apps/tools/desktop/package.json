@@ -31,6 +31,7 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "preload-pet.cjs",
       "aria2.cjs",
       "paths.cjs",
       "sniff.cjs",

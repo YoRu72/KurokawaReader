@@ -1,9 +1,9 @@
 // A pack chosen by the user from his own files: a folder (the system's folder chooser) or a zip, read into memory
 // within the limits (count, each file's size, the total) before anything is decoded; then its frames made into PNG
 // pictures of their own (a strip's cells cut, a GIF's frames composed), ready for the library.
-import { LIMITS } from './model';
-import { PackError, type FrameSrc, type PackFile } from './source';
-import { gifFrames } from './gif';
+import { LIMITS, imageKind } from './model';
+import { PackError, checkFrameBudget, picInfo, type FrameSrc, type PackFile } from './source';
+import { GifDecoder } from './gif';
 
 const WANTED = /\.(png|webp|gif|json|xml|txt|md)$/i;
 function choose(o: { dir?: boolean; accept?: string }): Promise<File[] | null> {
@@ -38,10 +38,17 @@ export async function readFiles(list: { path: string; file: Blob }[]): Promise<P
   for (const x of list) if (!WANTED.test(x.path)) out.push({ path: x.path, bytes: new Uint8Array(0) });
   return out;
 }
+/** An entry's name: as written when the zip says UTF-8 or the bytes are valid UTF-8; else Shift_JIS (the Japanese packs
+ *  zipped on Windows), where the platform can read it. */
+export function zipName(e: { name: string; raw?: Uint8Array; utf8?: boolean }): string {
+  if (e.utf8 || !e.raw) return e.name;
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(e.raw); } catch { /* not UTF-8 */ }
+  try { return new TextDecoder('shift_jis', { fatal: true }).decode(e.raw); } catch { return e.name; }
+}
 export async function readZip(b: Blob): Promise<PackFile[]> {
   const { zipEntries, zipRead } = await import('../ipa/zip');
   let entries; try { entries = await zipEntries(b); } catch { throw new PackError('notZip'); }
-  entries = entries.filter((e) => !e.name.endsWith('/'));
+  entries = entries.filter((e) => !e.name.endsWith('/')).map((e) => ({ ...e, name: zipName(e) }));
   if (entries.length > LIMITS.files * 2) throw new PackError('tooManyFiles');
   const out: PackFile[] = []; let total = 0;
   for (const e of entries) {
@@ -56,33 +63,40 @@ export async function readZip(b: Blob): Promise<PackFile[]> {
 }
 
 /* ---------- frames into pictures ---------- */
-async function bitmapOf(bytes: Uint8Array, type: string): Promise<ImageBitmap> {
-  try { return await createImageBitmap(new Blob([bytes as BlobPart], { type })); } catch { throw new PackError('badPicture'); }
-}
 function canvasOf(w: number, h: number): HTMLCanvasElement { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 const toPng = (c: HTMLCanvasElement): Promise<Blob> => new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new PackError('encode'))), 'image/png'));
-/** Each frame as its own PNG, with its size; `progress` told as they are made. */
-export async function makeFrames(frames: FrameSrc[], files: PackFile[], progress?: (done: number, total: number) => void): Promise<{ blobs: Blob[]; sizes: [number, number][] }> {
+/** A moment for the page between two frames (a long import never holds the window), and the cancel checked. */
+const breathe = (signal?: AbortSignal): Promise<void> => new Promise((res, rej) => setTimeout(() => (signal?.aborted ? rej(new PackError('cancelled')) : res()), 0));
+/** Each frame as its own PNG, with its size; `progress` told as they are made; `signal` cancels. Checked against the
+ *  limits before anything is decoded; then one picture at a time — a sheet decoded, its cells cut, let go; a GIF's
+ *  frames composed in order on one buffer, only up to the last frame used. */
+export async function makeFrames(frames: FrameSrc[], files: PackFile[], progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ blobs: Blob[]; sizes: [number, number][] }> {
   const byPath = new Map(files.map((f) => [f.path, f]));
-  const bitmaps = new Map<string, ImageBitmap>(); const gifs = new Map<string, ReturnType<typeof gifFrames>>();
-  const blobs: Blob[] = []; const sizes: [number, number][] = [];
-  try {
-    for (let i = 0; i < frames.length; i++) {
-      const fr = frames[i]; const f = byPath.get(fr.file); if (!f) throw new PackError('missing');
-      let c: HTMLCanvasElement;
-      if (fr.gif !== undefined) {
-        let g = gifs.get(fr.file); if (!g) { try { g = gifFrames(f.bytes, LIMITS.framePx * LIMITS.framePx); } catch { throw new PackError('badPicture'); } gifs.set(fr.file, g); }
-        const one = g.frames[fr.gif]; if (!one) throw new PackError('badPicture');
-        c = canvasOf(g.w, g.h); c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(one.rgba), g.w, g.h), 0, 0);
-      } else {
-        let bm = bitmaps.get(fr.file); if (!bm) { bm = await bitmapOf(f.bytes, f.path.toLowerCase().endsWith('.webp') ? 'image/webp' : 'image/png'); bitmaps.set(fr.file, bm); }
-        const [x, y, w, h] = fr.cell ?? [0, 0, bm.width, bm.height];
-        if (w > LIMITS.framePx || h > LIMITS.framePx || x + w > bm.width || y + h > bm.height) throw new PackError('frameTooBig');
-        c = canvasOf(w, h); c.getContext('2d')!.drawImage(bm, x, y, w, h, 0, 0, w, h);
+  checkFrameBudget(frames, (p) => { const f = byPath.get(p); return f ? picInfo(f) : null; });
+  const blobs: Blob[] = new Array(frames.length); const sizes: [number, number][] = new Array(frames.length);
+  const order = new Map<string, number[]>(); frames.forEach((fr, i) => { const l = order.get(fr.file); if (l) l.push(i); else order.set(fr.file, [i]); });
+  let done = 0;
+  const keep = async (i: number, c: HTMLCanvasElement) => { blobs[i] = await toPng(c); sizes[i] = [c.width, c.height]; c.width = c.height = 0; progress?.(++done, frames.length); await breathe(signal); };
+  for (const [file, idxs] of order) {
+    const f = byPath.get(file); if (!f) throw new PackError('missing');
+    if (imageKind(f.bytes) === 'gif') {
+      let d: GifDecoder; try { d = new GifDecoder(f.bytes, LIMITS.framePx); } catch { throw new PackError('badPicture'); }
+      for (const i of [...idxs].sort((a, b) => (frames[a].gif ?? 0) - (frames[b].gif ?? 0))) {
+        let rgba: Uint8ClampedArray; try { rgba = d.frame(frames[i].gif ?? 0); } catch { throw new PackError('badPicture'); }
+        const c = canvasOf(d.w, d.h); c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(rgba), d.w, d.h), 0, 0);
+        await keep(i, c);
       }
-      blobs.push(await toPng(c)); sizes.push([c.width, c.height]); c.width = c.height = 0;
-      progress?.(i + 1, frames.length);
+      continue;
     }
-  } finally { for (const b of bitmaps.values()) b.close(); }
+    let bm: ImageBitmap; try { bm = await createImageBitmap(new Blob([f.bytes as BlobPart], { type: imageKind(f.bytes) === 'webp' ? 'image/webp' : 'image/png' })); } catch { throw new PackError('badPicture'); }
+    try {
+      for (const i of idxs) {
+        const [x, y, w, h] = frames[i].cell ?? [0, 0, bm.width, bm.height];
+        if (w > LIMITS.framePx || h > LIMITS.framePx || x + w > bm.width || y + h > bm.height) throw new PackError('frameTooBig');
+        const c = canvasOf(w, h); c.getContext('2d')!.drawImage(bm, x, y, w, h, 0, 0, w, h);
+        await keep(i, c);
+      }
+    } finally { bm.close(); }
+  }
   return { blobs, sizes };
 }

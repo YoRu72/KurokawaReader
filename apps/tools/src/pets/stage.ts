@@ -12,14 +12,14 @@ import type { PetPrefs } from './prefs';
 /** Where a pet may stand: the app's boxes (cards, grouped rows, download rows, bars) — those drawn as boxes (a background
  *  or a border of their own), whose top edge is open (nothing solid just above it: not the seam between two rows). */
 const SURFACES = '#app .card, #app .card > .row, #app .card > label.row, #app .task, #app .dl-status, #app [data-pet-surface]';
-const BUSY_MS = 1000 / 30, REST_MS = 100, MEASURE_MS = 400;
+const BUSY_MS = 1000 / 30, MAX_REST_MS = 15000;
 interface Pet { id: string; lp: LoadedPet; sim: PetSim; cv: HTMLCanvasElement; ctx: CanvasRenderingContext2D; masks: (Uint8Array | null)[]; bubble: HTMLElement; press: { x: number; y: number; t: number; moved: boolean; id: number } | null }
 export type StageWhy = 'hidden' | 'fullscreen' | 'video' | 'battery' | 'motion' | null;
 
-export interface StageHooks { hide(): void; settings(): void; labels: { hide: string; settings: string } }
+export interface StageHooks { hide(): void; settings(): void; /** A pet that failed (its pack): taken off, the user told. */ failed?(name: string): void; labels: { hide: string; settings: string } }
 export class Stage {
   readonly host: HTMLElement; pets: Pet[] = [];
-  private timer = 0; private off: (() => void)[] = []; private surfaces: Surface[] = []; private measuredAt = -1e9; private dirty = true;
+  private timer = 0; private off: (() => void)[] = []; private surfaces: Surface[] = []; private dirty = true; private mutTimer = 0;
   private ids = new WeakMap<Element, string>(); private nextId = 1; private last = 0;
   private pointer: { x: number; y: number } | null = null; private lastFlee = 0; private prevDist = new Map<string, number>();
   private video = false; private onBattery = false; private menu: HTMLElement | null = null;
@@ -30,8 +30,17 @@ export class Stage {
     const add = (tg: EventTarget, ev: string, fn: EventListener, o: AddEventListenerOptions | boolean = false) => { tg.addEventListener(ev, fn, o); this.off.push(() => tg.removeEventListener(ev, fn, o)); };
     const upd = () => this.gate();
     add(document, 'visibilitychange', upd); add(document, 'fullscreenchange', upd);
-    add(window, 'resize', () => { this.dirty = true; this.wake(); }, { passive: true });
-    add(document, 'scroll', () => { this.dirty = true; }, { capture: true, passive: true });
+    add(window, 'resize', () => { this.dirty = true; const w = this.world(); for (const p of this.pets) p.sim.fit(w); this.draw(); this.wake(); }, { passive: true });
+    add(document, 'scroll', () => { this.dirty = true; this.wakeIfStanding(); }, { capture: true, passive: true });
+    // (The panels measured again only when the page's layout changes — a view changed, a row added, a size changed —,
+    // a moment after it settles; a pet standing on one then follows it, or falls when it is gone.)
+    const app = document.getElementById('app');
+    const changed = () => { this.dirty = true; if (!this.mutTimer) this.mutTimer = window.setTimeout(() => { this.mutTimer = 0; this.wakeIfStanding(); }, 150); };
+    if (app) {
+      const mo = new MutationObserver(changed); mo.observe(app, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden'] }); this.off.push(() => mo.disconnect());
+      if (typeof ResizeObserver === 'function') { const ro = new ResizeObserver(changed); ro.observe(app); this.off.push(() => ro.disconnect()); }
+    }
+    this.off.push(() => { clearTimeout(this.mutTimer); this.mutTimer = 0; });
     add(window, 'pointermove', ((e: PointerEvent) => this.move(e)) as EventListener, { passive: true, capture: true });
     add(window, 'blur', () => { for (const p of this.pets) p.cv.style.pointerEvents = 'none'; });
     const vid = () => { const v = Array.from(document.querySelectorAll('video')).some((x) => !x.paused && !x.ended && x.readyState > 1); if (v !== this.video) { this.video = v; this.gate(); } };
@@ -79,10 +88,16 @@ export class Stage {
     this.host.dataset.state = this.why ?? 'on';
     clearTimeout(this.timer); this.timer = 0;
     if (this.why === 'motion') { this.still(); return; }
-    if (this.why === 'battery') { this.draw(); return; }
-    if (!this.why) { this.last = performance.now(); this.schedule(0); }
+    // (On battery: a pet in the air — thrown, falling, held — finishes its motion, then stays where it lands.)
+    if (!this.why || this.why === 'battery') { this.last = performance.now(); this.schedule(0); }
   }
-  private wake(): void { if (!this.why && !this.timer) { this.last = performance.now(); this.schedule(0); } else if (this.why === 'motion') this.still(); }
+  private wake(): void { if ((!this.why || this.why === 'battery') && !this.timer) { this.last = performance.now(); this.schedule(0); } else if (this.why === 'motion') this.still(); }
+  private wakeIfStanding(): void { if (this.pets.some((p) => p.sim.on && p.sim.on !== 'floor')) this.wake(); }
+  /** One pet failed (a fault in its pack or ours): taken off the screen; the others go on. */
+  private fail(p: Pet, e: unknown): void {
+    console.error('[pets]', e); this.drop(p); this.pets = this.pets.filter((x) => x !== p);
+    try { this.hooks.failed?.(p.lp.pack.name); } catch { /* told nobody */ }
+  }
   private schedule(ms: number): void { if (this.timer || !this.pets.length) return; this.timer = window.setTimeout(() => { this.timer = 0; this.frame(); }, ms); }
   /** Less motion: each pet stands on the floor in its first idle picture; nothing scheduled. */
   private still(): void {
@@ -91,17 +106,26 @@ export class Stage {
     this.draw();
   }
   private frame(): void {
-    if (this.why || !this.host.isConnected) return;
-    const now = performance.now(); const dt = Math.min(0.1, (now - this.last) / 1000); this.last = now;
-    const w = this.world();
-    for (const p of this.pets) p.sim.step(dt, w);
-    this.draw();
-    this.schedule(this.pets.some((p) => p.sim.busy()) ? BUSY_MS : REST_MS);
+    if ((this.why && this.why !== 'battery') || !this.host.isConnected) return;
+    const now = performance.now(); let dt = Math.min(15, (now - this.last) / 1000); this.last = now;
+    const w = this.world(); const battery = this.why === 'battery';
+    for (const p of [...this.pets]) {
+      try {
+        if (battery && p.sim.on && !p.sim.dragging) continue;
+        // (A long rest is stepped through in tenths: timers run their full time, physics stays fine-grained.)
+        let left = dt; while (left > 1e-6) { const d = Math.min(0.1, left); p.sim.step(d, w); left -= d; }
+      } catch (e) { this.fail(p, e); }
+    }
+    dt = 0; this.draw();
+    // (Moving: 30 a second. At rest: woken only when something drawn changes by itself — the next picture, the end of
+    // what it does —; events wake it sooner. On battery: only until every pet has landed.)
+    if (battery) { if (this.pets.some((p) => !p.sim.on || p.sim.dragging)) this.schedule(BUSY_MS); return; }
+    const rest = Math.min(...this.pets.map((p) => p.sim.restFor()));
+    if (rest === 0) this.schedule(BUSY_MS); else if (Number.isFinite(rest)) this.schedule(Math.min(MAX_REST_MS, Math.max(BUSY_MS, rest * 1000 + 5)));
   }
   /* ---------- the world: the window, its panels ---------- */
   world(): World {
-    const now = performance.now();
-    if (this.dirty || now - this.measuredAt > MEASURE_MS) { this.dirty = false; this.measuredAt = now; this.surfaces = this.measure(); }
+    if (this.dirty) { this.dirty = false; this.surfaces = this.measure(); }
     return { width: innerWidth, height: innerHeight, floor: innerHeight, surfaces: this.surfaces, pointer: this.pointer };
   }
   private boxes = new WeakMap<Element, boolean>();
@@ -139,8 +163,9 @@ export class Stage {
   /* ---------- drawing ---------- */
   draw(): void {
     const dpr = Math.min(2, devicePixelRatio || 1);
-    for (const p of this.pets) {
-      const v = p.sim.view(); const im = p.lp.images[v.frame]; if (!im) continue;
+    for (const p of [...this.pets]) {
+      let v: ReturnType<PetSim['view']>; try { v = p.sim.view(); } catch (e) { this.fail(p, e); continue; }
+      const im = p.lp.images[v.frame]; if (!im) continue;
       const cw = Math.max(1, Math.ceil(v.w)), ch = Math.max(1, Math.ceil(v.h));
       if (p.cv.width !== Math.round(cw * dpr) || p.cv.height !== Math.round(ch * dpr)) { p.cv.width = Math.round(cw * dpr); p.cv.height = Math.round(ch * dpr); p.cv.style.width = `${cw}px`; p.cv.style.height = `${ch}px`; }
       const c = p.ctx; c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, p.cv.width, p.cv.height);
