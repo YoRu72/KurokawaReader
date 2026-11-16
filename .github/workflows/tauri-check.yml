@@ -19,6 +19,8 @@ on:
       - 'apps/tools/desktop-tauri/**'
       - 'apps/tools/core/**'
       - 'shared/shell-rs/**'
+      - 'scripts/build-scene-wasm.sh'
+      - '.github/actions/scene-wasm/**'
       - 'apps/tools/src/**'
       - 'apps/tools/tests/**'
       - 'apps/tools/desktop/**'
@@ -48,6 +50,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
 
+      # (The scene engine's wasm into public/scene/ before the web build — scripts/build-scene-wasm.sh.)
+      - uses: ./.github/actions/scene-wasm
       - name: Web UI
         working-directory: apps/tools
         run: |

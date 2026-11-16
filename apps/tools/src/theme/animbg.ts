@@ -11,25 +11,35 @@
 // It never runs on a phone, is fetched only when chosen (settings.animBg), and stops — no timer, no frame — whenever
 // it cannot be seen or should not move (see `Gate`). Text stays readable: the colours are drawn nearer the ground until
 // every text role passes WCAG AA over the brightest and darkest colour any frame can show (`clampPalette`).
+//
+// Scenes («scene:motes»): particles simulated by our Rust engine (core/kt-scene, loaded as wasm by sceneHost.ts, both
+// fetched only when a scene is chosen) and drawn on the same canvas, under the same gate, throttle and teardown. When
+// the engine cannot be loaded the background is «drift» instead, and one console.info line says why.
 import { getSettings } from '../settings';
 import { contrast, over, type RGBA } from './themes';
+import type { SceneRun } from './sceneHost';
 
-export type AnimKind = 'drift' | 'flow';
+/** The two drawn designs. */
+export type Design = 'drift' | 'flow';
+/** The scenes of the engine. */
+export type SceneKind = 'scene:motes';
+export type AnimKind = Design | SceneKind;
 export type AnimPref = 'off' | 'match' | AnimKind;
 export type AnimLevel = 'full' | 'reduced' | 'still';
+export const isScene = (k: string | null | undefined): k is SceneKind => typeof k === 'string' && k.startsWith('scene:');
 /** The loop of each design (seconds of motion at Full; Reduced moves at half the speed, so twice as long). */
-export const LOOP: Record<AnimKind, number> = { drift: 300, flow: 240 };
+export const LOOP: Record<Design, number> = { drift: 300, flow: 240 };
 /** Frames a second (measured: each new frame makes the compositor blur the glass over it again — the real cost —, so
  *  as few as the motion needs): drift moves a few pixels a second, 15 are smooth; flow 12 while its shapes rest and
  *  glide, 24 during the spring of a re-arrangement. Reduced: half. */
-function fpsOf(kind: AnimKind, level: AnimLevel, t: number): number {
+function fpsOf(kind: Design, level: AnimLevel, t: number): number {
   const k = level === 'reduced' ? 0.5 : 1;
   if (kind === 'drift') return 15 * k;
   const seg = LOOP.flow / ARR; const into = (((t % LOOP.flow) + LOOP.flow) % LOOP.flow) % seg;
   return (into > seg - TRANS - 0.5 ? 24 : 12) * k;
 }
 /** A frame chosen for Still (and for the first frame): a moment of rest in each design. */
-const STILL_AT: Record<AnimKind, number> = { drift: 41, flow: 20 };
+const STILL_AT: Record<Design, number> = { drift: 41, flow: 20 };
 /** The window unfocused this long: paused. */
 export const UNFOCUSED_MS = 4000;
 /** After a scroll, a wheel or a drag: this long before moving again. */
@@ -39,7 +49,7 @@ const GRAIN_A = 0.028;
 /** «Match the theme»: Frost drifts, Expressive 3 flows, a theme of the reader's its own choice; the others none. */
 export function kindFor(pref: AnimPref | undefined, theme: string | undefined, themeAnim: string | undefined): AnimKind | null {
   if (!pref || pref === 'off') return null;
-  if (pref === 'drift' || pref === 'flow') return pref;
+  if (pref === 'drift' || pref === 'flow' || isScene(pref)) return pref;
   if (themeAnim === 'drift' || themeAnim === 'flow') return themeAnim;
   if (theme === 'frost') return 'drift';
   if (theme === 'classic' || !theme) return 'flow';
@@ -100,7 +110,7 @@ function cssColour(host: Element, value: string, fallback: RGBA): RGBA {
 }
 export interface Palette { light: boolean; ground: RGBA; cols: RGBA[]; texts: RGBA[]; worst: number }
 /** The design's colours from the theme on <html> now: its ground, its tonal containers (or a theme's own three). */
-export function readPalette(kind: AnimKind, host: Element = document.documentElement): Palette {
+export function readPalette(kind: Design, host: Element = document.documentElement): Palette {
   const html = document.documentElement; const light = html.dataset.ui === 'light';
   const ground = cssColour(host, 'var(--th-ground, var(--md-surface))', light ? [238, 240, 246, 1] : [18, 19, 20, 1]);
   const texts = ['var(--md-on-surface)', 'var(--md-on-surface-variant)', 'var(--md-on-surface-dim, var(--md-on-surface-variant))'].map((v) => cssColour(host, v, light ? [24, 27, 35, 1] : [228, 228, 230, 1]));
@@ -123,6 +133,26 @@ export function readPalette(kind: AnimKind, host: Element = document.documentEle
       : [mix(ground, pc, 0.72), mix(ground, tc, 0.78), mix(ground, sc, 0.66), mix(ground, p, 0.12)]);
   const pal = clampPalette(ground, cols.map(noYellow), texts);
   return { light, ground, cols: pal.cols, texts, worst: pal.worst };
+}
+/** A scene's colours: each of its palette roles (a theme role's name, e.g. «primary-container») read from the theme
+ *  — a theme's own three animation colours standing in for the three containers —, drawn toward the primary so small
+ *  soft dots still show (lighter in dark, a deeper cool tone in light), no yellow, and every text role kept at 4.5:1
+ *  over them as over the designs. */
+export function sceneColours(roles: string[], host: Element = document.documentElement): { cols: RGBA[]; worst: number } {
+  const html = document.documentElement; const light = html.dataset.ui === 'light';
+  const ground = cssColour(host, 'var(--th-ground, var(--md-surface))', light ? [238, 240, 246, 1] : [18, 19, 20, 1]);
+  const texts = ['var(--md-on-surface)', 'var(--md-on-surface-variant)', 'var(--md-on-surface-dim, var(--md-on-surface-variant))'].map((v) => cssColour(host, v, light ? [24, 27, 35, 1] : [228, 228, 230, 1]));
+  const own = html.dataset.anim && getComputedStyle(html).getPropertyValue('--th-anim-a').trim();
+  const OWN: Record<string, string> = { 'primary-container': '--th-anim-a', 'tertiary-container': '--th-anim-b', 'secondary-container': '--th-anim-c' };
+  const p = noYellow(cssColour(host, 'var(--md-primary)', light ? [61, 78, 153, 1] : [201, 204, 210, 1]));
+  const lift = (c: RGBA, k: number): RGBA => { const l = (c[0] + c[1] + c[2]) / 3; return [l + (c[0] - l) * k, l + (c[1] - l) * k, l + (c[2] - l) * k, 1].map((v, i) => (i < 3 ? Math.max(0, Math.min(255, v)) : v)) as RGBA; };
+  const cols = roles.map((r) => {
+    const name = /^[a-z][a-z-]{0,40}$/.test(r) ? r : 'primary';
+    const c = noYellow(cssColour(host, own && OWN[name] ? `var(${OWN[name]})` : `var(--md-${name}, var(--md-primary))`, p));
+    return noYellow(light ? lift(mix(c, p, 0.7), 1.8) : lift(mix(c, p, 0.6), 2.2));
+  });
+  const pal = clampPalette(ground, cols, texts);
+  return { cols: pal.cols, worst: pal.worst };
 }
 
 /* ---------- the two designs ---------- */
@@ -180,7 +210,7 @@ function spring(u: number): number {
 }
 
 /** Draws one frame of a design at loop time `t` (seconds) onto a canvas `w`×`h`. Exported for the tests. */
-export function drawFrame(g: CanvasRenderingContext2D, w: number, h: number, kind: AnimKind, pal: Palette, seed: number, t: number, amp = 1): void {
+export function drawFrame(g: CanvasRenderingContext2D, w: number, h: number, kind: Design, pal: Palette, seed: number, t: number, amp = 1): void {
   g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.fillStyle = rgba(pal.ground); g.fillRect(0, 0, w, h);
   const L = LOOP[kind]; const u = (((t % L) + L) % L) / L; const big = Math.max(w, h);
   if (kind === 'drift') {
@@ -266,13 +296,12 @@ const gate = {
   },
 };
 /** What the background is doing now, and why (the Appearance page says it in one line). */
-export function animState(): { kind: AnimKind | null; level: AnimLevel; paused: PauseWhy | null; still: StillWhy | null } {
-  const g = globalInst; return { kind: g?.kind ?? null, level: g ? g.level : levelPref(), paused: gate.st.paused, still: g?.level === 'still' ? null : gate.st.still ?? (g?.tooSlow ? 'slow' : null) };
+export function animState(): { kind: AnimKind | null; level: AnimLevel; paused: PauseWhy | null; still: StillWhy | null; fallback: boolean } {
+  const g = globalInst; return { kind: g?.asked ?? null, level: g ? g.level : levelPref(), paused: gate.st.paused, still: g?.level === 'still' ? null : gate.st.still ?? (g?.tooSlow ? 'slow' : null), fallback: g?.sceneState === 'failed' };
 }
 /** Told when the state changes; returns its removal. */
 export function watchAnim(fn: () => void): () => void { watchers.add(fn); return () => watchers.delete(fn); }
 
-/* ---------- an instance: a canvas, its grain, its clock ---------- */
 let grainUrl = '';
 function grain(seed: number): string {
   if (grainUrl) return grainUrl;
@@ -295,42 +324,115 @@ html.pc.abg:not([data-glass]) .downloads-view>.topbar{background:transparent;-we
 const levelPref = (): AnimLevel => { const l = getSettings().animBgLevel; return l === 'reduced' || l === 'still' ? l : 'full'; };
 const seedPref = (): number => { const s = getSettings().animBgSeed; return typeof s === 'number' && Number.isFinite(s) ? s : 1; };
 
+/* ---------- the test-only performance numbers (the scenes' gate against «drift»; tests/scene.cjs) ---------- */
+// (On only with localStorage «kt.anim.perf» = '1' or ?animperf in the address: then `window.__ktAnimPerf()` gives the
+//  page background's numbers since the last reset — tests/scene.cjs says how to read them.)
+const PERF = ((): boolean => { try { return localStorage.getItem('kt.anim.perf') === '1' || /[?&]animperf\b/.test(location.search); } catch { return false; } })();
+interface PerfCount { since: number; busyMs: number; frames: number; lateSum: number; gapSum: number; gaps: number; slowDowns: number; slowUps: number }
+const perfNew = (): PerfCount => ({ since: performance.now(), busyMs: 0, frames: 0, lateSum: 0, gapSum: 0, gaps: 0, slowDowns: 0, slowUps: 0 });
+function perfHook(): void {
+  if (!PERF) return;
+  const w = window as unknown as { __ktAnimPerf?: unknown };
+  const read = (): Record<string, unknown> | null => {
+    const i = globalInst; if (!i) return null; const c = i.pf; const secs = Math.max(0.001, (performance.now() - c.since) / 1000);
+    return { kind: i.asked, engine: i.host.dataset.engine ?? 'canvas', canvas: `${i.w}x${i.h}`, seconds: +secs.toFixed(2), frames: c.frames, fps: +(c.frames / secs).toFixed(2),
+      engineMsPerSec: +(c.busyMs / secs).toFixed(3), rafLateAvgMs: c.gaps ? +(c.lateSum / c.gaps).toFixed(3) : 0, rafGapAvgMs: c.gaps ? +(c.gapSum / c.gaps).toFixed(3) : 0,
+      lateEma: +i.late.toFixed(3), slow: i.slow, tooSlow: i.tooSlow, slowDowns: c.slowDowns, slowUps: c.slowUps, scene: i.scene ? i.scene.stats() : null };
+  };
+  w.__ktAnimPerf = Object.assign(read, {
+    reset: (): void => { if (globalInst) { globalInst.pf = perfNew(); globalInst.scene?.resetStats(); } },
+    /** The engine's step for 4,096 particles (ms), measured in this page (loads the engine if it is not yet). */
+    bench: (): Promise<unknown> => import('./sceneHost').then((m) => m.bench4096()),
+    hash: (): number | null => globalInst?.scene?.hash() ?? null,
+    liveScenes: (): Promise<number> => import('./sceneHost').then((m) => m.liveScenes()),
+  });
+}
+
+/* ---------- an instance: a canvas, its grain, its clock ---------- */
+let fellBack = false;
+/** Said once a page, quietly: the scene engine could not be loaded, so «drift» is drawn instead. */
+function noteFallback(why: unknown): void {
+  if (fellBack) return; fellBack = true;
+  console.info(`[animbg] scene engine unavailable (${why instanceof Error ? why.message : String(why)}): drawing «drift» instead`);
+}
 class Inst {
   canvas: HTMLCanvasElement; g: CanvasRenderingContext2D | null; grainEl: HTMLElement; pal: Palette | null = null;
   vt: number; last = 0; timer = 0; raf = 0; drawn = false; held: number | null = null; dead = false;
   px = 0; py = 0; tx = 0; ty = 0; w = 0; h = 0;
   /** Self-throttle: how late the asked frames come (a running average, ms) and the slow-down it led to (1, 2 or 4). */
   raf2 = 0; late = 0; slow = 1; tooSlow = false; stepAt = 0;
-  constructor(public host: HTMLElement, public kind: AnimKind, public level: AnimLevel, public seed: number, public global: boolean) {
+  /** The design drawn (a scene's fallback: drift); a scene once loaded, and device pixels per CSS pixel of its canvas. */
+  kind: Design; scene: SceneRun | null = null; sceneState: 'loading' | 'ready' | 'failed' | null = null; k = 1;
+  pf: PerfCount = perfNew();
+  constructor(public host: HTMLElement, public asked: AnimKind, public level: AnimLevel, public seed: number, public global: boolean) {
+    this.kind = isScene(asked) ? 'drift' : asked;
     this.canvas = document.createElement('canvas'); this.canvas.className = 'abg-canvas'; this.canvas.setAttribute('aria-hidden', 'true');
     this.g = this.canvas.getContext('2d', { alpha: false });
     this.canvas.addEventListener('contextrestored', () => { this.drawn = false; this.paint(); });
     this.grainEl = document.createElement('div'); this.grainEl.className = 'abg-grain'; this.grainEl.style.backgroundImage = `url(${grain(7)})`;
     host.append(this.canvas, this.grainEl);
-    this.vt = STILL_AT[kind];
+    this.vt = STILL_AT[this.kind];
+    if (isScene(asked)) { this.sceneState = 'loading'; host.dataset.engine = 'loading'; void this.loadScene(asked.slice(6)); } else host.dataset.engine = 'canvas';
     this.resize(); this.refresh();
   }
-  /** The canvas: a sixteenth (drift) or a quarter (flow) of the window, at most so many pixels. */
+  /** The engine and the scene fetched (lazily); on any failure, «drift» from then on. */
+  async loadScene(id: string): Promise<void> {
+    try {
+      const m = await import('./sceneHost'); const run = await m.openScene(id, this.seed);
+      if (this.dead) { run.free(); return; }
+      this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene';
+      run.setColours(sceneColours(run.roles, this.host).cols); run.setSpeed(this.level === 'reduced' ? 0.6 : 1);
+      this.w = this.h = 0; this.resize();
+    } catch (e) {
+      if (this.dead) return;
+      this.sceneState = 'failed'; this.host.dataset.engine = 'canvas'; this.host.dataset.fallback = 'drift'; noteFallback(e);
+      this.drawn = false; this.paint(); for (const w of watchers) w();
+    }
+  }
+  /** Drawing a scene (loaded, or still loading), not a design. */
+  get sceneMode(): boolean { return isScene(this.asked) && this.sceneState !== 'failed'; }
+  /** The canvas: a sixteenth (drift) or a quarter (flow) of the window, at most so many pixels; a scene: its resolution
+   *  hint × the device's pixels (at most 2 a CSS pixel), at most 1.2 million pixels. */
   resize(): void {
     const W = (this.global ? innerWidth : this.host.clientWidth || 320) + 32, H = (this.global ? innerHeight : this.host.clientHeight || 180) + 32;
-    const f = this.kind === 'drift' ? 1 / 16 : 1 / 4; const cap = this.kind === 'drift' ? 24_000 : 260_000;
-    let w = Math.max(16, Math.ceil(W * f)), h = Math.max(16, Math.ceil(H * f)); const k = Math.min(1, Math.sqrt(cap / (w * h))); w = Math.ceil(w * k); h = Math.ceil(h * k);
+    let w: number, h: number;
+    if (this.scene) {
+      let k = this.scene.resolution * Math.min(2, Math.max(1, devicePixelRatio || 1)); const cap = 1_200_000;
+      if (W * k * H * k > cap) k = Math.sqrt(cap / (W * H));
+      w = Math.max(16, Math.ceil(W * k)); h = Math.max(16, Math.ceil(H * k)); this.k = w / W; this.scene.viewport(W, H);
+    } else {
+      const f = this.kind === 'drift' ? 1 / 16 : 1 / 4; const cap = this.kind === 'drift' ? 24_000 : 260_000;
+      w = Math.max(16, Math.ceil(W * f)); h = Math.max(16, Math.ceil(H * f)); const k = Math.min(1, Math.sqrt(cap / (w * h))); w = Math.ceil(w * k); h = Math.ceil(h * k);
+    }
     if (w === this.w && h === this.h) return; this.w = this.canvas.width = w; this.h = this.canvas.height = h; this.drawn = false; this.paint();
   }
   /** The theme's colours read again (a theme, a mode or an accent changed). */
-  refresh(): void { this.pal = readPalette(this.kind, this.host); this.host.dataset.worst = this.pal.worst.toFixed(2); this.drawn = false; this.paint(); }
+  refresh(): void {
+    this.pal = readPalette(this.kind, this.host); this.host.dataset.worst = this.pal.worst.toFixed(2);
+    if (this.scene) { const sc = sceneColours(this.scene.roles, this.host); this.scene.setColours(sc.cols); this.host.dataset.worst = Math.min(this.pal.worst, sc.worst).toFixed(2); }
+    this.drawn = false; this.paint();
+  }
   pointer(e: PointerEvent): void {
-    if (!this.global || this.kind !== 'drift' || this.level !== 'full') return;
+    if (!this.global || this.kind !== 'drift' || this.sceneMode || this.level !== 'full') return;
     this.tx = ((e.clientX / innerWidth) - 0.5) * -10; this.ty = ((e.clientY / innerHeight) - 0.5) * -8;
   }
   seek(t: number | null): void { this.held = t; this.drawn = false; this.cancel(); if (t !== null) { this.draw(t); this.host.dataset.state = 'held'; } else this.sync(); }
-  draw(t: number): void {
+  /** A frame at loop time `t`; a scene steps `dtMs` instead and is drawn only when something moved (or not yet drawn). */
+  draw(t: number, dtMs = 0): void {
     if (!this.g || !this.pal) return;
+    if (this.sceneMode) {
+      if (!this.scene) { if (!this.drawn) { const c = this.pal.ground; this.g.setTransform(1, 0, 0, 1, 0, 0); this.g.fillStyle = `rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])})`; this.g.fillRect(0, 0, this.w, this.h); this.drawn = true; } return; }
+      const moved = this.scene.step(dtMs);
+      if (moved || !this.drawn) { this.scene.render(this.g, this.w, this.h, this.k, this.pal.ground); this.drawn = true; }
+      return;
+    }
     drawFrame(this.g, this.w, this.h, this.kind, this.pal, this.seed, t, this.level === 'reduced' ? 0.6 : 1); this.drawn = true;
     if (this.tx || this.ty || this.px || this.py) { this.px += (this.tx - this.px) * 0.08; this.py += (this.ty - this.py) * 0.08; this.canvas.style.transform = `translate3d(${this.px.toFixed(2)}px,${this.py.toFixed(2)}px,0)`; }
   }
   paint(): void { if (this.held !== null) { this.draw(this.held); return; } if (!this.drawn) this.draw(this.vt); this.sync(); }
   cancel(): void { if (this.timer) clearTimeout(this.timer); if (this.raf) cancelAnimationFrame(this.raf); if (this.raf2) cancelAnimationFrame(this.raf2); this.timer = this.raf = this.raf2 = 0; }
+  /** Frames a second now: the design's, or the scene's hint (Reduced: two thirds of it). */
+  fps(): number { return this.scene && this.sceneMode ? this.scene.fps * (this.level === 'reduced' ? 2 / 3 : 1) : fpsOf(this.kind, this.level, this.vt); }
   /** Moving, paused or still, as the gate and the level say. */
   sync(): void {
     if (this.dead) return;
@@ -349,24 +451,26 @@ class Inst {
     const p = performance.now();
     if (st.busyUntil > p) { this.last = 0; this.host.dataset.state = 'busy'; this.schedule(st.busyUntil - p + 16); return; }
     this.host.dataset.state = 'running';
-    if (this.last) this.vt += Math.min(0.25, (now - this.last) / 1000) * (this.level === 'reduced' ? 0.5 : 1);
+    const gap = this.last ? Math.min(250, now - this.last) : 0;
+    this.vt += (gap / 1000) * (this.level === 'reduced' ? 0.5 : 1);
     this.last = now; this.vt %= LOOP[this.kind] * 2;
     // (The frame after a drawing is the one that pays for it — the compositor blurring the glass over the new
     //  background. When those frames come late, a weak GPU is behind: fewer frames then, a half and a quarter; still
     //  late at a quarter, the still frame. Back up again once they come on time.)
     if (this.tooSlow) return;
     if (p - this.stepAt > 2000) {
-      if (this.late > 14 && this.slow < 4) { this.slow *= 2; this.late = 0; this.stepAt = p; }
-      else if (this.late > 14) { this.tooSlow = true; this.sync(); for (const w of watchers) w(); return; }
-      else if (this.late < 2 && this.slow > 1) { this.slow /= 2; this.stepAt = p + 8000; }
+      if (this.late > 14 && this.slow < 4) { this.slow *= 2; this.late = 0; this.stepAt = p; this.pf.slowDowns++; }
+      else if (this.late > 14) { this.tooSlow = true; this.pf.slowDowns++; this.sync(); for (const w of watchers) w(); return; }
+      else if (this.late < 2 && this.slow > 1) { this.slow /= 2; this.stepAt = p + 8000; this.pf.slowUps++; }
     }
     this.host.dataset.slow = String(this.slow);
-    this.draw(this.vt);
-    this.raf2 = requestAnimationFrame((t2) => { this.raf2 = 0; this.late = this.late * 0.8 + Math.max(0, t2 - now - 20) * 0.2; });
-    this.schedule(1000 / fpsOf(this.kind, this.level, this.vt) * this.slow - Math.max(0, performance.now() - p) - 6);
+    this.draw(this.vt, gap);
+    if (PERF) { this.pf.busyMs += performance.now() - p; this.pf.frames++; }
+    this.raf2 = requestAnimationFrame((t2) => { this.raf2 = 0; this.late = this.late * 0.8 + Math.max(0, t2 - now - 20) * 0.2; if (PERF) { this.pf.gapSum += t2 - now; this.pf.lateSum += Math.max(0, t2 - now - 1000 / 60); this.pf.gaps++; } });
+    this.schedule(1000 / this.fps() * this.slow - Math.max(0, performance.now() - p) - 6);
   };
   destroy(): void {
-    if (this.dead) return; this.dead = true; this.cancel(); this.canvas.width = this.canvas.height = 0; this.canvas.remove(); this.grainEl.remove(); insts.delete(this);
+    if (this.dead) return; this.dead = true; this.cancel(); this.scene?.free(); this.scene = null; this.canvas.width = this.canvas.height = 0; this.canvas.remove(); this.grainEl.remove(); insts.delete(this);
     if (globalInst === this) globalInst = null;
     if (!insts.size) { gate.stop(); document.getElementById(CSS_ID)?.remove(); }
   }
@@ -382,22 +486,25 @@ function mountInst(host: HTMLElement, kind: AnimKind, level: AnimLevel, global: 
 /* ---------- the page's background, kept as the settings and the theme say ---------- */
 let globalInst: Inst | null = null; let globalHost: HTMLElement | null = null; let htmlObs: MutationObserver | null = null; let pending = false;
 const isPc = () => document.documentElement.classList.contains('pc');
+/** Prism's mini window and the screen translator's overlay: never a background. */
+const sideWindow = () => /^#\/(mini|overlay)\b/.test(location.hash);
 /** The background as it should be now: mounted, changed or taken down (with everything it listened to). */
 export function syncAnimBg(): void {
   prune(); for (const w of watchers) w();
-  const s = getSettings(); const html = document.documentElement; const pc = isPc();
+  const s = getSettings(); const html = document.documentElement; const pc = isPc() && !sideWindow();
   const want = pc ? kindFor(s.animBg, html.dataset.theme, html.dataset.anim) : null; const level = levelPref();
   // (While chosen on a computer, the theme on <html> is watched: Match the theme follows it, the colours too.)
   if (pc && s.animBg && s.animBg !== 'off') {
     if (!htmlObs) { htmlObs = new MutationObserver(() => { if (pending) return; pending = true; queueMicrotask(() => { pending = false; syncAnimBg(); }); }); htmlObs.observe(html, { attributes: true, attributeFilter: ['data-theme', 'data-ui', 'data-accent', 'data-anim', 'data-dark', 'style', 'class'] }); }
   } else if (htmlObs) { htmlObs.disconnect(); htmlObs = null; }
-  if (globalInst && (!want || globalInst.kind !== want || globalInst.level !== level)) { globalInst.destroy(); globalInst = null; }
+  if (globalInst && (!want || globalInst.asked !== want || globalInst.level !== level)) { globalInst.destroy(); globalInst = null; }
   // (A class set or taken only when it changes: writing it anyway is a mutation the watcher above would see again.)
   if (!want) { globalHost?.remove(); globalHost = null; if (html.classList.contains('abg')) html.classList.remove('abg'); return; }
   if (!globalInst) {
     if (!globalHost) { globalHost = document.createElement('div'); globalHost.id = 'kt-animbg'; globalHost.setAttribute('aria-hidden', 'true'); }
     document.body.prepend(globalHost);
     globalInst = mountInst(globalHost, want, level, true); if (!html.classList.contains('abg')) html.classList.add('abg');
+    perfHook();
   } else globalInst.refresh();
   for (const i of insts) if (i !== globalInst && i.host.isConnected) i.refresh();
 }

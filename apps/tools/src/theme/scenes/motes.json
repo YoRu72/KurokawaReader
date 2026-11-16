@@ -1,0 +1,67 @@
+{
+  "format": "ktscene/1",
+  "meta": { "id": "motes", "name": "Motes" },
+  "view": { "fps": 24, "resolution": 0.5 },
+  "palette": { "roles": ["primary-container", "tertiary-container", "primary"] },
+  "layers": [
+    { "id": "far", "depth": 0.15, "opacity": 0.7 },
+    { "id": "mid", "depth": 0.5, "opacity": 0.85 },
+    { "id": "near", "depth": 0.9, "opacity": 0.7 }
+  ],
+  "emitters": [
+    {
+      "layer": "far", "max": 340, "rate": 24, "prewarm": 1,
+      "initializers": [
+        { "kind": "lifetime", "min": 10, "max": 18 },
+        { "kind": "size", "min": 3, "max": 5 },
+        { "kind": "alpha", "min": 0.5, "max": 0.9 },
+        { "kind": "velocity", "min": [-3, -4], "max": [3, 1] },
+        { "kind": "colour", "roles": ["primary-container", "tertiary-container"] },
+        { "kind": "sprite", "id": 0 }
+      ],
+      "operators": [
+        { "kind": "drift", "scale": 0.0035, "speed": 0.035, "strength": 5 },
+        { "kind": "gravity", "x": 0, "y": -0.8 },
+        { "kind": "drag", "k": 0.35 },
+        { "kind": "bounds", "mode": "wrap", "margin": 12 },
+        { "kind": "fade", "in": 0.25, "out": 0.35 }
+      ]
+    },
+    {
+      "layer": "mid", "max": 180, "rate": 14, "prewarm": 1,
+      "initializers": [
+        { "kind": "lifetime", "min": 9, "max": 16 },
+        { "kind": "size", "min": 5, "max": 8 },
+        { "kind": "alpha", "min": 0.45, "max": 0.85 },
+        { "kind": "velocity", "min": [-5, -6], "max": [5, 2] },
+        { "kind": "colour", "roles": ["primary-container", "tertiary-container", "primary"] },
+        { "kind": "sprite", "id": 0 }
+      ],
+      "operators": [
+        { "kind": "drift", "scale": 0.0028, "speed": 0.045, "strength": 8 },
+        { "kind": "gravity", "x": 0, "y": -1.2 },
+        { "kind": "drag", "k": 0.4 },
+        { "kind": "bounds", "mode": "wrap", "margin": 16 },
+        { "kind": "fade", "in": 0.2, "out": 0.3 }
+      ]
+    },
+    {
+      "layer": "near", "max": 48, "rate": 3.5, "prewarm": 1,
+      "initializers": [
+        { "kind": "lifetime", "min": 11, "max": 17 },
+        { "kind": "size", "min": 12, "max": 22 },
+        { "kind": "alpha", "min": 0.16, "max": 0.34 },
+        { "kind": "velocity", "min": [-8, -8], "max": [8, 3] },
+        { "kind": "colour", "roles": ["tertiary-container", "primary"] },
+        { "kind": "sprite", "id": 0 }
+      ],
+      "operators": [
+        { "kind": "drift", "scale": 0.002, "speed": 0.03, "strength": 11 },
+        { "kind": "gravity", "x": 0, "y": -1.6 },
+        { "kind": "drag", "k": 0.45 },
+        { "kind": "bounds", "mode": "wrap", "margin": 40 },
+        { "kind": "fade", "in": 0.3, "out": 0.35 }
+      ]
+    }
+  ]
+}

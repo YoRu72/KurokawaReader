@@ -1,0 +1,33 @@
+[package]
+name = "kt-scene"
+# (The scene engine of the animated backgrounds: apps/tools/src/theme/sceneHost.ts loads it as public/scene/ktscene.wasm.)
+version = "0.1.0"
+description = "Kurokawa Tools' scene engine: particle scenes (ktscene/1) simulated in Rust, drawn by the page"
+edition = "2021"
+publish = false
+
+[lib]
+name = "ktscene"
+path = "src/lib.rs"
+# cdylib: the .wasm the page loads (built in CI by scripts/build-scene-wasm.sh, never committed); rlib: the native tests.
+crate-type = ["cdylib", "rlib"]
+
+# None, on purpose: std only, so `cargo test --offline` works on any machine with Rust, and every module can be checked
+# alone with rustc (see test-alone.sh).
+[dependencies]
+
+# Its own workspace root, so no Cargo.toml above it is taken for one.
+[workspace]
+
+# (The standalone checks of a module that uses its siblings: `--cfg 'kt_alone="<module>"'` brings them in by path.)
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kt_alone, values("particles", "forces", "drawlist", "scene", "abi"))'] }
+
+# Small: the page fetches it when the scene is chosen. panic = "abort": a bug traps the wasm instance (the page then
+# falls back to «drift»); nothing in it may panic on any input (the native tests feed it hostile files).
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

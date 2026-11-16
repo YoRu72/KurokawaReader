@@ -31,7 +31,7 @@ export interface Settings {
   glassBattery?: boolean; glassRail?: boolean;
   /** A computer: the animated background (theme/animbg.ts) — off unless chosen —, how much it moves, and the seed its
    *  shapes and places come from (fixed: the same background each start). */
-  animBg?: 'off' | 'match' | 'drift' | 'flow'; animBgLevel?: 'full' | 'reduced' | 'still'; animBgSeed?: number;
+  animBg?: 'off' | 'match' | 'drift' | 'flow' | 'scene:motes'; animBgLevel?: 'full' | 'reduced' | 'still'; animBgSeed?: number;
   /** The download folder (a path, or a content: URI on Android); '' = the engine's default. */
   downloadDir: string;
   /** Folders chosen lately in the Add sheet, newest first. */
