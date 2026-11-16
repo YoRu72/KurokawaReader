@@ -17,15 +17,17 @@
 //
 // A wasm trap (any throw from the engine) poisons that engine instance: every scene on it stops, the next load makes a
 // new one, and the caller draws «drift» instead (animbg.ts).
-import { contrast, type RGBA } from './themes';
+import { contrast, over, type RGBA } from './themes';
 import motes from './scenes/motes.json';
 import nightSnowfall from './scenes/night-snowfall.json';
+import auroraLake from './scenes/aurora-lake.json';
 
 /** The scenes this build has, by id. */
-const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall };
+const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake };
 export const SCENE_IDS = Object.keys(SCENES);
 const ABI = 2;
 const PARAM_SPEED = 0;
+const PARAM_REACT = 5;
 
 interface Exports {
   memory: WebAssembly.Memory;
@@ -109,6 +111,8 @@ function hex(s: string): RGBA | null {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1];
 }
 const pack = (c: RGBA): number => ((Math.round(c[0]) << 24) | (Math.round(c[1]) << 16) | (Math.round(c[2]) << 8) | Math.round(255 * (c[3] ?? 1))) >>> 0;
+/** Relative luminance (WCAG). */
+const lum = (c: RGBA): number => { const f = (v: number): number => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
 const unpack = (v: number): RGBA => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, (v & 255) / 255];
 
 /** What the theme gives a scene: light or dark, the ground, the text roles, a role's colour, and the no-yellow rule. */
@@ -123,22 +127,55 @@ function palSpecs(def: unknown, light: boolean): PalSpec[] {
 
 /* ---------- sprites ---------- */
 function mk(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D | null] { const c = document.createElement('canvas'); c.width = w; c.height = h; return [c, c.getContext('2d')]; }
-/** Sprite `id` in colour `c`: 0 soft dot, 1 crisp flake, 2 streak, 3 ring, 4 puff. */
-function sprite(id: number, c: RGBA): HTMLCanvasElement {
-  const n = 64; const [cv, g] = mk(n, n); if (!g) return cv;
-  const radial = (stops: [number, number][]): void => { const grd = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2); for (const [s, a] of stops) grd.addColorStop(s, css(c, a)); g.fillStyle = grd; g.fillRect(0, 0, n, n); };
-  if (id === 1) radial([[0, 1], [0.3, 0.95], [0.42, 0.35], [1, 0]]);
-  else if (id === 2) { const grd = g.createLinearGradient(0, 0, 0, n); grd.addColorStop(0, css(c, 0)); grd.addColorStop(0.5, css(c, 0.9)); grd.addColorStop(1, css(c, 0)); g.fillStyle = grd; g.fillRect(n * 0.4, 0, n * 0.2, n); }
-  else if (id === 3) { g.strokeStyle = css(c, 0.9); g.lineWidth = n * 0.06; g.beginPath(); g.arc(n / 2, n / 2, n * 0.4, 0, Math.PI * 2); g.stroke(); }
+/** Sprite `id` in colour `c` (64 px, drawn scaled): 0 soft dot, 1 crisp dot, 2 streak, 3 ring, 4 puff, 5–7 crystal
+ *  flakes (six arms, three shapes), 8 petal, 9 leaf, 10 feather, 11 curtain (a ribbon's slice). `edge`: a faint cool
+ *  rim for light particles on a light sky (snow must read as snow, not as a hole). */
+function sprite(id: number, c: RGBA, edge: RGBA | null): HTMLCanvasElement {
+  const n = 64, m = n / 2; const [cv, g] = mk(n, n); if (!g) return cv;
+  const radial = (stops: [number, number][]): void => { const grd = g.createRadialGradient(m, m, 0, m, m, m); for (const [s, a] of stops) grd.addColorStop(s, css(c, a)); g.fillStyle = grd; g.fillRect(0, 0, n, n); };
+  const rim = (r: number): void => { if (!edge) return; g.strokeStyle = css(edge, 0.32); g.lineWidth = n * 0.06; g.beginPath(); g.arc(m, m, r, 0, Math.PI * 2); g.stroke(); };
+  if (id === 1) { rim(n * 0.2); radial([[0, 1], [0.3, 0.95], [0.42, 0.35], [1, 0]]); }
+  else if (id === 2) { const grd = g.createLinearGradient(0, 0, 0, n); grd.addColorStop(0, css(c, 0)); grd.addColorStop(0.6, css(c, 0.55)); grd.addColorStop(0.92, css(c, 0.95)); grd.addColorStop(1, css(c, 0)); g.fillStyle = grd; g.fillRect(m - n * 0.06, 0, n * 0.12, n); }
+  else if (id === 3) { g.strokeStyle = css(c, 0.85); g.lineWidth = n * 0.045; g.beginPath(); g.ellipse(m, m, n * 0.44, n * 0.44, 0, 0, Math.PI * 2); g.stroke(); }
   else if (id === 4) radial([[0, 0.9], [0.4, 0.55], [0.75, 0.18], [1, 0]]);
-  // (A soft core that holds its colour, then a smooth fall-off: a dot of a pixel or two still shows its tint.)
-  else { const st: [number, number][] = []; for (let i = 0; i <= 8; i++) { const s = i / 8; const u = s < 0.3 ? 0 : (s - 0.3) / 0.7; st.push([s, Math.max(0, (1 - u) * (1 - u) * (1 + 2 * u) * (1 - u * 0.15))]); } radial(st); }
+  else if (id >= 5 && id <= 7) { // crystal flakes: six arms, side branches by shape
+    const arm = (stroke: string, w: number): void => {
+      g.strokeStyle = stroke; g.lineWidth = w; g.lineCap = 'round';
+      for (let k = 0; k < 6; k++) {
+        g.save(); g.translate(m, m); g.rotate((k * Math.PI) / 3); g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -n * 0.44);
+        const br = id === 5 ? [0.22, 0.32] : id === 6 ? [0.16, 0.26, 0.36] : [0.3];
+        for (const b of br) { const L = n * (id === 7 ? 0.16 : 0.1); g.moveTo(0, -n * b); g.lineTo(-L, -n * b - L); g.moveTo(0, -n * b); g.lineTo(L, -n * b - L); }
+        g.stroke(); g.restore();
+      }
+      if (id === 7) { g.beginPath(); g.arc(m, m, n * 0.09, 0, Math.PI * 2); g.stroke(); }
+    };
+    if (edge) arm(css(edge, 0.35), n * 0.085);
+    arm(css(c, 0.95), n * 0.045);
+  } else if (id === 8) { // petal: a soft teardrop with a notch, lighter at its heart
+    const grd = g.createRadialGradient(m, m * 1.25, 0, m, m, m); grd.addColorStop(0, css(mix(c, [255, 255, 255, 1], 0.35), 1)); grd.addColorStop(1, css(c, 0.9)); g.fillStyle = grd;
+    g.beginPath(); g.moveTo(m, n * 0.92); g.bezierCurveTo(n * 0.08, n * 0.62, n * 0.16, n * 0.08, m - n * 0.06, n * 0.1); g.lineTo(m, n * 0.2); g.lineTo(m + n * 0.06, n * 0.1); g.bezierCurveTo(n * 0.84, n * 0.08, n * 0.92, n * 0.62, m, n * 0.92); g.fill();
+  } else if (id === 9) { // leaf: a pointed ellipse with its midrib
+    g.fillStyle = css(c, 0.95); g.beginPath(); g.moveTo(m, n * 0.04); g.quadraticCurveTo(n * 0.95, m, m, n * 0.96); g.quadraticCurveTo(n * 0.05, m, m, n * 0.04); g.fill();
+    g.strokeStyle = css(mix(c, [0, 0, 0, 1], 0.25), 0.7); g.lineWidth = n * 0.03; g.beginPath(); g.moveTo(m, n * 0.08); g.lineTo(m, n * 0.94); g.stroke();
+  } else if (id === 10) { // feather: a long vane of fine barbs round a shaft
+    g.strokeStyle = css(c, 0.8); g.lineWidth = n * 0.02;
+    for (let k = 0; k < 18; k++) { const y = n * (0.12 + k * 0.042); const w = n * 0.2 * Math.sin((k / 17) * Math.PI) + n * 0.03; g.beginPath(); g.moveTo(m, y); g.lineTo(m - w, y - n * 0.05); g.moveTo(m, y); g.lineTo(m + w, y - n * 0.05); g.stroke(); }
+    g.strokeStyle = css(c, 1); g.lineWidth = n * 0.03; g.beginPath(); g.moveTo(m, n * 0.06); g.lineTo(m, n * 0.97); g.stroke();
+  } else if (id === 11) { // curtain: a ribbon's slice — faint at the top, bright low, a soft lower edge
+    const grd = g.createLinearGradient(0, 0, 0, n); grd.addColorStop(0, css(c, 0)); grd.addColorStop(0.65, css(c, 0.55)); grd.addColorStop(0.86, css(c, 0.9)); grd.addColorStop(1, css(c, 0));
+    g.fillStyle = grd; g.fillRect(0, 0, n, n); g.globalCompositeOperation = 'destination-in';
+    const side = g.createLinearGradient(0, 0, n, 0); side.addColorStop(0, 'rgba(0,0,0,0)'); side.addColorStop(0.5, 'rgba(0,0,0,1)'); side.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = side; g.fillRect(0, 0, n, n); g.globalCompositeOperation = 'source-over';
+  } else { // 0: a soft core that holds its colour, then a smooth fall-off: a dot of a pixel or two still shows its tint
+    rim(n * 0.3);
+    const st: [number, number][] = []; for (let i = 0; i <= 8; i++) { const s = i / 8; const u = s < 0.3 ? 0 : (s - 0.3) / 0.7; st.push([s, Math.max(0, (1 - u) * (1 - u) * (1 + 2 * u) * (1 - u * 0.15))]); } radial(st);
+  }
   return cv;
 }
 
 /* ---------- static layers, drawn from their geometry ---------- */
 type Pal = RGBA[];
-function drawStatic(g: CanvasRenderingContext2D, kind: number, geo: Float32Array, pal: Pal, b: { x0: number; y0: number; x1: number; y1: number; w: number; h: number }, opacity: number): void {
+interface Bounds { x0: number; y0: number; x1: number; y1: number; w: number; h: number }
+function drawStatic(g: CanvasRenderingContext2D, kind: number, geo: Float32Array, pal: Pal, b: Bounds, opacity: number): void {
   const P = (i: number): RGBA => pal[Math.max(0, Math.min(pal.length - 1, i | 0))] ?? [128, 128, 128, 1];
   g.globalAlpha = opacity;
   if (kind === 1) { // sky
@@ -149,21 +186,33 @@ function drawStatic(g: CanvasRenderingContext2D, kind: number, geo: Float32Array
       const rg = g.createRadialGradient(0, 0, 0, 0, 0, Math.max(1, gr)); rg.addColorStop(0, css(P(gc), ga)); rg.addColorStop(1, css(P(gc), 0)); g.fillStyle = rg; g.fillRect(-gr, -gr, gr * 2, gr * 2); g.restore(); }
   } else if (kind === 2) { // silhouette
     const [form, ci, hci, haze, snow, baseY, topY] = [geo[0], geo[1], geo[2], geo[3], geo[4], geo[5], geo[6]]; const n = geo[7] | 0; const col = P(ci);
-    const fill = (): void => { const grd = g.createLinearGradient(0, topY, 0, b.y1); grd.addColorStop(0, css(mix(col, P(hci), haze))); grd.addColorStop(Math.min(1, Math.max(0.01, (baseY - topY) / Math.max(1, b.y1 - topY))), css(col)); grd.addColorStop(1, css(col)); g.fillStyle = grd; };
+    // (Shaded: the crest lighter — hazed toward the far air —, deepening down the slope.)
+    const fill = (): void => { const deep = mix(col, [0, 0, 0, 1], 0.28); const grd = g.createLinearGradient(0, topY, 0, b.y1); grd.addColorStop(0, css(mix(col, P(hci), haze))); grd.addColorStop(Math.min(0.95, Math.max(0.05, (baseY - topY) / Math.max(1, b.y1 - topY))), css(col)); grd.addColorStop(1, css(deep)); g.fillStyle = grd; };
     if (form === 0 || form === 1) {
       const edge = (): void => { g.beginPath(); g.moveTo(b.x0, b.y1 + 2); for (let i = 0; i < n; i++) g.lineTo(geo[8 + i * 2], geo[9 + i * 2]); g.lineTo(b.x1, b.y1 + 2); g.closePath(); };
       fill(); edge(); g.fill();
-      // (Snow-covered: the heights white, fading down the slopes, and a soft rim of light along the crest. No trees.)
+      // (Snow-covered: the snow on the crests, thinning down the slopes in a short band, shaded by the slope's own
+      //  gradient below it, and a soft rim of light along the crest. No trees.)
       if (snow >= 0) {
-        const sc = P(snow); g.save(); edge(); g.clip();
-        const grd = g.createLinearGradient(0, topY, 0, baseY + (baseY - topY) * 0.8); grd.addColorStop(0, css(sc, 0.85)); grd.addColorStop(0.45, css(sc, 0.32)); grd.addColorStop(1, css(sc, 0));
-        g.fillStyle = grd; g.fillRect(b.x0, topY - 4, b.x1 - b.x0, b.y1 - topY + 6); g.restore();
-        g.strokeStyle = css(mix(sc, [255, 255, 255, 1], 0.3), 0.5); g.lineWidth = 2.5; g.lineJoin = 'round';
-        g.beginPath(); for (let i = 0; i < n; i++) { if (i) g.lineTo(geo[8 + i * 2], geo[9 + i * 2]); else g.moveTo(geo[8], geo[9]); } g.stroke();
+        // (The snow follows the crest — strokes of the crest line, wide and faint to narrow and bright, clipped to the
+        //  silhouette so only their lower half shows —: a cap on every ridge, never a pale block at the top's height.)
+        const sc = P(snow); const span = Math.max(8, (baseY - topY) * 0.9); g.save(); edge(); g.clip();
+        const crest = (): void => { g.beginPath(); for (let i = 0; i < n; i++) { if (i) g.lineTo(geo[8 + i * 2], geo[9 + i * 2]); else g.moveTo(geo[8], geo[9]); } };
+        g.lineJoin = 'round'; g.lineCap = 'round';
+        // (Soft: the wide stroke drawn only as its blurred shadow — off to the side, the shadow brought back —, then a
+        //  narrow brighter one at the crest itself; no bands.)
+        const tr = g.getTransform(); const off = Math.round(((b.x1 - b.x0) + 400) * Math.abs(tr.a)) + 400; g.save(); g.translate(-off / (tr.a || 1), 0); g.shadowColor = css(sc, 0.62); g.shadowBlur = Math.max(3, span * 0.32 * Math.abs(tr.a)); g.shadowOffsetX = off;
+        g.strokeStyle = '#000'; g.lineWidth = Math.max(3, span * 0.34); crest(); g.stroke(); g.restore();
+        g.strokeStyle = css(sc, 0.3); g.lineWidth = Math.max(2, span * 0.07); crest(); g.stroke();
+        const shade = g.createLinearGradient(0, topY + span * 0.6, 0, b.y1); shade.addColorStop(0, css(col, 0)); shade.addColorStop(1, css(mix(col, [0, 0, 0, 1], 0.35), 0.55));
+        g.fillStyle = shade; g.fillRect(b.x0, topY, b.x1 - b.x0, b.y1 - topY); g.restore();
+        g.strokeStyle = css(mix(sc, [255, 255, 255, 1], 0.4), 0.55); g.lineWidth = 2; crest(); g.stroke();
       }
-    }
-    else if (form === 3) { g.fillStyle = css(col); for (let i = 0; i < n; i++) { const [x, w, h] = [geo[8 + i * 3], geo[9 + i * 3], geo[10 + i * 3]]; g.fillRect(x, baseY - h, w, b.y1 - baseY + h + 2); } }
-    else if (form === 4) { g.strokeStyle = css(col); g.lineCap = 'round'; for (let i = 0; i < n; i++) { const [x, h, lean, w] = [geo[8 + i * 4], geo[9 + i * 4], geo[10 + i * 4], geo[11 + i * 4]]; g.lineWidth = w; g.beginPath(); g.moveTo(x, b.y1 + 2); g.quadraticCurveTo(x + lean * 0.2, b.h - h * 0.6, x + lean, b.h - h); g.stroke(); } g.fillStyle = css(col); g.fillRect(b.x0, b.h - 6, b.x1 - b.x0, b.y1 - b.h + 8); }
+    } else if (form === 3) { // skyline: blocks; a few windows in the snow colour when one is given
+      g.fillStyle = css(col); for (let i = 0; i < n; i++) { const [x, w, h] = [geo[8 + i * 3], geo[9 + i * 3], geo[10 + i * 3]]; g.fillRect(x, baseY - h, w, b.y1 - baseY + h + 2); }
+      if (snow >= 0) { let s = 777; const rnd = (): number => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; g.fillStyle = css(P(snow), 0.8);
+        for (let i = 0; i < n; i++) { const [x, w, h] = [geo[8 + i * 3], geo[9 + i * 3], geo[10 + i * 3]]; for (let yy = baseY - h + 10; yy < baseY - 8; yy += 14) for (let xx = x + 5; xx < x + w - 6; xx += 10) if (rnd() < 0.07) g.fillRect(xx, yy, 4, 5); } }
+    } else if (form === 4) { g.strokeStyle = css(col); g.lineCap = 'round'; for (let i = 0; i < n; i++) { const [x, h, lean, w] = [geo[8 + i * 4], geo[9 + i * 4], geo[10 + i * 4], geo[11 + i * 4]]; g.lineWidth = w; g.beginPath(); g.moveTo(x, b.y1 + 2); g.quadraticCurveTo(x + lean * 0.2, b.h - h * 0.6, x + lean, b.h - h); g.stroke(); } g.fillStyle = css(col); g.fillRect(b.x0, b.h - 6, b.x1 - b.x0, b.y1 - b.h + 8); }
   } else if (kind === 3) { // disc with halo
     const [x, y, r, halo, ci, glow] = [geo[0], geo[1], geo[2], geo[3], geo[4], geo[5]]; const c = P(ci); const R = r * halo;
     const rg = g.createRadialGradient(x, y, r * 0.8, x, y, R); rg.addColorStop(0, css(c, glow)); rg.addColorStop(0.35, css(c, glow * 0.35)); rg.addColorStop(1, css(c, 0)); g.fillStyle = rg; g.fillRect(x - R, y - R, R * 2, R * 2);
@@ -182,25 +231,45 @@ function drawStatic(g: CanvasRenderingContext2D, kind: number, geo: Float32Array
 }
 /** The contrast the scrim aims at, above 4.5: the static layers' cell mean leaves out the moving particles (snow over
  *  a lit slope adds a little light) and a text's own rectangle is smaller than a cell. */
-const PANEL_TARGET = 5.3, BARE_TARGET = 5.0;
+const PANEL_TARGET = 4.9, BARE_TARGET = 4.8;
+/** What a bare text's halo (text-shadow in the ground colour, `data-abg-halo`) is counted as: the ground mixed this
+ *  much into the scene right round the glyphs. */
+export const HALO = 0.35;
+/** The most a panel's scrim may take: glass stays glass. */
+const PANEL_MAX = 0.9;
 const BLEND: GlobalCompositeOperation[] = ['source-over', 'lighter', 'screen', 'multiply', 'soft-light'];
 
 export interface SceneStats { steps: number; stepMs: number; draws: number; drawMs: number; instances: number; live: number; statics: number; scrimMax: number; panelScrim: number }
-/** A group of consecutive static layers drawn into one canvas (same transform). */
-interface StaticGroup { first: number; cv: HTMLCanvasElement; bx: number; by: number; scale: number; tx: number; ty: number }
+/** A run of consecutive static layers with the same parallax, drawn into one canvas at the transform of its making;
+ *  blitted after at the transform of the frame (the camera's shift and a small zoom need no redraw). */
+interface StaticGroup { first: number; clean: HTMLCanvasElement; cv: HTMLCanvasElement; bx: number; by: number; scale: number; tx: number; ty: number }
+/** What the page gives the scrim: its panels (rectangles in the canvas's CSS pixels, each with its own tint) and its
+ *  bare texts (rectangles); null: no page around (a preview): everything counts as bare text. */
+/** The page under a scene: each panel (with the text it holds — measured there, not under its whole surface — when the
+ *  page knows it) and each text with no panel under it; rectangles in the canvas's CSS pixels. */
+export interface SceneDom { panels: { x: number; y: number; w: number; h: number; tint: RGBA; text?: { x: number; y: number; w: number; h: number }[] }[]; bare: { x: number; y: number; w: number; h: number }[] }
+/** What the scrim asks of the page: each panel's veil (0–PANEL_MAX), in the panels' order, and the most of them. */
+export interface SceneScrim { panels: number[]; max: number }
 
 /** One scene in the engine, and how it is drawn. */
 export class SceneRun {
   readonly fps: number; readonly resolution: number; readonly space: { w: number; h: number; ov: number };
   private ex: Exports; private L: Layout;
-  private pal: RGBA[] = []; private palKey = ''; private sprites = new Map<number, HTMLCanvasElement>(); private spriteCol: RGBA[] = [];
-  private theme: SceneTheme | null = null; private groundCss = 'rgb(0,0,0)';
+  private pal: RGBA[] = []; private palKey = ''; private sprites = new Map<number, HTMLCanvasElement>(); private spriteCol: RGBA[] = []; private edge: RGBA | null = null;
+  theme: SceneTheme | null = null; private groundCss = 'rgb(0,0,0)';
   private f32: Float32Array | null = null; private u32: Uint32Array | null = null; private buf: ArrayBuffer | null = null;
-  private count = 0; private dead = false; private statics: StaticGroup[] = []; private scrimMax = 0;
-  /** The panels' scrim the contrast rule asks for (0–1); the caller puts it on the page. */
+  private count = 0; private dead = false; private statics: StaticGroup[] = []; private scrimMax = 0; private needBake = true;
+  private mirrorCv: HTMLCanvasElement | null = null; private reflCv: HTMLCanvasElement | null = null; private reflAt = -1; private reflWy = 0; private accumBumps = new Map<number, Float32Array>(); private t0 = performance.now();
+  /** The page's panels and bare text, asked when the scrim is made; null: everywhere bare (a preview). */
+  dom: (() => SceneDom) | null = null;
+  /** Told when the scrim is made: what the page's panels should take. */
+  onScrim: ((s: SceneScrim) => void) | null = null;
   panelScrim = 0;
-  /** Where bare text is (rectangles in the canvas's CSS pixels), asked when the scrim is made; null: everywhere. */
-  bare: (() => { x: number; y: number; w: number; h: number }[]) | null = null;
+  /** The scene has large moving layers (ribbons, a mirror, settled snow): its frames are measured too. */
+  private wide = false;
+  private ribCv: HTMLCanvasElement | null = null;
+  /** The colour the veils and halos are made of (the page puts it on the panels too). */
+  veil: RGBA = [0, 0, 0, 1];
   private st = { steps: 0, stepMs: 0, draws: 0, drawMs: 0 };
   /** (Tests only, with the perf flag: throw as a trap would after this many steps.) */
   trapAfter = -1;
@@ -211,6 +280,12 @@ export class SceneRun {
     this.space = { w: this.ex.scene_hint(h, 2), h: this.ex.scene_hint(h, 3), ov: this.ex.scene_hint(h, 4) };
   }
   get alive(): boolean { return !this.dead && !this.eng.poisoned; }
+  /** The scene file's small UI palette for the mode (accent, accent2, tint), when it has one. */
+  ui(light: boolean): { accent?: RGBA; accent2?: RGBA; tint?: RGBA } | null {
+    const u = (this.def as { ui?: Record<string, Record<string, string>> }).ui; const m = u?.[light ? 'light' : 'dark'] ?? u?.dark; if (!m) return null;
+    const one = (k: string): RGBA | undefined => (typeof m[k] === 'string' ? hex(m[k]) ?? undefined : undefined);
+    return { accent: one('accent'), accent2: one('accent2'), tint: one('tint') };
+  }
   /** Every call into the engine: a throw poisons it and is passed on as a SceneTrap. */
   private call<T>(f: () => T): T {
     if (this.dead) throw new SceneTrap('ktscene: the scene is gone');
@@ -226,6 +301,10 @@ export class SceneRun {
   viewport(w: number, h: number): void { this.call(() => this.ex.scene_viewport(this.h, w, h)); this.statics = []; }
   pointer(x: number, y: number, buttons: number): void { this.call(() => this.ex.scene_pointer(this.h, x, y, buttons)); }
   click(x: number, y: number): void { this.call(() => this.ex.scene_click(this.h, x, y)); }
+  /** The camera: a shift −1…1 each way (× each layer's parallax), a zoom 1–1.5. */
+  camera(px: number, py: number, zoom: number): void { this.call(() => this.ex.scene_camera(this.h, px, py, zoom)); }
+  /** How much the pointer and clicks move things: 0 off, 1 subtle, 2.2 lively. */
+  react(k: number): void { this.call(() => this.ex.scene_param(this.h, PARAM_REACT, k)); }
   /** 1 normal, 0.6 Reduced, 0 stopped. */
   setSpeed(k: number): void { this.call(() => this.ex.scene_param(this.h, PARAM_SPEED, k)); }
   /** The theme's colours for the scene's palette: resolved, the no-yellow rule applied, told to the engine. Returns
@@ -237,9 +316,13 @@ export class SceneRun {
     this.theme = t;
     if (key === this.palKey) return false;
     this.palKey = key; this.pal = pal; this.groundCss = css(t.ground);
+    // (The veil's colour: the scene's own deepest colour in dark — its lightest in light — so a veiled panel keeps the
+    //  scene's hue instead of turning grey; the theme's ground when that colour would not carry the text.)
+    const ext = pal.reduce((a, c) => ((t.light ? lum(c) > lum(a) : lum(c) < lum(a)) ? c : a), t.ground);
+    this.veil = t.texts.every((tx) => contrast(tx, ext) >= PANEL_TARGET + 1) ? [ext[0], ext[1], ext[2], 1] : t.ground;
     this.call(() => { pal.forEach((c, i) => this.ex.scene_palette(this.h, i, pack(c))); });
     // (The particles' colours: a role must show — at least 2:1 against the ground —, and nothing may stand out more
-    //  than the text does: the peak cap.)
+    //  than the text does: the peak cap. In light, particles lighter than the ground get a faint cool rim.)
     const on = t.texts[0] ?? (t.light ? [24, 27, 35, 1] : [228, 228, 230, 1]); const cap = contrast(on, t.ground) * 0.85;
     this.spriteCol = pal.map((c0, i) => {
       let c: RGBA = [c0[0], c0[1], c0[2], 1];
@@ -247,6 +330,7 @@ export class SceneRun {
       for (let k = 0; k < 40 && contrast(c, t.ground) > cap; k++) c = mix(c, t.ground, 0.05);
       return c;
     });
+    this.edge = t.light ? [92, 112, 150, 1] : null;
     this.sprites.clear(); this.statics = [];
     return true;
   }
@@ -262,25 +346,32 @@ export class SceneRun {
   }
   private sprite(id: number, ci: number): HTMLCanvasElement {
     const k = id * 64 + ci; let s = this.sprites.get(k);
-    if (!s) { s = sprite(id, this.spriteCol[ci] ?? this.spriteCol[0] ?? [128, 128, 128, 1]); this.sprites.set(k, s); }
+    if (!s) {
+      const c = this.spriteCol[ci] ?? this.spriteCol[0] ?? [128, 128, 128, 1];
+      // (The rim only for what is lighter than the ground: snow on a pale sky.)
+      const edge = this.edge && this.theme && lum(c) > lum(this.theme.ground) - 0.02 ? this.edge : null;
+      s = sprite(id, c, edge); this.sprites.set(k, s);
+    }
     return s;
   }
-  /** The static layers between two moving ones, drawn into canvases (same transform: one canvas), and the scrim map
-   *  baked into them. Made again only when the transform, the canvas or the colours changed. */
-  private buildStatics(cmds: Float32Array, base: number, n: number, cw: number, ch: number, k: number): void {
-    const L = this.L; const groups: { first: number; last: number; scale: number; tx: number; ty: number }[] = [];
+  /** The static layers drawn into canvases: runs of consecutive ones with the same parallax into one, at the frame's
+   *  transform. A clean copy is kept: the scrim is laid over a copy of it, so it can be made again (the page's text
+   *  moved) without drawing the art again. */
+  private buildStatics(cmds: Float32Array, base: number, n: number, k: number): void {
+    const L = this.L; const groups: { first: number; last: number; scale: number; tx: number; ty: number; par: number }[] = [];
+    this.wide = false; for (let i = 0; i < n; i++) { const kd = cmds[base + i * L.CS + L.KIND] | 0; if (cmds[base + i * L.CS + L.KNOWN] && kd >= 9 && kd <= 11) this.wide = true; }
     for (let i = 0; i < n; i++) {
       const o = base + i * L.CS; if (!cmds[o + L.STATIC] || !cmds[o + L.KNOWN]) continue;
-      const [s, tx, ty, bl] = [cmds[o + L.SCALE], cmds[o + L.TX], cmds[o + L.TY], cmds[o + L.BLEND]];
+      const [s, tx, ty, bl, par] = [cmds[o + L.SCALE], cmds[o + L.TX], cmds[o + L.TY], cmds[o + L.BLEND], cmds[o + 4]];
       const g = groups[groups.length - 1];
-      if (g && g.last === i - 1 && Math.abs(g.scale - s) < 1e-4 && Math.abs(g.tx - tx) < 0.01 && Math.abs(g.ty - ty) < 0.01 && !bl) g.last = i; else groups.push({ first: i, last: i, scale: s, tx, ty });
+      if (g && g.last === i - 1 && Math.abs(g.par - par) < 1e-4 && !bl) g.last = i; else groups.push({ first: i, last: i, scale: s, tx, ty, par });
     }
-    const { w: SW, h: SH, ov } = this.space; const bnd = { x0: -SW * ov, y0: -SH * ov, x1: SW * (1 + ov), y1: SH * (1 + ov), w: SW, h: SH };
+    const { w: SW, h: SH, ov } = this.space; const bnd: Bounds = { x0: -SW * ov, y0: -SH * ov, x1: SW * (1 + ov), y1: SH * (1 + ov), w: SW, h: SH };
     const out: StaticGroup[] = [];
     for (const gr of groups) {
       const S = gr.scale * k; const bx = Math.floor((bnd.x0 * gr.scale + gr.tx) * k), by = Math.floor((bnd.y0 * gr.scale + gr.ty) * k);
       const W = Math.min(4096, Math.ceil((bnd.x1 - bnd.x0) * S) + 2), H = Math.min(4096, Math.ceil((bnd.y1 - bnd.y0) * S) + 2);
-      const [cv, g] = mk(W, H); if (!g) continue;
+      const [clean, g] = mk(W, H); if (!g) continue;
       g.setTransform(S, 0, 0, S, (gr.tx * k - bx), (gr.ty * k - by));
       for (let i = gr.first; i <= gr.last; i++) {
         const o = base + i * L.CS; if (!cmds[o + L.STATIC] || !cmds[o + L.KNOWN]) continue;
@@ -291,54 +382,80 @@ export class SceneRun {
         drawStatic(g, cmds[o + L.KIND] | 0, geo, this.pal, bnd, cmds[o + L.OPACITY]);
       }
       g.globalCompositeOperation = 'source-over';
-      out.push({ first: gr.first, cv, bx, by, scale: gr.scale, tx: gr.tx, ty: gr.ty });
+      const [cv] = mk(W, H);
+      out.push({ first: gr.first, clean, cv, bx, by, scale: gr.scale, tx: gr.tx, ty: gr.ty });
     }
-    this.statics = out;
-    this.bakeScrim(cw, ch, k);
+    this.statics = out; this.needBake = true;
   }
-  /** The contrast rule, from the static layers' local mean (cells of about two text heights, the scene's particles
-   *  left out):
-   *  - PANELS (glass): the least mix of the ground into the panels' tint that keeps every text role at 5.3:1 over the
-   *    worst cell — `panelScrim`, which the caller puts on the page (--abg-scrim); the scene stays as it is;
-   *  - BARE TEXT (no panel under it, `bare` gives its rectangles in the canvas's CSS pixels; none given: everywhere):
-   *    only the cells under it are pulled toward the ground, as little as keeps 5:1 (above 4.5 for the text's own
-   *    spread and the particles) — spread to the neighbouring cells, smoothed, and baked into the static canvases. */
-  private bakeScrim(cw: number, ch: number, k: number): void {
+  /** The contrast rule, from the static layers' local mean (cells of about two text heights; the particles left out):
+   *  - PANELS: each panel its own veil — the least share of the ground laid over its tint that keeps every text role
+   *    at 5.3:1 over the worst cell under that panel (at most PANEL_MAX: glass stays glass) — given to the page
+   *    (`onScrim`), which puts it on that panel; cards over a dark sky stay clear;
+   *  - BARE TEXT (no panel under it): a halo first (the page gives such text a soft text-shadow in the ground colour,
+   *    counted as HALO), then, only as far as still needed for 5:1, a soft dimming of the art under it — a feathered
+   *    shape of the text block, no edge — laid into the static canvases. With no page (a preview), everything is bare. */
+  private bake(cw: number, ch: number, k: number, frame?: HTMLCanvasElement): void {
+    this.needBake = false;
     const t = this.theme; if (!t || !this.statics.length) { this.scrimMax = 0; this.panelScrim = 0; return; }
-    // (Cells of about 20 canvas pixels: at the scenes' half resolution, 40 CSS pixels — two lines of text.)
+    for (const s of this.statics) { const g = s.cv.getContext('2d'); if (!g) continue; g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'copy'; g.drawImage(s.clean, 0, 0); g.globalCompositeOperation = 'source-over'; }
     const GW = Math.max(4, Math.round(cw / 20)), GH = Math.max(3, Math.round(ch / 20));
     const [, mg] = mk(GW, GH); if (!mg) return;
     mg.fillStyle = this.groundCss; mg.fillRect(0, 0, GW, GH); mg.imageSmoothingQuality = 'high';
-    for (const st of this.statics) mg.drawImage(st.cv, st.bx * GW / cw, st.by * GH / ch, st.cv.width * GW / cw, st.cv.height * GH / ch);
+    for (const st of this.statics) mg.drawImage(st.clean, st.bx * GW / cw, st.by * GH / ch, st.clean.width * GW / cw, st.clean.height * GH / ch);
     const d = mg.getImageData(0, 0, GW, GH).data;
+    // (Scenes with large moving layers — aurora curtains, a mirrored lake —: the frame just drawn is measured too, each
+    //  cell taking the worse of the two and of its neighbours above and below — the curtains sway.)
+    let fd: Uint8ClampedArray | null = null;
+    if (frame) { mg.drawImage(frame, 0, 0, frame.width, frame.height, 0, 0, GW, GH); fd = mg.getImageData(0, 0, GW, GH).data; }
+    const far = (c: RGBA): number => Math.abs(lum(c) - lum(this.veil));
+    const at = (src: Uint8ClampedArray, x: number, y: number): RGBA => { const i = (Math.min(GH - 1, Math.max(0, y)) * GW + Math.min(GW - 1, Math.max(0, x))) * 4; return [src[i], src[i + 1], src[i + 2], 1]; };
+    const cell = (x: number, y: number): RGBA => {
+      let c = at(d, x, y); if (!fd) return c;
+      for (const dy of [-1, 0, 1]) { const e = at(fd, x, y + dy); if (far(e) > far(c)) c = e; }
+      return c;
+    };
     const texts = t.texts.length ? t.texts : [[128, 128, 128, 1] as RGBA];
     const least = (ok: (x: number) => boolean): number => { if (ok(0)) return 0; let lo = 0, hi = 1; for (let it = 0; it < 12; it++) { const mid = (lo + hi) / 2; if (ok(mid)) hi = mid; else lo = mid; } return hi; };
-    // (Which cells hold bare text.)
-    let mask: Uint8Array | null = null;
-    const rects = this.bare ? this.bare() : null;
-    if (rects) {
-      mask = new Uint8Array(GW * GH); const cx = GW / cw * k, cy = GH / ch * k;
-      for (const r of rects) { const x0 = Math.max(0, Math.floor(r.x * cx)), x1 = Math.min(GW - 1, Math.floor((r.x + r.w) * cx)), y0 = Math.max(0, Math.floor(r.y * cy)), y1 = Math.min(GH - 1, Math.floor((r.y + r.h) * cy)); for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) mask[y * GW + x] = 1; }
+    const cx = GW / cw * k, cy = GH / ch * k;
+    const cellsOf = (r: { x: number; y: number; w: number; h: number }): RGBA[] => { const out: RGBA[] = []; const x0 = Math.floor(r.x * cx), x1 = Math.floor((r.x + r.w) * cx), y0 = Math.floor(r.y * cy), y1 = Math.floor((r.y + r.h) * cy); for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && y >= 0 && x < GW && y < GH) out.push(cell(x, y)); return out; };
+    const dom = this.dom ? this.dom() : null;
+    // (Panels: each its own veil over its own tint.)
+    const panels = (dom?.panels ?? []).map((p) => {
+      const pt = p.tint; let need = 0;
+      const cs = p.text?.length ? p.text.flatMap(cellsOf) : cellsOf(p);
+      for (const c of cs) need = Math.max(need, least((s) => { const u = over(pt, c); const b = mix(u, this.veil, s); return texts.every((tx) => contrast(tx, b) >= PANEL_TARGET); }));
+      return Math.min(PANEL_MAX, need);
+    });
+    this.panelScrim = panels.reduce((a, b) => Math.max(a, b), 0);
+    // (Bare text: the halo counted, then a feathered dimming where it is still short.)
+    const bare = dom ? dom.bare : [{ x: 0, y: 0, w: cw / k, h: ch / k }];
+    const dims: { x: number; y: number; w: number; h: number; a: number }[] = [];
+    for (const r of bare) {
+      const cs = cellsOf(r); if (!cs.length) continue; const mean: RGBA = [0, 0, 0, 1];
+      for (const c of cs) for (let j = 0; j < 3; j++) mean[j] += c[j] / cs.length;
+      const worst = cs.reduce((a, c) => (Math.abs(lum(c) - lum(this.veil)) > Math.abs(lum(a) - lum(this.veil)) ? c : a), mean);
+      const need = least((x) => { const b = mix(mix(worst, this.veil, x), this.veil, dom ? HALO : 0); return texts.every((tx) => contrast(tx, b) >= BARE_TARGET); });
+      if (need > 0) dims.push({ ...r, a: need });
     }
-    const need = new Float32Array(GW * GH); let panel = 0; const pt = t.panel;
-    for (let i = 0; i < GW * GH; i++) {
-      const c: RGBA = [d[i * 4], d[i * 4 + 1], d[i * 4 + 2], 1];
-      if (!mask || mask[i]) need[i] = least((x) => { const b = mix(c, t.ground, x); return texts.every((tx) => contrast(tx, b) >= BARE_TARGET); });
-      if (pt) panel = Math.max(panel, least((sc) => { const A = sc + pt[3] * (1 - sc); const b: RGBA = [0, 1, 2].map((j) => t.ground[j] * sc + pt[j] * pt[3] * (1 - sc) + c[j] * (1 - A)) as unknown as RGBA; b[3] = 1; return texts.every((tx) => contrast(tx, b) >= PANEL_TARGET); }));
+    this.scrimMax = dims.reduce((a, b) => Math.max(a, b.a), 0);
+    if (dims.length) {
+      // (Feathered: each block drawn only as its shadow — blurred by about two text heights —, the block grown by the
+      //  blur so its core still covers the text fully; no edge anywhere.)
+      const blur = 26 * k; const [mp, mpg] = mk(cw, ch);
+      if (mpg) {
+        const off = cw + ch + 100;
+        for (const r of dims) {
+          mpg.shadowColor = css(this.veil, r.a); mpg.shadowBlur = blur; mpg.shadowOffsetX = off; mpg.fillStyle = '#000';
+          const x = r.x * k - blur * 0.6, y = r.y * k - blur * 0.6, w = r.w * k + blur * 1.2, h = r.h * k + blur * 1.2;
+          mpg.beginPath(); mpg.roundRect ? mpg.roundRect(x - off, y, w, h, blur) : mpg.rect(x - off, y, w, h); mpg.fill();
+        }
+        for (const s of this.statics) { const g = s.cv.getContext('2d'); if (!g) continue; g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-atop'; g.drawImage(mp, -s.bx, -s.by); g.restore(); }
+      }
     }
-    this.panelScrim = panel;
-    // (Each cell takes the most its neighbours need: the smoothing never leaves a cell short.)
-    const [mp, mpg] = mk(GW, GH); if (!mpg) return; const img = mpg.createImageData(GW, GH); let max = 0;
-    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
-      let v = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) v = Math.max(v, need[yy * GW + xx]); }
-      const j = (y * GW + x) * 4; img.data[j] = t.ground[0]; img.data[j + 1] = t.ground[1]; img.data[j + 2] = t.ground[2]; img.data[j + 3] = Math.ceil(v * 255); max = Math.max(max, v);
-    }
-    mpg.putImageData(img, 0, 0); this.scrimMax = max;
-    if (max <= 0) return;
-    for (const st of this.statics) { const g = st.cv.getContext('2d'); if (!g) continue; g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-atop'; g.imageSmoothingEnabled = true; g.drawImage(mp, -st.bx, -st.by, cw, ch); g.restore(); }
+    this.onScrim?.({ panels, max: this.panelScrim });
   }
-  /** The static canvases (and the scrim) made again at the next frame: the page's text moved (another view). */
-  rebake(): void { this.statics = []; }
+  /** The scrim made again at the next frame (the page's text moved: another view, a scroll settled). */
+  rebake(): void { this.needBake = true; }
   /** One frame on `g` (`w`×`h` device pixels, `k` of them a CSS pixel): the ground, then every layer in order. */
   render(g: CanvasRenderingContext2D, w: number, h: number, k: number): void {
     const t0 = performance.now();
@@ -348,21 +465,29 @@ export class SceneRun {
     const pc = this.call(() => this.ex.scene_cmds(this.h)), n = this.call(() => this.ex.scene_ncmd(this.h)), pi = this.call(() => this.ex.scene_inst(this.h));
     if (pc && n > 0) {
       const cb = pc >>> 2, ib = pi >>> 2;
-      if (!this.statics.length) this.buildStatics(f, cb, n, w, h, k);
+      if (!this.statics.length) this.buildStatics(f, cb, n, k);
+      const after = this.needBake && this.wide; if (this.needBake && !after) this.bake(w, h, k);
       let si = 0; let stale = false;
       for (let c = 0; c < n; c++) {
         const o = cb + c * L.CS; if (!f[o + L.KNOWN]) continue;
+        const kind = f[o + L.KIND] | 0;
         if (f[o + L.STATIC]) {
           const s = this.statics[si];
           if (s && s.first === c) {
-            // (The camera moved this layer: drawn where it was this frame, made again for the next.)
-            if (Math.abs(s.scale - f[o + L.SCALE]) > 1e-4 || Math.abs(s.tx - f[o + L.TX]) > 0.01 || Math.abs(s.ty - f[o + L.TY]) > 0.01) stale = true;
-            g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; g.drawImage(s.cv, s.bx, s.by); si++;
+            // (The camera moved it: blitted where the frame's transform puts it; a zoom past 4 % made again.)
+            const r = f[o + L.SCALE] / s.scale; if (Math.abs(r - 1) > 0.04) stale = true;
+            const { w: SW, h: SH, ov } = this.space; const x0 = -SW * ov, y0 = -SH * ov;
+            const bx = (x0 * f[o + L.SCALE] + f[o + L.TX]) * k, by = (y0 * f[o + L.SCALE] + f[o + L.TY]) * k;
+            g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+            if (Math.abs(r - 1) < 1e-4 && Math.abs(bx - s.bx) < 0.01 && Math.abs(by - s.by) < 0.01) g.drawImage(s.cv, s.bx, s.by); else g.drawImage(s.cv, bx, by, s.cv.width * r, s.cv.height * r);
+            si++;
           }
           continue;
         }
-        const count = f[o + L.COUNT] | 0; if (!count || !pi) continue;
         const S = f[o + L.SCALE], tx = f[o + L.TX], ty = f[o + L.TY]; const px = S * k;
+        if (kind === 10 || kind === 11) { this.drawDynamic(g, kind, f[o + L.LAYER] | 0, f[o + L.GLEN] | 0, S, tx, ty, k, w, h, f[o + L.OPACITY]); continue; }
+        const count = f[o + L.COUNT] | 0; if (!count || !pi) continue;
+        if (kind === 9) { this.drawRibbon(g, f, u, ib, f[o + L.START] | 0, count, px, tx * k, ty * k, w, h, BLEND[f[o + L.BLEND] | 0] ?? 'source-over'); continue; }
         g.setTransform(px, 0, 0, px, tx * k, ty * k); g.globalCompositeOperation = BLEND[f[o + L.BLEND] | 0] ?? 'source-over';
         const start = f[o + L.START] | 0;
         for (let i = 0; i < count; i++) {
@@ -370,7 +495,7 @@ export class SceneRun {
           if (!(sx * px >= 0.25) || !(a > 0.004)) continue;
           const sp = f[q + L.SPRITE] | 0;
           // (The peak cap: big soft particles at half alpha at most; fog puffs at a quarter.)
-          if (sp === 4) { if (a > 0.25) a = 0.25; } else if (sx * S > 12 && a > 0.5) a = 0.5;
+          if (sp === 4) { if (a > 0.25) a = 0.25; } else if (sp !== 11 && sx * S > 12 && a > 0.5) a = 0.5;
           const ci = this.palIndexOf(u[q + L.RGBA], f[q + L.COLOUR]);
           g.globalAlpha = a > 1 ? 1 : a;
           const rot = f[q + L.ROT];
@@ -379,9 +504,69 @@ export class SceneRun {
         }
       }
       g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+      if (after) this.bake(w, h, k, g.canvas as HTMLCanvasElement);
       if (stale) this.statics = [];
     }
     this.st.drawMs += performance.now() - t0; this.st.draws++;
+  }
+  /** The layers the page draws every frame from their geometry: the mirror (what is drawn so far, reflected below
+   *  the waterline in rippling slices, tinted) and the settled snow. */
+  private drawDynamic(g: CanvasRenderingContext2D, kind: number, layer: number, len: number, S: number, tx: number, ty: number, k: number, w: number, h: number, opacity: number): void {
+    if (!len) return; const p = this.call(() => this.ex.scene_geom(this.h, layer)); if (!p) return;
+    const geo = new Float32Array(this.views()[0].buffer, p, len);
+    const t = (performance.now() - this.t0) / 1000;
+    if (kind === 10) {
+      const wy = Math.round((geo[0] * S + ty) * k); const below = h - wy; if (below <= 2 || wy <= 2) return;
+      const ripple = geo[1] * S * k, alpha = geo[2] * opacity, tint = this.pal[geo[3] | 0] ?? this.theme?.ground ?? [0, 0, 0, 1], strength = geo[4];
+      const H = Math.min(below, wy);
+      // (Made at half size, and again only every other frame — a reflection is soft and slow —: the part above the
+      //  line copied, then laid flipped in rippling slices into the reflection canvas; each frame blits that once.)
+      const M = 2, mw = Math.ceil(w / M), mh = Math.max(1, Math.ceil(H / M));
+      if (!this.mirrorCv || this.mirrorCv.width !== mw || this.mirrorCv.height !== mh) { [this.mirrorCv] = mk(mw, mh); [this.reflCv] = mk(mw, mh); this.reflAt = -1; }
+      const mg = this.mirrorCv.getContext('2d'), rg = this.reflCv?.getContext('2d'); if (!mg || !rg || !this.reflCv) return;
+      if (this.reflAt < 0 || this.st.draws - this.reflAt >= 2 || this.reflWy !== wy) {
+        this.reflAt = this.st.draws; this.reflWy = wy;
+        mg.setTransform(1, 0, 0, 1, 0, 0); mg.globalCompositeOperation = 'copy'; mg.imageSmoothingQuality = 'low'; mg.drawImage(g.canvas, 0, wy - H, w, H, 0, 0, mw, mh);
+        rg.setTransform(1, 0, 0, 1, 0, 0); rg.clearRect(0, 0, mw, mh);
+        const N = 16; const sh = Math.ceil(mh / N);
+        for (let j = 0; j < N; j++) {
+          const dy = j * sh; const off = ripple / M * Math.sin(t * 1.6 + j * 0.9) * (0.3 + j / N);
+          // (Slice j below the line mirrors the slice j above it.)
+          rg.setTransform(1, 0, 0, -1, off, dy + sh); rg.drawImage(this.mirrorCv, 0, mh - dy - sh, mw, sh, 0, 0, mw, sh);
+        }
+      }
+      g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = alpha; g.globalCompositeOperation = 'source-over'; g.imageSmoothingQuality = 'low';
+      g.drawImage(this.reflCv, 0, 0, mw, mh, 0, wy, mw * M, mh * M);
+      const grd = g.createLinearGradient(0, wy, 0, h); grd.addColorStop(0, css(tint, strength * 0.6)); grd.addColorStop(1, css(tint, Math.min(1, strength * 1.6)));
+      g.globalAlpha = 1; g.fillStyle = grd; g.fillRect(0, wy, w, below);
+      g.fillStyle = css(mix(tint, [255, 255, 255, 1], 0.5), 0.18); g.fillRect(0, wy, w, Math.max(1, k));
+    } else {
+      const [top, bottom, ci, alpha, rough, seed] = [geo[0], geo[1], geo[2], geo[3], geo[4], geo[5]]; const c = this.pal[ci | 0] ?? [255, 255, 255, 1];
+      let bumps = this.accumBumps.get(layer);
+      if (!bumps) { bumps = new Float32Array(40); let s = (seed | 0) + 9; for (let i = 0; i < bumps.length; i++) { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; bumps[i] = s / 4294967296; } this.accumBumps.set(layer, bumps); }
+      const { w: SW, ov } = this.space; const x0 = -SW * ov, x1 = SW * (1 + ov); const amp = (bottom - top) * rough * 0.5 + 2;
+      g.setTransform(S * k, 0, 0, S * k, tx * k, ty * k); g.globalAlpha = alpha * opacity; g.globalCompositeOperation = 'source-over';
+      const grd = g.createLinearGradient(0, top - amp, 0, bottom); grd.addColorStop(0, css(c)); grd.addColorStop(1, css(mix(c, this.theme?.ground ?? [0, 0, 0, 1], 0.25)));
+      g.fillStyle = grd; g.beginPath(); g.moveTo(x0, bottom + 2);
+      for (let i = 0; i < bumps.length; i++) { const x = x0 + (x1 - x0) * i / (bumps.length - 1); g.lineTo(x, top - amp * (0.4 + 0.6 * bumps[i])); }
+      g.lineTo(x1, bottom + 2); g.closePath(); g.fill();
+      g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1;
+    }
+  }
+  /** Aurora curtains: soft and large, so drawn at a quarter of the canvas's size and laid on it scaled up — a
+   *  sixteenth of the pixels to fill, the same look. */
+  private drawRibbon(g: CanvasRenderingContext2D, f: Float32Array, u: Uint32Array, ib: number, start: number, count: number, px: number, ox: number, oy: number, w: number, h: number, blend: GlobalCompositeOperation): void {
+    const R = 4, L = this.L; const rw = Math.max(1, Math.ceil(w / R)), rh = Math.max(1, Math.ceil(h / R));
+    if (!this.ribCv || this.ribCv.width !== rw || this.ribCv.height !== rh) [this.ribCv] = mk(rw, rh);
+    const rg = this.ribCv.getContext('2d'); if (!rg) return;
+    rg.setTransform(1, 0, 0, 1, 0, 0); rg.globalAlpha = 1; rg.globalCompositeOperation = 'source-over'; rg.clearRect(0, 0, rw, rh);
+    rg.setTransform(px / R, 0, 0, px / R, ox / R, oy / R); rg.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < count; i++) {
+      const q = ib + (start + i) * L.IS; const sx = f[q + L.SX], sy = f[q + L.SY]; const a = f[q + L.ALPHA]; if (!(a > 0.004) || !(sx > 0)) continue;
+      rg.globalAlpha = a > 1 ? 1 : a; rg.drawImage(this.sprite(f[q + L.SPRITE] | 0, this.palIndexOf(u[q + L.RGBA], f[q + L.COLOUR])), f[q + L.X] - sx / 2, f[q + L.Y] - sy / 2, sx, sy);
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = blend; g.imageSmoothingQuality = 'low';
+    g.drawImage(this.ribCv, 0, 0, rw * R, rh * R); g.globalCompositeOperation = 'source-over';
   }
   /** The palette index of an instance: its colour field, else found by its rgba word. */
   private palIndexOf(rgba: number, colour: number): number {
@@ -398,7 +583,7 @@ export class SceneRun {
   /** Freed in the engine (when it is still sound) and here. */
   free(): void { if (this.dead) return; if (!this.eng.poisoned) { try { this.ex.scene_free(this.h); } catch { poison(this.eng); } } this.abandon(); }
   /** Dropped here without calling the engine (it trapped). */
-  private abandon(): void { if (this.dead) return; this.dead = true; this.sprites.clear(); this.statics = []; this.f32 = this.u32 = null; this.buf = null; live--; }
+  private abandon(): void { if (this.dead) return; this.dead = true; this.sprites.clear(); this.statics = []; this.mirrorCv = this.reflCv = null; this.accumBumps.clear(); this.f32 = this.u32 = null; this.buf = null; live--; }
 }
 
 /** A built-in scene started in the engine (throws UnknownScene, or when the engine or the scene cannot be loaded). */

@@ -24,11 +24,19 @@ use crate::scenefile::Op;
 /// A second seed for the noise's y component.
 const NOISE_Y: u32 = 0x5BD1_E995;
 
-/// What the page told the scene this step: the pointer (scene units, or none) and a click to answer (once).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What the page told the scene this step: the pointer (scene units, or none), a click to answer (once), and how much
+/// the scene reacts to them (0 off, 1 subtle, about 2 lively).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Control {
     pub pointer: Option<(f32, f32)>,
     pub click: Option<(f32, f32)>,
+    pub react: f32,
+}
+
+impl Default for Control {
+    fn default() -> Control {
+        Control { pointer: None, click: None, react: 1.0 }
+    }
 }
 
 /// Unit direction and distance from (x, y) to (px, py); None when farther than `radius` or on the point itself.
@@ -53,7 +61,7 @@ pub fn accelerate(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, dt: f
                 if let Some((px, py)) = ctl.pointer {
                     for i in r.clone() {
                         if let Some((ux, uy, d)) = toward(pool.px[i], pool.py[i], px, py, radius) {
-                            let f = strength * (1.0 - d / radius) * dt;
+                            let f = strength * ctl.react * (1.0 - d / radius) * dt;
                             pool.vx[i] += ux * f;
                             pool.vy[i] += uy * f;
                         }
@@ -64,7 +72,7 @@ pub fn accelerate(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, dt: f
                 if let Some((px, py)) = ctl.click {
                     for i in r.clone() {
                         if let Some((ux, uy, d)) = toward(pool.px[i], pool.py[i], px, py, radius) {
-                            let f = impulse * (1.0 - d / radius);
+                            let f = impulse * ctl.react * (1.0 - d / radius);
                             pool.vx[i] -= ux * f;
                             pool.vy[i] -= uy * f;
                         }
@@ -95,8 +103,44 @@ pub fn accelerate(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, dt: f
                     pool.vy[i] *= keep;
                 }
             }
-            Op::Bounds { .. } | Op::Fade { .. } | Op::Unknown(_) => {}
+            Op::Bounds { .. } | Op::Fade { .. } | Op::Floor { .. } | Op::Grow { .. } | Op::Unknown(_) => {}
         }
+    }
+}
+
+/// Sizes grown (ripple rings).
+pub fn grow(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, dt: f32) {
+    for op in ops {
+        if let Op::Grow { rate } = *op {
+            let k = 1.0 + rate * dt;
+            for i in r.clone() {
+                pool.size[i] *= k;
+            }
+        }
+    }
+}
+
+/// The angle (radians) that turns a sprite drawn downward to point along (vx, vy): atan2(−vx, vy), by a rational
+/// approximation (basic operations only: the same bits everywhere; error under 0.005 rad).
+pub fn heading(vx: f32, vy: f32) -> f32 {
+    let (x, y) = (vy, -vx);
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax < 1e-9 && ay < 1e-9 {
+        return 0.0;
+    }
+    let (a, swap) = if ay > ax { (ax / ay, true) } else { (ay / ax, false) };
+    let s = a * a;
+    let mut r = a * (0.999_866 + s * (-0.330_299_5 + s * (0.180_141 + s * (-0.085_133 + s * 0.020_835_1))));
+    if swap {
+        r = core::f32::consts::FRAC_PI_2 - r;
+    }
+    if x < 0.0 {
+        r = core::f32::consts::PI - r;
+    }
+    if y < 0.0 {
+        -r
+    } else {
+        r
     }
 }
 
@@ -111,8 +155,20 @@ pub fn integrate(pool: &mut Pool, r: core::ops::Range<usize>, dt: f32, wind: (f3
 }
 
 /// Bounds after moving: wrapped to the other side, or marked dead (its age set to its life; reaped by the emitter).
-pub fn constrain(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, view: View) {
+pub fn constrain(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, view: View, deaths: &mut Vec<(f32, f32)>) {
     for op in ops {
+        if let Op::Floor { y } = *op {
+            // (Below the floor: dead there; the place kept — up to the buffer's room, never growing it — for children.)
+            let fy = view.h * y;
+            for i in r.clone() {
+                if pool.age[i] < pool.life[i] && pool.py[i] >= fy {
+                    pool.age[i] = pool.life[i];
+                    if deaths.len() < deaths.capacity() {
+                        deaths.push((pool.px[i], fy));
+                    }
+                }
+            }
+        }
         if let Op::Bounds { wrap, margin } = *op {
             let (x0, y0, x1, y1) = (view.x0 - margin, view.y0 - margin, view.x1 + margin, view.y1 + margin);
             let (sw, sh) = (x1 - x0, y1 - y0);
@@ -209,17 +265,17 @@ mod tests {
     fn bounds_wrap_and_kill() {
         let view = View::plain(100.0, 50.0);
         let mut p = pool1(115.0, -20.0, 0.0, 0.0);
-        constrain(&[Op::Bounds { wrap: true, margin: 10.0 }], &mut p, 0..1, view);
+        constrain(&[Op::Bounds { wrap: true, margin: 10.0 }], &mut p, 0..1, view, &mut Vec::new());
         assert!((p.px[0] - (-5.0)).abs() < 1e-4, "{}", p.px[0]);
         assert!((p.py[0] - 50.0).abs() < 1e-4, "{}", p.py[0]);
         let mut far = pool1(1e9, -1e9, 0.0, 0.0);
-        constrain(&[Op::Bounds { wrap: true, margin: 10.0 }], &mut far, 0..1, view);
+        constrain(&[Op::Bounds { wrap: true, margin: 10.0 }], &mut far, 0..1, view, &mut Vec::new());
         assert!(far.px[0] >= -10.0 && far.px[0] <= 110.0 && far.py[0] >= -10.0 && far.py[0] <= 60.0);
         let mut k = pool1(-30.0, 10.0, 0.0, 0.0);
-        constrain(&[Op::Bounds { wrap: false, margin: 10.0 }], &mut k, 0..1, view);
+        constrain(&[Op::Bounds { wrap: false, margin: 10.0 }], &mut k, 0..1, view, &mut Vec::new());
         assert_eq!(k.age[0], k.life[0]);
         let mut nan = pool1(f32::NAN, 10.0, 0.0, 0.0);
-        constrain(&[Op::Bounds { wrap: true, margin: 10.0 }], &mut nan, 0..1, view);
+        constrain(&[Op::Bounds { wrap: true, margin: 10.0 }], &mut nan, 0..1, view, &mut Vec::new());
         assert_eq!(nan.age[0], nan.life[0]);
     }
 
@@ -227,20 +283,48 @@ mod tests {
     fn pointer_click_and_wind() {
         let ops = [Op::Pointer { strength: -60.0, radius: 100.0 }, Op::Click { impulse: 100.0, radius: 100.0 }];
         let mut p = pool1(50.0, 0.0, 0.0, 0.0);
-        accelerate(&ops, &mut p, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: None });
+        accelerate(&ops, &mut p, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: None, react: 1.0 });
         assert!((p.vx[0] - 30.0).abs() < 1e-4, "pushed away: {}", p.vx[0]);
         let mut q = pool1(50.0, 0.0, 0.0, 0.0);
-        accelerate(&ops, &mut q, 0..1, 1.0, 0.0, 1, &Control { pointer: None, click: Some((0.0, 0.0)) });
+        accelerate(&ops, &mut q, 0..1, 1.0, 0.0, 1, &Control { pointer: None, click: Some((0.0, 0.0)), react: 1.0 });
         assert!((q.vx[0] - 50.0).abs() < 1e-4, "{}", q.vx[0]);
         let mut far = pool1(500.0, 0.0, 0.0, 0.0);
-        accelerate(&ops, &mut far, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: Some((0.0, 0.0)) });
+        accelerate(&ops, &mut far, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: Some((0.0, 0.0)), react: 1.0 });
         assert_eq!(far.vx[0], 0.0);
         let mut on = pool1(0.0, 0.0, 0.0, 0.0);
-        accelerate(&ops, &mut on, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: Some((0.0, 0.0)) });
+        accelerate(&ops, &mut on, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: Some((0.0, 0.0)), react: 1.0 });
         assert!(on.vx[0] == 0.0 && on.vy[0] == 0.0);
         let mut w = pool1(0.0, 0.0, 1.0, 0.0);
         integrate(&mut w, 0..1, 1.0, (10.0, -2.0));
         assert_eq!((w.px[0], w.py[0]), (11.0, -2.0));
+    }
+
+    #[test]
+    fn floor_grow_react_and_heading() {
+        let view = View::plain(100.0, 100.0);
+        let mut p = pool1(10.0, 95.0, 0.0, 0.0);
+        let mut deaths = Vec::with_capacity(2);
+        constrain(&[Op::Floor { y: 0.9 }], &mut p, 0..1, view, &mut deaths);
+        assert_eq!(p.age[0], p.life[0]);
+        assert_eq!(deaths, vec![(10.0, 90.0)]);
+        constrain(&[Op::Floor { y: 0.9 }], &mut p, 0..1, view, &mut deaths);
+        assert_eq!(deaths.len(), 1, "a dead one dies once");
+        let mut full: Vec<(f32, f32)> = Vec::with_capacity(0);
+        let mut q = pool1(10.0, 95.0, 0.0, 0.0);
+        constrain(&[Op::Floor { y: 0.9 }], &mut q, 0..1, view, &mut full);
+        assert!(full.is_empty() && full.capacity() == 0, "never grows the buffer");
+        let mut g = pool1(0.0, 0.0, 0.0, 0.0);
+        g.size[0] = 10.0;
+        grow(&[Op::Grow { rate: 1.0 }], &mut g, 0..1, 0.5);
+        assert_eq!(g.size[0], 15.0);
+        let ops = [Op::Pointer { strength: -60.0, radius: 100.0 }];
+        let mut off = pool1(50.0, 0.0, 0.0, 0.0);
+        accelerate(&ops, &mut off, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: None, react: 0.0 });
+        assert_eq!(off.vx[0], 0.0, "react 0: nothing");
+        for (vx, vy) in [(0.0f32, 1.0f32), (1.0, 1.0), (-3.0, 2.0), (2.0, -5.0), (-1.0, -1.0), (5.0, 0.0)] {
+            let want = (-vx).atan2(vy);
+            assert!((heading(vx, vy) - want).abs() < 0.005, "{vx} {vy}: {} vs {}", heading(vx, vy), want);
+        }
     }
 
     #[test]

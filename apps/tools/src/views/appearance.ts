@@ -56,7 +56,7 @@ export function editorDeps(rerender: () => void): EditorDeps {
     keys: (handler) => undoScope(handler),
   };
 }
-const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel'] as const;
+const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel', 'animBgWhere', 'animBgTint', 'animBgReact'] as const;
 type AnimPref = NonNullable<Settings['animBg']>; type AnimLevel = NonNullable<Settings['animBgLevel']>;
 /** A computer's animated background: the choice, how much it moves, a live preview and one line saying what it does
  *  now and why (paused, still). Its engine (theme/animbg.ts) is fetched only once it is chosen. */
@@ -64,11 +64,19 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
   const s = getSettings(); const pref: AnimPref = s.animBg ?? 'off';
   // (The hint says what the choice made does; a pick's third value would be an icon, so the words go here.)
   // («Motes», «Night snowfall»: scenes of the Rust engine — core/kt-scene, loaded as wasm only when chosen; drift where it cannot load.)
-  const what = { off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint'), 'scene:motes': t('animBgMotesHint'), 'scene:night-snowfall': t('animBgNightSnowHint') }[pref] ?? t('animBgHint');
-  const choice = row(t('animBg'), pickButton(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene:motes', t('animBgMotes')], ['scene:night-snowfall', t('animBgNightSnow')]], pref, (v) => { updateSettings({ animBg: v as AnimPref }); rerender(); }, t('close')), what);
+  const what = { off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint'), 'scene:motes': t('animBgMotesHint'), 'scene:night-snowfall': t('animBgNightSnowHint'), 'scene:aurora-lake': t('animBgAuroraHint') }[pref] ?? t('animBgHint');
+  const choice = row(t('animBg'), pickButton(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene:motes', t('animBgMotes')], ['scene:night-snowfall', t('animBgNightSnow')], ['scene:aurora-lake', t('animBgAurora')]], pref, (v) => { updateSettings({ animBg: v as AnimPref }); rerender(); }, t('close')), what);
   if (pref === 'off') return [choice];
   const level: AnimLevel = s.animBgLevel ?? 'full';
   const levelRow = row(t('animBgLevel'), pickButton(t('animBgLevel'), [['full', t('animBgFull')], ['reduced', t('animBgReduced')], ['still', t('animBgStill')]], level, (v) => { updateSettings({ animBgLevel: v as AnimLevel }); rerender(); }, t('close')), level === 'full' ? t('animBgHint') : t(level === 'reduced' ? 'animBgReducedHint' : 'animBgStillHint'));
+  // (A scene: where it shows, whether the app's colours follow it, how much it answers the mouse.)
+  const scene = pref.startsWith('scene:');
+  const where = s.animBgWhere ?? 'whole'; const react = s.animBgReact ?? 'subtle';
+  const sceneRows = scene ? [
+    row(t('animBgWhereRow'), pickButton(t('animBgWhereRow'), [['whole', t('animBgWhole')], ['content', t('animBgContent')]], where, (v) => { updateSettings({ animBgWhere: v as 'whole' | 'content' }); rerender(); }, t('close')), t('animBgWhereHint')),
+    toggle(t('animBgTintRow'), s.animBgTint === true, (v) => { updateSettings({ animBgTint: v }); rerender(); }, t('animBgTintHint')),
+    row(t('animBgReactRow'), pickButton(t('animBgReactRow'), [['off', t('animBgReactOff')], ['subtle', t('animBgReactSubtle')], ['lively', t('animBgReactLively')]], react, (v) => { updateSettings({ animBgReact: v as 'off' | 'subtle' | 'lively' }); rerender(); }, t('close')), t('animBgReactHint')),
+  ] : [];
   const box = h('div', { class: 'abg-preview', role: 'img', 'aria-label': t('animBgPreview') }, h('div', { class: 'abg-sample' }, h('b', null, t('animBgSample')), h('small', null, t('animBgSampleDim'))));
   const now = h('small', { class: 'src abg-now', 'aria-live': 'polite' });
   void import('../theme/animbg').then((m) => {
@@ -85,7 +93,7 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
     };
     const off = m.watchAnim(say); say();
   });
-  return [choice, levelRow, h('div', { class: 'row abg-row' }, box, now)];
+  return [choice, levelRow, ...sceneRows, h('div', { class: 'row abg-row' }, box, now)];
 }
 
 export function appearanceCard(rerender: () => void): HTMLElement {
@@ -125,7 +133,7 @@ export function appearanceCard(rerender: () => void): HTMLElement {
     row(t('accent'), swatches, ownColours ? t('accentThemeHint') : undefined),
     h('div', { class: 'row' }, h('span', null, t('appearanceReset'), h('small', { class: 'src' }, t('appearanceResetHint'))), h('button', { type: 'button', class: 'btn text small', onclick: () => {
       const cur = getSettings(); const before = Object.fromEntries(RESET_KEYS.map((k) => [k, cur[k]])) as Partial<Settings>;
-      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined, animBg: undefined, animBgLevel: undefined }); reloadThemePictures(); rerender();
+      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined, animBg: undefined, animBgLevel: undefined, animBgWhere: undefined, animBgTint: undefined, animBgReact: undefined }); reloadThemePictures(); rerender();
       toast(t('appearanceResetDone'), 'info', 6000, { label: t('undo'), run: () => { updateSettings(before); reloadThemePictures(); rerender(); } });
     } }, icon('refresh'), t('appearanceReset'))),
     def.by ? h('div', { class: 'row theme-credit' }, h('span', null, t('themeBy', { who: def.by }), h('small', { class: 'src' }, t('themeLicence'))), h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses'))) : null);

@@ -58,12 +58,21 @@ impl Pool {
 }
 
 /// An emitter: its slice of the pool, its birth rate, its initializers and operators.
+/// Deaths kept for children in one step, at most.
+pub const DEATHS: usize = 64;
+
 pub struct Emitter {
     /// Its own random stream and noise seed (from its id).
     pub rng: Pcg32,
     pub noise_seed: u32,
     pub group: usize,
     pub wind: f32,
+    /// Streaks: turned along their velocity when drawn.
+    pub align: bool,
+    /// Children born where particles die at a floor: (emitter, how many each); the deaths of this step, at most
+    /// `DEATHS` (allocated once).
+    pub on_death: Option<(usize, u32)>,
+    pub deaths: Vec<(f32, f32)>,
     pub density_param: Option<usize>,
     pub size_param: Option<usize>,
     pub start: usize,
@@ -100,6 +109,17 @@ impl Emitter {
     /// The particles alive now: `start .. start + live`.
     pub fn range(&self) -> core::ops::Range<usize> {
         self.start..self.start + self.live
+    }
+
+    /// One particle born at (x, y) — a child of another's death —, its other values from the initializers.
+    pub fn spawn_at(&mut self, pool: &mut Pool, view: View, limit: usize, x: f32, y: f32) -> bool {
+        if !self.spawn(pool, view, limit) {
+            return false;
+        }
+        let i = self.start + self.live - 1;
+        pool.px[i] = x;
+        pool.py[i] = y;
+        true
     }
 
     /// One particle born (when there is room under `limit`); its values from the initializers, in order.
@@ -206,7 +226,7 @@ mod tests {
     use super::*;
 
     fn em(start: usize, max: usize, inits: Vec<Init>) -> Emitter {
-        Emitter { rng: Pcg32::new(1, 2), noise_seed: 1, group: 0, wind: 1.0, density_param: None, size_param: None, start, max, live: 0, layer: 0, rate: 10.0, carry: 0.0, prewarm: 1.0, shape: Shape { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, inits, ops: vec![] }
+        Emitter { rng: Pcg32::new(1, 2), noise_seed: 1, group: 0, wind: 1.0, align: false, on_death: None, deaths: Vec::with_capacity(DEATHS), density_param: None, size_param: None, start, max, live: 0, layer: 0, rate: 10.0, carry: 0.0, prewarm: 1.0, shape: Shape { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, inits, ops: vec![] }
     }
 
     #[test]
@@ -232,6 +252,15 @@ mod tests {
             part.spawn(&mut p2, view, usize::MAX);
         }
         assert!(part.range().all(|i| p2.px[i] >= 100.0 && p2.py[i] <= 10.0));
+    }
+
+    #[test]
+    fn a_child_is_born_where_asked() {
+        let mut pool = Pool::new(4);
+        let view = View::plain(100.0, 100.0);
+        let mut e = em(0, 4, vec![]);
+        assert!(e.spawn_at(&mut pool, view, usize::MAX, 12.0, 34.0));
+        assert_eq!((pool.px[0], pool.py[0]), (12.0, 34.0));
     }
 
     #[test]

@@ -33,20 +33,27 @@
 //!              band       y0, y1, top, bottom (colours), a0, a1                         (a vertical gradient band)
 //!              bokeh      count (1–256), y0, y1, rmin, rmax, alpha, colours: [...]       (static soft discs)
 //!              grain      alpha;  halftone  alpha, cell                                  (screen overlays)
-//!            any other kind (ribbon/aurora today) is kept by name, drawn as nothing, reported by the ABI.
+//!              ribbon     y, amp, thickness, bands (1–4), speed, freq, alpha, colours: [...]   (aurora curtains, moving)
+//!              mirror     y, ripple, alpha, tint, strength   (water: what is drawn before it, mirrored below y)
+//!              accum      h0, h1, grow (s), colour, alpha, rough  (settled snow growing along the bottom)
+//!            any other kind is kept by name, drawn as nothing, reported by the ABI.
 //!   "emitters": [ {                                                      (0–16)
 //!       "id": "snow-near", "layer": "snow-near" (required: a particles layer), "group": "snow",
 //!       "max": 360 (1–2048; the scene's sum ≤ 4096), "rate": 26, "prewarm": 1, "wind": 1 (0–4),
 //!       "densityParam": "amount", "sizeParam": "flake",               (file params multiplying density / size)
+//!       "align": true,                                                  (streaks turned along their velocity)
+//!       "onDeath": { "emitter": "splash", "count": 1 },                 (deaths at a floor give birth there)
 //!       "shape": { "kind": "rect", "x": 0, "y": 0, "w": 1, "h": 1 },     (a share of the scene space)
 //!       "initializers": [ { "kind": "lifetime" | "size" | "alpha" | "rotation" | "spin" | "stretch", "min", "max" },
 //!                         { "kind": "velocity", "min": [x, y], "max": [x, y] },
 //!                         { "kind": "colour", "roles": ["primary", 2, …] },   (palette references)
-//!                         { "kind": "sprite", "id": 0 } ],    (0 soft dot, 1 crisp flake, 2 streak, 3 ring, 4 puff)
+//!                         { "kind": "sprite", "id": 0 } ],    (0 soft dot, 1 crisp dot, 2 streak, 3 ring, 4 puff,
+//!                                                              5–7 crystal flakes, 8 petal, 9 leaf, 10 feather)
 //!       "operators":    [ { "kind": "drift", "scale", "speed", "strength" }, { "kind": "gravity", "x", "y" },
 //!                         { "kind": "drag", "k" }, { "kind": "bounds", "mode": "wrap" | "kill", "margin" },
 //!                         { "kind": "fade", "in", "out" }, { "kind": "pointer", "strength", "radius" },
-//!                         { "kind": "click", "impulse", "radius" } ] } ] }
+//!                         { "kind": "click", "impulse", "radius" }, { "kind": "floor", "y" },
+//!                         { "kind": "grow", "rate" } ] } ] }
 //! ```
 
 #[cfg(kt_alone = "scenefile")]
@@ -155,7 +162,13 @@ pub enum LayerKind {
     Bokeh { count: u32, y0: f32, y1: f32, rmin: f32, rmax: f32, alpha: f32, colours: Vec<u8> },
     Grain { alpha: f32 },
     Halftone { alpha: f32, cell: f32 },
-    /// A kind this version does not draw (ribbon/aurora, or any other): kept by name.
+    /// Aurora-like ribbons: `bands` soft curtains along a noise curve round `y`, moving with time (instances).
+    Ribbon { y: f32, amp: f32, thickness: f32, bands: u32, speed: f32, freq: f32, alpha: f32, colours: Vec<u8> },
+    /// A water mirror: what is drawn before it, mirrored below `y` with a ripple, tinted (the page draws it each frame).
+    Mirror { y: f32, ripple: f32, alpha: f32, tint: u8, strength: f32 },
+    /// Settled snow (or sand) along the bottom, growing from `h0` to `h1` of the height over `grow` seconds.
+    Accum { h0: f32, h1: f32, grow: f32, colour: u8, alpha: f32, rough: f32 },
+    /// A kind this version does not draw: kept by name.
     Unknown(String),
 }
 
@@ -172,12 +185,15 @@ impl LayerKind {
             LayerKind::Bokeh { .. } => 6,
             LayerKind::Grain { .. } => 7,
             LayerKind::Halftone { .. } => 8,
+            LayerKind::Ribbon { .. } => 9,
+            LayerKind::Mirror { .. } => 10,
+            LayerKind::Accum { .. } => 11,
             LayerKind::Unknown(_) => 255,
         }
     }
     /// Drawn once into an offscreen canvas by the page and blitted (nothing to compute per frame).
     pub fn is_static(&self) -> bool {
-        !matches!(self, LayerKind::Particles | LayerKind::Fog { .. })
+        !matches!(self, LayerKind::Particles | LayerKind::Fog { .. } | LayerKind::Ribbon { .. } | LayerKind::Mirror { .. } | LayerKind::Accum { .. })
     }
 }
 
@@ -202,6 +218,10 @@ pub struct EmitterDef {
     pub rate: f32,
     pub prewarm: f32,
     pub wind: f32,
+    /// Streaks: each particle turned along its velocity.
+    pub align: bool,
+    /// Particles that die at a floor (Op::Floor) give birth to `count` of another emitter's there (splash rings).
+    pub on_death: Option<(usize, u32)>,
     pub density_param: Option<usize>,
     pub size_param: Option<usize>,
     pub shape: Shape,
@@ -257,6 +277,10 @@ pub enum Op {
     Pointer { strength: f32, radius: f32 },
     /// A click: one outward push of `impulse` units/s within `radius`.
     Click { impulse: f32, radius: f32 },
+    /// Below `y` (a share of the height): the particle dies there (its death can spawn children: `onDeath`).
+    Floor { y: f32 },
+    /// Size grows by `rate` a second (a share: 1 doubles in a second); a ripple ring.
+    Grow { rate: f32 },
     Unknown(String),
 }
 
@@ -608,6 +632,25 @@ fn read_layer(l: &V, i: usize, pal: &[PalEntry]) -> Result<LayerDef, i32> {
         }
         Some("grain") => LayerKind::Grain { alpha: num(p, "alpha", 0.05, 0.0, 0.5)? },
         Some("halftone") => LayerKind::Halftone { alpha: num(p, "alpha", 0.08, 0.0, 0.6)?, cell: num(p, "cell", 6.0, 2.0, 64.0)? },
+        Some("ribbon") | Some("aurora") => {
+            let list = arr(p.get("colours"))?;
+            if list.len() > MAX_PALETTE {
+                return Err(ERR_CAPS);
+            }
+            let mut colours = Vec::new();
+            for c in list {
+                colours.push(pal_ref(c, pal)?);
+            }
+            if colours.is_empty() {
+                colours.push(0);
+            }
+            LayerKind::Ribbon { y: num(p, "y", 0.3, -0.2, 1.2)?, amp: num(p, "amp", 0.08, 0.0, 1.0)?, thickness: num(p, "thickness", 0.18, 0.01, 1.0)?, bands: num(p, "bands", 2.0, 1.0, 4.0)? as u32, speed: num(p, "speed", 0.05, 0.0, 2.0)?, freq: num(p, "freq", 1.5, 0.1, 8.0)?, alpha: num(p, "alpha", 0.35, 0.0, 1.0)?, colours }
+        }
+        Some("mirror") => LayerKind::Mirror { y: num(p, "y", 0.7, 0.0, 1.0)?, ripple: num(p, "ripple", 3.0, 0.0, 40.0)?, alpha: num(p, "alpha", 0.55, 0.0, 1.0)?, tint: pal_field(p, "tint", 0, pal)?, strength: num(p, "strength", 0.35, 0.0, 1.0)? },
+        Some("accum") => {
+            let (h0, h1) = (num(p, "h0", 0.0, 0.0, 0.5)?, num(p, "h1", 0.04, 0.0, 0.5)?);
+            LayerKind::Accum { h0, h1: h1.max(h0), grow: num(p, "grow", 300.0, 1.0, 36_000.0)?, colour: pal_field(p, "colour", 0, pal)?, alpha: num(p, "alpha", 0.95, 0.0, 1.0)?, rough: num(p, "rough", 0.3, 0.0, 1.0)? }
+        }
         Some(other) => LayerKind::Unknown(other.chars().take(64).collect()),
     };
     Ok(LayerDef { id, kind, depth, parallax, opacity, blend })
@@ -674,6 +717,7 @@ pub fn read(bytes: &[u8]) -> Result<SceneDef, i32> {
         return Err(ERR_CAPS);
     }
     let mut emitters: Vec<EmitterDef> = Vec::new();
+    let mut death_refs: Vec<Option<(String, u32)>> = Vec::new();
     let mut groups: Vec<String> = Vec::new();
     let mut total: u32 = 0;
     let param_of = |e: &V, k: &str| -> Result<Option<usize>, i32> {
@@ -749,7 +793,17 @@ pub fn read(bytes: &[u8]) -> Result<SceneDef, i32> {
         for v in ops_v {
             ops.push(read_op(v)?);
         }
+        let on_death_raw = match obj(e.get("onDeath"))? {
+            Some(o) => match text(o, "emitter")? {
+                Some(t) => Some((t.to_string(), num(o, "count", 1.0, 1.0, 8.0)? as u32)),
+                None => return Err(ERR_REF),
+            },
+            None => None,
+        };
+        death_refs.push(on_death_raw);
         emitters.push(EmitterDef {
+            align: matches!(e.get("align"), Some(V::Bool(true))),
+            on_death: None,
             id: eid,
             layer,
             group,
@@ -763,6 +817,16 @@ pub fn read(bytes: &[u8]) -> Result<SceneDef, i32> {
             inits,
             ops,
         });
+    }
+    // (An emitter's children: any emitter of the file, before or after it, but not itself.)
+    for (i, r) in death_refs.into_iter().enumerate() {
+        if let Some((id, n)) = r {
+            let k = emitters.iter().position(|x| x.id == id).ok_or(ERR_REF)?;
+            if k == i {
+                return Err(ERR_REF);
+            }
+            emitters[i].on_death = Some((k, n));
+        }
     }
     if groups.is_empty() {
         groups.push("main".to_string());
@@ -845,6 +909,8 @@ fn read_op(v: &V) -> Result<Op, i32> {
         "fade" => Op::Fade { fin: num(v, "in", 0.2, 0.0, 1.0)?, fout: num(v, "out", 0.2, 0.0, 1.0)? },
         "pointer" => Op::Pointer { strength: num(v, "strength", -60.0, -4096.0, 4096.0)?, radius: num(v, "radius", 160.0, 1.0, 4096.0)? },
         "click" => Op::Click { impulse: num(v, "impulse", 120.0, -4096.0, 4096.0)?, radius: num(v, "radius", 220.0, 1.0, 4096.0)? },
+        "floor" => Op::Floor { y: num(v, "y", 1.0, -0.5, 1.5)? },
+        "grow" => Op::Grow { rate: num(v, "rate", 1.0, -0.95, 20.0)? },
         other => Op::Unknown(unknown(other)),
     })
 }
@@ -905,7 +971,7 @@ mod tests {
           "params":[{"id":"amount","default":5},{"id":"on","type":"toggle","default":0.7},{"id":"pick","type":"choice","choices":["a","b","c"],"default":9},{"id":"tint","type":"colour","default":"#ff0080"}],
           "layers":[{"id":"sky","kind":"sky","params":{"stops":[[0,"sky"],[1,1]],"glow":{"colour":"primary"}}},
                     {"id":"r","kind":"silhouette","blend":"screen","params":{"form":"pines","count":9999,"snow":0}},
-                    {"id":"m","kind":"disc"},{"id":"f","kind":"fog"},{"id":"au","kind":"aurora"},{"id":"p"}],
+                    {"id":"m","kind":"disc"},{"id":"f","kind":"fog"},{"id":"au","kind":"comet"},{"id":"p"}],
           "emitters":[{"id":"x","layer":"p","group":"snow","densityParam":"amount","sizeParam":"pick"},{"layer":"p","group":"rain"},{"layer":"p","group":"snow"}]}"##).unwrap();
         assert_eq!(d.space, Space { w: 800.0, h: 500.0, overscan: 0.25, cover: false });
         assert_eq!(d.palette[0].dark, Colour::Rgba(0x112233ff));
@@ -920,11 +986,28 @@ mod tests {
         assert!(matches!(&d.layers[0].kind, LayerKind::Sky { stops, glow: Some(g) } if stops == &vec![(0.0, 2), (1.0, 1)] && g.3 == 3));
         assert!(matches!(d.layers[1].kind, LayerKind::Silhouette { form: Form::Ridge, count: 400, snow: Some(0), .. }), "pines are no form: a ridge");
         assert_eq!(d.layers[1].blend, Blend::Screen);
-        assert_eq!(d.layers[4].kind, LayerKind::Unknown("aurora".into()));
+        assert_eq!(d.layers[4].kind, LayerKind::Unknown("comet".into()));
         assert!(!d.layers[3].kind.is_static() && d.layers[0].kind.is_static());
         assert_eq!(d.groups, vec!["snow".to_string(), "rain".to_string()]);
         assert_eq!((d.emitters[0].group, d.emitters[1].group, d.emitters[2].group), (0, 1, 0));
         assert_eq!((d.emitters[0].density_param, d.emitters[0].size_param), (Some(0), Some(2)));
+    }
+
+    #[test]
+    fn round_three_kinds() {
+        let d = read(br##"{"format":"ktscene/1","palette":["primary","#ffffff"],
+          "layers":[{"id":"a","kind":"aurora","params":{"bands":9,"colours":[0,1]}},{"id":"w","kind":"mirror","params":{"y":0.6}},{"id":"s","kind":"accum","params":{"h0":0.1,"h1":0.02}},{"id":"p"}],
+          "emitters":[{"id":"rain","layer":"p","align":true,"onDeath":{"emitter":"splash","count":20},"operators":[{"kind":"floor","y":0.9}]},{"id":"splash","layer":"p","rate":0,"operators":[{"kind":"grow","rate":1.5}]}]}"##).unwrap();
+        assert!(matches!(d.layers[0].kind, LayerKind::Ribbon { bands: 4, .. }));
+        assert!(matches!(d.layers[1].kind, LayerKind::Mirror { .. }));
+        assert!(matches!(d.layers[2].kind, LayerKind::Accum { h0, h1, .. } if h0 == 0.1 && h1 == 0.1));
+        assert!(!d.layers[0].kind.is_static() && !d.layers[1].kind.is_static() && !d.layers[2].kind.is_static());
+        assert!(d.emitters[0].align && d.emitters[0].on_death == Some((1, 8)));
+        assert_eq!(d.emitters[0].ops[0], Op::Floor { y: 0.9 });
+        assert_eq!(d.emitters[1].ops[0], Op::Grow { rate: 1.5 });
+        assert_eq!(read(br#"{"format":"ktscene/1","emitters":[{"id":"x","onDeath":{"emitter":"x"}}]}"#), Err(ERR_REF));
+        assert_eq!(read(br#"{"format":"ktscene/1","emitters":[{"id":"x","onDeath":{"emitter":"nope"}}]}"#), Err(ERR_REF));
+        assert_eq!(read(br#"{"format":"ktscene/1","emitters":[{"id":"x","onDeath":{}}]}"#), Err(ERR_REF));
     }
 
     #[test]

@@ -31,12 +31,12 @@ mod scenefile;
 mod scenery;
 
 use crate::drawlist::{Cmd, DrawList, Inst};
-use crate::forces::{accelerate, constrain, fade, integrate, Control};
+use crate::forces::{accelerate, constrain, fade, grow, heading, integrate, Control};
 use crate::graph::Graph;
 use crate::math::{clampf, Fnv, Pcg32};
-use crate::particles::{Emitter, Pool, View};
+use crate::particles::{Emitter, Pool, View, DEATHS};
 use crate::scenefile::{read, Colour, LayerKind, ParamDef, SceneDef, Space, MAX_LAYERS};
-use crate::scenery::{bounds, seed_of, Scenery};
+use crate::scenery::{bounds, seed_of, Scenery, RIBBON_POINTS};
 
 /// One fixed step, milliseconds and seconds.
 pub const STEP_MS: f32 = 1000.0 / 60.0;
@@ -55,6 +55,8 @@ pub const PARAM_DENSITY: u32 = 1;
 pub const PARAM_WIND_X: u32 = 2;
 pub const PARAM_WIND_Y: u32 = 3;
 pub const PARAM_SIZE: u32 = 4;
+/// How much the pointer and clicks move things: 0 off, 1 subtle, 2.2 lively (0–3).
+pub const PARAM_REACT: u32 = 5;
 pub const PARAM_FILE: u32 = 16;
 
 /// The golden hash: Motes, seed 42, viewport 1312×832, 600 steps of 1000/60 ms. Native and wasm must both give it
@@ -112,7 +114,10 @@ pub struct Scene {
     density: f32,
     size: f32,
     wind: (f32, f32),
+    react: f32,
     last_substeps: u32,
+    /// A ribbon band's points this frame (allocated once).
+    band: Vec<(f32, f32, f32, f32, u8)>,
 }
 
 /// A palette entry's colour before the page gives the theme's: a literal as written (dark), a role mid grey.
@@ -131,7 +136,12 @@ impl Scene {
     }
 
     pub fn from_def(def: &SceneDef, seed: u32) -> Scene {
-        let total: usize = def.emitters.iter().map(|e| e.max as usize).sum::<usize>() + def.layers.iter().map(|l| if let LayerKind::Fog { count, .. } = l.kind { count as usize } else { 0 }).sum::<usize>();
+        let total: usize = def.emitters.iter().map(|e| e.max as usize).sum::<usize>()
+            + def.layers.iter().map(|l| match l.kind {
+                LayerKind::Fog { count, .. } => count as usize,
+                LayerKind::Ribbon { bands, .. } => bands as usize * RIBBON_POINTS,
+                _ => 0,
+            }).sum::<usize>();
         let (x0, y0, x1, y1) = bounds(&def.space);
         let view = View { w: def.space.w, h: def.space.h, x0, y0, x1, y1 };
         let mut start = 0;
@@ -143,6 +153,9 @@ impl Scene {
                 noise_seed: (s ^ (s >> 32)) as u32,
                 group: e.group,
                 wind: e.wind,
+                align: e.align,
+                on_death: e.on_death,
+                deaths: Vec::with_capacity(DEATHS),
                 density_param: e.density_param,
                 size_param: e.size_param,
                 start,
@@ -188,7 +201,9 @@ impl Scene {
             density: 1.0,
             size: 1.0,
             wind: (0.0, 0.0),
+            react: 1.0,
             last_substeps: 0,
+            band: Vec::with_capacity(RIBBON_POINTS),
         };
         let view = s.view;
         for k in 0..s.emitters.len() {
@@ -303,6 +318,7 @@ impl Scene {
             PARAM_WIND_X => self.wind.0 = clampf(v, -400.0, 400.0),
             PARAM_WIND_Y => self.wind.1 = clampf(v, -400.0, 400.0),
             PARAM_SIZE => self.size = clampf(v, 0.25, 4.0),
+            PARAM_REACT => self.react = clampf(v, 0.0, 3.0),
             _ if id >= PARAM_FILE && ((id - PARAM_FILE) as usize) < self.params.len() => {
                 let i = (id - PARAM_FILE) as usize;
                 let d = &self.params[i];
@@ -320,6 +336,7 @@ impl Scene {
             PARAM_WIND_X => Some(self.wind.0),
             PARAM_WIND_Y => Some(self.wind.1),
             PARAM_SIZE => Some(self.size),
+            PARAM_REACT => Some(self.react),
             _ if id >= PARAM_FILE => self.values.get((id - PARAM_FILE) as usize).copied(),
             _ => None,
         }
@@ -363,15 +380,37 @@ impl Scene {
         for k in 0..self.emitters.len() {
             let limit = self.limit_of(k);
             let parallax = self.graph.layers.get(self.emitters[k].layer).map(|l| l.parallax).unwrap_or(0.5);
-            let ctl = Control { pointer: self.pointer.map(|p| self.to_scene(p, parallax)), click: self.click.map(|p| self.to_scene(p, parallax)) };
+            let ctl = Control { pointer: self.pointer.map(|p| self.to_scene(p, parallax)), click: self.click.map(|p| self.to_scene(p, parallax)), react: self.react };
             let e = &mut self.emitters[k];
             let wind = (self.wind.0 * e.wind, self.wind.1 * e.wind);
             accelerate(&e.ops, &mut self.pool, e.range(), dt, t, e.noise_seed, &ctl);
             integrate(&mut self.pool, e.range(), dt, wind);
-            constrain(&e.ops, &mut self.pool, e.range(), view);
+            grow(&e.ops, &mut self.pool, e.range(), dt);
+            constrain(&e.ops, &mut self.pool, e.range(), view, &mut e.deaths);
             e.reap(&mut self.pool);
             e.emit(&mut self.pool, view, dt, limit);
         }
+        // (Children where particles died at a floor: splash rings where rain meets the ground.)
+        for k in 0..self.emitters.len() {
+            if let Some((c, n)) = self.emitters[k].on_death {
+                if self.emitters[k].deaths.is_empty() || c >= self.emitters.len() {
+                    continue;
+                }
+                let deaths = core::mem::take(&mut self.emitters[k].deaths);
+                let limit = self.limit_of(c);
+                for &(x, y) in &deaths {
+                    for _ in 0..n {
+                        self.emitters[c].spawn_at(&mut self.pool, view, limit, x, y);
+                    }
+                }
+                let mut d = deaths;
+                d.clear();
+                self.emitters[k].deaths = d;
+            } else {
+                self.emitters[k].deaths.clear();
+            }
+        }
+        self.scenery.settle(self.time, &self.space);
         for (li, f) in self.scenery.fog.iter_mut().enumerate() {
             if let Some(f) = f {
                 let p = self.graph.layers.get(li).map(|l| l.parallax).unwrap_or(0.5);
@@ -408,7 +447,8 @@ impl Scene {
                     }
                     let c = p.colour[i];
                     let rgba = self.palette.get(c as usize).copied().unwrap_or(0x8080_80ff);
-                    self.draw.push(Inst { x: p.px[i], y: p.py[i], sx, sy: sx * p.stretch[i], rot: p.rot[i], alpha: a.min(1.0), rgba, sprite: p.sprite[i], layer: li8, depth: layer.depth, colour: c });
+                    let rot = if e.align { heading(p.vx[i], p.vy[i]) } else { p.rot[i] };
+                    self.draw.push(Inst { x: p.px[i], y: p.py[i], sx, sy: sx * p.stretch[i], rot, alpha: a.min(1.0), rgba, sprite: p.sprite[i], layer: li8, depth: layer.depth, colour: c });
                 }
             }
             if let Some(Some(f)) = self.scenery.fog.get(li) {
@@ -417,6 +457,19 @@ impl Scene {
                     let a = f.a[i] * layer.opacity;
                     if a >= MIN_ALPHA {
                         self.draw.push(Inst { x: f.x[i], y: f.y[i], sx: f.w[i], sy: f.w[i] * 0.32, rot: 0.0, alpha: a.min(1.0), rgba, sprite: 4, layer: li8, depth: layer.depth, colour: f.colour });
+                    }
+                }
+            }
+            if let Some(Some((rb, seed))) = self.scenery.ribbon.get(li) {
+                let step = (bounds(&self.space).2 - bounds(&self.space).0) / (RIBBON_POINTS - 1) as f32;
+                for b in 0..rb.bands {
+                    rb.band(b, self.time, *seed, &self.space, &mut self.band);
+                    for &(x, y, hgt, a, c) in &self.band {
+                        let a = a * layer.opacity;
+                        if a >= MIN_ALPHA {
+                            let rgba = self.palette.get(c as usize).copied().unwrap_or(0x8080_80ff);
+                            self.draw.push(Inst { x, y, sx: step * 2.4, sy: hgt, rot: 0.0, alpha: a.min(1.0), rgba, sprite: 11, layer: li8, depth: layer.depth, colour: c });
+                        }
                     }
                 }
             }
@@ -525,6 +578,7 @@ mod tests {
 
     const MOTES: &str = include_str!("../../../src/theme/scenes/motes.json");
     const SNOW: &str = include_str!("../../../src/theme/scenes/night-snowfall.json");
+    const AURORA: &str = include_str!("../../../src/theme/scenes/aurora-lake.json");
     #[test]
     fn golden_hash() {
         let mut s = Scene::load(MOTES.as_bytes(), 42).unwrap();
@@ -537,7 +591,7 @@ mod tests {
 
     #[test]
     fn same_seed_same_state() {
-        for src in [MOTES, SNOW] {
+        for src in [MOTES, SNOW, AURORA] {
             let mut a = Scene::load(src.as_bytes(), 7).unwrap();
             let mut b = Scene::load(src.as_bytes(), 7).unwrap();
             let mut c = Scene::load(src.as_bytes(), 8).unwrap();
@@ -636,7 +690,7 @@ mod tests {
 
     #[test]
     fn caps_hold_and_long_runs_stay_finite() {
-        for src in [MOTES, SNOW] {
+        for src in [MOTES, SNOW, AURORA] {
             let mut s = Scene::load(src.as_bytes(), 3).unwrap();
             let cap = s.capacity();
             assert!(cap <= crate::scenefile::MAX_TOTAL as usize);
@@ -710,10 +764,47 @@ mod tests {
         let h = s.state_hash();
         s.step(100.0);
         assert_eq!(s.state_hash(), h);
-        assert!(!s.param(99, 1.0) && !s.param(5, 1.0));
+        assert!(!s.param(99, 1.0) && !s.param(6, 1.0));
+        assert!(s.param(PARAM_REACT, 9.0) && s.param_get(PARAM_REACT) == Some(3.0));
         assert!(s.param(PARAM_SPEED, f32::NAN));
         assert!(s.palette(0, 0x11223344) && !s.palette(99, 0));
         assert_eq!(s.palette_get(0), Some(0x11223344));
+    }
+
+    #[test]
+    fn rain_splashes_ribbons_and_accumulation() {
+        let text = br##"{"format":"ktscene/1","palette":["#ffffff","#88ccff"],
+          "layers":[{"id":"sky","kind":"sky"},{"id":"au","kind":"ribbon","params":{"bands":2,"colours":[0,1]}},{"id":"snowbed","kind":"accum","params":{"h0":0,"h1":0.05,"grow":10}},{"id":"rain"},{"id":"rings"},{"id":"lake","kind":"mirror"}],
+          "emitters":[{"id":"rain","layer":"rain","max":300,"rate":200,"align":true,"onDeath":{"emitter":"splash","count":1},
+             "initializers":[{"kind":"lifetime","min":30,"max":30},{"kind":"velocity","min":[-60,600],"max":[-40,700]},{"kind":"sprite","id":2},{"kind":"stretch","min":8,"max":8}],
+             "operators":[{"kind":"floor","y":0.9},{"kind":"bounds"}]},
+            {"id":"splash","layer":"rings","max":200,"rate":0,"prewarm":0,"initializers":[{"kind":"lifetime","min":0.6,"max":0.6},{"kind":"size","min":4,"max":4},{"kind":"sprite","id":3}],
+             "operators":[{"kind":"grow","rate":3},{"kind":"fade","in":0,"out":0.8}]}]}"##;
+        let mut s = Scene::load(text, 2).unwrap();
+        let splash_live = |s: &Scene| s.emitters[1].live;
+        for _ in 0..120 {
+            s.step(STEP_MS);
+        }
+        assert!(splash_live(&s) > 0, "rain meeting the floor made rings");
+        // (The rings sit on the floor line and grow.)
+        let d = s.instances();
+        let rings: Vec<usize> = (0..d.count()).filter(|&k| d.get(k, crate::drawlist::I_SPRITE) == 3.0).collect();
+        assert!(!rings.is_empty() && rings.iter().all(|&k| (d.get(k, I_Y) - 900.0).abs() < 1e-3 && d.get(k, crate::drawlist::I_SX) >= 4.0));
+        // (Streaks turned along their fall: leaning with the wind, a little.)
+        let rain: Vec<usize> = (0..d.count()).filter(|&k| d.get(k, crate::drawlist::I_SPRITE) == 2.0).collect();
+        assert!(!rain.is_empty() && rain.iter().all(|&k| { let r = d.get(k, crate::drawlist::I_ROT); r > 0.0 && r < 0.2 }));
+        // (Ribbons: two bands of points, moving.)
+        let rb: Vec<usize> = (0..d.count()).filter(|&k| d.get(k, crate::drawlist::I_SPRITE) == 11.0).collect();
+        assert!(rb.len() > RIBBON_POINTS);
+        // (Settled snow grew; the mirror's command is there, not static.)
+        assert!(s.geom(2)[0] < 1000.0);
+        let c = s.instances().cmd_floats();
+        assert_eq!((c[5 * CMD_STRIDE + C_KIND], c[5 * CMD_STRIDE + C_STATIC]), (10.0, 0.0));
+        assert!(s.all_finite());
+        for _ in 0..2000 {
+            s.step(STEP_MS);
+        }
+        assert!(s.all_finite() && s.live() <= s.capacity());
     }
 
     #[test]

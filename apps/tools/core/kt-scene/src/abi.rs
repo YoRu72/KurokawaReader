@@ -6,7 +6,7 @@
 //! | export                                     | returns                                                       |
 //! |--------------------------------------------|---------------------------------------------------------------|
 //! | `kt_abi() -> u32`                          | 2                                                             |
-//! | `kt_feature(id) -> u32`                    | 1 when the engine has feature `id` (0 pointer, 1 click, 2 camera, 3 groups, 4 fog, 5 silhouettes), else 0 |
+//! | `kt_feature(id) -> u32`                    | 1 when the engine has feature `id` (0 pointer, 1 click, 2 camera, 3 groups, 4 fog, 5 silhouettes, 6 ribbons, 7 mirror, 8 accumulation, 9 children on death and the react param), else 0 |
 //! | `kt_layout(id) -> i32`                     | the layouts (drawlist.rs): 0 instance stride, 1 command stride, 100 + an instance field's name number → its offset, 200 + a command field's → its offset (see `LAYOUT`); −1 unknown |
 //! | `kt_alloc(len) -> ptr`, `kt_free(ptr, len)`| `len` bytes (1 … 256 KB) for the page to write a scene file into |
 //! | `scene_load(ptr, len, seed) -> i32`        | a handle (> 0), or `ERR_*` (json.rs, and −20… below)          |
@@ -17,7 +17,7 @@
 //! | `scene_palette(h, i, rgba) -> i32`         | the palette's size; `ERR_ARG` for no such entry                |
 //! | `scene_palette_get(h, i) -> u32`           | an entry's colour now (0xRRGGBBAA; a literal's own until set)  |
 //! | `scene_roles(h) -> i32`                    | the palette's size                                            |
-//! | `scene_param(h, id, v) -> i32`             | 0; `ERR_ARG` for no such param (0 speed, 1 density, 2 wind x, 3 wind y, 4 size, 16 + i the file's) |
+//! | `scene_param(h, id, v) -> i32`             | 0; `ERR_ARG` for no such param (0 speed, 1 density, 2 wind x, 3 wind y, 4 size, 5 react, 16 + i the file's) |
 //! | `scene_param_get(h, id) -> f32`            | its value (NaN: none)                                         |
 //! | `scene_group(h, g, density, size) -> i32`  | 0; `ERR_ARG` for no such group                                 |
 //! | `scene_step(h, dt_ms) -> i32`              | instances to draw (fixed 1/60 s steps inside, at most 4)      |
@@ -146,7 +146,7 @@ pub extern "C" fn kt_abi() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn kt_feature(id: u32) -> u32 {
-    (id <= 5) as u32
+    (id <= 9) as u32
 }
 
 #[no_mangle]
@@ -381,7 +381,7 @@ mod tests {
     fn the_page_s_path() {
         assert_eq!(kt_abi(), 2);
         assert_eq!((kt_layout(0), kt_layout(1), kt_layout(106), kt_layout(209), kt_layout(999)), (16, 16, 6, 9, -1));
-        assert_eq!((kt_feature(0), kt_feature(5), kt_feature(6)), (1, 1, 0));
+        assert_eq!((kt_feature(0), kt_feature(9), kt_feature(10)), (1, 1, 0));
         let h = load(SNOW.as_bytes(), 42);
         assert!(h > 0, "{h}");
         assert_eq!(scene_viewport(h, 1280.0, 800.0), 0);
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(scene_pointer(h, 300.0, 200.0, 0), 0);
         assert_eq!(scene_click(h, 300.0, 200.0), 0);
         let n = scene_roles(h);
-        assert_eq!(n, 13);
+        assert_eq!(n, 14);
         assert_eq!(scene_palette_get(h, 0), 0x040822ff);
         assert_eq!(scene_palette(h, 2, 0xaabbccff), n);
         assert_eq!(scene_palette_get(h, 2), 0xaabbccff);
@@ -494,7 +494,7 @@ mod tests {
         for n in [1u32, 7, 8, 9, 4096, MAX_JSON as u32] {
             for _ in 0..50 {
                 let p = kt_alloc(n);
-                assert!(!p.is_null() && p as usize % 8 == 0);
+                assert!(!p.is_null() && (p as usize).is_multiple_of(8));
                 unsafe { kt_free(p, n) };
             }
         }

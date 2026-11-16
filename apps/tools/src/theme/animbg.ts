@@ -22,7 +22,7 @@ import type { SceneRun } from './sceneHost';
 /** The two drawn designs. */
 export type Design = 'drift' | 'flow';
 /** The scenes of the engine. */
-export type SceneKind = 'scene:motes' | 'scene:night-snowfall';
+export type SceneKind = 'scene:motes' | 'scene:night-snowfall' | 'scene:aurora-lake';
 export type AnimKind = Design | SceneKind;
 export type AnimPref = 'off' | 'match' | AnimKind;
 export type AnimLevel = 'full' | 'reduced' | 'still';
@@ -269,8 +269,6 @@ const gate = {
     add(document, 'scroll', busy, { capture: true, passive: true });
     add(window, 'wheel', busy, { passive: true });
     add(window, 'pointermove', ((e: PointerEvent) => { if (e.buttons) busy(); for (const i of insts) i.pointer(e); }) as EventListener, { passive: true });
-    // (A click on the bare background — not on anything that answers clicks — reaches a scene.)
-    add(window, 'pointerdown', ((e: PointerEvent) => { const t = e.target as Element | null; if (t?.closest?.('button,a,input,select,textarea,label,summary,[role],[tabindex],[contenteditable]')) return; for (const i of insts) i.click(e); }) as EventListener, { passive: true });
     add(document, 'dragover', busy, { capture: true, passive: true });
     add(window, 'resize', () => { for (const i of insts) i.resize(); }, { passive: true });
     // (Another view: the scenes' scrim made again for its text, once it is drawn and once more when it has settled.)
@@ -292,6 +290,8 @@ const gate = {
     const still: StillWhy | null = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'motion' : this.lowBattery ? 'battery' : null;
     this.st = { ...this.st, paused, still };
     for (const i of insts) i.sync();
+    // («Less motion» turned on or off: the mouse answered, or not, as it says.)
+    const gi = globalInst; if (gi?.scene) { try { gi.page(); } catch (e) { gi.sceneFailed(e); } } clickGate(!!gi && !gi.dead && isScene(gi.asked) && reactPref() > 0);
     for (const w of watchers) w();
   },
 };
@@ -310,13 +310,19 @@ function grain(seed: number): string {
   for (let i = 0; i < im.data.length; i += 4) { const v = r() < 0.5 ? 0 : 255; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = Math.round(255 * GRAIN_A * (0.35 + r() * 0.65)); }
   g.putImageData(im, 0, 0); grainUrl = c.toDataURL('image/png'); return grainUrl;
 }
+/** What counts as a panel while a scene runs: each gets a veil of the ground of its own (--abg-p), measured under it. */
+const PANELS = '.nav-rail,.topbar,.dl-status,.card,.task-card,.video-row,.video-folder,.files-section,.release-group,.doh-card,.screen-step,.files-job,.sheet,.chip,.pick-btn,.empty .glyph';
 const CSS_ID = 'kt-animbg-css';
 const CSS = `html.abg body{background:transparent}html.abg{background:var(--th-ground,var(--md-surface))}
 #kt-animbg{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;contain:strict}
 .abg-canvas{position:absolute;inset:-16px;width:calc(100% + 32px);height:calc(100% + 32px);display:block;will-change:transform}
 .abg-grain{position:absolute;inset:0;background-size:96px 96px;pointer-events:none}
-html.abg-scene[data-glass]:not([data-glass='off']) :is(.task-card,.video-row,.video-folder,.files-section,.release-group,.doh-card,.screen-step,.files-job,.list-row,.empty){background-image:linear-gradient(var(--abg-veil,transparent),var(--abg-veil,transparent))}
-html.abg-scene[data-glass]:not([data-glass='off']){--g-pane:color-mix(in srgb,var(--th-ground) var(--abg-scrim,0%),var(--g-pane-t));--g-card:color-mix(in srgb,var(--th-ground) var(--abg-scrim,0%),var(--g-card-t));--g-sheet:color-mix(in srgb,var(--th-ground) var(--abg-scrim,0%),var(--g-sheet-t))}
+html.abg-scene :is(${PANELS}):not([data-abg-bare]){background-image:linear-gradient(rgb(var(--abg-g) / var(--abg-p,var(--abg-p0,0))),rgb(var(--abg-g) / var(--abg-p,var(--abg-p0,0))))!important}
+html.abg-scene [data-abg-halo]{text-shadow:0 0 1px rgb(var(--abg-g) / .7),0 0 6px rgb(var(--abg-g) / .55),0 0 14px rgb(var(--abg-g) / .4)}
+html.abg-scene.abg-whole:not([data-glass]) .nav-rail{background-color:color-mix(in srgb,var(--md-surface-container-low,var(--md-surface)) 45%,transparent);border-color:transparent}
+html.abg-scene.abg-whole[data-glass] .nav-rail{background-color:var(--g-pane-t)}
+html.abg-scene.abg-content :is(.nav-rail,.topbar,.dl-status){background:var(--th-solid-low,var(--md-surface-container-low,var(--md-surface)))!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.abg-ring{position:absolute;border-radius:50%;pointer-events:none;border:1.5px solid rgb(var(--abg-g-on,255 255 255) / .35);transform:translate(-50%,-50%)}
 html.pc.abg:not([data-glass]) .downloads-view .body>.chips{background:transparent}
 html.pc.abg:not([data-glass]) .downloads-view>.topbar{background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
 .settings-view .card>.row.abg-row:not([hidden]){flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:6px}.settings-view .card>.row.abg-row>*{margin-inline:0;align-self:flex-start;text-align:start}.settings-view .card>.row.abg-row>.abg-now{text-align:start;align-self:stretch;margin-inline:0}
@@ -324,6 +330,9 @@ html.pc.abg:not([data-glass]) .downloads-view>.topbar{background:transparent;-we
 .abg-preview .abg-canvas{z-index:-1}.abg-preview .abg-grain{z-index:-1}
 .abg-sample{position:absolute;inset-inline-start:14px;bottom:12px;display:flex;flex-direction:column;gap:2px;font-size:14px;color:var(--md-on-surface)}.abg-sample small{color:var(--md-on-surface-dim);font-size:12.5px}`;
 const levelPref = (): AnimLevel => { const l = getSettings().animBgLevel; return l === 'reduced' || l === 'still' ? l : 'full'; };
+const wherePref = (): 'whole' | 'content' => (getSettings().animBgWhere === 'content' ? 'content' : 'whole');
+/** How much a scene answers the mouse: 0 off (and always with «less motion»), 1 subtle (the default), 2.2 lively. */
+const reactPref = (): number => { if (matchMedia('(prefers-reduced-motion: reduce)').matches) return 0; const r = getSettings().animBgReact; return r === 'off' ? 0 : r === 'lively' ? 2.2 : 1; };
 const seedPref = (): number => { const s = getSettings().animBgSeed; return typeof s === 'number' && Number.isFinite(s) ? s : 1; };
 
 /* ---------- the test-only performance numbers (the scenes' gate against «drift»; tests/scene.cjs) ---------- */
@@ -361,30 +370,97 @@ function noteFallback(why: unknown): void {
   if (saidFallback.has(name)) return; saidFallback.add(name);
   console.info(line);
 }
-/** Where text sits with no panel under it: rectangles in the background canvas's CSS pixels (it reaches 16 px past the
- *  window). A panel is an element with a glass blur or a background at least a third opaque. */
-function bareText(): { x: number; y: number; w: number; h: number }[] {
-  const out: { x: number; y: number; w: number; h: number }[] = []; const panel = new Map<Element, boolean>();
-  const isPanel = (el: Element | null): boolean => {
+/* ---------- the page round a scene: its panels and bare text, the veils and halos put on them ---------- */
+const parseCol = (v: string): RGBA => { if (!v || v === 'transparent') return [0, 0, 0, 0]; let m = /rgba?\(([^)]+)\)/.exec(v); if (m) { const x = m[1].split(/[ ,/]+/).filter(Boolean).map(parseFloat); return [x[0], x[1], x[2], x[3] ?? 1]; } m = /color\(srgb ([^)]+)\)/.exec(v); if (m) { const x = m[1].split(/[ /]+/).filter(Boolean).map(parseFloat); return [x[0] * 255, x[1] * 255, x[2] * 255, x[3] ?? 1]; } return [0, 0, 0, 0]; };
+/** Elements the scene's veils and halos were put on (taken off with the scene). */
+const touched = { panels: new Set<HTMLElement>(), halos: new Set<Element>(), bare: new Set<Element>() };
+/** A surface of its own: a colour (not transparent) or glass (a backdrop filter). */
+function surfaced(el: Element): boolean {
+  const st = getComputedStyle(el); const bf = st.backdropFilter || (st as unknown as { webkitBackdropFilter?: string }).webkitBackdropFilter || 'none';
+  return (!!bf && bf !== 'none') || parseCol(st.backgroundColor)[3] >= 0.05;
+}
+let lastPanels: HTMLElement[] = [];
+/** The page as the scrim needs it: each visible panel (its rectangle in the background canvas's CSS pixels — the canvas
+ *  reaches 16 px past the window — and its own tint), and each text with no panel under it (marked for a halo). */
+function sceneDom(): { panels: { x: number; y: number; w: number; h: number; tint: RGBA; text: { x: number; y: number; w: number; h: number }[] }[]; bare: { x: number; y: number; w: number; h: number }[] } {
+  const panels: { x: number; y: number; w: number; h: number; tint: RGBA; text: { x: number; y: number; w: number; h: number }[] }[] = []; lastPanels = [];
+  const inView = (r: DOMRect): boolean => r.width >= 1 && r.height >= 1 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(PANELS))) {
+    if (el.closest('#kt-animbg')) continue; const r = el.getBoundingClientRect(); if (!inView(r)) continue;
+    // (A «panel» with no surface of its own — a menu item drawn as bare text — is bare text: a halo, not a veiled pill.)
+    if (!surfaced(el)) { if (!el.hasAttribute('data-abg-bare')) el.setAttribute('data-abg-bare', ''); touched.bare.add(el); continue; }
+    if (el.hasAttribute('data-abg-bare')) el.removeAttribute('data-abg-bare');
+    lastPanels.push(el); panels.push({ x: r.left + 16, y: r.top + 16, w: r.width, h: r.height, tint: parseCol(getComputedStyle(el).backgroundColor), text: [] });
+  }
+  const isPanel = new Map<Element, boolean>();
+  const panelled = (el: Element): boolean => {
     const seen: Element[] = []; let v = false;
-    for (let a = el; a && a !== document.documentElement; a = a.parentElement) {
-      const c = panel.get(a); if (c !== undefined) { v = c; break; }
-      seen.push(a); const st = getComputedStyle(a);
-      const bf = st.backdropFilter || (st as unknown as { webkitBackdropFilter?: string }).webkitBackdropFilter || 'none';
-      const bg = st.backgroundColor; let alpha = 0;
-      if (bg && bg !== 'transparent') { const m = /\/\s*([\d.]+%?)\s*\)/.exec(bg) || /rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/.exec(bg); alpha = m ? (m[1].endsWith('%') ? parseFloat(m[1]) / 100 : parseFloat(m[1])) : 1; }
-      if ((bf && bf !== 'none') || alpha >= 0.35) { v = true; break; }
+    for (let a: Element | null = el; a && a !== document.documentElement; a = a.parentElement) {
+      const c = isPanel.get(a); if (c !== undefined) { v = c; break; }
+      seen.push(a); if (a.matches(PANELS) && surfaced(a)) { v = true; break; }
+      const st = getComputedStyle(a);
+      if (parseCol(st.backgroundColor)[3] >= 0.35) { v = true; break; }
     }
-    for (const a of seen) panel.set(a, v);
+    for (const a of seen) isPanel.set(a, v);
     return v;
   };
+  const bare: { x: number; y: number; w: number; h: number }[] = []; const halos = new Set<Element>();
   const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n: Node | null; let k = 0;
   while ((n = w.nextNode()) && k < 4000) {
     k++; if (!n.nodeValue || !n.nodeValue.trim()) continue; const el = n.parentElement; if (!el || el.closest('#kt-animbg,script,style,[hidden]')) continue;
-    const r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
-    if (!isPanel(el)) out.push({ x: r.left + 16, y: r.top + 16, w: r.width, h: r.height });
+    const r = el.getBoundingClientRect(); if (!inView(r)) continue;
+    const rr = { x: r.left + 16, y: r.top + 16, w: r.width, h: r.height };
+    if (!panelled(el)) { bare.push(rr); halos.add(el); continue; }
+    // (Text on a panel: measured under that panel — the nearest one round it.)
+    const pe = el.closest<HTMLElement>(PANELS); const i = pe ? lastPanels.indexOf(pe) : -1; if (i >= 0) panels[i].text.push(rr);
   }
-  return out;
+  for (const el of touched.halos) if (!halos.has(el)) el.removeAttribute('data-abg-halo');
+  for (const el of halos) if (!el.hasAttribute('data-abg-halo')) el.setAttribute('data-abg-halo', '');
+  touched.halos = halos;
+  return { panels, bare };
+}
+/** Each panel's veil, as the scrim measured it; the most of them for panels not yet measured (new rows). */
+function applyScrim(s: { panels: number[]; max: number }, ground: RGBA): void {
+  const html = document.documentElement;
+  html.style.setProperty('--abg-g', `${Math.round(ground[0])} ${Math.round(ground[1])} ${Math.round(ground[2])}`); html.style.setProperty('--abg-p0', s.max.toFixed(3));
+  const now = new Set<HTMLElement>();
+  lastPanels.forEach((el, i) => { const v = (s.panels[i] ?? s.max).toFixed(3); if (el.style.getPropertyValue('--abg-p') !== v) el.style.setProperty('--abg-p', v); now.add(el); });
+  for (const el of touched.panels) if (!now.has(el)) el.style.removeProperty('--abg-p');
+  touched.panels = now;
+}
+/** Everything the scene put on the page, taken off. */
+function clearScene(): void {
+  const html = document.documentElement;
+  for (const el of touched.panels) el.style.removeProperty('--abg-p'); for (const el of touched.halos) el.removeAttribute('data-abg-halo'); for (const el of touched.bare) el.removeAttribute('data-abg-bare');
+  touched.panels = new Set(); touched.halos = new Set(); touched.bare = new Set(); lastPanels = [];
+  for (const v of ['--abg-g', '--abg-p0', '--abg-g-on']) html.style.removeProperty(v);
+  for (const c of ['abg-scene', 'abg-whole', 'abg-content']) if (html.classList.contains(c)) html.classList.remove(c);
+  untint();
+}
+/* ---------- «Match the app's colours to the background»: the scene's small UI palette on the theme's tokens ---------- */
+const TINT_ID = 'kt-abg-ui';
+let basePanel: { key: string; panel: RGBA | null } = { key: '', panel: null };
+function untint(): void { document.getElementById(TINT_ID)?.remove(); if (document.documentElement.classList.contains('abg-tint')) document.documentElement.classList.remove('abg-tint'); }
+/** The scene's accent (and second accent, and surface tint) put on the theme's tokens for as long as the option is on
+ *  and the scene runs; taken off exactly (one style element) when it is not. The accent is drawn toward the text until
+ *  it reads at 4.5:1 on the ground; no yellow. */
+function tint(ui: { accent?: RGBA; accent2?: RGBA; tint?: RGBA } | null, host: Element): void {
+  if (!ui?.accent) { untint(); return; }
+  const th = sceneTheme(host); const on = th.texts[0];
+  let a = noYellow(ui.accent); for (let i = 0; i < 30 && contrast(a, th.ground) < 4.5; i++) a = mix(a, on, 0.08);
+  let a2 = noYellow(ui.accent2 ?? ui.accent); for (let i = 0; i < 30 && contrast(a2, th.ground) < 4.5; i++) a2 = mix(a2, on, 0.08);
+  const onA: RGBA = contrast([255, 255, 255, 1], a) >= contrast([0, 0, 0, 1], a) ? [255, 255, 255, 1] : [10, 12, 18, 1];
+  const c = (x: RGBA): string => `rgb(${Math.round(x[0])} ${Math.round(x[1])} ${Math.round(x[2])})`;
+  const vars: [string, string][] = [['--md-primary', c(a)], ['--md-on-primary', c(onA)], ['--md-primary-container', c(mix(th.ground, a, 0.32))], ['--md-on-primary-container', c(on)],
+    ['--md-secondary-container', c(mix(th.ground, a, 0.22))], ['--md-on-secondary-container', c(on)], ['--md-tertiary', c(a2)]];
+  // (The surfaces' own tint read while not yet tinted — the tint mixed into what it already changed would drift.)
+  const html = document.documentElement; const key = [html.dataset.theme, html.dataset.ui, html.dataset.dark, html.dataset.glass].join('|');
+  if (!html.classList.contains('abg-tint') || basePanel.key !== key) basePanel = { key, panel: html.classList.contains('abg-tint') ? null : th.panel };
+  if (ui.tint && basePanel.panel) { const bp = basePanel.panel; const pt = mix(bp, noYellow(ui.tint), 0.22); for (const v of ['--g-card-t', '--g-pane-t', '--g-sheet-t']) vars.push([v, `rgb(${Math.round(pt[0])} ${Math.round(pt[1])} ${Math.round(pt[2])} / ${bp[3].toFixed(3)})`]); }
+  const text = `html.abg-tint{${vars.map(([k, v]) => `${k}:${v}!important`).join(';')}}`;
+  let el = document.getElementById(TINT_ID); if (!el) { el = document.createElement('style'); el.id = TINT_ID; document.head.append(el); }
+  if (el.textContent !== text) el.textContent = text;
+  if (!document.documentElement.classList.contains('abg-tint')) document.documentElement.classList.add('abg-tint');
 }
 /** (Tests only, with the perf flag: a scene throws as a trap would after this many steps.) */
 const trapAfter = (): number => { const v = (window as unknown as { __ktSceneTrapAfter?: unknown }).__ktSceneTrapAfter; return PERF && typeof v === 'number' ? v : -1; };
@@ -398,7 +474,9 @@ class Inst {
   kind: Design; scene: SceneRun | null = null; sceneState: 'loading' | 'ready' | 'failed' | null = null; k = 1;
   pf: PerfCount = perfNew();
   /** When to make the scene's static canvases and scrim again (the page's text moved); the panels' scrim set now. */
-  rebakeAt: number[] = []; scrimNow = -1;
+  rebakeAt: number[] = []; nextBake = 0;
+  /** The camera (a scene on the whole window): where the pointer pulls it (−1…1), where it is, the click's zoom pulse. */
+  cam = { tx: 0, ty: 0, x: 0, y: 0, pulse: 0, sent: '' }; react = 0;
   constructor(public host: HTMLElement, public asked: AnimKind, public level: AnimLevel, public seed: number, public global: boolean) {
     this.kind = isScene(asked) ? 'drift' : asked;
     this.canvas = document.createElement('canvas'); this.canvas.className = 'abg-canvas'; this.canvas.setAttribute('aria-hidden', 'true');
@@ -415,9 +493,11 @@ class Inst {
     try {
       const m = await import('./sceneHost'); const run = await m.openScene(id, this.seed);
       if (this.dead) { run.free(); return; }
-      run.trapAfter = trapAfter(); if (this.global) run.bare = bareText;
+      run.trapAfter = trapAfter();
+      if (this.global) { run.dom = sceneDom; run.onScrim = (sc) => applyScrim(sc, run.veil); }
       run.setTheme(sceneTheme(this.host)); run.setSpeed(this.level === 'reduced' ? 0.6 : 1);
-      this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene'; const t = performance.now(); this.rebakeAt = [t + 800, t + 2500];
+      this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene'; const t = performance.now(); this.rebakeAt = [t + 800, t + 2500]; this.nextBake = t + 6000;
+      this.page();
       this.w = this.h = 0; this.resize();
     } catch (e) { this.sceneFailed(e); }
   }
@@ -425,7 +505,7 @@ class Inst {
   sceneFailed(e: unknown): void {
     if (this.dead) return;
     const run = this.scene; this.scene = null; try { run?.free(); } catch { /* a poisoned engine: nothing to free */ }
-    this.scrim(-1);
+    if (this.global) clearScene();
     this.sceneState = 'failed'; this.host.dataset.engine = 'canvas'; this.host.dataset.fallback = 'drift'; noteFallback(e);
     this.w = this.h = 0; this.drawn = false; this.resize(); this.paint(); for (const w of watchers) w();
   }
@@ -451,26 +531,46 @@ class Inst {
   refresh(): void {
     this.pal = readPalette(this.kind, this.host); this.host.dataset.worst = this.pal.worst.toFixed(2);
     // (A scene: its colours told again only when they changed — another change on <html> remakes nothing.)
-    if (this.scene) { let changed = false; try { changed = this.scene.setTheme(sceneTheme(this.host)); } catch (e) { this.sceneFailed(e); return; } if (!changed && this.drawn) return; }
+    if (this.scene) { let changed = false; try { changed = this.scene.setTheme(sceneTheme(this.host)); this.page(); } catch (e) { this.sceneFailed(e); return; } if (!changed && this.drawn) return; }
     this.drawn = false; this.paint();
   }
   pointer(e: PointerEvent): void {
     // (A scene: the pointer, in the canvas's CSS pixels — it reaches 16 px past the window —, as its control point.)
-    if (this.scene) { if (this.global) { try { this.scene.pointer(e.clientX + 16, e.clientY + 16, e.buttons); } catch (err) { this.sceneFailed(err); } } return; }
+    if (this.scene) {
+      if (this.global && this.react > 0) {
+        // (The camera leans toward the pointer: a little (Subtle) or more (Lively); the near layers most.)
+        const a = this.react > 1.5 ? 0.9 : 0.45; this.cam.tx = ((e.clientX / innerWidth) * 2 - 1) * a; this.cam.ty = ((e.clientY / innerHeight) * 2 - 1) * a * 0.6;
+        try { this.scene.pointer(e.clientX + 16, e.clientY + 16, e.buttons); } catch (err) { this.sceneFailed(err); }
+      }
+      return;
+    }
     if (!this.global || this.kind !== 'drift' || this.sceneMode || this.level !== 'full') return;
     this.tx = ((e.clientX / innerWidth) - 0.5) * -10; this.ty = ((e.clientY / innerHeight) - 0.5) * -8;
   }
-  /** The panels' scrim on the page (the page's background only; −1: taken off). */
-  scrim(v: number): void {
-    if (!this.global) return; const html = document.documentElement; const r = v < 0 ? -1 : Math.round(v * 1000) / 10;
-    if (r === this.scrimNow) return; this.scrimNow = r;
-    if (r < 0) { html.style.removeProperty('--abg-scrim'); html.style.removeProperty('--abg-veil'); html.classList.remove('abg-scene'); return; }
-    // (The glass tints take the ground mixed in — --abg-scrim —; the surfaces coloured by the theme's own tokens (the
-    //  download cards…) a layer of the ground over them — --abg-veil —: the same result over any backdrop.)
-    const g = this.pal?.ground ?? [0, 0, 0, 1];
-    html.style.setProperty('--abg-scrim', `${r}%`); html.style.setProperty('--abg-veil', `rgba(${Math.round(g[0])},${Math.round(g[1])},${Math.round(g[2])},${(r / 100).toFixed(3)})`); if (!html.classList.contains('abg-scene')) html.classList.add('abg-scene');
+  /** The page round the scene as the settings say: where it shows, how much it answers the mouse, the app's colours. */
+  page(): void {
+    const sc = this.scene; if (!sc) return;
+    const r = this.global ? reactPref() : 0; if (r !== this.react) { this.react = r; sc.react(r); if (!r) { this.cam.tx = this.cam.ty = 0; sc.pointer(NaN, NaN, 0); } }
+    if (!this.global) return;
+    const html = document.documentElement; const where = wherePref(); const want = ['abg-scene', where === 'whole' ? 'abg-whole' : 'abg-content'];
+    for (const c of ['abg-scene', 'abg-whole', 'abg-content']) { const on = want.includes(c); if (html.classList.contains(c) !== on) html.classList.toggle(c, on); }
+    if (getSettings().animBgTint) tint(sc.ui(sceneTheme(this.host).light), this.host); else untint();
   }
-  click(e: PointerEvent): void { if (this.scene && this.global) { try { this.scene.click(e.clientX + 16, e.clientY + 16); } catch (err) { this.sceneFailed(err); } } }
+  /** (Old name kept for the teardown paths: everything of the scene off the page.) */
+  scrim(v: number): void {
+    if (v < 0 && this.global) clearScene();
+  }
+  click(e: PointerEvent): void {
+    if (!this.scene || !this.global || !this.react) return;
+    try { this.scene.click(e.clientX + 16, e.clientY + 16); } catch (err) { this.sceneFailed(err); return; }
+    this.cam.pulse = 1;
+    // (Lively: a faint ring where it was clicked, gone in under a second.)
+    if (this.react > 1.5 && this.held === null && this.level !== 'still') {
+      const ring = document.createElement('div'); ring.className = 'abg-ring'; ring.style.left = `${e.clientX + 16}px`; ring.style.top = `${e.clientY + 16}px`; this.host.append(ring);
+      const an = ring.animate([{ width: '8px', height: '8px', opacity: 0.9 }, { width: '120px', height: '120px', opacity: 0 }], { duration: 850, easing: 'cubic-bezier(.2,.7,.3,1)' });
+      an.onfinish = () => ring.remove(); an.oncancel = () => ring.remove();
+    }
+  }
   seek(t: number | null): void { this.held = t; this.drawn = false; this.cancel(); if (t !== null) { this.draw(t); this.host.dataset.state = 'held'; } else this.sync(); }
   /** A frame at loop time `t`; a scene steps `dtMs` instead and is drawn only when something moved (or not yet drawn). */
   draw(t: number, dtMs = 0): void {
@@ -478,9 +578,18 @@ class Inst {
     if (this.sceneMode) {
       if (!this.scene) { if (!this.drawn) { const c = this.pal.ground; this.g.setTransform(1, 0, 0, 1, 0, 0); this.g.fillStyle = `rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])})`; this.g.fillRect(0, 0, this.w, this.h); this.drawn = true; } return; }
       try {
-        const moved = this.scene.step(dtMs);
-        if (this.rebakeAt.length && performance.now() > this.rebakeAt[0]) { this.rebakeAt.shift(); this.scene.rebake(); this.drawn = false; }
-        if (moved || !this.drawn) { this.scene.render(this.g, this.w, this.h, this.k); this.drawn = true; this.scrim(this.scene.panelScrim); }
+        const moved = this.scene.step(dtMs); const now = performance.now();
+        if (this.rebakeAt.length && now > this.rebakeAt[0]) { this.rebakeAt.shift(); this.scene.rebake(); this.drawn = false; }
+        // (The page changes under the scene — rows come and go —: the veils measured again every few seconds.)
+        else if (this.global && now > this.nextBake) { this.nextBake = now + 4000; this.scene.rebake(); this.drawn = false; }
+        const c = this.cam;
+        if (this.react || c.x || c.y || c.pulse) {
+          c.x += (c.tx - c.x) * 0.08; c.y += (c.ty - c.y) * 0.08; c.pulse = c.pulse > 0.01 ? c.pulse * 0.85 : 0;
+          if (Math.abs(c.x) < 1e-3 && !c.tx) c.x = 0; if (Math.abs(c.y) < 1e-3 && !c.ty) c.y = 0;
+          const z = 1 + (this.react > 1.5 ? 0.05 : 0.025) * c.pulse; const key = `${c.x.toFixed(3)},${c.y.toFixed(3)},${z.toFixed(4)}`;
+          if (key !== c.sent) { c.sent = key; this.scene.camera(c.x, c.y, z); this.drawn = false; }
+        }
+        if (moved || !this.drawn) { this.scene.render(this.g, this.w, this.h, this.k); this.drawn = true; }
       } catch (e) { this.sceneFailed(e); }
       return;
     }
@@ -530,7 +639,7 @@ class Inst {
   destroy(): void {
     if (this.dead) return; this.dead = true; this.cancel(); this.scene?.free(); this.scene = null; this.scrim(-1); this.canvas.width = this.canvas.height = 0; this.canvas.remove(); this.grainEl.remove(); insts.delete(this);
     if (globalInst === this) globalInst = null;
-    if (!insts.size) { gate.stop(); document.getElementById(CSS_ID)?.remove(); }
+    if (!insts.size) { gate.stop(); clickGate(false); document.getElementById(CSS_ID)?.remove(); }
   }
 }
 function prune(): void { for (const i of [...insts]) if (!i.host.isConnected) i.destroy(); }
@@ -541,6 +650,15 @@ function mountInst(host: HTMLElement, kind: AnimKind, level: AnimLevel, global: 
   return i;
 }
 
+/* ---------- clicks: listened to only while a scene answers the mouse ---------- */
+let clickOff: (() => void) | null = null;
+/** A click on the bare background — not on a panel, nor on anything that answers clicks — reaches the scene. */
+function clickGate(on: boolean): void {
+  if (on === !!clickOff) return;
+  if (!on) { clickOff?.(); clickOff = null; return; }
+  const fn = ((e: PointerEvent) => { const t = e.target as Element | null; if (t?.closest?.(`button,a,input,select,textarea,label,summary,[role],[tabindex],[contenteditable],${PANELS}`)) return; for (const i of insts) i.click(e); }) as EventListener;
+  window.addEventListener('pointerdown', fn, { passive: true }); clickOff = () => window.removeEventListener('pointerdown', fn);
+}
 /* ---------- the page's background, kept as the settings and the theme say ---------- */
 let globalInst: Inst | null = null; let globalHost: HTMLElement | null = null; let htmlObs: MutationObserver | null = null; let pending = false;
 const isPc = () => document.documentElement.classList.contains('pc');
@@ -557,6 +675,7 @@ export function syncAnimBg(): void {
   } else if (htmlObs) { htmlObs.disconnect(); htmlObs = null; }
   if (globalInst && (!want || globalInst.asked !== want || globalInst.level !== level)) { globalInst.destroy(); globalInst = null; }
   // (A class set or taken only when it changes: writing it anyway is a mutation the watcher above would see again.)
+  clickGate(!!want && isScene(want) && reactPref() > 0);
   if (!want) { globalHost?.remove(); globalHost = null; if (html.classList.contains('abg')) html.classList.remove('abg'); return; }
   if (!globalInst) {
     if (!globalHost) { globalHost = document.createElement('div'); globalHost.id = 'kt-animbg'; globalHost.setAttribute('aria-hidden', 'true'); }

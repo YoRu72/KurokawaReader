@@ -1,10 +1,10 @@
-// node tests/scene.cjs: the scene engine's backgrounds «Motes» and «Night snowfall» (animBg 'scene:…': src/theme/
+// node tests/scene.cjs: the scene engine's backgrounds «Motes», «Night snowfall» and «Aurora over a lake» (animBg 'scene:…': src/theme/
 // sceneHost.ts drawing what the Rust engine core/kt-scene computes, loaded as dist/scene/ktscene.wasm) on a computer.
 // The wasm is built in CI only (scripts/build-scene-wasm.sh; never committed). So this test has two paths:
 //  - the wasm present (dist/scene/ktscene.wasm, or the file named by KT_SCENE_WASM — e.g. the «ktscene-wasm» artifact of
 //    .github/workflows/scene-wasm.yml — served at scene/ktscene.wasm):
 //      1. chosen at the start: the engine loads, ONE canvas, frames change, the instances drawn are the engine's;
-//         Night snowfall: a composition — static layers drawn once (sky, moon, ridges, pines, ground), snow moving;
+//         Night snowfall: a composition — static layers drawn once (sky, moon, ridges, hills, ground), snow moving;
 //      2. the same pause gate as the designs: hidden → paused, visible → running, «less motion» → still, Still → one frame;
 //      3. taken down from Appearance (Off), five times over: no canvas, timer, frame, listener, observer or engine
 //         scene left (sceneHost's liveScenes back to 0);
@@ -12,7 +12,10 @@
 //         line, no page error, the engine let go; chosen again later, a new engine instance runs the scene;
 //      5. readability, measured on the REAL text: every visible text's rectangle, the scene's pixels under it averaged,
 //         every panel between composited over them — 4.5:1 or more; no yellow; Motes clearly visible in dark;
-//      6. the perf gate's numbers printed beside «drift» (generous checks only; the real gate is the owner's PC);
+//      6. the page round a scene: «Where the background shows» (whole window: the sidebar a measured panel; content
+//         only: the theme's own surfaces), «Match the app's colours» (on: the scene's accent, ≥ 4.5:1, no yellow; off:
+//         the reader's accent back exactly), «Reacts to the mouse» (Off: no click listener);
+//      7. the perf gate's numbers printed beside «drift» (generous checks only; the real gate is the owner's PC);
 //  - the wasm absent: a scene chosen falls back to «drift» quietly — one console.info line, no error, drawing, the
 //    Appearance line saying so — and the test says «wasm absent: fallback path only» and passes, UNLESS
 //    KT_SCENE_REQUIRED=1 (the release workflow sets it): then the missing engine is a failure.
@@ -46,8 +49,8 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
 const PC = { viewport: { width: 1280, height: 800 } };
 const PHONE = { viewport: { width: 412, height: 915 }, hasTouch: true, isMobile: true };
 const T = {
-  en: { row: 'Animated background', motes: 'Motes', snow: 'Night snowfall', off: 'Off', fallback: /could not be loaded here/ },
-  ar: { row: 'خلفيّةٌ متحرّكة', motes: 'الذرّاتُ السابحة', snow: 'ثلجُ الليل', off: 'معطَّلة', fallback: /تعذّر تحميلُ محرّكِ المشاهد/ },
+  en: { row: 'Animated background', motes: 'Motes', snow: 'Night snowfall', aurora: 'Aurora over a lake', off: 'Off', fallback: /could not be loaded here/, where: 'Where the background shows', tint: "Match the app's colours to the background", react: 'Reacts to the mouse' },
+  ar: { row: 'خلفيّةٌ متحرّكة', motes: 'الذرّاتُ السابحة', snow: 'ثلجُ الليل', aurora: 'شفقٌ فوقَ بحيرة', off: 'معطَّلة', fallback: /تعذّر تحميلُ محرّكِ المشاهد/, where: 'موضعُ ظهورِ الخلفيّة', tint: 'مواءمةُ ألوانِ التطبيقِ للخلفيّة', react: 'التفاعلُ مع الفأرة' },
 }[LANG];
 
 /** In the page before anything runs: settings, the desktop bridge (or the phone's plugin), the counters (as animbg.cjs). */
@@ -106,7 +109,7 @@ function init({ settings, phone, lang, trapAfter }) {
     const { p, ctx, errs, fetched } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark' } }, '#/settings/appearance');
     await p.waitForSelector('#appearance');
     await p.locator('#appearance .row', { hasText: T.row }).first().locator('.pick-btn').click(); await p.waitForTimeout(250);
-    ok(`Appearance (PC, ${LANG}) offers «${T.motes}» and «${T.snow}»`, (await p.locator('.sheet .dest-row', { hasText: T.motes }).count()) === 1 && (await p.locator('.sheet .dest-row', { hasText: T.snow }).count()) === 1);
+    ok(`Appearance (PC, ${LANG}) offers «${T.motes}», «${T.snow}» and «${T.aurora}»`, (await p.locator('.sheet .dest-row', { hasText: T.motes }).count()) === 1 && (await p.locator('.sheet .dest-row', { hasText: T.snow }).count()) === 1 && (await p.locator('.sheet .dest-row', { hasText: T.aurora }).count()) === 1);
     await p.keyboard.press('Escape'); await p.waitForTimeout(250);
     ok('…and nothing of the engine fetched before it is chosen', !fetched(/sceneHost|ktscene\.wasm/));
     ok('no page errors (0)', !errs.length, errs); await ctx.close();
@@ -239,7 +242,7 @@ function init({ settings, phone, lang, trapAfter }) {
   /* ---------- 5. readability, on the real text ---------- */
   if (HAVE) {
     const worst = []; const yellow = [];
-    for (const [scene, mode, accent, route] of [['scene:night-snowfall', 'dark', 'graphite', '#/'], ['scene:night-snowfall', 'dark', 'graphite', '#/settings/appearance'], ['scene:night-snowfall', 'light', 'graphite', '#/'], ['scene:night-snowfall', 'light', 'teal', '#/settings/appearance'], ['scene:night-snowfall', 'dark', 'violet', '#/'], ['scene:motes', 'dark', 'graphite', '#/'], ['scene:motes', 'light', 'teal', '#/settings/appearance'], ['scene:motes', 'dark', 'gold', '#/settings/appearance']]) {
+    for (const [scene, mode, accent, route] of [['scene:night-snowfall', 'dark', 'graphite', '#/'], ['scene:night-snowfall', 'dark', 'graphite', '#/settings/appearance'], ['scene:night-snowfall', 'light', 'graphite', '#/'], ['scene:night-snowfall', 'light', 'teal', '#/settings/appearance'], ['scene:night-snowfall', 'dark', 'violet', '#/'], ['scene:motes', 'dark', 'graphite', '#/'], ['scene:motes', 'light', 'teal', '#/settings/appearance'], ['scene:motes', 'dark', 'gold', '#/settings/appearance'], ['scene:aurora-lake', 'dark', 'graphite', '#/'], ['scene:aurora-lake', 'light', 'graphite', '#/settings/appearance']]) {
       const { p, ctx, errs } = await open(PC, { settings: { theme: 'frost', uiMode: mode, accent, animBg: scene } }, route);
       await waitState(p, 'running', 6000); await p.waitForTimeout(3200);
       const r = await p.evaluate(() => {
@@ -263,6 +266,8 @@ function init({ settings, phone, lang, trapAfter }) {
           const chain = []; for (let a = el; a && a !== document.documentElement; a = a.parentElement) chain.push(a);
           // (Its colour, then a flat colour layered over it as a background image — the scenes' veil on themed surfaces.)
           for (const a of chain.reverse()) { const cs = getComputedStyle(a); back = over(parse(cs.backgroundColor), back); const m = /^linear-gradient\((rgba?\([^)]*\)|color\([^)]*\)), \1\)$/.exec(cs.backgroundImage); if (m) back = over(parse(m[1]), back); }
+          // (Text with the scenes' halo: its soft shadow in the veil colour counted as the host counts it, 0.35.)
+          if (el.closest('[data-abg-halo]')) { const g = getComputedStyle(document.documentElement).getPropertyValue('--abg-g').trim().split(/\s+/).map(Number); if (g.length === 3) back = over([g[0], g[1], g[2], 0.35], back); }
           const fg = parse(st.color); if (fg[3] < 0.05) continue; const ratio = cr(over(fg, back), back); n++;
           if (ratio < w) { w = ratio; at = { text: node.nodeValue.trim().slice(0, 30), ratio: +ratio.toFixed(2), back: back.map(Math.round), fg: fg.map((v) => +v.toFixed(2)) }; }
         }
@@ -279,6 +284,46 @@ function init({ settings, phone, lang, trapAfter }) {
     }
     console.log('     lowest text contrast: ' + worst.join(' | '));
     ok('no yellow, amber or gold in any scene', !yellow.length, yellow);
+  }
+
+  /* ---------- 6. the page round a scene: where it shows, the app's colours, the mouse ---------- */
+  {
+    const { p, ctx, errs } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark', animBg: 'scene:aurora-lake' } }, '#/settings/appearance');
+    await p.waitForSelector('#appearance'); await p.waitForTimeout(400);
+    const has = async (txt) => (await p.locator('#appearance .row', { hasText: txt }).count()) > 0;
+    ok(`a scene chosen (PC, ${LANG}): «${T.where}», «${T.tint}» and «${T.react}» offered`, (await has(T.where)) && (await has(T.tint)) && (await has(T.react)));
+    // (Clicks are listened to only while the scene answers the mouse: Subtle by default, none with Off.)
+    const cdp = await ctx.newCDPSession(p);
+    const downs = async () => { const { result } = await cdp.send('Runtime.evaluate', { expression: 'window' }); const { listeners } = await cdp.send('DOMDebugger.getEventListeners', { objectId: result.objectId }); return listeners.filter((l) => l.type === 'pointerdown').length; };
+    const d1 = await downs();
+    await p.locator('#appearance .row', { hasText: T.react }).first().locator('.pick-btn').click(); await p.waitForTimeout(250);
+    await p.locator('.sheet .dest-row').nth(0).locator('input').click(); await p.waitForTimeout(800);
+    const d0 = await downs();
+    ok('«Reacts to the mouse» Off: no click listener of the scene (Subtle: one more)', d1 === d0 + 1, { subtle: d1, off: d0 });
+    ok('no page errors (6a)', !errs.length, errs); await ctx.close();
+  }
+  if (HAVE) {
+    const { p, ctx, errs } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark', accent: 'teal', animBg: 'scene:night-snowfall' } });
+    await waitState(p, 'running', 6000); await p.waitForTimeout(3000);
+    const look = () => p.evaluate(() => { const h = document.documentElement; const cs = getComputedStyle(h); const rail = document.querySelector('.nav-rail'); return { cls: h.className, primary: cs.getPropertyValue('--md-primary').trim(), style: !!document.getElementById('kt-abg-ui'), railP: rail?.style.getPropertyValue('--abg-p') ?? '', railBf: rail ? getComputedStyle(rail).backdropFilter : '' }; });
+    const a = await look();
+    ok('whole window (the default): the sidebar is a panel over the scene, measured (its own veil)', /abg-whole/.test(a.cls) && a.railP !== '' && !/abg-content/.test(a.cls), a);
+    // (Match the app's colours: on, the scene's accent on the theme's tokens; off again, the reader's accent exactly.)
+    await p.goto(p.url().replace(/#.*$/, '#/settings/appearance')); await p.waitForSelector('#appearance'); await p.waitForTimeout(600);
+    const tintBox = () => p.locator('#appearance .row', { hasText: T.tint }).first().locator('input[type=checkbox]');
+    await tintBox().click(); await p.waitForTimeout(1000);
+    const b = await look();
+    const ratio = await p.evaluate(() => { const c = (v) => { const d = document.createElement('div'); d.style.color = v; document.body.append(d); const m = getComputedStyle(d).color.match(/[\d.]+/g).map(Number); d.remove(); return m; }; const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; const L = (x) => 0.2126 * lin(x[0]) + 0.7152 * lin(x[1]) + 0.0722 * lin(x[2]); const cs = getComputedStyle(document.documentElement); const p = c(cs.getPropertyValue('--md-primary')), g = c(cs.getPropertyValue('--md-surface')); const x = L(p), y = L(g); const mx = Math.max(...p), mn = Math.min(...p); let hue = 0; if (mx > mn) { hue = mx === p[0] ? ((p[1] - p[2]) / (mx - mn)) % 6 : mx === p[1] ? (p[2] - p[0]) / (mx - mn) + 2 : (p[0] - p[1]) / (mx - mn) + 4; hue = (hue * 60 + 360) % 360; } return { cr: (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05), hue }; });
+    ok('Match colours on: the scene\'s accent on the tokens, ≥ 4.5:1 on the ground, no yellow, amber or orange', /abg-tint/.test(b.cls) && b.style && b.primary !== a.primary && ratio.cr >= 4.5 && !(ratio.hue >= 20 && ratio.hue <= 70), { a: a.primary, b: b.primary, ratio });
+    await tintBox().click(); await p.waitForTimeout(800);
+    const c = await look();
+    ok('…off again: the reader\'s own accent back exactly, nothing of the scene left on the tokens', !/abg-tint/.test(c.cls) && !c.style && c.primary === a.primary, { before: a.primary, after: c.primary });
+    // (Content area only: the sidebar and the bars keep the theme's own surfaces.)
+    await p.locator('#appearance .row', { hasText: T.where }).first().locator('.pick-btn').click(); await p.waitForTimeout(250);
+    await p.locator('.sheet .dest-row').nth(1).locator('input').click(); await p.waitForTimeout(800);
+    const d = await look();
+    ok('«Content area only»: the sidebar is the theme\'s own surface again, no glass over the scene', /abg-content/.test(d.cls) && d.railBf === 'none', d);
+    ok('no page errors (6b)', !errs.length, errs); await ctx.close();
   }
 
   /* ---------- 5. the perf gate's numbers, beside «drift» (headless: a regression guard only) ---------- */

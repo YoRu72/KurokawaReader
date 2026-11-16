@@ -15,6 +15,10 @@
 //! - band (5):       y0, y1, top, bottom, a0, a1
 //! - bokeh (6):      n, (x, y, r, colour, alpha) × n
 //! - grain (7):      alpha;   halftone (8): alpha, cell
+//! - mirror (10):    y, ripple, alpha, tint, strength            (drawn each frame by the page from what precedes it)
+//! - accum (11):     yTop (now), yBottom, colour, alpha, rough, seed (yTop rises as the snow settles)
+//!
+//! Ribbons (9) are instances (soft curtains along a noise curve), made each step from the scene's time.
 
 #[cfg(kt_alone = "scenery")]
 #[path = "json.rs"]
@@ -76,25 +80,88 @@ impl Fog {
 
 /// The non-particle layers of a scene.
 pub struct Scenery {
-    /// Per layer: its geometry (empty for particles, fog and unknown kinds).
+    /// Per layer: its geometry (empty for particles, fog, ribbons and unknown kinds).
     pub geom: Vec<Vec<f32>>,
     /// Per layer: its fog, when it is one.
     pub fog: Vec<Option<Fog>>,
+    /// Per layer: its ribbon (and the layer's noise seed), when it is one.
+    pub ribbon: Vec<Option<(Ribbon, u32)>>,
+    /// Per layer: an accumulation's growth (h0, h1, seconds), when it is one.
+    pub accum: Vec<Option<(f32, f32, f32)>>,
+}
+
+/// A ribbon layer's shape (scenefile.rs LayerKind::Ribbon).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ribbon {
+    pub y: f32,
+    pub amp: f32,
+    pub thickness: f32,
+    pub bands: u32,
+    pub speed: f32,
+    pub freq: f32,
+    pub alpha: f32,
+    pub colours: Vec<u8>,
+}
+
+/// Points along each ribbon band.
+pub const RIBBON_POINTS: usize = 44;
+
+impl Ribbon {
+    /// The instances of one band at time `t`: (x, y, height, alpha, colour) for each point, into `out` (cleared).
+    pub fn band(&self, b: u32, t: f64, seed: u32, s: &Space, out: &mut Vec<(f32, f32, f32, f32, u8)>) {
+        out.clear();
+        let (x0, _, x1, _) = bounds(s);
+        let z = (t * self.speed as f64) as f32 + b as f32 * 7.3;
+        let nc = self.colours.len().max(1);
+        for i in 0..RIBBON_POINTS {
+            let u = i as f32 / (RIBBON_POINTS - 1) as f32;
+            let x = x0 + (x1 - x0) * u;
+            let n1 = noise3(seed, u * self.freq * 3.0, b as f32 * 3.1, z);
+            let n2 = noise3(seed ^ 0x51ed, u * self.freq * 5.0, b as f32 * 1.7, z * 1.3);
+            let y = s.h * (self.y + self.amp * n1 + b as f32 * self.thickness * 0.35);
+            let hgt = s.h * self.thickness * (0.55 + 0.45 * (n2 * 0.5 + 0.5));
+            let a = self.alpha * (0.3 + 0.7 * clampf(n2 * 0.7 + 0.55, 0.0, 1.0));
+            let c = self.colours.get(((u * nc as f32) as usize).min(nc - 1)).copied().unwrap_or(0);
+            out.push((x, y, hgt, a, c));
+        }
+    }
 }
 
 impl Scenery {
     pub fn new(layers: &[LayerDef], space: &Space, seed: u32) -> Scenery {
         let mut geom = Vec::with_capacity(layers.len());
         let mut fog = Vec::with_capacity(layers.len());
+        let mut ribbon = Vec::with_capacity(layers.len());
+        let mut accum = Vec::with_capacity(layers.len());
         for l in layers {
             let mut r = Pcg32::new(seed_of(&l.id, seed), 0x5c3e);
             fog.push(match &l.kind {
                 LayerKind::Fog { y, h, count, size, speed, alpha, colour } => Some(make_fog(space, *y, *h, *count, *size, *speed, *alpha, *colour, &mut r)),
                 _ => None,
             });
+            ribbon.push(match &l.kind {
+                LayerKind::Ribbon { y, amp, thickness, bands, speed, freq, alpha, colours } => Some((Ribbon { y: *y, amp: *amp, thickness: *thickness, bands: *bands, speed: *speed, freq: *freq, alpha: *alpha, colours: colours.clone() }, seed_of(&l.id, seed) as u32)),
+                _ => None,
+            });
+            accum.push(match &l.kind {
+                LayerKind::Accum { h0, h1, grow, .. } => Some((*h0, *h1, *grow)),
+                _ => None,
+            });
             geom.push(make_geom(&l.kind, space, seed_of(&l.id, seed) as u32, &mut r));
         }
-        Scenery { geom, fog }
+        Scenery { geom, fog, ribbon, accum }
+    }
+
+    /// The accumulations' tops at time `t` (seconds), written into their geometry.
+    pub fn settle(&mut self, t: f64, s: &Space) {
+        for (g, a) in self.geom.iter_mut().zip(&self.accum) {
+            if let Some((h0, h1, grow)) = *a {
+                let k = clampf((t / grow as f64) as f32, 0.0, 1.0);
+                if let Some(v) = g.get_mut(0) {
+                    *v = s.h * (1.0 - (h0 + (h1 - h0) * k));
+                }
+            }
+        }
     }
 }
 
@@ -229,7 +296,9 @@ fn make_geom(kind: &LayerKind, s: &Space, seed: u32, r: &mut Pcg32) -> Vec<f32> 
         }
         LayerKind::Grain { alpha } => vec![*alpha],
         LayerKind::Halftone { alpha, cell } => vec![*alpha, *cell],
-        LayerKind::Particles | LayerKind::Fog { .. } | LayerKind::Unknown(_) => Vec::new(),
+        LayerKind::Mirror { y, ripple, alpha, tint, strength } => vec![y * h, *ripple, *alpha, *tint as f32, *strength],
+        LayerKind::Accum { h0, colour, alpha, rough, .. } => vec![h * (1.0 - h0), y1, *colour as f32, *alpha, *rough, (seed & 0xffff) as f32],
+        LayerKind::Particles | LayerKind::Fog { .. } | LayerKind::Ribbon { .. } | LayerKind::Unknown(_) => Vec::new(),
     }
 }
 
@@ -269,13 +338,10 @@ mod tests {
                 LayerKind::Sky { stops, .. } => assert_eq!(g.len(), 1 + stops.len() * 2 + 6),
                 LayerKind::Silhouette { form, .. } => {
                     let n = g[7] as usize;
-                    match form {
-                        Form::Ridge => {
-                            assert_eq!(g.len(), 8 + n * 2);
-                            assert_eq!((g[8], g[8 + (n - 1) * 2]), (x0, x1));
-                            assert!((0..n).all(|i| g[9 + i * 2] >= y0 && g[9 + i * 2] <= y1));
-                        }
-                        _ => {}
+                    if let Form::Ridge = form {
+                        assert_eq!(g.len(), 8 + n * 2);
+                        assert_eq!((g[8], g[8 + (n - 1) * 2]), (x0, x1));
+                        assert!((0..n).all(|i| g[9 + i * 2] >= y0 && g[9 + i * 2] <= y1));
                     }
                 }
                 LayerKind::Disc { .. } => assert_eq!(g.len(), 6),
@@ -286,6 +352,26 @@ mod tests {
         }
         let fog = sc.fog.iter().flatten().next().unwrap();
         assert_eq!(fog.x.len(), 5);
+    }
+
+    #[test]
+    fn ribbons_mirror_and_accum() {
+        let d = read(br##"{"format":"ktscene/1","palette":["primary","#ffffff"],"layers":[
+          {"id":"a","kind":"ribbon","params":{"bands":3,"colours":[0,1]}},{"id":"m","kind":"mirror","params":{"y":0.6}},{"id":"s","kind":"accum","params":{"h0":0,"h1":0.1,"grow":100}}]}"##).unwrap();
+        let mut sc = Scenery::new(&d.layers, &d.space, 3);
+        let (rb, seed) = sc.ribbon[0].clone().unwrap();
+        let (mut a, mut b) = (Vec::with_capacity(RIBBON_POINTS), Vec::with_capacity(RIBBON_POINTS));
+        rb.band(0, 1.0, seed, &d.space, &mut a);
+        rb.band(0, 30.0, seed, &d.space, &mut b);
+        assert_eq!(a.len(), RIBBON_POINTS);
+        assert_ne!(a, b, "it moves with time");
+        assert!(a.iter().all(|p| p.0.is_finite() && p.1.is_finite() && p.2 > 0.0 && p.3 >= 0.0 && p.3 <= 1.0));
+        assert_eq!(sc.geom[1], vec![600.0, 3.0, 0.55, 0.0, 0.35]);
+        assert_eq!(sc.geom[2][0], 1000.0);
+        sc.settle(50.0, &d.space);
+        assert_eq!(sc.geom[2][0], 950.0);
+        sc.settle(1e9, &d.space);
+        assert_eq!(sc.geom[2][0], 900.0);
     }
 
     #[test]
