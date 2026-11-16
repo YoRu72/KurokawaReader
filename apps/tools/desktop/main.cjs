@@ -173,7 +173,7 @@ else {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin' && !ScreenTr.keepInTray()) app.quit(); });
-  app.on('before-quit', () => { quitting = true; if (RUST_SWITCH) owner?.release(); void WebStream.stopAll(); ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); });
+  app.on('before-quit', () => { quitting = true; if (RUST_SWITCH) owner?.release(); void WebStream.stopAll(); ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); try { require('./extplayer.cjs').release(); } catch { /* */ } });
 }
 
 /* ---------- the engine, to the page ---------- */
@@ -363,6 +363,13 @@ ipcMain.handle('kt:streamStats', async (_e, o) => { const h = handed.get(String(
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
 ipcMain.handle('kt:videoUrl', async () => ({ url: await StreamProxy.videoBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
+// Another program as the player (extplayer.cjs) and the relay it reads a source with headers through (relay.cjs).
+ipcMain.handle('kt:relayOpen', (_e, o) => StreamProxy.relayOpen(o || {}));
+ipcMain.handle('kt:relayClose', (_e, o) => StreamProxy.relayClose(o || {}));
+ipcMain.handle('kt:extPlayers', (_e, o) => require('./extplayer.cjs').find(o || {}));
+ipcMain.handle('kt:extPlayerStart', (_e, o) => require('./extplayer.cjs').start(o || {}));
+ipcMain.handle('kt:extPlayerStatus', (_e, o) => require('./extplayer.cjs').status(o || {}));
+ipcMain.handle('kt:extPlayerStop', (_e, o) => require('./extplayer.cjs').stop(o || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 ipcMain.handle('kt:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : AppIcon.current()));
 // DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.

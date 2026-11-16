@@ -332,6 +332,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
       row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
       ...(s.addons.includes('player') ? [...(plat === 'android' ? [toggle(t('playerEngine') + ' — mpv', s.playerEngine !== 'web', (v) => updateSettings({ playerEngine: v ? 'mpv' : 'web' }), t('playerEngineHint'))] : []), toggle(t('videosTabToggle'), s.videosTab !== false, (v) => updateSettings({ videosTab: v }), t('videosTabHint')), ...fontRows(plat === 'desktop')] : [])) : null;
+    // (Another app for each kind of video — src/player/external/settingsRows.ts, loaded with the page's card.)
+    if (player && s.playerWith !== 'app') { const slot = h('div', { class: 'ext-slot' }); player.insertBefore(slot, player.children[2] ?? null); void import('../player/external/settingsRows').then((m) => { const el = m.externalRows(); if (el) slot.replaceWith(el); else slot.remove(); }); }
     // The player's own preferences (REX Player's groups), with the Player add-on.
     // (The player's own preferences go into the Player card — one «Player», not a second «Player settings» beside it.)
     const playerPrefs = s.addons.includes('player') ? (() => { const into = player ?? card('playerprefs', t('playerSettings')); into.append(h('p', { class: 'hint player-prefs-hint' }, t('playerPrefsHint'))); void import('../player/panel').then((m) => into.append(m.playerPrefsPanel())); return player ? null : into; })() : null;

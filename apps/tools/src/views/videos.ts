@@ -46,7 +46,7 @@ const upFolder = () => up('/videos?tab=phone');
 const upServer = () => back('/videos?tab=servers');
 
 /* ---------- playing ---------- */
-async function play(url: string, name: string, o: { localPath?: string; playlist?: { url: string; name: string; localPath?: string }[] } = {}): Promise<void> {
+async function play(url: string, name: string, o: { localPath?: string; playlist?: { url: string; name: string; localPath?: string }[]; origin?: { url: string; headers: Record<string, string> } } = {}): Promise<void> {
   const { openPlayer } = await import('./player'); await openPlayer(url, name, o);
 }
 async function urlOf(path: string): Promise<string | null> { const { localFileUrl } = await import('../player/files'); return localFileUrl(path); }
@@ -221,7 +221,8 @@ async function playRemote(s: Server, vids: Entry[], i: number): Promise<void> {
   const playlist = (await Promise.all(near.map(async (x) => ({ url: await resolve(x).catch(() => ''), name: x.name })))).filter((x) => x.url);
   const url = await resolve(vids[i]); if (!url) { toast(t('playerCantPlay'), 'error'); return; }
   if (s.type === 'webdav' && !plug()?.proxyUrl && vids[i].headers) toast(t('serversNoRelay'));
-  await play(url, vids[i].name, { playlist });
+  // (Its headers kept with it: another app reads it through the relay — on a computer too, where the page has none.)
+  await play(url, vids[i].name, { playlist, origin: vids[i].headers && vids[i].url ? { url: vids[i].url!, headers: vids[i].headers! } : undefined });
 }
 async function jellyfin(s: Server, parent?: string): Promise<Entry[]> {
   const H = { 'x-emby-authorization': jfAuth(s.token), authorization: jfAuth(s.token), accept: 'application/json' };

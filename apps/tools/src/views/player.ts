@@ -9,7 +9,8 @@ import { getSettings, updateSettings } from '../settings';
 import { getEngine, isVideo } from '../engine';
 import type { Task } from '../engine/types';
 
-type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[]; headers?: Record<string, string>; startAt?: number; forCaller?: boolean };
+type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[]; headers?: Record<string, string>; startAt?: number; forCaller?: boolean;
+  /** An online source as the site gives it (its headers, HLS or not): another app gets it through the relay; the app's own player gets `inAppUrl()` (the proxy the web view needs). */ origin?: { url: string; headers: Record<string, string>; hls?: boolean }; inAppUrl?: () => Promise<string> };
 export type PlayWith = 'ask' | 'app' | 'external';
 export const canPlayExternally = (): boolean => { const p = nativePlatform(); return p === 'android' || p === 'desktop'; };
 
@@ -17,7 +18,22 @@ export async function openPlayer(url: string, name: string, opts: PlayOpts = {})
   const how = canPlayExternally() ? await chooseHow() : 'app'; if (!how) return;
   // (A video opened from a folder: its folder's other videos become the queue, in name order, when the player's setting says.)
   if (!opts.playlist && opts.localPath && !opts.task) { try { const { getPrefs } = await import('../player/prefs'); if (getPrefs().autoQueueFolder !== false) { const { siblingFiles, localFileUrl } = await import('../player/files'); const sibs = (await siblingFiles(opts.localPath)).filter((p) => /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i.test(p)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); if (sibs.length > 1 && sibs.includes(opts.localPath)) { const pl = []; for (const p of sibs) { const u = p === opts.localPath ? url : await localFileUrl(p); if (u) pl.push({ url: u, name: p.split('/').pop() ?? p, localPath: p }); } if (pl.length > 1) opts = { ...opts, playlist: pl }; } } } catch { /* alone */ } }
-  if (how === 'external' && (await external(url, name, opts.localPath))) return;
+  if (how === 'external') {
+    // (Another app: the player for this kind of source, the relay when the source needs headers, subtitles and the
+    // start handed over, and what the app tells back fed to the same «watched» hook — src/player/external.)
+    const ext = await import('../player/external/run'); const { serviceOf } = await import('../player/external/logic');
+    const srcUrl = opts.origin?.url ?? url; const headers = opts.origin?.headers ?? opts.headers;
+    const key = opts.localPath ?? srcUrl.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
+    const service = serviceOf({ taskKind: opts.task?.kind, localPath: opts.localPath, headers, online: !!opts.origin });
+    const handled = await ext.playExternally({ src: ext.sourceFor({ url: srcUrl, name, localPath: opts.localPath, headers, hls: opts.origin?.hls, subtitles: opts.subtitles, startAt: opts.startAt, key }), service, key, task: opts.task, fileIndex: opts.fileIndex, meta: opts.meta, fallback: () => void inApp(url, name, opts) });
+    if (handled) return;
+    if (await external(url, name, opts.localPath)) return;
+  }
+  await inApp(url, name, opts);
+}
+/** The app's own player (the Player add-on), with mpv on a phone when it is here. */
+async function inApp(url: string, name: string, opts: PlayOpts): Promise<void> {
+  if (!url && opts.inAppUrl) { try { url = await opts.inAppUrl(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); return; } }
   // (Where it goes back to — the app's own player only, not another app's, nor a video handed in by another app.)
   if (!opts.forCaller) await import('../player/returnTo').then((r) => r.notePlayerOpen(opts.task?.meta ?? opts.meta)).catch(() => undefined);
   if (!getSettings().addons.includes('player')) {

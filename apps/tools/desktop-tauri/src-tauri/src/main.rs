@@ -40,6 +40,8 @@ mod stream_hybrid;
 #[cfg(feature = "rqbit")]
 mod stream_rqbit;
 mod streamproxy;
+mod extplayer;
+mod relaylogic;
 mod streamserver;
 mod streamtest;
 mod torrentmake;
@@ -229,6 +231,12 @@ fn main() {
             streamserver::kt_audio_url,
             streamserver::kt_video_url,
             streamserver::kt_proxy_url,
+            extplayer::kt_relay_open,
+            extplayer::kt_relay_close,
+            extplayer::kt_ext_players,
+            extplayer::kt_ext_player_start,
+            extplayer::kt_ext_player_status,
+            extplayer::kt_ext_player_stop,
             streamtest::kt_selftest_stream,
             // (Stage P5: the video tools.)
             vtools::kt_video_info,

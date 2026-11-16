@@ -96,6 +96,79 @@ final class KtStream {
         out.flush(); c.disconnect();
     }
 
+    /* ---------- the relay for another app's player (src/player/external; desktop/relay.cjs's twin) ----------
+     * A session per playback, its random token in the path (/r/<token>/v|u|s/…), closed when the playback ends
+     * (relayClose) or after six idle hours: a source's headers sent for the player, an HLS playlist rewritten so
+     * every segment, key and sub-playlist is a numbered address of the same session (no URL taken from a request),
+     * the subtitles (a site's, or a file the player could not read) served beside it. */
+    private static final class Relay { String url; String headers; org.json.JSONArray subs; final java.util.ArrayList<String> urls = new java.util.ArrayList<>(); final java.util.HashMap<String, Integer> ids = new java.util.HashMap<>(); volatile long last = System.currentTimeMillis(); volatile boolean gone; }
+    private final java.util.Map<String, Relay> relays = java.util.Collections.synchronizedMap(new java.util.HashMap<>());
+    synchronized org.json.JSONObject relayOpen(org.json.JSONObject o) throws Exception {
+        url("", 0);
+        synchronized (relays) { relays.values().removeIf(r -> System.currentTimeMillis() - r.last > 6L * 3600_000); }
+        byte[] b = new byte[16]; new java.security.SecureRandom().nextBytes(b); StringBuilder tk = new StringBuilder(); for (byte x : b) tk.append(String.format(java.util.Locale.US, "%02x", x));
+        Relay r = new Relay(); r.url = o.optString("url", ""); r.headers = o.optJSONObject("headers") == null ? "{}" : o.optJSONObject("headers").toString(); r.subs = o.optJSONArray("subs") == null ? new org.json.JSONArray() : o.optJSONArray("subs");
+        relays.put(tk.toString(), r);
+        String at = "http://127.0.0.1:" + port + "/r/" + tk;
+        org.json.JSONObject out = new org.json.JSONObject(); out.put("token", tk.toString());
+        out.put("url", r.url.isEmpty() ? "" : at + "/v/" + nameOf(o.optString("name", ""), "video"));
+        org.json.JSONArray su = new org.json.JSONArray(); for (int i = 0; i < r.subs.length(); i++) { org.json.JSONObject x = r.subs.optJSONObject(i); String n = x == null ? "" : x.optString("name", new File(x.optString("path", "")).getName()); su.put(at + "/s/" + i + "/" + nameOf(n, "sub" + i + ".srt")); }
+        out.put("subs", su); return out;
+    }
+    private static String nameOf(String n, String d) throws IOException { String x = (n == null || n.isEmpty() ? d : n).replaceAll("[\\\\/]", "_"); if (x.length() > 100) x = x.substring(0, 100); return java.net.URLEncoder.encode(x, "UTF-8").replace("+", "%20"); }
+    boolean relayClose(String token) { Relay r = relays.remove(token); if (r != null) r.gone = true; return r != null; }
+    private void relay(String path, String method, String range, OutputStream out) throws Exception {
+        String[] p = path.split("\\?")[0].split("/"); // ["", "r", token, kind, n?, name?]
+        Relay r = p.length > 3 ? relays.get(p[2]) : null;
+        if (r == null) { out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+        r.last = System.currentTimeMillis(); String at = "http://127.0.0.1:" + port + "/r/" + p[2]; String target; String hj = r.headers; boolean mayList = true;
+        if ("v".equals(p[3])) target = r.url;
+        else if ("u".equals(p[3]) && p.length > 4) { int n = Integer.parseInt(p[4]); synchronized (r) { target = n >= 0 && n < r.urls.size() ? r.urls.get(n) : ""; } }
+        else if ("s".equals(p[3]) && p.length > 4) {
+            org.json.JSONObject x = r.subs.optJSONObject(Integer.parseInt(p[4])); mayList = false;
+            if (x == null) target = "";
+            else if (!x.optString("path", "").isEmpty()) {
+                byte[] body = java.nio.file.Files.readAllBytes(new File(x.optString("path")).toPath());
+                out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: " + body.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); if (!"HEAD".equals(method)) out.write(body); out.flush(); return;
+            } else { target = x.optString("url", ""); org.json.JSONObject m = new org.json.JSONObject(r.headers); org.json.JSONObject sh = x.optJSONObject("headers"); if (sh != null) for (java.util.Iterator<String> it = sh.keys(); it.hasNext(); ) { String k = it.next(); m.put(k, sh.optString(k)); } hj = m.toString(); }
+        } else target = "";
+        if (target.isEmpty()) { out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+        org.json.JSONObject hd = new org.json.JSONObject(hj);
+        java.net.HttpURLConnection c = null; java.net.URL url = new java.net.URL(target);
+        boolean listByName = url.getPath().toLowerCase(java.util.Locale.ROOT).endsWith(".m3u8");
+        for (int hop = 0; hop < 6; hop++) {
+            c = KrDoh.open(url); c.setInstanceFollowRedirects(false); c.setConnectTimeout(15000); c.setReadTimeout(30000); c.setRequestMethod("HEAD".equals(method) && !listByName ? "HEAD" : "GET");
+            for (java.util.Iterator<String> it = hd.keys(); it.hasNext(); ) { String k = it.next(); if (!"range".equalsIgnoreCase(k) && !"host".equalsIgnoreCase(k)) c.setRequestProperty(k, hd.optString(k)); }
+            if (!hd.has("User-Agent") && !hd.has("user-agent")) c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Mobile Safari/537.36");
+            if (range != null && !listByName) c.setRequestProperty("Range", range);
+            int code = c.getResponseCode();
+            if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) { url = new java.net.URL(url, c.getHeaderField("Location")); c.disconnect(); continue; }
+            break;
+        }
+        int code = c.getResponseCode(); String type = c.getContentType() == null ? "" : c.getContentType();
+        boolean playlist = mayList && code < 400 && (type.toLowerCase(java.util.Locale.ROOT).contains("mpegurl") || url.getPath().toLowerCase(java.util.Locale.ROOT).endsWith(".m3u8"));
+        InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
+        if (playlist) {
+            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream(); byte[] buf = new byte[16384]; int n; while ((n = in.read(buf)) > 0) b.write(buf, 0, n); in.close();
+            StringBuilder sb = new StringBuilder(); java.util.regex.Pattern attr = java.util.regex.Pattern.compile("URI=\"([^\"]+)\"");
+            for (String line : new String(b.toByteArray(), StandardCharsets.UTF_8).split("\r?\n")) {
+                String t = line.trim();
+                if (t.isEmpty()) { sb.append('\n'); continue; }
+                if (t.startsWith("#")) { java.util.regex.Matcher m = attr.matcher(line); StringBuffer o = new StringBuffer(); while (m.find()) m.appendReplacement(o, java.util.regex.Matcher.quoteReplacement("URI=\"" + relayId(r, at, new java.net.URL(url, m.group(1)).toString()) + "\"")); m.appendTail(o); sb.append(o).append('\n'); }
+                else sb.append(relayId(r, at, new java.net.URL(url, t).toString())).append('\n');
+            }
+            byte[] body = sb.toString().getBytes(StandardCharsets.UTF_8);
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: " + body.length + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            if (!"HEAD".equals(method)) out.write(body); out.flush(); c.disconnect(); return;
+        }
+        StringBuilder head = new StringBuilder("HTTP/1.1 " + code + " " + (c.getResponseMessage() == null ? "" : c.getResponseMessage()) + "\r\n");
+        for (String k : new String[] { "Content-Type", "Content-Length", "Content-Range", "Accept-Ranges" }) { String v = c.getHeaderField(k); if (v != null) head.append(k).append(": ").append(v).append("\r\n"); }
+        head.append("Connection: close\r\n\r\n"); out.write(head.toString().getBytes(StandardCharsets.US_ASCII));
+        if (in != null && !"HEAD".equals(method)) { byte[] buf = new byte[1 << 16]; int n; while (!r.gone && (n = in.read(buf)) > 0) out.write(buf, 0, n); in.close(); }
+        out.flush(); c.disconnect();
+    }
+    private static String relayId(Relay r, String at, String u) { synchronized (r) { Integer n = r.ids.get(u); if (n == null) { if (r.urls.size() >= 200000) return u; n = r.urls.size(); r.urls.add(u); r.ids.put(u, n); } return at + "/u/" + n; } }
+
     /** The base address of the sound a web view cannot decode itself (AC-3, E-AC-3, DTS, TrueHD…). */
     synchronized String audioBase() throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/audio"; }
     /** /audio?src=&ss=&a=: one audio track of a video (any address ffmpeg reads, this server's own included), from
@@ -123,6 +196,7 @@ final class KtStream {
             String[] parts = path.replaceFirst("^/", "").split("/");
             BufferedOutputStream out = new BufferedOutputStream(rawOut, 1 << 16);
             if (path.startsWith("/proxy?")) { proxy(path, req[0], rawRange, out); return; }
+            if (path.startsWith("/r/")) { relay(path, req[0], rawRange, out); return; }
             // /arc/<id>: a file inside an archive, read straight from it (ranges by seeking in a stored zip entry, by reading past otherwise).
             if (path.startsWith("/arc/")) {
                 String[] ent = arcEntries.get(path.substring(5).split("[?]")[0]);

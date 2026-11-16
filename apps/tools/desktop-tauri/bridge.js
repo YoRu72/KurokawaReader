@@ -263,6 +263,16 @@
     audioUrl: function () { return call('kt_audio_url'); },
     videoUrl: function () { return call('kt_video_url'); },
     proxyUrl: function (o) { return call('kt_proxy_url', { o: obj(o) }); },
+    /* another program as the player (src-tauri/src/extplayer.rs): relayOpen({ url, headers, subs, name }) → { token,
+       url, subs } (a session of its own on the stream server, its token in the path), relayClose({ token });
+       extPlayers({ cands }) → { found }, extPlayerStart({ exe, args, ipc }) → { id }, extPlayerStatus({ id }) → {
+       running, code, pos, dur, eof }, extPlayerStop({ id }). */
+    relayOpen: function (o) { return call('kt_relay_open', { o: obj(o) }); },
+    relayClose: function (o) { return call('kt_relay_close', { o: obj(o) }); },
+    extPlayers: function (o) { return call('kt_ext_players', { o: obj(o) }); },
+    extPlayerStart: function (o) { return call('kt_ext_player_start', { o: obj(o) }); },
+    extPlayerStatus: function (o) { return call('kt_ext_player_status', { o: obj(o) }); },
+    extPlayerStop: function (o) { return call('kt_ext_player_stop', { o: obj(o) }); },
     /* stage P6 (src-tauri/src/desktop.rs, rules in desklogic.rs): the computer's side of the downloads — desktopPrefs(o)
        → the choices in force (keepAwake, whenDone, notifyDone, tray, hotkeys; this shell also takes o.labels, the
        interface's words for the tray's menu and a Mac's menu bar, and answers hotkeyErrors { mode: why } for a hotkey

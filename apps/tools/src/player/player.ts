@@ -1300,8 +1300,17 @@ export function openPlayer(src: PlayerSource): void {
     box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
   });
   // Another player (VLC, MX, mpv…) through Android's chooser.
-  function canOpenWith() { return !!(window as unknown as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.(); }
-  async function openWith() { const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { openWith?(o: { url?: string; path?: string; mime: string; title: string }): Promise<void> } | null; try { video.pause(); await kp?.openWith?.({ url: src.localPath ? undefined : src.url, path: src.localPath, mime: 'video/*', title: src.name }); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
+  function canOpenWith() { return !!window.kurokawaTools || !!(window as unknown as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.(); }
+  /** Another app from here (external/run.ts): the player chooser always, from where it is now; this player closed so
+   *  what the other app tells back is the one «watched»; «the in-app player» brings it back at the same place. */
+  async function openWith() {
+    video.pause(); const at = video.currentTime;
+    const ext = await import('./external/run'); const { serviceOf } = await import('./external/logic');
+    // (An online source's subtitles go along; a file's own and the ones beside it the other player finds itself.)
+    const subsNow = src.subtitles ?? [];
+    goingOn = true; close();
+    await ext.playExternally({ src: ext.sourceFor({ url: src.url, name: src.name, localPath: src.localPath, headers: src.headers, subtitles: subsNow, startAt: at > 1 ? at : undefined, key }), service: serviceOf({ taskKind: src.task?.kind, localPath: src.localPath, headers: src.headers }), key, task: src.task, fileIndex: src.fileIndex, meta: src.task?.meta ?? src.meta, fallback: () => openPlayer({ ...src, startAt: at }) }, true);
+  }
 
   // ---- closing
   function close() {

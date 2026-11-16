@@ -1177,6 +1177,53 @@ public class KtPlugin extends Plugin {
     }
 
     /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
+    /* ---------- another app as the player (src/player/external) ---------- */
+    /** relayOpen({ url, headers, subs, name }) → { token, url, subs }; relayClose({ token }) → { closed }. */
+    @PluginMethod public void relayOpen(PluginCall call) { run(call, () -> call.resolve(obj(engine().stream().relayOpen(call.getData())))); }
+    @PluginMethod public void relayClose(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("closed", engine().stream().relayClose(call.getString("token", ""))); call.resolve(r); }); }
+    /** playerApps({ pkgs }) → { installed }: which of these players' packages are on the phone. */
+    @PluginMethod public void playerApps(PluginCall call) {
+        JSArray in = call.getArray("pkgs", new JSArray()); JSArray out = new JSArray(); PackageManager pm = getContext().getPackageManager();
+        for (int i = 0; i < in.length(); i++) { String n = in.optString(i, ""); try { pm.getPackageInfo(n, 0); out.put(n); } catch (Exception ignored) { /* not here */ } }
+        JSObject r = new JSObject(); r.put("installed", out); call.resolve(r);
+    }
+    /** openPlayerApp({ pkg, chooser, data | path, mime, title, extras: [{ k, t, v }], result }): ACTION_VIEW with each
+     *  app's documented extras (t: s string, i int, l long, b boolean, sa String[], ua Uri[]). With `result`, the
+     *  call answers when the player closes: { code, extras } (VLC's extra_position / extra_duration, MX's, mpv's and
+     *  Just Player's position / duration / end_by); the phone's chooser answers at once. */
+    @PluginMethod public void openPlayerApp(PluginCall call) {
+        try {
+            String path = call.getString("path", null), data = call.getString("data", ""), mime = call.getString("mime", "video/*"), pkg = call.getString("pkg", null);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            if (path != null && !path.isEmpty()) { Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", fileOf(path)); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            else i.setDataAndType(Uri.parse(data), mime);
+            if (pkg != null && !pkg.isEmpty()) i.setPackage(pkg);
+            JSArray ex = call.getArray("extras", new JSArray());
+            for (int n = 0; n < ex.length(); n++) {
+                JSONObject e = ex.getJSONObject(n); String k = e.getString("k"), t = e.getString("t");
+                switch (t) {
+                    case "i": i.putExtra(k, e.getInt("v")); break;
+                    case "l": i.putExtra(k, e.getLong("v")); break;
+                    case "b": i.putExtra(k, e.getBoolean("v")); break;
+                    case "sa": { JSONArray a = e.getJSONArray("v"); String[] o = new String[a.length()]; for (int j = 0; j < o.length; j++) o[j] = a.getString(j); i.putExtra(k, o); break; }
+                    case "ua": { JSONArray a = e.getJSONArray("v"); android.os.Parcelable[] o = new android.os.Parcelable[a.length()]; for (int j = 0; j < o.length; j++) o[j] = Uri.parse(a.getString(j)); i.putExtra(k, o); break; }
+                    default: i.putExtra(k, e.optString("v", "")); break;
+                }
+            }
+            if (call.getBoolean("chooser", false) || !call.getBoolean("result", false)) {
+                Intent ch = call.getBoolean("chooser", false) ? Intent.createChooser(i, call.getString("title", "")) : i; ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); JSObject r = new JSObject(); r.put("code", 0); call.resolve(r); return;
+            }
+            startActivityForResult(call, i, "playerAppDone");
+        } catch (android.content.ActivityNotFoundException e) { call.reject("not installed"); }
+        catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    @ActivityCallback private void playerAppDone(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject r = new JSObject(); r.put("code", result.getResultCode()); JSObject ex = new JSObject();
+        Intent d = result.getData(); android.os.Bundle b = d == null ? null : d.getExtras();
+        if (b != null) for (String k : b.keySet()) { Object v = b.get(k); if (v instanceof Number || v instanceof String || v instanceof Boolean) ex.put(k, v); }
+        r.put("extras", ex); call.resolve(r);
+    }
     @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
     /* ---------- the Player add-on's engine: mpv (KtMpv), from the mpv pack ---------- */
     @PluginMethod public void mpvAvailable(PluginCall call) { JSObject r = new JSObject(); r.put("available", KtMpv.available(getContext())); call.resolve(r); }

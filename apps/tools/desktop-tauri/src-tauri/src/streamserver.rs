@@ -10,6 +10,7 @@
 //   /<token>/audio?src&ss&a      one audio track as AAC (kt:audioUrl; ffmpeg — streamproxy.rs)
 //   /<token>/video?src&ss&a&c    the picture converted as it plays (kt:videoUrl; ffmpeg)
 //   /<token>/p?u&h               an online source with its headers, HLS remuxed to MP4 (kt:proxyUrl)
+//   /<token>/r/<session>/…       another program's player through the relay (extplayer.rs, kt:relayOpen)
 // Stopped when the app quits (main.rs) — the port and every file let go.
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -251,6 +252,12 @@ fn handle(mut s: TcpStream, token: &str, stop: &Arc<AtomicBool>) {
     let head_only = req.method == "HEAD";
     let target = req.target.clone();
     let (path, query) = sl::split_target(&target);
+    // (Another program's player reading through the relay: extplayer.rs, a session of its own under this run's token.)
+    if path.contains("/r/") && crate::extplayer::serve(&mut s, path, token, &req, head_only, stop) {
+        let _ = s.flush();
+        let _ = s.shutdown(Shutdown::Both);
+        return;
+    }
     match sl::route(path, query, token) {
         sl::Route::Forbidden => simple(&mut s, 403, ""),
         sl::Route::NotFound => simple(&mut s, 404, ""),
