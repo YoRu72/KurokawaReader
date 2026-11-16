@@ -42,11 +42,43 @@ public class CT {
   static int hit(String mode) { AtomicInteger a = hits.get(mode); return a == null ? 0 : a.get(); }
   static void reset(KrDoh.Resolver... rs) { for (KrDoh.Resolver r : rs) { r.lastAt = 0; r.lastOk = false; r.lastMs = -1; r.shape = ""; } }
 
+  static volatile int port2; static final AtomicInteger postHits = new AtomicInteger();
+  static void redirects(com.sun.net.httpserver.HttpExchange ex) {
+    try {
+      String path = ex.getRequestURI().getPath(); String m = ex.getRequestMethod(); int p0 = ex.getLocalAddress().getPort(); String loc = null; int code = 302; boolean noLoc = false;
+      if (m.equals("POST")) postHits.incrementAndGet();
+      switch (path) {
+        case "/r/same": loc = "/r/final"; break;
+        case "/r/other307": code = 307; loc = "http://resolver-b.test:" + p0 + "/r/echo"; break;
+        case "/r/other303": code = 303; loc = "http://resolver-b.test:" + p0 + "/r/echo"; break;
+        case "/r/s303": code = 303; loc = "/r/echo"; break;
+        case "/r/p301": code = 301; loc = "/r/echo"; break;
+        case "/r/p302": code = 302; loc = "/r/echo"; break;
+        case "/r/port": code = 307; loc = "http://resolver-a.test:" + port2 + "/r/echo"; break;
+        case "/r/rel": loc = "echo?r=1"; break;
+        case "/r/proto": loc = "//resolver-b.test:" + p0 + "/r/echo?p=1"; break;
+        case "/r/space": loc = "/r/echo?q=a b&x=é"; break;
+        case "/r/loop": loc = "/r/loop"; break;
+        case "/r/ftp": loc = "ftp://resolver-b.test/file"; break;
+        case "/r/noloc": noLoc = true; break;
+        case "/r/inner": loc = "http://127.0.0.2:" + p0 + "/r/echo"; break;
+        case "/r/prg": if (m.equals("POST")) { code = 303; loc = "/r/prg"; } break;
+        case "/r/slow": Thread.sleep(2000); break;
+        default: if (path.startsWith("/r/n/")) loc = "/r/n/" + (Integer.parseInt(path.substring(5)) + 1);
+      }
+      if (noLoc) { ex.sendResponseHeaders(302, -1); ex.close(); return; }
+      if (loc != null) { ex.getResponseHeaders().set("Location", loc); ex.sendResponseHeaders(code, -1); ex.close(); return; }
+      byte[] in = ex.getRequestBody().readAllBytes(); com.sun.net.httpserver.Headers h = ex.getRequestHeaders();
+      String out = path + "|" + m + "|" + h.getFirst("Host") + "|auth=" + h.getFirst("Authorization") + "|cookie=" + h.getFirst("Cookie") + "|ctype=" + h.getFirst("Content-Type") + "|key=" + h.getFirst("X-Api-Key") + "|ua=" + h.getFirst("User-Agent") + "|q=" + ex.getRequestURI().getRawQuery() + "|body=" + new String(in, "UTF-8");
+      ex.getResponseHeaders().set("X-Echo", out.replace("\r", " ").replace("\n", " "));
+      byte[] b = out.getBytes("UTF-8"); if (m.equals("HEAD")) { ex.sendResponseHeaders(200, -1); } else { ex.sendResponseHeaders(200, b.length); ex.getResponseBody().write(b); } ex.close();
+    } catch (Exception e) { e.printStackTrace(); ex.close(); }
+  }
   static String follow(String url, String method, String body, boolean creds) throws IOException {
     HttpURLConnection c = KrDoh.openFollowing(new URL(url)); c.setRequestMethod(method); c.setConnectTimeout(3000); c.setReadTimeout(3000);
-    if (creds) { c.setRequestProperty("Authorization", "Bearer x"); c.setRequestProperty("Cookie", "c=1"); }
+    if (creds) { c.setRequestProperty("authorization", "Bearer x"); c.setRequestProperty("Cookie", "c=1"); c.setRequestProperty("X-Api-Key", "k1"); c.setRequestProperty("User-Agent", "KT-test"); }
     if (body != null) { c.setDoOutput(true); c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded"); try (OutputStream o = c.getOutputStream()) { o.write(body.getBytes("UTF-8")); } }
-    int code = c.getResponseCode(); String t = new String(c.getInputStream().readAllBytes(), "UTF-8"); c.disconnect(); return code == 200 ? t : "HTTP " + code;
+    int code = c.getResponseCode(); if (method.equals("HEAD")) { String e = c.getHeaderField("X-Echo"); c.disconnect(); return code == 200 ? e : "HTTP " + code; } String t = new String(c.getInputStream().readAllBytes(), "UTF-8"); c.disconnect(); return code == 200 ? t : "HTTP " + code;
   }
   static String followErr(String url) { try { return "no error: " + follow(url, "GET", null, false); } catch (IOException e) { return String.valueOf(e.getMessage()); } }
   public static void main(String[] a) throws Exception {
@@ -95,24 +127,11 @@ public class CT {
         } catch (Exception e) { e.printStackTrace(); ex.close(); }
       });
     }
-    // (Redirects: /r/same → /r/final; /r/other307 and /r/other303 → another host's /r/echo; /r/loop → itself; /r/n/<k> → /r/n/<k+1>; /r/ftp → ftp://.)
-    srv.createContext("/r/", ex -> {
-      try {
-        String path = ex.getRequestURI().getPath(); int p0 = ex.getLocalAddress().getPort(); String loc = null; int code = 302;
-        if (path.equals("/r/same")) loc = "/r/final";
-        else if (path.equals("/r/other307")) { code = 307; loc = "http://resolver-b.test:" + p0 + "/r/echo"; }
-        else if (path.equals("/r/other303")) { code = 303; loc = "http://resolver-b.test:" + p0 + "/r/echo"; }
-        else if (path.equals("/r/loop")) loc = "/r/loop";
-        else if (path.startsWith("/r/n/")) loc = "/r/n/" + (Integer.parseInt(path.substring(5)) + 1);
-        else if (path.equals("/r/ftp")) loc = "ftp://resolver-b.test/file";
-        if (loc != null) { ex.getResponseHeaders().set("Location", loc); ex.sendResponseHeaders(code, -1); ex.close(); return; }
-        byte[] in = ex.getRequestBody().readAllBytes();
-        String out = path + "|" + ex.getRequestMethod() + "|" + ex.getRequestHeaders().getFirst("Host") + "|auth=" + ex.getRequestHeaders().getFirst("Authorization") + "|cookie=" + ex.getRequestHeaders().getFirst("Cookie") + "|body=" + new String(in, "UTF-8");
-        byte[] b = out.getBytes("UTF-8"); ex.sendResponseHeaders(200, b.length); ex.getResponseBody().write(b); ex.close();
-      } catch (Exception e) { e.printStackTrace(); ex.close(); }
-    });
+    // (Redirects, on two servers — the second for another port: see redirects(...).)
+    srv.createContext("/r/", CT::redirects);
     srv.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());   // (each request on its own thread: a slow resolver holds none of the others back)
     srv.start(); port = srv.getAddress().getPort();
+    HttpServer srv2 = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 16); srv2.createContext("/r/", CT::redirects); srv2.setExecutor(java.util.concurrent.Executors.newCachedThreadPool()); srv2.start(); port2 = srv2.getAddress().getPort();
     KrDoh.lastProbeAt = System.currentTimeMillis();   // (the automatic probe later, on its own)
     final AtomicInteger sysCalls = new AtomicInteger(); KrDoh.sys = h -> { sysCalls.incrementAndGet(); return new InetAddress[] { InetAddress.getByName("198.51.100.99") }; };
 
@@ -231,8 +250,50 @@ public class CT {
     ok("a redirect loop refused", followErr(base + "/r/loop").contains("loop"));
     ok("more than five hops refused", followErr(base + "/r/n/0").contains("too many"));
     ok("a redirect to a non-http address refused", followErr(base + "/r/ftp").contains("non-http"));
+    // (0.21 P9 review round.)
+    String rp = follow(base + "/r/port", "GET", null, true);
+    ok("another port, same host: an origin change — credentials, key dropped; User-Agent kept (" + rp + ")", rp.startsWith("/r/echo|GET|") && rp.contains("auth=null") && rp.contains("cookie=null") && rp.contains("key=null") && rp.contains("ua=KT-test"));
+    ok("lower-case «authorization» dropped across hosts too", follow(base + "/r/other307", "GET", null, true).contains("auth=null"));
+    String k2 = follow(base + "/r/other307", "POST", "x=1", true);
+    ok("an API-key header dropped across origins; Content-Type kept with the body (" + k2 + ")", k2.contains("key=null") && k2.contains("ctype=application/x-www-form-urlencoded") && k2.endsWith("body=x=1"));
+    ok("same origin: an API-key header kept", follow(base + "/r/same", "GET", null, true).contains("key=k1"));
+    String p301 = follow(base + "/r/p301", "POST", "x=1", false), p302 = follow(base + "/r/p302", "POST", "x=1", false);
+    ok("301 and 302 after a POST → GET without the body (" + p301 + ")", p301.startsWith("/r/echo|GET|") && p301.endsWith("body=") && p302.startsWith("/r/echo|GET|") && p302.endsWith("body="));
+    String h303 = follow(base + "/r/s303", "HEAD", null, false); ok("HEAD stays HEAD on 303 (" + h303 + ")", h303 != null && h303.startsWith("/r/echo|HEAD|"));
+    String c303 = follow(base + "/r/s303", "POST", "x=1", true);
+    ok("303 on the same origin: GET, credentials kept, Content-Type dropped with the body (" + c303 + ")", c303.startsWith("/r/echo|GET|") && c303.contains("auth=Bearer x") && c303.contains("ctype=null") && c303.endsWith("body="));
+    ok("a relative Location", follow(base + "/r/rel", "GET", null, false).startsWith("/r/echo|GET|resolver-a.test:"));
+    ok("a protocol-relative Location", follow(base + "/r/proto", "GET", null, false).startsWith("/r/echo|GET|resolver-b.test:"));
+    String sp = follow(base + "/r/space", "GET", null, false); ok("a Location with a space and a non-ASCII letter, encoded (" + sp + ")", sp.contains("|q=q=a%20b&x=%C3%A9|"));
+    ok("a final 3xx with no Location is the answer", follow(base + "/r/noloc", "GET", null, false).equals("HTTP 302"));
+    String prg = follow(base + "/r/prg", "POST", "x=1", false); ok("POST → 303 → GET of the same address is no loop (" + prg + ")", prg.startsWith("/r/prg|GET|"));
+    ok("https → http refused (the decision: no TLS on loopback here)", KrDoh.downgrade(new URL("https://a.test/x"), new URL("http://a.test/x")) && !KrDoh.downgrade(new URL("http://a.test/x"), new URL("https://a.test/x")) && !KrDoh.downgrade(new URL("https://a.test/x"), new URL("https://b.test/x")));
+    URL norm = KrDoh.redirectTarget(new URL("http://a.test/p/q"), "//bücher.test/x y");
+    ok("the host in ASCII (IDN), the path encoded (" + norm + ")", norm.getHost().equals("xn--bcher-kva.test") && norm.getFile().equals("/x%20y"));
+    // The browser's mode: a public site's redirect to this device or a private network refused (127.0.0.1 plays the public
+    // site here: the address rule is swapped so only other loopback addresses count as «this device»).
+    KrDoh.innerAddr = x -> !x.getHostAddress().equals("127.0.0.1") && KrDoh.inner(x);
+    String inr = ""; try { inr = KrDoh.browser(() -> { KrDoh.browserProvider = KrDoh.provider; HttpURLConnection c = KrDoh.openFollowing(new URL(base + "/r/inner")); try { c.getResponseCode(); return "followed"; } catch (IOException e) { return e.getMessage(); } }); } catch (Exception e) { inr = String.valueOf(e); }
+    ok("browser mode: a hop from a public site to a private address refused (" + inr + ")", inr.contains("private network refused"));
+    String trn = followErr(base + "/r/inner"); ok("the translator (not the browser): not refused for that reason (" + trn + ")", !trn.contains("private network refused"));
+    KrDoh.innerAddr = KrDoh::inner; KrDoh.browserProvider = "off";
+    // The body: capped; a GET with a body becomes a POST.
+    HttpURLConnection big = KrDoh.openFollowing(new URL(base + "/r/same")); String cap = ""; try (OutputStream o = big.getOutputStream()) { o.write(new byte[KrDoh.BODY_MAX]); o.write(1); } catch (IOException e) { cap = e.getMessage(); }
+    ok("the buffered body capped at 8 MB (" + cap + ")", cap.contains("too large") && big.getRequestMethod().equals("POST"));
+    // A failure kept: given again, the request never sent twice.
+    HttpURLConnection lpc = KrDoh.openFollowing(new URL(base + "/r/loop")); IOException e1 = null, e2 = null; try { lpc.getResponseCode(); } catch (IOException e) { e1 = e; } try { lpc.getInputStream(); } catch (IOException e) { e2 = e; }
+    ok("a failure kept and given again (the same one)", e1 != null && e1 == e2);
+    int ph = postHits.get(); HttpURLConnection pc = KrDoh.openFollowing(new URL(base + "/r/loopnot")); pc.setRequestMethod("POST"); pc.setDoOutput(true); try (OutputStream o = pc.getOutputStream()) { o.write(1); } pc.getResponseCode(); pc.getResponseCode(); pc.getInputStream().readAllBytes();
+    ok("a POST sent once whatever is read after it", postHits.get() == ph + 1);
+    // Cancelled from another thread while a hop waits; one deadline for the chain.
+    final HttpURLConnection sl = KrDoh.openFollowing(new URL(base + "/r/slow")); sl.setReadTimeout(5000); long t0 = System.currentTimeMillis(); new Thread(() -> { try { Thread.sleep(200); } catch (InterruptedException ignored) {} sl.disconnect(); }).start();
+    String cn = ""; try { sl.getResponseCode(); } catch (IOException e) { cn = String.valueOf(e.getMessage()); } long tc = System.currentTimeMillis() - t0;
+    ok("disconnect() from another thread cuts the hop under way (" + tc + " ms)", tc < 1500);
+    HttpURLConnection dl = KrDoh.openFollowing(new URL(base + "/r/slow")); dl.setConnectTimeout(200); dl.setReadTimeout(300); long t1 = System.currentTimeMillis(); try { dl.getResponseCode(); } catch (IOException e) { } long td = System.currentTimeMillis() - t1;
+    ok("the caller's time limits hold for the chain (" + td + " ms)", td < 1500);
     KrDoh.Following fl = (KrDoh.Following) KrDoh.openFollowing(new URL(base + "/r/same")); fl.getResponseCode(); ok("the final address reported", fl.getURL().getPath().equals("/r/final"));
-    KrDoh.provider = "off"; ok("DoH off: the plain connection (it follows by itself)", !(KrDoh.openFollowing(new URL(base + "/r/same")) instanceof KrDoh.Following));
+    KrDoh.provider = "off"; HttpURLConnection pl = KrDoh.openFollowing(new URL("http://127.0.0.1:" + port + "/r/same")); int plc = pl.getResponseCode(); String plt = new String(pl.getInputStream().readAllBytes(), "UTF-8");
+    ok("DoH off: the plain connection, and it really follows (" + plt + ")", !(pl instanceof KrDoh.Following) && plc == 200 && plt.startsWith("/r/final|GET|"));
     KrDoh.provider = "auto";
 
     // No thread of ours left behind.
