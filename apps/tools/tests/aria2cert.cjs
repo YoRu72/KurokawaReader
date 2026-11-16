@@ -1,6 +1,7 @@
 // node tests/aria2cert.cjs: certificates checked by the real aria2c (0.21 P9 — --check-certificate=false is gone): a
-// loopback HTTPS server with a self-signed certificate made here by openssl is refused by default; «Ignore certificate
-// errors for this download» (Aria2Engine.ignoreCert) then fetches that download alone. Needs aria2c (the bundle's —
+// loopback HTTPS server with a self-signed certificate made here by openssl is refused, tried again too (aria2 checks
+// certificates for every download at once: its manual has no per-download check-certificate, so the app offers no way
+// round it — the browser, which shows its own warning, is the way out). Needs aria2c (the bundle's —
 // node desktop/fetch-aria2.mjs — or one on the PATH) and openssl; without them it says so and stops (not-in-ci.json).
 const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const https = require('node:https'); const { spawnSync } = require('node:child_process');
 delete globalThis.WebSocket;
@@ -25,9 +26,9 @@ if (!probe.binary()) { console.log('skipped: no aria2c here (node desktop/fetch-
   const t = await e.add({ source: { url }, dir: dl, name: 'self.bin' });
   const failed = await wait(t.id, (x) => x.state === 'failed' || x.state === 'done');
   ok('a self-signed certificate is refused by default', failed?.state === 'failed' && /certificate|SSL|TLS/i.test(failed?.error || ''), failed);
-  const gid = await e.ignoreCert(t.id);
-  const done = await wait(gid, (x) => x.state === 'done' || x.state === 'failed');
-  ok('after the explicit choice, that download alone is fetched', done?.state === 'done' && fs.existsSync(path.join(dl, 'self.bin')) && fs.statSync(path.join(dl, 'self.bin')).size === body.length, done);
+  await e.resume(t.id).catch(() => undefined);
+  const again = await wait(t.id, (x) => x.state === 'failed' || x.state === 'done');
+  ok('tried again: still refused (no per-download way round)', again?.state === 'failed' && !(fs.existsSync(path.join(dl, 'self.bin')) && fs.statSync(path.join(dl, 'self.bin')).size === body.length), again);
   const t2 = await e.add({ source: { url: url.replace('self.bin', 'other.bin') }, dir: dl, name: 'other.bin' });
   const f2 = await wait(t2.id, (x) => x.state === 'failed' || x.state === 'done');
   ok('another download from it is still refused', f2?.state === 'failed', f2);

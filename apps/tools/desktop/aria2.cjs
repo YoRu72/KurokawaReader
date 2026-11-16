@@ -161,18 +161,6 @@ class Aria2Engine {
     await this.rpc.call('removeDownloadResult', id).catch(() => {});
     this.keep[gid] = { ...k, source: { ...(k.source || {}), url } }; delete this.keep[id]; this.saveKeep(); this.tick(); return gid;
   }
-  /** «Ignore certificate errors for this download» (0.21 P9 — the page asks first, and only after a certificate
-   *  failure): this download alone gets check-certificate=false — changed while it waits, else added again over the
-   *  same file; the choice kept with it. */
-  async ignoreCert(id) {
-    const st = await this.rpc.call('tellStatus', id); if (st.bittorrent) throw new Error('not a file download');
-    const url = st.files?.[0]?.uris?.[0]?.uri; if (!url) throw new Error('no address');
-    if (['active', 'waiting', 'paused'].includes(st.status)) { await this.rpc.call('changeOption', id, { 'check-certificate': 'false' }); await this.rpc.call('unpause', id).catch(() => {}); this.keep[id] = { ...(this.keep[id] || {}), insecure: true }; this.saveKeep(); this.tick(); return id; }
-    const f = st.files?.[0]?.path || ''; const k = this.keep[id] || {};
-    const opts = { dir: this.np(st.dir), continue: 'true', 'check-certificate': 'false' }; if (f) opts.out = path.basename(f); if (k.source?.headers) opts.header = Object.entries(k.source.headers).map(([a, b]) => `${a}: ${b}`);
-    const gid = await this.rpc.call('addUri', [url], opts); await this.rpc.call('removeDownloadResult', id).catch(() => {});
-    this.keep[gid] = { ...k, insecure: true }; delete this.keep[id]; this.saveKeep(); this.tick(); return gid;
-  }
   async pause(id) { await this.rpc.call('pause', id); this.tick(); }
   async resume(id) { if (this.handedOver?.(id)) return; await this.rpc.call('unpause', id); this.tick(); }
   async remove(id, deleteFiles) {

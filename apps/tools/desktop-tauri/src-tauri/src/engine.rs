@@ -1044,28 +1044,6 @@ impl Engine {
     }
 
     /// kt:setUrl: a new address for a download whose link ran out — the same file, gone on from where it stopped.
-    /// «Ignore certificate errors for this download» (0.21 P9: offered by the page only after a certificate failure,
-    /// asked first): this download alone gets check-certificate=false — changed in place while it waits, else added
-    /// again over the same file; the choice kept with it.
-    pub fn ignore_cert(&self, id: &str) -> Result<String, String> {
-        let stv = self.call("tellStatus", vec![json!(id)])?;
-        let st = status_of(&stv);
-        if st.bittorrent {
-            return Err("not a file download".to_string());
-        }
-        let url = st.files.first().and_then(|f| f.uris.first().cloned()).unwrap_or_default();
-        if url.is_empty() {
-            return Err("no address".to_string());
-        }
-        if matches!(st.status.as_str(), "active" | "waiting" | "paused") {
-            self.call("changeOption", vec![json!(id), json!({ "check-certificate": "false" })])?;
-            let _ = self.call("unpause", vec![json!(id)]);
-            self.tick();
-            return Ok(id.to_string());
-        }
-        self.readd(id, &url, &st, true)
-    }
-
     pub fn set_url(&self, id: &str, url: &str) -> Result<String, String> {
         let stv = self.call("tellStatus", vec![json!(id)])?;
         let st = status_of(&stv);
@@ -1109,10 +1087,10 @@ impl Engine {
             return Ok(id.to_string());
         }
         // (Stopped with an error: added again over the same file, which aria2 continues.)
-        self.readd(id, url, &st, false)
+        self.readd(id, url, &st)
     }
 
-    fn readd(&self, id: &str, url: &str, st: &ec::Status, insecure: bool) -> Result<String, String> {
+    fn readd(&self, id: &str, url: &str, st: &ec::Status) -> Result<String, String> {
         let f = st.files.first().map(|x| x.path.clone()).unwrap_or_default();
         let k: Map<String, Value> = match self.lock().keep.get(id) {
             Some(Value::Object(m)) => m.clone(),
@@ -1129,10 +1107,6 @@ impl Engine {
                 h.iter().map(|(a, b)| (a.clone(), text(Some(b)))).collect();
             opts.insert("header".into(), json!(ec::header_lines(&pairs)));
         }
-        let insecure = insecure || k.get("insecure") == Some(&Value::Bool(true));
-        if insecure {
-            opts.insert("check-certificate".into(), json!("false"));
-        }
         let gid_v = self.call("addUri", vec![json!([url]), Value::Object(opts)])?;
         let gid = text(Some(&gid_v));
         let _ = self.call("removeDownloadResult", vec![json!(id)]);
@@ -1144,9 +1118,6 @@ impl Engine {
             };
             src.insert("url".into(), json!(url));
             nk.insert("source".into(), Value::Object(src));
-            if insecure {
-                nk.insert("insecure".into(), Value::Bool(true));
-            }
             let mut g = self.lock();
             g.keep.insert(gid.clone(), Value::Object(nk));
             g.keep.remove(id);

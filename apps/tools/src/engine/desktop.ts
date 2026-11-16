@@ -21,8 +21,6 @@ export interface DesktopBridge {
   setFiles(id: string, priorities: number[]): Promise<void>;
   setLimits(l: Limits): Promise<void>;
   setUrl?(id: string, url: string): Promise<string>;
-  /** (0.21 P9) «Ignore certificate errors for this download». */
-  ignoreCert?(id: string): Promise<string>;
   move?(id: string, how: number): Promise<void>;
   torrentInfo(source: TaskSource): Promise<TorrentInfo>;
   open(id: string, fileIndex?: number): Promise<void>;
@@ -62,7 +60,6 @@ export class DesktopEngine implements Engine {
   setLimits(l: Limits) { return this.b.setLimits(l); }
   async move(id: string, how: -2 | -1 | 1 | 2) { if (this.b.move) await this.b.move(id, how); }
   async setUrl(id: string, url: string) { if (!this.b.setUrl) throw new Error('not here'); await this.b.setUrl(id, url); }
-  async ignoreCert(id: string) { if (!this.b.ignoreCert) throw new Error('not here'); await this.b.ignoreCert(id); }
   torrentInfo(s: TaskSource) { return this.b.torrentInfo(s); }
   open(id: string, i?: number) { return this.b.open(id, i); }
   rename(id: string, name: string) { return (this.b as unknown as { rename(o: { id: string; name: string }): Promise<string> }).rename({ id, name }); }

@@ -240,7 +240,6 @@ function openBrowser(url) {
 ipcMain.handle('kt:browse', (_e, o) => { openBrowser(String(o && o.url || '')); return true; });
 ipcMain.handle('kt:move', (_e, id, how) => E().move(id, how));
 ipcMain.handle('kt:setUrl', (_e, id, url) => E().setUrl(id, url));
-ipcMain.handle('kt:ignoreCert', (_e, id) => E().ignoreCert(id));
 ipcMain.handle('kt:setLimits', (_e, l) => E().setLimits(l));
 ipcMain.handle('kt:configure', (_e, o) => { if (o && o.maxVideo !== undefined) { videos?.setMax(o.maxVideo); const { maxVideo, ...rest } = o; if (!Object.keys(rest).length) return undefined; o = rest; } return E().configure(o); });
 ipcMain.handle('kt:torrentInfo', (_e, s) => E().ensure().then(() => E().torrentInfo(s)));

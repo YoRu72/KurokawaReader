@@ -145,7 +145,6 @@ fn main() {
             commands::kt_remove,
             commands::kt_set_files,
             commands::kt_set_url,
-            commands::kt_ignore_cert,
             commands::kt_move,
             commands::kt_set_limits,
             commands::kt_configure,

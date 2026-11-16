@@ -1943,9 +1943,6 @@ export const zh: Partial<Strings> = {
   errDohBlocked: "此网站被你选择的解析服务器 {name} 屏蔽（其自身过滤）。",
   errDohSettings: "DoH 设置",
   errCert: "无法验证网站的证书。",
-  errCertHint: "连接可能并非来自该网站。只有在你信任它时，才可仅对此下载忽略证书错误。",
-  certIgnore: "忽略此下载的证书错误",
-  certIgnoreAsk: "无法确认网站身份，中间的任何人都可能读取或篡改此下载。仅对此下载忽略证书错误吗？",
-  certIgnored: "仅对此下载忽略证书错误。",
+  errCertHint: "所有下载都会检查证书，引擎无法只为某一个下载跳过检查。如果你信任该网站，请在浏览器中打开，它会显示警告并由你决定。",
   dohEvBlocked: "已屏蔽",
 };
