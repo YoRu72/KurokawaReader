@@ -9,6 +9,7 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
+mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
 mod dohtools;

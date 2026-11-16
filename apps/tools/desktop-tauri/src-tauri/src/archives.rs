@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::sevenparse;
 use kurokawa_shell::archive::{self, Codec, Ctx, ExtractOpts, Pr};
 use kurokawa_shell::{shell, util};
 
@@ -423,132 +424,175 @@ fn no_window(c: &mut std::process::Command) {
 fn no_window(_c: &mut std::process::Command) {}
 
 /// One line of 7-Zip's progress (`-bsp1`, with `-bb1`: «40% + name», or «  3% 12 + name») → (percent, the name when it names one).
-fn seven_progress(line: &str) -> Option<(u64, String)> {
-    let l = line.trim_start();
-    let digits: String = l.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() || !l[digits.len()..].starts_with('%') {
-        return None;
-    }
-    let mut rest = l[digits.len() + 1..].trim_start();
-    let skip = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-    if skip > 0 {
-        rest = rest[skip..].trim_start();
-    }
-    let name = rest.strip_prefix("+ ").unwrap_or("").to_string();
-    Some((digits.parse().unwrap_or(0), name))
-}
-
 /// A 7z made by 7-Zip: `level` 0 (store), 1 (fast), 5 (normal) or 9 (best) (others: normal); a `password` locks the contents AND
-/// the names (`-mhe=on`). The inputs must share one folder; 7-Zip runs there and is given their names, so the archive holds `name/…`
-/// and never an absolute path. Written beside as «.part», put in place when whole; Cancel (`stop`) kills 7-Zip and removes it.
-/// The password reaches 7-Zip as its -p switch (as extraction does) and is never logged or kept. → the number of files added.
-pub fn create_7z(seven: &Path, out: &Path, inputs: &[PathBuf], level: i64, password: Option<&str>, on: &dyn Fn(u64, u64, &str), stop: &AtomicBool) -> Result<u64, String> {
+/// the names (`-mhe=on`). The inputs are grouped by folder (sevenparse::groups): 7-Zip runs in each folder and is given the names
+/// there (`-spd`: no wildcards in names; `--`: no switches, no @listfiles), so the archive holds `name/…` and never an absolute
+/// path; two inputs of one name are refused, and so is an output that lies inside an input. Written beside as «.part», put in place
+/// when whole; an existing file is replaced only when `replace` is set. Cancel (`stop`) kills 7-Zip and removes the part.
+/// The password reaches 7-Zip as its -p switch (as extraction does); no message that leaves here carries it. → the files added.
+pub fn create_7z(seven: &Path, out: &Path, inputs: &[PathBuf], level: i64, password: Option<&str>, replace: bool, on: &dyn Fn(u64, u64, &str), stop: &AtomicBool) -> Result<u64, String> {
     use std::process::{Command, Stdio};
-    let parent = match inputs.first().and_then(|p| p.parent()) {
-        Some(p) => p.to_path_buf(),
-        None => return Err("sevenZipOneFolder".into()),
-    };
-    if inputs.iter().any(|p| p.parent() != Some(parent.as_path())) {
-        return Err("sevenZipOneFolder".into());
-    }
-    let mut names: Vec<String> = Vec::new();
+    let groups = sevenparse::groups(inputs)?;
     for p in inputs {
-        let n = p.file_name().map(|x| x.to_string_lossy().to_string()).ok_or_else(|| "sevenZipOneFolder".to_string())?;
         if !p.exists() {
-            return Err(format!("notFound {}", n));
+            return Err(format!("notFound {}", p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default()));
         }
-        names.push(n);
+    }
+    if sevenparse::out_inside(out, inputs) {
+        return Err("sevenZipOutInside".into());
+    }
+    if out.exists() && !replace {
+        return Err("sevenZipExists".into());
     }
     let mx = match level {
         0 | 1 | 3 | 5 | 7 | 9 => level,
         _ => 5,
     };
-    let mut part_os = out.as_os_str().to_owned();
-    part_os.push(".kurokawa-part");
-    let part = PathBuf::from(part_os);
-    let _ = std::fs::remove_file(&part);
-    let mut cmd = Command::new(seven);
-    cmd.current_dir(&parent).arg("a").arg("-t7z").arg(format!("-mx={}", mx)).args(["-y", "-bsp1", "-bb1"]);
-    if let Some(pw) = password {
-        cmd.arg(format!("-p{}", pw)).arg("-mhe=on");
+    // The archive is built in a folder made just now, beside the target, by this run alone: `create_dir` fails if the name is taken (even by a
+    // link), so nothing we did not make is written into or followed; a stale one of a crashed run has another name and is never touched.
+    // The guard removes the folder on every way out.
+    struct Stage(PathBuf);
+    impl Drop for Stage {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
-    cmd.arg("--").arg(&part).args(&names).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    no_window(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| format!("7z could not start: {}", e))?;
-    let mut so = child.stdout.take().ok_or_else(|| "7z: no output".to_string())?;
-    let mut se = child.stderr.take().ok_or_else(|| "7z: no output".to_string())?;
-    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-    let t_out = std::thread::spawn(move || {
-        let mut buf = vec![0u8; 8192];
-        loop {
-            match so.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if tx.send(buf[..n].to_vec()).is_err() {
-                        break;
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut stage: Option<Stage> = None;
+    for _ in 0..8 {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let mut name = out.as_os_str().to_owned();
+        name.push(format!(".kurokawa-{}-{:x}-{}", std::process::id(), nanos, SEQ.fetch_add(1, Ordering::SeqCst)));
+        let dir = PathBuf::from(name);
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                stage = Some(Stage(dir));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err("sevenZipFailed".into()),
+        }
+    }
+    let stage = stage.ok_or_else(|| "sevenZipFailed".to_string())?;
+    let part = stage.0.join("part.7z");
+    let total = groups.len() as u64;
+    let mut files = 0u64;
+    for (gi, (parent, names)) in groups.iter().enumerate() {
+        let mut cmd = Command::new(seven);
+        cmd.current_dir(parent).arg("a").arg("-t7z").arg(format!("-mx={}", mx)).args(["-y", "-spd", "-bsp1", "-bb1"]);
+        if let Some(pw) = password {
+            cmd.arg(format!("-p{}", pw)).arg("-mhe=on");
+        }
+        cmd.arg("--").arg(&part).args(names).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        no_window(&mut cmd);
+        // (Not the system's own error text: it may carry the command line, and with it the password.)
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(_) => {
+                return Err("sevenZipMissing".into());
+            }
+        };
+        let mut so = child.stdout.take().ok_or_else(|| "sevenZipFailed".to_string())?;
+        let mut se = child.stderr.take().ok_or_else(|| "sevenZipFailed".to_string())?;
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let t_out = std::thread::spawn(move || {
+            let mut buf = vec![0u8; 8192];
+            loop {
+                match so.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
                     }
                 }
             }
-        }
-    });
-    let t_err = std::thread::spawn(move || {
-        let mut v = Vec::new();
-        let _ = se.read_to_end(&mut v);
-        v
-    });
-    let mut pending = String::new();
-    let mut last_line = String::new();
-    let mut files = 0u64;
-    let mut feed = |chunk: &[u8], pending: &mut String, last_line: &mut String| {
-        pending.push_str(&String::from_utf8_lossy(chunk));
-        if let Some(i) = pending.rfind(|c| c == '\r' || c == '\n') {
-            let done: String = pending[..=i].to_string();
-            *pending = pending[i + 1..].to_string();
-            for l in done.split(|c| c == '\r' || c == '\n').filter(|l| !l.is_empty()) {
-                if let Some((pct, name)) = seven_progress(l) {
-                    on(pct, 100, &name);
+        });
+        // (Only the end of what 7-Zip says on its error channel is kept.)
+        let t_err = std::thread::spawn(move || {
+            let mut tail: Vec<u8> = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                match se.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        tail.extend_from_slice(&buf[..n]);
+                        if tail.len() > 8192 {
+                            let cut = tail.len() - 8192;
+                            tail.drain(..cut);
+                        }
+                    }
+                }
+            }
+            tail
+        });
+        let mut lines = sevenparse::Lines::default();
+        let mut last_line = String::new();
+        let mut feed = |chunk: Option<&[u8]>, lines: &mut sevenparse::Lines, last_line: &mut String| {
+            let got: Vec<String> = match chunk {
+                Some(c) => lines.feed(c),
+                None => lines.finish().into_iter().collect(),
+            };
+            for l in got {
+                if let Some((pct, name)) = sevenparse::progress(&l) {
+                    on(gi as u64 * 100 + pct.min(100), total * 100, &name);
                 }
                 if l.starts_with("+ ") {
                     files += 1;
                 }
                 *last_line = l.trim().to_string();
             }
-        }
-    };
-    let mut stopped = false;
-    let status = loop {
+        };
+        let mut stopped = false;
+        let status = loop {
+            while let Ok(chunk) = rx.try_recv() {
+                feed(Some(chunk.as_slice()), &mut lines, &mut last_line);
+            }
+            if stop.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                stopped = true;
+                break child.wait().map_err(|_| "sevenZipFailed".to_string())?;
+            }
+            match child.try_wait() {
+                Ok(Some(st)) => break st,
+                Ok(None) => {}
+                Err(_) => return Err("sevenZipFailed".into()),
+            }
+            std::thread::sleep(Duration::from_millis(60));
+        };
+        let _ = t_out.join();
         while let Ok(chunk) = rx.try_recv() {
-            feed(&chunk, &mut pending, &mut last_line);
+            feed(Some(chunk.as_slice()), &mut lines, &mut last_line);
         }
-        if stop.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            stopped = true;
-            break child.wait().map_err(|e| e.to_string())?;
+        feed(None, &mut lines, &mut last_line);
+        let err_bytes = t_err.join().unwrap_or_default();
+        if stopped || stop.load(Ordering::SeqCst) {
+            return Err("stopped".into());
         }
-        match child.try_wait() {
-            Ok(Some(st)) => break st,
-            Ok(None) => {}
-            Err(e) => return Err(e.to_string()),
+        if !status.success() {
+            let err = String::from_utf8_lossy(&err_bytes).to_string();
+            let why = err.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or(last_line);
+            let why = sevenparse::scrub(&why, password);
+            return Err(if why.is_empty() { format!("7z exit {}", status.code().unwrap_or(-1)) } else { why });
         }
-        std::thread::sleep(Duration::from_millis(60));
-    };
-    let _ = t_out.join();
-    while let Ok(chunk) = rx.try_recv() {
-        feed(&chunk, &mut pending, &mut last_line);
     }
-    let err_bytes = t_err.join().unwrap_or_default();
-    if stopped || stop.load(Ordering::SeqCst) {
-        let _ = std::fs::remove_file(&part);
-        return Err("stopped".into());
+    // Put in place in ONE step: a rename over the target (std's rename replaces on every system, Windows included: MoveFileEx with
+    // REPLACE_EXISTING) — never «remove, then rename»: a crash between would lose both. Without `replace`: a hard link, which fails when
+    // the name appeared meanwhile; where links are not possible (FAT, some storage) the rename after a last look.
+    if replace {
+        std::fs::rename(&part, out).map_err(|_| "sevenZipFailed".to_string())?;
+    } else {
+        match std::fs::hard_link(&part, out) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err("sevenZipExists".into()),
+            Err(_) => {
+                if out.exists() {
+                    return Err("sevenZipExists".into());
+                }
+                std::fs::rename(&part, out).map_err(|_| "sevenZipFailed".to_string())?;
+            }
+        }
     }
-    if !status.success() {
-        let _ = std::fs::remove_file(&part);
-        let err = String::from_utf8_lossy(&err_bytes).to_string();
-        let why = err.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or(last_line);
-        return Err(if why.is_empty() { format!("7z exit {}", status.code().unwrap_or(-1)) } else { why });
-    }
-    let _ = std::fs::remove_file(out);
-    std::fs::rename(&part, out).map_err(|e| e.to_string())?;
     on(100, 100, "");
     Ok(files)
 }
@@ -566,11 +610,12 @@ pub async fn kt_archive_create(app: AppHandle, o: Value) -> Result<Value, String
     let format = s(&o, "format");
     let level = o.get("level").and_then(|v| v.as_i64()).unwrap_or(5);
     let password = opt_s(&o, "password");
+    let replace = o.get("replace").and_then(|v| v.as_bool()).unwrap_or(false);
     let r = blocking(move || {
         let n: u64 = if format == "7z" {
             // (A 7z: by the 7-Zip the app ships — desktop/archive.cjs's create7z, the same call.)
-            let sv = seven().map(|x| x.0).ok_or_else(|| "7z not found".to_string())?;
-            create_7z(&sv, Path::new(&out2), &inputs, level, password.as_deref(), &on, &stop)?
+            let sv = seven().map(|x| x.0).ok_or_else(|| "sevenZipMissing".to_string())?;
+            create_7z(&sv, Path::new(&out2), &inputs, level, password.as_deref(), replace, &on, &stop)?
         } else {
             let pr = Pr { on: &on, stop: &stop };
             archive::create_zip(Path::new(&out2), &inputs, &ctx(), &pr)? as u64

@@ -57,16 +57,16 @@ export function coursesView(route: Extract<Route, { name: 'courses' }>): HTMLEle
   const download = async () => {
     if (!info) return; const i = info; const eng = getEngine(); const { preferredFormat } = await import('./addVideo'); const st = getSettings();
     const base = `${st.downloadDir || ''}`.replace(/\/$/, ''); const courseDir = `${base}/${safeName(i.title || 'Course')}`;
-    const continuous = st.coursesContinuous !== false; let n = 0, secNo = 0, inSec = 0; let lastSec: string | undefined; let added = 0;
+    const continuous = st.coursesContinuous !== false; let n = 0, secNo = 0, inSec = 0; let lastSec: string | undefined; let added = 0; const got: import('../engine/types').Task[] = [];
     for (const e of i.entries) {
       if (e.chapter !== lastSec) { lastSec = e.chapter; secNo++; inSec = 0; }
       n++; inSec++;
       if (!picked.has(e.url)) continue;
       const dir = e.chapter ? `${courseDir}/${String(secNo).padStart(2, '0')} - ${safeName(e.chapter)}` : courseDir;
       const pf = preferredFormat();
-      try { await eng.add({ source: { url: e.url }, dir, video: { ...pf, container: pf.audioOnly ? undefined : st.videoContainer, embedThumb: st.videoEmbedThumb, chapters: true, title: e.title, playlistIndex: continuous ? n : inSec, cookieJar: jar || undefined, subs: st.subLangs.length ? st.subLangs.join(',') : undefined } }); added++; } catch { /* the next */ }
+      try { got.push(await eng.add({ source: { url: e.url }, dir, video: { ...pf, container: pf.audioOnly ? undefined : st.videoContainer, embedThumb: st.videoEmbedThumb, chapters: true, title: e.title, playlistIndex: continuous ? n : inSec, cookieJar: jar || undefined, subs: st.subLangs.length ? st.subLangs.join(',') : undefined } })); added++; } catch { /* the next */ }
     }
-    toast(t('coursesAdded', { n: countFiles(added) })); navigate('/');
+    toast(t('coursesAdded', { n: countFiles(added) })); void import('../ui/dlFloat').then((m) => m.downloadsStarted(got));
   };
   const recent = h('div', { class: 'dest-list' }, ...courses().map((c) => h('button', { type: 'button', class: 'dest-row', onclick: () => { url.value = c.url; jar = c.jar ?? ''; void refreshJar().then(read); } }, icon('books'), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, c.title), h('small', { class: 'src', dir: 'ltr' }, c.url)))));
   body.append(h('p', { class: 'hint' }, t('coursesHint')),

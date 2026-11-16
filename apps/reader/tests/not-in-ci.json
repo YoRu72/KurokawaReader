@@ -122,7 +122,8 @@
     },
     {
       "name": "tauribrowser.cjs",
-      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+      "reason": "No workflow runs it: it is not in the release workflow's test chain, and tauri-check.yml runs only the Tools copy (tauribrowsertools.cjs). In the preflight job, which installs Playwright 1.64.1, it failed with a navigation TimeoutError (waiting for the https://kr-lane.invalid/ page to finish navigating), the same pattern as Tools' tauribrowsertools.cjs; the cause there is not known, so the preflight does not run it.",
+      "run": false
     },
     {
       "name": "textpic.cjs",

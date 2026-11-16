@@ -8,10 +8,11 @@ delete globalThis.WebSocket;
 const { Aria2Engine } = require('../desktop/aria2.cjs');
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n, c ? '' : JSON.stringify(x ?? '')); if (!c) fails++; };
 const has = (cmd, args) => { try { return spawnSync(cmd, args, { timeout: 5000 }).status === 0; } catch { return false; } };
-const res = path.join(__dirname, '..', 'desktop', 'resources');
-if (!has('openssl', ['version'])) { console.log('skipped: no openssl here'); process.exit(0); }
+const res = process.env.KT_ARIA2_RES || path.join(__dirname, '..', 'desktop', 'resources');   // KT_ARIA2_RES=apps/tools/desktop finds desktop/aria2/<plat>-<arch>/
+const skip = (why) => { console.log((process.env.KT_REQUIRE_ARIA2 === '1' ? 'FAIL ' : 'skipped: ') + why); process.exit(process.env.KT_REQUIRE_ARIA2 === '1' ? 1 : 0); };
+if (!has('openssl', ['version'])) skip('no openssl here');
 const probe = new Aria2Engine({ userData: os.tmpdir(), resources: res, defaultDir: os.tmpdir() });
-if (!probe.binary()) { console.log('skipped: no aria2c here (node desktop/fetch-aria2.mjs, or one on the PATH)'); process.exit(0); }
+if (!probe.binary()) skip('no aria2c here (node desktop/fetch-aria2.mjs, or one on the PATH)');
 
 (async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-cert-'));

@@ -46,7 +46,7 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   await itemAct('Song.mp3', 'Copy'); await goTo(P); await pasteClick(); await p.waitForTimeout(400);
   ok('a copy pasted as a job', (await calls()).includes(`copy:Song.mp3>${P}`), await calls());
   ok('after a copy is pasted, Paste is still offered', await pasteShown());
-  await p.click('.files-row:has-text("DCIM") .files-main'); await p.waitForSelector('.files-row:has-text("pic.jpg")'); await pasteClick(); await p.waitForTimeout(400);
+  await p.click('.files-row:has-text("DCIM") .files-main'); await p.waitForSelector('.files-row:has-text("pic.jpg")'); await pasteClick(); await p.waitForFunction((x) => window.__calls.includes(x), `copy:Song.mp3>${P}/DCIM`, { timeout: 4000 }).catch(() => undefined);
   ok('… and a second paste copies it again', (await calls()).includes(`copy:Song.mp3>${P}/DCIM`), await calls());
   // a cut whose move was cancelled with the file still in place: still cut; a move that went through: the clipboard emptied
   await goTo(K); await itemAct('Song.mp3', 'Cut'); await goTo(P);
