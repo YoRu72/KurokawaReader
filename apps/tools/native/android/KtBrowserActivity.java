@@ -51,8 +51,8 @@ public class KtBrowserActivity extends Activity {
         probes.execute(() -> {
             JSONObject o = new JSONObject();
             try {
-                // (0.21 P9: under the browser's own DoH choice — KrDoh.browser; plain while it is off.)
-                java.net.HttpURLConnection c = KrDoh.browser(() -> KrDoh.open(new java.net.URL(u))); c.setConnectTimeout(8000); c.setReadTimeout(8000); c.setInstanceFollowRedirects(true);
+                // (0.21 P9: under the browser's own DoH choice — KrDoh.browser, redirects followed through it; plain while it is off.)
+                java.net.HttpURLConnection c = KrDoh.browser(() -> KrDoh.openFollowing(new java.net.URL(u))); c.setConnectTimeout(8000); c.setReadTimeout(8000); c.setInstanceFollowRedirects(true);
                 boolean hls = u.matches("(?i)^[^?#]*\\.m3u8(\\?.*)?$"); c.setRequestMethod(hls ? "GET" : "HEAD");
                 if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) { String k = e.getKey(); if (k != null && !k.equalsIgnoreCase("range") && !k.equalsIgnoreCase("host") && !k.equalsIgnoreCase("content-length")) try { c.setRequestProperty(k, e.getValue()); } catch (Exception ignored) {} }
                 try { String ck = android.webkit.CookieManager.getInstance().getCookie(u); if (ck != null && !ck.isEmpty()) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) {}
@@ -74,7 +74,7 @@ public class KtBrowserActivity extends Activity {
             long bw = 0; String variant = null; String pending = null;
             for (String raw : text.split("\\r?\\n")) { String l = raw.trim(); if (l.startsWith("#EXT-X-STREAM-INF:")) { pending = l; continue; } if (l.isEmpty() || l.startsWith("#")) continue; if (pending != null) { java.util.regex.Matcher m = java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(pending); long b = m.find() ? Long.parseLong(m.group(1)) : 0; if (b > bw) { bw = b; variant = l; } pending = null; } }
             String media = text;
-            if (variant != null) { final java.net.URL vu = new java.net.URL(base, variant); java.net.HttpURLConnection c = KrDoh.browser(() -> KrDoh.open(vu)); c.setConnectTimeout(8000); c.setReadTimeout(8000); if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) { String k = e.getKey(); if (k != null && !k.equalsIgnoreCase("range") && !k.equalsIgnoreCase("host")) try { c.setRequestProperty(k, e.getValue()); } catch (Exception ignored) {} } media = new String(readAll(c.getInputStream(), 1 << 20), java.nio.charset.StandardCharsets.UTF_8); c.disconnect(); }
+            if (variant != null) { final java.net.URL vu = new java.net.URL(base, variant); java.net.HttpURLConnection c = KrDoh.browser(() -> KrDoh.openFollowing(vu)); c.setConnectTimeout(8000); c.setReadTimeout(8000); if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) { String k = e.getKey(); if (k != null && !k.equalsIgnoreCase("range") && !k.equalsIgnoreCase("host")) try { c.setRequestProperty(k, e.getValue()); } catch (Exception ignored) {} } media = new String(readAll(c.getInputStream(), 1 << 20), java.nio.charset.StandardCharsets.UTF_8); c.disconnect(); }
             double secs = 0; for (String raw : media.split("\\r?\\n")) { String l = raw.trim(); if (l.startsWith("#EXTINF:")) { try { secs += Double.parseDouble(l.substring(8).split(",")[0].trim()); } catch (Exception ignored) {} } }
             if (secs <= 0) return 0; if (bw <= 0) bw = 2_500_000; return (long) (secs * bw / 8);
         } catch (Exception e) { return 0; }
