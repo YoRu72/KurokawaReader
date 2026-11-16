@@ -3,6 +3,7 @@
 // progress. On the web there is no file system to extract into, so the add-on is for the apps.
 import { ktPlugin } from './native';
 import { uid } from './db';
+import { t, localDigits } from './i18n';
 
 export interface ArchiveEntry { path: string; size: number; compressed?: number; dir: boolean; /** When the archive keeps it (epoch ms). */ mtime?: number }
 export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean; largest?: number; free?: number; unsafe?: string; duplicate?: string; sfv?: string; /** How many volumes a split archive has. */ volumes?: number }
@@ -10,7 +11,7 @@ export interface ExtractOptions { path: string; /** A folder, or «cache:» for 
 export type ExtractResult = { files: number; dest: string; /** The job's journal (Undo while it is offered). */ job?: string; appeared?: string[]; damaged?: string[] };
 export type ArchiveProgress = { id: string; done: number; total: number; file: string };
 
-type Bridge = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[]; format?: string; level?: number; password?: string }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
+type Bridge = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[]; format?: string; level?: number; password?: string; replace?: boolean }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
 type Plugin = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(o: { id: string }): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<{ paths: string[] }>; addListener(ev: 'archiveProgress', fn: (p: ArchiveProgress) => void): Promise<{ remove(): void }> };
 const desk = () => (window.kurokawaTools as unknown as Bridge | undefined)?.archiveList ? (window.kurokawaTools as unknown as Bridge) : null;
 const plug = () => { const p = ktPlugin() as unknown as Plugin | null; return p?.archiveList ? p : null; };
@@ -24,7 +25,8 @@ export function firstVolume(path: string): string {
 /** Whether a name is a later volume of a split archive (opened through its first). */
 export const isLaterVolume = (n: string): boolean => firstVolume(n) !== n;
 /** Formats only the phone's engine reads (read-only: list and extract; from commons-compress and xz, already in the app): .lzma (and tar.lzma), compress's .Z (and tar.Z), cpio, ar, .deb. */
-export const PHONE_ARC_RE = /\.(lzma|tlz|taz|z|cpio|ar|deb)$/i;
+/** (The compress program's .Z is upper case: a lower-case «.z» is not taken for it; the engine checks the file's own first bytes in any case.) */
+export const PHONE_ARC_RE = /\.(?:lzma|tlz|taz|cpio|ar|deb)$|\.Z$/;
 export const isArchiveName = (n: string): boolean => ARCHIVE_RE.test(n) || (!!plug() && PHONE_ARC_RE.test(n));
 
 export async function listArchive(path: string, password?: string, charset?: string): Promise<ArchiveInfo> {
@@ -80,7 +82,7 @@ export async function entryThumb(path: string, entry: string, px: number, passwo
   if (!p?.archiveThumb) return null; try { return (await p.archiveThumb({ path: firstVolume(path), entry, px, password })).url; } catch { return null; }
 }
 export async function cancelArchive(id: string): Promise<void> { const d = desk(); if (d) return d.archiveCancel(id); await plug()?.archiveCancel({ id }); }
-export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string; /** Volumes of this many MiB (0: one file). */ splitMb?: number }
+export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string; /** Volumes of this many MiB (0: one file). */ splitMb?: number; /** A computer's 7z: an existing file of that name may be replaced (the user said so). */ replace?: boolean }
 /** The volume sizes offered, in MiB (0: one file). */
 export const splitSizes: number[] = [0, 10, 25, 50, 100, 250, 700, 1024, 2048, 4096];
 /** The formats the engine here can make: the phone's zip, 7z and tar kinds; a computer's zip and 7z (the 7-Zip the app ships). */
@@ -89,17 +91,29 @@ export const makeFormats = (): MakeOptions['format'][] => (desk() ? ['zip', '7z'
 export const makesOnComputer = (): boolean => !!desk();
 export async function createZip(out: string, inputs: string[], onProgress?: (p: ArchiveProgress) => void, o: MakeOptions = {}): Promise<{ files: number; path: string; size: number }> {
   wire(); const id = uid(); if (onProgress) listeners.set(id, onProgress);
-  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs, ...(o.format === '7z' ? { format: '7z', level: o.level, password: o.password } : {}) }) : await (plug()!.archiveCreate as unknown as (x: MakeOptions & { id: string; out: string; inputs: string[] }) => Promise<{ files: number; path: string; size: number }>)({ id, out, inputs, ...o }); } finally { listeners.delete(id); }
+  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs, ...(o.format === '7z' ? { format: '7z', level: o.level, password: o.password, replace: o.replace === true } : {}) }) : await (plug()!.archiveCreate as unknown as (x: MakeOptions & { id: string; out: string; inputs: string[] }) => Promise<{ files: number; path: string; size: number }>)({ id, out, inputs, ...o }); } finally { listeners.delete(id); }
 }
 export async function pickFiles(multiple = false): Promise<string[]> {
   const d = desk(); if (d) return (await d.pickFile({ multiple })) ?? [];
   const p = plug(); if (p) return (await p.pickFile({ multiple })).paths;
   return [];
 }
+/** Whether something is at `p` (a computer's shell; the phone's own sheet asks nothing of the kind). */
+export async function pathExists(p: string): Promise<boolean> { const d = desk(); if (!d?.pathInfo) return false; try { return !!(await d.pathInfo(p)).exists; } catch { return false; } }
+/** What a failed 7z creation says, in words: the shells throw codes («sevenZipExists»), the bridge may put words before them. */
+export function sevenErrorText(err: unknown): string {
+  const m = String((err as Error | undefined)?.message ?? err); const hit = (k: string) => m.includes(k);
+  if (hit('stopped')) return t('filesCancelled');
+  if (hit('sevenZipSameName')) return t('files7zErrSameName'); if (hit('sevenZipOutInside')) return t('files7zErrOutInside'); if (hit('sevenZipExists')) return t('files7zErrExists');
+  if (hit('sevenZipMissing')) return t('files7zErrMissing'); if (hit('sevenZipNoFolder')) return t('files7zErrNoFolder'); if (hit('sevenZipFailed')) return t('files7zErrFailed');
+  const nf = /notFound (.+)$/m.exec(m); if (nf) return t('files7zErrNotFound', { name: nf[1].trim() });
+  const ex = /7z exit (-?\d+)/.exec(m); if (ex) return t('files7zErrExit', { n: localDigits(Number(ex[1])) });
+  return m.replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
+}
 export const parentOf = (p: string): string => p.replace(/[\\/][^\\/]*$/, '');
 export const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 /** `name.tar.gz` → `name`; `name.zip` → `name`. */
-export const stem = (n: string): string => n.replace(ARCHIVE_RE, '').replace(PHONE_ARC_RE, '').replace(/\.tar$/i, '');
+export const stem = (n: string): string => { const a = n.replace(ARCHIVE_RE, ''); if (a !== n) return a; const b = n.replace(PHONE_ARC_RE, ''); return b !== n ? b.replace(/\.tar$/i, '') : n.replace(/\.tar$/i, ''); };
 
 /* ---------- HatchZip's other verbs ---------- */
 type More = { archiveTest(o: { id: string; path: string; password?: string }): Promise<{ ok: boolean; files: number; bad: string[] }>; archiveRestore(o: { path: string }): Promise<{ left: number }>; archiveFree(o: { dir: string }): Promise<{ free: number }>; archiveExisting(o: { dest: string; names: string[] }): Promise<{ existing: string[] }> };

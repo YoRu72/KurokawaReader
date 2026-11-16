@@ -2956,6 +2956,20 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   filesLevelBest: "Best",
   files7zPasswordHint: "The password locks the contents and the file names too: without it the archive cannot even be opened to see what is inside. It is handed to 7-Zip on its command line, so another program of this account could read it for the moment the job runs. If it is lost, the files cannot be recovered.",
   filesZipNoPasswordPc: "A ZIP made on a computer has no password. Choose 7Z to lock the archive with one.",
+  filesJobDropped: "The job was taken out of the queue: the system did not confirm that it had stopped.",
+  filesReviewJobs: "Review",
+  filesUnfinishedHint: "Only copies, moves and extractions are kept; a delete is never run again by itself. Resume starts these in the order shown.",
+  files7zErrSameName: "Two of the chosen items have the same name, so they would meet inside one 7Z. Rename one, or pack them separately.",
+  files7zErrOutInside: "The archive would lie inside a folder that is being packed. Choose another folder for it.",
+  files7zErrExists: "A file of that name is already there.",
+  files7zErrMissing: "7-Zip, which makes 7Z archives, could not be started.",
+  files7zErrNoFolder: "An item at the very top of a drive cannot be packed this way.",
+  files7zErrFailed: "The 7Z archive could not be made.",
+  files7zErrNotFound: "«{name}» is no longer there.",
+  files7zErrExit: "7-Zip stopped with an error (code {n}).",
+  archiveSpecial: "This archive is refused: “{name}” is a device, a pipe or a sparse file, and these are never unpacked.",
+  archiveTooBig: "“{name}” holds more data than the archive says, so the unpacking stopped. The archive is damaged or made to deceive.",
+  archiveMemory: "This file asks for more memory than the app allows (128 MB), so it is not unpacked.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

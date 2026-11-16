@@ -9,6 +9,7 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
+mod sevenparse;
 mod commands;
 // (Stage P6: the computer's side of the downloads — tray, notices, hotkeys, keep-awake, when done, taskbar progress, the
 // mini window, launches handed over, a Mac's menu bar; desklogic.rs its rules, std only.)

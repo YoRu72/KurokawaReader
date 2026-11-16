@@ -2,6 +2,11 @@
   "_": "Tests that are deliberately not in the release workflow's test chain (they may be in a check workflow). name, reason (required); run:false = the preflight does not run it (a helper, or it needs something this machine lacks); args/env = how the preflight runs it properly (env value $TMPZIP = a small zip made by the preflight).",
   "tests": [
     {
+      "name": "filesextras-lib.cjs",
+      "reason": "A helper (the shared page and menu functions of the filesextras*, filesqueue and files7z tests), not a test.",
+      "run": false
+    },
+    {
       "name": "filesphone-fixture.cjs",
       "reason": "A helper (the pretend phone for filesclip.cjs and filesback.cjs), not a test.",
       "run": false

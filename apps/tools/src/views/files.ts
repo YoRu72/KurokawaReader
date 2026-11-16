@@ -72,6 +72,8 @@ export const canRunJobs = (): boolean => canJobs();
 /** The job queue (views/filesQueue.ts), once loaded — the first job asked for loads it. */
 let Q: typeof import('./filesQueue') | null = null;
 let queueOffered = false;
+/** Job ids are never repeated, even for jobs asked for in the same millisecond (Resume asks for several at once). */
+let idSeq = 0; const nid = (p: string): string => `${p}-${Date.now()}-${++idSeq}`;
 /** The storages and the one-item changes (new folder, rename, the facts of one path): the phone's plugin, or a computer's
  *  shell where it has them — the Tauri shell's filesRoots, filesStat (shallow), filesMkdir and filesRename, the same
  *  shapes; Electron's shell has none. */
@@ -873,7 +875,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const shareMany = async (paths: string[]) => { const pl = plug(); if (!pl) return; if (paths.length === 1) { await pl.shareFile({ path: paths[0], title: baseOf(paths[0]) }).catch(() => undefined); return; } const { shareFiles } = await import('../ui/shareMany'); await shareFiles(paths); };
   const extractHere = async (e: Entry) => {
-    const id = `fe-${Date.now()}`; const dest = parentOf(e.path);
+    const id = nid('fe'); const dest = parentOf(e.path);
     const job: import('./filesQueue').QJob = { id, kind: 'extract', label: t('filesExtracting', { name: e.name }), what: e.name, from: e.path, to: dest, cancel: () => undefined, save: { op: 'extractHere', paths: [e.path], dest },
       start: async () => { const a = await import('../archives'); const aj = a.extractArchiveJob({ path: e.path, dest, replace: 'ask' as never }); job.cancel = () => void a.cancelArchive(aj.id); watchArchiveJob(aj.id, aj.done, e.name); void aj.done.then(() => Q?.finish(id), () => Q?.finish(id)); return true; } };
     await queued(job);
@@ -889,7 +891,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
 
   // ---- the jobs: copy / move / delete, with their progress, cancel and the question when a name is taken
-  if (!stagesSwept) { stagesSwept = true; try { if (localStorage.getItem('kt.files.stages')) void import('./filesVerify').then((m) => { const jb = jobs(); if (jb) m.sweepStages((ps) => jb.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: ps })); }); } catch { /* none */ } }
+  if (!stagesSwept) { stagesSwept = true; try { if (localStorage.getItem('kt.files.stages')) void import('./filesVerify').then((m) => { const jb = jobs(); if (jb) m.sweepStages((ps) => jb.filesJob({ id: nid('fq'), op: 'delete', paths: ps })); }); } catch { /* none */ } }
   const me = {};
   const jobRow = (id: string, label: string, cancel: () => void): HTMLElement => {
     const el = h('div', { class: 'files-job', 'data-id': id }, h('div', { class: 'grow' }, h('span', { class: 'files-job-label', dir: 'auto' }, label), h('div', { class: 'files-job-bar' }, h('i')), h('small', { class: 'src files-job-meta' })), iconButton('close', t('cancel'), cancel));
@@ -904,9 +906,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   /** The queue's chunk, and this pane listening to it for the Jobs button's badge. */
   const useQueue = async () => { const m = await import('./filesQueue'); Q = m; if (!offQ && !gone) offQ = m.subscribe(drawJobsBadge); drawJobsBadge(); return m; };
   /** A job given to the queue: it starts at once when it may, else waits its turn (and says so). */
-  const queued = async (job: import('./filesQueue').QJob): Promise<boolean> => { const m = await useQueue(); if (m.enqueue(job, qhost) === 'waiting') toast(t('filesJobQueued', { n: localDigits(m.snapshot().waiting.length) })); return true; };
+  const queued = async (job: import('./filesQueue').QJob): Promise<boolean> => { const m = await useQueue(); const where = m.enqueue(job, qhost); if (where === 'duplicate') return false; if (where === 'waiting') toast(t('filesJobQueued', { n: localDigits(m.snapshot().waiting.length) })); return true; };
   /** True when the job was asked for: it starts now or waits its turn in the queue (its events come once it starts). */
-  const startJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = `fj-${Date.now()}`, label0?: string): Promise<boolean> => {
+  const startJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = nid('fj'), label0?: string): Promise<boolean> => {
     const pl = jobs(); if (!pl) return false;
     // (An archive's entries: taken out, as a copy — an archive is not changed from here, so never deleted or moved out of.)
     if (paths.length && paths.every(isArc)) { if (op === 'delete' || !dest) { toast(t('arcReadOnly'), 'error'); return false; } if (isArc(dest)) { toast(t('arcNoPaste'), 'error'); return false; } void extractEntries(paths, dest); return false; }
@@ -925,7 +927,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     return queued(job);
   };
   /** The job itself, started now (what the queue calls when its turn comes). True when it was started. */
-  const launchJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = `fj-${Date.now()}`, label0?: string): Promise<boolean> => {
+  const launchJob = async (op: 'copy' | 'move' | 'delete', paths: string[], dest?: string, id = nid('fj'), label0?: string): Promise<boolean> => {
     const pl = jobs(); if (!pl) return false;
     const srcV = paths.some(isVirtual), dstV = !!dest && isVirtual(dest);
     if ((srcV || dstV) && op !== 'delete') {
@@ -1022,7 +1024,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const why = pasteBlock(); if (why) { toast(why, 'error'); return; }
     if (c.paths.every(isArc)) { await extractEntries(c.paths, at); return; }
     if (c.op === 'copy') { await startJob('copy', c.paths, at); return; }
-    const id = `fj-${Date.now()}`; setClip({ ...c, busy: id });
+    const id = nid('fj'); setClip({ ...c, busy: id });
     if (!(await startJob('move', c.paths, at, id)) && clipboard?.busy === id) setClip({ op: 'move', paths: c.paths });
   };
   /** An archive's entries taken out into `dest` as a paste does: unpacked (with progress) to a hidden folder there, then
@@ -1030,7 +1032,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
    *  folder removed at the end, whatever happened. */
   const extractEntries = async (paths: string[], dest: string): Promise<void> => {
     const jb = jobs(); if (!jb || !arcOk() || !paths.length) return;
-    const id = `fx-${Date.now()}`; const label = paths.length === 1 ? t('filesExtracting', { name: baseOf(paths[0]) }) : t('filesExtractingN', { n: localDigits(paths.length) });
+    const id = nid('fx'); const label = paths.length === 1 ? t('filesExtracting', { name: baseOf(paths[0]) }) : t('filesExtractingN', { n: localDigits(paths.length) });
     const job: import('./filesQueue').QJob = { id, kind: 'extract', label, what: whatOf(paths), from: parseArc(paths[0]).archive, to: dest, cancel: () => undefined, save: { op: 'extract', paths, dest }, start: () => runExtract(paths, dest, id, label, job) };
     await queued(job);
   };
@@ -1040,18 +1042,18 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const jb = jobs(); if (!jb || !arcOk()) return false; const m = await import('./filesArc'); const a = await import('../archives');
     const stage = `${dest.replace(/\/+$/, '')}/${STAGE}${id}`; let stopped = false; let jobId = '';
     const el = jobRow(id, label, () => { stopped = true; if (jobId) void a.cancelArchive(jobId); }); qj.cancel = () => { stopped = true; if (jobId) void a.cancelArchive(jobId); };
-    const dropStage = () => void jb.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: [stage] }).catch(() => undefined);
+    const dropStage = () => void jb.filesJob({ id: nid('fq'), op: 'delete', paths: [stage] }).catch(() => undefined);
     try {
       const job = m.arcExtract(paths, stage, (pr) => { const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0; const b = el.querySelector('.files-job-bar i') as HTMLElement | null; if (b && pr.total) b.style.width = `${pct}%`; const meta = `${baseOf(pr.file || '')} · ${formatBytes(pr.done)}${pr.total ? ` / ${formatBytes(pr.total)}` : ''}`; (el.querySelector('.files-job-meta') as HTMLElement).textContent = meta; Q?.progress(id, pct, meta); });
       jobId = job.id; await job.done;
     } catch (err) { el.remove(); dropStage(); if (!stopped && !/stopped|cancel/i.test(String((err as Error).message ?? err))) toast(String((err as Error).message ?? err), 'error', 5000); else toast(t('filesCancelled')); return false; }
     el.remove(); if (stopped) { dropStage(); toast(t('filesCancelled')); return false; }
-    const moveId = `fj-${Date.now()}`; stagings.set(moveId, stage); Q?.link(moveId, id); qj.cancel = () => void jb.filesCancel({ id: moveId });
+    const moveId = nid('fj'); stagings.set(moveId, stage); Q?.link(moveId, id); qj.cancel = () => void jb.filesCancel({ id: moveId });
     if (!(await launchJob('move', paths.map((p) => `${stage}/${parseArc(p).inner}`), dest, moveId, t('filesExtractingN', { n: localDigits(paths.length) })))) { stagings.delete(moveId); dropStage(); return false; }
     return true;
   };
   /** «Resume» on the unfinished jobs of an earlier run: asked for again, in their order (a delete is never among them). */
-  const resumeSaved = (list: import('./filesQueue').Saved[]) => { for (const j of list) { if (j.op === 'extract') void extractEntries(j.paths, j.dest); else if (j.op === 'extractHere') void extractHere({ path: j.paths[0], name: baseOf(j.paths[0]) } as Entry); else void startJob(j.op, j.paths, j.dest); } };
+  const resumeSaved = (list: import('./filesQueue').Saved[]) => { for (const j of list) { try { const one = j.op === 'extract' ? extractEntries(j.paths, j.dest) : j.op === 'extractHere' ? extractHere({ path: j.paths[0], name: baseOf(j.paths[0]) } as Entry) : startJob(j.op, j.paths, j.dest); void one.catch(() => undefined); } catch { /* a bad entry is dropped, never thrown on */ } } };
   const extractTo = async (paths: string[]) => {
     let d: string | null = null;
     try { if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else d = (await ktPlugin()?.pickDir())?.dir ?? null; } catch { d = null; }
@@ -1080,7 +1082,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     el?.remove(); void load();
     if (rec) { rec.ended = true; setTimeout(() => liveJobs.delete(ev.id), 2000); }
     // (An archive's entries moved in from their hidden folder: the folder goes, whatever happened.)
-    const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void jobs()?.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: [stage] }).catch(() => undefined); }
+    const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void jobs()?.filesJob({ id: nid('fq'), op: 'delete', paths: [stage] }).catch(() => undefined); }
     const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); }
     if (ev.status === 'done') { if (ev.failed?.length) summarySheet(ev); else if (ev.left) toast(t('filesLeftInPlace', { n: localDigits(ev.left) }), 'info', 5000); else if (ev.skipped) toast(t('filesDoneSkipped', { n: localDigits(ev.skipped) })); else if (renamedMoves.has(ev.id)) toast(t('filesVerifyRenamed'), 'info', 5000); else if (ev.verified !== undefined) toast(t('filesVerifiedDone', { n: localDigits(ev.verified) })); else if (sizeChecked.has(ev.id)) toast(t('filesDoneSizes')); else toast(t('filesDone')); sizeChecked.delete(ev.id); renamedMoves.delete(ev.id); }
     else if (ev.status === 'cancelled') { if (ev.failed?.length) summarySheet(ev); else toast(ev.left ? t('filesCancelledLeft', { n: localDigits(ev.left) }) : t('filesCancelled')); }
@@ -1128,7 +1130,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
   // (The queue: another pane's jobs show here too; jobs an earlier run left waiting are offered — never run — once per start.)
   if (Q) { offQ = Q.subscribe(drawJobsBadge); drawJobsBadge(); }
-  if (!quiet && !pk && canJobs() && !queueOffered) { queueOffered = true; try { if (localStorage.getItem('kt.files.queue') || localStorage.getItem('kt.files.queue.unfinished')) void useQueue().then((m) => { if (!gone) offUnfinished = m.offerUnfinished(resumeSaved); }); } catch { /* none */ } }
+  // (Offered again at the next page until the user has answered: «queueOffered» is set by the answer, not by the offer.)
+  if (!quiet && !pk && canJobs() && !queueOffered) { try { if (localStorage.getItem('kt.files.queue') || localStorage.getItem('kt.files.queue.unfinished')) void useQueue().then((m) => { if (!gone && !queueOffered) offUnfinished = m.offerUnfinished(resumeSaved, () => { queueOffered = true; }); }); } catch { /* none */ } }
   const pl = plug(); if (pl) void import('./filesMore').then((m) => m.pruneTrash());
   void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); if (!pk && po.side !== 'b' && localStorage.getItem('kt.files.renamejob')) void import('./filesBatchUi').then((m) => m.interruptedBanner(batchHost([]), body)); })();
   let wake: { release(): Promise<void> } | null = null;
