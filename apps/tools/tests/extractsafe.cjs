@@ -446,7 +446,7 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
   { const c = await stoppedInPlace(); const jp = c.file + '.kurokawa-unzip'; const outBefore = tree(c.dest); const fresh = mkZip([{ name: 'new.txt' }, { name: 'two.txt' }]); fs.writeFileSync(c.file, fresh); let good = Object.keys(outBefore).length > 0;
     const b = await E.beside(c.file, c.registry); const lo = await E.leftOf(c.file); const fb = await E.finishBeside(c.file, pr(), fakeIo(), { registry: c.registry }); const { e: er } = await attempt(() => E.restoreBeside(c.file, fakeIo()));
     const pf = await E.preflightOf(c.file, path.join(c.d, 'o2'), {}); const { e: ei } = await attempt(() => E.extract(c.file, path.join(c.d, 'o2'), { inPlace: true, registry: c.registry }, pr(), fakeIo())); const rn = await E.extract(c.file, path.join(c.d, 'o2'), { registry: c.registry }, pr(), fakeIo());
-    good = good && b.kind === 'old' && lo === null && fb === null && er?.message === 'nothingToRestore' && pf.facts.oldJob && !pf.report.inPlace.ok && /^refused oldJob/.test(ei?.message || '') && ei.nothingChanged && rn.files === 2 && fs.readFileSync(c.file).equals(fresh);
+    good = good && b.kind === 'old' && b.stale === 'archiveChanged' && lo === null && fb === null && er?.message === 'nothingToRestore' && pf.facts.oldJob && pf.facts.staleJob?.why === 'archiveChanged' && pf.facts.staleJob.journal === jp && pf.report.problems.some((x) => x.kind === 'staleJob') && !pf.report.inPlace.ok && ei?.message === 'refused staleJob' && ei.nothingChanged && rn.files === 2 && fs.readFileSync(c.file).equals(fresh);
     const sh = (await E.shelf(c.registry)).filter((x) => x.journal === jp); good = good && sh[0]?.state === 'blocked' && sh[0].why === 'archiveChanged' && sh[0].can.join() === 'forget,leave';
     const c2 = await stoppedInPlace(); const { e: enb } = await attempt(() => E.forgetBlocked(c2.file + '.kurokawa-unzip', c2.registry)); good = good && enb?.message === 'notBlocked';
     const aside = path.join(c.dest, S.SPEC.asideDir + '-x'); fs.mkdirSync(aside, { recursive: true }); fs.writeFileSync(path.join(aside, 'keep.txt'), 'k');
@@ -463,6 +463,39 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
       const u = await E.undo(jp, fakeIo()); good = good && u.identical && fs.readFileSync(u.restoredTo).equals(orig) && fs.readFileSync(c.file).equals(fresh);
     }
     ok('round 5: a crash at «removed», then a new file at the path — the job is finished, the new file never touched, its Undo kept (the archive made again beside it)', good); }
+  /* ---- 21. round six (kt-core extractjob.rs's tests too): a tail that cannot be read just now; Forget keeps what can still be recovered; a file merely
+   *  named like a journal; a moved drive re-roots its job; the job's own cut archive told by more than its size ---- */
+  { let good = true; const c = await stoppedInPlace(); const jp = c.file + '.kurokawa-unzip'; const tail = c.file + '.kurokawa-tail'; const saved = fs.readFileSync(tail);
+    fs.rmSync(tail); fs.mkdirSync(tail); { const { e } = await attempt(() => E.openJob(jp)); good = good && e?.message === 'tailUnreadable'; }
+    { const sh = await E.shelf(c.registry); good = good && sh[0]?.why === 'tailUnreadable' && sh[0].can.join() === 'leave'; const { e } = await attempt(() => E.forgetBlocked(jp, c.registry)); good = good && e?.message === 'tailUnreadable'; }
+    fs.rmdirSync(tail); { const { e } = await attempt(() => E.openJob(jp)); good = good && e?.message === 'tailMissing'; } fs.writeFileSync(tail, saved);
+    const arc = fs.readFileSync(c.file); fs.writeFileSync(jp, fs.readFileSync(jp, 'utf8').replace('"state"', '"stat"')); { const { e } = await attempt(() => E.openJob(jp)); good = good && e?.message === 'journalCorrupt'; }
+    const r = await E.forgetBlocked(jp, c.registry); const kept = c.file + '.kurokawa-tail.kept';
+    good = good && r.kept === kept && fs.readFileSync(kept).equals(saved) && !fs.existsSync(tail) && !fs.existsSync(jp) && fs.readFileSync(c.file).equals(arc);
+    await E.preflightOf(c.file, path.join(c.d, 'o2'), {}).catch(() => {}); good = good && fs.existsSync(kept);
+    const pfn = S.preflight({ format: 'zip', platform: 'linux', entries: [{ path: 'x/a.ZIP.Kurokawa-Tail.Kept', usize: 1, csize: 1, method: 0 }], supported: [0], password: 'none', archiveWritable: true, destWritable: true, sameVolume: true, free: 1e9, existing: [], inPlaceFormat: true }); good = good && pfn.problems.some((x) => x.kind === 'names');
+    const c2 = await stoppedInPlace(); const jp2 = c2.file + '.kurokawa-unzip'; fs.writeFileSync(jp2, fs.readFileSync(jp2, 'utf8').replace('"state"', '"stat"')); fs.writeFileSync(c2.file + '.kurokawa-tail.kept', 'earlier');
+    { const { e } = await attempt(() => E.forgetBlocked(jp2, null)); good = good && e?.message === 'keptExists' && fs.existsSync(jp2) && fs.existsSync(c2.file + '.kurokawa-tail') && fs.readFileSync(c2.file + '.kurokawa-tail.kept', 'utf8') === 'earlier'; }
+    const c3 = setup(mkZip(ENTRIES), 'zip'); const jp3 = c3.file + '.kurokawa-unzip'; fs.writeFileSync(jp3, 'my notes');
+    { const { e } = await attempt(() => E.forgetBlocked(jp3, c3.registry)); good = good && e?.message === 'notJournal'; } await E.register(c3.registry, jp3, 'z9'); await E.forgetBlocked(jp3, c3.registry); good = good && !fs.existsSync(jp3);
+    ok('round 6: a tail unreadable just now is «tailUnreadable» (Leave only, never forgotten); Forget keeps the saved tail beside a half-extracted archive («.kurokawa-tail.kept», refused as an entry name, never twice); a file merely named like a journal is never forgotten', good); }
+  { let good = true; const c = await stoppedInPlace(); const moved = path.join(c.d, 'moved'); fs.renameSync(path.join(c.d, 'src'), moved); const file = path.join(moved, 'a.zip'); const jp = file + '.kurokawa-unzip';
+    const { j } = await E.openJob(jp); good = good && j.archive === file && j.tail === file + '.kurokawa-tail' && j.dest === path.join(moved, 'out');
+    const { e } = await attempt(() => E.finishBeside(file, pr(), fakeIo(), { registry: c.registry })); good = good && e?.message === `askBeside ${path.join(moved, 'out')}`;
+    await E.finishBeside(file, pr(), fakeIo(), { registry: c.registry, confirmed: true }); good = good && same(tree(path.join(moved, 'out')), expected(ENTRIES)) && !fs.existsSync(file);
+    const saved = S.journalRead(fs.readFileSync(jp, 'utf8')).body; good = good && saved.archive === file && saved.state === 'done';
+    const c2 = await stoppedInPlace(); const other = path.join(c2.d, 'src', 'b.zip'); fs.copyFileSync(c2.file, other); fs.copyFileSync(c2.file + '.kurokawa-unzip', other + '.kurokawa-unzip'); fs.copyFileSync(c2.file + '.kurokawa-tail', other + '.kurokawa-tail');
+    { const { e: e2 } = await attempt(() => E.openJob(other + '.kurokawa-unzip')); good = good && e2?.message === 'journalCorrupt'; }
+    ok('round 6: a stopped job whose drive moved opens from beside its archive (re-rooted), is asked about, then finishes into the moved destination; a journal copied beside another name is never re-rooted', good); }
+  { let good = true; E.BATCH.count = 3; const f0 = fakeIo(); const c0 = setup(mkZip(ENTRIES), 'zip'); await E.extract(c0.file, c0.dest, { inPlace: true, registry: c0.registry }, pr(), f0); const cut = f0.points.lastIndexOf('cut') + 1; const at = cut - 1;
+    const c = setup(mkZip(ENTRIES), 'zip'); const orig = fs.readFileSync(c.file); const jp = c.file + '.kurokawa-unzip'; await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: at })));
+    const { j } = await E.openJob(jp); const len = fs.statSync(c.file).size; good = good && len === j.prevCommitted && len > 0;
+    const theirs = Buffer.alloc(len, 7); fs.writeFileSync(c.file, theirs); await E.finish(jp, pr(), fakeIo()); good = good && fs.readFileSync(c.file).equals(theirs);
+    const u = await E.undo(jp, fakeIo()); good = good && u.identical && fs.readFileSync(u.restoredTo).equals(orig) && fs.readFileSync(c.file).equals(theirs);
+    const c2 = setup(mkZip(ENTRIES), 'zip'); await attempt(() => E.extract(c2.file, c2.dest, { inPlace: true, registry: c2.registry }, pr(), fakeIo({ crashAt: at }))); await E.finish(c2.file + '.kurokawa-unzip', pr(), fakeIo()); good = good && !fs.existsSync(c2.file) && same(tree(c2.dest), expected(ENTRIES));
+    for (const later of [false, true]) { const c3 = setup(mkZip(ENTRIES), 'zip'); await attempt(() => E.extract(c3.file, c3.dest, { inPlace: true, registry: c3.registry }, pr(), fakeIo({ crashAt: cut }))); good = good && fs.statSync(c3.file).size === 0;
+      if (later) { const t = new Date(Date.now() + 60000); fs.utimesSync(c3.file, t, t); } await E.finish(c3.file + '.kurokawa-unzip', pr(), fakeIo()); good = good && fs.existsSync(c3.file) === later; }
+    E.BATCH.count = 64; ok('round 6: the job\'s own cut archive is told by more than its size (its first header at the commit before; an empty file written well after the journal is not its own)', good); }
   ok('zip64 end records when the fallback closes a big archive', E.zipEnd(3, 10, 100).length === 22 && E.zipEnd(70000, 10, 100).length === 98 && E.zipEnd(1, 10, 5e9).readBigUInt64LE(48) === 5000000000n);
   console.log(`${passes} passed, ${fails} failed (${((Date.now() - t0) / 1000).toFixed(1)} s)`); console.log(fails ? 'errors' : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

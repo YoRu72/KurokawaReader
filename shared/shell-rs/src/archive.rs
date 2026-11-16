@@ -1626,7 +1626,7 @@ pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) ->
 /// taken by another job's («refused oldJob», the pre-flight's reason), so nothing beside the archive is written over.
 pub fn extract_fresh(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
     if o.in_place && o.only.is_none() {
-        return Err("refused oldJob oldJob".to_string());
+        return Err("refused oldJob".to_string());
     }
     extract_with(file, dest, o, ctx, pr, false)
 }
@@ -2798,7 +2798,7 @@ mod tests {
         let o = ExtractOpts { replace: "replace".to_string(), ..Default::default() };
         assert_eq!(extract_fresh(&z, &d.join("o"), &o, &ctx(), &pr).unwrap(), 2);
         assert_eq!(fs::read(d.join("o").join("new.txt")).unwrap(), b"new");
-        assert_eq!(extract_fresh(&z, &d.join("o2"), &ExtractOpts { in_place: true, ..o.clone() }, &ctx(), &pr).unwrap_err(), "refused oldJob oldJob");
+        assert_eq!(extract_fresh(&z, &d.join("o2"), &ExtractOpts { in_place: true, ..o.clone() }, &ctx(), &pr).unwrap_err(), "refused oldJob");
         assert!(z.exists() && journal_of(&z).exists() && tail_of(&z).exists());
         let _ = fs::remove_dir_all(&d);
     }

@@ -109,7 +109,7 @@ pub fn extract(app: &AppHandle, path: &Path, dest: &Path, o: &Value, on: &dyn Fn
     }
     // (In place while another job's journal holds its place: the pre-flight's reason, so the page says what to do.)
     if old_job && flag(o, "inPlace") && o.get("only").map(|v| v.is_null()).unwrap_or(true) {
-        return Err("refused oldJob oldJob".to_string());
+        return Err(if matches!(ej::beside(path, None), Ok(ej::Beside::Stale(_))) { "refused staleJob" } else { "refused oldJob" }.to_string());
     }
     let fmt = archive::format_of(path)?;
     if (fmt != "zip" && fmt != "tar") || numbered(&path.to_string_lossy()) {
@@ -242,5 +242,5 @@ pub async fn kt_archive_job(app: AppHandle, o: Value) -> Result<Value, String> {
 /// Whether the journal beside `path` is a finished job's and a new archive of that name is there (kt-core Beside::Old):
 /// then the shared reader lists and extracts the archive itself (list_fresh, extract_fresh), never the old job's tail.
 pub fn old_job_beside(path: &Path) -> bool {
-    ej::journal_version(path) == 2 && matches!(ej::beside(path, None), Ok(ej::Beside::Old))
+    ej::journal_version(path) == 2 && matches!(ej::beside(path, None), Ok(ej::Beside::Old) | Ok(ej::Beside::Stale(_)))
 }

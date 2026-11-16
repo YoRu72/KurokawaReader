@@ -186,6 +186,20 @@ Do the same once before a local `tauri build` / `tauri dev`.
   previous commit) is removed by Finish; anything else is never touched, and Undo makes the archive again beside it.
   Known and left: a 0-byte archive file left by a power loss in an 11e49e4-era build (when «done» was saved before the
   archive was removed) stays where it is — it cannot be told from a user's file; the user can delete it.
+- **P11 review, round 6 (both engines):** a tail that cannot be read just now (a scanner, a sync tool, a permission
+  hiccup) is `tailUnreadable` — only a missing one is `tailMissing` —; such a job offers Leave only and is never
+  forgotten for it. Forget reads the journal leniently and refuses a file that is not one of ours (`notJournal`) unless
+  this registry points at it; when the half-extracted archive is still beside it (the size of its last or previous
+  commit), the saved tail is kept as `<archive>.kurokawa-tail.kept` (`kept` in the answer; refused as an entry name like
+  the job's own files; never read by a job; a second one is refused, `keptExists`). A journal beside an archive whose
+  folder moved (another drive letter, another computer) is re-rooted from where it sits — only when the stored archive
+  has the journal's own name and the stored tail is its tail; the destination and restore name move with it when they
+  were inside its old folder; the size and header checks still guard it; it is not in this registry under that path, so
+  it is asked about. A job beside that cannot be used is reported with its reason (`staleJob` in the facts, the
+  pre-flight's `staleJob` problem, «refused staleJob») and the sheet offers Forget there too. The job's own cut archive
+  is told by more than its size: at the commit before, its first unit's header must be where the plan saw it; an empty
+  file written more than 5 s after the journal's last save is not the job's. Refusals no longer repeat their kind
+  («refused oldJob», not «refused oldJob oldJob»).
 - **Known limit — two registries.** Electron keeps its jobs' pointers in `<userData>/extract-jobs`, Tauri in
   `<app data>/extract-jobs` (different folders on every system). A job started by one shell is therefore *not* «ours»
   for the other: opening that archive in the other shell asks first (the sheet above) instead of finishing silently, and

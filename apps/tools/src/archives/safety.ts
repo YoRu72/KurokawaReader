@@ -18,8 +18,11 @@ const volumeOf = (p: string): string => (/^\/(storage|mnt\/media_rw)\/[0-9A-Fa-f
 export const phonePlatform = (dest: string): Platform => (volumeOf(dest).startsWith('/') ? 'android-fat' : 'android');
 
 /** The report for one archive and one destination; nothing is written. */
+/** A stopped job beside the archive that cannot be used for the file now there (its journal, the engine's reason). */
+export interface StaleJob { journal: string; why: string }
 export async function preflightFor(info: ArchiveInfo, path: string, dest: string, o: { password?: string; verify?: boolean; free: number; keepFree: number; existing: string[] }): Promise<Report> {
-  const d = desk(); if (d?.archivePreflight) { try { return (await d.archivePreflight({ path, dest, password: o.password, verify: o.verify, keepFree: o.keepFree })).report; } catch { /* the computer's older engine: the page decides */ } }
+  // (Round six: a job beside the archive that cannot be used for it rides along with the report, so the sheet can offer to forget it.)
+  const d = desk(); if (d?.archivePreflight) { try { const r = await d.archivePreflight({ path, dest, password: o.password, verify: o.verify, keepFree: o.keepFree }); const sj = (r as { facts?: { staleJob?: StaleJob | null } }).facts?.staleJob; return sj ? Object.assign(r.report, { staleJob: sj }) : r.report; } catch { /* the computer's older engine: the page decides */ } }
   const p = ktPlugin() ? phonePlatform(dest) : ((info as ArchiveInfo & { platform?: Platform }).platform ?? 'linux');
   const entries = info.entries.map((e) => ({ path: e.path, dir: e.dir, usize: Math.max(0, e.size), csize: e.compressed ?? 0, method: (e as { method?: number }).method, offset: (e as { offset?: number }).offset, encrypted: (e as { encrypted?: boolean }).encrypted }));
   const zipLike = info.format === 'zip' || info.format === 'tar';

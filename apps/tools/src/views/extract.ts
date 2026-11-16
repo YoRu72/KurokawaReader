@@ -16,7 +16,7 @@ import { extractArchiveJob, cancelArchive, createZip, pickFiles, parentOf, baseN
 export const keepFreeNow = (): number => { const k = getSettings().archiveKeepFree; return k >= 0 ? k : nativePlatform() === 'desktop' ? 2 * 1024 ** 3 : 512 * 1024 ** 2; };
 const errText = (m: string): string => {
   if (m === 'noSpace') return t('errNoSpace'); if (m === 'notArchive') return t('notAnArchive'); if (m === 'busy' || m === 'journalExists') return t('errBusy');
-  if (m === 'nothingToRestore') return t('errNothingToRestore'); if (/^refused oldJob\b/.test(m)) return `${t('pf_oldJob')}. ${t('fixOldJob')}`;
+  if (m === 'nothingToRestore') return t('errNothingToRestore'); if (/^refused oldJob\b/.test(m)) return `${t('pf_oldJob')}. ${t('fixOldJob')}`; if (/^refused staleJob\b/.test(m)) return `${t('pf_staleJob')}. ${t('fixStaleJob')}`;
   const [k, ...rest] = m.split(' '); const what = rest.join(' ').replace(/ — nothing was modified$/, '');
   if (k === 'refused') { const [kind, ...nm] = what.split(' '); return t('errRefused', { what: `${pfTitle(kind)}${nm.length ? ` — ${nm.join(' ')}` : ''}` }); }
   if (k === 'unsupportedMethod') return t('errRefused', { what: `${t('pf_method')} — ${rest.slice(1).join(' ').replace(/ — nothing was modified$/, '')}` });
@@ -125,6 +125,9 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
       const [free, ex] = await Promise.all([dest ? freeSpaceAt(dest) : Promise.resolve(info.free ?? -1), dest ? existingIn(dest, names.slice(0, 5000)) : Promise.resolve([])]); existing = ex;
       report = await preflightFor(info, path, dest, { password: password || undefined, free, keepFree: keepFreeNow(), existing: ex });
       pfBox.replaceChildren(reportEl(report));
+      // (Round six: a stopped job beside this archive that cannot be used for it — said with its reason, and Forget offered here as on the shelf.)
+      const stale = (report as { staleJob?: { journal: string; why: string } }).staleJob;
+      if (stale) { const sx = await import('./extractShelf'); pfBox.append(h('div', { class: 'pf-stale' }, h('p', { class: 'hint' }, t('besideStale'), ' ', sx.why(stale.why)), h('button', { type: 'button', class: 'btn tonal', onclick: () => void sx.forgetJob({ journal: stale.journal, archive: path, dest: '' }, () => void check(), true) }, t('shelfForget')))); }
       if (!info.resumable && report.recommend === 'inPlace' && !deleteAfter) { inPlace = true; inPlaceIn.checked = true; }
       existRow.hidden = !ex.length; conflicts.textContent = ex.length ? t('existingAsk', { n: countFiles(ex.length) }) : '';
       sync();

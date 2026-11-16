@@ -17,6 +17,7 @@ const base = { format: 'zip', platform: 'windows', supported: [0, 8], password: 
 const ents = (n, size) => Array.from({ length: n }, (_, i) => ({ path: `Season 1/Episode ${i + 1}.mkv`, usize: size, csize: size * 0.98, method: 8, offset: i * size }));
 const REPORTS = {
   ok: S.preflight({ ...base, entries: ents(6, 0.4 * GB), free: 40 * GB }, { margin: 2 * GB }),
+  stale: S.preflight({ ...base, entries: ents(6, 0.4 * GB), free: 40 * GB, oldJob: true, staleJob: { journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', why: 'archiveChanged' } }, { margin: 2 * GB }),
   problems: S.preflight({ ...base, entries: [...ents(3, 0.2 * GB), { path: 'notes/meeting 10:30.txt', usize: 900, csize: 400, method: 8 }, { path: 'CON.txt', usize: 10, csize: 10, method: 0 }, { path: 'C:/Windows/evil.dll', usize: 10, csize: 10, method: 0 }, { path: 'extras/bonus.zst', usize: 5 * GB, csize: 4 * 1024 ** 2, method: 93 }], existing: ['Season 1/Episode 1.mkv', 'Season 1/Episode 2.mkv'], free: 400 * GB }, { margin: 2 * GB }),
   fit: S.preflight({ ...base, entries: ents(8, 1.5 * GB), free: 9 * GB }, { margin: 2 * GB }),
   conflicts: S.preflight({ ...base, entries: ents(4, 0.1 * GB), existing: ['Season 1/Episode 1.mkv', 'Season 1/Episode 2.mkv', 'Season 1/Episode 3.mkv'], free: 40 * GB }, { margin: 2 * GB }),
@@ -32,16 +33,16 @@ const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1',
     await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.fulfill({ status: 404, body: '' }));
     const p = await ctx.newPage(); p.setDefaultTimeout(8000); const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.errs = errs;
     const report = REPORTS[which]; const entries = (which === 'problems' ? [...report.problems] : []).length >= 0 ? null : null; void entries;
-    await p.addInitScript(([l, rep, shelf, ex]) => {
+    await p.addInitScript(([l, rep, shelf, ex, stale]) => {
       localStorage.setItem('kr.lang', l); localStorage.setItem('kt.update.lastCheck', String(Date.now())); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['files', 'archives'] }));
-      const calls = []; window.__calls = calls;
+      const calls = []; window.__calls = calls; window.__stale = stale;
       const t = { platform: 'desktop', available: true, os: 'linux', list: async () => [], onTasks: () => () => {}, homeDir: async () => '/home/u', listDir: async () => ({ entries: [{ name: 'Show.zip', path: '/home/u/Downloads/Show.zip', dir: false, size: 3e9, mtime: 0 }], exists: true }), openPath: async () => undefined, pickDir: async () => '/mnt/other',
         archiveList: async () => ({ format: 'zip', entries: [{ path: 'Season 1/', size: 0, dir: true }, ...Array.from({ length: 6 }, (_, i) => ({ path: `Season 1/Episode ${i + 1}.mkv`, size: 4e8, compressed: 3.9e8, dir: false }))], total: 2.4e9, encrypted: false, inPlaceOk: true, platform: 'windows' }),
         pickFile: async () => ['/home/u/Downloads/Show.zip'], pathInfo: async () => ({ exists: true }), archiveTest: async () => ({ ok: true, files: 6, bad: [] }),
-        archivePreflight: async () => ({ report: rep, facts: {} }), archiveFree: async () => ({ free: rep.space.free }), archiveExisting: async () => ({ existing: ex }),
+        archivePreflight: async () => ({ report: rep, facts: window.__stale ? { staleJob: { journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', why: 'archiveChanged' } } : {} }), archiveFree: async () => ({ free: rep.space.free }), archiveExisting: async () => ({ existing: ex }),
         archiveExtract: async (o) => { calls.push(o); if (window.__askOnce) { window.__askOnce = false; throw new Error('askBeside /home/u/Elsewhere/out'); } return { files: 6, dest: o.dest, job: '/x/job.kurokawa-unzip' }; }, archiveJob: async (o) => { calls.push(o); return { identical: true }; }, archiveShelf: async () => shelf, onArchiveProgress: () => () => {}, archiveCancel: async () => {} };
       window.kurokawaTools = new Proxy(t, { get: (o, k) => (k in o ? o[k] : k === 'then' || ['filesJob', 'onFilesJob', 'titleBar', 'filesRoots', 'filesStat', 'filesMkdir', 'filesRename'].includes(k) ? undefined : async () => undefined) });
-    }, [lang, report, extra.shelf ?? [], extra.existing ?? (which === 'conflicts' || which === 'problems' ? ['Season 1/Episode 1.mkv', 'Season 1/Episode 2.mkv', 'Season 1/Episode 3.mkv'].slice(0, which === 'problems' ? 2 : 3) : [])]);
+    }, [lang, report, extra.shelf ?? [], extra.existing ?? (which === 'conflicts' || which === 'problems' ? ['Season 1/Episode 1.mkv', 'Season 1/Episode 2.mkv', 'Season 1/Episode 3.mkv'].slice(0, which === 'problems' ? 2 : 3) : []), which === 'stale']);
     return { p, ctx };
   };
   const openSheet = async (p) => { await p.goto(url + '#/'); await p.waitForSelector('.fab'); await p.evaluate(() => import(document.querySelector('script[type=module]')?.src ?? '/assets/app.js')); await p.evaluate(async () => { const mods = [...document.querySelectorAll('link[rel=modulepreload]')]; void mods; }); };
@@ -52,7 +53,7 @@ const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1',
   const viaImport = async (p) => { await p.goto(url + '#/files?p=/home/u/Downloads'); await p.waitForSelector('.files-view'); const src = await p.evaluate(() => [...document.scripts].map((s) => s.src).find((s) => /app[-.\w]*\.js/.test(s))); void src; };
   void viaImport;
   for (const lang of ['en', 'ar']) for (const kind of ['phone', 'pc']) {
-    for (const which of ['ok', 'problems', 'fit', 'conflicts']) {
+    for (const which of ['ok', 'problems', 'fit', 'conflicts', 'stale']) {
       if (kind === 'pc' && which !== 'problems') continue;
       const { p, ctx } = await page(lang, kind, which);
       // (Opened as the user does: + → Open an archive → the archive's contents → Extract.)
@@ -96,6 +97,15 @@ const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1',
         await (await p.$$('.extract-sheet .switch-row input'))[1].click();
         ok(`${lang} fit: turning «verify first» off shows a plain warning`, await p.$eval('.pf-warn', (e) => !e.hidden));
         if (kind === 'phone') { await p.$eval('.pf-warn', (e) => e.scrollIntoView({ block: 'center' })); await shot(p, { path: path.join(SHOTS, lang === 'en' ? 'extract-verify-off.png' : 'extract-verify-off-ar.png') }); }
+      }
+      if (which === 'stale') {
+        // (Round six: a stopped job beside the archive that cannot be used for it — said on the sheet with its reason, Forget offered there, the
+        //  confirmation stacked above the sheet.)
+        const st = await p.waitForSelector('.extract-sheet .pf-stale', { timeout: 6000 }).then(() => true).catch(() => false); const txt = st ? await p.$eval('.extract-sheet .pf-stale', (e) => e.innerText) : '';
+        ok(`${lang} ${kind} stale: the job beside said unusable, with its reason`, st && txt.length > 30 && !/shelfWhy_|besideStale/.test(txt), txt);
+        if (st) { await p.click('.extract-sheet .pf-stale .btn'); await p.waitForSelector('.forget-sheet'); if (lang === 'ar') await shot(p, { path: path.join(PREVIEW, 'forget-from-sheet-ar.png') });
+          await p.click('.forget-sheet .sheet-actions .btn.danger'); await p.waitForFunction(() => window.__calls.some((c) => c.act === 'forget' && /Show\.zip\.kurokawa-unzip$/.test(c.journal)));
+          ok(`${lang} ${kind} stale: Forget from the sheet sends it, the sheet stays`, !!(await p.$('.extract-sheet'))); }
       }
       if (which === 'conflicts') {
         await p.click('.extract-sheet .sheet-actions .btn.primary'); await p.waitForSelector('.cf-sheet');

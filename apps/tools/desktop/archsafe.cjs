@@ -181,10 +181,10 @@ function conflictChoice(answers, path, isDir) {
 /* ---------- the pre-flight ---------- */
 /** The endings of a job's own files (journal, its temporary copy and unit log, saved tail, lock, and theirs): an entry whose last name ends so — any
  *  letter case, in any folder — is refused, whatever spelling the destination has (kt-core extractjob.rs JOB_SUFFIXES). */
-const JOB_SUFFIXES = ['.kurokawa-unzip', '.kurokawa-unzip.tmp', '.kurokawa-unzip.log', '.kurokawa-tail', '.kurokawa-tail.tmp', '.kurokawa-lock', '.kurokawa-lock.tmp'];
+const JOB_SUFFIXES = ['.kurokawa-unzip', '.kurokawa-unzip.tmp', '.kurokawa-unzip.log', '.kurokawa-tail', '.kurokawa-tail.tmp', '.kurokawa-lock', '.kurokawa-lock.tmp', '.kurokawa-tail.kept'];
 const NAME_REFUSALS = new Set(['empty', 'nul', 'dot', 'dotdot', 'absolute', 'drive', 'reservedSuffix', 'pathLong']);
 /** What the user can do about each kind of problem (a key the page words; the same in every language file). */
-const FIX = { method: 'fixMethod', password: 'fixPassword', names: 'fixNames', clash: 'fixClash', links: 'fixLinks', space: 'fixSpace', layout: 'fixLayout', damaged: 'fixDamaged', volumes: 'fixVolumes', readonly: 'fixReadonly', saf: 'fixSaf', busy: 'fixBusy', oldJob: 'fixOldJob', ratio: 'fixRatio', existing: 'fixExisting', rewrite: 'fixRewrite', otherVolume: 'fixOtherVolume', resume: 'fixResume' };
+const FIX = { method: 'fixMethod', password: 'fixPassword', names: 'fixNames', clash: 'fixClash', links: 'fixLinks', space: 'fixSpace', layout: 'fixLayout', damaged: 'fixDamaged', volumes: 'fixVolumes', readonly: 'fixReadonly', saf: 'fixSaf', busy: 'fixBusy', oldJob: 'fixOldJob', staleJob: 'fixStaleJob', ratio: 'fixRatio', existing: 'fixExisting', rewrite: 'fixRewrite', otherVolume: 'fixOtherVolume', resume: 'fixResume' };
 /**
  * Everything checked before anything is written. `f` (facts the engine gathered, nothing changed yet): { format, size,
  * entries: [{ path, dir, link?, target?, method?, encrypted?, csize?, usize, crc?, headerOk? }], supported: [methods the
@@ -222,7 +222,8 @@ function preflight(f, o = {}) {
   if (f.volumes && (f.volumes.missing.length || f.volumes.odd.length)) add('volumes', 'block', [...f.volumes.missing, ...f.volumes.odd]);
   if (f.busy) add('busy', 'block', ['busy']);
   // (A finished in-place job's journal beside this new archive of the same name: in place waits until that job leaves the shelf.)
-  if (f.oldJob) add('oldJob', 'inPlace', ['oldJob']);
+  // (The job beside cannot be used for this file — its own reason, so the page offers to forget it.)
+  if (f.staleJob) add('staleJob', 'inPlace', ['staleJob']); else if (f.oldJob) add('oldJob', 'inPlace', ['oldJob']);
   if (f.saf) add('saf', 'inPlace', ['saf']);
   if (!f.archiveWritable) add('readonly', 'inPlace', ['archive']);
   if (!f.destWritable) add('readonly', 'block', ['destination']);

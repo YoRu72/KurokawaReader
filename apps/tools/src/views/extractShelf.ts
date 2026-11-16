@@ -13,7 +13,7 @@ const leftNow = (): string[] => { try { return JSON.parse(sessionStorage.getItem
 const leave = (j: string) => { try { sessionStorage.setItem(LEFT, JSON.stringify([...leftNow(), j])); } catch { /* none */ } };
 type K = Parameters<typeof t>[0];
 /** A stop's reason in words: the engine's first word (its code) looked up; one with no words of its own is said as an error while reading or writing, its code kept. */
-const why = (w: string): string => { const code = w.split(' ')[0]; const k = `shelfWhy_${code}` as K; const v = t(k); return v === k ? t('shelfWhy_other', { code: w }) : v; };
+export const why = (w: string): string => { const code = w.split(' ')[0]; const k = `shelfWhy_${code}` as K; const v = t(k); return v === k ? t('shelfWhy_other', { code: w }) : v; };
 
 /** What an Undo or a Restore did, said plainly (P11 review): the files that could not go back into the archive, the archive made again
  *  under another name (a file took its name), originals put back beside an edited file, files kept in the hidden folder. */
@@ -41,13 +41,13 @@ function askPassword(name: string, wrong: boolean): Promise<string | null> {
 }
 
 /** «Forget this job» for a blocked one, after a plain confirmation: only its record goes; its extracted files stay, the archive can no longer be rebuilt. */
-function forgetJob(j: ShelfJob, redraw: () => void): Promise<void> {
+export function forgetJob(j: Pick<ShelfJob, 'journal' | 'archive' | 'dest'>, redraw: () => void, stack = false): Promise<void> {
   return new Promise((res) => {
-    const sh = openSheet(t('shelfForget'), t('cancel'), { onClose: () => res() }); sh.el.classList.add('forget-sheet');
+    const sh = openSheet(t('shelfForget'), t('cancel'), { stack, onClose: () => res() }); sh.el.classList.add('forget-sheet');
     sh.body.append(h('p', { class: 'forget-name', dir: 'auto' }, baseName(j.archive)), h('p', null, t('shelfForgetAsk')), ...(j.dest ? [h('p', { class: 'src', dir: 'ltr' }, j.dest)] : []));
     sh.actions.classList.add('equal');
     sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('cancel')),
-      h('button', { type: 'button', class: 'btn danger', onclick: async () => { try { await shelfAct(j.journal, 'forget'); toast(t('shelfForgotten')); } catch (e) { toast(why(String((e as Error).message ?? e)), 'error'); } sh.close(); redraw(); } }, t('shelfForget')));
+      h('button', { type: 'button', class: 'btn danger', onclick: async () => { try { const r = (await shelfAct(j.journal, 'forget')) as { kept?: string } | undefined; toast(r?.kept ? t('shelfForgottenKept', { name: baseName(r.kept) }) : t('shelfForgotten'), undefined, r?.kept ? 8000 : undefined); } catch (e) { toast(why(String((e as Error).message ?? e)), 'error'); } sh.close(); redraw(); } }, t('shelfForget')));
   });
 }
 
