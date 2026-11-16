@@ -6,7 +6,7 @@
 //! | export                                     | returns                                                       |
 //! |--------------------------------------------|---------------------------------------------------------------|
 //! | `kt_abi() -> u32`                          | 2                                                             |
-//! | `kt_feature(id) -> u32`                    | 1 when the engine has feature `id` (0 pointer, 1 click, 2 camera, 3 groups, 4 fog, 5 silhouettes, 6 ribbons, 7 mirror, 8 accumulation, 9 children on death and the react param), else 0 |
+//! | `kt_feature(id) -> u32`                    | 1 when the engine has feature `id` (0 pointer, 1 click, 2 camera, 3 groups, 4 fog, 5 silhouettes, 6 ribbons, 7 mirror, 8 accumulation, 9 children on death and the react param, 10 springing offsets, twinkle, swell, gust, shafts, arcs, clicks giving birth), else 0 |
 //! | `kt_layout(id) -> i32`                     | the layouts (drawlist.rs): 0 instance stride, 1 command stride, 100 + an instance field's name number → its offset, 200 + a command field's → its offset (see `LAYOUT`); −1 unknown |
 //! | `kt_alloc(len) -> ptr`, `kt_free(ptr, len)`| `len` bytes (1 … 256 KB) for the page to write a scene file into |
 //! | `scene_load(ptr, len, seed) -> i32`        | a handle (> 0), or `ERR_*` (json.rs, and −20… below)          |
@@ -146,7 +146,7 @@ pub extern "C" fn kt_abi() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn kt_feature(id: u32) -> u32 {
-    (id <= 9) as u32
+    (id <= 10) as u32
 }
 
 #[no_mangle]
@@ -381,7 +381,7 @@ mod tests {
     fn the_page_s_path() {
         assert_eq!(kt_abi(), 2);
         assert_eq!((kt_layout(0), kt_layout(1), kt_layout(106), kt_layout(209), kt_layout(999)), (16, 16, 6, 9, -1));
-        assert_eq!((kt_feature(0), kt_feature(9), kt_feature(10)), (1, 1, 0));
+        assert_eq!((kt_feature(0), kt_feature(10), kt_feature(11)), (1, 1, 0));
         let h = load(SNOW.as_bytes(), 42);
         assert!(h > 0, "{h}");
         assert_eq!(scene_viewport(h, 1280.0, 800.0), 0);
@@ -406,10 +406,10 @@ mod tests {
         let count = scene_step(h, 40.0);
         assert!(count > 0);
         assert_eq!(scene_substeps(h), 1);
-        assert_eq!(scene_ncmd(h), 10);
+        assert_eq!(scene_ncmd(h), 9);
         // (The buffers never move: the page's views stay valid.)
         assert_eq!((scene_inst(h), scene_cmds(h)), (p0, c0));
-        let cmds = unsafe { core::slice::from_raw_parts(c0, 10 * dl::CMD_STRIDE) };
+        let cmds = unsafe { core::slice::from_raw_parts(c0, 9 * dl::CMD_STRIDE) };
         assert!(cmds.iter().all(|v| v.is_finite()));
         let sky_len = cmds[dl::C_GEOM_LEN] as usize;
         assert!(sky_len > 0 && !scene_geom(h, 0).is_null());

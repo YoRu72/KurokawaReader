@@ -17,6 +17,8 @@
 //! - grain (7):      alpha;   halftone (8): alpha, cell
 //! - mirror (10):    y, ripple, alpha, tint, strength            (drawn each frame by the page from what precedes it)
 //! - accum (11):     yTop (now), yBottom, colour, alpha, rough, seed (yTop rises as the snow settles)
+//! - shafts (12):    n, colour, (x, yTop, width, length, alpha) × n, angle (radians from straight down)
+//! - arcs (13):      n, width, (cx, cy, r, a0, a1, colour, alpha, 0) × n
 //!
 //! Ribbons (9) are instances (soft curtains along a noise curve), made each step from the scene's time.
 
@@ -298,6 +300,41 @@ fn make_geom(kind: &LayerKind, s: &Space, seed: u32, r: &mut Pcg32) -> Vec<f32> 
         LayerKind::Halftone { alpha, cell } => vec![*alpha, *cell],
         LayerKind::Mirror { y, ripple, alpha, tint, strength } => vec![y * h, *ripple, *alpha, *tint as f32, *strength],
         LayerKind::Accum { h0, colour, alpha, rough, .. } => vec![h * (1.0 - h0), y1, *colour as f32, *alpha, *rough, (seed & 0xffff) as f32],
+        LayerKind::Shafts { count, x0: a, x1: b, y0, len, angle, width, alpha, colour } => {
+            let n = *count as usize;
+            let mut g = Vec::with_capacity(2 + n * 5);
+            g.push(n as f32);
+            g.push(*colour as f32);
+            for k in 0..n {
+                // (Spread evenly with a jitter, each its own width, length and strength.)
+                let u = if n > 1 { k as f32 / (n - 1) as f32 } else { 0.5 };
+                g.push(w * (a + (b - a) * clampf(u + (r.next_f32() - 0.5) * 0.6 / n as f32, 0.0, 1.0)));
+                g.push(h * y0);
+                g.push(w * width * r.range(0.5, 1.5));
+                g.push(h * len * r.range(0.7, 1.1));
+                g.push(alpha * r.range(0.5, 1.0));
+            }
+            g.push(*angle);
+            g
+        }
+        LayerKind::Arcs { count, y0, y1: yb, rmin, rmax, width, alpha, colours } => {
+            let n = *count as usize;
+            let mut g = Vec::with_capacity(2 + n * 8);
+            g.push(n as f32);
+            g.push(*width);
+            for _ in 0..n {
+                g.push(r.range(x0, x1));
+                g.push(h * r.range(*y0, *yb));
+                g.push(r.range(*rmin, *rmax));
+                let a0 = r.range(0.0, core::f32::consts::TAU);
+                g.push(a0);
+                g.push(a0 + r.range(0.5, 2.2));
+                g.push(colours[r.below(colours.len() as u32) as usize] as f32);
+                g.push(alpha * r.range(0.45, 1.0));
+                g.push(0.0);
+            }
+            g
+        }
         LayerKind::Particles | LayerKind::Fog { .. } | LayerKind::Ribbon { .. } | LayerKind::Unknown(_) => Vec::new(),
     }
 }

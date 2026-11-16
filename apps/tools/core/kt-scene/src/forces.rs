@@ -23,6 +23,13 @@ use crate::scenefile::Op;
 
 /// A second seed for the noise's y component.
 const NOISE_Y: u32 = 0x5BD1_E995;
+/// The offset's spring (per s²) and damping (per s): critically damped, back in about a second.
+pub const SPRING_K: f32 = 25.0;
+pub const SPRING_C: f32 = 10.0;
+/// The pointer's force on the offset (× strength): at rest about strength × PUSH ÷ SPRING_K units off the path.
+const PUSH: f32 = 12.0;
+/// A click's kick on the offset's velocity (× impulse).
+const KICK: f32 = 3.0;
 
 /// What the page told the scene this step: the pointer (scene units, or none), a click to answer (once), and how much
 /// the scene reacts to them (0 off, 1 subtle, about 2 lively).
@@ -57,13 +64,15 @@ fn toward(x: f32, y: f32, px: f32, py: f32, radius: f32) -> Option<(f32, f32, f3
 pub fn accelerate(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, dt: f32, t: f64, seed: u32, ctl: &Control) {
     for op in ops {
         match *op {
+            // (The pointer and a click push the OFFSET from the particle's own path — measured where it is drawn —;
+            //  spring() brings it back, so nothing stays displaced.)
             Op::Pointer { strength, radius } => {
                 if let Some((px, py)) = ctl.pointer {
                     for i in r.clone() {
-                        if let Some((ux, uy, d)) = toward(pool.px[i], pool.py[i], px, py, radius) {
-                            let f = strength * ctl.react * (1.0 - d / radius) * dt;
-                            pool.vx[i] += ux * f;
-                            pool.vy[i] += uy * f;
+                        if let Some((ux, uy, d)) = toward(pool.px[i] + pool.dx[i], pool.py[i] + pool.dy[i], px, py, radius) {
+                            let f = strength * ctl.react * (1.0 - d / radius) * PUSH * dt;
+                            pool.dvx[i] += ux * f;
+                            pool.dvy[i] += uy * f;
                         }
                     }
                 }
@@ -71,12 +80,21 @@ pub fn accelerate(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, dt: f
             Op::Click { impulse, radius } => {
                 if let Some((px, py)) = ctl.click {
                     for i in r.clone() {
-                        if let Some((ux, uy, d)) = toward(pool.px[i], pool.py[i], px, py, radius) {
-                            let f = impulse * ctl.react * (1.0 - d / radius);
-                            pool.vx[i] -= ux * f;
-                            pool.vy[i] -= uy * f;
+                        if let Some((ux, uy, d)) = toward(pool.px[i] + pool.dx[i], pool.py[i] + pool.dy[i], px, py, radius) {
+                            let f = impulse * ctl.react * (1.0 - d / radius) * KICK;
+                            pool.dvx[i] -= ux * f;
+                            pool.dvy[i] -= uy * f;
                         }
                     }
+                }
+            }
+            Op::Gust { strength, period } => {
+                // (Irregular: smooth noise over time, mostly one way — a gust rises, holds and dies down.)
+                let z = (t / period as f64) as f32;
+                let g = clampf(0.45 + 0.75 * noise3(seed ^ 0x6a09_e667, z, 0.5, 1.5), 0.0, 1.2);
+                let k = strength * g * dt;
+                for i in r.clone() {
+                    pool.vx[i] += k;
                 }
             }
             Op::Drift { scale, speed, strength } => {
@@ -103,7 +121,7 @@ pub fn accelerate(ops: &[Op], pool: &mut Pool, r: core::ops::Range<usize>, dt: f
                     pool.vy[i] *= keep;
                 }
             }
-            Op::Bounds { .. } | Op::Fade { .. } | Op::Floor { .. } | Op::Grow { .. } | Op::Unknown(_) => {}
+            Op::Bounds { .. } | Op::Fade { .. } | Op::Floor { .. } | Op::Grow { .. } | Op::Twinkle { .. } | Op::Swell { .. } | Op::Unknown(_) => {}
         }
     }
 }
@@ -144,8 +162,32 @@ pub fn heading(vx: f32, vy: f32) -> f32 {
     }
 }
 
-/// Velocities (and the wind, units/s) applied: positions, rotations and ages advanced.
+/// Velocities (and the wind, units/s) applied: positions, rotations and ages advanced; the pointer's offsets springing
+/// back toward nothing (snapped to zero once they are imperceptible, so an untouched scene stays exactly as it was).
 pub fn integrate(pool: &mut Pool, r: core::ops::Range<usize>, dt: f32, wind: (f32, f32)) {
+    for i in r.clone() {
+        let (dx, dy, vx, vy) = (pool.dx[i], pool.dy[i], pool.dvx[i], pool.dvy[i]);
+        if dx == 0.0 && dy == 0.0 && vx == 0.0 && vy == 0.0 {
+            continue;
+        }
+        let nvx = vx + (-SPRING_K * dx - SPRING_C * vx) * dt;
+        let nvy = vy + (-SPRING_K * dy - SPRING_C * vy) * dt;
+        let (ndx, ndy) = (dx + nvx * dt, dy + nvy * dt);
+        let tiny = ndx.abs() < 0.01 && ndy.abs() < 0.01 && nvx.abs() < 0.05 && nvy.abs() < 0.05;
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        let bad = !(ndx.is_finite() && ndy.is_finite() && nvx.is_finite() && nvy.is_finite());
+        if tiny || bad {
+            pool.dx[i] = 0.0;
+            pool.dy[i] = 0.0;
+            pool.dvx[i] = 0.0;
+            pool.dvy[i] = 0.0;
+        } else {
+            pool.dx[i] = ndx;
+            pool.dy[i] = ndy;
+            pool.dvx[i] = nvx;
+            pool.dvy[i] = nvy;
+        }
+    }
     for i in r {
         pool.px[i] += (pool.vx[i] + wind.0) * dt;
         pool.py[i] += (pool.vy[i] + wind.1) * dt;
@@ -213,6 +255,49 @@ pub fn fade(ops: &[Op], age: f32, life: f32) -> f32 {
         }
     }
     k
+}
+
+/// The blinking's factor (0–1) at time `t`: each particle its own phase (from its life, random at birth), two
+/// triangle waves multiplied so the rhythm is irregular, smoothed.
+pub fn twinkle(ops: &[Op], t: f32, life: f32) -> f32 {
+    let mut k = 1.0;
+    for op in ops {
+        if let Op::Twinkle { speed, depth } = *op {
+            let ph = frac(life * 7.31);
+            let a = smooth(tri(t * speed + ph));
+            let b = smooth(tri(t * speed * 0.41 + ph * 2.3 + 0.17));
+            k *= 1.0 - depth + depth * a * (0.55 + 0.45 * b);
+        }
+    }
+    k
+}
+
+/// The swelling's factor (≥ 1) of a particle at (x, y) with the pointer at `p` (scene units).
+pub fn swell(ops: &[Op], x: f32, y: f32, p: Option<(f32, f32)>, react: f32) -> f32 {
+    let mut k = 1.0;
+    if let Some((px, py)) = p {
+        for op in ops {
+            if let Op::Swell { radius, scale } = *op {
+                let (dx, dy) = (x - px, y - py);
+                let d2 = dx * dx + dy * dy;
+                if d2 < radius * radius {
+                    let u = 1.0 - d2.sqrt() / radius;
+                    k *= 1.0 + scale * react * u * u;
+                }
+            }
+        }
+    }
+    k
+}
+
+fn frac(x: f32) -> f32 {
+    x - x.floor()
+}
+
+/// A triangle wave 0…1…0 over each unit.
+fn tri(x: f32) -> f32 {
+    let f = frac(x);
+    1.0 - (2.0 * f - 1.0).abs()
 }
 
 fn smooth(x: f32) -> f32 {
@@ -284,16 +369,16 @@ mod tests {
         let ops = [Op::Pointer { strength: -60.0, radius: 100.0 }, Op::Click { impulse: 100.0, radius: 100.0 }];
         let mut p = pool1(50.0, 0.0, 0.0, 0.0);
         accelerate(&ops, &mut p, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: None, react: 1.0 });
-        assert!((p.vx[0] - 30.0).abs() < 1e-4, "pushed away: {}", p.vx[0]);
+        assert!((p.dvx[0] - 360.0).abs() < 1e-3 && p.vx[0] == 0.0, "the offset pushed away, the path untouched: {}", p.dvx[0]);
         let mut q = pool1(50.0, 0.0, 0.0, 0.0);
         accelerate(&ops, &mut q, 0..1, 1.0, 0.0, 1, &Control { pointer: None, click: Some((0.0, 0.0)), react: 1.0 });
-        assert!((q.vx[0] - 50.0).abs() < 1e-4, "{}", q.vx[0]);
+        assert!((q.dvx[0] - 150.0).abs() < 1e-3 && q.vx[0] == 0.0, "{}", q.dvx[0]);
         let mut far = pool1(500.0, 0.0, 0.0, 0.0);
         accelerate(&ops, &mut far, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: Some((0.0, 0.0)), react: 1.0 });
-        assert_eq!(far.vx[0], 0.0);
+        assert_eq!((far.vx[0], far.dvx[0]), (0.0, 0.0));
         let mut on = pool1(0.0, 0.0, 0.0, 0.0);
         accelerate(&ops, &mut on, 0..1, 1.0, 0.0, 1, &Control { pointer: Some((0.0, 0.0)), click: Some((0.0, 0.0)), react: 1.0 });
-        assert!(on.vx[0] == 0.0 && on.vy[0] == 0.0);
+        assert!(on.dvx[0] == 0.0 && on.dvy[0] == 0.0);
         let mut w = pool1(0.0, 0.0, 1.0, 0.0);
         integrate(&mut w, 0..1, 1.0, (10.0, -2.0));
         assert_eq!((w.px[0], w.py[0]), (11.0, -2.0));

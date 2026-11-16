@@ -49,8 +49,8 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
 const PC = { viewport: { width: 1280, height: 800 } };
 const PHONE = { viewport: { width: 412, height: 915 }, hasTouch: true, isMobile: true };
 const T = {
-  en: { row: 'Animated background', motes: 'Motes', snow: 'Night snowfall', aurora: 'Aurora over a lake', off: 'Off', fallback: /could not be loaded here/, where: 'Where the background shows', tint: "Match the app's colours to the background", react: 'Reacts to the mouse' },
-  ar: { row: 'خلفيّةٌ متحرّكة', motes: 'الذرّاتُ السابحة', snow: 'ثلجُ الليل', aurora: 'شفقٌ فوقَ بحيرة', off: 'معطَّلة', fallback: /تعذّر تحميلُ محرّكِ المشاهد/, where: 'موضعُ ظهورِ الخلفيّة', tint: 'مواءمةُ ألوانِ التطبيقِ للخلفيّة', react: 'التفاعلُ مع الفأرة' },
+  en: { scene: 'Scene', row: 'Animated background', motes: 'Motes', snow: 'Night snowfall', aurora: 'Aurora over a lake', off: 'Off', fallback: /could not be loaded here/, where: 'Where the background shows', tint: "Match the app's colours to the background", react: 'Reacts to the mouse' },
+  ar: { scene: 'مشهد', row: 'خلفيّةٌ متحرّكة', motes: 'الذرّاتُ السابحة', snow: 'ثلجُ الليل', aurora: 'شفقٌ فوقَ بحيرة', off: 'معطَّلة', fallback: /تعذّر تحميلُ محرّكِ المشاهد/, where: 'موضعُ ظهورِ الخلفيّة', tint: 'مواءمةُ ألوانِ التطبيقِ للخلفيّة', react: 'التفاعلُ مع الفأرة' },
 }[LANG];
 
 /** In the page before anything runs: settings, the desktop bridge (or the phone's plugin), the counters (as animbg.cjs). */
@@ -94,9 +94,14 @@ function init({ settings, phone, lang, trapAfter }) {
     await p.addInitScript(init, { lang: LANG, ...opts }); await p.goto(base + route); await p.waitForSelector('.view, .mini-view, body'); await p.waitForTimeout(700);
     return { p, ctx, errs, reqs, snap: () => p.evaluate(() => window.__snap()), fetched: (re) => reqs.some((u) => re.test(u)) };
   };
+  // (A design or Off from the row's sheet; a scene: «Scene» there, then its picture in the grid.)
   const choose = async (p, option) => {
+    const scene = ![T.off].includes(option);
+    const tile = () => p.locator('#appearance .abg-tile', { hasText: option }).first();
+    if (scene && (await p.locator('#appearance .abg-tile').count())) { await tile().click(); await p.waitForTimeout(300); return; }
     await p.locator('#appearance .row', { hasText: T.row }).first().locator('.pick-btn').click();
-    await p.locator('.sheet .dest-row', { hasText: new RegExp(`^\\s*${option}\\s*$`) }).first().locator('input').click(); await p.waitForTimeout(300);
+    await p.locator('.sheet .dest-row', { hasText: new RegExp(`^\\s*${scene ? T.scene : option}\\s*$`) }).first().locator('input').click(); await p.waitForTimeout(300);
+    if (scene) { await tile().click(); await p.waitForTimeout(300); }
   };
   const waitFor = (p, fn, arg, ms = 4000) => p.waitForFunction(fn, arg, { timeout: ms }).then(() => true, () => false);
   const waitState = (p, want, ms = 4000) => waitFor(p, (w) => (document.getElementById('kt-animbg')?.dataset.state ?? null) === w, want, ms);
@@ -109,9 +114,23 @@ function init({ settings, phone, lang, trapAfter }) {
     const { p, ctx, errs, fetched } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark' } }, '#/settings/appearance');
     await p.waitForSelector('#appearance');
     await p.locator('#appearance .row', { hasText: T.row }).first().locator('.pick-btn').click(); await p.waitForTimeout(250);
-    ok(`Appearance (PC, ${LANG}) offers «${T.motes}», «${T.snow}» and «${T.aurora}»`, (await p.locator('.sheet .dest-row', { hasText: T.motes }).count()) === 1 && (await p.locator('.sheet .dest-row', { hasText: T.snow }).count()) === 1 && (await p.locator('.sheet .dest-row', { hasText: T.aurora }).count()) === 1);
+    ok(`Appearance (PC, ${LANG}) offers «${T.scene}»`, (await p.locator('.sheet .dest-row', { hasText: T.scene }).count()) === 1);
     await p.keyboard.press('Escape'); await p.waitForTimeout(250);
     ok('…and nothing of the engine fetched before it is chosen', !fetched(/sceneHost|ktscene\.wasm/));
+    // (Chosen: the grid of pictures, grouped, the chosen one marked; drawn once each, no live engine per picture.)
+    await choose(p, T.snow);
+    const grid = await p.evaluate(() => ({ tiles: document.querySelectorAll('#appearance .abg-tile').length, groups: document.querySelectorAll('#appearance .abg-group').length, on: [...document.querySelectorAll('#appearance .abg-tile[aria-checked="true"]')].map((b) => b.dataset.scene) }));
+    ok('the scenes as a grid: 14 pictures in 4 groups, Night snowfall marked', grid.tiles === 14 && grid.groups === 4 && grid.on.join() === 'night-snowfall', grid);
+    ok(`…«${T.motes}» and «${T.aurora}» among them`, (await p.locator('#appearance .abg-tile', { hasText: T.motes }).count()) === 1 && (await p.locator('#appearance .abg-tile', { hasText: T.aurora }).count()) === 1);
+    const drawn = await waitFor(p, () => document.querySelectorAll('#appearance .abg-thumb.drawn').length === 14, null, 30000);
+    const pics = await p.evaluate(() => [...document.querySelectorAll('#appearance .abg-thumb')].map((x) => x.style.backgroundImage.slice(0, 22)));
+    ok(`every picture drawn (${HAVE ? 'by the engine' : 'the sky, without the engine'})`, drawn && pics.every((u) => (HAVE ? u.startsWith('url("data:image/') : u.startsWith('linear-gradient'))), pics.slice(0, 3));
+    if (HAVE) ok('…and let go: no engine scene kept for a picture (the page and the preview only)', (await p.evaluate(() => window.__ktAnimPerf.liveScenes())) <= 2);
+    // (Keyboard: Tab reaches the chosen one, the arrows move between them.)
+    await p.locator('#appearance .abg-tile[tabindex="0"]').focus(); await p.keyboard.press(LANG === 'ar' ? 'ArrowLeft' : 'ArrowRight');
+    ok('keyboard: the arrows move to the next picture', (await p.evaluate(() => document.activeElement?.dataset?.scene)) === 'snowflakes');
+    await p.keyboard.press('Enter'); await p.waitForTimeout(400);
+    ok('…and Enter chooses it', (await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).animBg)) === 'scene:snowflakes');
     ok('no page errors (0)', !errs.length, errs); await ctx.close();
   }
 

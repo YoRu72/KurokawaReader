@@ -14,7 +14,7 @@
 //! | 4     | rot     | radians                                                                       |
 //! | 5     | alpha   | 0–1, fade and layer opacity applied                                           |
 //! | 6     | rgba    | the palette colour, 0xRRGGBBAA, as the f32's BITS (read it with a Uint32Array) |
-//! | 7     | sprite  | 0 soft dot, 1 crisp dot, 2 streak, 3 ring, 4 puff, 5–7 crystal flakes, 8 petal, 9 leaf, 10 feather, 11 curtain (ribbon) |
+//! | 7     | sprite  | 0 soft dot, 1 crisp dot, 2 streak, 3 ring, 4 puff, 5–7 crystal flakes, 8 petal, 9 leaf, 10 feather, 11 curtain (ribbon), 12 comet |
 //! | 8     | layer   | the layer's index                                                             |
 //! | 9     | depth   | the layer's depth, 0 far … 1 near                                             |
 //! | 10    | colour  | the palette index                                                             |
@@ -24,7 +24,7 @@
 //!
 //! | float | field    | meaning                                                                        |
 //! |-------|----------|--------------------------------------------------------------------------------|
-//! | 0     | kind     | scenefile.rs LayerKind::code (0 particles, 1 sky, 2 silhouette, 3 disc, 4 fog, 5 band, 6 bokeh, 7 grain, 8 halftone, 9 ribbon, 10 mirror, 11 accum, 255 unknown) |
+//! | 0     | kind     | scenefile.rs LayerKind::code (0 particles, 1 sky, 2 silhouette, 3 disc, 4 fog, 5 band, 6 bokeh, 7 grain, 8 halftone, 9 ribbon, 10 mirror, 11 accum, 12 shafts, 13 arcs, 255 unknown) |
 //! | 1     | blend    | 0 normal, 1 add, 2 screen, 3 multiply, 4 soft light                            |
 //! | 2     | opacity  | 0–1                                                                            |
 //! | 3     | depth    | 0 far … 1 near                                                                 |

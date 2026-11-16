@@ -22,7 +22,7 @@ import type { SceneRun } from './sceneHost';
 /** The two drawn designs. */
 export type Design = 'drift' | 'flow';
 /** The scenes of the engine. */
-export type SceneKind = 'scene:motes' | 'scene:night-snowfall' | 'scene:aurora-lake';
+export type SceneKind = `scene:${string}`;
 export type AnimKind = Design | SceneKind;
 export type AnimPref = 'off' | 'match' | AnimKind;
 export type AnimLevel = 'full' | 'reduced' | 'still';
@@ -321,6 +321,7 @@ html.abg-scene :is(${PANELS}):not([data-abg-bare]){background-image:linear-gradi
 html.abg-scene [data-abg-halo]{text-shadow:0 0 1px rgb(var(--abg-g) / .7),0 0 6px rgb(var(--abg-g) / .55),0 0 14px rgb(var(--abg-g) / .4)}
 html.abg-scene.abg-whole:not([data-glass]) .nav-rail{background-color:color-mix(in srgb,var(--md-surface-container-low,var(--md-surface)) 45%,transparent);border-color:transparent}
 html.abg-scene.abg-whole[data-glass] .nav-rail{background-color:var(--g-pane-t)}
+html.abg-scene.abg-whole .view>.topbar{-webkit-mask-image:linear-gradient(#000 calc(100% - 18px),transparent);mask-image:linear-gradient(#000 calc(100% - 18px),transparent);border-bottom-color:transparent;box-shadow:none}
 html.abg-scene.abg-content :is(.nav-rail,.topbar,.dl-status){background:var(--th-solid-low,var(--md-surface-container-low,var(--md-surface)))!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 .abg-ring{position:absolute;border-radius:50%;pointer-events:none;border:1.5px solid rgb(var(--abg-g-on,255 255 255) / .35);transform:translate(-50%,-50%)}
 html.pc.abg:not([data-glass]) .downloads-view .body>.chips{background:transparent}

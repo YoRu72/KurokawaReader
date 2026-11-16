@@ -1,0 +1,338 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "underwater",
+  "name": "Underwater"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#0b4a66",
+   "light": "#7fcbe0"
+  },
+  {
+   "id": "sky1",
+   "dark": "#06304a",
+   "light": "#9fd9e8"
+  },
+  {
+   "id": "sky2",
+   "dark": "#02172a",
+   "light": "#c9eef4"
+  },
+  {
+   "id": "shaft",
+   "dark": "#7fe3ff",
+   "light": "#ffffff"
+  },
+  {
+   "id": "bed",
+   "dark": "#021220",
+   "light": "#5fa7b8"
+  },
+  {
+   "id": "reed",
+   "dark": "#031d2c",
+   "light": "#2f7f8c"
+  },
+  {
+   "id": "reed2",
+   "dark": "#052a3a",
+   "light": "#4c99a5"
+  },
+  {
+   "id": "bubble",
+   "dark": "#bff4ff",
+   "light": "#ffffff"
+  },
+  {
+   "id": "mote",
+   "dark": "#7fd3e8",
+   "light": "#ffffff"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#5fe0ff",
+   "accent2": "#7fb4ff",
+   "tint": "#06304a"
+  },
+  "light": {
+   "accent": "#0d6f86",
+   "accent2": "#2f5fae",
+   "tint": "#b9e2ea"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.5,
+      "sky1"
+     ],
+     [
+      1,
+      "sky2"
+     ]
+    ],
+    "glow": {
+     "x": 0.5,
+     "y": -0.1,
+     "r": 0.8,
+     "colour": "shaft",
+     "alpha": 0.18
+    }
+   }
+  },
+  {
+   "id": "shafts",
+   "kind": "shafts",
+   "depth": 0.1,
+   "parallax": 0.06,
+   "params": {
+    "count": 8,
+    "x0": 0.05,
+    "x1": 0.95,
+    "y0": -0.08,
+    "len": 1.05,
+    "angle": 0.22,
+    "width": 0.08,
+    "alpha": 0.11,
+    "colour": "shaft"
+   }
+  },
+  {
+   "id": "motes",
+   "depth": 0.3
+  },
+  {
+   "id": "bed",
+   "kind": "silhouette",
+   "depth": 0.45,
+   "params": {
+    "form": "hills",
+    "base": 0.93,
+    "amp": 0.05,
+    "colour": "bed",
+    "hazeColour": "sky1",
+    "haze": 0.35
+   }
+  },
+  {
+   "id": "reeds-far",
+   "kind": "silhouette",
+   "depth": 0.55,
+   "params": {
+    "form": "reeds",
+    "base": 0.95,
+    "count": 60,
+    "h0": 0.08,
+    "h1": 0.24,
+    "colour": "reed2"
+   }
+  },
+  {
+   "id": "bubbles",
+   "depth": 0.7
+  },
+  {
+   "id": "reeds",
+   "kind": "silhouette",
+   "depth": 0.9,
+   "params": {
+    "form": "reeds",
+    "base": 1.0,
+    "count": 70,
+    "h0": 0.12,
+    "h1": 0.38,
+    "colour": "reed"
+   }
+  }
+ ],
+ "emitters": [
+  {
+   "id": "motes",
+   "layer": "motes",
+   "max": 160,
+   "rate": 6,
+   "prewarm": 1,
+   "wind": 0.3,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 40
+    },
+    {
+     "kind": "size",
+     "min": 1.5,
+     "max": 3
+    },
+    {
+     "kind": "alpha",
+     "min": 0.25,
+     "max": 0.55
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -3,
+      -3
+     ],
+     "max": [
+      3,
+      2
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "mote"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.004,
+     "speed": 0.05,
+     "strength": 6
+    },
+    {
+     "kind": "drag",
+     "k": 0.3
+    },
+    {
+     "kind": "pointer",
+     "strength": -40,
+     "radius": 160
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 10
+    },
+    {
+     "kind": "fade",
+     "in": 0.2,
+     "out": 0.2
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "bubbles",
+   "layer": "bubbles",
+   "max": 90,
+   "rate": 6,
+   "prewarm": 1,
+   "wind": 0.2,
+   "shape": {
+    "kind": "rect",
+    "x": 0,
+    "y": 0.6,
+    "w": 1,
+    "h": 0.45
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 8,
+     "max": 16
+    },
+    {
+     "kind": "size",
+     "min": 4,
+     "max": 12
+    },
+    {
+     "kind": "alpha",
+     "min": 0.45,
+     "max": 0.85
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -6,
+      -70
+     ],
+     "max": [
+      6,
+      -40
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "bubble"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 3
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.01,
+     "speed": 0.4,
+     "strength": 30
+    },
+    {
+     "kind": "pointer",
+     "strength": -70,
+     "radius": 200
+    },
+    {
+     "kind": "click",
+     "impulse": 140,
+     "radius": 260
+    },
+    {
+     "kind": "bounds",
+     "mode": "kill",
+     "margin": 30
+    },
+    {
+     "kind": "fade",
+     "in": 0.1,
+     "out": 0.1
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

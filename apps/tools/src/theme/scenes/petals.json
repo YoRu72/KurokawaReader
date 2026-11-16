@@ -1,0 +1,434 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "petals",
+  "name": "Petals"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#1c1233",
+   "light": "#c9b6d8"
+  },
+  {
+   "id": "sky1",
+   "dark": "#3b2558",
+   "light": "#dccbe4"
+  },
+  {
+   "id": "sky2",
+   "dark": "#7a4a86",
+   "light": "#efdfec"
+  },
+  {
+   "id": "glow",
+   "dark": "#d78ab4",
+   "light": "#fbe6f0"
+  },
+  {
+   "id": "far",
+   "dark": "#3a2756",
+   "light": "#bba6cd"
+  },
+  {
+   "id": "mid",
+   "dark": "#281a42",
+   "light": "#9e88b8"
+  },
+  {
+   "id": "near",
+   "dark": "#170f2a",
+   "light": "#7c69a0"
+  },
+  {
+   "id": "petal",
+   "dark": "#f4a9cb",
+   "light": "#e783ae"
+  },
+  {
+   "id": "petal2",
+   "dark": "#fbd0e2",
+   "light": "#f0a5c6"
+  },
+  {
+   "id": "petal3",
+   "dark": "#ffffff",
+   "light": "#d97aa8"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#f29bc6",
+   "accent2": "#b9a2ff",
+   "tint": "#2c1c46"
+  },
+  "light": {
+   "accent": "#a4386f",
+   "accent2": "#5d48ae",
+   "tint": "#e2d2e6"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.55,
+      "sky1"
+     ],
+     [
+      1,
+      "sky2"
+     ]
+    ],
+    "glow": {
+     "x": 0.5,
+     "y": 0.9,
+     "r": 0.9,
+     "colour": "glow",
+     "alpha": 0.35
+    }
+   }
+  },
+  {
+   "id": "ridge",
+   "kind": "silhouette",
+   "depth": 0.2,
+   "params": {
+    "form": "ridge",
+    "base": 0.74,
+    "amp": 0.08,
+    "rough": 0.4,
+    "colour": "far",
+    "hazeColour": "glow",
+    "haze": 0.35
+   }
+  },
+  {
+   "id": "far",
+   "depth": 0.3
+  },
+  {
+   "id": "hills",
+   "kind": "silhouette",
+   "depth": 0.5,
+   "params": {
+    "form": "hills",
+    "base": 0.86,
+    "amp": 0.06,
+    "colour": "mid",
+    "hazeColour": "glow",
+    "haze": 0.15
+   }
+  },
+  {
+   "id": "mid",
+   "depth": 0.6
+  },
+  {
+   "id": "near-hills",
+   "kind": "silhouette",
+   "depth": 0.75,
+   "params": {
+    "form": "hills",
+    "base": 0.97,
+    "amp": 0.04,
+    "colour": "near"
+   }
+  },
+  {
+   "id": "near",
+   "depth": 0.92
+  }
+ ],
+ "emitters": [
+  {
+   "id": "far",
+   "layer": "far",
+   "max": 60,
+   "rate": 3,
+   "prewarm": 1,
+   "wind": 0.5,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 40
+    },
+    {
+     "kind": "size",
+     "min": 5,
+     "max": 8
+    },
+    {
+     "kind": "alpha",
+     "min": 0.55,
+     "max": 0.85
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      10,
+      8
+     ],
+     "max": [
+      24,
+      18
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -1.2,
+     "max": 1.2
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "petal",
+      "petal2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 8
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.004,
+     "speed": 0.1,
+     "strength": 14
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 20
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "mid",
+   "layer": "mid",
+   "max": 40,
+   "rate": 2,
+   "prewarm": 1,
+   "wind": 0.8,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 40
+    },
+    {
+     "kind": "size",
+     "min": 10,
+     "max": 15
+    },
+    {
+     "kind": "alpha",
+     "min": 0.7,
+     "max": 0.95
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      16,
+      12
+     ],
+     "max": [
+      34,
+      24
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -1.4,
+     "max": 1.4
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "petal",
+      "petal2",
+      "petal3"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 8
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.003,
+     "speed": 0.1,
+     "strength": 20
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "pointer",
+     "strength": -60,
+     "radius": 200
+    },
+    {
+     "kind": "click",
+     "impulse": 130,
+     "radius": 260
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 30
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "near",
+   "layer": "near",
+   "max": 12,
+   "rate": 0.6,
+   "prewarm": 1,
+   "wind": 1,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 30
+    },
+    {
+     "kind": "size",
+     "min": 22,
+     "max": 32
+    },
+    {
+     "kind": "alpha",
+     "min": 0.8,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      24,
+      16
+     ],
+     "max": [
+      44,
+      30
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -1.6,
+     "max": 1.6
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "petal",
+      "petal2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 8
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.002,
+     "speed": 0.1,
+     "strength": 26
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "pointer",
+     "strength": -80,
+     "radius": 240
+    },
+    {
+     "kind": "click",
+     "impulse": 160,
+     "radius": 300
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 50
+    },
+    {
+     "kind": "fade",
+     "in": 0.06,
+     "out": 0.06
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

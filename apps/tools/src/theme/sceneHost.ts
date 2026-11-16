@@ -21,9 +21,20 @@ import { contrast, over, type RGBA } from './themes';
 import motes from './scenes/motes.json';
 import nightSnowfall from './scenes/night-snowfall.json';
 import auroraLake from './scenes/aurora-lake.json';
+import snowflakes from './scenes/snowflakes.json';
+import blizzard from './scenes/blizzard.json';
+import firstSnow from './scenes/first-snow.json';
+import rain from './scenes/rain.json';
+import waves from './scenes/waves.json';
+import underwater from './scenes/underwater.json';
+import fireflies from './scenes/fireflies.json';
+import starfield from './scenes/starfield.json';
+import meteors from './scenes/meteors.json';
+import petals from './scenes/petals.json';
+import neonNight from './scenes/neon-night.json';
 
 /** The scenes this build has, by id. */
-const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake };
+const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake, 'snowflakes': snowflakes, 'blizzard': blizzard, 'first-snow': firstSnow, 'rain': rain, 'waves': waves, 'underwater': underwater, 'fireflies': fireflies, 'starfield': starfield, 'meteors': meteors, 'petals': petals, 'neon-night': neonNight };
 export const SCENE_IDS = Object.keys(SCENES);
 const ABI = 2;
 const PARAM_SPEED = 0;
@@ -128,7 +139,7 @@ function palSpecs(def: unknown, light: boolean): PalSpec[] {
 /* ---------- sprites ---------- */
 function mk(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D | null] { const c = document.createElement('canvas'); c.width = w; c.height = h; return [c, c.getContext('2d')]; }
 /** Sprite `id` in colour `c` (64 px, drawn scaled): 0 soft dot, 1 crisp dot, 2 streak, 3 ring, 4 puff, 5–7 crystal
- *  flakes (six arms, three shapes), 8 petal, 9 leaf, 10 feather, 11 curtain (a ribbon's slice). `edge`: a faint cool
+ *  flakes (six arms, three shapes), 8 petal, 9 leaf, 10 feather, 11 curtain (a ribbon's slice), 12 comet. `edge`: a faint cool
  *  rim for light particles on a light sky (snow must read as snow, not as a hole). */
 function sprite(id: number, c: RGBA, edge: RGBA | null): HTMLCanvasElement {
   const n = 64, m = n / 2; const [cv, g] = mk(n, n); if (!g) return cv;
@@ -165,6 +176,12 @@ function sprite(id: number, c: RGBA, edge: RGBA | null): HTMLCanvasElement {
     const grd = g.createLinearGradient(0, 0, 0, n); grd.addColorStop(0, css(c, 0)); grd.addColorStop(0.65, css(c, 0.55)); grd.addColorStop(0.86, css(c, 0.9)); grd.addColorStop(1, css(c, 0));
     g.fillStyle = grd; g.fillRect(0, 0, n, n); g.globalCompositeOperation = 'destination-in';
     const side = g.createLinearGradient(0, 0, n, 0); side.addColorStop(0, 'rgba(0,0,0,0)'); side.addColorStop(0.5, 'rgba(0,0,0,1)'); side.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = side; g.fillRect(0, 0, n, n); g.globalCompositeOperation = 'source-over';
+  } else if (id === 12) { // comet: a sharp bright core low in the sprite, a short tail fading upward (drawn along its path)
+    const tail = g.createLinearGradient(0, 0, 0, n * 0.86); tail.addColorStop(0, css(c, 0)); tail.addColorStop(1, css(c, 0.55));
+    g.fillStyle = tail; g.beginPath(); g.moveTo(m, 0); g.lineTo(m + n * 0.07, n * 0.84); g.lineTo(m - n * 0.07, n * 0.84); g.closePath(); g.fill();
+    const halo = g.createRadialGradient(m, n * 0.86, 0, m, n * 0.86, n * 0.3); halo.addColorStop(0, css(c, 0.45)); halo.addColorStop(1, css(c, 0)); g.fillStyle = halo; g.fillRect(m - n * 0.3, n * 0.56, n * 0.6, n * 0.44);
+    const core = g.createRadialGradient(m, n * 0.86, 0, m, n * 0.86, n * 0.14); core.addColorStop(0, css(mix(c, [255, 255, 255, 1], 0.6), 1)); core.addColorStop(0.35, css(c, 0.95)); core.addColorStop(1, css(c, 0));
+    g.fillStyle = core; g.fillRect(m - n * 0.14, n * 0.72, n * 0.28, n * 0.28);
   } else { // 0: a soft core that holds its colour, then a smooth fall-off: a dot of a pixel or two still shows its tint
     rim(n * 0.3);
     const st: [number, number][] = []; for (let i = 0; i <= 8; i++) { const s = i / 8; const u = s < 0.3 ? 0 : (s - 0.3) / 0.7; st.push([s, Math.max(0, (1 - u) * (1 - u) * (1 + 2 * u) * (1 - u * 0.15))]); } radial(st);
@@ -226,6 +243,23 @@ function drawStatic(g: CanvasRenderingContext2D, kind: number, geo: Float32Array
     const a = geo[0]; const cell = kind === 8 ? Math.max(2, geo[1]) : 2; let s = 12345;
     const rnd = (): number => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
     for (let y = b.y0; y < b.y1; y += cell) for (let x = b.x0; x < b.x1; x += cell) { const v = rnd(); if (kind === 7) { if (v < 0.5) continue; g.fillStyle = v > 0.75 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`; g.fillRect(x, y, cell, cell); } else { g.fillStyle = `rgba(0,0,0,${a})`; g.beginPath(); g.arc(x + cell / 2, y + cell / 2, cell * 0.22 * (0.6 + v * 0.6), 0, 6.2832); g.fill(); } }
+  } else if (kind === 12) { // shafts: soft beams, brightest at the top, fading along their length and to both sides
+    const n = geo[0] | 0; const c = P(geo[1]); const ang = geo[2 + n * 5] ?? 0; const prev = g.globalCompositeOperation; g.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < n; i++) {
+      const [x, y, w, len, a] = [geo[2 + i * 5], geo[3 + i * 5], geo[4 + i * 5], geo[5 + i * 5], geo[6 + i * 5]];
+      g.save(); g.translate(x, y); g.rotate(-ang);
+      const along = g.createLinearGradient(0, 0, 0, len); along.addColorStop(0, css(c, a)); along.addColorStop(0.55, css(c, a * 0.45)); along.addColorStop(1, css(c, 0));
+      g.fillStyle = along; g.beginPath(); g.moveTo(-w * 0.35, 0); g.lineTo(w * 0.35, 0); g.lineTo(w * 0.8, len); g.lineTo(-w * 0.8, len); g.closePath();
+      g.shadowColor = css(c, a * 0.8); g.shadowBlur = Math.max(4, w * 0.6 * Math.abs(g.getTransform().a)); g.fill(); g.restore();
+    }
+    g.globalCompositeOperation = prev;
+  } else if (kind === 13) { // arcs: thin lines of light, each with a faint glow
+    const n = geo[0] | 0, lw = geo[1]; g.lineCap = 'round';
+    for (let i = 0; i < n; i++) {
+      const o = 2 + i * 8; const [x, y, r, a0, a1, ci, a] = [geo[o], geo[o + 1], geo[o + 2], geo[o + 3], geo[o + 4], geo[o + 5], geo[o + 6]]; const c = P(ci);
+      g.strokeStyle = css(c, a * 0.22); g.lineWidth = lw * 5; g.beginPath(); g.arc(x, y, r, a0, a1); g.stroke();
+      g.strokeStyle = css(c, a); g.lineWidth = lw; g.beginPath(); g.arc(x, y, r, a0, a1); g.stroke();
+    }
   }
   g.globalAlpha = 1;
 }
@@ -265,6 +299,8 @@ export class SceneRun {
   /** Told when the scrim is made: what the page's panels should take. */
   onScrim: ((s: SceneScrim) => void) | null = null;
   panelScrim = 0;
+  /** A thumbnail: the art as it is, no scrim (nothing is written over it). */
+  thumb = false;
   /** The scene has large moving layers (ribbons, a mirror, settled snow): its frames are measured too. */
   private wide = false;
   private ribCv: HTMLCanvasElement | null = null;
@@ -382,7 +418,8 @@ export class SceneRun {
         drawStatic(g, cmds[o + L.KIND] | 0, geo, this.pal, bnd, cmds[o + L.OPACITY]);
       }
       g.globalCompositeOperation = 'source-over';
-      const [cv] = mk(W, H);
+      // (Ready to blit at once: a scene measured from its frames bakes after the first one is drawn.)
+      const [cv, cg] = mk(W, H); cg?.drawImage(clean, 0, 0);
       out.push({ first: gr.first, clean, cv, bx, by, scale: gr.scale, tx: gr.tx, ty: gr.ty });
     }
     this.statics = out; this.needBake = true;
@@ -428,7 +465,7 @@ export class SceneRun {
     });
     this.panelScrim = panels.reduce((a, b) => Math.max(a, b), 0);
     // (Bare text: the halo counted, then a feathered dimming where it is still short.)
-    const bare = dom ? dom.bare : [{ x: 0, y: 0, w: cw / k, h: ch / k }];
+    const bare = dom ? dom.bare : this.thumb ? [] : [{ x: 0, y: 0, w: cw / k, h: ch / k }];
     const dims: { x: number; y: number; w: number; h: number; a: number }[] = [];
     for (const r of bare) {
       const cs = cellsOf(r); if (!cs.length) continue; const mean: RGBA = [0, 0, 0, 1];
@@ -495,7 +532,7 @@ export class SceneRun {
           if (!(sx * px >= 0.25) || !(a > 0.004)) continue;
           const sp = f[q + L.SPRITE] | 0;
           // (The peak cap: big soft particles at half alpha at most; fog puffs at a quarter.)
-          if (sp === 4) { if (a > 0.25) a = 0.25; } else if (sp !== 11 && sx * S > 12 && a > 0.5) a = 0.5;
+          if (sp === 4) { if (a > 0.25) a = 0.25; } else if (sp !== 11 && sp !== 12 && sx * S > 12 && a > 0.5) a = 0.5;
           const ci = this.palIndexOf(u[q + L.RGBA], f[q + L.COLOUR]);
           g.globalAlpha = a > 1 ? 1 : a;
           const rot = f[q + L.ROT];
@@ -606,4 +643,13 @@ export async function bench4096(n = 240): Promise<{ stepMs: number; live: number
     const t0 = performance.now(); for (let i = 0; i < n; i++) ex.scene_step(h, 1000 / 60);
     return { stepMs: (performance.now() - t0) / n, live: ex.scene_live(h) };
   } finally { ex.scene_free(h); }
+}
+
+/** The sky of a scene file as a gradient (its first sky layer's stops, resolved for the mode): what a thumbnail shows
+ *  when the engine cannot run here. */
+export function sceneSky(id: string, light: boolean): string[] {
+  const def = SCENES[id] as { palette?: unknown; layers?: { kind?: string; params?: { stops?: [number, string | number][] } }[] } | undefined; if (!def) return [];
+  const specs = palSpecs(def, light); const ids = (Array.isArray(def.palette) ? def.palette : []).map((p: unknown, i: number) => (typeof p === 'object' && p && 'id' in p ? String((p as { id: unknown }).id) : String(i)));
+  const sky = def.layers?.find((l) => l.kind === 'sky')?.params?.stops ?? [];
+  return sky.map(([at, ref]) => { const i = typeof ref === 'number' ? ref : ids.indexOf(String(ref)); const c = specs[i]?.lit ?? [96, 104, 128, 1]; return `${css(c)} ${Math.round(at * 100)}%`; });
 }

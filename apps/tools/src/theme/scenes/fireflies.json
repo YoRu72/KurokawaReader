@@ -1,0 +1,363 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "fireflies",
+  "name": "Fireflies"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#01060c",
+   "light": "#8fa9b8"
+  },
+  {
+   "id": "sky1",
+   "dark": "#05182a",
+   "light": "#aac0cb"
+  },
+  {
+   "id": "sky2",
+   "dark": "#0f3442",
+   "light": "#c9d9df"
+  },
+  {
+   "id": "far",
+   "dark": "#0a2230",
+   "light": "#7d97a6"
+  },
+  {
+   "id": "near",
+   "dark": "#020a10",
+   "light": "#5c7a8a"
+  },
+  {
+   "id": "water",
+   "dark": "#01070d",
+   "light": "#7690a0"
+  },
+  {
+   "id": "fly",
+   "dark": "#a6ffe0",
+   "light": "#f0fffa"
+  },
+  {
+   "id": "fly2",
+   "dark": "#8ff0ff",
+   "light": "#eafdff"
+  },
+  {
+   "id": "reed",
+   "dark": "#010508",
+   "light": "#3e5f6e"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#6ff5c8",
+   "accent2": "#7fdcff",
+   "tint": "#041420"
+  },
+  "light": {
+   "accent": "#0f7a5c",
+   "accent2": "#1a6f8f",
+   "tint": "#bfd1d8"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.45,
+      "sky1"
+     ],
+     [
+      0.6,
+      "sky2"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "hills",
+   "kind": "silhouette",
+   "depth": 0.15,
+   "params": {
+    "form": "hills",
+    "base": 0.58,
+    "amp": 0.06,
+    "colour": "far",
+    "hazeColour": "sky2",
+    "haze": 0.25
+   }
+  },
+  {
+   "id": "shore",
+   "kind": "silhouette",
+   "depth": 0.3,
+   "params": {
+    "form": "hills",
+    "base": 0.615,
+    "amp": 0.015,
+    "colour": "near"
+   }
+  },
+  {
+   "id": "flies",
+   "depth": 0.45
+  },
+  {
+   "id": "pond",
+   "kind": "mirror",
+   "depth": 0.5,
+   "params": {
+    "y": 0.62,
+    "ripple": 4,
+    "alpha": 0.7,
+    "tint": "water",
+    "strength": 0.4
+   }
+  },
+  {
+   "id": "flies-near",
+   "depth": 0.75
+  },
+  {
+   "id": "reeds",
+   "kind": "silhouette",
+   "depth": 0.92,
+   "params": {
+    "form": "reeds",
+    "base": 1.0,
+    "count": 80,
+    "h0": 0.1,
+    "h1": 0.3,
+    "colour": "reed"
+   }
+  }
+ ],
+ "emitters": [
+  {
+   "id": "flies",
+   "layer": "flies",
+   "max": 46,
+   "rate": 2,
+   "align": true,
+   "prewarm": 1,
+   "wind": 0.1,
+   "shape": {
+    "kind": "rect",
+    "x": 0,
+    "y": 0.28,
+    "w": 1,
+    "h": 0.32
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 14,
+     "max": 26
+    },
+    {
+     "kind": "size",
+     "min": 11,
+     "max": 15
+    },
+    {
+     "kind": "stretch",
+     "min": 1.8,
+     "max": 2.4
+    },
+    {
+     "kind": "alpha",
+     "min": 0.85,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -6,
+      -4
+     ],
+     "max": [
+      6,
+      4
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "fly",
+      "fly2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 12
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.006,
+     "speed": 0.12,
+     "strength": 22
+    },
+    {
+     "kind": "drag",
+     "k": 0.6
+    },
+    {
+     "kind": "twinkle",
+     "speed": 0.32,
+     "depth": 0.9
+    },
+    {
+     "kind": "pointer",
+     "strength": 30,
+     "radius": 220
+    },
+    {
+     "kind": "click",
+     "impulse": -90,
+     "radius": 240
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 20
+    },
+    {
+     "kind": "fade",
+     "in": 0.1,
+     "out": 0.1
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "flies-near",
+   "layer": "flies-near",
+   "max": 16,
+   "rate": 0.7,
+   "align": true,
+   "prewarm": 1,
+   "wind": 0.1,
+   "shape": {
+    "kind": "rect",
+    "x": 0,
+    "y": 0.66,
+    "w": 1,
+    "h": 0.25
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 14,
+     "max": 26
+    },
+    {
+     "kind": "size",
+     "min": 16,
+     "max": 22
+    },
+    {
+     "kind": "stretch",
+     "min": 1.8,
+     "max": 2.4
+    },
+    {
+     "kind": "alpha",
+     "min": 0.85,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -8,
+      -4
+     ],
+     "max": [
+      8,
+      4
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "fly"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 12
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.005,
+     "speed": 0.12,
+     "strength": 26
+    },
+    {
+     "kind": "drag",
+     "k": 0.6
+    },
+    {
+     "kind": "twinkle",
+     "speed": 0.28,
+     "depth": 0.9
+    },
+    {
+     "kind": "pointer",
+     "strength": 40,
+     "radius": 240
+    },
+    {
+     "kind": "click",
+     "impulse": -110,
+     "radius": 260
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 30
+    },
+    {
+     "kind": "fade",
+     "in": 0.1,
+     "out": 0.1
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

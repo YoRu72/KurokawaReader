@@ -1,0 +1,337 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "first-snow",
+  "name": "First snow"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#140f2e",
+   "light": "#9d9cc9"
+  },
+  {
+   "id": "sky1",
+   "dark": "#2b2457",
+   "light": "#b9b4dc"
+  },
+  {
+   "id": "sky2",
+   "dark": "#4d3f7d",
+   "light": "#d8cfe8"
+  },
+  {
+   "id": "glow",
+   "dark": "#c88ab8",
+   "light": "#f6dbe9"
+  },
+  {
+   "id": "far",
+   "dark": "#2c2a5a",
+   "light": "#8f90bf"
+  },
+  {
+   "id": "mid",
+   "dark": "#1b1a40",
+   "light": "#7676a9"
+  },
+  {
+   "id": "near",
+   "dark": "#0e0d27",
+   "light": "#5c5c90"
+  },
+  {
+   "id": "snow",
+   "dark": "#e9ecfb",
+   "light": "#ffffff"
+  },
+  {
+   "id": "cap",
+   "dark": "#bfc4e8",
+   "light": "#ffffff"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#b2a8ff",
+   "accent2": "#e59ac8",
+   "tint": "#2b2457"
+  },
+  "light": {
+   "accent": "#4f45a8",
+   "accent2": "#a2477e",
+   "tint": "#cdc7e6"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.55,
+      "sky1"
+     ],
+     [
+      1,
+      "sky2"
+     ]
+    ],
+    "glow": {
+     "x": 0.3,
+     "y": 0.85,
+     "r": 0.8,
+     "colour": "glow",
+     "alpha": 0.35
+    }
+   }
+  },
+  {
+   "id": "ridge",
+   "kind": "silhouette",
+   "depth": 0.15,
+   "params": {
+    "form": "ridge",
+    "base": 0.7,
+    "amp": 0.09,
+    "rough": 0.45,
+    "colour": "far",
+    "hazeColour": "glow",
+    "haze": 0.3
+   }
+  },
+  {
+   "id": "hills",
+   "kind": "silhouette",
+   "depth": 0.4,
+   "params": {
+    "form": "hills",
+    "base": 0.83,
+    "amp": 0.07,
+    "colour": "mid",
+    "hazeColour": "glow",
+    "haze": 0.15,
+    "snow": "cap"
+   }
+  },
+  {
+   "id": "far",
+   "depth": 0.35
+  },
+  {
+   "id": "near-hills",
+   "kind": "silhouette",
+   "depth": 0.7,
+   "params": {
+    "form": "hills",
+    "base": 0.95,
+    "amp": 0.05,
+    "colour": "near",
+    "snow": "cap"
+   }
+  },
+  {
+   "id": "settled",
+   "kind": "accum",
+   "depth": 0.8,
+   "params": {
+    "h0": 0.0,
+    "h1": 0.04,
+    "grow": 900,
+    "colour": "snow",
+    "alpha": 0.95,
+    "rough": 0.35
+   }
+  },
+  {
+   "id": "near",
+   "depth": 0.9
+  }
+ ],
+ "emitters": [
+  {
+   "id": "far",
+   "layer": "far",
+   "max": 90,
+   "rate": 4,
+   "prewarm": 1,
+   "wind": 0.4,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 40,
+     "max": 80
+    },
+    {
+     "kind": "size",
+     "min": 4,
+     "max": 7
+    },
+    {
+     "kind": "alpha",
+     "min": 0.55,
+     "max": 0.9
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -3,
+      8
+     ],
+     "max": [
+      3,
+      14
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "snow"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.003,
+     "speed": 0.04,
+     "strength": 3
+    },
+    {
+     "kind": "drag",
+     "k": 0.1
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 10
+    },
+    {
+     "kind": "fade",
+     "in": 0.06,
+     "out": 0.06
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "near",
+   "layer": "near",
+   "max": 34,
+   "rate": 1.4,
+   "prewarm": 1,
+   "wind": 0.8,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 40,
+     "max": 70
+    },
+    {
+     "kind": "size",
+     "min": 14,
+     "max": 24
+    },
+    {
+     "kind": "alpha",
+     "min": 0.75,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -4,
+      10
+     ],
+     "max": [
+      4,
+      18
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -0.25,
+     "max": 0.25
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "snow"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 6
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.002,
+     "speed": 0.04,
+     "strength": 4
+    },
+    {
+     "kind": "drag",
+     "k": 0.1
+    },
+    {
+     "kind": "pointer",
+     "strength": -60,
+     "radius": 220
+    },
+    {
+     "kind": "click",
+     "impulse": 120,
+     "radius": 260
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 30
+    },
+    {
+     "kind": "fade",
+     "in": 0.06,
+     "out": 0.06
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

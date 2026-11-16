@@ -35,12 +35,18 @@ pub struct Pool {
     pub alpha: Vec<f32>,
     pub colour: Vec<u8>,
     pub sprite: Vec<u8>,
+    /// The pointer's and a click's push: an offset from the particle's own path and its velocity, springing back to
+    /// nothing (drawn at px + dx; the path itself never changes).
+    pub dx: Vec<f32>,
+    pub dy: Vec<f32>,
+    pub dvx: Vec<f32>,
+    pub dvy: Vec<f32>,
 }
 
 impl Pool {
     pub fn new(n: usize) -> Pool {
         let f = || vec![0.0f32; n];
-        Pool { px: f(), py: f(), vx: f(), vy: f(), age: f(), life: f(), size: f(), stretch: f(), rot: f(), spin: f(), alpha: f(), colour: vec![0; n], sprite: vec![0; n] }
+        Pool { px: f(), py: f(), vx: f(), vy: f(), age: f(), life: f(), size: f(), stretch: f(), rot: f(), spin: f(), alpha: f(), colour: vec![0; n], sprite: vec![0; n], dx: f(), dy: f(), dvx: f(), dvy: f() }
     }
     pub fn len(&self) -> usize {
         self.px.len()
@@ -53,7 +59,7 @@ impl Pool {
         macro_rules! mv {
             ($($f:ident),*) => { $( self.$f[to] = self.$f[from]; )* };
         }
-        mv!(px, py, vx, vy, age, life, size, stretch, rot, spin, alpha, colour, sprite);
+        mv!(px, py, vx, vy, age, life, size, stretch, rot, spin, alpha, colour, sprite, dx, dy, dvx, dvy);
     }
 }
 
@@ -72,6 +78,8 @@ pub struct Emitter {
     /// Children born where particles die at a floor: (emitter, how many each); the deaths of this step, at most
     /// `DEATHS` (allocated once).
     pub on_death: Option<(usize, u32)>,
+    /// A click gives birth to so many of this emitter's particles where it fell.
+    pub on_click: u32,
     pub deaths: Vec<(f32, f32)>,
     pub density_param: Option<usize>,
     pub size_param: Option<usize>,
@@ -151,6 +159,10 @@ impl Emitter {
         pool.alpha[i] = 1.0;
         pool.colour[i] = 0;
         pool.sprite[i] = 0;
+        pool.dx[i] = 0.0;
+        pool.dy[i] = 0.0;
+        pool.dvx[i] = 0.0;
+        pool.dvy[i] = 0.0;
         for init in &self.inits {
             match init {
                 Init::Lifetime { min, max } => pool.life[i] = rng.range(*min, *max).max(0.05),
@@ -226,7 +238,7 @@ mod tests {
     use super::*;
 
     fn em(start: usize, max: usize, inits: Vec<Init>) -> Emitter {
-        Emitter { rng: Pcg32::new(1, 2), noise_seed: 1, group: 0, wind: 1.0, align: false, on_death: None, deaths: Vec::with_capacity(DEATHS), density_param: None, size_param: None, start, max, live: 0, layer: 0, rate: 10.0, carry: 0.0, prewarm: 1.0, shape: Shape { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, inits, ops: vec![] }
+        Emitter { rng: Pcg32::new(1, 2), noise_seed: 1, group: 0, wind: 1.0, align: false, on_death: None, on_click: 0, deaths: Vec::with_capacity(DEATHS), density_param: None, size_param: None, start, max, live: 0, layer: 0, rate: 10.0, carry: 0.0, prewarm: 1.0, shape: Shape { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, inits, ops: vec![] }
     }
 
     #[test]

@@ -1,0 +1,248 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "starfield",
+  "name": "Starfield"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#01020a",
+   "light": "#7083b8"
+  },
+  {
+   "id": "sky1",
+   "dark": "#060f2a",
+   "light": "#94a3d1"
+  },
+  {
+   "id": "sky2",
+   "dark": "#12224a",
+   "light": "#c3cbea"
+  },
+  {
+   "id": "milky",
+   "dark": "#7f96ff",
+   "light": "#ffffff"
+  },
+  {
+   "id": "star",
+   "dark": "#eef2ff",
+   "light": "#ffffff"
+  },
+  {
+   "id": "star2",
+   "dark": "#bcd2ff",
+   "light": "#f2f6ff"
+  },
+  {
+   "id": "far",
+   "dark": "#0a1530",
+   "light": "#7b8bbd"
+  },
+  {
+   "id": "near",
+   "dark": "#040917",
+   "light": "#56669a"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#9fb2ff",
+   "accent2": "#c5a8ff",
+   "tint": "#0a1530"
+  },
+  "light": {
+   "accent": "#3a4fa8",
+   "accent2": "#6a45ae",
+   "tint": "#c0c7e6"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.6,
+      "sky1"
+     ],
+     [
+      1,
+      "sky2"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "milky",
+   "kind": "shafts",
+   "depth": 0.02,
+   "parallax": 0.02,
+   "params": {
+    "count": 3,
+    "x0": 0.12,
+    "x1": 0.32,
+    "y0": -0.35,
+    "len": 1.9,
+    "angle": 0.85,
+    "width": 0.22,
+    "alpha": 0.11,
+    "colour": "milky"
+   }
+  },
+  {
+   "id": "dust",
+   "kind": "bokeh",
+   "depth": 0.03,
+   "parallax": 0.03,
+   "params": {
+    "count": 240,
+    "y0": -0.05,
+    "y1": 0.8,
+    "rmin": 0.8,
+    "rmax": 2.0,
+    "alpha": 0.75,
+    "colours": [
+     "star",
+     "star2"
+    ]
+   }
+  },
+  {
+   "id": "stars",
+   "depth": 0.05,
+   "parallax": 0.05
+  },
+  {
+   "id": "ridge",
+   "kind": "silhouette",
+   "depth": 0.4,
+   "params": {
+    "form": "ridge",
+    "base": 0.86,
+    "amp": 0.1,
+    "rough": 0.45,
+    "colour": "far",
+    "hazeColour": "sky2",
+    "haze": 0.25
+   }
+  },
+  {
+   "id": "hills",
+   "kind": "silhouette",
+   "depth": 0.8,
+   "params": {
+    "form": "hills",
+    "base": 0.96,
+    "amp": 0.05,
+    "colour": "near"
+   }
+  }
+ ],
+ "emitters": [
+  {
+   "id": "stars",
+   "layer": "stars",
+   "max": 160,
+   "rate": 1,
+   "prewarm": 1,
+   "wind": 0,
+   "shape": {
+    "kind": "rect",
+    "x": 0,
+    "y": 0,
+    "w": 1,
+    "h": 0.85
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 200,
+     "max": 400
+    },
+    {
+     "kind": "size",
+     "min": 2.2,
+     "max": 4.5
+    },
+    {
+     "kind": "alpha",
+     "min": 0.6,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      1.5,
+      0
+     ],
+     "max": [
+      3,
+      0.4
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "star",
+      "star2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 1
+    }
+   ],
+   "operators": [
+    {
+     "kind": "twinkle",
+     "speed": 0.35,
+     "depth": 0.7
+    },
+    {
+     "kind": "pointer",
+     "strength": -30,
+     "radius": 160
+    },
+    {
+     "kind": "click",
+     "impulse": 60,
+     "radius": 220
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 10
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

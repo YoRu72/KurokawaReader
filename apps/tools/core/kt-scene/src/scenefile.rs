@@ -36,6 +36,8 @@
 //!              ribbon     y, amp, thickness, bands (1–4), speed, freq, alpha, colours: [...]   (aurora curtains, moving)
 //!              mirror     y, ripple, alpha, tint, strength   (water: what is drawn before it, mirrored below y)
 //!              accum      h0, h1, grow (s), colour, alpha, rough  (settled snow growing along the bottom)
+//!              shafts     count, x0, x1, y0, len, angle, width, alpha, colour   (soft beams of light; static)
+//!              arcs       count, y0, y1, rmin, rmax, width, alpha, colours: [...] (thin circle arcs; static)
 //!            any other kind is kept by name, drawn as nothing, reported by the ABI.
 //!   "emitters": [ {                                                      (0–16)
 //!       "id": "snow-near", "layer": "snow-near" (required: a particles layer), "group": "snow",
@@ -43,17 +45,21 @@
 //!       "densityParam": "amount", "sizeParam": "flake",               (file params multiplying density / size)
 //!       "align": true,                                                  (streaks turned along their velocity)
 //!       "onDeath": { "emitter": "splash", "count": 1 },                 (deaths at a floor give birth there)
+//!       "onClick": { "count": 3 },                                      (a click gives birth to so many there)
 //!       "shape": { "kind": "rect", "x": 0, "y": 0, "w": 1, "h": 1 },     (a share of the scene space)
 //!       "initializers": [ { "kind": "lifetime" | "size" | "alpha" | "rotation" | "spin" | "stretch", "min", "max" },
 //!                         { "kind": "velocity", "min": [x, y], "max": [x, y] },
 //!                         { "kind": "colour", "roles": ["primary", 2, …] },   (palette references)
 //!                         { "kind": "sprite", "id": 0 } ],    (0 soft dot, 1 crisp dot, 2 streak, 3 ring, 4 puff,
-//!                                                              5–7 crystal flakes, 8 petal, 9 leaf, 10 feather)
+//!                                                              5–7 crystal flakes, 8 petal, 9 leaf, 10 feather,
+//!                                                              12 comet: a sharp core with a short trail)
 //!       "operators":    [ { "kind": "drift", "scale", "speed", "strength" }, { "kind": "gravity", "x", "y" },
 //!                         { "kind": "drag", "k" }, { "kind": "bounds", "mode": "wrap" | "kill", "margin" },
 //!                         { "kind": "fade", "in", "out" }, { "kind": "pointer", "strength", "radius" },
 //!                         { "kind": "click", "impulse", "radius" }, { "kind": "floor", "y" },
-//!                         { "kind": "grow", "rate" } ] } ] }
+//!                         { "kind": "grow", "rate" }, { "kind": "twinkle", "speed", "depth" },
+//!                         { "kind": "swell", "radius", "scale" }, { "kind": "gust", "strength", "period" } ] } ] }
+//!   (The pointer and a click move a particle off its own path — an offset that springs back —, never the path.)
 //! ```
 
 #[cfg(kt_alone = "scenefile")]
@@ -168,6 +174,11 @@ pub enum LayerKind {
     Mirror { y: f32, ripple: f32, alpha: f32, tint: u8, strength: f32 },
     /// Settled snow (or sand) along the bottom, growing from `h0` to `h1` of the height over `grow` seconds.
     Accum { h0: f32, h1: f32, grow: f32, colour: u8, alpha: f32, rough: f32 },
+    /// Soft beams of light (light under water, a milky band): `count` beams from the top line `y0`, between `x0` and
+    /// `x1`, leaning by `angle` (radians from straight down), `len` long and about `width` wide (shares of the space).
+    Shafts { count: u32, x0: f32, x1: f32, y0: f32, len: f32, angle: f32, width: f32, alpha: f32, colour: u8 },
+    /// Thin arcs (neon lines): `count` circle arcs centred between y0 and y1, radii rmin…rmax, `width` units thick.
+    Arcs { count: u32, y0: f32, y1: f32, rmin: f32, rmax: f32, width: f32, alpha: f32, colours: Vec<u8> },
     /// A kind this version does not draw: kept by name.
     Unknown(String),
 }
@@ -188,6 +199,8 @@ impl LayerKind {
             LayerKind::Ribbon { .. } => 9,
             LayerKind::Mirror { .. } => 10,
             LayerKind::Accum { .. } => 11,
+            LayerKind::Shafts { .. } => 12,
+            LayerKind::Arcs { .. } => 13,
             LayerKind::Unknown(_) => 255,
         }
     }
@@ -222,6 +235,8 @@ pub struct EmitterDef {
     pub align: bool,
     /// Particles that die at a floor (Op::Floor) give birth to `count` of another emitter's there (splash rings).
     pub on_death: Option<(usize, u32)>,
+    /// A click on the scene gives birth to `on_click` of this emitter's particles there (a stone in a pond).
+    pub on_click: u32,
     pub density_param: Option<usize>,
     pub size_param: Option<usize>,
     pub shape: Shape,
@@ -281,6 +296,12 @@ pub enum Op {
     Floor { y: f32 },
     /// Size grows by `rate` a second (a share: 1 doubles in a second); a ripple ring.
     Grow { rate: f32 },
+    /// Alpha blinking (when drawn): `speed` blinks a second, each particle its own phase, dimmed by up to `depth`.
+    Twinkle { speed: f32, depth: f32 },
+    /// Size swelling near the pointer (when drawn): up to `scale` more within `radius` (bokeh that breathe).
+    Swell { radius: f32, scale: f32 },
+    /// Gusts: a sideways push of up to `strength` units/s², rising and falling irregularly over about `period` s.
+    Gust { strength: f32, period: f32 },
     Unknown(String),
 }
 
@@ -651,6 +672,22 @@ fn read_layer(l: &V, i: usize, pal: &[PalEntry]) -> Result<LayerDef, i32> {
             let (h0, h1) = (num(p, "h0", 0.0, 0.0, 0.5)?, num(p, "h1", 0.04, 0.0, 0.5)?);
             LayerKind::Accum { h0, h1: h1.max(h0), grow: num(p, "grow", 300.0, 1.0, 36_000.0)?, colour: pal_field(p, "colour", 0, pal)?, alpha: num(p, "alpha", 0.95, 0.0, 1.0)?, rough: num(p, "rough", 0.3, 0.0, 1.0)? }
         }
+        Some("shafts") => LayerKind::Shafts { count: num(p, "count", 5.0, 1.0, 32.0)? as u32, x0: num(p, "x0", 0.1, -0.5, 1.5)?, x1: num(p, "x1", 0.9, -0.5, 1.5)?, y0: num(p, "y0", -0.05, -0.5, 1.5)?, len: num(p, "len", 0.9, 0.01, 3.0)?, angle: num(p, "angle", 0.2, -1.5, 1.5)?, width: num(p, "width", 0.06, 0.002, 1.0)?, alpha: num(p, "alpha", 0.15, 0.0, 1.0)?, colour: pal_field(p, "colour", 0, pal)? },
+        Some("arcs") => {
+            let list = arr(p.get("colours"))?;
+            if list.len() > MAX_PALETTE {
+                return Err(ERR_CAPS);
+            }
+            let mut colours = Vec::new();
+            for c in list {
+                colours.push(pal_ref(c, pal)?);
+            }
+            if colours.is_empty() {
+                colours.push(0);
+            }
+            let (rmin, rmax) = (num(p, "rmin", 120.0, 1.0, 4000.0)?, num(p, "rmax", 600.0, 1.0, 4000.0)?);
+            LayerKind::Arcs { count: num(p, "count", 6.0, 1.0, 64.0)? as u32, y0: num(p, "y0", 0.2, -0.5, 1.5)?, y1: num(p, "y1", 0.8, -0.5, 1.5)?, rmin: rmin.min(rmax), rmax: rmin.max(rmax), width: num(p, "width", 1.5, 0.2, 40.0)?, alpha: num(p, "alpha", 0.4, 0.0, 1.0)?, colours }
+        }
         Some(other) => LayerKind::Unknown(other.chars().take(64).collect()),
     };
     Ok(LayerDef { id, kind, depth, parallax, opacity, blend })
@@ -804,6 +841,10 @@ pub fn read(bytes: &[u8]) -> Result<SceneDef, i32> {
         emitters.push(EmitterDef {
             align: matches!(e.get("align"), Some(V::Bool(true))),
             on_death: None,
+            on_click: match obj(e.get("onClick"))? {
+                Some(o) => num(o, "count", 1.0, 0.0, 16.0)? as u32,
+                None => 0,
+            },
             id: eid,
             layer,
             group,
@@ -911,6 +952,9 @@ fn read_op(v: &V) -> Result<Op, i32> {
         "click" => Op::Click { impulse: num(v, "impulse", 120.0, -4096.0, 4096.0)?, radius: num(v, "radius", 220.0, 1.0, 4096.0)? },
         "floor" => Op::Floor { y: num(v, "y", 1.0, -0.5, 1.5)? },
         "grow" => Op::Grow { rate: num(v, "rate", 1.0, -0.95, 20.0)? },
+        "twinkle" => Op::Twinkle { speed: num(v, "speed", 0.5, 0.0, 20.0)?, depth: num(v, "depth", 0.6, 0.0, 1.0)? },
+        "swell" => Op::Swell { radius: num(v, "radius", 220.0, 1.0, 4096.0)?, scale: num(v, "scale", 0.6, 0.0, 4.0)? },
+        "gust" => Op::Gust { strength: num(v, "strength", 60.0, -4096.0, 4096.0)?, period: num(v, "period", 6.0, 0.5, 120.0)? },
         other => Op::Unknown(unknown(other)),
     })
 }

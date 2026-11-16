@@ -31,7 +31,7 @@ mod scenefile;
 mod scenery;
 
 use crate::drawlist::{Cmd, DrawList, Inst};
-use crate::forces::{accelerate, constrain, fade, grow, heading, integrate, Control};
+use crate::forces::{accelerate, constrain, fade, grow, heading, integrate, swell, twinkle, Control};
 use crate::graph::Graph;
 use crate::math::{clampf, Fnv, Pcg32};
 use crate::particles::{Emitter, Pool, View, DEATHS};
@@ -155,6 +155,7 @@ impl Scene {
                 wind: e.wind,
                 align: e.align,
                 on_death: e.on_death,
+                on_click: e.on_click,
                 deaths: Vec::with_capacity(DEATHS),
                 density_param: e.density_param,
                 size_param: e.size_param,
@@ -390,6 +391,21 @@ impl Scene {
             e.reap(&mut self.pool);
             e.emit(&mut self.pool, view, dt, limit);
         }
+        // (A click: births where it fell, for the emitters that ask for them — a stone dropped in a pond.)
+        if let Some(c) = self.click {
+            for k in 0..self.emitters.len() {
+                let n = self.emitters[k].on_click;
+                if n == 0 {
+                    continue;
+                }
+                let parallax = self.graph.layers.get(self.emitters[k].layer).map(|l| l.parallax).unwrap_or(0.5);
+                let (x, y) = self.to_scene(c, parallax);
+                let limit = self.limit_of(k);
+                for _ in 0..n {
+                    self.emitters[k].spawn_at(&mut self.pool, view, limit, x, y);
+                }
+            }
+        }
         // (Children where particles died at a floor: splash rings where rain meets the ground.)
         for k in 0..self.emitters.len() {
             if let Some((c, n)) = self.emitters[k].on_death {
@@ -434,13 +450,15 @@ impl Scene {
             };
             let first = self.draw.count();
             let li8 = li.min(255) as u8;
+            let ptr = self.pointer.map(|q| self.to_scene(q, layer.parallax));
             for &ei in &layer.emitters {
                 let e = &self.emitters[ei];
                 let gsize = self.groups.get(e.group).map(|g| g.1).unwrap_or(1.0) * self.size * size_mult(&self.params, &self.values, e.size_param);
                 for i in e.range() {
                     let p = &self.pool;
-                    let a = p.alpha[i] * fade(&e.ops, p.age[i], p.life[i]) * layer.opacity;
-                    let sx = p.size[i] * gsize;
+                    let a = p.alpha[i] * fade(&e.ops, p.age[i], p.life[i]) * twinkle(&e.ops, self.time as f32, p.life[i]) * layer.opacity;
+                    let (x, y) = (p.px[i] + p.dx[i], p.py[i] + p.dy[i]);
+                    let sx = p.size[i] * gsize * swell(&e.ops, x, y, ptr, self.react);
                     #[allow(clippy::neg_cmp_op_on_partial_ord)]
                     if !(a >= MIN_ALPHA) || !(sx > 0.0) {
                         continue;
@@ -448,7 +466,7 @@ impl Scene {
                     let c = p.colour[i];
                     let rgba = self.palette.get(c as usize).copied().unwrap_or(0x8080_80ff);
                     let rot = if e.align { heading(p.vx[i], p.vy[i]) } else { p.rot[i] };
-                    self.draw.push(Inst { x: p.px[i], y: p.py[i], sx, sy: sx * p.stretch[i], rot, alpha: a.min(1.0), rgba, sprite: p.sprite[i], layer: li8, depth: layer.depth, colour: c });
+                    self.draw.push(Inst { x, y, sx, sy: sx * p.stretch[i], rot, alpha: a.min(1.0), rgba, sprite: p.sprite[i], layer: li8, depth: layer.depth, colour: c });
                 }
             }
             if let Some(Some(f)) = self.scenery.fog.get(li) {
@@ -540,6 +558,11 @@ impl Scene {
                     h.f32(v);
                 }
                 h.u32(p.colour[i] as u32 | (p.sprite[i] as u32) << 8);
+                // (The pointer's offset, only while there is one: an untouched scene hashes as it always did.)
+                if p.dx[i] != 0.0 || p.dy[i] != 0.0 {
+                    h.f32(p.dx[i]);
+                    h.f32(p.dy[i]);
+                }
             }
         }
         for f in self.scenery.fog.iter().flatten() {
@@ -640,13 +663,13 @@ mod tests {
         s.viewport(1280.0, 800.0);
         s.step(STEP_MS);
         let d = s.instances();
-        assert_eq!(d.cmd_count(), 10);
+        assert_eq!(d.cmd_count(), 9);
         let c = d.cmd_floats();
         let at = |k: usize, f: usize| c[k * CMD_STRIDE + f];
         // (Sky first, static, no instances; the particle and fog layers cover every instance, in order, once.)
         assert_eq!((at(0, C_KIND), at(0, C_STATIC), at(0, C_COUNT)), (1.0, 1.0, 0.0));
         let mut next = 0.0;
-        for k in 0..10 {
+        for k in 0..9 {
             assert_eq!(at(k, C_START), next);
             next += at(k, C_COUNT);
         }
@@ -818,5 +841,100 @@ mod tests {
             assert!(s.live() <= 4096);
         }
         assert!(s.all_finite());
+    }
+
+    #[test]
+    fn the_pointer_pushes_and_the_path_springs_back() {
+        // (Pushed by the pointer, then left alone: once the offsets have sprung back, the scene is EXACTLY the one that
+        //  was never touched — the push moved where particles are drawn, never their paths.)
+        let mut a = Scene::load(SNOW.as_bytes(), 5).unwrap();
+        let mut b = Scene::load(SNOW.as_bytes(), 5).unwrap();
+        a.viewport(1280.0, 800.0);
+        b.viewport(1280.0, 800.0);
+        for k in 0..240 {
+            if k < 60 {
+                a.pointer(640.0 + k as f32 * 3.0, 400.0, 0);
+            } else if k == 60 {
+                a.pointer(f32::NAN, f32::NAN, 0);
+            }
+            if k == 20 {
+                a.click(600.0, 380.0);
+            }
+            a.step(1000.0 / 60.0);
+            b.step(1000.0 / 60.0);
+            if k == 59 {
+                assert!(a.pool.dx.iter().any(|&d| d.abs() > 5.0), "pushed");
+                assert_ne!(a.state_hash(), b.state_hash());
+            }
+        }
+        assert!(a.pool.dx.iter().chain(a.pool.dy.iter()).all(|&d| d == 0.0), "all back on their paths");
+        assert_eq!(a.state_hash(), b.state_hash());
+    }
+
+    #[test]
+    fn round_four_operators_and_kinds() {
+        let src = br##"{"format":"ktscene/1","palette":["#ffffff","#00ffff"],
+          "layers":[{"id":"sh","kind":"shafts","params":{"count":4,"colour":1}},{"id":"ar","kind":"arcs","params":{"count":3,"colours":[1]}},{"id":"p"}],
+          "emitters":[{"id":"f","layer":"p","max":50,"rate":0,"prewarm":1,"initializers":[{"kind":"lifetime","min":5,"max":9}],
+            "operators":[{"kind":"twinkle","speed":1,"depth":0.9},{"kind":"swell","radius":300,"scale":1},{"kind":"gust","strength":80,"period":3}]},
+            {"id":"stone","layer":"p","max":20,"rate":0,"prewarm":0,"onClick":{"count":3},"operators":[{"kind":"grow","rate":1}]}]}"##;
+        let mut s = Scene::load(src, 2).unwrap();
+        s.viewport(1600.0, 1000.0);
+        assert_eq!((s.geom(0)[0], s.geom(0).len()), (4.0, 2 + 4 * 5 + 1));
+        assert_eq!((s.geom(1)[0], s.geom(1).len()), (3.0, 2 + 3 * 8));
+        let x0: f32 = s.pool.px[..50].iter().sum();
+        s.click(800.0, 500.0);
+        for _ in 0..60 {
+            s.step(1000.0 / 60.0);
+        }
+        // (Gusts push sideways; the click gave birth to three stones; blinking dims some.)
+        let x1: f32 = s.pool.px[..50].iter().sum();
+        assert!(x1 > x0 + 50.0);
+        assert_eq!(s.emitters[1].live, 3);
+        let d = s.instances();
+        let alphas: Vec<f32> = (0..d.count()).map(|k| d.get(k, crate::drawlist::I_ALPHA)).collect();
+        assert!(alphas.iter().any(|&a| a < 0.5) && alphas.iter().all(|a| a.is_finite()));
+        // (Swelling: near the pointer, larger.)
+        let before: f32 = (0..d.count()).map(|k| d.get(k, crate::drawlist::I_SX)).sum();
+        s.pointer(800.0, 500.0, 0);
+        s.step(0.0);
+        let d = s.instances();
+        let after: f32 = (0..d.count()).map(|k| d.get(k, crate::drawlist::I_SX)).sum();
+        assert!(after > before);
+    }
+
+    #[test]
+    fn every_bundled_scene_reads_and_runs() {
+        // (Every file in src/theme/scenes: read with nothing unknown, run 6 s with a pointer and a click, finite,
+        //  within the caps. Under cargo only — the standalone rustc runs have no manifest directory.)
+        let Some(dir) = option_env!("CARGO_MANIFEST_DIR") else { return };
+        let mut n = 0;
+        for f in std::fs::read_dir(format!("{dir}/../../src/theme/scenes")).unwrap() {
+            let path = f.unwrap().path();
+            if path.extension().map(|e| e != "json").unwrap_or(true) {
+                continue;
+            }
+            let bytes = std::fs::read(&path).unwrap();
+            let name = path.display().to_string();
+            let d = crate::scenefile::read(&bytes).expect(&name);
+            assert!(d.layers.iter().all(|l| !matches!(l.kind, crate::scenefile::LayerKind::Unknown(_))), "{name}");
+            assert!(d.emitters.iter().all(|e| e.ops.iter().all(|o| !matches!(o, crate::scenefile::Op::Unknown(_))) && e.inits.iter().all(|i| !matches!(i, crate::scenefile::Init::Unknown(_)))), "{name}");
+            let text = String::from_utf8_lossy(&bytes).to_lowercase();
+            assert!(!text.contains("\"pine") && !text.contains("\"tree") && !text.contains("forest"), "no trees: {name}");
+            let mut s = Scene::load(&bytes, 9).expect(&name);
+            s.viewport(1280.0, 800.0);
+            for k in 0..360 {
+                if k == 100 {
+                    s.pointer(500.0, 400.0, 0);
+                }
+                if k == 150 {
+                    s.click(640.0, 500.0);
+                }
+                s.step(1000.0 / 60.0);
+            }
+            assert!(s.all_finite() && s.live() <= 4096 && s.instances().count() > 0, "{name}");
+            n += 1;
+        }
+        assert!(n >= 14, "{n} scenes");
     }
 }
