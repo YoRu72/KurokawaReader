@@ -48,13 +48,20 @@ class Aria2Engine {
     const port = await Aria2Engine.freePort(); const secret = crypto.randomBytes(12).toString('hex');
     fs.mkdirSync(this.defaultDir, { recursive: true });
     const sessionFile = path.join(this.userData, 'aria2.session'); if (!fs.existsSync(sessionFile)) fs.writeFileSync(sessionFile, '');
-    const args = ['--enable-rpc', `--rpc-listen-port=${port}`, `--rpc-secret=${secret}`, '--rpc-listen-all=false', '--rpc-allow-origin-all=false', '--continue=true', `--max-connection-per-server=${Math.min(16, this.config.maxConnections)}`, `--split=${Math.min(16, this.config.maxConnections)}`, '--min-split-size=1M', '--max-concurrent-downloads=5', '--bt-save-metadata=true', '--bt-load-saved-metadata=true', `--seed-time=${this.config.seed ? 0 : 0}`, `--seed-ratio=${this.config.seed ? 0 : 0.0}`, `--dir=${this.defaultDir}`, `--save-session=${sessionFile}`, `--input-file=${sessionFile}`, '--save-session-interval=30', '--enable-dht=true', '--enable-dht6=true', '--bt-enable-lpd=true', '--follow-torrent=true', '--file-allocation=none', '--check-certificate=false', '--user-agent=KurokawaTools/0.1 aria2', '--summary-interval=0', '--console-log-level=warn', '--quiet=true', '--bt-detach-seed-only=true', '--auto-file-renaming=true', '--allow-overwrite=false', '--max-tries=5', '--retry-wait=3', '--dht-file-path=' + path.join(this.userData, 'dht.dat'), '--dht-file-path6=' + path.join(this.userData, 'dht6.dat')];
+    const args = ['--enable-rpc', `--rpc-listen-port=${port}`, `--rpc-secret=${secret}`, '--rpc-listen-all=false', '--rpc-allow-origin-all=false', '--continue=true', `--max-connection-per-server=${Math.min(16, this.config.maxConnections)}`, `--split=${Math.min(16, this.config.maxConnections)}`, '--min-split-size=1M', '--max-concurrent-downloads=5', '--bt-save-metadata=true', '--bt-load-saved-metadata=true', `--seed-time=${this.config.seed ? 0 : 0}`, `--seed-ratio=${this.config.seed ? 0 : 0.0}`, `--dir=${this.defaultDir}`, `--save-session=${sessionFile}`, `--input-file=${sessionFile}`, '--save-session-interval=30', '--enable-dht=true', '--enable-dht6=true', '--bt-enable-lpd=true', '--follow-torrent=true', '--file-allocation=none', '--user-agent=KurokawaTools/0.1 aria2', '--summary-interval=0', '--console-log-level=warn', '--quiet=true', '--bt-detach-seed-only=true', '--auto-file-renaming=true', '--allow-overwrite=false', '--max-tries=5', '--retry-wait=3', '--dht-file-path=' + path.join(this.userData, 'dht.dat'), '--dht-file-path6=' + path.join(this.userData, 'dht6.dat')];
     if (this.config.listenPort > 0) { args.push(`--listen-port=${this.config.listenPort}`, `--dht-listen-port=${this.config.listenPort}`); } else { args.push('--listen-port=6881-6999', '--dht-listen-port=6881-6999'); }
     // Senpwai's torrent options: peer discovery, encryption, and when seeding stops.
     const c = this.config; if (!c.seed) args.push('--seed-time=0'); else args.push(`--seed-ratio=${c.seedRatio > 0 ? c.seedRatio : '0.0'}`, ...(c.seedMinutes > 0 ? [`--seed-time=${c.seedMinutes}`] : []));
     if (c.dht === false) args.push('--enable-dht=false', '--enable-dht6=false'); if (c.lsd === false) args.push('--bt-enable-lpd=false'); else args.push('--bt-enable-lpd=true');
     if (c.enc === 'forced') args.push('--bt-require-crypto=true', '--bt-min-crypto-level=arc4');
     args.push(...Object.entries(netOptions(c.net)).map(([k, v]) => `--${k}=${v}`));
+    // (0.21 P9: the saved DoH choice put in force first — main.cjs's beforeStart — so a resumed download never runs
+    // without the DoH proxy; the proxy's password and the certificate authorities in a config file only this user can
+    // read, never on the command line. Certificates are checked: aria2's default, no longer turned off.)
+    if (this.beforeStart) await this.beforeStart().catch(() => undefined);
+    const conf = { ...proxyOptions(c.net?.proxy) }; const ca = caBundle(); if (ca) conf['ca-certificate'] = ca;
+    const confPath = path.join(this.userData, 'aria2-kt.conf');
+    try { fs.writeFileSync(confPath, confText(conf), { mode: 0o600 }); fs.chmodSync(confPath, 0o600); args.unshift(`--conf-path=${this.np(confPath)}`); } catch { /* without it: no DoH proxy until setDohProxy */ }
     let said = ''; const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); this.proc = proc;
     proc.stderr.on('data', (d) => { said = String(d).trim().split(/\r?\n/).pop() || said; console.warn('[aria2c]', said); });
     proc.on('error', (e) => { said = String(e.message || e); });
@@ -130,7 +137,9 @@ class Aria2Engine {
     if (o.meta?.noRetry) opts['max-tries'] = '1';
     // A file of that name there already, with «Skip» chosen: not downloaded again.
     if (this.config.net?.conflict === 'skip' && o.name && o.source.url && fs.existsSync(path.join(this.np(o.dir) || this.defaultDir, o.name))) throw new Error('exists');
-    const gid = o.source.torrent ? await this.rpc.call('addTorrent', o.source.torrent, [], opts) : await this.rpc.call('addUri', [o.source.magnet || o.source.url], opts);
+    // (A magnet's UDP trackers by the DoH chain's addresses while DoH is on: main.cjs sets dohMagnet.)
+    const magnet = o.source.magnet && this.dohMagnet ? await this.dohMagnet(o.source.magnet).catch(() => o.source.magnet) : o.source.magnet;
+    const gid = o.source.torrent ? await this.rpc.call('addTorrent', o.source.torrent, [], opts) : await this.rpc.call('addUri', [magnet || o.source.url], opts);
     this.keep[gid] = { name: o.name, source: o.source, addedAt: Date.now(), meta: o.meta }; this.saveKeep();
     const st = await this.rpc.call('tellStatus', gid); this.tick();
     return this.task(st);
@@ -152,6 +161,18 @@ class Aria2Engine {
     await this.rpc.call('removeDownloadResult', id).catch(() => {});
     this.keep[gid] = { ...k, source: { ...(k.source || {}), url } }; delete this.keep[id]; this.saveKeep(); this.tick(); return gid;
   }
+  /** «Ignore certificate errors for this download» (0.21 P9 — the page asks first, and only after a certificate
+   *  failure): this download alone gets check-certificate=false — changed while it waits, else added again over the
+   *  same file; the choice kept with it. */
+  async ignoreCert(id) {
+    const st = await this.rpc.call('tellStatus', id); if (st.bittorrent) throw new Error('not a file download');
+    const url = st.files?.[0]?.uris?.[0]?.uri; if (!url) throw new Error('no address');
+    if (['active', 'waiting', 'paused'].includes(st.status)) { await this.rpc.call('changeOption', id, { 'check-certificate': 'false' }); await this.rpc.call('unpause', id).catch(() => {}); this.keep[id] = { ...(this.keep[id] || {}), insecure: true }; this.saveKeep(); this.tick(); return id; }
+    const f = st.files?.[0]?.path || ''; const k = this.keep[id] || {};
+    const opts = { dir: this.np(st.dir), continue: 'true', 'check-certificate': 'false' }; if (f) opts.out = path.basename(f); if (k.source?.headers) opts.header = Object.entries(k.source.headers).map(([a, b]) => `${a}: ${b}`);
+    const gid = await this.rpc.call('addUri', [url], opts); await this.rpc.call('removeDownloadResult', id).catch(() => {});
+    this.keep[gid] = { ...k, insecure: true }; delete this.keep[id]; this.saveKeep(); this.tick(); return gid;
+  }
   async pause(id) { await this.rpc.call('pause', id); this.tick(); }
   async resume(id) { if (this.handedOver?.(id)) return; await this.rpc.call('unpause', id); this.tick(); }
   async remove(id, deleteFiles) {
@@ -163,9 +184,11 @@ class Aria2Engine {
   }
   async setFiles(id, priorities) { await this.rpc.call('changeOption', id, { 'select-file': priorities.map((p, i) => (p ? i + 1 : 0)).filter(Boolean).join(',') }); this.tick(); }
   async setLimits(l) { await this.rpc.call('changeGlobalOption', { 'max-overall-download-limit': String(l.down || 0), 'max-overall-upload-limit': String(l.up || 0) }); }
-  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.net) await this.rpc?.call('changeGlobalOption', netOptions(o.net)).catch(() => {}); if (o.maxConnections) await this.rpc?.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined || o.seedRatio !== undefined || o.seedMinutes !== undefined) { const c = this.config; await this.rpc?.call('changeGlobalOption', c.seed ? { 'seed-ratio': c.seedRatio > 0 ? String(c.seedRatio) : '0.0', 'seed-time': c.seedMinutes > 0 ? String(c.seedMinutes) : '525600' } : { 'seed-time': '0' }).catch(() => {}); } }
+  async configure(o) { Object.assign(this.config, o); this.saveConfig(); if (o.net) await this.rpc?.call('changeGlobalOption', { ...netOptions(o.net), ...proxyOptions(o.net.proxy) }).catch(() => {}); if (o.maxConnections) await this.rpc?.call('changeGlobalOption', { 'max-concurrent-downloads': String(Math.max(1, o.maxConnections)) }).catch(() => {}); if (o.seed !== undefined || o.seedRatio !== undefined || o.seedMinutes !== undefined) { const c = this.config; await this.rpc?.call('changeGlobalOption', c.seed ? { 'seed-ratio': c.seedRatio > 0 ? String(c.seedRatio) : '0.0', 'seed-time': c.seedMinutes > 0 ? String(c.seedMinutes) : '525600' } : { 'seed-time': '0' }).catch(() => {}); } }
   async torrentInfo(source) {
-    const gid = source.torrent ? await this.rpc.call('addTorrent', source.torrent, [], { pause: 'true' }) : await this.rpc.call('addUri', [source.magnet], { 'bt-metadata-only': 'true', 'bt-save-metadata': 'false' });
+    // (0.21 P9: the metadata step's UDP trackers by the DoH chain too.)
+    const magnet = source.magnet && this.dohMagnet ? await this.dohMagnet(source.magnet).catch(() => source.magnet) : source.magnet;
+    const gid = source.torrent ? await this.rpc.call('addTorrent', source.torrent, [], { pause: 'true' }) : await this.rpc.call('addUri', [magnet], { 'bt-metadata-only': 'true', 'bt-save-metadata': 'false' });
     const until = Date.now() + 60000;
     try {
       for (;;) {
@@ -198,6 +221,19 @@ class Aria2Engine {
 }
 /** Prism's connection settings as aria2 options: the name given to servers, tries, how long to wait, a proxy,
  *  what to do with a file already there. */
+// (0.21 P9: while DNS over HTTPS is on, aria2 is pointed at the DoH chain's small proxy — desktop/dohchain.cjs — for
+// http and https (kt-core engine_core proxy_options is the twin), unless the user set a proxy of their own, which then
+// finds the sites. FTP keeps all-proxy: the DoH proxy does not carry FTP.)
+let dohProxy = null;   // { address, user, password } | null
+function proxyOptions(userProxy) {
+  const u = String(userProxy || '').trim(); const [addr, user, pass] = u ? [u, '', ''] : dohProxy ? [dohProxy.address, dohProxy.user, dohProxy.password] : ['', '', ''];
+  const o = {}; for (const k of ['http', 'https']) { o[`${k}-proxy`] = addr; o[`${k}-proxy-user`] = user; o[`${k}-proxy-passwd`] = pass; } return o;
+}
+function setDohProxy(p, eng) { dohProxy = p ? { address: p.address, user: p.user, password: p.password } : null; if (eng?.rpc) void eng.rpc.call('changeGlobalOption', proxyOptions(eng.config.net?.proxy)).catch(() => {}); }
+/** aria2's config file: «key=value» lines (a value with a line break left out). */
+function confText(o) { return Object.entries(o).filter(([k, v]) => !/[\r\n]/.test(String(v)) && !k.includes('=')).map(([k, v]) => `${k}=${v}\n`).join(''); }
+/** Linux's certificate authorities for the static aria2 (engine_core ca_bundle's twin); none elsewhere. */
+function caBundle(exists = fs.existsSync, linux = process.platform === 'linux') { if (!linux) return null; return ['/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/certs/ca-bundle.crt', '/etc/ssl/ca-bundle.pem', '/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem', '/etc/ssl/cert.pem'].find((p) => exists(p)) || null; }
 function netOptions(n) {
   n = n || {}; const o = {};
   o['user-agent'] = String(n.ua || '').trim() || 'KurokawaTools/0.1 aria2';
@@ -207,4 +243,4 @@ function netOptions(n) {
   const c = n.conflict || 'rename'; o['auto-file-renaming'] = c === 'rename' ? 'true' : 'false'; o['allow-overwrite'] = c === 'overwrite' ? 'true' : 'false';
   return o;
 }
-module.exports = { Aria2Engine, netOptions };
+module.exports = { Aria2Engine, netOptions, setDohProxy, proxyOptions, confText, caBundle };

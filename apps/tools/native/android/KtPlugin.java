@@ -72,7 +72,9 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
+    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); }
+        // (0.21 P9: no automatic DoH probe on a metered connection.)
+        try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} catch (Exception ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
      *  debuggable build its shadow mode on (each download rule also asked of Rust, differences counted — Java's answer
      *  used). Off the main thread; nothing changes for the user whether the library is there or not. */
@@ -500,7 +502,11 @@ public class KtPlugin extends Plugin {
     /** DNS over HTTPS up close: its state, counters and last events; `probe` tries the resolver first. */
     @PluginMethod public void dohStatus(PluginCall call) {
         final boolean probe = Boolean.TRUE.equals(call.getBoolean("probe", false));
-        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe()); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } r.put("proxy", KrDohProxy.status()); call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe(true)); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } r.put("proxy", KrDohProxy.status()); call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+    }
+    /** What answered each name (the details pages' status line): { on, hosts: { host: { via, at } } }. */
+    @PluginMethod public void dohUsed(PluginCall call) {
+        try { java.util.List<String> hs = new java.util.ArrayList<>(); JSArray a = call.getArray("hosts"); if (a != null) for (int i = 0; i < Math.min(64, a.length()); i++) hs.add(a.getString(i)); call.resolve(JSObject.fromJSONObject(KrDoh.usedFor(hs))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /** Each DoH event handed to the page as «doh» (the Settings page's live feed, the status chip). */
     static void wireDoh() { KrDoh.listener = (json) -> { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("doh", JSObject.fromJSONObject(new org.json.JSONObject(json)), true); } catch (Exception ignored) {} KtBrowserActivity.dohEvent(json); }; }
@@ -508,6 +514,8 @@ public class KtPlugin extends Plugin {
         String p = call.getString("provider", null); String sp = call.getString("split", null);
         if (p != null) { KrDoh.provider = p; KrDoh.forget(); getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply(); }
         if (sp != null) { KrDoh.split = sp; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("dohSplit", sp).apply(); }
+        // (0.21 P9: the system's DNS when every resolver failed — the reader's choice, off by default.)
+        Boolean sys = call.getBoolean("allowSystem", null); if (sys != null) { KrDoh.allowSystem = sys; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("dohSystem", sys).apply(); }
         if (p != null) bg.execute(KtPlugin::applyDohProxy);
         final String test = call.getString("test", null); JSObject r = new JSObject(); r.put("provider", KrDoh.provider);
         if (test == null) { call.resolve(r); return; }
@@ -1303,7 +1311,7 @@ public class KtPlugin extends Plugin {
             } catch (javax.net.ssl.SSLException e) {
                 // (Refused at the TLS handshake through the resolver's way: asked once more the plain way, kept a day.)
                 String host = ""; try { host = new URL(urlStr).getHost(); } catch (Exception ignored) {}
-                if (KrDoh.on() && !KrDoh.isDirect(host)) { KrDoh.goDirect(host); httpRequest(call); return; }
+                if (KrDoh.on() && !KrDoh.isDirect(host) && KrDoh.goDirect(host)) { httpRequest(call); return; }
                 call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e);
             } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
         });

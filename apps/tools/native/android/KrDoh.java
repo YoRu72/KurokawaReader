@@ -25,9 +25,14 @@ import javax.net.ssl.SSLSocketFactory;
  * provider hides by its name is reached all the same.
  *
  * Made to keep working on a network that fights back:
- *  - several resolvers (Cloudflare, Google, Quad9, AdGuard, Mullvad, DNS.SB, ControlD, OpenDNS, or one the reader
- *    gives), the chosen one first and the others after it when it does not answer; the one that answered last is
- *    asked first next time ("auto" lets the app choose);
+ *  - several resolvers (core/kt-core/src/doh-providers.txt — the one table — or one the reader gives), the chosen
+ *    one first and the others after it when it does not answer; «auto» asks the quickest healthy one first (the health
+ *    probe: on demand, and at most every half hour when a name is asked — no timer); the order, the cache, which
+ *    answers are kept and the system-DNS rule are kt-core dohchain.rs's, checked on the same lines
+ *    (doh-cases.txt) by tests/native/doh/CT.java (0.21 P9);
+ *  - the network's DNS never asked for a site's name unless the reader allowed it (`allowSystem`) and every resolver
+ *    failed — and then the event and the per-name record say so; names of this device or its network (.local, .lan…)
+ *    are the system's by rule;
  *  - each resolver asked by its own address (no DNS at all), in several shapes — a POST with the question in it,
  *    the same with the TLS hello split in two (a filter reading the server's name in the first packet sees none),
  *    a GET, the address alone without the name in the hello (the resolvers whose certificates carry their
@@ -43,6 +48,8 @@ final class KrDoh {
 
     /** "off", "auto", a provider's name, or the address of a resolver ("https://…/dns-query"). */
     static volatile String provider = "off";
+    /** The reader's choice: the system's DNS when every resolver failed (off by default — a privacy trade-off). */
+    static volatile boolean allowSystem = false;
     /** The app's browser's own choice, apart from the app's (Settings): it reaches the browser's pages only, through
      *  KtDohWeb — the app's requests and the app's page never see it. */
     static volatile String browserProvider = "off";
@@ -79,28 +86,35 @@ final class KrDoh {
             if (!on()) state = "off"; else if ("off".equals(state)) state = "idle";
             o.put("provider", prov()); o.put("split", split); o.put("state", state); o.put("ways", waysJson()); o.put("queries", queries.get()); o.put("hits", hits.get()); o.put("fails", fails.get()); o.put("unblocked", unblocked.get());
             o.put("lastResolver", lastResolver); o.put("lastShape", lastShape); o.put("lastMs", lastMs); o.put("lastAt", lastAt); o.put("lastError", lastError); o.put("cached", cache.size()); o.put("forced", forced.size());
-            org.json.JSONArray rs = new org.json.JSONArray(); for (Resolver r : resolvers(prov())) { org.json.JSONObject x = new org.json.JSONObject(); x.put("id", r.id); x.put("url", r.url); x.put("ok", r.lastOk); x.put("ms", r.lastMs); x.put("shape", r.shape); x.put("error", r.lastError == null ? "" : r.lastError); rs.put(x); } o.put("resolvers", rs);
+            org.json.JSONArray rs = new org.json.JSONArray(); org.json.JSONArray ord = new org.json.JSONArray(); for (Resolver r : resolvers(prov())) { ord.put(r.id); org.json.JSONObject x = new org.json.JSONObject(); x.put("id", r.id); x.put("url", r.url); x.put("ok", r.lastOk); x.put("ms", r.lastMs); x.put("shape", r.shape); x.put("error", r.lastError == null ? "" : r.lastError); rs.put(x); } o.put("resolvers", rs); o.put("order", ord);
+            // (The shared status shape — Electron's and Tauri's too: every provider of the table with its health.)
+            org.json.JSONArray ps = new org.json.JSONArray(); for (Resolver r : table) { org.json.JSONObject x = new org.json.JSONObject(); x.put("id", r.id); x.put("label", r.label); x.put("url", r.url); x.put("filters", r.filters); if (r.lastAt > 0) { x.put("ok", r.lastOk); x.put("ms", r.lastMs); x.put("at", r.lastAt); } x.put("reason", r.lastError == null ? "" : r.lastError); ps.put(x); } o.put("providers", ps);
+            Resolver cu = prov().contains("://") ? custom.get(prov()) : null; if (cu != null && cu.lastAt > 0) { org.json.JSONObject x = new org.json.JSONObject(); x.put("ok", cu.lastOk); x.put("ms", cu.lastMs); x.put("at", cu.lastAt); x.put("reason", cu.lastError == null ? "" : cu.lastError); o.put("custom", x); }
+            o.put("on", on()); o.put("allowSystem", allowSystem); o.put("system", systemUsed.get()); if (lastProbeAt > 0) o.put("lastProbe", lastProbeAt);
             org.json.JSONArray a = new org.json.JSONArray(); synchronized (log) { for (String j : log) a.put(new org.json.JSONObject(j)); } o.put("log", a);
         } catch (Exception ignored) {}
         return o;
     }
     /** Every resolver tried on purpose, at once (a known name asked of each): which answer, from which address, by which shape, in how long; the fastest kept first. */
-    static org.json.JSONObject probe() {
+    static org.json.JSONObject probe() { return probe(true); }
+    /** `all`: every resolver («Check now»); else those the chain asks first (probeSet). */
+    static org.json.JSONObject probe(boolean all) {
         org.json.JSONObject o = new org.json.JSONObject();
         try {
             if (!on()) { o.put("ok", false); o.put("why", "off"); return o; }
-            List<Resolver> rs = resolvers(prov()); if (rs.isEmpty()) { o.put("ok", false); o.put("why", "noResolver"); return o; }
+            List<Resolver> rs = probeSet(prov(), all); if (rs.isEmpty()) { o.put("ok", false); o.put("why", "noResolver"); return o; }
             state = "resolving"; note("probe", "example.com", null, -1, "start");
             final org.json.JSONArray tries = new org.json.JSONArray(); List<Thread> ts = new ArrayList<>();
             for (final Resolver r : rs) {
                 Thread t = new Thread(() -> {
                     org.json.JSONObject tr = new org.json.JSONObject(); long t0 = System.currentTimeMillis();
-                    try { tr.put("resolver", r.id); tr.put("url", r.url); Answer a = askResolver(r, query("example.com", 1), 9000); tr.put("ok", a.ips.length > 0); tr.put("ms", System.currentTimeMillis() - t0); tr.put("from", a.from); tr.put("shape", a.shape); }
+                    try { tr.put("resolver", r.id); tr.put("url", r.url); Answer a = askResolver(r, query("example.com", 1), 5000); boolean ok = false; for (InetAddress x : a.ips) if (addressOk(x, "custom".equals(r.id))) ok = true; if (!ok) health(r, false, System.currentTimeMillis() - t0, "no usable address"); tr.put("ok", ok); tr.put("ms", System.currentTimeMillis() - t0); tr.put("from", a.from); tr.put("shape", a.shape); }
                     catch (Exception e) { try { tr.put("ok", false); tr.put("ms", System.currentTimeMillis() - t0); tr.put("error", clean(e.getMessage())); } catch (Exception ignored) {} }
                     synchronized (tries) { tries.put(tr); }
                 }, "kt-doh-probe"); t.setDaemon(true); ts.add(t); t.start();
             }
             for (Thread t : ts) t.join(12000);
+            lastProbeAt = System.currentTimeMillis(); chainFailed = false;
             org.json.JSONObject best = null;
             synchronized (tries) { for (int i = 0; i < tries.length(); i++) { org.json.JSONObject tr = tries.getJSONObject(i); if (tr.optBoolean("ok") && (best == null || tr.optLong("ms") < best.optLong("ms"))) best = tr; } }
             o.put("tries", tries); o.put("ok", best != null);
@@ -113,105 +127,304 @@ final class KrDoh {
 
     /* ---------- the resolvers ---------- */
     static final class Resolver {
-        final String id, url; final String[] ips;
-        /** Whether it answers the JSON form (Cloudflare's, Google's, AdGuard's, DNS.SB's do; Quad9 and ControlD do not). */
-        boolean json() { return id.equals("cloudflare") || id.equals("google") || id.equals("adguard") || id.equals("dnssb") || id.equals("custom"); }
+        final String id, url, label, filters; final String[] ips; final boolean json;
+        /** Whether it documents the JSON form (Cloudflare's and Google's). */
+        boolean json() { return json; }
         /** How it was last reached: the shape that worked (asked first next time). */
-        volatile String shape = ""; volatile boolean lastOk; volatile long lastMs = -1; volatile String lastError;
-        Resolver(String id, String url, String... ips) { this.id = id; this.url = url; this.ips = ips; }
+        volatile String shape = ""; volatile boolean lastOk; volatile long lastMs = -1; volatile String lastError; volatile long lastAt = 0;
+        Resolver(String id, String label, String url, String[] ips, boolean json, String filters) { this.id = id; this.label = label; this.url = url; this.ips = ips; this.json = json; this.filters = filters; }
+        Resolver(String id, String url, String... ips) { this(id, id, url, ips, false, "none"); }
     }
-    private static final Resolver[] KNOWN = {
-        new Resolver("cloudflare", "https://cloudflare-dns.com/dns-query", "1.1.1.1", "1.0.0.1"),
-        new Resolver("google", "https://dns.google/dns-query", "8.8.8.8", "8.8.4.4"),
-        new Resolver("quad9", "https://dns.quad9.net/dns-query", "9.9.9.9", "149.112.112.112"),
-        new Resolver("adguard", "https://dns.adguard-dns.com/dns-query", "94.140.14.14", "94.140.15.15"),
-        new Resolver("mullvad", "https://dns.mullvad.net/dns-query", "194.242.2.2"),
-        new Resolver("dnssb", "https://doh.dns.sb/dns-query", "185.222.222.222", "45.11.45.11"),
-        new Resolver("controld", "https://freedns.controld.com/p0", "76.76.2.0", "76.76.10.0"),
-        new Resolver("opendns", "https://doh.opendns.com/dns-query", "208.67.222.222", "208.67.220.220"),
+    /** core/kt-core/src/doh-providers.txt, field by field (tests/dohchain.cjs checks the copy). */
+    static final Resolver[] KNOWN = {
+        new Resolver("cloudflare", "Cloudflare", "https://cloudflare-dns.com/dns-query", new String[] { "1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001" }, true, "none"),
+        new Resolver("google", "Google", "https://dns.google/dns-query", new String[] { "8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844" }, true, "none"),
+        new Resolver("quad9", "Quad9", "https://dns.quad9.net/dns-query", new String[] { "9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9" }, false, "malware"),
+        new Resolver("adguard", "AdGuard", "https://dns.adguard-dns.com/dns-query", new String[] { "94.140.14.14", "94.140.15.15", "2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff" }, false, "ads"),
+        new Resolver("adguard-unfiltered", "AdGuard (unfiltered)", "https://unfiltered.adguard-dns.com/dns-query", new String[] { "94.140.14.140", "94.140.14.141", "2a10:50c0::1:ff", "2a10:50c0::2:ff" }, false, "none"),
+        new Resolver("dnssb", "DNS.SB", "https://185.222.222.222/dns-query", new String[] { "185.222.222.222" }, false, "none"),
+        new Resolver("controld", "Control D", "https://freedns.controld.com/p0", new String[] { "76.76.2.0", "76.76.10.0", "2606:1a40::", "2606:1a40:1::" }, false, "none"),
+        new Resolver("wikimedia", "Wikimedia DNS", "https://wikimedia-dns.org/dns-query", new String[] { "185.71.138.138", "2001:67c:930::1" }, false, "none"),
+        new Resolver("dns4eu", "DNS4EU", "https://unfiltered.joindns4.eu/dns-query", new String[] { "86.54.11.100", "86.54.11.200", "2a13:1001::86:54:11:100", "2a13:1001::86:54:11:200" }, false, "legal"),
     };
+    /** The table in use (tests put loopback resolvers here; the app never changes it). */
+    static volatile Resolver[] table = KNOWN;
+    /** The system's own lookup (tests count its calls; the app's is InetAddress's). */
+    interface SysDns { InetAddress[] lookup(String host) throws IOException; }
+    static volatile SysDns sys = InetAddress::getAllByName;
+    static final long FAIL_FORGET_MS = 600_000L, PROBE_EVERY_MS = 1_800_000L, TTL_MIN_S = 30, TTL_MAX_S = 3600, NEG_TTL_S = 30; static final int CACHE_MAX = 512;
     private static final Map<String, Resolver> custom = new ConcurrentHashMap<>();
-    /** The one that answered last: asked first. */
+    /** (Kept for the old status field: the one that answered last.) */
     static volatile String preferred = "";
-    /** The resolvers for `p`, in the order to try them: the chosen (or the last that answered) first, the rest after it. */
+    static String hostOf(String url) { try { String h = new URL(url).getHost(); if (h.startsWith("[")) h = h.substring(1, h.length() - 1); return h.toLowerCase(java.util.Locale.ROOT); } catch (Exception e) { return ""; } }
+    /** A resolver on this device (plain http to 127.0.0.1, localhost, ::1): asked alone. */
+    static boolean onDevice(String url) { if (url == null || !url.trim().toLowerCase(java.util.Locale.ROOT).startsWith("http://")) return false; String h = hostOf(url.trim()); return h.equals("127.0.0.1") || h.equals("localhost") || h.equals("::1"); }
+    /** The user's own address checked (dohchain.rs validate_custom): "ok" or why not. */
+    static String validateCustom(String url) {
+        String u = url == null ? "" : url.trim(); if (u.length() > 512) return "tooLong";
+        for (int i = 0; i < u.length(); i++) { char c = u.charAt(i); if (Character.isWhitespace(c) || c < 0x20 || c == 0x7f) return "space"; }
+        String lower = u.toLowerCase(java.util.Locale.ROOT), rest;
+        if (lower.startsWith("https://")) rest = lower.substring(8);
+        else if (lower.startsWith("http://")) { String h = authHost(lower.substring(7)); if (!(h.equals("127.0.0.1") || h.equals("localhost") || h.equals("::1"))) return "notHttps"; rest = lower.substring(7); }
+        else return "notHttps";
+        int end = rest.length(); for (char c : new char[] { '/', '?', '#' }) { int i = rest.indexOf(c); if (i >= 0 && i < end) end = i; }
+        String auth = rest.substring(0, end), path = rest.substring(end);
+        if (auth.contains("@")) return "userinfo";
+        String host, port = null;
+        if (auth.startsWith("[")) { int i = auth.indexOf(']'); if (i < 0) return "noHost"; host = auth.substring(1, i); String after = auth.substring(i + 1); if (after.startsWith(":")) port = after.substring(1); }
+        else { int i = auth.indexOf(':'); host = i < 0 ? auth : auth.substring(0, i); if (i >= 0) port = auth.substring(i + 1); }
+        if (host.isEmpty()) return "noHost";
+        if (port != null) { if (!port.matches("\\d{1,5}") || Integer.parseInt(port) < 1 || Integer.parseInt(port) > 65535) return "badPort"; }
+        if (path.contains("#") || !path.startsWith("/") || path.equals("/") || path.startsWith("/?")) return "badPath";
+        return "ok";
+    }
+    private static String authHost(String rest) { int end = rest.length(); for (char c : new char[] { '/', '?', '#' }) { int i = rest.indexOf(c); if (i >= 0 && i < end) end = i; } String a = rest.substring(0, end); a = a.substring(a.lastIndexOf('@') + 1); if (a.startsWith("[")) { int i = a.indexOf(']'); return i < 0 ? "" : a.substring(1, i); } int i = a.indexOf(':'); return i < 0 ? a : a.substring(0, i); }
+    private static Resolver known(String id) { for (Resolver r : table) if (r.id.equals(id)) return r; return null; }
+    /** The resolvers for `p`, in the order to try them (dohchain.rs order): the chosen one first («custom»: alone when
+     *  on this device), then the rest — the healthy ones quickest first, the ones not checked (or whose failure is old)
+     *  in the table's order, the ones that failed lately last. «mullvad» (discontinued) is «auto»; an unknown name, off. */
     static List<Resolver> resolvers(String p) {
         List<Resolver> out = new ArrayList<>();
-        if (p == null || p.isEmpty() || "off".equals(p)) return out;
+        if (p == null) return out; p = p.trim(); if (p.isEmpty() || "off".equals(p)) return out;
         Resolver chosen = null;
-        if (p.startsWith("https://")) { chosen = custom.get(p); if (chosen == null) { chosen = new Resolver("custom", p); custom.put(p, chosen); } }
-        else if (!"auto".equals(p)) for (Resolver r : KNOWN) if (r.id.equals(p)) chosen = r;
+        if (p.contains("://")) { if (!"ok".equals(validateCustom(p))) return out; chosen = custom.get(p); if (chosen == null) { chosen = new Resolver("custom", p); custom.put(p, chosen); } if (onDevice(p)) { out.add(chosen); return out; } }
+        else if (!"auto".equals(p) && !"mullvad".equals(p) && !"opendns".equals(p)) { chosen = known(p); if (chosen == null) return out; }
         if (chosen != null) out.add(chosen);
-        String pref = preferred;
-        if (!pref.isEmpty()) for (Resolver r : KNOWN) if (r.id.equals(pref) && !out.contains(r)) out.add(r);
-        List<Resolver> rest = new ArrayList<>(); for (Resolver r : KNOWN) if (!out.contains(r)) rest.add(r);
-        // (The rest by health: the ones that answered last, quickest first; the ones that failed last.)
-        java.util.Collections.sort(rest, (x, y) -> { int a = x.lastMs < 0 ? 1 : x.lastOk ? 0 : 2, b = y.lastMs < 0 ? 1 : y.lastOk ? 0 : 2; if (a != b) return a - b; return Long.compare(x.lastMs < 0 ? Long.MAX_VALUE : x.lastMs, y.lastMs < 0 ? Long.MAX_VALUE : y.lastMs); });
+        final long now = System.currentTimeMillis();
+        final List<Resolver> tab = java.util.Arrays.asList(table);
+        List<Resolver> rest = new ArrayList<>(); for (Resolver r : tab) if (r != chosen) rest.add(r);
+        java.util.Collections.sort(rest, (x, y) -> { int a = rank(x, now), b = rank(y, now); if (a != b) return a - b; if (a == 0 && x.lastMs != y.lastMs) return Long.compare(x.lastMs, y.lastMs); return tab.indexOf(x) - tab.indexOf(y); });
         out.addAll(rest); return out;
     }
+    private static int rank(Resolver r, long now) { if (r.lastAt == 0) return 1; if (r.lastOk) return 0; return now - r.lastAt < FAIL_FORGET_MS ? 2 : 1; }
+    /** Its health noted (by the chain's questions and the probe). */
+    static void health(Resolver r, boolean ok, long ms, String why) { r.lastOk = ok; r.lastMs = ms; r.lastAt = System.currentTimeMillis(); r.lastError = ok ? null : why; }
 
-    private static final class Entry { final InetAddress[] ips; final long until; Entry(InetAddress[] ips, long until) { this.ips = ips; this.until = until; } }
+    /** Names of this device or its network: the system's own lookup, by rule (never sent to a public resolver). */
+    static boolean isLocalName(String name) { String n = name.toLowerCase(java.util.Locale.ROOT); if (n.endsWith(".")) n = n.substring(0, n.length() - 1); return (!n.isEmpty() && !n.contains(".")) || n.equals("localhost") || n.endsWith(".localhost") || n.endsWith(".local") || n.endsWith(".home.arpa") || n.endsWith(".lan") || n.endsWith(".internal"); }
+    /** An answered address worth connecting to (dohchain.rs address_ok): never the unspecified, this device, link-local,
+     *  multicast or broadcast; from a public resolver not a private network's (a filter's «blocked», or a rebinding). */
+    static boolean addressOk(InetAddress a, boolean fromCustom) {
+        byte[] b = a.getAddress();
+        if (b.length == 16) { boolean mapped = true; for (int i = 0; i < 10; i++) if (b[i] != 0) mapped = false; if (mapped && (b[10] & 0xff) == 0xff && (b[11] & 0xff) == 0xff) { try { return addressOk(InetAddress.getByAddress(java.util.Arrays.copyOfRange(b, 12, 16)), fromCustom); } catch (Exception e) { return false; } } }
+        if (a.isAnyLocalAddress() || a.isLinkLocalAddress() || a.isMulticastAddress()) return false;
+        if (a.isLoopbackAddress()) return fromCustom;   // (the user's own resolver may name this device)
+        if (b.length == 4) { int o0 = b[0] & 0xff, o1 = b[1] & 0xff; if (o0 == 0 || o0 >= 240) return false; boolean priv = o0 == 10 || (o0 == 172 && o1 >= 16 && o1 <= 31) || (o0 == 192 && o1 == 168) || (o0 == 100 && o1 >= 64 && o1 <= 127) || (o0 == 198 && (o1 == 18 || o1 == 19)); return fromCustom || !priv; }
+        // (An IPv6 form that carries an IPv4 address — IPv4-compatible ::/96, NAT64 64:ff9b::/96, 6to4 2002::/16 — is
+        // judged by the address it carries.)
+        boolean zero6 = true; for (int i = 0; i < 12; i++) if (b[i] != 0) zero6 = false;
+        boolean nat64 = (b[0] & 0xff) == 0 && (b[1] & 0xff) == 0x64 && (b[2] & 0xff) == 0xff && (b[3] & 0xff) == 0x9b; for (int i = 4; i < 12 && nat64; i++) if (b[i] != 0) nat64 = false;
+        try {
+            if (zero6 || nat64) return addressOk(InetAddress.getByAddress(java.util.Arrays.copyOfRange(b, 12, 16)), fromCustom);
+            if ((b[0] & 0xff) == 0x20 && (b[1] & 0xff) == 0x02) return addressOk(InetAddress.getByAddress(java.util.Arrays.copyOfRange(b, 2, 6)), fromCustom);
+        } catch (Exception e) { return false; }
+        return fromCustom || (b[0] & 0xfe) != 0xfc;
+    }
+
+    /** Whether a resolver blocks names by itself: its «0.0.0.0» is an answer (dohchain.rs filters). */
+    static boolean filters(String id) { if ("custom".equals(id)) return true; Resolver r = known(id); return r != null && !"none".equals(r.filters); }
+    /** The resolvers the probe asks (dohchain.rs probe_ids): «Check now» (`all`) every one; the automatic probe those
+     *  the chain asks first — all in «auto», the chosen one alone when pinned or one's own. */
+    static List<Resolver> probeSet(String p, boolean all) {
+        List<Resolver> chain = resolvers(p); List<Resolver> out = new ArrayList<>(); if (chain.isEmpty()) return out;
+        Resolver first = chain.get(0); boolean auto = "auto".equals(p) || "mullvad".equals(p) || "opendns".equals(p);
+        if (!all && !auto) { out.add(first); return out; }
+        if ("custom".equals(first.id)) { out.add(first); if (onDevice(p)) return out; }   // (a resolver on this device: asked alone, the probe too)
+        for (Resolver k : table) out.add(k);
+        return out;
+    }
+    /** Whether the connection is metered (KtPlugin sets this from Android's ConnectivityManager): no automatic probe then. */
+    static volatile java.util.function.BooleanSupplier metered = () -> false;
+    /** The whole lookup's limit (the shapes, addresses and the AAAA retry of every resolver within it). */
+    static volatile long chainDeadlineMs = 20000;
+
+    /* ---------- which resolver answered each name (the details pages' line), and the probe's timing ---------- */
+    private static final Map<String, String[]> used = new ConcurrentHashMap<>();   // host → {via code, at}
+    static void used(String host, String via) { if (host == null) return; if (used.size() > 400) { String oldest = null; long o = Long.MAX_VALUE; for (Map.Entry<String, String[]> e : used.entrySet()) { long at = Long.parseLong(e.getValue()[1]); if (at < o) { o = at; oldest = e.getKey(); } } if (oldest != null) used.remove(oldest); } used.put(host.toLowerCase(java.util.Locale.ROOT), new String[] { via, String.valueOf(System.currentTimeMillis()) }); }
+    /** { on, hosts: { host: { via, at } } }: via is doh:<id>:<ms>, cache:<id>, stale:<id>, system, local, none:<id>, failed. */
+    static org.json.JSONObject usedFor(List<String> hosts) {
+        org.json.JSONObject o = new org.json.JSONObject();
+        try { org.json.JSONObject hs = new org.json.JSONObject(); for (String h : hosts) { String[] u = used.get(h.toLowerCase(java.util.Locale.ROOT)); if (u != null) { org.json.JSONObject x = new org.json.JSONObject(); x.put("via", u[0]); x.put("at", Long.parseLong(u[1])); hs.put(h, x); } } o.put("on", on()); o.put("hosts", hs); } catch (Exception ignored) {}
+        return o;
+    }
+    static volatile long lastProbeAt = 0; static volatile boolean chainFailed = false; private static final java.util.concurrent.atomic.AtomicBoolean probing = new java.util.concurrent.atomic.AtomicBoolean();
+    /** The probe again when due (dohchain.rs probe_due): on a plain thread, only when a name is asked — no timer. */
+    static void probeIfDue() {
+        if (!on()) return; long now = System.currentTimeMillis();
+        boolean due = lastProbeAt == 0 || now - lastProbeAt >= PROBE_EVERY_MS || (chainFailed && now - lastProbeAt >= 60_000L);
+        try { if (due && metered.getAsBoolean()) return; } catch (Throwable ignored) {}
+        if (!due || !probing.compareAndSet(false, true)) return;
+        final String p = prov(); final boolean br = Boolean.TRUE.equals(inBrowser.get());
+        Thread t = new Thread(() -> { try { if (br) browser(() -> probe(false)); else probe(false); } catch (Exception ignored) {} finally { probing.set(false); } }, "kt-doh-health"); t.setDaemon(true); t.start();
+    }
+
+    private static final class Entry { final InetAddress[] ips; final long until, stored; final String by; Entry(InetAddress[] ips, long until, String by) { this.ips = ips; this.until = until; this.by = by; this.stored = System.currentTimeMillis(); } }
     private static final Map<String, Entry> cache = new ConcurrentHashMap<>();
+    /** Kept by TTL within [TTL_MIN_S, TTL_MAX_S]; «no such name» NEG_TTL_S; at most CACHE_MAX names (the expired first,
+     *  then the soonest to expire). */
+    static void cachePut(String key, InetAddress[] ips, long ttl, String by) {
+        long keep = ips.length == 0 ? NEG_TTL_S : Math.max(TTL_MIN_S, Math.min(TTL_MAX_S, ttl)); long now = System.currentTimeMillis();
+        if (!cache.containsKey(key) && cache.size() >= CACHE_MAX) { cache.entrySet().removeIf(e -> e.getValue().until <= now); while (cache.size() >= CACHE_MAX) { String k = null; long u = Long.MAX_VALUE; for (Map.Entry<String, Entry> e : cache.entrySet()) if (e.getValue().until < u) { u = e.getValue().until; k = e.getKey(); } if (k == null) break; cache.remove(k); } }
+        cache.put(key, new Entry(ips, now + keep * 1000, by));
+    }
+    static int cacheSize() { return cache.size(); }
     static void forget() { cache.clear(); neededAt.clear(); forced.clear(); state = on() ? "idle" : "off"; lastResolver = ""; lastError = ""; lastShape = ""; lastMs = -1; }
 
-    /** The addresses of `host`, asked of the resolvers (kept for their time to live, at least a minute). */
+    /** The addresses of `host` by the chain (dohchain.rs resolve): the cache; each resolver in turn (addresses
+     *  `addressOk` refuses dropped — an answer left with none is that resolver's failure); every resolver failed: an
+     *  earlier answer of theirs however old (up to a day), else the system's DNS only when `allowSystem` — said so in
+     *  the events and in `used`. A name of this device or its network: the system's, by rule. */
     static InetAddress[] resolve(String host) throws IOException {
         if (isLiteral(host)) return new InetAddress[] { InetAddress.getByName(host) };
-        String p = prov(); String key = p + "|" + host.toLowerCase();
+        String hk = host.toLowerCase(java.util.Locale.ROOT);
+        if (isLocalName(hk)) { InetAddress[] l = sys.lookup(host); used(hk, "local"); return l; }
+        String p = prov(); String key = p + "|" + hk;
         Entry e = cache.get(key);
-        if (e != null && e.until > System.currentTimeMillis()) { hits.incrementAndGet(); if (e.ips.length == 0) throw new java.net.UnknownHostException(host); return e.ips; }
+        if (e != null && e.until > System.currentTimeMillis()) { hits.incrementAndGet(); if (e.ips.length == 0) throw new java.net.UnknownHostException(e.by.startsWith("blocked:") ? "DNS over HTTPS: " + host + " is blocked by " + e.by.substring(8) : host); used(hk, "cache:" + e.by); return e.ips; }
         List<Resolver> rs = resolvers(p);
-        if (rs.isEmpty()) return InetAddress.getAllByName(host);
-        byte[] query = query(host, 1);
+        if (rs.isEmpty()) return InetAddress.getAllByName(host);   // (DoH off: the system's, as asked)
         IOException last = null; queries.incrementAndGet(); state = "resolving"; long t0 = System.currentTimeMillis();
-        long deadline = t0 + 25000;
-        for (Resolver r : rs) {
-            if (System.currentTimeMillis() > deadline) break;
-            try {
-                long[] ttl = { 300 };
-                Answer a = askResolver(r, query, (int) Math.max(3000, Math.min(9000, deadline - System.currentTimeMillis())));
-                InetAddress[] ips = a.ips; ttl[0] = a.ttl;
-                if (ips.length == 0) { Answer b = askResolver(r, query(host, 28), 6000); ips = b.ips; ttl[0] = b.ttl; }   // (no IPv4 address: its IPv6 ones)
-                if (ips.length == 0) throw new java.net.UnknownHostException(host);
-                cache.put(key, new Entry(ips, System.currentTimeMillis() + Math.max(60, Math.min(3600, ttl[0])) * 1000));
-                long ms = System.currentTimeMillis() - t0; state = "ok"; lastResolver = a.from; lastShape = a.shape; lastMs = ms; lastAt = System.currentTimeMillis(); lastError = ""; preferred = r.id;
-                note("resolve", host, ips[0].getHostAddress(), ms, r.id + " " + a.shape);
-                return ips;
-            } catch (java.net.UnknownHostException nx) { cache.put(key, new Entry(new InetAddress[0], System.currentTimeMillis() + 60_000L)); state = "ok"; lastAt = System.currentTimeMillis(); note("none", host, null, System.currentTimeMillis() - t0, r.id); throw nx; }   // (a resolver answered: no such name — remembered a minute)
-            catch (IOException ex) { last = ex; note("retry", host, r.id, -1, String.valueOf(ex.getMessage())); }
-        }
-        // (No resolver answered: an address known from before, however old, beats none.)
-        if (e != null && e.ips.length > 0) { note("stale", host, e.ips[0].getHostAddress(), System.currentTimeMillis() - t0, "no resolver answered"); return e.ips; }
-        fails.incrementAndGet(); state = "failed"; lastError = last != null ? clean(last.getMessage()) : "unknown host"; lastAt = System.currentTimeMillis();
-        note("fail", host, null, System.currentTimeMillis() - t0, lastError);
-        throw last != null ? last : new java.net.UnknownHostException(host);
+        long deadline = t0 + chainDeadlineMs; List<String> failed = new ArrayList<>(); boolean allPrivate = true;
+        try {
+            for (Resolver r : rs) {
+                if (System.currentTimeMillis() >= deadline) { failed.add(r.id + ": deadline"); allPrivate = false; break; }
+                long a0 = System.currentTimeMillis();
+                try {
+                    Answer a = askResolver(r, query(host, 1), 6000, deadline);
+                    InetAddress[] ips = a.ips; long ttl = a.ttl;
+                    if (ips.length == 0) { Answer b = askResolver(r, query(host, 28), 6000, deadline); ips = b.ips; ttl = b.ttl; }   // (no IPv4 address: its IPv6 ones)
+                    // (A filtering resolver's 0.0.0.0: blocked by it, on purpose — an answer; no other resolver asked, its health untouched.)
+                    if (ips.length > 0 && filters(r.id)) { boolean unspec = true; for (InetAddress x : ips) if (!x.isAnyLocalAddress()) unspec = false; if (unspec) { cachePut(key, new InetAddress[0], 0, "blocked:" + r.id); used(hk, "blocked:" + r.id); note("blocked", host, null, -1, r.id); throw new java.net.UnknownHostException("DNS over HTTPS: " + host + " is blocked by " + r.id); } }
+                    List<InetAddress> kept = new ArrayList<>(); for (InetAddress x : ips) if (addressOk(x, "custom".equals(r.id))) kept.add(x);
+                    if (kept.isEmpty() && ips.length > 0) { failed.add(r.id + ": private"); note("retry", host, r.id, -1, "private"); continue; }
+                    if (kept.isEmpty()) throw new java.net.UnknownHostException(host);
+                    InetAddress[] out = kept.toArray(new InetAddress[0]);
+                    cachePut(key, out, ttl, r.id);
+                    long ms = System.currentTimeMillis() - t0; state = "ok"; lastResolver = a.from; lastShape = a.shape; lastMs = ms; lastAt = System.currentTimeMillis(); lastError = ""; preferred = r.id;
+                    used(hk, "doh:" + r.id + ":" + (System.currentTimeMillis() - a0));
+                    note("resolve", host, out[0].getHostAddress(), ms, r.id + " " + a.shape);
+                    return out;
+                } catch (java.net.UnknownHostException nx) { if (String.valueOf(nx.getMessage()).contains(" is blocked by ")) throw nx; cachePut(key, new InetAddress[0], 0, r.id); state = "ok"; lastAt = System.currentTimeMillis(); used(hk, "none:" + r.id); note("none", host, null, System.currentTimeMillis() - t0, r.id); throw nx; }   // (a resolver answered: no such name — remembered briefly)
+                catch (IOException ex) { last = ex; allPrivate = false; failed.add(r.id + ": " + clean(ex.getMessage())); note("retry", host, r.id, -1, String.valueOf(ex.getMessage())); }
+            }
+            // (No resolver answered: an address of theirs known from before, however old, beats none.)
+            if (e != null && e.ips.length > 0 && System.currentTimeMillis() - e.stored < 86_400_000L) { used(hk, "stale:" + e.by); note("stale", host, e.ips[0].getHostAddress(), System.currentTimeMillis() - t0, "no resolver answered"); return e.ips; }
+            if (allowSystem) {
+                try { InetAddress[] sy = sys.lookup(host); if (sy.length > 0) { systemUsed.incrementAndGet(); used(hk, "system"); note("system", host, sy[0].getHostAddress(), System.currentTimeMillis() - t0, "every resolver failed: the system's DNS, as allowed"); return sy; } } catch (IOException ignored) {}
+            }
+            chainFailed = true; fails.incrementAndGet(); state = "failed"; lastError = last != null ? clean(last.getMessage()) : "unknown host"; lastAt = System.currentTimeMillis(); used(hk, allPrivate && !failed.isEmpty() ? "private" : "failed");
+            note("fail", host, null, System.currentTimeMillis() - t0, lastError);
+            String why = "DNS over HTTPS: no resolver answered for " + host + " (" + String.join("; ", failed.subList(0, Math.min(3, failed.size()))) + ")" + (allowSystem ? "" : " — the system's DNS is not allowed in Settings");
+            throw new java.net.UnknownHostException(why);
+        } finally { probeIfDue(); }
     }
+    static final java.util.concurrent.atomic.AtomicLong systemUsed = new java.util.concurrent.atomic.AtomicLong();
+    /** Whether a caller may go the network's own way for `host` (a download tried once more by the system's DNS, a
+     *  site whose TLS refused the resolver's way): only when the reader allowed the system's DNS — and then said. */
+    static boolean systemOk(String host, String why) {
+        if (!on()) return true;
+        String k = (host == null ? "" : host.toLowerCase(java.util.Locale.ROOT)) + (allowSystem ? "|y" : "|n"); long now = System.currentTimeMillis(); Long was = saidAt.get(k);
+        boolean say = was == null || now - was > 60_000L; if (say) { if (saidAt.size() > 200) saidAt.clear(); saidAt.put(k, now); }   // (said once a minute a host, not at every connection)
+        if (!allowSystem) { if (say) note("nosystem", host, null, -1, why + ": the system's DNS is not allowed"); return false; }
+        systemUsed.incrementAndGet(); if (host != null) used(host, "system"); if (say) note("system", host, null, -1, why); return true;
+    }
+    private static final Map<String, Long> saidAt = new ConcurrentHashMap<>();
 
     /** What a resolver answered: the addresses, their time to live, the address it answered from and the shape that got through. */
     static final class Answer { final InetAddress[] ips; final long ttl; final String from, shape; Answer(InetAddress[] ips, long ttl, String from, String shape) { this.ips = ips; this.ttl = ttl; this.from = from; this.shape = shape; } }
     /** The shapes a question takes, in the order tried (the one that last worked first): see the class note. */
     static final String[] SHAPES = { "post", "post-split", "get", "post-noname", "json" };
-    /** `r` asked `q` by each of its addresses and each shape until one answers; what worked is kept with it. */
-    static Answer askResolver(Resolver r, byte[] q, int timeoutMs) throws IOException {
+    /** `r` asked `q` by each of its addresses and each shape until one answers; what worked is kept with it. Every
+     *  shape goes to the resolver's own addresses (its bootstrap; the user's resolver's name found by the public
+     *  ones), never by the network's DNS; a POST carries an id of its own, and every answer is read trusting nothing. */
+    static Answer askResolver(Resolver r, byte[] q0, int timeoutMs) throws IOException { return askResolver(r, q0, timeoutMs, System.currentTimeMillis() + Math.max(timeoutMs, 1) * 4L); }
+    /** The same, never past `until` (the lookup's own deadline): every shape and address within it. */
+    static Answer askResolver(Resolver r, byte[] q0, int timeoutMs, long until) throws IOException {
         URL u = new URL(r.url); IOException last = null; long t0 = System.currentTimeMillis();
+        String[] qn = questionOf(q0); int qtype = Integer.parseInt(qn[1]);
         List<String> shapes = new ArrayList<>(); if (!r.shape.isEmpty()) shapes.add(r.shape); for (String s : SHAPES) if (!shapes.contains(s)) shapes.add(s);
-        String[] by = r.ips.length > 0 ? r.ips : new String[] { null };
+        String[] by = bootstrap(r);
         for (String shape : shapes) {
-            // (The JSON form goes by the resolver's name alone; the others by each of its addresses — by name when none is known.)
             if (shape.equals("json") && !r.json()) continue;
-            String[] over = shape.equals("json") ? new String[] { null } : by;
-            for (String ip : over) {
+            for (String ip : by) {
                 if (ip == null && (shape.equals("post-split") || shape.equals("post-noname"))) continue;
+                int id = shape.equals("get") ? 0 : RND.nextInt(65536); byte[] q = withId(q0, id);
+                int left = (int) Math.min(timeoutMs, until - System.currentTimeMillis()); if (left < 50) { if (last == null) last = new IOException("deadline"); health(r, false, System.currentTimeMillis() - t0, "deadline"); throw last; }
                 try {
-                    byte[] m = shape.equals("json") ? askJson(u, q, timeoutMs) : ask(u, ip, q, shape, timeoutMs);
-                    long[] ttl = { 300 }; InetAddress[] ips = parse(m, ttl);
-                    r.shape = shape; r.lastOk = true; r.lastMs = System.currentTimeMillis() - t0; r.lastError = null;
+                    byte[] m = shape.equals("json") ? askJson(u, ip, q, left) : ask(u, ip, q, shape, left);
+                    long[] ttl = { 300 }; InetAddress[] ips = parseStrict(m, qn[0], qtype, id, ttl);
+                    r.shape = shape; health(r, true, System.currentTimeMillis() - t0, null);
                     return new Answer(ips, ttl[0], ip != null ? ip : u.getHost(), shape);
-                } catch (java.net.UnknownHostException nx) { r.lastOk = true; r.lastMs = System.currentTimeMillis() - t0; r.shape = shape; throw nx; }   // (the resolver answered: the name is no site's)
+                } catch (java.net.UnknownHostException nx) { r.shape = shape; health(r, true, System.currentTimeMillis() - t0, null); throw nx; }   // (the resolver answered: the name is no site's)
                 catch (IOException e) { last = e; }
             }
         }
-        r.lastOk = false; r.lastMs = System.currentTimeMillis() - t0; r.lastError = last == null ? "no answer" : clean(last.getMessage());
+        health(r, false, System.currentTimeMillis() - t0, last == null ? "no answer" : clean(last.getMessage()));
         throw last != null ? last : new IOException("no answer");
+    }
+    private static final java.security.SecureRandom RND = new java.security.SecureRandom();
+    static byte[] withId(byte[] q, int id) { byte[] c = q.clone(); c[0] = (byte) (id >> 8); c[1] = (byte) id; return c; }
+    /** The addresses a resolver is reached at: its own (the table's); for the user's resolver, its address when it is
+     *  one, this device when it is on it, else its name asked of the public resolvers — never the network's DNS. */
+    static String[] bootstrap(Resolver r) throws IOException {
+        if (r.ips.length > 0) return r.ips;
+        String h = hostOf(r.url); if (h.isEmpty()) throw new IOException("no host");
+        if (isLiteral(h)) return new String[] { h };
+        if (onDevice(r.url)) return new String[] { "localhost".equals(h) ? "127.0.0.1" : h };
+        String[] had = bootCache.get(h); if (had != null) return had;
+        InetAddress[] ips = null; IOException last = null;
+        for (Resolver k : resolvers("auto")) { try { Answer a = askResolver(k, query(h, 1), 5000); if (a.ips.length > 0) { ips = a.ips; break; } } catch (IOException e) { last = e; } }
+        if (ips == null || ips.length == 0) throw new IOException("the resolver's own name not found: " + (last == null ? h : clean(last.getMessage())));
+        String[] out = new String[ips.length]; for (int i = 0; i < ips.length; i++) out[i] = ips[i].getHostAddress(); bootCache.put(h, out); return out;
+    }
+    private static final Map<String, String[]> bootCache = new ConcurrentHashMap<>();
+
+    /* ---------- torrents: UDP trackers by the chain's addresses (dohchain.rs tracker_rewrite / magnet_rewrite) ---------- */
+    /** A UDP tracker's address with `ip` in place of its name (the UDP tracker protocol carries no name); null when it
+     *  is left as it is — an HTTP(S) tracker (its name is needed for the Host header and the certificate), one given by
+     *  address, a local name. */
+    static String trackerRewrite(String url, String ip) {
+        if (url == null || url.length() < 6 || !url.substring(0, 6).equalsIgnoreCase("udp://")) return null; String rest = url.substring(6);
+        int end = rest.length(); for (char c : new char[] { '/', '?' }) { int i = rest.indexOf(c); if (i >= 0 && i < end) end = i; }
+        String auth = rest.substring(0, end), tail = rest.substring(end); if (auth.startsWith("[")) return null;
+        int i = auth.lastIndexOf(':'); String host = i < 0 ? auth : auth.substring(0, i), port = i < 0 ? null : auth.substring(i + 1);
+        if (host.isEmpty() || isLiteral(host) || isLocalName(host)) return null;
+        return "udp://" + (ip.contains(":") ? "[" + ip + "]" : ip) + (port != null ? ":" + port : "") + tail;
+    }
+    static String trackerHost(String url) { if (trackerRewrite(url, "192.0.2.1") == null) return null; String a = url.substring(6); int end = a.length(); for (char c : new char[] { '/', '?', ':' }) { int i = a.indexOf(c); if (i >= 0 && i < end) end = i; } return a.substring(0, end).toLowerCase(java.util.Locale.ROOT); }
+    interface HostIp { String ip(String host); }
+    static String pctDecode(String s) { try { return java.net.URLDecoder.decode(s, "UTF-8"); } catch (Exception e) { return s; } }
+    static String pctEncode(String s) { StringBuilder b = new StringBuilder(); for (byte c : s.getBytes(java.nio.charset.StandardCharsets.UTF_8)) { int x = c & 0xff; if ((x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 'z') || (x >= '0' && x <= '9') || x == '-' || x == '.' || x == '_' || x == '~') b.append((char) x); else b.append('%').append(String.format(java.util.Locale.ROOT, "%02X", x)); } return b.toString(); }
+    /** A magnet's UDP trackers (tr=) by address; everything else left exactly as it was. */
+    static String magnetRewrite(String magnet, HostIp resolve) {
+        int q = magnet.indexOf('?'); if (q < 0) return magnet; String[] parts = magnet.substring(q + 1).split("&", -1); StringBuilder out = new StringBuilder(magnet.substring(0, q + 1)); boolean first = true;
+        for (String p : parts) {
+            int j = p.indexOf('='); String n = p;
+            if (j > 0 && p.substring(0, j).equalsIgnoreCase("tr")) { String url = pctDecode(p.substring(j + 1)); String h = trackerHost(url); if (h != null) { String ip = resolve.ip(h); String r = ip == null ? null : trackerRewrite(url, ip); if (r == null) continue; n = p.substring(0, j) + "=" + pctEncode(r); } }   // (a UDP tracker the chain could not answer: left out)
+            if (!first) out.append('&'); first = false; out.append(n);
+        }
+        return out.toString();
+    }
+    /** The UDP trackers left out because the chain could not answer for them (the swarm page lists them). */
+    static final java.util.Set<String> droppedTrackers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** rewritten → {original, via}: the swarm page shows the tracker's own name and what answered it. */
+    static final Map<String, String[]> trackerOrigin = new ConcurrentHashMap<>();
+    /** A torrent's tracker list with its UDP trackers by the chain's addresses — the hosts asked at once, within
+     *  `budgetMs`; one the chain could not answer is left as it is (the engine's own lookup: said on the swarm page). */
+    static List<String> trackersViaDoh(List<String> urls, long budgetMs) {
+        if (!on() || urls == null) return urls;
+        java.util.Set<String> hosts = new java.util.LinkedHashSet<>(); for (String u : urls) { String h = trackerHost(u); if (h != null) hosts.add(h); }
+        final Map<String, String> got = new ConcurrentHashMap<>(); List<Thread> ts = new ArrayList<>();
+        for (final String h : hosts) { Thread t = new Thread(() -> { try { InetAddress[] a = resolve(h); if (a.length > 0) got.put(h, a[0].getHostAddress()); } catch (Exception ignored) {} }, "kt-doh-tracker"); t.setDaemon(true); ts.add(t); t.start(); }
+        long until = System.currentTimeMillis() + budgetMs; for (Thread t : ts) { long left = until - System.currentTimeMillis(); if (left <= 0) break; try { t.join(left); } catch (InterruptedException e) { break; } }
+        List<String> out = new ArrayList<>();
+        for (String u : urls) {
+            String h = trackerHost(u); if (h == null) { out.add(u); continue; }   // (HTTP(S), by address, local: as it was)
+            String ip = got.get(h); String r = ip == null ? null : trackerRewrite(u, ip);
+            if (r != null) { String[] w = used.get(h); trackerOrigin.put(r, new String[] { u, w == null ? "" : w[0] }); out.add(r); }
+            else { droppedTrackers.add(u); String[] w = used.get(h); trackerOrigin.put(u, new String[] { u, "dropped:" + (w == null ? "failed" : w[0]) }); }   // (not answered: left out, never a name for libtorrent)
+        }
+        return out;
     }
 
     /* ---------- the sites: whether a site needs the resolver, and the ones forced through it ---------- */
@@ -230,7 +443,8 @@ final class KrDoh {
     /** Sites whose TLS handshake failed through the resolver's way (AniList refusing the rewritten hello on some
      *  networks) and answered the plain way: asked the plain way — the network's DNS, the hello as it is — for a day. */
     private static final Map<String, Long> direct = new ConcurrentHashMap<>();
-    static void goDirect(String host) { if (host == null || host.isEmpty()) return; direct.put(host.toLowerCase(), System.currentTimeMillis() + 86_400_000L); note("direct", host, null, -1, "TLS refused through the resolver: the plain way"); }
+    /** False (and nothing kept) when the reader did not allow the system's DNS: no silent fall-back. */
+    static boolean goDirect(String host) { if (host == null || host.isEmpty()) return false; if (!systemOk(host, "TLS refused through the resolver: the plain way")) return false; direct.put(host.toLowerCase(), System.currentTimeMillis() + 86_400_000L); note("direct", host, null, -1, "TLS refused through the resolver: the plain way"); return true; }
     static boolean isDirect(String host) { if (host == null) return false; Long until = direct.get(host.toLowerCase()); if (until == null) return false; if (until < System.currentTimeMillis()) { direct.remove(host.toLowerCase()); return false; } return true; }
     /** `host` (and its subdomains) sent through the resolver for an hour whatever the network's DNS says: the browser
      *  could not reach it the network's way (a reset, a timeout, a handshake refused — a filter reading names). */
@@ -256,6 +470,10 @@ final class KrDoh {
     static boolean needed(String host) {
         if (!on() || isLiteral(host)) return false;
         if (isForced(host)) return true;
+        // (0.21 P9: the app's own choice — its web views behind the app's proxy — never asks the network's DNS to compare:
+        // every name goes through the chain, and the hello is split only for a site that failed the plain way (forced).
+        // The in-app browser's own switch, without the proxy, still compares — its pages need the web view's own way.)
+        if (!Boolean.TRUE.equals(inBrowser.get())) return false;
         String key = prov() + "|" + host.toLowerCase();
         long[] had = neededAt.get(key);
         if (had != null && had[0] > System.currentTimeMillis()) return had[1] == 1;
@@ -331,23 +549,83 @@ final class KrDoh {
         if (least != Long.MAX_VALUE) ttl[0] = least;
         return out.toArray(new InetAddress[0]);
     }
+    /** An answer read trusting nothing (shared/shell-rs doh.rs decode_strict's twin): at most 65535 bytes, an answer,
+     *  not truncated, the id and the one question asked; the records of the name asked, CNAMEs followed (at most 8, a
+     *  loop refused), class IN and the type asked only. «No such name» → UnknownHostException; no record → none. */
+    static InetAddress[] parseStrict(byte[] m, String qname, int qtype, int id, long[] ttl) throws IOException {
+        if (m.length > 65535) throw new IOException("DNS answer too big"); if (m.length < 12) throw new IOException("DNS answer cut short");
+        if (u16(m, 0) != id) throw new IOException("DNS answer for another question (id)");
+        int flags = u16(m, 2); if ((flags & 0x8000) == 0) throw new IOException("not a DNS answer"); if ((flags & 0x0200) != 0) throw new IOException("DNS answer truncated");
+        int rc = flags & 15; if (rc == 3) throw new java.net.UnknownHostException("NXDOMAIN"); if (rc != 0) throw new IOException("the resolver failed (code " + rc + ")");
+        if (u16(m, 4) != 1) throw new IOException("DNS answer for another question");
+        int an = u16(m, 6); String want = qname.toLowerCase(java.util.Locale.ROOT); if (want.endsWith(".")) want = want.substring(0, want.length() - 1);
+        Object[] qr = readName(m, 12); int i = (Integer) qr[1]; if (i + 4 > m.length) throw new IOException("DNS answer cut short");
+        if (!qr[0].equals(want) || u16(m, i) != qtype) throw new IOException("DNS answer for another question"); i += 4;
+        List<Object[]> recs = new ArrayList<>();   // owner, type, class, ttl, data, len
+        for (int k = 0; k < an; k++) { Object[] o = readName(m, i); int at = (Integer) o[1]; if (at + 10 > m.length) throw new IOException("DNS answer cut short"); int len = u16(m, at + 8), data = at + 10; if (data + len > m.length) throw new IOException("DNS answer cut short"); recs.add(new Object[] { o[0], u16(m, at), u16(m, at + 2), ((long) u16(m, at + 4) << 16) | u16(m, at + 6), data, len }); i = data + len; }
+        String name = want; List<String> seen = new ArrayList<>(); seen.add(name); long least = Long.MAX_VALUE;
+        for (int hop = 0; hop <= 8; hop++) {
+            List<InetAddress> out = new ArrayList<>();
+            for (Object[] r : recs) { if (!r[0].equals(name) || (Integer) r[2] != 1 || (Integer) r[1] != qtype) continue; int at = (Integer) r[4], len = (Integer) r[5]; if ((qtype == 1 && len != 4) || (qtype == 28 && len != 16)) throw new IOException("DNS answer: an address of the wrong size"); out.add(InetAddress.getByAddress(java.util.Arrays.copyOfRange(m, at, at + len))); least = Math.min(least, (Long) r[3]); }
+            if (!out.isEmpty()) { ttl[0] = least; return out.toArray(new InetAddress[0]); }
+            Object[] c = null; for (Object[] r : recs) if (r[0].equals(name) && (Integer) r[1] == 5 && (Integer) r[2] == 1) { c = r; break; }
+            if (c == null) return new InetAddress[0];
+            String to = (String) readName(m, (Integer) c[4])[0]; if (seen.contains(to)) throw new IOException("DNS answer: a CNAME loop"); least = Math.min(least, (Long) c[3]); seen.add(to); name = to;
+        }
+        throw new IOException("DNS answer: too many CNAMEs");
+    }
+    /** A name at `i`, pointers followed (only backwards, at most 32, at most 255 bytes) → {name, position after it}. */
+    static Object[] readName(byte[] m, int i) throws IOException {
+        StringBuilder sb = new StringBuilder(); int end = -1, jumps = 0, total = 0;
+        while (true) {
+            if (i >= m.length) throw new IOException("DNS answer cut short"); int len = m[i] & 0xff;
+            if (len == 0) return new Object[] { sb.toString(), end >= 0 ? end : i + 1 };
+            if ((len & 0xc0) == 0xc0) { if (i + 1 >= m.length) throw new IOException("DNS answer cut short"); int to = ((len & 0x3f) << 8) | (m[i + 1] & 0xff); if (++jumps > 32 || to >= i) throw new IOException("DNS answer: a name that points at itself"); if (end < 0) end = i + 2; i = to; continue; }
+            if ((len & 0xc0) != 0) throw new IOException("DNS answer: a label of an unknown kind");
+            if (i + 1 + len > m.length) throw new IOException("DNS answer cut short"); total += len + 1; if (total > 255) throw new IOException("DNS answer: a name too long");
+            if (sb.length() > 0) sb.append('.'); sb.append(new String(m, i + 1, len, java.nio.charset.StandardCharsets.ISO_8859_1).toLowerCase(java.util.Locale.ROOT)); i += 1 + len;
+        }
+    }
     /** A DNS answer made out of the JSON form's (RFC 8427-ish: {Status, Answer:[{type, TTL, data}]}): the same bytes `parse` reads. */
-    static byte[] fromJson(String json) throws IOException {
+    static byte[] fromJson(String json) throws IOException { return fromJson(json, null); }
+    /** The same, with the question `q` echoed (its id and question): what parseStrict reads. */
+    static byte[] fromJson(String json, byte[] q) throws IOException {
         org.json.JSONObject o; try { o = new org.json.JSONObject(json); } catch (Exception e) { throw new IOException("DoH JSON: " + e.getMessage()); }
         int status = o.optInt("Status", 0); if (status == 3) throw new java.net.UnknownHostException("NXDOMAIN"); if (status != 0) throw new IOException("DoH JSON status " + status);
         ByteArrayOutputStream b = new ByteArrayOutputStream(); org.json.JSONArray ans = o.optJSONArray("Answer"); int n = 0;
         ByteArrayOutputStream recs = new ByteArrayOutputStream();
+        // (0.21 P9: each record keeps its own owner name — parseStrict then follows the question and its CNAMEs, as for the
+        // wire form; an address is taken only when it is written as one — never looked up.)
         if (ans != null) for (int i = 0; i < ans.length(); i++) {
-            org.json.JSONObject a = ans.optJSONObject(i); if (a == null) continue; int type = a.optInt("type", 0); if (type != 1 && type != 28) continue;
-            byte[] addr; try { addr = InetAddress.getByName(a.optString("data")).getAddress(); } catch (Exception e) { continue; }
-            if ((type == 1 && addr.length != 4) || (type == 28 && addr.length != 16)) continue;
+            org.json.JSONObject a = ans.optJSONObject(i); if (a == null) continue; int type = a.optInt("type", 0); if (type != 1 && type != 28 && type != 5) continue;
+            byte[] owner = wireName(a.optString("name", "")), data;
+            if (owner == null) continue;
+            if (type == 5) { data = wireName(a.optString("data", "")); if (data == null) continue; }
+            else { data = literal(a.optString("data", ""), type == 1 ? 4 : 16); if (data == null) continue; }
             long ttl = a.optLong("TTL", 300);
-            recs.write(0xc0); recs.write(0x0c); recs.write(type >> 8); recs.write(type); recs.write(0); recs.write(1);
-            recs.write((int) (ttl >> 24)); recs.write((int) (ttl >> 16)); recs.write((int) (ttl >> 8)); recs.write((int) ttl); recs.write(addr.length >> 8); recs.write(addr.length); recs.write(addr, 0, addr.length); n++;
+            recs.write(owner, 0, owner.length); recs.write(type >> 8); recs.write(type); recs.write(0); recs.write(1);
+            recs.write((int) (ttl >> 24)); recs.write((int) (ttl >> 16)); recs.write((int) (ttl >> 8)); recs.write((int) ttl); recs.write(data.length >> 8); recs.write(data.length); recs.write(data, 0, data.length); n++;
         }
-        b.write(0); b.write(0); b.write(0x81); b.write(0x80); b.write(0); b.write(0); b.write(n >> 8); b.write(n); b.write(0); b.write(0); b.write(0); b.write(0);   // (no question kept: parse skips none)
+        if (q != null) { b.write(q[0]); b.write(q[1]); b.write(0x81); b.write(0x80); b.write(0); b.write(1); b.write(n >> 8); b.write(n); b.write(0); b.write(0); b.write(0); b.write(0); b.write(q, 12, q.length - 12); }
+        else { b.write(0); b.write(0); b.write(0x81); b.write(0x80); b.write(0); b.write(0); b.write(n >> 8); b.write(n); b.write(0); b.write(0); b.write(0); b.write(0); }   // (no question kept: parse skips none)
         byte[] r = recs.toByteArray(); b.write(r, 0, r.length);
         return b.toByteArray();
+    }
+    /** A host name in wire form (labels of 1–63 letters, digits, «-» or «_»; the trailing dot allowed); null otherwise. */
+    static byte[] wireName(String n) {
+        if (n.endsWith(".")) n = n.substring(0, n.length() - 1); if (n.isEmpty() || n.length() > 253) return null;
+        ByteArrayOutputStream b = new ByteArrayOutputStream();
+        for (String l : n.split("\\.", -1)) { if (l.isEmpty() || l.length() > 63 || !l.matches("[A-Za-z0-9_-]+")) return null; b.write(l.length()); byte[] x = l.getBytes(java.nio.charset.StandardCharsets.US_ASCII); b.write(x, 0, x.length); }
+        b.write(0); return b.toByteArray();
+    }
+    /** An address written as one (dotted IPv4, or IPv6 of hex digits and colons) as `len` bytes; never looked up. */
+    static byte[] literal(String s, int len) {
+        try {
+            if (len == 4) { if (!s.matches("\\d{1,3}(\\.\\d{1,3}){3}")) return null; String[] p = s.split("\\."); byte[] b = new byte[4]; for (int i = 0; i < 4; i++) { int v = Integer.parseInt(p[i]); if (v > 255) return null; b[i] = (byte) v; } return b; }
+            if (!s.matches("[0-9A-Fa-f:.]+") || !s.contains(":")) return null;
+            byte[] b = InetAddress.getByName(s).getAddress();   // (a literal of hex and colons: parsed, not looked up)
+            return b.length == 16 ? b : null;
+        } catch (Exception e) { return null; }
     }
     private static int u16(byte[] m, int i) { return ((m[i] & 0xff) << 8) | (m[i + 1] & 0xff); }
     private static int skipName(byte[] m, int p) {
@@ -373,9 +651,11 @@ final class KrDoh {
         else c.setRequestMethod("GET");
         int code = c.getResponseCode();
         if (code != 200) { c.disconnect(); throw new IOException("DoH HTTP " + code + " (" + shape + ")"); }
-        try (InputStream in = c.getInputStream()) { ByteArrayOutputStream b = new ByteArrayOutputStream(); byte[] buf = new byte[4096]; int n; while ((n = in.read(buf)) > 0) b.write(buf, 0, n); return b.toByteArray(); }
+        try (InputStream in = c.getInputStream()) { return readCapped(in); }
         finally { c.disconnect(); }
     }
+    /** A resolver's answer read whole, refused past 65536 bytes (a DNS message is at most 65535). */
+    static byte[] readCapped(InputStream in) throws IOException { ByteArrayOutputStream b = new ByteArrayOutputStream(); byte[] buf = new byte[4096]; int n; while ((n = in.read(buf)) > 0) { b.write(buf, 0, n); if (b.size() > 65536) throw new IOException("DNS answer too big"); } return b.toByteArray(); }
     private static final String B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     /** base64url without padding (RFC 4648 §5), as the GET form wants it. */
     static String b64url(byte[] d) {
@@ -388,15 +668,16 @@ final class KrDoh {
         return sb.toString();
     }
     /** The JSON form (Cloudflare's, Google's, AdGuard's…), by the resolver's name: a last resort when the wire form is refused everywhere. */
-    private static byte[] askJson(URL resolver, byte[] q, int timeoutMs) throws IOException {
+    private static byte[] askJson(URL resolver, String ip, byte[] q, int timeoutMs) throws IOException {
         String[] qn = questionOf(q);
         String base = resolver.toString().replaceAll("/dns-query$", "/resolve"); if (resolver.getHost().contains("cloudflare")) base = resolver.toString();
         URL u = new URL(base + (base.contains("?") ? "&" : "?") + "name=" + java.net.URLEncoder.encode(qn[0], "UTF-8") + "&type=" + qn[1]);
-        HttpURLConnection c = (HttpURLConnection) u.openConnection();
-        c.setConnectTimeout(Math.min(8000, timeoutMs)); c.setReadTimeout(timeoutMs); c.setRequestProperty("Accept", "application/dns-json"); c.setRequestProperty("User-Agent", "KurokawaTools");
+        // (By the resolver's own address — its name kept for TLS — like every other shape: never the network's DNS.)
+        HttpURLConnection c = ip == null ? (HttpURLConnection) u.openConnection() : connectTo(u, ip, false);
+        c.setInstanceFollowRedirects(false); c.setConnectTimeout(Math.min(8000, timeoutMs)); c.setReadTimeout(timeoutMs); c.setRequestProperty("Accept", "application/dns-json"); c.setRequestProperty("User-Agent", "KurokawaTools");
         try {
             int code = c.getResponseCode(); if (code != 200) throw new IOException("DoH JSON HTTP " + code);
-            try (InputStream in = c.getInputStream()) { ByteArrayOutputStream b = new ByteArrayOutputStream(); byte[] buf = new byte[4096]; int n; while ((n = in.read(buf)) > 0) b.write(buf, 0, n); return fromJson(new String(b.toByteArray(), java.nio.charset.StandardCharsets.UTF_8)); }
+            try (InputStream in = c.getInputStream()) { return fromJson(new String(readCapped(in), java.nio.charset.StandardCharsets.UTF_8), q); }
         } finally { c.disconnect(); }
     }
 

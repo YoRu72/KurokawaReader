@@ -11,6 +11,8 @@ mod appicon;
 mod archives;
 mod sevenparse;
 mod commands;
+// (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
+mod dohtools;
 // (Stage P6: the computer's side of the downloads — tray, notices, hotkeys, keep-awake, when done, taskbar progress, the
 // mini window, launches handed over, a Mac's menu bar; desklogic.rs its rules, std only.)
 mod desklogic;
@@ -144,6 +146,7 @@ fn main() {
             commands::kt_remove,
             commands::kt_set_files,
             commands::kt_set_url,
+            commands::kt_ignore_cert,
             commands::kt_move,
             commands::kt_set_limits,
             commands::kt_configure,
@@ -172,6 +175,8 @@ fn main() {
             commands::kt_check_update,
             commands::kt_set_doh,
             commands::kt_doh_probe,
+            commands::kt_doh_status,
+            commands::kt_doh_used,
             update::kt_install_update,
             update::kt_update_download,
             update::kt_update_install,
@@ -334,6 +339,8 @@ fn main() {
                     res_dirs.push(d.to_path_buf());
                 }
             }
+            // (0.21 P9: the DoH choice kept beside the engine's files, read before aria2 starts.)
+            dohtools::set_data_dir(&data_dir);
             engine::init(
                 handle.clone(),
                 data_dir,

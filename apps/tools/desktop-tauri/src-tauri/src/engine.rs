@@ -148,6 +148,30 @@ fn opts_value(o: &[(String, String)]) -> Value {
 
 /* ---------- JSON ⇄ engine_core ---------- */
 
+/// The DoH proxy aria2 is pointed at while DNS over HTTPS is on (0.21 P9: dohtools.rs): (address, user, password),
+/// None while off. Given to aria2 as http-proxy / https-proxy (kt-core engine_core::proxy_options) — in its config
+/// file at start, over RPC later —, never on its command line; the user's own proxy wins.
+static DOH_PROXY: std::sync::RwLock<Option<(String, String, String)>> = std::sync::RwLock::new(None);
+
+/// The DoH proxy changed: kept for the next start, and aria2 told now.
+pub fn set_doh_proxy(p: Option<(String, String, String)>) {
+    if let Ok(mut d) = DOH_PROXY.write() {
+        *d = p;
+    }
+    if let Some(e) = get() {
+        let user = {
+            let g = e.lock();
+            g.config.get("net").and_then(|n| n.get("proxy")).map(|p| text(Some(p))).unwrap_or_default()
+        };
+        let _ = e.call("changeGlobalOption", vec![opts_value(&proxy_opts(&user))]);
+    }
+}
+
+fn proxy_opts(user_proxy: &str) -> Vec<(String, String)> {
+    let d = DOH_PROXY.read().ok().and_then(|p| p.clone());
+    ec::proxy_options(user_proxy, d.as_ref().map(|(a, u, p)| (a.as_str(), u.as_str(), p.as_str())))
+}
+
 pub fn net_config(n: Option<&Value>) -> ec::NetConfig {
     let empty = json!({});
     let n = match n {
@@ -371,6 +395,21 @@ fn free_port() -> Result<u16, String> {
     let p = l.local_addr().map_err(|e| e.to_string())?.port();
     drop(l);
     Ok(p)
+}
+
+/// A file only this user can read (aria2's config with the proxy's password).
+fn write_private(p: &Path, text: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(p)?;
+        f.write_all(text.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(p, text)
+    }
 }
 
 /// Starts the engine (once): its state read from `data_dir`, aria2c started in the background.
@@ -609,7 +648,18 @@ impl Engine {
             data_dir: &self.data_dir,
             windows: WIN,
         };
-        let args = ec::start_args(&config, port, &secret, &paths, std::process::id());
+        let mut args = ec::start_args(&config, port, &secret, &paths, std::process::id());
+        // (0.21 P9: the DoH proxy — read from the saved choice before aria2 starts, so a resumed download never runs
+        // without it — and the certificate authorities, in a config file only this user can read.)
+        crate::dohtools::init_from_disk(&self.data_dir);
+        let mut conf = proxy_opts(&config.net.proxy);
+        if let Some(ca) = ec::ca_bundle(&|p| Path::new(p).exists(), cfg!(target_os = "linux")) {
+            conf.push(("ca-certificate".to_string(), ca));
+        }
+        let conf_path = self.data_dir.join("aria2-kt.conf");
+        if write_private(&conf_path, &ec::conf_text(&conf)).is_ok() {
+            args.insert(0, format!("--conf-path={}", ec::native_path(&conf_path.to_string_lossy(), WIN)));
+        }
         let mut cmd = Command::new(&bin);
         cmd.args(&args)
             .stdin(Stdio::null())
@@ -956,7 +1006,8 @@ impl Engine {
             )?
         } else {
             let link = if truthy(source.get("magnet")) {
-                text(source.get("magnet"))
+                // (Its UDP trackers by the DoH chain's addresses while DoH is on.)
+                crate::dohtools::rewrite_magnet(&text(source.get("magnet")))
             } else {
                 text(source.get("url"))
             };
@@ -993,6 +1044,28 @@ impl Engine {
     }
 
     /// kt:setUrl: a new address for a download whose link ran out — the same file, gone on from where it stopped.
+    /// «Ignore certificate errors for this download» (0.21 P9: offered by the page only after a certificate failure,
+    /// asked first): this download alone gets check-certificate=false — changed in place while it waits, else added
+    /// again over the same file; the choice kept with it.
+    pub fn ignore_cert(&self, id: &str) -> Result<String, String> {
+        let stv = self.call("tellStatus", vec![json!(id)])?;
+        let st = status_of(&stv);
+        if st.bittorrent {
+            return Err("not a file download".to_string());
+        }
+        let url = st.files.first().and_then(|f| f.uris.first().cloned()).unwrap_or_default();
+        if url.is_empty() {
+            return Err("no address".to_string());
+        }
+        if matches!(st.status.as_str(), "active" | "waiting" | "paused") {
+            self.call("changeOption", vec![json!(id), json!({ "check-certificate": "false" })])?;
+            let _ = self.call("unpause", vec![json!(id)]);
+            self.tick();
+            return Ok(id.to_string());
+        }
+        self.readd(id, &url, &st, true)
+    }
+
     pub fn set_url(&self, id: &str, url: &str) -> Result<String, String> {
         let stv = self.call("tellStatus", vec![json!(id)])?;
         let st = status_of(&stv);
@@ -1036,6 +1109,10 @@ impl Engine {
             return Ok(id.to_string());
         }
         // (Stopped with an error: added again over the same file, which aria2 continues.)
+        self.readd(id, url, &st, false)
+    }
+
+    fn readd(&self, id: &str, url: &str, st: &ec::Status, insecure: bool) -> Result<String, String> {
         let f = st.files.first().map(|x| x.path.clone()).unwrap_or_default();
         let k: Map<String, Value> = match self.lock().keep.get(id) {
             Some(Value::Object(m)) => m.clone(),
@@ -1052,6 +1129,10 @@ impl Engine {
                 h.iter().map(|(a, b)| (a.clone(), text(Some(b)))).collect();
             opts.insert("header".into(), json!(ec::header_lines(&pairs)));
         }
+        let insecure = insecure || k.get("insecure") == Some(&Value::Bool(true));
+        if insecure {
+            opts.insert("check-certificate".into(), json!("false"));
+        }
         let gid_v = self.call("addUri", vec![json!([url]), Value::Object(opts)])?;
         let gid = text(Some(&gid_v));
         let _ = self.call("removeDownloadResult", vec![json!(id)]);
@@ -1063,6 +1144,9 @@ impl Engine {
             };
             src.insert("url".into(), json!(url));
             nk.insert("source".into(), Value::Object(src));
+            if insecure {
+                nk.insert("insecure".into(), Value::Bool(true));
+            }
             let mut g = self.lock();
             g.keep.insert(gid.clone(), Value::Object(nk));
             g.keep.remove(id);
@@ -1216,7 +1300,8 @@ impl Engine {
             self.call(
                 "addUri",
                 vec![
-                    json!([text(source.get("magnet"))]),
+                    // (0.21 P9: the metadata step's UDP trackers by the DoH chain too.)
+                    json!([crate::dohtools::rewrite_magnet(&text(source.get("magnet")))]),
                     json!({ "bt-metadata-only": "true", "bt-save-metadata": "false" }),
                 ],
             )?
