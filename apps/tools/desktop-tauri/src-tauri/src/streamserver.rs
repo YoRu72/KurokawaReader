@@ -10,7 +10,8 @@
 //   /<token>/audio?src&ss&a      one audio track as AAC (kt:audioUrl; ffmpeg — streamproxy.rs)
 //   /<token>/video?src&ss&a&c    the picture converted as it plays (kt:videoUrl; ffmpeg)
 //   /<token>/p?u&h               an online source with its headers, HLS remuxed to MP4 (kt:proxyUrl)
-//   /<token>/r/<session>/…       another program's player through the relay (extplayer.rs, kt:relayOpen)
+//   /r/<session>/…               another program's player through the relay (extplayer.rs, kt:relayOpen) — outside
+//                                the run's token: that token unlocks /f and /p, and is never handed to another program
 // Stopped when the app quits (main.rs) — the port and every file let go.
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -253,7 +254,8 @@ fn handle(mut s: TcpStream, token: &str, stop: &Arc<AtomicBool>) {
     let target = req.target.clone();
     let (path, query) = sl::split_target(&target);
     // (Another program's player reading through the relay: extplayer.rs, a session of its own under this run's token.)
-    if path.contains("/r/") && crate::extplayer::serve(&mut s, path, token, &req, head_only, stop) {
+    // (Mounted outside the run's token: another program reads it, by the session's own 128-bit id.)
+    if path.starts_with("/r/") && crate::extplayer::serve(&mut s, path, &req, head_only, stop) {
         let _ = s.flush();
         let _ = s.shutdown(Shutdown::Both);
         return;
@@ -272,7 +274,7 @@ fn handle(mut s: TcpStream, token: &str, stop: &Arc<AtomicBool>) {
 }
 
 /// streamproxy.cjs's localFile(): a file on this computer, with ranges.
-fn serve_file(s: &mut TcpStream, path: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
+pub(crate) fn serve_file(s: &mut TcpStream, path: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
     let p = PathBuf::from(path);
     let size = match std::fs::metadata(&p) {
         Ok(m) if m.is_file() => m.len(),

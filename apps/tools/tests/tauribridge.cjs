@@ -19,7 +19,7 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
   // (Stage P4.)
   'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl',
   // (0.21 P8: another program as the player — extplayer.rs, the relay in streamserver.rs.)
-  'relayOpen', 'relayClose', 'relayStatus', 'extPlayers', 'extPlayerChoose', 'extPlayerArgs', 'extPlayerForget', 'extPlayerStart', 'extPlayerStatus', 'extPlayerStop',
+  'relayOpen', 'relayClose', 'relayStatus', 'extPlayers', 'extPlayerChoose', 'extPlayerArgs', 'extPlayerForget', 'extPlayerDropSub', 'extPlayerStart', 'extPlayerStatus', 'extPlayerStop',
   // (Stage P6: desktop.rs.)
   'desktopPrefs', 'mini', 'registerMagnet', 'captureUrl', 'siteWindow',
   // (Stage P7: browser.rs.)
@@ -110,7 +110,7 @@ function loadBridge(boot) {
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
     appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
-    streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }], relayOpen: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' }, subs: [{ url: 'https://h/a.ass', name: 'a.ass' }], name: 'Show' }], relayClose: [{ token: 'ab' }], relayStatus: [{ token: 'ab' }], extPlayers: [], extPlayerChoose: [{ title: 'Pick' }], extPlayerArgs: [{ args: '--fs {url}' }], extPlayerForget: [], extPlayerStart: [{ player: 'mpv', target: 'https://h/a.m3u8', title: 'x', start: 3, subs: [], headers: {}, slang: [], alang: [] }], extPlayerStatus: [{ id: '1' }], extPlayerStop: [{ id: '1' }],
+    streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }], relayOpen: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' }, subs: [{ url: 'https://h/a.ass', name: 'a.ass' }], name: 'Show' }], relayClose: [{ token: 'ab' }], relayStatus: [{ token: 'ab' }], extPlayers: [], extPlayerChoose: [{ title: 'Pick' }], extPlayerArgs: [{ args: '--fs {url}' }], extPlayerForget: [], extPlayerDropSub: [{ path: '/tmp/kt-sub-a.srt' }], extPlayerStart: [{ player: 'mpv', target: 'https://h/a.m3u8', title: 'x', start: 3, subs: [], headers: {}, slang: [], alang: [] }], extPlayerStatus: [{ id: '1' }], extPlayerStop: [{ id: '1' }],
     desktopPrefs: [{ keepAwake: true, whenDone: 'sleep', notifyDone: false, tray: true, hotkeys: { clip: 'CommandOrControl+Shift+V' } }], mini: [{ action: 'auto', on: true }], registerMagnet: [],
     captureUrl: [{ url: 'https://anilist.co/api/v2/oauth/authorize?client_id=1&response_type=token', marker: 'access_token=', title: 'AniList' }], siteWindow: [{ url: 'https://e.org/', title: 'E' }],
     browse: [{ url: 'https://e.org/' }],

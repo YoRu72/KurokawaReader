@@ -38,10 +38,11 @@ function logic() {
   const cookie = { ...site, headers: { ...site.headers, Cookie: 'k=v' } };
   const C = (id) => L.pcCaps(id);
   ok('phone: a torrent stream and a plain link as they are, a file by path, headers through the relay (subtitles too)', L.plan(torrent, 'android').main === 'direct' && L.plan(file, 'android').main === 'path' && L.plan(site, 'android').main === 'relay' && L.plan(site, 'android').subs[0] === 'relay');
-  ok('phone: a subtitle that is a file path is left out (the app\'s loopback address is used instead)', L.plan({ ...torrent, subs: [{ path: '/data/x.srt', name: 'x' }] }, 'android').subs[0] === 'drop');
-  const m = L.plan(cookie, 'linux', C('mpv'));
-  ok('computer, mpv (tells where it is): all headers on its command line, no relay for the video', m.main === 'direct' && m.headerArgs && !m.relay === false || (m.main === 'direct' && m.headerArgs), m);
-  ok('…a torrent stream and a file as they are', L.plan(torrent, 'linux', C('mpv')).main === 'direct' && L.plan(file, 'linux', C('mpv')).main === 'direct');
+  ok('phone: a subtitle file in the app\'s own folders is left out; one outside them goes by the app\'s loopback address', L.plan({ ...torrent, subs: [{ path: '/data/x.srt', name: 'x' }] }, 'android').subs[0] === 'drop' && L.plan({ ...torrent, subs: [{ path: '/storage/emulated/0/x.srt', name: 'x' }] }, 'android').subs[0] === 'direct');
+  const m = L.plan(cookie, 'linux', C('mpv')); const m2 = L.plan(site, 'linux', C('mpv'));
+  ok('computer, mpv with a cookie: the source through the relay (a cookie never on a command line), mpv still telling where it is', m.main === 'relay' && !m.headerArgs && m.relay && C('mpv').reports, m);
+  ok('…with only User-Agent and Referer: those on its command line, no relay for the video', m2.main === 'direct' && m2.headerArgs, m2);
+  ok('…a torrent stream as it is; a file through a relay session of its own (the run\'s token never handed out)', L.plan(torrent, 'linux', C('mpv')).main === 'direct' && L.plan(file, 'linux', C('mpv')).main === 'relay' && L.plan({ ...file, subs: [{ path: '/v/a.srt', name: 'a' }] }, 'linux', C('mpv')).subs[0] === 'temp');
   for (const id of ['vlc', 'iina', 'mpc-hc', 'potplayer']) ok(`computer, ${id} (does not tell): always through the relay, so the app sees when reading stops`, L.plan(torrent, 'win', C(id)).main === 'relay' && L.plan(site, 'win', C(id)).main === 'relay');
   ok('PotPlayer: headers never on its command line (not documented well enough)', C('potplayer').headers === 'none');
   ok('VLC and MPC read subtitles from disk: saved first', L.plan(site, 'win', C('vlc')).subs[0] === 'temp' && L.plan(site, 'win', C('mpc-hc')).subs[0] === 'temp');
@@ -71,11 +72,12 @@ function logic() {
 /* ---------- 2. the computer's shell ---------- */
 async function shell() {
   const X = require('../desktop/extcmd.cjs');
-  const q = X.check({ target: 'https://cdn.test/v/master.m3u8', title: 'Show\n- 03', start: 90.4, subs: [{ at: path.join(os.tmpdir(), 'kurokawa-clip', 'en.vtt'), isDefault: true }], headers: { ua: 'UA-1', referer: 'https://site.test/', others: [['Cookie', 'k=v']] }, slang: ['ar', 'EN', 'en'], alang: ['ja'] }, X.tempDirs()).req;
+  const q = X.check({ target: 'https://cdn.test/v/master.m3u8', title: 'Show\n- 03', start: 90.4, subs: [{ at: path.join(os.tmpdir(), 'kurokawa-clip', 'en.vtt'), isDefault: true }], headers: { ua: 'UA-1', referer: 'https://site.test/' }, slang: ['ar', 'EN', 'en'], alang: ['ja'] }, X.tempDirs()).req;
   ok('request checked: title without line breaks, languages as codes', q && q.title === 'Show - 03' && q.slang.join() === 'ar,en');
   const sub = q.subs[0].at;
   const mpv = X.build('mpv', q).args;
-  ok('mpv: title, start, sub, langs, UA, referrer, other headers appended, hwdec, IPC, «--» then the address', mpv.includes('--start=90.4') && mpv.includes(`--sub-file=${sub}`) && mpv.includes('--http-header-fields-append=Cookie: k=v') && mpv.includes('--input-ipc-server=${ipc}') && mpv.slice(-2).join() === `--,${q.target}`, mpv);
+  ok('mpv: title, start, sub, langs, User-Agent and Referer only, hwdec, IPC, «--» then the address', mpv.includes('--start=90.4') && mpv.includes(`--sub-file=${sub}`) && mpv.includes('--user-agent=UA-1') && !mpv.some((a) => /header-fields/.test(a)) && mpv.includes('--input-ipc-server=${ipc}') && mpv.slice(-2).join() === `--,${q.target}`, mpv);
+  ok('any other header (a cookie) refused by the shell: such a source must come through the relay', X.check({ target: 'https://a/b', headers: { others: [['Cookie', 'k=v']] } }, X.tempDirs()).error === 'header');
   const ii = X.build('iina', q).args;
   ok('IINA: --keep-running (waits until its window is closed), never -w; its mpv options as --mpv-…', ii[0] === '--keep-running' && !ii.includes('-w') && ii.includes('--mpv-start=90.4') && ii[ii.length - 1] === q.target, ii);
   const vlc = X.build('vlc', q).args; ok('VLC: meta-title, start-time, sub-file, play-and-exit, the address last', vlc.includes('--start-time=90.4') && vlc.includes(`--sub-file=${sub}`) && vlc.includes('--play-and-exit') && vlc[vlc.length - 1] === q.target);
@@ -83,6 +85,8 @@ async function shell() {
   ok('PotPlayer: no header switches', !X.build('potplayer', q).args.some((a) => /user_agent|referer/.test(a)));
   const c = X.build('custom', { ...q, subs: [] }, '"--title={title}" --sub={sub} --hdr \'{referrer}\' ; rm -rf $(x)').args;
   ok('the chosen program\'s line: placeholders inside their own argument, empty ones dropped, no shell (; and $( ) plain)', c.join('|') === `--title=Show - 03|--hdr|https://site.test/|;|rm|-rf|$(x)|${q.target}`, c);
+  const opt = X.build('custom', { ...q, title: '--script=evil.lua', subs: [] }, '{title} --name={title} {url}').args;
+  ok('…a bare placeholder whose value starts with «-» is left out (it would be read as an option)', opt.join('|') === `--name=--script=evil.lua|${q.target}`, opt);
   ok('refused: a file: or other non-http address, a subtitle outside the temp folder, a header with a line break, a referer that is no address', X.check({ target: 'file:///etc/passwd' }, X.tempDirs()).error === 'target' && X.check({ target: 'https://a/b', subs: [{ at: path.join(os.homedir(), '.ssh', 'id.srt') }] }, X.tempDirs()).error === 'subtitle' && X.check({ target: 'https://a/b', headers: { ua: 'a\r\nX: y' } }, X.tempDirs()).error === 'header' && X.check({ target: 'https://a/b', headers: { referer: 'javascript:x' } }, X.tempDirs()).error === 'header');
   if (process.platform === 'win32') { console.log('skip programs (fake players are shell scripts)'); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-extbin-')); const log = path.join(dir, 'log.jsonl'); const rel = path.join(dir, 'rel'); fs.mkdirSync(rel);
@@ -102,13 +106,19 @@ srv.listen(ipc);`;
     let threw = ''; try { E.start({ player: '/bin/sh', target: 'https://a/b' }); } catch (e) { threw = e.message; } ok('a program the page names is refused (only a known id or «chosen»)', /not installed/.test(threw));
     threw = ''; try { E.start({ player: 'mpv', target: 'file:///etc/passwd' }); } catch (e) { threw = e.message; } ok('…a file: address refused', /refused: target/.test(threw));
     threw = ''; try { E.start({ player: 'chosen', target: 'https://a/b' }); } catch (e) { threw = e.message; } ok('«chosen» with nothing chosen: refused', /not installed/.test(threw));
-    const { id, reports } = E.start({ player: 'mpv', target: 'http://127.0.0.1:1/x', title: 'Show - 01', start: 12 });
+    const { id, reports } = E.start({ player: 'mpv', target: 'http://127.0.0.1:1/x', title: 'Show - 01 ${ipc}', start: 12 });
     let st; const t0 = Date.now(); let seenRunning = false;
     for (;;) { await new Promise((r) => setTimeout(r, 100)); st = E.status({ id }); if (st.running) seenRunning = true; if (!st.running || Date.now() - t0 > 8000) break; }
     const rec = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))[0];
-    ok('mpv started by the shell with arguments it built, ${ipc} filled with its own socket', reports && rec.a[0] === '--force-media-title=Show - 01' && rec.a.some((a) => /--input-ipc-server=.*kt-mpv-[0-9a-f]+\.sock$/.test(a)) && rec.a[rec.a.length - 1] === 'http://127.0.0.1:1/x', rec.a);
+    ok('mpv started by the shell with arguments it built, ${ipc} filled with its own socket in --input-ipc-server only (a title naming it stays as it is)', reports && rec.a[0] === '--force-media-title=Show - 01 ${ipc}' && rec.a.some((a) => /--input-ipc-server=.*kt-mpv-[0-9a-f]+\.sock$/.test(a)) && rec.a[rec.a.length - 1] === 'http://127.0.0.1:1/x', rec.a);
     ok('its position told by IPC, the end seen, then ended; the record dropped after', seenRunning && !st.running && st.pos === 1438 && st.dur === 1440 && st.eof && E.status({ id }).error === 'unknown', st);
-    threw = ''; try { E.setChosen('myplayer'); } catch (e) { threw = e.message; } ok('the chosen program must be an absolute path to a file', /not a program/.test(threw));
+    threw = ''; try { E.setChosen('myplayer'); } catch (e) { threw = e.message; } ok('the chosen program must be an absolute path to a file (a clear error)', /kt-ext:notprogram/.test(threw));
+    // (A Mac's dialog gives the .app bundle: its program inside, by Info.plist's CFBundleExecutable.)
+    const app = path.join(dir, 'Fake Player.app'); fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true }); fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), '<plist><dict><key>CFBundleExecutable</key>\n<string>fakeplay</string></dict></plist>'); fs.writeFileSync(path.join(app, 'Contents', 'MacOS', 'fakeplay'), '#!/bin/sh\n', { mode: 0o755 });
+    ok('a .app bundle picked: its program inside is kept', E.setChosen(app).path === path.join(app, 'Contents', 'MacOS', 'fakeplay'));
+    const subCopy = path.join(os.tmpdir(), 'kurokawa-clip', `kt-sub-test${process.pid}.srt`); fs.mkdirSync(path.dirname(subCopy), { recursive: true }); fs.writeFileSync(subCopy, '1\n');
+    const outside = path.join(dir, 'kt-sub-x.srt'); fs.writeFileSync(outside, '1\n');
+    ok('a subtitle copy removed after its player; nothing else (another folder, another name)', E.dropSub({ path: subCopy }).ok && !fs.existsSync(subCopy) && !E.dropSub({ path: outside }).ok && fs.existsSync(outside) && !E.dropSub({ path: '/etc/passwd' }).ok);
     E.setChosen(path.join(dir, 'myplayer')); E.setArgs({ args: '--name={title} {url}' });
     ok('the chosen program and its line kept by the shell (its own file), shown back', E.find().chosen.path === path.join(dir, 'myplayer') && E.find().chosen.args === '--name={title} {url}' && fs.existsSync(path.join(dir, 'store', 'ext-player.json')));
     const ch = E.start({ player: 'chosen', target: 'https://cdn.test/a.mp4', title: 'A b' });
@@ -133,6 +143,7 @@ async function relay() {
     if (u === '/away') { res.writeHead(302, { location: `${C}/moved.mp4` }); res.end(); return; }
     if (u === '/tofile') { res.writeHead(302, { location: 'file:///etc/passwd' }); res.end(); return; }
     if (u === '/big.mp4') { const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range || ''); if (m) { const a = +m[1], b = m[2] ? +m[2] : SEG.length - 1; res.writeHead(206, { 'content-type': 'video/mp4', 'content-range': `bytes ${a}-${b}/${SEG.length}`, 'content-length': b - a + 1, 'accept-ranges': 'bytes' }); res.end(SEG.subarray(a, b + 1)); return; } res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': SEG.length }); res.end(SEG); return; }
+    if (u === '/huge.m3u8') { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }); const line = Buffer.from('#EXTINF:4,\nseg.ts\n'.repeat(4096)); let n = 0; const more = () => { while (n < 300) { n++; if (!res.write(line)) { res.once('drain', more); return; } } res.end(); }; more(); return; }
     if (u === '/slow.mp4') { res.writeHead(200, { 'content-type': 'video/mp4' }); const iv = setInterval(() => res.write(Buffer.alloc(1000)), 20); res.on('close', () => clearInterval(iv)); return; }
     res.writeHead(200, { 'content-type': 'application/octet-stream' }); res.end(`part ${u}`);
   });
@@ -165,7 +176,10 @@ async function relay() {
   const s3 = Relay.open({ url: `${O}/slow.mp4`, headers: H, name: 'slow' }, base);
   const cut = await new Promise((resolve) => { const r = http.get(s3.url, (x) => { let n = 0; x.on('data', (d) => { n += d.length; if (n > 3000) { ok('…a read under way counted', Relay.status(s3.token).reading === 1); Relay.close(s3.token); } }); x.on('close', () => resolve(true)); x.on('error', () => resolve(true)); }); r.on('error', () => resolve(true)); setTimeout(() => resolve(false), 5000); });
   ok('closed: the read under way cut, the address refused (403), status closed', cut && (await get(s3.url)).status === 403 && !Relay.status(s3.token).open);
-  for (const x of [s, s2, s4, s5]) Relay.close(x.token);
+  const s6 = Relay.open({ url: `${O}/huge.m3u8`, headers: H, name: 'h' }, base);
+  ok('a playlist bigger than the cap (16 MB) is not buffered: 502', (await get(s6.url)).status === 502 && Relay.MAX_LIST === 16 << 20);
+  let longRefused = false; try { Relay.open({ url: `${O}/${'x'.repeat(9000)}` }, base); } catch { longRefused = true; } ok('…an address longer than 8 KB refused', longRefused);
+  for (const x of [s, s2, s4, s5, s6]) Relay.close(x.token);
   ok('all sessions closed', Relay.count() === 0);
   // the signed /p through streamproxy.cjs's own server (Electron's net stood in by Node's fetch)
   const real = Module._load; Module._load = function (req, ...rest) { if (req === 'electron') return { net: { fetch: (u, o) => fetch(u, o), request: () => { throw new Error('not in tests'); } }, app: { getPath: () => os.tmpdir() } }; return real.call(this, req, ...rest); };
@@ -179,6 +193,17 @@ async function relay() {
     const unsigned = pu.replace(/&e=.*$/, ''); const tampered = pu.replace(encodeURIComponent(`${O}/big.mp4`), encodeURIComponent(`${O}/slow.mp4`)); const expired = pu.replace(/&e=\d+/, '&e=1000');
     ok('…unsigned, tampered or expired: 403 before anything is fetched', (await get(unsigned)).status === 403 && (await get(tampered)).status === 403 && (await get(expired)).status === 403);
     let refused = false; try { await SP.url('file:///etc/passwd', {}); } catch { refused = true; } ok('…a file: source refused', refused);
+    let nl = false; try { await SP.url('https://a.test/x\nX: y', {}); } catch { nl = true; } ok('…an address with a line break refused', nl);
+    // (/audio and /video run ffmpeg on what they are given: only under this run's token, CORS for the app's page only.)
+    const ab = await SP.audioBase(); const vb = await SP.videoBase();
+    const ah = await get(ab, { Origin: 'https://evil.test' }, 'HEAD');
+    ok('/audio and /video: only with the run\'s token in the path (bare: 403), no CORS for another origin', /\/audio\/[0-9a-f]{32}$/.test(ab) && /\/video\/[0-9a-f]{32}$/.test(vb) && ah.status === 200 && !('access-control-allow-origin' in ah.headers) && (await get(ab.replace(/\/audio\/.*$/, '/audio?src=x'), {}, 'HEAD')).status === 403 && (await get(vb.replace(/\/video\/.*$/, '/video?src=x'), {}, 'HEAD')).status === 403);
+    // (A file on this computer for another program's player: a relay session's own address, ranges, nothing of the run's token.)
+    const tmpFile = path.join(os.tmpdir(), `kt-relay-file-${process.pid}.mkv`); fs.writeFileSync(tmpFile, Buffer.alloc(5000, 3));
+    const rf = await SP.relayOpen({ file: tmpFile, name: 'Local' }); const gf = await get(rf.url, { Range: 'bytes=10-19' });
+    let relRefused = false; try { await SP.relayOpen({ file: 'relative/x.mkv' }); } catch { relRefused = true; }
+    ok('a file through a relay session: ranges served, its address has no run token; a relative or missing path refused', gf.status === 206 && gf.body.length === 10 && /\/r\/[0-9a-f]{32}\/v\/Local$/.test(rf.url) && relRefused);
+    SP.relayClose({ token: rf.token }); ok('…closed: 403', (await get(rf.url)).status === 403); fs.rmSync(tmpFile, { force: true });
     const r = await SP.relayOpen({ url: `${O}/big.mp4`, headers: H, name: 'v' });
     ok('streamproxy.cjs: relayOpen on the app\'s stream server, relayStatus, relayClose', /^http:\/\/127\.0\.0\.1:\d+\/r\/[0-9a-f]{32}\/v\/v$/.test(r.url) && (await get(r.url, { Range: 'bytes=0-9' })).status === 206 && SP.relayStatus({ token: r.token }).open && SP.relayClose({ token: r.token }).closed && (await get(r.url)).status === 403);
     SP.stop();
@@ -191,13 +216,14 @@ async function relay() {
 /* ---------- 4. the page ---------- */
 const STREAM = LANG === 'ar' ? 'تشغيل في أثناء التنزيل' : 'Play while downloading';
 const OPENWITH = LANG === 'ar' ? 'افتحه في مشغّل آخر' : 'Open in another player';
-const streamFrom = async (p, i) => { const cards = await p.$$('.task-card'); await cards[i].click(); const b = p.getByRole('button', { name: STREAM }).first(); await b.waitFor({ timeout: 10000 }); await b.click(); };
+const streamFrom = async (p, i) => { const cards = typeof i === 'string' ? [await p.$(`.task-card:has-text("${i}")`)] : await p.$$('.task-card'); await cards[typeof i === 'string' ? 0 : i].click(); const b = p.getByRole('button', { name: STREAM }).first(); await b.waitFor({ timeout: 10000 }); await b.click(); };
 async function page() {
   let chromium; try { ({ chromium } = require('playwright')); } catch { console.log('skip page (no playwright)'); return; }
   const DIST = path.join(ROOT, 'dist'); if (!fs.existsSync(path.join(DIST, 'index.html'))) { ok('dist built', false); return; }
   const MEDIA = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-extmedia-'));
+  fs.writeFileSync(path.join(MEDIA, 'en.srt'), '1\n00:00:01,000 --> 00:00:03,000\nFirst line\n');
   let media = true; try { execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=25', '-t', '20', '-c:v', 'libvpx', '-b:v', '200k', path.join(MEDIA, 'clip.webm')]); } catch { media = false; }
-  const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.webm': 'video/webm' };
+  const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.webm': 'video/webm', '.srt': 'text/plain' };
   const web = http.createServer((req, res) => {
     let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
     const f = p.startsWith('/media/') ? path.join(MEDIA, p.slice(7)) : path.join(DIST, p);
@@ -215,58 +241,87 @@ async function page() {
   /* ----- the computer ----- */
   {
     const p = await br.newPage({ viewport: { width: 1280, height: 800 } }); p.on('pageerror', (e) => errors.push('pc: ' + e.message));
+    // (Default settings: nothing about how to watch is set — one chooser must be all that is asked.)
     await p.addInitScript(([lang, tasks, port]) => {
       localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.pc.starter', '1');
-      if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player', 'anime'], playerWith: 'external', settingsLayout: 'tabs' }));
-      window.__calls = []; window.__status = {}; window.__relayReads = 0;
+      if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player', 'anime'], settingsLayout: 'tabs' }));
+      window.__calls = []; window.__status = {}; window.__relayReads = 0; window.__quietAfter = 1; window.__lastRead = () => Date.now() - 3600e3;
       const rec = (k) => async (o) => { window.__calls.push([k, o]); return undefined; };
+      // (Each fake takes what the real bridge method takes — desktop/preload.cjs and desktop-tauri/bridge.js; checked below.)
       const api = {
-        platform: 'desktop', available: true, os: 'linux', list: async () => tasks, onTasks: (fn) => { setTimeout(() => fn(tasks), 50); return () => {}; }, on: () => () => {}, ready: async () => ({}), freeSpace: async () => 5e11,
-        fileUrl: async (pth) => `http://127.0.0.1:1/f?t=x&p=${encodeURIComponent(pth)}`, streamUrl: async () => ({ url: `http://127.0.0.1:${port}/media/clip.webm` }), streamDone: rec('streamDone'),
+        platform: 'desktop', available: true, os: 'linux', list: async () => tasks, onTasks: (fn) => { setTimeout(() => fn(tasks), 50); return () => {}; }, freeSpace: async () => 5e11,
+        fileUrl: async (pth) => `http://127.0.0.1:${port}/media/${pth.split('/').pop()}?t=RUNTOKEN`, streamUrl: async (o) => { window.__calls.push(['streamUrl', o]); return { url: `http://127.0.0.1:${port}/media/clip.webm` }; }, streamDone: rec('streamDone'),
         extPlayers: async () => { window.__calls.push(['extPlayers']); return { found: [{ id: 'mpv', name: 'mpv' }, { id: 'vlc', name: 'VLC' }].filter((f) => !window.__noPlayers), chosen: window.__chosen ?? null }; },
-        extPlayerChoose: async (o) => { window.__calls.push(['extPlayerChoose', o]); window.__chosen = { path: '/opt/my player/play', args: '', there: true }; return { path: '/opt/my player/play' }; },
+        extPlayerChoose: async (o) => { window.__calls.push(['extPlayerChoose', o]); if (window.__chooseFails) throw new Error(window.__chooseFails); if (window.__chooseCancel) return null; window.__chosen = { path: '/opt/my player/play', args: '', there: true }; return { path: '/opt/my player/play' }; },
         extPlayerStart: async (o) => { window.__calls.push(['extPlayerStart', o]); if (window.__failStart) throw new Error('spawn ENOENT'); const id = String(window.__calls.length); window.__status[id] = { n: 0, mpv: o.player === 'mpv' }; return { id, reports: o.player === 'mpv' }; },
         extPlayerStatus: async (o) => { window.__calls.push(['extPlayerStatus', o]); const s = window.__status[o.id]; s.n++; return s.n < 2 ? { running: true, code: null, pos: s.mpv ? 600 : null, dur: s.mpv ? 1440 : null, eof: false } : { running: false, code: 0, pos: s.mpv ? 1350 : null, dur: s.mpv ? 1440 : null, eof: false }; },
-        relayOpen: async (o) => { window.__calls.push(['relayOpen', o]); return { token: 'tok', url: 'http://127.0.0.1:3/r/tok/v/x', subs: (o.subs || []).map((_, i) => `http://127.0.0.1:3/r/tok/s/${i}/s`) }; }, relayClose: rec('relayClose'),
-        relayStatus: async (o) => { window.__calls.push(['relayStatus', o]); window.__relayReads++; return window.__relayReads < 2 ? { open: true, lastRead: Date.now(), reading: 1 } : { open: true, lastRead: Date.now() - 3600e3, reading: 0 }; },
-        writeTemp: async (o) => ({ path: `/tmp/kurokawa-clip/${o.name}` }), addons: async () => [],
+        extPlayerDropSub: rec('extPlayerDropSub'),
+        relayOpen: async (o) => { window.__calls.push(['relayOpen', o]); return { token: 'tok', url: 'http://127.0.0.1:3/r/tok/v/x', subs: (o.subs || []).map((x, i) => (x.url ? `http://127.0.0.1:3/r/tok/s/${i}/s` : '')) }; }, relayClose: rec('relayClose'),
+        relayStatus: async (o) => { window.__calls.push(['relayStatus', o]); window.__relayReads++; return window.__relayReads <= window.__quietAfter ? { open: true, lastRead: Date.now(), reading: 1 } : { open: true, lastRead: window.__lastRead(), reading: 0 }; },
+        writeTemp: async (name, text) => { window.__calls.push(['writeTemp', { name, text }]); return `/tmp/kurokawa-clip/${name}`; },
       };
+      window.__api = api;
       window.kurokawaTools = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) });
     }, [LANG, [task({ id: 'd1', kind: 'http', name: 'Made-up Show - 03.mkv', dir: '/videos', state: 'done', engine: 'aria2', meta: META }), task({ id: 't1', kind: 'torrent', name: 'Made-up Clip.mkv', dir: '/videos', state: 'downloading', engine: 'aria2' })], web.address().port]);
     await p.goto(base); await p.waitForSelector('.task-card', { timeout: 20000 });
+    // The fakes take what the real bridges take (a fake with another shape once hid a wrong call).
+    {
+      const shape = (file, re) => { const out = {}; const src = fs.readFileSync(path.join(ROOT, file), 'utf8'); let m; while ((m = re.exec(src))) out[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).length; return out; };
+      const pre = shape('desktop/preload.cjs', /(\w+): \(([^)]*)\) => call\(/g); const tau = shape('desktop-tauri/bridge.js', /(\w+): function \(([^)]*)\) \{ return call\(/g);
+      const fakes = await p.evaluate(() => Object.fromEntries(Object.entries(window.__api).filter(([, v]) => typeof v === 'function').map(([k, v]) => [k, v.length])));
+      const bad = Object.entries(fakes).filter(([k, n]) => (k in pre && pre[k] !== n) || (k in tau && tau[k] !== n));
+      ok('every fake bridge method takes as many arguments as desktop/preload.cjs and desktop-tauri/bridge.js give it', !bad.length && 'writeTemp' in pre && pre.writeTemp === 2, { bad, writeTemp: [pre.writeTemp, tau.writeTemp] });
+    }
     await p.evaluate(() => { window.addEventListener('kt-anime-watched', (e) => { (window.__watched ??= []).push(e.detail); }); });
-    const playBtn = async () => { await p.click(`.task-card button[aria-label="${playLabel}"]`); };
+    const playBtn = async () => { await p.click(`.task-card:has-text("Show - 03") button[aria-label="${playLabel}"]`); };
     await playBtn(); await p.waitForSelector('.ext-chooser .watch-choice', { timeout: 10000 }); await p.waitForTimeout(300);
     const ways = await p.$$eval('.ext-chooser .watch-choice', (e) => e.map((x) => x.dataset.way));
-    const hint = await p.$eval('.ext-chooser [data-way="out"] small', (e) => e.textContent);
-    ok('PC chooser: exactly two ways — the in-app player and «A player on this PC» (Automatic: mpv, which marks it watched)', ways.join() === 'app,out' && /mpv/.test(hint), { ways, hint });
+    const chooserText = await p.$eval('.ext-chooser', (e) => e.textContent);
+    ok('default settings: one question only (no «Watch with» sheet before the chooser)', (await p.$$('.sheet')).length === 1);
+    ok('PC chooser: exactly two ways, no player name in its lines (what happens is said instead)', ways.join() === 'app,out' && !/mpv|VLC|MPC|PotPlayer|IINA/.test(chooserText), { ways, chooserText });
     await shot(p, 'chooser-pc');
     await p.click('.ext-chooser .switch-row input'); await p.click('.ext-chooser [data-way="out"]');
     await p.waitForFunction(() => (window.__watched ?? []).length > 0, null, { timeout: 15000 });
     const pc1 = await p.evaluate(() => ({ calls: window.__calls, mem: JSON.parse(localStorage.getItem('kt.player.memory') || '{}'), set: JSON.parse(localStorage.getItem('kt.settings')), review: sessionStorage.getItem('kt.anime.reviewAsk'), watched: window.__watched }));
-    const start = pc1.calls.find((c) => c[0] === 'extPlayerStart')[1];
-    ok('a typed request: the player\'s id, the file by its loopback address, its title; no program, no arguments from the page', start.player === 'mpv' && start.target === `http://127.0.0.1:1/f?t=x&p=${encodeURIComponent('/videos/Made-up Show - 03.mkv')}` && start.title === 'Made-up Show - 03.mkv' && !('exe' in start) && !('args' in start) && !pc1.calls.some((c) => c[0] === 'relayOpen'), start);
+    const start = pc1.calls.find((c) => c[0] === 'extPlayerStart')[1]; const ro = pc1.calls.find((c) => c[0] === 'relayOpen')?.[1];
+    ok('a file on this PC: a relay session of its own (the run\'s token never on another program\'s command line); a typed request, no program, no arguments', start.player === 'mpv' && start.target === 'http://127.0.0.1:3/r/tok/v/x' && ro?.file === '/videos/Made-up Show - 03.mkv' && !JSON.stringify(start).includes('RUNTOKEN') && !('exe' in start) && !('args' in start), { start, ro });
     const mk = pc1.mem['/videos/Made-up Show - 03.mkv'];
     ok('mpv told 1350 of 1440: the memory, watched once, the review note', mk && mk.duration === 1440 && mk.watched === true && pc1.watched.length === 1 && !!pc1.review, { mk, w: pc1.watched });
     ok('«always» kept as the outside way for files, on the computer only', pc1.set.extPlayers?.desktop?.local === 'out' && !pc1.set.extPlayers?.android);
-    // A player that does not tell (VLC) on the torrent stream: through the relay; the stream kept until the relay is quiet.
-    await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kt.settings')); s.extPcPlayer = 'vlc'; s.extPlayers.desktop.torrent = 'out'; localStorage.setItem('kt.settings', JSON.stringify(s)); window.__calls = []; window.__relayReads = 0; });
-    await p.reload(); await p.waitForSelector('.task-card'); 
-    await streamFrom(p, 1);
-    await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'streamDone'), null, { timeout: 20000 }).catch(async (e) => { console.log('calls:', JSON.stringify(await p.evaluate(() => window.__calls.map((c) => c[0]))), await p.evaluate(() => document.querySelector('.sheet')?.textContent)); throw e; });
-    const pc2 = await p.evaluate(() => window.__calls.map((c) => c[0]));
-    const vs = (await p.evaluate(() => window.__calls.find((c) => c[0] === 'extPlayerStart')[1]));
-    ok('VLC: the torrent stream through the relay (so its reads are seen)', vs.player === 'vlc' && vs.target === 'http://127.0.0.1:3/r/tok/v/x' && pc2.includes('relayOpen'), vs);
-    const exitAt = pc2.lastIndexOf('extPlayerStatus'); const quietAt = pc2.indexOf('relayStatus', pc2.indexOf('relayStatus') + 1);
-    ok('…after the program ended, the stream and relay kept while it was still being read; let go once quiet', exitAt >= 0 && pc2.indexOf('relayStatus') > exitAt && pc2.indexOf('streamDone') > quietAt && pc2.indexOf('relayClose') > quietAt && quietAt > 0, pc2);
-    ok('…an untracked clip: no question', !(await p.$('.ext-mark')));
+    // Cancelling the chooser for a torrent started from the list: the stream let go at once.
+    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__calls = []; }); await streamFrom(p, 'Made-up Clip.mkv'); await p.waitForSelector('.ext-chooser'); await p.keyboard.press('Escape');
+    await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'streamDone'), null, { timeout: 5000 }).catch(() => undefined);
+    ok('chooser cancelled (a torrent from the list): its stream let go', await p.evaluate(() => window.__calls.some((c) => c[0] === 'streamDone' && c[1].id === 't1')));
     await p.goto(base); await p.waitForSelector('.task-card');
-    // «Open in another player» from inside the app's own player on a torrent: the stream is not let go.
+    // A player that does not tell (VLC) on the torrent stream, with a subtitle: through the relay; kept until ten quiet minutes.
+    await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kt.settings')); s.extPcPlayer = 'vlc'; s.extPlayers.desktop.http = 'out'; localStorage.setItem('kt.settings', JSON.stringify(s)); });
+    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__calls = []; window.__relayReads = 0; window.__quietAfter = 2; window.__lastRead = () => Date.now() - 120e3; window.__waitedAt = Date.now(); });
+    // (A video handed in with its subtitle — Android's «Kurokawa Player» path; any source with a subtitle would do.)
+    await p.evaluate((port) => window.dispatchEvent(new CustomEvent('kt:play', { detail: { url: `http://127.0.0.1:${port}/media/clip.webm`, name: 'Handed in', subs: [`http://127.0.0.1:${port}/media/en.srt`] } })), web.address().port);
+    await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'extPlayerStart'), null, { timeout: 15000 });
+    const vs = await p.evaluate(() => window.__calls.find((c) => c[0] === 'extPlayerStart')[1]);
+    const wt = await p.evaluate(() => window.__calls.find((c) => c[0] === 'writeTemp')?.[1]);
+    ok('VLC with a subtitle: saved through writeTemp(name, text), its path an .srt/.ass copy, handed over', !!wt && /^kt-sub-[\w]+\.(srt|ass)$/.test(wt.name) && /First line/.test(wt.text) && /\/kurokawa-clip\/kt-sub-\w+\.(srt|ass)$/.test(vs.subs[0]?.at || ''), { wt, subs: vs.subs });
+    ok('…the video through the relay (so its reads are seen)', vs.player === 'vlc' && vs.target === 'http://127.0.0.1:3/r/tok/v/x', vs);
+    await p.waitForTimeout(12000);
+    const kept = await p.evaluate(() => window.__calls.map((c) => c[0]));
+    ok('…ended, the relay quiet for only two minutes: everything kept (a paused film in a single-instance player)', !kept.includes('relayClose') && !kept.includes('extPlayerDropSub') && kept.filter((x) => x === 'relayStatus').length >= 2, kept);
+    await p.evaluate(() => { window.__lastRead = () => Date.now() - 11 * 60e3; });
+    await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'relayClose'), null, { timeout: 12000 }).catch(() => undefined);
+    const done2 = await p.evaluate(() => window.__calls.map((c) => c[0]));
+    ok('…ten quiet minutes: the relay closed and the subtitle copy removed', done2.includes('relayClose') && done2.includes('extPlayerDropSub'), done2);
+    await p.goto(base); await p.waitForSelector('.task-card');
+    // «Open in another player» from inside the app's own player on a torrent: the stream kept; cancelling reopens the player there.
     if (media) {
       await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kt.settings')); s.extPlayers.desktop.torrent = 'app'; s.extPcPlayer = 'mpv'; localStorage.setItem('kt.settings', JSON.stringify(s)); });
       await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__calls = []; });
-      await streamFrom(p, 1); await p.waitForSelector('.kt-player video.kt-video', { timeout: 15000 });
+      await streamFrom(p, 'Made-up Clip.mkv'); await p.waitForSelector('.kt-player video.kt-video', { timeout: 15000 });
       await p.waitForFunction(() => document.querySelector('.kt-video').currentTime > 2.2, null, { timeout: 15000 });
+      await p.click('.kt-top button[data-icon="more"]'); await p.getByRole('button', { name: OPENWITH }).click();
+      await p.waitForSelector('.ext-chooser [data-way="out"]'); await p.keyboard.press('Escape');
+      await p.waitForSelector('.kt-player video.kt-video', { timeout: 10000 });
+      await p.waitForFunction(() => document.querySelector('.kt-video').currentTime > 2, null, { timeout: 10000 });
+      ok('chooser cancelled from inside the app\'s player: it reopens where it was, the stream not let go', !(await p.evaluate(() => window.__calls.some((c) => c[0] === 'streamDone'))));
       await p.click('.kt-top button[data-icon="more"]'); await p.getByRole('button', { name: OPENWITH }).click();
       await p.waitForSelector('.ext-chooser [data-way="out"]'); await p.click('.ext-chooser [data-way="out"]');
       await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'extPlayerStart'), null, { timeout: 10000 });
@@ -276,28 +331,43 @@ async function page() {
       ok('…the other player gets the same live address, from where it was', st.target === `http://127.0.0.1:${web.address().port}/media/clip.webm` && st.start > 0, st);
       await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'streamDone'), null, { timeout: 15000 });
       ok('…and let go once that player ended', true);
-      await p.goto(base); await p.waitForSelector('.task-card');
+      // A failure there: «Watch in the in-app player» gets the stream still alive (no streamDone before it reopens).
+      await p.waitForSelector('.kt-player', { state: 'detached' }).catch(() => undefined);
+      await p.goto(base); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__calls = []; window.__failStart = true; });
+      await streamFrom(p, 'Made-up Clip.mkv'); await p.waitForSelector('.kt-player video.kt-video', { timeout: 15000 });
+      await p.click('.kt-top button[data-icon="more"]'); await p.getByRole('button', { name: OPENWITH }).click();
+      await p.waitForSelector('.ext-chooser [data-way="out"]'); await p.click('.ext-chooser [data-way="out"]');
+      await p.waitForSelector('.ext-error', { timeout: 10000 }); await p.click('.ext-error .btn.primary');
+      await p.waitForSelector('.kt-player video.kt-video', { timeout: 10000 });
+      ok('a failed hand-over → «Watch in the in-app player»: the stream was not withdrawn', !(await p.evaluate(() => window.__calls.some((c) => c[0] === 'streamDone'))));
+      await p.evaluate(() => { window.__failStart = false; });
+      await p.click('.kt-top button[data-icon="back"]'); await p.waitForFunction(() => !document.querySelector('.kt-player'));
+      // (Reloaded just after the app's player was open: the app goes back to the page it was opened from; then home.)
+      await p.goto(base); await p.reload(); await p.waitForTimeout(500); await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.task-card');
     }
     // «Mark as watched?» for a tracked episode with VLC.
-    await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kt.settings')); s.extPcPlayer = 'vlc'; localStorage.setItem('kt.settings', JSON.stringify(s)); localStorage.removeItem('kt.player.memory'); window.__relayReads = 5; window.__watched = []; });
-    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__relayReads = 5; });
+    await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kt.settings')); s.extPcPlayer = 'vlc'; localStorage.setItem('kt.settings', JSON.stringify(s)); localStorage.removeItem('kt.player.memory'); });
+    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__quietAfter = 0; });
     await p.evaluate(() => { window.addEventListener('kt-anime-watched', (e) => { (window.__watched ??= []).push(e.detail); }); });
     await playBtn(); await p.waitForSelector('.ext-mark', { timeout: 20000 }); await p.waitForTimeout(250); await shot(p, 'mark-pc');
     ok('VLC told nothing about a tracked episode: «Mark as watched?» naming it', /VLC/.test(await p.$eval('.ext-mark', (e) => e.textContent)));
     await p.click('.ext-mark .btn.primary'); await p.waitForFunction(() => (window.__watched ?? []).length >= 1);
     await p.waitForTimeout(300);
     ok('…yes: watched once', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.player.memory'))['/videos/Made-up Show - 03.mkv']?.watched === true && window.__watched.length === 1));
-    // A program that fails: the error, the in-app player one tap away, «Choose a program…».
+    // A program that fails: the error, the in-app player one tap away, «Choose a program…» — buttons of one width.
     await p.evaluate(() => { window.__failStart = true; }); await playBtn();
     await p.waitForSelector('.ext-error', { timeout: 10000 }); await p.waitForTimeout(250); await shot(p, 'error-pc');
-    ok('a program that fails: the error, «Watch in the in-app player» and «Choose a program…»', (await p.$$('.ext-error .btn')).length === 2 && /spawn ENOENT/.test(await p.$eval('.ext-error-why', (e) => e.textContent)));
+    const widths = await p.$$eval('.ext-error .btn', (e) => e.map((b) => Math.round(b.getBoundingClientRect().width)));
+    ok('a program that fails: the error, «Watch in the in-app player» and «Choose a program…», of one width', widths.length === 2 && widths[0] === widths[1] && /spawn ENOENT/.test(await p.$eval('.ext-error-why', (e) => e.textContent)), widths);
     await p.click('.ext-error .btn.primary'); await p.waitForSelector('.kt-player, .player-view', { timeout: 15000 });
     ok('…one tap: the in-app player opens the same video', true);
-    await p.evaluate(() => { window.__failStart = false; window.__noPlayers = true; window.__calls = []; });
-    // Nothing found on this PC: the first use asks for a program.
+    // Nothing found on this PC: the first use asks for a program; a refused pick says why.
     await p.goto(base); await p.waitForSelector('.task-card');
     await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kt.settings')); delete s.extPcPlayer; localStorage.setItem('kt.settings', JSON.stringify(s)); });
-    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__chosen = null; window.__noPlayers = true; window.__calls = []; });
+    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__chosen = null; window.__noPlayers = true; window.__calls = []; window.__chooseFails = 'kt-ext:batch'; });
+    await playBtn(); await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((t) => /\.bat/.test(t.textContent)), null, { timeout: 10000 }).catch(() => undefined);
+    ok('a .bat picked: said plainly (no shell is run), not swallowed', await p.evaluate(() => [...document.querySelectorAll('.toast')].some((t) => /\.bat/.test(t.textContent))));
+    await p.evaluate(() => { window.__chooseFails = ''; window.__calls = []; });
     await playBtn(); await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'extPlayerStart'), null, { timeout: 15000 });
     const first = await p.evaluate(() => ({ calls: window.__calls, set: JSON.parse(localStorage.getItem('kt.settings')) }));
     ok('nothing found: the shell\'s dialog first, then «chosen» started (the path stays with the shell)', first.calls.some((c) => c[0] === 'extPlayerChoose') && first.calls.find((c) => c[0] === 'extPlayerStart')[1].player === 'chosen' && first.set.extPcPlayer === 'chosen' && !JSON.stringify(first.set).includes('/opt/my player'));
@@ -322,7 +392,7 @@ async function page() {
   {
     const p = await br.newPage({ viewport: { width: 360, height: 760 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }); p.on('pageerror', (e) => errors.push('phone: ' + e.message));
     await p.addInitScript(([lang, tasks]) => {
-      localStorage.setItem('kr.lang', lang); if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player', 'anime'], playerWith: 'external' }));
+      localStorage.setItem('kr.lang', lang); if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player', 'anime'] }));
       window.__calls = []; window.__answer = { code: -1, action: 'com.mxtech.intent.result.VIEW', extras: { position: 1430000, duration: 1440000, end_by: 'playback_completion' } };
       const api = {
         addListener: () => Promise.resolve({ remove() {} }), list: async () => ({ tasks }), streamUrl: async (o) => ({ url: `http://127.0.0.1:5/stream/${o.id}/${o.fileIndex}` }), localUrl: async (o) => ({ url: `http://127.0.0.1:5/file?p=${encodeURIComponent(o.path)}` }),

@@ -202,7 +202,7 @@ export function openPlayer(src: PlayerSource): void {
   // (Never a silent black screen: a file with no audio track, or whose picture does not decode, is said plainly —
   // health.ts, loaded after the first frame.)
   let healthOff: (() => void) | null = null;
-  video.addEventListener('playing', () => { if (healthOff || playerGone) return; healthOff = () => undefined; void import('./health').then((H) => { if (playerGone) return; healthOff = H.watchHealth(video, { name: src.localPath ?? src.name, soundBeside: () => !!beside, mpvTracks: mpv ? () => mpv.tracks() : undefined, onNoAudio: () => notice(t('fileNoAudio')), onNoPicture: () => problem('damaged') }); }); });
+  video.addEventListener('playing', () => { if (healthOff || playerGone) return; healthOff = () => undefined; void import('./health').then((H) => { if (playerGone) return; healthOff = H.watchHealth(video, { name: src.localPath ?? src.name, sound: () => ({ busy: soundChecking || !!beside || !!converted, tracks: tracksFound ? tracksFound.audio.length : null }), pictureBusy: () => !!converted || soundChecking, mpvTracks: mpv ? () => mpv.tracks() : undefined, onNoAudio: (k) => notice(k === 'none' ? t('fileNoAudio') : t('fileNoSound')), onNoPicture: () => problem('damaged') }); }); });
   // (A small notice over the picture, under the top bar: told for a few seconds, the video goes on.)
   let noticeTimer = 0;
   function notice(text: string) { let el = root.querySelector<HTMLElement>('.kt-notice'); if (!el) { el = h('div', { class: 'kt-notice', role: 'status' }); root.append(el); } el.textContent = text; el.hidden = false; window.clearTimeout(noticeTimer); noticeTimer = window.setTimeout(() => { el!.hidden = true; }, 6000); }
@@ -862,7 +862,10 @@ export function openPlayer(src: PlayerSource): void {
   function cycleAudio() { const a = audioTracks(); if (!a || a.length < 2) { flashText(t('audioOneTrack')); return; } let i = 0; for (let k = 0; k < a.length; k++) if (a[k].enabled) i = k; const n = (i + 1) % a.length; for (let k = 0; k < a.length; k++) a[k].enabled = k === n; flashText(a[n].label || a[n].language || `#${n + 1}`); }
   // ---- sound the decoder cannot play: turned into AAC by ffmpeg and played beside the video (./compat)
   let beside: import('./compat').SoundBeside | null = null; let tracksFound: import('./compat').Probe | null = null;
-  async function checkSound() {
+  // (While the sound is being settled — the probe, the sound beside starting — no verdict on it: health.ts waits.)
+  let soundChecking = false;
+  async function checkSound() { soundChecking = true; try { await checkSound1(); } finally { soundChecking = false; } }
+  async function checkSound1() {
     const c = await import('./compat'); if (mpv || !c.compatHere() || playerGone) return;
     // (Whatever ffprobe says: a video playing a few seconds with not one frame drawn has a picture this view cannot decode.)
     const pic = () => { if (playerGone || converted) return; void import('./transcode').then((T) => { if (T.noPicture(video)) void noPictureHere(); }); };
@@ -1340,7 +1343,7 @@ export function openPlayer(src: PlayerSource): void {
     const subsNow = src.subtitles ?? [];
     // (The torrent's stream stays: the other player reads it now, and external/run.ts lets it go when that is done.)
     goingOn = true; handingOver = true; close();
-    await ext.playExternally({ src: ext.sourceFor({ url: src.url, name: src.name, localPath: src.localPath, headers: src.headers, subtitles: subsNow, startAt: at > 1 ? at : undefined, key }), service: serviceOf({ taskKind: src.task?.kind, localPath: src.localPath, headers: src.headers }), key, task: src.task, fileIndex: src.fileIndex, meta: src.task?.meta ?? src.meta, alreadyWatched: watchedSent, fallback: () => openPlayer({ ...src, startAt: at }) }, true);
+    await ext.playExternally({ src: ext.sourceFor({ url: src.url, name: src.name, localPath: src.localPath, headers: src.headers, subtitles: subsNow, startAt: at > 1 ? at : undefined, key }), service: serviceOf({ taskKind: src.task?.kind, localPath: src.localPath, headers: src.headers }), key, task: src.task, fileIndex: src.fileIndex, meta: src.task?.meta ?? src.meta, alreadyWatched: watchedSent, fromPlayer: true, fallback: () => openPlayer({ ...src, startAt: at }) }, true);
   }
 
   // ---- closing

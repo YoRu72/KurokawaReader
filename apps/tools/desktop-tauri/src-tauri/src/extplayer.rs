@@ -4,7 +4,7 @@
 // program the user picked in its own dialog in the app's data folder (never in the page's settings: no backup or
 // import can bring a program to run), and starts one only from a typed request it checks and turns into arguments
 // itself (no shell: each argument one item). How it goes: running or ended, and for mpv where it is (its JSON IPC
-// observed). And the relay: a session per playback on the stream server (/<token>/r/<session>/…), closed when the
+// observed). And the relay: a session per playback on the stream server (/r/<session>/…, outside the run's token), closed when the
 // playback ends or after six idle hours (a sweeper marks such sessions gone); the cookie and the page's other headers
 // only to the source's own origin; no CORS. Compiled in CI only (tauri, reqwest); kept thin.
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 use kt_core::streamlogic as sl;
-use kurokawa_shell::{net, reqwest, shell};
+use kurokawa_shell::{reqwest, shell};
 
 use crate::relaylogic::{self as rl, Ask, MpvNote, Req, Session, Sub};
 use crate::streamserver;
@@ -41,6 +41,7 @@ fn plain(s: &mut TcpStream, code: u16) {
 /* ---------- the relay ---------- */
 struct Live {
     s: Session,
+    file: String,
     origin: String,
     last: Instant,
     last_ms: u64,
@@ -99,15 +100,27 @@ pub async fn kt_relay_open(o: Value) -> Result<Value, String> {
     if !url.is_empty() && !rl::is_http(&url) {
         return Err("refused: target".into());
     }
+    // (A file on this computer for another program's player: served by this session's address.)
+    let file = match o.get("file").and_then(|v| v.as_str()) {
+        Some(f) if !f.is_empty() => {
+            let p = PathBuf::from(f);
+            if !p.is_absolute() || !p.is_file() {
+                return Err("refused: file".into());
+            }
+            p.to_string_lossy().to_string()
+        }
+        _ => String::new(),
+    };
     let subs: Vec<Sub> = o.get("subs").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().take(20).map(|x| {
         let u = x.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
         Sub { url: if rl::is_http(&u) { u } else { String::new() }, path: String::new(), name: x.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(), headers: pairs(x.get("headers")) }
     }).collect();
-    let at = format!("http://127.0.0.1:{}/{}/r/{}", port, token, id);
+    let _ = token;
+    let at = format!("http://127.0.0.1:{}/r/{}", port, id);
     let name = o.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let sub_urls: Vec<String> = subs.iter().enumerate().map(|(i, s)| if s.url.is_empty() { String::new() } else { format!("{}/s/{}/{}", at, i, name_part(&s.name, &format!("sub{}.srt", i))) }).collect();
-    let main = if url.is_empty() { String::new() } else { format!("{}/v/{}", at, name_part(name, "video")) };
-    let live = Live { origin: rl::origin(&url), s: Session::new(url, pairs(o.get("headers")), subs), last: Instant::now(), last_ms: now_ms(), reads: 0, reading: Arc::new(AtomicU64::new(0)), gone: Arc::new(AtomicBool::new(false)) };
+    let main = if url.is_empty() && file.is_empty() { String::new() } else { format!("{}/v/{}", at, name_part(name, "video")) };
+    let live = Live { file, origin: rl::origin(&url), s: Session::new(url, pairs(o.get("headers")), subs), last: Instant::now(), last_ms: now_ms(), reads: 0, reading: Arc::new(AtomicU64::new(0)), gone: Arc::new(AtomicBool::new(false)) };
     sessions().lock().map_err(|e| e.to_string())?.insert(id.clone(), live);
     Ok(json!({ "token": id, "url": main, "subs": sub_urls }))
 }
@@ -134,18 +147,20 @@ pub async fn kt_relay_status(o: Value) -> Result<Value, String> {
     })
 }
 
-/// Called by streamserver::handle for /<token>/r/…: true when it was a relay address (answered here).
-pub fn serve(s: &mut TcpStream, path: &str, token: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) -> bool {
-    let (tok, id, ask) = match rl::parse(path) {
+/// The relay's own client: no redirect followed by itself (relay_one does it hop by hop), no cookie jar.
+fn relay_client() -> Option<&'static reqwest::Client> {
+    static C: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+    C.get_or_init(|| reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(30)).build().ok()).as_ref()
+}
+
+/// Called by streamserver::handle for /r/…: true when it was a relay address (answered here).
+pub fn serve(s: &mut TcpStream, path: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) -> bool {
+    let (id, ask) = match rl::parse(path) {
         Some(x) => x,
         None => return false,
     };
-    if !sl::same_token(&sl::decode_component(&tok, false), token) {
-        plain(s, 403);
-        return true;
-    }
     let port = streamserver::ensure().map(|(p, _)| p).unwrap_or(0);
-    let at = format!("http://127.0.0.1:{}/{}/r/{}", port, token, id);
+    let at = format!("http://127.0.0.1:{}/r/{}", port, id);
     let (target, headers, origin, gone, reading, is_sub) = {
         let mut m = match sessions().lock() {
             Ok(m) => m,
@@ -164,6 +179,15 @@ pub fn serve(s: &mut TcpStream, path: &str, token: &str, req: &sl::Head, head_on
         l.last = Instant::now();
         l.last_ms = now_ms();
         l.reads += 1;
+        if matches!(ask, Ask::Video) && !l.file.is_empty() {
+            let f = l.file.clone();
+            let reading = l.reading.clone();
+            drop(m);
+            reading.fetch_add(1, Ordering::SeqCst);
+            streamserver::serve_file(s, &f, req, head_only, stop);
+            reading.fetch_sub(1, Ordering::SeqCst);
+            return true;
+        }
         let (t, h, sub) = match ask {
             Ask::Video => (l.s.url.clone(), l.s.headers.clone(), false),
             Ask::Url(n) => (l.s.urls.get(n).cloned().unwrap_or_default(), l.s.headers.clone(), false),
@@ -189,37 +213,68 @@ pub fn serve(s: &mut TcpStream, path: &str, token: &str, req: &sl::Head, head_on
 }
 #[allow(clippy::too_many_arguments)]
 fn relay_one(s: &mut TcpStream, id: &str, at: &str, target: &str, headers: &[(String, String)], origin: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>, gone: &Arc<AtomicBool>, is_sub: bool) {
-    let client = match net::client() {
-        Ok(c) => c,
-        Err(_) => {
+    let client = match relay_client() {
+        Some(c) => c,
+        None => {
             plain(s, 502);
             return;
         }
     };
     let range = if rl::is_playlist("", target) { None } else { req.header("range") };
-    let same = rl::origin(target) == origin;
-    let mut rb = client.request(if head_only { reqwest::Method::HEAD } else { reqwest::Method::GET }, target);
-    for (k, v) in rl::fetch_headers(headers, range, UA, same) {
-        if reqwest::header::HeaderName::from_bytes(k.as_bytes()).is_ok() && reqwest::header::HeaderValue::from_str(&v).is_ok() {
-            rb = rb.header(k.as_str(), v.as_str());
+    // (Redirects followed here one hop at a time: the page's cookie and its other headers go to the source's origin
+    // only, whatever host a redirect or a playlist names.)
+    let mut url = target.to_string();
+    let mut resp = None;
+    for _ in 0..7 {
+        if !rl::is_http(&url) {
+            break;
+        }
+        let same = rl::origin(&url) == origin;
+        let mut rb = client.request(if head_only { reqwest::Method::HEAD } else { reqwest::Method::GET }, url.as_str());
+        for (k, v) in rl::fetch_headers(headers, range, UA, same) {
+            if reqwest::header::HeaderName::from_bytes(k.as_bytes()).is_ok() && reqwest::header::HeaderValue::from_str(&v).is_ok() {
+                rb = rb.header(k.as_str(), v.as_str());
+            }
+        }
+        let r = match tauri::async_runtime::block_on(rb.send()) {
+            Ok(r) => r,
+            Err(_) => break,
+        };
+        let code = r.status().as_u16();
+        let loc = r.headers().get("location").and_then(|v| v.to_str().ok()).map(|v| v.to_string());
+        match (code, loc) {
+            (300..=399, Some(l)) => url = rl::join(&url, &l),
+            _ => {
+                resp = Some(r);
+                break;
+            }
         }
     }
-    // (reqwest follows redirects itself and drops the cookie and authorisation on another host.)
-    let mut resp = match tauri::async_runtime::block_on(rb.send()) {
-        Ok(r) => r,
-        Err(_) => {
+    let mut resp = match resp {
+        Some(r) => r,
+        None => {
             plain(s, 502);
             return;
         }
     };
     let ctype = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-    let final_url = resp.url().to_string();
-    if !rl::is_http(&final_url) {
-        plain(s, 502);
-        return;
-    }
+    let final_url = url.clone();
     if !is_sub && resp.status().as_u16() < 400 && rl::is_playlist(&ctype, &final_url) {
-        let text = if head_only { String::new() } else { tauri::async_runtime::block_on(resp.text()).unwrap_or_default() };
+        if resp.content_length().unwrap_or(0) as usize > rl::MAX_LIST {
+            plain(s, 502);
+            return;
+        }
+        let mut raw: Vec<u8> = Vec::new();
+        if !head_only {
+            while let Ok(Some(b)) = tauri::async_runtime::block_on(resp.chunk()) {
+                raw.extend_from_slice(&b);
+                if raw.len() > rl::MAX_LIST {
+                    plain(s, 502);
+                    return;
+                }
+            }
+        }
+        let text = String::from_utf8_lossy(&raw).to_string();
         let body = match sessions().lock() {
             Ok(mut m) => match m.get_mut(id) {
                 Some(l) => rl::rewrite(&text, &final_url, at, &mut l.s),
@@ -259,9 +314,9 @@ fn relay_one(s: &mut TcpStream, id: &str, at: &str, target: &str, headers: &[(St
 
 /* ---------- the players ---------- */
 struct Proc {
-    child: Option<Child>,
+    child: Arc<Mutex<Option<Child>>>,
     running: Arc<AtomicBool>,
-    code: Option<i32>,
+    code: Arc<Mutex<Option<i32>>>,
     pos: Arc<Mutex<Option<f64>>>,
     dur: Arc<Mutex<Option<f64>>>,
     eof: Arc<AtomicBool>,
@@ -339,6 +394,8 @@ fn save(app: &AppHandle, v: &Value) -> Result<(), String> {
 /// kt:extPlayers() → { found: [{ id, name }], chosen: { path, args, there } | null }.
 #[tauri::command]
 pub async fn kt_ext_players(app: AppHandle) -> Result<Value, String> {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(sweep_subs);
     let found: Vec<Value> = rl::KNOWN.iter().filter(|k| path_of(k.id).is_some()).map(|k| json!({ "id": k.id, "name": k.name })).collect();
     let s = store(&app);
     let chosen = s.get("path").and_then(|v| v.as_str()).filter(|p| !p.is_empty()).map(|p| json!({ "path": p, "args": s.get("args").and_then(|v| v.as_str()).unwrap_or(""), "there": PathBuf::from(p).is_file() }));
@@ -352,13 +409,59 @@ pub async fn kt_ext_player_choose(app: AppHandle, o: Value) -> Result<Value, Str
         Some(p) => PathBuf::from(p),
         None => return Ok(Value::Null),
     };
+    // (A Mac's dialog gives the application bundle: its program is Contents/MacOS/<CFBundleExecutable>.)
+    let p = if p.extension().map(|e| e.eq_ignore_ascii_case("app")).unwrap_or(false) && p.is_dir() { bundle_program(&p).ok_or("kt-ext:notprogram")? } else { p };
+    // (No shell is ever used, so a .bat or .cmd cannot be run as a player.)
+    if cfg!(windows) && p.extension().map(|e| e.eq_ignore_ascii_case("bat") || e.eq_ignore_ascii_case("cmd")).unwrap_or(false) {
+        return Err("kt-ext:batch".into());
+    }
     if !p.is_absolute() || !p.is_file() {
-        return Err("not a program".into());
+        return Err("kt-ext:notprogram".into());
     }
     let mut s = store(&app);
     s["path"] = json!(p.to_string_lossy());
     save(&app, &s)?;
     Ok(json!({ "path": p.to_string_lossy() }))
+}
+fn bundle_program(app: &std::path::Path) -> Option<PathBuf> {
+    let plist = std::fs::read_to_string(app.join("Contents").join("Info.plist")).unwrap_or_default();
+    let name = plist.find("<key>CFBundleExecutable</key>").and_then(|i| {
+        let rest = &plist[i..];
+        let a = rest.find("<string>")? + 8;
+        let b = rest[a..].find("</string>")?;
+        Some(rest[a..a + b].trim().to_string())
+    }).unwrap_or_else(|| app.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
+    let f = app.join("Contents").join("MacOS").join(name);
+    if f.is_file() { Some(f) } else { None }
+}
+fn sub_name_ok(n: &str) -> bool {
+    n.starts_with("kt-sub-") && n.len() < 120 && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') && [".srt", ".ass", ".ssa", ".vtt"].iter().any(|e| n.ends_with(e))
+}
+/// The subtitle copies saved for players that read only files, an hour old or more: removed.
+fn sweep_subs() {
+    let tmp = std::env::temp_dir();
+    for d in [tmp.clone(), tmp.join("kurokawa-clip")] {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let n = e.file_name().to_string_lossy().to_string();
+                let old = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).map(|a| a.as_secs() > 3600).unwrap_or(false);
+                if sub_name_ok(&n) && old {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
+}
+/// kt:extPlayerDropSub({ path }): one subtitle copy removed once its player has ended.
+#[tauri::command]
+pub async fn kt_ext_player_drop_sub(o: Value) -> Result<Value, String> {
+    let p = PathBuf::from(o.get("path").and_then(|v| v.as_str()).unwrap_or(""));
+    let tmp = std::env::temp_dir();
+    let ok = p.is_absolute() && p.file_name().map(|n| sub_name_ok(&n.to_string_lossy())).unwrap_or(false) && p.parent().map(|d| d == tmp || d == tmp.join("kurokawa-clip")).unwrap_or(false);
+    if ok {
+        let _ = std::fs::remove_file(&p);
+    }
+    Ok(json!({ "ok": ok }))
 }
 /// kt:extPlayerArgs({ args }): the chosen program's arguments line, kept with it here.
 #[tauri::command]
@@ -413,17 +516,48 @@ pub async fn kt_ext_player_start(app: AppHandle, o: Value) -> Result<Value, Stri
     } else {
         tmp.join(format!("kt-mpv-{}.sock", rnd)).to_string_lossy().to_string()
     };
-    let args: Vec<String> = args.into_iter().map(|a| if ipc { a.replace("${ipc}", &ipc_path) } else { a }).collect();
+    // (The socket's path goes into mpv's --input-ipc-server only, never into a title or an address.)
+    let args: Vec<String> = args.into_iter().map(|a| if ipc && a == "--input-ipc-server=${ipc}" { format!("--input-ipc-server={}", ipc_path) } else { a }).collect();
     let child = Command::new(&exe).args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     let id = (SEQ.fetch_add(1, Ordering::SeqCst) + 1).to_string();
-    let p = Proc { child: Some(child), running: Arc::new(AtomicBool::new(true)), code: None, pos: Arc::new(Mutex::new(None)), dur: Arc::new(Mutex::new(None)), eof: Arc::new(AtomicBool::new(false)), ipc: ipc_path.clone(), started: Instant::now() };
+    let p = Proc { child: Arc::new(Mutex::new(Some(child))), running: Arc::new(AtomicBool::new(true)), code: Arc::new(Mutex::new(None)), pos: Arc::new(Mutex::new(None)), dur: Arc::new(Mutex::new(None)), eof: Arc::new(AtomicBool::new(false)), ipc: ipc_path.clone(), started: Instant::now() };
+    // (Reaped here as soon as it ends, whether or not the page asks: no zombie when the page went away.)
+    {
+        let (child, running, code, ipcp) = (p.child.clone(), p.running.clone(), p.code.clone(), p.ipc.clone());
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_millis(500));
+            let mut g = match child.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let ended = match g.as_mut() {
+                Some(c) => match c.try_wait() {
+                    Ok(Some(st)) => Some(st.code()),
+                    Ok(None) => None,
+                    Err(_) => Some(None),
+                },
+                None => Some(None),
+            };
+            if let Some(c) = ended {
+                *g = None;
+                if let Ok(mut k) = code.lock() {
+                    *k = c;
+                }
+                running.store(false, Ordering::SeqCst);
+                if !ipcp.is_empty() && !cfg!(windows) {
+                    let _ = std::fs::remove_file(&ipcp);
+                }
+                return;
+            }
+        });
+    }
     if ipc {
         let (running, pos, dur, eof) = (p.running.clone(), p.pos.clone(), p.dur.clone(), p.eof.clone());
         thread::spawn(move || observe(&ipc_path, running, pos, dur, eof));
     }
     let mut m = procs().lock().map_err(|e| e.to_string())?;
     // (Records a reloaded page no longer asks about: let go after a day.)
-    m.retain(|_, x| x.started.elapsed() < Duration::from_secs(24 * 3600));
+    m.retain(|_, x| x.running.load(Ordering::SeqCst) || x.started.elapsed() < Duration::from_secs(24 * 3600));
     m.insert(id.clone(), p);
     Ok(json!({ "id": id, "reports": ipc }))
 }
@@ -491,20 +625,11 @@ pub async fn kt_ext_player_status(o: Value) -> Result<Value, String> {
         Some(p) => p,
         None => return Ok(json!({ "running": false, "code": null, "pos": null, "dur": null, "eof": false, "error": "unknown" })),
     };
-    if let Some(c) = p.child.as_mut() {
-        if let Ok(Some(st)) = c.try_wait() {
-            p.running.store(false, Ordering::SeqCst);
-            p.code = st.code();
-            p.child = None;
-            if !p.ipc.is_empty() && !cfg!(windows) {
-                let _ = std::fs::remove_file(&p.ipc);
-            }
-        }
-    }
     let running = p.running.load(Ordering::SeqCst);
     let pos = *p.pos.lock().unwrap_or_else(|e| e.into_inner());
     let dur = *p.dur.lock().unwrap_or_else(|e| e.into_inner());
-    let r = json!({ "running": running, "code": p.code, "pos": pos, "dur": dur, "eof": p.eof.load(Ordering::SeqCst) });
+    let code = *p.code.lock().unwrap_or_else(|e| e.into_inner());
+    let r = json!({ "running": running, "code": code, "pos": pos, "dur": dur, "eof": p.eof.load(Ordering::SeqCst) });
     if !running {
         m.remove(&id);
     }
@@ -516,8 +641,8 @@ pub async fn kt_ext_player_status(o: Value) -> Result<Value, String> {
 pub async fn kt_ext_player_stop(o: Value) -> Result<Value, String> {
     let id = o.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let mut m = procs().lock().map_err(|e| e.to_string())?;
-    let ok = match m.get_mut(&id).and_then(|p| p.child.as_mut()) {
-        Some(c) => c.kill().is_ok(),
+    let ok = match m.get_mut(&id) {
+        Some(p) => p.child.lock().ok().and_then(|mut g| g.as_mut().map(|c| c.kill().is_ok())).unwrap_or(false),
         None => false,
     };
     Ok(json!({ "ok": ok }))

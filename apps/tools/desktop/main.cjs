@@ -118,7 +118,7 @@ function createWindow() {
   win.on('close', (e) => { saveState(); if (!quitting && ScreenTr.keepInTray()) { e.preventDefault(); win.hide(); } });
   win.on('closed', () => { win = null; closeMini(); });
   // (The page reloaded: what it knew of programs it started is gone, so the records go too; the players keep playing.)
-  win.webContents.on('did-start-loading', () => { try { require('./extplayer.cjs').release(); } catch { /* */ } });
+  win.webContents.on('did-start-navigation', (_e, _u, inPlace, mainFrame) => { if (!mainFrame || inPlace) return; try { require('./extplayer.cjs').release(); } catch { /* */ } });
   // (The mini window when the main one is put away, if chosen.)
   win.on('minimize', () => { if (loadState().miniOnMinimize) openMini(); });
   win.on('restore', () => { if (loadState().miniOnMinimize) closeMini(); });
@@ -375,6 +375,7 @@ ipcMain.handle('kt:extPlayers', () => ExtPlayer().find());
 ipcMain.handle('kt:extPlayerChoose', async (_e, o) => { const r = await dialog.showOpenDialog(win, { title: String(o && o.title || ''), properties: ['openFile'] }); if (r.canceled || !r.filePaths[0]) return null; return ExtPlayer().setChosen(r.filePaths[0]); });
 ipcMain.handle('kt:extPlayerArgs', (_e, o) => ExtPlayer().setArgs(o || {}));
 ipcMain.handle('kt:extPlayerForget', () => ExtPlayer().forget());
+ipcMain.handle('kt:extPlayerDropSub', (_e, o) => ExtPlayer().dropSub(o || {}));
 ipcMain.handle('kt:extPlayerStart', (_e, o) => ExtPlayer().start(o || {}));
 ipcMain.handle('kt:extPlayerStatus', (_e, o) => ExtPlayer().status(o || {}));
 ipcMain.handle('kt:extPlayerStop', (_e, o) => ExtPlayer().stop(o || {}));

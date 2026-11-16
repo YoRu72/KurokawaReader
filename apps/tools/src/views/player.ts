@@ -15,7 +15,9 @@ export type PlayWith = 'ask' | 'app' | 'external';
 export const canPlayExternally = (): boolean => { const p = nativePlatform(); return p === 'android' || p === 'desktop'; };
 
 export async function openPlayer(url: string, name: string, opts: PlayOpts = {}): Promise<void> {
-  const how = canPlayExternally() ? await chooseHow() : 'app'; if (!how) return;
+  // (One question at most: the hand-over's own chooser — the app's own player or the outside way — asks it, with the
+  // default for this kind of video; «Watch videos with» in Settings feeds that default. No second sheet before it.)
+  const how: 'app' | 'external' = canPlayExternally() && getSettings().playerWith !== 'app' ? 'external' : 'app';
   // (A video opened from a folder: its folder's other videos become the queue, in name order, when the player's setting says.)
   if (!opts.playlist && opts.localPath && !opts.task) { try { const { getPrefs } = await import('../player/prefs'); if (getPrefs().autoQueueFolder !== false) { const { siblingFiles, localFileUrl } = await import('../player/files'); const sibs = (await siblingFiles(opts.localPath)).filter((p) => /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mts|mpg|mpeg|ogv|3gp)$/i.test(p)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); if (sibs.length > 1 && sibs.includes(opts.localPath)) { const pl = []; for (const p of sibs) { const u = p === opts.localPath ? url : await localFileUrl(p); if (u) pl.push({ url: u, name: p.split('/').pop() ?? p, localPath: p }); } if (pl.length > 1) opts = { ...opts, playlist: pl }; } } } catch { /* alone */ } }
   if (how === 'external') {
@@ -47,22 +49,6 @@ async function inApp(url: string, name: string, opts: PlayOpts): Promise<void> {
   // (An MKV, AVI or other container the web view cannot decode — a black picture with sound at best — with no mpv here: the mpv pack offered once, the web view only if declined.)
   if (nativePlatform() === 'android' && engine === 'web' && /\.(mkv|avi|wmv|flv|ts|m2ts|mts|mpg|mpeg|ogv|rmvb)(\?|$)/i.test(opts.localPath ?? name ?? url)) { try { const { ensurePacks } = await import('../packs'); if (await ensurePacks(['mpv'], t('packWhyMpv'))) { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; } } catch { /* the web view then */ } }
   const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts, engine });
-}
-/** The question, unless a choice is remembered: another app, or the in-app player (with what it brings). */
-function chooseHow(): Promise<'app' | 'external' | null> {
-  const pref = getSettings().playerWith; if (pref === 'app' || pref === 'external') return Promise.resolve(pref);
-  return new Promise((resolve) => {
-    let done = false; const answer = (v: 'app' | 'external' | null) => { if (done) return; done = true; if (v && remember.checked) updateSettings({ playerWith: v }); sh.close(); resolve(v); };
-    const sh = openSheet(t('watchWith'), t('close'), { stack: true });
-    const has = getSettings().addons.includes('player'); const android = nativePlatform() === 'android';
-    const remember = h('input', { type: 'checkbox' }) as HTMLInputElement;
-    const choice = (ic: string, title: string, sub: string, v: 'app' | 'external') => h('button', { type: 'button', class: 'watch-choice', onclick: () => answer(v) }, h('span', { class: 'watch-ic' }, icon(ic)), h('span', { class: 'grow' }, h('b', null, title), h('small', null, sub)));
-    sh.body.append(h('div', { class: 'watch-choices' },
-      choice('play', t('watchInApp'), has ? t('watchInAppHint') : `${t('watchInAppHint')} · ${t('watchInAppGet')}`, 'app'),
-      choice('external', t('watchExternal'), android ? t('watchExternalHintAndroid') : t('watchExternalHintDesktop'), 'external')),
-      h('label', { class: 'row switch-row' }, h('span', null, t('watchRemember')), remember), h('p', { class: 'hint' }, t('watchChangeLater')));
-    const mo = new MutationObserver(() => { if (!sh.el.isConnected) { mo.disconnect(); if (!done) { done = true; resolve(null); } } }); mo.observe(document.body, { childList: true, subtree: true });
-  });
 }
 /** Handed to another app: the phone's chooser (the file itself, or the local stream while it comes), or the
  *  computer's default player for a file. False when there is no way, so the in-app player takes it. */

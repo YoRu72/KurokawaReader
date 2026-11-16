@@ -237,6 +237,7 @@ fn main() {
             extplayer::kt_ext_player_choose,
             extplayer::kt_ext_player_args,
             extplayer::kt_ext_player_forget,
+            extplayer::kt_ext_player_drop_sub,
             extplayer::kt_ext_players,
             extplayer::kt_ext_player_start,
             extplayer::kt_ext_player_status,

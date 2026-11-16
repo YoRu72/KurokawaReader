@@ -50,15 +50,11 @@ pub enum Ask {
     Sub(usize),
 }
 
-/// `/<token>/r/<session>/v/<name>`, `/u/<n>`, `/s/<i>/<name>` → (session, what); None for any other path. The run's
-/// token is checked by the caller (streamlogic's same_token).
-pub fn parse(path: &str) -> Option<(String, String, Ask)> {
-    let rest = path.strip_prefix('/')?;
-    let mut it = rest.splitn(5, '/');
-    let tok = it.next()?.to_string();
-    if it.next()? != "r" {
-        return None;
-    }
+/// `/r/<session>/v/<name>`, `/u/<n>`, `/s/<i>/<name>` → (session, what); None for any other path. The relay lives
+/// outside the run's token (another program reads it): the session's own 128-bit id is its key.
+pub fn parse(path: &str) -> Option<(String, Ask)> {
+    let rest = path.strip_prefix("/r/")?;
+    let mut it = rest.splitn(3, '/');
     let sess = it.next()?;
     if sess.len() != 32 || !sess.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
@@ -72,8 +68,12 @@ pub fn parse(path: &str) -> Option<(String, String, Ask)> {
         "s" => Ask::Sub(first.parse().ok()?),
         _ => return None,
     };
-    Some((tok, sess.to_string(), ask))
+    Some((sess.to_string(), ask))
 }
+
+/// A playlist is read whole to be rewritten: at most this much (else 502); longer addresses are left out.
+pub const MAX_LIST: usize = 16 << 20;
+pub const MAX_URL: usize = 8192;
 
 pub fn is_playlist(content_type: &str, href: &str) -> bool {
     if content_type.to_ascii_lowercase().contains("mpegurl") {
@@ -211,7 +211,7 @@ pub fn origin(u: &str) -> String {
 }
 pub fn is_http(u: &str) -> bool {
     let l = u.to_ascii_lowercase();
-    (l.starts_with("http://") || l.starts_with("https://")) && !u.contains(['\r', '\n', ' '])
+    (l.starts_with("http://") || l.starts_with("https://")) && !u.contains(['\r', '\n', ' ', '\0']) && u.len() <= MAX_URL
 }
 
 /// Request headers for a fetch: to the source's own origin all of the page's (lower-cased; Range and Host never);
@@ -332,7 +332,8 @@ pub fn check(mut r: Req, temp_dirs: &[std::path::PathBuf]) -> Result<Req, &'stat
     if r.ua.as_deref().map(|v| !no_break(v)).unwrap_or(false) || r.referer.as_deref().map(|v| !no_break(v) || !is_http(v)).unwrap_or(false) {
         return Err("header");
     }
-    if r.others.len() > 30 || !r.others.iter().all(|(k, v)| !k.is_empty() && k.len() <= 64 && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') && no_break(v)) {
+    // (Only User-Agent and Referer ever reach a command line; the page sends any other header through the relay.)
+    if !r.others.is_empty() {
         return Err("header");
     }
     r.title = r.title.chars().map(|c| if c.is_control() { ' ' } else { c }).take(300).collect();
@@ -382,9 +383,6 @@ pub fn build(id: &str, q: &Req, template: &str) -> (Vec<String>, bool) {
             }
             if let Some(r) = &q.referer {
                 a.push(o(format!("--referrer={}", r)));
-            }
-            for (k, v) in &q.others {
-                a.push(o(format!("--http-header-fields-append={}: {}", k, v)));
             }
             if id == "mpv" {
                 for x in ["--hwdec=auto-safe", "--input-ipc-server=${ipc}", "--idle=no", "--keep-open=no", "--"] {
@@ -487,6 +485,11 @@ pub fn custom(line: &str, q: &Req) -> Vec<String> {
         if any && empty {
             continue;
         }
+        // (Only a placeholder, and its value starts with «-»: it would be read as an option — left out.)
+        let only = vals.iter().any(|(k, _)| w == format!("{{{}}}", k));
+        if any && only && f.starts_with('-') {
+            continue;
+        }
         out.push(f);
     }
     if !had_url {
@@ -538,11 +541,12 @@ mod tests {
     #[test]
     fn players() {
         let tmp = vec![std::path::PathBuf::from("/tmp")];
-        let q = Req { target: "https://cdn.test/v/a.m3u8".into(), title: "Show - 03".into(), start: 90.4, subs: vec![("/tmp/en.vtt".into(), true)], ua: Some("UA-1".into()), referer: Some("https://site.test/".into()), others: vec![("Cookie".into(), "k=v".into())], slang: vec!["ar".into(), "EN".into()], alang: vec!["ja".into()] };
+        let q = Req { target: "https://cdn.test/v/a.m3u8".into(), title: "Show - 03".into(), start: 90.4, subs: vec![("/tmp/en.vtt".into(), true)], ua: Some("UA-1".into()), referer: Some("https://site.test/".into()), others: vec![], slang: vec!["ar".into(), "EN".into()], alang: vec!["ja".into()] };
+        assert_eq!(check(Req { others: vec![("Cookie".into(), "k=v".into())], ..q.clone() }, &tmp).unwrap_err(), "header");
         let q = check(q, &tmp).unwrap();
         assert_eq!(q.slang, vec!["ar"]);
         let (m, ipc) = build("mpv", &q, "");
-        assert!(ipc && m.contains(&"--start=90.4".to_string()) && m.contains(&"--http-header-fields-append=Cookie: k=v".to_string()) && m[m.len() - 2] == "--" && m[m.len() - 1] == q.target);
+        assert!(ipc && m.contains(&"--start=90.4".to_string()) && !m.iter().any(|a| a.contains("Cookie")) && m.contains(&"--user-agent=UA-1".to_string()) && m[m.len() - 2] == "--" && m[m.len() - 1] == q.target);
         let (ii, _) = build("iina", &q, "");
         assert_eq!(ii[0], "--keep-running");
         assert!(ii.contains(&"--mpv-referrer=https://site.test/".to_string()) && !ii.contains(&"-w".to_string()));
@@ -553,6 +557,7 @@ mod tests {
         let (c, _) = build("custom", &Req { subs: vec![], ..q.clone() }, "\"--title={title}\" --sub={sub} --from={start} --hdr '{referrer}'");
         assert_eq!(c, vec!["--title=Show - 03", "--from=90.4", "--hdr", "https://site.test/", "https://cdn.test/v/a.m3u8"]);
         assert_eq!(custom("p {url}; rm -rf $(x)", &Req { subs: vec![], ..q.clone() }), vec!["p", "https://cdn.test/v/a.m3u8;", "rm", "-rf", "$(x)"]);
+        assert_eq!(custom("{title} --x={title} {url}", &Req { title: "--script=evil".into(), ..q.clone() }), vec!["--x=--script=evil", "https://cdn.test/v/a.m3u8"]);
         assert!(check(Req { target: "file:///etc/passwd".into(), ..Req::default() }, &tmp).is_err());
         assert!(check(Req { target: "https://a/b".into(), subs: vec![("/home/u/.ssh/id.srt".into(), false)], ..Req::default() }, &tmp).is_err());
         assert!(check(Req { target: "https://a/b".into(), ua: Some("a\r\nX: y".into()), ..Req::default() }, &tmp).is_err());
@@ -586,12 +591,14 @@ mod tests {
     #[test]
     fn parses() {
         let s = "0123456789abcdef0123456789abcdef";
-        assert_eq!(parse(&format!("/TOK/r/{}/v/Show%2001", s)), Some(("TOK".into(), s.into(), Ask::Video)));
-        assert_eq!(parse(&format!("/TOK/r/{}/u/12", s)), Some(("TOK".into(), s.into(), Ask::Url(12))));
-        assert_eq!(parse(&format!("/TOK/r/{}/s/1/a.ass", s)), Some(("TOK".into(), s.into(), Ask::Sub(1))));
-        assert_eq!(parse("/TOK/r/short/v/x"), None);
-        assert_eq!(parse(&format!("/TOK/r/{}/u/x", s)), None);
+        assert_eq!(parse(&format!("/r/{}/v/Show%2001", s)), Some((s.into(), Ask::Video)));
+        assert_eq!(parse(&format!("/r/{}/u/12", s)), Some((s.into(), Ask::Url(12))));
+        assert_eq!(parse(&format!("/r/{}/s/1/a.ass", s)), Some((s.into(), Ask::Sub(1))));
+        assert_eq!(parse("/r/short/v/x"), None);
+        assert_eq!(parse(&format!("/r/{}/u/x", s)), None);
+        assert_eq!(parse(&format!("/TOK/r/{}/v/x", s)), None);
         assert_eq!(parse("/TOK/p"), None);
+        assert!(!is_http(&format!("https://a/{}", "x".repeat(9000))));
         assert!(is_playlist("application/vnd.apple.mpegurl", "x"));
         assert!(is_playlist("", "https://a/b.M3U8?x=1"));
         assert!(!is_playlist("video/mp4", "https://a/b.mp4"));

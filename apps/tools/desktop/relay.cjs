@@ -12,11 +12,16 @@ const crypto = require('node:crypto');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
 const IDLE_MS = 6 * 3600e3; const MAX_URLS = 200000; const HOPS = 6;
+/** A playlist is read whole to be rewritten: at most this much, else 502; an address longer than MAX_URL is left out. */
+const MAX_LIST = 16 << 20; const MAX_URL = 8192;
+let sendFile = null;
+/** The stream server's own file sender (ranges), for a session that plays a file on this computer. */
+function setFileSender(f) { sendFile = f; }
 let doFetch = (u, o) => fetch(u, o);
 /** Electron's net.fetch (the app's proxy and certificates) in the app; Node's own in tests. */
 function setFetch(f) { doFetch = f; }
 const sessions = new Map();
-const isHttp = (u) => { try { const x = new URL(u); return x.protocol === 'http:' || x.protocol === 'https:'; } catch { return false; } };
+const isHttp = (u) => { if (typeof u !== 'string' || u.length > MAX_URL || /[\r\n\0]/.test(u)) return false; try { const x = new URL(u); return x.protocol === 'http:' || x.protocol === 'https:'; } catch { return false; } };
 const originOf = (u) => { try { return new URL(u).origin; } catch { return ''; } };
 /** Headers for one request: all of the page's to the source's origin; elsewhere only User-Agent and Referer. */
 function headersFor(target, page, origin) {
@@ -27,12 +32,15 @@ function headersFor(target, page, origin) {
 
 function open(o, base) {
   const url = String(o.url || ''); if (url && !isHttp(url)) throw new Error('refused: target');
+  // (A file on this computer for another program's player: by this session's address, not the run's own token.)
+  let file = '';
+  if (o.file) { const fs = require('node:fs'); const path = require('node:path'); const f = String(o.file); let st = null; try { st = path.isAbsolute(f) ? fs.statSync(f) : null; } catch { st = null; } if (!st || !st.isFile()) throw new Error('refused: file'); file = path.resolve(f); }
   const subs = (Array.isArray(o.subs) ? o.subs : []).map((x) => ({ url: x && isHttp(x.url) ? String(x.url) : '', name: String(x && x.name || ''), headers: x && x.headers || {} }));
   const token = crypto.randomBytes(16).toString('hex');
-  const s = { url, origin: originOf(url), headers: o.headers || {}, subs, urls: [], ids: new Map(), live: new Set(), at: Date.now(), reads: 0, timer: null };
+  const s = { url, file, origin: originOf(url), headers: o.headers || {}, subs, urls: [], ids: new Map(), live: new Set(), at: Date.now(), reads: 0, timer: null };
   sessions.set(token, s); idle(token, s);
   const at = `${base}/r/${token}`; const nm = (n, d) => encodeURIComponent(String(n || d).replace(/[\\/]/g, '_')).slice(0, 120);
-  return { token, url: url ? `${at}/v/${nm(o.name, 'video')}` : '', subs: subs.map((x, i) => (x.url ? `${at}/s/${i}/${nm(x.name, `sub${i}.srt`)}` : '')) };
+  return { token, url: url || file ? `${at}/v/${nm(o.name, 'video')}` : '', subs: subs.map((x, i) => (x.url ? `${at}/s/${i}/${nm(x.name, `sub${i}.srt`)}` : '')) };
 }
 function idle(token, s) { clearTimeout(s.timer); s.timer = setTimeout(() => close(token), IDLE_MS); s.timer.unref?.(); }
 function close(token) { const s = sessions.get(String(token)); if (!s) return false; sessions.delete(String(token)); clearTimeout(s.timer); for (const r of s.live) { try { r.destroy(); } catch { /* gone */ } } return true; }
@@ -68,6 +76,7 @@ async function handle(req, out, base) {
     if (!sub || !sub.url) { out.writeHead(404); out.end(); return true; }
     await pass(req, out, sub.url, { ...s.headers, ...sub.headers }, s, at, false); return true;
   }
+  if (m[2] === 'v' && s.file) { if (!sendFile) { out.writeHead(500); out.end(); return true; } out.on('close', () => { s.at = Date.now(); }); sendFile(s.file, req, out); return true; }
   const u = m[2] === 'v' ? s.url : s.urls[Number(m[3])];
   if (!u) { out.writeHead(404); out.end(); return true; }
   await pass(req, out, u, s.headers, s, at, true); return true;
@@ -86,7 +95,10 @@ async function pass(req, out, u, page, s, at, mayList) {
   }
   const ctype = r.headers.get('content-type') || '';
   if (mayList && r.status < 400 && isPlaylist(ctype, target)) {
-    const text = req.method === 'HEAD' ? '' : await r.text();
+    const len = Number(r.headers.get('content-length') || 0);
+    if (len > MAX_LIST) { try { await r.body?.cancel(); } catch { /* */ } out.writeHead(502); out.end('playlist too big'); return; }
+    let text = '';
+    if (req.method !== 'HEAD' && r.body) { const rd = r.body.getReader(); const parts = []; let n = 0; for (;;) { const x = await rd.read(); if (x.done) break; n += x.value.length; if (n > MAX_LIST) { try { await rd.cancel(); } catch { /* */ } out.writeHead(502); out.end('playlist too big'); return; } parts.push(Buffer.from(x.value)); } text = Buffer.concat(parts).toString('utf8'); }
     const body = Buffer.from(rewrite(text, target, s, at), 'utf8');
     out.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': body.length, 'cache-control': 'no-store' });
     out.end(req.method === 'HEAD' ? undefined : body); return;
@@ -99,4 +111,4 @@ async function pass(req, out, u, page, s, at, mayList) {
   for (;;) { let x; try { x = await reader.read(); } catch { break; } if (x.done) break; if (out.destroyed) break; if (!out.write(Buffer.from(x.value))) await new Promise((ok) => { out.once('drain', ok); out.once('close', ok); }); }
   out.end();
 }
-module.exports = { open, close, closeAll, handle, setFetch, count, status, rewrite, isPlaylist, headersFor, isHttp };
+module.exports = { open, close, closeAll, handle, setFetch, setFileSender, count, status, rewrite, isPlaylist, headersFor, isHttp, MAX_LIST };

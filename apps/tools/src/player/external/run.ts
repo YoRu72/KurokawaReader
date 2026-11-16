@@ -16,13 +16,13 @@ import type { Task } from '../../engine/types';
 import { plan, androidIntent, androidResult, isWatched, autoPick, pcCaps, chosenCaps, wayOf, isLoopback, type ExtSource, type Platform, type Service, type Ready, type AndroidIntent, type Caps, type Way } from './logic';
 
 type Meta = Task['meta'];
-export interface ExtRequest { src: ExtSource; service: Service; key: string; task?: Task; fileIndex?: number; meta?: Meta; /** the app's own player instead */ fallback: () => void; /** the app's own player has already counted it watched */ alreadyWatched?: boolean }
+export interface ExtRequest { src: ExtSource; service: Service; key: string; task?: Task; fileIndex?: number; meta?: Meta; /** the app's own player instead */ fallback: () => void; /** opened from inside the app's own player (closed for the hand-over): cancelling reopens it */ fromPlayer?: boolean; /** the app's own player has already counted it watched */ alreadyWatched?: boolean }
 type Found = { found: { id: string; name: string }[]; chosen: { path: string; args: string; there: boolean } | null };
 type Desk = {
   os?: string; relayOpen?(o: unknown): Promise<{ token: string; url: string; subs: string[] }>; relayClose?(o: { token: string }): Promise<unknown>; relayStatus?(o: { token: string }): Promise<{ open: boolean; lastRead?: number; reading?: number }>;
   extPlayers?(): Promise<Found>; extPlayerChoose?(o: { title: string }): Promise<{ path: string } | null>; extPlayerArgs?(o: { args: string }): Promise<unknown>;
   extPlayerStart?(o: unknown): Promise<{ id: string; reports: boolean }>; extPlayerStatus?(o: { id: string }): Promise<{ running: boolean; code: number | null; pos: number | null; dur: number | null; eof: boolean; error?: string }>;
-  writeTemp?(o: { name: string; text: string }): Promise<{ path: string } | string>; streamDone?(o: { id: string }): Promise<unknown>; fileUrl?(p: string): Promise<string>;
+  writeTemp?(name: string, text: string): Promise<string>; extPlayerDropSub?(o: { path: string }): Promise<unknown>; streamDone?(o: { id: string }): Promise<unknown>; fileUrl?(p: string): Promise<string>;
 };
 type Plug = {
   relayOpen?(o: unknown): Promise<{ token: string; url: string; subs: string[] }>; relayClose?(o: { token: string }): Promise<unknown>;
@@ -37,7 +37,11 @@ export function platform(): Platform | null {
   return os === 'darwin' ? 'mac' : os === 'linux' ? 'linux' : 'win';
 }
 const side = (p: Platform) => (p === 'android' ? 'android' : 'desktop') as 'android' | 'desktop';
-export function defaultFor(p: Platform, s: Service): Way { return wayOf(getSettings().extPlayers?.[side(p)]?.[s]); }
+/** The way for this kind of video: its own choice if one was made, else what «Watch videos with» says. */
+export function defaultFor(p: Platform, s: Service): Way {
+  const own = getSettings().extPlayers?.[side(p)]?.[s]; if (own) return wayOf(own);
+  const w = getSettings().playerWith; return w === 'app' ? 'app' : w === 'external' ? 'out' : 'ask';
+}
 export function setDefault(p: Platform, s: Service, w: Way): void { const all = { ...(getSettings().extPlayers ?? {}) }; all[side(p)] = { ...(all[side(p)] ?? {}), [s]: w }; updateSettings({ extPlayers: all }); }
 export const outName = (p: Platform): string => (p === 'android' ? t('extAnyApp') : t('extPcPlayer'));
 const svcName = (s: Service) => ({ torrent: t('extSvcTorrent'), online: t('extSvcOnline'), http: t('extSvcHttp'), local: t('extSvcLocal') })[s];
@@ -54,7 +58,9 @@ export async function pcPlayer(): Promise<{ caps?: Caps; list: Found; want: stri
 }
 /** The shell's own dialog: the program picked is kept by the shell; here only «chosen». */
 export async function chooseProgram(): Promise<boolean> {
-  const r = await desk()?.extPlayerChoose?.({ title: t('extPickTitle') }).catch(() => null);
+  let r: { path: string } | null = null;
+  try { r = (await desk()?.extPlayerChoose?.({ title: t('extPickTitle') })) ?? null; }
+  catch (e) { const m = String((e as Error)?.message ?? e); toast(/kt-ext:batch/.test(m) ? t('extProgramBatch') : t('extProgramBad'), 'error', 6000); return false; }
   if (!r?.path) return false; updateSettings({ extPcPlayer: 'chosen' }); return true;
 }
 
@@ -74,17 +80,18 @@ export function choose(p: Platform, s: Service, outHint: string): Promise<Way | 
 }
 
 /** An error the person can act on: the in-app player at once, or (phone) the list again / (computer) a program. */
-function failed(msg: string, req: ExtRequest, p: Platform, again: () => void, detail?: string): void {
-  const sh = openSheet(t('extFailedTitle'), t('close'), { stack: true });
+function failed(msg: string, req: ExtRequest, p: Platform, again: () => void, detail?: string, dismissed?: () => void): void {
+  let acted = false;
+  const sh = openSheet(t('extFailedTitle'), t('close'), { stack: true, onClose: () => { if (!acted) dismissed?.(); } });
   sh.body.classList.add('ext-error');
+  const act = (fn: () => void) => () => { acted = true; sh.close(); fn(); };
   sh.body.append(h('p', { class: 'ext-error-msg' }, msg), detail ? h('p', { class: 'hint ext-error-why', dir: 'ltr' }, detail) : '',
     h('div', { class: 'ext-error-actions' },
-      h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); req.fallback(); } }, icon('play'), t('extFallback')),
+      h('button', { type: 'button', class: 'btn primary', onclick: act(() => req.fallback()) }, icon('play'), t('extFallback')),
       p === 'android'
-        ? h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); again(); } }, icon('apps'), t('extOther'))
-        : h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); void chooseProgram().then((ok) => { if (ok) again(); }); } }, icon('folder'), t('extChooseProgram'))));
+        ? h('button', { type: 'button', class: 'btn tonal', onclick: act(again) }, icon('apps'), t('extOther'))
+        : h('button', { type: 'button', class: 'btn tonal', onclick: act(() => void chooseProgram().then((ok) => { if (ok) again(); else dismissed?.(); })) }, icon('folder'), t('extChooseProgram'))));
 }
-
 /** «Mark as watched?» when nothing came back. */
 export function askWatched(appName: string, name: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -120,39 +127,43 @@ export async function applyResult(req: ExtRequest, r: { pos?: number; dur?: numb
   return watched;
 }
 
-/** The whole hand-over. False when this device has no way (the app's own player then). */
+/** The whole hand-over. False when this device has no way (the app's own player then).
+ *  The torrent's stream is let go only when nothing will play it any more: after the outside player is done with it,
+ *  or when the person gives up (the chooser or an error closed without the app's own player); «Watch in the in-app
+ *  player» keeps it (that player lets it go when it closes). Cancelling a hand-over started from inside the app's own
+ *  player reopens it where it was. */
 export async function playExternally(req: ExtRequest, forceAsk = false): Promise<boolean> {
   const p = platform(); if (!p) return false;
+  const giveUp = () => { if (req.fromPlayer) req.fallback(); else releaseStream(req, p); };
   let pc: Awaited<ReturnType<typeof pcPlayer>> | null = p === 'android' ? null : await pcPlayer();
   let way: Way = forceAsk ? 'ask' : defaultFor(p, req.service);
-  if (way === 'ask') { const c = await choose(p, req.service, p === 'android' ? t('extHintPhone') : outHint(pc!.caps)); if (!c) return true; way = c; }
+  if (way === 'ask') { const c = await choose(p, req.service, p === 'android' ? t('extHintPhone') : outHint(pc!.caps)); if (!c) { giveUp(); return true; } way = c; }
   if (way === 'app') { req.fallback(); return true; }
   // (A computer with no player found and none picked: pick the program now.)
-  if (pc && !pc.caps) { toast(t('extNothingFound'), 'info', 4000); if (!(await chooseProgram())) return true; pc = await pcPlayer(); if (!pc.caps) return true; }
+  if (pc && !pc.caps) { toast(t('extNothingFound'), 'info', 4000); if (!(await chooseProgram())) { giveUp(); return true; } pc = await pcPlayer(); if (!pc.caps) { giveUp(); return true; } }
   const name = p === 'android' ? t('extAnyApp') : pc!.caps!.name;
   const again = () => void playExternally(req, true);
   const pl = plan(req.src, p, pc?.caps);
-  if (pl.problem === 'hls') { failed(t('extCantHls', { app: name }), req, p, again); return true; }
+  if (pl.problem === 'hls') { failed(t('extCantHls', { app: name }), req, p, again, undefined, giveUp); return true; }
   const relayer = p === 'android' ? plug() : desk();
   let relay: { token: string; url: string; subs: string[] } | null = null;
-  let releaseNow = true;
+  const temps: string[] = [];
+  let keep = false;
   try {
-    // ---- what the player opens: http(s) only on a computer (a file by the app's loopback file address)
-    let main = req.src.url;
-    if (p !== 'android' && req.src.localPath) main = (await desk()?.fileUrl?.(req.src.localPath)) ?? main;
     const subs = await localSubs(p, req.src.subs ?? []);
     if (pl.relay) {
-      if (!relayer?.relayOpen) { failed(t('extNoRelay', { app: name }), req, p, again); return true; }
-      relay = await relayer.relayOpen({ url: pl.main === 'relay' ? main : '', headers: req.src.headers ?? {}, name: req.src.name, subs: subs.map((s, i) => (pl.subs[i] === 'relay' ? { url: s.url, name: s.name, headers: s.headers } : { name: s.name })) });
+      if (!relayer?.relayOpen) { failed(t('extNoRelay', { app: name }), req, p, again, undefined, giveUp); return true; }
+      const file = p !== 'android' && req.src.localPath ? req.src.localPath : undefined;
+      relay = await relayer.relayOpen({ url: pl.main === 'relay' && !file ? req.src.url : '', file, headers: req.src.headers ?? {}, name: req.src.name, subs: subs.map((s, i) => (pl.subs[i] === 'relay' ? { url: s.url, name: s.name, headers: s.headers } : { name: s.name })) });
     }
     const readySubs: Ready['subs'] = [];
     for (let i = 0; i < subs.length; i++) {
       const s = subs[i]; const how = pl.subs[i]; let at = '';
-      if (how === 'relay') at = relay?.subs[i] ?? ''; else if (how === 'direct') at = s.url ?? ''; else if (how === 'temp') at = await saveSub(s);
+      if (how === 'relay') at = relay?.subs[i] ?? ''; else if (how === 'direct') at = s.url ?? ''; else if (how === 'temp') { at = await saveSub(s); if (at) temps.push(at); }
       if (at) readySubs.push({ at, name: s.name, isDefault: s.isDefault });
     }
     const start = req.src.start && req.src.start > 1 ? req.src.start : undefined;
-    const target = pl.main === 'relay' ? relay?.url ?? main : pl.main === 'path' ? req.src.localPath ?? main : main;
+    const target = pl.main === 'relay' ? relay?.url ?? req.src.url : pl.main === 'path' ? req.src.localPath ?? req.src.url : req.src.url;
     if (p === 'android') {
       const pk = plug(); if (!pk?.openPlayerApp) throw new Error('openPlayerApp');
       noteLaunch(req);
@@ -162,27 +173,30 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
     } else {
       const caps = pc!.caps!;
       const hd = Object.fromEntries(Object.entries(req.src.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
-      const headers = pl.headerArgs ? { ua: hd['user-agent'], referer: hd.referer, others: caps.headers === 'all' ? Object.entries(req.src.headers ?? {}).filter(([k]) => !/^(user-agent|referer|range)$/i.test(k)) : [] } : {};
+      const headers = pl.headerArgs ? { ua: hd['user-agent'], referer: hd.referer } : {};
       const r = await runDesktop({ player: caps.id, target, title: req.src.name, start, subs: readySubs.map((s) => ({ at: s.at, isDefault: !!s.isDefault })), headers, slang: req.src.slang ?? [], alang: req.src.alang ?? [] }, name);
-      if (!r.reports) { releaseNow = false; void afterUntold(req, name, relay, relayer); return true; }
+      if (!r.reports) { keep = true; void afterUntold(req, name, relay, relayer, temps); return true; }
       await applyResult(req, { pos: r.pos, dur: r.dur, ended: r.ended, told: r.pos !== undefined || r.ended }, name);
     }
+    releaseStream(req, p);
   } catch (e) {
     const why = String((e as Error)?.message ?? e);
-    failed(/not installed|ENOENT|ActivityNotFound/i.test(why) ? t('extNotInstalled', { app: name }) : t('extFailed', { app: name }), req, p, again, why);
+    failed(/not installed|ENOENT|ActivityNotFound/i.test(why) ? t('extNotInstalled', { app: name }) : t('extFailed', { app: name }), req, p, again, why, giveUp);
   } finally {
-    if (releaseNow) release(req, p, relay, relayer);
+    if (!keep) { closeRelay(relay, relayer); dropTemps(temps); }
   }
   return true;
 }
-function release(req: ExtRequest, p: Platform, relay: { token: string } | null, relayer: Desk | Plug | null | undefined): void {
-  if (relay) void relayer?.relayClose?.({ token: relay.token }).catch(() => undefined);
-  if (req.task?.kind === 'torrent' && p !== 'android') void desk()?.streamDone?.({ id: req.task.id }).catch(() => undefined);
-}
-/** A computer's player that tells nothing ended its process: the stream kept until the relay has not been read for
- *  a while (nothing reading, the last read a minute ago); then «Mark as watched?» where it is asked, and the stream
- *  let go after the answer. At most eight hours. */
-async function afterUntold(req: ExtRequest, name: string, relay: { token: string } | null, relayer: Desk | Plug | null | undefined): Promise<void> {
+function closeRelay(relay: { token: string } | null, relayer: Desk | Plug | null | undefined): void { if (relay) void relayer?.relayClose?.({ token: relay.token }).catch(() => undefined); }
+function releaseStream(req: ExtRequest, p: Platform): void { if (req.task?.kind === 'torrent' && p !== 'android') void desk()?.streamDone?.({ id: req.task.id }).catch(() => undefined); }
+/** The subtitle copies saved for this playback: removed by the shell once the player is done (only kt-sub-* files there). */
+function dropTemps(temps: string[]): void { for (const f of temps) void desk()?.extPlayerDropSub?.({ path: f }).catch(() => undefined); }
+/** A computer's player that tells nothing ended its process: it may have handed the address to an instance already
+ *  open (a single-instance player, a wrapper), so the relay and the stream stay until the relay has not been read for
+ *  ten minutes (nothing reading — a paused or fully buffered film keeps nothing reading, hence the long wait); then
+ *  «Mark as watched?» where it is asked, and only after the answer the relay, the stream and the subtitle copies go.
+ *  At most eight hours. */
+async function afterUntold(req: ExtRequest, name: string, relay: { token: string } | null, relayer: Desk | Plug | null | undefined, temps: string[]): Promise<void> {
   const d = desk(); const until = Date.now() + 8 * 3600e3;
   for (;;) {
     if (Date.now() > until) break;
@@ -191,22 +205,26 @@ async function afterUntold(req: ExtRequest, name: string, relay: { token: string
     if (quiet) break;
     await new Promise((ok) => window.setTimeout(ok, UNTOLD_POLL_MS));
   }
-  try { await applyResult(req, { ended: false, told: false }, name); } finally { release(req, 'win', relay, relayer); }
+  try { await applyResult(req, { ended: false, told: false }, name); } finally { closeRelay(relay, relayer); releaseStream(req, 'win'); dropTemps(temps); }
 }
-let UNTOLD_QUIET_MS = 60e3; let UNTOLD_POLL_MS = 5000; let DESK_POLL_MS = 2000;
+let UNTOLD_QUIET_MS = 10 * 60e3; let UNTOLD_POLL_MS = 5000; let DESK_POLL_MS = 2000;
 /** (Tests: shorter waits.) */
 export function setWaits(o: { poll?: number; quiet?: number; untoldPoll?: number }): void { if (o.poll) DESK_POLL_MS = o.poll; if (o.quiet) UNTOLD_QUIET_MS = o.quiet; if (o.untoldPoll) UNTOLD_POLL_MS = o.untoldPoll; }
-const outHint = (c?: Caps): string => (!c ? t('extHintPick') : c.reports ? t('extHintReports', { app: c.name }) : t('extHintAsks', { app: c.name }));
+const outHint = (c?: Caps): string => (!c ? t('extHintPick') : c.reports ? t('extHintReports') : t('extHintAsks'));
 
-/** Local subtitles made addresses: the app's own loopback ones (a phone: only files outside the app's own folders). */
+/** Local subtitles made addresses, one for one (the plan's places kept): a phone's by the app's loopback address (only
+ *  files outside the app's own folders); a computer's read here through the app's own file address and handed over
+ *  as a saved copy (the plan saves every local one), so that address and its run token never leave the app. */
 async function localSubs(p: Platform, subs: NonNullable<ExtSource['subs']>): Promise<NonNullable<ExtSource['subs']>> {
   const out: NonNullable<ExtSource['subs']> = [];
   for (const s of subs) {
     if (!s.path) { out.push(s); continue; }
+    let url = '';
     try {
-      if (p === 'android') { if (/^\/data\//.test(s.path)) continue; const u = (await plug()?.localUrl?.({ path: s.path }))?.url; if (u) out.push({ url: u, name: s.name, isDefault: s.isDefault }); }
-      else { const u = await desk()?.fileUrl?.(s.path); if (u) out.push({ url: u, name: s.name, isDefault: s.isDefault }); }
-    } catch { /* left out */ }
+      if (p === 'android') { if (!/^\/data\//.test(s.path)) url = (await plug()?.localUrl?.({ path: s.path }))?.url ?? ''; }
+      else url = (await desk()?.fileUrl?.(s.path)) ?? '';
+    } catch { url = ''; }
+    out.push({ url, name: s.name, isDefault: s.isDefault });
   }
   return out;
 }
@@ -216,7 +234,8 @@ async function saveSub(s: { url?: string; name: string; headers?: Record<string,
   try {
     const text = await (await fetch(s.url, isLoopback(s.url) ? undefined : { headers: s.headers })).text();
     const ext = /\.(ass|ssa|srt|vtt)$/i.exec(s.name)?.[0] ?? (/^\s*\[Script Info\]/i.test(text) ? '.ass' : /^WEBVTT/.test(text) ? '.vtt' : '.srt');
-    const r = await desk()?.writeTemp?.({ name: `kt-sub-${Date.now().toString(36)}${ext}`, text }); return typeof r === 'string' ? r : r?.path ?? '';
+    // (The bridge's writeTemp takes the name and the text, as cut.ts and embedded.ts call it.)
+    const r = await desk()?.writeTemp?.(`kt-sub-${Date.now().toString(36)}${ext}`, text); return typeof r === 'string' ? r : '';
   } catch { return ''; }
 }
 

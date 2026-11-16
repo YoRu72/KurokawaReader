@@ -277,6 +277,7 @@
     extPlayerChoose: function (o) { return call('kt_ext_player_choose', { o: obj(o) }); },
     extPlayerArgs: function (o) { return call('kt_ext_player_args', { o: obj(o) }); },
     extPlayerForget: function () { return call('kt_ext_player_forget'); },
+    extPlayerDropSub: function (o) { return call('kt_ext_player_drop_sub', { o: obj(o) }); },
     extPlayerStart: function (o) { return call('kt_ext_player_start', { o: obj(o) }); },
     extPlayerStatus: function (o) { return call('kt_ext_player_status', { o: obj(o) }); },
     extPlayerStop: function (o) { return call('kt_ext_player_stop', { o: obj(o) }); },

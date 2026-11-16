@@ -34,13 +34,30 @@ function resolve(p) {
 function isFile(f) { try { return fs.statSync(f).isFile(); } catch { return false; } }
 const pathOf = (id) => { const p = X.byId(id); if (!p) return null; for (const c of p.paths[PLAT] || []) { const r = resolve(c); if (r) return r; } return null; };
 /** extPlayers() → { found: [{ id, name }], chosen: { path, args, there } | null }. */
+let swept = false;
 function find() {
+  if (!swept) { swept = true; sweepSubs(); }
   const found = X.PLAYERS.filter((p) => pathOf(p.id)).map((p) => ({ id: p.id, name: p.name }));
   const s = store(); const chosen = s.path ? { path: s.path, args: s.args || '', there: isFile(s.path) } : null;
   return { found, chosen };
 }
 /** The program the user picked in the shell's own dialog (main.cjs): kept if it is a file. */
-function setChosen(p) { const abs = p && path.isAbsolute(p) ? path.resolve(p) : ''; if (!abs || !isFile(abs)) throw new Error('not a program'); const s = store(); save({ ...s, path: abs }); return { path: abs }; }
+function setChosen(p) {
+  let abs = p && path.isAbsolute(p) ? path.resolve(p) : '';
+  // (A Mac's dialog gives the application bundle: its program is Contents/MacOS/<CFBundleExecutable>.)
+  if (abs && /\.app$/i.test(abs)) abs = bundleProgram(abs) || '';
+  // (No shell is ever used, so a .bat or .cmd cannot be run as a player.)
+  if (abs && WIN && /\.(bat|cmd)$/i.test(abs)) throw new Error('kt-ext:batch');
+  if (!abs || !isFile(abs)) throw new Error('kt-ext:notprogram');
+  const s = store(); save({ ...s, path: abs }); return { path: abs };
+}
+function bundleProgram(app) {
+  try { const plist = fs.readFileSync(path.join(app, 'Contents', 'Info.plist'), 'utf8'); const m = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist); const f = path.join(app, 'Contents', 'MacOS', m ? m[1] : path.basename(app, '.app')); return isFile(f) ? f : null; } catch { return null; }
+}
+/** The subtitle copies saved for players that read only files (kt-sub-*), an hour old or more: removed. */
+function sweepSubs() { for (const d of X.tempDirs()) { let names = []; try { names = fs.readdirSync(d); } catch { continue; } for (const n of names) { if (!/^kt-sub-[\w.-]+\.(srt|ass|ssa|vtt)$/.test(n)) continue; const f = path.join(d, n); try { if (Date.now() - fs.statSync(f).mtimeMs > 3600e3) fs.rmSync(f, { force: true }); } catch { /* */ } } } }
+/** One subtitle copy removed once its player has ended (only a kt-sub-* file in the temp folders). */
+function dropSub(o) { const f = String(o && o.path || ''); const abs = path.isAbsolute(f) ? path.resolve(f) : ''; if (!abs || !/^kt-sub-[\w.-]+\.(srt|ass|ssa|vtt)$/.test(path.basename(abs)) || !X.tempDirs().some((d) => path.dirname(abs) === path.resolve(d))) return { ok: false }; try { fs.rmSync(abs, { force: true }); } catch { /* */ } return { ok: true }; }
 /** The chosen program's arguments line (typed by the user in Settings; kept here with it, never in the settings). */
 function setArgs(o) { const s = store(); save({ ...s, args: String(o && o.args || '').slice(0, 2000) }); return { ok: true }; }
 function forget() { save({}); return { ok: true }; }
@@ -55,7 +72,8 @@ function start(o) {
   const c = X.check(o, X.tempDirs()); if (c.error) throw new Error(`refused: ${c.error}`);
   const { args, ipc } = X.build(player === 'chosen' ? 'custom' : player, c.req, template);
   const ipcPath = ipc ? (WIN ? `\\\\.\\pipe\\kt-mpv-${crypto.randomBytes(6).toString('hex')}` : path.join(os.tmpdir(), `kt-mpv-${crypto.randomBytes(6).toString('hex')}.sock`)) : '';
-  const argv = args.map((a) => (ipc ? a.split('${ipc}').join(ipcPath) : a));
+  // (The socket's path goes into mpv's --input-ipc-server only, never into a title or an address.)
+  const argv = args.map((a) => (ipc && a === '--input-ipc-server=${ipc}' ? `--input-ipc-server=${ipcPath}` : a));
   const id = String(++seq);
   const st = { id, running: true, code: null, pos: null, dur: null, eof: false, error: '', sock: null, ipcPath, tries: 0, timer: null };
   let child; try { child = spawn(exe, argv, { stdio: 'ignore', windowsHide: false, detached: !WIN, shell: false }); } catch (e) { throw new Error(String(e && e.message || e)); }
@@ -85,4 +103,4 @@ function stop(o) { const st = procs.get(String(o && o.id)); if (!st) return { ok
 /** The app quitting, or the page reloaded (main.cjs): sockets and records let go; the players keep playing. */
 function release() { for (const st of procs.values()) { clearTimeout(st.timer); try { st.sock?.destroy(); } catch { /* */ } try { st.child.unref(); } catch { /* */ } } procs.clear(); }
 const running = () => [...procs.values()].filter((p) => p.running).length;
-module.exports = { init, find, setChosen, setArgs, forget, start, status, stop, release, resolve, running };
+module.exports = { init, find, setChosen, dropSub, sweepSubs, bundleProgram, setArgs, forget, start, status, stop, release, resolve, running };

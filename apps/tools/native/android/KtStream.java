@@ -63,7 +63,7 @@ final class KtStream {
         // (Signed over the source and its headers, with an expiry, as /file is: no other app on the phone can use this server as a proxy.)
         return "http://127.0.0.1:" + port + "/proxy?u=" + java.net.URLEncoder.encode(u, "UTF-8") + "&h=" + java.net.URLEncoder.encode(hj, "UTF-8") + "&e=" + e + "&t=" + sign(u + "\n" + hj, e);
     }
-    static boolean isHttp(String u) { if (u == null) return false; String l = u.toLowerCase(java.util.Locale.ROOT); return l.startsWith("http://") || l.startsWith("https://"); }
+    static boolean isHttp(String u) { if (u == null || u.length() > 8192 || u.indexOf('\r') >= 0 || u.indexOf('\n') >= 0 || u.indexOf('\0') >= 0) return false; String l = u.toLowerCase(java.util.Locale.ROOT); return l.startsWith("http://") || l.startsWith("https://"); }
     /** CORS for the app's own page only (Capacitor's https://localhost), never «*». */
     private static final String APP_CORS = "Access-Control-Allow-Origin: https://localhost\r\nVary: Origin\r\n";
     private static String param(String q, String k) throws IOException { for (String kv : q.split("&")) { int i = kv.indexOf('='); if (i > 0 && kv.substring(0, i).equals(k)) return java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8"); } return null; }
@@ -113,7 +113,7 @@ final class KtStream {
      * a site's subtitles served beside it. Only http(s); redirects followed here one hop at a time; the cookie,
      * authorisation and the page's other headers go only to the source's own origin (another host gets the user agent
      * and the referer only). No file is ever read for another app here, and no CORS: players, not pages. */
-    private static final class Relay { String url, origin, headers; org.json.JSONArray subs; final java.util.ArrayList<String> urls = new java.util.ArrayList<>(); final java.util.HashMap<String, Integer> ids = new java.util.HashMap<>(); volatile long last = System.currentTimeMillis(); volatile int reads, reading; volatile boolean gone; }
+    private static final class Relay { String url, origin, headers; org.json.JSONArray subs; final java.util.ArrayList<String> urls = new java.util.ArrayList<>(); final java.util.HashMap<String, Integer> ids = new java.util.HashMap<>(); volatile long last = System.currentTimeMillis(); final java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger(), reading = new java.util.concurrent.atomic.AtomicInteger(); volatile boolean gone; }
     private final java.util.Map<String, Relay> relays = java.util.Collections.synchronizedMap(new java.util.HashMap<>());
     private static String originOf(String u) { try { java.net.URL x = new java.net.URL(u); return x.getProtocol() + "://" + x.getHost() + ":" + (x.getPort() < 0 ? x.getDefaultPort() : x.getPort()); } catch (Exception e) { return ""; } }
     synchronized org.json.JSONObject relayOpen(org.json.JSONObject o) throws Exception {
@@ -134,13 +134,13 @@ final class KtStream {
     private static String nameOf(String n, String d) throws IOException { String x = (n == null || n.isEmpty() ? d : n).replaceAll("[\\\\/]", "_"); if (x.length() > 100) x = x.substring(0, 100); return java.net.URLEncoder.encode(x, "UTF-8").replace("+", "%20"); }
     boolean relayClose(String token) { Relay r = relays.remove(token); if (r != null) r.gone = true; return r != null; }
     /** Whether the session is open, when it was last read, how often, and whether a read is under way. */
-    org.json.JSONObject relayStatus(String token) throws org.json.JSONException { Relay r = relays.get(token); org.json.JSONObject o = new org.json.JSONObject(); o.put("open", r != null); if (r != null) { o.put("lastRead", r.last); o.put("reads", r.reads); o.put("reading", r.reading); } return o; }
+    org.json.JSONObject relayStatus(String token) throws org.json.JSONException { Relay r = relays.get(token); org.json.JSONObject o = new org.json.JSONObject(); o.put("open", r != null); if (r != null) { o.put("lastRead", r.last); o.put("reads", r.reads.get()); o.put("reading", r.reading.get()); } return o; }
     private void relay(String path, String method, String range, OutputStream out) throws Exception {
         String[] p = path.split("\\?")[0].split("/"); // ["", "r", token, kind, n?, name?]
         Relay r = p.length > 3 ? relays.get(p[2]) : null;
         if (r == null) { out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
-        r.last = System.currentTimeMillis(); r.reads++; r.reading++;
-        try { relayOne(r, p, method, range, out); } finally { r.reading--; r.last = System.currentTimeMillis(); }
+        r.last = System.currentTimeMillis(); r.reads.incrementAndGet(); r.reading.incrementAndGet();
+        try { relayOne(r, p, method, range, out); } finally { r.reading.decrementAndGet(); r.last = System.currentTimeMillis(); }
     }
     private void relayOne(Relay r, String[] p, String method, String range, OutputStream out) throws Exception {
         String at = "http://127.0.0.1:" + port + "/r/" + p[2]; String target; String hj = r.headers; boolean mayList = true;
@@ -171,7 +171,7 @@ final class KtStream {
         boolean playlist = mayList && code < 400 && (type.toLowerCase(java.util.Locale.ROOT).contains("mpegurl") || url.getPath().toLowerCase(java.util.Locale.ROOT).endsWith(".m3u8"));
         InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
         if (playlist) {
-            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream(); byte[] buf = new byte[16384]; int n; while ((n = in.read(buf)) > 0) b.write(buf, 0, n); in.close();
+            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream(); byte[] buf = new byte[16384]; int n; while ((n = in.read(buf)) > 0) { b.write(buf, 0, n); if (b.size() > (16 << 20)) { in.close(); c.disconnect(); out.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; } } in.close();
             StringBuilder sb = new StringBuilder(); java.util.regex.Pattern attr = java.util.regex.Pattern.compile("URI=\"([^\"]+)\"");
             for (String line : new String(b.toByteArray(), StandardCharsets.UTF_8).split("\r?\n")) {
                 String t = line.trim();

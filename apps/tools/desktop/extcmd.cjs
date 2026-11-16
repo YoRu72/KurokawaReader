@@ -6,15 +6,16 @@
 'use strict';
 const path = require('node:path'); const os = require('node:os');
 
-/** Known players, in the order «Automatic» tries them. `headers`: what it sends itself (all, User-Agent and Referer,
- *  none — PotPlayer's header switches are not documented well enough to trust, so it gets the relay); `ipc`: it tells
- *  where it is (mpv's JSON IPC). */
+/** Known players, in the order «Automatic» tries them. `headers`: what goes on its command line — User-Agent and
+ *  Referer at most (a cookie or an authorisation on a command line would go to every host the player reaches, and is
+ *  readable by other programs: those sources go through the app's relay, which sends them to the source's origin
+ *  only); none for PotPlayer, whose switches are not documented well enough. `ipc`: it tells where it is (mpv). */
 const PLAYERS = [
-  { id: 'mpv', name: 'mpv', headers: 'all', hls: true, subs: 'url', ipc: true,
+  { id: 'mpv', name: 'mpv', headers: 'ua-ref', hls: true, subs: 'url', ipc: true,
     paths: { win32: ['mpv.exe', '%ProgramFiles%\\mpv\\mpv.exe', '%LOCALAPPDATA%\\Programs\\mpv\\mpv.exe', '%USERPROFILE%\\scoop\\apps\\mpv\\current\\mpv.exe'], darwin: ['/opt/homebrew/bin/mpv', '/usr/local/bin/mpv', '/Applications/mpv.app/Contents/MacOS/mpv'], linux: ['mpv', '/usr/bin/mpv', '/usr/local/bin/mpv'] } },
   { id: 'vlc', name: 'VLC', headers: 'ua-ref', hls: true, subs: 'path', ipc: false,
     paths: { win32: ['%ProgramFiles%\\VideoLAN\\VLC\\vlc.exe', '%ProgramFiles(x86)%\\VideoLAN\\VLC\\vlc.exe', 'vlc.exe'], darwin: ['/Applications/VLC.app/Contents/MacOS/VLC'], linux: ['vlc', '/usr/bin/vlc'] } },
-  { id: 'iina', name: 'IINA', headers: 'all', hls: true, subs: 'url', ipc: false, paths: { darwin: ['/Applications/IINA.app/Contents/MacOS/iina-cli', '/opt/homebrew/bin/iina', '/usr/local/bin/iina'] } },
+  { id: 'iina', name: 'IINA', headers: 'ua-ref', hls: true, subs: 'url', ipc: false, paths: { darwin: ['/Applications/IINA.app/Contents/MacOS/iina-cli', '/opt/homebrew/bin/iina', '/usr/local/bin/iina'] } },
   { id: 'mpc-hc', name: 'MPC-HC', headers: 'none', hls: false, subs: 'path', ipc: false, paths: { win32: ['%ProgramFiles%\\MPC-HC\\mpc-hc64.exe', '%ProgramFiles(x86)%\\MPC-HC\\mpc-hc.exe', '%ProgramFiles%\\K-Lite Codec Pack\\MPC-HC64\\mpc-hc64.exe'] } },
   { id: 'mpc-be', name: 'MPC-BE', headers: 'none', hls: false, subs: 'path', ipc: false, paths: { win32: ['%ProgramFiles%\\MPC-BE x64\\mpc-be64.exe', '%ProgramFiles(x86)%\\MPC-BE\\mpc-be.exe'] } },
   { id: 'potplayer', name: 'PotPlayer', headers: 'none', hls: true, subs: 'path', ipc: false, paths: { win32: ['%ProgramFiles%\\DAUM\\PotPlayer\\PotPlayerMini64.exe', '%ProgramFiles(x86)%\\DAUM\\PotPlayer\\PotPlayerMini.exe'] } },
@@ -42,8 +43,9 @@ function check(r, tempDirs) {
   const headers = {};
   if (h.ua !== undefined) { if (!noBreak(h.ua)) return { error: 'header' }; headers.ua = h.ua; }
   if (h.referer !== undefined) { if (!noBreak(h.referer) || !isHttp(h.referer)) return { error: 'header' }; headers.referer = h.referer; }
-  headers.others = [];
-  for (const kv of Array.isArray(h.others) ? h.others.slice(0, 30) : []) { if (!Array.isArray(kv) || !/^[A-Za-z0-9-]{1,64}$/.test(String(kv[0])) || !noBreak(String(kv[1]))) return { error: 'header' }; headers.others.push([String(kv[0]), String(kv[1])]); }
+  // (Only User-Agent and Referer ever reach a command line; any other header is refused here — the page sends such a
+  // source through the relay.)
+  if (Array.isArray(h.others) && h.others.length) return { error: 'header' };
   const langs = (a) => (Array.isArray(a) ? a.map(String).filter((x) => /^[a-z]{2,3}$/.test(x)).slice(0, 10) : []);
   const start = Number(r.start);
   return { req: { target: r.target, title: clean(r.title), start: Number.isFinite(start) && start > 0 ? start : 0, subs, headers, slang: langs(r.slang), alang: langs(r.alang) } };
@@ -53,7 +55,7 @@ const secs = (s) => (s > 0 ? String(Math.round(s * 10) / 10) : '');
 const hms = (s) => { const t = Math.floor(s); return `${String(Math.floor(t / 3600)).padStart(2, '0')}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
 /** The arguments for a known player (`id`) or for the program the user chose with its arguments line (`template`). */
 function build(id, q, template) {
-  const a = []; const ua = q.headers.ua; const ref = q.headers.referer; const others = q.headers.others || [];
+  const a = []; const ua = q.headers.ua; const ref = q.headers.referer;
   const def = q.subs.find((s) => s.isDefault) || q.subs[0];
   switch (id) {
     case 'mpv': case 'iina': {
@@ -66,7 +68,6 @@ function build(id, q, template) {
       if (q.alang.length) a.push(o(`--alang=${q.alang.join(',')}`));
       if (ua) a.push(o(`--user-agent=${ua}`));
       if (ref) a.push(o(`--referrer=${ref}`));
-      for (const [k, v] of others) a.push(o(`--http-header-fields-append=${k}: ${v}`));
       if (id === 'mpv') a.push('--hwdec=auto-safe', '--input-ipc-server=${ipc}', '--idle=no', '--keep-open=no', '--', q.target);
       else a.push(q.target);
       return { args: a, ipc: id === 'mpv' };
@@ -103,7 +104,10 @@ function custom(line, q) {
   for (const w of splitArgs(line)) {
     let empty = false; let any = false;
     const f = w.replace(/\{(url|title|start|startms|sub|ua|referrer)\}/g, (_m, k) => { any = true; if (k === 'url') hadUrl = true; const v = vals[k]; if (!v) empty = true; return v; });
-    if (any && empty) continue; out.push(f);
+    if (any && empty) continue;
+    // (An argument that is only a placeholder and whose value starts with «-» would be read as an option: left out.)
+    if (any && /^\{(url|title|start|startms|sub|ua|referrer)\}$/.test(w) && f.startsWith('-')) continue;
+    out.push(f);
   }
   if (!hadUrl) out.push(q.target);
   return { args: out, ipc: false };

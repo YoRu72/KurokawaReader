@@ -8,7 +8,7 @@ const { chromium } = require('playwright'); const http = require('node:http'); c
 const DIST = path.join(__dirname, '..', 'dist');
 const MEDIA = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-leak-'));
 try { execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=25', '-t', '20', '-c:v', 'libvpx', '-b:v', '200k', path.join(MEDIA, 'clip.webm')]); }
-catch { console.log('ffmpeg not available — skipped'); process.exit(0); }
+catch { if (process.env.KT_REQUIRE_FFMPEG) { console.log('FAIL ffmpeg is required here (KT_REQUIRE_FFMPEG)'); process.exit(1); } console.log('ffmpeg not available — skipped'); process.exit(0); }
 fs.writeFileSync(path.join(MEDIA, 'clip.srt'), '1\n00:00:00,500 --> 00:00:09,000\nA made-up line\n');
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x).slice(0, 600))); if (!c) fails++; };
 setTimeout(() => { console.log('FAIL timed out'); process.exit(1); }, 240000).unref();

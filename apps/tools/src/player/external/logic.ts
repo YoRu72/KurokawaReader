@@ -23,11 +23,11 @@ export interface ExtSource {
   subs?: ExtSub[]; /** seconds */ start?: number; alang?: string[]; slang?: string[];
 }
 /** What a computer's player can take (desktop/extcmd.cjs's table; the chosen program by its arguments line). */
-export interface Caps { id: string; name: string; headers: 'all' | 'ua-ref' | 'none'; hls: boolean; subs: 'url' | 'path'; reports: boolean }
+export interface Caps { id: string; name: string; /** what may go on its command line: User-Agent and Referer, or nothing */ headers: 'ua-ref' | 'none'; hls: boolean; subs: 'url' | 'path'; reports: boolean }
 export const PC_PLAYERS: Caps[] = [
-  { id: 'mpv', name: 'mpv', headers: 'all', hls: true, subs: 'url', reports: true },
+  { id: 'mpv', name: 'mpv', headers: 'ua-ref', hls: true, subs: 'url', reports: true },
   { id: 'vlc', name: 'VLC', headers: 'ua-ref', hls: true, subs: 'path', reports: false },
-  { id: 'iina', name: 'IINA', headers: 'all', hls: true, subs: 'url', reports: false },
+  { id: 'iina', name: 'IINA', headers: 'ua-ref', hls: true, subs: 'url', reports: false },
   { id: 'mpc-hc', name: 'MPC-HC', headers: 'none', hls: false, subs: 'path', reports: false },
   { id: 'mpc-be', name: 'MPC-BE', headers: 'none', hls: false, subs: 'path', reports: false },
   // (PotPlayer's header switches are not documented well enough to rely on: the relay.)
@@ -64,20 +64,21 @@ export function plan(src: ExtSource, plat: Platform, caps?: Caps): Plan {
   const onlyUaRef = keys.every((k) => k === 'user-agent' || k === 'referer');
   if (plat === 'android') {
     const main: How = src.localPath ? 'path' : !keys.length || isLoopback(src.url) ? 'direct' : 'relay';
-    const subs = (src.subs ?? []).map((s): How => (s.path ? 'drop' : isLoopback(s.url ?? '') ? 'direct' : isHttp(s.url) ? 'relay' : 'drop'));
+    const subs = (src.subs ?? []).map((s): How => (s.path ? (/^\/data\//.test(s.path) ? 'drop' : 'direct') : isLoopback(s.url ?? '') ? 'direct' : isHttp(s.url) ? 'relay' : 'drop'));
     return { main, headerArgs: false, subs, relay: main === 'relay' || subs.includes('relay') };
   }
   const c = caps ?? PC_PLAYERS[0];
   let main: How; let headerArgs = false;
-  if (!c.reports) main = 'relay';
-  else if (src.localPath || !keys.length || isLoopback(src.url)) main = 'direct';
-  else if (c.headers === 'all' || (c.headers === 'ua-ref' && onlyUaRef)) { main = 'direct'; headerArgs = true; }
+  // (Only User-Agent and Referer ever go on a command line: a cookie or an authorisation there would reach every host
+  // the player opens, and other programs can read it. Anything else goes through the relay, to the source's origin only.
+  // A file on this computer goes through a relay session of its own: the run's own token never leaves the app.)
+  if (src.localPath) main = 'relay';
+  else if (!c.reports) main = 'relay';
+  else if (!keys.length || isLoopback(src.url)) main = 'direct';
+  else if (c.headers === 'ua-ref' && onlyUaRef) { main = 'direct'; headerArgs = true; }
   else main = 'relay';
-  // (Headers the program cannot send: the relay sends them, whatever the player.)
-  if (main === 'relay' && keys.length && !(c.headers === 'all' || (c.headers === 'ua-ref' && onlyUaRef))) headerArgs = false;
   const subs = (src.subs ?? []).map((s): How => {
-    if (c.subs === 'path') return 'temp';
-    if (s.path) return 'direct';
+    if (c.subs === 'path' || s.path) return 'temp';
     return s.headers && Object.keys(s.headers).length && !isLoopback(s.url ?? '') ? 'relay' : 'direct';
   });
   return { main, headerArgs, subs, relay: main === 'relay' || subs.includes('relay'), problem: src.hls && !c.hls ? 'hls' : undefined };

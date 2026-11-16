@@ -266,7 +266,8 @@ html.pc .fab-item { flex-direction: row-reverse; }
 .ext-inapp .watch-ic { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .ext-error-msg { margin: 4px 0 6px; line-height: 1.5; }
 .ext-error-why { margin: 0 0 12px; font-size: 12px; opacity: .8; overflow-wrap: anywhere; }
-.ext-error-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 4px; }
+.ext-error-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 8px 0 4px; }
+.ext-error-actions .btn { justify-content: center; width: 100%; }
 .ext-mark p { margin: 4px 0 14px; line-height: 1.5; }
 .ext-settings { display: grid; gap: 10px; margin: 6px 0 4px; }
 .ext-settings .ext-title { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
