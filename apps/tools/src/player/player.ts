@@ -909,7 +909,7 @@ export function openPlayer(src: PlayerSource): void {
   async function startBeside(track: number, codec: string) {
     const c = await import('./compat'); const packs = await import('../packs');
     if (packs.packsHere() && !(await packs.ensurePacks(['ffmpeg'], t('packWhyPlayerSound')))) { toast(t('playerNoSound', { codec: codec.toUpperCase() }), 'error', 6000); return; }
-    let base: string | null = null; try { base = await c.audioBase(); } catch { base = null; }
+    let base: string | null = null; try { base = await c.audioBase(src.url); } catch { base = null; }
     if (!base || playerGone) return;
     beside?.stop(); beside = new c.SoundBeside(video, src.url, track, base);
     flashText(t('playerSoundBeside', { codec: (codec || '?').toUpperCase() }), true);

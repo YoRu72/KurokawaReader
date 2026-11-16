@@ -42,7 +42,7 @@ function logic() {
   const m = L.plan(cookie, 'linux', C('mpv')); const m2 = L.plan(site, 'linux', C('mpv'));
   ok('computer, mpv with a cookie: the source through the relay (a cookie never on a command line), mpv still telling where it is', m.main === 'relay' && !m.headerArgs && m.relay && C('mpv').reports, m);
   ok('…with only User-Agent and Referer: those on its command line, no relay for the video', m2.main === 'direct' && m2.headerArgs, m2);
-  ok('…a torrent stream as it is; a file through a relay session of its own (the run\'s token never handed out)', L.plan(torrent, 'linux', C('mpv')).main === 'direct' && L.plan(file, 'linux', C('mpv')).main === 'relay' && L.plan({ ...file, subs: [{ path: '/v/a.srt', name: 'a' }] }, 'linux', C('mpv')).subs[0] === 'temp');
+  ok('…a torrent stream and a file each through a relay session of their own; the app\'s own loopback subtitles as a copy (the run\'s token never handed out)', ['linux', 'win', 'mac'].every((os) => L.plan(torrent, os, C('mpv')).main === 'relay') && L.plan(file, 'linux', C('mpv')).main === 'relay' && L.plan({ ...file, subs: [{ path: '/v/a.srt', name: 'a' }] }, 'linux', C('mpv')).subs[0] === 'temp' && L.plan({ ...torrent, subs: [{ url: 'http://127.0.0.1:4567/TOK/f?p=%2Fa.srt', name: 'a' }] }, 'linux', C('mpv')).subs[0] === 'temp' && L.plan({ url: 'https://a.test/v.mkv', name: 'v', subs: [{ url: 'https://a.test/v.srt', name: 's' }] }, 'linux', C('mpv')).main === 'direct');
   for (const id of ['vlc', 'iina', 'mpc-hc', 'potplayer']) ok(`computer, ${id} (does not tell): always through the relay, so the app sees when reading stops`, L.plan(torrent, 'win', C(id)).main === 'relay' && L.plan(site, 'win', C(id)).main === 'relay');
   ok('PotPlayer: headers never on its command line (not documented well enough)', C('potplayer').headers === 'none');
   ok('VLC and MPC read subtitles from disk: saved first', L.plan(site, 'win', C('vlc')).subs[0] === 'temp' && L.plan(site, 'win', C('mpc-hc')).subs[0] === 'temp');
@@ -116,6 +116,18 @@ srv.listen(ipc);`;
     // (A Mac's dialog gives the .app bundle: its program inside, by Info.plist's CFBundleExecutable.)
     const app = path.join(dir, 'Fake Player.app'); fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true }); fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), '<plist><dict><key>CFBundleExecutable</key>\n<string>fakeplay</string></dict></plist>'); fs.writeFileSync(path.join(app, 'Contents', 'MacOS', 'fakeplay'), '#!/bin/sh\n', { mode: 0o755 });
     ok('a .app bundle picked: its program inside is kept', E.setChosen(app).path === path.join(app, 'Contents', 'MacOS', 'fakeplay'));
+    // (Info.plist in its binary form — bplist00, as a built bundle often has it —, read best-effort; IINA's iina-cli first.)
+    const bpl = (pairs) => { const enc = (s) => { const ascii = /^[\x00-\x7f]*$/.test(s); let body = Buffer.from(s, ascii ? 'latin1' : 'utf16le'); if (!ascii) { body = Buffer.from(body); body.swap16(); } const n = ascii ? s.length : body.length / 2; return Buffer.concat([Buffer.from(n < 15 ? [(ascii ? 0x50 : 0x60) | n] : [ascii ? 0x5f : 0x6f, 0x10, n]), body]); };
+      const n = pairs.length; const objs = [Buffer.from([0xd0 | n, ...pairs.map((_, i) => 1 + i), ...pairs.map((_, i) => 1 + n + i)]), ...pairs.map((p) => enc(p[0])), ...pairs.map((p) => enc(p[1]))];
+      let out = Buffer.from('bplist00', 'latin1'); const offs = []; for (const o of objs) { offs.push(out.length); out = Buffer.concat([out, o]); } const table = out.length;
+      const tr = Buffer.alloc(32); tr[6] = 2; tr[7] = 1; tr.writeBigUInt64BE(BigInt(objs.length), 8); tr.writeBigUInt64BE(0n, 16); tr.writeBigUInt64BE(BigInt(table), 24);
+      return Buffer.concat([out, Buffer.concat(offs.map((o) => Buffer.from([o >> 8, o & 255]))), tr]); };
+    const bin = bpl([['CFBundleName', 'Fake'], ['CFBundleExecutable', 'fakebin'], ['Note', 'مشغّل']]);
+    const app2 = path.join(dir, 'Binary Player.app'); fs.mkdirSync(path.join(app2, 'Contents', 'MacOS'), { recursive: true }); fs.writeFileSync(path.join(app2, 'Contents', 'Info.plist'), bin); fs.writeFileSync(path.join(app2, 'Contents', 'MacOS', 'fakebin'), '#!/bin/sh\n', { mode: 0o755 });
+    ok('…a binary Info.plist: CFBundleExecutable read (UTF-16 values too); a broken one gives nothing, no throw', E.bplistString(bin, 'CFBundleExecutable') === 'fakebin' && E.bplistString(bin, 'Note') === 'مشغّل' && E.setChosen(app2).path === path.join(app2, 'Contents', 'MacOS', 'fakebin') && E.bplistString(bin.subarray(0, 45), 'CFBundleExecutable') === null && E.bplistString(Buffer.concat([bin.subarray(0, bin.length - 1), Buffer.from([255])]), 'CFBundleExecutable') === null);
+    const iina = path.join(dir, 'IINA.app'); fs.mkdirSync(path.join(iina, 'Contents', 'MacOS'), { recursive: true }); fs.writeFileSync(path.join(iina, 'Contents', 'Info.plist'), '<plist><dict><key>CFBundleExecutable</key><string>IINA</string></dict></plist>');
+    for (const f of ['IINA', 'iina-cli']) fs.writeFileSync(path.join(iina, 'Contents', 'MacOS', f), '#!/bin/sh\n', { mode: 0o755 });
+    ok('…IINA picked: its bundled iina-cli, not the window program', E.setChosen(iina).path === path.join(iina, 'Contents', 'MacOS', 'iina-cli'));
     const subCopy = path.join(os.tmpdir(), 'kurokawa-clip', `kt-sub-test${process.pid}.srt`); fs.mkdirSync(path.dirname(subCopy), { recursive: true }); fs.writeFileSync(subCopy, '1\n');
     const outside = path.join(dir, 'kt-sub-x.srt'); fs.writeFileSync(outside, '1\n');
     ok('a subtitle copy removed after its player; nothing else (another folder, another name)', E.dropSub({ path: subCopy }).ok && !fs.existsSync(subCopy) && !E.dropSub({ path: outside }).ok && fs.existsSync(outside) && !E.dropSub({ path: '/etc/passwd' }).ok);
@@ -201,6 +213,8 @@ async function relay() {
     // (A file on this computer for another program's player: a relay session's own address, ranges, nothing of the run's token.)
     const tmpFile = path.join(os.tmpdir(), `kt-relay-file-${process.pid}.mkv`); fs.writeFileSync(tmpFile, Buffer.alloc(5000, 3));
     const rf = await SP.relayOpen({ file: tmpFile, name: 'Local' }); const gf = await get(rf.url, { Range: 'bytes=10-19' });
+    const rev = await get(rf.url, { Range: 'bytes=100-50' }); const past = await get(rf.url, { Range: 'bytes=6000-' });
+    ok('…a reversed range (bytes=100-50) or one past the end: 416 with the size', rev.status === 416 && rev.headers['content-range'] === 'bytes */5000' && past.status === 416);
     let relRefused = false; try { await SP.relayOpen({ file: 'relative/x.mkv' }); } catch { relRefused = true; }
     ok('a file through a relay session: ranges served, its address has no run token; a relative or missing path refused', gf.status === 206 && gf.body.length === 10 && /\/r\/[0-9a-f]{32}\/v\/Local$/.test(rf.url) && relRefused);
     SP.relayClose({ token: rf.token }); ok('…closed: 403', (await get(rf.url)).status === 403); fs.rmSync(tmpFile, { force: true });
@@ -209,7 +223,7 @@ async function relay() {
     SP.stop();
   } catch (e) { ok('streamproxy.cjs with Electron stood in', false, String(e && e.stack || e)); } finally { Module._load = real; }
   srv.close(); origin.close(); cdn.close();
-  try { execFileSync('rustc', ['--version'], { stdio: 'ignore' }); const out = path.join(os.tmpdir(), `kt-relaylogic-${process.pid}`); execFileSync('rustc', ['--edition', '2021', '--test', path.join(ROOT, 'desktop-tauri/src-tauri/src/relaylogic.rs'), '-o', out], { stdio: 'pipe' }); const r = execFileSync(out, { encoding: 'utf8' }); ok('relaylogic.rs: its tests (join, rewrite, parse, headers by origin, players\' arguments, checks, mpv lines)', /test result: ok\. 5 passed/.test(r), r); fs.rmSync(out, { force: true }); }
+  try { execFileSync('rustc', ['--version'], { stdio: 'ignore' }); const out = path.join(os.tmpdir(), `kt-relaylogic-${process.pid}`); execFileSync('rustc', ['--edition', '2021', '--test', path.join(ROOT, 'desktop-tauri/src-tauri/src/relaylogic.rs'), '-o', out], { stdio: 'pipe' }); const r = execFileSync(out, { encoding: 'utf8' }); ok('relaylogic.rs: its tests (join, rewrite, parse, headers by origin, players\' arguments, checks, mpv lines)', /test result: ok\. 7 passed/.test(r), r); fs.rmSync(out, { force: true }); }
   catch (e) { if (e.code === 'ENOENT') console.log('skip relaylogic.rs (no rustc)'); else ok('relaylogic.rs compiles and passes', false, String(e.stderr || e.message).slice(-800)); }
 }
 
@@ -250,7 +264,7 @@ async function page() {
       // (Each fake takes what the real bridge method takes — desktop/preload.cjs and desktop-tauri/bridge.js; checked below.)
       const api = {
         platform: 'desktop', available: true, os: 'linux', list: async () => tasks, onTasks: (fn) => { setTimeout(() => fn(tasks), 50); return () => {}; }, freeSpace: async () => 5e11,
-        fileUrl: async (pth) => `http://127.0.0.1:${port}/media/${pth.split('/').pop()}?t=RUNTOKEN`, streamUrl: async (o) => { window.__calls.push(['streamUrl', o]); return { url: `http://127.0.0.1:${port}/media/clip.webm` }; }, streamDone: rec('streamDone'),
+        fileUrl: async (pth) => `http://127.0.0.1:${port}/media/${pth.split('/').pop()}?t=RUNTOKEN`, streamUrl: async (o) => { window.__calls.push(['streamUrl', o]); return { url: `http://127.0.0.1:${port}/media/clip.webm?t=RUNTOKEN` }; }, streamDone: rec('streamDone'),
         extPlayers: async () => { window.__calls.push(['extPlayers']); return { found: [{ id: 'mpv', name: 'mpv' }, { id: 'vlc', name: 'VLC' }].filter((f) => !window.__noPlayers), chosen: window.__chosen ?? null }; },
         extPlayerChoose: async (o) => { window.__calls.push(['extPlayerChoose', o]); if (window.__chooseFails) throw new Error(window.__chooseFails); if (window.__chooseCancel) return null; window.__chosen = { path: '/opt/my player/play', args: '', there: true }; return { path: '/opt/my player/play' }; },
         extPlayerStart: async (o) => { window.__calls.push(['extPlayerStart', o]); if (window.__failStart) throw new Error('spawn ENOENT'); const id = String(window.__calls.length); window.__status[id] = { n: 0, mpv: o.player === 'mpv' }; return { id, reports: o.player === 'mpv' }; },
@@ -328,7 +342,8 @@ async function page() {
       const atStart = await p.evaluate(() => window.__calls.map((c) => c[0]));
       ok('«Open in another player» on a torrent: the stream not let go when the app\'s player closed', !atStart.slice(0, atStart.indexOf('extPlayerStart')).includes('streamDone'), atStart);
       const st = await p.evaluate(() => window.__calls.find((c) => c[0] === 'extPlayerStart')[1]);
-      ok('…the other player gets the same live address, from where it was', st.target === `http://127.0.0.1:${web.address().port}/media/clip.webm` && st.start > 0, st);
+      const sro = await p.evaluate(() => window.__calls.find((c) => c[0] === 'relayOpen')?.[1]);
+      ok('…mpv (it tells) on the torrent: the same live address through a relay session of its own, from where it was — no run token in anything handed to the player', st.player === 'mpv' && st.target === 'http://127.0.0.1:3/r/tok/v/x' && sro?.url === `http://127.0.0.1:${web.address().port}/media/clip.webm?t=RUNTOKEN` && !JSON.stringify(st).includes('RUNTOKEN') && st.start > 0, { st, sro });
       await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'streamDone'), null, { timeout: 15000 });
       ok('…and let go once that player ended', true);
       // A failure there: «Watch in the in-app player» gets the stream still alive (no streamDone before it reopens).
@@ -347,10 +362,12 @@ async function page() {
     }
     // «Mark as watched?» for a tracked episode with VLC.
     await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('kt.settings')); s.extPcPlayer = 'vlc'; localStorage.setItem('kt.settings', JSON.stringify(s)); localStorage.removeItem('kt.player.memory'); });
-    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__quietAfter = 0; });
+    await p.reload(); await p.waitForSelector('.task-card'); await p.evaluate(() => { window.__quietAfter = 0; window.__calls = []; });
     await p.evaluate(() => { window.addEventListener('kt-anime-watched', (e) => { (window.__watched ??= []).push(e.detail); }); });
     await playBtn(); await p.waitForSelector('.ext-mark', { timeout: 20000 }); await p.waitForTimeout(250); await shot(p, 'mark-pc');
     ok('VLC told nothing about a tracked episode: «Mark as watched?» naming it', /VLC/.test(await p.$eval('.ext-mark', (e) => e.textContent)));
+    const asked = await p.evaluate(() => window.__calls.map((c) => c[0]));
+    ok('…the relay session closed before the question is asked (an unanswered question holds nothing)', asked.includes('relayOpen') && asked.includes('relayClose'), asked);
     await p.click('.ext-mark .btn.primary'); await p.waitForFunction(() => (window.__watched ?? []).length >= 1);
     await p.waitForTimeout(300);
     ok('…yes: watched once', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.player.memory'))['/videos/Made-up Show - 03.mkv']?.watched === true && window.__watched.length === 1));
@@ -377,7 +394,7 @@ async function page() {
     await p.goto(base + '#/settings'); await p.waitForSelector('.settings-nav .chip', { timeout: 15000 }); await p.evaluate(() => { const c = [...document.querySelectorAll('.settings-nav .chip')].find((x) => /player/.test(x.dataset.sec || '')); c?.click(); }); await p.waitForSelector('.ext-settings .ext-pc-pick', { timeout: 15000 });
     const pcs = await p.evaluate(() => ({ rows: [...document.querySelectorAll('.ext-settings [data-service]')].map((b) => b.dataset.service), args: !!document.querySelector('.ext-args') }));
     ok('PC settings: the four kinds of video, «Player on this PC», the chosen program\'s arguments line', pcs.rows.join() === 'torrent,online,http,local' && pcs.args, pcs);
-    await p.$eval('.ext-settings', (e) => e.scrollIntoView({ block: 'start' })); await p.waitForTimeout(200); await shot(p, 'settings-pc');
+    await p.$eval('.ext-settings', (e) => (e.previousElementSibling ?? e).scrollIntoView({ block: 'start' })); await p.waitForTimeout(200); await shot(p, 'settings-pc');
     await p.click('.ext-settings [data-service="online"]'); await p.waitForTimeout(250);
     const opts = await p.$$eval('.sheet:last-of-type button, .sheet:last-of-type [role="option"], .sheet:last-of-type label', (e) => e.map((x) => x.textContent.trim()).filter(Boolean));
     ok('…a kind of video: ask, the in-app player, «A player on this PC» — no player names', opts.some((x) => /PC|الحاسوب/.test(x)) && !opts.some((x) => /mpv|VLC|MX/.test(x)), opts);

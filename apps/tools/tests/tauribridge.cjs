@@ -296,6 +296,27 @@ function loadBridge(boot) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
     assert.deepEqual([...ks].sort(), [...params[cmd]].sort(), `${cmd}: bridge sends ${ks}, Rust takes ${params[cmd]}`);
   }
+  // (0.21 P8 round 4) The outside players' relay asks for its sources through the shell's no-redirect client — the
+  // user's DNS-over-HTTPS choice and the app's cookie jar — never a bare reqwest client of its own; that client is
+  // built as client() is (same builder, DoH resolver on its DoH slot) and client() itself still follows redirects.
+  {
+    const ext = fs.readFileSync(path.join(src, 'extplayer.rs'), 'utf8');
+    const rc = ext.slice(ext.indexOf('fn relay_client()'), ext.indexOf('\n}\n', ext.indexOf('fn relay_client()')));
+    assert.ok(/kurokawa_shell::net::client_no_redirect\(\)/.test(rc), 'relay_client uses net::client_no_redirect()');
+    assert.ok(!/Client::builder\(\)|ClientBuilder|Policy::/.test(ext), 'extplayer.rs builds no reqwest client of its own');
+    for (const f of fs.readdirSync(src).filter((x) => x.endsWith('.rs'))) {
+      if (/streamproxy|extplayer|streamserver/.test(f)) assert.ok(!/reqwest::Client::builder\(\)/.test(fs.readFileSync(path.join(src, f), 'utf8')), `${f}: no bare reqwest client`);
+    }
+    const net = fs.readFileSync(path.join(ROOT, '..', '..', 'shared', 'shell-rs', 'src', 'net.rs'), 'utf8');
+    const fnBody = (name) => { const a = net.indexOf(`fn ${name}(`); assert.ok(a > 0, `net.rs: ${name}`); return net.slice(a, net.indexOf('\n}\n', a)); };
+    assert.ok(/client_slot\(doh_server\(\)\.is_some\(\), true\)/.test(fnBody('client')), 'client(): DoH as chosen, redirects followed');
+    assert.ok(/client_slot\(doh_server\(\)\.is_some\(\), false\)/.test(fnBody('client_no_redirect')), 'client_no_redirect(): DoH as chosen, no redirects');
+    const sc = fnBody('slot_client');
+    assert.ok(/builder\(follow\)/.test(sc) && /slot_uses_doh\(slot\)/.test(sc) && /dns_resolver\(Arc::new\(DohResolver\)\)/.test(sc), 'slot_client: one builder, DoH resolver on the DoH slots');
+    const b = fnBody('builder');
+    assert.ok(/cookie_provider\(jar\(\)\)/.test(b) && /Policy::limited\(20\)/.test(b) && /Policy::none\(\)/.test(b), 'builder: the shared jar, 20 redirects or none');
+    for (const s of ['PLAIN', 'VIA_DOH', 'PLAIN_NR', 'VIA_DOH_NR']) assert.ok(new RegExp(`static ${s}: OnceLock<reqwest::Client>`).test(net), `net.rs caches ${s}`);
+  }
   // The self-test script: inert without its settings; its verdict; a full run against a fake bridge passes, and fails
   // when one answer is wrong.
   const stSrc = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'selftest.js'), 'utf8');

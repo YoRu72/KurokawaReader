@@ -1248,7 +1248,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void mpvGet(PluginCall call) { try { JSObject r = new JSObject(); r.put("value", KtMpv.get().getString(call.getString("name", ""))); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }
     @PluginMethod public void mpvClose(PluginCall call) { KtMpv.get().close(); call.resolve(); }
     /** The player's sound for tracks a web view cannot decode: ffmpeg turning them into AAC as they play (needs the ffmpeg pack). */
-    @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); r.put("url", engine().stream().audioBase()); call.resolve(r); }); }
+    @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); String src = call.getString("src", ""); if (src == null || src.isEmpty()) throw new Exception("src"); r.put("url", engine().stream().audioUrl(src)); call.resolve(r); }); }
     @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }
     @PluginMethod public void siblings(PluginCall call) {
         File f = fileOf(call.getString("path", "")); JSArray out = new JSArray(); File dir = f.getParentFile(); String base = f.getName().replaceAll("\\.[^.]+$", "").toLowerCase();

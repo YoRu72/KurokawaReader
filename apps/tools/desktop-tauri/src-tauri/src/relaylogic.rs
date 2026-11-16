@@ -214,6 +214,84 @@ pub fn is_http(u: &str) -> bool {
     (l.starts_with("http://") || l.starts_with("https://")) && !u.contains(['\r', '\n', ' ', '\0']) && u.len() <= MAX_URL
 }
 
+/// A string value of the top dictionary of a binary property list (Apple's bplist00), or None — only what a bundle's
+/// Info.plist needs (desktop/extplayer.cjs's bplistString): the trailer, the offset table, a dictionary, ASCII and
+/// UTF-16 strings; anything else, or anything out of bounds, None.
+pub fn bplist_string(b: &[u8], key: &str) -> Option<String> {
+    if b.len() < 40 || &b[..8] != b"bplist00" {
+        return None;
+    }
+    let t = b.len() - 32;
+    let (off_size, ref_size) = (b[t + 6] as usize, b[t + 7] as usize);
+    let be = |at: usize| -> u64 { b[at..at + 8].iter().fold(0u64, |v, x| (v << 8) | *x as u64) };
+    let (num, top, table) = (be(t + 8) as usize, be(t + 16) as usize, be(t + 24) as usize);
+    if off_size == 0 || ref_size == 0 || off_size > 8 || ref_size > 8 || num > t || table.checked_add(num.checked_mul(off_size)?)? > t {
+        return None;
+    }
+    let uint = |at: usize, n: usize| -> Option<usize> {
+        if at.checked_add(n)? > t {
+            return None;
+        }
+        Some(b[at..at + n].iter().fold(0usize, |v, x| v.wrapping_shl(8) | *x as usize))
+    };
+    let off = |i: usize| -> Option<usize> { if i < num { uint(table + i * off_size, off_size) } else { None } };
+    let len = |at: usize| -> Option<(usize, usize)> {
+        let lo = (b[at] & 0xf) as usize;
+        if lo != 0xf {
+            return Some((lo, at + 1));
+        }
+        let m = *b.get(at + 1)?;
+        if m & 0xf0 != 0x10 || m & 0xf > 3 {
+            return None;
+        }
+        let n = 1usize << (m & 0xf);
+        Some((uint(at + 2, n)?, at + 2 + n))
+    };
+    let string = |i: usize| -> Option<String> {
+        let at = off(i)?;
+        if at < 8 || at >= t {
+            return None;
+        }
+        let (n, s) = len(at)?;
+        match b[at] >> 4 {
+            5 if s.checked_add(n)? <= t => Some(b[s..s + n].iter().map(|c| *c as char).collect()),
+            6 if s.checked_add(n.checked_mul(2)?)? <= t => {
+                let u: Vec<u16> = b[s..s + 2 * n].chunks(2).map(|c| ((c[0] as u16) << 8) | c[1] as u16).collect();
+                String::from_utf16(&u).ok()
+            }
+            _ => None,
+        }
+    };
+    let at = off(top)?;
+    if at < 8 || at >= t || b[at] >> 4 != 0xd {
+        return None;
+    }
+    let (n, s) = len(at)?;
+    for k in 0..n {
+        if string(uint(s + k * ref_size, ref_size)?).as_deref() == Some(key) {
+            return string(uint(s + (n + k) * ref_size, ref_size)?);
+        }
+    }
+    None
+}
+
+/// The path and query of an address of this app's own stream server (`http://127.0.0.1:<port>/…`, or localhost), else
+/// None: such a source (a torrent being watched, a file) is served by the relay session itself, in-process, so the
+/// run's token in its address never reaches another program.
+pub fn own_target(u: &str, port: u16) -> Option<String> {
+    if !is_http(u) || port == 0 {
+        return None;
+    }
+    let l = u.to_ascii_lowercase();
+    for host in ["127.0.0.1", "localhost"] {
+        let pre = format!("http://{}:{}/", host, port);
+        if l.starts_with(&pre) {
+            return Some(u[pre.len() - 1..].to_string());
+        }
+    }
+    None
+}
+
 /// Request headers for a fetch: to the source's own origin all of the page's (lower-cased; Range and Host never);
 /// to any other host only User-Agent and Referer — a cookie or an authorisation never leaves the source's origin.
 /// A Chrome-like user agent unless one is given.
@@ -588,6 +666,57 @@ mod tests {
         assert!(!o2.contains("file:") && o2.contains("URI=\"\""));
         assert_eq!(s.urls, vec!["https://a.test/v/key.bin", "https://a.test/init.mp4", "https://a.test/v/seg0.ts", "https://cdn.test/seg1.ts"]);
     }
+    /// A tiny bplist00: one dictionary of string pairs (ASCII or UTF-16), offsets of two bytes, references of one.
+    pub(crate) fn bplist(pairs: &[(&str, &str)]) -> Vec<u8> {
+        let enc = |s: &str| -> Vec<u8> {
+            let ascii = s.is_ascii();
+            let body: Vec<u8> = if ascii { s.as_bytes().to_vec() } else { s.encode_utf16().flat_map(|u| [(u >> 8) as u8, u as u8]).collect() };
+            let n = if ascii { s.len() } else { body.len() / 2 };
+            let mut v = if n < 15 { vec![(if ascii { 0x50 } else { 0x60 }) | n as u8] } else { vec![if ascii { 0x5f } else { 0x6f }, 0x10, n as u8] };
+            v.extend(body);
+            v
+        };
+        let n = pairs.len();
+        let mut objs: Vec<Vec<u8>> = vec![];
+        let mut dict = vec![0xd0 | n as u8];
+        dict.extend((0..n).map(|i| (1 + i) as u8));
+        dict.extend((0..n).map(|i| (1 + n + i) as u8));
+        objs.push(dict);
+        for p in pairs { objs.push(enc(p.0)); }
+        for p in pairs { objs.push(enc(p.1)); }
+        let mut out = b"bplist00".to_vec();
+        let mut offs = vec![];
+        for o in &objs { offs.push(out.len()); out.extend(o); }
+        let table = out.len();
+        for o in &offs { out.extend([(o >> 8) as u8, *o as u8]); }
+        out.extend([0, 0, 0, 0, 0, 0, 2, 1]);
+        for v in [objs.len() as u64, 0, table as u64] { out.extend(v.to_be_bytes()); }
+        out
+    }
+
+    #[test]
+    fn bplists() {
+        let b = bplist(&[("CFBundleName", "Fake"), ("CFBundleExecutable", "fakeplay"), ("Note", "مشغّل — a longer value")]);
+        assert_eq!(bplist_string(&b, "CFBundleExecutable").as_deref(), Some("fakeplay"));
+        assert_eq!(bplist_string(&b, "Note").as_deref(), Some("مشغّل — a longer value"));
+        assert_eq!(bplist_string(&b, "Missing"), None);
+        assert_eq!(bplist_string(b"<plist></plist>", "CFBundleExecutable"), None);
+        // cut short, or its trailer pointing outside: nothing, and no panic
+        for cut in [40, b.len() - 1, b.len() - 33] { let _ = bplist_string(&b[..cut], "CFBundleExecutable"); }
+        let mut bad = b.clone(); let l = bad.len(); bad[l - 1] = 0xff; assert_eq!(bplist_string(&bad, "CFBundleExecutable"), None);
+        let mut bad2 = b.clone(); let l = bad2.len(); bad2[l - 9] = 0x7f; assert_eq!(bplist_string(&bad2, "CFBundleExecutable"), None);
+    }
+
+    #[test]
+    fn own_targets() {
+        assert_eq!(own_target("http://127.0.0.1:4000/TOK/t/S/a.mkv", 4000).as_deref(), Some("/TOK/t/S/a.mkv"));
+        assert_eq!(own_target("http://LOCALHOST:4000/TOK/f?p=x", 4000).as_deref(), Some("/TOK/f?p=x"));
+        assert_eq!(own_target("http://127.0.0.1:4001/TOK/t/S/a.mkv", 4000), None);
+        assert_eq!(own_target("http://127.0.0.1:40000/TOK/t/S/a.mkv", 4000), None);
+        assert_eq!(own_target("https://a.test/v.mkv", 4000), None);
+        assert_eq!(own_target("http://127.0.0.1:4000/x", 0), None);
+    }
+
     #[test]
     fn parses() {
         let s = "0123456789abcdef0123456789abcdef";

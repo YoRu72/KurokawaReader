@@ -49,9 +49,9 @@ final class KtStream {
     /** A local file's URL: signed and expiring (twelve hours), so nothing else on the phone can read files through this server by guessing a path. */
     synchronized String fileUrl(String path) throws IOException { url("", 0); long e = System.currentTimeMillis() + 12L * 3600_000; return "http://127.0.0.1:" + port + "/file?p=" + java.net.URLEncoder.encode(path, "UTF-8") + "&e=" + e + "&t=" + sign(path, e); }
     private final byte[] secret = new byte[32]; { new java.security.SecureRandom().nextBytes(secret); }
-    private String sign(String what, long e) { try { javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256"); mac.init(new javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256")); byte[] d = mac.doFinal((what + "|" + e).getBytes(StandardCharsets.UTF_8)); StringBuilder sb = new StringBuilder(); for (int i = 0; i < 12; i++) sb.append(String.format(java.util.Locale.US, "%02x", d[i])); return sb.toString(); } catch (Exception ex) { return ""; } }
+    private String sign(String what, long e) { return KtSign.sign(secret, what, e); }
     /** The query's token checked against its path and expiry. */
-    private boolean signed(String what, java.util.Map<String, String> q) { try { long e = Long.parseLong(q.getOrDefault("e", "0")); if (e < System.currentTimeMillis()) return false; String t = q.getOrDefault("t", ""); return !t.isEmpty() && java.security.MessageDigest.isEqual(t.getBytes(StandardCharsets.US_ASCII), sign(what, e).getBytes(StandardCharsets.US_ASCII)); } catch (Exception ex) { return false; } }
+    private boolean signed(String what, java.util.Map<String, String> q) { return KtSign.signed(secret, what, q, System.currentTimeMillis()); }
     private static java.util.Map<String, String> query(String path) { java.util.Map<String, String> m = new java.util.HashMap<>(); int q = path.indexOf('?'); if (q < 0) return m; for (String kv : path.substring(q + 1).split("&")) { int eq = kv.indexOf('='); if (eq <= 0) continue; try { m.put(kv.substring(0, eq), java.net.URLDecoder.decode(kv.substring(eq + 1), "UTF-8")); } catch (Exception ignored) {} } return m; }
 
     /** A remote stream's URL on this server, fetched with the headers it needs (a referer, a cookie): what an online
@@ -192,15 +192,18 @@ final class KtStream {
     /** A playlist's address as a numbered one of this session; "" for anything not http(s). */
     private static String relayId(Relay r, String at, java.net.URL base, String rel) { String u; try { u = new java.net.URL(base, rel).toString(); } catch (Exception e) { return ""; } if (!isHttp(u)) return ""; synchronized (r) { Integer n = r.ids.get(u); if (n == null) { if (r.urls.size() >= 200000) return ""; n = r.urls.size(); r.urls.add(u); r.ids.put(u, n); } return at + "/u/" + n; } }
 
-    /** The base address of the sound a web view cannot decode itself (AC-3, E-AC-3, DTS, TrueHD…). */
-    synchronized String audioBase() throws IOException { url("", 0); return "http://127.0.0.1:" + port + "/audio"; }
+    /** The address of the sound a web view cannot decode itself (AC-3, E-AC-3, DTS, TrueHD…) for one source: signed
+     *  over it, with an expiry (KtSign), as /file is — the page adds &ss= and &a=. */
+    synchronized String audioUrl(String src) throws IOException { url("", 0); return KtSign.audioUrl(secret, port, src, System.currentTimeMillis()); }
     /** /audio?src=&ss=&a=: one audio track of a video (any address ffmpeg reads, this server's own included), from
      *  `ss` seconds, turned into AAC as it plays — the player plays it beside the muted video, in step with it. */
     private void audio(String path, String method, Socket sock, OutputStream out) throws Exception {
-        String q = path.substring(path.indexOf('?') + 1); String src = param(q, "src"); String ss = param(q, "ss"); String a = param(q, "a");
-        out.write("HTTP/1.1 200 OK\r\nContent-Type: audio/aac\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-        if ("HEAD".equals(method) || src == null) { out.flush(); return; }
-        java.util.List<String> args = java.util.Arrays.asList("-nostdin", "-hide_banner", "-loglevel", "error", "-ss", ss == null ? "0" : ss, "-i", src, "-map", "0:a:" + (a == null ? "0" : a), "-vn", "-sn", "-dn", "-ac", "2", "-c:a", "aac", "-b:a", "192k", "-f", "adts", "pipe:1");
+        String[] sa = KtSign.audioArgs(secret, path, System.currentTimeMillis());
+        if (sa == null) { out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII)); out.flush(); return; }
+        String src = sa[0]; String ss = sa[1]; String a = sa[2];
+        out.write(("HTTP/1.1 200 OK\r\nContent-Type: audio/aac\r\nCache-Control: no-store\r\nConnection: close\r\n" + APP_CORS + "\r\n").getBytes(StandardCharsets.US_ASCII));
+        if ("HEAD".equals(method)) { out.flush(); return; }
+        java.util.List<String> args = java.util.Arrays.asList("-nostdin", "-hide_banner", "-loglevel", "error", "-ss", ss, "-i", src, "-map", "0:a:" + a, "-vn", "-sn", "-dn", "-ac", "2", "-c:a", "aac", "-b:a", "192k", "-f", "adts", "pipe:1");
         Process p = KtPacks.command(engine.context(), KtPacks.ffmpegBin(engine.context()), args).redirectErrorStream(false).start();
         // (Its messages drained, so it never stops on a full pipe.)
         Thread drain = new Thread(() -> { try (InputStream e = p.getErrorStream()) { byte[] b = new byte[4096]; while (e.read(b) > 0) { /* dropped */ } } catch (IOException ignored) {} }, "kt-audio-err"); drain.setDaemon(true); drain.start();

@@ -149,6 +149,10 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
   let relay: { token: string; url: string; subs: string[] } | null = null;
   const temps: string[] = [];
   let keep = false;
+  // (Everything this playback holds — the relay session, the subtitle copies, and once the outside player is done the
+  // torrent's stream — let go once, BEFORE «Mark as watched?» is asked: an unanswered question holds nothing.)
+  let cleaned = false;
+  const letGo = (stream: boolean): void => { if (cleaned) return; cleaned = true; closeRelay(relay, relayer); dropTemps(temps); if (stream) releaseStream(req, p); };
   try {
     const subs = await localSubs(p, req.src.subs ?? []);
     if (pl.relay) {
@@ -169,6 +173,7 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
       noteLaunch(req);
       const res = await pk.openPlayerApp(androidIntent({ target, isPath: pl.main === 'path', title: req.src.name, start, subs: readySubs }));
       clearLaunch();
+      letGo(true);
       await applyResult(req, androidResult(res), name);
     } else {
       const caps = pc!.caps!;
@@ -176,14 +181,14 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
       const headers = pl.headerArgs ? { ua: hd['user-agent'], referer: hd.referer } : {};
       const r = await runDesktop({ player: caps.id, target, title: req.src.name, start, subs: readySubs.map((s) => ({ at: s.at, isDefault: !!s.isDefault })), headers, slang: req.src.slang ?? [], alang: req.src.alang ?? [] }, name);
       if (!r.reports) { keep = true; void afterUntold(req, name, relay, relayer, temps); return true; }
+      letGo(true);
       await applyResult(req, { pos: r.pos, dur: r.dur, ended: r.ended, told: r.pos !== undefined || r.ended }, name);
     }
-    releaseStream(req, p);
   } catch (e) {
     const why = String((e as Error)?.message ?? e);
     failed(/not installed|ENOENT|ActivityNotFound/i.test(why) ? t('extNotInstalled', { app: name }) : t('extFailed', { app: name }), req, p, again, why, giveUp);
   } finally {
-    if (!keep) { closeRelay(relay, relayer); dropTemps(temps); }
+    if (!keep) letGo(false);
   }
   return true;
 }
@@ -194,7 +199,7 @@ function dropTemps(temps: string[]): void { for (const f of temps) void desk()?.
 /** A computer's player that tells nothing ended its process: it may have handed the address to an instance already
  *  open (a single-instance player, a wrapper), so the relay and the stream stay until the relay has not been read for
  *  ten minutes (nothing reading — a paused or fully buffered film keeps nothing reading, hence the long wait); then
- *  «Mark as watched?» where it is asked, and only after the answer the relay, the stream and the subtitle copies go.
+ *  the relay, the stream and the subtitle copies go, and only then «Mark as watched?» is asked where it is.
  *  At most eight hours. */
 async function afterUntold(req: ExtRequest, name: string, relay: { token: string } | null, relayer: Desk | Plug | null | undefined, temps: string[]): Promise<void> {
   const d = desk(); const until = Date.now() + 8 * 3600e3;
@@ -205,7 +210,8 @@ async function afterUntold(req: ExtRequest, name: string, relay: { token: string
     if (quiet) break;
     await new Promise((ok) => window.setTimeout(ok, UNTOLD_POLL_MS));
   }
-  try { await applyResult(req, { ended: false, told: false }, name); } finally { closeRelay(relay, relayer); releaseStream(req, 'win'); dropTemps(temps); }
+  closeRelay(relay, relayer); releaseStream(req, 'win'); dropTemps(temps);
+  await applyResult(req, { ended: false, told: false }, name).catch(() => undefined);
 }
 let UNTOLD_QUIET_MS = 10 * 60e3; let UNTOLD_POLL_MS = 5000; let DESK_POLL_MS = 2000;
 /** (Tests: shorter waits.) */

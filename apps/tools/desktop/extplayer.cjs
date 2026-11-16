@@ -51,8 +51,40 @@ function setChosen(p) {
   if (!abs || !isFile(abs)) throw new Error('kt-ext:notprogram');
   const s = store(); save({ ...s, path: abs }); return { path: abs };
 }
+/** A bundle's program: IINA's own command-line door (Contents/MacOS/iina-cli — IINA.app's main program opens a window
+ *  and takes no mpv options) when the bundle carries it; else Info.plist's CFBundleExecutable, read from the XML form
+ *  or, best-effort, the binary one (bplist00); else the bundle's own name. */
 function bundleProgram(app) {
-  try { const plist = fs.readFileSync(path.join(app, 'Contents', 'Info.plist'), 'utf8'); const m = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist); const f = path.join(app, 'Contents', 'MacOS', m ? m[1] : path.basename(app, '.app')); return isFile(f) ? f : null; } catch { return null; }
+  try {
+    const mac = path.join(app, 'Contents', 'MacOS'); const cli = path.join(mac, 'iina-cli'); if (isFile(cli)) return cli;
+    let name = ''; let raw = null; try { raw = fs.readFileSync(path.join(app, 'Contents', 'Info.plist')); } catch { raw = null; }
+    if (raw) { if (raw.toString('latin1', 0, 8) === 'bplist00') name = bplistString(raw, 'CFBundleExecutable') || ''; else { const m = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(raw.toString('utf8')); name = m ? m[1].trim() : ''; } }
+    if (!name || /[\/\\]|^\.\.?$/.test(name)) name = path.basename(app, '.app');
+    const f = path.join(mac, name); return isFile(f) ? f : null;
+  } catch { return null; }
+}
+/** A string value of the top dictionary of a binary property list (Apple's bplist00), or null — only what a bundle's
+ *  Info.plist needs: its trailer, the offset table, a dictionary, ASCII and UTF-16 strings; anything else, null. */
+function bplistString(buf, key) {
+  try {
+    if (buf.length < 40 || buf.toString('latin1', 0, 8) !== 'bplist00') return null;
+    const t = buf.length - 32; const offSize = buf[t + 6]; const refSize = buf[t + 7];
+    const num = Number(buf.readBigUInt64BE(t + 8)); const top = Number(buf.readBigUInt64BE(t + 16)); const table = Number(buf.readBigUInt64BE(t + 24));
+    if (!offSize || !refSize || offSize > 8 || refSize > 8 || table + num * offSize > t) return null;
+    const uint = (at, n) => { if (at < 0 || at + n > t) throw new Error('bplist'); let v = 0; for (let i = 0; i < n; i++) v = v * 256 + buf[at + i]; return v; };
+    const off = (i) => (i < num ? uint(table + i * offSize, offSize) : -1);
+    const len = (at) => { const lo = buf[at] & 0xf; if (lo !== 0xf) return [lo, at + 1]; const m = buf[at + 1]; if ((m & 0xf0) !== 0x10 || (m & 0xf) > 3) return [-1, 0]; const n = 1 << (m & 0xf); return [uint(at + 2, n), at + 2 + n]; };
+    const str = (i) => {
+      const at = off(i); if (at < 8 || at >= t) return null; const ty = buf[at] >> 4; const [n, s] = len(at); if (n < 0) return null;
+      if (ty === 5 && s + n <= t) return buf.toString('latin1', s, s + n);
+      if (ty === 6 && s + 2 * n <= t) { const b = Buffer.from(buf.subarray(s, s + 2 * n)); b.swap16(); return b.toString('utf16le'); }
+      return null;
+    };
+    const at = off(top); if (at < 8 || at >= t || buf[at] >> 4 !== 0xd) return null;
+    const [n, s] = len(at); if (n < 0) return null;
+    for (let k = 0; k < n; k++) if (str(uint(s + k * refSize, refSize)) === key) return str(uint(s + (n + k) * refSize, refSize));
+    return null;
+  } catch { return null; }
 }
 /** The subtitle copies saved for players that read only files (kt-sub-*), an hour old or more: removed. */
 function sweepSubs() { for (const d of X.tempDirs()) { let names = []; try { names = fs.readdirSync(d); } catch { continue; } for (const n of names) { if (!/^kt-sub-[\w.-]+\.(srt|ass|ssa|vtt)$/.test(n)) continue; const f = path.join(d, n); try { if (Date.now() - fs.statSync(f).mtimeMs > 3600e3) fs.rmSync(f, { force: true }); } catch { /* */ } } } }
@@ -103,4 +135,4 @@ function stop(o) { const st = procs.get(String(o && o.id)); if (!st) return { ok
 /** The app quitting, or the page reloaded (main.cjs): sockets and records let go; the players keep playing. */
 function release() { for (const st of procs.values()) { clearTimeout(st.timer); try { st.sock?.destroy(); } catch { /* */ } try { st.child.unref(); } catch { /* */ } } procs.clear(); }
 const running = () => [...procs.values()].filter((p) => p.running).length;
-module.exports = { init, find, setChosen, dropSub, sweepSubs, bundleProgram, setArgs, forget, start, status, stop, release, resolve, running };
+module.exports = { init, find, setChosen, dropSub, sweepSubs, bundleProgram, bplistString, setArgs, forget, start, status, stop, release, resolve, running };

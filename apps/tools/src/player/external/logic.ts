@@ -56,7 +56,8 @@ export interface Plan { main: How; /** the headers go on the program's command l
 /** How a source reaches the player.
  *  Phone: a file by its path (FileProvider), a plain or loopback address as it is, anything with headers through the
  *  relay; a site's subtitles through the relay, the app's own (loopback) as they are.
- *  Computer: a file by the app's loopback file address (the shell takes http(s) only); headers on the command line
+ *  Computer: a file, or the app's own loopback address (a torrent), through a relay session of its own; the app's own
+ *  loopback subtitles saved as a copy; headers on the command line
  *  where the player takes them, else the relay; a player that does not tell where it stopped always reads through the
  *  relay, so the app sees when it has stopped reading (some hand the address to an instance already open and exit). */
 export function plan(src: ExtSource, plat: Platform, caps?: Caps): Plan {
@@ -71,14 +72,16 @@ export function plan(src: ExtSource, plat: Platform, caps?: Caps): Plan {
   let main: How; let headerArgs = false;
   // (Only User-Agent and Referer ever go on a command line: a cookie or an authorisation there would reach every host
   // the player opens, and other programs can read it. Anything else goes through the relay, to the source's origin only.
-  // A file on this computer goes through a relay session of its own: the run's own token never leaves the app.)
-  if (src.localPath) main = 'relay';
+  // A file on this computer, and any address of the app's own server on 127.0.0.1 — a torrent being watched —, go
+  // through a relay session of their own: the run's own token never leaves the app.)
+  if (src.localPath || isLoopback(src.url)) main = 'relay';
   else if (!c.reports) main = 'relay';
-  else if (!keys.length || isLoopback(src.url)) main = 'direct';
+  else if (!keys.length) main = 'direct';
   else if (c.headers === 'ua-ref' && onlyUaRef) { main = 'direct'; headerArgs = true; }
   else main = 'relay';
   const subs = (src.subs ?? []).map((s): How => {
-    if (c.subs === 'path' || s.path) return 'temp';
+    // (The app's own subtitles on 127.0.0.1 are read here and saved as a copy: their address carries the run's token.)
+    if (c.subs === 'path' || s.path || isLoopback(s.url ?? '')) return 'temp';
     return s.headers && Object.keys(s.headers).length && !isLoopback(s.url ?? '') ? 'relay' : 'direct';
   });
   return { main, headerArgs, subs, relay: main === 'relay' || subs.includes('relay'), problem: src.hls && !c.hls ? 'hls' : undefined };

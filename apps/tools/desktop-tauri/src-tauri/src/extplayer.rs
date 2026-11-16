@@ -42,6 +42,8 @@ fn plain(s: &mut TcpStream, code: u16) {
 struct Live {
     s: Session,
     file: String,
+    /// A torrent being watched (the stream server's session key), served by this relay session in-process.
+    torrent: String,
     origin: String,
     last: Instant,
     last_ms: u64,
@@ -96,12 +98,12 @@ pub async fn kt_relay_open(o: Value) -> Result<Value, String> {
     if id.len() != 32 {
         return Err("token".into());
     }
-    let url = o.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut url = o.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if !url.is_empty() && !rl::is_http(&url) {
         return Err("refused: target".into());
     }
     // (A file on this computer for another program's player: served by this session's address.)
-    let file = match o.get("file").and_then(|v| v.as_str()) {
+    let mut file = match o.get("file").and_then(|v| v.as_str()) {
         Some(f) if !f.is_empty() => {
             let p = PathBuf::from(f);
             if !p.is_absolute() || !p.is_file() {
@@ -111,16 +113,27 @@ pub async fn kt_relay_open(o: Value) -> Result<Value, String> {
         }
         _ => String::new(),
     };
+    // (This server's own address — a torrent being watched, a file —: served by the session in-process, so the run's
+    // token in it never reaches another program's command line. Its other routes are not handed out.)
+    let mut torrent = String::new();
+    if let Some(t) = rl::own_target(&url, port) {
+        let (p, q) = sl::split_target(&t);
+        match sl::route(p, q, &token) {
+            sl::Route::Torrent { session } => torrent = session,
+            sl::Route::File { path } if file.is_empty() => file = path,
+            _ => return Err("refused: target".into()),
+        }
+        url = String::new();
+    }
     let subs: Vec<Sub> = o.get("subs").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().take(20).map(|x| {
         let u = x.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
         Sub { url: if rl::is_http(&u) { u } else { String::new() }, path: String::new(), name: x.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(), headers: pairs(x.get("headers")) }
     }).collect();
-    let _ = token;
     let at = format!("http://127.0.0.1:{}/r/{}", port, id);
     let name = o.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let sub_urls: Vec<String> = subs.iter().enumerate().map(|(i, s)| if s.url.is_empty() { String::new() } else { format!("{}/s/{}/{}", at, i, name_part(&s.name, &format!("sub{}.srt", i))) }).collect();
-    let main = if url.is_empty() && file.is_empty() { String::new() } else { format!("{}/v/{}", at, name_part(name, "video")) };
-    let live = Live { file, origin: rl::origin(&url), s: Session::new(url, pairs(o.get("headers")), subs), last: Instant::now(), last_ms: now_ms(), reads: 0, reading: Arc::new(AtomicU64::new(0)), gone: Arc::new(AtomicBool::new(false)) };
+    let main = if url.is_empty() && file.is_empty() && torrent.is_empty() { String::new() } else { format!("{}/v/{}", at, name_part(name, "video")) };
+    let live = Live { file, torrent, origin: rl::origin(&url), s: Session::new(url, pairs(o.get("headers")), subs), last: Instant::now(), last_ms: now_ms(), reads: 0, reading: Arc::new(AtomicU64::new(0)), gone: Arc::new(AtomicBool::new(false)) };
     sessions().lock().map_err(|e| e.to_string())?.insert(id.clone(), live);
     Ok(json!({ "token": id, "url": main, "subs": sub_urls }))
 }
@@ -147,10 +160,13 @@ pub async fn kt_relay_status(o: Value) -> Result<Value, String> {
     })
 }
 
-/// The relay's own client: no redirect followed by itself (relay_one does it hop by hop), no cookie jar.
+/// The relay's client: the shell's client_no_redirect() — the DNS-over-HTTPS choice and the cookie jar of every other
+/// request of the app (so a source that set its cookies through the app is let in, and a host the system's DNS
+/// blocks is still found), with no redirect followed by itself (relay_one does it hop by hop). (The jar's own cookies
+/// for a host go to that host only, as with any request of the app; a cookie the page handed over goes to the
+/// source's origin only, and reqwest adds the jar's only when the request carries no Cookie of its own.)
 fn relay_client() -> Option<&'static reqwest::Client> {
-    static C: OnceLock<Option<reqwest::Client>> = OnceLock::new();
-    C.get_or_init(|| reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(30)).build().ok()).as_ref()
+    kurokawa_shell::net::client_no_redirect().ok()
 }
 
 /// Called by streamserver::handle for /r/…: true when it was a relay address (answered here).
@@ -179,6 +195,15 @@ pub fn serve(s: &mut TcpStream, path: &str, req: &sl::Head, head_only: bool, sto
         l.last = Instant::now();
         l.last_ms = now_ms();
         l.reads += 1;
+        if matches!(ask, Ask::Video) && !l.torrent.is_empty() {
+            let k = l.torrent.clone();
+            let reading = l.reading.clone();
+            drop(m);
+            reading.fetch_add(1, Ordering::SeqCst);
+            streamserver::serve_torrent(s, &k, req, head_only, stop);
+            reading.fetch_sub(1, Ordering::SeqCst);
+            return true;
+        }
         if matches!(ask, Ask::Video) && !l.file.is_empty() {
             let f = l.file.clone();
             let reading = l.reading.clone();
@@ -424,14 +449,29 @@ pub async fn kt_ext_player_choose(app: AppHandle, o: Value) -> Result<Value, Str
     Ok(json!({ "path": p.to_string_lossy() }))
 }
 fn bundle_program(app: &std::path::Path) -> Option<PathBuf> {
-    let plist = std::fs::read_to_string(app.join("Contents").join("Info.plist")).unwrap_or_default();
-    let name = plist.find("<key>CFBundleExecutable</key>").and_then(|i| {
-        let rest = &plist[i..];
-        let a = rest.find("<string>")? + 8;
-        let b = rest[a..].find("</string>")?;
-        Some(rest[a..a + b].trim().to_string())
-    }).unwrap_or_else(|| app.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
-    let f = app.join("Contents").join("MacOS").join(name);
+    let mac = app.join("Contents").join("MacOS");
+    // (IINA's own command-line door: IINA.app's main program opens a window and takes no mpv options.)
+    let cli = mac.join("iina-cli");
+    if cli.is_file() {
+        return Some(cli);
+    }
+    let raw = std::fs::read(app.join("Contents").join("Info.plist")).unwrap_or_default();
+    let name = if raw.starts_with(b"bplist00") {
+        rl::bplist_string(&raw, "CFBundleExecutable")
+    } else {
+        let plist = String::from_utf8_lossy(&raw).to_string();
+        plist.find("<key>CFBundleExecutable</key>").and_then(|i| {
+            let rest = &plist[i..];
+            let a = rest.find("<string>")? + 8;
+            let b = rest[a..].find("</string>")?;
+            Some(rest[a..a + b].trim().to_string())
+        })
+    };
+    let name = match name {
+        Some(n) if !n.is_empty() && !n.contains(['/', '\\']) && n != "." && n != ".." => n,
+        _ => app.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+    };
+    let f = mac.join(name);
     if f.is_file() { Some(f) } else { None }
 }
 fn sub_name_ok(n: &str) -> bool {

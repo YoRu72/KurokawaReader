@@ -29,6 +29,9 @@ pub const REPO: &str = "YoRu72/KurokawaReader";
 /// asks the resolver itself.
 static PLAIN: OnceLock<reqwest::Client> = OnceLock::new();
 static VIA_DOH: OnceLock<reqwest::Client> = OnceLock::new();
+/// The same two, with redirects left to the caller (the outside players' relay: client_no_redirect).
+static PLAIN_NR: OnceLock<reqwest::Client> = OnceLock::new();
+static VIA_DOH_NR: OnceLock<reqwest::Client> = OnceLock::new();
 static BOOT: OnceLock<reqwest::Client> = OnceLock::new();
 static USER_AGENT: OnceLock<String> = OnceLock::new();
 /// The DoH resolver's address in force (None: the system's DNS).
@@ -345,32 +348,43 @@ fn user_agent() -> String {
     }
 }
 
-fn builder() -> reqwest::ClientBuilder {
+fn builder(follow_redirects: bool) -> reqwest::ClientBuilder {
+    let policy = if follow_redirects { reqwest::redirect::Policy::limited(20) } else { reqwest::redirect::Policy::none() };
     reqwest::Client::builder()
         .user_agent(user_agent().as_str())
-        .redirect(reqwest::redirect::Policy::limited(20))
+        .redirect(policy)
         .connect_timeout(Duration::from_secs(30))
         .cookie_provider(jar())
+}
+
+/// The client of a slot (doh::client_slot), built once: with the DoH resolver for the two DoH slots, else the
+/// system's DNS — the same cookie jar for all four.
+fn slot_client(slot: doh::ClientSlot) -> Result<&'static reqwest::Client, String> {
+    let (cell, follow) = match slot {
+        doh::ClientSlot::Plain => (&PLAIN, true),
+        doh::ClientSlot::ViaDoh => (&VIA_DOH, true),
+        doh::ClientSlot::PlainNoRedirect => (&PLAIN_NR, false),
+        doh::ClientSlot::ViaDohNoRedirect => (&VIA_DOH_NR, false),
+    };
+    if let Some(c) = cell.get() {
+        return Ok(c);
+    }
+    let b = builder(follow);
+    let b = if doh::slot_uses_doh(slot) { b.dns_resolver(Arc::new(DohResolver)) } else { b };
+    let built = b.build().map_err(|e| e.to_string())?;
+    Ok(cell.get_or_init(|| built))
 }
 
 /// The client every request of the app goes through: with the DoH resolver while one is chosen, else the system's
 /// DNS — the same cookies either way.
 pub fn client() -> Result<&'static reqwest::Client, String> {
-    if doh_server().is_some() {
-        if let Some(c) = VIA_DOH.get() {
-            return Ok(c);
-        }
-        let built = builder()
-            .dns_resolver(Arc::new(DohResolver))
-            .build()
-            .map_err(|e| e.to_string())?;
-        return Ok(VIA_DOH.get_or_init(|| built));
-    }
-    if let Some(c) = PLAIN.get() {
-        return Ok(c);
-    }
-    let built = builder().build().map_err(|e| e.to_string())?;
-    Ok(PLAIN.get_or_init(|| built))
+    slot_client(doh::client_slot(doh_server().is_some(), true))
+}
+
+/// client()'s twin that does not follow redirects (the outside players' relay follows them hop by hop, to send the
+/// source's headers to its own origin only): the same DoH choice, the same cookie jar.
+pub fn client_no_redirect() -> Result<&'static reqwest::Client, String> {
+    slot_client(doh::client_slot(doh_server().is_some(), false))
 }
 
 /// main.cjs's kr:set-doh test: the site `host` reached (HEAD https://host/, 12 s at most) with the resolver in force,

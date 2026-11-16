@@ -330,7 +330,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     // The player: how videos are watched (another app, or the in-app player of the Player add-on).
     const plat = nativePlatform();
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
-      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
+      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close')), t('playerWithHint')),
       ...(s.addons.includes('player') ? [...(plat === 'android' ? [toggle(t('playerEngine') + ' — mpv', s.playerEngine !== 'web', (v) => updateSettings({ playerEngine: v ? 'mpv' : 'web' }), t('playerEngineHint'))] : []), toggle(t('videosTabToggle'), s.videosTab !== false, (v) => updateSettings({ videosTab: v }), t('videosTabHint')), ...fontRows(plat === 'desktop')] : [])) : null;
     // (Another app for each kind of video — src/player/external/settingsRows.ts, loaded with the page's card.)
     if (player && s.playerWith !== 'app') { const slot = h('div', { class: 'ext-slot' }); player.insertBefore(slot, player.children[2] ?? null); void import('../player/external/settingsRows').then((m) => { const el = m.externalRows(); if (el) slot.replaceWith(el); else slot.remove(); }); }

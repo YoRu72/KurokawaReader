@@ -315,7 +315,7 @@ pub(crate) fn serve_file(s: &mut TcpStream, path: &str, req: &sl::Head, head_onl
 }
 
 /// torrentstream.cjs's serve(): a file of a torrent being watched, each part sent once its pieces are in.
-fn serve_torrent(s: &mut TcpStream, key: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
+pub(crate) fn serve_torrent(s: &mut TcpStream, key: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
     let sess = match sessions().get(key).cloned() {
         Some(x) if !x.cancelled.load(Ordering::SeqCst) => x,
         _ => {

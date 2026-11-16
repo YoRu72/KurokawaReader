@@ -229,9 +229,48 @@ impl Cache {
     }
 }
 
+/// Which of net.rs's four cached clients a request goes through: the resolver chosen or not (`doh_on`), and redirects
+/// followed by the client (the app's requests) or left to the caller (the outside players' relay, which follows them
+/// hop by hop itself). Every one of them shares the app's cookie jar; the two with DoH use it strictly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClientSlot {
+    Plain,
+    ViaDoh,
+    PlainNoRedirect,
+    ViaDohNoRedirect,
+}
+
+pub fn client_slot(doh_on: bool, follow_redirects: bool) -> ClientSlot {
+    match (doh_on, follow_redirects) {
+        (false, true) => ClientSlot::Plain,
+        (true, true) => ClientSlot::ViaDoh,
+        (false, false) => ClientSlot::PlainNoRedirect,
+        (true, false) => ClientSlot::ViaDohNoRedirect,
+    }
+}
+
+/// Whether a slot's client asks the DoH resolver (and never the system's DNS).
+pub fn slot_uses_doh(s: ClientSlot) -> bool {
+    matches!(s, ClientSlot::ViaDoh | ClientSlot::ViaDohNoRedirect)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_slots() {
+        assert_eq!(client_slot(false, true), ClientSlot::Plain);
+        assert_eq!(client_slot(true, true), ClientSlot::ViaDoh);
+        assert_eq!(client_slot(false, false), ClientSlot::PlainNoRedirect);
+        assert_eq!(client_slot(true, false), ClientSlot::ViaDohNoRedirect);
+        // the relay's client asks the resolver exactly when the app's does
+        for on in [false, true] {
+            assert_eq!(slot_uses_doh(client_slot(on, false)), slot_uses_doh(client_slot(on, true)));
+            assert_eq!(slot_uses_doh(client_slot(on, false)), on);
+            assert_ne!(client_slot(on, false), client_slot(on, true));
+        }
+    }
 
     /// An answer as a resolver writes one: the question echoed, then the records (name by pointer to it).
     fn answer(query: &[u8], rcode: u16, records: &[(u16, u32, Vec<u8>)]) -> Vec<u8> {

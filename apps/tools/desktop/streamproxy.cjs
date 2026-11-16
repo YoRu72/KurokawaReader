@@ -103,7 +103,8 @@ function sendFile(p, req, out, cors = {}) {
   if (!st.isFile()) { out.writeHead(404, cors); out.end(); return; }
   const size = st.size; let from = 0, to = size - 1; const r = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
   if (r) { if (r[1]) from = Number(r[1]); if (r[2]) to = Math.min(size - 1, Number(r[2])); if (!r[1] && r[2]) { from = Math.max(0, size - Number(r[2])); to = size - 1; } }
-  if (size && from >= size) { out.writeHead(416, { 'content-range': `bytes */${size}`, ...cors }); out.end(); return; }
+  // (Past the end, or reversed — bytes=100-50 —: nothing to send.)
+  if ((size && from >= size) || (r && from > to)) { out.writeHead(416, { 'content-range': `bytes */${size}`, ...cors }); out.end(); return; }
   out.writeHead(r ? 206 : 200, { 'content-type': TYPES[path.extname(p).toLowerCase()] || 'application/octet-stream', 'accept-ranges': 'bytes', 'content-length': String(size ? to - from + 1 : 0), ...(r ? { 'content-range': `bytes ${from}-${to}/${size}` } : {}), ...cors, 'cache-control': 'no-store' });
   if (req.method === 'HEAD' || !size) { out.end(); return; }
   const rs = fs.createReadStream(p, { start: from, end: to }); req.on('close', () => rs.destroy()); rs.on('error', () => out.destroy()); rs.pipe(out);
