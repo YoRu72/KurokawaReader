@@ -4,6 +4,7 @@
 // words, icons and storage (`GalleryDeps`); styles are in glass.css's companion block, gallery.css.
 import { THEMES, DEFAULT_THEME, themeById, previewOf, modesOf, registerTheme, type ThemeDef, type Mode, type DarkTone, type Preview } from './themes';
 import { deferred } from './history';
+import { APP_THEME } from './app';
 import { loadIndex, installPack, removePack, installed, pictureUrls, PackError, forgetIndex, type PackIO, type Installed, type IndexEntry } from './packs';
 
 export interface GalleryDeps {
@@ -101,15 +102,16 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
     },
     el('div', { class: 'tg-pair', 'data-n': String(minis.length) }, ...minis),
     on ? el('span', { class: 'tg-check', 'aria-hidden': 'true' }, d.icon('check')) : null,
-    el('span', { class: 'tg-meta' }, el('b', { class: 'tg-name' }, name, def.id === DEFAULT_THEME ? el('span', { class: 'tg-tag' }, d.t('themeDefaultTag')) : null), def.by ? el('small', { class: 'tg-by' }, d.t('themeBy', { who: def.by })) : null,
+    el('span', { class: 'tg-meta' }, el('b', { class: 'tg-name' }, name, APP_THEME.mainTag && def.classic && def.id === DEFAULT_THEME ? el('span', { class: 'tg-tag' }, d.t('themeDefaultTag')) : null), def.by ? el('small', { class: 'tg-by' }, d.t('themeBy', { who: def.by })) : null,
       el('small', { class: 'tg-state' + (err ? ' err' : ''), id: `tg-s-${def.id}`, role: err ? 'alert' : undefined }, state)));
     const act = prog ? el('span', { class: 'tg-progress', role: 'progressbar', 'aria-label': d.t('themeDownloadingShort') }, el('i', { style: { width: `${prog.total ? Math.min(100, (prog.done / prog.total) * 100) : 8}%` } }))
       : need ? el('button', { type: 'button', class: 'tg-act tg-dl' + (err ? ' retry' : ''), title: err ? d.t('themeRetry') : d.t('themeDownload', { size: d.formatBytes(sizeOf(def)) }), 'aria-label': `${err ? d.t('themeRetry') : d.t('themeDownload', { size: d.formatBytes(sizeOf(def)) })} — ${name}`, onclick: () => void fetchIt(def, false) }, d.icon(err ? 'refresh' : 'download'))
       : packId && removing.has(packId) ? null
       : packId ? el('button', { type: 'button', class: 'tg-act tg-rm', title: d.t('themeRemove'), 'aria-label': `${d.t('themeRemove')} — ${name}`, onclick: () => void remove(def) }, d.icon('trash'))
       : null;
-    // (Customise: a pencil on every theme — Expressive 3's makes a copy of it among My themes —; a saved theme's ⋮ holds its own actions.)
-    const edit = !d.mine ? null : def.custom
+    // (Customise: a pencil on every theme — the main theme's, where the app allows it, makes a copy of it among My
+    //  themes, elsewhere it has none —; a saved theme's ⋮ holds its own actions.)
+    const edit = !d.mine || (def.classic && !APP_THEME.mainCopyable) ? null : def.custom
       ? el('button', { type: 'button', class: 'tg-edit tg-more', title: d.t('myMore'), 'aria-label': `${d.t('myMore')} — ${name}`, onclick: () => d.mine!.menu(def.id) }, d.icon('more'))
       : el('button', { type: 'button', class: 'tg-edit', title: d.t('editorCustomise'), 'aria-label': `${d.t('editorCustomise')} — ${name}`, onclick: () => d.mine!.customise(def.id) }, d.icon('pencil'));
     return el('div', { class: 'tg-card' + (on ? ' on' : '') + (need ? ' needs' : '') + (prog ? ' busy' : '') + (err ? ' failed' : '') + (def.custom ? ' mine' : ''), 'data-theme': def.id, 'data-pack': def.custom ? undefined : packId }, pick, edit, act);

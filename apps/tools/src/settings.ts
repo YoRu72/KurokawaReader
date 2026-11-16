@@ -1,6 +1,7 @@
 // The app's settings: kept in localStorage under one key, applied to the document (theme, accent) on change.
 import type { Limits } from './engine/types';
-import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, migrateMain, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
+import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
+import { migrateMain } from './theme/app';
 import { loadMine, toDef, pictureKey, pictureAsset } from './theme/custom';
 import { myStore } from './myStore';
 import { nativePlatform } from './native';
@@ -208,7 +209,7 @@ for (const m of mine0) upsertTheme(toDef(m));
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
 /** Once: the move to themes (kt.themeMigrated, 0.17). Then once (kt.mainTheme, 0.21): «Expressive 3» the main theme
- *  again — an install Frost was given without asking goes back to it (theme/themes.ts migrateMain), a snackbar then
+ *  again — an install Frost was given without asking goes back to it (theme/app.ts migrateMain), a snackbar then
  *  says so and can undo it (kt.mainThemeNote, theme/mainNote.ts); a theme chosen is kept, and marked as chosen. */
 function migrateTheme(hasMine: boolean): void {
   // (A theme that is no longer in the app — «ember» was taken out before release — falls back to the default.)

@@ -1,9 +1,9 @@
 // node tests/themedefault.cjs: «Expressive 3», the main theme again (0.21).
-//  1. the move back (theme/themes.ts migrateMain), every stored-settings shape: fresh, moved to Frost by itself, Frost
+//  1. the move back (theme/app.ts migrateMain), every stored-settings shape: fresh, moved to Frost by itself, Frost
 //     chosen (marked, or told by what was touched around it), another theme, the reader's own, before themes, corrupted;
 //  2. its palettes: text on its surfaces ≥ 4.5:1 (body), outlines and icons ≥ 3:1, the colour roles on their containers,
 //     the snackbar on the inverse surface — dark and light; no colour in the yellow/amber band; base.css says the same
-//     values as themes.ts;
+//     values as theme/app.ts;
 //  3. in the app: the default per light/dark/system; the move once, its snackbar, «Use Frost» undoing it, ✕ dismissing
 //     it, nothing shown again; a chosen Frost untouched; corrupted settings start clean; the gallery shows Expressive 3
 //     first with «Default», and Reset goes back to it.
@@ -17,7 +17,9 @@ let fails = 0; const ok = (n, c, extra = '') => { console.log((c ? 'ok   ' : 'FA
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-themedefault-'));
 esbuild.buildSync({ entryPoints: [path.join(__dirname, '..', 'src', 'theme', 'themes.ts')], bundle: true, format: 'cjs', platform: 'node', outfile: path.join(tmp, 'themes.js'), logLevel: 'silent' });
-const T = require(path.join(tmp, 'themes.js'));
+// (themes.ts is shared with the Reader; Tools' own side — the main theme's palettes, the move back — is theme/app.ts.)
+esbuild.buildSync({ entryPoints: [path.join(__dirname, '..', 'src', 'theme', 'app.ts')], bundle: true, format: 'cjs', platform: 'node', outfile: path.join(tmp, 'app.js'), logLevel: 'silent' });
+const T = { ...require(path.join(tmp, 'themes.js')), ...require(path.join(tmp, 'app.js')) };
 
 (async () => {
   /* 1. the move back, table-tested */
@@ -84,7 +86,7 @@ const T = require(path.join(tmp, 'themes.js'));
   ok('a selected chip is told from the others at a glance (dark by tone, light by hue)', c(RD.secondaryContainer, D.high) >= 1.15 && hsl(RL.secondaryContainer).s - hsl(L.high).s >= 0.3, `${c(RD.secondaryContainer, D.high).toFixed(2)} / ${(hsl(RL.secondaryContainer).s - hsl(L.high).s).toFixed(2)}`);
   const inCss = (v) => block.toLowerCase().includes(v.toLowerCase());
   const missing = [...Object.values(L), ...Object.values(TL), ...Object.values(RL), T.E3_LIGHT.tertiary, ...Object.values(T.E3_LIGHT.inverse), T.E3_DARK.secondaryContainer, T.E3_DARK.inverse.primary, T.E3_DARK.onHighest.dim, T.E3_DARK.onHighest.outline, T.E3_LIGHT.onHighest.outline].filter((v) => !inCss(v));
-  ok('base.css carries the same values as themes.ts (previews, tests and the app agree)', !missing.length, missing.join(', '));
+  ok('base.css carries the same values as theme/app.ts (previews, tests and the app agree)', !missing.length, missing.join(', '));
 
   /* 3. in the app */
   const web = serve().listen(0, '127.0.0.1'); await new Promise((r) => web.once('listening', r)); const URL0 = `http://127.0.0.1:${web.address().port}/`;

@@ -5,6 +5,7 @@
 import { themeById, THEMES, upsertTheme, removeTheme, type ThemeDef, type Mode, type DarkTone } from './themes';
 import { fromBase, toDef, sanitise, loadMine, lowestContrast, fixContrast, preparePicture, exportTheme, importTheme, pictureKey, pictureAsset, minePictureUrls, modeFromBase, ThemeFileError, RANGES, usesOwnPicture, type MyTheme, type MyMode, type BgKind, type MyStore } from './custom';
 import { History, deferred } from './history';
+import { APP_THEME } from './app';
 import { el, themeName } from './gallery';
 
 export interface EditorDeps {
@@ -233,7 +234,7 @@ export function openEditor(d: EditorDeps, start: { my: MyTheme; existing: boolea
     const kinds: [BgKind, string][] = [['theme', t('bgTheme')], ['mesh', t('bgMesh')], ['solid', t('bgSolid')], ['picture', t('bgPicture')]];
     if (packPics.length) kinds.push(['pack', t('bgPack')]);
     // (A computer: the two moving backgrounds, in the three colours below — still wherever they do not move.)
-    if (d.isPc()) kinds.push(['drift', t('animBgDrift')], ['flow', t('animBgFlow')]);
+    if (APP_THEME.animBg && d.isPc()) kinds.push(['drift', t('animBgDrift')], ['flow', t('animBgFlow')]);
     const bg = m.bg;
     const setKind = (k: BgKind) => change((x) => { const b = x.my[mode]!.bg; b.kind = k; if (k === 'pack' && !b.pack && packPics[0]) b.pack = { id: packPics[0].id, asset: packPics[0].asset }; }, undefined, true);
     const pickPicture = async () => {
@@ -258,7 +259,7 @@ export function openEditor(d: EditorDeps, start: { my: MyTheme; existing: boolea
       slider(t('editorShadow'), 'shadow', 'shadow', pct),
       el('h3', { class: 'te-h' }, t('editorBackground')),
       el('div', { class: 'te-chips', role: 'radiogroup', 'aria-label': t('editorBackground') }, ...kinds.map(([k, l]) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(bg.kind === k), class: 'chip' + (bg.kind === k ? ' on' : ''), onclick: () => setKind(k) }, l))),
-      ...((bg.kind === 'drift' || bg.kind === 'flow') && d.isPc() ? [el('p', { class: 'te-note' }, d.icon('info'), el('span', null, t('editorAnimNote')))] : []),
+      ...((bg.kind === 'drift' || bg.kind === 'flow') && APP_THEME.animBg && d.isPc() ? [el('p', { class: 'te-note' }, d.icon('info'), el('span', null, t('editorAnimNote')))] : []),
       ...(bg.kind === 'mesh' || bg.kind === 'drift' || bg.kind === 'flow' ? [colour(t('editorColour1'), 'bg.colors.0'), colour(t('editorColour2'), 'bg.colors.1'), colour(t('editorColour3'), 'bg.colors.2')] : []),
       ...(bg.kind === 'solid' ? [colour(t('editorColour1'), 'bg.solid')] : []),
       ...(bg.kind === 'picture' ? [
@@ -310,6 +311,7 @@ export function openEditor(d: EditorDeps, start: { my: MyTheme; existing: boolea
 export function customise(d: EditorDeps, defId: string): void {
   const def = themeById(defId);
   if (def.custom) { const my = myTheme(def.id); if (my) { void blobsOf(d.store, my).then((p) => openEditor(d, { my, existing: true, pictures: p })); return; } }
+  if (def.classic && !APP_THEME.mainCopyable) return;
   const my = fromBase(def, d.darkTone(), d.t('myDefaultName', { base: themeName(def, d.t) }).slice(0, 60));
   openEditor(d, { my, existing: false });
 }

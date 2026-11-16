@@ -1,9 +1,10 @@
 // Themes: frosted-glass looks laid over the Material 3 roles both Kurokawa apps already use (--md-*), and the
-// choice of how much blur a device can afford. Self-contained, shared by the apps: no import from either app.
+// choice of how much blur a device can afford. Shared by the apps: its only import is `./app`, each app's own small
+// file (not shared) saying what differs — the default theme, the main theme's name and light palette, and the like.
 // The app gives `applyTheme` the reader's choices (theme, light or dark, dark tone, accent, blur) and the picture
 // a downloaded theme brought (an object URL); this file turns them into CSS custom properties on <html>, which
-// glass.css (beside this file) reads. «Expressive 3» (id 'classic', the main theme) sets nothing: the app's own
-// Material 3 Expressive stylesheet (base.css), the look the app had before themes — its light side refreshed.
+// glass.css (beside this file) reads. The main theme (id 'classic') sets nothing: the app's own stylesheet.
+import { APP_THEME } from './app';
 
 export type Mode = 'light' | 'dark';
 export type DarkTone = 'default' | 'grey' | 'black';
@@ -140,21 +141,18 @@ const FROST: ThemeDef = {
 export const FROST_GRAPHITE: Surfaces = { ground: '#17181b', lowest: '#111214', low: '#1c1d20', mid: '#222326', high: '#2a2b2e', highest: '#333437' };
 export const FROST_LIGHT: Surfaces = { ground: '#ebebe9', lowest: '#fbfbfa', low: '#f5f5f3', mid: '#efefed', high: '#e6e6e3', highest: '#dddddb' };
 
-/** «Expressive 3», the main theme: the app's own Material 3 Expressive look (base.css), no glass — the default before
- *  the glass themes came (0.17) and the default again (0.21). Its id stays 'classic' (what that look was called meanwhile).
- *  Dark: the graphite it always had. Light: soft cool neutrals, never glaring white, cards raised by tone, an indigo
- *  accent (base.css «Expressive 3 in light»; these constants are the same values, for previews and tests). */
-const CLASSIC: ThemeDef = { id: 'classic', nameKey: 'themeExpressive', classic: true, followsAccent: true };
-export const E3_LIGHT: { surfaces: Surfaces; text: TextRoles; roles: Roles; tertiary: string; inverse: { surface: string; on: string; primary: string }; onHighest: { dim: string; outline: string } } = {
-  surfaces: { ground: '#eef0f6', lowest: '#fbfcfe', low: '#f8f9fc', mid: '#e7eaf2', high: '#dfe3ed', highest: '#d6dbe7' },
-  text: { on: '#181b23', variant: '#3d4352', dim: '#545b6b', outline: '#5b6272', outlineVariant: '#c4c9d6' },
-  roles: { primary: '#3d4e99', onPrimary: '#ffffff', primaryContainer: '#dce1fa', onPrimaryContainer: '#121a45', secondaryContainer: '#d3daf6', onSecondaryContainer: '#1b2033', tertiaryContainer: '#d2e9ec', onTertiaryContainer: '#0b2a2f' },
-  tertiary: '#2b6870', inverse: { surface: '#2b2f39', on: '#eef0f6', primary: '#b9c3ff' },
-  /** On the brightest surface: the outline a step darker. */ onHighest: { dim: '#545b6b', outline: '#525969' },
-};
-/** Expressive 3 in dark: the old default's graphite (base.css :root and data-accent='graphite'), exactly. */
-export const E3_DARK = { surfaces: { ground: '#121314', lowest: '#0c0d0e', low: '#1a1b1d', mid: '#1e2022', high: '#282a2d', highest: '#323437' } as Surfaces, inverse: { surface: '#e4e4e6', on: '#2e3033', primary: '#3d4656' }, secondaryContainer: '#3a404b',
-  /** On the brightest surface (selection bars, the add field): the muted inks a step lighter. */ onHighest: { dim: '#a3a5aa', outline: '#9fa2a7' } };
+/** What each app says of its themes (src/theme/app.ts, the app's own): everything else here is the same in both. */
+export interface AppTheme {
+  /** The theme a fresh install starts with, and what an unknown id falls back to. */ defaultTheme: string;
+  /** The main theme's (id 'classic', no glass: the app's own stylesheet) name key. */ mainNameKey: string;
+  /** The main theme opens the gallery (downloaded themes then follow the built-in ones), or closes it. */ mainFirst: boolean;
+  /** The main theme's own light palette (unset: the app's surfaces and text as they are). */ mainLight?: { surfaces: Surfaces; text: TextRoles; roles: Roles };
+  /** The main theme's dark roles where they are not the default accent's. */ mainDarkRoles?: Partial<Roles>;
+  /** The main theme carries a pencil (a copy of it among the reader's own); a «Default» tag when it is the default. */ mainCopyable: boolean; mainTag: boolean;
+  /** The moving backgrounds ('drift', 'flow') are offered; otherwise a theme that has one shows its still stand-in. */ animBg: boolean;
+  /** The large radius a copied theme without its own is scaled from. */ radiusLg: number;
+}
+const CLASSIC: ThemeDef = { id: 'classic', nameKey: APP_THEME.mainNameKey, classic: true, followsAccent: true };
 
 /** Aurora: a polar night with the faintest curtains of sea-green and lilac, close to grey; in light, the same on ice. */
 const AURORA: ThemeDef = {
@@ -271,17 +269,18 @@ const FROSTED: ThemeDef = { ...FG_BASE, id: 'frosted-glass', name: 'Frosted Glas
 const FROSTED_LIGHT: ThemeDef = { ...FG_BASE, id: 'frosted-glass-light', name: 'Frosted Glass Light', force: 'light', light: FG_LIGHT, pack: { ...FG_PACK, size: 784_506, assets: { light: 'bg-light' } } };
 const FROSTED_DARK: ThemeDef = { ...FG_BASE, id: 'frosted-glass-dark', name: 'Frosted Glass Dark', force: 'dark', dark: FG_DARK, pack: { ...FG_PACK, size: 784_506, assets: { dark: 'bg-dark' } } };
 
-export const THEMES: ThemeDef[] = [CLASSIC, FROST, AURORA, OBSIDIAN, WASHI, FROSTED, FROSTED_LIGHT, FROSTED_DARK];
-/** The main theme: «Expressive 3». */
-export const DEFAULT_THEME = 'classic';
-export const themeById = (id: string | undefined): ThemeDef => THEMES.find((x) => x.id === id) ?? CLASSIC;
+const BUILT_IN = [FROST, AURORA, OBSIDIAN, WASHI, FROSTED, FROSTED_LIGHT, FROSTED_DARK];
+export const THEMES: ThemeDef[] = APP_THEME.mainFirst ? [CLASSIC, ...BUILT_IN] : [...BUILT_IN, CLASSIC];
+export const DEFAULT_THEME = APP_THEME.defaultTheme;
+const FALLBACK = THEMES.find((x) => x.id === DEFAULT_THEME) ?? FROST;
+export const themeById = (id: string | undefined): ThemeDef => THEMES.find((x) => x.id === id) ?? FALLBACK;
 /** A theme made by the reader: added (or replaced) among «My themes»; removed again. */
 export function upsertTheme(def: ThemeDef): void { const i = THEMES.findIndex((x) => x.id === def.id); if (i >= 0) THEMES[i] = def; else THEMES.push(def); }
 export function removeTheme(id: string): void { const i = THEMES.findIndex((x) => x.id === id && x.custom); if (i >= 0) THEMES.splice(i, 1); }
-/** A theme that came in a pack (its tokens in the pack's header), added after the built-in ones. */
+/** A theme that came in a pack (its tokens in the pack's header): before the main theme when it closes the list. */
 export function registerTheme(def: ThemeDef): void {
   if (!def || typeof def.id !== 'string' || THEMES.some((x) => x.id === def.id) || !(def.dark || def.light)) return;
-  THEMES.push({ ...def, classic: false, custom: false });
+  const at = APP_THEME.mainFirst ? -1 : THEMES.findIndex((x) => x.classic); THEMES.splice(at < 0 ? THEMES.length : at, 0, { ...def, classic: false, custom: false });
 }
 
 /* ---------- colour arithmetic (sRGB), for alpha blending and WCAG contrast ---------- */
@@ -310,7 +309,7 @@ export function resolve(c: Choice): Resolved {
   const own = mode === 'dark' ? def.dark : def.light;
   const tokens = def.classic ? null : own ?? (mode === 'dark' ? FROST.dark! : FROST.light!);
   const appS = mode === 'light' ? APP_SURFACES.light : APP_SURFACES[c.darkTone];
-  if (def.classic) { const s = mode === 'light' ? E3_LIGHT.surfaces : APP_SURFACES[c.darkTone]; return { def, mode, tokens: null, surfaces: s, text: mode === 'light' ? E3_LIGHT.text : APP_TEXT.dark, roles: null, pane: [0, 0, 0, 0], card: [0, 0, 0, 0], sheet: [0, 0, 0, 0] }; }
+  if (def.classic) { const L = mode === 'light' ? APP_THEME.mainLight : undefined; return { def, mode, tokens: null, surfaces: L?.surfaces ?? appS, text: L?.text ?? APP_TEXT[mode], roles: null, pane: [0, 0, 0, 0], card: [0, 0, 0, 0], sheet: [0, 0, 0, 0] }; }
   // (Frost follows the dark tone: the refined graphite for the default, unless the earlier colours were kept.)
   const surfaces = tokens?.surfaces ?? (mode === 'dark' ? (c.darkTone === 'default' && !c.keepColours ? FROST_GRAPHITE : appS) : c.keepColours ? appS : FROST_LIGHT);
   const text = tokens?.text ?? APP_TEXT[mode];
@@ -406,39 +405,18 @@ export function migrateLook(stored: OldLook | null): { theme: string; keepColour
   return { theme: DEFAULT_THEME, keepColours: custom };
 }
 
-/* ---------- the main theme back (0.21): Expressive 3 again, once, for those Frost was given without asking ---------- */
-/** What is read from the stored settings to tell an install moved to Frost by itself from one that chose it. */
-export interface StoredLook extends OldLook { theme?: string; accentPrev?: string; glassBlur?: string; glassRail?: boolean; glassBattery?: boolean; themeChosen?: boolean; themeKeepColours?: boolean }
-export interface MainMove { theme: string; chosen: boolean; moved: boolean; prev?: { theme: string; themeKeepColours?: boolean } }
-/** Before 0.21 nothing recorded whether a theme was chosen: 0.17 put every install on Frost (migrateLook) and a fresh
- *  install started there. Frost is taken for a choice when anything around it was touched — the reader's own themes
- *  exist, the blur, the sidebar's glass or the battery choice was set, or a theme's own colours were once taken —,
- *  otherwise it was given, and Expressive 3 comes back (once; `moved` asks for the snackbar that can undo it). Any other
- *  theme stored was chosen by hand (only Frost was ever given). From 0.21 `themeChosen` says it plainly. */
-export function migrateMain(stored: StoredLook | null, hasMine: boolean): MainMove {
-  if (!stored || typeof stored !== 'object') return { theme: DEFAULT_THEME, chosen: false, moved: false };
-  const th = typeof stored.theme === 'string' && stored.theme ? stored.theme : undefined;
-  if (!th) return { theme: DEFAULT_THEME, chosen: false, moved: false };
-  if (stored.themeChosen) return { theme: th, chosen: true, moved: false };
-  if (th !== 'frost') return { theme: th, chosen: th !== DEFAULT_THEME, moved: false };
-  const touched = hasMine || (stored.glassBlur !== undefined && stored.glassBlur !== 'auto') || stored.glassRail !== undefined || stored.glassBattery !== undefined
-    || stored.accentPrev !== undefined || stored.accent === 'theme';
-  if (touched) return { theme: 'frost', chosen: true, moved: false };
-  return { theme: DEFAULT_THEME, chosen: false, moved: true, prev: { theme: 'frost', themeKeepColours: stored.themeKeepColours || undefined } };
-}
-
 /** The colours a gallery card is drawn with: ground, the glass, the text, the accent; and its background layers. */
 /** The default accent's roles (graphite, as base.css has them): what a theme that follows the accent is previewed with. */
 export const GRAPHITE: Record<Mode, Roles> = {
   dark: { primary: '#c9ccd2', onPrimary: '#1f2226', primaryContainer: '#3a3e45', onPrimaryContainer: '#e6e8ec', secondaryContainer: '#2e3237', onSecondaryContainer: '#dfe2e6', tertiaryContainer: '#2b3540', onTertiaryContainer: '#d6e1ec' },
   light: { primary: '#3f444b', onPrimary: '#ffffff', primaryContainer: '#dfe2e6', onPrimaryContainer: '#15181b', secondaryContainer: '#e6e8ec', onSecondaryContainer: '#1a1d20', tertiaryContainer: '#d8e3ee', onTertiaryContainer: '#0f1d2a' },
 };
-/** Expressive 3's colour roles with its default accent, by mode (the gallery's miniature, a copy made of it). */
-export const e3Roles = (m: Mode): Roles => (m === 'light' ? E3_LIGHT.roles : { ...GRAPHITE.dark, secondaryContainer: E3_DARK.secondaryContainer });
+/** The main theme's colour roles with the default accent, by mode (the gallery's miniature, a copy made of it). */
+export const mainRoles = (m: Mode): Roles => (m === 'light' ? APP_THEME.mainLight?.roles ?? GRAPHITE.light : { ...GRAPHITE.dark, ...APP_THEME.mainDarkRoles });
 export interface Preview { mode: Mode; ground: string; bg: string; picture?: string; veil?: string; pane: string; card: string; text: string; dim: string; edge: string; vars: Record<string, string> }
 export function previewOf(def: ThemeDef, mode: Mode, darkTone: DarkTone): Preview {
   const r = resolve({ theme: def.id, mode, darkTone, useThemeColours: true });
-  const t = r.tokens; const roles = r.roles ?? (def.classic ? e3Roles(r.mode) : GRAPHITE[r.mode]);
+  const t = r.tokens; const roles = r.roles ?? (def.classic ? mainRoles(r.mode) : GRAPHITE[r.mode]);
   const vars: Record<string, string> = {}; for (const [k, v] of ROLE_VARS) vars[v] = roles[k];
   return { mode: r.mode, ground: r.surfaces.ground, bg: t?.bg ?? 'none', picture: t?.picture, veil: t?.veil, pane: t ? css(r.pane) : r.surfaces.mid, card: t ? css(r.card) : r.surfaces.low, text: r.text.on, dim: r.text.dim, edge: t?.edge ?? r.text.outlineVariant, vars };
 }
