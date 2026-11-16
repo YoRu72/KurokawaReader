@@ -100,9 +100,9 @@ function mountInner(route: Route): void {
   if (key === currentKey && current) return;
   const prevRoute = currentKey ? (JSON.parse(currentKey) as Route) : null;
   currentKey = key;
-  const dest = destOf(route); if (route.name !== 'pick') noteTab(dest, location.hash.replace(/^#/, '') || '/');
+  const dest = destOf(route); if (route.name !== 'pick' && route.name !== 'openWith') noteTab(dest, location.hash.replace(/^#/, '') || '/');
   // Leaving a tab: its screen kept (not torn down) to come back to; staying in the tab: replaced as before.
-  if (current && prevRoute && destOf(prevRoute) !== dest && prevRoute.name !== 'add' && prevRoute.name !== 'pick') {
+  if (current && prevRoute && destOf(prevRoute) !== dest && prevRoute.name !== 'add' && prevRoute.name !== 'pick' && prevRoute.name !== 'openWith') {
     const pd = destOf(prevRoute); const old = kept.get(pd); if (old && old.el !== current) { old.el.dispose?.(); old.el.remove(); }
     kept.set(pd, { key: JSON.stringify(prevRoute), el: current, scroll: window.scrollY, inner: current.querySelector<HTMLElement>('.body')?.scrollTop ?? 0 });
     current.remove();
@@ -127,6 +127,7 @@ function mountInner(route: Route): void {
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
     case 'files': current = lazyView(() => import('./views/files').then((m) => m.filesView(route))); break;
     case 'pick': current = lazyView(() => import('./views/pick').then((m) => m.pickView())); break;
+    case 'openWith': current = lazyView(() => import('./views/openWith').then((m) => m.openWithView(route))); break;
     case 'videos': current = lazyView(() => import('./views/videos').then((m) => m.videosView(route))); break;
     case 'courses': current = lazyView(() => import('./views/courses').then((m) => m.coursesView(route))); break;
     case 'tv': current = lazyView(() => import('./views/tv').then((m) => m.tvView(route.tab as 'discover' | undefined, route.q))); break;

@@ -52,6 +52,9 @@ public class MainActivity extends BridgeActivity {
             if ("kurokawatools".equals(d.getScheme()) && "files".equals(d.getHost())) { final String q = d.getQuery() == null ? "" : d.getQuery(); if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash=" + org.json.JSONObject.quote("#/files?" + q), null), 400); return; }
             // (Another app asked for a file and chose this app — KtPickActivity —: the Files page as a picker.)
             if ("kurokawatools".equals(d.getScheme()) && "pick".equals(d.getHost())) { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/pick?t=" + System.currentTimeMillis() + "'", null), 400); return; }
+            // (A file, files or a folder handed in by another app through one of the «Open with» entries — KtOpenActivity —:
+            // the page's own place for them, #/open?kind=…&id=…)
+            if ("kurokawatools".equals(d.getScheme()) && "open".equals(d.getHost())) { final String q = d.getQuery() == null ? "" : d.getQuery(); if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash=" + org.json.JSONObject.quote("#/open?" + q + "&t=" + System.currentTimeMillis()), null), 400); return; }
             if ("kurokawatools".equals(d.getScheme()) && "screen".equals(d.getHost())) { if (getBridge() != null && getBridge().getWebView() != null) getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript("location.hash='#/screen'", null), 400); return; }
             // (A video or a sound file opened with «Kurokawa Player»: straight into the player, with what the caller
             // says — where to start, the title, subtitles, headers (MX Player's extras) —, the position handed back.)
@@ -86,11 +89,26 @@ public class MainActivity extends BridgeActivity {
         return nameOf(d).toLowerCase(java.util.Locale.ROOT).endsWith(".torrent");
     }
     private boolean isMedia(Intent intent, Uri d) {
-        if (intent.getComponent() != null && intent.getComponent().getClassName().endsWith("KtPlayer")) return true;
         String type = intent.getType(); if (type == null) try { type = getContentResolver().getType(d); } catch (Throwable ignored) {}
+        // (Android names every «.ts» «video/mp2t», TypeScript sources too: those are read first, whoever was chosen.)
+        boolean local = "content".equals(d.getScheme()) || "file".equals(d.getScheme());
+        if (local && ("video/mp2t".equals(type) || nameOf(d).toLowerCase(java.util.Locale.ROOT).endsWith(".ts"))) return isMpegTs(d);
+        if (intent.getComponent() != null && intent.getComponent().getClassName().endsWith("KtPlayer")) return true;
         if (type != null && (type.startsWith("video/") || type.startsWith("audio/") || type.contains("mpegurl"))) return true;
-        String n = nameOf(d).toLowerCase(java.util.Locale.ROOT);
-        return n.matches(".*\\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|flv|wmv|3gp|mp3|m4a|flac|ogg|opus|wav|aac|m3u8)$") && !"magnet".equals(d.getScheme());
+        String n = nameOf(d).toLowerCase(java.util.Locale.ROOT); if ("magnet".equals(d.getScheme())) return false;
+        return n.matches(".*\\.(mkv|mp4|m4v|webm|avi|mov|m2ts|mts|flv|wmv|3gp|mp3|m4a|flac|ogg|opus|wav|aac|m3u8)$");
+    }
+    /** MPEG-TS: the sync byte 0x47 at the start of each 188-byte packet (or each 192-byte one, M2TS), twice at least —
+     *  the same test as src/views/openWithLogic.ts sniffTs. */
+    static boolean looksMpegTs(byte[] b, int n) {
+        if (n >= 189 && b[0] == 0x47 && b[188] == 0x47 && (n < 377 || b[376] == 0x47)) return true;
+        return n >= 197 && b[4] == 0x47 && b[196] == 0x47 && (n < 389 || b[388] == 0x47);
+    }
+    private boolean isMpegTs(Uri d) {
+        try (java.io.InputStream in = getContentResolver().openInputStream(d)) {
+            if (in == null) return false; byte[] b = new byte[400]; int got = 0, r; while (got < b.length && (r = in.read(b, got, b.length - got)) > 0) got += r;
+            return looksMpegTs(b, got);
+        } catch (Throwable e) { return false; }
     }
     /** Launched to play something: the activity ends when the player closes, its position handed to the caller. */
     static volatile boolean playingForCaller = false;

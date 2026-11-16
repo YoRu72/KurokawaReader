@@ -40,6 +40,8 @@ type Plug = {
   sharedPending(): Promise<{ items: { uri: string; name: string; size: number; mime: string }[] }>; sharedSave(o: { dir: string; clear?: boolean }): Promise<{ saved: string[]; failed: string[]; dir: string }>; sharedClear(): Promise<void>;
   openChooser(o: { path: string; mime?: string; title: string }): Promise<void>; openWith(o: { path: string; mime: string; title: string }): Promise<void>; shareFile(o: { path: string; title: string }): Promise<void>;
   defaultDir(): Promise<{ dir: string }>;
+  /** Files' own chooser (views/openWith.ts): the apps that open a type, and one of them asked to. */
+  appsFor?(o: { path: string; mime: string }): Promise<{ apps: { pkg: string; cls: string; label: string; icon?: string }[] }>; openIn?(o: { path: string; mime: string; pkg: string; cls: string }): Promise<void>;
 };
 type Desk = { fileUrl?(p: string): Promise<string>; listDir?(p: string): Promise<{ entries: Entry[] }>; openPath?(p: string): Promise<unknown>; homeDir?(): Promise<string> };
 const plug = (): Plug | null => { const p = ktPlugin() as unknown as Partial<Plug> | null; return p?.filesList ? (p as Plug) : null; };
@@ -151,7 +153,7 @@ const dayOf = (ms: number): string => { const d = new Date(ms); const now = new 
 export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void; /** The view (list or grid) changed: button and rows redrawn in place. */ restyle: () => void };
 /** Another app's «pick a file» (views/pick.ts): the page as a picker — files of the kind asked chosen, folders walked. */
 export type PickMode = { req: PickRequest; done: (paths: string[]) => void; cancel: () => void };
-type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null; pick?: PickMode };
+type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null; pick?: PickMode; /** Opened by another app («Open with»): its folders walked inside the page; Back at `start` hands back to that app. */ handedIn?: { start: string; leave: () => void } };
 /** Two panes when the reader asked and the screen is wide enough, else one. */
 export function filesView(route: { p?: string; save?: string; c?: string }): HTMLElement {
   const wide = () => window.matchMedia('(min-width: 840px)').matches;
@@ -167,7 +169,7 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
 }
 export function filesPane(route: { p?: string; save?: string; c?: string }, po: PaneOpts = {}): Pane {
   // (A picker, like a pane beside another, keeps the address as it is: its folders are walked inside the page.)
-  const pk = po.pick; const quiet = !!po.embedded || !!pk;
+  const pk = po.pick; const quiet = !!po.embedded || !!pk || !!po.handedIn;
   const body = h('div', { class: 'files-body' });
   const crumbs = h('div', { class: 'files-crumbs', dir: 'ltr' }); const rootsRow = h('div', { class: 'chip-row files-roots' }); const kindRow = h('div', { class: 'chip-row files-kinds' });
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
@@ -467,6 +469,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     }
     const k = kindOfFile(e.name); const pl = plug();
     if (pl && /\.kurokawa$/i.test(e.name)) { const m = await import('./filesMore'); if (m.canVault()) { await m.openLocked(e, open); return; } }
+    // («Always open .mkv with…»: the choice made in Files' own chooser goes first — Kurokawa's own way, or an app.)
+    if (pl?.appsFor || desk()?.openPath) { const ow = await import('./openWith'); const d = ow.defaultFor(e.name); if (d && await runChoice(d, e)) return; }
+    // («.ts»: a video only when its first bytes are MPEG-TS packets — a TypeScript source is text.)
+    let tsVideo = false;
+    if (/\.ts$/i.test(e.name) && pl) { const r = await (pl as unknown as { uriRead?(o: { path: string; max: number }): Promise<{ b64: string }> }).uriRead?.({ path: e.path, max: 400 }).catch(() => null); if (typeof r?.b64 === 'string') { const [{ fromB64 }, { sniffTs }] = await Promise.all([import('./textCodec'), import('./openWithLogic')]); tsVideo = sniffTs(fromB64(r.b64)); if (!tsVideo && e.size < 4_000_000) { const m = await import('./filesMore'); await m.editorSheet(e, () => void load()); return; } } }
     try {
       if (k === 'video' || k === 'audio') { const { openPlayer } = await import('./player'); const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(e.path); if (u) { await openPlayer(u, e.name, { localPath: e.path }); return; } }
       // (An installed app's own APKs — its base and its parts — are there to look into, not to install again.)
@@ -474,12 +481,31 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       if (/\.(apk|apks|xapk|apkm)$/i.test(e.name)) { const m = await import('./apk'); if (m.canInstallApps()) { await m.installSheet(e.path); return; } }
       if (looksArchive(e.name) && !/\.epub$/i.test(e.name)) { go(arcPath(e.path)); return; }
       if (/\.(srt|ass|ssa|vtt|sub)$/i.test(e.name) && e.size < 4_000_000) { const { workshopSheet } = await import('../subs/workshop'); const vid = shown().find((x) => !x.dir && kindOfFile(x.name) === 'video' && x.name.replace(/\.[^.]+$/, '').startsWith(e.name.replace(/\.[^.]+$/, '').replace(/\.[a-z]{2,3}$/i, ''))); await workshopSheet(e.path, vid?.path); return; }
-      if (/\.(txt|nfo|md|log|json|xml|srt|ass|vtt|csv|ini|cfg|yml|yaml|html?|css|js|ts|py|sh|java|kt|c|h|cpp)$/i.test(e.name) && e.size < 4_000_000 && pl) { const m = await import('./filesMore'); await m.editorSheet(e, () => void load()); return; }
+      if (/\.(txt|nfo|md|log|json|xml|srt|ass|vtt|csv|ini|cfg|yml|yaml|html?|css|js|ts|py|sh|java|kt|c|h|cpp)$/i.test(e.name) && !tsVideo && e.size < 4_000_000 && pl) { const m = await import('./filesMore'); await m.editorSheet(e, () => void load()); return; }
       if (k === 'image' && pl) { const m = await import('./filesMore'); const { localFileUrl } = await import('../player/files'); const pics = shown().filter((x) => !x.dir && (kindOfFile(x.name) === 'image' || kindOfFile(x.name) === 'video')); await m.imageViewer(pics, Math.max(0, pics.findIndex((x) => x.path === e.path)), localFileUrl, (x) => void confirmDelete([x.path])); return; }
-      if (pl) { await pl.openChooser({ path: e.path, mime: mimeOf(e.name), title: e.name }); return; }
+      if (pl) { if (pl.appsFor) { await chooseThenOpen(e); return; } await pl.openChooser({ path: e.path, mime: mimeOf(e.name), title: e.name }); return; }
       const d = desk(); if (d?.openPath) { await d.openPath(e.path); return; }
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   };
+  /** One of Kurokawa's own ways for a file, as the chooser or a kept default names it; false when it does not apply here. */
+  const openWay = async (w: import('./openWithLogic').OwnWay, e: Entry): Promise<boolean> => {
+    const pl = plug();
+    if (w === 'player') { const { openPlayer } = await import('./player'); const { localFileUrl } = await import('../player/files'); const u = await localFileUrl(e.path); if (!u) return false; await openPlayer(u, e.name, { localPath: e.path }); return true; }
+    if (w === 'viewer' && pl) { const m = await import('./filesMore'); const { localFileUrl } = await import('../player/files'); const pics = shown().filter((x) => !x.dir && (kindOfFile(x.name) === 'image' || kindOfFile(x.name) === 'video')); const list = pics.some((x) => x.path === e.path) ? pics : [e]; await m.imageViewer(list, Math.max(0, list.findIndex((x) => x.path === e.path)), localFileUrl, (x) => void confirmDelete([x.path])); return true; }
+    if (w === 'editor' && pl) { const m = await import('./filesMore'); await m.editorSheet(e, () => void load()); return true; }
+    if (w === 'archive') { go(arcPath(e.path)); return true; }
+    if (w === 'installer') { const m = await import('./apk'); if (!m.canInstallApps()) return false; await m.installSheet(e.path); return true; }
+    if (w === 'system') { const d = desk(); if (!d?.openPath) return false; await d.openPath(e.path); return true; }
+    return false;
+  };
+  const runChoice = async (c: import('./openWithLogic').DefaultApp, e: Entry): Promise<boolean> => {
+    if ('own' in c) return openWay(c.own, e);
+    const pl = plug(); if (!pl?.openIn) return false;
+    try { await pl.openIn({ path: e.path, mime: mimeOf(e.name), pkg: c.app.pkg, cls: c.app.cls }); return true; }
+    catch { const ow = await import('./openWith'); ow.forgetDefault((await import('./openWithLogic')).extOf(e.name)); toast(t('owAppGone'), 'error', 4000); await chooseThenOpen(e); return true; }
+  };
+  /** Files' own «Open with…»: Kurokawa's ways first, then the apps; «Just once» or «Always». */
+  const chooseThenOpen = async (e: Entry) => { const ow = await import('./openWith'); const c = await ow.chooseOpener(e, mimeOf(e.name), !plug()); if (c && !(await runChoice(c, e))) toast(t('filesFailed'), 'error'); };
   const quickLook = async (e: Entry) => {
     const pl = plug()!; const sh = openSheet(e.name, t('close')); sh.el.classList.add('files-look');
     const pre = h('pre', { class: 'files-text', dir: 'auto' }, '…'); sh.body.append(pre);
@@ -562,7 +588,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     sh.body.append(h('p', { class: 'src', dir: 'ltr' }, readablePath(e.path)), h('div', { class: 'dest-list' },
       act('external', t('open'), () => void open(e)),
-      ...(pl && !e.dir ? [act('apps', t('openWith'), () => void pl.openWith({ path: e.path, mime: mimeOf(e.name), title: e.name })), act('type', t('filesOpenAs'), () => openAs(e))] : []),
+      ...(pl && !e.dir ? [act('apps', t('openWith'), () => { if (pl.appsFor) void chooseThenOpen(e); else void pl.openWith({ path: e.path, mime: mimeOf(e.name), title: e.name }); }), act('type', t('filesOpenAs'), () => openAs(e))] : []),
+      ...(!pl && !e.dir && !isVirtual(e.path) && !isArc(e.path) && desk()?.openPath ? [act('apps', t('openWith'), () => void chooseThenOpen(e))] : []),
       ...(pl ? [act('share', t('share'), () => void pl.shareFile({ path: e.path, title: e.name }))] : []),
       ...(canJobs() ? [act('copy', t('filesCopy'), () => copyPicked('copy', [e.path])), act('scissors', t('filesCut'), () => copyPicked('move', [e.path]))] : []),
       act('pen', t('rename'), () => renameSheet(e)),
@@ -903,6 +930,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unBack = onBackStep(() => {
     if (gone || !root.isConnected) return false;
     if (po.peer?.() && (activePane ? activePane !== me : po.side === 'b')) return false;
+    // (Opened by another app and still where it began: Back hands back to that app.)
+    if (po.handedIn && at === po.handedIn.start && !selecting && search.hidden && !collection) { po.handedIn.leave(); return true; }
     if (backStep()) return true;
     // (A picker at its top: Back is «Cancel» — the asking app gets nothing.)
     if (pk) { pk.cancel(); return true; }

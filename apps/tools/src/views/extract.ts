@@ -19,13 +19,13 @@ const errText = (m: string): string => {
   return k === 'unsafePath' ? t('archiveUnsafe', { name: what }) : k === 'duplicateEntry' ? t('archiveDuplicate', { name: what }) : k === 'damaged' ? t('archiveDamaged', { names: what }) : k === 'sfvMismatch' ? t('archiveSfvBad', { names: what }) : k === 'crcMismatch' ? t('archiveDamaged', { names: what }) : k === 'overlapping' ? t('archiveOverlap', { name: what }) : k === 'hardLinked' ? t('archiveHardLinked') : m;
 };
 
-export async function extractSheet(path: string, opts: { onDone?: (dest: string) => void; queue?: string[] } = {}): Promise<void> {
-  const sh = openSheet(baseName(path), t('close'));
+export async function extractSheet(path: string, opts: { onDone?: (dest: string) => void; queue?: string[]; /** A folder to extract into (each archive in a folder of its name): an archive handed in by another app and copied to the cache is not extracted beside its copy. */ dest?: string; /** Told when the sheet goes (another app's «Extract with Kurokawa» then hands back). */ onClose?: () => void } = {}): Promise<void> {
+  const sh = openSheet(baseName(path), t('close'), { onClose: () => { if (!handedOn) opts.onClose?.(); } }); let handedOn = false;
   sh.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   let info: ArchiveInfo; let password = '';
   const load = async () => { try { const r = await listArchiveAuto(path, password || undefined); info = r.info; password = r.password ?? ''; if (password) savePassword(password); draw(); } catch (e) { const m = String((e as Error).message ?? e); if (/password/i.test(m)) { drawPassword(m); return; } sh.body.replaceChildren(h('p', { class: 'empty small' }, errText(m))); } };
   const drawPassword = (why: string) => { const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off' }) as HTMLInputElement; sh.body.replaceChildren(h('p', { class: 'hint' }, /wrong/i.test(why) ? t('wrongPassword') : t('passwordNeeded')), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: rememberPasswords(), onchange: (e: Event) => setRememberPasswords((e.target as HTMLInputElement).checked) }), h('span', null, t('archiveRememberPw')))); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { password = pw.value; void load(); } }, t('open'))); };
-  let destMode: 'here' | 'folder' | 'other' = 'here'; let other = ''; let inPlace = false; let replace: 'replace' | 'skip' | 'both' = 'both'; let deleteAfter = false; let verifyFirst = getSettings().archiveVerifyFirst;
+  let destMode: 'here' | 'folder' | 'other' = opts.dest ? 'other' : 'here'; let other = opts.dest ? `${opts.dest.replace(/\/+$/, '')}/${stem(baseName(path))}` : ''; let inPlace = false; let replace: 'replace' | 'skip' | 'both' = 'both'; let deleteAfter = false; let verifyFirst = getSettings().archiveVerifyFirst;
   const destOf = () => (destMode === 'here' ? (topLevel(info.entries) === 'one' ? parentOf(path) : `${parentOf(path)}/${stem(baseName(path))}`) : destMode === 'folder' ? `${parentOf(path)}/${stem(baseName(path))}` : other);
   const draw = () => {
     const files = info.entries.filter((e) => !e.dir);
@@ -100,7 +100,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
     try {
       const r = await job.done; opts.onDone?.(r.dest);
       const next = opts.queue?.shift();
-      if (next) { sh.close(); void extractSheet(next, opts); return; }
+      if (next) { handedOn = true; sh.close(); void extractSheet(next, opts); return; }
       if (getSettings().archiveCloseWhenDone) { toast(t('extracted', { n: countFiles(r.files) })); sh.close(); return; }
       sh.body.replaceChildren(h('div', { class: 'empty small' }, h('div', { class: 'glyph' }, icon('check')), h('p', null, t('extracted', { n: countFiles(r.files) })), h('p', { class: 'src', dir: 'ltr' }, r.dest)));
       sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('done')), ...(canOpenFolder() ? [h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void openFolder(r.dest); } }, icon('folder'), t('openFolder'))] : []));
@@ -110,7 +110,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   await load();
 }
 /** Several archives, HatchZip's way: one after another, each with its own plan as it starts. */
-export async function extractMany(paths: string[]): Promise<void> { const [first, ...rest] = paths; if (first) await extractSheet(first, { queue: rest }); }
+export async function extractMany(paths: string[], o: { dest?: string; onClose?: () => void } = {}): Promise<void> { const [first, ...rest] = paths; if (first) await extractSheet(first, { queue: rest, ...o }); }
 
 /** A zip from files the user picks (stored for what gains nothing by squeezing). */
 export async function createZipSheet(): Promise<void> {

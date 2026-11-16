@@ -9,7 +9,7 @@ const app = path.join(root, 'android', 'app');
 // (The accessibility service that reads the screen's text for the screen translator is declared only in the «-a11y»
 // build (KT_A11Y=1, or `node native/android/a11y.mjs` on a prepared project): Google Play Protect blocks the install of
 // an app from a file that declares one, so the ordinary build reads the screen as a picture instead.)
-import { A11Y_SERVICE } from './a11y.mjs';
+import { patchManifest } from './manifest.mjs';
 const pkgDir = path.join(app, 'src/main/java/app/kurokawa/tools');
 const LIBTORRENT4J = '2.1.0-39';
 
@@ -18,186 +18,8 @@ const NAMES = { ar: 'أدوات كروكاوا', ja: 'Kurokawa Tools', zh: 'Kuro
 // --- manifest ---
 const manifestPath = path.join(app, 'src/main/AndroidManifest.xml');
 let manifest = await fs.readFile(manifestPath, 'utf8');
-if (!manifest.includes('xmlns:tools')) manifest = manifest.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
-if (!manifest.includes('FOREGROUND_SERVICE_DATA_SYNC')) {
-  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.SET_WALLPAPER" />
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
-    <application`);
-  manifest = manifest.replace('</application>', `    <service android:name=".KtService" android:exported="false" android:foregroundServiceType="dataSync|specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Downloads and torrents the user started, kept going while the app is in the background" /></service>
-    <activity android:name=".KtAuthActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
-    <activity android:name=".KtBrowserActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" android:windowSoftInputMode="adjustResize" />
-    <!-- Kurokawa Tools in every app's file picker (Open / Save), and «Save to device» in every app's share sheet -->
-    <provider android:name=".KtDocumentsProvider" android:authorities="app.kurokawa.tools.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
-      <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
-    </provider>
-    <activity-alias android:name=".KtSave" android:targetActivity=".MainActivity" android:exported="true" android:label="@string/kt_save" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
-      <intent-filter android:label="@string/kt_save">
-        <action android:name="android.intent.action.SEND" />
-        <action android:name="android.intent.action.SEND_MULTIPLE" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <data android:mimeType="*/*" />
-      </intent-filter>
-    </activity-alias>
-    </application>`);
-}
-if (!manifest.includes('android:scheme="magnet"')) {
-  manifest = manifest.replace(/(<category android:name="android.intent.category.LAUNCHER" \/>\s*<\/intent-filter>)/, `$1
-      <!-- Magnet links, .torrent files, and links shared to the app -->
-      <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <data android:scheme="magnet" />
-      </intent-filter>
-      <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <data android:mimeType="application/x-bittorrent" />
-      </intent-filter>
-      <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <data android:scheme="content" />
-        <data android:scheme="file" />
-        <data android:mimeType="application/octet-stream" />
-        <data android:pathPattern=".*\\\\.torrent" />
-        <data android:pathPattern=".*\\\\..*\\\\.torrent" />
-      </intent-filter>
-      <intent-filter>
-        <action android:name="android.intent.action.SEND" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <data android:mimeType="text/plain" />
-        <data android:mimeType="application/x-bittorrent" />
-      </intent-filter>
-      <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <data android:scheme="kurokawatools" />
-      </intent-filter>
-      <!-- An anime's page on AniList or MyAnimeList: offered to open in the app (the show's page) -->
-      <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <data android:scheme="https" />
-        <data android:host="anilist.co" android:pathPrefix="/anime/" />
-        <data android:host="myanimelist.net" android:pathPrefix="/anime/" />
-      </intent-filter>
-`);
-}
-// --- the screen translator (the «Translate on screen» add-on): appearing over other apps, reading the screen's text
-// (accessibility service) or a picture of it (screen capture), its foreground service and quick-settings tile ---
-if (!manifest.includes('KtScreenService')) {
-  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
-    <application`);
-  manifest = manifest.replace('</application>', `    <service android:name=".KtScreenService" android:exported="false" android:foregroundServiceType="specialUse|mediaProjection"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="A floating translator bubble the user opened over other apps" /></service>
-${process.env.KT_A11Y === '1' ? A11Y_SERVICE : ''}    <service android:name=".KtDownloadsTile" android:exported="true" android:label="@string/kt_downloads_tile" android:icon="@android:drawable/stat_sys_download" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-      <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
-    </service>
-    <receiver android:name=".KtService$Actions" android:exported="false" />
-    <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="app.kurokawa.tools.shizuku" android:multiprocess="false" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
-    <service android:name=".KtFolderShare$Fg" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Folder shared on the local network" /></service>
-    <service android:name=".KtFolderShare$TileSvc" android:exported="true" android:label="@string/kt_share_tile" android:icon="@android:drawable/stat_sys_upload" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-      <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
-    </service>
-    <service android:name=".KtScreenTile" android:exported="true" android:label="@string/kt_screen_tile" android:icon="@android:drawable/ic_menu_view" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-      <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
-      <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
-    </service>
-    <activity-alias android:name=".KtInstaller" android:targetActivity=".MainActivity" android:exported="true" android:label="@string/kt_installer" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
-      <intent-filter android:label="@string/kt_installer">
-        <action android:name="android.intent.action.VIEW" />
-        <action android:name="android.intent.action.INSTALL_PACKAGE" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <data android:scheme="content" />
-        <data android:scheme="file" />
-        <data android:mimeType="application/vnd.android.package-archive" />
-      </intent-filter>
-      <intent-filter android:label="@string/kt_installer">
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <data android:scheme="content" />
-        <data android:scheme="file" />
-        <data android:mimeType="application/octet-stream" />
-        <data android:mimeType="application/zip" />
-        <data android:host="*" />
-        <data android:pathPattern=".*\\\\.apks" />
-        <data android:pathPattern=".*\\\\.xapk" />
-        <data android:pathPattern=".*\\\\.apkm" />
-      </intent-filter>
-    </activity-alias>
-    <!-- «Kurokawa Player»: videos and sound opened with the app from a file manager, a browser or another app
-         (MX Player's extras honoured: position, title, subs, headers; the position handed back when it closes). -->
-    <activity-alias android:name=".KtPlayer" android:targetActivity=".MainActivity" android:exported="true" android:label="@string/kt_player" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
-      <intent-filter android:label="@string/kt_player">
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <data android:scheme="content" />
-        <data android:scheme="file" />
-        <data android:scheme="http" />
-        <data android:scheme="https" />
-        <data android:scheme="rtsp" />
-        <data android:mimeType="video/*" />
-        <data android:mimeType="audio/*" />
-        <data android:mimeType="application/vnd.apple.mpegurl" />
-        <data android:mimeType="application/x-mpegurl" />
-        <data android:mimeType="application/mp4" />
-      </intent-filter>
-    </activity-alias>
-    <activity android:name=".KtScreenLaunch" android:exported="true" android:enabled="false" android:label="@string/kt_screen_tile" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity="app.kurokawa.tools.screen" android:launchMode="singleInstance">
-      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-    </activity>
-    <!-- «Kurokawa Tools» as a file picker for other apps (Open / Attach a file): GET_CONTENT and PICK, one file or
-         several; the answer carried back by this invisible activity in the caller's task. -->
-    <activity android:name=".KtPickActivity" android:exported="true" android:label="@string/kt_pick" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize">
-      <intent-filter android:label="@string/kt_pick">
-        <action android:name="android.intent.action.GET_CONTENT" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.OPENABLE" />
-        <data android:mimeType="*/*" />
-      </intent-filter>
-      <intent-filter android:label="@string/kt_pick">
-        <action android:name="android.intent.action.GET_CONTENT" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <data android:mimeType="*/*" />
-      </intent-filter>
-      <intent-filter android:label="@string/kt_pick">
-        <action android:name="android.intent.action.PICK" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <data android:mimeType="*/*" />
-      </intent-filter>
-    </activity>
-    <activity android:name=".KtScreenCapture$Consent" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:taskAffinity="app.kurokawa.tools.capture" android:launchMode="singleInstance" />
-    </application>`);
-}
-manifest = manifest.replace(/android:launchMode="[^"]*"/, 'android:launchMode="singleTask"');
-if (!manifest.includes('android:launchMode')) manifest = manifest.replace('<activity', '<activity\n      android:launchMode="singleTask"');
-// (The player's floating window: the main activity may shrink into picture in picture.)
-if (!manifest.includes('android:supportsPictureInPicture')) manifest = manifest.replace('<activity', '<activity\n      android:supportsPictureInPicture="true"');
-if (!manifest.includes('android:usesCleartextTraffic')) manifest = manifest.replace('<application', '<application android:usesCleartextTraffic="true"');
-if (!manifest.includes('android:requestLegacyExternalStorage')) manifest = manifest.replace('<application', '<application android:requestLegacyExternalStorage="true"');
-// (The other Kurokawa app is looked for by its package name: Android 11+ must be told.)
-if (!manifest.includes('app.kurokawa.reader')) manifest = manifest.replace('</manifest>', `  <queries>\n    <package android:name="app.kurokawa.reader" />\n    <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>\n  </queries>\n</manifest>`);
+// (Permissions, services, intent filters and the «Open with» aliases: native/android/manifest.mjs.)
+manifest = patchManifest(manifest, { a11y: process.env.KT_A11Y === '1' });
 await fs.writeFile(manifestPath, manifest);
 
 // --- names ---
@@ -225,7 +47,7 @@ for (const f of ['KtTorDirector.java', 'KtTorrentCore.java', 'KtTorrentRs.java',
 // (Stage M5 of the Rust port: the file jobs' planner and executor, the network storages' rules.)
 for (const f of ['KtFilePlan.java', 'KtFileExec.java', 'KtRemoteRules.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 // (Other apps' «pick a file»: the invisible activity that carries the answer back; the picker is the Files page.)
-await fs.copyFile(path.join(root, 'native/android', 'KtPickActivity.java'), path.join(pkgDir, 'KtPickActivity.java'));
+for (const f of ['KtPickActivity.java', /* (others' «Open with» / «Share»: the same, for files handed in) */ 'KtOpenActivity.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // mpv's Java side (its native libraries come with the mpv pack): the class name its JNI code binds to.
 { const d = path.join(app, 'src/main/java/is/xyz/mpv'); await fs.mkdir(d, { recursive: true }); await fs.copyFile(path.join(root, 'native/android/mpv/MPVLib.java'), path.join(d, 'MPVLib.java')); }

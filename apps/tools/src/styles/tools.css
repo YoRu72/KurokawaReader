@@ -1263,3 +1263,32 @@ html.pc .sheet.batch-sheet { width: min(1120px, calc(100vw - 64px)); max-height:
 /* ⋮ of the selection bar: what destroys comes last, apart, in the error colour. */
 .dest-list.sel-risky { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--md-outline-variant); }
 .dest-row.danger, .dest-row.danger svg { color: var(--md-error); }
+
+/* Others' «Open with» / «Share» (views/openWith.ts): the line that says who handed the file in, the any-file sheet,
+   the switches of Kurokawa's entries in other apps, Files' own app chooser and the defaults kept. */
+.ow-wrap { display: flex; flex-direction: column; gap: 8px; margin: 8px 16px 0; }
+.ow-wrap > .btn { align-self: flex-start; }
+.ow-banner { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 8px 6px 16px; border-radius: 20px; background: var(--md-surface-container-high); color: var(--md-on-surface); font: 500 14px/1.35 var(--font-ui); }
+html[dir='rtl'] .ow-banner { padding: 6px 16px 6px 8px; }
+.ow-banner > svg { flex: none; width: 20px; height: 20px; color: var(--md-primary); }
+.ow-banner .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view > .body > .ow-banner { margin: 8px 16px; }
+.ow-file { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin-bottom: 10px; border-radius: 20px; background: var(--md-surface-container); }
+.ow-file-ic { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.ow-file .name { display: block; font: 600 15px/1.35 var(--font-ui); overflow-wrap: anywhere; }
+.ow-row, .ow-app { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 56px; padding: 8px 12px; margin: 0 0 4px; border-radius: 16px; text-align: start; }
+.ow-row .files-drawer-ic { flex: none; }
+.ow-apps { display: flex; flex-direction: column; gap: 4px; }
+.ow-app-ic { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); object-fit: contain; }
+.ow-app-ic.own { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.ow-app[aria-selected='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); outline: 2px solid var(--md-primary); outline-offset: -2px; }
+.ow-list { display: flex; flex-direction: column; gap: 2px; }
+.ow-switch { min-height: 64px; gap: 16px; }
+.ow-switch > span { min-width: 0; }
+.ow-note { margin-top: 12px; padding: 10px 14px; border-radius: 16px; background: var(--md-surface-container); }
+.ow-defaults .ow-default { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 4px 0; }
+.ow-defaults .ow-default > .grow { flex: 1; min-width: 0; }
+.ow-ext { flex: none; min-width: 56px; padding: 4px 10px; border-radius: 10px; background: var(--md-surface-container-high); font: 600 13px/1.4 var(--font-mono, monospace); text-align: center; }
+.ow-open-settings, .ow-open-defaults { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 4px; text-align: start; }
+html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg { transform: scaleX(-1); }
+.files-ed-notice { margin: 0 0 8px; padding: 10px 14px; border-radius: 16px; background: var(--md-surface-container-high); }

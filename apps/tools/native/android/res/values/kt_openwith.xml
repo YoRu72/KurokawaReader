@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The names of Kurokawa's entries in other apps' «Open with» / «Share» lists (native/android/openwith.json; tests/openwith.cjs checks they agree). -->
+<resources>
+    <string name="kt_ow_archive">Kurokawa Files · Open archive</string>
+    <string name="kt_ow_extract">Extract with Kurokawa</string>
+    <string name="kt_ow_folder">Kurokawa Files · Open folder</string>
+    <string name="kt_ow_image">View with Kurokawa</string>
+    <string name="kt_ow_text">Edit with Kurokawa</string>
+    <string name="kt_ow_any">Open with Kurokawa Files</string>
+    <string name="kt_ow_browse">Kurokawa Files</string>
+</resources>

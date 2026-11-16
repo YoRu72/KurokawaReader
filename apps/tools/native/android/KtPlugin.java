@@ -908,6 +908,143 @@ public class KtPlugin extends Plugin {
             call.resolve();
         });
     }
+    /* ---------- others' «Open with» / «Share» (KtOpenActivity holds the request and its grant; openwith.json) ---------- */
+    /** What came: {id, kind, action, caller, writable, mime, items:[{uri, name, size, mime, path?, dir, readable}]}, or none. */
+    @PluginMethod public void openRequest(PluginCall call) {
+        final KtOpenActivity a = KtOpenActivity.current; final String q = a != null ? KtOpenActivity.request : null;
+        if (q == null) { JSObject r = new JSObject(); r.put("request", null); call.resolve(r); return; }
+        bg.execute(() -> {
+            try {
+                JSONObject o = new JSONObject(q); JSONArray items = new JSONArray(); java.util.List<Uri> us; synchronized (a.uris) { us = new java.util.ArrayList<>(a.uris); }
+                for (Uri u : us) items.put(openItem(u));
+                o.put("items", items); JSObject r = new JSObject(); r.put("request", o.toString()); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    private JSONObject openItem(Uri u) throws org.json.JSONException {
+        JSONObject o = new JSONObject(); o.put("uri", u.toString()); File real = realPath(u);
+        if (real != null) { o.put("path", real.getAbsolutePath()); o.put("name", real.getName()); o.put("dir", real.isDirectory()); o.put("size", real.isFile() ? real.length() : 0); o.put("readable", real.canRead()); return o; }
+        java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); String mime = m.get("mime") == null ? "" : String.valueOf(m.get("mime"));
+        boolean dir = "vnd.android.document/directory".equals(mime) || "resource/folder".equals(mime) || "inode/directory".equals(mime);
+        o.put("name", String.valueOf(m.get("name"))); o.put("size", (Long) m.get("size")); o.put("mime", mime); o.put("dir", dir);
+        boolean readable = dir; if (!dir) { try (java.io.InputStream in = getContext().getContentResolver().openInputStream(u)) { readable = in != null; } catch (Throwable ignored) {} }
+        o.put("readable", readable); return o;
+    }
+    /** A file or a folder behind a link, when it lives on the phone's storage and the app may read it where it is:
+     *  file://, the system's storage documents (a document, a tree, a root), Downloads' «raw:» ids, the app's own
+     *  documents provider. Null otherwise (the page then reads the link through its provider). */
+    static File realPath(Uri u) {
+        try {
+            if ("file".equals(u.getScheme())) { File f = new File(u.getPath()); return f.exists() && f.canRead() ? f : null; }
+            if (!"content".equals(u.getScheme()) || u.getAuthority() == null) return null;
+            java.util.List<String> seg = u.getPathSegments(); String id = null;
+            if (seg.size() >= 4 && "tree".equals(seg.get(0)) && "document".equals(seg.get(2))) id = seg.get(3);
+            else if (seg.size() >= 2 && ("tree".equals(seg.get(0)) || "document".equals(seg.get(0)) || "root".equals(seg.get(0)))) id = seg.get(1);
+            if (id == null) return null; String auth = u.getAuthority(); File f = null;
+            if ("com.android.externalstorage.documents".equals(auth)) { int c = id.indexOf(':'); String vol = c > 0 ? id.substring(0, c) : id; String rel = c >= 0 ? id.substring(c + 1) : ""; f = "primary".equalsIgnoreCase(vol) ? new File(android.os.Environment.getExternalStorageDirectory(), rel) : new File("/storage/" + vol, rel); }
+            else if ("com.android.providers.downloads.documents".equals(auth)) { if (id.startsWith("raw:")) f = new File(id.substring(4)); else if ("downloads".equals(id)) f = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS); }
+            else if (KtDocumentsProvider.AUTHORITY.equals(auth) && id.startsWith("/")) f = new File(id);
+            return f != null && f.exists() && f.canRead() ? f : null;
+        } catch (Throwable e) { return null; }
+    }
+    private final java.util.Map<String, AtomicBoolean> openFetches = new java.util.concurrent.ConcurrentHashMap<>();
+    /** A link that is not a file here, copied into the app's cache (only when the page needs a file: an archive to
+     *  open, a file to share) or into a folder chosen (`dir`, «Copy to…»); progress as «openProgress» {jobId, done, total}; cancelled by openFetchCancel. */
+    @PluginMethod public void openFetch(PluginCall call) {
+        final Uri u = Uri.parse(call.getString("uri", "")); final String job = call.getString("jobId", "of"); final AtomicBoolean stop = new AtomicBoolean(false); openFetches.put(job, stop);
+        bg.execute(() -> {
+            File out = null;
+            try {
+                java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); String name = String.valueOf(m.get("name")).replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]", "_"); long total = (Long) m.get("size");
+                // (Into a folder chosen — «Copy to…» —, under a free name there; else the app's cache, one folder a job.)
+                String into = call.getString("dir", null); if (name.isEmpty()) name = "file";
+                File dir = into != null && !into.isEmpty() ? fileOf(into) : new File(new File(getContext().getCacheDir(), "kt-open"), job); dir.mkdirs(); out = new File(dir, name);
+                if (into != null) { int dot = name.lastIndexOf('.'); String stem = dot > 0 ? name.substring(0, dot) : name, ext = dot > 0 ? name.substring(dot) : ""; for (int k = 2; out.exists(); k++) out = new File(dir, stem + " (" + k + ")" + ext); }
+                long done = 0, last = 0;
+                try (java.io.InputStream in = getContext().getContentResolver().openInputStream(u); java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                    if (in == null) throw new java.io.IOException("unreadable");
+                    byte[] b = new byte[1 << 16]; int n;
+                    while ((n = in.read(b)) > 0) { if (stop.get()) throw new java.io.IOException("cancelled"); os.write(b, 0, n); done += n; long now = System.currentTimeMillis(); if (now - last > 250) { last = now; JSObject ev = new JSObject(); ev.put("jobId", job); ev.put("done", done); ev.put("total", total); notifyListeners("openProgress", ev); } }
+                }
+                JSObject r = new JSObject(); r.put("path", out.getAbsolutePath()); r.put("size", out.length()); call.resolve(r);
+            } catch (Exception e) { if (out != null) out.delete(); call.reject(String.valueOf(e.getMessage())); }
+            finally { openFetches.remove(job); }
+        });
+    }
+    @PluginMethod public void openFetchCancel(PluginCall call) { AtomicBoolean c = openFetches.get(call.getString("jobId", "")); if (c != null) c.set(true); call.resolve(); }
+    /** Done with what came: the invisible activity ends; `back`: the app steps aside, so the calling app is in front. */
+    @PluginMethod public void openDone(PluginCall call) {
+        final KtOpenActivity a = KtOpenActivity.current; final android.app.Activity me = getActivity(); final boolean back = Boolean.TRUE.equals(call.getBoolean("back", false));
+        final String forId = call.getString("id", "");
+        if (a == null || (forId != null && !forId.isEmpty() && !forId.equals(a.id))) { call.resolve(); return; }
+        a.runOnUiThread(() -> { try { a.finish(); } catch (Throwable ignored) {} try { if (back && me != null) me.moveTaskToBack(true); } catch (Throwable ignored) {} call.resolve(); });
+    }
+    /** A link's bytes (the first `max`), as base64 — the text editor tells the characters' encoding itself. */
+    @PluginMethod public void uriRead(PluginCall call) {
+        final String s = call.getString("uri", ""), path = call.getString("path", null); final int max = call.getInt("max", 4_000_000);
+        bg.execute(() -> {
+            try (java.io.InputStream in = path != null ? new java.io.FileInputStream(fileOf(path)) : getContext().getContentResolver().openInputStream(Uri.parse(s))) {
+                if (in == null) throw new java.io.IOException("unreadable");
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] b = new byte[1 << 16]; int n; long all = 0;
+                while ((n = in.read(b)) > 0) { if (all < max) bo.write(b, 0, (int) Math.min(n, max - all)); all += n; if (all > max) break; }
+                long size = path != null ? fileOf(path).length() : all;
+                JSObject r = new JSObject(); r.put("b64", android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)); r.put("size", size); r.put("whole", all <= max); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** Bytes written back: to a file here (a temporary file renamed over it), or to a link the caller let us edit. */
+    @PluginMethod public void uriWrite(PluginCall call) {
+        final String s = call.getString("uri", ""), path = call.getString("path", null); final byte[] bytes = android.util.Base64.decode(call.getString("b64", ""), android.util.Base64.DEFAULT);
+        bg.execute(() -> {
+            try {
+                if (path != null) { File f = fileOf(path); File tmp = new File(f.getParentFile(), "." + f.getName() + ".kt-tmp"); try (java.io.FileOutputStream os = new java.io.FileOutputStream(tmp)) { os.write(bytes); os.getFD().sync(); } if (!tmp.renameTo(f)) { tmp.delete(); throw new java.io.IOException("cannot write"); } }
+                else try (java.io.OutputStream os = getContext().getContentResolver().openOutputStream(Uri.parse(s), "wt")) { if (os == null) throw new java.io.IOException("unwritable"); os.write(bytes); }
+                JSObject r = new JSObject(); r.put("size", bytes.length); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** A link the web view can show (a picture handed in that is not a file here): through the app's stream server. */
+    @PluginMethod public void contentUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().contentUrl(call.getString("uri", ""))); call.resolve(r); }); }
+    /** Each «Open with» entry's switch: Android's state for the components named (0 as installed, 1 on, 2 off). */
+    @PluginMethod public void openWithStates(PluginCall call) {
+        PackageManager pm = getContext().getPackageManager(); String pkg = getContext().getPackageName(); JSObject states = new JSObject(); JSArray names = call.getArray("names", new JSArray());
+        for (int i = 0; i < names.length(); i++) { String n = names.optString(i, ""); if (!n.matches("Kt[A-Za-z]+")) continue; try { states.put(n, pm.getComponentEnabledSetting(new android.content.ComponentName(pkg, pkg + "." + n))); } catch (Throwable e) { states.put(n, -1); } }
+        JSObject r = new JSObject(); r.put("states", states); call.resolve(r);
+    }
+    /** One switch turned: `state` «on», «off» or «default» (as installed); the app keeps running. */
+    @PluginMethod public void openWithSet(PluginCall call) {
+        String n = call.getString("name", ""), st = call.getString("state", "default"); if (!n.matches("Kt[A-Za-z]+")) { call.reject("name"); return; }
+        int v = "on".equals(st) ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : "off".equals(st) ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED : PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+        try { String pkg = getContext().getPackageName(); getContext().getPackageManager().setComponentEnabledSetting(new android.content.ComponentName(pkg, pkg + "." + n), v, PackageManager.DONT_KILL_APP); call.resolve(); }
+        catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    /** The apps that open a file of this type (Files' own chooser, «Always open .mkv with…»): label, package,
+     *  activity and a small icon, this app left out (the page lists its own viewers first). */
+    @PluginMethod public void appsFor(PluginCall call) {
+        final String path = call.getString("path", ""), mime = call.getString("mime", "*/*");
+        bg.execute(() -> {
+            try {
+                Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", fileOf(path));
+                Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(u, mime); PackageManager pm = getContext().getPackageManager(); JSArray out = new JSArray();
+                for (android.content.pm.ResolveInfo ri : pm.queryIntentActivities(i, 0)) {
+                    if (ri.activityInfo == null || getContext().getPackageName().equals(ri.activityInfo.packageName)) continue;
+                    JSObject o = new JSObject(); o.put("pkg", ri.activityInfo.packageName); o.put("cls", ri.activityInfo.name); o.put("label", String.valueOf(ri.loadLabel(pm)));
+                    try { android.graphics.drawable.Drawable d = ri.loadIcon(pm); int px = 96; android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888); android.graphics.Canvas c = new android.graphics.Canvas(bm); d.setBounds(0, 0, px, px); d.draw(c); java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); bm.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo); o.put("icon", "data:image/png;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)); } catch (Throwable ignored) {}
+                    out.put(o);
+                }
+                JSObject r = new JSObject(); r.put("apps", out); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** A file opened in one app named (the chooser's choice): «notInstalled» when that app is gone. */
+    @PluginMethod public void openIn(PluginCall call) {
+        try {
+            File f = fileOf(call.getString("path", "")); Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+            Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(u, call.getString("mime", "*/*")); i.setClassName(call.getString("pkg", ""), call.getString("cls", "")); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (i.resolveActivity(getContext().getPackageManager()) == null) { call.reject("notInstalled"); return; }
+            getContext().startActivity(i); call.resolve();
+        } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
     /* Shared to «Save to device»: what other apps sent (kept until saved or dismissed), and the saving. */
     static final java.util.List<Uri> shared = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     static void sharedIn(java.util.List<Uri> us) { shared.addAll(us); KtPlugin p = self; if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
