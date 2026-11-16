@@ -1,0 +1,89 @@
+# DNS over HTTPS: the rules every copy keeps — kt-core dohchain.rs (Tauri), KrDoh.java (phone), desktop/dohchain.cjs
+# (Electron) — checked on these lines by dohchain.rs's tests, tests/native/doh/CT.java and tests/dohchain.cjs.
+#
+# order|choice|health|the resolvers asked, in order («custom» is the user's own address)
+#   health: id=ok:<ms> (answered the last probe or question in <ms>), id=fail (failed just now),
+#   id=fail-old (failed more than ten minutes ago: counts as not checked again)
+order|off||
+order|nonesuch||
+order|auto||cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,opendns,wikimedia,dns4eu
+order|mullvad||cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,opendns,wikimedia,dns4eu
+order|auto|google=ok:40,quad9=ok:20,cloudflare=fail|quad9,google,adguard,adguard-unfiltered,dnssb,controld,opendns,wikimedia,dns4eu,cloudflare
+order|auto|wikimedia=ok:30,dns4eu=ok:30,cloudflare=fail-old|wikimedia,dns4eu,cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,opendns
+order|auto|google=fail,cloudflare=fail|quad9,adguard,adguard-unfiltered,dnssb,controld,opendns,wikimedia,dns4eu,cloudflare,google
+order|quad9|google=ok:10|quad9,google,cloudflare,adguard,adguard-unfiltered,dnssb,controld,opendns,wikimedia,dns4eu
+order|quad9|quad9=fail,google=ok:10|quad9,google,cloudflare,adguard,adguard-unfiltered,dnssb,controld,opendns,wikimedia,dns4eu
+# (A resolver on this device — the user's own, plain http to 127.0.0.1 — is asked alone: its names go nowhere else.)
+order|http://127.0.0.1:5353/dns-query|google=ok:5|custom
+order|https://doh.example/dns-query|dnssb=ok:5|custom,dnssb,cloudflare,google,quad9,adguard,adguard-unfiltered,controld,opendns,wikimedia,dns4eu
+#
+# custom|the address typed|ok or why it is refused (notHttps, noHost, badPort, userinfo, badPath, space, tooLong)
+custom|https://doh.example/dns-query|ok
+custom|https://doh.example/q?profile=a1|ok
+custom|https://doh.example:8443/dns-query|ok
+custom|https://[2001:db8::53]/dns-query|ok
+custom|http://doh.example/dns-query|notHttps
+custom|ftp://doh.example/dns-query|notHttps
+custom|https://|noHost
+custom|https:///dns-query|noHost
+custom|https://doh.example:99999/dns-query|badPort
+custom|https://doh.example:/dns-query|badPort
+custom|https://user:pw@doh.example/dns-query|userinfo
+custom|https://doh.example|badPath
+custom|https://doh.example/|badPath
+custom|https://doh.example/q#frag|badPath
+custom|https://doh.example/dns query|space
+custom|http://127.0.0.1:5353/dns-query|ok
+custom|http://localhost:5353/dns-query|ok
+custom|http://127.0.0.1.doh.example/dns-query|notHttps
+#
+# tracker|tracker address|address the resolver gave|the address handed to the torrent engine («-»: left as it is)
+tracker|udp://tracker.test:1337/announce|203.0.113.5|udp://203.0.113.5:1337/announce
+tracker|udp://Tracker.Test:6969|2001:db8::1|udp://[2001:db8::1]:6969
+tracker|udp://tracker.test:80/announce?key=1|198.51.100.7|udp://198.51.100.7:80/announce?key=1
+tracker|http://tracker.test/announce|203.0.113.5|-
+tracker|https://tracker.test/announce|203.0.113.5|-
+tracker|udp://203.0.113.9:80/announce|203.0.113.5|-
+tracker|udp://[2001:db8::9]:80/announce|203.0.113.5|-
+tracker|udp://localhost:80/announce|203.0.113.5|-
+#
+# magnet|magnet|the chain's answers (host=address; a host not listed gets none)|the magnet handed to the engine
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=A%20B&tr=udp%3A%2F%2Ftracker.test%3A1337%2Fannounce&tr=http%3A%2F%2Fweb.test%2Fannounce|tracker.test=203.0.113.5|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=A%20B&tr=udp%3A%2F%2F203.0.113.5%3A1337%2Fannounce&tr=http%3A%2F%2Fweb.test%2Fannounce
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=udp://open.test:6969/announce&tr=udp%3A%2F%2Fgone.test%3A80|open.test=2001:db8::5|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=udp%3A%2F%2F%5B2001%3Adb8%3A%3A5%5D%3A6969%2Fannounce&tr=udp%3A%2F%2Fgone.test%3A80
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=x||magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=x
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&TR=udp%3a%2f%2fUp.Test%3a1%2fa|up.test=198.51.100.9|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&TR=udp%3A%2F%2F198.51.100.9%3A1%2Fa
+#
+# addr|address|from the user's own resolver (custom) or a public one (public)|kept or dropped
+#   (an answer from a public resolver that points a public name into a private network or at this device is
+#   dropped — a filter's «blocked» page or a rebinding; the user's own resolver may know private names)
+addr|203.0.113.5|public|kept
+addr|0.0.0.0|public|dropped
+addr|0.0.0.0|custom|dropped
+addr|127.0.0.1|custom|dropped
+addr|10.1.2.3|public|dropped
+addr|10.1.2.3|custom|kept
+addr|192.168.1.10|public|dropped
+addr|172.20.0.1|public|dropped
+addr|172.32.0.1|public|kept
+addr|100.64.0.1|public|dropped
+addr|169.254.1.1|custom|dropped
+addr|224.0.0.1|public|dropped
+addr|255.255.255.255|custom|dropped
+addr|::|public|dropped
+addr|::1|custom|dropped
+addr|fe80::1|custom|dropped
+addr|fd00::1|public|dropped
+addr|fd00::1|custom|kept
+addr|2001:db8::1|public|kept
+addr|::ffff:10.0.0.1|public|dropped
+addr|::ffff:203.0.113.5|public|kept
+#
+# local|name|whether it is a name of this device or its network (never sent to a public resolver)
+local|localhost|yes
+local|printer.local|yes
+local|nas.home.arpa|yes
+local|router.lan|yes
+local|svc.internal|yes
+local|a.localhost|yes
+local|example.test|no
+local|localhost.example|no

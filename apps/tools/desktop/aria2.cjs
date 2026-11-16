@@ -130,7 +130,9 @@ class Aria2Engine {
     if (o.meta?.noRetry) opts['max-tries'] = '1';
     // A file of that name there already, with «Skip» chosen: not downloaded again.
     if (this.config.net?.conflict === 'skip' && o.name && o.source.url && fs.existsSync(path.join(this.np(o.dir) || this.defaultDir, o.name))) throw new Error('exists');
-    const gid = o.source.torrent ? await this.rpc.call('addTorrent', o.source.torrent, [], opts) : await this.rpc.call('addUri', [o.source.magnet || o.source.url], opts);
+    // (A magnet's UDP trackers by the DoH chain's addresses while DoH is on: main.cjs sets dohMagnet.)
+    const magnet = o.source.magnet && this.dohMagnet ? await this.dohMagnet(o.source.magnet).catch(() => o.source.magnet) : o.source.magnet;
+    const gid = o.source.torrent ? await this.rpc.call('addTorrent', o.source.torrent, [], opts) : await this.rpc.call('addUri', [magnet || o.source.url], opts);
     this.keep[gid] = { name: o.name, source: o.source, addedAt: Date.now(), meta: o.meta }; this.saveKeep();
     const st = await this.rpc.call('tellStatus', gid); this.tick();
     return this.task(st);
@@ -198,13 +200,17 @@ class Aria2Engine {
 }
 /** Prism's connection settings as aria2 options: the name given to servers, tries, how long to wait, a proxy,
  *  what to do with a file already there. */
+// (0.21 P9: while DNS over HTTPS is on, aria2 is pointed at the DoH chain's small proxy — desktop/dohchain.cjs —
+// unless the user set a proxy of their own, which then finds the sites.)
+let dohProxy = '';
+function setDohProxy(url, eng) { dohProxy = String(url || ''); if (eng?.rpc && !String(eng.config.net?.proxy || '').trim()) void eng.rpc.call('changeGlobalOption', { 'all-proxy': dohProxy }).catch(() => {}); }
 function netOptions(n) {
   n = n || {}; const o = {};
   o['user-agent'] = String(n.ua || '').trim() || 'KurokawaTools/0.1 aria2';
   o['max-tries'] = String(Math.max(0, Math.min(30, Number(n.retries ?? 5))));
   const t = Math.max(5, Math.min(600, Number(n.timeout ?? 60))); o.timeout = String(t); o['connect-timeout'] = String(Math.min(30, t));
-  o['all-proxy'] = String(n.proxy || '').trim();
+  o['all-proxy'] = String(n.proxy || '').trim() || dohProxy;
   const c = n.conflict || 'rename'; o['auto-file-renaming'] = c === 'rename' ? 'true' : 'false'; o['allow-overwrite'] = c === 'overwrite' ? 'true' : 'false';
   return o;
 }
-module.exports = { Aria2Engine, netOptions };
+module.exports = { Aria2Engine, netOptions, setDohProxy };

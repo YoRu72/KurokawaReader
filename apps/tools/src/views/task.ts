@@ -34,13 +34,15 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const x = task; const name = displayName(x); const hst = historyOf(x);
     setName(title.firstChild as HTMLElement, name);
     const link = x.source.url ?? x.source.magnet ?? '';
+    // (0.21 P9: with DoH on, one quiet line — which resolver found the site, or that the system's DNS did.)
+    const dohSlot = h('div', { class: 'doh-slot' }); if (x.kind !== 'torrent' && x.source.url && getSettings().doh !== 'off') void import('../ui/dohLine').then((m) => dohSlot.append(m.dohLine(x.source.url!))).catch(() => undefined);
     const live = x.state === 'downloading' || x.state === 'metadata';
     const hero = h('section', { class: 'card kt-hero' },
       h('span', { class: 'task-kind big' }, icon(x.kind === 'torrent' ? 'magnet' : categoryOf(name, x.kind).icon)),
       h('div', { class: 'grow' }, h('div', { class: 'kt-name', dir: nameDir(name) }, ...nameNodes(name)),
         link ? h('div', { class: 'kt-url' }, icon('link'), h('span', { class: 'sel', dir: 'ltr' }, link), h('button', { type: 'button', class: 'kt-copy', 'aria-label': t('copyLink'), onclick: () => void navigator.clipboard?.writeText(link).then(() => toast(t('copied'))) }, icon('copy'))) : null,
         h('div', { class: 'kt-badges' }, h('span', { class: `kt-badge state-${x.state}` }, live ? h('span', { class: 'kt-live' }) : null, stateLabel(x.state)),
-          x.kind !== 'torrent' && (x.segments?.length ?? 0) > 1 ? h('span', { class: 'kt-badge ok' }, icon('check'), t('badgeResumable')) : null)));
+          x.kind !== 'torrent' && (x.segments?.length ?? 0) > 1 ? h('span', { class: 'kt-badge ok' }, icon('check'), t('badgeResumable')) : null), dohSlot));
     // (A file download's own speed limit, in KB/s; 0 lifts it. The engine's global limit still caps everything.)
     const limitRow = x.kind === 'http' && eng.setTaskLimits && x.state !== 'done' ? h('label', { class: 'field row task-limit' }, h('span', { class: 'label' }, t('taskSpeedLimit')), h('input', { type: 'number', inputmode: 'numeric', min: '0', value: String(Math.round(((x as Task & { limitDown?: number }).limitDown ?? 0) / 1024)), placeholder: '0', onchange: (e: Event) => void eng.setTaskLimits!(x.id, Math.max(0, Number((e.target as HTMLInputElement).value) || 0) * 1024, 0).then(() => toast(t('done'))).catch(() => undefined) })) : null;
     const hlsLine = (x.meta?.hls || x.kind === 'video') && (x.state === 'downloading' || x.state === 'metadata') ? h('p', { class: 'src' }, icon('film'), ' ', liveLine(x)) : null;

@@ -78,7 +78,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohnames.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs; do
+          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohchain.rs apps/tools/core/kt-core/src/dohproxy.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"

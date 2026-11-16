@@ -13,6 +13,6 @@ public class DT { public static void main(String[] a) throws Exception {
   if (!(l1 > 60 && l1 < 60 + name.length)) throw new Error("cut not inside the name: " + l1);
   byte[] joined = new byte[payload.length]; System.arraycopy(two[0],5,joined,0,l1); System.arraycopy(two[1],5,joined,l1,l2); if (!java.util.Arrays.equals(joined, payload)) throw new Error("split bytes");
   if (KrDoh.splitHello(new byte[]{0x17,3,1,0,1,0},0,6,host) != null) throw new Error("not a handshake");
-  if (KrDoh.resolvers("auto").size() != 8 || !KrDoh.resolvers("quad9").get(0).id.equals("quad9") || !KrDoh.resolvers("https://x.y/dns-query").get(0).id.equals("custom")) throw new Error("resolvers");
+  if (KrDoh.resolvers("auto").size() != 10 || !KrDoh.resolvers("quad9").get(0).id.equals("quad9") || !KrDoh.resolvers("https://x.y/dns-query").get(0).id.equals("custom")) throw new Error("resolvers");
   System.out.println("doh: all passed");
 }}

@@ -1935,7 +1935,7 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .doh-head { display: flex; align-items: center; gap: 10px; }
 .doh-light { width: 12px; height: 12px; border-radius: 50%; background: var(--md-outline); flex: none; }
 .doh-card[data-state='ok'] .doh-light { background: #4caf50; box-shadow: 0 0 0 4px rgb(76 175 80 / .2); }
-.doh-card[data-state='resolving'] .doh-light { background: #f5a623; animation: doh-pulse 1s ease-in-out infinite; }
+.doh-card[data-state='resolving'] .doh-light { background: var(--md-primary); animation: doh-pulse 1s ease-in-out infinite; }
 .doh-card[data-state='failed'] .doh-light { background: var(--md-error); }
 .doh-card[data-state='idle'] .doh-light { background: var(--md-primary); opacity: .6; }
 @keyframes doh-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: .5; } }
@@ -1945,6 +1945,33 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .doh-ev .doh-kind { font-weight: 600; min-width: 6em; }
 .doh-ev.k-fail .doh-kind, .doh-ev.k-retry .doh-kind { color: var(--md-error); }
 .doh-ev.k-unblock .doh-kind, .doh-ev.k-resolve .doh-kind { color: var(--md-primary); }
+/* (0.21 P9) DoH settings: the resolvers' health, the custom address, what goes through DoH, the per-use line */
+.doh-rows { display: contents; }
+.doh-custom { display: grid; gap: 6px; margin: 4px 0 8px; }
+.doh-custom .doh-url { width: 100%; box-sizing: border-box; }
+.doh-err { color: var(--md-error); margin: 0; }
+.doh-health { display: grid; gap: 6px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container-low); margin: 8px 0; }
+.doh-health-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.doh-health-list { display: grid; gap: 2px; }
+.doh-hrow { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 2px; }
+.doh-hrow + .doh-hrow { border-top: 1px solid var(--md-outline-variant); }
+.doh-hrow .grow { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 2px; min-width: 0; }
+.doh-hrow .doh-hstate { flex: none; max-width: 45%; text-align: end; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doh-hrow.h-fail .doh-hstate { color: var(--md-error); }
+.doh-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--md-outline); }
+.doh-hrow.h-ok .doh-dot, .doh-cover-list .c-yes .doh-dot { background: var(--md-primary); }
+.doh-hrow.h-fail .doh-dot { background: var(--md-error); }
+.doh-cover-list .c-hidden .doh-dot { background: var(--md-tertiary, var(--md-primary)); opacity: .6; }
+.doh-first { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.doh-health[data-state='checking'] .doh-health-list { opacity: .6; }
+.doh-health-foot { display: block; }
+.doh-cover { margin: 4px 0 8px; padding: 0 12px; }
+.doh-cover summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.doh-cover-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.doh-cover-list li { display: flex; align-items: center; gap: 10px; }
+.doh-cover-list li .src { text-align: end; flex: none; max-width: 50%; }
+.doh-line { display: block; margin: 4px 0 0; }
+.doh-line[data-via='system'], .doh-line[data-via='failed'] { color: var(--md-error); }
 
 /* The window's bar of the app's own on a computer (ui/titlebar.ts): a strip in the theme's colours with the icon and
    the name, the system's buttons over its end (on a Mac its lights at its start); the page below it, full screen

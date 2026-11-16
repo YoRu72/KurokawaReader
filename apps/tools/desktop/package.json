@@ -32,6 +32,7 @@
       "main.cjs",
       "preload.cjs",
       "aria2.cjs",
+      "dohchain.cjs",
       "paths.cjs",
       "sniff.cjs",
       "localapi.cjs",

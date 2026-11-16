@@ -148,6 +148,31 @@ fn opts_value(o: &[(String, String)]) -> Value {
 
 /* ---------- JSON ⇄ engine_core ---------- */
 
+/// The DoH proxy aria2 is pointed at while DNS over HTTPS is on and the user set no proxy of their own (0.21 P9:
+/// dohtools.rs; empty while off).
+static DOH_PROXY: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// The DoH proxy changed: kept for the next start, and aria2's all-proxy changed now — unless the user's own proxy
+/// is set, which wins (the proxy finds the sites then).
+pub fn set_doh_proxy(url: String) {
+    if let Ok(mut p) = DOH_PROXY.write() {
+        *p = url;
+    }
+    if let Some(e) = get() {
+        let user = {
+            let g = e.lock();
+            g.config.get("net").and_then(|n| n.get("proxy")).map(|p| text(Some(p))).unwrap_or_default()
+        };
+        if user.trim().is_empty() {
+            let _ = e.call("changeGlobalOption", vec![json!({ "all-proxy": doh_proxy() })]);
+        }
+    }
+}
+
+fn doh_proxy() -> String {
+    DOH_PROXY.read().map(|p| p.clone()).unwrap_or_default()
+}
+
 pub fn net_config(n: Option<&Value>) -> ec::NetConfig {
     let empty = json!({});
     let n = match n {
@@ -165,7 +190,7 @@ pub fn net_config(n: Option<&Value>) -> ec::NetConfig {
         proxy: if truthy(n.get("proxy")) {
             text(n.get("proxy"))
         } else {
-            String::new()
+            doh_proxy()
         },
         conflict: if truthy(n.get("conflict")) {
             text(n.get("conflict"))
@@ -956,7 +981,8 @@ impl Engine {
             )?
         } else {
             let link = if truthy(source.get("magnet")) {
-                text(source.get("magnet"))
+                // (Its UDP trackers by the DoH chain's addresses while DoH is on.)
+                crate::dohtools::rewrite_magnet(&text(source.get("magnet")))
             } else {
                 text(source.get("url"))
             };

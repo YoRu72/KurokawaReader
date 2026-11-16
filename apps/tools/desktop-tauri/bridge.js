@@ -236,13 +236,15 @@
     /* network */
     http: function (o) { return call('kt_http', { o: obj(o) }); },
     checkUpdate: function (o) { return call('kt_check_update', { o: obj(o) }); },
-    /* stage P8: DNS over HTTPS for the app's own requests (the shared crate's resolver; kt-core's dohnames for Tools'
-       names), the probe; the updater (src-tauri/src/update.rs over kt-core's updatelogic: this build's own release
+    /* stage P8 (0.21 P9: the chain): DNS over HTTPS for the app's own requests and aria2's (src-tauri/src/dohtools.rs
+       over kt-core's dohchain), the probe, the status, what answered each name; the updater (src-tauri/src/update.rs over kt-core's updatelogic: this build's own release
        file, resumed, its size and SHA-256 checked, installed per system) and its progress as kt:update-progress.
        updateDownload({ beta }) / updateInstall() are this shell's own: a background download, installed now or silently
        when the app quits. */
     setDoh: function (o) { return call('kt_set_doh', { o: obj(o) }); },
     dohProbe: function () { return call('kt_doh_probe'); },
+    dohStatus: function () { return call('kt_doh_status'); },
+    dohUsed: function (o) { return call('kt_doh_used', { o: obj(o) }); },
     installUpdate: function (u) { return call('kt_install_update', { url: str(u) }); },
     onUpdateProgress: function (cb) { return subscribe('kt:update-progress', cb); },
     updateDownload: function (o) { return call('kt_update_download', { o: obj(o) }); },

@@ -171,6 +171,157 @@ pub fn decode_answer(m: &[u8], qtype: u16) -> Result<Answer, String> {
     Ok(Answer { ips, ttl })
 }
 
+/// The same query with an id of the caller's (a GET can be cached by id 0; a POST — Tools' chain — gets a random
+/// one, so an answer meant for another question is told apart).
+pub fn encode_query_id(name: &str, qtype: u16, id: u16) -> Result<Vec<u8>, String> {
+    let mut q = encode_query(name, qtype)?;
+    q[0..2].copy_from_slice(&id.to_be_bytes());
+    Ok(q)
+}
+
+/// Why `decode_strict` refused an answer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Refused {
+    /// The resolver says the name does not exist (an answer, not a failure: no other resolver is asked).
+    NoSuchName,
+    /// Anything else: the resolver's failure, or an answer not to be trusted — the next resolver is asked.
+    Bad(String),
+}
+
+/// A name at `i`, compression pointers followed (only backwards, at most 32 of them, at most 255 bytes): the name
+/// (lowercased, dotted) and the position after it where it first ended.
+fn read_name(m: &[u8], mut i: usize) -> Result<(String, usize), String> {
+    let mut labels: Vec<String> = Vec::new();
+    let mut end: Option<usize> = None;
+    let mut jumps = 0;
+    let mut total = 0usize;
+    loop {
+        let len = *m.get(i).ok_or("DNS answer cut short")? as usize;
+        if len == 0 {
+            return Ok((labels.join("."), end.unwrap_or(i + 1)));
+        }
+        if len & 0xC0 == 0xC0 {
+            let to = (((len & 0x3F) << 8) | *m.get(i + 1).ok_or("DNS answer cut short")? as usize) as usize;
+            jumps += 1;
+            if jumps > 32 || to >= i {
+                return Err("DNS answer: a name that points at itself".to_string());
+            }
+            if end.is_none() {
+                end = Some(i + 2);
+            }
+            i = to;
+            continue;
+        }
+        if len & 0xC0 != 0 {
+            return Err("DNS answer: a label of an unknown kind".to_string());
+        }
+        let l = m.get(i + 1..i + 1 + len).ok_or("DNS answer cut short")?;
+        total += len + 1;
+        if total > 255 {
+            return Err("DNS answer: a name too long".to_string());
+        }
+        labels.push(String::from_utf8_lossy(l).to_ascii_lowercase());
+        i += 1 + len;
+    }
+}
+
+/// An answer read as Tools' chain wants it, trusting nothing: at most 65535 bytes, an answer (not a question), not
+/// truncated, the id and the one question the ones asked; then the records of the name asked, CNAMEs followed (at most
+/// 8, a loop refused), only those of class IN and the type asked. «No such name» is NoSuchName; an answer with no
+/// record of the type is an empty list (the caller treats it as «no address»).
+pub fn decode_strict(m: &[u8], qname: &str, qtype: u16, id: u16) -> Result<Answer, Refused> {
+    let bad = |s: &str| Refused::Bad(s.to_string());
+    if m.len() > 65535 {
+        return Err(bad("DNS answer too big"));
+    }
+    if m.len() < 12 {
+        return Err(bad("DNS answer cut short"));
+    }
+    if u16::from_be_bytes([m[0], m[1]]) != id {
+        return Err(bad("DNS answer for another question (id)"));
+    }
+    let flags = u16::from_be_bytes([m[2], m[3]]);
+    if flags & 0x8000 == 0 {
+        return Err(bad("not a DNS answer"));
+    }
+    if flags & 0x0200 != 0 {
+        return Err(bad("DNS answer truncated"));
+    }
+    match flags & 0x000F {
+        0 => {}
+        3 => return Err(Refused::NoSuchName),
+        rc => return Err(Refused::Bad(format!("the resolver failed (code {})", rc))),
+    }
+    let qd = u16::from_be_bytes([m[4], m[5]]);
+    let an = u16::from_be_bytes([m[6], m[7]]) as usize;
+    if qd != 1 {
+        return Err(bad("DNS answer for another question"));
+    }
+    let want = qname.trim_end_matches('.').to_ascii_lowercase();
+    let (q, mut i) = read_name(m, 12).map_err(Refused::Bad)?;
+    let qt = u16_at(m, i).map_err(Refused::Bad)?;
+    if q != want || qt != qtype {
+        return Err(bad("DNS answer for another question"));
+    }
+    i += 4;
+    if i > m.len() {
+        return Err(bad("DNS answer cut short"));
+    }
+    // (Every record of the answer section: owner, type, class, TTL, data's place.)
+    let mut recs: Vec<(String, u16, u16, u32, usize, usize)> = Vec::new();
+    for _ in 0..an {
+        let (owner, at) = read_name(m, i).map_err(Refused::Bad)?;
+        let t = u16_at(m, at).map_err(Refused::Bad)?;
+        let class = u16_at(m, at + 2).map_err(Refused::Bad)?;
+        let ttl = u32_at(m, at + 4).map_err(Refused::Bad)?;
+        let len = u16_at(m, at + 8).map_err(Refused::Bad)? as usize;
+        let data = at + 10;
+        if data + len > m.len() {
+            return Err(bad("DNS answer cut short"));
+        }
+        recs.push((owner, t, class, ttl, data, len));
+        i = data + len;
+    }
+    let mut name = want;
+    let mut seen: Vec<String> = vec![name.clone()];
+    let mut ttl = u32::MAX;
+    for _ in 0..=8 {
+        let mut ips: Vec<IpAddr> = Vec::new();
+        for (owner, t, class, rttl, at, len) in recs.iter() {
+            if *owner != name || *class != 1 || *t != qtype {
+                continue;
+            }
+            if *t == TYPE_A && *len == 4 {
+                ips.push(IpAddr::V4(Ipv4Addr::new(m[*at], m[at + 1], m[at + 2], m[at + 3])));
+            } else if *t == TYPE_AAAA && *len == 16 {
+                let mut b = [0u8; 16];
+                b.copy_from_slice(&m[*at..at + 16]);
+                ips.push(IpAddr::V6(Ipv6Addr::from(b)));
+            } else {
+                return Err(bad("DNS answer: an address of the wrong size"));
+            }
+            ttl = ttl.min(*rttl);
+        }
+        if !ips.is_empty() {
+            return Ok(Answer { ips, ttl });
+        }
+        let cname = recs.iter().find(|(o, t, c, _, _, _)| *o == name && *t == 5 && *c == 1);
+        match cname {
+            Some((_, _, _, rttl, at, _)) => {
+                let (to, _) = read_name(m, *at).map_err(Refused::Bad)?;
+                if seen.contains(&to) {
+                    return Err(bad("DNS answer: a CNAME loop"));
+                }
+                ttl = ttl.min(*rttl);
+                seen.push(to.clone());
+                name = to;
+            }
+            None => return Ok(Answer { ips: Vec::new(), ttl: 0 }),
+        }
+    }
+    Err(bad("DNS answer: too many CNAMEs"))
+}
+
 /// Names answered without asking anyone (as Chromium does): an address written as one, and localhost.
 pub fn local_answer(host: &str) -> Option<Vec<IpAddr>> {
     let h = host.trim_start_matches('[').trim_end_matches(']');
@@ -302,6 +453,76 @@ mod tests {
         cut.truncate(cut.len() - 2);
         assert!(decode_answer(&cut, TYPE_A).is_err());
         assert!(decode_answer(&[0x80], TYPE_A).is_err());
+    }
+
+    /// An answer with the question echoed (id `id`) and records given whole: (owner as wire bytes, type, ttl, data).
+    fn raw(id: u16, flags: u16, q: &[u8], recs: &[(Vec<u8>, u16, u32, Vec<u8>)]) -> Vec<u8> {
+        let mut m = q.to_vec();
+        m[0..2].copy_from_slice(&id.to_be_bytes());
+        m[2..4].copy_from_slice(&flags.to_be_bytes());
+        m[6..8].copy_from_slice(&(recs.len() as u16).to_be_bytes());
+        for (owner, t, ttl, data) in recs {
+            m.extend_from_slice(owner);
+            m.extend_from_slice(&t.to_be_bytes());
+            m.extend_from_slice(&1u16.to_be_bytes());
+            m.extend_from_slice(&ttl.to_be_bytes());
+            m.extend_from_slice(&(data.len() as u16).to_be_bytes());
+            m.extend_from_slice(data);
+        }
+        m
+    }
+
+    fn wire(name: &str) -> Vec<u8> {
+        let mut v = Vec::new();
+        for l in name.split('.') {
+            v.push(l.len() as u8);
+            v.extend_from_slice(l.as_bytes());
+        }
+        v.push(0);
+        v
+    }
+
+    #[test]
+    fn strict_answers() {
+        let id = 0x5a17;
+        let q = encode_query_id("Site.Test", TYPE_A, id).unwrap();
+        assert_eq!(&q[0..2], &[0x5a, 0x17]);
+        let ptr = vec![0xC0, 0x0C];
+        // A plain answer, the owner by pointer to the question.
+        let ok = raw(id, 0x8180, &q, &[(ptr.clone(), 1, 90, vec![203, 0, 113, 5]), (ptr.clone(), 1, 40, vec![203, 0, 113, 6])]);
+        assert_eq!(decode_strict(&ok, "site.test", TYPE_A, id).unwrap(), Answer { ips: vec!["203.0.113.5".parse().unwrap(), "203.0.113.6".parse().unwrap()], ttl: 40 });
+        // A CNAME chain followed; a record for an unrelated name ignored.
+        let chain = raw(id, 0x8180, &q, &[(ptr.clone(), 5, 300, wire("cdn.test")), (wire("other.test"), 1, 5, vec![198, 51, 100, 1]), (wire("cdn.test"), 1, 60, vec![198, 51, 100, 2])]);
+        assert_eq!(decode_strict(&chain, "site.test", TYPE_A, id).unwrap(), Answer { ips: vec!["198.51.100.2".parse().unwrap()], ttl: 60 });
+        // A CNAME loop.
+        let looped = raw(id, 0x8180, &q, &[(ptr.clone(), 5, 300, wire("b.test")), (wire("b.test"), 5, 300, wire("site.test"))]);
+        assert!(matches!(decode_strict(&looped, "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("loop")));
+        // Too many CNAMEs.
+        let mut many = vec![(ptr.clone(), 5u16, 300u32, wire("c0.test"))];
+        for k in 0..10 {
+            many.push((wire(&format!("c{}.test", k)), 5, 300, wire(&format!("c{}.test", k + 1))));
+        }
+        assert!(matches!(decode_strict(&raw(id, 0x8180, &q, &many), "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("too many")));
+        // The wrong id, truncated, not an answer, another question, a server failure, no such name.
+        assert!(matches!(decode_strict(&ok, "site.test", TYPE_A, id + 1), Err(Refused::Bad(e)) if e.contains("id")));
+        assert!(matches!(decode_strict(&raw(id, 0x8380, &q, &[]), "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("truncated")));
+        assert!(matches!(decode_strict(&raw(id, 0x0100, &q, &[]), "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("not a DNS answer")));
+        assert!(matches!(decode_strict(&ok, "other.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("another question")));
+        assert!(matches!(decode_strict(&ok, "site.test", TYPE_AAAA, id), Err(Refused::Bad(e)) if e.contains("another question")));
+        assert!(matches!(decode_strict(&raw(id, 0x8182, &q, &[]), "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("code 2")));
+        assert_eq!(decode_strict(&raw(id, 0x8183, &q, &[]), "site.test", TYPE_A, id), Err(Refused::NoSuchName));
+        // Cut short, oversized, an address of the wrong size, a pointer to itself.
+        let mut cut = ok.clone();
+        cut.truncate(cut.len() - 1);
+        assert!(decode_strict(&cut, "site.test", TYPE_A, id).is_err());
+        let mut big = ok.clone();
+        big.resize(70000, 0);
+        assert!(matches!(decode_strict(&big, "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("too big")));
+        assert!(matches!(decode_strict(&raw(id, 0x8180, &q, &[(ptr.clone(), 1, 9, vec![1, 2, 3])]), "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("wrong size")));
+        let self_ptr = raw(id, 0x8180, &q, &[(vec![0xC0, (q.len()) as u8], 1, 9, vec![1, 2, 3, 4])]);
+        assert!(matches!(decode_strict(&self_ptr, "site.test", TYPE_A, id), Err(Refused::Bad(e)) if e.contains("points at itself")));
+        // No record of the type: an empty list.
+        assert_eq!(decode_strict(&raw(id, 0x8180, &q, &[]), "site.test", TYPE_A, id).unwrap().ips.len(), 0);
     }
 
     #[test]
