@@ -1,0 +1,55 @@
+/* Pets (src/pets): the layer over the app (above the content and the sidebar, below scrims, sheets and menus), the
+   pet's own little menu and speech bubble, and Settings → Pets with its sheets. */
+#kt-pets { position: fixed; inset: 0; z-index: 34; pointer-events: none; overflow: hidden; contain: strict; }
+#kt-pets[hidden] { display: none; }
+#kt-pets .kt-pet { position: absolute; left: 0; top: 0; pointer-events: none; touch-action: none; cursor: grab; will-change: transform; }
+#kt-pets .kt-pet-say { position: absolute; left: 0; top: 0; max-width: 220px; padding: 6px 12px; border-radius: 16px; background: var(--md-surface-container-highest); color: var(--md-on-surface); font: 500 13px/1.35 var(--font-ui); box-shadow: var(--el-2); white-space: normal; }
+.kt-pet-menu { position: fixed; z-index: 100; display: flex; flex-direction: column; gap: 2px; min-width: 180px; padding: 6px; border-radius: 16px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); font: 500 14px var(--font-ui); }
+.kt-pet-menu button { all: unset; box-sizing: border-box; padding: 10px 14px; border-radius: 12px; cursor: pointer; }
+.kt-pet-menu button:hover, .kt-pet-menu button:focus-visible { background: color-mix(in srgb, var(--md-on-surface) 9%, transparent); }
+
+#pets .pet-lib { display: flex; flex-direction: column; }
+#pets h4 { margin: 18px 0 4px; font: 600 13px var(--font-ui); color: var(--md-on-surface-variant); letter-spacing: .02em; }
+#pets .pet-row { display: flex; align-items: center; gap: 14px; padding-block: 10px; }
+#pets .pet-row .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+#pets .pet-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pets .pet-thumb { flex: none; width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--md-surface-container-high); overflow: hidden; }
+#pets .pet-thumb img { max-width: 40px; max-height: 40px; image-rendering: auto; }
+#pets .pet-shown-label { padding: 0; gap: 10px; background: none; }
+#pets .pet-empty { align-items: center; gap: 16px; }
+#pets .row-actions { gap: 8px; }
+#pets .pet-scale { align-items: center; gap: 12px; }
+#pets .pet-scale input[type=range] { width: 180px; }
+#pets .pet-scale-val { min-width: 48px; text-align: end; font: 600 13px var(--font-ui); }
+
+.pet-import { display: flex; flex-direction: column; gap: 10px; font-family: var(--font-ui); }
+.pet-import h4 { margin: 14px 0 0; font: 600 14px var(--font-ui); }
+.pet-import .pet-pick { display: flex; flex-wrap: wrap; gap: 10px; justify-self: start; }
+.pet-import .pet-busy:empty { display: none; }
+.pet-allowed { display: flex; align-items: center; gap: 10px; margin: 0; padding: 10px 14px; border-radius: 14px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 500; }
+.pet-allowed svg { flex: none; width: 20px; height: 20px; }
+.pet-links { display: flex; flex-direction: column; gap: 8px; }
+.pet-link { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 16px; background: var(--md-surface-container); }
+.pet-link .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.pet-link small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pet-link-form { display: flex; flex-direction: column; gap: 8px; }
+.pet-link-form .row-actions { justify-self: start; gap: 8px; }
+.pet-link-err:empty { display: none; }
+.pet-link-err { color: var(--md-error); }
+.pet-steps { margin: 0; padding-inline-start: 22px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.pet-report { margin: 0; padding-inline-start: 18px; font: 13px/1.5 var(--font-mono, monospace); }
+.pet-about pre.pet-licence { white-space: pre-wrap; font: 13px/1.5 var(--font-ui); max-height: 40vh; overflow: auto; padding: 10px 12px; border-radius: 12px; background: var(--md-surface-container); }
+
+.pet-map-sheet .pet-preview { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; border-radius: 18px; background: var(--md-surface-container); min-height: 100px; }
+.pet-map-sheet .pet-tile { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; border-radius: 14px; background: var(--md-surface-container-high); }
+.pet-map-sheet .pet-tile figcaption { font: 500 12px var(--font-ui); color: var(--md-on-surface-variant); }
+.pet-map-sheet .pet-map-rows .row { padding: 6px 0; }
+
+/* A pet's own desktop window (#/pet/<id>): nothing but the pet, on a transparent window. */
+html.pet-window, html.pet-window body { background: transparent !important; margin: 0; padding: 0; overflow: hidden; }
+html.pet-window body > :not(#app) { display: none !important; }
+html.pet-window #app { position: fixed; inset: 0; padding: 0; margin: 0; background: transparent; }
+html.pet-window .pet-win-cv { position: absolute; left: 0; top: 0; touch-action: none; cursor: grab; }
+html.pet-window .pet-win-say { position: absolute; left: 50%; top: 4px; transform: translateX(-50%); max-width: 200px; padding: 6px 12px; border-radius: 16px; background: var(--md-surface-container-highest); color: var(--md-on-surface); font: 500 13px/1.35 var(--font-ui); }
+html.pet-window .pet-win-menu { position: absolute; left: 0; top: 0; min-width: 0; width: 196px; box-sizing: border-box; }
+.pet-map-sheet .sheet-body > .field { margin-top: 10px; }

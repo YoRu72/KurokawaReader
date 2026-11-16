@@ -120,6 +120,17 @@ jobs:
           rustc --edition 2021 --test apps/tools/core/kt-core/src/screenlogic.rs -o "$d/screenlogic$ext"
           "$d/screenlogic$ext"
 
+      # (Pets: the window in front and the work area — activewin.rs, std only, each system's own library (user32 and
+      # dwmapi, CoreGraphics, libX11 by dlopen) — compiled and its tests run on every system: the only place its Windows
+      # and macOS paths are compiled before the app's own build.)
+      - name: Std-only unit tests (pets, the window in front)
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/rs-tests-pets"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          rustc --edition 2021 --test apps/tools/desktop-tauri/src-tauri/src/activewin.rs -o "$d/activewin$ext"
+          "$d/activewin$ext"
+
       # (The hybrid — PORTING.md «Closed by the hybrid»: its std-only rules — a notice's click address and toast, Electron's
       # content-type rule and the header probe's limits, the handed cookies' lines, the programs' digests —, on every
       # system; the Electron half of the carried sign-ins in plain node, Linux.)

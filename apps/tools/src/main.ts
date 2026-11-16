@@ -17,6 +17,7 @@ import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
 // (undo-redo) The snackbar's Undo / Redo, a computer's Ctrl+Z, and a settings restore that can still be taken back.
 import './styles/undo.css';
+import './styles/pets.css';
 import { wireUndoKeys } from './ui/undo';
 import { brandIcon, applyBrandIcon } from './ui/brandIcon';
 // (The icon of the user's choosing on the page's own little icon too, from the start.)
@@ -64,6 +65,9 @@ function buildNav(): HTMLElement {
 const RAIL_KEY = 'kt.rail.mini';
 /** The animated background (a computer, when chosen): its module fetched only then, after the first screen. */
 let abg = false;
+/** The pets (a computer, once one was added and shown): their module fetched only then (src/pets). */
+let pets = false;
+function petsOn(): void { if (!pets && !(isPc() && getSettings().pets?.on)) return; pets = true; void import('./pets/boot').then((m) => m.syncPets()); }
 function animBg(): void { const s = getSettings(); if (!abg && !(isPc() && s.animBg && s.animBg !== 'off')) return; abg = true; void import('./theme/animbg').then((m) => m.syncAnimBg()); }
 /** The sidebar folded: as chosen, or by itself in a window too narrow for it. */
 function fitRail(): void {
@@ -173,8 +177,11 @@ applyChrome();
 const MINI = location.hash.startsWith('#/mini');
 // (The computer's screen translator over the screen: only its own view.)
 const OVERLAY = location.hash.startsWith('#/overlay');
+// (A pet's own window on the desktop: only its pet — src/pets/desktop.ts.)
+const PETWIN = location.hash.startsWith('#/pet/');
 if (MINI) { document.documentElement.classList.add('mini'); const { miniView } = await import('./views/mini'); app.replaceChildren(miniView()); }
 else if (OVERLAY) { const { overlayView } = await import('./views/overlay'); app.replaceChildren(overlayView()); }
+else if (PETWIN) { await loadRest(); const { petWindow } = await import('./pets/desktop'); void petWindow(decodeURIComponent(location.hash.slice(6)), { hide: t('petsHide'), settings: t('petsSettings') }); }
 else {
   placeNav();
   // (The window's own bar: the Tauri shell has the page draw all of it, its buttons too — ui/winbar.ts, the Reader's —;
@@ -187,7 +194,7 @@ else {
   // choices are in force before any download moves; the hand-over's hooks are there for the shell and the tests.)
   void backNav().then((m) => m.wirePcBack());
   wireUndoKeys();
-  onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); animBg(); });
+  onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); animBg(); petsOn(); });
   void import('./downloads/power').then((m) => m.applyPower());
   // (Once after 0.21 moved an install back to «Expressive 3»: the snackbar that says so and can undo it.)
   try { if (localStorage.getItem(MAIN_NOTE_KEY)) afterFirstPaint(() => window.setTimeout(() => void import('./theme/mainNote').then((m) => m.showMainNote()), 700)); } catch { /* private mode */ }
@@ -226,7 +233,7 @@ else {
   mount(parseRoute());
   // (The rest — heavy or periodic work nobody waits for — once the first screen is drawn.)
   afterFirstPaint(() => {
-  animBg();
+  animBg(); petsOn();
   // (The rest of the strings — every screen but this one waits for them — fetched once the list is up and the page idle,
   // so the first other screen opened does not wait for them.)
   { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (idle) idle(() => void loadRest(), { timeout: 1500 }); else setTimeout(() => void loadRest(), 300); }

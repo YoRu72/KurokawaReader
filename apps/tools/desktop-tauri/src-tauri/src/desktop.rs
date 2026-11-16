@@ -735,7 +735,10 @@ pub fn on_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 mini_save(&app, json!({ "x": l.x, "y": l.y }));
             }
         }
-        ("main", tauri::WindowEvent::Destroyed) => close_mini(&app),
+        ("main", tauri::WindowEvent::Destroyed) => {
+            close_mini(&app);
+            crate::petwin::close_all(&app);
+        }
         ("main", tauri::WindowEvent::Focused(true)) => {
             let id = desk().notice.focused(now_ms());
             if let Some(id) = id {

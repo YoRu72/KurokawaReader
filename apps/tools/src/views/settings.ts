@@ -5,6 +5,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
 import { BUILT_IN, getSettings, updateSettings } from '../settings';
 import { appearanceCard } from './appearance';
+import { petsCard } from '../pets/ui';
 import { navigate } from '../router';
 import { onBack } from '../ui/backstack';
 import { APP_VERSION, REPO, SITE_URL } from '../repo';
@@ -136,6 +137,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       ...titleBarRows(rerender),
     );
     const appearance = appearanceCard(rerender);
+    // (Pets: a computer only.)
+    const pets = pc() ? petsCard(rerender) : null;
     const eng = getEngine();
     const dirLabel = h('span', { class: 'src', dir: 'ltr' }, s.downloadDir || t('defaultFolder'));
     const canPick = !!(window.kurokawaTools?.pickDir || ktPlugin());
@@ -383,7 +386,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const screen = (plat === 'android' || plat === 'desktop') && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
     // Advanced (phones that carry the Rust core): the download engine — views/engineSettings.ts.
     const advanced = advancedCard(rerender);
-    return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
+    return [general, anilist, episodes, appearance, pets, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   // (Back: a search typed is let go first, then a tab of the bar back to «All»; then Settings is left.)

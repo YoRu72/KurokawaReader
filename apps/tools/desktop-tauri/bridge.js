@@ -272,6 +272,11 @@
        after). Links the system handed the app reach the page as the preload's kt:open DOM event (below). */
     desktopPrefs: function (o) { return call('kt_desktop_prefs', { o: obj(o) }); },
     mini: function (o) { return call('kt_mini', { o: obj(o) }); },
+    /* the pets on the desktop (src-tauri/src/petwin.rs, activewin.rs): pet({ action: open | move | through | close |
+       closeAll | screen | active | main, id, x, y, w, h, on, hash }) → open/move/…: { ok }; screen: { work, cursor,
+       scale } (logical pixels); active: { rect | null, why } (the window in front; why: wayland, noX11, … where it
+       cannot be known). */
+    pet: function (o) { return call('kt_pet', { o: obj(o) }); },
     registerMagnet: function () { return call('kt_register_magnet'); },
     onHotkeyAdd: function (cb) { return subscribe('kt:hotkeyAdd', cb); },
     onOpenTask: function (cb) {

@@ -96,6 +96,38 @@ function openMini() {
   mini.on('move', keep); mini.on('closed', () => { mini = null; });
 }
 function closeMini() { if (mini) mini.close(); }
+/* ---------- the pets on the desktop (src/pets/desktop.ts): one small window per pet, the size of its picture ---------- */
+// Transparent, frameless, above the others, not on the taskbar, never focused; clicks pass through it (forwarded moves
+// tell the page where the pointer is, and it takes the clicks only over the pet). Electron cannot tell which window
+// is in front without a native addon: no «follow the active window» here (the pet keeps to the work area's floor).
+const petWins = new Map();
+const PET_ID = /^[A-Za-z0-9_-]{1,40}$/;
+const num = (v, d) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : d);
+function closePets() { for (const w of petWins.values()) { try { if (!w.isDestroyed()) w.close(); } catch { /* gone */ } } petWins.clear(); }
+ipcMain.handle('kt:pet', (_e, o) => {
+  const a = o && o.action; const id = String((o && o.id) || '');
+  if (a === 'screen') { const { screen } = require('electron'); const c = screen.getCursorScreenPoint(); const d = screen.getPrimaryDisplay(); const wa = d.workArea; return { work: { x: wa.x, y: wa.y, w: wa.width, h: wa.height }, cursor: { x: c.x, y: c.y }, scale: d.scaleFactor }; }
+  if (a === 'active') return { rect: null, why: 'unsupported' };
+  if (a === 'closeAll') { closePets(); return { ok: true }; }
+  if (a === 'main') { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (o.hash === '#/settings/pets') win.webContents.executeJavaScript("location.hash='#/settings/pets'").catch(() => {}); } return { ok: true }; }
+  if (!PET_ID.test(id)) return { ok: false };
+  const w = petWins.get(id);
+  if (a === 'open') {
+    if (w && !w.isDestroyed()) return { ok: true };
+    const pw = new BrowserWindow({ x: num(o.x, 0), y: num(o.y, 0), width: Math.max(4, num(o.w, 4)), height: Math.max(4, num(o.h, 4)), transparent: true, frame: false, resizable: false, movable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, hasShadow: false, fullscreenable: false, maximizable: false, minimizable: false, show: false, backgroundColor: '#00000000', title: 'Kurokawa Tools pet',
+      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+    pw.setAlwaysOnTop(true, 'floating'); pw.setVisibleOnAllWorkspaces?.(true); pw.setIgnoreMouseEvents(true, { forward: true });
+    pw.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    pw.loadURL(`app://kurokawa/index.html#/pet/${id}`); pw.once('ready-to-show', () => { if (!pw.isDestroyed()) pw.showInactive(); });
+    pw.on('closed', () => { if (petWins.get(id) === pw) petWins.delete(id); });
+    petWins.set(id, pw); return { ok: true };
+  }
+  if (!w || w.isDestroyed()) return { ok: false };
+  if (a === 'move') { w.setBounds({ x: num(o.x, 0), y: num(o.y, 0), width: Math.max(4, Math.min(1600, num(o.w, 4))), height: Math.max(4, Math.min(1600, num(o.h, 4))) }); return { ok: true }; }
+  if (a === 'through') { w.setIgnoreMouseEvents(!!o.on, { forward: true }); return { ok: true }; }
+  if (a === 'close') { w.close(); petWins.delete(id); return { ok: true }; }
+  return { ok: false };
+});
 
 function createWindow() {
   const st = loadState();
@@ -116,7 +148,7 @@ function createWindow() {
   win.on('resize', saveState); win.on('move', saveState);
   // (The screen translator kept in the tray: closing the window hides it; Quit is in the tray's menu.)
   win.on('close', (e) => { saveState(); if (!quitting && ScreenTr.keepInTray()) { e.preventDefault(); win.hide(); } });
-  win.on('closed', () => { win = null; closeMini(); });
+  win.on('closed', () => { win = null; closeMini(); closePets(); });
   // (The mini window when the main one is put away, if chosen.)
   win.on('minimize', () => { if (loadState().miniOnMinimize) openMini(); });
   win.on('restore', () => { if (loadState().miniOnMinimize) closeMini(); });

@@ -15,6 +15,9 @@ mod commands;
 // mini window, launches handed over, a Mac's menu bar; desklogic.rs its rules, std only.)
 mod desklogic;
 mod desktop;
+// (The pets on the desktop: their windows, and the window in front — std only, each system's own library.)
+mod activewin;
+mod petwin;
 // (Stage P6: kt:captureUrl and kt:siteWindow — the sign-in window and the site window.)
 mod sitewin;
 // (Stage P7: the in-app browser, kt:browse — its rules in the shared crate's browserlogic.rs.)
@@ -205,6 +208,7 @@ fn main() {
             titlebar::kt_title_bar,
             desktop::kt_desktop_prefs,
             desktop::kt_mini,
+            petwin::kt_pet,
             desktop::kt_open_take,
             desktop::kt_register_magnet,
             desktop::kt_selftest_desk,

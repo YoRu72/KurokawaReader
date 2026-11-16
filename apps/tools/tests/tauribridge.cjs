@@ -28,7 +28,9 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
   'videoInfo', 'videoReady', 'isVideoHost', 'videoVersion', 'videoRollback', 'videoUpdate', 'videoBinary', 'videoCookies', 'galleryList', 'galleryReady', 'ffmpegAvailable', 'ffmpeg', 'ffmpegCancel', 'ffprobe',
   'packStatus', 'packInstall', 'packCancel', 'packRemove',
   // (Screen translator: screentr.rs.)
-  'screenConfig', 'screenStatus', 'screenAction', 'screenJob', 'screenRegion', 'screenClose', 'screenOcrLangs', 'screenCaptionSize'];
+  'screenConfig', 'screenStatus', 'screenAction', 'screenJob', 'screenRegion', 'screenClose', 'screenOcrLangs', 'screenCaptionSize',
+  // (Pets on the desktop: petwin.rs.)
+  'pet'];
 // (The preload's channel → this shell's command, where the name is not kt:xyz → kt_xyz.)
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
@@ -120,6 +122,8 @@ function loadBridge(boot) {
     // (Screen translator.)
     screenConfig: [{ config: { pcOn: true, pc: { keys: { region: 'Alt+Shift+T' }, tray: true } }, clearFixed: true }], screenStatus: [], screenAction: ['region'], screenJob: [],
     screenRegion: [{ x: 90, y: 90, width: 330, height: 90 }], screenClose: [], screenOcrLangs: [], screenCaptionSize: [{ height: 88 }],
+    // (Pets on the desktop.)
+    pet: [{ action: 'move', id: 'p1', x: 10, y: 20, w: 64, h: 64 }],
   };
   assert.deepEqual(Object.keys(samples).sort(), [...SLICE].sort());
   const sent = {};
