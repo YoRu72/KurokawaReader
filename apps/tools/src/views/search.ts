@@ -131,7 +131,7 @@ export function searchView(q?: string): HTMLElement & { dispose?: () => void } {
         h('div', { class: 'grow' }, h('b', { dir: 'auto' }, title), h('small', { class: 'src' }, [facts, countResults(w.rows.length)].filter(Boolean).join(' · ')))),
       rowsBox);
   };
-  const releaseRow = (r: SearchResult, p: Release, card: TitleCard | null) => h('button', { type: 'button', class: 'result-row', onclick: () => void addResult(r, card ? { anilistId: card.ids.anilist, imdbId: card.ids.imdb, cover: card.cover, title: card.title, episode: p.episode, season: p.season } : {}) },
+  const releaseRow = (r: SearchResult, p: Release, card: TitleCard | null) => h('button', { type: 'button', class: 'result-row', onclick: () => void addResult(r, card ? { anilistId: card.ids.anilist, imdbId: card.ids.imdb, cover: card.cover?.startsWith('blob:') ? undefined : card.cover, title: card.title, episode: p.episode, season: p.season } : {}) },
     icon(r.magnet || r.torrent ? 'magnet' : 'link'),
     h('span', { class: 'grow', dir: 'auto' }, h('span', { class: 'result-title' }, r.title),
       h('small', { class: 'src' }, [r.quality ?? p.resolution, r.size ? formatBytes(r.size) : '', r.seeds !== undefined ? `↑${localDigits(r.seeds)}` : '', p.season !== undefined && p.episode !== undefined ? `S${String(p.season).padStart(2, '0')}E${String(p.episode).padStart(2, '0')}` : p.episode !== undefined ? t('episodeN', { n: p.episode }) : '', p.batch ? t('animeBatch') : '', r.date ?? '', r.source].filter(Boolean).join(' · '))));

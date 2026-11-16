@@ -18,10 +18,12 @@ export async function openPlayer(url: string, name: string, opts: PlayOpts = {})
   // (A video opened from a folder: its folder's other videos become the queue, in name order, when the player's setting says.)
   if (!opts.playlist && opts.localPath && !opts.task) { try { const { getPrefs } = await import('../player/prefs'); if (getPrefs().autoQueueFolder !== false) { const { siblingFiles, localFileUrl } = await import('../player/files'); const sibs = (await siblingFiles(opts.localPath)).filter((p) => /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i.test(p)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); if (sibs.length > 1 && sibs.includes(opts.localPath)) { const pl = []; for (const p of sibs) { const u = p === opts.localPath ? url : await localFileUrl(p); if (u) pl.push({ url: u, name: p.split('/').pop() ?? p, localPath: p }); } if (pl.length > 1) opts = { ...opts, playlist: pl }; } } } catch { /* alone */ } }
   if (how === 'external' && (await external(url, name, opts.localPath))) return;
+  // (Where it goes back to — the app's own player only, not another app's, nor a video handed in by another app.)
+  if (!opts.forCaller) await import('../player/returnTo').then((r) => r.notePlayerOpen(opts.task?.meta ?? opts.meta)).catch(() => undefined);
   if (!getSettings().addons.includes('player')) {
     // (Offered in the download card, with its ffmpeg; declined or offline: the system's own controls this time.)
     const { needAddon } = await import('../addons/need');
-    if (!(await needAddon('player', t('addonWhyPlayer')))) { bare(url, name); return; }
+    if (!(await needAddon('player', t('addonWhyPlayer')))) { bare(url, name, opts.task?.meta ?? opts.meta); return; }
   }
   // (The engine: mpv when it is here and not turned off — Settings → Player —, else the web view's own.)
   let engine: 'mpv' | 'web' = 'web';
@@ -58,12 +60,13 @@ async function external(url: string, name: string, localPath?: string): Promise<
   return false;
 }
 /** The browser's own <video> (when the Player add-on cannot be fetched). */
-function bare(url: string, name: string): void {
+function bare(url: string, name: string, meta?: { anilistId?: number; episode?: number }): void {
   const video = h('video', { src: url, controls: true, autoplay: true, playsinline: true, class: 'kt-video' }) as HTMLVideoElement;
   const root = h('div', { class: 'player-view', role: 'dialog', 'aria-label': name },
     h('div', { class: 'player-bar' }, iconButton('back', t('back'), close), h('span', { class: 'grow', dir: 'auto' }, name)), video);
   const unBack = pushLayer({ kind: 'player', name: 'plain player', on: () => root.isConnected, back: () => { close(); return true; } });
-  function close() { unBack(); video.pause(); video.removeAttribute('src'); video.load(); root.remove(); }
+  let watched = false; video.addEventListener('ended', () => { watched = true; });
+  function close() { unBack(); video.pause(); video.removeAttribute('src'); video.load(); root.remove(); const at = location.hash; void import('../player/returnTo').then((r) => r.playerClosed({ watched, meta, at })); }
   video.addEventListener('error', () => { toast(t('stateFailed'), 'error'); close(); void openExternal(url); });
   document.body.append(root);
 }

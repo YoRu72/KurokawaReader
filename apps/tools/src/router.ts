@@ -98,3 +98,5 @@ window.addEventListener('hashchange', () => {
   move = move === 'replace' ? 'push' : move;
 });
 export function onRoute(fn: (r: Route) => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
+/** The router's own history and listeners (player/returnTo.ts puts them back after the app started again). */
+export const routerInternals = { stack, listeners, setMove: (m: typeof move) => { move = m; } };

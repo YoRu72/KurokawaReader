@@ -25,12 +25,12 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   const rows = await p.$$eval('.addon-row b', (els) => els.map((e) => e.textContent)); console.log('add-ons:', rows.join(', '));
   const anime = (await p.$$('.addon-row')).find(async () => true); void anime;
   await p.click('.addon-row:has-text("Anime") .btn'); await p.waitForSelector('.toast');
-  console.log('installed:', await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).addons.join(',')));
+  { const inst = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).addons.join(',')); console.log('installed:', inst); if (!/anime/.test(inst)) errors.push('the Anime add-on installed'); }
   await p.waitForSelector('[data-dest="anime"]'); await p.click('[data-dest="anime"]'); await p.click('.chip[aria-pressed]:has-text("Season")'); await p.waitForSelector('.anime-card');
-  console.log('season cards:', await p.$$eval('.anime-card', (e) => e.length), await p.$eval('.season-head h2', (e) => e.textContent));
+  { const n = await p.$$eval('.anime-card', (e) => e.length); console.log('season cards:', n, await p.$eval('.season-head h2', (e) => e.textContent)); if (n < 3) errors.push('season cards'); }
   await p.screenshot({ path: 'shot-anime-season.png' });
   await p.click('.chip:has-text("Schedule")'); await p.waitForSelector('.sched-row'); console.log('schedule:', await p.$eval('.sched-row .anime-title', (e) => e.textContent), await p.$eval('.sched-until', (e) => e.textContent));
-  await p.click('.sched-row'); await p.waitForSelector('.ep-row'); console.log('episodes:', await p.$$eval('.ep-row', (e) => e.length), 'aired rows:', await p.$$eval('.ep-row:not(.future)', (e) => e.length));
+  await p.click('.sched-row'); await p.waitForSelector('.ep-row'); { const all = await p.$$eval('.ep-row', (e) => e.length), aired = await p.$$eval('.ep-row:not(.future)', (e) => e.length); console.log('episodes:', all, 'aired rows:', aired); if (all !== 28 || aired !== 5) errors.push(`episode rows ${all}/${aired}`); }
   await p.waitForFunction(() => document.querySelectorAll('.ep-row .ep-pic img').length > 0, null, { timeout: 4000 }).catch(() => undefined);
   const pics = await p.$$eval('.ep-row .ep-pic img', (e) => e.map((x) => x.getAttribute('src'))); console.log('episode pictures:', pics.length);
   if (!pics.some((x) => /thetvdb\.com\/e2/.test(x))) errors.push('episode pictures from ani.zip');
@@ -41,7 +41,7 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   await p.waitForSelector('.torrent-list .result-row'); await p.waitForFunction(() => !document.querySelector('.provider-chips .busy'));
   console.log('chips:', await p.$$eval('.provider-chips .chip', (e) => e.map((x) => x.className + ' ' + x.title)).then((x) => x.join(' | ')));
   console.log('providers:', await p.$$eval('.provider-chips .chip', (e) => e.map((x) => x.textContent.trim())).then((x) => x.join(' | ')));
-  console.log('results:', await p.$$eval('.torrent-list .result-row .result-title', (e) => e.map((x) => x.textContent)).then((x) => x.join(' | ')));
+  { const rs = await p.$$eval('.torrent-list .result-row .result-title', (e) => e.map((x) => x.textContent)); console.log('results:', rs.join(' | ')); if (!rs.length) errors.push('torrent results'); }
   await p.screenshot({ path: 'shot-anime-torrents.png' });
   // Each release's tags read from its name; SeaDex's best first.
   const tagRows = await p.$$eval('.torrent-list .result-row', (e) => e.map((x) => [...x.querySelectorAll('.rel-tag')].map((y) => y.textContent).join(',')));
@@ -117,4 +117,4 @@ const MEDIA = (id, n) => ({ id, idMal: id, title: { romaji: `Sousou no Frieren $
   if (!asked || JSON.stringify(asked.variables.genres) !== '["Fantasy"]' || JSON.stringify(asked.variables.tags) !== '["Isekai"]' || JSON.stringify(asked.variables.notTags) !== '["Magic"]') errors.push('tag search');
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); repo.close(); process.exit(errors.length ? 1 : 0);
-})();
+})().catch((e) => { console.log('FAIL ' + (e && e.message)); process.exit(1); });

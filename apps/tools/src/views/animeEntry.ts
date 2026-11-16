@@ -14,12 +14,30 @@ import { buildQuery, searchAll, rank, releaseTags, providers, syncBuiltins, magn
 import { parseFilename, matchesEpisode } from '../anime/anitomy';
 import { ruleOf, saveRule, dropRule, downloadRange, downloadedEpisodes, fillersOf, checkRules, startAuto, type AutoRule } from '../anime/auto';
 import type { Task } from '../engine/types';
+import { coverOf } from '../anime/covers';
+import { reviewIcon } from '../anime/reviewIcon';
+import type { ShowNote } from '../anime/notes';
 
 export function animeEntryView(id: number): HTMLElement & { dispose?: () => void } {
   const body = h('div', { class: 'body anime-entry' }, h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   const title = h('div', { class: 'title' }, h('span', null, ''));
   const root = h('div', { class: 'view anime-entry-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/anime')), title, h('div', { class: 'topbar-actions' })), body) as HTMLElement & { dispose?: () => void };
   let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let disk = new Map<number, { path: string; name: string }>(); let fillers = new Set<number>(); let streams = 0; let art = new Map<number, al.EpisodeArt>();
+  // (The user's notes on this show — loaded with its page, kept on the device — and the module that draws them.)
+  let notes: ShowNote[] = []; let NV: typeof import('./animeNotes') | null = null;
+  // (After an episode watched in the player: its row brought into view, and «Review it?» offered once.)
+  let dropBar: (() => void) | null = null;
+  const askReview = (ep: number) => {
+    if (gone || !a || getSettings().animeAskReview === false || notes.some((x) => !x.review && x.ep === ep)) return;
+    try { sessionStorage.removeItem('kt.anime.reviewAsk'); } catch { /* none */ }
+    dropBar?.(); void import('./animeNotes').then((m) => { if (!gone) dropBar = m.reviewBar(ep, () => openNote(ep)); });
+  };
+  const pending = (key: string): { id: number; ep: number; at?: number } | null => { try { const x = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return x && x.id === id ? x : null; } catch { return null; } };
+  const onWatched = (e: Event) => { const d = (e as CustomEvent<{ id: number; ep: number }>).detail; if (d?.id === id) { if (NV) askReview(d.ep); focusEp(); } };
+  window.addEventListener('kt-anime-watched', onWatched);
+  const focusEp = () => { const f = pending('kt.anime.focusEp'); if (!f) return; requestAnimationFrame(() => { const row = body.querySelector<HTMLElement>(`.ep-row[data-ep="${f.ep}"]`); if (row) { row.scrollIntoView({ block: 'center' }); try { sessionStorage.removeItem('kt.anime.focusEp'); } catch { /* none */ } } }); };
+  const notesChanged = () => void import('../anime/notes').then((N) => N.notesOf(id)).then((x) => { notes = x; if (!gone) draw(); });
+  const openNote = (n: number) => void import('./animeNotes').then((m) => m.noteSheet(a!, n, notes.find((x) => !x.review && x.ep === n), notesChanged));
   const draw = () => {
     if (!a) return;
     const s = getSettings();
@@ -31,7 +49,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     const facts = [a.format ? fmtFormat(a.format) : '', a.season ? `${t(({ WINTER: 'seasonWinter', SPRING: 'seasonSpring', SUMMER: 'seasonSummer', FALL: 'seasonFall' } as const)[a.season])} ${localDigits(a.seasonYear ?? '')}` : a.seasonYear ? localDigits(a.seasonYear) : '', a.episodes ? countEpisodes(a.episodes) : '', a.duration ? t('minutesEach', { n: a.duration }) : '', a.studioId ? '' : a.studio ?? '', a.score ? `★ ${localDigits(a.score)}%` : ''].filter(Boolean).join(' · ');
     const head = h('section', { class: 'anime-head', style: a.color ? { '--cover-color': a.color } : undefined },
       a.banner ? h('img', { class: 'anime-banner', src: a.banner, alt: '' }) : null,
-      h('div', { class: 'anime-head-row' }, h('div', { class: 'anime-cover big' }, a.cover ? h('img', { src: a.cover, alt: '' }) : icon('film')),
+      h('div', { class: 'anime-head-row' }, h('button', { type: 'button', class: 'anime-cover big cover-btn', title: t('coverTitle'), 'aria-label': t('coverTitle'), onclick: () => void import('./animeNotes').then((m) => m.coverSheet(a!, () => draw())) }, coverOf(a) ? h('img', { src: coverOf(a), alt: '' }) : icon('film'), h('span', { class: 'cover-edit' }, icon('pen'))),
         h('div', { class: 'anime-head-text' }, h('h2', { dir: 'auto' }, titleOf(a)), a.titleNative && a.titleNative !== titleOf(a) ? h('p', { class: 'src', dir: 'auto' }, a.titleNative) : null, h('p', { class: 'anime-facts' }, facts, a.studio && a.studioId ? [' · ', h('a', { class: 'studio-link', href: `#/anime/studio/${a.studioId}?name=${encodeURIComponent(a.studio)}` }, a.studio)] : null),
           a.nextAiring ? h('p', { class: 'anime-next', dataset: { at: String(a.nextAiring.airingAt), ep: String(a.nextAiring.episode) } }, icon('clock'), h('span', { class: 'until' }, t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - now) }))) : null,
           h('div', { class: 'chips' }, ...a.genres.slice(0, 6).map((g) => h('button', { type: 'button', class: 'chip small', onclick: () => navigate(`/anime?tab=search&genre=${encodeURIComponent(g)}`) }, g))))));
@@ -61,21 +79,22 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
       const aired = n <= airedCount || a.status === 'FINISHED'; const at = sched.get(n); const seen = !!e && n <= e.progress; const st0 = stream.find((x) => x.n === n); const ar = art.get(n);
       // (The streaming site's picture and title first, else ani.zip's — TheTVDB's — for the episodes the sites lack.)
       const st = st0 || ar ? { title: st0?.title || ar?.title, thumbnail: st0?.thumbnail || ar?.image } : undefined;
-      const got = have.get(n); const filler = fillers.has(n);
+      const got = have.get(n); const filler = fillers.has(n); const noted = notes.some((x) => !x.review && x.ep === n);
       // (Hayase's «hide spoilers»: past the next episode, no title and no picture.)
       const spoil = !!s.animeHideSpoilers && n > (e?.progress ?? 0) + 1;
       const epTitle = (!spoil && st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '')) || t('episodeN', { n }); const onDisk = !got ? disk.get(n) : undefined;
       const rowEl = h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { ep: String(n) }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined,
-        onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(a!, n, epTitle, st?.thumbnail, () => draw()); } },
+        onclick: (ev: Event) => { if (!aired || (ev.target as Element).closest('button')) return; episodeSheet(a!, n, epTitle, st?.thumbnail, () => draw(), noted, () => openNote(n)); } },
         episodePic(spoil ? undefined : st?.thumbnail, localDigits(n, 'prose')),
         h('span', { class: 'grow' }, h('span', { class: 'ep-title', dir: 'auto' }, epTitle, onDisk ? h('span', { class: 'ep-badge have' }, t('onDisk')) : null, filler ? h('span', { class: 'ep-badge filler' }, t('filler')) : null, got ? h('span', { class: 'ep-badge have' }, got.state === 'done' ? t('downloaded') : t('downloading', { p: localDigits(got.total ? Math.round((got.done / got.total) * 100) : 0) })) : null), h('small', { class: 'src' }, at ? (aired ? df.format(new Date(at * 1000)) : fmtUntil(at - now)) : aired ? t('animeAired') : t('animeNotYet')),
           got && got.state !== 'done' ? h('div', { class: 'task-bar thin ep-prog' + (got.state === 'paused' || got.state === 'failed' ? ' paused' : '') }, h('i', { style: { width: `${got.total > 0 ? Math.round((got.done / got.total) * 100) : 2}%` } })) : null),
         onDisk ? iconButton('play', t('play'), () => void import('./anime').then((m) => m.playLocal(a!, n, onDisk.path, onDisk.name))) :
         got && got.state === 'done' ? iconButton('play', t('play'), () => void import('./player').then((m) => m.playTaskFile(got, got.files.length > 1 ? Math.max(0, got.files.findIndex((f) => /\.(mkv|mp4|webm|avi|mov|m4v)$/i.test(f.path))) : 0))) : aired ? iconButton('download', t('animeFindTorrents'), () => torrentSheet(a!, n)) : null,
         aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
+        aired ? (() => { const b = iconButton('more', t('reviewThisEp'), () => openNote(n)); b.replaceChildren(reviewIcon()); b.classList.add('ep-note-btn'); if (noted) { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); } return b; })() : null,
         al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => (seen && e ? unmark(e, n) : void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) }))) : null);
       // (Held: the episode's options — Hayase's — among them deleting its download.)
-      if (aired) onLongPress(rowEl, (ev) => episodeMenu(a!, n, epTitle, got, seen, al.linked() ? (to) => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: to }) : null, () => draw(), ev));
+      if (aired) onLongPress(rowEl, (ev) => episodeMenu(a!, n, epTitle, got, seen, al.linked() ? (to) => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: to }) : null, () => draw(), ev, noted, () => openNote(n)));
       eps.push(rowEl);
     }
     const rule = ruleOf(a.id);
@@ -90,9 +109,10 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     const relSec = rel.length ? h('section', { class: 'card' }, h('h3', null, t('animeRelations')), h('div', { class: 'chips' }, ...rel.map((r) => h('button', { type: 'button', class: 'chip', onclick: () => navigate(`/anime/${r.id}`) }, h('small', null, relName(r.relation)), ' ', h('span', { dir: 'auto' }, r.title))))) : null;
     const links = [...(a.links ?? []).filter((l) => l.type === 'STREAMING').slice(0, 6), { site: 'AniList', url: a.url }, ...(a.idMal ? [{ site: 'MyAnimeList', url: `https://myanimelist.net/anime/${a.idMal}` }] : []), ...(a.trailer?.site === 'youtube' ? [{ site: 'YouTube', url: `https://www.youtube.com/watch?v=${a.trailer.id}` }] : [])];
     const linkSec = h('section', { class: 'card' }, h('h3', null, t('animeLinks')), h('div', { class: 'chips' }, ...links.map((l) => h('a', { class: 'chip', href: l.url, target: '_blank', rel: 'noopener' }, icon('external'), l.site))));
-    body.replaceChildren(...[head, track, syn, epsSec, relSec, linkSec].filter((x): x is HTMLElement => !!x));
+    const notesSec = NV ? NV.notesCard(a, notes, notesChanged) : null;
+    body.replaceChildren(...[head, track, syn, epsSec, notesSec, relSec, linkSec].filter((x): x is HTMLElement => !!x));
   };
-  const saveEntry = async (entry: AlEntry) => { if (!a) return; try { const r = await al.saveOrQueue(a.id, entry); a.entry = r.entry; draw(); toast(r.sent ? t('animeSaved') : t('animeQueued')); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } };
+  const saveEntry = async (entry: AlEntry) => { if (!a) return; try { const r = await al.saveOrQueue(a.id, entry, a.entry ?? null); a.entry = r.entry; draw(); toast(r.sent ? t('animeSaved') : t('animeQueued')); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } };
   // (undo-redo) Unmarking episode n sets the progress to n − 1 — below the later episodes too. Shown at once, with the
   // progress it was in the Undo's line; sent to AniList only when the Undo is over (an Undo after sending would post a
   // second change, and its activity, where none was meant): Undo leaves AniList untouched and the entry exactly as it was.
@@ -111,7 +131,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void saveEntry({ ...a!.entry!, score: Number(range.value) }); } }, t('save')));
   };
   void al.episodeArt(id).then((x) => { art = x; if (x.size && a && !gone) draw(); });
-  void al.media(id).then((m) => { if (gone) return; a = m; draw(); void import('../anime/library').then((l) => l.filesFor(m.id)).then((f) => { disk = f; if (f.size && !gone) draw(); }).catch(() => undefined); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
+  void al.media(id).then((m) => { if (gone) return; a = m; draw(); void Promise.all([import('./animeNotes'), import('../anime/notes').then((N) => N.notesOf(id))]).then(([v, x]) => { NV = v; notes = x; if (gone) return; draw(); focusEp(); const ask = pending('kt.anime.reviewAsk'); if (ask && Date.now() - (ask.at ?? 0) < 10 * 60e3) askReview(ask.ep); }).catch(() => undefined); void import('../anime/library').then((l) => l.filesFor(m.id)).then((f) => { disk = f; if (f.size && !gone) draw(); }).catch(() => undefined); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
   // Downloads of this show followed as they go: each episode's bar and percentage moved in place; the page
   // redrawn when one is added, finishes or fails.
   const offTasks = getEngine().onChange((ts) => {
@@ -128,7 +148,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     if (redraw) draw();
   });
   const tick = tickCountdowns(body);
-  root.dispose = () => { gone = true; window.clearInterval(tick); offTasks(); };
+  root.dispose = () => { gone = true; window.clearInterval(tick); offTasks(); window.removeEventListener('kt-anime-watched', onWatched); dropBar?.(); };
   return root;
 }
 /** A yes/no in the app's own sheet (a browser confirm() looks foreign and blocks). */
@@ -199,7 +219,7 @@ export async function torrentSheet(a: Anime, episode: number, mode: 'download' |
       const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
       void import('../anime/watch').then((w) => w.rememberPick(a.id, r));
       // (Downloaded in the background, as in Hayase: the show's page stays; «Show» goes to the download.)
-      toast(t('taskAdded', { name: tk.name || r.title }), 'info', 5000, { label: t('toastShow'), run: () => navigate('/') }); sh.close();
+      void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, r.title)); sh.close();
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
   const base = await buildQuery(a, episode); let token = 0;
@@ -268,13 +288,14 @@ function ruleSheet(a: Anime, next: number, changed: () => void): void {
 
 /** One episode, held: what can be done with it — watch, download, choose a release, mark it (or every one up to
  *  it) seen or not, its download's details, and its download deleted (files and all). */
-function episodeMenu(a: Anime, n: number, title: string, got: Task | undefined, seen: boolean, setProgress: ((to: number) => void) | null, changed: () => void, at?: Event): void {
+function episodeMenu(a: Anime, n: number, title: string, got: Task | undefined, seen: boolean, setProgress: ((to: number) => void) | null, changed: () => void, at?: Event, noted = false, note?: () => void): void {
   const sh = openSheet(`${titleOf(a)} · ${t('episodeN', { n })}`, t('close'), { at }); sh.el.classList.add('ep-menu');
   const row = (ic: string, label: string, fn: () => void, cls = '') => sh.body.append(h('button', { type: 'button', class: 'dest-row' + cls, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow', dir: 'auto' }, label)));
   sh.body.append(h('p', { class: 'src', dir: 'auto' }, title));
   row('play', got?.state === 'done' ? t('play') : t('epWatchNow'), () => void import('../anime/watch').then((m) => m.watchEpisode(a, n, `${titleOf(a)} · ${t('episodeN', { n })}`)));
-  if (!got) row('download', t('epDownloadBest'), () => void (async () => { const { findBest } = await import('../anime/watch'); toast(t('watchFinding')); const best = await findBest(a, n); if (!best) { toast(t('watchNone'), 'error'); return; } const { addFor } = await import('../anime/auto'); await addFor({ ...a, title: titleOf(a) } as Anime, best, n); toast(t('taskAdded', { name: best.title })); changed(); })());
+  if (!got) row('download', t('epDownloadBest'), () => void (async () => { const { findBest } = await import('../anime/watch'); toast(t('watchFinding')); const best = await findBest(a, n); if (!best) { toast(t('watchNone'), 'error'); return; } const { addFor } = await import('../anime/auto'); const tk = await addFor({ ...a, title: titleOf(a) } as Anime, best, n); void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, best.title)); changed(); })());
   row('magnet', t('epChoose'), () => void torrentSheet(a, n));
+  if (note) row('note', noted ? t('noteEditEp') : t('noteWriteEp'), note);
   if (setProgress) { row(seen ? 'circle' : 'check', seen ? t('epMarkUnseen') : t('animeMarkSeen'), () => setProgress(seen ? n - 1 : n)); if (!seen && n > 1) row('check', t('epMarkUpTo', { n: localDigits(n) }), () => setProgress(n)); }
   if (got) {
     row('info', t('details'), () => navigate(`/task/${encodeURIComponent(got.id)}`));
@@ -284,7 +305,7 @@ function episodeMenu(a: Anime, n: number, title: string, got: Task | undefined, 
 
 /** One episode, tapped: watch it now (the best release, played while it comes), online through a streaming
  *  extension, download it (the best release, or one chosen from the list), play what is downloaded, mark it seen. */
-function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefined, changed: () => void): void {
+function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefined, changed: () => void, noted = false, note?: () => void): void {
   const sh = openSheet(`${titleOf(a)} · ${t('episodeN', { n })}`, t('close')); sh.el.classList.add('ep-sheet');
   sh.body.append(h('div', { class: 'ep-sheet-head' }, thumb ? h('img', { src: thumb, alt: '' }) : h('span', { class: 'ep-num big' }, localDigits(n, 'prose')), h('b', { dir: 'auto' }, title)));
   const row = (ic: string, label: string, hint: string, fn: () => void, primary = false) => sh.body.append(h('button', { type: 'button', class: 'dest-row' + (primary ? ' primary' : ''), onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, h('span', null, label), hint ? h('small', { class: 'src' }, hint) : null)));
@@ -309,11 +330,12 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
         toast(t('watchFinding'));
         const best = await findBest(a, n);
         if (!best) { toast(t('watchNone'), 'error', 5000); torrentSheet(a, n); return; }
-        const { addFor } = await import('../anime/auto'); await addFor({ ...a, title: show } as Anime, best, n);
-        toast(t('taskAdded', { name: best.title })); changed();
+        const { addFor } = await import('../anime/auto'); const tk = await addFor({ ...a, title: show } as Anime, best, n);
+        void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, best.title)); changed();
       })().catch((e) => toast(String((e as Error).message ?? e), 'error')));
     }
     row('magnet', t('epChoose'), t('epChooseHint'), () => void torrentSheet(a, n));
+    if (note) row('note', noted ? t('noteEditEp') : t('noteWriteEp'), t('noteEpHint'), note);
   })();
 }
 

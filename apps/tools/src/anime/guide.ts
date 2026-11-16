@@ -4,6 +4,7 @@
 // season), and the diary — every episode you logged on AniList as a calendar heatmap, the shows you left
 // unfinished, and the year in review.
 import * as al from '../anilist';
+import { coverFor } from './covers';
 
 type ListRaw = { status: al.AlStatus; score: number; progress: number; updatedAt?: number; media: { id: number; genres?: string[]; tags?: { name: string; rank: number }[]; averageScore?: number; episodes?: number | null; duration?: number | null; studios?: { nodes: { name: string }[] }; title: { userPreferred?: string; romaji?: string }; coverImage?: { large?: string }; nextAiringEpisode?: { episode: number } | null; status?: string } };
 let tasteCache: { at: number; w: Map<string, number> } | null = null;
@@ -56,7 +57,7 @@ export function diaryDays(acts: Act[]): Map<string, DiaryDay> {
     const d = new Date(a.createdAt * 1000); const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const day = days.get(key) ?? days.set(key, { date: key, items: [] }).get(key)!;
     const eps = /watched episode|rewatched episode/.test(a.status) ? epsOf(a.progress) : [];
-    let it = day.items.find((x) => x.id === a.media.id); if (!it) { it = { id: a.media.id, title: a.media.title.userPreferred ?? '', cover: a.media.coverImage?.medium, episodes: [], status: a.status }; day.items.push(it); }
+    let it = day.items.find((x) => x.id === a.media.id); if (!it) { it = { id: a.media.id, title: a.media.title.userPreferred ?? '', cover: coverFor(a.media.id, a.media.coverImage?.medium), episodes: [], status: a.status }; day.items.push(it); }
     it.episodes.push(...eps); if (/completed|dropped/.test(a.status)) it.status = a.status;
   }
   return days;
@@ -87,7 +88,7 @@ export async function unfinished(): Promise<{ a: al.Anime; behind: number; updat
   const out: { a: al.Anime; behind: number; updatedAt: number }[] = [];
   for (const l of d.MediaListCollection.lists) for (const e of l.entries) {
     const aired = e.media.nextAiringEpisode ? e.media.nextAiringEpisode.episode - 1 : e.media.episodes ?? e.progress;
-    const a = { id: e.media.id, title: e.media.title.userPreferred ?? e.media.title.romaji ?? '', cover: e.media.coverImage?.large, genres: e.media.genres ?? [], synonyms: [], isAdult: false, url: '', episodes: e.media.episodes, entry: { status: e.status, progress: e.progress, score: e.score } } as al.Anime;
+    const a = { id: e.media.id, title: e.media.title.userPreferred ?? e.media.title.romaji ?? '', cover: coverFor(e.media.id, e.media.coverImage?.large), genres: e.media.genres ?? [], synonyms: [], isAdult: false, url: '', episodes: e.media.episodes, entry: { status: e.status, progress: e.progress, score: e.score } } as al.Anime;
     out.push({ a, behind: Math.max(0, aired - e.progress), updatedAt: e.updatedAt });
   }
   return out.sort((x, y) => y.updatedAt - x.updatedAt);

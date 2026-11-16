@@ -11,6 +11,7 @@ import * as al from '../anilist';
 import * as guide from '../anime/guide';
 import type { Anime, Season, AlStatus } from '../anilist';
 import { pullToRefresh } from '../ui/gestures';
+import { coverOf } from '../anime/covers';
 
 export type AnimeTab = 'discover' | 'search' | 'season' | 'schedule' | 'list' | 'library' | 'diary';
 const TAB_KEY = 'kt.anime.tab';
@@ -35,7 +36,7 @@ export function animeCard(a: Anime, extra?: HTMLElement | null): HTMLElement {
   const next = a.nextAiring ? h('span', { class: 'anime-next', dataset: { at: String(a.nextAiring.airingAt), ep: String(a.nextAiring.episode) } }, icon('clock'), h('span', { class: 'until' }, t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - Date.now() / 1000) }))) : null;
   const prog = a.entry ? h('span', { class: `anime-badge s-${a.entry.status.toLowerCase()}` }, `${localDigits(a.entry.progress)}${a.episodes ? ` / ${localDigits(a.episodes)}` : ''}`) : null;
   return h('button', { type: 'button', class: 'anime-card', onclick: () => navigate(`/anime/${a.id}`), style: a.color ? { '--cover-color': a.color } : undefined },
-    h('span', { class: 'anime-cover' }, a.cover ? h('img', { src: a.cover, alt: '', loading: 'lazy' }) : icon('film'), prog),
+    h('span', { class: 'anime-cover' }, coverOf(a) ? h('img', { src: coverOf(a), alt: '', loading: 'lazy' }) : icon('film'), prog),
     h('span', { class: 'anime-text' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(a)), h('span', { class: 'anime-facts' }, facts), next, extra ?? null));
 }
 export const fmtFormat = (f: string): string => ({ TV: 'TV', TV_SHORT: t('formatShort'), MOVIE: t('formatMovie'), SPECIAL: t('formatSpecial'), OVA: 'OVA', ONA: 'ONA', MUSIC: t('formatMusic') } as Record<string, string>)[f] ?? f;
@@ -53,7 +54,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
   const fail = (e: unknown) => h('p', { class: 'empty small' }, String((e as Error)?.message ?? e));
 
   /** «+ Plan» on a card of a show not on the list (the Season Guide's quick add). */
-  const planBtn = (a: Anime): HTMLElement | null => (!al.linked() || a.entry ? null : h('span', { class: 'plan-chip', role: 'button', tabindex: '0', onclick: async (e: Event) => { e.stopPropagation(); const el = e.currentTarget as HTMLElement; el.classList.add('busy'); try { const r = await al.saveOrQueue(a.id, { status: 'PLANNING', progress: 0, score: 0 }); a.entry = r.entry; el.replaceWith(h('span', { class: 'plan-chip done' }, icon('check'), t('statusPlanning'))); } catch (er) { toast(String((er as Error).message ?? er), 'error'); el.classList.remove('busy'); } } }, icon('plus'), t('plan')));
+  const planBtn = (a: Anime): HTMLElement | null => (!al.linked() || a.entry ? null : h('span', { class: 'plan-chip', role: 'button', tabindex: '0', onclick: async (e: Event) => { e.stopPropagation(); const el = e.currentTarget as HTMLElement; el.classList.add('busy'); try { const r = await al.saveOrQueue(a.id, { status: 'PLANNING', progress: 0, score: 0 }, null); a.entry = r.entry; el.replaceWith(h('span', { class: 'plan-chip done' }, icon('check'), t('statusPlanning'))); } catch (er) { toast(String((er as Error).message ?? er), 'error'); el.classList.remove('busy'); } } }, icon('plus'), t('plan')));
   const draw = () => {
     drawChips(); window.clearInterval(timer); const my = ++token; body.replaceChildren(); body.classList.remove('dc-page');
     root.classList.toggle('dc-on', current === 'discover');
@@ -113,7 +114,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
           // «For you»: the season in the order of your taste, each card with how well it fits.
           if (sort === 'FOR_YOU') { const w = await guide.taste().catch(() => new Map<string, number>()); if (my !== token || mine !== loads) return; const fits = new Map(r.map((a) => [a.id, guide.fit(a, w)])); r = [...r].sort((x, y) => fits.get(y.id)! - fits.get(x.id)!); list.replaceChildren(grid(r, (a) => { const f = fits.get(a.id)!; const pl = planBtn(a); return h('span', { class: 'anime-fit' }, h('b', null, `${localDigits(f)}%`), ' ', t('fitForYou'), pl); })); return; }
           // The season's top ten as tiers, above the grid.
-          if (!leftovers && r.length > 12) { const top = guide.tiers(r); list.replaceChildren(h('div', { class: 'tier-strip' }, ...(['S', 'A', 'B', 'C'] as const).map((tier) => h('div', { class: `tier-row t-${tier}` }, h('b', { class: 'tier-letter' }, tier), h('div', { class: 'tier-items' }, ...top.filter((x) => x.tier === tier).map(({ a }) => h('button', { type: 'button', class: 'tier-item', title: titleOf(a), onclick: () => navigate(`/anime/${a.id}`) }, a.cover ? h('img', { src: a.cover, alt: '', loading: 'lazy' }) : icon('film'))))))), grid(r, planBtn)); return; }
+          if (!leftovers && r.length > 12) { const top = guide.tiers(r); list.replaceChildren(h('div', { class: 'tier-strip' }, ...(['S', 'A', 'B', 'C'] as const).map((tier) => h('div', { class: `tier-row t-${tier}` }, h('b', { class: 'tier-letter' }, tier), h('div', { class: 'tier-items' }, ...top.filter((x) => x.tier === tier).map(({ a }) => h('button', { type: 'button', class: 'tier-item', title: titleOf(a), onclick: () => navigate(`/anime/${a.id}`) }, coverOf(a) ? h('img', { src: coverOf(a), alt: '', loading: 'lazy' }) : icon('film'))))))), grid(r, planBtn)); return; }
           // The shows on the user's list first within the season's order, so «what am I watching this season» is on top.
           list.replaceChildren(r.length ? grid(r, planBtn) : h('p', { class: 'empty small' }, t('noResults')));
         } catch (e) { if (mine === loads) list.replaceChildren(fail(e)); }
@@ -129,7 +130,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
           const days = new Map<string, al.AiringItem[]>(); const df = new Intl.DateTimeFormat(dateLocale('prose'), { weekday: 'long', day: 'numeric', month: 'long' }); const tf = new Intl.DateTimeFormat(dateLocale('data'), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
           for (const it of items) { const k = df.format(new Date(it.airingAt * 1000)); (days.get(k) ?? days.set(k, []).get(k)!).push(it); }
           list.replaceChildren(...[...days].map(([day, its]) => h('section', { class: 'sched-day' }, h('h3', null, day), ...its.map((it) => h('button', { type: 'button', class: 'sched-row' + (it.airingAt <= now ? ' aired' : ''), onclick: () => navigate(`/anime/${it.media.id}`) },
-            h('span', { class: 'sched-time', dir: 'ltr' }, tf.format(new Date(it.airingAt * 1000))), it.media.cover ? h('img', { src: it.media.cover, alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }),
+            h('span', { class: 'sched-time', dir: 'ltr' }, tf.format(new Date(it.airingAt * 1000))), coverOf(it.media) ? h('img', { src: coverOf(it.media), alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }),
             h('span', { class: 'grow' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(it.media)), h('small', { class: 'src' }, `${t('episodeN', { n: it.episode })}${it.media.episodes ? ` / ${localDigits(it.media.episodes, 'prose')}` : ''}${it.media.entry ? ` · ${statusName(it.media.entry.status)}` : ''}`)),
             h('span', { class: 'sched-until' }, it.airingAt <= now ? t('animeAiredNow') : fmtUntil(it.airingAt - now)))))));
           if (!days.size) list.replaceChildren(h('p', { class: 'empty small' }, t('noResults')));
@@ -297,7 +298,7 @@ async function libraryTab(body: HTMLElement, alive: () => boolean, grid: (items:
       for (const g of shows) { const m = files.get(g.anilistId!) ?? new Map(); for (const [ep, f] of lib.episodesOf(g)) if (!m.has(ep)) m.set(ep, f); files.set(g.anilistId!, m); }
       for (const [id, eps] of files) {
         const a = byId.get(id); if (!a) continue; const next = (a.entry?.progress ?? 0) + 1; const f = eps.get(next);
-        if (f && (!a.entry || a.entry.status === 'CURRENT' || a.entry.status === 'REPEATING' || a.entry.status === 'PAUSED')) cont.push(h('button', { type: 'button', class: 'cont-card', onclick: () => void playLocal(a, next, f.path, f.name) }, a.cover ? h('img', { src: a.cover, alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }), h('span', { class: 'grow' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(a)), h('small', { class: 'src' }, t('episodeN', { n: next }))), icon('play')));
+        if (f && (!a.entry || a.entry.status === 'CURRENT' || a.entry.status === 'REPEATING' || a.entry.status === 'PAUSED')) cont.push(h('button', { type: 'button', class: 'cont-card', onclick: () => void playLocal(a, next, f.path, f.name) }, coverOf(a) ? h('img', { src: coverOf(a), alt: '', loading: 'lazy' }) : h('span', { class: 'sched-noimg' }), h('span', { class: 'grow' }, h('span', { class: 'anime-title', dir: 'auto' }, titleOf(a)), h('small', { class: 'src' }, t('episodeN', { n: next }))), icon('play')));
       }
       const extra = (a: Anime) => { const eps = files.get(a.id); if (!eps) return null; const aired = a.nextAiring ? a.nextAiring.episode - 1 : a.status === 'FINISHED' ? a.episodes ?? 0 : 0; let missing = 0; for (let e = (a.entry?.progress ?? 0) + 1; e <= aired; e++) if (!eps.has(e)) missing++; return h('span', { class: 'anime-facts' }, [t('libraryOnDisk', { n: localDigits(eps.size) }), missing ? t('libraryMissing', { n: localDigits(missing) }) : ''].filter(Boolean).join(' · ')); };
       out.replaceChildren(

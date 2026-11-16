@@ -10,6 +10,7 @@ import * as al from '../anilist';
 import type { Anime } from '../anilist';
 import { hero, rail, poster, tile, continueCard, hueOf } from '../ui/discover';
 import { titleOf, fmtFormat, fmtUntil, seasonName, presetSearch, type AnimeTab } from './anime';
+import { coverOf, coverFor, customCover, coversReady } from '../anime/covers';
 
 const GENRES = ['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Romance', 'Slice of Life', 'Sci-Fi', 'Mystery', 'Horror', 'Psychological', 'Thriller', 'Sports', 'Supernatural', 'Mecha', 'Music', 'Mahou Shoujo', 'Ecchi'];
 const DECADES = [2020, 2010, 2000, 1990, 1980, 1970, 1960];
@@ -53,19 +54,19 @@ export function animeDiscover(body: HTMLElement, o: { live: () => boolean; goTab
       chips: [a.status === 'RELEASING' ? t('dcOngoing') : a.status === 'FINISHED' ? t('dcFinished') : '', a.score ? `${localDigits(a.score)}%` : '', a.studio ?? ''].filter(Boolean),
       text: a.description?.replace(/\s+/g, ' ').slice(0, 260),
     }))));
-    trending.fill(d.trending.map((a, i) => poster({ image: a.cover, title: titleOf(a), sub: yearsOf(a), color: a.color, badge: t('dcRank', { n: localDigits(i + 1) }), badgeKind: i < 3 ? 'rank' : 'plain', overlay: overlayOf(a), onClick: open(a) })));
-    airing.fill(d.airing.map((a) => { const b = airingBadge(a); return poster({ image: a.cover, title: titleOf(a), sub: a.nextAiring ? t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - Date.now() / 1000) }) : yearsOf(a), color: a.color, badge: b?.text, badgeKind: b?.kind, overlay: overlayOf(a), onClick: open(a) }); }));
-    season.fill(d.season.map((a) => poster({ image: a.cover, title: titleOf(a), sub: a.episodes ? countEpisodes(a.episodes) : yearsOf(a), color: a.color, overlay: overlayOf(a), onClick: open(a) })));
-    top.fill(d.top.map((a, i) => poster({ image: a.cover, title: titleOf(a), sub: yearsOf(a), color: a.color, badge: `#${localDigits(i + 1)}`, badgeKind: 'plain', overlay: overlayOf(a), onClick: open(a) })));
-    movies.fill(d.movies.map((a) => poster({ image: a.cover, title: titleOf(a), sub: yearsOf(a), color: a.color, overlay: score10(a), onClick: open(a) })));
+    trending.fill(d.trending.map((a, i) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, badge: t('dcRank', { n: localDigits(i + 1) }), badgeKind: i < 3 ? 'rank' : 'plain', overlay: overlayOf(a), onClick: open(a) })));
+    airing.fill(d.airing.map((a) => { const b = airingBadge(a); return poster({ image: coverOf(a), title: titleOf(a), sub: a.nextAiring ? t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - Date.now() / 1000) }) : yearsOf(a), color: a.color, badge: b?.text, badgeKind: b?.kind, overlay: overlayOf(a), onClick: open(a) }); }));
+    season.fill(d.season.map((a) => poster({ image: coverOf(a), title: titleOf(a), sub: a.episodes ? countEpisodes(a.episodes) : yearsOf(a), color: a.color, overlay: overlayOf(a), onClick: open(a) })));
+    top.fill(d.top.map((a, i) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, badge: `#${localDigits(i + 1)}`, badgeKind: 'plain', overlay: overlayOf(a), onClick: open(a) })));
+    movies.fill(d.movies.map((a) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, overlay: score10(a), onClick: open(a) })));
   }).catch((e) => { if (!o.live()) return; const m = String((e as Error)?.message ?? e); heroBox.replaceChildren(); for (const r of [trending, airing, season, top, movies]) r.fail(m); });
 
   // ---- continue watching: what the player left half-way, then the list's next episodes
   void (async () => {
-    const { history } = await import('../player/prefs');
+    const { history } = await import('../player/prefs'); await coversReady();
     const half = history().filter((m) => m.anilistId && !m.watched && m.duration > 0 && m.pos > 60 && m.duration - m.pos > 60).slice(0, 10);
     const cards: HTMLElement[] = []; const had = new Set<number>();
-    for (const m of half) { if (had.has(m.anilistId!)) continue; had.add(m.anilistId!); cards.push(continueCard({ image: m.cover, title: m.show ?? '', line: m.episode ? t('episodeN', { n: m.episode }) : undefined, chip: t('timeLeft', { t: countMinutes(Math.max(1, Math.round((m.duration - m.pos) / 60))) }), progress: m.pos / m.duration, onClick: () => navigate(`/anime/${m.anilistId}`) })); }
+    for (const m of half) { if (had.has(m.anilistId!)) continue; had.add(m.anilistId!); cards.push(continueCard({ image: coverFor(m.anilistId, m.cover), title: m.show ?? '', line: m.episode ? t('episodeN', { n: m.episode }) : undefined, chip: t('timeLeft', { t: countMinutes(Math.max(1, Math.round((m.duration - m.pos) / 60))) }), progress: m.pos / m.duration, onClick: () => navigate(`/anime/${m.anilistId}`) })); }
     if (cards.length && o.live()) cont.fill(cards);
     if (!al.linked()) return;
     const list = await al.myList().catch(() => [] as Anime[]); if (!o.live()) return;
@@ -76,7 +77,7 @@ export function animeDiscover(body: HTMLElement, o: { live: () => boolean; goTab
       const aired = a.nextAiring ? a.nextAiring.episode - 1 : a.status === 'FINISHED' ? a.episodes ?? next : next;
       const chip = next <= aired ? t('dcNextUp') : a.nextAiring ? t('dcAirsIn', { t: fmtUntil(a.nextAiring.airingAt - now) }) : '';
       if (!chip) continue;
-      cards.push(continueCard({ image: a.banner ?? a.cover, title: titleOf(a), line: t('episodeN', { n: next }), chip, progress: a.episodes ? e.progress / a.episodes : undefined, onClick: open(a) }));
+      cards.push(continueCard({ image: customCover(a.id) ?? a.banner ?? a.cover, title: titleOf(a), line: t('episodeN', { n: next }), chip, progress: a.episodes ? e.progress / a.episodes : undefined, onClick: open(a) }));
     }
     if (o.live()) cont.fill(cards);
   })();

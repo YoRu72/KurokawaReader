@@ -386,6 +386,30 @@ public class KtPlugin extends Plugin {
         String path = pathOfTree(tree);
         JSObject r = new JSObject(); r.put("dir", path != null ? path : tree.toString()); r.put("writable", path != null && KtEngine.writable(new File(path))); call.resolve(r);
     }
+    /** A folder chosen on a storage the app has no path for (a content: tree — a memory card, another app's
+     *  storage): the files whose names match `pattern` copied, three levels deep at most, into `dest`; their paths. */
+    @PluginMethod public void treeCopy(PluginCall call) {
+        final String uri = call.getString("uri", ""); final File dest = fileOf(call.getString("dest", "")); final String re = call.getString("pattern", ".*");
+        bg.execute(() -> {
+            try {
+                DocumentFile root = DocumentFile.fromTreeUri(getContext(), Uri.parse(uri)); if (root == null || !root.canRead()) throw new java.io.IOException("unreadable");
+                java.util.regex.Pattern pat = java.util.regex.Pattern.compile(re, java.util.regex.Pattern.CASE_INSENSITIVE);
+                JSArray out = new JSArray(); copyTreeInto(root, dest, pat, out, 0);
+                JSObject r = new JSObject(); r.put("paths", out); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    private void copyTreeInto(DocumentFile dir, File dest, java.util.regex.Pattern pat, JSArray out, int depth) throws java.io.IOException {
+        for (DocumentFile f : dir.listFiles()) {
+            String n = f.getName(); if (n == null || n.startsWith(".")) continue; String safe = n.replaceAll("[\\\\/:]", "_");
+            if (f.isDirectory()) { if (depth < 3) copyTreeInto(f, new File(dest, safe), pat, out, depth + 1); continue; }
+            if (!pat.matcher(n).find()) continue;
+            if (!dest.isDirectory() && !dest.mkdirs()) throw new java.io.IOException("mkdir " + dest);
+            File o = new File(dest, safe);
+            try (java.io.InputStream in = getContext().getContentResolver().openInputStream(f.getUri()); java.io.OutputStream os = new java.io.FileOutputStream(o)) { if (in == null) continue; byte[] b = new byte[1 << 16]; int k; while ((k = in.read(b)) > 0) os.write(b, 0, k); }
+            out.put(o.getAbsolutePath());
+        }
+    }
     private static String pathOfTree(Uri tree) {
         try { String id = android.provider.DocumentsContract.getTreeDocumentId(tree); String[] parts = id.split(":", 2); if ("primary".equalsIgnoreCase(parts[0])) return new File(android.os.Environment.getExternalStorageDirectory(), parts.length > 1 ? parts[1] : "").getAbsolutePath(); } catch (Exception ignored) {}
         return null;
