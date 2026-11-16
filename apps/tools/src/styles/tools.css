@@ -1259,3 +1259,7 @@ html.pc .sheet.batch-sheet { width: min(1120px, calc(100vw - 64px)); max-height:
   html.pc .batch-prev { height: min(58vh, 560px); }
   html.pc .batch-grid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+
+/* ⋮ of the selection bar: what destroys comes last, apart, in the error colour. */
+.dest-list.sel-risky { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--md-outline-variant); }
+.dest-row.danger, .dest-row.danger svg { color: var(--md-error); }

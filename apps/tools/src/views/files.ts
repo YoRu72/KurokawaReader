@@ -593,9 +593,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const selectionSheet = (hid: SelAct[] = []) => {
     const sh = openSheet(countItems(picked.size), t('close')); const paths = [...picked];
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
-    const extra = [...hid.filter((x) => !x.danger), ...hid.filter((x) => x.danger)].map((x) => { const r = act(x.ic, x.label, x.run ?? (() => undefined)); if (x.off) { (r as HTMLButtonElement).disabled = true; r.classList.add('files-off'); } if (x.danger) r.classList.add('danger'); return r; });
+    const mk = (x: SelAct) => { const r = act(x.ic, x.label, x.run ?? (() => undefined)); if (x.off) { (r as HTMLButtonElement).disabled = true; r.classList.add('files-off'); } if (x.danger) r.classList.add('danger'); return r; };
+    const extra = hid.filter((x) => !x.danger).map(mk); const risky = hid.filter((x) => x.danger).map(mk);
     if (isArc(at)) { sh.body.append(h('div', { class: 'dest-list' }, ...extra)); return; }
-    sh.body.append(h('div', { class: 'dest-list' }, ...extra, act('archive', t('filesCompress'), () => void compress(paths)), act('pen', t('filesBatchRename'), () => void batchRename()), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } applySel(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })));
+    sh.body.append(h('div', { class: 'dest-list' }, ...extra, act('archive', t('filesCompress'), () => void compress(paths)), act('pen', t('filesBatchRename'), () => void batchRename()), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } applySel(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })), ...(risky.length ? [h('div', { class: 'dest-list sel-risky' }, ...risky)] : []));
   };
   const sortSheet = () => {
     const sh = openSheet(t('sortBy'), t('close'));
