@@ -26,8 +26,8 @@ import java.util.concurrent.Future;
  */
 final class KtTranslate {
     interface Opener { HttpURLConnection open(URL u) throws IOException; }
-    // (0.21 P9: through the DoH chain while it is on — KrDoh.open; as before while it is off.)
-    static volatile Opener opener = KrDoh::open;
+    // (0.21 P9: through the DoH chain while it is on, redirects followed through it — KrDoh.openFollowing; as before while it is off.)
+    static volatile Opener opener = KrDoh::openFollowing;
 
     /** What to translate with. */
     static final class Config {

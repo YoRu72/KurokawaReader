@@ -694,6 +694,74 @@ final class KrDoh {
         return c;
     }
 
+    /**
+     * A connection that follows redirects through the chain (0.21 P9), for callers that relied on the system opener's
+     * own following (KtTranslate's default opener, the browser's media probe): up to MAX_HOPS, each hop resolved
+     * through DoH again (KrDoh.open), http(s) only, a loop refused; 303 → GET without a body (HEAD stays HEAD), 301/302 →
+     * GET after a POST, 307/308 keep the method and body; Authorization, Cookie and Proxy-Authorization dropped when the
+     * host changes. With DoH off: the plain connection, which follows by itself as before. Callers that want to see the
+     * redirect (the downloader, the packs, the browser's own requests) keep KrDoh.open.
+     */
+    static HttpURLConnection openFollowing(URL url) throws IOException {
+        if (!on()) return (HttpURLConnection) url.openConnection();
+        return new Following(url, Boolean.TRUE.equals(inBrowser.get()));
+    }
+    static final int MAX_HOPS = 5;
+    static final class Following extends HttpURLConnection {
+        private final boolean br; private final Map<String, List<String>> props = new java.util.LinkedHashMap<>();
+        private ByteArrayOutputStream body; private HttpURLConnection fin; private URL at;
+        Following(URL u, boolean br) { super(u); this.br = br; this.at = u; }
+        private static String key(Map<String, List<String>> m, String k) { for (String x : m.keySet()) if (x.equalsIgnoreCase(k)) return x; return k; }
+        @Override public void setRequestProperty(String k, String v) { if (k == null) throw new NullPointerException("key"); List<String> l = new ArrayList<>(); l.add(v); props.remove(key(props, k)); props.put(k, l); }
+        @Override public void addRequestProperty(String k, String v) { if (k == null) throw new NullPointerException("key"); props.computeIfAbsent(key(props, k), x -> new ArrayList<>()).add(v); }
+        @Override public String getRequestProperty(String k) { List<String> l = props.get(key(props, k)); return l == null || l.isEmpty() ? null : l.get(l.size() - 1); }
+        @Override public Map<String, List<String>> getRequestProperties() { return java.util.Collections.unmodifiableMap(props); }
+        @Override public void setFixedLengthStreamingMode(int n) {}
+        @Override public void setFixedLengthStreamingMode(long n) {}
+        @Override public void setChunkedStreamingMode(int n) {}
+        @Override public void setInstanceFollowRedirects(boolean f) {}
+        @Override public OutputStream getOutputStream() throws IOException { if (fin != null) throw new IOException("already sent"); setDoOutput(true); if (body == null) body = new ByteArrayOutputStream(); return body; }
+        @Override public boolean usingProxy() { return false; }
+        @Override public void disconnect() { if (fin != null) fin.disconnect(); }
+        @Override public void connect() throws IOException { send(); }
+        @Override public URL getURL() { return at; }
+        @Override public int getResponseCode() throws IOException { send(); return fin.getResponseCode(); }
+        @Override public String getResponseMessage() throws IOException { send(); return fin.getResponseMessage(); }
+        @Override public InputStream getInputStream() throws IOException { send(); return fin.getInputStream(); }
+        @Override public InputStream getErrorStream() { try { send(); } catch (IOException e) { return null; } return fin.getErrorStream(); }
+        @Override public String getHeaderField(String n) { try { send(); } catch (IOException e) { return null; } return fin.getHeaderField(n); }
+        @Override public String getHeaderField(int i) { try { send(); } catch (IOException e) { return null; } return fin.getHeaderField(i); }
+        @Override public String getHeaderFieldKey(int i) { try { send(); } catch (IOException e) { return null; } return fin.getHeaderFieldKey(i); }
+        @Override public Map<String, List<String>> getHeaderFields() { try { send(); } catch (IOException e) { return java.util.Collections.emptyMap(); } return fin.getHeaderFields(); }
+        @Override public String getContentType() { return getHeaderField("Content-Type"); }
+        @Override public long getContentLengthLong() { try { send(); } catch (IOException e) { return -1; } return fin.getContentLengthLong(); }
+        @Override public int getContentLength() { long l = getContentLengthLong(); return l > Integer.MAX_VALUE ? -1 : (int) l; }
+        /** The request sent, hop by hop, until an answer that is not a redirect. */
+        private synchronized void send() throws IOException {
+            if (fin != null) return;
+            URL u = url; String m = getRequestMethod(); byte[] b = body == null ? null : body.toByteArray();
+            Map<String, List<String>> hs = new java.util.LinkedHashMap<>(props); java.util.Set<String> seen = new java.util.HashSet<>();
+            for (int hop = 0; ; hop++) {
+                if (!seen.add(u.toString())) throw new IOException("redirect loop at " + u);
+                final URL target = u; HttpURLConnection c;
+                try { c = br ? browser(() -> open(target)) : open(target); } catch (IOException e) { throw e; } catch (Exception e) { throw new IOException(e); }
+                c.setInstanceFollowRedirects(false); c.setConnectTimeout(getConnectTimeout()); c.setReadTimeout(getReadTimeout()); c.setUseCaches(false); c.setRequestMethod(m);
+                for (Map.Entry<String, List<String>> e : hs.entrySet()) for (String v : e.getValue()) c.addRequestProperty(e.getKey(), v);
+                if (b != null && !"GET".equals(m) && !"HEAD".equals(m)) { c.setDoOutput(true); c.setFixedLengthStreamingMode(b.length); try (OutputStream o = c.getOutputStream()) { o.write(b); } }
+                int code = c.getResponseCode(); String loc = c.getHeaderField("Location");
+                boolean redirect = (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) && loc != null;
+                if (!redirect) { fin = c; at = u; connected = true; return; }
+                c.disconnect();
+                if (hop >= MAX_HOPS) throw new IOException("too many redirects (more than " + MAX_HOPS + ")");
+                URL next = new URL(u, loc); String sch = next.getProtocol().toLowerCase(java.util.Locale.ROOT);
+                if (!sch.equals("http") && !sch.equals("https")) throw new IOException("redirect to a non-http address: " + sch);
+                if (code == 303 && !"HEAD".equals(m) || (code == 301 || code == 302) && "POST".equals(m)) { m = "GET"; b = null; hs.remove(key(hs, "Content-Type")); hs.remove(key(hs, "Content-Length")); }
+                if (!next.getHost().equalsIgnoreCase(u.getHost())) for (String k : new String[] { "Authorization", "Cookie", "Proxy-Authorization" }) hs.remove(key(hs, k));
+                u = next;
+            }
+        }
+    }
+
     /** `url` asked of `ip`: the name kept in the Host header, the TLS handshake and the certificate's check; the hello split when asked. */
     private static HttpURLConnection connectTo(URL url, String ip, boolean frag) throws IOException {
         final String host = url.getHost();
