@@ -981,13 +981,14 @@ public class KtPlugin extends Plugin {
     }
     /** A link's bytes (the first `max`), as base64 — the text editor tells the characters' encoding itself. */
     @PluginMethod public void uriRead(PluginCall call) {
-        final String s = call.getString("uri", ""), path = call.getString("path", null); final int max = call.getInt("max", 4_000_000);
+        final String s = call.getString("uri", ""), path = call.getString("path", null); final int max = call.getInt("max", 4_000_000), offset = call.getInt("offset", 0);
         bg.execute(() -> {
             try (java.io.InputStream in = path != null ? new java.io.FileInputStream(fileOf(path)) : getContext().getContentResolver().openInputStream(Uri.parse(s))) {
                 if (in == null) throw new java.io.IOException("unreadable");
+                long left = offset; while (left > 0) { long k = in.skip(left); if (k <= 0) break; left -= k; }   // (a chunk of a big file: from this byte on)
                 java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] b = new byte[1 << 16]; int n; long all = 0;
                 while ((n = in.read(b)) > 0) { if (all < max) bo.write(b, 0, (int) Math.min(n, max - all)); all += n; if (all > max) break; }
-                long size = path != null ? fileOf(path).length() : all;
+                long size = path != null ? fileOf(path).length() : all + offset;
                 JSObject r = new JSObject(); r.put("b64", android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)); r.put("size", size); r.put("whole", all <= max); call.resolve(r);
             } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
         });

@@ -801,6 +801,10 @@ html.pc .files-view.has-clip .files-body { padding-bottom: 96px; }
 .files-list.grid .files-row > .icon-btn { position: absolute; top: 0; inset-inline-end: 0; width: 32px; height: 32px; opacity: .7; }
 .files-list.grid .files-check { position: absolute; top: 4px; inset-inline-end: 4px; width: 28px; height: 28px; border-radius: 50%; background: var(--md-surface-container-highest); }
 .files-status { padding: 8px 10px; }
+.files-sizenote { display: flex; align-items: center; gap: 12px; padding: 6px 10px; margin: 0; }
+.files-sizenote .grow { min-width: 0; overflow-wrap: anywhere; }
+.files-sizenote .btn { flex: none; }
+.files-sizectl { display: flex; gap: 8px; padding: 4px 0 8px; }
 .files-selbar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--nav-h, 64px) + 12px); display: flex; align-items: center; gap: 2px; padding: 6px 6px; border-radius: 28px; background: var(--md-surface-container-highest); box-shadow: 0 6px 20px rgba(0,0,0,.25); z-index: 30; overflow: hidden; }
 .files-selbar > * { flex: none; }
 .files-selbar > .icon-btn { width: 40px; height: 40px; }
@@ -1335,3 +1339,66 @@ html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg
 .shelf-hints { margin: 0; padding-inline-start: 18px; font-size: 12.5px; line-height: 1.5; color: var(--md-on-surface-variant); }
 .shelf-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .shelf-actions .btn.busy { opacity: .6; }
+
+/* Text size in lists (Files setting): names and details scaled; the grid's own small sizes scaled likewise. */
+.files-list.ts-small { --ts: .88; } .files-list.ts-large { --ts: 1.16; } .files-list.ts-larger { --ts: 1.34; }
+.files-list[class*="ts-"] .files-main { font-size: calc(1em * var(--ts)); }
+.files-list.grid[class*="ts-"] .files-name { font-size: calc(13px * var(--ts)); }
+.files-list.grid[class*="ts-"] .files-main small { font-size: calc(11px * var(--ts)); }
+.files-list[class*="ts-"] .files-section { font-size: calc(13px * var(--ts)); }
+
+/* The fast scroller (views/filesScroll.ts): a handle on the end edge, a bubble beside it. */
+.files-fast { position: fixed; inset-inline-end: 0; width: 56px; z-index: 30; pointer-events: none; opacity: 0; transition: opacity .2s; }
+.files-fast.on { opacity: 1; }
+.files-fast-thumb { position: absolute; inset-inline-end: 0; top: 0; width: 44px; height: 56px; pointer-events: auto; touch-action: none; display: grid; place-items: center; cursor: grab; outline: none; }
+.files-fast-grip { width: 6px; height: 40px; border-radius: 3px; background: var(--md-primary); opacity: .75; transition: width .15s, height .15s, opacity .15s; }
+.files-fast.drag .files-fast-grip, .files-fast-thumb:focus-visible .files-fast-grip { width: 14px; height: 48px; border-radius: 8px; opacity: 1; }
+.files-fast-bubble { position: absolute; inset-inline-end: 52px; top: 0; min-width: 48px; max-width: 140px; height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 20px; background: var(--md-primary-container); color: var(--md-on-primary-container); font: 600 17px/40px var(--font-ui); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 6px rgb(0 0 0 / .25); opacity: 0; transform-origin: right center; transition: opacity .12s; }
+.files-fast.bubble .files-fast-bubble { opacity: 1; }
+.files-fast.pc { width: 0; }
+.files-fast.pc .files-fast-thumb { display: none; }
+.files-fast.pc .files-fast-bubble { inset-inline-end: 24px; }
+
+/* Columns chosen by pinching (grid and gallery). */
+.files-list.grid.cols { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); }
+/* The gallery: dense square tiles, the picture filling the tile, the name only where there is no picture. */
+.files-list.grid.gallery { grid-template-columns: repeat(auto-fill, minmax(max(78px, 16%), 1fr)); gap: 3px; }
+.files-list.grid.gallery.cols { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); }
+.files-list.grid.gallery .files-row { position: relative; padding: 0; gap: 0; aspect-ratio: 1; overflow: hidden; border-radius: 10px; background: var(--md-surface-container); contain-intrinsic-size: auto 100px; justify-content: center; }
+.files-list.grid.gallery .files-ic, .files-list.grid.gallery .files-ic.has-img { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border-radius: 0; background: transparent; aspect-ratio: auto; }
+.files-list.grid.gallery .files-ic svg { width: 32px; height: 32px; }
+.files-list.grid.gallery .files-main { position: relative; z-index: 1; margin-top: auto; padding: 0 4px 4px; }
+.files-list.grid.gallery .files-main small { display: none; }
+.files-list.grid.gallery .files-name { font-size: 11px; line-height: 1.2; -webkit-line-clamp: 1; }
+.files-list.grid.gallery .files-row:has(.files-ic.has-img) .files-main { display: none; }
+.files-list.grid.gallery .files-row > .icon-btn { display: none; }
+.files-list.grid.gallery .files-row.picked { outline: 3px solid var(--md-primary); outline-offset: -3px; }
+.files-list.grid.gallery .files-row.picked .files-ic { background: color-mix(in srgb, var(--md-primary) 18%, transparent); color: var(--md-on-surface); }
+
+/* The text editor's tools, find panel, line numbers (views/filesEditor.ts). */
+.files-ed-tools { flex-wrap: wrap; }
+.files-ed-tools .icon-btn.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.files-ed-statusrow { padding: 2px 4px 8px; }
+.files-ed-statusrow .files-ed-status { margin-inline-start: 0; display: block; overflow-wrap: anywhere; }
+.files-find { display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: 0 0 10px; border-radius: 16px; background: var(--md-surface-container-high); }
+.files-find[hidden] { display: none; }
+.files-find-row { display: flex; align-items: center; gap: 8px; }
+.files-find-row .files-find-in { flex: 1 1 auto; min-width: 0; height: 44px; box-sizing: border-box; border: 0; border-radius: 12px; padding: 0 12px; background: var(--md-surface-container); color: var(--md-on-surface); font: inherit; }
+.files-find-row.opts { flex-wrap: wrap; }
+.files-find-row.opts .chip { min-width: 44px; justify-content: center; }
+.files-find-row.opts .chip.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.files-find-count { margin-inline-start: auto; }
+.files-find-count.bad { color: var(--md-error); }
+.files-find-row.acts { flex-wrap: wrap; }
+.files-ed-wrap { display: flex; align-items: stretch; gap: 0; }
+.files-ed-wrap .files-ta { flex: 1 1 auto; min-width: 0; }
+.files-ed-gutter { flex: none; min-width: 3.2ch; box-sizing: content-box; padding: 12px 8px 12px 6px; overflow: hidden; white-space: pre; text-align: end; font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--md-on-surface-variant); background: var(--md-surface-container-low); border-radius: 12px 0 0 12px; user-select: none; }
+html[dir="rtl"] .files-ed-gutter { border-radius: 0 12px 12px 0; }
+.files-ed-wrap:has(.files-ed-gutter:not([hidden])) .files-ta { border-start-start-radius: 0; border-end-start-radius: 0; }
+.files-editor .files-ta.sub { font-family: var(--font-ui); unicode-bidi: plaintext; text-align: start; }
+.files-goto { width: 100%; height: 48px; box-sizing: border-box; border-radius: 12px; border: 1px solid var(--md-outline-variant); padding: 0 12px; background: var(--md-surface-container); color: var(--md-on-surface); font: inherit; }
+.files-ed-more { display: flex; align-items: center; gap: 12px; padding: 8px 4px; }
+.files-fontrow { align-items: center; gap: 8px; padding: 8px 14px; }
+.files-fontnow { min-width: 2ch; text-align: center; }
+.files-find-opt { min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-highest); color: var(--md-on-surface); font: 600 14px/1 var(--font-ui); cursor: pointer; }
+.files-find-opt.on { border-color: transparent; }

@@ -139,51 +139,19 @@ export async function richProperties(rows: HTMLElement, e: Entry, line: (k: stri
 /* ---------- the text editor ---------- */
 /** Where the editor's bytes come from and go to: a file here (the plugin's uriRead/uriWrite with a path), or a link
  *  another app handed in («Edit with Kurokawa»: written back only when it let us). */
-export type EditorIo = { read(): Promise<{ bytes: Uint8Array; size: number; whole: boolean }>; write?(bytes: Uint8Array): Promise<void>; openWith?: () => void; caption?: string };
+export type EditorIo = { /** The bytes (all up to 5 MB), or one part of a bigger file: from `offset`, `max` bytes. */ read(o?: { offset?: number; max?: number }): Promise<{ bytes: Uint8Array; size: number; whole: boolean }>; write?(bytes: Uint8Array): Promise<void>; openWith?: () => void; caption?: string };
 /** The bytes of a file here, through the plugin (null where it cannot: the old UTF-8 way then). */
 export function fileIo(path: string): EditorIo | null {
-  const p = ktPlugin() as unknown as { uriRead?(o: { path: string; max: number }): Promise<{ b64: string; size: number; whole: boolean }>; uriWrite?(o: { path: string; b64: string }): Promise<unknown> } | null;
+  const p = ktPlugin() as unknown as { uriRead?(o: { path: string; max: number; offset?: number }): Promise<{ b64: string; size: number; whole: boolean }>; uriWrite?(o: { path: string; b64: string }): Promise<unknown> } | null;
   if (!p?.uriRead || !p.uriWrite) return null;
   return {
-    read: async () => { const { fromB64 } = await import('./textCodec'); const r = await p.uriRead!({ path, max: 4_000_000 }); if (typeof r?.b64 !== 'string') throw new Error('noBytes'); return { bytes: fromB64(r.b64), size: r.size, whole: r.whole !== false }; },
+    read: async (o) => { const { fromB64 } = await import('./textCodec'); const r = await p.uriRead!({ path, max: o?.max ?? 5_000_000, offset: o?.offset }); if (typeof r?.b64 !== 'string') throw new Error('noBytes'); return { bytes: fromB64(r.b64), size: r.size, whole: r.whole !== false }; },
     write: async (bytes) => { const { toB64 } = await import('./textCodec'); await p.uriWrite!({ path, b64: toB64(bytes) }); },
   };
 }
 export async function editorSheet(e: Entry, refresh: () => void, io: EditorIo | null = fileIo(e.path), onClose?: () => void): Promise<void> {
-  // (undo-redo) Unsaved changes are asked about before the editor closes (its button, Back, Escape, a drag): Save, Discard, Keep editing.
-  const { dirtyGuard } = await import('../ui/undo');
-  const pl = plug(); const sh = openSheet(e.name, t('close'), { onClose, beforeClose: dirtyGuard(() => !ta.readOnly && ta.value !== original, () => doSave(), () => e.name) }); sh.el.classList.add('files-editor');
-  const ta = h('textarea', { class: 'files-ta', dir: 'auto', spellcheck: 'false' }) as HTMLTextAreaElement; let original = '';
-  const findBox = h('input', { type: 'search', placeholder: t('filesFind'), hidden: true, dir: 'auto' }) as HTMLInputElement;
-  const status = h('small', { class: 'src files-ed-status' });
-  let enc: { charset: import('./textCodec').Charset; bom: boolean } | null = null;
-  const doSave = async (): Promise<boolean> => { try {
-    if (io) { const { encodeText, charsetName } = await import('./textCodec'); const b = enc ? encodeText(ta.value, enc.charset, enc.bom) : null; if (!b || !io.write) { toast(enc && !b ? t('owCharsetCannot', { cs: charsetName(enc.charset) }) : t('filesReadOnly'), 'error', 4000); return false; } await io.write(b); }
-    else await pl.filesWrite({ path: e.path, text: ta.value });
-    original = ta.value; save.disabled = true; toast(t('filesSaved')); refresh(); return true; } catch (err) { toast(String((err as Error).message ?? err), 'error'); return false; } };
-  const save = h('button', { type: 'button', class: 'btn primary', disabled: true, onclick: () => void doSave() }, icon('check'), t('save')) as HTMLButtonElement;
-  const wrapBtn = iconButton('scroll', t('filesWrap'), () => { ta.classList.toggle('nowrap'); }); const monoBtn = iconButton('type', t('filesMono'), () => { ta.classList.toggle('mono'); });
-  const findBtn = iconButton('search', t('filesFind'), () => { findBox.hidden = !findBox.hidden; if (!findBox.hidden) findBox.focus(); });
-  findBox.addEventListener('keydown', (ev) => { if (ev.key !== 'Enter') return; const q = findBox.value; if (!q) return; const from = ta.selectionEnd; let i = ta.value.indexOf(q, from); if (i < 0) i = ta.value.indexOf(q); if (i >= 0) { ta.focus(); ta.setSelectionRange(i, i + q.length); } });
-  ta.addEventListener('input', () => { save.disabled = ta.value === original; status.textContent = `${localDigits(ta.value.length)} ${t('filesChars')}`; });
-  sh.body.append(h('div', { class: 'row files-ed-tools' }, findBtn, wrapBtn, monoBtn, status), findBox, ta);
-  sh.actions.append(...(io && !io.openWith && !/^\//.test(e.path) ? [] : [h('button', { type: 'button', class: 'btn tonal', onclick: () => { if (io?.openWith) io.openWith(); else void pl.openWith({ path: e.path, mime: 'text/plain', title: e.name }); } }, icon('external'), t('openWith'))]), save);
-  const notice = h('p', { class: 'hint files-ed-notice', hidden: true }); ta.before(notice);
-  if (io) {
-    try {
-      const { decodeText, charsetName } = await import('./textCodec'); const r = await io.read(); const d = decodeText(r.bytes, r.whole);
-      original = d.text; ta.value = d.text; enc = { charset: d.charset, bom: d.bom };
-      status.textContent = `${localDigits(d.text.length)} ${t('filesChars')} · ${charsetName(d.charset)}${d.bom ? ' BOM' : ''}${io.caption ? ' · ' + io.caption : ''}`;
-      // (Never spoilt by a save: what could not be read back byte for byte, or was only partly read, stays read-only.)
-      if (!d.safe || !io.write) { ta.readOnly = true; notice.hidden = false; notice.textContent = !io.write ? t('owReadOnlyLink') : d.why === 'partial' ? t('owTooBigReadOnly', { size: formatBytes(r.size) }) : d.why === 'binary' ? t('owBinaryReadOnly') : t('owCharsetReadOnly'); }
-      return;
-    } catch (err) {
-      // (A shell that cannot hand bytes over: the plain UTF-8 way below.)
-      if ((err as Error)?.message !== 'noBytes') { ta.value = String((err as Error).message ?? err); ta.readOnly = true; original = ta.value; return; }
-      io = null;
-    }
-  }
-  try { const r = await pl.filesHead({ path: e.path, max: 2_000_000 }); original = r.text; ta.value = r.text; status.textContent = `${localDigits(r.text.length)} ${t('filesChars')}${r.size > 2_000_000 ? ' · ' + t('filesTooBigToEdit') : ''}`; if (r.size > 2_000_000) ta.readOnly = true; } catch (err) { ta.value = String((err as Error).message ?? err); ta.readOnly = true; original = ta.value; }
+  // (The editor itself — find and replace, line numbers, character sets, line endings — is views/filesEditor.ts.)
+  const { openEditor } = await import('./filesEditor'); return openEditor(e, refresh, io, onClose, plug());
 }
 
 /* ---------- the picture viewer: pinch to zoom; a swipe — the picture following the finger — to the folder's next or
@@ -340,15 +308,16 @@ export async function filesSettingsSheet(at: string, apply: () => void): Promise
   const row = (label: string, el: HTMLElement, hint?: string) => h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), el);
   const tog = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => row(label, h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => { set((e.target as HTMLInputElement).checked); savePrefs(); apply(); } }), hint);
   const sec = (title: string) => h('p', { class: 'files-sec' }, title);
-  const viewBtn = pickButton(t('filesDefaultView'), [['grid', t('filesGrid')], ['list', t('filesListView')]], prefs.view, (v) => { prefs.view = v as 'grid' | 'list'; savePrefs(); apply(); }, t('close'));
+  const viewBtn = pickButton(t('filesDefaultView'), [['grid', t('filesGrid')], ['gallery', t('filesGallery')], ['list', t('filesListView')]], prefs.view, (v) => { prefs.view = v as 'grid' | 'list' | 'gallery'; savePrefs(); apply(); }, t('close'));
   const sortBtn = pickButton(t('sortBy'), [['name', t('sortName')], ['date', t('sortDate')], ['size', t('sortSize')], ['type', t('sortType')]], prefs.sort, (v) => { prefs.sort = v as typeof prefs.sort; savePrefs(); apply(); }, t('close'));
   const densBtn = pickButton(t('filesDensity'), [['comfortable', t('filesComfortable')], ['compact', t('filesCompact')]], prefs.density ?? 'comfortable', (v) => { prefs.density = v as 'comfortable' | 'compact'; savePrefs(); apply(); }, t('close'));
+  const sizeBtn = pickButton(t('filesTextSize'), [['small', t('filesTextSmall')], ['normal', t('filesTextNormal')], ['large', t('filesTextLarge')], ['larger', t('filesTextLarger')]], prefs.textSize ?? 'normal', (v) => { prefs.textSize = v === 'normal' ? undefined : (v as 'small' | 'large' | 'larger'); savePrefs(); apply(); }, t('close'));
   const s = getSettings();
   const toneBtn = pickButton(t('filesTheme'), [['auto', t('filesThemeAuto')], ['light', t('filesThemeLight')], ['dark', t('filesThemeDark')], ['black', t('filesThemeBlack')]], s.uiMode === 'light' ? 'light' : s.uiMode === 'dark' ? (s.darkTone === 'black' ? 'black' : 'dark') : 'auto', (v) => { updateSettings({ uiMode: v === 'auto' ? 'auto' : v === 'light' ? 'light' : 'dark', darkTone: v === 'black' ? 'black' : s.darkTone === 'black' ? 'default' : s.darkTone } as never); }, t('close'));
   const home = h('div', { class: 'row' }, h('span', { class: 'grow files-main' }, h('span', null, t('filesHomeFolder')), h('small', { class: 'src', dir: 'ltr' }, prefs.home || t('filesHomeNone'))), h('button', { type: 'button', class: 'btn text small', onclick: () => { prefs.home = at; savePrefs(); (home.querySelector('small') as HTMLElement).textContent = at; toast(t('filesHomeSet')); } }, t('filesUseThis')), h('button', { type: 'button', class: 'btn text small', onclick: () => { prefs.home = undefined; savePrefs(); (home.querySelector('small') as HTMLElement).textContent = t('filesHomeNone'); } }, t('reset')));
   sh.body.append(
-    sec(t('filesLook')), h('div', { class: 'chip-row files-filters' }, viewBtn, sortBtn, densBtn, toneBtn),
-    tog(t('filesShowThumbs'), prefs.thumbs !== false, (v) => { prefs.thumbs = v; }), tog(t('filesShowCounts'), prefs.counts !== false, (v) => { prefs.counts = v; }, t('filesShowCountsHint')), tog(t('filesShowHiddenSetting'), prefs.hidden, (v) => { prefs.hidden = v; }), tog(t('filesEink'), !!prefs.eink, (v) => { prefs.eink = v; }, t('filesEinkHint')),
+    sec(t('filesLook')), h('div', { class: 'chip-row files-filters' }, viewBtn, sortBtn, densBtn, sizeBtn, toneBtn),
+    tog(t('filesShowThumbs'), prefs.thumbs !== false, (v) => { prefs.thumbs = v; }), tog(t('filesShowCounts'), prefs.counts !== false, (v) => { prefs.counts = v; }, t('filesShowCountsHint')), tog(t('filesDirSizes'), prefs.dirSizes !== false, (v) => { prefs.dirSizes = v; }, t('filesDirSizesHint')), tog(t('filesShowHiddenSetting'), prefs.hidden, (v) => { prefs.hidden = v; }), tog(t('filesEink'), !!prefs.eink, (v) => { prefs.eink = v; }, t('filesEinkHint')),
     sec(t('filesBehaviour')), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
     // (Kurokawa in other apps' «Open with» / «Share» lists: phones only — a computer has no such lists; the default
     // apps chosen in Files' own chooser: both.)

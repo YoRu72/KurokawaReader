@@ -6,8 +6,10 @@
 // Run: NODE_PATH=$(npm root -g) node tests/filesview.cjs [en|ar]
 const { chromium } = require('playwright'); const F = require('./filesphone-fixture.cjs'); const { K, ZIP } = F;
 let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FAIL ') + what + (cond || x === undefined ? '' : '  ' + JSON.stringify(x))); if (!cond) fails++; };
-const LABEL = { en: { grid: 'Switch to grid view', list: 'Switch to list view' }, ar: { grid: 'التبديل إلى عرض الشبكة', list: 'التبديل إلى عرض القائمة' } };
-const BTN = '.files-view .topbar-actions .icon-btn[data-icon="grid"], .files-view .topbar-actions .icon-btn[data-icon="list"]';
+const LABEL = { en: { grid: 'Switch to grid view', list: 'Switch to list view', gallery: 'Switch to gallery view' }, ar: { grid: 'التبديل إلى عرض الشبكة', list: 'التبديل إلى عرض القائمة', gallery: 'التبديل إلى عرض المعرض' } };
+const BTN = '.files-view .topbar-actions .icon-btn[data-icon="grid"], .files-view .topbar-actions .icon-btn[data-icon="list"], .files-view .topbar-actions .icon-btn[data-icon="images"]';
+// (The button cycles list -> grid -> gallery -> list; `toList` taps on until the list is back.)
+const toList = async (p, how = 'click') => { for (let i = 0; i < 3 && (await p.evaluate((sel) => document.querySelector(sel)?.dataset.icon, BTN)) !== 'grid'; i++) { if (how === 'key') await p.keyboard.press('Enter'); else await p.click(BTN); await p.waitForTimeout(350); } };
 const shot = (p, name) => (process.env.KT_SHOTS ? p.screenshot({ path: require('node:path').join(process.env.KT_SHOTS, name) }) : null);
 
 async function prime(p) {
@@ -24,8 +26,10 @@ async function cycle(p, L, lang, what) {
   const hash0 = s.hash;
   await p.click(BTN); await p.waitForTimeout(350); s = await state(p);
   ok(L(`${what}: one tap: the grid, in place (same page, same address)`), /\bgrid\b/.test(s.cls) && s.hash === hash0 && s.same, s);
-  ok(L(`${what}: the button now offers the list, named so`), s.icon === 'list' && s.label === LABEL[lang].list, s);
+  ok(L(`${what}: the button now offers the gallery, named so`), s.icon === 'images' && s.label === LABEL[lang].gallery, s);
   ok(L(`${what}: the choice kept`), s.view === 'grid', s);
+  await p.click(BTN); await p.waitForTimeout(350); s = await state(p);
+  ok(L(`${what}: tapped again: the gallery (a grid of square tiles), the button offers the list`), /\bgallery\b/.test(s.cls) && s.icon === 'list' && s.label === LABEL[lang].list && s.view === 'gallery', s);
   await p.click(BTN); await p.waitForTimeout(350); s = await state(p);
   ok(L(`${what}: tapped again: the list, the button as at first`), /\blist\b/.test(s.cls) && s.icon === 'grid' && s.view === 'list', s);
 }
@@ -39,11 +43,11 @@ async function phone(browser, port, z, lang) {
   await p.click(BTN); await p.waitForTimeout(500);
   ok(L('… and again at the grid size (240)'), (await p.evaluate(() => window.__thumbs)).includes('photo.jpg@240'), await p.evaluate(() => window.__thumbs));
   await shot(p, 'view-button-grid.png');
-  await p.click(BTN); await p.waitForTimeout(400); await shot(p, 'view-button-list.png');
+  await toList(p); await shot(p, 'view-button-list.png');
   // keyboard: focus stays on the button
   await p.focus(BTN); await p.keyboard.press('Enter'); await p.waitForTimeout(300);
   ok(L('keyboard: the button keeps the focus after the switch'), await p.evaluate((sel) => document.activeElement === document.querySelector(sel), BTN));
-  await p.keyboard.press('Enter'); await p.waitForTimeout(300);
+  await toList(p, 'key');
   // the scroll: a long folder, the row in sight stays in sight
   await p.evaluate((k) => { location.hash = '#/files?p=' + encodeURIComponent(k + '/Many') + '&t=2'; }, K); await p.waitForSelector('.files-row'); await p.waitForTimeout(500);
   await p.evaluate(() => { window.scrollTo(0, 1500); document.querySelector('.files-body').scrollTop = 1500; }); await p.waitForTimeout(300);
@@ -51,7 +55,7 @@ async function phone(browser, port, z, lang) {
   const before = await seen(); await p.click(BTN); await p.waitForTimeout(500); const after = await seen();
   const inView = await p.evaluate((n) => { const r = [...document.querySelectorAll('.files-row')].find((x) => x.querySelector('.files-name').title === n); if (!r) return false; const b = r.getBoundingClientRect(); return b.bottom > 0 && b.top < innerHeight; }, before.name);
   ok(L('long folder: the row that was at the top is still in sight after the switch'), !!before && inView, { before, after });
-  await p.click(BTN); await p.waitForTimeout(400);
+  await toList(p);
   const e = errors.filter((x) => !/favicon/.test(x)); ok(L('no page errors'), !e.length, e); await p.close();
 }
 
@@ -80,9 +84,9 @@ async function pc(browser, port, z, lang) {
   const d = await F.open(browser, { lang, pc: true, z }); await prime(d.page); const q = d.page;
   await q.addInitScript((k) => { const pr = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); localStorage.setItem('kt.files.prefs', JSON.stringify({ ...pr, dual: true, lastB: k })); }, K);
   await q.goto(`http://localhost:${port}/#/files?p=${encodeURIComponent(K)}`); await q.waitForSelector('.files-dual .files-row'); await q.waitForTimeout(500);
-  const st = () => q.$$eval('.files-dual > .files-view', (vs) => vs.map((v) => ({ cls: v.querySelector('.files-list').className, icon: v.querySelector('.topbar-actions .icon-btn[data-icon="grid"], .topbar-actions .icon-btn[data-icon="list"]').dataset.icon })));
+  const st = () => q.$$eval('.files-dual > .files-view', (vs) => vs.map((v) => ({ cls: v.querySelector('.files-list').className, icon: v.querySelector('.topbar-actions .icon-btn[data-icon="grid"], .topbar-actions .icon-btn[data-icon="list"], .topbar-actions .icon-btn[data-icon="images"]').dataset.icon })));
   await q.click('.files-dual > .files-view >> nth=0 >> .topbar-actions .icon-btn[data-icon="grid"]'); await q.waitForTimeout(500); const s = await st();
-  ok(L('two panes: both lists are grids, both buttons offer the list'), s.length === 2 && s.every((x) => /\bgrid\b/.test(x.cls) && x.icon === 'list'), s);
+  ok(L('two panes: both lists are grids, both buttons offer the gallery'), s.length === 2 && s.every((x) => /\bgrid\b/.test(x.cls) && x.icon === 'images'), s);
   await q.close();
   const e = [...errors, ...d.errors].filter((x) => !/favicon/.test(x)); ok(L('no page errors'), !e.length, e);
 }

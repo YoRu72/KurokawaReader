@@ -3,16 +3,16 @@
 // zero), then strict UTF-8, then Windows-1256 (Arabic subtitles of old). A file is editable only when writing the text
 // back gives the very bytes read — anything else (a binary file, a cut-off read, an encoding not known here) opens
 // read-only with a notice, so a file is never spoilt by a save.
-export type Charset = 'utf-8' | 'utf-16le' | 'utf-16be' | 'windows-1256';
+export type Charset = 'utf-8' | 'utf-16le' | 'utf-16be' | 'windows-1256' | 'windows-1252' | 'shift_jis';
 export type Decoded = { text: string; charset: Charset; bom: boolean; safe: boolean; why?: 'binary' | 'partial' | 'unknown' };
 
-let cp1256: Map<string, number> | null = null;
-/** Windows-1256's characters → bytes, read from the platform's own decoder. */
-function table1256(): Map<string, number> {
-  if (cp1256) return cp1256;
-  const m = new Map<string, number>(); const dec = new TextDecoder('windows-1256');
+const tables = new Map<string, Map<string, number>>();
+/** A single-byte charset's characters → bytes, read from the platform's own decoder. */
+function byteTable(label: 'windows-1256' | 'windows-1252'): Map<string, number> {
+  const have = tables.get(label); if (have) return have;
+  const m = new Map<string, number>(); const dec = new TextDecoder(label);
   for (let b = 0; b < 256; b++) { const ch = dec.decode(new Uint8Array([b])); if (ch !== '�' && !m.has(ch)) m.set(ch, b); }
-  return (cp1256 = m);
+  tables.set(label, m); return m;
 }
 const same = (a: Uint8Array, b: Uint8Array | null): boolean => !!b && a.length === b.length && a.every((x, i) => x === b[i]);
 
@@ -25,10 +25,31 @@ export function encodeText(text: string, charset: Charset, bom = false): Uint8Ar
     for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); out[head + i * 2 + (le ? 0 : 1)] = c & 0xff; out[head + i * 2 + (le ? 1 : 0)] = c >> 8; }
     return out;
   }
-  const t = table1256(); const out = new Uint8Array(text.length);
+  // (Shift_JIS has no encoder in the platform: it is read, never written — null.)
+  if (charset === 'shift_jis') return null;
+  const t = byteTable(charset); const out = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) { const b = t.get(text[i]); if (b === undefined) return null; out[i] = b; }
   return out;
 }
+/** The charsets that can be written back safely, and those only read. */
+export const canWrite = (c: Charset): boolean => c !== 'shift_jis';
+/** The bytes read as the charset asked (the reader's choice, «Re-open as…»): safe only when writing the text back gives the very bytes. */
+export function decodeAs(b: Uint8Array, charset: Charset, bom: boolean, whole = true): Decoded {
+  const label = charset === 'utf-8' ? 'utf-8' : charset;
+  const skip = bom ? (charset === 'utf-8' && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf ? 3 : (charset === 'utf-16le' && b[0] === 0xff && b[1] === 0xfe) || (charset === 'utf-16be' && b[0] === 0xfe && b[1] === 0xff) ? 2 : 0) : 0;
+  const text = new TextDecoder(label, { ignoreBOM: true }).decode(b.subarray(skip));
+  if (!whole) return { text, charset, bom, safe: false, why: 'partial' };
+  return same(b, encodeText(text, charset, bom && skip > 0)) ? { text, charset, bom: bom && skip > 0, safe: true } : { text, charset, bom, safe: false, why: 'unknown' };
+}
+/** The line endings of a text: all «\n», all «\r\n», all «\r», or a mixture (then not changed unless asked). */
+export type Eol = 'lf' | 'crlf' | 'cr' | 'mixed';
+export function detectEol(text: string): Eol {
+  let crlf = 0, lf = 0, cr = 0;
+  for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); if (c === 13) { if (text.charCodeAt(i + 1) === 10) { crlf++; i++; } else cr++; } else if (c === 10) lf++; }
+  const kinds = (crlf ? 1 : 0) + (lf ? 1 : 0) + (cr ? 1 : 0); if (kinds > 1) return 'mixed'; return crlf ? 'crlf' : cr ? 'cr' : 'lf';
+}
+export const toLf = (text: string): string => text.replace(/\r\n?/g, '\n');
+export const withEol = (text: string, eol: Eol): string => (eol === 'crlf' ? text.replace(/\n/g, '\r\n') : eol === 'cr' ? text.replace(/\n/g, '\r') : text);
 
 /** The text of these bytes. `whole`: false when only the start of a bigger file was read (then read-only). */
 export function decodeText(b: Uint8Array, whole = true): Decoded {
@@ -58,4 +79,4 @@ export function decodeText(b: Uint8Array, whole = true): Decoded {
 export function fromB64(s: string): Uint8Array { const bin = atob(s); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
 export function toB64(b: Uint8Array): string { let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(s); }
 /** The charset's name for people. */
-export const charsetName = (c: Charset): string => ({ 'utf-8': 'UTF-8', 'utf-16le': 'UTF-16 LE', 'utf-16be': 'UTF-16 BE', 'windows-1256': 'Windows-1256' })[c];
+export const charsetName = (c: Charset): string => ({ 'utf-8': 'UTF-8', 'utf-16le': 'UTF-16 LE', 'utf-16be': 'UTF-16 BE', 'windows-1256': 'Windows-1256', 'windows-1252': 'Windows-1252', shift_jis: 'Shift_JIS' })[c];

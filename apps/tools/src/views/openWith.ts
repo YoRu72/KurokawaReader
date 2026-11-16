@@ -16,7 +16,7 @@ type Listener = { remove(): void };
 export type OwPlug = {
   openRequest?(): Promise<{ request: string | null }>; openDone?(o: { id: string; back: boolean }): Promise<void>;
   openFetch?(o: { uri: string; jobId: string; dir?: string }): Promise<{ path: string; size: number }>; openFetchCancel?(o: { jobId: string }): Promise<void>;
-  uriRead?(o: { uri?: string; path?: string; max: number }): Promise<{ b64: string; size: number; whole: boolean }>; uriWrite?(o: { uri?: string; path?: string; b64: string }): Promise<unknown>;
+  uriRead?(o: { uri?: string; path?: string; max: number; offset?: number }): Promise<{ b64: string; size: number; whole: boolean }>; uriWrite?(o: { uri?: string; path?: string; b64: string }): Promise<unknown>;
   contentUrl?(o: { uri: string }): Promise<{ url: string }>; openWithStates?(o: { names: string[] }): Promise<{ states: Record<string, number> }>; openWithSet?(o: { name: string; state: 'on' | 'off' | 'default' }): Promise<void>;
   appsFor?(o: { path: string; mime: string }): Promise<{ apps: AppChoice[] }>; openIn?(o: { path: string; mime: string; pkg: string; cls: string }): Promise<void>;
   filesList?(o: { path: string }): Promise<{ exists: boolean; entries: Entry[] }>; hashFile?(o: { path: string }): Promise<{ md5: string; sha1: string; sha256: string }>;
@@ -116,7 +116,7 @@ export function openWithView(route: { kind: string; id: string }): HTMLElement &
 async function openText(it: OpenItem, req: OpenRequest, onClose: () => void, readOnly = false): Promise<void> {
   const fm = await import('./filesMore'); const p = plug(); const { fromB64, toB64 } = await import('./textCodec');
   const io: import('./filesMore').EditorIo = it.path ? { ...(fm.fileIo(it.path) ?? { read: async () => ({ bytes: new Uint8Array(), size: 0, whole: true }) }) } : {
-    read: async () => { const r = await p!.uriRead!({ uri: it.uri, max: 4_000_000 }); return { bytes: fromB64(r.b64), size: r.size, whole: r.whole }; },
+    read: async (o) => { const r = await p!.uriRead!({ uri: it.uri, max: o?.max ?? 5_000_000, offset: o?.offset }); return { bytes: fromB64(r.b64), size: r.size, whole: r.whole }; },
     ...(req.writable ? { write: async (b: Uint8Array) => { await p!.uriWrite!({ uri: it.uri, b64: toB64(b) }); } } : {}),
   };
   if (readOnly) delete io.write;
