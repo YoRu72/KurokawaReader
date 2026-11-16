@@ -89,7 +89,7 @@ const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','a
     await p.addInitScript(([lang, st, status, sh]) => {
       localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.settings', st); window.__calls = [];
       const api = { platform: 'desktop', available: true, os: 'win32', ...(sh === 'electron' ? { shell: 'electron' } : {}), list: async () => [{ id: 'g1', kind: 'http', name: 'Episode 01.mkv', source: { url: 'https://files.test/ep01.mkv' }, dir: 'C:\\D', state: 'downloading', done: 4e8, total: 1e9, downSpeed: 3e6, upSpeed: 0, files: [], addedAt: Date.now() }, { id: 'g2', kind: 'http', name: 'Notes.pdf', source: { url: 'https://self.test/notes.pdf' }, dir: 'C:\\D', state: 'failed', error: 'SSL/TLS handshake failure: unable to get local issuer certificate (1)', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now() }, { id: 'g3', kind: 'http', name: 'Ads.zip', source: { url: 'https://ads.test/a.zip' }, dir: 'C:\\D', state: 'failed', error: 'DNS over HTTPS: ads.test is blocked by adguard', done: 0, total: 0, downSpeed: 0, upSpeed: 0, files: [], addedAt: Date.now() }],
-        ignoreCert: async (id) => { window.__calls.push(['ignoreCert', id]); return id; }, onTasks: (fn) => { setTimeout(() => api.list().then(fn), 30); return () => {}; },
+        onTasks: (fn) => { setTimeout(() => api.list().then(fn), 30); return () => {}; },
         setDoh: async (o) => { window.__calls.push(['setDoh', o]); window.__allow = o.allowSystem; return o; }, dohStatus: async () => eval(status), dohProbe: async () => { window.__calls.push(['dohProbe']); return { ...eval(status), ok: true, resolver: 'cloudflare', ms: 21 }; },
         dohUsed: async (o) => ({ on: true, hosts: Object.fromEntries((o.hosts || []).map((h) => [h, { via: 'system', at: Date.now() }])) }) };
       window.kurokawaTools = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => undefined) });
@@ -110,13 +110,11 @@ const STATUS = `(() => { const ids = ['cloudflare','google','quad9','adguard','a
     const line = await p.$eval('.doh-line', (e) => (e.hidden ? '' : e.textContent)).catch(() => '');
     check(`${shell}: the download's line says when the system's DNS was used`, /system|النظام/.test(line), line);
     if (shell === 'electron') await shot(p.locator('.kt-hero'), 'pc-task-line-system');
-    // A certificate failure: the plain words, and «Ignore certificate errors for this download», asked first.
-    p.on('dialog', (d) => void d.accept()); await p.goto(base + '#/task/g2'); await p.waitForSelector('.task-error', { timeout: 4000 }).catch(() => undefined);
+    // A certificate failure: the plain words, why it cannot be skipped for one download, and the browser as the way out.
+    await p.goto(base + '#/task/g2'); await p.waitForSelector('.task-error', { timeout: 4000 }).catch(() => undefined);
     const err = await p.$eval('.task-error', (e) => e.innerText).catch(() => '');
-    check(`${shell}: a certificate failure in plain words, with the per-download choice`, /certificate could not be verified|تعذّر التحقّق من شهادة/.test(err) && !!(await p.$('[data-act="ignore-cert"]')), err);
+    check(`${shell}: a certificate failure in plain words, no way round it but the browser`, /certificate could not be verified|تعذّر التحقّق من شهادة/.test(err) && /cannot skip|لا يقدر/.test(err) && !!(await p.$('[data-act="cert-browser"]')) && !(await p.$('[data-act="ignore-cert"]')) && !/SSL\/TLS handshake/.test(err), err);
     if (shell === 'electron') await shot(p.locator('.task-error'), 'pc-cert-error');
-    if (await p.$('[data-act="ignore-cert"]')) { await p.click('[data-act="ignore-cert"]'); await p.waitForTimeout(300); }
-    check(`${shell}: the choice asked first, then made for this download alone`, await p.evaluate(() => window.__calls.some(([k, id]) => k === 'ignoreCert' && id === 'g2')));
     await p.goto(base + '#/task/g3'); await p.waitForSelector('.task-error', { timeout: 4000 }).catch(() => undefined);
     const blk = await p.$eval('.task-error', (e) => e.innerText).catch(() => '');
     check(`${shell}: blocked by the chosen resolver — said with its name, no raw text`, /AdGuard/.test(blk) && /blocked|يحجبه/.test(blk) && !/DNS over HTTPS: ads\.test/.test(blk), blk);

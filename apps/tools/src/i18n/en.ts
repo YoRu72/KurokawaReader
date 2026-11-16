@@ -3183,10 +3183,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   errDohBlocked: "The site is blocked by {name}, the resolver you chose (its own filter).",
   errDohSettings: "DoH settings",
   errCert: "The site’s certificate could not be verified.",
-  errCertHint: "The connection may not be the site’s own. Only if you trust it, you can ignore certificate errors for this download alone.",
-  certIgnore: "Ignore certificate errors for this download",
-  certIgnoreAsk: "The site’s identity could not be checked. Anyone between you and it could read or change this download. Ignore certificate errors for this download only?",
-  certIgnored: "Certificate errors are ignored for this download only.",
+  errCertHint: "Certificates are checked for every download, and the engine cannot skip the check for one. If you trust the site, open it in the browser, which shows the warning and lets you decide.",
   dohEvBlocked: "blocked",
 } as const;
 

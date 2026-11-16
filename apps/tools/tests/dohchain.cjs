@@ -164,7 +164,7 @@ const resolverServer = http.createServer((req, res) => {
   ok('aria2: config text — one key=value a line, a line break refused', A.confText({ a: '1', b: 'x\ny' }) === 'a=1\n');
   ok('aria2: Linux certificate authorities found', A.caBundle((p) => p === '/etc/pki/tls/certs/ca-bundle.crt', true) === '/etc/pki/tls/certs/ca-bundle.crt' && A.caBundle(() => true, false) === null);
   // aria2 started (a fake aria2c): the saved DoH choice first (beforeStart), the password in a private config file —
-  // not on the command line —, certificates checked; «Ignore certificate errors» re-adds one failed download.
+  // not on the command line —, certificates checked (no per-download way round them: aria2 has none).
   if (process.platform !== 'win32') {
     const ws = globalThis.WebSocket; delete globalThis.WebSocket;   // (the fake aria2c speaks HTTP only)
     const os = require('node:os'); const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-doh-aria2-')); const argsFile = path.join(root, 'args.json'); const rpcLog = path.join(root, 'rpc.log');
@@ -182,9 +182,7 @@ const srv = http.createServer((q, r) => { let b = ''; q.on('data', (c) => (b += 
     ok('aria2 start: the saved DoH choice applied first, the proxy in its config file', before === 1 && conf.includes(`http-proxy=${px.address}`) && conf.includes(`https-proxy-passwd=${px.password}`), { before, conf });
     ok('aria2 start: the password not on the command line; certificates not switched off', !args.join(' ').includes(px.password) && !args.some((a) => a.includes('check-certificate')), args);
     ok('aria2 start: the config file readable by this user only', !!confFile && (fs.statSync(confFile).mode & 0o077) === 0);
-    const gid = await e.ignoreCert('e1'); const calls = fs.readFileSync(rpcLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    const add = calls.find(([m]) => m === 'aria2.addUri');
-    ok('ignore certificate errors: that download alone added again with the check off, kept with it', gid === 'e2' && !!add && add[1][1][0] === 'https://self.test/a.bin' && add[1][2]['check-certificate'] === 'false' && e.keep.e2?.insecure === true, add);
+    ok('no «ignore certificate errors» call: aria2 cannot skip the check for one download', typeof e.ignoreCert === 'undefined');
     e.stopping = true; clearTimeout(e.timer); e.timer = null; e.stop(); A.setDohProxy(null, null);
     await new Promise((r) => setTimeout(r, 300)); fs.rmSync(root, { recursive: true, force: true }); if (ws) globalThis.WebSocket = ws;
   }
