@@ -402,9 +402,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     };
     draw1(); while (k > 0 && selBar.scrollWidth > selBar.clientWidth + 1) { k--; draw1(); }
   };
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => { if (!selBar.hidden && selActs.length) paintSelBar(); }).observe(selBar);
+  // (One observer, only while something is selected; let go when the selection ends and when the view goes.)
+  let selRo: ResizeObserver | null = null;
+  const watchSelBar = (on: boolean): void => { if (!on) { selRo?.disconnect(); selRo = null; return; } if (!selRo && typeof ResizeObserver !== 'undefined') { selRo = new ResizeObserver(() => { if (!selBar.hidden && selActs.length) paintSelBar(); }); selRo.observe(selBar); } };
   const drawSel = () => {
-    selBar.hidden = !selecting; if (!selecting) { root.classList.remove('selecting'); return; } root.classList.add('selecting');
+    selBar.hidden = !selecting; if (!selecting) { watchSelBar(false); root.classList.remove('selecting'); return; } root.classList.add('selecting'); watchSelBar(true);
     const n = picked.size; const one = n === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
     const all = (): void => { for (const e of shown()) picked.add(e.path); applySel(); drawSel(); };
     // (Inside an archive only what reads: copy (taken out on Paste), share, take out; cut shown greyed with its reason.)
@@ -932,7 +934,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };
