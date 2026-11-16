@@ -97,13 +97,14 @@ jobs:
 
       # (Stage P5: the video tools' std-only parts — kt-core's rules and JSON, the self-test's stand-in programs and
       # their loopback server, the process runner with its tree kill — on every system, since running and killing
-      # programs differ between them.)
+      # programs differ between them. videotools.rs goes through its test root, stdroots/videotools.rs, which brings in
+      # dlrules.rs beside it: it calls crate::dlrules, which a file compiled alone does not have.)
       - name: Std-only unit tests (stage P5, video tools)
         shell: bash
         run: |
           d="$RUNNER_TEMP/rs-tests-p5"; mkdir -p "$d"
           ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
-          for f in apps/tools/core/kt-core/src/videotools.rs apps/tools/core/kt-core/src/vidjson.rs apps/tools/desktop-tauri/src-tauri/src/vtfake.rs apps/tools/desktop-tauri/src-tauri/src/vtproc.rs; do
+          for f in apps/tools/core/kt-core/stdroots/videotools.rs apps/tools/core/kt-core/src/vidjson.rs apps/tools/desktop-tauri/src-tauri/src/vtfake.rs apps/tools/desktop-tauri/src-tauri/src/vtproc.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n$ext"
             "$d/$n$ext"
