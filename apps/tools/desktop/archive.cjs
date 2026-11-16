@@ -106,6 +106,8 @@ async function list(file, password) {
 
 /* ---------- 7-Zip ---------- */
 function sevenZip() {
+  // (An explicit program, for a machine with its own 7-Zip and for tests: KT_SEVENZIP, used as given — even when it does not exist, then 7-Zip is «missing».)
+  if (process.env.KT_SEVENZIP) return process.env.KT_SEVENZIP;
   try { const bin = require('7zip-bin'); return bin.path7za.replace('app.asar', 'app.asar.unpacked'); } catch { return process.platform === 'win32' ? '7z.exe' : '7z'; }
 }
 /** Runs the shipped 7-Zip. `o.pw`: the password in the arguments (taken out of every message that leaves). `o.onLine(line)`: each output line as it is
