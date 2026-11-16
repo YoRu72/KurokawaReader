@@ -1,0 +1,114 @@
+# The name table's vectors: run by tests/extractsafe.cjs (desktop/archsafe.cjs), KtNameSafe.java (tests/native/namesafe.sh)
+# and kt-core's archsafe.rs (rustc --test). Columns (tab): kind, platform, input, action, out, reasons, flags.
+# Escapes in input/out: \\ a backslash, \u{hex} a character. kind «name»: one component; «path»: a relative path;
+# «set»: entries joined by « | », each f:path, d:path, s:path>target (symlink), h:path>target (hard link); its action
+# column holds the problems sorted, «kind:path» joined by «,» («-» none), out/reasons/flags «-».
+name	linux	readme.txt	allow	readme.txt	-	-
+name	windows	readme.txt	allow	readme.txt	-	-
+name	linux		refuse	-	empty	-
+name	linux	.	refuse	-	dot	-
+name	linux	..	refuse	-	dotdot	-
+name	windows	..	refuse	-	dotdot	-
+name	linux	a\u{0}b	refuse	-	nul	-
+name	linux	meeting 10:30.txt	allow	meeting 10:30.txt	-	-
+name	macos	meeting 10:30.txt	allow	meeting 10:30.txt	-	-
+name	android	meeting 10:30.txt	allow	meeting 10:30.txt	-	-
+name	android-fat	meeting 10:30.txt	rewrite	meeting 10_30.txt	colon	-
+name	windows	meeting 10:30.txt	rewrite	meeting 10_30.txt	colon	-
+name	windows	c:	rewrite	c_	colon	-
+name	linux	c:	allow	c:	-	-
+name	windows	a<b>c?d*e|f"g	rewrite	a_b_c_d_e_f_g	illegal	-
+name	android-fat	a<b>c?d*e|f"g	rewrite	a_b_c_d_e_f_g	illegal	-
+name	linux	a<b>c?d*e|f"g	allow	a<b>c?d*e|f"g	-	-
+name	windows	a\\b	rewrite	a_b	illegal	-
+name	linux	a\\b	allow	a\\b	-	-
+name	linux	bell\u{7}.txt	allow	bell\u{7}.txt	-	control
+name	windows	bell\u{7}.txt	rewrite	bell_.txt	control	-
+name	android-fat	tab\u{9}x	rewrite	tab_x	control	-
+name	windows	name.	rewrite	name_	trailing	-
+name	windows	name. 	rewrite	name__	trailing	-
+name	android-fat	name 	rewrite	name_	trailing	-
+name	linux	name 	allow	name 	-	spaces
+name	linux	 lead	allow	 lead	-	spaces
+name	windows	 lead	allow	 lead	-	spaces
+name	windows	...	rewrite	___	trailing	-
+name	windows	CON	rewrite	_CON	reserved	-
+name	windows	con.txt	rewrite	_con.txt	reserved	-
+name	windows	Com1.tar.gz	rewrite	_Com1.tar.gz	reserved	-
+name	windows	LPT9	rewrite	_LPT9	reserved	-
+name	windows	COM\u{b9}	rewrite	_COM\u{b9}	reserved	-
+name	windows	nul .txt	rewrite	_nul .txt	reserved	-
+name	windows	CONSOLE.txt	allow	CONSOLE.txt	-	-
+name	windows	COM10	allow	COM10	-	-
+name	linux	CON	allow	CON	-	-
+name	android-fat	CON	allow	CON	-	-
+name	linux	x.kt-part	refuse	-	reservedSuffix	-
+name	windows	X.KT-PART	refuse	-	reservedSuffix	-
+name	linux	-rf	allow	-rf	-	-
+name	linux	.hidden	allow	.hidden	-	hidden
+name	linux	\u{202e}gpj.exe	allow	\u{202e}gpj.exe	-	bidi
+name	windows	\u{200f}كتاب.pdf	allow	\u{200f}كتاب.pdf	-	bidi
+name	linux	كتاب الإعجاز.pdf	allow	كتاب الإعجاز.pdf	-	-
+name	linux	進撃の巨人.mkv	allow	進撃の巨人.mkv	-	-
+name	windows	\u{1f600}\u{1f389}.png	allow	\u{1f600}\u{1f389}.png	-	-
+name	macos	Cafe\u{301}.txt	allow	Cafe\u{301}.txt	-	-
+name	linux	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt	allow	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt	-	-
+name	linux	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt	rewrite	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt	long	-
+name	linux	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	rewrite	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	long	-
+name	linux	كككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك.pdf	rewrite	ككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك.pdf	long	-
+name	windows	كككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك.pdf	allow	كككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك.pdf	-	-
+name	windows	كككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك.pdf	rewrite	ككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك.pdf	long	-
+name	linux	😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀.png	rewrite	😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀.png	long	-
+name	windows	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.	rewrite	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	trailing,long	-
+path	windows	d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/x	allow	d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/x	-	longPath
+path	linux	a/b/c.txt	allow	a/b/c.txt	-	-
+path	linux	./a/./b.txt	allow	a/b.txt	-	-
+path	linux	a//b/	allow	a/b	-	-
+path	linux		refuse	-	empty	-
+path	linux	./	refuse	-	empty	-
+path	linux	/etc/passwd	refuse	-	absolute	-
+path	windows	\\evil	refuse	-	absolute	-
+path	linux	../up.txt	refuse	-	dotdot	-
+path	linux	a/..	refuse	-	dotdot	-
+path	linux	a/../../b	refuse	-	dotdot	-
+path	linux	foo../bar	allow	foo../bar	-	-
+path	windows	foo../bar	rewrite	foo__/bar	trailing	-
+path	linux	C:foo	refuse	-	drive	-
+path	linux	C:\\foo	refuse	-	drive	-
+path	android	c:/x	refuse	-	drive	-
+path	macos	z:	refuse	-	drive	-
+path	linux	dosdevices/c:	allow	dosdevices/c:	-	-
+path	macos	dosdevices/c:	allow	dosdevices/c:	-	-
+path	windows	dosdevices/c:	rewrite	dosdevices/c_	colon	-
+path	windows	dir/a:b	rewrite	dir/a_b	colon	-
+path	android-fat	dir/a:b	rewrite	dir/a_b	colon	-
+path	windows	..\\..\\evil.dll	rewrite	.._.._evil.dll	illegal	hidden
+path	linux	..\\..\\evil.dll	allow	..\\..\\evil.dll	-	hidden
+path	windows	sub/CON/x.txt	rewrite	sub/_CON/x.txt	reserved	-
+path	linux	a/b\u{0}c	refuse	-	nul	-
+path	windows	a/x.kt-part	refuse	-	reservedSuffix	-
+path	linux	.git/config	allow	.git/config	-	hidden
+set	linux	f:a.txt | f:b.txt	-	-	-	-
+set	linux	f:a.txt | f:a.txt	duplicate:a.txt	-	-	-
+set	linux	f:A.txt | f:a.txt	-	-	-	-
+set	windows	f:A.txt | f:a.txt	caseClash:a.txt	-	-	-
+set	macos	f:A.txt | f:a.txt	caseClash:a.txt	-	-	-
+set	android-fat	f:A.txt | f:a.txt	caseClash:a.txt	-	-	-
+set	android	f:A.txt | f:a.txt	-	-	-	-
+set	macos	f:Caf\u{e9}.txt | f:Cafe\u{301}.txt	caseClash:Cafe\u{301}.txt	-	-	-
+set	linux	f:Caf\u{e9}.txt | f:Cafe\u{301}.txt	-	-	-	-
+set	windows	f:Caf\u{e9}.txt | f:Cafe\u{301}.txt	-	-	-	-
+set	windows	f:ab:c | f:ab_c	rewriteClash:ab_c	-	-	-
+set	linux	f:ab:c | f:ab_c	-	-	-	-
+set	linux	f:x | f:x/y.txt	fileDir:x	-	-	-
+set	linux	f:x | d:x/	fileDir:x	-	-	-
+set	windows	f:X | d:x/	fileDir:X	-	-	-
+set	linux	d:a/ | d:a/ | f:a/b	-	-	-	-
+set	linux	s:a/l>../../etc | f:a/b	linkOutside:a/l	-	-	-
+set	linux	s:a/l>/etc/passwd	linkOutside:a/l	-	-	-
+set	linux	s:a/l>../b | f:b	-	-	-	-
+set	linux	s:l>sub | f:l/x.txt	throughLink:l/x.txt	-	-	-
+set	linux	h:a/h>a/missing	linkOutside:a/h	-	-	-
+set	linux	h:a/h>a/b | f:a/b	-	-	-	-
+set	linux	f:../x | f:ok	dotdot:../x	-	-	-
+set	windows	f:C:\\x | f:CON	drive:C:\\x	-	-	-

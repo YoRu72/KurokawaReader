@@ -62,3 +62,6 @@ pub mod hls;
 pub mod fileplan;
 pub mod filejournal;
 pub mod remoterules;
+// (Tools 0.21 P5: archive safety — the one name table, the peak-space replay, the pre-flight's decisions, the conflict
+// plan and the extraction journal's text; the twin of desktop/archsafe.cjs and KtNameSafe.java.)
+pub mod archsafe;

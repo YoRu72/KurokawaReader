@@ -1,0 +1,20 @@
+{
+  "_": "The one name-safety table for every engine (desktop/archsafe.cjs reads it; KtNameSafe.java and kt-core archsafe.rs are its twins, checked equal by tests/extractsafe.cjs and run on the same vectors, tests/data/namesafe-vectors.tsv). Per target: what a path component may hold, what is rewritten (shown in the preview, never silent) and what is refused.",
+  "version": 1,
+  "replacement": "_",
+  "tempSuffix": ".kt-part",
+  "asideDir": ".kurokawa-replaced",
+  "journalSuffix": ".kurokawa-unzip",
+  "tailSuffix": ".kurokawa-tail",
+  "extKeep": 9,
+  "portableIllegal": "\\/:*?\"<>|",
+  "reservedNames": ["CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³", "CONIN$", "CONOUT$"],
+  "bidi": [1564, 8206, 8207, 8234, 8235, 8236, 8237, 8238, 8294, 8295, 8296, 8297],
+  "platforms": {
+    "linux": { "illegal": "", "control": "flag", "trailing": "allow", "reserved": false, "maxName": 255, "unit": "utf8", "maxPath": 4095, "longPath": 0, "foldCase": false, "foldForm": false },
+    "android": { "illegal": "", "control": "flag", "trailing": "allow", "reserved": false, "maxName": 255, "unit": "utf8", "maxPath": 4095, "longPath": 0, "foldCase": false, "foldForm": false },
+    "android-fat": { "illegal": "\\:*?\"<>|", "control": "rewrite", "trailing": "rewrite", "reserved": false, "maxName": 255, "unit": "utf16", "maxPath": 4095, "longPath": 0, "foldCase": true, "foldForm": false },
+    "macos": { "illegal": "", "control": "flag", "trailing": "allow", "reserved": false, "maxName": 255, "unit": "utf8", "maxPath": 1023, "longPath": 0, "foldCase": true, "foldForm": true },
+    "windows": { "illegal": "\\:*?\"<>|", "control": "rewrite", "trailing": "rewrite", "reserved": true, "maxName": 255, "unit": "utf16", "maxPath": 32000, "longPath": 259, "foldCase": true, "foldForm": false }
+  }
+}
