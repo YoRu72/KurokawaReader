@@ -1348,12 +1348,12 @@ html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg
 .files-list[class*="ts-"] .files-section { font-size: calc(13px * var(--ts)); }
 
 /* The fast scroller (views/filesScroll.ts): a handle on the end edge, a bubble beside it. */
-.files-fast { position: fixed; inset-inline-end: 0; width: 56px; z-index: 30; pointer-events: none; opacity: 0; transition: opacity .2s; }
+.files-fast { position: fixed; inset-inline-end: 0; width: 22px; z-index: 30; pointer-events: none; opacity: 0; transition: opacity .2s; }
 .files-fast.on { opacity: 1; }
-.files-fast-thumb { position: absolute; inset-inline-end: 0; top: 0; width: 44px; height: 56px; pointer-events: auto; touch-action: none; display: grid; place-items: center; cursor: grab; outline: none; }
-.files-fast-grip { width: 6px; height: 40px; border-radius: 3px; background: var(--md-primary); opacity: .75; transition: width .15s, height .15s, opacity .15s; }
-.files-fast.drag .files-fast-grip, .files-fast-thumb:focus-visible .files-fast-grip { width: 14px; height: 48px; border-radius: 8px; opacity: 1; }
-.files-fast-bubble { position: absolute; inset-inline-end: 52px; top: 0; min-width: 48px; max-width: 140px; height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 20px; background: var(--md-primary-container); color: var(--md-on-primary-container); font: 600 17px/40px var(--font-ui); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 6px rgb(0 0 0 / .25); opacity: 0; transform-origin: right center; transition: opacity .12s; }
+.files-fast-thumb { position: absolute; inset-inline-end: 0; top: 0; width: 22px; height: 56px; pointer-events: auto; touch-action: none; display: grid; place-items: center end; cursor: grab; outline: none; }
+.files-fast-grip { width: 4px; height: 40px; border-radius: 3px; background: var(--md-primary); opacity: .75; transition: width .15s, height .15s, opacity .15s; }
+.files-fast.drag .files-fast-grip, .files-fast-thumb:focus-visible .files-fast-grip { width: 12px; height: 48px; border-radius: 8px; opacity: 1; }
+.files-fast-bubble { position: absolute; inset-inline-end: 96px; top: 0; min-width: 48px; max-width: 140px; height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 20px; background: var(--md-primary-container); color: var(--md-on-primary-container); font: 600 17px/40px var(--font-ui); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 6px rgb(0 0 0 / .25); opacity: 0; transform-origin: right center; transition: opacity .12s; }
 .files-fast.bubble .files-fast-bubble { opacity: 1; }
 .files-fast.pc { width: 0; }
 .files-fast.pc .files-fast-thumb { display: none; }
@@ -1372,8 +1372,10 @@ html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg
 .files-list.grid.gallery .files-name { font-size: 11px; line-height: 1.2; -webkit-line-clamp: 1; }
 .files-list.grid.gallery .files-row:has(.files-ic.has-img) .files-main { display: none; }
 .files-list.grid.gallery .files-row > .icon-btn { display: none; }
-.files-list.grid.gallery .files-row.picked { outline: 3px solid var(--md-primary); outline-offset: -3px; }
-.files-list.grid.gallery .files-row.picked .files-ic { background: color-mix(in srgb, var(--md-primary) 18%, transparent); color: var(--md-on-surface); }
+.files-list.grid.gallery .files-row.picked { background: color-mix(in srgb, var(--md-primary) 30%, var(--md-surface-container)); }
+.files-list.grid.gallery .files-row.picked .files-ic { inset: 9px; width: auto; height: auto; border-radius: 7px; overflow: hidden; background: transparent; color: var(--md-on-surface); }
+.files-list.grid.gallery .files-row.picked::after { content: ''; position: absolute; inset: 0; z-index: 2; border: 3px solid var(--md-primary); border-radius: 10px; box-sizing: border-box; background: color-mix(in srgb, var(--md-primary) 14%, transparent); pointer-events: none; }
+.files-list.grid.gallery .files-row .files-check { z-index: 3; }
 
 /* The text editor's tools, find panel, line numbers (views/filesEditor.ts). */
 .files-ed-tools { flex-wrap: wrap; }
@@ -1402,3 +1404,54 @@ html[dir="rtl"] .files-ed-gutter { border-radius: 0 12px 12px 0; }
 .files-fontnow { min-width: 2ch; text-align: center; }
 .files-find-opt { min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-highest); color: var(--md-on-surface); font: 600 14px/1 var(--font-ui); cursor: pointer; }
 .files-find-opt.on { border-color: transparent; }
+
+/* A picked tile in the plain grid: its picture ringed in the primary colour and tinted, the tile itself tinted. */
+.files-list.grid:not(.gallery) .files-row.picked .files-ic { box-shadow: 0 0 0 3px var(--md-surface), 0 0 0 6px var(--md-primary); }
+.files-list.grid:not(.gallery) .files-row.picked .files-ic.has-img img { opacity: .72; }
+/* The page's header rows keep their height: with a long list they were squeezed to a few pixels by the column's flex shrink. */
+.files-view > :is(.files-crumbs, .files-kinds, .files-roots, .files-search, .files-shelf, .files-sizenote) { flex-shrink: 0; }
+.files-body > .files-sizenote { flex-shrink: 0; }
+/* While the fast scroller's handle is on the page, the rows keep clear of it. */
+html:not(.pc) .files-view.has-fast .files-body:has(> .files-list:not(.gallery)) { padding-inline-end: 30px; }
+
+/* «Verify after copying»: the note on a result sheet whose copies differed, and the settings row. */
+.files-verify-note { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; margin: 8px 0; border-radius: 14px; background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.files-verify-note > svg { flex: none; width: 20px; height: 20px; margin-top: 2px; color: var(--md-primary); }
+.files-verify-note > span { min-width: 0; overflow-wrap: anywhere; }
+.files-verify-row { align-items: center; gap: 12px; }
+.files-verify-row .pick-btn { flex: none; }
+
+/* Compare two files, and Find duplicate files (views/filesCompare.ts, filesDups.ts). */
+.files-cmp-files { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.files-cmp-file { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container); }
+.files-cmp-file > svg { flex: none; width: 22px; height: 22px; color: var(--md-primary); }
+.files-cmp-verdict { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; background: var(--md-surface-container-high); margin-bottom: 10px; }
+.files-cmp-verdict > svg { flex: none; width: 24px; height: 24px; }
+.files-cmp-verdict b, .files-cmp-verdict small { display: block; }
+.files-cmp-verdict.same > svg { color: color-mix(in srgb, #2f7d4f 85%, var(--md-on-surface)); }
+.files-cmp-verdict.diff > svg { color: color-mix(in srgb, #a3443f 85%, var(--md-on-surface)); }
+.files-cmp-prog { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.files-cmp-acts { gap: 8px; margin-bottom: 8px; }
+.files-cmp-count { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0 8px; font-weight: 600; font-size: 14px; }
+.files-cmp-count .cmp-add-n { color: color-mix(in srgb, #2f7d4f 80%, var(--md-on-surface)); }
+.files-cmp-count .cmp-del-n { color: color-mix(in srgb, #a3443f 80%, var(--md-on-surface)); }
+.files-cmp-lines { border-radius: 14px; overflow: hidden; border: 1px solid var(--md-outline-variant); font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+.files-cmp-lines .cmp-row { display: flex; align-items: flex-start; gap: 0; min-width: 0; background: var(--md-surface); color: var(--md-on-surface); }
+.files-cmp-lines .cmp-no { flex: none; width: 3.4em; padding: 0 6px; text-align: end; color: var(--md-on-surface-variant); user-select: none; }
+.files-cmp-lines .cmp-mark { flex: none; width: 1.6em; text-align: center; font-weight: 700; user-select: none; }
+.files-cmp-lines .cmp-text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding-inline-end: 8px; unicode-bidi: plaintext; }
+.files-cmp-lines .cmp-row.add { background: color-mix(in srgb, #3f8f5a 16%, var(--md-surface)); }
+.files-cmp-lines .cmp-row.del { background: color-mix(in srgb, #b4504a 14%, var(--md-surface)); }
+.files-cmp-lines .cmp-row.skip { background: var(--md-surface-container); color: var(--md-on-surface-variant); font-family: var(--font-ui); font-size: 12px; padding: 3px 0; }
+.files-dups-out { margin-top: 10px; }
+.files-dups-sub { margin-top: 4px; }
+.files-dups-sum { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 10px; font-weight: 600; }
+.files-dup-group { margin: 0 0 12px; padding: 6px; border-radius: 16px; background: var(--md-surface-container); display: flex; flex-direction: column; gap: 4px; }
+.files-dup-head { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px 2px; }
+.files-dup-file { display: flex; align-items: center; gap: 12px; width: 100%; box-sizing: border-box; min-height: 52px; padding: 6px 10px; border: 0; border-radius: 12px; background: transparent; color: var(--md-on-surface); font: inherit; text-align: start; cursor: pointer; }
+.files-dup-file .files-main { min-width: 0; overflow-wrap: anywhere; }
+.files-dup-file.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.files-dup-file.locked { opacity: .55; cursor: default; }
+.files-dup-tick { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--md-outline); color: transparent; }
+.files-dup-tick > svg { width: 16px; height: 16px; }
+.files-dup-file.on .files-dup-tick { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }

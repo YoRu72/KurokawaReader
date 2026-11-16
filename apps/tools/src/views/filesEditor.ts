@@ -81,11 +81,11 @@ export async function openEditor(e: Entry, refresh: () => void, io: EditorIo | n
   };
   const setWrap = (on: boolean) => { wrapOn = on; ta.classList.toggle('nowrap', !on); toggle(wrapBtn, on); if (on && numbers) setNumbers(false); };
   const setNumbers = (on: boolean) => { numbers = on; gutter.hidden = !on; toggle(numBtn, on); if (on) { if (wrapOn) { setWrap(false); toast(t('filesLineNumbersWrap')); } paintNumbers(); } };
-  const wrapBtn = iconButton('scroll', t('filesWrap'), () => setWrap(!wrapOn));
+  const wrapBtn = iconButton('wrapText', t('filesWrap'), () => setWrap(!wrapOn));
   const numBtn = iconButton('list', t('filesLineNumbers'), () => setNumbers(!numbers));
   const monoBtn = iconButton('type', t('filesMono'), () => { ta.classList.toggle('mono'); toggle(monoBtn, ta.classList.contains('mono')); if (numbers) paintNumbers(); });
   const findBtn = iconButton('search', t('filesFind'), () => { panel.hidden = !panel.hidden; toggle(findBtn, !panel.hidden); if (!panel.hidden) { findIn.focus(); recount(); } });
-  const gotoBtn = iconButton('target', t('filesGoToLine'), () => goToSheet());
+  const gotoBtn = iconButton('hash', t('filesGoToLine'), () => goToSheet());
   const moreBtn = iconButton('more', t('more'), () => moreSheet());
   toggle(wrapBtn, true); toggle(numBtn, false); toggle(monoBtn, false); toggle(findBtn, false);
   tools.append(findBtn, gotoBtn, numBtn, wrapBtn, monoBtn, moreBtn);
@@ -153,7 +153,7 @@ export async function openEditor(e: Entry, refresh: () => void, io: EditorIo | n
     const eolList = () => pickSheet(t('filesEol'), [['', t('filesEolKeep', { eol: eolName(eol) })], ['lf', t('filesEolLf')], ['crlf', t('filesEolCrlf')]] as [string, string][], forced ?? '', (v) => { forced = v ? (v as Eol) : null; if (eol === 'mixed' && forced) { ta.readOnly = !!big || !io?.write; notice.hidden = !ta.readOnly; } refreshSave(); paintStatus(); }, t('close'));
     m.body.append(h('div', { class: 'dest-list' },
       ...(io && rawBytes ? [act('type', t('filesReopenAs'), csList(t('filesReopenAs'), false), `${enc ? charsetName(enc.charset) : ''}`), act('check', t('filesSaveAsCharset'), csList(t('filesSaveAsCharset'), true))] : []),
-      ...(io ? [act('scroll', t('filesEol'), eolList, eolName(forced ?? eol))] : []),
+      ...(io ? [act('lineBreak', t('filesEol'), eolList, eolName(forced ?? eol))] : []),
       h('div', { class: 'row files-fontrow' }, h('span', { class: 'grow' }, t('filesFontSize')),
         iconButton('zoomOut', t('filesFontSize') + ' −', () => step(-1)), h('b', { class: 'files-fontnow' }, localDigits(fontNow())), iconButton('zoomIn', t('filesFontSize') + ' +', () => step(1)))));
     const fontNowEl = m.body.querySelector('.files-fontnow') as HTMLElement;

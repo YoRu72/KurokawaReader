@@ -25,7 +25,7 @@ type AppEntry = Entry & { pkg?: string; sub?: string; special?: 'data' | 'obb' |
 
 export interface Entry { name: string; path: string; dir: boolean; size: number; mtime: number; ext?: string; hidden?: boolean; count?: number }
 interface Root { kind: string; path: string; name: string; readable: boolean; free?: number; total?: number; appFolder?: string }
-type JobEvent = { id: string; status: 'progress' | 'conflict' | 'done' | 'cancelled' | 'failed'; done?: number; total?: number; files?: number; ofFiles?: number; name?: string; from?: string; to?: string; size?: number; existingSize?: number; mtime?: number; existingMtime?: number; dir?: boolean; failed?: string[]; message?: string; /** A move's: the files left where they were (skipped, failed, cancelled), and the chosen paths still there. */ left?: number; remaining?: string[]; skipped?: number };
+type JobEvent = { id: string; status: 'progress' | 'conflict' | 'done' | 'cancelled' | 'failed'; done?: number; total?: number; files?: number; ofFiles?: number; name?: string; from?: string; to?: string; size?: number; existingSize?: number; mtime?: number; existingMtime?: number; dir?: boolean; failed?: string[]; /** A Full check's: the files that passed it, and the ones whose copy differed. */ verified?: number; mismatch?: string[]; message?: string; /** A move's: the files left where they were (skipped, failed, cancelled), and the chosen paths still there. */ left?: number; remaining?: string[]; skipped?: number };
 type Plug = {
   filesList(o: { path: string; counts?: boolean; hidden?: boolean }): Promise<{ exists: boolean; entries: Entry[]; truncated?: boolean }>;
   filesRoots(): Promise<{ allFiles: boolean; roots: Root[] }>;
@@ -60,6 +60,13 @@ const jobs = (): Jobs | null => {
 };
 /** Copy, move and delete as jobs: the phone's, or the computer's where its shell has them. */
 const canJobs = (): boolean => !!jobs();
+/** A file's SHA-256 by the shell's own streaming hashFile (the phone's plugin, a computer's shell), or null where there is none. */
+const hashOf = (): ((p: string) => Promise<string>) | null => {
+  const d = window.kurokawaTools as unknown as { hashFile?(p: string): Promise<{ sha256: string }> } | undefined; if (d?.hashFile) return async (x) => (await d.hashFile!(x)).sha256;
+  const pl = ktPlugin() as unknown as { hashFile?(o: { path: string }): Promise<{ sha256: string }> } | null; if (pl?.hashFile) return async (x) => (await pl.hashFile!({ path: x })).sha256; return null;
+};
+/** Whether «Verify after copying → Full check» can run here (jobs and a streaming checksum). */
+export const canVerifyFull = (): boolean => canJobs() && !!hashOf();
 /** The storages and the one-item changes (new folder, rename, the facts of one path): the phone's plugin, or a computer's
  *  shell where it has them — the Tauri shell's filesRoots, filesStat (shallow), filesMkdir and filesRename, the same
  *  shapes; Electron's shell has none. */
@@ -78,7 +85,7 @@ const rootIcon = (kind: string): string => ({ app: 'download', downloads: 'downl
 
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
 export type Prefs = { view: 'list' | 'grid' | 'gallery'; /** Columns chosen by pinching, per view and kind of folder (`grid:media`, `gallery:plain`…). */ cols?: Record<string, number>; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string;
-  /** The folder the page opens on (empty: the last one when `rememberLast`, else the first storage). */ home?: string; rememberLast?: boolean; counts?: boolean; thumbs?: boolean; density?: 'comfortable' | 'compact'; /** The text of names and details in the lists (normal when not set). */ textSize?: 'small' | 'large' | 'larger'; confirmDelete?: boolean; /** A folder's size shown in its row once counted (Calculate size); on unless off. */ dirSizes?: boolean; keepOn?: boolean; eink?: boolean; backUp?: boolean };
+  /** The folder the page opens on (empty: the last one when `rememberLast`, else the first storage). */ home?: string; rememberLast?: boolean; counts?: boolean; thumbs?: boolean; density?: 'comfortable' | 'compact'; /** The text of names and details in the lists (normal when not set). */ textSize?: 'small' | 'large' | 'larger'; confirmDelete?: boolean; /** A folder's size shown in its row once counted (Calculate size); on unless off. */ dirSizes?: boolean; keepOn?: boolean; eink?: boolean; backUp?: boolean; /** After copying or moving: the engine's size check (the default), or the content compared too. */ verify?: 'size' | 'full' };
 const PREFS = 'kt.files.prefs';
 /** The view button cycles list, grid, gallery; each says what a tap switches TO. */
 const NEXT_VIEW: Record<Prefs['view'], Prefs['view']> = { list: 'grid', grid: 'gallery', gallery: 'list' };
@@ -96,6 +103,11 @@ let activePane: object | null = null;
 /** The hidden folders an archive's entries are taken out to before they are moved in (by the move job's id). */
 const stagings = new Map<string, string>();
 const STAGE = '.kurokawa-extract-';
+/** The engine jobs a Full check runs under one visible job (their events go to it, not to the page's own handling). */
+const subJobs = new Map<string, (ev: JobEvent) => void>();
+/** Jobs started plainly (the engine checked the sizes), and moves that were a rename on one storage (nothing copied to check). */
+const sizeChecked = new Set<string>(); const renamedMoves = new Set<string>();
+let stagesSwept = false;
 const setClip = (c: typeof clipboard) => { clipboard = c; for (const f of clipWatch) f(); };
 /** `dest` is one of `paths` or lies inside one — a folder pasted into itself (whole names compared, letter case aside:
  *  the phone's storage ignores it; /a/b and /a/bc are strangers; a computer's «\\» is a «/»). */
@@ -109,6 +121,10 @@ import { isRemote, isVirtual, parseRemote, connections, connectionSheet, connect
 const KINDS: [string, string, RegExp | null][] = [['all', 'filesKindAll', null], ['image', 'filesKindImages', /^(jpe?g|png|gif|webp|bmp|heic|heif|hif|avif|svg|tiff?|ico|wbmp|jfif|apng)$/], ['audio', 'filesKindMusic', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/], ['video', 'filesKindVideo', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp)$/], ['doc', 'filesKindDocs', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/], ['archive', 'filesKindArchives', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/], ['apk', 'filesKindApps', /^(apk|apks|xapk|apkm)$/]];
 const ICON: Record<string, string> = { video: 'film', audio: 'music', ebook: 'books', image: 'images', sub: 'subtitles', archive: 'archive', doc: 'file', other: 'file', locked: 'lock' };
 const MIMES: [string, string, string][] = [['image/*', 'filesAsImage', 'images'], ['audio/*', 'filesAsMusic', 'music'], ['video/*', 'filesAsVideo', 'film'], ['text/plain', 'filesAsText', 'type'], ['application/pdf', 'filesAsDocument', 'file'], ['application/zip', 'filesAsArchive', 'archive'], ['*/*', 'filesAsAny', 'apps']];
+/** The books and comics the Reader opens (its detect.ts), with the MIME its manifest takes them under. */
+const READER_PKG = 'app.kurokawa.reader';
+const READER_MIME: Record<string, string> = { epub: 'application/epub+zip', pdf: 'application/pdf', mobi: 'application/x-mobipocket-ebook', azw: 'application/x-mobipocket-ebook', azw3: 'application/x-mobipocket-ebook', kf8: 'application/x-mobipocket-ebook', prc: 'application/x-mobipocket-ebook', fb2: 'application/x-fictionbook+xml', cbz: 'application/vnd.comicbook+zip', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', odt: 'application/vnd.oasis.opendocument.text', md: 'text/markdown', markdown: 'text/markdown', txt: 'text/plain' };
+const readerMime = (name: string): string | null => READER_MIME[(name.split('.').pop() ?? '').toLowerCase()] ?? null;
 const mimeOf = (p: string): string => { const k = kindOfFile(p); if (/\.(txt|nfo|md|srt|ass|vtt|json|xml|log|csv|ini|cfg)$/i.test(p)) return 'text/plain'; if (/\.pdf$/i.test(p)) return 'application/pdf'; if (/\.apk$/i.test(p)) return 'application/vnd.android.package-archive'; return ({ video: 'video/*', audio: 'audio/*', image: 'image/*', ebook: 'application/epub+zip', archive: 'application/zip' } as Record<string, string>)[k] ?? '*/*'; };
 // (A place under a scheme — «apps://com.x», «remote://id» — has the scheme's root above it, «apps://»; trimming the
 // last part as a folder would leave «apps:/», which became «apps:», a place that lists nothing.)
@@ -363,10 +379,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const c = [...nameParts(e.name, e.dir).head.trim()][0] ?? ''; return /[0-9٠-٩]/.test(c) ? '#' : c.toUpperCase();
   };
   const syncFast = () => {
-    if (fastList.length < 60 || po.embedded) { fast?.dispose(); fast = null; return; }
+    if (fastList.length < 60 || po.embedded) { fast?.dispose(); fast = null; root.classList.remove('has-fast'); return; }
     if (fast) { fast.update(); return; }
     void import('./filesScroll').then((m) => {
       if (gone || fast || fastList.length < 60) return;
+      root.classList.add('has-fast');
       fast = m.fastScroller(root, { name: t('filesFastScroller'), pc: document.documentElement.classList.contains('pc'), total: () => fastList.length, current: fastIndex, label: fastLabel, jump: fastJump,
         track: () => { const nav = document.querySelector('.bottom-nav') as HTMLElement | null; const fb = fab.getBoundingClientRect(); const navTop = nav && nav.offsetHeight ? nav.getBoundingClientRect().top : window.innerHeight; const bottom = (fb.height && fab.isConnected && getComputedStyle(fab).display !== 'none' ? Math.min(fb.top, navTop) : navTop) - 10; return { top: Math.max(pageTop(), 0) + 8, bottom }; } });
     }).catch(() => undefined);
@@ -510,6 +527,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     selActs = [{ ic: 'check', label: t('filesSelectAll'), prio: 1, run: all },
       ...(canJobs() ? [{ ic: 'copy', label: t('filesCopy'), prio: 2, run: () => copyPicked('copy') }, { ic: 'scissors', label: t('filesCut'), prio: 3, run: () => copyPicked('move') }] : []),
       ...(n > 1 ? [{ ic: 'pen', label: t('filesBatchRename'), prio: 4, run: () => void batchRename() }] : []),
+      ...(comparePair() ? [{ ic: 'columns', label: t('filesCompare'), prio: 4, run: () => { const pr = comparePair(); if (pr) runCompare(pr); } }] : []),
       ...(po.peer?.() ? [{ ic: 'swap', label: t('filesToOtherPane'), prio: 7, run: () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); } }] : []),
       { ic: 'trash', label: t('delete'), prio: 5, danger: true, run: () => void confirmDelete([...picked]) },
       ...(plug() && !isVirtual(at) ? [{ ic: 'lock', label: t('vaultLock'), prio: 8, run: () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); } }] : []),
@@ -689,6 +707,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       ...(sizeable(e) ? [act('refresh', t('filesCalcSize'), () => void propertiesSheet(e, true))] : []),
       act('info', t('properties'), () => void propertiesSheet(e)),
       act('trash', t('delete'), () => void confirmDelete([e.path]))));
+    // (A book the Reader opens: «Open in Kurokawa Reader» — only where the system says the Reader is installed and takes it.)
+    const rm = readerMime(e.name); if (pl?.appsFor && pl.openIn && !e.dir && rm) void pl.appsFor({ path: e.path, mime: rm }).then((r) => {
+      const app = r.apps.find((a) => a.pkg === READER_PKG); if (!app || !sh.body.isConnected) return; const list = sh.body.querySelector('.dest-list'); if (!list || list.querySelector('.files-open-reader')) return;
+      const row = act('books', t('filesOpenInReader'), () => void pl.openIn!({ path: e.path, mime: rm, pkg: READER_PKG, cls: app.cls }).catch(() => toast(t('filesReaderFailed'), 'error'))); row.classList.add('files-open-reader'); list.firstElementChild?.after(row);
+    }).catch(() => undefined);
   };
   /** An entry inside an archive: what reads it — open, open with, share, copy (taken out on Paste), take out here or
    *  elsewhere, properties —; what would change the archive left out, and why said once. */
@@ -734,6 +757,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       ...(canShareFolder() && !isVirtual(at) ? [act('wifi', t('fshareTitle'), () => void folderShareSheet(at, baseOf(at) || at))] : []),
       ...(plug() && !isVirtual(at) ? [act('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
       ...(plug() ? [act('key', t('archiveForgetPw'), () => void import('../archives').then((a) => { a.forgetPasswords(); a.setRememberPasswords(false); toast(t('done')); }))] : []),
+      ...(!isVirtual(at) && !isArc(at) && !isApps(at) && !collection && fileHost() ? [act('copy', t('filesDups'), () => findDups())] : []),
       act('info', t('properties'), () => void propertiesSheet({ name: placeName(at), path: at, dir: true, size: 0, mtime: 0 })),
       ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : []),
       ...(plug() && !allFiles ? [act('key', t('filesAccessAllow'), () => void askAccess())] : [])));
@@ -850,6 +874,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
 
   // ---- the jobs: copy / move / delete, with their progress, cancel and the question when a name is taken
+  if (!stagesSwept) { stagesSwept = true; try { if (localStorage.getItem('kt.files.stages')) void import('./filesVerify').then((m) => { const jb = jobs(); if (jb) m.sweepStages((ps) => jb.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: ps })); }); } catch { /* none */ } }
   const me = {};
   const jobRow = (id: string, label: string, cancel: () => void): HTMLElement => {
     const el = h('div', { class: 'files-job', 'data-id': id }, h('div', { class: 'grow' }, h('span', { class: 'files-job-label', dir: 'auto' }, label), h('div', { class: 'files-job-bar' }, h('i')), h('small', { class: 'src files-job-meta' })), iconButton('close', t('cancel'), cancel));
@@ -871,10 +896,54 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       ownRow(id, label, () => void vfs.cancel(id));
       try { await vfs.job(id, srcV ? 'down' : 'up', paths, dest!, op === 'move'); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); return false; }
     }
+    if (op !== 'delete' && dest && !stagings.has(id)) {
+      if (prefs.verify === 'full' && hashOf()) { const how = fullPlan(op, paths, dest); if (how === 'run') return verifiedJob(op, paths, dest, id, label0); if (how === 'rename') renamedMoves.add(id); }
+      sizeChecked.add(id);
+    }
     const label = label0 ?? (op === 'delete' ? t('filesDeleting', { n: localDigits(paths.length) }) : op === 'move' ? t('filesMoving', { n: localDigits(paths.length) }) : t('filesCopying', { n: localDigits(paths.length) }));
     ownRow(id, label, () => void pl.filesCancel({ id }));
     try { await pl.filesJob({ id, op, paths, dest, conflict: 'ask' }); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(String((err as Error).message ?? err), 'error'); return false; }
   };
+  // ---- «Verify after copying»: the Full check (views/filesVerify.ts)
+  const rootOf = (p: string): string => roots.filter((r) => p === r.path || p.startsWith(r.path.replace(/\/+$/, '') + '/')).sort((a, b) => a.path.length - b.path.length)[0]?.path ?? '';  // (the shortest: the storage itself — the app's folder lies inside the phone's)
+  /** run: copied through a stage and checked; rename: a move inside one storage (nothing is copied); plain: not checkable here
+   *  (two items of one name, a link, a remote or an archive) — the engine's size check then. */
+  const fullPlan = (op: 'copy' | 'move', paths: string[], dest: string): 'run' | 'rename' | 'plain' => {
+    if (paths.some(isVirtual) || paths.some(isArc) || isVirtual(dest) || isArc(dest) || !fsx()) return 'plain';
+    if (new Set(paths.map(baseOf)).size !== paths.length) return 'plain';
+    if (op === 'move') { const d = rootOf(dest); if (d && paths.every((x) => rootOf(x) === d)) return 'rename'; }
+    return 'run';
+  };
+  const listAll = async (dir: string): Promise<Entry[]> => { const pp = plug(); if (pp) return (await pp.filesList({ path: dir, hidden: true })).entries; const d = desk(); return d?.listDir ? ((await d.listDir(dir)).entries ?? []) : []; };
+  const verifiedJob = async (op: 'copy' | 'move', paths: string[], dest: string, id: string, label0?: string): Promise<boolean> => {
+    const pl = jobs(); const fx = fsx(); const hash = hashOf(); if (!pl || !fx || !hash) return false;
+    const label = label0 ?? (op === 'move' ? t('filesMoving', { n: localDigits(paths.length) }) : t('filesCopying', { n: localDigits(paths.length) }));
+    let run: { cancel(): void; done: Promise<import('./filesVerify').VerifyEnd> } | null = null; let stop = false;
+    ownRow(id, label, () => { stop = true; run?.cancel(); });
+    const mod = await import('./filesVerify'); if (stop) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); return false; }
+    const bar = (pct: number, meta: string) => { const el = jobsEl.querySelector(`[data-id="${id}"]`); if (!el) return; (el.querySelector('.files-job-bar i') as HTMLElement).style.width = `${pct}%`; (el.querySelector('.files-job-meta') as HTMLElement).textContent = meta; };
+    const stage = `${dest.replace(/\/+$/, '')}/${STAGE}v-${id}`;
+    run = mod.runVerified({
+      start: async (sid, sop, sp, sd, conflict, on) => { subJobs.set(sid, (ev) => { on(ev); if (ev.status !== 'progress' && ev.status !== 'conflict') subJobs.delete(sid); }); try { await pl.filesJob({ id: sid, op: sop, paths: sp, dest: sd, conflict }); } catch (e) { subJobs.delete(sid); throw e; } },
+      cancelSub: (sid) => void pl.filesCancel({ id: sid }), ask: (ev) => conflictSheet(ev as JobEvent),
+      list: listAll, mkdir: async (p) => { await fx.filesMkdir({ path: p }); }, hash,
+      progress: bar,
+      words: { copying: (n) => t('filesVerifyCopying', { name: n }), checking: (n, i, c) => t('filesVerifyChecking', { name: n, i: localDigits(i), n: localDigits(c) }), placing: t('filesVerifyPlacing'), mismatch: (n) => t('filesVerifyMismatch', { name: n }), kept: (n) => t('filesVerifyKept', { name: n }) },
+    }, { id, op, paths, dest, stage });
+    void run.done.then((r) => { subJobs.delete(id); onJob({ id, status: r.status, files: r.files, done: r.files, total: r.files, failed: r.failed, skipped: r.skipped, verified: r.verified, mismatch: r.mismatch, ...(op === 'move' ? { left: r.left, remaining: r.remaining } : {}) } as JobEvent); });
+    return true;
+  };
+  // ---- Compare two files; Find duplicate files (views/filesCompare.ts, filesDups.ts)
+  const fileHost = (): import('./filesCompare').FileHost | null => {
+    const hash = hashOf(); if (!hash || isVirtual(at) || isArc(at)) return null;
+    const kp = ktPlugin() as unknown as { uriRead?(o: { path: string; max: number; offset?: number }): Promise<{ b64: string }> } | null; const d = window.kurokawaTools as unknown as { readFile?(p: string): Promise<ArrayBuffer> } | undefined;
+    return { list: listAll, hash,
+      ...(kp?.uriRead ? { read: async (path: string, offset: number, max: number) => { const r = await kp.uriRead!({ path, max, offset }); const { fromB64 } = await import('./textCodec'); return typeof r?.b64 === 'string' ? fromB64(r.b64) : null; } } : {}),
+      ...(d?.readFile ? { readSmall: async (path: string) => new Uint8Array(await d.readFile!(path)) } : {}) };
+  };
+  const comparePair = (): [Entry, Entry] | null => { if (picked.size !== 2 || !fileHost()) return null; const two = [...picked].map((x) => entries.find((e) => e.path === x)); return two[0] && two[1] && !two[0].dir && !two[1].dir ? [two[0], two[1]] : null; };
+  const runCompare = (pair: [Entry, Entry]) => { const host = fileHost(); if (!host) return; leaveSel(); void import('./filesCompare').then((m) => m.compareSheet(pair[0], pair[1], host)); };
+  const findDups = () => { const host = fileHost(); if (!host) return; void import('./filesDups').then((m) => m.dupSheet(at, host, (ps) => void confirmDelete(ps))); };
   /** Why the clipboard cannot be pasted here (said on the bar, its Paste greyed), or null when it can. */
   const pasteBlock = (): string | null => {
     const c = clipboard; if (!c) return null;
@@ -949,6 +1018,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const ends = (ev: JobEvent) => ev.status === 'done' || ev.status === 'cancelled' || ev.status === 'failed';
   const onJob = (ev: JobEvent) => {
+    const subJob = subJobs.get(ev.id); if (subJob) { subJob(ev); return; }
     const rec = liveJobs.get(ev.id);
     if (rec && rec.owner !== me) {
       if (rec.owner || rec.ended) { if (ends(ev)) void load(); return; }
@@ -964,7 +1034,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     // (An archive's entries moved in from their hidden folder: the folder goes, whatever happened.)
     const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void jobs()?.filesJob({ id: `fq-${Date.now()}`, op: 'delete', paths: [stage] }).catch(() => undefined); }
     const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); }
-    if (ev.status === 'done') { if (ev.failed?.length) summarySheet(ev); else if (ev.left) toast(t('filesLeftInPlace', { n: localDigits(ev.left) }), 'info', 5000); else if (ev.skipped) toast(t('filesDoneSkipped', { n: localDigits(ev.skipped) })); else toast(t('filesDone')); }
+    if (ev.status === 'done') { if (ev.failed?.length) summarySheet(ev); else if (ev.left) toast(t('filesLeftInPlace', { n: localDigits(ev.left) }), 'info', 5000); else if (ev.skipped) toast(t('filesDoneSkipped', { n: localDigits(ev.skipped) })); else if (renamedMoves.has(ev.id)) toast(t('filesVerifyRenamed'), 'info', 5000); else if (ev.verified !== undefined) toast(t('filesVerifiedDone', { n: localDigits(ev.verified) })); else if (sizeChecked.has(ev.id)) toast(t('filesDoneSizes')); else toast(t('filesDone')); sizeChecked.delete(ev.id); renamedMoves.delete(ev.id); }
     else if (ev.status === 'cancelled') { if (ev.failed?.length) summarySheet(ev); else toast(ev.left ? t('filesCancelledLeft', { n: localDigits(ev.left) }) : t('filesCancelled')); }
     else if (ev.status === 'failed') toast(ev.message ?? t('filesFailed'), 'error');
   };
@@ -972,6 +1042,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const summarySheet = (ev: JobEvent) => {
     const failed = ev.failed ?? []; const sh = openSheet(t('filesSummaryTitle'), t('close'));
     sh.body.append(h('p', null, joinMeta([t('filesSummaryDone', { n: localDigits(Math.max(0, (ev.files ?? 0) - (ev.skipped ?? 0))) }), ev.skipped ? t('filesSummarySkipped', { n: localDigits(ev.skipped) }) : '', t('filesSummaryFailed', { n: localDigits(failed.length) })])),
+      ...(ev.mismatch?.length ? [h('p', { class: 'hint files-verify-note' }, icon('info'), h('span', null, t('filesVerifyMismatchNote', { n: localDigits(ev.mismatch.length) })))] : []),
       h('ul', { class: 'files-failed' }, ...failed.slice(0, 30).map((f) => h('li', { dir: 'auto' }, f))), ...(failed.length > 30 ? [h('p', { class: 'hint' }, '…')] : []));
   };
   const conflictSheet = (ev: JobEvent) => {

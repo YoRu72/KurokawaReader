@@ -175,6 +175,10 @@ const PATHS: Record<string, string> = {
   layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
   gesture: '<path d="M4 15c2-3 4-6 6-6s1 6 3 6 3-8 5-8 2 3 2 3"/>',
   minus: '<path d="M5 12h14"/>',
+  // (The text editor's wrap and go-to-line buttons: each its own picture.)
+  wrapText: '<path d="M3 6h18"/><path d="M3 12h13a3 3 0 0 1 0 6h-4"/><path d="m14 15-3 3 3 3"/><path d="M3 18h4"/>',
+  lineBreak: '<path d="M20 5v8a3 3 0 0 1-3 3H5"/><path d="m9 12-4 4 4 4"/>',
+  hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
   keyboard: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>',
 };
 

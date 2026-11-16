@@ -1,5 +1,5 @@
 // The smaller Files features of 0.21.0, one section each, on the pretend phone (tests/filesphone-fixture.cjs) at 360 px and,
-// where it matters, a computer's width; English and Arabic. Sections: foldersize, scroller, gallery, editor.
+// where it matters, a computer's width; English and Arabic. Sections: foldersize, scroller, gallery, editor, verify, compare, duplicates, reader.
 // Run: NODE_PATH=$(npm root -g) node tests/filesextras.cjs [en|ar] [section ...]
 const { chromium } = require('playwright'); const F = require('./filesphone-fixture.cjs'); const { K } = F; const path = require('node:path');
 let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FAIL ') + what + (cond || x === undefined ? '' : '  ' + JSON.stringify(x).slice(0, 300))); if (!cond) fails++; };
@@ -18,6 +18,9 @@ async function page(browser, port, z, lang, o = {}) {
     window.__bytes = {}; window.__writes = []; const b64 = (u) => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
     kt.uriRead = async ({ path, max = 4000000, offset = 0 }) => { const u = window.__bytes[path]; if (!u) throw new Error('missing'); const part = u.subarray(offset, Math.min(u.length, offset + max)); return { b64: b64(part), size: u.length, whole: offset + max >= u.length }; };
     kt.uriWrite = async ({ path, b64: d }) => { const bin = atob(d); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); window.__bytes[path] = u; window.__writes.push(path); return { size: u.length }; };
+    // (A checksum of a file: its size and a mark carried by copies; a name in __badNames differs once copied into a Full check's stage.)
+    window.__badNames = []; window.__hashPause = 0; window.__hashed = [];
+    kt.hashFile = async ({ path }) => { const n = window.__tree.get(path); if (!n || n.dir) throw new Error('unreadable'); window.__hashed.push(path); if (window.__hashPause) await new Promise((r) => setTimeout(r, window.__hashPause)); const bad = window.__badNames.includes(path.split('/').pop()) && path.includes('.kurokawa-extract-v-'); const sig = (n.sig ?? 'c' + n.size) + (bad ? 'X' : ''); return { md5: sig, sha1: sig, sha256: sig, size: n.size }; };
     kt.appsFor = async () => ({ apps: [] });
     window.__thumbs = []; kt.filesThumb = async (o) => { window.__thumbs.push(o.path); if (!/\.(jpe?g|mp4)$/.test(o.path)) return { url: null }; const c = document.createElement('canvas'); c.width = 8; c.height = 8; const g = c.getContext('2d'); g.fillStyle = 'hsl(' + (o.path.length * 37 % 360) + ',55%,55%)'; g.fillRect(0, 0, 8, 8); return { url: c.toDataURL() }; };
     kt.filesList = async (o) => { window.__lists++; if (window.__listPause) await new Promise((r) => setTimeout(r, window.__listPause)); return orig(o); };
@@ -112,10 +115,19 @@ async function scroller(browser, port, z, lang) {
   const th = p.locator('.files-fast-thumb'); ok(L('the handle shows when scrolling a long list'), (await p.locator('.files-fast.on').count()) === 1);
   const box = await th.boundingBox(); const rtl = lang === 'ar';
   ok(L(`the handle is on the ${rtl ? 'left' : 'right'} edge`), rtl ? box.x < 40 : box.x > 360 - 60, box);
+  // idle: slim, at the screen edge, clear of every ⋮; the ⋮ beside it is still hit by a tap
+  const clear = await p.evaluate(() => { const t = document.querySelector('.files-fast-thumb').getBoundingClientRect(); const g = document.querySelector('.files-fast-grip').getBoundingClientRect(); const dots = [...document.querySelectorAll('.files-row > button.icon-btn[data-icon="more"], .files-row .icon-btn[data-icon="more"]')].map((x) => x.getBoundingClientRect()).filter((r) => r.bottom > 0 && r.top < innerHeight); const gap = Math.min(...dots.map((r) => (document.dir === 'rtl' || document.documentElement.dir === 'rtl' ? t.left - r.right : r.left - 0 > 0 ? Math.min(Math.abs(t.left - r.right), 999) : 999)));
+    const near = dots.find((r) => r.top < t.bottom && r.bottom > t.top) ?? dots[0]; const hit = document.elementFromPoint(near.left + near.width / 2, near.top + near.height / 2); return { tw: t.width, gw: g.width, overlap: dots.some((r) => r.left < t.right && r.right > t.left && r.top < t.bottom && r.bottom > t.top), hitDots: !!hit?.closest('.icon-btn[data-icon="more"]'), n: dots.length, edge: document.documentElement.dir === 'rtl' ? t.left : innerWidth - t.right }; });
+  ok(L(`idle handle: slim (grip ${clear.gw}px, hit area ${clear.tw}px), at the screen edge (${clear.edge}px), over no ⋮`), clear.gw <= 5 && clear.tw <= 24 && clear.edge <= 1 && !clear.overlap && clear.n > 3, clear);
+  ok(L('the ⋮ beside the handle is hit by a tap point'), clear.hitDots, clear);
+  const crumbH = await p.evaluate(() => ['.files-crumbs', '.files-kinds', '.files-roots'].map((q) => { const e = document.querySelector(q); return e && !e.hidden ? Math.round(e.getBoundingClientRect().height) : -1; }));
+  ok(L(`header rows keep their height with a long list (${crumbH})`), crumbH.every((h) => h === -1 || h >= 30), crumbH);
   const track = await p.evaluate(() => { const e = document.querySelector('.files-fast'); const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
   const mid = (track.top + track.bottom) / 2;
   await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await p.mouse.down(); await p.mouse.move(box.x + box.width / 2, mid, { steps: 6 }); await p.waitForTimeout(500);
   const bub = await p.textContent('.files-fast-bubble'); ok(L(`dragging: the bubble names the place ("${bub}")`), bub === 'Z' && (await p.locator('.files-fast.drag.bubble').count()) === 1, bub);
+  const bb = await p.evaluate(() => { const b = document.querySelector('.files-fast-bubble').getBoundingClientRect(); const dots = [...document.querySelectorAll('.files-row .icon-btn[data-icon="more"]')].map((x) => x.getBoundingClientRect()); return { bubbleOverDots: dots.some((r) => r.left < b.right && r.right > b.left && r.top < b.bottom && r.bottom > b.top), gap: Math.min(...dots.map((r) => (document.documentElement.dir === 'rtl' ? b.left - r.right : r.left - b.right)).filter((g) => g > -400)) }; });
+  ok(L(`dragging: the bubble keeps off the ⋮ column (gap ${Math.round(bb.gap)}px)`), !bb.bubbleOverDots, bb);
   await shot(p, `extras-fast-scroller${lang === 'ar' ? '-ar' : ''}.png`);
   await p.mouse.up(); await p.waitForTimeout(400);
   const top = await p.evaluate(() => { const edge = document.querySelector('.topbar').getBoundingClientRect().bottom; const r = [...document.querySelectorAll('.files-row')].find((x) => x.getBoundingClientRect().bottom > edge + 40); return r ? +/(\d{4})/.exec(r.querySelector('.files-name').title)?.[1] : -1; });
@@ -164,6 +176,8 @@ async function gallery(browser, port, z, lang) {
   ok(L('selection: two tiles picked, in order badges'), (await p.locator('.files-row.picked').count()) === 2 && (await p.locator('.files-check.order').count()) === 2, await p.locator('.files-row.picked').count());
   const bd = await p.evaluate(() => { const b = document.querySelector('.files-check.order').getBoundingClientRect(); const r = b && document.querySelector('.files-row.picked').getBoundingClientRect(); return { b: [b.left, b.right], r: [r.left, r.right] }; });
   ok(L(`order badge inside its tile, on the ${rtl ? 'left' : 'right'}`), bd.b[0] >= bd.r[0] - 1 && bd.b[1] <= bd.r[1] + 1 && (rtl ? bd.b[0] - bd.r[0] < 20 : bd.r[1] - bd.b[1] < 20), bd);
+  const ring = await p.evaluate(() => { const r = document.querySelector('.files-row.picked'); const c = getComputedStyle(r, '::after'); const ic = r.querySelector('.files-ic').getBoundingClientRect(); const rr = r.getBoundingClientRect(); return { w: c.borderTopWidth, col: c.borderTopColor, bg: c.backgroundColor, inset: Math.round(ic.left - rr.left), plain: getComputedStyle(document.querySelectorAll('.files-row:not(.picked)')[0], '::after').content }; });
+  ok(L(`picked tile: primary ring ${ring.w}, scrim, picture inset ${ring.inset}px`), ring.w === '3px' && /\d/.test(ring.col) && ring.bg !== 'rgba(0, 0, 0, 0)' && ring.inset >= 6 && (ring.plain === 'none' || ring.plain === 'normal'), ring);
   await shot(p, `extras-gallery${rtl ? '-ar' : ''}.png`);
   await p.evaluate(() => document.querySelector('.files-selbar .icon-btn')?.click()); await p.waitForTimeout(200);
   // pinch: spread = bigger pictures = fewer columns; pinch in = more columns; kept for this kind of folder
@@ -243,12 +257,12 @@ async function editor(browser, port, z, lang) {
   await p.click(`${ED} .files-find-row.acts .btn.text`); await p.waitForTimeout(200); ok(L('Undo after Replace all'), (await tav(p)) === orig);
   ok(L('nothing written to the file yet'), (await p.evaluate(() => window.__writes.length)) === 0);
   // ---- go to line, line numbers, font size
-  await tool(p, 'target').click(); await p.waitForSelector('.files-goto'); await p.fill('.files-goto', '3'); await p.keyboard.press('Enter'); await p.waitForTimeout(300);
+  await tool(p, 'hash').click(); await p.waitForSelector('.files-goto'); await p.fill('.files-goto', '3'); await p.keyboard.press('Enter'); await p.waitForTimeout(300);
   ok(L('go to line 3: the caret at the start of line 3'), (await p.evaluate(() => document.querySelector('.files-ta').selectionStart)) === orig.indexOf('السلام'), await p.evaluate(() => document.querySelector('.files-ta').selectionStart));
   await tool(p, 'list').click(); await p.waitForTimeout(250);
   const g = await p.evaluate(() => ({ vis: !document.querySelector('.files-ed-gutter').hidden, txt: document.querySelector('.files-ed-gutter').textContent, nowrap: document.querySelector('.files-ta').classList.contains('nowrap') }));
   ok(L('line numbers on: 1..6 shown (5 lines and the empty one after the last newline), wrapping turned off'), g.vis && g.txt === '1\n2\n3\n4\n5\n6' && g.nowrap, g);
-  await tool(p, 'scroll').click(); await p.waitForTimeout(200); ok(L('wrapping on again: line numbers off'), await p.evaluate(() => document.querySelector('.files-ed-gutter').hidden));
+  await tool(p, 'wrapText').click(); await p.waitForTimeout(200); ok(L('wrapping on again: line numbers off'), await p.evaluate(() => document.querySelector('.files-ed-gutter').hidden));
   const f0 = await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.files-ta')).fontSize)); await tool(p, 'more').click(); await p.waitForSelector('.files-fontrow'); await p.click('.files-fontrow .icon-btn[data-icon="zoomIn"]'); await p.waitForTimeout(150); await p.keyboard.press('Escape'); await p.waitForTimeout(250);
   const f1 = await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.files-ta')).fontSize)); ok(L(`font size up (${f0} -> ${f1})`), f1 > f0);
   await p.click(`${ED} .files-ta`); await p.fill(`${ED} .files-ta`, orig + 'tail\n'); await p.click(`${ED} .btn.primary`); await p.waitForTimeout(400);
@@ -289,6 +303,187 @@ async function editor(browser, port, z, lang) {
   ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close();
 }
 
+
+const { SD, P } = F;
+/** Copy or cut `names` from the folder now open, then open `dest` and paste. */
+const pasteTo = async (p, names, how, dest) => {
+  if (names.length === 1) { await menu(p, names[0]); await p.locator('.sheet .dest-row', { hasText: how === 'copy' ? /^\s*(Copy|نسخ)\s*$/ : /^\s*(Cut|قص)\s*$/ }).first().click(); }
+  else { await rowOf(p, names[0]).locator('.files-main').click({ delay: 700 }).catch(() => undefined); }
+  await p.waitForTimeout(250);
+  await p.evaluate((d) => { location.hash = '#/files?p=' + encodeURIComponent(d); }, dest); await p.waitForSelector('.files-clip-paste:not([disabled])', { timeout: 5000 }); await p.click('.files-clip-paste');
+};
+async function verify(browser, port, z, lang) {
+  const L = (s) => `[${lang}-verify] ${s}`; const ar = lang === 'ar';
+  const treeHas = (p, path) => p.evaluate((x) => window.__tree.has(x), path);
+  const calls = (p) => p.evaluate(() => window.__calls.filter((c) => /^(copy|move|delete)/.test(c)));
+  const mk = () => page(browser, port, z, lang, { seed: (k) => { const o = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); o.verify = 'full'; localStorage.setItem('kt.files.prefs', JSON.stringify(o)); window.__put(k + '/Sub/in2.txt', false, 30); } });
+  // ---- the setting
+  { const { p, errors } = await page(browser, port, z, lang);
+    await p.click('.topbar-actions .icon-btn[data-icon="more"]'); await p.locator('.sheet .dest-row', { hasText: /Files settings|إعدادات الملفات/ }).click(); await p.waitForSelector('.sheet .files-verify-row');
+    ok(L('Files settings: «Verify after copying» with Size check chosen by default'), /Size check|فحص الحجم/.test(await p.textContent('.files-verify-row')) && !(await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').verify)));
+    await p.locator('.files-verify-row .pick-btn').click(); await p.waitForTimeout(250); await p.locator('.sheet button, .sheet .dest-row', { hasText: /^\s*(Full check|فحص كامل)\s*$/ }).last().click(); await p.waitForTimeout(300);
+    ok(L('choosing Full check is kept'), (await p.evaluate(() => JSON.parse(localStorage.getItem('kt.files.prefs')).verify)) === 'full');
+    ok(L('no page errors (setting)'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+  // ---- Size check (the default): a plain job, and it says the sizes were checked
+  { const { p } = await page(browser, port, z, lang);
+    await pasteTo(p, ['Song.mp3'], 'copy', SD); await p.waitForTimeout(700);
+    const c = await calls(p); ok(L(`size check: one plain copy straight to the destination (${c})`), c.length === 1 && /^copy:Song.mp3>/.test(c[0]) && !/kurokawa-extract/.test(c[0]) && (await p.evaluate(() => window.__hashed.length)) === 0, c);
+    ok(L('size check: the message says the sizes were checked'), /sizes? .*checked|size of every file|فُحص حجم كل ملف/.test(await p.evaluate(() => document.querySelector('.toast')?.textContent ?? '')) , await p.evaluate(() => document.querySelector('.toast')?.textContent)); await p.close(); }
+  // ---- Full check, a copy that matches
+  { const { p, errors } = await mk();
+    await pasteTo(p, ['Song.mp3'], 'copy', SD); await p.waitForTimeout(1500);
+    const c = await calls(p);
+    ok(L(`full: copied into a hidden stage, moved out, the stage removed (${c.join(' | ')})`), c.length === 3 && /^copy:Song.mp3>.*\.kurokawa-extract-v-/.test(c[0]) && /^move:Song.mp3>/.test(c[1]) && /^delete:\.kurokawa-extract-v-/.test(c[2]), c);
+    ok(L('full: the copy is at the destination, the original still here, no stage left'), (await treeHas(p, SD + '/Song.mp3')) && (await treeHas(p, K + '/Song.mp3')) && !(await p.evaluate(() => [...window.__tree.keys()].some((k) => k.includes('.kurokawa-extract-v-')))));
+    ok(L('full: both files were summed'), (await p.evaluate(() => window.__hashed.length)) === 2, await p.evaluate(() => window.__hashed));
+    ok(L('full: the end message says the files were checked'), /checked|فُحصت/.test(await p.evaluate(() => document.querySelector('.toast')?.textContent ?? '')), await p.evaluate(() => document.querySelector('.toast')?.textContent));
+    ok(L('full: the stage never shows in the list'), !(await p.locator('.files-name[title^=".kurokawa"]').count()));
+    ok(L('no page errors (full copy)'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+  // ---- Full check, a move where one copy differs: the original stays, the bad copy is gone, the failed one listed
+  { const { p, errors } = await mk(); await p.evaluate(() => { window.__badNames = ['photo.jpg']; });
+    await rowOf(p, 'Song.mp3').locator('.files-main').click({ delay: 800 }); await p.waitForTimeout(300);
+    await p.touchscreen.tap(...await rowOf(p, 'photo.jpg').boundingBox().then((b) => [b.x + b.width / 2, b.y + b.height / 2])); await p.waitForTimeout(300);
+    await p.locator('.files-selbar .icon-btn[data-icon="scissors"]').click(); await p.waitForTimeout(250);
+    await p.evaluate((d) => { location.hash = '#/files?p=' + encodeURIComponent(d); }, SD); await p.waitForSelector('.files-clip-paste:not([disabled])'); await p.click('.files-clip-paste'); await p.waitForSelector('.sheet .files-failed', { timeout: 8000 });
+    ok(L('mismatch: the good file moved (copy there, original gone)'), (await treeHas(p, SD + '/Song.mp3')) && !(await treeHas(p, K + '/Song.mp3')));
+    ok(L('mismatch: the differing copy is not at the destination; its original stays'), !(await treeHas(p, SD + '/photo.jpg')) && (await treeHas(p, K + '/photo.jpg')));
+    ok(L('mismatch: no stage left'), !(await p.evaluate(() => [...window.__tree.keys()].some((k) => k.includes('.kurokawa-extract-v-')))));
+    const sheet = await p.textContent('.sheet'); ok(L('mismatch: the result sheet names the failed file'), /photo\.jpg/.test(await p.textContent('.sheet .files-failed')) && /did not match|خالفت/.test(sheet), sheet);
+    ok(L('mismatch: what stays cut is the failed one only'), (await p.evaluate(() => document.querySelector('.files-clip-name')?.textContent ?? '')).includes('photo'));
+    await p.waitForTimeout(600); await shot(p, `extras-verify-result${ar ? '-ar' : ''}.png`);
+    ok(L('no page errors (mismatch)'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
+  // ---- Cancel while checking: nothing at the destination, the stage removed, the original in place
+  { const { p } = await mk(); await p.evaluate(() => { window.__hashPause = 400; });
+    await pasteTo(p, ['Song.mp3'], 'move', SD); await p.waitForSelector('.files-job', { timeout: 4000 }); await p.waitForFunction(() => window.__hashed.length >= 1, null, { timeout: 5000 });
+    ok(L('while checking: the job says which file'), /Song\.mp3/.test(await p.textContent('.files-job-meta')), await p.textContent('.files-job-meta'));
+    await shot(p, `extras-verify-progress${ar ? '-ar' : ''}.png`);
+    await p.click('.files-job .icon-btn'); await p.waitForTimeout(1200);
+    ok(L('Cancel: nothing at the destination, the original is in place, the stage is removed'), !(await treeHas(p, SD + '/Song.mp3')) && (await treeHas(p, K + '/Song.mp3')) && !(await p.evaluate(() => [...window.__tree.keys()].some((k) => k.includes('.kurokawa-extract-v-')))), await p.evaluate(() => [...window.__tree.keys()].filter((k) => /Song|extract/.test(k))));
+    ok(L('Cancel: the move stays on the clipboard (cut)'), (await p.locator('.files-clip-paste').count()) === 1);
+    await p.close(); }
+  // ---- a move on one storage is a rename: nothing to check, and it says so
+  { const { p } = await mk();
+    await pasteTo(p, ['Song.mp3'], 'move', P + '/Music'); await p.waitForTimeout(900);
+    const c = await calls(p); ok(L(`same storage: a plain move, no stage, nothing summed (${c})`), c.length === 1 && /^move:Song.mp3>/.test(c[0]) && !/kurokawa/.test(c[0]) && (await p.evaluate(() => window.__hashed.length)) === 0, c);
+    ok(L('same storage: the message says nothing was copied'), /nothing was copied|لم يُنسخ شيء/.test(await p.evaluate(() => document.querySelector('.toast')?.textContent ?? '')), await p.evaluate(() => document.querySelector('.toast')?.textContent)); await p.close(); }
+  // ---- a folder: every file inside summed
+  { const { p } = await mk();
+    await pasteTo(p, ['Sub'], 'copy', SD); await p.waitForTimeout(1800);
+    ok(L('folder: its files are at the destination'), (await treeHas(p, SD + '/Sub/in.txt')) && (await treeHas(p, SD + '/Sub/Deeper/deep.txt')) && (await treeHas(p, SD + '/Sub/in2.txt')));
+    ok(L('folder: the 3 files in it were each summed (original and copy)'), (await p.evaluate(() => window.__hashed.length)) === 6, await p.evaluate(() => window.__hashed.length)); await p.close(); }
+  // ---- a stage left by a killed app is swept at the next start; it never shows
+  { const stage = K + '/.kurokawa-extract-v-fj-old';
+    const { p } = await page(browser, port, z, lang, { seed: (k) => { window.__put(k + '/.kurokawa-extract-v-fj-old', true); window.__put(k + '/.kurokawa-extract-v-fj-old/x.bin', false, 5); localStorage.setItem('kt.files.stages', JSON.stringify([k + '/.kurokawa-extract-v-fj-old'])); } });
+    await p.waitForTimeout(800);
+    ok(L('start: a stage left behind is deleted'), !(await treeHas(p, stage)) && !(await p.evaluate(() => localStorage.getItem('kt.files.stages'))), await p.evaluate(() => localStorage.getItem('kt.files.stages')));
+    await p.close(); }
+}
+
+
+const SEED_CMP = (k) => {
+  window.__put(k + '/Cmp', true); const mk = (n, u) => { window.__put(`${k}/Cmp/${n}`, false, u.length); window.__bytes[`${k}/Cmp/${n}`] = u; }; const te = (x) => new TextEncoder().encode(x);
+  mk('a.txt', te('one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n')); mk('a-b.txt', te('one\ntwo\nTHREE\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\n'));
+  const big = new Uint8Array(2_500_000); for (let i = 0; i < big.length; i++) big[i] = (i * 7) & 255; mk('a1.bin', big); mk('a2.bin', big.slice());
+  const d = big.slice(); d[1_600_000] ^= 1; mk('a3.bin', d); mk('a-s.bin', big.slice(0, 2_000_000));
+  mk('a-e1.txt', new Uint8Array(0)); mk('a-e2.txt', new Uint8Array(0));
+  window.__put(`${k}/Dups`, true); window.__put(`${k}/Dups/Sub`, true);
+  for (const n of ['a.bin', 'b.bin', 'c.bin']) window.__put(`${k}/Dups/${n}`, false, 1000); window.__tree.get(`${k}/Dups/c.bin`).sig = 'other';
+  window.__put(`${k}/Dups/d.bin`, false, 2000); window.__put(`${k}/Dups/e.bin`, false, 3000); window.__put(`${k}/Dups/Sub/f.bin`, false, 3000); window.__put(`${k}/Dups/zero1`, false, 0); window.__put(`${k}/Dups/zero2`, false, 0);
+};
+async function compare(browser, port, z, lang) {
+  const L = (s) => `[${lang}-compare] ${s}`; const ar = lang === 'ar';
+  const { p, errors } = await page(browser, port, z, lang, { at: K + '/Cmp', seed: SEED_CMP }); const cdp = await p.context().newCDPSession(p);
+  const pickTwo = async (a, b) => {
+    await rowOf(p, a).evaluate((e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); const r1 = await rowOf(p, a).boundingBox(); await hold(cdp, r1.x + r1.width / 2, r1.y + r1.height / 2); await p.waitForTimeout(300);
+    await rowOf(p, b).evaluate((e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); const r2 = await rowOf(p, b).boundingBox(); await p.touchscreen.tap(r2.x + r2.width / 2, r2.y + r2.height / 2); await p.waitForTimeout(300);
+    if (process.env.DBG) await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/dbg.png' });
+    if (await p.locator('.files-selbar [data-icon="columns"]').count()) await p.click('.files-selbar [data-icon="columns"]');
+    else { await p.click('.files-selbar [data-icon="more"]'); await p.waitForSelector('.sheet .dest-row'); await p.locator('.sheet .dest-row', { hasText: /^\s*(Compare|مقارنة)\s*$/ }).click(); }
+    await p.waitForSelector('.files-cmp-verdict .grow b, .files-cmp-verdict.same, .files-cmp-verdict.diff', { timeout: 8000 }); await p.waitForTimeout(400);
+  };
+  const verdict = () => p.textContent('.files-cmp-verdict'); const closeSheet = async () => { await p.click('.sheet .sheet-head button[aria-label]'); await p.waitForTimeout(300); };
+  const sameRe = /identical|متطابقان/, diffRe = /different|مختلفان/;
+  // one file picked: no Compare
+  const r0 = await rowOf(p, 'a.txt').boundingBox(); await hold(cdp, r0.x + r0.width / 2, r0.y + r0.height / 2); await p.waitForTimeout(300);
+  ok(L('one file picked: Compare is not offered'), (await p.locator('.files-selbar [data-icon="columns"]').count()) === 0);
+  await p.click('.files-selbar [data-icon="close"]').catch(() => undefined); await p.waitForTimeout(300);
+  await pickTwo('a1.bin', 'a2.bin'); ok(L('identical files (2.5 MB, several chunks): said identical'), sameRe.test(await verdict()), await verdict());
+  const reads = await p.evaluate(() => 0); void reads; await closeSheet();
+  await pickTwo('a1.bin', 'a3.bin'); ok(L('same size, one byte differs: different, and where'), diffRe.test(await verdict()) && /1600000|1[,٬]?600[,٬]?000|١٦٠٠٠٠٠/.test(await verdict()), await verdict()); await closeSheet();
+  await pickTwo('a1.bin', 'a-s.bin'); ok(L('different sizes: different by size first, nothing read'), diffRe.test(await verdict()) && /MB/.test(await verdict()), await verdict()); await closeSheet();
+  await pickTwo('a-e1.txt', 'a-e2.txt'); ok(L('two empty files: identical'), sameRe.test(await verdict()), await verdict()); await closeSheet();
+  // a computer's way: no chunk reads, the checksums
+  await p.evaluate(() => { window.__noRead = window.Capacitor.Plugins.KurokawaTools.uriRead; window.Capacitor.Plugins.KurokawaTools.uriRead = undefined; window.__hashed.length = 0; });
+  await pickTwo('a1.bin', 'a2.bin'); ok(L('no chunk reads: the checksums say identical'), sameRe.test(await verdict()) && (await p.evaluate(() => window.__hashed.length)) === 2, await verdict());
+  await closeSheet(); await p.evaluate(() => { window.Capacitor.Plugins.KurokawaTools.uriRead = window.__noRead; });
+  // two text files: the lines
+  await pickTwo('a.txt', 'a-b.txt'); const diffTxt = await p.textContent('.files-cmp-diff');
+  ok(L('text files: different, with the diff'), diffRe.test(await verdict()) && (await p.locator('.cmp-row.add').count()) === 2 && (await p.locator('.cmp-row.del').count()) === 1, [await p.locator('.cmp-row.add').count(), await p.locator('.cmp-row.del').count()]);
+  ok(L('text files: the changed lines are there, marked + and −'), /THREE/.test(diffTxt) && /eleven/.test(diffTxt) && (await p.locator('.cmp-row.add .cmp-mark').first().textContent()) === '+' && (await p.locator('.cmp-row.del .cmp-mark').first().textContent()) === '−', diffTxt.slice(0, 200));
+  const tint = await p.evaluate(() => { const c = (sel) => { const e = document.querySelector(sel); const g = getComputedStyle(e); return [g.backgroundColor, g.color]; }; const lum = (rgb) => { const sc = rgb.startsWith('color(') ? 255 : 1; const m = rgb.replace(/^color\(srgb/, '').match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => { v *= sc; v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]; }; const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }; return { add: ratio(...c('.cmp-row.add')), del: ratio(...c('.cmp-row.del')) }; });
+  ok(L(`tints pass contrast (add ${tint.add.toFixed(1)}, remove ${tint.del.toFixed(1)}; 4.5 needed)`), tint.add >= 4.5 && tint.del >= 4.5, tint);
+  await shot(p, `extras-compare${ar ? '-ar' : ''}.png`); await closeSheet();
+  ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close();
+}
+async function duplicates(browser, port, z, lang) {
+  const L = (s) => `[${lang}-dups] ${s}`; const ar = lang === 'ar';
+  const { p, errors } = await page(browser, port, z, lang, { at: K + '/Dups', seed: SEED_CMP });
+  const open = async () => { await p.click('.topbar-actions .icon-btn[data-icon="more"]'); await p.waitForSelector('.sheet .dest-row'); await p.locator('.sheet .dest-row', { hasText: /Find duplicate files|البحث عن الملفات المكرّرة/ }).click(); await p.waitForSelector('.files-dups-sub'); };
+  const search = async () => { await p.evaluate(() => { window.__hashed.length = 0; }); await p.click('.sheet .actions .btn.primary, .sheet .sheet-actions .btn.primary'); await p.waitForSelector('.files-dup-group', { timeout: 8000 }); await p.waitForTimeout(300); };
+  await open(); ok(L('the folder menu offers it; sub-folders off by default'), !(await p.locator('.files-dups-sub input').isChecked()));
+  await search();
+  ok(L('this folder only: one group of two (a, b; c is the same size but different content)'), (await p.locator('.files-dup-group').count()) === 1 && (await p.locator('.files-dup-file').count()) === 2, await p.locator('.files-dup-file').count());
+  const hashedNames = await p.evaluate(() => window.__hashed.map((x) => x.split('/').pop()).sort());
+  ok(L(`only same-size files were summed (${hashedNames})`), hashedNames.join() === 'a.bin,b.bin,c.bin', hashedNames);
+  ok(L('the wasted space is told'), /1000 B|1[,٬]?000 B|1\.0 ?KB|KB|B/.test(await p.textContent('.files-dups-sum')), await p.textContent('.files-dups-sum'));
+  ok(L('nothing is ticked at first'), (await p.locator('.files-dup-file.on').count()) === 0 && (await p.locator('.sheet .btn.danger').isDisabled()));
+  await p.locator('.files-dup-file').nth(0).click(); await p.waitForTimeout(150);
+  ok(L('ticking one copy locks the other: at least one stays'), (await p.locator('.files-dup-file.on').count()) === 1 && (await p.locator('.files-dup-file.locked').count()) === 1);
+  await p.locator('.files-dup-file').nth(1).click({ force: true }); await p.waitForTimeout(150); ok(L('the locked one cannot be ticked'), (await p.locator('.files-dup-file.on').count()) === 1);
+  await shot(p, `extras-duplicates${ar ? '-ar' : ''}.png`);
+  await p.click('.sheet .btn.danger'); await p.waitForTimeout(500);
+  ok(L('Delete goes through the page\'s own delete question'), /Delete|حذف/.test(await p.textContent('.sheet')) && /1/.test(await p.textContent('.sheet')), (await p.textContent('.sheet')).slice(0, 200));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  // with sub-folders
+  await open(); await p.locator('.files-dups-sub').click(); await search();
+  ok(L('with sub-folders: a second group (e.bin and Sub/f.bin)'), (await p.locator('.files-dup-group').count()) === 2 && /Sub/.test(await p.textContent('.files-dup-group:nth-of-type(1), .files-dups-out')), await p.locator('.files-dup-group').count());
+  ok(L('empty files are not duplicates of anything'), !(await p.textContent('.files-dups-out')).includes('zero1'));
+  // Cancel
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300); await p.evaluate(() => { window.__hashPause = 500; }); await open(); await p.evaluate(() => { window.__hashed.length = 0; });
+  await p.click('.sheet .actions .btn.primary, .sheet .sheet-actions .btn.primary'); await p.waitForSelector('.files-dups-out .files-job'); await p.waitForFunction(() => window.__hashed.length >= 1);
+  await p.locator('.files-dups-out .btn', { hasText: /Cancel|إلغاء/ }).click(); await p.waitForTimeout(900); const n1 = await p.evaluate(() => window.__hashed.length); await p.waitForTimeout(900);
+  ok(L('Cancel: summing stops'), (await p.evaluate(() => window.__hashed.length)) === n1 && n1 <= 2, n1);
+  ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close();
+}
+
+
+async function reader(browser, port, z, lang) {
+  const L = (s) => `[${lang}-reader] ${s}`; const ar = lang === 'ar';
+  const { p, errors } = await page(browser, port, z, lang, { at: K + '/Books', seed: (k) => { window.__put(k + '/Books', true); for (const [n, sz] of [['novel.epub', 3e6], ['manual.pdf', 2e6], ['comic.cbz', 9e6], ['old.azw3', 1e6], ['story.fb2', 4e5], ['notes.txt', 900], ['photo.jpg', 2e6], ['song.mp3', 4e6], ['pack.zip', 5e6], ['vol.cbr', 7e6]]) window.__put(`${k}/Books/${n}`, false, sz); } });
+  await p.evaluate(() => { const kt = window.Capacitor.Plugins.KurokawaTools; window.__asked = []; window.__opened = []; window.__readerOn = true;
+    kt.appsFor = async ({ path, mime }) => { window.__asked.push(mime); return { apps: [{ pkg: 'com.other.viewer', cls: 'com.other.Viewer', label: 'Other' }, ...(window.__readerOn ? [{ pkg: 'app.kurokawa.reader', cls: 'app.kurokawa.reader.MainActivity', label: 'Kurokawa Reader' }] : [])] }; };
+    kt.openIn = async (o) => { window.__opened.push(o); }; });
+  const has = async (name) => { await menu(p, name); await p.waitForTimeout(500); const n = await p.locator('.sheet .files-open-reader').count(); return n; };
+  const close = async () => { await p.keyboard.press('Escape'); await p.waitForTimeout(250); };
+  ok(L('epub: «Open in Kurokawa Reader» is offered'), (await has('novel.epub')) === 1);
+  const order = await p.evaluate(() => [...document.querySelectorAll('.sheet .dest-row')].slice(0, 3).map((x) => x.className.includes('files-open-reader')));
+  ok(L('it sits right after Open'), order[1] === true, order);
+  await shot(p, `extras-reader${ar ? '-ar' : ''}.png`);
+  await p.click('.sheet .files-open-reader'); await p.waitForTimeout(300);
+  const o = await p.evaluate(() => window.__opened[0]);
+  ok(L('it opens the file in the Reader by an explicit intent (package, class, the file, its type)'), o && o.pkg === 'app.kurokawa.reader' && o.cls === 'app.kurokawa.reader.MainActivity' && /novel\.epub$/.test(o.path) && o.mime === 'application/epub+zip', o);
+  for (const [n, mime] of [['manual.pdf', 'application/pdf'], ['comic.cbz', 'application/vnd.comicbook+zip'], ['old.azw3', 'application/x-mobipocket-ebook'], ['story.fb2', 'application/x-fictionbook+xml']]) { ok(L(`${n}: offered, asked under ${mime}`), (await has(n)) === 1 && (await p.evaluate(() => window.__asked.slice(-1)[0])) === mime); await close(); }
+  for (const n of ['photo.jpg', 'song.mp3', 'pack.zip', 'vol.cbr']) { ok(L(`${n}: not a format the Reader opens: no entry`), (await has(n)) === 0); await close(); }
+  await p.evaluate(() => { window.__readerOn = false; }); ok(L('the Reader not installed: no entry'), (await has('novel.epub')) === 0); await close();
+  await p.evaluate(() => { window.__readerOn = true; window.Capacitor.Plugins.KurokawaTools.openIn = async () => { throw new Error('notInstalled'); }; }); await has('novel.epub'); await p.click('.sheet .files-open-reader'); await p.waitForTimeout(400);
+  ok(L('a failed hand-over says so'), /could not open|تعذّر/.test(await p.evaluate(() => document.querySelector('.toast')?.textContent ?? '')), await p.evaluate(() => document.querySelector('.toast')?.textContent));
+  ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close();
+  // a computer: nothing to ask about the Reader being installed, so no entry (Open uses the system default)
+  const pc = await page(browser, port, z, lang, { at: K + '/Books', pc: true, seed: (k) => { window.__put(k + '/Books', true); window.__put(k + '/Books/novel.epub', false, 3e6); } });
+  await pc.p.locator('.files-row', { has: pc.p.locator('.files-name[title="novel.epub"]') }).locator('button.icon-btn[data-icon="more"]').click().catch(() => undefined); await pc.p.waitForTimeout(500);
+  ok(L('PC: no «Open in Kurokawa Reader» entry'), (await pc.p.locator('.files-open-reader').count()) === 0); await pc.p.close();
+}
+
 (async () => {
   const z = await F.zipListing(); const srv = await F.serve(); const port = srv.address().port; const browser = await chromium.launch();
   try {
@@ -297,6 +492,10 @@ async function editor(browser, port, z, lang) {
       if (want('scroller')) await scroller(browser, port, z, lang);
       if (want('gallery')) await gallery(browser, port, z, lang);
       if (want('editor')) await editor(browser, port, z, lang);
+      if (want('verify')) await verify(browser, port, z, lang);
+      if (want('compare')) await compare(browser, port, z, lang);
+      if (want('duplicates')) await duplicates(browser, port, z, lang);
+      if (want('reader')) await reader(browser, port, z, lang);
     }
   } finally { await browser.close(); srv.close(); }
   console.log(fails ? `\n${fails} failed` : '\nall ok'); process.exit(fails ? 1 : 0);
