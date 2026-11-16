@@ -40,6 +40,17 @@ function askPassword(name: string, wrong: boolean): Promise<string | null> {
   });
 }
 
+/** «Forget this job» for a blocked one, after a plain confirmation: only its record goes; its extracted files stay, the archive can no longer be rebuilt. */
+function forgetJob(j: ShelfJob, redraw: () => void): Promise<void> {
+  return new Promise((res) => {
+    const sh = openSheet(t('shelfForget'), t('cancel'), { onClose: () => res() }); sh.el.classList.add('forget-sheet');
+    sh.body.append(h('p', { class: 'forget-name', dir: 'auto' }, baseName(j.archive)), h('p', null, t('shelfForgetAsk')), ...(j.dest ? [h('p', { class: 'src', dir: 'ltr' }, j.dest)] : []));
+    sh.actions.classList.add('equal');
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('cancel')),
+      h('button', { type: 'button', class: 'btn danger', onclick: async () => { try { await shelfAct(j.journal, 'forget'); toast(t('shelfForgotten')); } catch (e) { toast(why(String((e as Error).message ?? e)), 'error'); } sh.close(); redraw(); } }, t('shelfForget')));
+  });
+}
+
 /** The card, drawn into `el` (empty and hidden when nothing is left unfinished). */
 export async function shelfBanner(el: HTMLElement, jobs?: ShelfJob[]): Promise<void> {
   const all = (jobs ?? (await shelfJobs())).filter((j) => j.state !== 'done' && !leftNow().includes(j.journal));
@@ -66,6 +77,7 @@ export async function shelfBanner(el: HTMLElement, jobs?: ShelfJob[]): Promise<v
     if (j.can.includes('finish')) { buttons.push(btn(t('shelfFinish'), 'primary', (b) => void act(j, 'finish', b))); hints.push(h('li', null, h('b', null, t('shelfFinish')), ' — ', t('shelfFinishHint'))); }
     if (j.can.includes('restore')) { buttons.push(btn(t('shelfRestore'), 'tonal', (b) => void act(j, 'restore', b))); hints.push(h('li', null, h('b', null, t('shelfRestore')), ' — ', t(j.mode === 'normal' ? 'shelfRestoreHintNormal' : 'shelfRestoreHint'))); }
     if (j.can.includes('restoreV1')) { buttons.push(btn(t('shelfRestoreV1'), 'tonal', (b) => void act(j, 'restoreV1', b))); hints.push(h('li', null, h('b', null, t('shelfRestoreV1')), ' — ', t('shelfRestoreV1Hint'))); }
+    if (j.can.includes('forget')) { buttons.push(btn(t('shelfForget'), 'tonal', () => void forgetJob(j, redraw))); hints.push(h('li', null, h('b', null, t('shelfForget')), ' — ', t('shelfForgetHint'))); }
     buttons.push(btn(t('shelfLeave'), 'text', () => { leave(j.journal); redraw(); })); hints.push(h('li', null, h('b', null, t('shelfLeave')), ' — ', t('shelfLeaveHint')));
     return h('div', { class: 'shelf-job' + (blocked ? ' blocked' : '') }, h('div', { class: 'shelf-name' }, icon('archive'), h('span', { dir: 'auto' }, baseName(j.archive))), h('small', { class: 'src', dir: 'auto' }, line), h('ul', { class: 'shelf-hints' }, ...hints), h('div', { class: 'shelf-actions' }, ...buttons));
   });

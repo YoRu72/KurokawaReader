@@ -243,7 +243,7 @@ async function extract(file, dest, o, pr) {
   // finished job's beside a new archive of that name: left out (null) — the archive extracted as usual, never in place while that job is on the shelf.
   if (hasJournal(file)) {
     const v = await journalVersion(file);
-    if (v === 2) { const r = await Engine.finishBeside(file, pr, undefined, { password: o.password, keepFree: o.keepFree, registry: REGISTRY, confirmed: !!o.finishBeside }); if (r) { last = r; return r.files; } if (o.inPlace && !o.only) throw new Error('journalExists'); }
+    if (v === 2) { const r = await Engine.finishBeside(file, pr, undefined, { password: o.password, keepFree: o.keepFree, registry: REGISTRY, confirmed: !!o.finishBeside }); if (r) { last = r; return r.files; } if (o.inPlace && !o.only) throw new Error('refused oldJob oldJob'); }
     else { if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
   }
   const fmt = await formatOf(file); let n;
@@ -501,6 +501,8 @@ async function jobAct(journal, act, pr) {
   if (act === 'finish') return Engine.finish(journal, pr, undefined, { password: pr?.password });
   if (act === 'restore' || act === 'undo') return Engine.restore(journal);
   if (act === 'dismiss') return Engine.dismiss(journal);
+  // (A blocked job's own record only — journal, tail, unit log, this registry's pointers; never its files.)
+  if (act === 'forget') return Engine.forgetBlocked(journal, REGISTRY);
   if (act === 'restoreV1') { const file = journal.replace(/\.kurokawa-unzip$/, ''); const left = await restoreV1(file); return { left }; }
   return {};
 }

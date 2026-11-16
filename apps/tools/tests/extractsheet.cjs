@@ -22,7 +22,8 @@ const REPORTS = {
   conflicts: S.preflight({ ...base, entries: ents(4, 0.1 * GB), existing: ['Season 1/Episode 1.mkv', 'Season 1/Episode 2.mkv', 'Season 1/Episode 3.mkv'], free: 40 * GB }, { margin: 2 * GB }),
 };
 ok('the reports made by the real rules', REPORTS.ok.recommend === 'normal' && REPORTS.fit.recommend === 'inPlace' && !REPORTS.problems.normal.ok && REPORTS.problems.problems.some((p) => p.kind === 'rewrite'), [REPORTS.ok.recommend, REPORTS.fit.recommend]);
-const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1', archive: '/home/u/Downloads/Show.zip', dest: '/home/u/Downloads/Show', mode: 'inplace', state: 'paused', why: 'noSpace', done: 12, total: 40, can: ['finish', 'restore', 'leave'] }, { journal: '/home/u/Downloads/old.zip.kurokawa-unzip', id: 'b2', archive: '/home/u/Downloads/old.zip', dest: '', mode: 'inplace', state: 'blocked', why: 'archiveChanged', done: 0, total: 0, can: ['leave'] }];
+const PREVIEW = process.env.KT_PREVIEW_DIR || require('node:os').tmpdir();
+const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1', archive: '/home/u/Downloads/Show.zip', dest: '/home/u/Downloads/Show', mode: 'inplace', state: 'paused', why: 'noSpace', done: 12, total: 40, can: ['finish', 'restore', 'leave'] }, { journal: '/home/u/Downloads/old.zip.kurokawa-unzip', id: 'b2', archive: '/home/u/Downloads/old.zip', dest: '', mode: 'inplace', state: 'blocked', why: 'archiveChanged', done: 0, total: 0, can: ['forget', 'leave'] }];
 
 (async () => {
   const web = serve().listen(0); const url = `http://127.0.0.1:${web.address().port}/`; const br = await chromium.launch();
@@ -120,7 +121,13 @@ const SHELF = [{ journal: '/home/u/Downloads/Show.zip.kurokawa-unzip', id: 'a1',
     await p.goto(url + '#/files?p=/home/u/Downloads'); const got = await p.waitForSelector('.files-shelf .shelf-card', { timeout: 8000 }).then(() => true).catch(() => false);
     ok(`${lang} ${kind}: Files shows «Unfinished extractions»`, got, p.errs);
     if (got) {
-      const jobs = await p.$$eval('.shelf-job', (j) => j.map((x) => x.querySelectorAll('.shelf-actions .btn').length)); ok(`${lang} ${kind}: Finish / Restore / Leave for one, only Leave for the blocked one`, jobs.join() === '3,1', jobs);
+      const jobs = await p.$$eval('.shelf-job', (j) => j.map((x) => x.querySelectorAll('.shelf-actions .btn').length)); ok(`${lang} ${kind}: Finish / Restore / Leave for one, Forget / Leave for the blocked one`, jobs.join() === '3,2', jobs);
+      // (Round five: «Forget this job» asks first — what stays and what is lost said plainly —, the two choices the same width, then sends it.)
+      await p.locator('.shelf-job.blocked .btn.tonal').first().click(); await p.waitForSelector('.forget-sheet');
+      const fs_ = await p.$eval('.forget-sheet', (e) => { const b = [...e.querySelectorAll('.sheet-actions .btn')].map((x) => x.getBoundingClientRect()); const ps = [...e.querySelectorAll('.sheet-body p')].map((x) => x.getBoundingClientRect()); return { text: e.innerText, n: b.length, same: b.length === 2 && Math.abs(b[0].width - b[1].width) < 2, gap: ps.length >= 2 && ps[1].top - ps[0].bottom >= 8 }; });
+      ok(`${lang} ${kind}: Forget asks first (equal buttons, spaced words, no key shown)`, fs_.n === 2 && fs_.same && fs_.gap && fs_.text.length > 60 && !/shelfForget|\bshelf[A-Z]/.test(fs_.text), fs_);
+      if (kind === 'phone') await shot(p, { path: path.join(PREVIEW, lang === 'en' ? 'forget-sheet.png' : 'forget-sheet-ar.png') });
+      await p.locator('.forget-sheet .sheet-actions .btn.danger').click(); await p.waitForFunction(() => window.__calls.some((c) => c.act === 'forget')); ok(`${lang} ${kind}: Forget sent`, true);
       if (kind === 'phone') await shot(p, { path: path.join(SHOTS, lang === 'en' ? 'extract-shelf.png' : 'extract-shelf-ar.png') });
       await p.locator('.shelf-job').first().locator('.btn.primary').click(); await p.waitForFunction(() => window.__calls.some((c) => c.act === 'finish')); ok(`${lang} ${kind}: Finish sent`, true);
     }

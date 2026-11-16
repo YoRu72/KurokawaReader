@@ -16,6 +16,7 @@ import { extractArchiveJob, cancelArchive, createZip, pickFiles, parentOf, baseN
 export const keepFreeNow = (): number => { const k = getSettings().archiveKeepFree; return k >= 0 ? k : nativePlatform() === 'desktop' ? 2 * 1024 ** 3 : 512 * 1024 ** 2; };
 const errText = (m: string): string => {
   if (m === 'noSpace') return t('errNoSpace'); if (m === 'notArchive') return t('notAnArchive'); if (m === 'busy' || m === 'journalExists') return t('errBusy');
+  if (m === 'nothingToRestore') return t('errNothingToRestore'); if (/^refused oldJob\b/.test(m)) return `${t('pf_oldJob')}. ${t('fixOldJob')}`;
   const [k, ...rest] = m.split(' '); const what = rest.join(' ').replace(/ — nothing was modified$/, '');
   if (k === 'refused') { const [kind, ...nm] = what.split(' '); return t('errRefused', { what: `${pfTitle(kind)}${nm.length ? ` — ${nm.join(' ')}` : ''}` }); }
   if (k === 'unsupportedMethod') return t('errRefused', { what: `${t('pf_method')} — ${rest.slice(1).join(' ').replace(/ — nothing was modified$/, '')}` });

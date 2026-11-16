@@ -31,5 +31,5 @@ export const keepBothName = (name: string, taken: (n: string) => boolean): strin
 
 /** The jobs left unfinished (the computer keeps their list; the phone has only the one beside an archive opened). */
 export async function shelfJobs(atStart = false): Promise<ShelfJob[]> { const d = desk(); try { return d?.archiveShelf ? await d.archiveShelf({ atStart }) : []; } catch { return []; } }
-export async function shelfAct(journal: string, act: 'finish' | 'restore' | 'undo' | 'dismiss' | 'restoreV1' | 'leave', id?: string, password?: string): Promise<unknown> { const d = desk(); if (!d?.archiveJob) throw new Error('unsupported'); return d.archiveJob({ journal, act, id, ...(password ? { password } : {}) }); }
+export async function shelfAct(journal: string, act: 'finish' | 'restore' | 'undo' | 'dismiss' | 'restoreV1' | 'forget' | 'leave', id?: string, password?: string): Promise<unknown> { const d = desk(); if (!d?.archiveJob) throw new Error('unsupported'); return d.archiveJob({ journal, act, id, ...(password ? { password } : {}) }); }
 export const choiceOf = (a: Answers | undefined, path: string, dir: boolean): Choice | null => S.conflictChoice(a, path, dir);

@@ -107,8 +107,9 @@ pub fn extract(app: &AppHandle, path: &Path, dest: &Path, o: &Value, on: &dyn Fn
             _ => return Err("journalCorrupt".to_string()),
         }
     }
+    // (In place while another job's journal holds its place: the pre-flight's reason, so the page says what to do.)
     if old_job && flag(o, "inPlace") && o.get("only").map(|v| v.is_null()).unwrap_or(true) {
-        return Err("journalExists".to_string());
+        return Err("refused oldJob oldJob".to_string());
     }
     let fmt = archive::format_of(path)?;
     if (fmt != "zip" && fmt != "tar") || numbered(&path.to_string_lossy()) {
@@ -214,6 +215,7 @@ pub async fn kt_archive_job(app: AppHandle, o: Value) -> Result<Value, String> {
     // (A stopped job of a locked archive: the password the page asked for, to finish it; never kept.)
     let password = archives::opt_s(&o, "password");
     let stop = archives::job(&id);
+    let reg = registry(&app);
     let on = archives::emitter(app, id.clone());
     let r = archives::blocking(move || {
         let stopped = || stop.load(Ordering::SeqCst);
@@ -223,6 +225,8 @@ pub async fn kt_archive_job(app: AppHandle, o: Value) -> Result<Value, String> {
             "finish" => ej::finish(jp, &env(), &pr, password.as_deref(), 0).map(|j| value(&j)).map_err(|f| f.msg),
             "restore" | "undo" => ej::restore(jp, &env()).map(|j| value(&j)).map_err(|f| f.msg),
             "dismiss" => ej::dismiss(jp).map(|j| value(&j)).map_err(|f| f.msg),
+            // (A blocked job's own record only — journal, tail, unit log, this registry's pointers; never its files.)
+            "forget" => ej::forget_blocked(jp, reg.as_deref(), &DISK).map(|j| value(&j)).map_err(|f| f.msg),
             "restoreV1" => {
                 let file = journal.strip_suffix(ej::JOURNAL_SUFFIX).unwrap_or(&journal).to_string();
                 archive::restore(Path::new(&file)).map(|left| json!({ "left": left }))

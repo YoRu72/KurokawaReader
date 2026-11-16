@@ -175,6 +175,17 @@ Do the same once before a local `tauri build` / `tauri dev`.
   older build's tab-separated unit log is still read (each name still under the own-name rule). Paths are compared
   resolved; when only one side resolves the answer is «not the same» (refused); when neither does, their absolute
   spellings are compared.
+- **P11 review, round 5 (both engines):** a stopped in-place job that cannot be taken up for the file now at its path
+  (`archiveChanged`, `archiveGone`, `journalCorrupt` — the user replaced the half-cut archive) is treated like a finished
+  one beside a new archive: listed and extracted as itself, never in place (the pre-flight's `oldJob`; an in-place
+  attempt answers «refused oldJob», which the page words with `fixOldJob`). A blocked job on the shelf offers «Forget this
+  job» (`forget_blocked` / `forgetBlocked`, after a confirmation sheet): only the journal, the saved tail and the unit log
+  at the names the journal's own path gives, and this registry's pointers to it — never outputs, the aside folder or the
+  file at the archive's path; refused for a job that opens (`notBlocked`) or whose lock is held. A job with every unit
+  out (not restoring) is finished whatever is at the archive's path: the file it cut itself (the size of its last or
+  previous commit) is removed by Finish; anything else is never touched, and Undo makes the archive again beside it.
+  Known and left: a 0-byte archive file left by a power loss in an 11e49e4-era build (when «done» was saved before the
+  archive was removed) stays where it is — it cannot be told from a user's file; the user can delete it.
 - **Known limit — two registries.** Electron keeps its jobs' pointers in `<userData>/extract-jobs`, Tauri in
   `<app data>/extract-jobs` (different folders on every system). A job started by one shell is therefore *not* «ours»
   for the other: opening that archive in the other shell asks first (the sheet above) instead of finishing silently, and

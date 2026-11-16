@@ -308,7 +308,9 @@ function loadBridge(boot) {
     const fn = (name) => ex.slice(ex.indexOf(`pub fn ${name}(`), ex.indexOf('\n}\n', ex.indexOf(`pub fn ${name}(`)));
     assert.ok(fn('restore_v2').includes('ej::restore_beside(') && !fn('restore_v2').includes('ej::restore('), 'restore_v2: only the job of that very archive');
     assert.ok(fn('list_v2').includes('ej::left_beside(') && !fn('list_v2').includes('ej::left_entries('), 'list_v2: only the job of that very archive');
-    assert.ok(body('kt_archive_list').includes('archive::list_fresh(') && body('kt_archive_extract').includes('archive::extract_fresh(') && body('kt_archive_extract').includes('archive::list_fresh('), 'a finished job\'s journal beside a new archive: listed and extracted as itself'); }
+    assert.ok(body('kt_archive_list').includes('archive::list_fresh(') && body('kt_archive_extract').includes('archive::extract_fresh(') && body('kt_archive_extract').includes('archive::list_fresh('), 'a finished job\'s journal beside a new archive: listed and extracted as itself');
+    // (Round five: «Forget this job» for a blocked one goes to the engine's forget_blocked with this app's registry — not the {} that did nothing.)
+    { const i = ex.indexOf('pub async fn kt_archive_job('); const kj = ex.slice(i, ex.indexOf('\n}\n', i)); assert.ok(/"forget" => ej::forget_blocked\(jp, reg\.as_deref\(\), &DISK\)/.test(kj) && /let reg = registry\(&app\);/.test(kj), 'kt_archive_job: forget'); } }
   // The self-test script: inert without its settings; its verdict; a full run against a fake bridge passes, and fails
   // when one answer is wrong.
   const stSrc = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'selftest.js'), 'utf8');

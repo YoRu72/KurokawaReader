@@ -297,7 +297,8 @@ async function openJob(journal) {
   try { tail = await fsp.readFile(j.tail); } catch { throw fail('tailMissing'); }
   if (tail.length !== j.tailLen || S.crc32(tail) !== j.tailCrc) throw fail('tailCorrupt');
   const { plan, raw } = readTail(tail); validate(journal, j, plan);
-  if (j.mode === 'inplace' && j.state !== 'done' && !(j.next >= plan.units.length && !exists(j.archive) && !j.restoreAt)) {
+  // (All out: finished whatever is at the archive's path — its own cut file, removed by Finish, or a new one, never touched.)
+  if (j.mode === 'inplace' && j.state !== 'done' && !allOut(j, plan.units.length)) {
     // What is about to be cut or extended must be this job's: its size what the journal says (a restore: its last commit, plus at most the
     // write it announced), and the units' own header bytes where they should be.
     const target = targetOf(j); const restoring = j.state === 'restoring'; const unmade = restoring && j.restoreAt && j.committed === 0 && !j.restored;
@@ -383,7 +384,8 @@ async function writeUnit(fd, u, j, ctx) {
 async function extract(file, dest, o, pr, io = realIo) {
   const unlock = await takeLock(file);
   try {
-    if (exists(journalOf(file)) && (o.inPlace || (await beside(file).catch(() => ({}))).kind !== 'old')) throw fail('journalExists');
+    // (A journal beside it that is not this file's job — old: the pre-flight refuses in place for it, «refused oldJob».)
+    if (exists(journalOf(file)) && (await beside(file).catch(() => ({}))).kind !== 'old') throw fail('journalExists');
     const platform = o.platform || hostPlatform();
     const { facts: f, scan } = await facts(file, dest, { password: o.password, verify: !!(o.inPlace && o.verifyFirst), platform, io, pr });
     f.busy = false; // (this job holds the lock)
@@ -515,9 +517,12 @@ function isOurs(registry, id, jp) { try { return samePath(fs.readFileSync(path.j
  */
 async function beside(file, registry = null) {
   if (!exists(journalOf(file))) return { kind: 'none' };
-  const { jp, j, plan } = await besideJob(file);
+  // (A stopped job that cannot be taken up for this file — its archive replaced or gone, or a journal not this archive's: the new file is its own,
+  //  as beside a finished job — listed and extracted fresh, never in place.)
+  let job; try { job = await besideJob(file); } catch (e) { if (['archiveChanged', 'archiveGone', 'journalCorrupt'].includes(e.message)) return { kind: 'old' }; throw e; }
+  const { jp, j, plan } = job;
   let isFile = false; try { isFile = fs.lstatSync(file).isFile(); } catch { /* not there */ }
-  if (j.state === 'done' && isFile) return { kind: 'old' };
+  if (isFile && (j.state === 'done' || (allOut(j, plan.units.length) && !ownCut(j)))) return { kind: 'old' };
   if (registry && isOurs(registry, j.id, jp)) return { kind: 'ours' };
   return { kind: 'ask', info: { journal: jp, archive: j.archive, dest: j.dest, state: j.state, done: Math.min(j.next, plan.units.length), total: plan.units.length } };
 }
@@ -534,7 +539,8 @@ async function restoreBeside(file, io = realIo) { const b = await beside(file); 
 async function finish(jpath, pr, io = realIo, o = {}) {
   const { j, plan } = await openJob(jpath);
   // (Every unit out and the archive gone: a power loss after the last cut — finished.)
-  if (!['done', 'restoring', 'undoing'].includes(j.state) && j.mode === 'inplace' && j.next >= plan.units.length && !exists(j.archive)) { j.state = 'done'; j.finished = Date.now(); await saveJournal(jpath, j, io); }
+  // (Every unit out and the archive no longer the job's — removed, or a new file there, never touched: finished.)
+  if (allOut(j, plan.units.length) && !ownCut(j)) { j.state = 'done'; j.finished = Date.now(); await saveJournal(jpath, j, io); }
   if (j.state === 'done') { return { files: 0, dest: j.dest, job: jpath, appeared: [], damaged: j.damaged || [], undo: true }; }
   if (j.state === 'restoring' || j.state === 'undoing') throw fail('restoreUnfinished');
   const unlock = await takeLock(j.archive);
@@ -563,7 +569,7 @@ async function restore(jpath, io = realIo) {
     if (j.state !== 'restoring') {
       if (j.state !== 'done') await clearUncommitted(jpath, j, plan, io);
       // (Every unit out and the archive gone — a power loss after the last cut — is a finished job too.)
-      const finished = j.state === 'done' || (j.next >= plan.units.length && !exists(j.archive));
+      const finished = j.state === 'done' || (allOut(j, plan.units.length) && !ownCut(j));
       j.restoreFrom = finished ? plan.units.length : j.next;
       // (The archive was removed when the job finished: whatever is at its path now is not this job's and is never touched — the archive is
       //  made again beside it under a free name, said in the answer: `restoredTo`.)
@@ -656,6 +662,29 @@ async function undoNormal(jpath, j, plan, io) {
 /** Undo a finished job (in place: the archive made again whole; normal: its files removed); both put the old items back. */
 async function undo(jpath, io = realIo) { return restore(jpath, io); }
 /** The Undo offer ended: the aside folder, the saved tail and the journal removed. */
+/** Every unit out and nothing being restored: the job's work is done, whatever its journal says (extractjob.rs all_out). */
+const allOut = (j, n) => j.mode === 'inplace' && !['done', 'restoring', 'undoing'].includes(j.state) && j.next >= n && !j.restoreAt;
+/** The archive this job cut, still at its path: a file exactly the size of its last commit. Anything else there is not the job's, never touched. */
+// (Its last commit, or the one before when the power went between saving the journal and cutting.)
+const ownCut = (j) => { try { const st = fs.lstatSync(j.archive); return st.isFile() && (st.size === j.committed || st.size === j.prevCommitted); } catch { return false; } };
+/**
+ * «Forget this job» for a blocked one (extractjob.rs forget_blocked): only its own record goes — the journal, the saved tail and the unit log, at the
+ * names the journal's own path gives (never paths read from inside it), and this registry's pointers to it. Outputs, the aside folder and whatever is
+ * at the archive's path stay; the archive can no longer be rebuilt from it. A job that opens is refused («notBlocked»), a held lock «busy».
+ */
+async function forgetBlocked(jpath, registry = null) {
+  const name = path.basename(jpath); if (!name.endsWith(SUFFIX.journal) || name === SUFFIX.journal) throw fail('journalCorrupt');
+  const regular = (p) => { try { return fs.lstatSync(p).isFile(); } catch { return false; } };
+  if (!regular(jpath)) throw fail('journalMissing');
+  if (!(await attemptOpen(jpath))) throw fail('notBlocked');
+  const dir = path.dirname(jpath); const stem = name.slice(0, -SUFFIX.journal.length); const lock = path.join(dir, stem + SUFFIX.lock);
+  if (exists(lock) && lockAlive(lock)) throw fail('busy');
+  const removed = []; for (const p of [jpath + '.log', path.join(dir, stem + SUFFIX.tail), jpath]) if (regular(p)) { try { fs.rmSync(p); removed.push(p); } catch { /* kept */ } }
+  if (registry) { let names = []; try { names = fs.readdirSync(registry); } catch { /* none */ } for (const n of names) { if (!n.endsWith('.ref')) continue; const r = path.join(registry, n); try { if (samePath(fs.readFileSync(r, 'utf8').trim(), jpath)) fs.rmSync(r); } catch { /* kept */ } } }
+  return { forgotten: true, removed };
+}
+/** Whether a job's record fails to open (blocked). */
+async function attemptOpen(jpath) { try { await openJob(jpath); return false; } catch { return true; } }
 async function dismiss(jpath) { const { j } = await openJob(jpath).catch(async (e) => { const t = await fsp.readFile(jpath, 'utf8').catch(() => ''); const r = S.journalRead(t); if (r.ok) { validate(jpath, r.body, null); return { j: r.body }; } throw e; }); if (j.state !== 'done') throw fail('notDone'); const asideKept = await forget(jpath, j, true); return asideKept ? { asideKept } : {}; }
 
 /**
@@ -674,7 +703,7 @@ async function shelf(registry, o = {}) {
       out.push({ journal: jpath, id: j.id, archive: j.archive, dest: j.dest, mode: j.mode, state: j.state, why: j.why, done: j.next, total: plan.units.length, can: j.state === 'restoring' || j.state === 'undoing' ? ['restore', 'leave'] : ['finish', 'restore', 'leave'] });
     } catch (e) {
       const why = String(e.message || e); const body = e.body || {};
-      out.push({ journal: jpath, id: n.replace(/\.ref$/, ''), archive: body.archive || jpath.replace(/\.kurokawa-unzip$/, ''), dest: body.dest || body.output || '', mode: body.mode || 'inplace', state: 'blocked', why, done: 0, total: 0, can: why === 'journalV1' ? ['restoreV1', 'leave'] : ['leave'] });
+      out.push({ journal: jpath, id: n.replace(/\.ref$/, ''), archive: body.archive || jpath.replace(/\.kurokawa-unzip$/, ''), dest: body.dest || body.output || '', mode: body.mode || 'inplace', state: 'blocked', why, done: 0, total: 0, can: why === 'journalV1' ? ['restoreV1', 'forget', 'leave'] : ['forget', 'leave'] });
     }
   }
   return out;
@@ -686,4 +715,4 @@ async function register(registry, jpath, id) { await fsp.mkdir(registry, { recur
 /** What is still in an archive whose in-place job stopped (from its plan) — null when the journal beside it is not about this file (a finished
  *  job's, beside a new archive of that name: list the archive itself). */
 async function leftOf(file) { const b = await beside(file); if (b.kind === 'none' || b.kind === 'old') return null; const { j, plan } = await openJob(journalOf(file)); const n = plan.units.length; const left = j.mode === 'inplace' && j.state !== 'restoring' ? n - j.next : n; return { format: plan.format, entries: plan.units.slice(0, left).map((u) => ({ path: u.name, size: u.usize, compressed: u.csize, dir: u.dir })) }; }
-module.exports = { dupKeys, samePath, beside, isOurs, restoreBeside, finishBeside, parseLog, ownOutput, jobFileName, leftOf, planOuts, zipEnd, extract, finish, restore, undo, dismiss, shelf, register, facts, preflightOf: async (file, dest, o) => { const { facts: f } = await facts(file, dest, o); return { facts: f, report: S.preflight(f, { margin: o.keepFree || 0 }) }; }, unitsOf, checkPassword, verifyAll, openJob, BATCH, SUFFIX, OWN_METHODS, hostPlatform, Crash, journalOf, tailOf };
+module.exports = { forgetBlocked, dupKeys, samePath, beside, isOurs, restoreBeside, finishBeside, parseLog, ownOutput, jobFileName, leftOf, planOuts, zipEnd, extract, finish, restore, undo, dismiss, shelf, register, facts, preflightOf: async (file, dest, o) => { const { facts: f } = await facts(file, dest, o); return { facts: f, report: S.preflight(f, { margin: o.keepFree || 0 }) }; }, unitsOf, checkPassword, verifyAll, openJob, BATCH, SUFFIX, OWN_METHODS, hostPlatform, Crash, journalOf, tailOf };
