@@ -1848,7 +1848,7 @@ export const ja: Partial<Strings> = {
   filesJobRemove: "待機から外す",
   filesJobPosition: "順番: {n}",
   filesJobQueued: "待機に追加しました。待機中: {n}",
-  filesJobsNoPause: "実行中のジョブは中止できますが、一時停止はできません。エンジンに一時停止がありません。",
+  filesJobsNoPause: "実行中のジョブは中止できますが、一時停止はできません。",
   filesJobsModeOne: "ジョブは1つずつ実行されます。ファイルの設定で変更できます。",
   filesJobsModeTogether: "ジョブは同時に実行されます。ファイルの設定で変更できます。",
   filesJobsKept: "待機中のジョブはアプリを閉じても保持され、次回起動時に再提示されます。削除は保持されません。",

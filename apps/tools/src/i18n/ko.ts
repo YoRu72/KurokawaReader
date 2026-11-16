@@ -1848,7 +1848,7 @@ export const ko: Partial<Strings> = {
   filesJobRemove: "대기열에서 제거",
   filesJobPosition: "순서: {n}",
   filesJobQueued: "대기열에 추가했습니다. 대기 중: {n}",
-  filesJobsNoPause: "실행 중인 작업은 취소할 수 있지만 일시 중지할 수 없습니다. 엔진에 일시 중지가 없습니다.",
+  filesJobsNoPause: "실행 중인 작업은 취소할 수 있지만 일시 중지할 수는 없습니다.",
   filesJobsModeOne: "작업을 하나씩 실행합니다. 파일 설정에서 바꿀 수 있습니다.",
   filesJobsModeTogether: "작업을 동시에 실행합니다. 파일 설정에서 바꿀 수 있습니다.",
   filesJobsKept: "대기 중인 작업은 앱을 닫아도 보관되며 다음 시작 때 다시 제안합니다. 삭제 작업은 보관하지 않습니다.",

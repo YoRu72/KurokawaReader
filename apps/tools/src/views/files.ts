@@ -916,7 +916,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if ((srcV || dstV) && op !== 'delete' && srcV && dstV) { toast(t('remoteNoBetween'), 'error'); return false; }
     // (An extraction's move into place is a part of the extraction's own place in the queue.)
     if (stagings.has(id)) return launchJob(op, paths, dest, id, label0);
-    const remote = (srcV || dstV) && op !== 'delete'; const n = localDigits(paths.length);
+    const remote = (srcV || dstV) && op !== 'delete'; const n = countItems(paths.length);
     const label = label0 ?? (remote ? (srcV ? t('remoteDownloading', { n }) : t('remoteUploading', { n })) : op === 'delete' ? t('filesDeleting', { n }) : op === 'move' ? t('filesMoving', { n }) : t('filesCopying', { n }));
     const dropped = () => { const c = clipboard; if (c?.busy === id) setClip({ op: 'move', paths: c.paths }); };
     const job: import('./filesQueue').QJob = { id, kind: remote ? 'remote' : op, label, what: whatOf(paths), from: parentOf(paths[0]), to: dest, cancel: () => liveJobs.get(id)?.cancel(), dropped,
@@ -929,7 +929,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const pl = jobs(); if (!pl) return false;
     const srcV = paths.some(isVirtual), dstV = !!dest && isVirtual(dest);
     if ((srcV || dstV) && op !== 'delete') {
-      const label = srcV ? t('remoteDownloading', { n: localDigits(paths.length) }) : t('remoteUploading', { n: localDigits(paths.length) });
+      const label = srcV ? t('remoteDownloading', { n: countItems(paths.length) }) : t('remoteUploading', { n: countItems(paths.length) });
       ownRow(id, label, () => void vfs.cancel(id));
       try { await vfs.job(id, srcV ? 'down' : 'up', paths, dest!, op === 'move'); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(friendlyVfs(String((err as Error).message ?? err)), 'error'); return false; }
     }
@@ -937,7 +937,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       if (prefs.verify === 'full' && hashOf()) { const how = fullPlan(op, paths, dest); if (how === 'run') return verifiedJob(op, paths, dest, id, label0); if (how === 'rename') renamedMoves.add(id); }
       sizeChecked.add(id);
     }
-    const label = label0 ?? (op === 'delete' ? t('filesDeleting', { n: localDigits(paths.length) }) : op === 'move' ? t('filesMoving', { n: localDigits(paths.length) }) : t('filesCopying', { n: localDigits(paths.length) }));
+    const label = label0 ?? (op === 'delete' ? t('filesDeleting', { n: countItems(paths.length) }) : op === 'move' ? t('filesMoving', { n: countItems(paths.length) }) : t('filesCopying', { n: countItems(paths.length) }));
     ownRow(id, label, () => void pl.filesCancel({ id }));
     try { await pl.filesJob({ id, op, paths, dest, conflict: 'ask' }); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(String((err as Error).message ?? err), 'error'); return false; }
   };
@@ -954,7 +954,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const listAll = async (dir: string): Promise<Entry[]> => { const pp = plug(); if (pp) return (await pp.filesList({ path: dir, hidden: true })).entries; const d = desk(); return d?.listDir ? ((await d.listDir(dir)).entries ?? []) : []; };
   const verifiedJob = async (op: 'copy' | 'move', paths: string[], dest: string, id: string, label0?: string): Promise<boolean> => {
     const pl = jobs(); const fx = fsx(); const hash = hashOf(); if (!pl || !fx || !hash) return false;
-    const label = label0 ?? (op === 'move' ? t('filesMoving', { n: localDigits(paths.length) }) : t('filesCopying', { n: localDigits(paths.length) }));
+    const label = label0 ?? (op === 'move' ? t('filesMoving', { n: countItems(paths.length) }) : t('filesCopying', { n: countItems(paths.length) }));
     let run: { cancel(): void; done: Promise<import('./filesVerify').VerifyEnd> } | null = null; let stop = false;
     ownRow(id, label, () => { stop = true; run?.cancel(); });
     const mod = await import('./filesVerify'); if (stop) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); return false; }

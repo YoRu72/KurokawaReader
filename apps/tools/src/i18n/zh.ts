@@ -1848,7 +1848,7 @@ export const zh: Partial<Strings> = {
   filesJobRemove: "从队列中移除",
   filesJobPosition: "队列位置：{n}",
   filesJobQueued: "已加入队列。等待中：{n}",
-  filesJobsNoPause: "进行中的任务可以取消，但不能暂停：引擎没有暂停功能。",
+  filesJobsNoPause: "进行中的任务可以取消，但不能暂停。",
   filesJobsModeOne: "任务逐个运行。可在文件设置中更改。",
   filesJobsModeTogether: "任务同时运行。可在文件设置中更改。",
   filesJobsKept: "等待中的任务在应用关闭后会保留，并在下次启动时再次提示；删除任务不会保留。",

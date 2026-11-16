@@ -2943,7 +2943,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   filesJobRemove: "Remove from the queue",
   filesJobPosition: "Place in line: {n}",
   filesJobQueued: "Added to the queue. Waiting: {n}",
-  filesJobsNoPause: "A running job can be cancelled but not paused: the engines have no pause.",
+  filesJobsNoPause: "A running job can be cancelled, but it cannot be paused.",
   filesJobsModeOne: "Jobs run one at a time. Change this in Files settings.",
   filesJobsModeTogether: "Jobs run together. Change this in Files settings.",
   filesJobsKept: "Waiting jobs are kept if the app closes and offered again at the next start; deletes are not kept.",

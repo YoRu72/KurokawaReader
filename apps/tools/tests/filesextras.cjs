@@ -508,7 +508,7 @@ async function jobs(browser, port, z, lang) {
     ok(L('the sheet: one running, two waiting'), (await p.locator('.files-qrow.running').count()) === 1 && (await p.locator('.files-qrow.waiting').count()) === 2);
     const runTxt = await p.textContent('.files-qrow.running');
     ok(L('the running job: what it is, where from, where to, Cancel — and no Pause'), /Song\.mp3/.test(runTxt) && /Sub/.test(runTxt) && /Download/.test(runTxt) && /Cancel|إلغاء/.test(runTxt) && !/Pause|إيقاف مؤقت\b(?!؛)/.test(await p.locator('.files-qrow.running .files-qacts').textContent()), runTxt);
-    ok(L('the no-pause note is said'), (await p.locator('.files-qnote', { hasText: /pause|الإيقاف المؤقت|إيقاف مؤقت/ }).count()) >= 1);
+    ok(L('the no-pause note is said'), (await p.locator('.files-qnote', { hasText: /pause|مؤقتًا|مؤقتا/ }).count()) >= 1);
     const wait = (i) => p.locator('.files-qrow.waiting').nth(i);
     ok(L('waiting rows in order: Many first, Music second; the first cannot go up, the last cannot go down'), /Many/.test(await wait(0).textContent()) && /Music/.test(await wait(1).textContent()) && (await wait(0).locator('.files-qup').isDisabled()) && (await wait(1).locator('.files-qdown').isDisabled()) && !(await wait(0).locator('.files-qdown').isDisabled()));
     ok(L('each waiting row tells its place in line'), /1/.test(await wait(0).locator('.files-qpos').textContent()) && /2/.test(await wait(1).locator('.files-qpos').textContent()));
@@ -534,7 +534,7 @@ async function jobs(browser, port, z, lang) {
     await openJobs(p); await p.click('.files-qrow.running .files-qcancel'); await p.waitForTimeout(1200);
     const c = await copies(p); ok(L(`Cancel the running job: the waiting one starts (${c.join(' | ')})`), c.length === 2 && /Many$/.test(c[1]) && (await p.evaluate(() => window.__calls.includes('cancel'))), c);
     ok(L('the sheet follows: one running row, nothing waiting'), (await p.locator('.files-qrow.running').count()) === 1 && (await p.locator('.files-qrow.waiting').count()) === 0);
-    await closeSheet(p); await p.waitForTimeout(3200);
+    await closeSheet(p); await p.waitForFunction(() => !document.querySelector('.files-jobs-btn') || document.querySelector('.files-jobs-btn').hidden, null, { timeout: 15000 }).catch(() => undefined);
     ok(L('then none: no button'), (await badge(p)) === null, await badge(p));
     // a delete waiting behind a running job: kept out of storage; a copy waiting: kept
     await p.evaluate(() => { window.__slow = 3000; }); await again(p, K + '/Sub/Deeper'); await again(p, K + '/Many/Inner').catch(() => undefined);
@@ -553,7 +553,7 @@ async function jobs(browser, port, z, lang) {
     await pasteTo(p, ['Song.mp3'], 'copy', K + '/Sub'); await again(p, K + '/Many'); await p.waitForTimeout(400);
     const c = await copies(p); ok(L(`Together: both started at once (${c.join(' | ')})`), c.length === 2, c);
     ok(L('Together: the button shows 2'), (await badge(p)) === dg(2), await badge(p));
-    await p.waitForTimeout(2500); ok(L('Together: both end, no button'), (await badge(p)) === null);
+    await p.waitForFunction(() => !document.querySelector('.files-jobs-btn') || document.querySelector('.files-jobs-btn').hidden, null, { timeout: 15000 }).catch(() => undefined); ok(L('Together: both end, no button'), (await badge(p)) === null);
     ok(L('no page errors'), !errors.filter((x) => !/favicon/.test(x)).length, errors); await p.close(); }
   // ---- Together chosen while jobs wait: they start
   { const { p, errors } = await page(browser, port, z, lang);
@@ -621,20 +621,21 @@ async function sevenz(browser, port, z, lang) {
   ok(L('ZIP: no password field and a line saying a computer\'s ZIP has no password'), !(await shown('input[type=password]')) && (await p.locator('.sheet .hint').filter({ hasText: ar ? 'على الحاسوب بكلمة' : 'has no password' }).count()) === 1, sheet1.slice(0, 300));
   await shot(p, 'extras-7z-zip-pc' + sfx + '.png');
   // choose 7Z
-  await p.locator('.sheet .chip-row button').first().click(); await p.waitForTimeout(250);
+  await p.locator('.sheet .pick-btn').first().click(); await p.waitForTimeout(250);
   await p.locator('.sheet button, .sheet .dest-row').filter({ hasText: /^\s*7Z\s*$/ }).last().click(); await p.waitForTimeout(300);
-  ok(L('7Z: the level and the password appear, with the note on what is locked'), (await shown('input[type=password]')) && (await shown('.files-7z-note')) && (await p.locator('.sheet .chip-row button').count()) === 2, (await txt()).slice(0, 300));
+  ok(L('7Z: the level and the password appear, with the note on what is locked'), (await shown('input[type=password]')) && (await shown('.files-7z-note')) && (await p.locator('.sheet .pick-btn').count()) === 2 && (await p.locator('.sheet .field > span').allTextContents()).length >= 4, (await txt()).slice(0, 300));
   const note = await p.locator('.files-7z-note').textContent();
   ok(L('the note says the file names are locked as well'), ar ? /أسماء ملفاته/.test(note) : /file names/.test(note), note);
   await p.fill('.sheet input[type=password]', 'sesame');
   // level: Best
-  await p.locator('.sheet .chip-row button').nth(1).click(); await p.waitForTimeout(250);
+  await p.locator('.sheet .pick-btn').nth(1).click(); await p.waitForTimeout(250);
   const opts = await p.locator('.sheet .dest-row, .sheet .sheet button').allTextContents().catch(() => []);
   await p.locator('.sheet button, .sheet .dest-row').filter({ hasText: ar ? 'الأفضل' : 'Best' }).last().click(); await p.waitForTimeout(300);
   await shot(p, 'extras-7z-pc' + sfx + '.png');
   // geometry: nothing overlaps, nothing is cut off to the side, the footer does not cover the last row
-  const geo = await p.evaluate(() => { const sh = document.querySelector('.sheet'); const r = sh.getBoundingClientRect(); const kids = [...sh.querySelectorAll('.field, .chip-row, .hint, .chip-row button')].filter((e) => e.offsetParent !== null).map((e) => e.getBoundingClientRect()); const bad = []; for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) { const a = kids[i], b = kids[j]; if (a.width && b.width && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1 && !(a.left <= b.left && a.right >= b.right && a.top <= b.top && a.bottom >= b.bottom) && !(b.left <= a.left && b.right >= a.right && b.top <= a.top && b.bottom >= a.bottom)) bad.push([i, j]); } return { bad, over: sh.scrollWidth > sh.clientWidth + 1, w: r.width }; });
+  const geo = await p.evaluate(() => { const sh = document.querySelector('.sheet'); const r = sh.getBoundingClientRect(); const kids = [...sh.querySelectorAll('.field, .chip-row, .hint, .chip-row button')].filter((e) => e.offsetParent !== null).map((e) => e.getBoundingClientRect()); const gaps = [...sh.querySelectorAll('.field')].filter((e) => e.offsetParent !== null).map((e) => e.getBoundingClientRect()); const gp = gaps.slice(1).map((r, i) => Math.round(r.top - gaps[i].bottom)); const bad = []; for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) { const a = kids[i], b = kids[j]; if (a.width && b.width && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1 && !(a.left <= b.left && a.right >= b.right && a.top <= b.top && a.bottom >= b.bottom) && !(b.left <= a.left && b.right >= a.right && b.top <= a.top && b.bottom >= a.bottom)) bad.push([i, j]); } return { bad, gp, over: sh.scrollWidth > sh.clientWidth + 1, w: r.width }; });
   ok(L('the sheet: no overlapping controls, no sideways overflow'), !geo.bad.length && !geo.over, geo);
+  ok(L('the four fields are labelled and equally spaced (gaps ' + geo.gp.join(',') + ')'), geo.gp.length === 3 && Math.max(...geo.gp) - Math.min(...geo.gp) <= 2 && Math.min(...geo.gp) >= 6, geo.gp);
   await p.locator('.sheet button.primary').click(); await p.waitForTimeout(500);
   const mk = await p.evaluate(() => window.__mk);
   ok(L('Compress sends the 7z request: format, Best (9) and the password'), mk.length === 1 && mk[0].format === '7z' && mk[0].level === 9 && mk[0].password === 'sesame' && /\.7z$/.test(mk[0].out), mk);

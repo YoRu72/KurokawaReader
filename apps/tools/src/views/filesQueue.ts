@@ -123,7 +123,7 @@ export function jobsSheet(mode: () => 'one' | 'together'): void {
     for (const r of rs) {
       const j = r.job;
       out.push(h('div', { class: 'files-qrow running', 'data-id': j.id },
-        h('div', { class: 'files-qmain' }, h('div', { class: 'files-qhead' }, icon(KIND_ICON[j.kind]), h('b', { class: 'files-qlabel', dir: 'auto' }, j.label)), ...(j.what ? [h('span', { class: 'files-qwhat', dir: 'auto' }, j.what)] : []), line(t('filesJobFrom'), j.from), ...(j.to ? [line(t('filesJobTo'), j.to)] : []),
+        h('div', { class: 'files-qmain' }, h('div', { class: 'files-qhead' }, icon(KIND_ICON[j.kind]), h('b', { class: 'files-qlabel', dir: 'auto' }, j.label.replace(/\s*(…|\.\.\.)$/, ''))), ...(j.what ? [h('span', { class: 'files-qwhat', dir: 'auto' }, j.what)] : []), line(t('filesJobFrom'), j.from), ...(j.to ? [line(t('filesJobTo'), j.to)] : []),
           h('div', { class: 'files-job-bar' }, h('i', { style: { width: `${r.pct}%` } })), h('small', { class: 'src files-job-meta', dir: 'auto' }, r.meta),
         h('div', { class: 'files-qacts' }, h('span', { class: 'grow' }), h('button', { type: 'button', class: 'btn tonal small files-qcancel', onclick: () => cancelRunning(j.id) }, icon('close'), t('cancel'))))));
     }
@@ -133,7 +133,7 @@ export function jobsSheet(mode: () => 'one' | 'together'): void {
       const up = iconButton('chevronUp', t('filesJobUp'), () => move(j.id, -1)); const down = iconButton('chevronDown', t('filesJobDown'), () => move(j.id, 1)); const del = iconButton('close', t('filesJobRemove'), () => remove(j.id));
       up.disabled = i === 0; down.disabled = i === ws.length - 1; up.classList.add('files-qup'); down.classList.add('files-qdown'); del.classList.add('files-qdel');
       out.push(h('div', { class: 'files-qrow waiting', 'data-id': j.id },
-        h('div', { class: 'files-qmain' }, h('div', { class: 'files-qhead' }, icon(KIND_ICON[j.kind]), h('b', { class: 'files-qlabel', dir: 'auto' }, j.label)), ...(j.what ? [h('span', { class: 'files-qwhat', dir: 'auto' }, j.what)] : []), line(t('filesJobFrom'), j.from), ...(j.to ? [line(t('filesJobTo'), j.to)] : []),
+        h('div', { class: 'files-qmain' }, h('div', { class: 'files-qhead' }, icon(KIND_ICON[j.kind]), h('b', { class: 'files-qlabel', dir: 'auto' }, j.label.replace(/\s*(…|\.\.\.)$/, ''))), ...(j.what ? [h('span', { class: 'files-qwhat', dir: 'auto' }, j.what)] : []), line(t('filesJobFrom'), j.from), ...(j.to ? [line(t('filesJobTo'), j.to)] : []),
         h('div', { class: 'files-qacts' }, h('small', { class: 'src files-qpos grow' }, t('filesJobPosition', { n: localDigits(i + 1) })), up, down, del))));
     });
     out.push(h('p', { class: 'hint files-qnote' }, icon('info'), h('span', null, t(mode() === 'one' ? 'filesJobsModeOne' : 'filesJobsModeTogether'))));

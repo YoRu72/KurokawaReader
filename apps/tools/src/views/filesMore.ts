@@ -95,8 +95,9 @@ export async function makeArchiveSheet(paths: string[], dir: string, started: (i
   const pwField = h('label', { class: 'field' }, h('span', null, t('password')), pw);
   if (pc) {
     const pwHint = h('p', { class: 'hint files-7z-note' }, icon('lock'), h('span', null, t('files7zPasswordHint'))); const zipHint = h('p', { class: 'hint' }, t('filesZipNoPasswordPc'));
-    only7z.push(lvlBtn, pwField, pwHint); onlyZip.push(zipHint); sync();
-    sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn), pwField, pwHint, zipHint, h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })));
+    const lvlField = h('label', { class: 'field' }, h('span', null, t('filesLevel')), lvlBtn);
+    only7z.push(lvlField, pwField, pwHint); onlyZip.push(zipHint); sync();
+    sh.body.append(h('div', { class: 'files-pcfields' }, h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('label', { class: 'field' }, h('span', null, t('filesFormat')), fmtBtn), lvlField, pwField), pwHint, zipHint, h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })));
   } else {
     sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), pwField, h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'), h('small', { class: 'src' }, t('noUndoHint')))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
   }

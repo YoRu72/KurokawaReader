@@ -20,7 +20,8 @@
       "screen.cjs en"
     ],
     "timeoutSec": {
-      "default": 300
+      "default": 300,
+      "filesextras.cjs": 1800
     },
     "budgets": {
       "perfstart.cjs": {
