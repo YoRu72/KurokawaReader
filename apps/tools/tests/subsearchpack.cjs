@@ -16,7 +16,7 @@ try { execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', '
 catch { console.log('ffmpeg not available — skipped'); process.exit(0); }
 const srt = (x) => `1\n00:00:00,000 --> 00:01:00,000\n${x}\n`;
 const ass = (x) => `[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize\nStyle: Default,Arial,40\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:01:00.00,Default,,0,0,0,,${x}\n`;
-for (const [n, x] of [['Moon Harbor 2019 [en].srt', 'MOON EN'], ['Moon Harbor 2019 [ar].srt', 'MOON AR'], ['Moon Harbor 2019 alt [en].srt', 'MOON ALT'], ['Other Film 2001.srt', 'OTHER']]) fs.writeFileSync(path.join(MEDIA, 'Subs', 'Moon', n), srt(x));
+for (const [n, x] of [['Moon Harbor 2019 [en].srt', 'MOON EN'], ['Moon Harbor 2019 [ar].srt', 'MOON AR'], ['Moon Harbor 2019 alt [en].srt', 'MOON ALT'], ['Other Film 2001.srt', 'OTHER'], ['Moon Harbor 2019 [en] SDH.srt', 'MOON SDH']]) fs.writeFileSync(path.join(MEDIA, 'Subs', 'Moon', n), srt(x));
 for (const s of [1, 2]) for (const e of [1, 2]) fs.writeFileSync(path.join(MEDIA, 'Subs', 'Night', `Night Desk S0${s}E0${e}.srt`), srt(`NIGHT ${s}-${e}`));
 // What the stand-in source hands out: a season's archive (episodes 1, 2 and 4), one episode's file, a file with no number.
 const zsrc = path.join(MEDIA, 'zsrc'); fs.mkdirSync(zsrc); for (const e of [1, 2, 4]) fs.writeFileSync(path.join(zsrc, `Starlit Cafe - 0${e}.ass`), ass(`ZIP ${e}`));
@@ -62,6 +62,8 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
   });
   const real = (p0) => path.join(MEDIA, p0.replace(/^\/sdcard\/?/, ''));
   await p.exposeFunction('__ls', (dir) => { const d = real(dir); if (!fs.existsSync(d)) return { exists: false, entries: [] }; return { exists: true, entries: fs.readdirSync(d).map((n) => { const st = fs.statSync(path.join(d, n)); return { name: n, path: `${dir.replace(/\/$/, '')}/${n}`, dir: st.isDirectory(), size: st.size, mtime: st.mtimeMs }; }) }; });
+  await p.exposeFunction('__rm', (paths) => { for (const x of paths) fs.rmSync(real(x), { force: true }); return {}; });
+  await p.exposeFunction('__treeCopy', (o) => { const from = path.join(MEDIA, 'Subs', 'Moon'); const out = []; fs.mkdirSync(real(o.dest), { recursive: true }); for (const n of fs.readdirSync(from)) if (new RegExp(o.pattern, 'i').test(n)) { fs.copyFileSync(path.join(from, n), path.join(real(o.dest), n)); out.push(`${o.dest}/${n}`); } return { paths: out }; });
   await p.exposeFunction('__mkdir', (d) => { fs.mkdirSync(real(d), { recursive: true }); return {}; });
   await p.exposeFunction('__write', (o) => { fs.mkdirSync(path.dirname(real(o.path)), { recursive: true }); fs.writeFileSync(real(o.path), o.text); return {}; });
   await p.addInitScript(([port, lang]) => {
@@ -69,7 +71,7 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
     const movie = { id: 'mv', kind: 'http', name: 'Moon Harbor (2019).webm', source: { url: 'https://x/m.webm' }, dir: '/sdcard/Download', state: 'done', done: 1, total: 1, downSpeed: 0, upSpeed: 0, files: [{ index: 0, path: 'Moon Harbor (2019).webm', size: 1, done: 1, priority: 1 }], addedAt: Date.now() - 6e4, doneAt: Date.now() - 5e4, meta: { imdbId: 'tt7654321', title: 'Moon Harbor' } };
     const api = { addListener: () => Promise.resolve({ remove() {} }), list: async () => ({ tasks: [movie] }), localUrl: async (o) => ({ url: `http://127.0.0.1:${port}/media/${o.path.replace(/^\/sdcard\//, '')}` }), siblings: async () => ({ paths: [] }),
       filesList: async (o) => window.__ls(o.path), filesMkdir: async (o) => window.__mkdir(o.path), filesWrite: async (o) => window.__write(o), defaultDir: async () => ({ dir: '/sdcard/Download' }),
-      pickDir: async () => ({ dir: window.__pickDir }), pickFile: async () => ({ paths: [window.__pickFile] }), httpRequest: async (o) => window.__http(o) };
+      pickDir: async () => ({ dir: window.__pickDir }), filesJob: async (o) => { if (o.op === 'delete') await window.__rm(o.paths); return { id: 'j1' }; }, treeCopy: async (o) => window.__treeCopy(o), pickFile: async () => ({ paths: [window.__pickFile] }), httpRequest: async (o) => window.__http(o) };
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) }) }, PluginHeaders: [] };
   }, [port, LANG]);
   const shot = (n) => p.screenshot({ path: path.join(SHOTS, `p7-${n}-${LANG}.png`) });
@@ -79,9 +81,15 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
   // ---- the sheet's three buttons; no add-on ----
   await animeSheet();
   const bx = await p.$$eval('.pack-sheet .row-actions .btn', (els) => els.map((e) => e.getBoundingClientRect().toJSON()));
-  const touching = bx.some((a, i) => bx.some((b, j) => j > i && a.left < b.right + 4 && b.left < a.right + 4 && a.top < b.bottom + 4 && b.top < a.bottom + 4));
-  ok('three buttons: folder, archive, search — one height, apart, inside 360 px', bx.length === 3 && new Set(bx.map((b) => Math.round(b.height))).size === 1 && !touching && bx.every((b) => b.right <= 360), bx);
-  await p.waitForTimeout(200); await shot('subs-sheet-phone');
+  // (Apart: at least 10 px between any two — beside each other or one above the other.)
+  const gap = (a, b) => (a.top < b.bottom && b.top < a.bottom ? Math.max(b.left - a.right, a.left - b.right) : Math.max(b.top - a.bottom, a.top - b.bottom));
+  const minGap = Math.min(...bx.flatMap((a, i) => bx.slice(i + 1).map((b) => gap(a, b))));
+  ok('three buttons: folder, archive, search — one height, at least 10 px apart, inside 360 px', bx.length === 3 && new Set(bx.map((b) => Math.round(b.height))).size === 1 && minGap >= 10 && bx.every((b) => b.right <= 360), { bx, minGap });
+  await p.waitForFunction(() => getComputedStyle(document.querySelector('.pack-sheet')).opacity === '1' && !document.querySelector('.pack-sheet').getAnimations().length);
+  ok('the sheet: an opaque surface once open', await p.$eval('.pack-sheet', (e) => { const c = getComputedStyle(e).backgroundColor; const m = /rgba?\(([^)]+)\)/.exec(c); const a = m && m[1].split(',')[3]; return a === undefined || Number(a) === 1; }));
+  await shot('subs-sheet-phone');
+  // (The Episodes card's head at 360 px: its buttons apart from the card's edge.)
+  { const card = await p.$eval('.anime-episodes', (e) => e.getBoundingClientRect().toJSON()).catch(() => null); const hb = await p.$$eval('.anime-episodes > .card-head .btn', (els) => els.map((e) => e.getBoundingClientRect().toJSON())); ok('the Episodes card\'s buttons keep a gap to its edge', !!card && hb.every((b) => b.right <= card.right - 8 && b.left >= card.left + 8), { card, hb }); }
   await p.click('.pack-sheet .pack-find'); await p.waitForSelector('.sheet .btn.filled');
   ok('without the Subtitles add-on: said, with the way to the add-ons', !!(await p.$('.sheet .btn.filled')));
   await shot('subs-noaddon-phone');
@@ -107,8 +115,10 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
   ok('…the count and the missing one said', /3|٣/.test(await p.$eval('.pack-count', (e) => e.textContent)));
   ok('…and Undo offered', !!(await p.$('.toast.with-action')));
   await shot('subs-attached-phone');
-  await p.click('.toast.with-action .toast-act'); await p.waitForTimeout(800);
-  ok('Undo: the show has no pack again', !(await p.$('.pack-sheet .pack-current')) && !!(await p.$('.pack-sheet .pack-find')));
+  const showDir = path.join(MEDIA, 'Download', 'Subtitles', 'Starlit Cafe'); const filesNow = () => (fs.existsSync(showDir) ? fs.readdirSync(showDir).filter((n) => /\.ass$/.test(n)) : []);
+  ok('…its three files written into the show\'s folder', filesNow().length === 3, filesNow());
+  await p.click('.toast.with-action .toast-act'); await p.waitForFunction(() => !document.querySelector('.pack-sheet .pack-current') && !!document.querySelector('.pack-sheet .pack-find'), null, { timeout: 8000 }).catch(() => undefined);
+  ok('Undo: the show has no pack again, and the files it added are gone', !(await p.$('.pack-sheet .pack-current')) && filesNow().length === 0, filesNow());
   await p.click('.pack-sheet .pack-find'); await p.waitForSelector('.sheet input[type=search]'); await p.click('.sheet button[type=submit], .sheet .btn.primary').catch(() => undefined);
   await p.waitForSelector('.sheet .result-row', { timeout: 15000 }); await p.locator('.sheet .result-row', { hasText: 'whole season' }).click(); await p.waitForSelector('.pack-sheet .pack-ep[data-ep="4"]', { timeout: 15000 });
   // One episode's file: the missing episode 3 gets it.
@@ -118,17 +128,25 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
   await p.locator('.sheet .result-row', { hasText: '- 03' }).click();
   await p.waitForFunction(() => { const r = document.querySelector('.pack-ep[data-ep="3"]'); return r && !r.classList.contains('missing'); }, null, { timeout: 15000 }).catch(async () => console.log('state:', await p.evaluate(() => [...document.querySelectorAll('.toast, .sheet h2, .sheet .sheet-title, .pack-ep')].map((e) => e.className + ':' + e.textContent.slice(0, 80)))));
   ok('one episode\'s file: episode 3 has it now', !(await p.$eval('.pack-ep[data-ep="3"]', (e) => e.classList.contains('missing'))));
+  // Changed after it was added (loading turned off): Undo takes away its file only, the pack left as it is now.
+  const undoAct = await p.$('.toast.with-action .toast-act');
+  await p.$eval('.pack-sheet .switch-row input', (i) => i.click()); await p.waitForFunction(() => !document.querySelector('.pack-sheet .switch-row input').checked);
+  if (undoAct) await undoAct.click().catch(() => undefined);
+  await p.waitForFunction(() => document.querySelector('.pack-ep[data-ep="3"]')?.classList.contains('missing'), null, { timeout: 8000 }).catch(() => undefined);
+  ok('Undo after a later change: its file gone, the later change kept', (await p.$eval('.pack-ep[data-ep="3"]', (e) => e.classList.contains('missing'))) && !(await p.$eval('.pack-sheet .switch-row input', (e) => e.checked)) && !filesNow().some((n) => /03/.test(n)), { files: filesNow(), ep3: await p.$eval('.pack-ep[data-ep="3"]', (e) => e.className).catch(() => 'none'), on: await p.$eval('.pack-sheet .switch-row input', (e) => e.checked).catch(() => 'none') });
 
   // ---- a film ----
   await clear(); await p.goto(`${BASE}/#/tv/movie/tt7654321`); await p.waitForSelector('.subs-btn', { timeout: 15000 }).catch(() => undefined);
   ok('a film\'s page has the Subtitles control', !!(await p.$('.subs-btn')));
   await p.click('.subs-btn'); await p.waitForSelector('.pack-sheet .pack-find');
-  ok('…its sheet: the film\'s own text, the three buttons', /film|فيلم|映画|영화|电影/i.test(await p.$eval('.pack-sheet .hint', (e) => e.textContent)) && (await p.$$('.pack-sheet .row-actions .btn')).length === 3);
-  await p.evaluate(() => { window.__pickDir = '/sdcard/Subs/Moon'; }); await p.click('.pack-sheet .pack-pick-folder');
+  ok('…its sheet: titled and worded for a film, the three buttons', /film|فيلم|映画|영화|电影/i.test(await p.$eval('.pack-sheet h4', (e) => e.textContent)) && /film|فيلم|映画|영화|电影/i.test(await p.$eval('.pack-sheet .hint', (e) => e.textContent)) && (await p.$$('.pack-sheet .row-actions .btn')).length === 3);
+  // (A folder on a memory card: a content: tree the app has no path for — its subtitles copied in through the bridge.)
+  await p.evaluate(() => { window.__pickDir = 'content://com.android.externalstorage.documents/tree/1234-ABCD%3AMoon'; }); await p.click('.pack-sheet .pack-pick-folder');
   await p.waitForSelector('.pack-movie', { timeout: 8000 });
   const mv = await p.$eval('.pack-movie', (e) => e.textContent);
   // (English first: two English files fit alike — «several» said; Arabic first: the Arabic one, alone.)
   ok('a folder of several files: the best by title, year and the first language plays (several alike: said)', LANG === 'ar' ? /2019 \[ar\]/.test(mv) : /Moon Harbor 2019/.test(mv) && !/Other Film/.test(mv) && /tap/.test(mv), mv);
+  ok('…the folder from a content: tree copied into the film\'s own subtitles folder', /Subtitles\/Moon Harbor/.test(await p.$eval('.pack-sheet .pack-current', (e) => e.textContent)) && !/SDH/.test(mv), await p.$eval('.pack-sheet .pack-current', (e) => e.textContent));
   await shot('subs-movie-phone');
   await p.click('.pack-movie'); await p.waitForSelector('.pack-files .pack-file'); await p.locator('.pack-files .pack-file', { hasText: 'alt' }).click();
   await p.waitForFunction(() => /alt/.test(document.querySelector('.pack-movie')?.textContent || ''), null, { timeout: 5000 }).catch(() => undefined);
@@ -153,7 +171,7 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
   ok(`${LANG}: laid out ${LANG === 'ar' ? 'right to left' : 'left to right'}, nothing wider than the screen`, (await p.evaluate(() => document.documentElement.dir || 'ltr')) === (LANG === 'ar' ? 'rtl' : 'ltr') && (await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)));
   ok('no page errors', !errors.length, errors);
   // ---- PC: the sheet ----
-  await p.setViewportSize({ width: 1280, height: 800 }); await animeSheet(); await p.waitForTimeout(300); await shot('subs-sheet-pc');
+  await p.setViewportSize({ width: 1280, height: 800 }); await animeSheet(); await p.waitForFunction(() => !document.querySelector('.pack-sheet').getAnimations().length); await shot('subs-sheet-pc');
   await br.close(); web.close(); fs.rmSync(MEDIA, { recursive: true, force: true });
   console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.log('FAIL ' + e.message); process.exit(1); });

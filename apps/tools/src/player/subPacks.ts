@@ -131,8 +131,10 @@ export function movieFileFor(p: SubPack, scan: PackScan, title: string, year: nu
   const words = normTitle(title).split(' ').filter((w) => w.length > 1);
   const fit = (f: PackFile) => { const n = normTitle(f.path.split(/[\\/]/).pop() ?? f.path); return words.filter((w) => n.includes(w)).length / Math.max(1, words.length) + (year && n.includes(String(year)) ? 0.5 : 0); };
   const li = (f: PackFile) => { const l = langOfName(f.path); const i = l ? langs.indexOf(l) : -1; return i < 0 ? 99 : i; };
-  const cands = [...scan.files].sort((a, b) => fit(b) - fit(a) || li(a) - li(b) || a.path.localeCompare(b.path));
-  const top = cands[0]; const several = !!top && cands.filter((c) => fit(c) === fit(top) && li(c) === li(top)).length > 1;
+  // (Forced-only and hearing-impaired files come after the plain ones of the same fit and language, unless asked for by hand.)
+  const odd = (f: PackFile) => (/(^|[^a-z])(forced|sdh|hi|cc)([^a-z]|$)/i.test(f.path.split(/[\\/]/).pop() ?? '') ? 1 : 0);
+  const cands = [...scan.files].sort((a, b) => fit(b) - fit(a) || li(a) - li(b) || odd(a) - odd(b) || a.path.localeCompare(b.path));
+  const top = cands[0]; const several = !!top && cands.filter((c) => fit(c) === fit(top) && li(c) === li(top) && odd(c) === odd(top)).length > 1;
   if (mf) return { file: mf, cands: [mf, ...cands.filter((c) => c !== mf)], manual: true, several: false };
   return { file: top, cands, manual: false, several };
 }

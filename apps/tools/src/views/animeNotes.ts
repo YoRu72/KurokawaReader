@@ -11,12 +11,13 @@ import type { Anime } from '../anilist';
 import * as N from '../anime/notes';
 import * as C from '../anime/covers';
 import { titleOf } from './anime';
+import { reviewIcon } from '../anime/reviewIcon';
 
 /* ---------- the cover ---------- */
 const coverFault = (e: unknown): string => {
   const f = e instanceof C.CoverError ? e : null;
   if (!f) return String((e as Error)?.message ?? e);
-  return f.fault === 'badUrl' ? t('coverBadUrl') : f.fault === 'notImage' ? t('coverNotImage') : f.fault === 'tooLarge' ? t('coverTooLarge', { size: formatBytes(C.MAX_IN) }) : f.fault === 'decode' ? t('coverDecode') : f.status ? t('coverHttp', { s: f.status }) : t('coverUnreachable');
+  return f.fault === 'badUrl' ? t('coverBadUrl') : f.fault === 'notImage' ? t('coverNotImage') : f.fault === 'tooLarge' ? t('coverTooLarge', { size: formatBytes(C.MAX_IN) }) : f.fault === 'tooBig' ? t('coverTooBig', { n: localDigits(Math.round(C.MAX_PIXELS / 1e6)) }) : f.fault === 'store' ? t('coverStore') : f.fault === 'decode' ? t('coverDecode') : f.status ? t('coverHttp', { s: f.status }) : t('coverUnreachable');
 };
 /** The cover chooser: a picture from the device (the system's picker on the phone, the file dialog on the computer),
  *  a picture's address, or back to the original. */
@@ -29,7 +30,7 @@ export function coverSheet(a: Anime, changed: () => void): void {
   const paint = () => {
     const src = C.coverOf(a); pic.replaceChildren(src ? h('img', { src, alt: '' }) : icon('film'));
     const info = C.coverIndex()[a.id]; reset.hidden = !info;
-    about.textContent = info ? `${info.from === 'url' && info.url ? t('coverFromUrl', { host: hostOf(info.url) }) : t('coverFromFile')} · ${localDigits(info.w)}×${localDigits(info.h)} · ${formatBytes(info.bytes)}` : t('coverIsOriginal');
+    about.textContent = info ? `${info.from === 'url' && info.host ? t('coverFromUrl', { host: info.host }) : t('coverFromFile')} · ${localDigits(info.w)}×${localDigits(info.h)} · ${formatBytes(info.bytes)}` : t('coverIsOriginal');
   };
   const say = (text: string, bad = false) => { msg.textContent = text; msg.classList.toggle('bad', bad); };
   const busy = (on: boolean) => sh.el.querySelectorAll<HTMLButtonElement>('.cover-actions button, .cover-url button').forEach((b) => { b.disabled = on; });
@@ -45,13 +46,12 @@ export function coverSheet(a: Anime, changed: () => void): void {
     msg, file);
   paint();
 }
-const hostOf = (u: string): string => { try { return new URL(u).host; } catch { return u; } };
 
 /* ---------- notes ---------- */
 const labelOf = (n: N.ShowNote): string => (n.review ? t('reviewLabel') : n.ep ? t('episodeN', { n: n.ep }) : t('noteWholeShow'));
 /** The text an activity carries — exactly what the «before sending» sheet shows. */
 export function activityText(a: Anime, n: N.ShowNote): string {
-  return `${titleOf(a)} — ${n.ep ? t('episodeN', { n: n.ep }) : t('noteWholeShow')}\n\n${n.text.trim()}${n.score ? `\n\n★ ${localDigits(n.score)}/${localDigits(10)}` : ''}`;
+  return `${titleOf(a)} — ${n.ep ? t('episodeN', { n: n.ep }) : t('noteWholeShow')}\n\n${n.text.trim()}${n.score ? `\n\n★ ${localDigits(n.score, 'prose')}/${localDigits(10, 'prose')}` : ''}`;
 }
 function askSheet(text: string, buttons: [string, string, () => void][]): void {
   const sh = openSheet(text, t('close'), { stack: true });
@@ -121,22 +121,33 @@ export function sendSheet(a: Anime, n0: N.ShowNote, changed: () => void): void {
   const go = h('button', { type: 'button', class: 'btn primary send-go' }, icon('upload'), t('sendNow')) as HTMLButtonElement;
   const preview = (txt: string) => h('pre', { class: 'send-preview', dir: 'auto' }, txt);
   const sw = (label: string, on: boolean, set: (v: boolean) => void) => h('label', { class: 'row switch-row' }, h('span', null, label), h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => { set((e.target as HTMLInputElement).checked); drawAl(); drawMal(); } }));
-  let listAdd: boolean | null = null;
+  const warn = (text: string, soft = true) => h('p', { class: 'send-problem' + (soft ? ' soft' : '') }, icon(soft ? 'info' : 'alert'), h('span', null, text));
+  // (What the sheet must know before Send can be pressed — whether the show is on each list, since a note put in its
+  // notes or comments adds it — asked once; until it answers Send stays off; no answer: said that it may add it.)
+  type Check = 'checking' | 'on' | 'off' | 'unknown';
+  let alList: Check | null = null; let malList: Check | null = null;
+  const askAl = () => { if (alList) return; alList = 'checking'; void N.onAniListList(a.id).then((on) => { alList = on ? 'on' : 'off'; }, () => { alList = 'unknown'; }).finally(() => { if (sh.el.isConnected) drawAl(); }); };
+  const askMal = () => { if (malList || !a.idMal) return; malList = 'checking'; void import('../anime/mal').then((m) => m.malComments(a.idMal!)).then((c) => { malList = c === null ? 'off' : 'on'; }, () => { malList = 'unknown'; }).finally(() => { if (sh.el.isConnected) drawMal(); }); };
+  const listNote = (c: Check | null, adds: string, may: string) => (c === 'checking' ? h('p', { class: 'send-problem soft' }, h('span', { class: 'spinner tiny' }), h('span', null, t('sendChecking'))) : c === 'off' ? warn(adds) : c === 'unknown' ? warn(may) : null);
   const drawAl = () => {
-    if (!al.linked()) { alBox.replaceChildren(h('h4', null, 'AniList'), h('p', { class: 'hint' }, t('sendAlSignIn')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./anilistLink').then((m) => m.anilistSignIn(() => { toAl = true; drawAl(); syncGo(); })) }, icon('user'), t('anilistSignInWith'))); return; }
+    if (!al.linked()) { alBox.replaceChildren(h('h4', null, 'AniList'), h('p', { class: 'hint' }, t('sendAlSignIn')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./anilistLink').then((m) => m.anilistSignIn(() => { toAl = true; drawAl(); syncGo(); })) }, icon('user'), t('anilistSignInWith'))); syncGo(); return; }
     const kids: (Node | null)[] = [h('h4', null, 'AniList'), sw(t('sendToAl'), toAl, (v) => { toAl = v; })];
     if (toAl) {
       if (isReview) {
         const p = N.reviewProblem(n);
         kids.push(h('p', { class: 'send-public' }, icon(n.review!.private ? 'lock' : 'globe'), h('span', null, n.review!.private ? t('pubReviewPrivate') : t('pubReview'))),
-          p ? h('p', { class: 'send-problem' }, icon('alert'), h('span', null, p === 'body' ? t('reviewTooShort', { n: localDigits(N.chars(n.text)), min: localDigits(N.REVIEW_MIN) }) : p === 'summary' ? t('reviewSummaryBad', { min: localDigits(N.SUMMARY_MIN), max: localDigits(N.SUMMARY_MAX) }) : t('reviewNeedScore'))) : null,
+          p ? warn(p === 'body' ? t('reviewTooShort', { n: localDigits(N.chars(n.text)), min: localDigits(N.REVIEW_MIN) }) : p === 'summary' ? t('reviewSummaryBad', { min: localDigits(N.SUMMARY_MIN), max: localDigits(N.SUMMARY_MAX) }) : t('reviewNeedScore'), false) : null,
           preview(`${n.review!.summary}\n\n${n.text.trim()}\n\n★ ${localDigits(n.score ?? 0)}/${localDigits(100)}`));
       } else {
+        const body = how === 'activity' ? activityText(a, n) : N.noteLine(n);
         kids.push(h('div', { class: 'chip-row wrap send-how' }, ...([['activity', t('notesModeActivity')], ['notes', t('notesModeNotes')]] as const).map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (how === k ? ' on' : ''), 'aria-pressed': String(how === k), onclick: () => { how = k; drawAl(); } }, l))),
           h('p', { class: 'send-public' }, icon('globe'), h('span', null, how === 'activity' ? t('pubActivity') : t('pubNotes'))),
-          how === 'notes' && listAdd ? h('p', { class: 'send-problem soft' }, icon('info'), h('span', null, t('pubNotesAdds'))) : null,
-          preview(how === 'activity' ? activityText(a, n) : N.noteLine(n)));
-        if (how === 'notes' && listAdd === null) { listAdd = false; void N.onAniListList(a.id).then((on) => { listAdd = !on; if (listAdd) drawAl(); }).catch(() => undefined); }
+          // (Sent before another way: that one is taken away first — said here, before Send.)
+          n.al && n.al.how !== how ? warn(n.al.how === 'activity' ? t('sendMovesFromActivity') : t('sendMovesFromNotes'), false) : null,
+          how === 'notes' ? listNote(alList, t('pubNotesAdds'), t('pubNotesMayAdd')) : null,
+          how === 'activity' && [...body].length > N.ACTIVITY_MAX ? warn(t('sendTooLong', { n: localDigits(N.ACTIVITY_MAX) }), false) : null,
+          preview(body));
+        if (how === 'notes') askAl();
       }
     }
     alBox.replaceChildren(...kids.filter((k): k is Node => !!k)); syncGo();
@@ -146,19 +157,31 @@ export function sendSheet(a: Anime, n0: N.ShowNote, changed: () => void): void {
     if (isReview) kids.push(h('p', { class: 'hint' }, t('malNoReviews')));
     else if (!a.idMal) kids.push(h('p', { class: 'hint' }, t('malNoPage')));
     else if (!malLinkedNow) kids.push(h('p', { class: 'hint' }, t('malSignInHint')), h('button', { type: 'button', class: 'btn text small', onclick: () => malSheet(() => { void loadMal().then(() => { toMal = malLinkedNow; drawMal(); }); }) }, icon('user'), t('malAccount')));
-    else { kids.push(sw(t('sendToMal'), toMal, (v) => { toMal = v; })); if (toMal) kids.push(h('p', { class: 'send-public' }, icon('globe'), h('span', null, t('pubMal'))), preview(N.noteLine(n))); }
+    else { kids.push(sw(t('sendToMal'), toMal, (v) => { toMal = v; })); if (toMal) { askMal(); kids.push(h('p', { class: 'send-public' }, icon('globe'), h('span', null, t('pubMal'))), listNote(malList, t('pubMalAdds'), t('pubMalMayAdd')), preview(N.noteLine(n))); } }
     malBox.replaceChildren(...kids.filter((k): k is Node => !!k)); syncGo();
   };
-  let malLinkedNow = false;
+  let malLinkedNow = false; let sending = false;
   const loadMal = () => import('../anime/mal').then((m) => { malLinkedNow = m.malLinked(); });
-  const syncGo = () => { go.disabled = !((toAl && al.linked() && !(isReview && N.reviewProblem(n))) || (toMal && malLinkedNow && !!a.idMal && !isReview)); };
+  const syncGo = () => {
+    const alOk = toAl && al.linked() && !(isReview && N.reviewProblem(n)) && !(!isReview && how === 'notes' && (!alList || alList === 'checking')) && !(!isReview && how === 'activity' && [...activityText(a, n)].length > N.ACTIVITY_MAX);
+    const malOk = toMal && malLinkedNow && !!a.idMal && !isReview && !!malList && malList !== 'checking';
+    const waiting = (toAl && !isReview && how === 'notes' && alList === 'checking') || (toMal && malList === 'checking');
+    go.disabled = sending || waiting || !(alOk || malOk);
+  };
   go.addEventListener('click', async () => {
-    go.disabled = true; status.classList.remove('bad'); status.textContent = t('sending'); const fails: string[] = [];
-    if (toAl && al.linked()) { try { n = await N.sendAniList(n, isReview ? 'review' : how, isReview ? '' : how === 'activity' ? activityText(a, n) : N.noteLine(n)); } catch (e) { const w = al.retryAfterOf(e); fails.push(`AniList: ${w ? t('sendWait', { n: localDigits(w) }) : String((e as Error).message ?? e)}`); } }
-    if (toMal && malLinkedNow && a.idMal && !isReview) { try { n = await N.sendMal(n, a.idMal, N.noteLine(n)); } catch (e) { const w = (e as { retryAfter?: number }).retryAfter; fails.push(w ? `MyAnimeList: ${t('sendWait', { n: localDigits(w) })}` : String((e as Error).message ?? e)); } }
-    changed();
+    if (go.disabled) return; sending = true; syncGo(); status.classList.remove('bad'); status.replaceChildren(t('sending')); const fails: (string | Node)[] = []; let maybe = false;
+    if (toAl && al.linked()) {
+      try { n = await N.sendAniList(n, isReview ? 'review' : how, isReview ? '' : how === 'activity' ? activityText(a, n) : N.noteLine(n), true); }
+      catch (e) { const w = al.retryAfterOf(e); maybe = al.maybeSent(e); fails.push(`AniList: ${e instanceof N.TooLong ? t('sendTooLong', { n: localDigits(e.max) }) : maybe ? t('sendMaybeSent') : w ? t('sendWait', { n: localDigits(w) }) : String((e as Error).message ?? e)}`); }
+    }
+    if (toMal && malLinkedNow && a.idMal && !isReview) { try { n = await N.sendMal(n, a.idMal, N.noteLine(n)); } catch (e) { const w = (e as { retryAfter?: number }).retryAfter; fails.push(`MyAnimeList: ${e instanceof N.TooLong ? t('sendTooLong', { n: localDigits(e.max) }) : w ? t('sendWait', { n: localDigits(w) }) : String((e as Error).message ?? e)}`); } }
+    sending = false; changed();
     if (!fails.length) { sh.close(); toast(t('sentOk')); return; }
-    status.textContent = `${t('sendFailedKept')} ${fails.join(' · ')}`; status.classList.add('bad'); go.lastChild!.textContent = t('tryAgain'); syncGo();
+    n = (await N.notesOf(n.show)).find((x) => x.id === n.id) ?? n;   // (what was done before the failure — taken away from elsewhere — known)
+    // (It may have reached AniList — a 5xx or a lost answer to a new activity or review —: look there before sending again.)
+    const u = al.user();
+    status.replaceChildren(`${t('sendFailedKept')} ${fails.join(' · ')}`, ...(maybe && u ? [' ', h('a', { class: 'send-check', href: `https://anilist.co/user/${encodeURIComponent(u.name)}/`, target: '_blank', rel: 'noopener' }, t('sendCheckAniList'))] : []));
+    status.classList.add('bad'); go.lastChild!.textContent = t('tryAgain'); syncGo();
   });
   sh.body.append(h('p', { class: 'hint' }, t('sendIntro')), alBox, malBox, status);
   sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('cancel')), go);
@@ -204,7 +227,7 @@ export function malSheet(changed: () => void): void {
       const signIn = async () => {
         updateSettings({ malClientId: idIn.value.trim() }); if (!m.malClientId()) { toast(t('malNeedClient'), 'error'); idIn.focus(); return; }
         const url = m.malAuthUrl(); const { capture } = await import('./anilistLink');
-        const at = await capture(url, 'code=', t('malAccount'));
+        const at = await capture(url, `${m.MAL_REDIRECT}?`, t('malAccount'));
         if (at === undefined) { window.open(url, '_blank', 'noopener'); pasteRow.hidden = false; return; }
         if (at) await finish(at);
       };
@@ -225,7 +248,7 @@ export function notesSettingsRows(rerender: () => void): HTMLElement[] {
   const malRow = h('div', { class: 'row notes-mal' }, h('span', null, 'MyAnimeList', h('small', { class: 'src mal-state' }, t('malWhatShort'))), h('button', { type: 'button', class: 'btn tonal small', onclick: () => malSheet(rerender) }, icon('user'), t('malAccount')));
   void import('../anime/mal').then((m) => { const st = malRow.querySelector('.mal-state'); if (st && m.malLinked()) st.textContent = t('malLinkedAs', { name: m.malUser() || '—' }); });
   const sw = (label: string, hint: string, on: boolean, set: (v: boolean) => void) => h('label', { class: 'row switch-row' }, h('span', null, label, h('small', { class: 'src' }, hint)), h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }));
-  const after = [sw(t('trackAfterWatch'), t('trackAfterWatchHint'), s.animeTrackAfterWatch !== false, (v) => updateSettings({ animeTrackAfterWatch: v })), sw(t('askReview'), t('askReviewHint'), s.animeAskReview !== false, (v) => updateSettings({ animeAskReview: v }))];
+  const after = [sw(t('trackAfterWatch'), t('trackAfterWatchHint'), s.animeTrackAfterWatch ?? s.anilistAutoProgress !== false, (v) => { updateSettings({ animeTrackAfterWatch: v }); if (!v) void import('../anime/progress').then((m) => m.clearAutoQueues()); }), sw(t('askReview'), t('askReviewHint'), s.animeAskReview !== false, (v) => updateSettings({ animeAskReview: v }))];
   return [h('h4', null, t('afterWatchTitle')), ...after, h('h4', null, t('notesTitle')), h('div', { class: 'field notes-mode-field' }, h('span', { class: 'label' }, t('notesModeLabel')), pick, h('small', { class: 'hint' }, mode === 'activity' ? t('pubActivity') : mode === 'notes' ? t('pubNotes') : t('notesModeLocalHint'))), malRow];
 }
 
@@ -243,7 +266,7 @@ export function reviewBar(ep: number, open: () => void): () => void {
   const hold = () => { if (held++ === 0) { window.clearTimeout(timer); left = Math.max(1500, left - (Date.now() - since)); el.classList.add('held'); } };
   const letGo = () => { if (held > 0 && --held === 0) run(); };
   const el = h('div', { class: 'float-bar review-bar' + (still ? ' still' : ''), role: 'status', 'aria-live': 'polite' },
-    h('button', { type: 'button', class: 'rb-main', onclick: () => { gone(); open(); } }, icon('pen'), h('span', { class: 'grow', dir: 'auto' }, t('reviewAskBar', { n: ep }))),
+    h('button', { type: 'button', class: 'rb-main', title: t('reviewThisEp'), onclick: () => { gone(); open(); } }, reviewIcon(), h('span', { class: 'grow', dir: 'auto' }, t('reviewAskBar', { n: ep }))),
     iconButton('close', t('close'), () => gone()), h('span', { class: 'rb-line', 'aria-hidden': 'true' }, line));
   el.addEventListener('pointerenter', hold); el.addEventListener('pointerleave', letGo); el.addEventListener('focusin', hold); el.addEventListener('focusout', letGo);
   el.addEventListener('touchstart', hold, { passive: true }); el.addEventListener('touchend', letGo); el.addEventListener('touchcancel', letGo);

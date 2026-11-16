@@ -54,7 +54,7 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
   const fail = (e: unknown) => h('p', { class: 'empty small' }, String((e as Error)?.message ?? e));
 
   /** «+ Plan» on a card of a show not on the list (the Season Guide's quick add). */
-  const planBtn = (a: Anime): HTMLElement | null => (!al.linked() || a.entry ? null : h('span', { class: 'plan-chip', role: 'button', tabindex: '0', onclick: async (e: Event) => { e.stopPropagation(); const el = e.currentTarget as HTMLElement; el.classList.add('busy'); try { const r = await al.saveOrQueue(a.id, { status: 'PLANNING', progress: 0, score: 0 }); a.entry = r.entry; el.replaceWith(h('span', { class: 'plan-chip done' }, icon('check'), t('statusPlanning'))); } catch (er) { toast(String((er as Error).message ?? er), 'error'); el.classList.remove('busy'); } } }, icon('plus'), t('plan')));
+  const planBtn = (a: Anime): HTMLElement | null => (!al.linked() || a.entry ? null : h('span', { class: 'plan-chip', role: 'button', tabindex: '0', onclick: async (e: Event) => { e.stopPropagation(); const el = e.currentTarget as HTMLElement; el.classList.add('busy'); try { const r = await al.saveOrQueue(a.id, { status: 'PLANNING', progress: 0, score: 0 }, null); a.entry = r.entry; el.replaceWith(h('span', { class: 'plan-chip done' }, icon('check'), t('statusPlanning'))); } catch (er) { toast(String((er as Error).message ?? er), 'error'); el.classList.remove('busy'); } } }, icon('plus'), t('plan')));
   const draw = () => {
     drawChips(); window.clearInterval(timer); const my = ++token; body.replaceChildren(); body.classList.remove('dc-page');
     root.classList.toggle('dc-on', current === 'discover');

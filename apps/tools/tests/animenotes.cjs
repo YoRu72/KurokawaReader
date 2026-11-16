@@ -1,5 +1,6 @@
 // A show's own cover, and notes and reviews (0.21 P7), against stand-in servers on loopback only (a made-up show and
-// made-up users; the app's test hook window.__ktTestApi, which takes loopback addresses only):
+// made-up users; AniList's and MyAnimeList's addresses answered by this test's server through the browser's routing —
+// the app has no test hook):
 //   covers — set from a file (made small), from an address, refused (not a web address, not a picture, an HTML page,
 //     an error, too large), kept across a reload, shown on the show's page, the season chart, Discover, Continue
 //     watching and the schedule, and back to the original;
@@ -16,10 +17,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 let fails = 0; const check = (what, ok, extra) => { console.log((ok ? 'ok   ' : 'FAIL ') + what + (ok || extra === undefined ? '' : '  ' + JSON.stringify(extra).slice(0, 400))); if (!ok) fails++; };
 
 // ---- the stand-ins: the app, AniList's GraphQL, MyAnimeList's API and sign-in, and pictures ----
-const calls = []; const mal = []; const flags = { refuse: 0, limit: 0 }; let png = null; let actId = 500;
-let listNotes = 'My own words about it\n[Ep 1] an older line';
+const calls = []; const mal = []; const flags = { refuse: 0, limit: 0, lost: 0, slowList: 0 }; const imgHits = []; let png = null; let actId = 500;
+let listNotes = 'My own words about it\n[Ep 1] a line of mine that only looks like the app\'s\n⟪Ep 1⟫ an older line';
 const SMALL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAYAAAA7KqwyAAAAEklEQVR42mP8z8DwnxEPYBxVSAoA0KkFE3ZgS1AAAAAASUVORK5CYII=', 'base64');
-const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, authorization, accept', 'access-control-allow-methods': 'GET, POST, PATCH, PUT, OPTIONS', 'access-control-expose-headers': 'retry-after, content-type, content-length' };
+const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, authorization, accept, range', 'access-control-allow-methods': 'GET, HEAD, POST, PATCH, PUT, OPTIONS', 'access-control-expose-headers': 'retry-after, content-type, content-length' };
 let BASE = '';
 const MEDIA = (id) => ({ id, idMal: 501, title: { romaji: 'Hoshizora Kissa', english: 'Starlit Cafe', native: '星空喫茶', userPreferred: 'Starlit Cafe' }, synonyms: [], coverImage: { large: `${BASE}/img/orig.png`, extraLarge: `${BASE}/img/orig.png`, color: '#5c6bc0' }, format: 'TV', status: 'RELEASING', episodes: 12, season: 'FALL', seasonYear: 2026, startDate: { year: 2026, month: 10, day: 1 }, genres: ['Slice of Life'], averageScore: 77, popularity: 1000, isAdult: false, siteUrl: `https://anilist.co/anime/${id}`, nextAiringEpisode: { airingAt: Math.floor(Date.now() / 1000) + 90000, episode: 6 }, mediaListEntry: null, duration: 24, description: 'A made-up show.', studios: { nodes: [{ id: 1, name: 'Made-up Studio' }] }, airingSchedule: { nodes: [1, 2, 3, 4, 5].map((e) => ({ airingAt: Math.floor(Date.now() / 1000) - (6 - e) * 604800, episode: e })) }, streamingEpisodes: [], externalLinks: [], relations: { edges: [] }, bannerImage: null, trailer: null });
 const answer = (q, v) => {
@@ -39,14 +40,18 @@ const answer = (q, v) => {
 };
 const read = (req) => new Promise((ok) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => ok(b)); });
 const server = http.createServer(async (req, res) => {
-  const u = new URL(req.url, 'http://x'); const send = (status, body, type = 'application/json', extra = {}) => { res.writeHead(status, { ...cors, 'content-type': type, ...extra }); res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
+  const u = new URL(req.url, 'http://x'); const send = (status, body, type = 'application/json', extra = {}) => { const b = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body); res.writeHead(status, { ...cors, 'content-type': type, 'content-length': Buffer.byteLength(b), ...extra }); res.end(req.method === 'HEAD' ? undefined : b); };
   if (req.method === 'OPTIONS') return send(204, '');
   if (u.pathname === '/graphql') {
     const body = JSON.parse(await read(req)); calls.push({ ...body, auth: req.headers.authorization, at: Date.now() });
     if (/SaveTextActivity/.test(body.query) && flags.limit) { flags.limit--; return send(429, { data: null, errors: [{ message: 'Too Many Requests.', status: 429 }] }, 'application/json', { 'retry-after': '1' }); }
+    if (/SaveTextActivity/.test(body.query) && !body.variables.id && flags.lost) { flags.lost--; answer(body.query, body.variables); return send(502, '<html>Bad gateway</html>', 'text/html'); }   // (made, then the answer lost)
+    if (/mediaListEntry \{ id notes \}/.test(body.query) && flags.slowList) { flags.slowList--; await new Promise((r) => setTimeout(r, 2500)); }
     if (/SaveTextActivity/.test(body.query) && flags.refuse) { flags.refuse--; return send(400, { data: null, errors: [{ message: 'Mock refusal', status: 400 }] }); }
     return send(200, { data: answer(body.query, body.variables || {}) });
   }
+  if (u.pathname.startsWith('/img/')) imgHits.push(`${req.method} ${u.pathname}`);
+  if (u.pathname === '/img/tiny-huge.png') { const b = Buffer.alloc(64); Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').copy(b); b.writeUInt32BE(10000, 16); b.writeUInt32BE(10000, 20); return send(200, b, 'image/png'); }
   if (u.pathname === '/img/orig.png') return send(200, SMALL, 'image/png');
   if (u.pathname === '/img/big.png') return send(200, png, 'image/png');
   if (u.pathname === '/img/page.html') return send(200, '<!doctype html><title>x</title>', 'text/html');
@@ -70,10 +75,15 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
   const br = await chromium.launch();
   const newPage = async (viewport, phone) => {
     const ctx = await br.newContext({ viewport, ...(phone ? { hasTouch: true, isMobile: true, deviceScaleFactor: 2 } : {}) });
-    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.fulfill({ status: 404, body: '' }));   // (never the real sites)
+    // (AniList and MyAnimeList answered by this test's server; every other outside address refused — never the real sites.)
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, async (r) => {
+      const u = new URL(r.request().url()); const to = u.host === 'graphql.anilist.co' ? '/graphql' : u.host === 'myanimelist.net' || u.host === 'api.myanimelist.net' ? u.pathname + u.search : null;
+      if (!to) return r.fulfill({ status: 404, body: '' });
+      const q = r.request(); const resp = await fetch(BASE + to, { method: q.method(), headers: q.headers(), body: ['GET', 'HEAD'].includes(q.method()) ? undefined : q.postDataBuffer() ?? undefined });
+      const headers = {}; resp.headers.forEach((v, k) => { headers[k] = v; }); r.fulfill({ status: resp.status, headers, body: Buffer.from(await resp.arrayBuffer()) });
+    });
     const p = await ctx.newPage(); p.errors = []; p.on('pageerror', (e) => p.errors.push(e.message));
     await p.addInitScript(([base, lang, phone]) => {
-      window.__ktTestApi = { anilist: `${base}/graphql`, mal: base };
       if (!localStorage.getItem('kt.settings')) {
         localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['anime'], settingsLayout: 'list' }));
         localStorage.setItem('kt.anilist.token', 'MADE-UP-TOKEN'); localStorage.setItem('kt.anilist.user', JSON.stringify({ id: 9001, name: 'Test Viewer', scoreFormat: 'POINT_10' }));
@@ -109,7 +119,7 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
   const msg = () => p.$eval('.cover-msg', (e) => ({ text: e.textContent, bad: e.classList.contains('bad') }));
   const waitMsg = () => p.waitForFunction(() => { const m = document.querySelector('.cover-msg'); return m && m.textContent && !/…$/.test(m.textContent); }, null, { timeout: 15000 });
   await p.setInputFiles('.cover-file', { name: 'mine.png', mimeType: 'image/png', buffer: png }); await waitMsg();
-  let m = await msg(); const idx = () => p.evaluate(() => JSON.parse(localStorage.getItem('kt.anime.covers') || '{}')['101']);
+  let m = await msg(); const idx = () => p.evaluate(() => JSON.parse(localStorage.getItem('kt.cache.animeCovers') || '{}')['101']);
   let info = await idx(); check('a picture from a file: kept, made small (600×900 at most)', !m.bad && info && info.from === 'file' && info.w === 600 && info.h === 900 && info.bytes < png.length, { m, info });
   check('the page shows it at once', /^blob:/.test(await p.$eval('.anime-head .cover-btn img', (e) => e.getAttribute('src'))));
   const tryUrl = async (u) => { await p.fill('.cover-url-in', u); await p.click('.cover-use'); await waitMsg(); return msg(); };
@@ -118,8 +128,10 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
   m = await tryUrl(`${BASE}/img/fake.png`); check('text named .png: refused as not a picture', m.bad, m);
   m = await tryUrl(`${BASE}/img/missing.png`); check('an error answer: refused with its status', m.bad && /404|٤٠٤/.test(m.text), m);
   m = await tryUrl(`${BASE}/img/huge.png`); check('too large: refused', m.bad && /20|٢٠/.test(m.text), m);
+  check('…known from its size before it is fetched (no GET of it)', imgHits.includes('HEAD /img/huge.png') && !imgHits.includes('GET /img/huge.png'), imgHits);
+  m = await tryUrl(`${BASE}/img/tiny-huge.png`); check('a tiny file claiming 10000×10000: refused before it is decoded', m.bad && /40|٤٠/.test(m.text), m);
   check('a refused picture leaves the chosen one', (await idx())?.from === 'file');
-  m = await tryUrl(`${BASE}/img/big.png`); info = await idx(); check('a picture from an address: fetched once and kept', !m.bad && info.from === 'url' && info.url === `${BASE}/img/big.png` && info.w === 600, { m, info });
+  m = await tryUrl(`${BASE}/img/big.png`); info = await idx(); check('a picture from an address: fetched once and kept', !m.bad && info.from === 'url' && info.host === new URL(BASE).host && !('url' in info) && info.w === 600, { m, info });
   check('the reset is offered now', !(await p.$eval('.cover-reset', (e) => e.hidden)));
   await closeSheets(p);
   // Kept across a reload, and shown wherever the show's cover is.
@@ -136,7 +148,7 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
   check('Continue watching (from the player\'s history)', cont.some((s) => /^blob:/.test(s || '')), cont);
   // Back to the original.
   await p.goto(`${BASE}/#/anime/101`); await p.waitForSelector('.anime-head .cover-btn img'); await p.click('.anime-head .cover-btn'); await p.waitForSelector('.cover-sheet');
-  await p.click('.cover-reset'); await p.waitForFunction(() => !JSON.parse(localStorage.getItem('kt.anime.covers') || '{}')['101']);
+  await p.click('.cover-reset'); await p.waitForFunction(() => !JSON.parse(localStorage.getItem('kt.cache.animeCovers') || '{}')['101']);
   check('back to the original: the page and the index', /\/img\/orig\.png$/.test(await p.$eval('.anime-head .cover-btn img', (e) => e.getAttribute('src'))) && (await p.$eval('.cover-reset', (e) => e.hidden)));
   check('...and the picture gone from the device', await p.evaluate(() => new Promise((ok) => { const r = indexedDB.open('kurokawa-tools'); r.onsuccess = () => { const q = r.result.transaction('files').objectStore('files').get('anime-cover:101'); q.onsuccess = () => ok(q.result === undefined); }; })));
   await closeSheets(p);
@@ -178,10 +190,13 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
 
   // ---- the list entry's notes ----
   await p.click('.note-row [data-icon="upload"]'); await p.waitForSelector('.send-sheet .send-how');
-  await p.click('.send-how .chip >> nth=1'); await p.waitForFunction(() => /^\[Ep 2\]/.test(document.querySelector('.send-sheet .send-preview')?.textContent || ''));
+  await p.click('.send-how .chip >> nth=1'); await p.waitForFunction(() => /^⟪Ep 2⟫/.test(document.querySelector('.send-sheet .send-preview')?.textContent || ''));
+  check('sent as an activity before: the sheet says that activity is deleted first', (await p.$$('.send-sheet .send-problem:not(.soft)')).length >= 1);
+  await p.waitForFunction(() => !document.querySelector('.send-go').disabled, null, { timeout: 8000 });
   await p.click('.send-go'); await sheetGone(p, '.send-sheet');
   mu = mutations().slice(before); const ln = mu[mu.length - 1];
-  check('in the list notes: the user\'s own text kept, the old line kept, this line added', /SaveMediaListEntry/.test(ln.query) && ln.variables.notes === 'My own words about it\n[Ep 1] an older line\n[Ep 2] Calm, warm, funny — and a lovely ending. (8/10)' && ln.variables.status == null, ln.variables);
+  check('another way: the old activity deleted first, then put in the list notes', /DeleteActivity/.test(mu[mu.length - 2].query) && mu[mu.length - 2].variables.id === firstId, mu.slice(-2).map((x) => x.query.slice(0, 30)));
+  check('in the list notes: the user\'s own lines (one only looking like the app\'s) untouched and in order, the app\'s line added', /SaveMediaListEntry/.test(ln.query) && ln.variables.notes === 'My own words about it\n[Ep 1] a line of mine that only looks like the app\'s\n⟪Ep 1⟫ an older line\n⟪Ep 2⟫ Calm, warm, funny — and a lovely ending. (8/10)' && ln.variables.status == null, ln.variables);
 
   // ---- refused, kept, sent again; a rate limit ----
   flags.refuse = 1;
@@ -190,6 +205,7 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
   check('a refused send: said, the sheet and the text kept', /Mock refusal/.test(await p.$eval('.send-status', (e) => e.textContent)) && !!(await p.$('.send-sheet')));
   await p.click('.send-go'); await sheetGone(p, '.send-sheet');
   check('sent again on «Try again»', /SaveTextActivity/.test(mutations().slice(-1)[0].query) && !flags.refuse);
+  check('…and the list notes\' line was taken out when it moved back to an activity', listNotes === 'My own words about it\n[Ep 1] a line of mine that only looks like the app\'s\n⟪Ep 1⟫ an older line', listNotes);
   flags.limit = 2; const t0 = Date.now();
   await p.click('.note-row [data-icon="upload"]'); await p.waitForSelector('.send-sheet .send-how'); await p.click('.send-go');
   await p.waitForSelector('.send-status.bad', { timeout: 20000 });
@@ -197,6 +213,22 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
   check('rate limited: Retry-After waited once, then the wait reported, the text kept', lim.length === 2 && lim[1].at - lim[0].at >= 1000 && /1|١/.test(await p.$eval('.send-status', (e) => e.textContent)), lim.map((x) => x.at - t0));
   await p.waitForSelector('.note-row .note-status.bad'); check('the note row says it was not sent', true);
   await p.click('.send-go'); await sheetGone(p, '.send-sheet'); check('sent after the wait', !flags.limit && !(await p.$('.note-row .note-status.bad')));
+
+  // ---- Send cannot be pressed before the sheet knows what it will do (the list check still out) ----
+  flags.slowList = 1; const mEarly = mutations().length;
+  await p.click('.note-row:not(.is-review) [data-icon="upload"]'); await p.waitForSelector('.send-sheet .send-how'); await p.click('.send-how .chip >> nth=1');
+  check('the list being checked: Send disabled', await p.$eval('.send-go', (e) => e.disabled));
+  await p.click('.send-go', { force: true }).catch(() => undefined); await p.waitForFunction(() => !document.querySelector('.send-go').disabled, null, { timeout: 8000 });
+  check('…pressing it early sent nothing', mutations().length === mEarly);
+  await closeSheets(p);
+  // ---- a new activity whose answer is lost (made, then a 502): not sent twice, «may have been sent», a link to look ----
+  await p.click('.ep-row[data-ep="3"] .ep-note-btn'); await p.waitForSelector('.note-sheet .note-text'); await p.fill('.note-sheet .note-text', 'Episode three, briefly.');
+  await p.click('.note-send'); await p.waitForSelector('.send-sheet'); await p.click('.send-sheet .send-target >> nth=0 >> .switch-row'); await p.waitForSelector('.send-sheet .send-preview');
+  flags.lost = 1; const tLost = Date.now(); await p.click('.send-go'); await p.waitForSelector('.send-status.bad', { timeout: 10000 });
+  const made = calls.filter((c) => c.at >= tLost && /SaveTextActivity/.test(c.query));
+  check('a lost answer: sent once only, said it may be there, with «Check on AniList»', made.length === 1 && !!(await p.$('.send-status .send-check')), made.length);
+  await closeSheets(p); await p.locator('.note-row', { hasText: 'Episode three, briefly.' }).locator('[data-icon="trash"]').click(); await p.waitForSelector('.sheet .btn.danger'); await p.click('.sheet .btn.danger');
+  await p.waitForFunction(() => ![...document.querySelectorAll('.note-row')].some((r) => /Episode three/.test(r.textContent)));
 
   // ---- a review ----
   await p.click('.note-review'); await p.waitForSelector('.note-sheet .note-summary');
@@ -235,7 +267,7 @@ const mutations = () => calls.filter((c) => /^\s*mutation/.test(c.query));
   await p.evaluate(() => { const sw = document.querySelector('.send-target input[type=checkbox]'); if (sw?.checked) sw.click(); });   // (AniList off: only MyAnimeList)
   const mBefore2 = mutations().length; await p.click('.send-go'); await sheetGone(p, '.send-sheet');
   const set = mal.find((x) => x.set); const got = mal.find((x) => x.get);
-  check('MyAnimeList: the comments read, this line put under the user\'s own, sent with the token', got && /my_list_status/.test(decodeURIComponent(got.get)) && set && set.method === 'PATCH' && set.set.comments === 'Mine on MAL\n[Ep 2] Calm, warm, funny — and a lovely ending. (8/10)' && set.auth === 'Bearer MAL-ACCESS-1' && mutations().length === mBefore2, { got, set });
+  check('MyAnimeList: the comments read, this line put under the user\'s own, sent with the token', got && /my_list_status/.test(decodeURIComponent(got.get)) && set && set.method === 'PATCH' && set.set.comments === 'Mine on MAL\n⟪Ep 2⟫ Calm, warm, funny — and a lovely ending. (8/10)' && set.auth === 'Bearer MAL-ACCESS-1' && mutations().length === mBefore2, { got, set });
   check('the note says it is on MyAnimeList', (await p.$eval('.note-row:not(.is-review) .note-status', (e) => e.textContent)).split('·').length >= 2);
 
   // ---- deleting: here only, and here and online ----

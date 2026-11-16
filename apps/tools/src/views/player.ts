@@ -15,11 +15,11 @@ export const canPlayExternally = (): boolean => { const p = nativePlatform(); re
 
 export async function openPlayer(url: string, name: string, opts: PlayOpts = {}): Promise<void> {
   const how = canPlayExternally() ? await chooseHow() : 'app'; if (!how) return;
-  // (Where it goes back to: this page, scrolled as it is — also after the phone let the app go meanwhile.)
-  void import('../player/returnTo').then((r) => r.notePlayerOpen(opts.task?.meta ?? opts.meta));
   // (A video opened from a folder: its folder's other videos become the queue, in name order, when the player's setting says.)
   if (!opts.playlist && opts.localPath && !opts.task) { try { const { getPrefs } = await import('../player/prefs'); if (getPrefs().autoQueueFolder !== false) { const { siblingFiles, localFileUrl } = await import('../player/files'); const sibs = (await siblingFiles(opts.localPath)).filter((p) => /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i.test(p)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); if (sibs.length > 1 && sibs.includes(opts.localPath)) { const pl = []; for (const p of sibs) { const u = p === opts.localPath ? url : await localFileUrl(p); if (u) pl.push({ url: u, name: p.split('/').pop() ?? p, localPath: p }); } if (pl.length > 1) opts = { ...opts, playlist: pl }; } } } catch { /* alone */ } }
   if (how === 'external' && (await external(url, name, opts.localPath))) return;
+  // (Where it goes back to — the app's own player only, not another app's, nor a video handed in by another app.)
+  if (!opts.forCaller) await import('../player/returnTo').then((r) => r.notePlayerOpen(opts.task?.meta ?? opts.meta)).catch(() => undefined);
   if (!getSettings().addons.includes('player')) {
     // (Offered in the download card, with its ffmpeg; declined or offline: the system's own controls this time.)
     const { needAddon } = await import('../addons/need');

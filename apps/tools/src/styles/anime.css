@@ -640,7 +640,11 @@ html.pc .kt-player .kt-bottom .chip:hover, html.pc .kt-player .kt-bottom .kt-chi
 .mal-sheet .field { margin: 12px 0; }
 /* (0.21 P7) after watching: the review bar; the episode's pen; the floating download bar (ui/dlFloat.ts) */
 .ep-note-btn.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
-.float-bar { position: fixed; z-index: 60; inset-inline: 12px; margin-inline: auto; max-width: 440px; display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 4px; border-radius: 20px; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); overflow: hidden; animation: rise var(--dur-med) var(--ease-emph-decel); }
+.ep-note-btn.on .rv-star { fill: currentColor; }
+.float-bar { position: fixed; z-index: 60; inset-inline: 12px; margin-inline: auto; max-width: 440px; display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 4px; border-radius: 20px; color: var(--md-on-surface); box-shadow: var(--el-3); overflow: hidden; animation: float-in 140ms ease-out;
+  /* (An opaque raised surface in every theme: the tone laid over the page's own solid surface, so nothing behind shows through.) */
+  background-color: var(--md-surface); background-image: linear-gradient(var(--md-surface-container-high), var(--md-surface-container-high)); border: 1px solid var(--md-outline-variant); }
+html[data-glass] .float-bar { background-image: linear-gradient(var(--g-sheet-s), var(--g-sheet-s)); box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow); }
 .float-bar.leaving { opacity: 0; transition: opacity .2s; }
 .float-bar > button:first-child { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; border-radius: 14px; }
 .float-bar > button:first-child:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
@@ -654,7 +658,11 @@ html[dir='rtl'] .rb-line i { transform-origin: right; }
 .review-bar.held .rb-line i { animation-play-state: paused; }
 .review-bar.still .rb-line i { animation: none; opacity: .6; }
 @keyframes rb-run { to { transform: scaleX(0); } }
+/* (The floating bars: only a short fade of the whole bar — never a see-through bar to read through.) */
+@keyframes float-in { from { opacity: 0; } }
 .dl-float { bottom: calc(var(--safe-bottom, 0px) + 150px); }
+/* (A short screen with the review bar up: the two stacked at the top, never in one spot.) */
+@media (max-height: 600px) { html:not(.pc) body:has(> .review-bar) .dl-float { bottom: auto; top: calc(var(--safe-top, 0px) + 68px + 68px); } }
 html.pc .dl-float { bottom: 20px; inset-inline: auto 24px; width: 380px; margin: 0; }
 .dl-float .grow { display: flex; flex-direction: column; min-width: 0; }
 .dlf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; }
@@ -676,3 +684,8 @@ html.pc .dl-float { bottom: 20px; inset-inline: auto 24px; width: 380px; margin:
 .pack-current .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .pack-current .grow > * { overflow-wrap: anywhere; }
 .pack-movie .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+/* (0.21 P7 fixes) The subtitles sheet's three buttons: real, equal gaps. The Episodes card's head: its buttons wrap
+   with a gap at a phone's width, never against the card's edge. */
+.pack-sheet .row-actions { gap: 12px; }
+.anime-episodes > .card-head { flex-wrap: wrap; row-gap: 10px; column-gap: 10px; }
+.anime-episodes > .card-head > .btn { flex: none; }

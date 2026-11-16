@@ -5,13 +5,12 @@
 // The token is kept on the device like AniList's.
 import { request } from '../http';
 import { getSettings } from '../settings';
-import { testApi } from '../anilist';
 
 const KEY = 'kt.mal.token';
 /** The redirect address the user registers with the client (any address works: the app's window reads it before it loads). */
 export const MAL_REDIRECT = 'http://localhost/kurokawa-mal';
-const authBase = () => (testApi('mal') ? `${testApi('mal')}/v1/oauth2` : 'https://myanimelist.net/v1/oauth2');
-const apiBase = () => (testApi('mal') ? `${testApi('mal')}/v2` : 'https://api.myanimelist.net/v2');
+const authBase = () => 'https://myanimelist.net/v1/oauth2';
+const apiBase = () => 'https://api.myanimelist.net/v2';
 interface Tok { access: string; refresh: string; exp: number; name: string }
 const tok = (): Tok | null => { try { return JSON.parse(localStorage.getItem(KEY) ?? 'null') as Tok | null; } catch { return null; } };
 const keepTok = (t: Tok | null) => { try { if (t) localStorage.setItem(KEY, JSON.stringify(t)); else localStorage.removeItem(KEY); } catch { /* private mode */ } };
@@ -46,12 +45,18 @@ export async function malFinish(address: string): Promise<string> {
   try { const me = await malFetch('/users/@me'); t.name = (JSON.parse(me.body) as { name?: string }).name ?? ''; keepTok(t); } catch (e) { keepTok(null); throw e; }
   return t.name;
 }
+// (A refresh token is good once: calls that find the token run out together share one renewal.)
+let renewing: Promise<Tok> | null = null;
+function renew(old: Tok): Promise<Tok> {
+  renewing ??= tokenCall({ grant_type: 'refresh_token', refresh_token: old.refresh }).then((x) => { const n = { ...x, name: old.name }; keepTok(n); return n; }, (e) => { keepTok(null); throw e; }).finally(() => { setTimeout(() => { renewing = null; }, 0); });
+  return renewing;
+}
 /** One call to the API, the token renewed once when MAL says it has run out. */
 async function malFetch(path: string, init: { method?: string; body?: string } = {}): Promise<{ status: number; body: string }> {
   let t = tok(); if (!t) throw new Error('MyAnimeList: sign in');
   const go = (x: Tok) => request(`${apiBase()}${path}`, { method: init.method ?? 'GET', headers: { Authorization: `Bearer ${x.access}`, ...(init.body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) }, body: init.body, timeoutMs: 30000 });
   let r = await go(t);
-  if (r.status === 401 && t.refresh) { try { t = { ...(await tokenCall({ grant_type: 'refresh_token', refresh_token: t.refresh })), name: t.name }; keepTok(t); r = await go(t); } catch { keepTok(null); throw new Error('MyAnimeList: sign in again'); } }
+  if (r.status === 401 && t.refresh) { try { t = await renew(t); r = await go(t); } catch { throw new Error('MyAnimeList: sign in again'); } }
   if (r.status === 429) throw Object.assign(new Error('MyAnimeList: HTTP 429'), { later: true, retryAfter: Number(r.headers['retry-after']) || 60 });
   if (r.status >= 400) throw new Error(`MyAnimeList: HTTP ${r.status}`);
   return r;
@@ -70,7 +75,7 @@ export async function malSetComments(idMal: number, comments: string, add = fals
 }
 
 /* ---------- progress (after an episode is watched): never lowered, kept and sent again when MAL cannot be reached ---------- */
-const PENDING = 'kt.mal.pending';
+const PENDING = 'kt.tmp.malPending';
 type Pend = Record<string, { ep: number; total?: number | null }>;
 const pend = (): Pend => { try { return JSON.parse(localStorage.getItem(PENDING) ?? '{}') as Pend; } catch { return {}; } };
 const keepPend = (p: Pend) => { try { localStorage.setItem(PENDING, JSON.stringify(p)); } catch { /* full */ } };
@@ -84,14 +89,15 @@ async function sendProgress(idMal: number, ep: number, total?: number | null): P
 }
 /** The list's progress moved to `ep` (when behind); unreachable: kept, and sent with the next one or when back online. */
 export async function malProgress(idMal: number | undefined, ep: number, total?: number | null): Promise<void> {
-  if (!idMal || !malLinked()) return;
+  if (!idMal || !malLinked() || !(await autoOnNow())) return;
   await malFlush();
   try { await sendProgress(idMal, ep, total); }
   catch (e) { if (/sign in/.test(String((e as Error).message))) return; const p = pend(); if ((p[idMal]?.ep ?? 0) < ep) p[idMal] = { ep, total }; keepPend(p); }
 }
 let flushing = false;
+const autoOnNow = () => import('./progress').then((m) => m.autoOn());
 export async function malFlush(): Promise<void> {
-  const p = pend(); if (flushing || !Object.keys(p).length || !malLinked()) return; flushing = true;
+  const p = pend(); if (flushing || !Object.keys(p).length || !malLinked() || !(await autoOnNow())) return; flushing = true;
   try { for (const [id, x] of Object.entries(p)) { try { await sendProgress(Number(id), x.ep, x.total); delete p[id]; } catch { /* next time */ } } keepPend(p); } finally { flushing = false; }
 }
 window.addEventListener('online', () => void malFlush());

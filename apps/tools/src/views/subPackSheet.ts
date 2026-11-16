@@ -42,27 +42,44 @@ export async function offerPack(key: string | null, src: PK.PackSource, title?: 
   try { const scan = await PK.scanPack({ ...src, at: 0, on: true }, true); if (covered(scan.files).length < 2) return;
     toast(t('packOffer', { n: localDigits(covered(scan.files).length) }), 'info', 9000, { label: t('packOfferYes'), run: () => { PK.setPack(key, { ...src, at: Date.now(), on: true, title }); toast(t('packSet', { name: baseOf(src.path) })); } }); } catch { /* not readable: nothing offered */ }
 }
+/** The files the last saveToShow wrote (for its Undo). */
+let lastWritten: string[] = [];
+/** Files taken away (an Undo of what a search added): through the phone's or the computer's own file jobs. */
+async function removeFiles(paths: string[]): Promise<void> {
+  if (!paths.length) return;
+  const { ktPlugin } = await import('../native');
+  const d = window.kurokawaTools as unknown as { filesJob?(o: { op: 'delete'; paths: string[] }): Promise<unknown> } | undefined;
+  const pl = ktPlugin() as unknown as { filesJob?(o: { op: 'delete'; paths: string[] }): Promise<unknown> } | null;
+  await (d?.filesJob ?? pl?.filesJob)?.call(d?.filesJob ? d : pl, { op: 'delete', paths }).catch(() => undefined);
+}
 /** Subtitle files (an episode's, or a season's) written into the show's own folder and added to its pack. */
 export async function saveToShow(key: string, title: string, files: { name: string; bytes: Uint8Array }[], ep?: { season?: number; episode: number }): Promise<string> {
   const { decodeSubtitle } = await import('../player/subs'); const { subEpisode } = await import('../player/subMatch');
-  const dir = await PK.showFolder(title); let n = 0;
+  const dir = await PK.showFolder(title); let n = 0; lastWritten = [];
   for (const f of files) {
     if (!/\.(srt|ass|ssa|vtt)$/i.test(f.name)) continue; let name = f.name;
     // (One episode's file whose name does not say that episode: its number put in front, so the pack finds it.)
     if (ep) { const r = subEpisode(name); if (r.episode !== ep.episode || (ep.season !== undefined && r.season !== undefined && r.season !== ep.season)) name = `${title} ${ep.season !== undefined ? `S${String(ep.season).padStart(2, '0')}E${String(ep.episode).padStart(2, '0')}` : `- ${String(ep.episode).padStart(2, '0')}`} - ${name}`; }
-    await PK.writeSubText(dir, name, decodeSubtitle(f.bytes, (await import('../player/prefs')).getPrefs().subCodepage || undefined)); n++;
+    lastWritten.push(await PK.writeSubText(dir, name, decodeSubtitle(f.bytes, (await import('../player/prefs')).getPrefs().subCodepage || undefined))); n++;
   }
   if (!n) throw new Error(t('subsPackEmpty', { name: files[0]?.name ?? '' }));
   PK.addToPack(key, { path: dir, kind: 'folder' }, title); return dir;
 }
 
+/** A folder on a storage the app has no path for (a content: tree on the phone): its subtitle and font files copied
+ *  into the show's own subtitles folder (the phone's bridge), which then is the pack. Null when it cannot. */
+async function copyTree(uri: string, title: string): Promise<string | null> {
+  const { ktPlugin } = await import('../native'); const pl = ktPlugin() as unknown as { treeCopy?(o: { uri: string; dest: string; pattern: string }): Promise<{ paths: string[] }> } | null;
+  if (!pl?.treeCopy) return null;
+  try { const dest = `${await PK.showFolder(title)}/${t('packCopiedFolder')}`; const r = await pl.treeCopy({ uri, dest, pattern: '\\.(ass|ssa|srt|vtt|ttf|otf|ttc)$' }); return r.paths?.length ? dest : null; } catch { return null; }
+}
 export interface PackSheetOptions { key: string; title: string; anilistId?: number; imdbId?: string; /** A series: seasons in the names, a season field in the search. */ series?: boolean; season?: number; /** Episodes per season ('' for a show without seasons), for the missing ones and absolute numbering. */ lengths?: Record<string, number>; /** A film: one file plays, chosen by its title and year (asked here when several fit). */ movie?: boolean; year?: number; onChange?(): void }
 /** The «Subtitles» sheet of a show's page. */
 export function packSheet(o: PackSheetOptions): void {
   const sh = openSheet(`${t('navSubs')} · ${o.title}`, t('close')); sh.el.classList.add('pack-sheet');
   const box = h('div', { class: 'pack-box' }); sh.body.append(box);
   const changed = () => { o.onChange?.(); void draw(true); };
-  const assign = async (kind: 'folder' | 'archive') => { try { const src = await PK.pickPackSource(kind); if (!src) return; if (/^content:/.test(src.path)) { toast(t('packPhoneFolder'), 'error', 6000); return; } PK.setPack(o.key, { ...src, at: Date.now(), on: true, title: o.title, lengths: o.lengths, movie: o.movie || undefined }); toast(t('packSet', { name: baseOf(src.path) })); changed(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
+  const assign = async (kind: 'folder' | 'archive') => { try { const src = await PK.pickPackSource(kind); if (!src) return; if (/^content:/.test(src.path)) { const got = await copyTree(src.path, o.title); if (!got) { toast(t('packPhoneFolder'), 'error', 6000); return; } src.path = got; src.kind = 'folder'; } PK.setPack(o.key, { ...src, at: Date.now(), on: true, title: o.title, lengths: o.lengths, movie: o.movie || undefined }); toast(t('packSet', { name: baseOf(src.path) })); changed(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
   const find = () => void import('../subs/findSheet').then(({ findSubsSheet }) => findSubsSheet({ title: o.title, anilistId: o.anilistId, imdbId: o.imdbId, season: o.season, askSeason: o.series, openableOnly: true,
     onPick: async (r, query, done) => {
       const { resolveLink } = await import('../subs/search'); const { request } = await import('../http'); const { unpackSubtitle } = await import('../player/subPack');
@@ -73,8 +90,14 @@ export function packSheet(o: PackSheetOptions): void {
       const before = PK.packOf(o.key); const was = before ? JSON.parse(JSON.stringify(before)) as PK.SubPack : null;
       const dir = await saveToShow(o.key, o.title, ep !== undefined || o.movie ? files.slice(0, o.movie ? 12 : 1) : files, ep !== undefined && !o.movie ? { season: o.series ? query.season : undefined, episode: ep } : undefined);
       if (o.movie) PK.updatePack(o.key, { movie: true });
+      // (Undo: the files it wrote taken away, and the pack as it was — unless the pack was changed since, which Undo
+      // then leaves as it is.)
+      // (What the user can change in a pack — not its bookkeeping, as the episode counts the sheet keeps up to date.)
+      const sig = (x: PK.SubPack | null) => JSON.stringify(x ? { path: x.path, kind: x.kind, more: x.more, on: x.on, shift: x.shift, manual: x.manual, filter: x.filter, movie: x.movie } : null);
+      const written = [...lastWritten]; const after = sig(PK.packOf(o.key));
+      const undo = async () => { await removeFiles(written); if (sig(PK.packOf(o.key)) === after) { PK.setPack(o.key, was); toast(t('undoneMsg')); } else { PK.setPack(o.key, PK.packOf(o.key)); toast(t('packUndoKept'), 'info', 6000); } o.onChange?.(); packSheet(o); };   // (kept: set again as it is, so its files are read anew)
       // (The search's sheet took this one's place: this one opened again, showing which episodes got a file.)
-      done(); o.onChange?.(); packSheet(o); toast(t('packAttachedTo', { path: baseOf(dir) }), 'info', 8000, { label: t('undoAct'), run: () => { PK.setPack(o.key, was); toast(t('undoneMsg')); o.onChange?.(); packSheet(o); } });
+      done(); o.onChange?.(); packSheet(o); toast(t('packAttachedTo', { path: baseOf(dir) }), 'info', 8000, { label: t('undoAct'), run: () => void undo() });
     } }));
   const draw = async (fresh = false) => {
     const p = PK.packOf(o.key); if (p && o.lengths && JSON.stringify(p.lengths ?? {}) !== JSON.stringify(o.lengths)) PK.updatePack(o.key, { lengths: o.lengths });
@@ -83,9 +106,9 @@ export function packSheet(o: PackSheetOptions): void {
       p ? h('button', { type: 'button', class: 'btn text small pack-remove', onclick: () => { PK.setPack(o.key, null); toast(t('subPackRemoved')); changed(); } }, icon('trash'), t('packRemove')) : null);
     // (Always there: without the Subtitles add-on its sheet says so and offers the add-ons — the three buttons alike.)
     btns.insertBefore(h('button', { type: 'button', class: 'btn tonal small pack-find', onclick: find }, icon('search'), t('subsSearchPack')), btns.querySelector('.pack-remove'));
-    if (!p) { box.replaceChildren(h('h4', null, t('subPackTitle')), h('p', { class: 'hint' }, o.movie ? t('packNoneMovie') : t('packNone')), btns); return; }
+    if (!p) { box.replaceChildren(h('h4', null, o.movie ? t('subPackTitleMovie') : t('subPackTitle')), h('p', { class: 'hint' }, o.movie ? t('packNoneMovie') : t('packNone')), btns); return; }
     const status = h('small', { class: 'src pack-count' }, t('loading'));
-    head.push(h('h4', null, t('subPackTitle')), h('div', { class: 'dest-row pack-current' }, icon(p.kind === 'folder' ? 'folder' : 'archive'), h('span', { class: 'grow' }, h('span', { class: 'name', dir: 'ltr' }, baseOf(p.path)), h('small', { class: 'src', dir: 'ltr' }, [p.path, ...(p.more ?? []).map((m) => m.path)].join(' · ')), status)),
+    head.push(h('h4', null, o.movie ? t('subPackTitleMovie') : t('subPackTitle')), h('div', { class: 'dest-row pack-current' }, icon(p.kind === 'folder' ? 'folder' : 'archive'), h('span', { class: 'grow' }, h('span', { class: 'name', dir: 'ltr' }, baseOf(p.path)), h('small', { class: 'src', dir: 'ltr' }, [p.path, ...(p.more ?? []).map((m) => m.path)].join(' · ')), status)),
       h('label', { class: 'row switch-row' }, h('span', null, t('packOn')), h('input', { type: 'checkbox', checked: p.on, onchange: (e: Event) => { PK.updatePack(o.key, { on: (e.target as HTMLInputElement).checked }); o.onChange?.(); } })),
       ...(p.shift ? [h('div', { class: 'row' }, h('span', null, t('packShiftNow', { n: shiftText(p.shift) })), h('button', { type: 'button', class: 'btn text small', onclick: () => { PK.updatePack(o.key, { shift: undefined }); changed(); } }, icon('undo'), t('packShiftClear')))] : []));
     box.replaceChildren(...head, btns, h('h4', null, o.movie ? t('packMoviePlays') : t('episodes')), eps);

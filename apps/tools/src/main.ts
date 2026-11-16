@@ -283,9 +283,8 @@ else {
   // (A video or a sound opened with «Kurokawa Player» from another app: straight into the player, where it asked.)
   window.addEventListener('kt:play', (e) => { const d = (e as CustomEvent<{ url: string; name: string; path?: string; position?: number; headers?: Record<string, string>; subs?: string[] }>).detail; if (!d?.url) return; void import('./views/player').then((m) => m.openPlayer(d.url, d.name || 'video', { localPath: d.path, startAt: d.position, headers: d.headers, forCaller: true, subtitles: (d.subs ?? []).map((u, i) => ({ url: u, name: u.split('/').pop()?.split('?')[0] || `subtitle ${i + 1}`, isDefault: i === 0 })) })); });
   window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
-  // (The app started again while a video was open — the phone let it go behind the player or another app —: back to
-  // the page the video was opened from, not the first page. player/returnTo.ts keeps it.)
-  try { const f = JSON.parse(localStorage.getItem('kt.player.from') ?? 'null') as { hash?: string; at?: number } | null; if (f) { localStorage.removeItem('kt.player.from'); if (Date.now() - (f.at ?? 0) < 12 * 3600e3 && (!location.hash || location.hash === '#/') && f.hash && f.hash !== '#/') navigate(f.hash.slice(1), true); } } catch { /* none */ }
+  // (The app started again while a video was open in its player: back to that page, its history — player/returnTo.ts.)
+  try { if (localStorage.getItem('kt.tmp.playerFrom')) void import('./player/returnTo').then((m) => m.restoreAtStart()); } catch { /* none */ }
   if (location.hash.startsWith('#/open?')) { const u = new URLSearchParams(location.hash.split('?')[1]).get('u'); if (u) navigate(`/add?u=${encodeURIComponent(u)}`, true); }
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {

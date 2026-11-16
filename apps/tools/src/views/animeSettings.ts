@@ -17,8 +17,9 @@ const toggle = (label: string, on: boolean, set: (v: boolean) => void) => { cons
 export function anilistCard(rerender: () => void): HTMLElement {
   const s = getSettings(); const u = al.user();
   const acct: HTMLElement[] = [];
-  if (u) acct.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })), h('button', { type: 'button', class: 'btn small', onclick: () => { al.unlink(); rerender(); } }, icon('close'), t('anilistUnlink'))),
-    toggle(t('anilistAutoProgress'), s.anilistAutoProgress, (v) => updateSettings({ anilistAutoProgress: v })));
+  if (u) acct.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })), h('button', { type: 'button', class: 'btn small', onclick: () => { al.unlink(); rerender(); } }, icon('close'), t('anilistUnlink'))));
+  // (Automatic list updates have one switch, «Update my list after watching», in the Anime card: it covers AniList and
+  // MyAnimeList, after watching and after a download finishes.)
   // (Not linked: one button — the sign-in, or the short guide that makes the client with you.)
   else acct.push(h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => void import('./anilistLink').then((m) => m.anilistSignIn(rerender)) }, icon('user'), t('anilistSignInWith')),
     h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./anilistLink').then((m) => m.anilistLinkSheet(rerender)) }, t('anilistOwnClient'))));

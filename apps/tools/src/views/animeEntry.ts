@@ -15,6 +15,7 @@ import { parseFilename, matchesEpisode } from '../anime/anitomy';
 import { ruleOf, saveRule, dropRule, downloadRange, downloadedEpisodes, fillersOf, checkRules, startAuto, type AutoRule } from '../anime/auto';
 import type { Task } from '../engine/types';
 import { coverOf } from '../anime/covers';
+import { reviewIcon } from '../anime/reviewIcon';
 import type { ShowNote } from '../anime/notes';
 
 export function animeEntryView(id: number): HTMLElement & { dispose?: () => void } {
@@ -90,7 +91,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
         onDisk ? iconButton('play', t('play'), () => void import('./anime').then((m) => m.playLocal(a!, n, onDisk.path, onDisk.name))) :
         got && got.state === 'done' ? iconButton('play', t('play'), () => void import('./player').then((m) => m.playTaskFile(got, got.files.length > 1 ? Math.max(0, got.files.findIndex((f) => /\.(mkv|mp4|webm|avi|mov|m4v)$/i.test(f.path))) : 0))) : aired ? iconButton('download', t('animeFindTorrents'), () => torrentSheet(a!, n)) : null,
         aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
-        aired ? (() => { const b = iconButton('pen', noted ? t('noteEditEp') : t('noteWriteEp'), () => openNote(n)); b.classList.add('ep-note-btn'); if (noted) b.classList.add('on'); return b; })() : null,
+        aired ? (() => { const b = iconButton('more', t('reviewThisEp'), () => openNote(n)); b.replaceChildren(reviewIcon()); b.classList.add('ep-note-btn'); if (noted) { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); } return b; })() : null,
         al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => (seen && e ? unmark(e, n) : void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) }))) : null);
       // (Held: the episode's options — Hayase's — among them deleting its download.)
       if (aired) onLongPress(rowEl, (ev) => episodeMenu(a!, n, epTitle, got, seen, al.linked() ? (to) => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: to }) : null, () => draw(), ev, noted, () => openNote(n)));
@@ -111,7 +112,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     const notesSec = NV ? NV.notesCard(a, notes, notesChanged) : null;
     body.replaceChildren(...[head, track, syn, epsSec, notesSec, relSec, linkSec].filter((x): x is HTMLElement => !!x));
   };
-  const saveEntry = async (entry: AlEntry) => { if (!a) return; try { const r = await al.saveOrQueue(a.id, entry); a.entry = r.entry; draw(); toast(r.sent ? t('animeSaved') : t('animeQueued')); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } };
+  const saveEntry = async (entry: AlEntry) => { if (!a) return; try { const r = await al.saveOrQueue(a.id, entry, a.entry ?? null); a.entry = r.entry; draw(); toast(r.sent ? t('animeSaved') : t('animeQueued')); } catch (e) { toast(`AniList: ${(e as Error).message}`, 'error'); } };
   // (undo-redo) Unmarking episode n sets the progress to n − 1 — below the later episodes too. Shown at once, with the
   // progress it was in the Undo's line; sent to AniList only when the Undo is over (an Undo after sending would post a
   // second change, and its activity, where none was meant): Undo leaves AniList untouched and the entry exactly as it was.

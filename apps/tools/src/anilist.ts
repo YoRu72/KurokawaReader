@@ -5,16 +5,12 @@
 import { request } from './http';
 import { parseFilename } from './anime/anitomy';
 import { getSettings, updateSettings } from './settings';
-import { coversReady } from './anime/covers';
 
 const API = 'https://graphql.anilist.co';
-/** Tests only: a stand-in server on loopback (window.__ktTestApi set before the app starts) — never any other address,
- *  so nothing in the app can send the token elsewhere through it. */
-export function testApi(k: 'anilist' | 'mal'): string | undefined {
-  const u = (window as { __ktTestApi?: Record<string, unknown> }).__ktTestApi?.[k];
-  return typeof u === 'string' && /^http:\/\/127\.0\.0\.1:\d+(\/|$)/.test(u) ? u.replace(/\/$/, '') : undefined;
-}
-const api = (): string => testApi('anilist') ?? API;
+// (The user's own covers — anime/covers.ts — read once, lazily, before the first answer is made into shows; a slow or
+// stuck IndexedDB is waited for 1.5 s at most, then AniList's answers go on without them.)
+let coversP: Promise<void> | null = null;
+const coversFirst = (): Promise<void> => (coversP ??= Promise.race([import('./anime/covers').then((m) => m.coversReady()).catch(() => undefined), new Promise<void>((r) => setTimeout(r, 1500))]));
 const TOKEN_KEY = 'kt.anilist.token';
 const USER_KEY = 'kt.anilist.user';
 
@@ -53,30 +49,35 @@ export function authUrl(): string { const id = getSettings().anilistClientId.tri
  *  used or kept). Its redirect address is AniList's pin page. */
 export const BUILTIN_CLIENT = '55772';
 
-const later = (m: string, retryAfter?: number) => Object.assign(new Error(m), { later: true, retryAfter });
+const later = (m: string, retryAfter?: number, maybeSent = false) => Object.assign(new Error(m), { later: true, retryAfter, maybeSent });
+/** A request that creates something public failed after it may have reached AniList (a 5xx, a cut connection, a timeout). */
+export const maybeSent = (e: unknown): boolean => !!(e as { maybeSent?: boolean })?.maybeSent;
 export const isLater = (e: unknown): boolean => !!(e as { later?: boolean })?.later;
 /** Seconds AniList asked to wait (its Retry-After) when it still refused after the one wait. */
 export const retryAfterOf = (e: unknown): number | undefined => (e as { retryAfter?: number })?.retryAfter;
 let lastCall = 0;
-/** One GraphQL call; AniList allows about thirty a minute, so calls are spaced out a little. */
-export async function gql<T>(query: string, variables: Record<string, unknown> = {}, auth = true): Promise<T> {
-  // (The user's own covers read once before the first answer is made into shows, so every card shows them.)
-  await coversReady();
+/** One GraphQL call; AniList allows about thirty a minute, so calls are spaced out a little. `creates`: a mutation that
+ *  makes something public (a new activity, a new review) — never sent twice by itself: a 5xx or a lost answer is
+ *  reported as «may have been sent» instead of tried again (a 429, refused before any work, is still waited out). */
+export async function gql<T>(query: string, variables: Record<string, unknown> = {}, auth = true, creates = false): Promise<T> {
+  await coversFirst();
   const wait = lastCall + 350 - Date.now(); if (wait > 0) await new Promise((r) => setTimeout(r, wait)); lastCall = Date.now();
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const tk = token(); if (auth && tk) headers.Authorization = `Bearer ${tk}`;
   let r: Awaited<ReturnType<typeof request>>;
   try {
-    r = await request(api(), { method: 'POST', headers, body: JSON.stringify({ query, variables }) });
-    // (As Hayase does: a 429 waits what Retry-After says and a second more, a 5xx a second, then once again.)
-    if (r.status === 429 || r.status >= 500) { const ra = Number(r.headers['retry-after']); await new Promise((ok) => setTimeout(ok, r.status === 429 ? Math.min(60, (isFinite(ra) && ra > 0 ? ra : 2) + 1) * 1000 : 1000)); lastCall = Date.now(); r = await request(api(), { method: 'POST', headers, body: JSON.stringify({ query, variables }) }); }
-  } catch (e) { throw later(String((e as Error)?.message ?? e)); }
+    r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) });
+    // (As Hayase does: a 429 waits what Retry-After says and a second more, a 5xx a second, then once again — a 5xx
+    // not for a mutation that creates something: it may have been made already.)
+    if (r.status === 429 || (r.status >= 500 && !creates)) { const ra = Number(r.headers['retry-after']); await new Promise((ok) => setTimeout(ok, r.status === 429 ? Math.min(60, (isFinite(ra) && ra > 0 ? ra : 2) + 1) * 1000 : 1000)); lastCall = Date.now(); r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) }); }
+  } catch (e) { throw later(String((e as Error)?.message ?? e), undefined, creates); }
   const busy = r.status === 429 || r.status >= 500 || r.status === 0;
+  const lost = creates && (r.status >= 500 || r.status === 0);
   const ra = r.status === 429 ? Number(r.headers['retry-after']) || 60 : undefined;
   let json: { data?: T; errors?: { message: string; status?: number }[] } = {};
-  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`, ra) : new Error(`AniList: HTTP ${r.status}`); }
-  if (json.errors?.length) { const e = json.errors[0]; if ((e.status === 400 && /invalid token|unauthorized/i.test(e.message)) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message, ra ?? (e.status === 429 ? 60 : undefined)) : new Error(e.message); }
-  if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`, ra) : new Error(`AniList: HTTP ${r.status}`);
+  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`, ra, lost) : new Error(`AniList: HTTP ${r.status}`); }
+  if (json.errors?.length) { const e = json.errors[0]; if ((e.status === 400 && /invalid token|unauthorized/i.test(e.message)) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message, ra ?? (e.status === 429 ? 60 : undefined), lost) : new Error(e.message); }
+  if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`, ra, lost) : new Error(`AniList: HTTP ${r.status}`);
   return json.data as T;
 }
 
@@ -230,19 +231,37 @@ export async function save(mediaId: number, e: AlEntry): Promise<AlEntry> {
 export async function remove(entryId: number): Promise<void> { await gql('mutation ($id: Int) { DeleteMediaListEntry(id: $id) { deleted } }', { id: entryId }); }
 
 /* ---------- changes made offline: kept and sent when AniList can be reached ---------- */
-type Pending = Record<string, { entry: AlEntry; tries: number }>;
+// (What is queued is what the user changed — each field with the value it had before —, not a copy of the whole
+// entry: when sent, the entry is read anew and only those fields are written; a field changed on AniList since is
+// left as it is there, and progress never goes below what AniList has unless the user lowered it himself and AniList
+// still has the value he lowered from.)
+type Pending = Record<string, { entry: AlEntry; was?: AlEntry | null; tries: number }>;
 const pendingNow = (): Pending => getSettings().anilistPending as Pending;
 const keepPending = (p: Pending) => updateSettings({ anilistPending: p });
 /** The entry written — or, when AniList cannot be reached, queued and reported as not yet sent. */
-export async function saveOrQueue(mediaId: number, entry: AlEntry): Promise<{ entry: AlEntry; sent: boolean }> {
+export async function saveOrQueue(mediaId: number, entry: AlEntry, was?: AlEntry | null): Promise<{ entry: AlEntry; sent: boolean }> {
   try { const e = await save(mediaId, entry); const p = pendingNow(); if (p[mediaId]) { delete p[mediaId]; keepPending(p); } return { entry: e, sent: true }; }
-  catch (err) { if (!isLater(err)) throw err; const p = pendingNow(); p[mediaId] = { entry, tries: 0 }; keepPending(p); return { entry, sent: false }; }
+  catch (err) { if (!isLater(err)) throw err; const p = pendingNow(); const before = p[mediaId]?.was !== undefined ? p[mediaId].was : was ?? null; p[mediaId] = { entry, was: before, tries: 0 }; keepPending(p); return { entry, sent: false }; }
+}
+const sameDate = (a?: AlDate, b?: AlDate) => (a?.year ?? null) === (b?.year ?? null) && (a?.month ?? null) === (b?.month ?? null) && (a?.day ?? null) === (b?.day ?? null);
+/** The queued change put on the entry as AniList has it now (see Pending). */
+export function mergeQueued(now: AlEntry | undefined, want: AlEntry, was: AlEntry | null | undefined): AlEntry {
+  if (!now) return want;
+  const out: AlEntry = { ...now };
+  const base = was ?? undefined;
+  // Progress: raised → at least what AniList has; lowered by the user → only when AniList still has what he lowered from.
+  if (!base || want.progress >= base.progress) out.progress = Math.max(now.progress, want.progress); else if (now.progress === base.progress) out.progress = want.progress;
+  if (!base || want.status !== base.status) { if (!base || now.status === base.status) out.status = want.status; }
+  if (!base || want.score !== base.score) { if (!base || now.score === base.score) out.score = want.score; }
+  if (!base || !sameDate(want.startedAt, base.startedAt)) { if (!base || sameDate(now.startedAt, base.startedAt)) out.startedAt = want.startedAt; }
+  if (!base || !sameDate(want.completedAt, base.completedAt)) { if (!base || sameDate(now.completedAt, base.completedAt)) out.completedAt = want.completedAt; }
+  return out;
 }
 let flushing = false;
 export async function flushPending(): Promise<void> {
   if (flushing || !linked()) return; const p = pendingNow(); if (!Object.keys(p).length) return;
   flushing = true;
-  try { for (const [id, q] of Object.entries(p)) { try { await save(Number(id), q.entry); delete p[id]; } catch (err) { if (!isLater(err) || ++q.tries >= 8) delete p[id]; } } keepPending(p); } finally { flushing = false; }
+  try { for (const [id, q] of Object.entries(p)) { try { const now = (await media(Number(id))).entry; await save(Number(id), mergeQueued(now, q.entry, q.was)); delete p[id]; } catch (err) { if (!isLater(err) || ++q.tries >= 8) delete p[id]; } } keepPending(p); } finally { flushing = false; }
 }
 window.addEventListener('online', () => void flushPending());
 
