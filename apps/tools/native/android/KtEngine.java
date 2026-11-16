@@ -269,6 +269,17 @@ final class KtEngine {
                 p.setTrackers(tr); p.setTrackerTiers(tiers);
             }
         } catch (Throwable e) { Log.w(TAG, "trackers", e); }
+        // (0.21 P9: with DoH on, the UDP trackers given by the chain's addresses — libtorrent would ask the network's DNS
+        // for their names; an HTTP(S) tracker keeps its name, and the swarm page says the engine finds it.)
+        // (A UDP tracker the chain could not answer is left out — never a name for libtorrent to look up by the network's
+        // DNS; each one's own name and what answered it kept with the task, so the swarm page shows them after a restart.)
+        try { if (KrDoh.on()) { if (x.meta == null) x.meta = new JSONObject(); java.util.List<String> tr = new java.util.ArrayList<>(p.getTrackers()); java.util.List<Integer> tiers = new java.util.ArrayList<>(p.getTrackerTiers()); while (tiers.size() < tr.size()) tiers.add(0);
+            java.util.List<String> via = KrDoh.trackersViaDoh(tr, 5000);
+            if (!via.equals(tr)) { java.util.List<Integer> nt = new java.util.ArrayList<>(); JSONObject names = new JSONObject(); JSONArray dropped = new JSONArray();
+                for (int i = 0; i < tr.size(); i++) { String u = tr.get(i); String[] og = null; for (String v : via) { String[] o2 = KrDoh.trackerOrigin.get(v); if (o2 != null && o2[0].equals(u)) og = o2; } if (via.contains(u)) nt.add(tiers.get(i)); else if (og != null) { nt.add(tiers.get(i)); } else dropped.put(u); }
+                for (String v : via) { String[] o2 = KrDoh.trackerOrigin.get(v); if (o2 != null && !o2[0].equals(v)) names.put(v, new JSONArray().put(o2[0]).put(o2[1])); }
+                while (nt.size() > via.size()) nt.remove(nt.size() - 1); while (nt.size() < via.size()) nt.add(0);
+                p.setTrackers(via); p.setTrackerTiers(nt); x.meta.put("dohTrackers", names); x.meta.put("dohDropped", dropped); persist(); } } } catch (Throwable e) { Log.w(TAG, "trackers via DoH", e); }
         p.setSavePath(x.dir);
         // (A paused one is added paused and not auto-managed: libtorrent's queue starts auto-managed paused torrents by
         // itself — so a download paused by the user started again each time the app was opened.)
@@ -385,8 +396,14 @@ final class KtEngine {
         for (org.libtorrent4j.AnnounceEntry e : x.th.trackers()) {
             JSONObject q = new JSONObject(); q.put("url", e.url()); q.put("tier", e.tier()); String state = "waiting", msg = ""; int fails = 0;
             for (org.libtorrent4j.AnnounceEndpoint ep : e.endpoints()) { org.libtorrent4j.AnnounceInfohash ih = ep.infohashV1(); if (ih == null) continue; if (ih.updating()) state = "updating"; else if (ih.isWorking() && !"updating".equals(state)) state = "working"; else if (ih.fails() > 0 && "waiting".equals(state)) state = "failing"; if (!ih.message().isEmpty()) msg = ih.message(); fails = Math.max(fails, ih.fails()); }
-            q.put("state", state); q.put("message", msg); q.put("fails", fails); trs.put(q);
+            q.put("state", state); q.put("message", msg); q.put("fails", fails);
+            // (Which way its name was found: the DoH chain — its own name and the resolver that answered — or the engine's own.)
+            JSONObject kept = x.meta == null ? null : x.meta.optJSONObject("dohTrackers"); JSONArray kn = kept == null ? null : kept.optJSONArray(e.url());
+            String[] og = kn != null ? new String[] { kn.optString(0), kn.optString(1) } : KrDoh.trackerOrigin.get(e.url()); if (og != null) { q.put("name", og[0]); q.put("dns", og[1]); } else if (KrDoh.on() && !e.url().toLowerCase(java.util.Locale.ROOT).startsWith("udp://")) q.put("dns", "engine");
+            trs.put(q);
         }
+        // (The UDP trackers left out because no resolver answered for them: listed, said so.)
+        JSONArray dropped = x.meta == null ? null : x.meta.optJSONArray("dohDropped"); if (dropped != null) for (int i = 0; i < dropped.length(); i++) { JSONObject q = new JSONObject(); q.put("url", dropped.optString(i)); q.put("tier", 0); q.put("state", "waiting"); q.put("message", ""); q.put("fails", 0); q.put("dns", "dropped"); trs.put(q); }
         o.put("peers", peers); o.put("trackers", trs); o.put("limitDown", x.limitDown); o.put("limitUp", x.limitUp);
         try { TorrentStatus st = x.th.status(); o.put("seeds", st.numSeeds()); o.put("peersConnected", st.numPeers()); o.put("seedsInSwarm", st.listSeeds()); o.put("peersInSwarm", st.listPeers()); o.put("ratio", st.allTimeDownload() > 0 ? (double) st.allTimeUpload() / st.allTimeDownload() : 0); } catch (Throwable ignored) {}
         return o;
@@ -585,7 +602,7 @@ final class KtEngine {
             try {
                 File dir = new File(x.dir); dir.mkdirs();
                 if (!writable(dir)) throw new IOException("EPERM");
-                String safe = x.name.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (safe.isEmpty()) safe = "download";
+                String safe = cleanName(x.name); if (safe.isEmpty()) safe = "download";
                 File state = new File(stateDir, x.id + ".http");
                 File part = new File(dir, safe + ".part");
                 // A name another download into this folder holds (under way, waiting, paused — begun or not), or a file
@@ -608,7 +625,7 @@ final class KtEngine {
                 // as soon as the server answers, not at the end: an APK no longer shows as «.bin» while it comes.)
                 final File dirF = dir;
                 opt.named = (n, mime) -> {
-                    if (!x.autoName) return null; String nn = n == null ? null : n.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim();
+                    if (!x.autoName) return null; String nn = n == null ? null : cleanName(n);
                     if (nn == null || nn.isEmpty()) nn = KrDownloader.withTypeExt(x.name, mime); if (nn == null || nn.equals(x.name)) { x.autoName = false; return null; }
                     synchronized (KtEngine.this) { java.util.Set<String> rs = reservedFor(x); if ((new File(dirF, nn).exists() && !"overwrite".equals(conflict)) || rs.contains(nn.toLowerCase(java.util.Locale.ROOT))) nn = KtDlRules.freeName(dirF, nn, rs); x.name = nn; } x.httpOut = new File(dirF, nn); x.autoName = false; persist(); tell(true); return new File(dirF, nn + ".part");
                 };
@@ -648,7 +665,7 @@ final class KtEngine {
                 }
                 if (r.out != null) part = r.out;
                 // (The name the server gives — Content-Disposition — when the user gave none and the link's was a code.)
-                if (x.autoName && r.fileName != null) { String n = r.fileName.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim(); if (!n.isEmpty() && !n.equals(safe)) { File want = new File(dir, n); synchronized (KtEngine.this) { java.util.Set<String> rs = reservedFor(x); if ((want.exists() && !"overwrite".equals(conflict)) || rs.contains(n.toLowerCase(java.util.Locale.ROOT))) n = KtDlRules.freeName(dir, n, rs); x.name = n; } x.httpOut = new File(dir, n); } x.autoName = false; }
+                if (x.autoName && r.fileName != null) { String n = cleanName(r.fileName); if (!n.isEmpty() && !n.equals(safe)) { File want = new File(dir, n); synchronized (KtEngine.this) { java.util.Set<String> rs = reservedFor(x); if ((want.exists() && !"overwrite".equals(conflict)) || rs.contains(n.toLowerCase(java.util.Locale.ROOT))) n = KtDlRules.freeName(dir, n, rs); x.name = n; } x.httpOut = new File(dir, n); } x.autoName = false; }
                 // (A server that refused connections: asked no more than it accepted next time; a host that took every connection
                 // its limit allowed: the limit doubled, up to what is asked — see KtDlRules.nextHostLimit. A link that dropped is
                 // not a refusal and changes nothing.)
@@ -772,7 +789,7 @@ final class KtEngine {
     private synchronized java.util.Set<String> reservedFor(Task x) {
         java.util.Set<String> r = new java.util.HashSet<>(); String d = new File(x.dir).getAbsolutePath();
         for (Task t : tasks.values()) { if (t == x || !("http".equals(t.kind) || "video".equals(t.kind)) || "done".equals(t.state) || t.dir == null || !new File(t.dir).getAbsolutePath().equals(d)) continue;
-            if (t.name != null) r.add(t.name.replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim().toLowerCase(java.util.Locale.ROOT)); if (t.httpOut != null) r.add(t.httpOut.getName().toLowerCase(java.util.Locale.ROOT)); }
+            if (t.name != null) r.add(cleanName(t.name).toLowerCase(java.util.Locale.ROOT)); if (t.httpOut != null) r.add(t.httpOut.getName().toLowerCase(java.util.Locale.ROOT)); }
         return r;
     }
     /** The HLS way of a file download: pieces i/n and the phase on the task, the joined file kept as the task's file. */
@@ -819,7 +836,8 @@ final class KtEngine {
     private HttpURLConnection open(URL u, JSONObject headers, boolean plainDns) throws IOException {
         takeTurn(hostOf(u.toString()));
         java.net.Proxy px = proxyOf(proxy);
-        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
+        // (The network's own DNS only when DoH is off, or the reader allowed it as a fall-back — 0.21 P9; else DoH again.)
+        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns && KrDoh.systemOk(u.getHost(), "a download tried once more by the system's DNS") ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
         // (The cookies the site set — here or in the app's browser, where a site's check is passed.)
         try { String ck = android.webkit.CookieManager.getInstance().getCookie(u.toString()); if (ck != null && !ck.isEmpty() && (headers == null || (!headers.has("Cookie") && !headers.has("cookie")))) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) {}
         c.setConnectTimeout(Math.min(30000, timeoutS * 1000)); c.setReadTimeout(timeoutS * 1000); c.setInstanceFollowRedirects(false);
@@ -834,16 +852,9 @@ final class KtEngine {
             s = s.replaceFirst("^[a-zA-Z0-9]+://", ""); int c = s.lastIndexOf(':'); String h = c > 0 ? s.substring(0, c) : s; int port = c > 0 ? Integer.parseInt(s.substring(c + 1).replaceAll("/.*$", "")) : (t == java.net.Proxy.Type.SOCKS ? 1080 : 8080);
             return new java.net.Proxy(t, java.net.InetSocketAddress.createUnresolved(h, port)); } catch (Exception e) { return null; }
     }
-    static String nameFromUrl(String url) {
-        try {
-            URL u = new URL(url); String p = u.getPath(); String n = java.net.URLDecoder.decode(p.substring(p.lastIndexOf('/') + 1).replace("+", "%2B"), "UTF-8");
-            // (A name in the query — ?f=, ?filename=, ?name=, ?file=, ?title= — with an extension: that one.)
-            String q = u.getQuery();
-            if (q != null) for (String kv : q.split("&")) { int i = kv.indexOf('='); if (i <= 0) continue; String k = kv.substring(0, i).toLowerCase(java.util.Locale.ROOT); if (!(k.equals("f") || k.equals("filename") || k.equals("name") || k.equals("file") || k.equals("title") || k.equals("fn") || k.equals("response-content-disposition"))) continue;
-                String v = java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8"); if (k.equals("response-content-disposition")) { String d = KrDownloader.dispositionName(v); if (d == null) continue; v = d; } v = v.replaceAll(".*[\\\\/]", "").trim(); if (v.matches(".+\\.[A-Za-z0-9]{1,5}")) return v; }
-            return n.isEmpty() ? "download" : n;
-        } catch (Exception e) { return "download"; }
-    }
+    /** A file name the file system takes (KrDownloader.cleanName), and the name a link gives (KrDownloader.nameFromUrl). */
+    static String cleanName(String n) { return KrDownloader.cleanName(n); }
+    static String nameFromUrl(String url) { return KrDownloader.nameFromUrl(url); }
 
     /* ---------- what the page sees ---------- */
     boolean anyActive() { for (Task x : snapshot()) if ("downloading".equals(x.state) || "metadata".equals(x.state) || "checking".equals(x.state) || ("seeding".equals(x.state) && seedAfterDone)) return true; return false; }

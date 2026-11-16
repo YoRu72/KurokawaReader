@@ -9,7 +9,8 @@ done
 echo 'package android.util; public final class Log { public static int w(String t, String m) { return 0; } public static int w(String t, String m, Throwable e) { return 0; } public static int i(String t, String m) { return 0; } public static int e(String t, String m, Throwable e) { return 0; } public static int d(String t, String m) { return 0; } }' > "$D/src/android/util/Log.java"
 sed 's/^package app.kurokawa.tools;//; s/^public final class KtArchive/public final class KtArchive/' "$HERE/../../native/android/KtArchive.java" > "$D/src/KtArchive.java"
 
-cp "$HERE/ArcT.java" "$D/src/"
+cp "$HERE/ArcT.java" "$HERE/ArcSafeT.java" "$D/src/"; sed 's/^package app.kurokawa.tools;//' "$HERE/../../native/android/KtNameSafe.java" > "$D/src/KtNameSafe.java"
 CP=$(ls "$LIB"/*.jar | tr '\n' ':'); cd "$D"
-javac -nowarn -cp "$CP" -d out src/android/util/Log.java src/KtArchive.java src/ArcT.java
+javac -encoding UTF-8 -nowarn -cp "$CP" -d out src/android/util/Log.java src/KtNameSafe.java src/KtArchive.java src/ArcT.java src/ArcSafeT.java
 java -cp "out:$CP" ArcT
+java -Dfile.encoding=UTF-8 -cp "out:$CP" ArcSafeT

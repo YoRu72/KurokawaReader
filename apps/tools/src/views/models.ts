@@ -56,14 +56,14 @@ export function modelsSheet(initial = ''): void {
     };
     const dl = h('button', { type: 'button', class: 'btn primary' }, icon('download'), t('download')) as HTMLButtonElement;
     dl.addEventListener('click', async () => {
-      dl.disabled = true; const tok = HF.hfPrefs().token.trim(); const eng = getEngine(); let n = 0;
+      dl.disabled = true; const tok = HF.hfPrefs().token.trim(); const eng = getEngine(); let n = 0; const got: import('../engine/types').Task[] = [];
       for (const f of HF.downloadOrder(repo.files.filter((x) => chosen.has(x.path)))) {
         const rel = HF.safePath(f.path); if (!rel) continue;
         const sub = rel.includes('/') ? `/${rel.slice(0, rel.lastIndexOf('/'))}` : '';
-        try { await eng.add({ source: { url: HF.fileUrl(repo, rel), ...(tok && (repo.gated || repo.private) ? { headers: { Authorization: `Bearer ${tok}` } } : {}) }, dir: folder + sub, name: rel.split('/').pop(), connections: 8, meta: { hf: repo.id, sha256: f.sha256, title: repo.id } }); n++; }
+        try { got.push(await eng.add({ source: { url: HF.fileUrl(repo, rel), ...(tok && (repo.gated || repo.private) ? { headers: { Authorization: `Bearer ${tok}` } } : {}) }, dir: folder + sub, name: rel.split('/').pop(), connections: 8, meta: { hf: repo.id, sha256: f.sha256, title: repo.id } })); n++; }
         catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
       }
-      if (n) { toast(t('hfAdded', { n: countFiles(n), id: repo.id })); sh.close(); navigate('/'); } else dl.disabled = false;
+      if (n) { toast(t('hfAdded', { n: countFiles(n), id: repo.id })); sh.close(); void import('../ui/dlFloat').then((m) => m.downloadsStarted(got)); } else dl.disabled = false;
     });
     out.replaceChildren(
       h('div', { class: 'models-head' }, h('b', { dir: 'ltr' }, repo.id), h('small', { class: 'src' }, [repo.task, repo.downloads !== undefined ? `↓ ${fmtCount(repo.downloads)}` : '', repo.likes ? `♥ ${fmtCount(repo.likes)}` : '', `@ ${repo.sha.slice(0, 7)}`].filter(Boolean).join(' · ')),

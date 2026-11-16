@@ -7,7 +7,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { ktPlugin } from '../native';
 import type { Entry } from './files';
-import { patternName as patternNameOf, clashes } from './filesNames';
+import { canExtractName } from './filesArc';
 import { isVideo } from '../engine';
 
 type Plug = {
@@ -74,24 +74,60 @@ export function searchSheet(here: string, storageRoot: string, hidden: boolean, 
 
 /* ---------- the archive maker: a name, the format, how hard, a password, the sources removed after ---------- */
 export async function makeArchiveSheet(paths: string[], dir: string, started: (id: string, label: string, done: Promise<unknown>, cancel: () => void) => void, refresh: () => void): Promise<void> {
-  const { createZip, makeFormats, cancelArchive, splitSizes } = await import('../archives');
+  const { createZip, makeFormats, makesOnComputer, cancelArchive, splitSizes } = await import('../archives');
   const sh = openSheet(t('filesCompress'), t('cancel'));
+  // (A computer makes a zip (no password, no volumes, no note) or a 7z of the 7-Zip the app ships: its level — Store, Fast, Normal, Best —
+  // and its password, which locks the names as well; the phone's own options stay the phone's.)
+  const pc = makesOnComputer();
   const stem = paths.length === 1 ? baseOf(paths[0]).replace(/\.[^.]+$/, '') : baseOf(dir) || 'archive';
-  const formats = makeFormats() as string[]; let format = formats[0]; let level = 6;
+  const formats = makeFormats() as string[]; let format = formats[0]; let level = pc ? 5 : 6;
   const name = h('input', { type: 'text', value: stem, dir: 'auto' }) as HTMLInputElement;
-  const fmtBtn = pickButton(t('filesFormat'), formats.map((f): [string, string] => [f, f.toUpperCase()]), format, (v) => { format = v; }, t('close'));
-  const lvlBtn = pickButton(t('filesLevel'), [['0', t('filesLevelStore')], ['1', t('filesLevelFastest')], ['3', t('filesLevelFast')], ['6', t('filesLevelNormal')], ['8', t('filesLevelMax')], ['9', t('filesLevelUltra')]], '6', (v) => { level = Number(v); }, t('close'));
+  const only7z: HTMLElement[] = []; const onlyZip: HTMLElement[] = [];
+  const sync = () => { if (!pc) return; for (const el of only7z) el.hidden = format !== '7z'; for (const el of onlyZip) el.hidden = format === '7z'; };
+  const fmtBtn = pickButton(t('filesFormat'), formats.map((f): [string, string] => [f, f.toUpperCase()]), format, (v) => { format = v; sync(); }, t('close'));
+  const lvlBtn = pc
+    ? pickButton(t('filesLevel'), [['0', t('filesLevelStore')], ['1', t('filesLevelFast')], ['5', t('filesLevelNormal')], ['9', t('filesLevelBest')]], '5', (v) => { level = Number(v); }, t('close'))
+    : pickButton(t('filesLevel'), [['0', t('filesLevelStore')], ['1', t('filesLevelFastest')], ['3', t('filesLevelFast')], ['6', t('filesLevelNormal')], ['8', t('filesLevelMax')], ['9', t('filesLevelUltra')]], '6', (v) => { level = Number(v); }, t('close'));
   const pw = h('input', { type: 'password', placeholder: t('filesPasswordOptional'), autocomplete: 'off' }) as HTMLInputElement; const del = h('input', { type: 'checkbox' }) as HTMLInputElement;
   let splitMb = 0; const splitLabel = (mb: number) => (mb === 0 ? t('filesSplitNone') : mb >= 1024 ? `${localDigits(mb / 1024)} GB` : `${localDigits(mb)} MB`);
   const splitBtn = pickButton(t('filesSplit'), splitSizes.map((mb): [string, string] => [String(mb), splitLabel(mb)]), '0', (v) => { splitMb = Number(v); }, t('close'));
   const comment = h('input', { type: 'text', placeholder: t('filesCommentOptional'), dir: 'auto' }) as HTMLInputElement;
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'), h('small', { class: 'src' }, t('noUndoHint')))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
+  const pwField = h('label', { class: 'field' }, h('span', null, t('password')), pw);
+  if (pc) {
+    const pwHint = h('p', { class: 'hint files-7z-note' }, icon('lock'), h('span', null, t('files7zPasswordHint'))); const zipHint = h('p', { class: 'hint' }, t('filesZipNoPasswordPc'));
+    const lvlField = h('label', { class: 'field' }, h('span', null, t('filesLevel')), lvlBtn);
+    only7z.push(lvlField, pwField, pwHint); onlyZip.push(zipHint); sync();
+    sh.body.append(h('div', { class: 'files-pcfields' }, h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('label', { class: 'field' }, h('span', null, t('filesFormat')), fmtBtn), lvlField, pwField), pwHint, zipHint, h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })));
+  } else {
+    sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), pwField, h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'), h('small', { class: 'src' }, t('noUndoHint')))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
+  }
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => {
-    const n = (name.value.trim() || stem).replace(/\.(zip|7z|tar|tar\.gz|tgz|tar\.xz)$/i, ''); const out = `${dir}/${n}.${format}`; sh.close();
-    const done = createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
-    const id = `mk-${Date.now()}`; started(id, t('filesZipping', { name: `${n}.${format}` }), done, () => void cancelArchive(id));
-    void done.then(() => { refresh(); toast(t('filesZipped', { name: `${n}.${format}` })); }, (err) => toast(String((err as Error).message ?? err), 'error'));
+    const n = (name.value.trim() || stem).replace(/\.(zip|7z|tar|tar\.gz|tgz|tar\.xz)$/i, ''); sh.close();
+    void (async () => {
+      let shown = `${n}.${format}`; let replace = false;
+      // (A computer: a file of that name is not replaced unasked — keep both, replace, or cancel, as the app asks for other names that are taken.)
+      if (pc) {
+        const { pathExists } = await import('../archives');
+        if (await pathExists(`${dir}/${shown}`)) {
+          const a = await clashSheet(shown); if (a === 'cancel') return;
+          if (a === 'replace') replace = true; else { for (let k = 2; k < 100; k++) { const c = `${n} (${k}).${format}`; if (!(await pathExists(`${dir}/${c}`))) { shown = c; break; } } }
+        }
+      }
+      const out = `${dir}/${shown}`;
+      const done = pc ? createZip(out, paths, undefined, { format: format as never, level, password: format === '7z' ? pw.value || undefined : undefined, replace }) : createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
+      const id = `mk-${Date.now()}`; started(id, t('filesZipping', { name: shown }), done, () => void cancelArchive(id));
+      void done.then(() => { refresh(); toast(t('filesZipped', { name: shown })); }, async (err) => { const { sevenErrorText } = await import('../archives'); toast(pc ? sevenErrorText(err) : String((err as Error).message ?? err), 'error', 5000); });
+    })();
   } }, icon('archive'), t('filesCompress')));
+}
+/** The name of an archive is taken (a computer's Compress): keep both, replace, or cancel. */
+function clashSheet(name: string): Promise<'both' | 'replace' | 'cancel'> {
+  return new Promise((res) => {
+    let answered = false; const sh = openSheet(t('filesNameTakenTitle'), t('cancel'), { onClose: () => { if (!answered) res('cancel'); } });
+    const pick = (a: 'both' | 'replace') => () => { answered = true; sh.close(); res(a); };
+    sh.body.append(h('p', { dir: 'auto' }, t('filesNameTakenAsk', { name })));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal files-clash-both', onclick: pick('both') }, t('keepBoth')), h('button', { type: 'button', class: 'btn tonal files-clash-replace', onclick: pick('replace') }, t('replaceFiles')));
+  });
 }
 
 /* ---------- the recycle bin ---------- */
@@ -121,41 +157,8 @@ export function trashSheet(refresh: () => void): void {
   void load();
 }
 
-/* ---------- renaming many at once ---------- */
 const pad = (n: number, w: number) => String(n).padStart(w, '0');
-/** The new name of `e` by the pattern (filesNames.ts; the sizes as the page writes them). */
-export const patternName = (e: Entry, pattern: string, i: number, start: number, find: string, replace: string): string => patternNameOf(e, pattern, i, start, find, replace, formatBytes);
-export function batchRenameSheet(items: Entry[], refresh: () => void): void {
-  const sh = openSheet(t('filesBatchRename'), t('cancel'));
-  const pattern = h('input', { type: 'text', value: '{name}', dir: 'ltr' }) as HTMLInputElement; const start = h('input', { type: 'number', value: '1', min: '0', style: { width: '80px' } }) as HTMLInputElement;
-  const find = h('input', { type: 'text', placeholder: t('filesFind'), dir: 'auto' }) as HTMLInputElement; const repl = h('input', { type: 'text', placeholder: t('filesReplaceWith'), dir: 'auto' }) as HTMLInputElement;
-  const preview = h('div', { class: 'files-preview' });
-  const vars = h('div', { class: 'chip-row' }, ...['{name}', '{ext}', '{name.ext}', '{n}', '{n:3}', '{size}', '{date}', '{time}', '{now}'].map((v) => h('button', { type: 'button', class: 'chip small', onclick: () => { pattern.value += v; draw(); } }, v)));
-  const names = (): string[] => items.map((e, i) => patternName(e, pattern.value, i, Number(start.value) || 0, find.value, repl.value));
-  // (Two new names the same — letter case aside — would have the second refused or, worse, one over the other: shown, and Rename held back.)
-  const clash = h('p', { class: 'hint error', hidden: true }, t('filesNamesClash'));
-  const draw = () => { const ns = names(); const bad = clashes(ns); preview.replaceChildren(...items.slice(0, 40).map((e, i) => h('div', { class: 'files-preview-row' + (bad.has(i) ? ' bad' : ''), dir: 'auto' }, h('small', { class: 'src' }, e.name), h('span', null, ns[i])))); clash.hidden = !bad.size; go.disabled = bad.size > 0 || ns.some((n) => !n); };
-  const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => { const ns = names(); sh.close(); let ok = 0; const failed: string[] = []; const did: Ren[] = []; for (let i = 0; i < items.length; i++) { if (ns[i] === items[i].name) continue; try { await plug().filesRename({ path: items[i].path, name: ns[i] }); ok++; did.push({ dir: items[i].path.slice(0, items[i].path.length - items[i].name.length - 1), from: items[i].name, to: ns[i] }); } catch (err) { failed.push(`${items[i].name}: ${String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err)}`); } }
-    if (failed.length) toast(t('filesSomeFailed', { n: localDigits(failed.length), why: failed[0] }), 'error', 5000);
-    // (undo-redo) Undo renames each back — only when every one can be (its new name still there, its old one free), checked by listing the folder.
-    else if (did.length) { const { offerUndo } = await import('../ui/undo'); offerUndo(t('filesRenamedN', { n: localDigits(ok) }), async () => { await renameAll(did.map((d) => ({ dir: d.dir, from: d.to, to: d.from })).reverse()); refresh(); }, async () => { await renameAll(did); refresh(); }); }
-    refresh(); } }, icon('pen'), t('rename')) as HTMLButtonElement;
-  for (const el of [pattern, start, find, repl]) el.addEventListener('input', draw);
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('filesPattern')), pattern), vars, h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, h('span', { class: 'label' }, t('filesStartAt')), start), h('div', { class: 'row', style: { gap: '8px' } }, find, repl), h('p', { class: 'hint' }, countItems(items.length)), clash, preview);
-  sh.actions.append(go); draw();
-}
-
-type Ren = { dir: string; from: string; to: string };
-/** (undo-redo) Renames made (or taken back) together, after a look at each folder: every `from` there and every `to`
- *  free, or nothing is touched; and looked at again after, so a rename the storage did not do is told. */
-async function renameAll(rs: Ren[]): Promise<void> {
-  const pl = plug() as Plug & { filesList(o: { path: string }): Promise<{ entries: { name: string }[] }> };
-  const names = async (dir: string) => new Set((await pl.filesList({ path: dir })).entries.map((e) => e.name.toLowerCase()));
-  const dirs = new Map<string, Set<string>>(); for (const r of rs) if (!dirs.has(r.dir)) dirs.set(r.dir, await names(r.dir));
-  for (const r of rs) { const n = dirs.get(r.dir)!; if (!n.has(r.from.toLowerCase()) || (n.has(r.to.toLowerCase()) && r.to.toLowerCase() !== r.from.toLowerCase())) throw new Error(t('renameBackBlocked', { name: r.from })); n.delete(r.from.toLowerCase()); n.add(r.to.toLowerCase()); }
-  for (const r of rs) await pl.filesRename({ path: `${r.dir}/${r.from}`, name: r.to });
-  for (const [dir] of dirs) { const n = await names(dir); const miss = rs.find((r) => r.dir === dir && !n.has(r.to.toLowerCase())); if (miss) throw new Error(t('renameBackBlocked', { name: miss.from })); }
-}
+/* (Renaming many at once: views/filesBatchUi.ts — the sheet — and views/filesBatch.ts — the plan, the run, the Undo.) */
 
 /* ---------- properties, told whole ---------- */
 export async function richProperties(rows: HTMLElement, e: Entry, line: (k: string, v: string) => HTMLElement): Promise<void> {
@@ -171,29 +174,28 @@ export async function richProperties(rows: HTMLElement, e: Entry, line: (k: stri
 }
 
 /* ---------- the text editor ---------- */
-export async function editorSheet(e: Entry, refresh: () => void): Promise<void> {
-  // (undo-redo) Unsaved changes are asked about before the editor closes (its button, Back, Escape, a drag): Save, Discard, Keep editing.
-  const { dirtyGuard } = await import('../ui/undo');
-  const pl = plug(); const sh = openSheet(e.name, t('close'), { beforeClose: dirtyGuard(() => !ta.readOnly && ta.value !== original, () => doSave(), () => e.name) }); sh.el.classList.add('files-editor');
-  const ta = h('textarea', { class: 'files-ta', dir: 'auto', spellcheck: 'false' }) as HTMLTextAreaElement; let original = '';
-  const findBox = h('input', { type: 'search', placeholder: t('filesFind'), hidden: true, dir: 'auto' }) as HTMLInputElement;
-  const status = h('small', { class: 'src files-ed-status' });
-  const doSave = async (): Promise<boolean> => { try { await pl.filesWrite({ path: e.path, text: ta.value }); original = ta.value; save.disabled = true; toast(t('filesSaved')); refresh(); return true; } catch (err) { toast(String((err as Error).message ?? err), 'error'); return false; } };
-  const save = h('button', { type: 'button', class: 'btn primary', disabled: true, onclick: () => void doSave() }, icon('check'), t('save')) as HTMLButtonElement;
-  const wrapBtn = iconButton('scroll', t('filesWrap'), () => { ta.classList.toggle('nowrap'); }); const monoBtn = iconButton('type', t('filesMono'), () => { ta.classList.toggle('mono'); });
-  const findBtn = iconButton('search', t('filesFind'), () => { findBox.hidden = !findBox.hidden; if (!findBox.hidden) findBox.focus(); });
-  findBox.addEventListener('keydown', (ev) => { if (ev.key !== 'Enter') return; const q = findBox.value; if (!q) return; const from = ta.selectionEnd; let i = ta.value.indexOf(q, from); if (i < 0) i = ta.value.indexOf(q); if (i >= 0) { ta.focus(); ta.setSelectionRange(i, i + q.length); } });
-  ta.addEventListener('input', () => { save.disabled = ta.value === original; status.textContent = `${localDigits(ta.value.length)} ${t('filesChars')}`; });
-  sh.body.append(h('div', { class: 'row files-ed-tools' }, findBtn, wrapBtn, monoBtn, status), findBox, ta);
-  sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void pl.openWith({ path: e.path, mime: 'text/plain', title: e.name }) }, icon('external'), t('openWith')), save);
-  try { const r = await pl.filesHead({ path: e.path, max: 2_000_000 }); original = r.text; ta.value = r.text; status.textContent = `${localDigits(r.text.length)} ${t('filesChars')}${r.size > 2_000_000 ? ' · ' + t('filesTooBigToEdit') : ''}`; if (r.size > 2_000_000) ta.readOnly = true; } catch (err) { ta.value = String((err as Error).message ?? err); ta.readOnly = true; original = ta.value; }
+/** Where the editor's bytes come from and go to: a file here (the plugin's uriRead/uriWrite with a path), or a link
+ *  another app handed in («Edit with Kurokawa»: written back only when it let us). */
+export type EditorIo = { /** The bytes (all up to 5 MB), or one part of a bigger file: from `offset`, `max` bytes. */ read(o?: { offset?: number; max?: number }): Promise<{ bytes: Uint8Array; size: number; whole: boolean }>; write?(bytes: Uint8Array): Promise<void>; openWith?: () => void; caption?: string };
+/** The bytes of a file here, through the plugin (null where it cannot: the old UTF-8 way then). */
+export function fileIo(path: string): EditorIo | null {
+  const p = ktPlugin() as unknown as { uriRead?(o: { path: string; max: number; offset?: number }): Promise<{ b64: string; size: number; whole: boolean }>; uriWrite?(o: { path: string; b64: string }): Promise<unknown> } | null;
+  if (!p?.uriRead || !p.uriWrite) return null;
+  return {
+    read: async (o) => { const { fromB64 } = await import('./textCodec'); const r = await p.uriRead!({ path, max: o?.max ?? 5_000_000, offset: o?.offset }); if (typeof r?.b64 !== 'string') throw new Error('noBytes'); return { bytes: fromB64(r.b64), size: r.size, whole: r.whole !== false }; },
+    write: async (bytes) => { const { toB64 } = await import('./textCodec'); await p.uriWrite!({ path, b64: toB64(bytes) }); },
+  };
+}
+export async function editorSheet(e: Entry, refresh: () => void, io: EditorIo | null = fileIo(e.path), onClose?: () => void): Promise<void> {
+  // (The editor itself — find and replace, line numbers, character sets, line endings — is views/filesEditor.ts.)
+  const { openEditor } = await import('./filesEditor'); return openEditor(e, refresh, io, onClose, plug());
 }
 
 /* ---------- the picture viewer: pinch to zoom; a swipe — the picture following the finger — to the folder's next or
    previous picture or GIF; its videos among them, each a still with a Play button (a swipe there would fight the
    player's seeking, so the video plays in the player, with the folder's videos as its queue) ---------- */
-export async function imageViewer(items: Entry[], index: number, urlOf: (p: string) => Promise<string | null>, onDelete: (e: Entry) => void, o: { readOnly?: boolean } = {}): Promise<void> {
-  const pl = plug(); let i = index; const sh = openSheet(items[i].name, t('close')); sh.el.classList.add('files-viewer');
+export async function imageViewer(items: Entry[], index: number, urlOf: (p: string) => Promise<string | null>, onDelete: (e: Entry) => void, o: { readOnly?: boolean; onClose?: () => void } = {}): Promise<void> {
+  const pl = plug(); let i = index; const sh = openSheet(items[i].name, t('close'), { onClose: o.onClose }); sh.el.classList.add('files-viewer');
   const img = h('img', { class: 'files-viewer-img', alt: '', draggable: 'false' }) as HTMLImageElement;
   const vid = h('video', { class: 'files-viewer-img', muted: true, playsinline: true, preload: 'metadata', hidden: true }) as HTMLVideoElement; let vidUrl = '';
   const play = h('button', { type: 'button', class: 'files-viewer-play', hidden: true, 'aria-label': t('play'), onclick: () => { const e = items[i]; if (!vidUrl) return; sh.close(); void import('./player').then((m) => m.openPlayer(vidUrl, e.name, /^arc:\/\//.test(e.path) ? {} : { localPath: e.path })); } }, icon('play'));
@@ -284,7 +286,7 @@ export async function analyzerSheet(root: { name: string; path: string; total?: 
 
 /** An archive's facts for the properties sheet: the format, how many files, the size inside, how far squeezed. */
 export async function archiveProperties(rows: HTMLElement, e: Entry, line: (k: string, v: string) => HTMLElement): Promise<void> {
-  if (e.dir || !/\.(zip|7z|rar|tar|gz|tgz|xz|bz2|cbz|001)$/i.test(e.name)) return;
+  if (e.dir || !(canExtractName(e.name) || /\.cbz$/i.test(e.name))) return;
   try { const { listArchive } = await import('../archives'); const info = await listArchive(e.path); const files = info.entries.filter((x) => !x.dir).length; const ratio = info.total > 0 && e.size > 0 ? Math.round((e.size / info.total) * 100) : 0; rows.append(line(t('filesArchive'), [info.format.toUpperCase(), countItems(files), info.total > 0 ? `${formatBytes(info.total)} ${t('filesInside')}` : '', ratio ? t('packedTo', { pct: localDigits(ratio) }) : '', info.encrypted ? t('encrypted') : ''].filter(Boolean).join(' · '))); } catch { /* not readable */ }
 }
 
@@ -343,29 +345,41 @@ export async function filesSettingsSheet(at: string, apply: () => void): Promise
   const row = (label: string, el: HTMLElement, hint?: string) => h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), el);
   const tog = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => row(label, h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => { set((e.target as HTMLInputElement).checked); savePrefs(); apply(); } }), hint);
   const sec = (title: string) => h('p', { class: 'files-sec' }, title);
-  const viewBtn = pickButton(t('filesDefaultView'), [['grid', t('filesGrid')], ['list', t('filesListView')]], prefs.view, (v) => { prefs.view = v as 'grid' | 'list'; savePrefs(); apply(); }, t('close'));
+  const viewBtn = pickButton(t('filesDefaultView'), [['grid', t('filesGrid')], ['gallery', t('filesGallery')], ['list', t('filesListView')]], prefs.view, (v) => { prefs.view = v as 'grid' | 'list' | 'gallery'; savePrefs(); apply(); }, t('close'));
   const sortBtn = pickButton(t('sortBy'), [['name', t('sortName')], ['date', t('sortDate')], ['size', t('sortSize')], ['type', t('sortType')]], prefs.sort, (v) => { prefs.sort = v as typeof prefs.sort; savePrefs(); apply(); }, t('close'));
   const densBtn = pickButton(t('filesDensity'), [['comfortable', t('filesComfortable')], ['compact', t('filesCompact')]], prefs.density ?? 'comfortable', (v) => { prefs.density = v as 'comfortable' | 'compact'; savePrefs(); apply(); }, t('close'));
+  const sizeBtn = pickButton(t('filesTextSize'), [['small', t('filesTextSmall')], ['normal', t('filesTextNormal')], ['large', t('filesTextLarge')], ['larger', t('filesTextLarger')]], prefs.textSize ?? 'normal', (v) => { prefs.textSize = v === 'normal' ? undefined : (v as 'small' | 'large' | 'larger'); savePrefs(); apply(); }, t('close'));
   const s = getSettings();
   const toneBtn = pickButton(t('filesTheme'), [['auto', t('filesThemeAuto')], ['light', t('filesThemeLight')], ['dark', t('filesThemeDark')], ['black', t('filesThemeBlack')]], s.uiMode === 'light' ? 'light' : s.uiMode === 'dark' ? (s.darkTone === 'black' ? 'black' : 'dark') : 'auto', (v) => { updateSettings({ uiMode: v === 'auto' ? 'auto' : v === 'light' ? 'light' : 'dark', darkTone: v === 'black' ? 'black' : s.darkTone === 'black' ? 'default' : s.darkTone } as never); }, t('close'));
   const home = h('div', { class: 'row' }, h('span', { class: 'grow files-main' }, h('span', null, t('filesHomeFolder')), h('small', { class: 'src', dir: 'ltr' }, prefs.home || t('filesHomeNone'))), h('button', { type: 'button', class: 'btn text small', onclick: () => { prefs.home = at; savePrefs(); (home.querySelector('small') as HTMLElement).textContent = at; toast(t('filesHomeSet')); } }, t('filesUseThis')), h('button', { type: 'button', class: 'btn text small', onclick: () => { prefs.home = undefined; savePrefs(); (home.querySelector('small') as HTMLElement).textContent = t('filesHomeNone'); } }, t('reset')));
+  const { canVerifyFull } = await import('./files'); const canFull = canVerifyFull();
+  const verifyBtn = pickButton(t('filesVerify'), [['size', t('filesVerifySize')], ['full', t('filesVerifyFull')]], prefs.verify === 'full' ? 'full' : 'size', (v) => { prefs.verify = v === 'full' ? 'full' : 'size'; savePrefs(); }, t('close'));
+  const verifyRow = h('div', { class: 'row files-verify-row' }, h('span', { class: 'grow files-main' }, h('span', null, t('filesVerify')), h('small', { class: 'src' }, t('filesVerifyHint'))), verifyBtn);
+  const { canRunJobs } = await import('./files');
+  const runBtn = pickButton(t('filesRunJobs'), [['one', t('filesRunOne')], ['together', t('filesRunTogether')]], prefs.jobsMode === 'together' ? 'together' : 'one', (v) => { prefs.jobsMode = v === 'together' ? 'together' : 'one'; savePrefs(); void import('./filesQueue').then((q) => q.modeChanged()); }, t('close'));
+  const runRow = h('div', { class: 'row files-verify-row files-runjobs-row' }, h('span', { class: 'grow files-main' }, h('span', null, t('filesRunJobs')), h('small', { class: 'src' }, t('filesRunJobsHint'))), runBtn);
   sh.body.append(
-    sec(t('filesLook')), h('div', { class: 'chip-row files-filters' }, viewBtn, sortBtn, densBtn, toneBtn),
-    tog(t('filesShowThumbs'), prefs.thumbs !== false, (v) => { prefs.thumbs = v; }), tog(t('filesShowCounts'), prefs.counts !== false, (v) => { prefs.counts = v; }, t('filesShowCountsHint')), tog(t('filesShowHiddenSetting'), prefs.hidden, (v) => { prefs.hidden = v; }), tog(t('filesEink'), !!prefs.eink, (v) => { prefs.eink = v; }, t('filesEinkHint')),
-    sec(t('filesBehaviour')), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
+    sec(t('filesLook')), h('div', { class: 'chip-row files-filters' }, viewBtn, sortBtn, densBtn, sizeBtn, toneBtn),
+    tog(t('filesShowThumbs'), prefs.thumbs !== false, (v) => { prefs.thumbs = v; }), tog(t('filesShowCounts'), prefs.counts !== false, (v) => { prefs.counts = v; }, t('filesShowCountsHint')), tog(t('filesDirSizes'), prefs.dirSizes !== false, (v) => { prefs.dirSizes = v; }, t('filesDirSizesHint')), tog(t('filesShowHiddenSetting'), prefs.hidden, (v) => { prefs.hidden = v; }), tog(t('filesEink'), !!prefs.eink, (v) => { prefs.eink = v; }, t('filesEinkHint')),
+    sec(t('filesBehaviour')), ...(canFull ? [verifyRow] : []), ...(canRunJobs() ? [runRow] : []), home, tog(t('filesRememberLast'), prefs.rememberLast !== false, (v) => { prefs.rememberLast = v; }), tog(t('filesConfirmDelete'), prefs.confirmDelete !== false, (v) => { prefs.confirmDelete = v; }, t('filesConfirmDeleteHint')), tog(t('filesKeepOn'), !!prefs.keepOn, (v) => { prefs.keepOn = v; }, t('filesKeepOnHint')), tog(t('filesTrashSetting'), trashOn(), (v) => setTrashOn(v)),
+    // (Kurokawa in other apps' «Open with» / «Share» lists: phones only — a computer has no such lists; the default
+    // apps chosen in Files' own chooser: both.)
+    sec(t('owSection')), ...(await import('./openWith').then((ow) => [
+      ...(ow.canSwitchEntries() ? [h('button', { type: 'button', class: 'row dest-row ow-open-settings', onclick: () => void ow.otherAppsSheet() }, h('span', { class: 'grow files-main' }, h('span', null, t('owSettingsRow')), h('small', { class: 'src' }, t('owSettingsHint'))), icon('chevronRight'))] : []),
+      h('button', { type: 'button', class: 'row dest-row ow-open-defaults', onclick: () => ow.defaultAppsSheet() }, h('span', { class: 'grow files-main' }, h('span', null, t('owDefaultApps')), h('small', { class: 'src' }, t('owDefaultAppsHint'))), icon('chevronRight'))])),
     sec(t('filesBackup')), h('p', { class: 'hint' }, t('filesBackupHint')));
   sh.actions.append(
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
-      const data = { kind: 'kurokawa-files-settings', v: 1, prefs, bookmarks: JSON.parse(localStorage.getItem('kt.files.bookmarks') ?? '[]') as unknown, hidden: hiddenPaths(), trash: trashOn(), charset: localStorage.getItem('kt.archive.charset') ?? 'auto' };
+      const data = { kind: 'kurokawa-files-settings', v: 1, prefs, bookmarks: JSON.parse(localStorage.getItem('kt.files.bookmarks') ?? '[]') as unknown, renamePresets: JSON.parse(localStorage.getItem('kt.files.renamePresets') ?? '[]') as unknown, hidden: hiddenPaths(), trash: trashOn(), charset: localStorage.getItem('kt.archive.charset') ?? 'auto' };
       const text = JSON.stringify(data, null, 2); const pl = plug() as unknown as { filesWrite?(o: { path: string; text: string }): Promise<unknown>; shareFile?(o: { path: string; title: string }): Promise<void> };
       if (pl.filesWrite) { const path = `${at}/kurokawa-files-settings.json`; try { await pl.filesWrite({ path, text }); toast(t('filesBackupSaved', { name: 'kurokawa-files-settings.json' })); apply(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
       else { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = 'kurokawa-files-settings.json'; a.click(); }
     } }, icon('download'), t('filesBackupSave')),
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
       const { pickFiles } = await import('../archives'); const ps = await pickFiles(false).catch(() => [] as string[]); if (!ps.length) return;
-      try { const r = await plug().filesHead({ path: ps[0], max: 2_000_000 }); const d = JSON.parse(r.text) as { kind?: string; prefs?: Record<string, unknown>; bookmarks?: unknown; hidden?: string[]; trash?: boolean; charset?: string };
+      try { const r = await plug().filesHead({ path: ps[0], max: 2_000_000 }); const d = JSON.parse(r.text) as { kind?: string; prefs?: Record<string, unknown>; bookmarks?: unknown; renamePresets?: unknown; hidden?: string[]; trash?: boolean; charset?: string };
         if (d.kind !== 'kurokawa-files-settings') throw new Error(t('filesBackupNotOurs'));
-        Object.assign(prefs, d.prefs ?? {}); savePrefs(); if (Array.isArray(d.bookmarks)) localStorage.setItem('kt.files.bookmarks', JSON.stringify(d.bookmarks)); if (Array.isArray(d.hidden)) localStorage.setItem('kt.files.hiddenPaths', JSON.stringify(d.hidden)); if (typeof d.trash === 'boolean') setTrashOn(d.trash); if (d.charset) localStorage.setItem('kt.archive.charset', d.charset);
+        Object.assign(prefs, d.prefs ?? {}); savePrefs(); if (Array.isArray(d.bookmarks)) localStorage.setItem('kt.files.bookmarks', JSON.stringify(d.bookmarks)); if (Array.isArray(d.renamePresets)) localStorage.setItem('kt.files.renamePresets', JSON.stringify(d.renamePresets)); if (Array.isArray(d.hidden)) localStorage.setItem('kt.files.hiddenPaths', JSON.stringify(d.hidden)); if (typeof d.trash === 'boolean') setTrashOn(d.trash); if (d.charset) localStorage.setItem('kt.archive.charset', d.charset);
         toast(t('filesBackupRestored')); sh.close(); navigate(`/files?p=${encodeURIComponent(at)}&t=${Date.now()}`, true);
       } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
     } }, icon('upload'), t('filesBackupRestore')));

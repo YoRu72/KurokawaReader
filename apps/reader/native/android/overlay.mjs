@@ -198,7 +198,10 @@ await fs.copyFile(path.join(root, 'native/android/KrDownloader.java'), path.join
 // from there and renamed into this package at build time; native/android/KrArchive.java is the fallback when the
 // Tools tree is absent (a checkout of this app alone).
 { const shared = path.join(root, '..', 'tools', 'native', 'android', 'KtArchive.java'); let src = null; try { src = await fs.readFile(shared, 'utf8'); } catch { /* none */ }
-  if (src) await fs.writeFile(path.join(pkgDir, 'KrArchive.java'), src.replace(/^package app\.kurokawa\.tools;/m, 'package app.kurokawa.reader;').replace(/\bKtArchive\b/g, 'KrArchive').replace(/\bKtFiles\.keepBoth\b/g, 'KrArchive.keepBothFile'));
+  if (src) { await fs.writeFile(path.join(pkgDir, 'KrArchive.java'), src.replace(/^package app\.kurokawa\.tools;/m, 'package app.kurokawa.reader;').replace(/\bKtArchive\b/g, 'KrArchive').replace(/\bKtFiles\.keepBoth\b/g, 'KrArchive.keepBothFile'));
+    // The engine's name rules (KtNameSafe: pure Java, java.util only) come along, package renamed, class name kept.
+    const names = await fs.readFile(path.join(root, '..', 'tools', 'native', 'android', 'KtNameSafe.java'), 'utf8');
+    await fs.writeFile(path.join(pkgDir, 'KtNameSafe.java'), names.replace(/^package app\.kurokawa\.tools;/m, 'package app.kurokawa.reader;')); }
   else await fs.copyFile(path.join(root, 'native/android/KrArchive.java'), path.join(pkgDir, 'KrArchive.java')); }
 await fs.copyFile(path.join(root, 'native/android/KrDoh.java'), path.join(pkgDir, 'KrDoh.java'));
 await fs.copyFile(path.join(root, 'native/android/KrDohWeb.java'), path.join(pkgDir, 'KrDohWeb.java'));

@@ -53,7 +53,7 @@ const OLD = {
         if (k === 'primary' && x.s > 0.4) bad.push(`${tag} primary ${c} S ${(x.s * 100).toFixed(0)}%`); }
     }
     ok('comfortable to the eyes: grounds and glass ≤ 10 % (dark) / 12 % (light) saturation, glass saturation ≤ 1.05, the background a whisper of hue, accents muted, none yellow', !bad.length, bad.join('; '));
-    ok('a theme taken out of the app (ember) falls back to the default', T.themeById('ember').id === 'frost' && !T.THEMES.some((x) => x.id === 'ember'));
+    ok('a theme taken out of the app (ember) falls back to the default', T.themeById('ember').id === 'classic' && !T.THEMES.some((x) => x.id === 'ember'));
   }
   ok('the blur follows the platform (phone Reduced, computer Full, WebKitGTK Reduced) and the system\'s wishes', T.resolveBlur('auto', { platform: 'android', phone: true, webkitGtk: false, reducedTransparency: false, reducedMotion: false, lowBattery: false }).blur === 'reduced'
     && T.resolveBlur('auto', { platform: 'desktop', phone: false, webkitGtk: false, deviceMemory: 16, reducedTransparency: false, reducedMotion: false, lowBattery: false }).blur === 'full'
@@ -62,14 +62,14 @@ const OLD = {
     && T.resolveBlur('auto', { platform: 'android', phone: true, webkitGtk: false, reducedTransparency: true, reducedMotion: false, lowBattery: false }).blur === 'off'
     && T.resolveBlur('auto', { platform: 'android', phone: true, webkitGtk: false, reducedTransparency: false, reducedMotion: false, lowBattery: true }).blur === 'off'
     && T.resolveBlur('full', { platform: 'android', phone: true, webkitGtk: false, reducedTransparency: true, reducedMotion: false, lowBattery: false }).blur === 'full');
-  ok('migration: fresh → the new default; untouched → the new default; chosen colours → kept', T.migrateLook(null).theme === 'frost' && !T.migrateLook(null).keepColours && T.migrateLook({ uiMode: 'dark', darkTone: 'default', accent: 'graphite' }).keepColours === false && T.migrateLook({ darkTone: 'grey', accent: 'graphite' }).keepColours === true && T.migrateLook({ accent: 'teal' }).keepColours === true);
+  ok('migration (0.17): fresh → the default (Expressive 3 since 0.21); untouched → the default; chosen colours → kept', T.migrateLook(null).theme === 'classic' && !T.migrateLook(null).keepColours && T.migrateLook({ uiMode: 'dark', darkTone: 'default', accent: 'graphite' }).keepColours === false && T.migrateLook({ darkTone: 'grey', accent: 'graphite' }).keepColours === true && T.migrateLook({ accent: 'teal' }).keepColours === true);
 
   const web = serve().listen(0, '127.0.0.1'); await new Promise((r) => web.once('listening', r)); const port = web.address().port; const URL0 = `http://127.0.0.1:${port}/`;
   const br = await chromium.launch(); const errors = [];
   const page = async (o, settings, lang = 'en') => {
-    const ctx = await br.newContext({ viewport: { width: o.w, height: o.h }, deviceScaleFactor: o.dpr || 1, isMobile: !!o.mobile, hasTouch: !!o.mobile, locale: lang, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    const ctx = await br.newContext({ viewport: { width: o.w, height: o.h }, deviceScaleFactor: o.dpr || 1, isMobile: !!o.mobile, hasTouch: !!o.mobile, locale: lang, reducedMotion: 'reduce', serviceWorkers: 'block', colorScheme: 'dark' }); // (A dark system: «system», the default mode since 0.21, shows these in dark as they were measured.)
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
-    await p.addInitScript(([s, l]) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); if (s !== null) localStorage.setItem('kt.settings', s); if (s && s.includes('"__migrated"')) localStorage.setItem('kt.themeMigrated', '1'); }, [settings === null ? null : JSON.stringify({ addons: ['player'], ...settings }), lang]);
+    await p.addInitScript(([s, l]) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); if (s !== null) localStorage.setItem('kt.settings', s); if (s && s.includes('"__migrated"')) { localStorage.setItem('kt.themeMigrated', '1'); localStorage.setItem('kt.mainTheme', '1'); } }, [settings === null ? null : JSON.stringify({ addons: ['player'], ...settings }), lang]);
     // (raw.githubusercontent.com — the theme list — is not reached: answered 404 here.)
     await p.route(/raw\.githubusercontent\.com/, (r) => r.fulfill({ status: 404, body: '' }));
     return { p, ctx };
@@ -128,29 +128,31 @@ const OLD = {
     await ctx.close();
   }
 
-  /* 3. the move to themes, in the app */
+  /* 3. the move to themes, in the app (0.17's, then 0.21's: Expressive 3 the default again) */
   {
     const { p, ctx } = await page(PHONE, null); await go(p, '', '.downloads-view');
-    const r = await p.evaluate(() => ({ s: JSON.parse(localStorage.getItem('kt.settings') || '{}'), flag: localStorage.getItem('kt.themeMigrated'), theme: document.documentElement.dataset.theme }));
-    ok('a fresh install gets Frost × M3 Expressive and the flag', r.theme === 'frost' && r.flag === '1'); await ctx.close();
+    const r = await p.evaluate(() => ({ s: JSON.parse(localStorage.getItem('kt.settings') || '{}'), flag: localStorage.getItem('kt.themeMigrated'), main: localStorage.getItem('kt.mainTheme'), theme: document.documentElement.dataset.theme }));
+    ok('a fresh install gets Expressive 3 and both flags', r.theme === 'classic' && r.flag === '1' && r.main === '1', JSON.stringify(r)); await ctx.close();
   }
   {
     const { p, ctx } = await page(PHONE, { uiMode: 'dark', darkTone: 'default', accent: 'graphite' }); await go(p, '', '.downloads-view');
-    const r = await p.evaluate(() => ({ s: JSON.parse(localStorage.getItem('kt.settings')), flag: localStorage.getItem('kt.themeMigrated'), ground: getComputedStyle(document.documentElement).getPropertyValue('--th-ground').trim() }));
-    ok('untouched settings move to the new default (its refined graphite), once', r.s.theme === 'frost' && !r.s.themeKeepColours && r.flag === '1' && r.ground === '#17181b'); await ctx.close();
+    const r = await p.evaluate(() => ({ s: JSON.parse(localStorage.getItem('kt.settings')), flag: localStorage.getItem('kt.themeMigrated'), note: localStorage.getItem('kt.mainThemeNote'), bg: getComputedStyle(document.body).backgroundColor }));
+    ok('settings from before themes keep the look they had (Expressive 3), no snackbar owed', r.s.theme === 'classic' && r.flag === '1' && !r.note && r.bg === 'rgb(18, 19, 20)', JSON.stringify(r)); await ctx.close();
   }
   {
     const { p, ctx } = await page(PHONE, { uiMode: 'dark', darkTone: 'grey', accent: 'teal' }); await go(p, '', '.downloads-view');
-    const r = await p.evaluate(() => { const c = getComputedStyle(document.documentElement); return { s: JSON.parse(localStorage.getItem('kt.settings')), ground: c.getPropertyValue('--th-ground').trim(), low: c.getPropertyValue('--th-solid-low').trim(), primary: c.getPropertyValue('--md-primary').trim() }; });
-    ok('chosen colours are kept inside the glass (grey tone, teal accent)', r.s.theme === 'frost' && r.s.themeKeepColours === true && r.ground === '#1c1b1f' && r.low === '#232227' && r.primary === '#86d6cf', JSON.stringify(r)); await ctx.close();
+    const r = await p.evaluate(() => { const c = getComputedStyle(document.documentElement); return { s: JSON.parse(localStorage.getItem('kt.settings')), bg: getComputedStyle(document.body).backgroundColor, primary: c.getPropertyValue('--md-primary').trim() }; });
+    ok('chosen colours from before themes are kept (grey tone, teal accent) in Expressive 3', r.s.theme === 'classic' && r.bg === 'rgb(28, 27, 31)' && r.primary === '#86d6cf', JSON.stringify(r)); await ctx.close();
   }
   {
     const { p, ctx } = await page(PHONE, { theme: 'frost', __migrated: 1 }); await go(p, '#/settings/appearance', '.tg-card[data-theme="classic"]');
     await p.click('.tg-card[data-theme="classic"] .tg-pick'); await p.waitForFunction(() => document.documentElement.dataset.theme === 'classic');
     await go(p, '', '.downloads-view .dl-status');
     const got = await p.evaluate((keys) => { const o = {}; for (const q of keys) { const e = document.querySelector(q); o[q] = e ? getComputedStyle(e).backgroundColor : null; } o.text = getComputedStyle(document.body).color; o.topbarFilter = getComputedStyle(document.querySelector('.topbar')).backdropFilter; return o; }, Object.keys(OLD.default).filter((k) => k !== 'text' && k !== 'topbarFilter'));
-    const diff = Object.entries(OLD.default).filter(([k, v]) => got[k] !== v);
-    ok('Classic, in one tap, gives back the old computed colours exactly', diff.length === 0, JSON.stringify(diff.map(([k]) => [k, got[k]])));
+    // (0.21: the one change on purpose — a chosen chip and the bottom bar's place a step lighter and cooler, told at a glance.)
+    const SELECTED = { '.chip': 'rgb(58, 64, 75)', '.nav-item.active .nav-pill': 'rgb(58, 64, 75)' };
+    const diff = Object.entries({ ...OLD.default, ...SELECTED }).filter(([k, v]) => got[k] !== v);
+    ok('Expressive 3, in one tap, gives back the old default\'s computed colours exactly (its selected tone a step clearer)', diff.length === 0, JSON.stringify(diff.map(([k]) => [k, got[k]])));
     await ctx.close();
   }
 

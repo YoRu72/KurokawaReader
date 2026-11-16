@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
-  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'dohStatus', 'dohUsed', 'installUpdate', 'appIcon',
   // (Stage P4.)
   'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl',
   // (Stage P6: desktop.rs.)
@@ -34,6 +34,10 @@ const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []] };
+// (The safe-extraction engine's calls — desktop/inplace.cjs over archsafe.cjs: the preflight, the shelf of unfinished jobs, the
+// job actions. Electron only for now: the Tauri bridge deliberately has none, because the page asks for them by presence
+// (src/archives/safety.ts desk(), main.ts) and falls back to the plain extraction without them, showing no shelf.)
+const ELECTRON_ONLY = ['archivePreflight', 'archiveShelf', 'archiveJob'];
 const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
@@ -87,7 +91,8 @@ function loadBridge(boot) {
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
   // (Every channel of the preload is here now — the screen translator's 8 were the last.)
-  for (const k of Object.keys(pre)) assert.ok(k in kt, `${k} is in preload.cjs but not in the bridge`);
+  for (const k of Object.keys(pre)) assert.ok(k in kt || ELECTRON_ONLY.includes(k), `${k} is in preload.cjs but not in the bridge`);
+  for (const k of ELECTRON_ONLY) assert.ok(k in pre && !(k in kt), `${k} is Electron-only: in the preload, not in the bridge`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
@@ -102,7 +107,7 @@ function loadBridge(boot) {
     screenFontAdd: [{ name: 'a.ttf', b64: 'AAEC' }], screenFontRemove: [{ path: '/d/screen-fonts/1-a.ttf' }], titleBar: [{ own: true, act: 'maximize' }],
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
-    appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
+    appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad', allowSystem: true }], dohProbe: [], dohStatus: [], dohUsed: [{ hosts: ['files.test'] }], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
     streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }],
     desktopPrefs: [{ keepAwake: true, whenDone: 'sleep', notifyDone: false, tray: true, hotkeys: { clip: 'CommandOrControl+Shift+V' } }], mini: [{ action: 'auto', on: true }], registerMagnet: [],
     captureUrl: [{ url: 'https://anilist.co/api/v2/oauth/authorize?client_id=1&response_type=token', marker: 'access_token=', title: 'AniList' }], siteWindow: [{ url: 'https://e.org/', title: 'E' }],
@@ -421,11 +426,11 @@ function loadBridge(boot) {
   // (Also the two halves CI launches since P5 merged — cfg.part 1 and 2 (KT_SELFTEST_PART): each passes, and together
   // they hold every check of the whole run.)
   const byPart = {};
-  for (const [bad, part] of [[false, 0], [true, 0], [false, 1], [false, 2]]) {
+  for (const [bad, part, flaky] of [[false, 0], [true, 0], [false, 1], [false, 2], [false, 0, true]]) {
     const sent2 = [];
     const kt2 = fakeKt(bad);
     // (Screen translator: a pretend screen — tests/screenfake.cjs.)
-    const SCR = require('./screenfake.cjs')(cfg); Object.assign(kt2, SCR.kt);
+    const SCR = require('./screenfake.cjs')(cfg, flaky ? { flaky: true } : undefined); Object.assign(kt2, SCR.kt);
     const D = kt2.__desk;
     const siteAct = (o) => (o.act === 'list' ? (D.capture ? [{ label: 'kt-site-capture-1', url: D.capture.o.url }] : []) : o.act === 'go' ? (D.capture && D.capture.o.marker && o.url.includes(D.capture.o.marker) ? (D.capture.ok(o.url), D.capture = null, true) : true) : o.act === 'close' ? (D.capture && (D.capture.ok(null), D.capture = null), true) : undefined);
     const brTell = (o) => setTimeout(() => (D.brSubs || []).forEach((f) => f(o)), 5);
@@ -486,6 +491,11 @@ function loadBridge(boot) {
     assert.ok(sent2.some((c) => c.cmd === 'kt_selftest_desk' && c.args.o.act === 'second' && c.args.o.args[0] === 'kurokawatools://task?id=kt-hybrid-2'), 'the toast\'s click address driven through a second launch');
     const scr = res.filter((r) => /^screen:/.test(r.name));
     assert.ok(scr.length === 13 && scr.every((r) => r.ok), 'the screen translator\'s checks against the pretend screen: ' + JSON.stringify(scr.filter((r) => !r.ok)));
+    // (A runner that was slow — the first drawn window taken one bar too low, the first «auto» with no caption in time —: the two
+    // rows pass on their second attempt and SAY so; with a good screen no row does.)
+    const retried = scr.filter((r) => /^PASSED ON RETRY/.test(r.detail));
+    if (flaky) assert.deepEqual(retried.map((r) => r.name.replace(/^screen: ([a-z ]+).*/, '$1').trim()), ['a window the test draws', 'auto'], 'the slow screen: the two rows passed on retry, and said so: ' + JSON.stringify(scr.map((r) => [r.name, r.detail.slice(0, 80)])));
+    else assert.equal(retried.length, 0, 'a good screen needs no retry: ' + JSON.stringify(retried));
   }
   {
     const whole = new Set(byPart[0]); const one = new Set(byPart[1]); const two = new Set(byPart[2]);

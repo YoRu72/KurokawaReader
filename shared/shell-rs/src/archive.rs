@@ -195,10 +195,19 @@ pub fn crc32(b: &[u8]) -> u32 {
 
 /* ---------- names ---------- */
 
-/// archive.cjs's `unsafe`: absolute, a «..» part, a drive letter — and here also a «:» anywhere (a Windows drive or
-/// stream), a NUL, or a backslash left in it.
+/// archive.cjs's `unsafe`: absolute, a «..» part, a drive letter at the start («C:», «c:x», «C:\\x», «C:/x») on every
+/// system — and here also a NUL or a backslash left in it, and on Windows a «:» anywhere (a stream name, `a:b`). On
+/// Linux and macOS a «:» inside a name is an ordinary character («meeting 10:30.txt», «dosdevices/c:») and is kept
+/// (Tools 0.21 P5, the one name table: desktop/namesafe.json).
 pub fn unsafe_name(name: &str) -> bool {
-    if name.starts_with('/') || name.contains('\0') || name.contains(':') || name.contains('\\') {
+    unsafe_name_for(name, cfg!(windows))
+}
+
+/// `unsafe_name` for a chosen system (`windows`), so both rules are tested on either.
+pub fn unsafe_name_for(name: &str, windows: bool) -> bool {
+    let b = name.as_bytes();
+    let drive = b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
+    if name.starts_with('/') || name.contains('\0') || name.contains('\\') || drive || (windows && name.contains(':')) {
         return true;
     }
     name.split('/').any(|p| p == "..")
@@ -2089,10 +2098,15 @@ mod tests {
 
     #[test]
     fn names() {
-        for bad in ["/etc/passwd", "../x", "a/../../x", "a/..", "C:/x", "c:x", "a:stream", "a\\..\\b", "x\0y"] {
+        for bad in ["/etc/passwd", "../x", "a/../../x", "a/..", "C:/x", "c:x", "C:", "a\\..\\b", "x\0y"] {
             assert!(unsafe_name(bad), "{}", bad);
             assert!(safe_join(Path::new("/d"), bad).is_err(), "{}", bad);
         }
+        // (A «:» inside a name: kept on Linux and macOS, refused on Windows — both rules checked here, whatever the host.)
+        for (n, win, want) in [("meeting 10:30.txt", false, false), ("dosdevices/c:", false, false), ("ab:stream", false, false), ("meeting 10:30.txt", true, true), ("dosdevices/c:", true, true), ("ab:stream", true, true), ("a:stream", false, true), ("C:", false, true), ("c:foo", false, true), ("C:\\foo", false, true), ("C:/foo", false, true), ("C:/foo", true, true), ("ab", true, false)] {
+            assert_eq!(unsafe_name_for(n, win), want, "{} on {}", n, if win { "Windows" } else { "Unix" });
+        }
+        assert_eq!(unsafe_name("ab:stream"), cfg!(windows));
         for good in ["a", "a/b.txt", "./a", "a/./b", "a..b", "..a", "ن/✓.txt"] {
             assert!(!unsafe_name(good), "{}", good);
             assert!(safe_join(Path::new("/d"), good).unwrap().starts_with("/d"));

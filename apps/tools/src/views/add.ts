@@ -1,5 +1,6 @@
 // A new download: links or magnets typed or pasted (several at once), a .torrent file chosen; the folder, the
 // name, the connections; for a torrent, its files picked once the metadata is here.
+import { nameDotExt } from '../ui/nameExt';
 import { h, icon, openSheet, toast } from '../ui/dom';
 import { t, formatBytes, countFiles, localDigits } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName, isTorrentBytes } from '../engine';
@@ -23,7 +24,8 @@ const toBase64 = (buf: ArrayBuffer): string => { const b = new Uint8Array(buf); 
 /** The Add sheet; `pickTorrent` opens the file picker at once, `video` says a video page is wanted (from the + menu). */
 export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boolean; torrent?: File; headers?: Record<string, string>; name?: string } = {}): void {
   const eng = getEngine();
-  const sh = openSheet(t('addTitle'), t('close'));
+  // (Its listener for «a link turned out to be a file» let go however the sheet goes — it piled up one per opening.)
+  const sh = openSheet(t('addTitle'), t('close'), { onClose: () => window.removeEventListener('kt:direct', onDirect) });
   sh.el.classList.add('add-sheet');
   const ta = h('textarea', { rows: 3, class: 'add-input', dir: 'ltr', placeholder: t('addHint'), spellcheck: 'false', autocapitalize: 'off' }) as HTMLTextAreaElement; ta.value = initial;
   const fileIn = h('input', { type: 'file', accept: '.torrent,application/x-bittorrent', hidden: true }) as HTMLInputElement;
@@ -93,6 +95,9 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
     if (r.page) sizeLine.append(h('b', { class: 'danger' }, ` · ${t('linkIsPage')}`));
     void showStorage();
   };
+  // (A script's link on a site yt-dlp knows that gave a file: looked at now as the plain link it is.)
+  const onDirect = (e: Event) => { const u = (e as CustomEvent<string>).detail; if (!sh.el.isConnected) { window.removeEventListener('kt:direct', onDirect); return; } if (sources()[0]?.url === u) probing = lookAt(u, sources()[0]?.headers); };
+  window.addEventListener('kt:direct', onDirect);
   const recent = (): string[] => (getSettings().recentDirs ?? []).filter((d) => d && d !== getSettings().downloadDir).slice(0, 5);
   const dirMenu = h('div', { class: 'folder-chips', hidden: !recent().length }, ...recent().map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d)));
   const drawDirs = () => { const r = recent(); dirMenu.hidden = !r.length; dirMenu.replaceChildren(...r.map((d) => h('button', { type: 'button', class: 'chip', dir: 'ltr', title: d, onclick: () => { updateSettings({ downloadDir: d }); dir.textContent = d; dirChosen = true; drawDirs(); void showStorage(); } }, icon('history'), d.split(/[\\/]/).filter(Boolean).pop() ?? d))); };
@@ -107,7 +112,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const filesBox = h('div', { class: 'add-files', hidden: true });
   let info: TorrentInfo | null = null; let chosen = new Set<number>(); let metaToken = 0;
   const saveAs = h('div', { class: 'save-as' },
-    h('div', { class: 'field' }, h('span', { class: 'label' }, t('saveAs')), h('div', { class: 'save-as-row' }, name, h('span', { class: 'dot' }, '.'), ext)),
+    h('div', { class: 'field' }, h('span', { class: 'label' }, t('saveAs')), nameDotExt(name, ext)),
     sizeLine, megaBox, storageLine,
     h('div', { class: 'dest-row static' }, icon('folder'), h('span', { class: 'label' }, t('saveTo')), dir, (window.kurokawaTools || ktPlugin()) ? h('button', { type: 'button', class: 'btn text small', onclick: () => void pick() }, t('changeFolder')) : null),
     dirMenu);
@@ -192,6 +197,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
       if (u && isShortLink(u)) { const to = await resolveShort(u); if (to && sources()[0]?.url === u) { ta.value = ta.value.replace(u, to); one = sources(); u = to; } }
       // (A post the reader will read first: yt-dlp waits — peekHf asks it only if the reader lists nothing.)
       const readerFirst = !!u && one.length === 1 && getSettings().socialAuto !== false && !!socialOf(u);
+      if (how.video && u) { const { forcePage } = await import('../downloads/direct'); forcePage(u); }
       video.check(readerFirst ? null : u); void peekZip(u); peekHf(u); probing = lookAt(u, one[0]?.headers); saveAs.classList.toggle('many', one.length > 1 || !!(one[0]?.magnet || one[0]?.torrent)); }
     if (!eng.torrentInfo || !eng.can.pickFiles) return;
     const srcs = sources(); if (srcs.length !== 1 || !(srcs[0].magnet || srcs[0].torrent)) { filesBox.hidden = true; info = null; return; }

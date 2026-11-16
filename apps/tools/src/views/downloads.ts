@@ -22,6 +22,8 @@ import { historyOf, sparkline } from './taskmap';
 import { torEngineBadge } from './engineInfo';
 import { offerUndo } from '../ui/undo';
 import { onBack } from '../ui/backstack';
+import { plainEngineError } from '../downloads/errors';
+import { nameNodes, setName, nameDir } from '../ui/fileName';
 // (undo-redo) Downloads taken off the list with an Undo are only held out of sight until it is over — every kind,
 // a video or a .torrent's too, which the trash cannot put back —, then removed for real; Undo shows them again as
 // they were (still downloading, if they were). The list's own files are never deleted this way.
@@ -126,7 +128,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const cats = allCategories().filter((c) => tasks.some((x) => catOf(x).id === c.id));
     chips.replaceChildren(...FILTERS.map(([k, label]) => h('button', { type: 'button', class: 'chip' + (current === k ? ' on' : ''), 'aria-pressed': String(current === k), onclick: () => { current = k; navigate(`/${k === 'all' ? '' : `?f=${k}`}`, true); draw(); } }, label)),
       ...(cats.length > 1 ? [h('span', { class: 'chip-sep' }), ...cats.map((c) => h('button', { type: 'button', class: 'chip' + (cat === c.id ? ' on' : ''), onclick: () => { cat = cat === c.id ? '' : c.id; draw(); } }, icon(c.icon), categoryName(c)))] : []),
-      h('button', { type: 'button', class: 'chip sort-chip', onclick: () => downloadsOptionsSheet(tasks, draw, 'sort') }, icon('sort'), t((({ progress: 'sortProgress', speed: 'sortSpeed', eta: 'sortEta' } as Record<string, string>)[getSettings().sort] ?? `sort_${getSettings().sort}`) as 'sort_added')));
+      h('button', { type: 'button', class: 'chip sort-chip', onclick: () => downloadsOptionsSheet(tasks, draw, 'sort') }, icon('sort'), t((({ queue: 'sortQueue', progress: 'sortProgress', speed: 'sortSpeed', eta: 'sortEta' } as Record<string, string>)[getSettings().sort] ?? `sort_${getSettings().sort}`) as 'sort_added')));
   };
   const shown = () => {
     const list = tasks.filter((x) => (current === 'all' ? true : current === 'active' ? ACTIVE.includes(x.state) || x.state === 'paused' : current === 'done' ? x.state === 'done' : x.state === 'failed') && (!cat || catOf(x).id === cat));
@@ -142,13 +144,31 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const measureRows = () => { const cs = [...list.querySelectorAll<HTMLElement>(':scope > .task-card')]; if (cs.length < 2) return; const a = cs[0].getBoundingClientRect().top, b = cs[cs.length - 1].getBoundingClientRect().top; const hgt = (b - a) / (cs.length - 1); if (hgt > 20 && Math.abs(hgt - rowH) > 1) rowH = hgt; };
   let scrollFrame = 0;
-  const onScroll = () => { if (!win || scrollFrame || !root.isConnected) return; scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; if (!win) return; const r = windowOf(shown().length); if (Math.abs(r.start - win.start) >= 4 || Math.abs(r.end - win.end) >= 4) draw(); }); };
+  // (Scrolled: only the window moved over the list as last drawn — not the whole draw, which filters, sorts and counts
+  // every task: a frame of a fling over 2,000 rows cost that much each time.)
+  let lastVis: Task[] = [];
+  const onScroll = () => { if (!win || scrollFrame || !root.isConnected) return; scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; if (!win) return; const r = windowOf(lastVis.length); if (Math.abs(r.start - win.start) >= 4 || Math.abs(r.end - win.end) >= 4) placeRows(windowRows(lastVis)); }); };
+  const windowRows = (vis: Task[]): HTMLElement[] => {
+    const r = windowOf(vis.length); win = r;
+    topPad.style.height = `${Math.max(0, r.start * rowH - 10)}px`; bottomPad.style.height = `${Math.max(0, (vis.length - r.end) * rowH - 10)}px`;
+    return [...(r.start > 0 ? [topPad] : []), ...vis.slice(r.start, r.end).map((x) => cardFor(x)), ...(r.end < vis.length ? [bottomPad] : [])];
+  };
+  const placeRows = (nodes: HTMLElement[]) => {
+    const keep = new Set(nodes);
+    for (const [id, el] of cards) if (!keep.has(el)) { el.remove(); cards.delete(id); }
+    for (const pad of [topPad, bottomPad]) if (!keep.has(pad)) pad.remove();
+    if (win) measureRows();
+    for (const [k, el] of heads) if (!keep.has(el)) { el.remove(); heads.delete(k); }
+    nodes.forEach((el, i) => { if (list.children[i] !== el) list.insertBefore(el, list.children[i] ?? null); });
+    // (Rows brought in by a scroll while choosing: their marks as chosen.)
+    if (selecting) for (const [id, el] of cards) { const on = picked.has(id); if (el.classList.contains('picked') !== on) { el.classList.toggle('picked', on); const cb = el.querySelector<HTMLInputElement>('.task-pick'); if (cb) cb.checked = on; } }
+  };
   document.addEventListener('scroll', onScroll, { capture: true, passive: true }); window.addEventListener('resize', onScroll);
   let places = new Map<string, number>();
   const draw = () => {
     places = queuePlaces(tasks);
     drawChips(); drawRecovery();
-    const P = dlPrefs(); const vis = shown();
+    const P = dlPrefs(); const vis = shown(); lastVis = vis;
     optBtn.dataset.n = String(activeFilters(P));
     list.className = `task-list look-${P.look}`;
     (title.querySelector('.count') as HTMLElement).textContent = tasks.length ? (vis.length !== tasks.length ? t('dlCountOf', { n: localDigits(vis.length), all: countItems(tasks.length) }) : countItems(tasks.length)) : '';
@@ -160,21 +180,14 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     // standing for the rest: 2,000 finished downloads are a screenful of rows, not 56,000 nodes. Selection, search,
     // filters, sort and Undo work on the data, so they see every row; the rows come back as they are scrolled to.)
     if (P.group === 'none' && vis.length > WINDOW_MIN) {
-      const r = windowOf(vis.length); win = r;
-      topPad.style.height = `${Math.max(0, r.start * rowH - 10)}px`; bottomPad.style.height = `${Math.max(0, (vis.length - r.end) * rowH - 10)}px`;
-      nodes.push(...(r.start > 0 ? [topPad] : []), ...vis.slice(r.start, r.end).map((x) => cardFor(x)), ...(r.end < vis.length ? [bottomPad] : []));
+      nodes.push(...windowRows(vis));
     } else if (P.group === 'none') { win = null; nodes.push(...vis.map((x) => cardFor(x))); }
     else {
       const groups = new Map<string, { label: string; items: Task[] }>();
       for (const x of vis) { const g = groupOf(x, P.group)!; const e = groups.get(g.key) ?? groups.set(g.key, { label: g.label, items: [] }).get(g.key)!; e.items.push(x); }
       for (const [key, g] of groups) { let hd = heads.get(key); if (!hd) { hd = h('h3', { class: 'task-group' }); heads.set(key, hd); } hd.replaceChildren(h('span', null, g.label), h('small', null, localDigits(g.items.length))); nodes.push(hd, ...g.items.map((x) => cardFor(x))); }
     }
-    const keep = new Set(nodes);
-    for (const [id, el] of cards) if (!keep.has(el)) { el.remove(); cards.delete(id); }
-    for (const pad of [topPad, bottomPad]) if (!keep.has(pad)) pad.remove();
-    if (win) measureRows();
-    for (const [k, el] of heads) if (!keep.has(el)) { el.remove(); heads.delete(k); }
-    nodes.forEach((el, i) => { if (list.children[i] !== el) list.insertBefore(el, list.children[i] ?? null); });
+    placeRows(nodes);
     if (!vis.length && tasks.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
     else list.querySelector(':scope > p.empty')?.remove();
     drawSelectBar(); drawStatus();
@@ -210,7 +223,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
     if (show.peers && x.kind === 'torrent' && (x.peers !== undefined || x.seeds !== undefined) && x.state !== 'done') parts.push(t('peersSeeds', { peers: localDigits(x.peers ?? 0), seeds: localDigits(x.seeds ?? 0) }));
     { const b = torEngineBadge(x); if (b) parts.push(b); }   // (stage M3: debuggable builds only)
-    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : x.error);
+    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : (plainEngineError(x.error) ?? x.error));
     { const n = noteOf(x.id); if (n) parts.push(`✎ ${n}`); }
     return parts.join(' · ');
   };
@@ -221,7 +234,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
         oncontextmenu: (e: Event) => { e.preventDefault(); const cur = tasks.find((y) => y.id === x.id) ?? x; // (A computer's right-click: its menu at the pointer; a phone's long press: choosing.)
           if (document.documentElement.classList.contains('pc') && !selecting) { taskMenu(cur, e); return; } if (!selecting) setSelecting(true); pick(cur); } },
         h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : catOf(x).icon)),
-        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: 'auto' }, displayName(x)), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i')))),
+        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: nameDir(displayName(x)) }, ...nameNodes(displayName(x))), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i')))),
       h('span', { class: 'task-actions' }));
     // (A phone: swiped to the right, its first action — pause, resume, retry —; to the left, removed (asked first).)
     swipeable(el, () => { const cur = tasks.find((y) => y.id === x.id) ?? x; const eng = getEngine();
@@ -239,7 +252,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const actsKey = `${x.state}|${x.heldBy ?? ''}|${displayName(x)}|${x.files?.length ?? 0}`;
     { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
     { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); }
-    (el.querySelector('.task-name') as HTMLElement).textContent = displayName(x);
+    setName(el.querySelector('.task-name') as HTMLElement, displayName(x));
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
     // (The fill is a full-width bar scaled — eased by the compositor, not by laying out the whole list on every frame
     // as an eased width did: tests/rowpatch.cjs.)

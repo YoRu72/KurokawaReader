@@ -30,11 +30,14 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   const ex = await p.evaluate(() => window.__extracted); console.log('chosen:', JSON.stringify(ex.only), ex.dest);
   if (JSON.stringify(ex.only) !== '["a/film.mkv"]' || ex.dest !== '/home/u/Downloads/Kurokawa/show') errors.push('only the chosen file taken out, beside the archive');
   await p.evaluate(() => { window.__extracted = null; });
-  await p.click('.archive-browse .sheet-actions .btn.tonal'); await p.waitForSelector('.space-plan .plan-row'); await p.click('.entry-details summary');
+  await p.click('.archive-browse .sheet-actions .btn.tonal'); await p.waitForSelector('.fit .fit-row'); await p.click('.entry-details summary');
   console.log('sheet:', (await p.$eval('.sheet', (e) => e.innerText)).replace(/\n+/g, ' | ').slice(0, 400));
-  await p.click('.sheet .switch-row:has-text("in place") input').catch(() => {}); console.log('plan:', (await p.$eval('.space-plan', (e) => e.innerText)).replace(/\n+/g, ' | '), '| conflicts:', await p.$eval('.conflicts', (e) => e.textContent));
+  await p.click('.sheet .switch-row:has-text("in place") input').catch(() => {}); console.log('plan:', (await p.$eval('.fit', (e) => e.innerText)).replace(/\n+/g, ' | '), '| conflicts:', await p.$eval('.conflicts', (e) => e.textContent));
   await p.screenshot({ path: 'shot-extract.png' });
-  await p.click('.sheet .btn.primary'); await p.waitForFunction(() => window.__extracted); await p.waitForSelector('.toast:has-text("extracted")');
+  // (readme.txt is there already: asked before anything changes — «Keep both» for it.)
+  await p.click('.extract-sheet .sheet-actions .btn.primary'); await p.waitForSelector('.cf-sheet'); await p.locator('.sheet').last().locator('.sheet-actions .btn.tonal').nth(1).click();
+  await p.waitForFunction(() => window.__extracted); await p.waitForSelector('.toast:has-text("extracted")');
+  { const x = await p.evaluate(() => window.__extracted); if (x.answers?.per?.['readme.txt'] !== 'both') errors.push('the answer for the file already there goes with the job'); }
   console.log('extract call:', JSON.stringify(await p.evaluate(() => window.__extracted)));
   await p.evaluate(() => { window.__zipping = true; }); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet'); await p.click('.sheet button:has-text("Make a zip")'); await p.waitForSelector('.sheet input[type=text]');
   console.log('zip name:', await p.$eval('.sheet input[type=text]', (e) => e.value), '| dir:', await p.$eval('.sheet p[dir=ltr]', (e) => e.textContent));

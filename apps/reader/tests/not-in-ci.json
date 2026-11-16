@@ -1,0 +1,146 @@
+{
+  "_": "Tests that are deliberately not in the release workflow's test chain (they may be in a check workflow). name, reason (required); run:false = the preflight does not run it (a helper, or it needs something this machine lacks); args/env = how the preflight runs it properly (env value $TMPZIP = a small zip made by the preflight).",
+  "tests": [
+    {
+      "name": "autobackup.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "coverview.cjs",
+      "reason": "Takes <book with a cover> <picture.jpg> <outdir>; needs a JPEG picture of one's own, none is in the repository, so it is run by hand.",
+      "run": false
+    },
+    {
+      "name": "doh.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "fixes054.cjs",
+      "reason": "Old regression test for 0.54 fixes; needs tests/fixtures. The preflight makes them.",
+      "needsFixtures": true
+    },
+    {
+      "name": "furigana.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "back.cjs",
+      "reason": "Takes two book files as arguments; the preflight gives it the two sample EPUBs. Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision).",
+      "args": [
+        "public/samples/alice-in-wonderland.epub",
+        "public/samples/maqamat-al-hariri.epub"
+      ]
+    },
+    {
+      "name": "history.cjs",
+      "reason": "Takes two book files as arguments; the preflight gives it the two sample EPUBs. Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision).",
+      "args": [
+        "public/samples/alice-in-wonderland.epub",
+        "public/samples/maqamat-al-hariri.epub"
+      ]
+    },
+    {
+      "name": "glassperf.cjs",
+      "reason": "A performance measurement (CPU slowed 6x, counts long tasks): depends on the machine's load, so not in CI; run by hand on a quiet machine."
+    },
+    {
+      "name": "hunt.cjs",
+      "reason": "The bug hunt: 40 rounds over every page; slow, meant to be run by hand before a release."
+    },
+    {
+      "name": "jobs.cjs",
+      "reason": "Takes <outdir> <file.pdf> (a screenshot demo); the preflight gives it a temp folder and the fixtures' PDF.",
+      "args": [
+        "$TMP",
+        "tests/fixtures/sample.pdf"
+      ],
+      "needsFixtures": true
+    },
+    {
+      "name": "librarysearch.cjs",
+      "reason": "Takes <outdir> <query> <file...>; the preflight gives it a temp folder, a query and the fixtures' Alice EPUB.",
+      "args": [
+        "$TMP",
+        "the",
+        "tests/fixtures/alice-in-wonderland.epub"
+      ],
+      "needsFixtures": true
+    },
+    {
+      "name": "linkopen.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "nextvolume.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "notesfold.cjs",
+      "reason": "Takes <book.epub>; the preflight gives it a sample EPUB.",
+      "args": [
+        "public/samples/alice-in-wonderland.epub"
+      ]
+    },
+    {
+      "name": "offline.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "pdf2docxlanes.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "pdfink.cjs",
+      "reason": "Takes <file.pdf> <outdir>; the preflight gives it the fixtures' PDF and a temp folder.",
+      "args": [
+        "tests/fixtures/sample.pdf",
+        "$TMP"
+      ],
+      "needsFixtures": true
+    },
+    {
+      "name": "pdftextrules.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "smartjustify.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "startup.cjs",
+      "reason": "Start-up timings with fixtures (tests/fixtures); not in CI because it needs the fixtures. The preflight makes them.",
+      "needsFixtures": true
+    },
+    {
+      "name": "sweep.cjs",
+      "reason": "Takes <books dir> <outdir>: every view at several sizes and languages, with screenshots; slow. The preflight gives it the fixtures and a temp folder.",
+      "args": [
+        "tests/fixtures",
+        "$TMP"
+      ],
+      "needsFixtures": true
+    },
+    {
+      "name": "tauribrowser.cjs",
+      "reason": "No workflow runs it: it is not in the release workflow's test chain, and tauri-check.yml runs only the Tools copy (tauribrowsertools.cjs). In the preflight job, which installs Playwright 1.64.1, it failed with a navigation TimeoutError (waiting for the https://kr-lane.invalid/ page to finish navigating), the same pattern as Tools' tauribrowsertools.cjs; the cause there is not known, so the preflight does not run it.",
+      "run": false
+    },
+    {
+      "name": "textpic.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "textpicfmt.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "updaterules.cjs",
+      "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
+      "name": "smoke.cjs",
+      "reason": "The big smoke test of every format; reads tests/fixtures (made by scripts/make-fixtures.py, which needs Python with PIL, docx, openpyxl, pptx, reportlab, so not in the release workflow). The preflight makes the fixtures.",
+      "needsFixtures": true
+    }
+  ]
+}

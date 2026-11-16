@@ -1,0 +1,67 @@
+{
+  "$comment": "Every place Kurokawa Tools offers itself in other apps' «Open with» / «Share» / «Choose» lists. Read by native/android/manifest.mjs (the activity-aliases written into the manifest), by the page (src/views/openWith*.ts: Settings → Files → «Show Kurokawa in other apps») and checked against its Java twin (KtOpenActivity.KINDS) by tests/openwith.cjs. «generated»: the alias is written from this table; otherwise it is declared by hand in manifest.mjs and only its switch is here. «on»: on when the app is installed (android:enabled). «exts»: path patterns, each with android:host=\"*\" (without a host Android ignores them).",
+  "target": ".KtOpenActivity",
+  "entries": [
+    {
+      "id": "archive", "alias": "KtArchive", "res": "kt_ow_archive", "on": true, "generated": true, "dest": "archive",
+      "label": { "en": "Kurokawa Files · Open archive", "ar": "ملفات كوروكاوا · فتح الأرشيف" },
+      "filters": [
+        { "actions": ["android.intent.action.VIEW"], "schemes": ["content", "file"],
+          "mimes": ["application/zip", "application/x-zip-compressed", "application/x-7z-compressed", "application/x-rar-compressed", "application/vnd.rar", "application/x-rar", "application/x-tar", "application/gzip", "application/x-gzip", "application/x-bzip2", "application/x-xz", "application/x-compressed-tar", "application/vnd.comicbook+zip", "application/x-cbz"] },
+        { "actions": ["android.intent.action.VIEW"], "schemes": ["content", "file"], "mimes": ["*/*"], "host": "*",
+          "exts": ["zip", "cbz", "7z", "rar", "tar", "tgz", "txz", "tbz2", "gz", "xz", "bz2", "001", "z01"] }
+      ]
+    },
+    {
+      "id": "archiveShare", "alias": "KtArchiveShare", "res": "kt_ow_extract", "on": true, "generated": true, "dest": "extract",
+      "label": { "en": "Extract with Kurokawa", "ar": "استخراج بكوروكاوا" },
+      "filters": [
+        { "actions": ["android.intent.action.SEND", "android.intent.action.SEND_MULTIPLE"],
+          "mimes": ["application/zip", "application/x-zip-compressed", "application/x-7z-compressed", "application/x-rar-compressed", "application/vnd.rar", "application/x-rar", "application/x-tar", "application/gzip", "application/x-gzip", "application/x-bzip2", "application/x-xz", "application/x-compressed-tar", "application/vnd.comicbook+zip", "application/x-cbz"] }
+      ]
+    },
+    {
+      "id": "folder", "alias": "KtFolder", "res": "kt_ow_folder", "on": true, "generated": true, "dest": "folder",
+      "label": { "en": "Kurokawa Files · Open folder", "ar": "ملفات كوروكاوا · فتح المجلد" },
+      "filters": [
+        { "actions": ["android.intent.action.VIEW"], "schemes": ["content", "file"], "mimes": ["resource/folder", "inode/directory", "vnd.android.document/directory", "x-directory/normal"] },
+        { "actions": ["org.openintents.action.VIEW_DIRECTORY"], "schemes": ["file"] }
+      ]
+    },
+    {
+      "id": "image", "alias": "KtImage", "res": "kt_ow_image", "on": false, "generated": true, "dest": "viewer",
+      "label": { "en": "View with Kurokawa", "ar": "عرض بكوروكاوا" },
+      "filters": [
+        { "actions": ["android.intent.action.VIEW"], "schemes": ["content", "file"], "mimes": ["image/*"] }
+      ]
+    },
+    {
+      "id": "text", "alias": "KtText", "res": "kt_ow_text", "on": false, "generated": true, "dest": "editor",
+      "label": { "en": "Edit with Kurokawa", "ar": "تحرير بكوروكاوا" },
+      "filters": [
+        { "actions": ["android.intent.action.VIEW", "android.intent.action.EDIT"], "schemes": ["content", "file"], "mimes": ["text/*", "application/json", "application/xml", "application/x-subrip", "application/x-yaml"] },
+        { "actions": ["android.intent.action.VIEW", "android.intent.action.EDIT"], "schemes": ["content", "file"], "mimes": ["*/*"], "host": "*",
+          "exts": ["txt", "ass", "ssa", "srt", "vtt", "sub", "lrc", "md", "log", "ini", "conf", "cfg", "yaml", "yml", "toml", "csv", "nfo", "m3u", "json", "xml"] }
+      ]
+    },
+    {
+      "id": "any", "alias": "KtAnyFile", "res": "kt_ow_any", "on": false, "generated": true, "dest": "any",
+      "label": { "en": "Open with Kurokawa Files", "ar": "فتح بملفات كوروكاوا" },
+      "filters": [
+        { "actions": ["android.intent.action.VIEW"], "schemes": ["content", "file"], "mimes": ["*/*"] }
+      ]
+    },
+    {
+      "id": "browse", "alias": "KtBrowse", "res": "kt_ow_browse", "on": true, "generated": true, "dest": "browse",
+      "label": { "en": "Kurokawa Files", "ar": "ملفات كوروكاوا" },
+      "filters": [
+        { "actions": ["android.intent.action.VIEW_DOWNLOADS"] },
+        { "actions": ["android.intent.action.VIEW"], "schemes": ["content"], "mimes": ["vnd.android.document/root"] }
+      ]
+    },
+    { "id": "save", "alias": "KtSave", "res": "kt_save", "on": true, "generated": false, "dest": "save", "label": { "en": "Kurokawa Tools · Save to device", "ar": "أدوات كوروكاوا · احفظ في الجهاز" } },
+    { "id": "pick", "alias": "KtPickActivity", "res": "kt_pick", "on": true, "generated": false, "dest": "pick", "label": { "en": "Kurokawa Tools · Files", "ar": "أدوات كوروكاوا · الملفات" } },
+    { "id": "installer", "alias": "KtInstaller", "res": "kt_installer", "on": true, "generated": false, "dest": "install", "label": { "en": "Kurokawa Installer", "ar": "مثبّت كوروكاوا" } },
+    { "id": "player", "alias": "KtPlayer", "res": "kt_player", "on": true, "generated": false, "dest": "player", "label": { "en": "Kurokawa Player", "ar": "مشغّل كوروكاوا" } }
+  ]
+}

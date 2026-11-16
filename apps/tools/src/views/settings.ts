@@ -119,7 +119,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   };
   search.addEventListener('input', applySearch);
   // (The sticky head's height, so a card scrolled to lands below it, not under it.)
-  if (typeof ResizeObserver === 'function') new ResizeObserver(() => body.style.setProperty('--head-h', `${head.offsetHeight}px`)).observe(head);
+  const headRo = typeof ResizeObserver === 'function' ? new ResizeObserver(() => body.style.setProperty('--head-h', `${head.offsetHeight}px`)) : null; headRo?.observe(head);
   const rerender = () => { const all = sections(); drawTabs(all); body.replaceChildren(head, ...inTab(all)); decorate(); };
 
   const sections = (): HTMLElement[] => {
@@ -153,6 +153,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       !!ktPlugin() ? h('div', { class: 'row' }, h('span', null, t('netHosts'), hostsLine), h('button', { type: 'button', class: 'btn text small', onclick: () => { void ktPlugin()?.configure({ forgetHosts: true }).then(() => { hostsLine.textContent = ''; toast(t('netHostsForgot')); }); } }, t('netHostsForget'))) : null) : null;
     if (connection && !!ktPlugin()) void (ktPlugin() as unknown as { hosts?(): Promise<{ hosts: Record<string, number> }> } | null)?.hosts?.().then((r) => { const e = Object.entries(r.hosts ?? {}); hostsLine.textContent = e.length ? ' ' + e.slice(0, 4).map(([k, v]) => `${k} ≤ ${localDigits(v)}`).join(' · ') + (e.length > 4 ? ' …' : '') : ' ' + t('netHostsNone'); }).catch(() => undefined);
     const downloads = card('downloads', t('downloadsSection'),
+      toggle(t('openDlOnStart'), !!s.openDownloadsOnStart, (v) => updateSettings({ openDownloadsOnStart: v }), t('openDlOnStartHint')),
       row(t('downloadFolder'), canPick ? h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { try { let d: string | null = null; if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; if (d) { updateSettings({ downloadDir: d }); const ok = await import('./folderAccess').then((m) => m.ensureFolderAccess(d!)); rerender(); if (ok) toast(t('folderPicked', { dir: d })); } } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }, icon('folder'), t('changeFolder')) : h('span'), s.downloadDir || t('defaultFolder')),
       // (Downloads kept before in the app's own storage, out of sight of the phone's file apps: moved to the
       // app's folder in Download in one go.)
@@ -279,17 +280,17 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const tvCard = s.addons.includes('tv') ? tvSettingsCard(rerender) : null;
     // Privacy (from the reader): DNS over HTTPS — sites blocked by the network's resolver reached through another —
     // and screenshots blocked; the Arabic digits; a backup of the settings.
-    const setDoh = async (provider: string, split?: string) => { const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; const p = ktPlugin() as unknown as { setDoh?(o: { provider?: string; split?: string }): Promise<unknown> } | null; if (d?.setDoh) await d.setDoh({ provider }); else if (p?.setDoh) await p.setDoh({ provider, split }); };
-    const dohCustom = h('input', { type: 'url', dir: 'ltr', placeholder: 'https://…/dns-query', value: /^https:/.test(s.doh) ? s.doh : '', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); if (/^https:\/\//.test(v)) { updateSettings({ doh: v }); void setDoh(v).catch((er) => toast(String((er as Error).message ?? er), 'error')); } } }) as HTMLInputElement;
-    const dohWrap = h('div', { hidden: !/^https:/.test(s.doh) }, dohCustom);
-    // (What the resolver is doing, live: the state, the last answer and how long it took, the counters, the last events.)
+    // (0.21 P9: the choice, the system-DNS fall-back, each resolver's health and what goes through DoH here —
+    // ui/dohSettings.ts, loaded with this card.)
+    const dohRows = h('div', { class: 'doh-rows' }); void import('../ui/dohSettings').then((m) => dohRows.append(...m.dohSection({ row, toggle, rerender }))).catch(() => undefined);
+    const setSplit = () => void import('../ui/dohSettings').then((m) => m.applyDoh()).catch(() => undefined);
+    // (What the phone's resolver is doing, live: the state, the counters, the last events.)
     const dohBox = h('div'); void import('../ui/dohStatus').then((m) => { if (m.canShowDoh()) dohBox.append(m.dohStatusCard()); });
     const privacy = card('privacy', t('privacy'),
-      row(t('dohTitle'), pickButton(t('dohTitle'), [['off', t('dohOff')], ['auto', t('dohAuto')], ['cloudflare', 'Cloudflare'], ['google', 'Google'], ['quad9', 'Quad9'], ['adguard', 'AdGuard'], ['mullvad', 'Mullvad'], ['dnssb', 'DNS.SB'], ['controld', 'ControlD'], ['opendns', 'OpenDNS'], ['custom', t('dohCustom')]], /^https:/.test(s.doh) ? 'custom' : s.doh, (v) => { if (v === 'custom') { dohWrap.hidden = false; dohCustom.focus(); return; } updateSettings({ doh: v }); void setDoh(v).then(() => toast(v === 'off' ? t('dohOff') : t('dohOn', { name: v }))).catch((er) => toast(String((er as Error).message ?? er), 'error')); rerender(); }, t('close')), t('dohHint')),
-      dohWrap,
-      ...(s.doh !== 'off' && ktPlugin() ? [row(t('dohSplit'), pickButton(t('dohSplit'), [['auto', t('dohSplitAuto')], ['always', t('dohSplitAlways')], ['off', t('dohOff')]], s.dohSplit ?? 'auto', (v) => { updateSettings({ dohSplit: v as 'auto' | 'always' | 'off' }); void setDoh(s.doh, v).catch(() => undefined); rerender(); }, t('close')), t('dohSplitHint'))] : []),
+      dohRows,
+      ...(s.doh !== 'off' && ktPlugin() ? [row(t('dohSplit'), pickButton(t('dohSplit'), [['auto', t('dohSplitAuto')], ['always', t('dohSplitAlways')], ['off', t('dohOff')]], s.dohSplit ?? 'auto', (v) => { updateSettings({ dohSplit: v as 'auto' | 'always' | 'off' }); setSplit(); rerender(); }, t('close')), t('dohSplitHint'))] : []),
       ...(s.doh !== 'off' && ktPlugin() && (s.dohSplit ?? 'auto') !== 'off' ? [h('p', { class: 'hint' }, t('dohWaysHint'))] : []),
-      ...(s.doh !== 'off' ? [dohBox] : []),
+      ...(s.doh !== 'off' && ktPlugin() ? [dohBox] : []),
       ...(ktPlugin() ? [toggle(t('secureScreen'), s.secureScreen, (v) => { updateSettings({ secureScreen: v }); void (ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: v }); }, t('secureScreenHint'))] : []),
       ...(getLang() === 'ar' ? [row(t('digitsPref'), pickButton(t('digitsPref'), [['auto', t('digitsAuto')], ['western', '123'], ['eastern', '١٢٣']], digitsPref(), (v) => { try { const o = JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as Record<string, string>; o.arDigits = v; localStorage.setItem('kr.visual', JSON.stringify(o)); } catch { /* none */ } location.reload(); }, t('close')))] : []));
     const backup = card('backup', t('backup'), h('p', { class: 'hint' }, t('backupHint')), h('div', { class: 'row-actions wrap' },
@@ -388,7 +389,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   rerender();
   // (Back: a search typed is let go first, then a tab of the bar back to «All»; then Settings is left.)
   const unBack = onBack(() => { if (!root.isConnected) return false; if (search.value) { search.value = ''; applySearch(); return true; } if (tab !== 'all') { tab = 'all'; rerender(); return true; } return false; }, 'search', 'settings');
-  const was = root.dispose; root.dispose = () => { unBack(); was?.(); };
+  const was = root.dispose; root.dispose = () => { unBack(); headRo?.disconnect(); was?.(); };
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
   void decorate;
   void s; void navigate; void localDigits; void formatBytes; void openSheet; void countAddons;

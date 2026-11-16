@@ -23,7 +23,7 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
       addListener: async (ev, fn) => { (ls[ev] = ls[ev] || []).push(fn); return { remove() { ls[ev] = ls[ev].filter((f) => f !== fn); } }; },
       filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'app', path: '/storage/emulated/0/Download/Kurokawa', name: 'Kurokawa', readable: true, free: 12e9, total: 64e9 }, { kind: 'phone', path: '/storage/emulated/0', name: 'Phone', readable: true, free: 12e9, total: 64e9 }] }),
       filesList: async ({ path }) => { window.__lists.push(path); const ms = window.__delay[path] || 0; if (ms) await new Promise((r) => setTimeout(r, ms)); const e = listOf(path); return { exists: !!e, entries: e || [] }; },
-      filesThumb: async () => ({ url: null }), filesCancel: async ({ id }) => { window.__calls.push('cancel:' + id); }, filesAccess: async () => ({ all: true }),
+      filesThumb: async () => ({ url: null }), filesCancel: async ({ id }) => { window.__calls.push('cancel:' + id); setTimeout(() => emit({ id, status: 'cancelled', done: 0, total: 1, files: 0, failed: [], left: 0 }), 20); }, filesAccess: async () => ({ all: true }),
       filesRename: async ({ path, name }) => { window.__calls.push('rename:' + path.split('/').pop() + '>' + name); return { ok: true, path }; },
       filesJob: async ({ id, op, paths, dest }) => { window.__calls.push(op + ':' + paths.map((x) => x.split('/').pop()).join('|') + '>' + dest); const plan = window.__plan.shift() || {}; window.__lastJob = { id, paths }; setTimeout(() => { if (plan.conflict) emit({ id, status: 'conflict', from: paths[0], to: dest + '/' + paths[0].split('/').pop(), size: 1, existingSize: 1, mtime: 1, existingMtime: 2 }); else end(id, typeof plan.end === 'function' ? plan.end(paths) : plan.end); }, 60); return { id }; },
       filesAnswer: async ({ id, answer }) => { window.__calls.push('answer:' + answer); setTimeout(() => end(id, {}), 30); },
@@ -46,7 +46,7 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   await itemAct('Song.mp3', 'Copy'); await goTo(P); await pasteClick(); await p.waitForTimeout(400);
   ok('a copy pasted as a job', (await calls()).includes(`copy:Song.mp3>${P}`), await calls());
   ok('after a copy is pasted, Paste is still offered', await pasteShown());
-  await p.click('.files-row:has-text("DCIM") .files-main'); await p.waitForSelector('.files-row:has-text("pic.jpg")'); await pasteClick(); await p.waitForTimeout(400);
+  await p.click('.files-row:has-text("DCIM") .files-main'); await p.waitForSelector('.files-row:has-text("pic.jpg")'); await pasteClick(); await p.waitForFunction((x) => window.__calls.includes(x), `copy:Song.mp3>${P}/DCIM`, { timeout: 4000 }).catch(() => undefined);
   ok('… and a second paste copies it again', (await calls()).includes(`copy:Song.mp3>${P}/DCIM`), await calls());
   // a cut whose move was cancelled with the file still in place: still cut; a move that went through: the clipboard emptied
   await goTo(K); await itemAct('Song.mp3', 'Cut'); await goTo(P);
@@ -64,15 +64,17 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   await goTo(K + '/Subway'); ok('a sibling sharing the name\'s start (Sub → Subway) is offered Paste', await pasteShown());
   // ---- 3. the batch rename: extensions kept, clashes shown
   await goTo(K); await itemAct('README', 'Select'); await p.click('.files-selbar button[aria-label="Select all"]'); await p.waitForTimeout(100);
-  await p.click('.files-selbar button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Rename all")'); await p.waitForSelector('.files-preview-row');
-  const preview = () => p.$$eval('.files-preview-row', (e) => Object.fromEntries(e.map((x) => [x.querySelector('small').textContent, x.querySelector('span').textContent])));
-  let pv = await preview(); ok('the pattern {name} leaves every name as it was', Object.entries(pv).every(([a, b]) => a === b), pv);
-  await p.fill('.sheet input[type=text] >> nth=0', '{name}_x'); await p.waitForTimeout(100); pv = await preview();
-  ok('{name}_x keeps the last extension', pv['Show.S01E01.720p.mkv'] === 'Show.S01E01.720p_x.mkv' && pv['archive.tar.gz'] === 'archive.tar_x.gz' && pv['.gitignore'] === '.gitignore_x' && pv.README === 'README_x' && pv.Sub === 'Sub_x', pv);
-  await p.fill('.sheet input[type=text] >> nth=0', 'X'); await p.waitForTimeout(100);
-  ok('names that clash: Rename disabled, the clash told', await p.$eval('.sheet .btn.primary', (e) => e.disabled) && (await p.textContent('.sheet')).includes('Some new names are the same'));
-  await p.fill('.sheet input[type=text] >> nth=0', 'x{n}'); await p.waitForTimeout(100); pv = await preview();
-  ok('numbered: all different, the extensions kept', new Set(Object.values(pv).map((x) => x.toLowerCase())).size === Object.keys(pv).length && /^x\d\.mkv$/.test(pv['Show.S01E01.720p.mkv']) && !(await p.$eval('.sheet .btn.primary', (e) => e.disabled)), pv);
+  await p.click('.files-selbar button[aria-label="Rename all…"]'); await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250);
+  const preview = () => p.$$eval('.batch-sheet .batch-row', (e) => Object.fromEntries(e.map((x) => [x.querySelector('.batch-old').textContent, x.querySelector('.batch-new').textContent])));
+  const goOff = () => p.$eval('.batch-sheet .sheet-actions .btn.primary', (e) => e.disabled);
+  const radio = (g, i) => p.locator('.batch-sheet [role=radiogroup]').nth(g).locator('[role=radio]').nth(i).click();
+  let pv = await preview(); ok('nothing asked: every name left as it was (and Rename off)', Object.entries(pv).every(([a, b]) => a === b) && await goOff(), pv);
+  await radio(0, 3); await p.fill('.batch-sheet .batch-sec >> nth=0 >> input[type=text] >> nth=0', '_x'); await p.waitForTimeout(150); pv = await preview();
+  ok('«add after» _x keeps the last extension', pv['Show.S01E01.720p.mkv'] === 'Show.S01E01.720p_x.mkv' && pv['archive.tar.gz'] === 'archive.tar_x.gz' && pv.README === 'README_x' && pv.Sub === 'Sub_x', pv);
+  await radio(0, 1); await p.fill('.batch-sheet .batch-sec >> nth=0 >> input[type=text] >> nth=0', 'X'); await p.waitForTimeout(150);
+  ok('names that clash: Rename disabled, the clash told', await goOff() && (await p.textContent('.batch-sheet')).includes('Two items would get this name'));
+  await p.locator('.batch-sheet .switch-row input').nth(2).click({ force: true }); await p.waitForTimeout(200); pv = await preview();
+  ok('numbered: all different, the extensions kept, Rename on', new Set(Object.values(pv).map((x) => x.toLowerCase())).size === Object.keys(pv).length && /^X - \d\.mkv$/.test(pv['Show.S01E01.720p.mkv']) && !(await goOff()), pv);
   await p.keyboard.press('Escape'); await p.waitForTimeout(250);
   // ---- a delete the bin cannot take: offered for good
   await goTo(K); await p.evaluate(() => { window.__trashFail = true; }); await itemAct('README', 'Delete'); await p.click('.sheet .btn.primary.danger'); await p.waitForTimeout(400);

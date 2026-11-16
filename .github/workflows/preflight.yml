@@ -1,0 +1,198 @@
+name: Preflight
+
+# One run that tells a work branch is ready for the final push, so release day is boring. It costs little on an
+# ordinary push and is complete when you ask for it:
+#   · a push to a work-* branch (apps/**, shared/**, repo/** or the preflight itself): the QUICK preflight on Linux
+#     (build, type check, string parity, version and notes, budgets, the tests the diff touches and a smoke set), and the
+#     Android compile check of the app when the branch changes what the APK is made from;
+#   · the FULL preflight (every test of the release workflow), the Tauri checks (Windows, Linux and macOS, runtime
+#     self-test included) and, for Tools, the Rust core for Android: by hand (Actions → Preflight → Run workflow, app
+#     tools, reader or all), or on a push whose head commit message contains «[full]».
+# A newer push cancels the older run of the same branch. Nothing here publishes, tags or releases anything, and no
+# secret is used (the check workflows sign with a throw-away key). docs/RELEASING.md says how to read the result.
+#
+# (The checks that already have a push trigger of their own — the Android checks on work-* when their own paths change,
+# the Tauri checks on work-tauri* / work-reader-tauri*, the Rust-for-Android check on three named branches — are not
+# started a second time by the same push: «plan» leaves them out when their own trigger fires.)
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'Which app'
+        type: choice
+        options: [all, tools, reader]
+        default: all
+      quick:
+        description: 'Quick preflight (build, tsc, budgets, parity, the tests the diff touches)'
+        type: boolean
+        default: false
+      compile:
+        description: 'Also compile the Android and Tauri sides (slow: the Tauri checks run on three systems)'
+        type: boolean
+        default: true
+  push:
+    branches: ['work-*']
+    paths:
+      - 'apps/**'
+      - 'shared/**'
+      - 'repo/**'
+      - 'scripts/preflight.mjs'
+      - 'scripts/preflight.config.json'
+      - '.github/workflows/preflight.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preflight-${{ github.ref }}-${{ inputs.app || 'push' }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      tools: ${{ steps.p.outputs.tools }}
+      reader: ${{ steps.p.outputs.reader }}
+      android_tools: ${{ steps.p.outputs.android_tools }}
+      android_reader: ${{ steps.p.outputs.android_reader }}
+      tauri_tools: ${{ steps.p.outputs.tauri_tools }}
+      tauri_reader: ${{ steps.p.outputs.tauri_reader }}
+      rust_android: ${{ steps.p.outputs.rust_android }}
+      quick: ${{ steps.p.outputs.quick }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: p
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          APP: ${{ inputs.app }}
+          COMPILE: ${{ inputs.compile }}
+          REF: ${{ github.ref_name }}
+          BEFORE: ${{ github.event.before }}
+          QUICK_IN: ${{ inputs.quick }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -u
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; echo "$1=$2"; }
+          if [ "$EVENT" = workflow_dispatch ]; then
+            t=false; r=false
+            case "$APP" in tools) t=true;; reader) r=true;; *) t=true; r=true;; esac
+            c=$COMPILE
+            out tools $t; out reader $r
+            out quick $([ "$QUICK_IN" = true ] && echo true || echo false)
+            out android_tools $([ $t = true ] && [ "$c" = true ] && echo true || echo false)
+            out android_reader $([ $r = true ] && [ "$c" = true ] && echo true || echo false)
+            out tauri_tools $([ $t = true ] && [ "$c" = true ] && echo true || echo false)
+            out tauri_reader $([ $r = true ] && [ "$c" = true ] && echo true || echo false)
+            out rust_android $([ $t = true ] && [ "$c" = true ] && echo true || echo false)
+            exit 0
+          fi
+          # A push: what the whole branch changes against main (so every later push of a branch that has native changes
+          # compiles them again), and what this push alone changes (to leave out a check whose own trigger fires).
+          git fetch --no-tags origin main || true
+          base=$(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD~1)
+          git diff --name-only "$base" HEAD > "$RUNNER_TEMP/branch.txt"
+          if echo "$BEFORE" | grep -qE '^0+$'; then cp "$RUNNER_TEMP/branch.txt" "$RUNNER_TEMP/push.txt"; else git diff --name-only "$BEFORE" HEAD > "$RUNNER_TEMP/push.txt" 2>/dev/null || cp "$RUNNER_TEMP/branch.txt" "$RUNNER_TEMP/push.txt"; fi
+          # Cheap by default: only a «[full]» in the head commit's message turns on the full preflight, the Tauri checks and the Rust core for Android.
+          if printf '%s' "$HEAD_MSG" | grep -qF '[full]'; then full=true; else full=false; fi
+          out quick $([ $full = true ] && echo false || echo true)
+          has() { grep -qE "$2" "$1"; }
+          tf() { if "$@"; then echo true; else echo false; fi; }
+          B="$RUNNER_TEMP/branch.txt"; P="$RUNNER_TEMP/push.txt"
+          out tools $(tf has "$B" '^(apps/tools/|shared/|repo/)')
+          out reader $(tf has "$B" '^(apps/reader/|shared/|repo/)')
+          # Java: the same paths android-check-<app>.yml watches; skipped when this push already started that workflow.
+          at='^apps/tools/(native/android/|tests/native/|capacitor\.config|package\.json)'; ar='^apps/reader/(native/android/|capacitor\.config|package\.json)'
+          if has "$B" "$at" && ! has "$P" "$at"; then out android_tools true; else out android_tools false; fi
+          if has "$B" "$ar" && ! has "$P" "$ar"; then out android_reader true; else out android_reader false; fi
+          # Rust: Tauri shells (and the crate they share); their own triggers are the work-tauri* / work-reader-tauri* branches.
+          tt='^(apps/tools/(desktop-tauri|core)/|shared/shell-rs/)'; rt='^(apps/reader/desktop-tauri/|shared/shell-rs/)'
+          if [ $full != true ]; then out tauri_tools false; else case "$REF" in work-tauri*) out tauri_tools false;; *) out tauri_tools $(tf has "$B" "$tt");; esac; fi
+          if [ $full != true ]; then out tauri_reader false; else case "$REF" in work-reader-tauri*) out tauri_reader false;; *) out tauri_reader $(tf has "$B" "$rt");; esac; fi
+          if [ $full != true ]; then out rust_android false; else case "$REF" in work-tt-p5|work-tauri|work-and-all) out rust_android false;; *) out rust_android $(tf has "$B" '^apps/tools/(core|native)/');; esac; fi
+
+  preflight:
+    name: Preflight (${{ matrix.app }})
+    needs: plan
+    runs-on: ubuntu-latest
+    # (90, was 60: a full Reader run — 107 tests one after another — reached test 101 at 56 minutes in runs 43807653380
+    # and 43817284797 and was cut while sweep.cjs, allowed 15 minutes, ran; a full Tools run takes some 41.)
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [tools, reader]
+    steps:
+      - name: Is this app part of the run
+        id: gate
+        shell: bash
+        run: |
+          if [ "${{ matrix.app }}" = tools ]; then echo "on=${{ needs.plan.outputs.tools }}" >> "$GITHUB_OUTPUT"; else echo "on=${{ needs.plan.outputs.reader }}" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.on == 'true'
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.on == 'true'
+        with: { node-version: 22 }
+      # (As the release workflows do it: the app's own packages, then Playwright with its Chromium — tried again, then
+      # without the system packages, because the runner's package server is sometimes unreachable.)
+      - name: Install
+        if: steps.gate.outputs.on == 'true'
+        working-directory: apps/${{ matrix.app }}
+        shell: bash
+        run: |
+          npm install
+          if [ "${{ matrix.app }}" = tools ]; then npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3; else npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3; fi
+          npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium
+      # (Tools, full runs only, once the scene engine is in the checkout: its wasm is built before the preflight builds the web app, so
+      # that tests/scene.cjs and the start-up budget run on the real engine, as the release does. The guard is the action's file,
+      # so a branch without the engine runs as before.)
+      - name: Scene engine (wasm)
+        if: steps.gate.outputs.on == 'true' && matrix.app == 'tools' && needs.plan.outputs.quick != 'true' && hashFiles('.github/actions/scene-wasm/action.yml') != ''
+        uses: ./.github/actions/scene-wasm
+      # (Reader's smoke test reads fixtures that scripts/make-fixtures.py makes: Python modules the runner does not have.)
+      - name: Python modules for the fixtures
+        if: steps.gate.outputs.on == 'true' && matrix.app == 'reader'
+        run: pip install --quiet pillow python-docx openpyxl python-pptx reportlab
+      - name: Preflight
+        if: steps.gate.outputs.on == 'true'
+        shell: bash
+        env:
+          QUICK: ${{ needs.plan.outputs.quick == 'true' && '--quick' || '' }}
+          # (With the scene engine in the checkout a missing wasm is a failure here, as in the release, not a quiet fallback.)
+          KT_SCENE_REQUIRED: ${{ matrix.app == 'tools' && needs.plan.outputs.quick != 'true' && hashFiles('.github/actions/scene-wasm/action.yml') != '' && '1' || '' }}
+        run: |
+          git fetch --no-tags origin main || true
+          set +e
+          node scripts/preflight.mjs ${{ matrix.app }} $QUICK --retry --json "$RUNNER_TEMP/preflight.json" 2>&1 | tee "$RUNNER_TEMP/preflight.txt"
+          code=${PIPESTATUS[0]}
+          { echo "### Preflight (${{ matrix.app }}): $([ $code = 0 ] && echo passed || echo FAILED)"; echo '```'; sed -n '/=== PREFLIGHT/,$p' "$RUNNER_TEMP/preflight.txt" | cut -c1-260; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+  android-tools:
+    name: Android compile (Tools)
+    needs: plan
+    if: needs.plan.outputs.android_tools == 'true'
+    uses: ./.github/workflows/android-check-tools.yml
+  android-reader:
+    name: Android compile (Reader)
+    needs: plan
+    if: needs.plan.outputs.android_reader == 'true'
+    uses: ./.github/workflows/android-check-reader.yml
+  tauri-tools:
+    name: Tauri check (Tools)
+    needs: plan
+    if: needs.plan.outputs.tauri_tools == 'true'
+    uses: ./.github/workflows/tauri-check.yml
+  tauri-reader:
+    name: Tauri check (Reader)
+    needs: plan
+    if: needs.plan.outputs.tauri_reader == 'true'
+    uses: ./.github/workflows/tauri-check-reader.yml
+  rust-android-tools:
+    name: Rust core for Android (Tools)
+    needs: plan
+    if: needs.plan.outputs.rust_android == 'true'
+    uses: ./.github/workflows/android-rust-check.yml

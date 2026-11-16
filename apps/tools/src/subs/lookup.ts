@@ -4,6 +4,7 @@
 // reader turns a title into a book across its sources.
 import { request } from '../http';
 import * as al from '../anilist';
+import { coverOf } from '../anime/covers';
 
 export type TitleKind = 'anime' | 'movie' | 'series';
 export interface TitleCard {
@@ -24,7 +25,7 @@ export function parseRef(s: string): { anilist?: number; mal?: number; imdb?: st
   return null;
 }
 
-const fromAnime = (a: al.Anime): TitleCard => ({ kind: 'anime', title: a.title, titles: al.titlesOf(a), year: a.seasonYear ?? a.startDate?.year ?? undefined, cover: a.cover, episodes: a.episodes ?? undefined, ids: { anilist: a.id, mal: a.idMal } });
+const fromAnime = (a: al.Anime): TitleCard => ({ kind: 'anime', title: a.title, titles: al.titlesOf(a), year: a.seasonYear ?? a.startDate?.year ?? undefined, cover: coverOf(a), episodes: a.episodes ?? undefined, ids: { anilist: a.id, mal: a.idMal } });
 type Meta = { imdb_id: string; name: string; poster?: string; releaseInfo?: string; year?: string; type: string };
 const fromMeta = (m: Meta, kind: 'movie' | 'series'): TitleCard => ({ kind, title: m.name, titles: [m.name], year: Number((m.releaseInfo ?? m.year ?? '').slice(0, 4)) || undefined, cover: m.poster, ids: { imdb: m.imdb_id } });
 

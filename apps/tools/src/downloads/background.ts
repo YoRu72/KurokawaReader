@@ -38,6 +38,7 @@ let schedTimer = 0; let schedWired = false;
  *  paused stays paused, one held (Wi‑Fi only, the battery) is left to its hold. One the reader starts by hand
  *  while the window is shut (still marked) is left running until the window has opened and shut again. */
 export function startScheduler(): void {
+  void import('./fallback').then((m) => m.startDirectFallback());
   window.clearTimeout(schedTimer);
   const tick = async () => {
     // (Each download's own clock first — a start or a stop time of its own —, then the global window.)

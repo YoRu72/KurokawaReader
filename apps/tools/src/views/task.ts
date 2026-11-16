@@ -10,6 +10,8 @@ import { ktPlugin, nativePlatform } from '../native';
 import { getSettings } from '../settings';
 import { t, localDigits } from '../i18n';
 import { liveLine } from '../downloads/live';
+import { plainEngineError, hideRaw, CERT } from '../downloads/errors';
+import { nameNodes, setName, nameDir } from '../ui/fileName';
 import { getEngine, displayName, isVideo, mainFilePath } from '../engine';
 import { trailOf, autoRelinkOn, setAutoRelink, expired, replayTrail } from '../downloads/relink';
 import type { Task } from '../engine/types';
@@ -30,21 +32,24 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
   const draw = () => {
     if (!task) return;
     const x = task; const name = displayName(x); const hst = historyOf(x);
-    (title.firstChild as HTMLElement).textContent = name;
+    setName(title.firstChild as HTMLElement, name);
     const link = x.source.url ?? x.source.magnet ?? '';
+    // (0.21 P9: with DoH on, one quiet line — which resolver found the site, or that the system's DNS did.)
+    const dohSlot = h('div', { class: 'doh-slot' }); if (x.kind !== 'torrent' && x.source.url && getSettings().doh !== 'off') void import('../ui/dohLine').then((m) => dohSlot.append(m.dohLine(x.source.url!))).catch(() => undefined);
     const live = x.state === 'downloading' || x.state === 'metadata';
     const hero = h('section', { class: 'card kt-hero' },
       h('span', { class: 'task-kind big' }, icon(x.kind === 'torrent' ? 'magnet' : categoryOf(name, x.kind).icon)),
-      h('div', { class: 'grow' }, h('div', { class: 'kt-name', dir: 'auto' }, name),
+      h('div', { class: 'grow' }, h('div', { class: 'kt-name', dir: nameDir(name) }, ...nameNodes(name)),
         link ? h('div', { class: 'kt-url' }, icon('link'), h('span', { class: 'sel', dir: 'ltr' }, link), h('button', { type: 'button', class: 'kt-copy', 'aria-label': t('copyLink'), onclick: () => void navigator.clipboard?.writeText(link).then(() => toast(t('copied'))) }, icon('copy'))) : null,
         h('div', { class: 'kt-badges' }, h('span', { class: `kt-badge state-${x.state}` }, live ? h('span', { class: 'kt-live' }) : null, stateLabel(x.state)),
-          x.kind !== 'torrent' && (x.segments?.length ?? 0) > 1 ? h('span', { class: 'kt-badge ok' }, icon('check'), t('badgeResumable')) : null)));
+          x.kind !== 'torrent' && (x.segments?.length ?? 0) > 1 ? h('span', { class: 'kt-badge ok' }, icon('check'), t('badgeResumable')) : null), dohSlot));
     // (A file download's own speed limit, in KB/s; 0 lifts it. The engine's global limit still caps everything.)
     const limitRow = x.kind === 'http' && eng.setTaskLimits && x.state !== 'done' ? h('label', { class: 'field row task-limit' }, h('span', { class: 'label' }, t('taskSpeedLimit')), h('input', { type: 'number', inputmode: 'numeric', min: '0', value: String(Math.round(((x as Task & { limitDown?: number }).limitDown ?? 0) / 1024)), placeholder: '0', onchange: (e: Event) => void eng.setTaskLimits!(x.id, Math.max(0, Number((e.target as HTMLInputElement).value) || 0) * 1024, 0).then(() => toast(t('done'))).catch(() => undefined) })) : null;
     const hlsLine = (x.meta?.hls || x.kind === 'video') && (x.state === 'downloading' || x.state === 'metadata') ? h('p', { class: 'src' }, icon('film'), ' ', liveLine(x)) : null;
     const acts = h('div', { class: 'task-detail-actions' });
     // (One held by the app — Wi‑Fi only on mobile data, a low battery —: «Download now», started in spite of the hold.)
-    if (x.state === 'paused' || x.state === 'failed') acts.append(h('button', { type: 'button', class: 'btn primary', onclick: () => void eng.resume(x.id, !!x.heldBy) }, icon('play'), t(x.heldBy ? 'downloadNow' : 'resume')));
+    // (One main action: a failed download with nothing in the file is «Try again»; with part of it here, «Resume»; a held or paused one, «Resume» / «Download now».)
+    if (x.state === 'paused' || x.state === 'failed') { const fresh = x.state === 'failed' && !(x.done > 0) && !x.heldBy; acts.append(h('button', { type: 'button', class: 'btn primary', 'data-act': fresh ? 'try-again' : 'resume', onclick: () => void eng.resume(x.id, !!x.heldBy) }, icon(fresh ? 'refresh' : 'play'), t(x.heldBy ? 'downloadNow' : fresh ? 'retry' : 'resume'))); }
     if (x.state !== 'done') acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void import('../downloads/rules').then((m) => m.clockSheet(x)) }, icon('clock'), t('clockTitle')));
     else if (x.state !== 'done' && eng.can.pause) acts.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => void eng.pause(x.id) }, icon('pause'), t('pause')));
     // What the main file is decides the first button: a video or a sound plays in the app, an app installs, an
@@ -81,10 +86,10 @@ export function taskView(id: string): HTMLElement & { dispose?: () => void } {
     const panel = h('section', { class: 'card kt-panel' },
       x.kind !== 'torrent' ? h('div', { class: 'kt-conn' }, h('div', { class: 'kt-ph' }, t('connectionsTitle')), lanes(x)) : null,
       speedChart(hst, x));
-    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x) ?? h('span'), x.state === 'failed' && x.error ? h('p', { class: 'plan-note bad' }, errorText(x.error), /^HTTP (401|403|410)$/.test(x.error) && x.kind === 'http' ? h('span', { class: 'row-actions wrap expired-acts' },
+    body.replaceChildren(hero, h('section', { class: 'card' }, meter(x), fileMap(x), x.state === 'failed' && x.error ? h('div', { class: 'plan-note bad task-error' }, h('p', { class: 'err-line', dir: 'auto' }, errorText(x.error)), plainEngineError(x.error) && !hideRaw(x.error) ? h('p', { class: 'err-raw src', dir: 'ltr' }, x.error) : null, /^HTTP (401|403|410)$/.test(x.error) && x.kind === 'http' ? h('span', { class: 'err-actions expired-acts' },
         h('small', { class: 'src' }, t('errExpiredHint')),
         h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'relink', onclick: () => void import('../browser').then((m) => m.relinkFromBrowser(x)) }, icon('globe'), t('relinkBrowser')),
-        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || isCut(x.error)) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : h('span'), hlsLine ?? h('span'), limitRow ?? h('span'), acts),
+        h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'paste', onclick: () => void import('./downloads').then((m) => m.newUrlSheet(x)) }, icon('link'), t('newUrl'))) : x.error === 'noFolderAccess' ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./folderAccess').then(async (m) => { if (await m.ensureFolderAccess(x.dir)) await getEngine().resume(x.id).catch(() => undefined); }) }, icon('key'), t('folderFix')) : (x.error === 'page' || (isCut(x.error) && !CERT.test(x.error))) && x.source.url ? h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser')) : remedies(x)) : null, hlsLine, limitRow, acts),
       panel, (x.kind === 'torrent' ? swarmEl() : null) ?? h('span'), files ?? h('span'), (x.kind === 'http' ? relinkCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('infoTitle')), infoList(x, torEngineInfo(x))), (x.kind === 'video' && ktPlugin() ? commandCard(x) : null) ?? h('span'), h('section', { class: 'card' }, h('h3', null, t('logTitle')), logList(hst)));
   };
   // (The files' card: made once and kept, so a search typed or a folder opened survives the redraws.)
@@ -124,13 +129,18 @@ function commandCard(x: Task): HTMLElement {
  *  network will not resolve, or an unreachable site → tried through the resolver (DoH); a cut-short file → tried again. */
 function remedies(x: Task): HTMLElement | null {
   const e = x.error ?? ''; const eng = getEngine(); const again = (label: string) => h('button', { type: 'button', class: 'btn tonal small', onclick: () => void eng.resume(x.id).catch(() => undefined) }, icon('refresh'), label);
-  if (/ENOSPC|No space|noSpace/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errNoSpaceHint')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/files') }, icon('chart'), t('filesAnalyzer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('folder'), t('changeFolder')));
-  if (/^HTTP (429|50\d)$/.test(e)) { const wait = /429/.test(e) ? 60 : 20; const b = again(t('errRetryIn', { s: localDigits(wait) })); setTimeout(() => { if (b.isConnected) b.click(); }, wait * 1000); return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errBusyHint')), b); }
-  if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), again(t('retry')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
+  if (/ENOSPC|No space|noSpace/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errNoSpaceHint')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/files') }, icon('chart'), t('filesAnalyzer')), h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('folder'), t('changeFolder')));
+  if (/^HTTP (429|50\d)$/.test(e)) { const wait = /429/.test(e) ? 60 : 20; const b = again(t('errRetryIn', { s: localDigits(wait) })); setTimeout(() => { if (b.isConnected) b.click(); }, wait * 1000); return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errBusyHint')), b); }
+  if (/UnknownHost|Unable to resolve|ENETUNREACH|EHOSTUNREACH|No address|timed out|Connection refused|incomplete/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, /incomplete/i.test(e) ? t('errIncompleteHint') : t('errNetHint')), ...(/UnknownHost|Unable to resolve|No address/i.test(e) && getSettings().doh === 'off' ? [h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/downloads') }, icon('globe'), t('errTurnOnDoh'))] : []));
+  // (0.21 P9: a certificate the engine refused: aria2 checks certificates for every download at once — its manual has no
+  // per-download check-certificate — so it cannot be skipped for one; the way out offered is the browser, where the reader
+  // sees the warning and decides.)
+  if (CERT.test(e) && x.kind === 'http') return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errCertHint')), ...(x.source.url ? [h('button', { type: 'button', class: 'btn tonal small', 'data-act': 'cert-browser', onclick: () => void import('../browser').then((m) => m.openBrowser(x.source.url!)) }, icon('globe'), t('openInBrowser'))] : []));
+  if (/DNS over HTTPS:/.test(e)) return h('span', { class: 'err-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => navigate('/settings/privacy') }, icon('globe'), t('errDohSettings')));
   // (A DRM-protected lecture or stream: nothing to retry; the app does not go around protection.)
-  if (/DRM|drm:|SAMPLE-AES|Widevine|protected/i.test(e)) return h('span', { class: 'row-actions wrap' }, h('small', { class: 'src' }, t('errDrmHint')));
+  if (/DRM|drm:|SAMPLE-AES|Widevine|protected/i.test(e)) return h('span', { class: 'err-actions' }, h('small', { class: 'src' }, t('errDrmHint')));
   if (/^HTTP 4(04|10)$/.test(e)) return null;
-  return again(t('retry'));
+  return null;
 }
-export const errorText = (e: string): string => (e === 'page' ? t('errPage') : e === 'noFolderAccess' ? t('errNoFolderAccess') : isCut(e) ? `${e} — ${t('errCut')}` : e);
+export const errorText = (e: string): string => (plainEngineError(e) ?? (e === 'page' ? t('errPage') : e === 'noFolderAccess' ? t('errNoFolderAccess') : isCut(e) ? `${e} — ${t('errCut')}` : e));
 

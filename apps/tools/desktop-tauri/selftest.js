@@ -61,6 +61,22 @@
   }
   function short(x) { var s; try { s = typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { s = String(x); } return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s); }
 
+  /** The one place that knows how a check is tried twice: built on any harness's own `check(name, required, fn, ms)`
+   *  (this script's, tests/screentauri.cjs's, …), so every harness gets the same retry. The two attempts are one row; a pass
+   *  the second time says «PASSED ON RETRY» with the first failure, a double failure «FAILED TWICE». `between()` puts
+   *  things back as they were before the second attempt. */
+  function retryOf(check) {
+    return function (name, required, fn, ms, between) {
+      return check(name, required, async function () {
+        var first = '';
+        try { return await fn(); } catch (e) { first = (e && e.message) || String(e); }
+        try { if (between) await between(); } catch (e) { first += ' [put back: ' + ((e && e.message) || String(e)) + ']'; }
+        try { return 'PASSED ON RETRY — the first attempt failed: ' + first + ' — the second: ' + await fn(); }
+        catch (e2) { throw new Error('FAILED TWICE — the first attempt: ' + first + ' — the second: ' + ((e2 && e2.message) || String(e2))); }
+      }, (ms || 20000) * 2 + 25000);
+    };
+  }
+
   /**
    * The checks. kt: window.kurokawaTools. env: { sleep(ms), invoke(cmd, args), doc (document), now() }.
    * Resolves with the results, after kt_selftest_done was sent.
@@ -69,7 +85,7 @@
     results = results || [];
     var sleep = env.sleep;
     function progress() { try { Promise.resolve(env.invoke('kt_selftest_progress', { results: results })).catch(function () {}); } catch (e) { /* none */ } }
-    function rec(name, ok, detail, required) { results.push({ name: name, ok: !!ok, detail: short(detail === undefined ? '' : detail), required: required !== false }); progress(); return !!ok; }
+    function rec(name, ok, detail, required, max) { results.push({ name: name, ok: !!ok, detail: (max || (/^(PASSED ON RETRY|FAILED TWICE)/.test(String(detail)) ? 1500 : 0)) ? String(detail).slice(0, max || 1500) : short(detail === undefined ? '' : detail), required: required !== false }); progress(); return !!ok; }
     function within(p, ms, what) {
       var t = null;
       var limit = new Promise(function (_ok, no) { t = setTimeout(function () { no(new Error('timeout: ' + what)); }, ms); });
@@ -79,6 +95,12 @@
       try { var d = await within(Promise.resolve().then(fn), ms || 20000, name); return rec(name, true, d, required); }
       catch (e) { return rec(name, false, (e && e.message) || String(e), required); }
     }
+    // (A check whose failure can be a matter of timing outside the product — a window the system has not painted yet, one
+    // that was slow to come up on a busy runner — is tried a second time, after `between()` has put the machine back as it
+    // was. A pass the second time is recorded as «PASSED ON RETRY» with the first attempt's failure in full, so the table
+    // shows it — never a plain pass — and a fault that is really there fails twice and says so. Windows' screen rows
+    // failed on one run in three with no change of code: runs of 2026-11-15.)
+    check.retry = retryOf(check);
     function must(cond, what) { if (!cond) throw new Error(what); }
     async function waitFor(fn, ms, what) { var until = env.now() + ms; for (;;) { var v = fn(); if (v) return v; if (env.now() > until) throw new Error('timeout: ' + what); await sleep(200); } }
 
@@ -244,8 +266,18 @@
       must(!bad.length, 'pixels ' + bad.join(', ') + ' in ' + got.w + '×' + got.h);
       return got;
     };
-    await check('screen: a window the test draws, captured as the app captures it — its pixels', can, async function () {
+    // (The row's attempt. What the timing of a real machine can upset — and what this row does about each:
+    //  · another of the app's screen windows still up and on top of the test window → waited until none is visible;
+    //  · the test window not painted yet → «draw» waits for a red pixel in its first bar (screentr.rs), as it always did;
+    //  · the picture taken a moment after that showing a window not yet settled (runs of 2026-11-15 on Windows: the bars
+    //    came out one and two bars too low, [0,255,0] and [0,0,255] where red was expected, in a 480×240 window that the
+    //    one-pixel probe had just found painted) → the grab is repeated until TWO pictures in a row are right, for 6 s,
+    //    and the row says when it took more than two;
+    //  · still wrong after that → it fails with what it saw (the window as the system has it, the column of the bars in
+    //    the picture, the scale) and the row is run once more from a fresh window — «PASSED ON RETRY» when that passes.)
+    var drawAttempt = async function () {
       if (noPerm) return noPerm;
+      await waitA(async function () { var ws = ((await S({ act: 'state' })) || {}).windows || []; return ws.every(function (w) { return w.label === 'kts-test' || !w.visible; }) ? true : null; }, 8000, 'the app\'s other screen windows closed before the test window is drawn');
       drawn = await S({ act: 'draw', w: 480, h: 240 });
       must(drawn && drawn.w === 480, short(drawn));
       // (Where this shell can look at the screen, «draw» waits until the window is painted and says how: a window that
@@ -254,11 +286,40 @@
       // (Its size as asked: in run 43559071568 GTK kept the window at its built 800×600 — set_size ignored on a window
       // that is not resizable — and the bars came out taller than the capture.)
       if (Array.isArray(drawn.actual) && kt.os === 'linux') must(Math.abs(drawn.actual[0] - drawn.w) <= 2 && Math.abs(drawn.actual[1] - drawn.h) <= 2, 'the window is ' + drawn.actual.join('×') + ', not ' + drawn.w + '×' + drawn.h);
-      var g = await S({ act: 'grab', x: drawn.x, y: drawn.y, w: drawn.w, h: drawn.h });
-      must(g && /^data:image\/png;base64,/.test(g.png) && g.w > 0, short(g));
-      var got = await compare(g.png, 0, 0, { w: g.w, h: g.h });
-      return st0.capture + ': ' + got.w + '×' + got.h + ' at ' + drawn.x + ',' + drawn.y + ' on ' + drawn.monitor + (drawn.how ? '; ' + drawn.how : '');
-    }, 45000);
+      var letter = function (c) { return near(c, [255, 0, 0], 40) ? 'R' : near(c, [0, 255, 0], 40) ? 'G' : near(c, [0, 0, 255], 40) ? 'B' : near(c, [255, 255, 255], 40) ? 'W' : near(c, [0, 0, 0], 40) ? 'K' : '?'; };
+      // (What the picture and the system show, for a failure to be read from: the bars down the column at a quarter of
+      // the width, one letter per twentieth of the height — RRRRGGGGBBBB where all is well —, the window as Tauri has it.)
+      var look = async function (png, w, h) {
+        var out = '';
+        try {
+          var st = (await S({ act: 'state' })) || {}; var tw = (st.windows || []).filter(function (x) { return x.label === 'kts-test'; })[0];
+          out += ' [window ' + (tw ? 'at ' + short(tw.at) + ' ' + short(tw.size) + ' visible ' + tw.visible : 'not in the list') + ', drawn at ' + drawn.x + ',' + drawn.y + ' ' + drawn.w + '×' + drawn.h + ', monitor scale ' + drawn.scale + ', ' + drawn.how;
+          if (png) { var ys = []; for (var k = 0; k < 20; k++) ys.push([w * 0.25, (k + 0.5) * h / 20]); var col = await env.pixels(png, ys); out += '; column at 25 %: ' + col.px.map(letter).join('') + ' (' + col.w + '×' + col.h + ')'; }
+          out += ']';
+        } catch (e) { out += ' [no look: ' + ((e && e.message) || e) + ']'; }
+        return out;
+      };
+      var good = 0, tries = 0, lastBad = '', firstBad = '', got = null, g = null, until = env.now() + 6000;
+      for (;;) {
+        tries++;
+        try {
+          g = await S({ act: 'grab', x: drawn.x, y: drawn.y, w: drawn.w, h: drawn.h });
+          must(g && /^data:image\/png;base64,/.test(g.png) && g.w > 0, short(g));
+          got = await compare(g.png, 0, 0, { w: g.w, h: g.h });
+          if (++good >= 2) break;
+        } catch (e) {
+          good = 0; lastBad = (e && e.message) || String(e); if (!firstBad) firstBad = lastBad;
+          if (env.now() > until) throw new Error(lastBad + ' — after ' + tries + ' grabs in 6 s' + (await look(g && g.png, g && g.w, g && g.h)));
+        }
+        await env.sleep(250);
+      }
+      return st0.capture + ': ' + got.w + '×' + got.h + ' at ' + drawn.x + ',' + drawn.y + ' on ' + drawn.monitor + (drawn.how ? '; ' + drawn.how : '') + (tries > 2 ? '; right only at grab ' + (tries - 1) + ' (the first wrong: ' + firstBad + ')' : '');
+    };
+    await (check.retry || retryOf(check))('screen: a window the test draws, captured as the app captures it — its pixels', can, drawAttempt, 45000, async function () {
+      try { await S({ act: 'undraw' }); } catch (e) { /* gone */ }
+      await waitA(gone('kts-test'), 8000, 'the test window closed');
+      await env.sleep(500);
+    });
     // (Reported: whether a window made hidden and then shown — the app's frozen screen, caption and clipboard window are
     // made so — paints without help; «after a size nudge» or «hidden and shown again» would say those windows need it.)
     await check('screen: a window made hidden, then shown, paints without help', false, async function () {
@@ -329,7 +390,7 @@
         if (win && (!c.win32 || typeof c.win32.foreground !== 'boolean')) return null;
         return { focused: c.tauri.focused || !!(c.win32 && c.win32.foreground), visible: c.win32 ? c.win32.visible : c.tauri.visible };
       };
-      for (round = 1; round <= 5; round++) {
+      var roundBody = async function () {
         t0 = env.now();
         await kt.screenAction('auto');
         try {
@@ -360,8 +421,27 @@
         }
         var t1 = env.now() + 15000, off = null;
         while (!off) { var x = (await S({ act: 'state' })) || {}; if (!x.auto && x.ocrRunning === 0 && (await gone('kts-caption')())) off = x; else { if (env.now() > t1) await fail('auto stopped, no caption, no helper — not within 15 s'); await env.sleep(200); } }
+      };
+      // (One round that never showed its caption within 15 s is done once more, after «auto» is stopped and no caption is
+      // left — on 2026-11-15 the Windows runner failed here in round 3 and passed on a run with no change of code. The row
+      // then says «PASSED ON RETRY» with that round's failure, its state included. Nothing else is tried again: a caption
+      // that took the focus, was not click-through or went away by itself is a fault of the product, every time.)
+      var retried = [];
+      for (round = 1; round <= 5; round++) {
+        try { await roundBody(); }
+        catch (e) {
+          var msg = (e && e.message) || String(e);
+          if (retried.length || !/^timeout: the caption window/.test(msg)) throw e;
+          retried.push('round ' + round + ' showed no caption in 15 s' + msg.replace(/^timeout: the caption window/, ''));
+          try {
+            var s2 = (await S({ act: 'state' })) || {}; if (s2.auto) await kt.screenAction('auto');
+            await waitA(async function () { var x2 = (await S({ act: 'state' })) || {}; return !x2.auto && x2.ocrRunning === 0 && (await gone('kts-caption')()) ? true : null; }, 15000, 'auto stopped and no caption left');
+          } catch (e2) { retried.push('(put back: ' + ((e2 && e2.message) || String(e2)) + ')'); }
+          await env.sleep(1000);
+          await roundBody();
+        }
       }
-      return '5 rounds, ' + samples + ' focus samples, never focused; click-through ' + (clickThrough === null ? 'not in this build' : clickThrough) + ', captions sent ' + sentAll + (st.captionFg ? '; ' + st.captionFg : '') + (st.lastError ? ', last error: ' + st.lastError : '');
+      return (retried.length ? 'PASSED ON RETRY — ' + retried.join(' ') + ' — ' : '') + '5 rounds, ' + samples + ' focus samples, never focused; click-through ' + (clickThrough === null ? 'not in this build' : clickThrough) + ', captions sent ' + sentAll + (st.captionFg ? '; ' + st.captionFg : '') + (st.lastError ? ', last error: ' + st.lastError : '');
     }, 150000);
     await check('screen: the clipboard\'s translation opens by the mouse and closes', can, async function () {
       await S({ act: 'popup', text: 'Good night' });
@@ -1641,7 +1721,7 @@
     off();
   }
 
-  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP4: runP4, runP5: runP5, runScreen: runScreen };
+  var lib = { ABC: ABC, verdict: verdict, sameBytes: sameBytes, join: join, find: find, b64bytes: b64bytes, run: run, runP4: runP4, runP5: runP5, runScreen: runScreen, retryOf: retryOf };
   try { Object.defineProperty(root, '__KT_SELFTEST_LIB__', { value: lib, configurable: true }); } catch (e) { root.__KT_SELFTEST_LIB__ = lib; }
 
   var cfg = root.__KT_SELFTEST__;

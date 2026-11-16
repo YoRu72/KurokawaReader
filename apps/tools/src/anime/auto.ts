@@ -45,14 +45,14 @@ export async function downloadedEpisodes(anilistId: number): Promise<Map<number,
 }
 /** A release added for an episode (or `eps`, a batch's wanted ones): from a batch, only those episodes' files
  *  (read from its list first), not the whole of it. */
-export async function addFor(a: al.Anime, r: TorrentResult, ep: number, eps?: number[]): Promise<void> {
+export async function addFor(a: al.Anime, r: TorrentResult, ep: number, eps?: number[]): Promise<Task | null> {
   const source = r.url ? { url: r.url } : { magnet: magnetOf(r) };
   const meta = { anilistId: a.id, title: a.title, episode: ep || undefined, batch: (!ep && !!eps) || undefined, cover: a.cover, provider: r.provider, hash: r.hash, fileIdx: r.fileIdx } as Task['meta'];
-  if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); await sendToDebrid(source, { meta }); return; }
+  if (!r.url && getSettings().debridDefault && getSettings().addons.includes('debrid')) { const { sendToDebrid } = await import('../debrid/transfers'); await sendToDebrid(source, { meta }); return null; }
   const want = eps ?? (ep ? [ep] : []);
   let files: number[] | undefined = !r.url && r.fileIdx !== undefined && want.length <= 1 ? [r.fileIdx] : undefined;
   if (!files && !r.url && want.length && (r.type === 'batch' || parseFilename(r.title).batch || !!eps)) files = (await import('../views/pickFiles').then((m) => m.smartFiles(source, want)).catch(() => null)) ?? undefined;
-  await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
+  return getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
 }
 
 export interface RangeOptions { from: number; to: number; choices: Pick<AutoRule, 'resolution' | 'group' | 'dub' | 'require' | 'avoid'>; skipFillers: boolean; skipHave: boolean; preferBatch: boolean }

@@ -6,12 +6,12 @@ import './theme/glass.css';
 import './theme/gallery.css';
 import './theme/editor.css';
 import './styles/glass-tools.css';
-import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
+import { applyDocumentLang, onLangChange, loadLang, loadRest, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, sectionOfRoute, type Route } from './router';
 import { h, icon, closeSheets } from './ui/dom';
 import { noteTab, tabPath } from './ui/backstack';
 const backNav = () => import('./ui/backnav');
-import { applyChrome, onSettingsChange, getSettings } from './settings';
+import { applyChrome, onSettingsChange, getSettings, MAIN_NOTE_KEY } from './settings';
 import { navPlacesAll } from './ui/navPlaces';
 import { registerNativePlugins, isNative, nativePlatform } from './native';
 import { downloadsView } from './views/downloads';
@@ -62,6 +62,9 @@ function buildNav(): HTMLElement {
   return h('nav', { class: 'bottom-nav', 'aria-label': t('appName') }, ...items);
 }
 const RAIL_KEY = 'kt.rail.mini';
+/** The animated background (a computer, when chosen): its module fetched only then, after the first screen. */
+let abg = false;
+function animBg(): void { const s = getSettings(); if (!abg && !(isPc() && s.animBg && s.animBg !== 'off')) return; abg = true; void import('./theme/animbg').then((m) => m.syncAnimBg()); }
 /** The sidebar folded: as chosen, or by itself in a window too narrow for it. */
 function fitRail(): void {
   let chosen: string | null = null; try { chosen = localStorage.getItem(RAIL_KEY); } catch { /* private */ }
@@ -72,7 +75,7 @@ function placeNav(): void {
   nav?.remove(); nav = buildNav(); nav.dataset.addons = navKey(getSettings()); nav.dataset.count = String(nav.querySelectorAll('[data-dest]').length);
   document.documentElement.classList.toggle('pc', isPc()); if (isPc()) fitRail();
   if (isPc()) document.body.prepend(nav); else document.body.append(nav); void import('./ui/keyboard').then((m) => m.watchKeyboard());
-  markNav(parseRoute());
+  markNav(parseRoute()); if (abg) animBg();
 }
 const destOf = sectionOfRoute;
 /* Each tab remembers where it was (a show's page in Anime, a section of Settings…): going back to the tab
@@ -97,9 +100,9 @@ function mountInner(route: Route): void {
   if (key === currentKey && current) return;
   const prevRoute = currentKey ? (JSON.parse(currentKey) as Route) : null;
   currentKey = key;
-  const dest = destOf(route); if (route.name !== 'pick') noteTab(dest, location.hash.replace(/^#/, '') || '/');
+  const dest = destOf(route); if (route.name !== 'pick' && route.name !== 'openWith') noteTab(dest, location.hash.replace(/^#/, '') || '/');
   // Leaving a tab: its screen kept (not torn down) to come back to; staying in the tab: replaced as before.
-  if (current && prevRoute && destOf(prevRoute) !== dest && prevRoute.name !== 'add' && prevRoute.name !== 'pick') {
+  if (current && prevRoute && destOf(prevRoute) !== dest && prevRoute.name !== 'add' && prevRoute.name !== 'pick' && prevRoute.name !== 'openWith') {
     const pd = destOf(prevRoute); const old = kept.get(pd); if (old && old.el !== current) { old.el.dispose?.(); old.el.remove(); }
     kept.set(pd, { key: JSON.stringify(prevRoute), el: current, scroll: window.scrollY, inner: current.querySelector<HTMLElement>('.body')?.scrollTop ?? 0 });
     current.remove();
@@ -124,6 +127,7 @@ function mountInner(route: Route): void {
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
     case 'files': current = lazyView(() => import('./views/files').then((m) => m.filesView(route))); break;
     case 'pick': current = lazyView(() => import('./views/pick').then((m) => m.pickView())); break;
+    case 'openWith': current = lazyView(() => import('./views/openWith').then((m) => m.openWithView(route))); break;
     case 'videos': current = lazyView(() => import('./views/videos').then((m) => m.videosView(route))); break;
     case 'courses': current = lazyView(() => import('./views/courses').then((m) => m.coursesView(route))); break;
     case 'tv': current = lazyView(() => import('./views/tv').then((m) => m.tvView(route.tab as 'discover' | undefined, route.q))); break;
@@ -176,19 +180,22 @@ else {
   // (The window's own bar: the Tauri shell has the page draw all of it, its buttons too — ui/winbar.ts, the Reader's —;
   // Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
   if ((window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar(window.kurokawaTools as never));
-  else void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
+  // (Only where the shell draws a title bar at all — a phone or the web never fetches it.)
+  else if ((window.kurokawaTools as unknown as { titleBar?: unknown } | undefined)?.titleBar) void import('./ui/titlebar').then((m) => m.startTitleBar(window.kurokawaTools as never, t('appName')));
   // (At the start, before the first screen — each a listener or a setting another flow reads at once: a key, a
   // download's «done» or a shell's event in the first moments must find someone listening; the network and power
   // choices are in force before any download moves; the hand-over's hooks are there for the shell and the tests.)
   void backNav().then((m) => m.wirePcBack());
-  wireUndoKeys(); void import('./backup').then((m) => m.offerRestoreUndo());
-  onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); });
+  wireUndoKeys();
+  onSettingsChange((s) => { applyChrome(s); const want = navKey(s); if ((nav?.dataset.addons ?? '') !== want) placeNav(); animBg(); });
   void import('./downloads/power').then((m) => m.applyPower());
+  // (Once after 0.21 moved an install back to «Expressive 3»: the snackbar that says so and can undo it.)
+  try { if (localStorage.getItem(MAIN_NOTE_KEY)) afterFirstPaint(() => window.setTimeout(() => void import('./theme/mainNote').then((m) => m.showMainNote()), 700)); } catch { /* private mode */ }
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).
-  { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined);
+  { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh, allowSystem: !!s0.dohSystem } as { provider: string }).catch(() => undefined);
     // (The phone: the app's Settings alone decide the app's DNS over HTTPS — «off» sent as much as a resolver, so the old
     // browser switch, which wrote the app's choice, cannot keep it on unseen. The browser has its own switch now.)
-    void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
+    void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off', allowSystem: !!s0.dohSystem } as { provider: string }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   // (Stage P9: the computer's two builds. The Tauri build: its first-run screen once — carrying the offer of the data the
   // previous (Electron) version handed over —, else that offer alone when there is one (ui/firstrun.ts startScreens).
   // The Electron build: the hand-over's maker reachable by the shell without an import (desktop/handover.cjs prepare
@@ -219,7 +226,16 @@ else {
   mount(parseRoute());
   // (The rest — heavy or periodic work nobody waits for — once the first screen is drawn.)
   afterFirstPaint(() => {
+  animBg();
+  // (The rest of the strings — every screen but this one waits for them — fetched once the list is up and the page idle,
+  // so the first other screen opened does not wait for them.)
+  { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; if (idle) idle(() => void loadRest(), { timeout: 1500 }); else setTimeout(() => void loadRest(), 300); }
+  // (Extractions a crash or a stop left half done: the computer tidies finished ones whose Undo offer ended, once, when idle; Files shows the rest.)
+  if ((window.kurokawaTools as unknown as { archiveShelf?: unknown } | undefined)?.archiveShelf) { const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback; const run = () => void import('./views/extractShelf').then((m) => m.shelfAtStart()).catch(() => {}); if (idle) idle(run, { timeout: 5000 }); else setTimeout(run, 2000); }
   void import('./downloads/relink').then((m) => m.startAutoRelink());
+  // (The offer to undo a restore, and the update check's code — it waits 3 s before it asks anyway —: nobody waits for them.)
+  void import('./backup').then((m) => m.offerRestoreUndo());
+  void import('./updates').then((m) => m.scheduleAutoCheck());
   void import('./ui/gestures').then((g) => g.pageSwipe({
     enabled: () => getSettings().swipeTabs !== false,
     view: () => current,
@@ -245,8 +261,6 @@ else {
   });
   // (Everything that works in the background starts once the first screen is drawn — not before it: the list is
   // usable sooner. A window that opens hidden — no frames — starts it all the same, a moment later.)
-  // (The app's update check: its code fetched after the first screen — it waits 3 s before it asks anyway.)
-  void import('./updates').then((m) => m.scheduleAutoCheck());
   document.documentElement.dataset.platform = nativePlatform();
 
   // Android's back: the native side asks the page (through the plugin's `backButton` event when present).
@@ -269,6 +283,8 @@ else {
   // (A video or a sound opened with «Kurokawa Player» from another app: straight into the player, where it asked.)
   window.addEventListener('kt:play', (e) => { const d = (e as CustomEvent<{ url: string; name: string; path?: string; position?: number; headers?: Record<string, string>; subs?: string[] }>).detail; if (!d?.url) return; void import('./views/player').then((m) => m.openPlayer(d.url, d.name || 'video', { localPath: d.path, startAt: d.position, headers: d.headers, forCaller: true, subtitles: (d.subs ?? []).map((u, i) => ({ url: u, name: u.split('/').pop()?.split('?')[0] || `subtitle ${i + 1}`, isDefault: i === 0 })) })); });
   window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
+  // (The app started again while a video was open in its player: back to that page, its history — player/returnTo.ts.)
+  try { if (localStorage.getItem('kt.tmp.playerFrom')) void import('./player/returnTo').then((m) => m.restoreAtStart()); } catch { /* none */ }
   if (location.hash.startsWith('#/open?')) { const u = new URLSearchParams(location.hash.split('?')[1]).get('u'); if (u) navigate(`/add?u=${encodeURIComponent(u)}`, true); }
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {

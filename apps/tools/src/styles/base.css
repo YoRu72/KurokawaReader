@@ -143,6 +143,31 @@ html[data-dark='grey']:not([data-ui='light']) { --md-surface: #1c1b1f; --md-surf
 html[data-dark='black']:not([data-ui='light']) { --md-surface: #000000; --md-surface-container-lowest: #000000; --md-surface-container-low: #0e0f10; --md-surface-container: #151617; --md-surface-container-high: #1f2022; --md-surface-container-highest: #2a2b2e; }
 html[data-ui='light'] { --md-surface: #f7f8fa; --md-surface-container-lowest: #ffffff; --md-surface-container-low: #f1f3f5; --md-surface-container: #eaedf0; --md-surface-container-high: #e3e6ea; --md-surface-container-highest: #dcdfe4; --md-on-surface: #1a1c1e; --md-on-surface-variant: #43474c; --md-on-surface-dim: #6b7077; --md-outline: #767a80; --md-outline-variant: #c5c8cd; --md-inverse-surface: #2e3033; --md-inverse-on-surface: #f0f1f3; }
 
+/* «Expressive 3» — the main theme (data-theme='classic', theme/themes.ts E3_LIGHT / E3_DARK: the same values). Dark is the
+   graphite above, untouched. Light: soft cool neutrals (never glaring white), cards raised by tone (lighter than the
+   ground, fields and chips darker), an indigo accent with a teal third, cool shadows kept faint — depth by tone. */
+html[data-theme='classic'][data-ui='light'] {
+  --md-surface: #eef0f6; --md-surface-bright: #fbfcfe; --md-surface-container-lowest: #fbfcfe; --md-surface-container-low: #f8f9fc; --md-surface-container: #e7eaf2; --md-surface-container-high: #dfe3ed; --md-surface-container-highest: #d6dbe7;
+  --md-on-surface: #181b23; --md-on-surface-variant: #3d4352; --md-on-surface-dim: #545b6b; --md-outline: #5b6272; --md-outline-variant: #c4c9d6;
+  --md-inverse-surface: #2b2f39; --md-inverse-on-surface: #eef0f6; --md-inverse-primary: #b9c3ff;
+  --md-secondary: #545b72; --md-on-secondary: #ffffff; --md-tertiary: #2b6870; --md-on-tertiary: #ffffff;
+  --md-scrim: rgba(20, 24, 36, .36);
+  --el-1: 0 1px 2px rgba(24,30,52,.10), 0 1px 3px rgba(24,30,52,.06);
+  --el-2: 0 1px 3px rgba(24,30,52,.10), 0 4px 12px rgba(24,30,52,.07);
+  --el-3: 0 8px 24px rgba(24,30,52,.13), 0 2px 6px rgba(24,30,52,.08);
+}
+html[data-theme='classic'][data-ui='light'][data-accent='graphite'] { --md-primary: #3d4e99; --md-on-primary: #ffffff; --md-primary-container: #dce1fa; --md-on-primary-container: #121a45; --md-secondary-container: #d3daf6; --md-on-secondary-container: #1b2033; --md-tertiary-container: #d2e9ec; --md-on-tertiary-container: #0b2a2f; }
+/* (Dark: the snackbar's action on the light inverse surface was the fallback lilac, hard to read; a slate ink instead.
+   The warm root's sand secondary never shows: a cool one.) */
+html[data-theme='classic']:not([data-ui='light']) { --md-inverse-primary: #3d4656; --md-secondary: #b9c0cc; --md-on-secondary: #1f2329; }
+/* (Today's standard: a chosen chip or place told from the others at a glance — the graphite's selected tone a step
+   lighter and cooler than the chips' own, its character unchanged.) */
+html[data-theme='classic']:not([data-ui='light'])[data-accent='graphite'] { --md-secondary-container: #3a404b; }
+/* (On the brightest surface — the selection bars, the add field, badges, key caps —: the muted inks a step lighter in
+   the dark and the outline a step darker in the light, so muted text keeps 4.5:1 there too. Only on that surface.) */
+html[data-theme='classic']:not([data-ui='light']) :is(.add-input, .select-bar, .files-selbar, .kt-badge, .upd-chip, .key-cap, kbd, .crash-card .crash-text, .crash-text, .mini-bar, .kt-file-bar, .files-list.grid .files-check, .usage-bar) { --md-on-surface-dim: #a3a5aa; --md-outline: #9fa2a7; }
+html[data-theme='classic'][data-ui='light'] :is(.add-input, .select-bar, .files-selbar, .kt-badge, .upd-chip, .key-cap, kbd, .crash-card .crash-text, .crash-text, .mini-bar, .kt-file-bar, .files-list.grid .files-check, .usage-bar) { --md-outline: #525969; }
+
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
 /* Every icon is a stroked line drawing (the few filled ones say so on their paths): drawn so wherever it lands,
@@ -1889,11 +1914,13 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 
 
 /* The Add sheet's «Save as»: the name and the extension apart; what the link says of itself; the folders used lately. */
-.save-as { display: grid; gap: 8px; margin-top: 4px; }
+.save-as { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 4px; } .save-as > .field { min-width: 0; }
 .save-as.many .field, .save-as.many .add-size { display: none; }
 .save-as-row { display: flex; align-items: center; gap: 4px; }
 .save-as-row .dot { opacity: .6; font-weight: 600; }
 .save-as-row .ext-in { width: 6em; flex: none; text-align: start; }
+/* (The name takes what is left and may shrink: the extension never pushed off a narrow screen.) */
+.save-as-row > input.grow { flex: 1 1 auto; min-width: 0; width: auto; }
 .add-size, .add-storage { display: flex; align-items: center; gap: 6px; font-size: 13px; min-height: 20px; }
 .add-size svg, .add-storage svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; flex: none; }
 .add-size .danger, .add-storage .danger { color: var(--md-error); }
@@ -1908,7 +1935,7 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .doh-head { display: flex; align-items: center; gap: 10px; }
 .doh-light { width: 12px; height: 12px; border-radius: 50%; background: var(--md-outline); flex: none; }
 .doh-card[data-state='ok'] .doh-light { background: #4caf50; box-shadow: 0 0 0 4px rgb(76 175 80 / .2); }
-.doh-card[data-state='resolving'] .doh-light { background: #f5a623; animation: doh-pulse 1s ease-in-out infinite; }
+.doh-card[data-state='resolving'] .doh-light { background: var(--md-primary); animation: doh-pulse 1s ease-in-out infinite; }
 .doh-card[data-state='failed'] .doh-light { background: var(--md-error); }
 .doh-card[data-state='idle'] .doh-light { background: var(--md-primary); opacity: .6; }
 @keyframes doh-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: .5; } }
@@ -1918,6 +1945,33 @@ input, textarea, [contenteditable]:not([contenteditable="false"]), pre, code, .s
 .doh-ev .doh-kind { font-weight: 600; min-width: 6em; }
 .doh-ev.k-fail .doh-kind, .doh-ev.k-retry .doh-kind { color: var(--md-error); }
 .doh-ev.k-unblock .doh-kind, .doh-ev.k-resolve .doh-kind { color: var(--md-primary); }
+/* (0.21 P9) DoH settings: the resolvers' health, the custom address, what goes through DoH, the per-use line */
+.doh-rows { display: contents; }
+.doh-custom { display: grid; gap: 6px; margin: 4px 0 8px; }
+.doh-custom .doh-url { width: 100%; box-sizing: border-box; }
+.doh-err { color: var(--md-error); margin: 0; }
+.doh-health { display: grid; gap: 6px; padding: 10px 12px; border-radius: 14px; background: var(--md-surface-container-low); margin: 8px 0; }
+.doh-health-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.doh-health-list { display: grid; gap: 2px; }
+.doh-hrow { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 2px; }
+.doh-hrow + .doh-hrow { border-top: 1px solid var(--md-outline-variant); }
+.doh-hrow .grow { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 2px; min-width: 0; }
+.doh-hrow .doh-hstate { flex: none; max-width: 45%; text-align: end; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doh-hrow.h-fail .doh-hstate { color: var(--md-error); white-space: normal; max-width: 50%; }
+.doh-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--md-outline); }
+.doh-hrow.h-ok .doh-dot, .doh-cover-list .c-yes .doh-dot { background: var(--md-primary); }
+.doh-hrow.h-fail .doh-dot { background: var(--md-error); }
+.doh-cover-list .c-hidden .doh-dot { background: var(--md-tertiary, var(--md-primary)); opacity: .6; }
+.doh-first { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.doh-health[data-state='checking'] .doh-health-list { opacity: .6; }
+.doh-health-foot { display: block; }
+.doh-cover { margin: 4px 0 8px; padding: 0 12px; }
+.doh-cover summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.doh-cover-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.doh-cover-list li { display: flex; align-items: center; gap: 10px; }
+.doh-cover-list li .src { text-align: end; flex: none; max-width: 50%; }
+.doh-line { display: block; margin: 4px 0 0; }
+.doh-line[data-via='system'], .doh-line[data-via='failed'] { color: var(--md-error); }
 
 /* The window's bar of the app's own on a computer (ui/titlebar.ts): a strip in the theme's colours with the icon and
    the name, the system's buttons over its end (on a Mac its lights at its start); the page below it, full screen
@@ -2009,3 +2063,7 @@ html.winbar.wb-clear .kr-winbar .wb-brand > * { display: none; }
 /* (Tools' own: the page's top bars keep room for the transparent bar's buttons; a Mac's sidebar starts below its lights.) */
 html.winbar.wb-clear:not(.wb-hide) .view > .topbar { border-inline-start: var(--wb-start, 0px) solid transparent; border-inline-end: var(--wb-end, 0px) solid transparent; }
 html.winbar.wb-clear.wb-mac:not(.wb-hide):not([dir='rtl']) .nav-rail { padding-top: calc(14px + var(--wb-h, 28px)); }
+
+/* No browser spinner arrows on number fields (white boxes inside the rounded field). */
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

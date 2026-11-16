@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-tools-desktop",
-  "version": "0.20.0",
+  "version": "0.20.5",
   "description": "Kurokawa Tools for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
@@ -32,6 +32,7 @@
       "main.cjs",
       "preload.cjs",
       "aria2.cjs",
+      "dohchain.cjs",
       "paths.cjs",
       "sniff.cjs",
       "localapi.cjs",
@@ -50,6 +51,9 @@
         ]
       },
       "archive.cjs",
+      "archsafe.cjs",
+      "inplace.cjs",
+      "namesafe.json",
       "ffmpeg.cjs",
       "ytdlp.cjs",
       "streamproxy.cjs",

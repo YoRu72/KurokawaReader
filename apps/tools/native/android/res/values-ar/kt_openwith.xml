@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The names of Kurokawa's entries in other apps' «Open with» / «Share» lists (native/android/openwith.json; tests/openwith.cjs checks they agree). -->
+<resources>
+    <string name="kt_ow_archive">ملفات كوروكاوا · فتح الأرشيف</string>
+    <string name="kt_ow_extract">استخراج بكوروكاوا</string>
+    <string name="kt_ow_folder">ملفات كوروكاوا · فتح المجلد</string>
+    <string name="kt_ow_image">عرض بكوروكاوا</string>
+    <string name="kt_ow_text">تحرير بكوروكاوا</string>
+    <string name="kt_ow_any">فتح بملفات كوروكاوا</string>
+    <string name="kt_ow_browse">ملفات كوروكاوا</string>
+</resources>

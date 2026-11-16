@@ -20,6 +20,8 @@ html.pc .tg-grid { grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
 .tg-meta { display: flex; flex-direction: column; gap: 2px; padding-inline: 4px; min-width: 0; min-height: 66px; flex: 1; }
 .tg-card[data-pack] .tg-meta { padding-inline-end: 40px; }
 .tg-name { font-size: 14px; font-weight: 650; line-height: 1.25; color: var(--md-on-surface); overflow-wrap: anywhere; }
+/* (The main theme's «Default» tag: a small tonal pill after its name.) */
+.tg-tag { display: block; width: fit-content; margin-top: 4px; padding: 2px 8px; border-radius: var(--sh-full); background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-size: 11px; font-weight: 650; line-height: 1.4; letter-spacing: .02em; white-space: nowrap; }
 .tg-by, .tg-state { font-size: 12px; line-height: 1.35; color: var(--md-on-surface-variant); }
 .tg-state.err { color: var(--md-error); font-weight: 600; }
 .tg-check { position: absolute; top: 14px; inset-inline-start: 14px; width: 26px; height: 26px; border-radius: 13px; display: grid; place-items: center; background: var(--md-primary); color: var(--md-on-primary); box-shadow: 0 2px 8px rgb(0 0 0 / .3); }

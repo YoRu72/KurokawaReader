@@ -19,7 +19,7 @@ Downloads, torrents, video sites, anime, subtitles, archives and a player — on
 - **App installer (Android)** — APKs and split bundles (.apks, .xapk, .apkm) installed straight from the file, with the app's name, icon and version (new, update or older) shown first.
 - **Player** — REX Player's gestures and VLC's tools: speed, A/B loop and cuts with burnt-in subtitles, subtitles found online for the episode playing, styled and dragged into place, openings and endings skipped (AniSkip, chapters), picture filters, an ambient glow, picture-in-picture, another player on a tap.
 
-Arabic · English · 日本語 · 한국어 · 中文, right-to-left or left-to-right, Material 3 Expressive, dark by default, the interface size yours to set.
+Arabic · English · 日本語 · 한국어 · 中文, right-to-left or left-to-right, Material 3 Expressive (the «Expressive 3» theme by default, with a soft light side; frosted-glass themes to choose), follows your system (dark and light), the interface size yours to set.
 
 ```bash
 npm install && npm run build       # web → dist/

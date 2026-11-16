@@ -163,7 +163,7 @@ final class KtFileExec {
         KtFileJobs.Job j; KtFilePlan.Snap snap; final List<String> answers = new ArrayList<>(); final Set<String> renameFailed = new LinkedHashSet<>();
         List<JSONArray> steps; List<JSONArray> ref; boolean onRust, resuming; Set<Integer> disputed = new HashSet<>(); List<String> itemPaths = new ArrayList<>();
         final long[] done = { 0, 0 }, total = { 0, 0 }, told = { 0 }; final JSONArray failed = new JSONArray(); int skipped, replans; final JSONArray remaining = new JSONArray();
-        final Map<Integer, Boolean> ok = new HashMap<>(); final Set<Integer> dead = new HashSet<>(); final Map<Integer, Integer> parentOf = new HashMap<>(); final Set<Integer> toldDisputed = new HashSet<>(); final Set<Integer> delFailed = new HashSet<>();
+        final Map<Integer, Boolean> ok = new HashMap<>(); final Set<Integer> dead = new HashSet<>(); final Map<Integer, Integer> parentOf = new HashMap<>(); final Set<Integer> toldDisputed = new HashSet<>(); final Set<Integer> delFailed = new HashSet<>(); final Set<Integer> settled = new HashSet<>();
         Journal jr; String jid; List<File> paths = new ArrayList<>();
         Exec(String id, String op, File dest, KtFileJobs.Events ev) { this.id = id; this.op = op; this.dest = dest; this.ev = ev; mv = op.equals("move"); }
 
@@ -218,6 +218,7 @@ final class KtFileExec {
         void loop(int k) throws Exception {
             while (k < steps.size()) {
                 if (j.cancel.get()) return;
+                if (settled.contains(k)) { k++; continue; }   // (a resume: the journal shows it finished)
                 JSONArray s = steps.get(k); String kind = s.optString(0); int item = s.optInt(1);
                 if (disputed.contains(item) && !kind.equals("end")) {
                     if (toldDisputed.add(item)) { failed.put(new File(itemPath(item)).getName() + ": skipped — the two planners disagree"); rec(false, "K", k); }
@@ -461,13 +462,17 @@ final class KtFileExec {
             steps.clear(); sts.clear(); disputed.clear(); items.clear(); parseJournal(read(f), steps, sts, disputed, items);
             Exec x = new Exec(id, op, new File(info.optString("dest")), ev); x.j = job; x.jr = jr; x.jid = jid; x.onRust = true; x.resuming = true; x.steps = steps; x.disputed = disputed; x.itemPaths = items;
             x.snap = new KtFilePlan.Snap(); x.snap.op = op; x.snap.dest = info.optString("dest");
+            // (A step that does nothing writes no record — the endDir of a folder a file of which failed, a step under a
+            // folder that could not be made —, so a finished step can stand after the first unfinished one: it is SETTLED,
+            // counted as it ended and never run again; run again, a moved file would find itself «exists».)
             int next = -1;
             for (int i = 0; i < steps.size(); i++) {
                 JSONArray s = steps.get(i); String k = s.optString(0), st = sts.get(i);
                 if (k.equals("dir") || k.equals("endDir")) x.parentOf.put(s.optInt(2), s.optInt(3));
                 if (st.equals("pending") || st.equals("begun") || st.equals("aside") || st.equals("placed")) { if (next < 0) next = i; continue; }
-                if (next >= 0) continue;
+                if (next >= 0) x.settled.add(i);
                 if (k.equals("dir")) { if (st.equals("failed")) x.dead.add(s.optInt(2)); else x.ok.put(s.optInt(2), true); }
+                else if (k.equals("del") && st.equals("failed")) x.delFailed.add(s.optInt(1));
                 else if ((st.equals("failed") || st.equals("skipped")) && !k.equals("del") && !k.equals("end")) x.notOk(s.optInt(2));
             }
             jr = null;   // (the Exec closes it)

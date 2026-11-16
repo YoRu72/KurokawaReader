@@ -259,12 +259,90 @@ async fn system_lookup(host: String) -> Result<Vec<IpAddr>, String> {
     }
 }
 
+/* ---------- an app's own resolver chain (Tools 0.21 P9) ----------
+ * An app that keeps its own chain of resolvers (Tools: kt-core's dohchain — the order, health, cache and the
+ * system-DNS rule) installs it as a hook: every name this client connects to is then the hook's to find. The
+ * hook asks each resolver with `doh_ask`, which reaches the resolver by the addresses it is given (its bootstrap),
+ * never by the network's DNS. Without a hook, `set_doh`'s one resolver as before (the Reader). */
+
+pub type DohHook = Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<IpAddr>, String>> + Send>> + Send + Sync>;
+static DOH_HOOK: RwLock<Option<DohHook>> = RwLock::new(None);
+/// The clients that ask one resolver each, pinned to its bootstrap addresses (by its address).
+static PINNED: Mutex<Vec<(String, reqwest::Client)>> = Mutex::new(Vec::new());
+static ASK_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The hook in force (None: `set_doh`'s resolver, or the system's DNS).
+pub fn set_doh_hook(hook: Option<DohHook>) {
+    if let Ok(mut h) = DOH_HOOK.write() {
+        *h = hook;
+    }
+    clear_doh_cache();
+}
+
+fn doh_hook() -> Option<DohHook> {
+    DOH_HOOK.read().ok().and_then(|h| h.clone())
+}
+
+fn pinned_client(url: &str, ips: &[IpAddr]) -> Result<reqwest::Client, String> {
+    let mut list = PINNED.lock().map_err(|e| e.to_string())?;
+    if let Some((_, c)) = list.iter().find(|(u, _)| u == url) {
+        return Ok(c.clone());
+    }
+    let parsed = reqwest::Url::parse(url).map_err(|e| e.to_string())?;
+    let host = parsed.host_str().unwrap_or("").to_string();
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let mut b = reqwest::Client::builder()
+        .user_agent(user_agent().as_str())
+        .connect_timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none());
+    if !ips.is_empty() && host.parse::<IpAddr>().is_err() {
+        let addrs: Vec<SocketAddr> = ips.iter().map(|ip| SocketAddr::new(*ip, port)).collect();
+        b = b.resolve_to_addrs(&host, &addrs);
+    }
+    let c = b.build().map_err(|e| e.to_string())?;
+    if list.len() > 32 {
+        list.remove(0);
+    }
+    list.push((url.to_string(), c.clone()));
+    Ok(c)
+}
+
+/// One question to one resolver of a chain: `host`'s records of `qtype`, POSTed (RFC 8484) with an id of its own and
+/// read by `doh::decode_strict` — to the resolver's `ips` when given (its name kept for TLS and its certificate), so
+/// the network's DNS is never asked for it. → (addresses, TTL) or why not.
+pub async fn doh_ask(url: &str, ips: &[IpAddr], host: &str, qtype: u16, timeout_ms: u64) -> Result<(Vec<IpAddr>, u32), doh::Refused> {
+    let bad = |e: String| doh::Refused::Bad(e);
+    let seed = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let id = (seed ^ ASK_SEQ.fetch_add(0x9E37, std::sync::atomic::Ordering::Relaxed).rotate_left(7)) as u16;
+    let q = doh::encode_query_id(host, qtype, id).map_err(bad)?;
+    let c = pinned_client(url, ips).map_err(bad)?;
+    let resp = c
+        .post(url)
+        .header("content-type", "application/dns-message")
+        .header("accept", "application/dns-message")
+        .body(q)
+        .timeout(Duration::from_millis(timeout_ms))
+        .send()
+        .await
+        .map_err(|e| bad(if e.is_timeout() { "timeout".to_string() } else { format!("not reached: {}", e) }))?;
+    let status = resp.status().as_u16();
+    if status != 200 {
+        return Err(bad(format!("HTTP {}", status)));
+    }
+    let bytes = resp.bytes().await.map_err(|e| bad(e.to_string()))?;
+    let a = doh::decode_strict(&bytes, host, qtype, id)?;
+    Ok((a.ips, a.ttl))
+}
+
 /// `host`'s addresses from the resolver in force: IPv4 first, then IPv6 (both asked at once), kept for their time to
 /// live. An address or localhost is answered here; with no resolver chosen (it was turned off while a request was
-/// under way), the system's.
+/// under way), the system's. With an app's hook installed, the hook's answer.
 pub async fn doh_lookup(host: &str) -> Result<Vec<IpAddr>, String> {
     if let Some(ips) = doh::local_answer(host) {
         return Ok(ips);
+    }
+    if let Some(hook) = doh_hook() {
+        return hook(host.to_string()).await;
     }
     let server = match doh_server() {
         Some(s) => s,
@@ -356,7 +434,7 @@ fn builder() -> reqwest::ClientBuilder {
 /// The client every request of the app goes through: with the DoH resolver while one is chosen, else the system's
 /// DNS — the same cookies either way.
 pub fn client() -> Result<&'static reqwest::Client, String> {
-    if doh_server().is_some() {
+    if doh_server().is_some() || doh_hook().is_some() {
         if let Some(c) = VIA_DOH.get() {
             return Ok(c);
         }

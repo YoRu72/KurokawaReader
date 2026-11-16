@@ -4,6 +4,7 @@ import * as esbuild from 'esbuild';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
@@ -44,6 +45,54 @@ self.addEventListener('fetch', (e) => {
 });
 `);
 }
+// The strings cut in two (src/i18n/index.ts): a first build finds the modules of the start — app.js and what it imports
+// statically —; the keys named anywhere in them (any word of their source that is a key: a label kept in a table is
+// found too) stay in each language's table, fetched at the start; the rest go to src/i18n/rest/<lang>.ts, filled by
+// English where the language has none. Every other module that names a key the start does not have imports
+// src/i18n/gate.ts first, which waits for that rest: no screen shows a key, and the start fetches a tenth of the strings.
+const LANGS = ['en', 'ar', 'ja', 'zh', 'ko'];
+function staticClosure(meta) {
+  const seen = new Set(); const todo = [Object.keys(meta.outputs).find((o) => /assets\/app\.js$/.test(o))];
+  while (todo.length) { const o = todo.pop(); if (!o || seen.has(o)) continue; seen.add(o); for (const i of meta.outputs[o].imports) if (i.kind === 'import-statement') todo.push(i.path); }
+  const mods = new Set(); for (const o of seen) for (const k of Object.keys(meta.outputs[o].inputs)) mods.add(k);
+  return mods;
+}
+const I18N = /src[\\/]i18n[\\/](?:rest[\\/])?(en|ar|ja|zh|ko)\.ts$/;
+async function splitStrings(opts) {
+  const pass = await esbuild.build({ ...opts, write: false, metafile: true, logLevel: 'silent' });
+  const start = staticClosure(pass.metafile);
+  const table = async (l) => { const { code } = await esbuild.transform(await fs.readFile(path.join(root, `src/i18n/${l}.ts`), 'utf8'), { loader: 'ts', format: 'cjs' }); const m = { exports: {} }; vm.runInNewContext(code, { module: m, exports: m.exports, require: () => ({}) }); return m.exports[l]; };
+  const tables = Object.fromEntries(await Promise.all(LANGS.map(async (l) => [l, await table(l)])));
+  const keys = Object.keys(tables.en); const words = new Set(); let whole = false;
+  const DYNAMIC = /keyof\s+Strings|\bt\(\s*`/;
+  // (A module's words, and for a key built at run time from a template — `tvGenre_${g}` — every key so begun.)
+  const wordsOf = (src, into) => { for (const w of src.matchAll(/[A-Za-z_$][\w$]*/g)) into.add(w[0]); for (const m of src.matchAll(/`([A-Za-z][A-Za-z_]{2,})\$\{/g)) for (const k of keys) if (k.startsWith(m[1])) into.add(k); return into; };
+  for (const f of start) {
+    if (!/\.ts$/.test(f) || /src[\\/]i18n[\\/]/.test(f)) continue;
+    const src = await fs.readFile(path.join(root, f), 'utf8');
+    if (DYNAMIC.test(src)) { console.warn(`splitStrings: ${f} builds a key at run time — every string kept at the start`); whole = true; }
+    wordsOf(src, words);
+  }
+  const core = new Set(whole ? keys : keys.filter((k) => words.has(k)));
+  const pick = (o, ks) => Object.fromEntries(ks.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+  const restKeys = keys.filter((k) => !core.has(k));
+  const gate = path.join(root, 'src/i18n/gate.ts');
+  return { core, start, plugin: { name: 'split-strings', setup(b) {
+    b.onLoad({ filter: /\.ts$/ }, async (a) => {
+      const m = I18N.exec(a.path); const rel = path.relative(root, a.path).split(path.sep).join('/');
+      if (m) {
+        const l = m[1]; const isRest = /[\\/]rest[\\/]/.test(a.path);
+        if (!isRest) return { contents: `export const ${l} = ${JSON.stringify(pick(tables[l], [...core]))};`, loader: 'js' };
+        return { contents: `export const rest = ${JSON.stringify(Object.fromEntries(restKeys.map((k) => [k, tables[l][k] ?? tables.en[k]]).filter(([, v]) => v !== undefined)))};`, loader: 'js' };
+      }
+      if (start.has(rel) || !rel.startsWith('src/') || rel.startsWith('src/i18n/')) return undefined;
+      const src = await fs.readFile(a.path, 'utf8');
+      let need = DYNAMIC.test(src); if (!need) for (const w of wordsOf(src, new Set())) if (!core.has(w) && Object.hasOwn(tables.en, w)) { need = true; break; }
+      // (On the first line, so the lines keep their numbers.)
+      return need ? { contents: `import ${JSON.stringify(gate)}; ${src}`, loader: 'ts' } : undefined;
+    });
+  } } };
+}
 const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const options = {
   entryPoints: { app: path.join(root, 'src/main.ts') },
@@ -63,7 +112,15 @@ if (watch || serve) {
   if (serve) { const { hosts, port } = await ctx.serve({ servedir: dist, port: 5174 }); console.log(`Kurokawa Tools → http://${hosts?.[0] ?? '127.0.0.1'}:${port}`); }
 } else {
   // (KR_META=1: the bundle's map written beside it — what each chunk is made of — for size work.)
-  const built = await esbuild.build({ ...options, metafile: !!process.env.KR_META });
+  const split = process.env.KR_WHOLE_STRINGS ? null : await splitStrings(options);
+  const built = await esbuild.build({ ...options, metafile: true, plugins: split ? [split.plugin] : [] });
+  if (split) {
+    // (The cut checked: the start the same as the first build found, no rest of the strings in it.)
+    const now = staticClosure(built.metafile); const bad = [...now].filter((k) => !split.start.has(k) || /src\/i18n\/(rest\/|gate)/.test(k));
+    if (bad.length) throw new Error(`splitStrings: the start changed or took the rest of the strings: ${bad.join(', ')}`);
+    console.log(`Strings at the start: ${split.core.size} keys`);
+  }
+  if (!process.env.KR_META) built.metafile = undefined;
   if (built.metafile) await fs.writeFile(path.join(root, 'meta.json'), JSON.stringify(built.metafile));
   await preload(); await sw();
   console.log('Built → dist/');

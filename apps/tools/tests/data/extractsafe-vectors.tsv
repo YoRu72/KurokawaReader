@@ -1,0 +1,15 @@
+# Space replay and journal vectors: run by tests/extractsafe.cjs (archsafe.cjs) and archsafe.rs (rustc --test).
+# replay<TAB>units (out:freed,…)<TAB>sameVolume<TAB>blockSize<TAB>overhead<TAB>normal<TAB>inPlace<TAB>peakAt
+# journal<TAB>text (\n for the newline)<TAB>ok|corrupt|future|v1
+replay	9000:8900,1000:900	1	1	0	10000	9000	0
+replay	9000:8900,1000:900	0	1	0	10000	10000	1
+replay	100:50,5000:4000,10:10	1	4096	65536	81920	77870	2
+replay	-	1	4096	100	100	100	-1
+replay	0:30,1:30	1	4096	0	4096	4066	1
+replay	4096:4100,4097:4100,8192:8000	1	4096	0	20480	12280	2
+journal	{"id":"a1","mode":"inplace","next":3,"kt":"extract","version":2}\n4afa3d71\n	ok
+journal	{"id":"a1","mode":"inplace","next":4,"kt":"extract","version":2}\n4afa3d71\n	corrupt
+journal	{"id":"a1","mode":"i	corrupt
+journal	{"kt":"extract","version":9,"id":"x"}\nd9c6c56d\n	future
+journal	{"version":1,"committed":100,"output":"/x"}	v1
+journal	not json	corrupt

@@ -17,7 +17,9 @@ export type Route =
   | { name: 'screen' }
   | { name: 'files'; p?: string; save?: string; c?: string; /** A stamp that only forces the page to be built anew (panes toggled). */ t?: string }
   | { name: 'install'; p: string }
-  | { name: 'pick' };
+  | { name: 'pick' }
+  /** Files, a file or a folder handed in by another app through one of Kurokawa's «Open with» entries (Android). */
+  | { name: 'openWith'; kind: string; id: string; t?: string };
 
 const listeners = new Set<(r: Route) => void>();
 export function parseRoute(hash = location.hash): Route {
@@ -25,6 +27,8 @@ export function parseRoute(hash = location.hash): Route {
   const [p, qs] = path.split('?'); const sp = new URLSearchParams(qs ?? '');
   const task = /^\/task\/([^/]+)/.exec(p); if (task) return { name: 'task', id: decodeURIComponent(task[1]) };
   // (#/open?u= is how Android hands over a magnet, a .torrent or a shared link — also while the app is open.)
+  // (#/open?kind=…: another app's «Open with» / «Share» — KtOpenActivity —, views/openWith.ts.)
+  if (p === '/open' && sp.get('kind')) return { name: 'openWith', kind: sp.get('kind')!, id: sp.get('id') ?? '', t: sp.get('t') ?? undefined };
   if (p.startsWith('/add') || p === '/open') return { name: 'add', u: sp.get('u') ?? undefined };
   if (p.startsWith('/search')) return { name: 'search', q: sp.get('q') ?? undefined, addon: sp.get('addon') ?? undefined };
   if (p.startsWith('/addons')) return { name: 'addons' };
@@ -63,7 +67,7 @@ export function sectionOfRoute(r: Route): string {
     case 'anime': case 'animeEntry': case 'animeStudio': return 'anime';
     case 'tv': case 'tvTitle': return 'tv';
     case 'videos': case 'courses': return 'videos';
-    case 'files': case 'pick': return 'files';
+    case 'files': case 'pick': case 'openWith': return 'files';
     case 'subs': return 'subs';
     case 'search': return 'search';
     default: { const never: never = r; return never; }
@@ -94,3 +98,5 @@ window.addEventListener('hashchange', () => {
   move = move === 'replace' ? 'push' : move;
 });
 export function onRoute(fn: (r: Route) => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
+/** The router's own history and listeners (player/returnTo.ts puts them back after the app started again). */
+export const routerInternals = { stack, listeners, setMove: (m: typeof move) => { move = m; } };

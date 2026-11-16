@@ -76,7 +76,7 @@ export function subsView(q?: string): HTMLElement & { dispose?: () => void } {
       const base = `${current?.title ?? r.title}${query.season ? ` S${String(query.season).padStart(2, '0')}` : ''}${r.episode ?? query.episode ? `E${String(r.episode ?? query.episode).padStart(2, '0')}` : ''} [${(r.language ?? 'xx').toUpperCase()}] ${r.site}`.replace(/[\\/:*?"<>|]+/g, ' ');
       const ext = r.archive ? `.${r.archive}` : /\.(srt|ass|ssa|vtt|sub)$/i.exec(name ?? url)?.[0] ?? '.srt';
       const tk = await getEngine().add({ source: { url }, name: name && !r.archive ? name : `${base}${ext}`, dir: subsDir(), meta: { kind: 'subtitle', title: current?.title, episode: r.episode ?? query.episode, season: query.season, anilistId: query.anilistId, imdbId: query.imdbId, addon: r.addon, archive: r.archive, lang: r.language } });
-      toast(t('taskAdded', { name: tk.name || base }));
+      void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, base));
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
   // A pasted link is looked up at once; a name once typing pauses.

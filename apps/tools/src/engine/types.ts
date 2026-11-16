@@ -66,7 +66,7 @@ export interface Task {
     /** A Hugging Face file: its repository, and the SHA-256 it is checked against when done. */
     hf?: string; sha256?: string;
     /** Waits for Wi-Fi (Android); not retried when it fails; a hidden file (a dot name); waits for the schedule's window. */
-    wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean; /** Paused by the «later» scheduler (or added paused to wait for its window): what it resumes when the window opens. */ schedPaused?: boolean; /** Started by hand (or by its own clock) while the window was shut: not paused by the scheduler until the window has opened again. */ schedSkip?: boolean; cookieJar?: string;
+    /** The extractor failed on a link that is a file: tried once as a plain download (downloads/fallback.ts), and this is that try. */ directTried?: boolean; directRetry?: boolean; wifiOnly?: boolean; noRetry?: boolean; hidden?: boolean; later?: boolean; /** Paused by the «later» scheduler (or added paused to wait for its window): what it resumes when the window opens. */ schedPaused?: boolean; /** Started by hand (or by its own clock) while the window was shut: not paused by the scheduler until the window has opened again. */ schedSkip?: boolean; cookieJar?: string;
     /** A stream fetched piece by piece (HLS): the pieces here of all, and the phase (variant, pieces, join, remux). */
     hls?: boolean; frag?: number; frags?: number; phase?: string;
     /** A video download's live facts from yt-dlp: resolution, codecs, container, approximate size, length in seconds. */
@@ -117,7 +117,7 @@ export interface AddOptions {
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }
 
-export interface TorrentDetail { peers?: { ip: string; client: string; down: number; up: number; progress: number; total: number; utp: boolean }[]; trackers?: { url: string; tier: number; state: 'working' | 'updating' | 'failing' | 'waiting'; message: string; fails: number }[]; seeds?: number; peersConnected?: number; seedsInSwarm?: number; peersInSwarm?: number; ratio?: number; limitDown?: number; limitUp?: number }
+export interface TorrentDetail { peers?: { ip: string; client: string; down: number; up: number; progress: number; total: number; utp: boolean }[]; trackers?: { url: string; tier: number; state: 'working' | 'updating' | 'failing' | 'waiting'; message: string; fails: number; /** (0.21 P9) its own address when the engine got it by the DoH chain's */ name?: string; /** what found its name: a DoH answer code, or «engine» */ dns?: string }[]; seeds?: number; peersConnected?: number; seedsInSwarm?: number; peersInSwarm?: number; ratio?: number; limitDown?: number; limitUp?: number }
 /** One torrent's metadata, fetched before the download is added (to pick files, to see the size). */
 export interface TorrentInfo { name: string; infoHash: string; total: number; files: { index: number; path: string; size: number }[] }
 

@@ -16,7 +16,8 @@ const overlayOf = (m: TvMeta) => [kindName(m), m.imdbRating ? `★ ${localDigits
 const yearOf = (m: TvMeta) => (m.releaseInfo ?? m.year ?? '').replace(/\d+/g, (d) => localDigits(d));
 const card = (m: TvMeta, badge?: string, rank = false) => poster({ image: m.poster, title: m.name, sub: yearOf(m), badge, badgeKind: rank ? 'rank' : 'plain', overlay: overlayOf(m), onClick: open(m) });
 
-export function tvDiscover(body: HTMLElement, o: { live: () => boolean; browse: (p: { type: TvKind; cat: cm.Catalog; genre: string }) => void }): void {
+/** The Discover page drawn into `body`; what it answers lets go of what it watches (the genre tiles' observer). */
+export function tvDiscover(body: HTMLElement, o: { live: () => boolean; browse: (p: { type: TvKind; cat: cm.Catalog; genre: string }) => void }): () => void {
   const heroBox = h('div', { class: 'dc-hero-box' }, hero([]));
   const cont = rail(t('continueWatching'), 'history', { kind: 'cont', count: 3 }); cont.el.hidden = true;
   const year = String(new Date().getFullYear());
@@ -66,6 +67,7 @@ export function tvDiscover(body: HTMLElement, o: { live: () => boolean; browse: 
   const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => { for (const e of es) { if (!e.isIntersecting) continue; const el = e.target as HTMLElement; io!.unobserve(el); const g = el.dataset.genre!; if (art.v[g]) continue;
     void cm.catalog('movie', 'top', g).then((r) => { const pic = r.metas.find((m) => m.background)?.background; if (!pic || !o.live()) return; art.v[g] = pic; try { localStorage.setItem(ART_KEY, JSON.stringify(art)); } catch { /* full */ } el.prepend(h('img', { class: 'dc-tile-img', src: pic, alt: '', loading: 'lazy' })); }).catch(() => undefined); } }, { rootMargin: '200px' }) : null;
   if (io) tiles.forEach((el) => io.observe(el));
+  return () => io?.disconnect();
 }
 const browseType = (): TvKind => { try { return (JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}') as { type?: TvKind }).type ?? 'series'; } catch { return 'series'; } };
 /** A genre's name in the app's language (Cinemeta's own names otherwise). */

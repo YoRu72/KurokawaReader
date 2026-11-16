@@ -9,8 +9,9 @@ for a in org/apache/commons/commons-compress/1.27.1/commons-compress-1.27.1.jar 
 done
 echo 'package android.util; public final class Log { public static int w(String t, String m) { return 0; } public static int w(String t, String m, Throwable e) { return 0; } public static int i(String t, String m) { return 0; } public static int e(String t, String m, Throwable e) { return 0; } public static int d(String t, String m) { return 0; } }' > "$D/src/android/util/Log.java"
 sed 's/^package app.kurokawa.tools;//; s/^public final class KtArchive/public final class KtArchive/' "$HERE/../../native/android/KtArchive.java" > "$D/src/KtArchive.java"
+sed 's/^package app.kurokawa.tools;//' "$HERE/../../native/android/KtNameSafe.java" > "$D/src/KtNameSafe.java"
 sed 's/^package app.kurokawa.tools;//; s/^final class KtApkPlan/public final class KtApkPlan/' "$HERE/../../native/android/KtApkPlan.java" > "$D/src/KtApkPlan.java"
 cp "$HERE/ApkT.java" "$D/src/"
 CP=$(ls "$LIB"/*.jar | tr '\n' ':'); cd "$D"
-javac -nowarn -cp "$CP" -d out src/android/util/Log.java src/KtArchive.java src/KtApkPlan.java src/ApkT.java
+javac -encoding UTF-8 -nowarn -cp "$CP" -d out src/android/util/Log.java src/KtNameSafe.java src/KtArchive.java src/KtApkPlan.java src/ApkT.java
 java -cp "out:$CP" ApkT

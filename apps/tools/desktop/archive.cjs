@@ -3,17 +3,46 @@
 // the rest through the 7-Zip binary that ships with the app (7zip-bin). Zip creation with yazl-free streaming
 // (stored for what gains nothing by squeezing, deflate otherwise).
 'use strict';
-const fs = require('node:fs'); const fsp = fs.promises; const path = require('node:path'); const zlib = require('node:zlib'); const { spawn } = require('node:child_process'); const { pipeline } = require('node:stream/promises'); const { Transform, Readable } = require('node:stream');
+const crypto = require('node:crypto'); const fs = require('node:fs'); const fsp = fs.promises; const path = require('node:path'); const zlib = require('node:zlib'); const { spawn } = require('node:child_process'); const { pipeline } = require('node:stream/promises'); const { Transform, Readable } = require('node:stream');
 
 const SIG = { zip: [0x50, 0x4b], sevenz: [0x37, 0x7a, 0xbc, 0xaf], rar: [0x52, 0x61, 0x72, 0x21], gz: [0x1f, 0x8b], xz: [0xfd, 0x37, 0x7a, 0x58, 0x5a], bz2: [0x42, 0x5a, 0x68] };
+/** Whether 512 bytes are a tar header: the «ustar» magic, or the checksum of an old (v7) header — the sum of the bytes, the checksum field as spaces. */
+function isTarHead(h) {
+  if (!h || h.length < 512) return false; if (h.toString('latin1', 257, 262) === 'ustar') return true;
+  const f = h.toString('latin1', 148, 156).replace(/[\0 ]+$/, '').trim(); if (!/^[0-7]+$/.test(f)) return false;
+  let sum = 0; for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : h[i]; return sum === parseInt(f, 8) && h.some((v) => v !== 0);
+}
+/** The first 512 bytes a compressed file holds, or null when they cannot be had: gzip by Node's own zlib; xz and bzip2 by the shipped 7-Zip writing to a pipe
+ *  (stopped after 512 bytes, and after 5 s whatever happens). No 7-Zip, a damaged file, a password: null — and the name's word stands. */
+async function peekInside(file, kind, fd) {
+  try {
+    if (kind === 'gz') { const b = Buffer.alloc(1 << 16); const { bytesRead } = await fd.read(b, 0, b.length, 0); return zlib.gunzipSync(b.subarray(0, bytesRead), { finishFlush: zlib.constants.Z_SYNC_FLUSH }).subarray(0, 512); }
+    return await new Promise((res) => {
+      let p; try { p = spawn(sevenZip(), ['e', '-so', '-y', '-p', '--', file], { stdio: ['ignore', 'pipe', 'ignore'] }); } catch { res(null); return; }
+      const got = []; let n = 0; let done = false; const end = (v) => { if (done) return; done = true; clearTimeout(t); try { p.kill(); } catch { /* gone */ } res(v); };
+      const t = setTimeout(() => end(null), 5000);
+      p.stdout.on('data', (d) => { got.push(d); n += d.length; if (n >= 512) end(Buffer.concat(got).subarray(0, 512)); }); p.on('error', () => end(null)); p.on('close', () => end(n ? Buffer.concat(got) : null));
+    });
+  } catch { return null; }
+}
+/** What a file is, by what is in it: zip, 7z, rar, gzip, xz, bzip2 by their first bytes; a tar by its header (the «ustar» magic or a header's checksum),
+ *  not by a name; «tar.gz», «tar.xz», «tar.bz2» when the name says so AND a tar header is inside (a name that claims it is checked as far as the
+ *  decompressor can look: gzip always, xz and bzip2 through the shipped 7-Zip; with no way to look, the name's word stands). */
 async function formatOf(file) {
-  const fd = await fsp.open(file, 'r'); const b = Buffer.alloc(8); try { await fd.read(b, 0, 8, 0); } finally { await fd.close(); }
-  const n = path.basename(file).toLowerCase(); const is = (s) => s.every((v, i) => b[i] === v);
-  // (Split volumes — «x.7z.001», «x.zip.001», «x.zip» beside «x.z01» — go to 7-Zip, which joins them.)
-  if (/\.(7z|zip)\.\d{3}$/.test(n) || (n.endsWith('.zip') && fs.existsSync(file.replace(/\.zip$/i, '.z01')))) return '7z';
-  if (is(SIG.zip)) return 'zip'; if (is(SIG.sevenz)) return '7z'; if (is(SIG.rar)) return 'rar';
-  if (is(SIG.gz)) return /\.(tar\.gz|tgz)$/.test(n) ? 'tar.gz' : 'gz'; if (is(SIG.xz)) return /\.(tar\.xz|txz)$/.test(n) ? 'tar.xz' : 'xz'; if (is(SIG.bz2)) return /\.(tar\.bz2|tbz2)$/.test(n) ? 'tar.bz2' : 'bz2';
-  if (n.endsWith('.tar')) return 'tar'; throw new Error('notArchive');
+  const fd = await fsp.open(file, 'r'); const b = Buffer.alloc(512); let nr = 0; try { nr = (await fd.read(b, 0, 512, 0)).bytesRead; } finally { /* kept for a peek */ }
+  try {
+    const n = path.basename(file).toLowerCase(); const is = (s) => s.every((v, i) => b[i] === v);
+    // (Split volumes — «x.7z.001», «x.zip.001», «x.zip» beside «x.z01» — go to 7-Zip, which joins them.)
+    if (/\.(7z|zip)\.\d{3}$/.test(n) || (n.endsWith('.zip') && fs.existsSync(file.replace(/\.zip$/i, '.z01')))) return '7z';
+    if (is(SIG.zip)) return 'zip'; if (is(SIG.sevenz)) return '7z'; if (is(SIG.rar)) return 'rar';
+    for (const [sig, kind, re] of [[SIG.gz, 'gz', /\.(tar\.gz|tgz)$/], [SIG.xz, 'xz', /\.(tar\.xz|txz)$/], [SIG.bz2, 'bz2', /\.(tar\.bz2|tbz2)$/]]) {
+      if (!is(sig)) continue; if (!re.test(n)) return kind;
+      const head = await peekInside(file, kind, fd); return head && !isTarHead(head) && !(head.length >= 512 && head.every((v) => v === 0)) ? kind : 'tar.' + kind;
+    }
+    if (nr >= 512 && isTarHead(b)) return 'tar';
+    if (n.endsWith('.tar') && nr >= 512 && b.every((v) => v === 0)) return 'tar';   // (an empty tar: two blocks of zeros)
+    throw new Error('notArchive');
+  } finally { await fd.close(); }
 }
 
 /* ---------- ZIP: the central directory ---------- */
@@ -41,7 +70,15 @@ async function readZip(fd, length) {
   return { items, cdStart: cdOff, length };
 }
 async function dataStart(fd, it) { const h = Buffer.alloc(30); await fd.read(h, 0, 30, it.offset); if (h.readUInt32LE(0) !== 0x04034b50) throw new Error('badLocalHeader ' + it.name); return it.offset + 30 + h.readUInt16LE(26) + h.readUInt16LE(28); }
-const unsafe = (name) => name.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(name) || /^[a-zA-Z]:/.test(name);
+// (Names: the one table, archsafe.cjs over namesafe.json, for this computer — refused here, rewritten where the target
+// needs it and shown first in the sheet; ZIP and tar go through inplace.cjs, which checks everything before any change.)
+const Safe = require('./archsafe.cjs'); const Engine = require('./inplace.cjs');
+const PLATFORM = Engine.hostPlatform();
+const unsafe = (name) => Safe.pathRule(name, PLATFORM).action === 'refuse';
+let REGISTRY = null; /** Where the PC keeps its extraction jobs' pointers (main.cjs: <userData>/extract-jobs). */
+const setRegistry = (d) => { REGISTRY = d; };
+/** The decoders 7-Zip adds for a normal extraction (ZIP methods: deflate64, bzip2, LZMA, XZ, PPMd, AES), when it is there. */
+const external = () => { try { return fs.existsSync(sevenZip()) ? [9, 12, 14, 95, 98, 99] : []; } catch { return []; } };
 const journalOf = (file) => file + '.kurokawa-unzip'; const tailOf = (file) => file + '.kurokawa-tail';
 const hasJournal = (file) => fs.existsSync(journalOf(file));
 
@@ -57,22 +94,35 @@ async function list(file, password) {
   } else if (format === 'tar') { const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
   else if (format === 'gz' || format === 'xz' || format === 'bz2') { entries.push({ path: path.basename(file).replace(/\.(gz|xz|bz2)$/i, ''), size: -1, dir: false }); }
   else {
-    const out = await run7z(['l', '-slt', '-ba', ...(password ? [`-p${password}`] : ['-p']), file]);
+    const out = await run7z(['l', '-slt', '-ba', ...(password ? [`-p${password}`] : ['-p']), file], { pw: password, all: true });
     let cur = null; for (const line of out.split(/\r?\n/)) { const m = /^(\w[\w ]*) = (.*)$/.exec(line); if (!m) { if (cur) { entries.push(cur); cur = null; } continue; } if (m[1] === 'Path') cur = { path: m[2].replace(/\\/g, '/'), size: 0, dir: false }; else if (!cur) continue; else if (m[1] === 'Size') { cur.size = Number(m[2]) || 0; total += cur.size; } else if (m[1] === 'Packed Size' && m[2]) cur.compressed = Number(m[2]); else if (m[1] === 'Modified' && m[2]) { const t = Date.parse(m[2].replace(' ', 'T').replace(/\.\d+$/, '')); if (t > 0) cur.mtime = t; } else if (m[1] === 'Folder' || m[1] === 'Attributes') { if (m[2] === '+' || /^D/.test(m[2])) cur.dir = true; } else if (m[1] === 'Encrypted' && m[2] === '+') encrypted = true; }
     if (cur) entries.push(cur);
   }
-  let largest = 0; const seen = new Set(); let duplicate, bad;
-  for (const e of entries) { if (!e.dir) largest = Math.max(largest, e.size); if (!bad && unsafe(e.path)) bad = e.path; if (!e.dir) { const k = e.path.toLowerCase(); if (seen.has(k) && !duplicate) duplicate = e.path; seen.add(k); } }
+  let largest = 0; for (const e of entries) if (!e.dir) largest = Math.max(largest, e.size);
+  const chk = Safe.checkSet(entries.map((e) => ({ path: e.path, dir: e.dir })), PLATFORM); const bad = chk.problems.find((p) => Safe.NAME_REFUSALS.has(p.kind))?.path; const duplicate = chk.problems.find((p) => ['duplicate', 'caseClash', 'rewriteClash', 'fileDir'].includes(p.kind))?.path;
   const sfv = sfvOf(file);
-  return { format, entries, total, encrypted, inPlaceOk: (format === 'zip' && !encrypted) || format === 'tar', resumable: hasJournal(file), largest, free: await freeSpace(path.dirname(file)), ...(bad ? { unsafe: bad } : {}), ...(duplicate ? { duplicate } : {}), ...(sfv ? { sfv: path.basename(sfv) } : {}) };
+  return { format, platform: PLATFORM, entries, total, encrypted, inPlaceOk: (format === 'zip' && !encrypted) || format === 'tar', resumable: hasJournal(file), largest, free: await freeSpace(path.dirname(file)), ...(bad ? { unsafe: bad } : {}), ...(duplicate ? { duplicate } : {}), ...(sfv ? { sfv: path.basename(sfv) } : {}) };
 }
 
 /* ---------- 7-Zip ---------- */
 function sevenZip() {
+  // (An explicit program, for a machine with its own 7-Zip and for tests: KT_SEVENZIP, used as given — even when it does not exist, then 7-Zip is «missing».)
+  if (process.env.KT_SEVENZIP) return process.env.KT_SEVENZIP;
   try { const bin = require('7zip-bin'); return bin.path7za.replace('app.asar', 'app.asar.unpacked'); } catch { return process.platform === 'win32' ? '7z.exe' : '7z'; }
 }
-function run7z(args, onLine) {
-  return new Promise((res, rej) => { const p = spawn(sevenZip(), args, { stdio: ['ignore', 'pipe', 'pipe'] }); let out = '', err = ''; p.stdout.on('data', (d) => { out += d; if (onLine) for (const l of String(d).split(/[\r\n]+/)) if (l) onLine(l); }); p.stderr.on('data', (d) => { err += d; }); p.on('error', rej); p.on('close', (code) => (code === 0 ? res(out) : rej(new Error((err || out).trim().split('\n').pop() || `7z exit ${code}`)))); return p; });
+/** Runs the shipped 7-Zip. `o.pw`: the password in the arguments (taken out of every message that leaves). `o.onLine(line)`: each output line as it is
+ *  whole (CR, LF and backspace end one; a line split between two reads is carried over). `o.all`: keep the whole output and return it (a listing is
+ *  the result); otherwise only a 4 KB tail of each stream is kept, for the error. Rejects with a cleaned message, never the spawn error (it carries the arguments). */
+function run7z(args, o = {}) {
+  const pw = o.pw || ''; const fn = typeof o === 'function' ? o : o.onLine;
+  return new Promise((res, rej) => {
+    let p; try { p = spawn(sevenZip(), args, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch { rej(new Error('sevenZipMissing')); return; }
+    const lines = makeLines(); let all = '', tail = '', err = '';
+    p.stdout.on('data', (d) => { if (o.all) all += d; tail = (tail + d).slice(-4096); if (fn) for (const l of lines.feed(d)) fn(l); });
+    p.stderr.on('data', (d) => { err = (err + d).slice(-4096); });
+    p.on('error', () => rej(new Error('sevenZipMissing')));
+    p.on('close', (code) => { const rest = lines.finish(); if (rest && fn) fn(rest); code === 0 ? res(o.all ? all : '') : rej(new Error(scrub((err || tail).trim().split('\n').pop() || `7z exit ${code}`, pw))); });
+  });
 }
 
 /* ---------- extracting ---------- */
@@ -168,21 +218,32 @@ async function freeSpace(dir) {
 }
 
 async function extract7z(file, dest, o, pr) {
-  const args = ['x', '-y', '-bsp1', '-bb1', `-o${dest}`, o.replace === 'skip' ? '-aos' : o.replace === 'both' ? '-aou' : '-aoa', o.password ? `-p${o.password}` : '-p', file, ...(o.only || []).map((w) => w.replace(/\/$/, ''))];
-  let n = 0; const p = { proc: null };
-  const out = await new Promise((res, rej) => {
-    const proc = spawn(sevenZip(), args, { stdio: ['ignore', 'pipe', 'pipe'] }); p.proc = proc; let buf = '', err = '';
+  const pw = o.password ? String(o.password) : '';
+  const args = ['x', '-y', '-bsp1', '-bb1', `-o${dest}`, o.replace === 'skip' ? '-aos' : o.replace === 'both' ? '-aou' : '-aoa', pw ? `-p${pw}` : '-p', file, ...(o.only || []).map((w) => w.replace(/\/$/, ''))];
+  let n = 0;
+  await new Promise((res, rej) => {
+    let proc; try { proc = spawn(sevenZip(), args, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch { rej(new Error('sevenZipMissing')); return; }
+    const lines = makeLines(); let tail = '', err = '';
+    const take = (l) => { const m = /^\s*(\d+)%(?:\s+\d+)?\s*(?:- (.*))?$/.exec(l); if (m) pr.on(Number(m[1]), 100, m[2] || ''); if (/^- /.test(l)) n++; };
     const timer = setInterval(() => { if (pr.stopped()) proc.kill(); }, 300);
-    proc.stdout.on('data', (d) => { buf += d; for (const l of String(d).split(/[\r\n]+/)) { const m = /^\s*(\d+)%(?:\s+\d+)?\s*(?:- (.*))?$/.exec(l); if (m) pr.on(Number(m[1]), 100, m[2] || ''); if (/^- /.test(l)) n++; } });
-    proc.stderr.on('data', (d) => { err += d; });
-    proc.on('error', rej); proc.on('close', (code) => { clearInterval(timer); if (pr.stopped()) rej(new Error('stopped')); else if (code === 0) res(buf); else rej(new Error(/wrong password/i.test(err + buf) ? 'wrongPassword' : (err.trim().split('\n').pop() || `7z exit ${code}`))); });
+    proc.stdout.on('data', (d) => { tail = (tail + d).slice(-4096); for (const l of lines.feed(d)) take(l); });
+    proc.stderr.on('data', (d) => { err = (err + d).slice(-4096); });
+    proc.on('error', () => { clearInterval(timer); rej(new Error('sevenZipMissing')); });
+    proc.on('close', (code) => { clearInterval(timer); const rest = lines.finish(); if (rest) take(rest); if (pr.stopped()) rej(new Error('stopped')); else if (code === 0) res(); else rej(new Error(/wrong password/i.test(err + tail) ? 'wrongPassword' : scrub(err.trim().split('\n').pop() || `7z exit ${code}`, pw))); });
   });
-  void out; pr.on(100, 100, ''); return n;
+  pr.on(100, 100, ''); return n;
 }
+/** A journal beside the archive: the new engine's (version 2) or the first design's. */
+async function journalVersion(file) { try { const r = Safe.journalRead(await fsp.readFile(journalOf(file), 'utf8')); return r.ok ? 2 : r.why === 'v1' ? 1 : 0; } catch { return 0; } }
 async function extract(file, dest, o, pr) {
-  await fsp.mkdir(dest, { recursive: true });
-  if (hasJournal(file)) return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr);
+  if (hasJournal(file)) { const v = await journalVersion(file); if (v === 2) return (await Engine.finish(journalOf(file), pr, undefined, { password: o.password, keepFree: o.keepFree })).files; if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
   const fmt = await formatOf(file); let n;
+  // ZIP (one file, methods the app decodes itself, ZipCrypto too) and tar: the engine that checks everything first.
+  if ((fmt === 'zip' || fmt === 'tar') && !/\.\d{3}$/.test(file)) {
+    const scan = await Engine.unitsOf(file); const own = scan.units.every((u) => u.dir || Engine.OWN_METHODS.includes(u.method));
+    if (own || o.inPlace) { const r = await Engine.extract(file, dest, { ...o, registry: REGISTRY || path.join(path.dirname(file), '.kurokawa-jobs') }, pr); last = r; if (o.deleteAfter && !o.inPlace && !pr.stopped()) await fsp.rm(file, { force: true }); return r.files; }
+  }
+  await fsp.mkdir(dest, { recursive: true });
   // HatchZip's rules before anything is touched: a hostile archive refused, an .sfv beside it checked, and with
   // «verify first» every checksum read before the archive is cut.
   const info = await list(file, o.password); if (info.unsafe) throw new Error('unsafePath ' + info.unsafe); if (info.duplicate && o.inPlace) throw new Error('duplicateEntry ' + info.duplicate);
@@ -229,6 +290,76 @@ async function createZip(out, inputs, pr) {
   await write(Buffer.concat([z64, loc, eocd])); await new Promise((r) => ws.end(r));
   await fsp.rm(out, { force: true }); await fsp.rename(part, out); pr.on(total, total, ''); return files.length;
 }
+/** A 7z made by the 7-Zip the app ships: `o.level` 0 (store), 1 (fast), 5 (normal) or 9 (best); `o.password` → AES-256 on the contents AND the
+ *  names (`-mhe=on`: without the password the archive cannot even be listed). The inputs must share one folder (the sheet's own); they are
+ *  given to 7-Zip by name from that folder, so the archive holds `name/…` and never an absolute path. Written beside as «.part», put in
+ *  place when whole. The password reaches 7-Zip as its -p switch (as extraction does) and is never logged or kept. */
+/** 7-Zip's output cut into lines as it arrives: its progress ends with a carriage return, or is erased with backspaces; a line split between
+ *  two reads is carried to the next; only the unfinished part is kept. feed(chunk) → the lines done; finish() → the last one, if any. */
+function makeLines() {
+  let pending = '';
+  return {
+    feed(chunk) {
+      pending += String(chunk); const out = []; let i;
+      while ((i = pending.search(/[\r\n\b]/)) >= 0) { const l = pending.slice(0, i); pending = pending.slice(i + 1); if (l.trim()) out.push(l); }
+      if (pending.length > 4096) pending = pending.slice(-1024);
+      return out;
+    },
+    finish() { const l = pending; pending = ''; return l.trim() ? l : ''; },
+  };
+}
+/** One line of 7-Zip's progress → { pct, name } or null. */
+function seven7Progress(line) { const m = /^\s*(\d+)%(?:\s+\d+)?\s*(?:\+ (.*))?$/.exec(line); return m ? { pct: Number(m[1]), name: m[2] || '' } : null; }
+/** A message with the password taken out (7-Zip or the system may print the command line, and with it the password). */
+function scrub(msg, password) { let m = String(msg); if (password) m = m.split(`-p${password}`).join('-p***').split(password).join('***'); return m; }
+/** The inputs grouped by the folder they are in: 7-Zip runs in each, given the names there, so the archive holds «name/…» and never an absolute path.
+ *  Two inputs of one name (from different folders) would meet in the archive: refused. */
+function groupInputs(inputs) {
+  const groups = new Map(); const seen = new Set();
+  for (const i of inputs) { const dir = path.dirname(i), n = path.basename(i); if (!n || dir === i) throw new Error('sevenZipNoFolder'); if (seen.has(n)) throw new Error('sevenZipSameName'); seen.add(n); if (!groups.has(dir)) groups.set(dir, []); groups.get(dir).push(n); }
+  if (!groups.size) throw new Error('sevenZipNoFolder');
+  return [...groups];
+}
+/** A 7z made by the 7-Zip the app ships: level 0, 1, 3, 5, 7 or 9; a password locks the contents AND the names (-mhe=on). -spd: no wildcards in
+ *  names; `--`: no switches and no @listfiles after it. Refused: an output inside an input (it would be packed into itself), an existing file
+ *  unless o.replace, two inputs of one name. Written beside as «.kurokawa-part», put in place when whole. No message that leaves carries the password. */
+async function create7z(out, inputs, o, pr) {
+  const groups = groupInputs(inputs);
+  for (const i of inputs) if (!fs.existsSync(i)) throw new Error('notFound ' + path.basename(i));
+  const ro = path.resolve(out); if (inputs.some((i) => { const ri = path.resolve(i); return ro === ri || ro.startsWith(ri + path.sep); })) throw new Error('sevenZipOutInside');
+  if (fs.existsSync(out) && !o.replace) throw new Error('sevenZipExists');
+  const mx = [0, 1, 3, 5, 7, 9].includes(Number(o.level)) ? Number(o.level) : 5; const pw = o.password ? String(o.password) : '';
+  // (The archive is built in a folder made just now, beside the target, by this run alone: `mkdir` fails if the name is taken, even by a link,
+  //  so nothing we did not make is ever written into or followed. A stale one from a crashed run has another name and is never touched.)
+  let stage = ''; for (let k = 0; k < 8 && !stage; k++) { const c = `${out}.kurokawa-${process.pid}-${crypto.randomBytes(6).toString('hex')}`; try { await fsp.mkdir(c, { mode: 0o700 }); stage = c; } catch (e) { if (!e || e.code !== 'EEXIST') throw e; } }
+  if (!stage) throw new Error('sevenZipFailed'); const part = path.join(stage, 'part.7z'); const cleanup = () => fsp.rm(stage, { recursive: true, force: true });
+  let n = 0;
+  try {
+    for (let gi = 0; gi < groups.length; gi++) {
+      const [cwd, names] = groups[gi];
+      const args = ['a', '-t7z', `-mx=${mx}`, '-y', '-spd', '-bsp1', '-bb1', ...(pw ? [`-p${pw}`, '-mhe=on'] : []), '--', part, ...names];
+      await new Promise((res, rej) => {
+        // (Not the spawn error itself: it carries the arguments, the password among them.)
+        let proc; try { proc = spawn(sevenZip(), args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { rej(new Error('sevenZipMissing')); return; }
+        const lines = makeLines(); let last = '', errTail = '';
+        const take = (l) => { const m = seven7Progress(l); if (m) pr.on(gi * 100 + Math.min(100, m.pct), groups.length * 100, m.name); if (/^\+ /.test(l)) n++; last = l.trim(); };
+        const timer = setInterval(() => { if (pr.stopped()) proc.kill(); }, 300);
+        proc.stdout.on('data', (d) => { for (const l of lines.feed(d)) take(l); });
+        proc.stderr.on('data', (d) => { errTail = (errTail + d).slice(-4096); });
+        proc.on('error', () => { clearInterval(timer); rej(new Error('sevenZipMissing')); });
+        proc.on('close', (code) => { clearInterval(timer); const rest = lines.finish(); if (rest) take(rest); if (pr.stopped()) rej(new Error('stopped')); else if (code === 0) res(); else rej(new Error(scrub(errTail.trim().split('\n').pop() || last || `7z exit ${code}`, pw))); });
+      });
+    }
+  } catch (e) { await cleanup(); throw new Error(scrub(e && e.message, pw)); }
+  // Put in place in ONE step: a rename over the target (Node's rename replaces on every system, Windows included: MoveFileEx with
+  // REPLACE_EXISTING), never «remove, then rename» — a crash between would lose both. Without replace: a hard link, which fails if the name
+  // appeared meanwhile; where links are not possible (FAT, some phones' storage) the rename after a last look.
+  try {
+    if (o.replace) await fsp.rename(part, out);
+    else { try { await fsp.link(part, out); } catch (e) { if (e && e.code === 'EEXIST') throw new Error('sevenZipExists'); if (fs.existsSync(out)) throw new Error('sevenZipExists'); await fsp.rename(part, out); } }
+  } catch (e) { await cleanup(); throw new Error(scrub(e && e.message, pw)); }
+  await cleanup(); pr.on(100, 100, ''); return n;
+}
 async function walk(dir, prefix, out) { for (const e of await fsp.readdir(dir, { withFileTypes: true })) { if (e.isDirectory()) await walk(path.join(dir, e.name), prefix + e.name + '/', out); else if (e.isFile()) out.push([path.join(dir, e.name), prefix + e.name]); } }
 
 /* ---------- HatchZip: test, restore, .sfv, tar in place ---------- */
@@ -252,12 +383,16 @@ async function test(file, password, pr) {
     } finally { await fd.close(); }
   }
   // 7-Zip tests the rest (and encrypted zips): every file decoded, its checksum compared.
-  try { const out = await run7z(['t', '-bb1', password ? `-p${password}` : '-p', file]); files = (out.match(/^T /gm) || []).length; } catch (e) { bad.push(e.message); }
+  try { await run7z(['t', '-bb1', password ? `-p${password}` : '-p', file], { pw: password, onLine: (l) => { if (/^T /.test(l)) files++; } }); } catch (e) { bad.push(e.message); }
   return { ok: !bad.length, files, bad };
 }
 /** Giving up an extraction in place: what is left becomes a normal ZIP again (the remaining entries' directory
  *  records written after them, then the end records); a cut tar is a valid tar already. */
 async function restore(file) {
+  if (await journalVersion(file) === 2) { const r = await Engine.restore(journalOf(file)); return r.identical ? -2 : r.keptOut.length; }
+  return restoreV1(file);
+}
+async function restoreV1(file) {
   const journal = journalOf(file), tail = tailOf(file); if (!fs.existsSync(journal)) throw new Error('nothingToRestore');
   if (isTar(file)) { await fsp.rm(journal, { force: true }); return -1; }
   const committed = JSON.parse(await fsp.readFile(journal, 'utf8')).committed;
@@ -327,6 +462,27 @@ async function extractTarInPlace(file, dest, o, pr) {
   await fsp.rm(file, { force: true }); await fsp.rm(journal, { force: true });
   return n;
 }
+let last = null; /** The last engine job's result (its journal for Undo, files that appeared, damaged ones). */
+const lastJob = () => last;
+/** The pre-flight report for the sheet (nothing written). */
+async function preflight(file, dest, o = {}) {
+  const fmt = await formatOf(file);
+  if ((fmt === 'zip' || fmt === 'tar') && !/\.\d{3}$/.test(file)) { const r = await Engine.preflightOf(file, dest, { ...o, external: external(), platform: PLATFORM }); return { report: r.report, facts: { ...r.facts, entries: undefined } }; }
+  const info = await list(file, o.password); const entries = info.entries.map((e) => ({ path: e.path, dir: e.dir, usize: e.size, csize: e.compressed }));
+  const f = { format: fmt, platform: PLATFORM, entries, supported: [], external: [], encrypted: info.encrypted, password: info.encrypted && !o.password ? 'missing' : 'ok', archiveWritable: true, destWritable: true, sameVolume: true, free: await freeSpace(dest), existing: await existing(dest, entries.filter((e) => !e.dir).map((e) => e.path)), inPlaceFormat: false };
+  const report = Safe.preflight(f, { margin: o.keepFree || 0 }); report.problems = report.problems.filter((p) => p.kind !== 'method');   // (7-Zip decodes what it lists)
+  report.normal.why = report.normal.why.filter((w) => w !== 'method'); report.normal.ok = !report.normal.why.length; report.ok = report.normal.ok; if (report.recommend === 'none' && report.normal.ok) { report.recommend = 'normal'; report.why = 'normalOnly'; }
+  return { report, facts: { format: fmt, platform: PLATFORM } };
+}
+/** The shelf of unfinished (and just finished) jobs; a job acted on: finish, restore, undo, dismiss, restoreV1. */
+async function shelf(o = {}) { return REGISTRY ? Engine.shelf(REGISTRY, o) : []; }
+async function jobAct(journal, act, pr) {
+  if (act === 'finish') return Engine.finish(journal, pr);
+  if (act === 'restore' || act === 'undo') return Engine.restore(journal);
+  if (act === 'dismiss') return Engine.dismiss(journal);
+  if (act === 'restoreV1') { const file = journal.replace(/\.kurokawa-unzip$/, ''); const left = await restoreV1(file); return { left }; }
+  return {};
+}
 async function existing(dest, names) { const out = []; for (const n of names) { try { if (fs.statSync(path.join(dest, n)).isFile()) out.push(n); } catch { /* not there */ } } return out; }
 
-module.exports = { formatOf, list, extract, createZip, hasJournal, BATCH, test, restore, checkSfv, freeSpace, existing };
+module.exports = { formatOf, list, extract, createZip, create7z, extract7z, makeLines, seven7Progress, scrub, groupInputs, hasJournal, BATCH, test, restore, checkSfv, freeSpace, existing, preflight, shelf, jobAct, setRegistry, lastJob };

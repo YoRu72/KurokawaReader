@@ -183,6 +183,26 @@ final class KrDownloader {
         if (m.find()) { String n = m.group(1) != null ? m.group(1) : m.group(2).trim(); return n.isEmpty() ? null : n; }
         return null;
     }
+    /** A name cut to `max` bytes of UTF-8 between characters (never inside a sequence or a surrogate pair), its extension kept. */
+    static String clipName(String name, int max) {
+        if (name == null || name.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= max) return name;
+        int dot = name.lastIndexOf('.'); String ext = dot > 0 && name.length() - dot <= 9 ? name.substring(dot) : ""; String stem = ext.isEmpty() ? name : name.substring(0, dot);
+        int room = max - ext.getBytes(java.nio.charset.StandardCharsets.UTF_8).length, n = 0; StringBuilder b = new StringBuilder();
+        for (int i = 0; i < stem.length(); ) { int cp = stem.codePointAt(i); int w = new String(Character.toChars(cp)).getBytes(java.nio.charset.StandardCharsets.UTF_8).length; if (n + w > room) break; b.appendCodePoint(cp); n += w; i += Character.charCount(cp); }
+        String s = b.toString().replaceAll("\\s+$", ""); return (s.isEmpty() ? "download" : s) + ext;
+    }
+    /** A file name the file system takes: what it refuses made a space, trimmed, and cut between characters to fit 255 bytes (the extension kept). */
+    static String cleanName(String n) { return clipName(n.replaceAll(KtNameSafe.PORTABLE_RUN, " ").trim(), 200); }   // (the characters from the one name table, desktop/namesafe.json)
+    static String nameFromUrl(String url) {
+        try {
+            URL u = new URL(url); String p = u.getPath(); String n = java.net.URLDecoder.decode(p.substring(p.lastIndexOf('/') + 1).replace("+", "%2B"), "UTF-8");
+            // (A name in the query — ?f=, ?filename=, ?name=, ?file=, ?title= — with an extension: that one.)
+            String q = u.getQuery();
+            if (q != null) for (String kv : q.split("&")) { int i = kv.indexOf('='); if (i <= 0) continue; String k = kv.substring(0, i).toLowerCase(java.util.Locale.ROOT); if (!(k.equals("f") || k.equals("filename") || k.equals("name") || k.equals("file") || k.equals("title") || k.equals("fn") || k.equals("response-content-disposition"))) continue;
+                String v = java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8"); if (k.equals("response-content-disposition")) { String d = dispositionName(v); if (d == null) continue; v = d; } v = v.replaceAll(".*[\\\\/]", "").trim(); if (v.matches(".+\\.[A-Za-z0-9]{1,5}")) return v; }
+            return n.isEmpty() ? "download" : n;
+        } catch (Exception e) { return "download"; }
+    }
     /** An answer with an unwanted status (kept, so a refusal can be told from a fault). */
     static final class Status extends IOException { final int code; Status(int c) { super("HTTP " + c); code = c; } }
 

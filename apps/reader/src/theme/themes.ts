@@ -1,8 +1,10 @@
 // Themes: frosted-glass looks laid over the Material 3 roles both Kurokawa apps already use (--md-*), and the
-// choice of how much blur a device can afford. Self-contained, shared by the apps: no import from either app.
+// choice of how much blur a device can afford. Shared by the apps: its only import is `./app`, each app's own small
+// file (not shared) saying what differs — the default theme, the main theme's name and light palette, and the like.
 // The app gives `applyTheme` the reader's choices (theme, light or dark, dark tone, accent, blur) and the picture
 // a downloaded theme brought (an object URL); this file turns them into CSS custom properties on <html>, which
-// glass.css (beside this file) reads. «Classic» sets nothing: the app's own stylesheet, exactly as before.
+// glass.css (beside this file) reads. The main theme (id 'classic') sets nothing: the app's own stylesheet.
+import { APP_THEME } from './app';
 
 export type Mode = 'light' | 'dark';
 export type DarkTone = 'default' | 'grey' | 'black';
@@ -37,6 +39,9 @@ export interface ModeTokens {
   blur: number; sat: number; edge: string; sheen: string; shadow: string;
   /** The scrim under a sheet. */
   scrim?: string;
+  /** A theme of the reader's whose background moves (a computer, when the animated background matches the theme):
+   *  the design and its three colours; `bg` is then its still stand-in. */
+  anim?: 'drift' | 'flow'; animColors?: [string, string, string];
 }
 export type Tint = string | { from: keyof Surfaces; a: number };
 export interface ThemeDef {
@@ -136,7 +141,18 @@ const FROST: ThemeDef = {
 export const FROST_GRAPHITE: Surfaces = { ground: '#17181b', lowest: '#111214', low: '#1c1d20', mid: '#222326', high: '#2a2b2e', highest: '#333437' };
 export const FROST_LIGHT: Surfaces = { ground: '#ebebe9', lowest: '#fbfbfa', low: '#f5f5f3', mid: '#efefed', high: '#e6e6e3', highest: '#dddddb' };
 
-const CLASSIC: ThemeDef = { id: 'classic', nameKey: 'themeClassic', classic: true, followsAccent: true };
+/** What each app says of its themes (src/theme/app.ts, the app's own): everything else here is the same in both. */
+export interface AppTheme {
+  /** The theme a fresh install starts with, and what an unknown id falls back to. */ defaultTheme: string;
+  /** The main theme's (id 'classic', no glass: the app's own stylesheet) name key. */ mainNameKey: string;
+  /** The main theme opens the gallery (downloaded themes then follow the built-in ones), or closes it. */ mainFirst: boolean;
+  /** The main theme's own light palette (unset: the app's surfaces and text as they are). */ mainLight?: { surfaces: Surfaces; text: TextRoles; roles: Roles };
+  /** The main theme's dark roles where they are not the default accent's. */ mainDarkRoles?: Partial<Roles>;
+  /** The main theme carries a pencil (a copy of it among the reader's own); a «Default» tag when it is the default. */ mainCopyable: boolean; mainTag: boolean;
+  /** The moving backgrounds ('drift', 'flow') are offered; otherwise a theme that has one shows its still stand-in. */ animBg: boolean;
+  /** The large radius a copied theme without its own is scaled from. */ radiusLg: number;
+}
+const CLASSIC: ThemeDef = { id: 'classic', nameKey: APP_THEME.mainNameKey, classic: true, followsAccent: true };
 
 /** Aurora: a polar night with the faintest curtains of sea-green and lilac, close to grey; in light, the same on ice. */
 const AURORA: ThemeDef = {
@@ -253,16 +269,18 @@ const FROSTED: ThemeDef = { ...FG_BASE, id: 'frosted-glass', name: 'Frosted Glas
 const FROSTED_LIGHT: ThemeDef = { ...FG_BASE, id: 'frosted-glass-light', name: 'Frosted Glass Light', force: 'light', light: FG_LIGHT, pack: { ...FG_PACK, size: 784_506, assets: { light: 'bg-light' } } };
 const FROSTED_DARK: ThemeDef = { ...FG_BASE, id: 'frosted-glass-dark', name: 'Frosted Glass Dark', force: 'dark', dark: FG_DARK, pack: { ...FG_PACK, size: 784_506, assets: { dark: 'bg-dark' } } };
 
-export const THEMES: ThemeDef[] = [FROST, AURORA, OBSIDIAN, WASHI, FROSTED, FROSTED_LIGHT, FROSTED_DARK, CLASSIC];
-export const DEFAULT_THEME = 'frost';
-export const themeById = (id: string | undefined): ThemeDef => THEMES.find((x) => x.id === id) ?? FROST;
+const BUILT_IN = [FROST, AURORA, OBSIDIAN, WASHI, FROSTED, FROSTED_LIGHT, FROSTED_DARK];
+export const THEMES: ThemeDef[] = APP_THEME.mainFirst ? [CLASSIC, ...BUILT_IN] : [...BUILT_IN, CLASSIC];
+export const DEFAULT_THEME = APP_THEME.defaultTheme;
+const FALLBACK = THEMES.find((x) => x.id === DEFAULT_THEME) ?? FROST;
+export const themeById = (id: string | undefined): ThemeDef => THEMES.find((x) => x.id === id) ?? FALLBACK;
 /** A theme made by the reader: added (or replaced) among «My themes»; removed again. */
 export function upsertTheme(def: ThemeDef): void { const i = THEMES.findIndex((x) => x.id === def.id); if (i >= 0) THEMES[i] = def; else THEMES.push(def); }
 export function removeTheme(id: string): void { const i = THEMES.findIndex((x) => x.id === id && x.custom); if (i >= 0) THEMES.splice(i, 1); }
-/** A theme that came in a pack (its tokens in the pack's header), added before Classic. */
+/** A theme that came in a pack (its tokens in the pack's header): before the main theme when it closes the list. */
 export function registerTheme(def: ThemeDef): void {
   if (!def || typeof def.id !== 'string' || THEMES.some((x) => x.id === def.id) || !(def.dark || def.light)) return;
-  const at = THEMES.findIndex((x) => x.classic); THEMES.splice(at < 0 ? THEMES.length : at, 0, { ...def, classic: false, custom: false });
+  const at = APP_THEME.mainFirst ? -1 : THEMES.findIndex((x) => x.classic); THEMES.splice(at < 0 ? THEMES.length : at, 0, { ...def, classic: false, custom: false });
 }
 
 /* ---------- colour arithmetic (sRGB), for alpha blending and WCAG contrast ---------- */
@@ -291,11 +309,12 @@ export function resolve(c: Choice): Resolved {
   const own = mode === 'dark' ? def.dark : def.light;
   const tokens = def.classic ? null : own ?? (mode === 'dark' ? FROST.dark! : FROST.light!);
   const appS = mode === 'light' ? APP_SURFACES.light : APP_SURFACES[c.darkTone];
+  if (def.classic) { const L = mode === 'light' ? APP_THEME.mainLight : undefined; return { def, mode, tokens: null, surfaces: L?.surfaces ?? appS, text: L?.text ?? APP_TEXT[mode], roles: null, pane: [0, 0, 0, 0], card: [0, 0, 0, 0], sheet: [0, 0, 0, 0] }; }
   // (Frost follows the dark tone: the refined graphite for the default, unless the earlier colours were kept.)
   const surfaces = tokens?.surfaces ?? (mode === 'dark' ? (c.darkTone === 'default' && !c.keepColours ? FROST_GRAPHITE : appS) : c.keepColours ? appS : FROST_LIGHT);
   const text = tokens?.text ?? APP_TEXT[mode];
   const tint = (t: Tint): RGBA => { if (typeof t === 'string') return parseColor(t); const b = parseColor(surfaces[t.from]); return [b[0], b[1], b[2], t.a]; };
-  return { def, mode, tokens, surfaces: def.classic ? appS : surfaces, text, roles: c.useThemeColours ? tokens?.roles ?? null : null, pane: tokens ? tint(tokens.pane) : [0, 0, 0, 0], card: tokens ? tint(tokens.card) : [0, 0, 0, 0], sheet: tokens ? tint(tokens.sheet) : [0, 0, 0, 0] };
+  return { def, mode, tokens, surfaces, text, roles: c.useThemeColours ? tokens?.roles ?? null : null, pane: tokens ? tint(tokens.pane) : [0, 0, 0, 0], card: tokens ? tint(tokens.card) : [0, 0, 0, 0], sheet: tokens ? tint(tokens.sheet) : [0, 0, 0, 0] };
 }
 
 /** Contrast of each text role on each glass layer over the background's brightest and darkest parts (and on the bare background). */
@@ -351,7 +370,7 @@ export function applyTheme(html: HTMLElement, st: ApplyState): { mode: Mode; gro
   for (const k of SET) html.style.removeProperty(k); SET.clear();
   const r = resolve(st);
   html.dataset.theme = r.def.id;
-  if (!r.tokens) { delete html.dataset.glass; delete html.dataset.picture; return { mode: r.mode, ground: r.surfaces.ground, glass: false }; }
+  if (!r.tokens) { delete html.dataset.glass; delete html.dataset.picture; delete html.dataset.anim; return { mode: r.mode, ground: r.surfaces.ground, glass: false }; }
   const t = r.tokens; html.dataset.glass = st.blur;
   const S = r.surfaces; const g = parseColor(S.ground);
   put(html, '--md-surface', S.ground); put(html, '--th-ground', S.ground);
@@ -371,6 +390,7 @@ export function applyTheme(html: HTMLElement, st: ApplyState): { mode: Mode; gro
   put(html, '--th-bg', [t.veil && pic ? t.veil : '', pic ? `url("${pic}")` : '', t.bg].filter(Boolean).join(', ') || 'none');
   if (pic && t.bgBlur) { put(html, '--th-bg-filter', `blur(${t.bgBlur}px)`); put(html, '--th-bg-bleed', `${Math.round(t.bgBlur * 2)}px`); }
   if (pic) html.dataset.picture = '1'; else delete html.dataset.picture;
+  if (t.anim) { html.dataset.anim = t.anim; (t.animColors ?? []).forEach((c, i) => put(html, `--th-anim-${'abc'[i]}`, c)); } else delete html.dataset.anim;
   for (const [k, v] of Object.entries(r.def.radius ?? {})) put(html, `--sh-${k}`, `${v}px`);
   return { mode: r.mode, ground: S.ground, glass: true };
 }
@@ -391,10 +411,12 @@ export const GRAPHITE: Record<Mode, Roles> = {
   dark: { primary: '#c9ccd2', onPrimary: '#1f2226', primaryContainer: '#3a3e45', onPrimaryContainer: '#e6e8ec', secondaryContainer: '#2e3237', onSecondaryContainer: '#dfe2e6', tertiaryContainer: '#2b3540', onTertiaryContainer: '#d6e1ec' },
   light: { primary: '#3f444b', onPrimary: '#ffffff', primaryContainer: '#dfe2e6', onPrimaryContainer: '#15181b', secondaryContainer: '#e6e8ec', onSecondaryContainer: '#1a1d20', tertiaryContainer: '#d8e3ee', onTertiaryContainer: '#0f1d2a' },
 };
+/** The main theme's colour roles with the default accent, by mode (the gallery's miniature, a copy made of it). */
+export const mainRoles = (m: Mode): Roles => (m === 'light' ? APP_THEME.mainLight?.roles ?? GRAPHITE.light : { ...GRAPHITE.dark, ...APP_THEME.mainDarkRoles });
 export interface Preview { mode: Mode; ground: string; bg: string; picture?: string; veil?: string; pane: string; card: string; text: string; dim: string; edge: string; vars: Record<string, string> }
 export function previewOf(def: ThemeDef, mode: Mode, darkTone: DarkTone): Preview {
   const r = resolve({ theme: def.id, mode, darkTone, useThemeColours: true });
-  const t = r.tokens; const roles = r.roles ?? GRAPHITE[r.mode];
+  const t = r.tokens; const roles = r.roles ?? (def.classic ? mainRoles(r.mode) : GRAPHITE[r.mode]);
   const vars: Record<string, string> = {}; for (const [k, v] of ROLE_VARS) vars[v] = roles[k];
   return { mode: r.mode, ground: r.surfaces.ground, bg: t?.bg ?? 'none', picture: t?.picture, veil: t?.veil, pane: t ? css(r.pane) : r.surfaces.mid, card: t ? css(r.card) : r.surfaces.low, text: r.text.on, dim: r.text.dim, edge: t?.edge ?? r.text.outlineVariant, vars };
 }

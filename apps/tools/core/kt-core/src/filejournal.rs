@@ -407,6 +407,10 @@ pub fn rollback(s: &State) -> (Vec<Act>, Vec<String>) {
                             acts.push(Act::Mkdir(from.to_string()));
                         }
                         acts.push(Act::UnsettleSwap { to: to.to_string(), into: into.to_string(), old: old.clone() });
+                        if old.is_some() {
+                            // (the file set aside is dropped right after the folder is in place: it may be gone already)
+                            lost.push(format!("{}: replaced by a folder", name(to)));
+                        }
                     }
                     St::Done(..) | St::Placed(_) | St::Begun => {
                         if rmdir {
@@ -580,6 +584,20 @@ mod tests {
         // what was undone is not undone again
         let t2 = format!("{}{}", t, journal(&[("Z", &["1"]), ("Z", &["0"])]));
         assert!(rollback(&state(&read(&t2).0, false)).0.is_empty());
+    }
+
+    #[test]
+    fn a_swap_cut_after_its_folder_is_in_place_tells_the_file_lost() {
+        let job = journal(&[("P", &["1", "move", "/d", "0", "1"]), ("S", &["0", "endDir", "0", "2", "1", "/s/D", "/d/D", "/d/D.tmp", "true", "true"]), ("R", &[]), ("B", &["0"])]);
+        let aside = format!("{}{}", job, journal(&[("A", &["0", "/d/D.ktold"])]));
+        assert!(rollback(&state(&read(&aside).0, false)).1.is_empty(), "set aside, not yet replaced: it comes back");
+        let placed = format!("{}{}", aside, journal(&[("L", &["0"])]));
+        let (acts, lost) = rollback(&state(&read(&placed).0, false));
+        assert_eq!(lost, v(&["D: replaced by a folder"]));
+        assert!(acts.contains(&Act::UnsettleSwap { to: "/d/D".into(), into: "/d/D.tmp".into(), old: Some("/d/D.ktold".into()) }));
+        // (no file there before: nothing lost)
+        let none = format!("{}{}", job, journal(&[("L", &["0"])]));
+        assert!(rollback(&state(&read(&none).0, false)).1.is_empty());
     }
 
     #[test]

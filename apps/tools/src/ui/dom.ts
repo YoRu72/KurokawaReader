@@ -47,6 +47,7 @@ const PATHS: Record<string, string> = {
   volumeOff: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 5 6"/><path d="m21 9-5 6"/>',
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  jobs: '<path d="M4 6h12M4 12h8M4 18h6"/><path d="m15 14 6 4-6 4z"/>',
   film: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M7 3v18M17 3v18M2 9h5M2 15h5M17 9h5M17 15h5"/>',
   subtitles: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 14h4M12 14h6M6 10h2M10 10h8"/>',
   archive: '<rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/>',
@@ -175,6 +176,10 @@ const PATHS: Record<string, string> = {
   layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
   gesture: '<path d="M4 15c2-3 4-6 6-6s1 6 3 6 3-8 5-8 2 3 2 3"/>',
   minus: '<path d="M5 12h14"/>',
+  // (The text editor's wrap and go-to-line buttons: each its own picture.)
+  wrapText: '<path d="M3 6h18"/><path d="M3 12h13a3 3 0 0 1 0 6h-4"/><path d="m14 15-3 3 3 3"/><path d="M3 18h4"/>',
+  lineBreak: '<path d="M20 5v8a3 3 0 0 1-3 3H5"/><path d="m9 12-4 4 4 4"/>',
+  hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
   keyboard: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>',
 };
 

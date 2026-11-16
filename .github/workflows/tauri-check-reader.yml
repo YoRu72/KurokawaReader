@@ -24,6 +24,8 @@ name: Tauri check (Reader)
 # both; macOS is reported without failing the job for now. Modelled on tauri-check.yml (Tools'). The bundles are kept
 # as workflow artifacts for 7 days; nothing is signed, published or released. Not run on main.
 on:
+  # (Also called by preflight.yml, which runs it on a work branch before the final push.)
+  workflow_call:
   push:
     branches: ['work-reader-tauri*']
     paths:

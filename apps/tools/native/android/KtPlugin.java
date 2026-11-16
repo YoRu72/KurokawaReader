@@ -72,7 +72,9 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
+    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
+        // (0.21 P9: no automatic DoH probe on a metered connection.)
+        try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
      *  debuggable build its shadow mode on (each download rule also asked of Rust, differences counted — Java's answer
      *  used). Off the main thread; nothing changes for the user whether the library is there or not. */
@@ -384,6 +386,30 @@ public class KtPlugin extends Plugin {
         String path = pathOfTree(tree);
         JSObject r = new JSObject(); r.put("dir", path != null ? path : tree.toString()); r.put("writable", path != null && KtEngine.writable(new File(path))); call.resolve(r);
     }
+    /** A folder chosen on a storage the app has no path for (a content: tree — a memory card, another app's
+     *  storage): the files whose names match `pattern` copied, three levels deep at most, into `dest`; their paths. */
+    @PluginMethod public void treeCopy(PluginCall call) {
+        final String uri = call.getString("uri", ""); final File dest = fileOf(call.getString("dest", "")); final String re = call.getString("pattern", ".*");
+        bg.execute(() -> {
+            try {
+                DocumentFile root = DocumentFile.fromTreeUri(getContext(), Uri.parse(uri)); if (root == null || !root.canRead()) throw new java.io.IOException("unreadable");
+                java.util.regex.Pattern pat = java.util.regex.Pattern.compile(re, java.util.regex.Pattern.CASE_INSENSITIVE);
+                JSArray out = new JSArray(); copyTreeInto(root, dest, pat, out, 0);
+                JSObject r = new JSObject(); r.put("paths", out); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    private void copyTreeInto(DocumentFile dir, File dest, java.util.regex.Pattern pat, JSArray out, int depth) throws java.io.IOException {
+        for (DocumentFile f : dir.listFiles()) {
+            String n = f.getName(); if (n == null || n.startsWith(".")) continue; String safe = n.replaceAll("[\\\\/:]", "_");
+            if (f.isDirectory()) { if (depth < 3) copyTreeInto(f, new File(dest, safe), pat, out, depth + 1); continue; }
+            if (!pat.matcher(n).find()) continue;
+            if (!dest.isDirectory() && !dest.mkdirs()) throw new java.io.IOException("mkdir " + dest);
+            File o = new File(dest, safe);
+            try (java.io.InputStream in = getContext().getContentResolver().openInputStream(f.getUri()); java.io.OutputStream os = new java.io.FileOutputStream(o)) { if (in == null) continue; byte[] b = new byte[1 << 16]; int k; while ((k = in.read(b)) > 0) os.write(b, 0, k); }
+            out.put(o.getAbsolutePath());
+        }
+    }
     private static String pathOfTree(Uri tree) {
         try { String id = android.provider.DocumentsContract.getTreeDocumentId(tree); String[] parts = id.split(":", 2); if ("primary".equalsIgnoreCase(parts[0])) return new File(android.os.Environment.getExternalStorageDirectory(), parts.length > 1 ? parts[1] : "").getAbsolutePath(); } catch (Exception ignored) {}
         return null;
@@ -500,7 +526,11 @@ public class KtPlugin extends Plugin {
     /** DNS over HTTPS up close: its state, counters and last events; `probe` tries the resolver first. */
     @PluginMethod public void dohStatus(PluginCall call) {
         final boolean probe = Boolean.TRUE.equals(call.getBoolean("probe", false));
-        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe()); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } r.put("proxy", KrDohProxy.status()); call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe(true)); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } r.put("proxy", KrDohProxy.status()); call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+    }
+    /** What answered each name (the details pages' status line): { on, hosts: { host: { via, at } } }. */
+    @PluginMethod public void dohUsed(PluginCall call) {
+        try { java.util.List<String> hs = new java.util.ArrayList<>(); JSArray a = call.getArray("hosts"); if (a != null) for (int i = 0; i < Math.min(64, a.length()); i++) hs.add(a.getString(i)); call.resolve(JSObject.fromJSONObject(KrDoh.usedFor(hs))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /** Each DoH event handed to the page as «doh» (the Settings page's live feed, the status chip). */
     static void wireDoh() { KrDoh.listener = (json) -> { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("doh", JSObject.fromJSONObject(new org.json.JSONObject(json)), true); } catch (Exception ignored) {} KtBrowserActivity.dohEvent(json); }; }
@@ -508,6 +538,8 @@ public class KtPlugin extends Plugin {
         String p = call.getString("provider", null); String sp = call.getString("split", null);
         if (p != null) { KrDoh.provider = p; KrDoh.forget(); getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply(); }
         if (sp != null) { KrDoh.split = sp; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("dohSplit", sp).apply(); }
+        // (0.21 P9: the system's DNS when every resolver failed — the reader's choice, off by default.)
+        Boolean sys = call.getBoolean("allowSystem", null); if (sys != null) { KrDoh.allowSystem = sys; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("dohSystem", sys).apply(); }
         if (p != null) bg.execute(KtPlugin::applyDohProxy);
         final String test = call.getString("test", null); JSObject r = new JSObject(); r.put("provider", KrDoh.provider);
         if (test == null) { call.resolve(r); return; }
@@ -908,6 +940,144 @@ public class KtPlugin extends Plugin {
             call.resolve();
         });
     }
+    /* ---------- others' «Open with» / «Share» (KtOpenActivity holds the request and its grant; openwith.json) ---------- */
+    /** What came: {id, kind, action, caller, writable, mime, items:[{uri, name, size, mime, path?, dir, readable}]}, or none. */
+    @PluginMethod public void openRequest(PluginCall call) {
+        final KtOpenActivity a = KtOpenActivity.current; final String q = a != null ? KtOpenActivity.request : null;
+        if (q == null) { JSObject r = new JSObject(); r.put("request", null); call.resolve(r); return; }
+        bg.execute(() -> {
+            try {
+                JSONObject o = new JSONObject(q); JSONArray items = new JSONArray(); java.util.List<Uri> us; synchronized (a.uris) { us = new java.util.ArrayList<>(a.uris); }
+                for (Uri u : us) items.put(openItem(u));
+                o.put("items", items); JSObject r = new JSObject(); r.put("request", o.toString()); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    private JSONObject openItem(Uri u) throws org.json.JSONException {
+        JSONObject o = new JSONObject(); o.put("uri", u.toString()); File real = realPath(u);
+        if (real != null) { o.put("path", real.getAbsolutePath()); o.put("name", real.getName()); o.put("dir", real.isDirectory()); o.put("size", real.isFile() ? real.length() : 0); o.put("readable", real.canRead()); return o; }
+        java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); String mime = m.get("mime") == null ? "" : String.valueOf(m.get("mime"));
+        boolean dir = "vnd.android.document/directory".equals(mime) || "resource/folder".equals(mime) || "inode/directory".equals(mime);
+        o.put("name", String.valueOf(m.get("name"))); o.put("size", (Long) m.get("size")); o.put("mime", mime); o.put("dir", dir);
+        boolean readable = dir; if (!dir) { try (java.io.InputStream in = getContext().getContentResolver().openInputStream(u)) { readable = in != null; } catch (Throwable ignored) {} }
+        o.put("readable", readable); return o;
+    }
+    /** A file or a folder behind a link, when it lives on the phone's storage and the app may read it where it is:
+     *  file://, the system's storage documents (a document, a tree, a root), Downloads' «raw:» ids, the app's own
+     *  documents provider. Null otherwise (the page then reads the link through its provider). */
+    static File realPath(Uri u) {
+        try {
+            if ("file".equals(u.getScheme())) { File f = new File(u.getPath()); return f.exists() && f.canRead() ? f : null; }
+            if (!"content".equals(u.getScheme()) || u.getAuthority() == null) return null;
+            java.util.List<String> seg = u.getPathSegments(); String id = null;
+            if (seg.size() >= 4 && "tree".equals(seg.get(0)) && "document".equals(seg.get(2))) id = seg.get(3);
+            else if (seg.size() >= 2 && ("tree".equals(seg.get(0)) || "document".equals(seg.get(0)) || "root".equals(seg.get(0)))) id = seg.get(1);
+            if (id == null) return null; String auth = u.getAuthority(); File f = null;
+            if ("com.android.externalstorage.documents".equals(auth)) { int c = id.indexOf(':'); String vol = c > 0 ? id.substring(0, c) : id; String rel = c >= 0 ? id.substring(c + 1) : ""; f = "primary".equalsIgnoreCase(vol) ? new File(android.os.Environment.getExternalStorageDirectory(), rel) : new File("/storage/" + vol, rel); }
+            else if ("com.android.providers.downloads.documents".equals(auth)) { if (id.startsWith("raw:")) f = new File(id.substring(4)); else if ("downloads".equals(id)) f = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS); }
+            else if (KtDocumentsProvider.AUTHORITY.equals(auth) && id.startsWith("/")) f = new File(id);
+            return f != null && f.exists() && f.canRead() ? f : null;
+        } catch (Throwable e) { return null; }
+    }
+    private final java.util.Map<String, AtomicBoolean> openFetches = new java.util.concurrent.ConcurrentHashMap<>();
+    /** A link that is not a file here, copied into the app's cache (only when the page needs a file: an archive to
+     *  open, a file to share) or into a folder chosen (`dir`, «Copy to…»); progress as «openProgress» {jobId, done, total}; cancelled by openFetchCancel. */
+    @PluginMethod public void openFetch(PluginCall call) {
+        final Uri u = Uri.parse(call.getString("uri", "")); final String job = call.getString("jobId", "of"); final AtomicBoolean stop = new AtomicBoolean(false); openFetches.put(job, stop);
+        bg.execute(() -> {
+            File out = null;
+            try {
+                java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); String name = String.valueOf(m.get("name")).replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]", "_"); long total = (Long) m.get("size");
+                // (Into a folder chosen — «Copy to…» —, under a free name there; else the app's cache, one folder a job.)
+                String into = call.getString("dir", null); if (name.isEmpty()) name = "file";
+                File dir = into != null && !into.isEmpty() ? fileOf(into) : new File(new File(getContext().getCacheDir(), "kt-open"), job); dir.mkdirs(); out = new File(dir, name);
+                if (into != null) { int dot = name.lastIndexOf('.'); String stem = dot > 0 ? name.substring(0, dot) : name, ext = dot > 0 ? name.substring(dot) : ""; for (int k = 2; out.exists(); k++) out = new File(dir, stem + " (" + k + ")" + ext); }
+                long done = 0, last = 0;
+                try (java.io.InputStream in = getContext().getContentResolver().openInputStream(u); java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                    if (in == null) throw new java.io.IOException("unreadable");
+                    byte[] b = new byte[1 << 16]; int n;
+                    while ((n = in.read(b)) > 0) { if (stop.get()) throw new java.io.IOException("cancelled"); os.write(b, 0, n); done += n; long now = System.currentTimeMillis(); if (now - last > 250) { last = now; JSObject ev = new JSObject(); ev.put("jobId", job); ev.put("done", done); ev.put("total", total); notifyListeners("openProgress", ev); } }
+                }
+                JSObject r = new JSObject(); r.put("path", out.getAbsolutePath()); r.put("size", out.length()); call.resolve(r);
+            } catch (Exception e) { if (out != null) out.delete(); call.reject(String.valueOf(e.getMessage())); }
+            finally { openFetches.remove(job); }
+        });
+    }
+    @PluginMethod public void openFetchCancel(PluginCall call) { AtomicBoolean c = openFetches.get(call.getString("jobId", "")); if (c != null) c.set(true); call.resolve(); }
+    /** Done with what came: the invisible activity ends; `back`: the app steps aside, so the calling app is in front. */
+    @PluginMethod public void openDone(PluginCall call) {
+        final KtOpenActivity a = KtOpenActivity.current; final android.app.Activity me = getActivity(); final boolean back = Boolean.TRUE.equals(call.getBoolean("back", false));
+        final String forId = call.getString("id", "");
+        if (a == null || (forId != null && !forId.isEmpty() && !forId.equals(a.id))) { call.resolve(); return; }
+        a.runOnUiThread(() -> { try { a.finish(); } catch (Throwable ignored) {} try { if (back && me != null) me.moveTaskToBack(true); } catch (Throwable ignored) {} call.resolve(); });
+    }
+    /** A link's bytes (the first `max`), as base64 — the text editor tells the characters' encoding itself. */
+    @PluginMethod public void uriRead(PluginCall call) {
+        final String s = call.getString("uri", ""), path = call.getString("path", null); final int max = call.getInt("max", 4_000_000), offset = call.getInt("offset", 0);
+        bg.execute(() -> {
+            try (java.io.InputStream in = path != null ? new java.io.FileInputStream(fileOf(path)) : getContext().getContentResolver().openInputStream(Uri.parse(s))) {
+                if (in == null) throw new java.io.IOException("unreadable");
+                long left = offset; while (left > 0) { long k = in.skip(left); if (k <= 0) break; left -= k; }   // (a chunk of a big file: from this byte on)
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] b = new byte[1 << 16]; int n; long all = 0;
+                while ((n = in.read(b)) > 0) { if (all < max) bo.write(b, 0, (int) Math.min(n, max - all)); all += n; if (all > max) break; }
+                long size = path != null ? fileOf(path).length() : all + offset;
+                JSObject r = new JSObject(); r.put("b64", android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)); r.put("size", size); r.put("whole", all <= max); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** Bytes written back: to a file here (a temporary file renamed over it), or to a link the caller let us edit. */
+    @PluginMethod public void uriWrite(PluginCall call) {
+        final String s = call.getString("uri", ""), path = call.getString("path", null); final byte[] bytes = android.util.Base64.decode(call.getString("b64", ""), android.util.Base64.DEFAULT);
+        bg.execute(() -> {
+            try {
+                if (path != null) { File f = fileOf(path); File tmp = new File(f.getParentFile(), "." + f.getName() + ".kt-tmp"); try (java.io.FileOutputStream os = new java.io.FileOutputStream(tmp)) { os.write(bytes); os.getFD().sync(); } if (!tmp.renameTo(f)) { tmp.delete(); throw new java.io.IOException("cannot write"); } }
+                else try (java.io.OutputStream os = getContext().getContentResolver().openOutputStream(Uri.parse(s), "wt")) { if (os == null) throw new java.io.IOException("unwritable"); os.write(bytes); }
+                JSObject r = new JSObject(); r.put("size", bytes.length); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** A link the web view can show (a picture handed in that is not a file here): through the app's stream server. */
+    @PluginMethod public void contentUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().contentUrl(call.getString("uri", ""))); call.resolve(r); }); }
+    /** Each «Open with» entry's switch: Android's state for the components named (0 as installed, 1 on, 2 off). */
+    @PluginMethod public void openWithStates(PluginCall call) {
+        PackageManager pm = getContext().getPackageManager(); String pkg = getContext().getPackageName(); JSObject states = new JSObject(); JSArray names = call.getArray("names", new JSArray());
+        for (int i = 0; i < names.length(); i++) { String n = names.optString(i, ""); if (!n.matches("Kt[A-Za-z]+")) continue; try { states.put(n, pm.getComponentEnabledSetting(new android.content.ComponentName(pkg, pkg + "." + n))); } catch (Throwable e) { states.put(n, -1); } }
+        JSObject r = new JSObject(); r.put("states", states); call.resolve(r);
+    }
+    /** One switch turned: `state` «on», «off» or «default» (as installed); the app keeps running. */
+    @PluginMethod public void openWithSet(PluginCall call) {
+        String n = call.getString("name", ""), st = call.getString("state", "default"); if (!n.matches("Kt[A-Za-z]+")) { call.reject("name"); return; }
+        int v = "on".equals(st) ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : "off".equals(st) ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED : PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+        try { String pkg = getContext().getPackageName(); getContext().getPackageManager().setComponentEnabledSetting(new android.content.ComponentName(pkg, pkg + "." + n), v, PackageManager.DONT_KILL_APP); call.resolve(); }
+        catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    /** The apps that open a file of this type (Files' own chooser, «Always open .mkv with…»): label, package,
+     *  activity and a small icon, this app left out (the page lists its own viewers first). */
+    @PluginMethod public void appsFor(PluginCall call) {
+        final String path = call.getString("path", ""), mime = call.getString("mime", "*/*");
+        bg.execute(() -> {
+            try {
+                Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", fileOf(path));
+                Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(u, mime); PackageManager pm = getContext().getPackageManager(); JSArray out = new JSArray();
+                for (android.content.pm.ResolveInfo ri : pm.queryIntentActivities(i, 0)) {
+                    if (ri.activityInfo == null || getContext().getPackageName().equals(ri.activityInfo.packageName)) continue;
+                    JSObject o = new JSObject(); o.put("pkg", ri.activityInfo.packageName); o.put("cls", ri.activityInfo.name); o.put("label", String.valueOf(ri.loadLabel(pm)));
+                    try { android.graphics.drawable.Drawable d = ri.loadIcon(pm); int px = 96; android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888); android.graphics.Canvas c = new android.graphics.Canvas(bm); d.setBounds(0, 0, px, px); d.draw(c); java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); bm.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo); o.put("icon", "data:image/png;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)); } catch (Throwable ignored) {}
+                    out.put(o);
+                }
+                JSObject r = new JSObject(); r.put("apps", out); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    /** A file opened in one app named (the chooser's choice): «notInstalled» when that app is gone. */
+    @PluginMethod public void openIn(PluginCall call) {
+        try {
+            File f = fileOf(call.getString("path", "")); Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+            Intent i = new Intent(Intent.ACTION_VIEW); i.setDataAndType(u, call.getString("mime", "*/*")); i.setClassName(call.getString("pkg", ""), call.getString("cls", "")); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (i.resolveActivity(getContext().getPackageManager()) == null) { call.reject("notInstalled"); return; }
+            getContext().startActivity(i); call.resolve();
+        } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
     /* Shared to «Save to device»: what other apps sent (kept until saved or dismissed), and the saving. */
     static final java.util.List<Uri> shared = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     static void sharedIn(java.util.List<Uri> us) { shared.addAll(us); KtPlugin p = self; if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
@@ -1165,7 +1335,7 @@ public class KtPlugin extends Plugin {
             } catch (javax.net.ssl.SSLException e) {
                 // (Refused at the TLS handshake through the resolver's way: asked once more the plain way, kept a day.)
                 String host = ""; try { host = new URL(urlStr).getHost(); } catch (Exception ignored) {}
-                if (KrDoh.on() && !KrDoh.isDirect(host)) { KrDoh.goDirect(host); httpRequest(call); return; }
+                if (KrDoh.on() && !KrDoh.isDirect(host) && KrDoh.goDirect(host)) { httpRequest(call); return; }
                 call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e);
             } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
         });

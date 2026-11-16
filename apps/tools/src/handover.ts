@@ -60,7 +60,7 @@ export const DONE_KEY = 'kt.handover.done'; export const PROGRESS_KEY = 'kt.hand
  *  build downloaded (a path in the old build's temp folder). */
 export const localSkipped = (k: string): boolean => k.startsWith('kt.handover.') || k.startsWith('kt.rustSwitch.') || k === 'kt.update.file';
 /** The lists a person keeps (a profile with any of them is not empty: a hand-over then merges). */
-const LISTS = ['kt.anime.listStatus', 'kt.anime.diary', 'kt.tv.watchlist', 'kt.tv.seen', 'kt.follows', 'kt.notes', 'kt.files.bookmarks', 'kt.courses', 'kt.player.memory', 'kt.watchedTasks', 'kt.trackers', 'kt.grab.projects'];
+const LISTS = ['kt.anime.listStatus', 'kt.anime.diary', 'kt.tv.watchlist', 'kt.tv.seen', 'kt.follows', 'kt.notes', 'kt.files.bookmarks', 'kt.files.renamePresets', 'kt.courses', 'kt.player.memory', 'kt.watchedTasks', 'kt.trackers', 'kt.grab.projects'];
 
 /* ---------- the database, read whole ---------- */
 const DB_NAME = 'kurokawa-tools';
