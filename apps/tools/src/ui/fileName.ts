@@ -18,7 +18,8 @@ function extOf(name: string): string {
 function tailStart(stem: string): number {
   let i = stem.length;
   while (i > 0) { const ch = stem[i - 1]; if (/\p{M}/u.test(ch) || (/\p{L}/u.test(ch) && !LATIN.test(ch))) break; i--; }
-  while (i < stem.length && (/\s/.test(stem[i]) || ARABIC_PUNCT.test(stem[i]))) i++;
+  // (A closing bracket right after the Arabic words belongs to them: «(كاريوكي)» keeps its bracket the right way round.)
+  while (i < stem.length && (/[\s)\]}»]/.test(stem[i]) || ARABIC_PUNCT.test(stem[i]))) i++;
   return i;
 }
 /** The name as nodes to put in an element whose direction is nameDir(name). */

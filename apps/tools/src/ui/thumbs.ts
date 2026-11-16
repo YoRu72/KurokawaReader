@@ -24,6 +24,11 @@ function pump(): void {
     void j.load().then((u) => { if (u) { remember(j.key, u); if (j.el.isConnected) j.put(u); } }).catch(() => undefined).finally(() => { running--; pump(); });
   }
 }
+/** Files renamed: their pictures kept in memory follow them (the key holds the path), not asked for again. */
+export function moveThumbs(pairs: [string, string][]): void {
+  if (!pairs.length || !cache.size) return; const to = new Map(pairs);
+  for (const [k, v] of [...cache]) { const m = /^f:(.*):(\d+):(-?\d+):(\d+)$/.exec(k); if (!m) continue; const np = to.get(m[1]); if (np) { cache.delete(k); cache.set(`f:${np}:${m[2]}:${m[3]}:${m[4]}`, v); } }
+}
 /** The pictures of the rows inside `box` no longer asked for (the rows taken out of the page): not watched, not waiting. */
 export function dropThumbs(box: Element): void {
   if (!io || !box.firstElementChild) return;

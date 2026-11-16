@@ -64,15 +64,17 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   await goTo(K + '/Subway'); ok('a sibling sharing the name\'s start (Sub → Subway) is offered Paste', await pasteShown());
   // ---- 3. the batch rename: extensions kept, clashes shown
   await goTo(K); await itemAct('README', 'Select'); await p.click('.files-selbar button[aria-label="Select all"]'); await p.waitForTimeout(100);
-  await p.click('.files-selbar button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Rename all")'); await p.waitForSelector('.files-preview-row');
-  const preview = () => p.$$eval('.files-preview-row', (e) => Object.fromEntries(e.map((x) => [x.querySelector('small').textContent, x.querySelector('span').textContent])));
-  let pv = await preview(); ok('the pattern {name} leaves every name as it was', Object.entries(pv).every(([a, b]) => a === b), pv);
-  await p.fill('.sheet input[type=text] >> nth=0', '{name}_x'); await p.waitForTimeout(100); pv = await preview();
-  ok('{name}_x keeps the last extension', pv['Show.S01E01.720p.mkv'] === 'Show.S01E01.720p_x.mkv' && pv['archive.tar.gz'] === 'archive.tar_x.gz' && pv['.gitignore'] === '.gitignore_x' && pv.README === 'README_x' && pv.Sub === 'Sub_x', pv);
-  await p.fill('.sheet input[type=text] >> nth=0', 'X'); await p.waitForTimeout(100);
-  ok('names that clash: Rename disabled, the clash told', await p.$eval('.sheet .btn.primary', (e) => e.disabled) && (await p.textContent('.sheet')).includes('Some new names are the same'));
-  await p.fill('.sheet input[type=text] >> nth=0', 'x{n}'); await p.waitForTimeout(100); pv = await preview();
-  ok('numbered: all different, the extensions kept', new Set(Object.values(pv).map((x) => x.toLowerCase())).size === Object.keys(pv).length && /^x\d\.mkv$/.test(pv['Show.S01E01.720p.mkv']) && !(await p.$eval('.sheet .btn.primary', (e) => e.disabled)), pv);
+  await p.click('.files-selbar button[aria-label="Rename all…"]'); await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250);
+  const preview = () => p.$$eval('.batch-sheet .batch-row', (e) => Object.fromEntries(e.map((x) => [x.querySelector('.batch-old').textContent, x.querySelector('.batch-new').textContent])));
+  const goOff = () => p.$eval('.batch-sheet .sheet-actions .btn.primary', (e) => e.disabled);
+  const radio = (g, i) => p.locator('.batch-sheet [role=radiogroup]').nth(g).locator('[role=radio]').nth(i).click();
+  let pv = await preview(); ok('nothing asked: every name left as it was (and Rename off)', Object.entries(pv).every(([a, b]) => a === b) && await goOff(), pv);
+  await radio(0, 3); await p.fill('.batch-sheet .batch-sec >> nth=0 >> input[type=text] >> nth=0', '_x'); await p.waitForTimeout(150); pv = await preview();
+  ok('«add after» _x keeps the last extension', pv['Show.S01E01.720p.mkv'] === 'Show.S01E01.720p_x.mkv' && pv['archive.tar.gz'] === 'archive.tar_x.gz' && pv.README === 'README_x' && pv.Sub === 'Sub_x', pv);
+  await radio(0, 1); await p.fill('.batch-sheet .batch-sec >> nth=0 >> input[type=text] >> nth=0', 'X'); await p.waitForTimeout(150);
+  ok('names that clash: Rename disabled, the clash told', await goOff() && (await p.textContent('.batch-sheet')).includes('Two items would get this name'));
+  await p.locator('.batch-sheet .switch-row input').nth(2).click({ force: true }); await p.waitForTimeout(200); pv = await preview();
+  ok('numbered: all different, the extensions kept, Rename on', new Set(Object.values(pv).map((x) => x.toLowerCase())).size === Object.keys(pv).length && /^X - \d\.mkv$/.test(pv['Show.S01E01.720p.mkv']) && !(await goOff()), pv);
   await p.keyboard.press('Escape'); await p.waitForTimeout(250);
   // ---- a delete the bin cannot take: offered for good
   await goTo(K); await p.evaluate(() => { window.__trashFail = true; }); await itemAct('README', 'Delete'); await p.click('.sheet .btn.primary.danger'); await p.waitForTimeout(400);

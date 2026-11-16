@@ -18,6 +18,7 @@ import { mimeMatches, mimeOfName, pickResult, kindsAsked, type PickRequest } fro
 import { kindOfFile } from './taskFiles';
 import { isArc, arcPath, parseArc, arcName, looksArchive } from './filesArc';
 import { isApps, appsPath, parseApps, appsAvailable } from './filesApps';
+import { nameDotExt } from '../ui/nameExt';
 import { splitExt, nameParts, joinMeta, readablePath, placeName, readShared, readSaved } from './filesNames';
 type AppEntry = Entry & { pkg?: string; sub?: string; special?: 'data' | 'obb' | 'media' };
 
@@ -147,7 +148,7 @@ const dayOf = (ms: number): string => { const d = new Date(ms); const now = new 
 
 /** A pane of the Files page: its own place, selection and history. Standing alone it writes where it is into the
  *  address; embedded (two panes) it keeps quiet and tells the other pane through `peer`. */
-export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void };
+export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void; /** The view (list or grid) changed: button and rows redrawn in place. */ restyle: () => void };
 /** Another app's «pick a file» (views/pick.ts): the page as a picker — files of the kind asked chosen, folders walked. */
 export type PickMode = { req: PickRequest; done: (paths: string[]) => void; cancel: () => void };
 type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null; pick?: PickMode };
@@ -179,11 +180,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   /** The title, a long name cut in its middle so its end (the extension) stays in sight. */
   const setTitle = (text: string, isDir = true) => { const np = nameParts(text, isDir); titleEl.setAttribute('dir', np.dir); titleEl.title = text; titleEl.replaceChildren(h('span', { class: 'mid-head' }, np.head), h('span', { class: 'mid-tail' }, np.tail)); };
   const fab = h('button', { type: 'button', class: 'fab files-fab', 'aria-label': t('newFolder'), onclick: () => fabSheet() }, icon('plus'));
+  // (The list/grid button: the same button for good — its focus stays —, showing the view a tap switches TO, named by
+  // what it does; it redraws the folder in place — the address stays the same, so a navigate() to it would draw nothing.)
+  const viewBtn = iconButton(prefs.view === 'grid' ? 'list' : 'grid', t(prefs.view === 'grid' ? 'filesViewToList' : 'filesViewToGrid'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); applyView(); po.peer?.()?.restyle(); });
   const root = h('div', { class: 'view files-view' },
     h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' },
       iconButton('search', t('search'), () => { if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
-      iconButton(prefs.view === 'grid' ? 'list' : 'grid', t('filesView'), () => { prefs.view = prefs.view === 'grid' ? 'list' : 'grid'; savePrefs(); if (quiet) { draw(); po.peer?.()?.reload(); } else navigate(`/files?p=${encodeURIComponent(at)}`, true); }),
+      viewBtn,
       iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
     clipBar, search, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
@@ -278,14 +282,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       else { const r = await listDir(at); if (stale()) return; const hid = (await import('./filesMore')).hiddenPaths(); if (stale()) return; got = (hid.length ? r.entries.filter((e) => !hid.includes(e.path)) : r.entries).filter((e) => !e.name.startsWith(STAGE)); if (!r.exists) note = t('folderNotFound'); if (r.truncated) toast(t('filesTruncated'), 'info'); }
     }
     catch (e) { if (stale()) return; got = []; note = String((e as Error).message ?? e); }
-    entries = got; for (const x of [...picked]) if (!got.some((e) => e.path === x)) picked.delete(x); if (!picked.size) selecting = false;
+    entries = got; { const have = new Set(got.map((e) => e.path)); for (const x of [...picked]) if (!have.has(x)) picked.delete(x); } if (!picked.size) selecting = false; reorder();
     // (Back to a folder seen before: where it was scrolled to.)
     const y = scrollMemo.get(want) ?? 0; draw(y); drawSel(); status.textContent = note;
     if (y) requestAnimationFrame(() => { if (stale()) return; window.scrollTo(0, y); body.scrollTop = y; });
   };
   const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
   let moreIo: IntersectionObserver | null = null; let chunkIo: IntersectionObserver | null = null;
-  const draw = (minPx = 0) => {
+  const draw = (minPx = 0, ensure = '') => {
     const list = shown(); listEl.className = `files-list ${prefs.view}${prefs.density === 'compact' ? ' compact' : ''}`; root.classList.toggle('eink', !!prefs.eink);
     moreIo?.disconnect(); moreIo = null; chunkIo?.disconnect(); chunkIo = null; dropThumbs(listEl); rowEls.clear();
     if (!list.length) { subEl.textContent = ''; listEl.replaceChildren(h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
@@ -314,11 +318,23 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     listEl.replaceChildren(slice());
     // (A scroll to come back to: drawn down to it first.)
     while (minPx && drawn < list.length && listEl.offsetHeight < minPx + window.innerHeight) listEl.append(slice());
+    if (ensure) { const at = list.findIndex((x) => x.path === ensure); while (at >= drawn && drawn < list.length) listEl.append(slice()); }
     // (Watched anew after each slice: a slice too short to push the sentinel out of reach — a grid on a tall screen —
     // left it «still in view», and no change, no call: the list stopped there.)
     if (drawn < list.length) { const sentinel = h('div', { class: 'files-more-sentinel' }); listEl.append(sentinel); moreIo = new IntersectionObserver((es) => { if (!es.some((x) => x.isIntersecting)) return; sentinel.before(slice()); if (drawn >= list.length) { moreIo?.disconnect(); moreIo = null; sentinel.remove(); return; } moreIo?.unobserve(sentinel); moreIo?.observe(sentinel); }, { root: null, rootMargin: '1200px 0px' }); moreIo.observe(sentinel); }
     const dirs = list.filter((e) => e.dir).length; const files = list.length - dirs;
     subEl.textContent = [dirs ? countFolders(dirs) : '', files ? countFiles(files) : ''].filter(Boolean).join(', '); status.textContent = '';
+  };
+  const paintView = () => { const to = prefs.view === 'grid' ? 'list' : 'grid'; viewBtn.dataset.icon = to; viewBtn.replaceChildren(icon(to)); const lbl = t(prefs.view === 'grid' ? 'filesViewToList' : 'filesViewToGrid'); viewBtn.title = lbl; viewBtn.setAttribute('aria-label', lbl); };
+  /** The view changed: the first row in sight stays where it is on the screen, the rows are drawn at the new size (their
+   *  pictures asked again at it), the button shows what a tap does now. */
+  const applyView = () => {
+    paintView(); let anchor: { path: string; top: number } | null = null; const edge = (root.querySelector('.topbar') as HTMLElement | null)?.getBoundingClientRect().bottom ?? 0;
+    for (const [p, { el }] of rowEls) { if (!el.isConnected) continue; const r = el.getBoundingClientRect(); if (r.bottom > edge + 1 && (!anchor || r.top < anchor.top)) anchor = { path: p, top: r.top }; }
+    draw(0, anchor?.path ?? '');
+    const now = anchor ? rowEls.get(anchor.path)?.el : null;
+    if (anchor && now) { const d = now.getBoundingClientRect().top - anchor.top; if (d) { if (body.scrollHeight > body.clientHeight + 1 && body.scrollTop) body.scrollTop += d; else window.scrollBy(0, d); } }
+    if (!anchor) { window.scrollTo(0, 0); }
   };
   const row = (e: Entry): HTMLElement => {
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
@@ -333,7 +349,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       const ok = e.dir || pickable(e);
       const pr = h('div', { class: 'files-row' + (chosen.has(e.path) ? ' picked' : '') + (ok ? '' : ' pick-off') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', 'aria-pressed': e.dir ? undefined : String(chosen.has(e.path)), onclick: () => void open(e) },
         ic, h('span', { class: 'grow files-main' }, nameEl(e.name, e.dir), h('small', { class: 'src' }, ...metaNodes(meta))),
-        h('span', { class: 'pick-mark' }, icon(e.dir ? 'chevronRight' : chosen.has(e.path) ? 'check' : 'circle')));
+        h('span', { class: 'pick-mark' + (chosen.has(e.path) && chosen.size > 1 && pk.req.multiple ? ' order' : '') }, ...(chosen.has(e.path) && chosen.size > 1 && pk.req.multiple ? [localDigits([...chosen.keys()].indexOf(e.path) + 1)] : [icon(e.dir ? 'chevronRight' : chosen.has(e.path) ? 'check' : 'circle')])));
       if (canThumb && prefs.thumbs !== false) thumbInto(ic, e);
       return pr;
     }
@@ -357,13 +373,18 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // (Chosen or let go: the rows in the page marked where they are — the list not drawn anew, so it stays where it was
   // scrolled to, however far down a big folder that is; rows drawn later read the choice themselves.)
   const rowEls = new Map<string, { el: HTMLElement; e: Entry }>();
-  const trail = (e: Entry): HTMLElement => (selecting ? h('span', { class: 'files-check', 'data-on': String(picked.has(e.path)) }, icon(picked.has(e.path) ? 'check' : 'circle')) : iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }));
+  // (The order of choosing: the Set keeps it — a first tap is 1; what select-all adds comes after, in the order shown; a
+  // let-go item gives its place up. Two or more chosen: each shows its number where the tick was.)
+  let orderOf = new Map<string, number>();
+  const reorder = () => { orderOf = new Map(); let i = 0; for (const p of picked) orderOf.set(p, ++i); };
+  const trail = (e: Entry): HTMLElement => { if (!selecting) return iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }); const on = picked.has(e.path); const n = orderOf.get(e.path); return on && picked.size > 1 && n ? h('span', { class: 'files-check order', 'data-on': 'true', 'data-n': String(n), 'aria-label': t('btPicked', { n: localDigits(n) }) }, localDigits(n)) : h('span', { class: 'files-check', 'data-on': String(on) }, icon(on ? 'check' : 'circle')); };
   const applySel = () => {
+    reorder();
     for (const [p, { el, e }] of rowEls) {
       if (!el.isConnected) { rowEls.delete(p); continue; }
       const on = picked.has(p); el.classList.toggle('picked', on);
-      const last = el.lastElementChild; const wasCheck = !!last?.classList.contains('files-check');
-      if (wasCheck !== selecting || (selecting && (last as HTMLElement | null)?.dataset.on !== String(on))) last?.replaceWith(trail(e));
+      const last = el.lastElementChild as HTMLElement | null; const wasCheck = !!last?.classList.contains('files-check');
+      if (wasCheck !== selecting || (selecting && (last?.dataset.on !== String(on) || (last?.dataset.n ?? '') !== (on && picked.size > 1 ? String(orderOf.get(p)) : '')))) last?.replaceWith(trail(e));
     }
   };
   const toggle = (e: Entry) => { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); if (!picked.size) selecting = false; applySel(); drawSel(); };
@@ -373,9 +394,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     // (Inside an archive only what reads: copy (taken out on Paste), share, take out; cut shown greyed with its reason.)
     if (isArc(at)) {
       const cut = iconButton('scissors', t('arcNoCut')); cut.disabled = true; cut.classList.add('files-off');
+      const ren = iconButton('pen', `${t('filesBatchRename')} — ${t('btWhyArchive')}`); ren.disabled = true; ren.classList.add('files-off');
       selBar.replaceChildren(h('span', { class: 'files-selcount' }, countItems(n)),
         iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }),
         ...(canJobs() ? [iconButton('copy', t('filesCopy'), () => { copyPicked('copy'); }), cut, iconButton('archive', t('extractHere'), () => { const ps = [...picked]; leaveSel(); void extractEntries(ps, parentOf(parseArc(at).archive)); })] : []),
+        ...(n > 1 ? [ren] : []),
         ...(plug() ? [iconButton('share', t('share'), () => { const ps = [...picked]; leaveSel(); void shareArc(ps); })] : []),
         iconButton('close', t('close'), leaveSel));
       return;
@@ -384,9 +407,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       h('span', { class: 'files-selcount' }, countItems(n)),
       iconButton('check', t('filesSelectAll'), () => { for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }),
       ...(canJobs() ? [iconButton('copy', t('filesCopy'), () => copyPicked('copy')), iconButton('scissors', t('filesCut'), () => copyPicked('move'))] : []),
-      ...(plug() && !isVirtual(at) ? [iconButton('lock', t('vaultLock'), () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); })] : []),
+      ...(n > 1 ? [iconButton('pen', t('filesBatchRename'), () => void batchRename())] : []),
       ...(po.peer?.() ? [iconButton('swap', t('filesToOtherPane'), () => { const ps = [...picked]; leaveSel(); pickSheet(t('filesToOtherPane'), [['copy', t('filesCopy'), 'copy'], ['move', t('filesMove'), 'scissors']], 'copy', (op) => void po.peer!()!.dropIn(op as 'copy' | 'move', ps), t('cancel')); })] : []),
       iconButton('trash', t('delete'), () => void confirmDelete([...picked])),
+      ...(plug() && !isVirtual(at) ? [iconButton('lock', t('vaultLock'), () => { const ps = [...picked]; leaveSel(); void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!ps.every((x) => /\.kurokawa$/i.test(x)), ps, jobRow, () => void load()); }); })] : []),
       ...(one ? [iconButton('pen', t('rename'), () => renameSheet(one))] : []),
       iconButton('share', t('share'), () => void shareMany([...picked])),
       iconButton('more', t('more'), () => selectionSheet()),
@@ -558,7 +582,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const selectionSheet = () => {
     const sh = openSheet(countItems(picked.size), t('close')); const paths = [...picked];
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
-    sh.body.append(h('div', { class: 'dest-list' }, act('archive', t('filesCompress'), () => void compress(paths)), act('pen', t('filesBatchRename'), () => void import('./filesMore').then((m) => m.batchRenameSheet(entries.filter((e) => picked.has(e.path)), () => { leaveSel(); void load(); }))), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } applySel(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })));
+    sh.body.append(h('div', { class: 'dest-list' }, act('archive', t('filesCompress'), () => void compress(paths)), act('pen', t('filesBatchRename'), () => void batchRename()), act('check', t('filesInvert'), () => { const all = shown(); for (const e of all) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } applySel(); drawSel(); }), act('info', t('properties'), () => { const one = entries.find((e) => e.path === paths[0]); if (one) void propertiesSheet(one); })));
   };
   const sortSheet = () => {
     const sh = openSheet(t('sortBy'), t('close'));
@@ -584,11 +608,43 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : []),
       ...(plug() && !allFiles ? [act('key', t('filesAccessAllow'), () => void askAccess())] : [])));
   };
+  // ---- renaming many at once: the sheet (views/filesBatchUi.ts), its run a job with progress and Cancel, then an Undo
+  const renameOne = async (dir: string, from: string, to: string): Promise<void> => {
+    const path = dir === '/' ? `/${from}` : `${dir}/${from}`;
+    if (isVirtual(path)) { await vfs.rename(path, to); return; }
+    const fx = fsx(); if (!fx) throw new Error(t('btWhyNoEngine')); const r = await fx.filesRename({ path, name: to }); if (r && r.ok === false) throw new Error('cannot rename');
+  };
+  const namesIn = async (dir: string): Promise<string[] | null> => {
+    try {
+      if (isVirtual(dir)) return (await vfs.list(dir)).entries.map((e) => e.name);
+      const p = plug(); if (p) return (await p.filesList({ path: dir, hidden: true, counts: false })).entries.map((e) => e.name);
+      const d = desk(); if (d?.listDir) return ((await d.listDir(dir)).entries ?? []).map((e) => e.name);
+    } catch { /* not known */ }
+    return null;
+  };
+  const batchHost = (items: Entry[]) => ({
+    items: items.map((e) => ({ path: e.path, name: e.name, dir: e.dir, size: e.size, mtime: e.mtime })), shown: shown().map((e) => ({ path: e.path, name: e.name, dir: e.dir, size: e.size, mtime: e.mtime })), byHand: true,
+    names: namesIn, rename: renameOne, fmtSize: formatBytes,
+    progress: (label: string, cancel: () => void) => { const id = `rn-${Date.now()}`; const el = jobRow(id, label, cancel); return { set: (d: number, n: number) => { const b = el.querySelector('.files-job-bar i') as HTMLElement | null; if (b && n) b.style.width = `${Math.round((d / n) * 100)}%`; const m = el.querySelector('.files-job-meta'); if (m) m.textContent = `${localDigits(d)} / ${localDigits(n)}`; }, end: () => el.remove() }; },
+    after: (moved: Map<string, string>) => { if (moved.size && picked.size) { const next = [...picked].map((x) => moved.get(x) ?? x); picked.clear(); for (const x of next) picked.add(x); } void load().then(() => { if (!gone && localStorage.getItem('kt.files.renamejob')) void import('./filesBatchUi').then((m) => m.interruptedBanner(batchHost([]), body)); }); },
+  });
+  const batchRename = async () => {
+    const byPath = new Map(entries.map((e) => [e.path, e])); const items = [...picked].map((p) => byPath.get(p)).filter((e): e is Entry => !!e);
+    if (items.length < 2) return;
+    const m = await import('./filesBatchUi'); const why = m.whyNot(items.map((e) => e.path), !!(fsx() || items.every((e) => isVirtual(e.path))) && !items.some((e) => isApps(e.path)));
+    if (why) { toast(t('btNoRenameHere', { why }), 'error', 5000); return; }
+    await m.batchSheet(batchHost(items));
+  };
   const renameSheet = (e: Entry) => {
-    const pl = fsx(); if (!pl) return; if (isArc(e.path)) { toast(t('arcReadOnly'), 'info'); return; } const sh = openSheet(t('rename'), t('cancel')); const inp = h('input', { type: 'text', value: e.name, dir: 'auto' }) as HTMLInputElement;
-    sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), inp));
-    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim(); if (!name || name === e.name) { sh.close(); return; } try { if (isVirtual(e.path)) { await vfs.rename(e.path, name); } else { const r = await pl.filesRename({ path: e.path, name }); if (r && r.ok === false) throw new Error(t('filesFailed')); } sh.close(); leaveSel(); void load(); } catch (err) { toast(fsErr(String((err as Error).message ?? err)), 'error'); } } }, icon('check'), t('rename')));
-    setTimeout(() => { inp.focus(); inp.setSelectionRange(0, splitExt(e.name, e.dir)[0].length); }, 50);
+    const pl = fsx(); if (!pl) return; if (isArc(e.path)) { toast(t('arcReadOnly'), 'info'); return; } const sh = openSheet(t('rename'), t('cancel'));
+    // (A file: «name . extension» as the downloader's Save as — the extension on its own, so a stem retyped cannot lose it.)
+    const [stem, ext] = splitExt(e.name, e.dir);
+    const inp = h('input', { type: 'text', value: stem, dir: 'auto', placeholder: t('fileName'), class: 'grow', spellcheck: 'false' }) as HTMLInputElement;
+    const extIn = e.dir ? null : h('input', { type: 'text', value: ext, dir: 'ltr', placeholder: t('extension'), class: 'ext-in', spellcheck: 'false', autocapitalize: 'off' }) as HTMLInputElement;
+    const compose = () => { const n = inp.value.trim(); const x = (extIn?.value ?? '').trim().replace(/^\.+/, ''); return extIn && x && n ? `${n}.${x}` : n; };
+    sh.body.append(h('div', { class: 'field' }, h('span', { class: 'label' }, t('fileName')), extIn ? nameDotExt(inp, extIn) : inp));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = compose(); if (!name || name === e.name) { sh.close(); return; } try { if (isVirtual(e.path)) { await vfs.rename(e.path, name); } else { const r = await pl.filesRename({ path: e.path, name }); if (r && r.ok === false) throw new Error(t('filesFailed')); } sh.close(); leaveSel(); void load(); } catch (err) { toast(fsErr(String((err as Error).message ?? err)), 'error'); } } }, icon('check'), t('rename')));
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
   };
   const newFolderSheet = () => {
     const pl = fsx(); if (!pl) return; if (isArc(at)) { toast(t('arcReadOnly'), 'info'); return; } const sh = openSheet(t('newFolder'), t('cancel')); const inp = h('input', { type: 'text', dir: 'auto', placeholder: t('folderNamePlaceholder') }) as HTMLInputElement;
@@ -821,7 +877,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let sub: { remove(): void } | null = null;
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
   const pl = plug(); if (pl) void import('./filesMore').then((m) => m.pruneTrash());
-  void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); })();
+  void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); if (!pk && po.side !== 'b' && localStorage.getItem('kt.files.renamejob')) void import('./filesBatchUi').then((m) => m.interruptedBanner(batchHost([]), body)); })();
   let wake: { release(): Promise<void> } | null = null;
   if (prefs.keepOn) void (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen').then((w) => { wake = w; }).catch(() => undefined);
   // Back (the phone's, a mouse's, Alt+←, the arrow in the bar): the open sheet or viewer closes first (the app's back
@@ -853,6 +909,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     else if (mod && k === 'f') { ev.preventDefault(); search.hidden = false; search.focus(); }
     else if (ev.key === 'Delete' && picked.size) { ev.preventDefault(); void confirmDelete([...picked]); }
     else if (ev.key === 'F2' && one) { ev.preventDefault(); renameSheet(one); }
+    else if (ev.key === 'F2' && picked.size > 1) { ev.preventDefault(); void batchRename(); }
     else if (ev.key === 'Escape' && selecting) { ev.preventDefault(); leaveSel(); }
     else if (ev.key === 'Escape' && clipboard && !clipboard.busy) { ev.preventDefault(); setClip(null); }
     else if ((ev.altKey && ev.key === 'ArrowUp') || (ev.key === 'Backspace' && !mod)) { const up = collection ? null : upOf(at); if (up) { ev.preventDefault(); goUp(up); } }
@@ -863,7 +920,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
   root.dispose = () => { keepScroll(); gone = true; clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
-  pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); };
+  pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };
   if (po.embedded) {
     root.classList.add('files-pane'); if (po.side) root.dataset.side = po.side;

@@ -57,7 +57,7 @@ async function suite(browser, port, z, lang, pc) {
 
   // ---- 2. three entries copied inside the zip: the bar, Paste greyed there
   await pick('notes.txt', 'Fonts', LONG);
-  ok(L('inside an archive the selection offers no delete or rename'), !(await p.$('.files-selbar button[data-icon="trash"]')) && !(await p.$('.files-selbar button[data-icon="pen"]')));
+  ok(L('inside an archive the selection offers no delete or rename (the rename-many button is there greyed, with its reason)'), !(await p.$('.files-selbar button[data-icon="trash"]')) && !(await p.$('.files-selbar button[data-icon="pen"]:not([disabled])')));
   ok(L('…and Cut greyed'), await p.$eval('.files-selbar button[data-icon="scissors"]', (b) => b.disabled));
   await sel('copy'); await p.waitForTimeout(300);
   let b = await bar();

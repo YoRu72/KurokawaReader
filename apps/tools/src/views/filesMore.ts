@@ -7,7 +7,6 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { ktPlugin } from '../native';
 import type { Entry } from './files';
-import { patternName as patternNameOf, clashes } from './filesNames';
 import { isVideo } from '../engine';
 
 type Plug = {
@@ -121,41 +120,8 @@ export function trashSheet(refresh: () => void): void {
   void load();
 }
 
-/* ---------- renaming many at once ---------- */
 const pad = (n: number, w: number) => String(n).padStart(w, '0');
-/** The new name of `e` by the pattern (filesNames.ts; the sizes as the page writes them). */
-export const patternName = (e: Entry, pattern: string, i: number, start: number, find: string, replace: string): string => patternNameOf(e, pattern, i, start, find, replace, formatBytes);
-export function batchRenameSheet(items: Entry[], refresh: () => void): void {
-  const sh = openSheet(t('filesBatchRename'), t('cancel'));
-  const pattern = h('input', { type: 'text', value: '{name}', dir: 'ltr' }) as HTMLInputElement; const start = h('input', { type: 'number', value: '1', min: '0', style: { width: '80px' } }) as HTMLInputElement;
-  const find = h('input', { type: 'text', placeholder: t('filesFind'), dir: 'auto' }) as HTMLInputElement; const repl = h('input', { type: 'text', placeholder: t('filesReplaceWith'), dir: 'auto' }) as HTMLInputElement;
-  const preview = h('div', { class: 'files-preview' });
-  const vars = h('div', { class: 'chip-row' }, ...['{name}', '{ext}', '{name.ext}', '{n}', '{n:3}', '{size}', '{date}', '{time}', '{now}'].map((v) => h('button', { type: 'button', class: 'chip small', onclick: () => { pattern.value += v; draw(); } }, v)));
-  const names = (): string[] => items.map((e, i) => patternName(e, pattern.value, i, Number(start.value) || 0, find.value, repl.value));
-  // (Two new names the same — letter case aside — would have the second refused or, worse, one over the other: shown, and Rename held back.)
-  const clash = h('p', { class: 'hint error', hidden: true }, t('filesNamesClash'));
-  const draw = () => { const ns = names(); const bad = clashes(ns); preview.replaceChildren(...items.slice(0, 40).map((e, i) => h('div', { class: 'files-preview-row' + (bad.has(i) ? ' bad' : ''), dir: 'auto' }, h('small', { class: 'src' }, e.name), h('span', null, ns[i])))); clash.hidden = !bad.size; go.disabled = bad.size > 0 || ns.some((n) => !n); };
-  const go = h('button', { type: 'button', class: 'btn primary', onclick: async () => { const ns = names(); sh.close(); let ok = 0; const failed: string[] = []; const did: Ren[] = []; for (let i = 0; i < items.length; i++) { if (ns[i] === items[i].name) continue; try { await plug().filesRename({ path: items[i].path, name: ns[i] }); ok++; did.push({ dir: items[i].path.slice(0, items[i].path.length - items[i].name.length - 1), from: items[i].name, to: ns[i] }); } catch (err) { failed.push(`${items[i].name}: ${String((err as Error).message ?? err) === 'exists' ? t('filesNameTaken') : String((err as Error).message ?? err)}`); } }
-    if (failed.length) toast(t('filesSomeFailed', { n: localDigits(failed.length), why: failed[0] }), 'error', 5000);
-    // (undo-redo) Undo renames each back — only when every one can be (its new name still there, its old one free), checked by listing the folder.
-    else if (did.length) { const { offerUndo } = await import('../ui/undo'); offerUndo(t('filesRenamedN', { n: localDigits(ok) }), async () => { await renameAll(did.map((d) => ({ dir: d.dir, from: d.to, to: d.from })).reverse()); refresh(); }, async () => { await renameAll(did); refresh(); }); }
-    refresh(); } }, icon('pen'), t('rename')) as HTMLButtonElement;
-  for (const el of [pattern, start, find, repl]) el.addEventListener('input', draw);
-  sh.body.append(h('label', { class: 'field' }, h('span', null, t('filesPattern')), pattern), vars, h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, h('span', { class: 'label' }, t('filesStartAt')), start), h('div', { class: 'row', style: { gap: '8px' } }, find, repl), h('p', { class: 'hint' }, countItems(items.length)), clash, preview);
-  sh.actions.append(go); draw();
-}
-
-type Ren = { dir: string; from: string; to: string };
-/** (undo-redo) Renames made (or taken back) together, after a look at each folder: every `from` there and every `to`
- *  free, or nothing is touched; and looked at again after, so a rename the storage did not do is told. */
-async function renameAll(rs: Ren[]): Promise<void> {
-  const pl = plug() as Plug & { filesList(o: { path: string }): Promise<{ entries: { name: string }[] }> };
-  const names = async (dir: string) => new Set((await pl.filesList({ path: dir })).entries.map((e) => e.name.toLowerCase()));
-  const dirs = new Map<string, Set<string>>(); for (const r of rs) if (!dirs.has(r.dir)) dirs.set(r.dir, await names(r.dir));
-  for (const r of rs) { const n = dirs.get(r.dir)!; if (!n.has(r.from.toLowerCase()) || (n.has(r.to.toLowerCase()) && r.to.toLowerCase() !== r.from.toLowerCase())) throw new Error(t('renameBackBlocked', { name: r.from })); n.delete(r.from.toLowerCase()); n.add(r.to.toLowerCase()); }
-  for (const r of rs) await pl.filesRename({ path: `${r.dir}/${r.from}`, name: r.to });
-  for (const [dir] of dirs) { const n = await names(dir); const miss = rs.find((r) => r.dir === dir && !n.has(r.to.toLowerCase())); if (miss) throw new Error(t('renameBackBlocked', { name: miss.from })); }
-}
+/* (Renaming many at once: views/filesBatchUi.ts — the sheet — and views/filesBatch.ts — the plan, the run, the Undo.) */
 
 /* ---------- properties, told whole ---------- */
 export async function richProperties(rows: HTMLElement, e: Entry, line: (k: string, v: string) => HTMLElement): Promise<void> {
@@ -356,16 +322,16 @@ export async function filesSettingsSheet(at: string, apply: () => void): Promise
     sec(t('filesBackup')), h('p', { class: 'hint' }, t('filesBackupHint')));
   sh.actions.append(
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
-      const data = { kind: 'kurokawa-files-settings', v: 1, prefs, bookmarks: JSON.parse(localStorage.getItem('kt.files.bookmarks') ?? '[]') as unknown, hidden: hiddenPaths(), trash: trashOn(), charset: localStorage.getItem('kt.archive.charset') ?? 'auto' };
+      const data = { kind: 'kurokawa-files-settings', v: 1, prefs, bookmarks: JSON.parse(localStorage.getItem('kt.files.bookmarks') ?? '[]') as unknown, renamePresets: JSON.parse(localStorage.getItem('kt.files.renamePresets') ?? '[]') as unknown, hidden: hiddenPaths(), trash: trashOn(), charset: localStorage.getItem('kt.archive.charset') ?? 'auto' };
       const text = JSON.stringify(data, null, 2); const pl = plug() as unknown as { filesWrite?(o: { path: string; text: string }): Promise<unknown>; shareFile?(o: { path: string; title: string }): Promise<void> };
       if (pl.filesWrite) { const path = `${at}/kurokawa-files-settings.json`; try { await pl.filesWrite({ path, text }); toast(t('filesBackupSaved', { name: 'kurokawa-files-settings.json' })); apply(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
       else { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = 'kurokawa-files-settings.json'; a.click(); }
     } }, icon('download'), t('filesBackupSave')),
     h('button', { type: 'button', class: 'btn tonal small', onclick: async () => {
       const { pickFiles } = await import('../archives'); const ps = await pickFiles(false).catch(() => [] as string[]); if (!ps.length) return;
-      try { const r = await plug().filesHead({ path: ps[0], max: 2_000_000 }); const d = JSON.parse(r.text) as { kind?: string; prefs?: Record<string, unknown>; bookmarks?: unknown; hidden?: string[]; trash?: boolean; charset?: string };
+      try { const r = await plug().filesHead({ path: ps[0], max: 2_000_000 }); const d = JSON.parse(r.text) as { kind?: string; prefs?: Record<string, unknown>; bookmarks?: unknown; renamePresets?: unknown; hidden?: string[]; trash?: boolean; charset?: string };
         if (d.kind !== 'kurokawa-files-settings') throw new Error(t('filesBackupNotOurs'));
-        Object.assign(prefs, d.prefs ?? {}); savePrefs(); if (Array.isArray(d.bookmarks)) localStorage.setItem('kt.files.bookmarks', JSON.stringify(d.bookmarks)); if (Array.isArray(d.hidden)) localStorage.setItem('kt.files.hiddenPaths', JSON.stringify(d.hidden)); if (typeof d.trash === 'boolean') setTrashOn(d.trash); if (d.charset) localStorage.setItem('kt.archive.charset', d.charset);
+        Object.assign(prefs, d.prefs ?? {}); savePrefs(); if (Array.isArray(d.bookmarks)) localStorage.setItem('kt.files.bookmarks', JSON.stringify(d.bookmarks)); if (Array.isArray(d.renamePresets)) localStorage.setItem('kt.files.renamePresets', JSON.stringify(d.renamePresets)); if (Array.isArray(d.hidden)) localStorage.setItem('kt.files.hiddenPaths', JSON.stringify(d.hidden)); if (typeof d.trash === 'boolean') setTrashOn(d.trash); if (d.charset) localStorage.setItem('kt.archive.charset', d.charset);
         toast(t('filesBackupRestored')); sh.close(); navigate(`/files?p=${encodeURIComponent(at)}&t=${Date.now()}`, true);
       } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
     } }, icon('upload'), t('filesBackupRestore')));

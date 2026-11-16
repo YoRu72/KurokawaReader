@@ -1,5 +1,6 @@
 // A new download: links or magnets typed or pasted (several at once), a .torrent file chosen; the folder, the
 // name, the connections; for a torrent, its files picked once the metadata is here.
+import { nameDotExt } from '../ui/nameExt';
 import { h, icon, openSheet, toast } from '../ui/dom';
 import { t, formatBytes, countFiles, localDigits } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName, isTorrentBytes } from '../engine';
@@ -111,7 +112,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const filesBox = h('div', { class: 'add-files', hidden: true });
   let info: TorrentInfo | null = null; let chosen = new Set<number>(); let metaToken = 0;
   const saveAs = h('div', { class: 'save-as' },
-    h('div', { class: 'field' }, h('span', { class: 'label' }, t('saveAs')), h('div', { class: 'save-as-row' }, name, h('span', { class: 'dot' }, '.'), ext)),
+    h('div', { class: 'field' }, h('span', { class: 'label' }, t('saveAs')), nameDotExt(name, ext)),
     sizeLine, megaBox, storageLine,
     h('div', { class: 'dest-row static' }, icon('folder'), h('span', { class: 'label' }, t('saveTo')), dir, (window.kurokawaTools || ktPlugin()) ? h('button', { type: 'button', class: 'btn text small', onclick: () => void pick() }, t('changeFolder')) : null),
     dirMenu);

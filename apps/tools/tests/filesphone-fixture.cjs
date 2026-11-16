@@ -41,7 +41,7 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
   localStorage.setItem('kt.settings', JSON.stringify({ addons: ['files', 'archives'] }));
   localStorage.setItem('kt.files.prefs', JSON.stringify({ view: 'list', sort: 'name', desc: false, hidden: false, kind: 'all', last: K }));
   const T = 1760000000000; const tree = new Map(); window.__tree = tree; window.__calls = []; window.__slow = 0; window.__failName = 'broken.bin';
-  const put = (p, dir, size = 0, mtime = T) => { tree.set(p, { dir, size, mtime }); };
+  const put = (p, dir, size = 0, mtime = T) => { tree.set(p, { dir, size, mtime }); }; window.__put = put;
   const parent = (p) => p.replace(/\/[^/]*$/, '');
   const base = (p) => p.split('/').pop();
   for (const d of [P, K, `${K}/Sub`, `${K}/Sub/Deeper`, `${K}/Many`, SD, `${P}/ReadOnly`, `${P}/Music`]) put(d, true);
@@ -90,11 +90,18 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
   const Kurokawa = new Proxy({
     addListener: async (ev, fn) => { (ls[ev] = ls[ev] || []).push(fn); return { remove() { ls[ev] = (ls[ev] || []).filter((f) => f !== fn); } }; },
     filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'app', path: K, name: 'Kurokawa', readable: true, free: 12e9, total: 64e9 }, { kind: 'phone', path: P, name: 'Phone', readable: true, free: 12e9, total: 64e9 }, { kind: 'sd', path: SD, name: 'SD card', readable: true, free: 3e10, total: 6.4e10 }] }),
-    filesList: async ({ path: d }) => { if (!tree.has(d)) return { exists: false, entries: [] }; return { exists: true, entries: kids(d).map(entry).filter((e) => !e.name.startsWith('.') || JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').hidden) }; },
+    filesList: async ({ path: d, hidden }) => { if (!tree.has(d)) return { exists: false, entries: [] }; return { exists: true, entries: kids(d).map(entry).filter((e) => !e.name.startsWith('.') || hidden || JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').hidden) }; },
     filesStat: async ({ path: p, shallow }) => { window.__calls.push('stat:' + (shallow ? 'shallow:' : '') + p); const n = tree.get(p) || { dir: true, size: 0, mtime: T }; return { name: base(p), path: p, exists: tree.has(p), dir: n.dir, size: n.size, mtime: n.mtime, readable: true, writable: !p.startsWith(`${P}/ReadOnly`) }; },
     filesThumb: async () => ({ url: null }), filesAccess: async () => ({ all: true }), filesCollection: async () => ({ entries: [] }),
     filesMkdir: async ({ path: p }) => { put(p, true); return { ok: true, path: p }; },
-    filesRename: async ({ path: p, name }) => { const to = `${parent(p)}/${name}`; copyTree(p, to); removeTree(p); return { ok: true, path: to }; },
+    // (The phone's rules: a missing source or a taken name (letter case aside) refused. Tests steer it: __renameDelay (ms), __renameFail(from, to) → throws.)
+    filesRename: async ({ path: p, name }) => {
+      (window.__renames = window.__renames || []).push(`${base(p)}>${name}`); if (window.__renameDelay) await sleep(window.__renameDelay);
+      if (window.__renameFail && window.__renameFail(base(p), name)) throw new Error('read error');
+      if (!tree.has(p)) throw new Error('not found'); const to = `${parent(p)}/${name}`;
+      if (to !== p && [...tree.keys()].some((k) => parent(k) === parent(p) && k.toLowerCase() === to.toLowerCase() && k !== p)) throw new Error('exists');
+      copyTree(p, to); removeTree(p); return { ok: true, path: to };
+    },
     filesJob: async (o) => { window.__calls.push(`${o.op}:${o.paths.map(base).join('|')}>${o.dest ?? ''}`); void runJob(o); return { id: o.id }; },
     filesAnswer: async ({ id, answer }) => { window.__calls.push('answer:' + answer); const j = jobs.get(id); if (!j) return; if (answer.endsWith('All')) j.standing = answer.slice(0, -3); const w = j.wake; j.wake = null; w && w(answer.replace('All', '')); },
     filesCancel: async ({ id }) => { window.__calls.push('cancel'); const j = jobs.get(id); if (!j) return; j.cancel = true; const w = j.wake; j.wake = null; w && w('skip'); },
@@ -123,8 +130,8 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
 }
 
 /** A browser page on the pretend phone: `phoneLayout` 412×915, else a computer's 1280×800; pictures at twice the pixels. */
-async function open(browser, { lang = 'en', pc = false, z, many = 0 }) {
-  const page = await browser.newPage({ viewport: pc ? { width: 1280, height: 800 } : { width: 412, height: 915 }, deviceScaleFactor: 2, hasTouch: !pc, isMobile: false });
+async function open(browser, { lang = 'en', pc = false, z, many = 0, width = 412, height = 915 }) {
+  const page = await browser.newPage({ viewport: pc ? { width: 1280, height: 800 } : { width, height }, deviceScaleFactor: 2, hasTouch: !pc, isMobile: false });
   const errors = []; page.on('pageerror', (e) => errors.push(String(e))); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|blocked by CORS policy/.test(m.text())) errors.push(m.text()); });
   await page.route(/api\.github\.com/, (r) => r.fulfill({ json: [], headers: { 'access-control-allow-origin': '*' } }));
   await page.addInitScript(phone, { z, lang, K, P, SD, ZIP, many });
