@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
-  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'archivePreflight', 'archiveShelf', 'archiveJob', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
   // (Stage P4.)
   'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl',
   // (Stage P6: desktop.rs.)
@@ -34,10 +34,10 @@ const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []] };
-// (The safe-extraction engine's calls — desktop/inplace.cjs over archsafe.cjs: the preflight, the shelf of unfinished jobs, the
-// job actions. Electron only for now: the Tauri bridge deliberately has none, because the page asks for them by presence
-// (src/archives/safety.ts desk(), main.ts) and falls back to the plain extraction without them, showing no shelf.)
-const ELECTRON_ONLY = ['archivePreflight', 'archiveShelf', 'archiveJob'];
+// (Preload methods the Tauri bridge has none of. Empty since Tools 0.21 P11 ported the safe-extraction engine —
+// archivePreflight, archiveShelf, archiveJob: extractcmds.rs over kt-core's extractjob.rs —; kept so a new Electron-only
+// call has to be named here.)
+const ELECTRON_ONLY = [];
 const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
@@ -107,6 +107,7 @@ function loadBridge(boot) {
     screenFontAdd: [{ name: 'a.ttf', b64: 'AAEC' }], screenFontRemove: [{ path: '/d/screen-fonts/1-a.ttf' }], titleBar: [{ own: true, act: 'maximize' }],
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
+    archivePreflight: [{ path: '/x/a.zip', dest: '/y', password: 'p', verify: true, keepFree: 1048576 }], archiveShelf: [{ atStart: true }], archiveJob: [{ id: 'a4', journal: '/x/a.zip.kurokawa-unzip', act: 'restore' }],
     appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
     streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }],
     desktopPrefs: [{ keepAwake: true, whenDone: 'sleep', notifyDone: false, tray: true, hotkeys: { clip: 'CommandOrControl+Shift+V' } }], mini: [{ action: 'auto', on: true }], registerMagnet: [],

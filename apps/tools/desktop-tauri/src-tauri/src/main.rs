@@ -9,6 +9,8 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
+// (Tools 0.21 P11: the safe-extraction engine's commands over kt-core's extractjob.rs.)
+mod extractcmds;
 mod sevenparse;
 mod commands;
 // (Stage P6: the computer's side of the downloads — tray, notices, hotkeys, keep-awake, when done, taskbar progress, the
@@ -199,6 +201,9 @@ fn main() {
             archives::kt_archive_restore,
             archives::kt_archive_existing,
             archives::kt_archive_cancel,
+            extractcmds::kt_archive_preflight,
+            extractcmds::kt_archive_shelf,
+            extractcmds::kt_archive_job,
             archives::kt_archive_create,
             archives::kt_selftest_7z,
             archives::kt_selftest_write,

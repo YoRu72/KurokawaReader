@@ -91,6 +91,24 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     if (f[0] === 'replay') { const units = f[1] === '-' ? [] : f[1].split(',').map((u) => { const [o, r] = u.split(':').map(Number); return { out: o, freed: r }; }); const r = S.replaySpace(units, { sameVolume: f[2] === '1', blockSize: Number(f[3]), overhead: Number(f[4]) }); ok(`replay vector ${f[1]}`, r.normal === Number(f[5]) && r.inPlace === Number(f[6]) && r.peakAt === Number(f[7]), JSON.stringify(r)); }
     else { const r = S.journalRead(f[1].replace(/\\n/g, '\n')); ok(`journal vector ${f[2]}`, (r.ok ? 'ok' : r.why) === f[2]); }
   }
+  /* ---- 1c. the engine's shared vectors (pre-flight, units, plan, journal and tail text): the same file kt-core's extractjob.rs runs ---- */
+  {
+    let n = 0; const vt = fs.mkdtempSync(path.join(TMP, 'vec-'));
+    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractjob-vectors.tsv'), 'utf8').split('\n')) {
+      if (!line || line.startsWith('#')) continue; const f = line.split('\t'); n++; let got, want;
+      if (f[0] === 'preflight') { const r = S.preflight(JSON.parse(f[1]), { margin: Number(f[2]) }); got = [r.normal.ok ? 1 : 0, r.inPlace.ok ? 1 : 0, r.recommend, r.why, r.problems.map((p) => `${p.kind}:${p.severity}`).sort().join(',') || '-', r.space.normal, r.space.inPlace].join('\t'); want = f.slice(3, 10).join('\t'); }
+      else if (f[0] === 'units') { const p = path.join(vt, f[3]); fs.writeFileSync(p, Buffer.from(f[2], 'hex')); const s = await E.unitsOf(p); got = s.units.map((u) => [u.name, u.start, u.dataStart, u.dataEnd, u.end, u.bad ? 1 : 0].join(':')).join('|') + '\t' + (s.layoutBad.join(',') || '-'); want = f[4] + '\t' + f[5]; }
+      else if (f[0] === 'plan') { const dest = fs.mkdtempSync(path.join(vt, 'p-')); if (f[2] !== '-') for (const x of f[2].split('|')) { fs.mkdirSync(path.dirname(path.join(dest, x)), { recursive: true }); fs.writeFileSync(path.join(dest, x), 'old'); }
+        const scan = { units: f[1].split('|').map((nm) => ({ name: nm, dir: nm.endsWith('/'), start: 0, dataStart: 0, dataEnd: 0, end: 0, method: 0, usize: 0, csize: 0 })) };
+        try { const r = E.planOuts(scan, dest, f[5], f[3] === '-' ? undefined : JSON.parse(f[3]), f[4] === '1', 'ID'); got = r.units.map((u) => `${u.kind}:${u.out}`).join('|') + '\t' + (r.moves.map((m) => `${m.from}>${m.to}`).join('|') || '-'); } catch (e) { got = e.message + (e.names ? ' ' + e.names.join(',') : '') + '\t-'; }
+        want = f[6] + '\t' + f[7]; }
+      else if (f[0] === 'journal') { got = S.journalText(JSON.parse(f[1])).replace(/\n/g, '\\n'); want = f[2]; }
+      else if (f[0] === 'tail') { const j = Buffer.from(f[1], 'utf8'); const tb = Buffer.concat([Buffer.from(`KTTAIL2\n${j.length}\n`), j, f[2] === '-' ? Buffer.alloc(0) : Buffer.from(f[2], 'hex')]); got = S.crc32(tb).toString(16).padStart(8, '0'); want = f[3]; }
+      ok(`engine vector ${f[0]} ${f[1].slice(0, 50)}`, got === want, `want ${want}\n  got  ${got}`);
+    }
+    ok('engine vectors read', n >= 60, String(n));
+    if (!QUICK) { try { const bin = path.join(TMP, 'extractjob_t'); execFileSync('rustc', ['--edition', '2021', '--test', path.join(ROOT, 'core/kt-core/stdroots/extractjob.rs'), '-o', bin], { stdio: 'pipe' }); const o = execFileSync(bin, [], { encoding: 'utf8', stdio: 'pipe' }); ok('Rust engine (rustc --test stdroots/extractjob.rs): the same vectors and the failure matrix', /test result: ok/.test(o), o.slice(-300)); } catch (e) { ok('Rust engine (rustc --test stdroots/extractjob.rs)', false, String(e.stdout || e.stderr || e.message).slice(-600)); } }
+  }
   /* ---- 2. pre-flight: unsupported method in the first / middle / last entry ---- */
   for (const at of [0, 3, 7]) for (const inPlace of [true, false]) {
     const es = ENTRIES.map((e, i) => (i === at ? { ...e, dir: false, name: e.dir ? 'x.zst' : e.name, method: 93 } : e)); const c = setup(mkZip(es), 'zip'); const orig = fs.readFileSync(c.file);
@@ -187,6 +205,19 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     ok(`${label}: killed at each of ${steps} steps, Finish always ends with every file right`, allFinish && steps > 5, String(steps));
     ok(`${label}: killed at each of ${steps} steps, Restore always gives the archive back byte for byte`, allRestore && steps > 5, String(steps));
   }
+  /* ---- 9b. a Restore itself killed after every step, then taken up again: the archive back byte for byte (a restore killed
+     after it wrote the archive's end left it longer than its journal said, and was refused «archiveChanged» before) ---- */
+  for (const fmt of ['zip', 'tar']) {
+    let k = 1; let good = true;
+    for (; k < 100; k++) {
+      const c = setup(build(fmt, ENTRIES), fmt); const orig = fs.readFileSync(c.file); E.BATCH.count = 2;
+      await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr({ stopAfter: 2 }), fakeIo())); E.BATCH.count = 64;
+      const j = c.file + '.kurokawa-unzip'; const { e } = await attempt(() => E.restore(j, fakeIo({ crashAt: k }))); if (!e) break;
+      const { e: e2 } = await attempt(() => E.restore(j, fakeIo()));
+      if (!(e.crash && !e2 && fs.readFileSync(c.file).equals(orig) && noTraces(c) && Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/')).length === 0)) { good = false; console.log('  restore crash', k, e.message, e2?.message); }
+    }
+    ok(`${fmt}: a Restore killed at each of ${k - 1} steps, taken up again, gives the archive back byte for byte`, good && k > 3, String(k));
+  }
   /* ---- 10. the journal corrupted, cut, of a later version; the archive changed after the crash; a v1 journal ---- */
   for (const fmt of ['zip', 'tar']) {
     const crashed = async () => { const c = setup(build(fmt, ENTRIES), fmt); E.BATCH.count = 2; await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: 9 }))); E.BATCH.count = 64; return { c, j: c.file + '.kurokawa-unzip' }; };
@@ -234,6 +265,11 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     const sets = { scripts: [{ name: 'كتب/إعجاز القرآن.txt' }, { name: '日本語/進撃の巨人.txt' }, { name: '\u{1f600}/\u{1f389}.txt' }, { name: 'Cafe\u0301.txt' }, { name: 'a'.repeat(120) + '/long name.txt' }], empty: [{ name: 'z1', data: '' }, { name: 'z/z2', data: '' }], dirs: [{ name: 'only/', dir: true }, { name: 'only/nested/', dir: true }, { name: 'only/nested/deeper/', dir: true }], none: [] };
     for (const [k, es] of Object.entries(sets)) { const c = setup(build(fmt, es), fmt); const r = await E.extract(c.file, c.dest, { inPlace, registry: c.registry }, pr(), fakeIo()); ok(`${fmt} ${inPlace ? 'in place' : 'normal'} ${k}`, r.files === es.filter((e) => !e.dir).length && same(tree(c.dest), expected(es)) && (inPlace ? !fs.existsSync(c.file) : true), JSON.stringify(tree(c.dest)).slice(0, 200)); }
   }
+  /* ---- 15b. tar devices, FIFOs and sparse files are never made: refused in place, left out of a normal extraction and reported ---- */
+  { const es = [{ name: 'a.txt' }, { name: 'z.txt' }]; const tarOf = () => { const b = mkTar(es); const dev = mkTar([{ name: 'pipe' }]).subarray(0, 512); dev[156] = 0x36; dev.fill(32, 148, 156); dev.write('0000000', 124); let s = 0; for (const v of dev) s += v; dev.write(s.toString(8).padStart(6, '0') + '\0 ', 148); return Buffer.concat([dev, b]); };
+    const c = setup(tarOf(), 'tar'); const orig = fs.readFileSync(c.file); const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo()));
+    ok('a FIFO in a tar: in place refused before any change', e && /^refused layout/.test(e.message) && fs.readFileSync(c.file).equals(orig) && noTraces(c), e?.message);
+    const r = await E.extract(c.file, c.dest, { registry: c.registry }, pr(), fakeIo()); ok('a FIFO in a tar: a normal extraction leaves it out and says so', r.damaged.includes('pipe') && !fs.existsSync(path.join(c.dest, 'pipe')) && fs.existsSync(path.join(c.dest, 'z.txt')), JSON.stringify(r)); }
   /* ---- 16. the report: space (peak, both modes, other volume), volumes, read-only, ratio ---- */
   {
     const f = { format: 'zip', platform: 'linux', entries: [{ path: 'a', usize: 1000, csize: 900, method: 8, offset: 0 }, { path: 'b', usize: 9000, csize: 8900, method: 8, offset: 1000 }], supported: [0, 8], password: 'none', archiveWritable: true, destWritable: true, sameVolume: true, free: 12000, inPlaceFormat: true, blockSize: 1 };

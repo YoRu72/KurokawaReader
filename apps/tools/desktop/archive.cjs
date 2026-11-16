@@ -259,10 +259,17 @@ async function extract(file, dest, o, pr) {
 
 /* ---------- making a zip ---------- */
 const STORED = /\.(png|jpe?g|gif|webp|avif|mp4|mkv|webm|mp3|m4a|ogg|opus|flac|zip|7z|rar|gz|xz|bz2|apk|woff2?)$/i;
-async function createZip(out, inputs, pr) {
+/** A zip of `inputs` at `out` → { files, path }. A name already there is never replaced unasked (Tools 0.21 P11): `o.clash` is the user's
+ *  answer — «replace» (the new archive renamed over the old in one step: a crash leaves the one or the other, whole), «both» (the next free
+ *  «name (2).zip»), «cancel» (nothing made: «cancelled»); none → «zipExists», nothing written. Written to a part file made exclusively for this
+ *  run; without «replace» put in place only where nothing is (a name taken meanwhile: the next free one with «both», else «zipExists»). */
+async function createZip(out, inputs, pr, o = {}) {
+  const taken = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
+  const freeName = (p) => { const dir = path.dirname(p); const b = path.basename(p); const dot = b.lastIndexOf('.'); const stem = dot > 0 ? b.slice(0, dot) : b; const ext = dot > 0 ? b.slice(dot) : ''; for (let k = 2; ; k++) { const c = path.join(dir, `${stem} (${k})${ext}`); if (!taken(c)) return c; } };
+  if (taken(out)) { if (o.clash === 'cancel') throw new Error('cancelled'); if (o.clash === 'both') out = freeName(out); else if (o.clash !== 'replace') throw new Error('zipExists'); }
   const files = []; for (const i of inputs) { const st = await fsp.stat(i); if (st.isDirectory()) await walk(i, path.basename(i) + '/', files); else files.push([i, path.basename(i)]); }
   let total = 0; for (const [f] of files) total += (await fsp.stat(f)).size; let done = 0;
-  const part = out + '.part'; const ws = fs.createWriteStream(part); let pos = 0; const central = []; const T = crcTable();
+  const part = path.join(path.dirname(out), `.kt${process.pid}-${crypto.randomBytes(6).toString('hex')}.part`); const ws = fs.createWriteStream(part, { flags: 'wx' }); let pos = 0; const central = []; const T = crcTable();
   const write = (b) => new Promise((res, rej) => { pos += b.length; ws.write(b, (e) => (e ? rej(e) : res())); });
   const dos = (d) => { const t = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xffff, dd = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xffff; return [t, dd]; };
   for (const [f, name] of files) {
@@ -286,7 +293,9 @@ async function createZip(out, inputs, pr) {
   const loc = Buffer.alloc(20); loc.writeUInt32LE(0x07064b50, 0); loc.writeBigUInt64LE(BigInt(cdEnd), 8); loc.writeUInt32LE(1, 16);
   const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(Math.min(central.length, 0xffff), 8); eocd.writeUInt16LE(Math.min(central.length, 0xffff), 10); eocd.writeUInt32LE(Math.min(cdBuf.length, 0xffffffff), 12); eocd.writeUInt32LE(Math.min(cdStart, 0xffffffff), 16);
   await write(Buffer.concat([z64, loc, eocd])); await new Promise((r) => ws.end(r));
-  await fsp.rm(out, { force: true }); await fsp.rename(part, out); pr.on(total, total, ''); return files.length;
+  if (o.clash === 'replace') await fsp.rename(part, out);
+  else { let at = out; for (;;) { try { await fsp.link(part, at); await fsp.rm(part, { force: true }); break; } catch (e) { if (e.code !== 'EEXIST' && !taken(at)) { await fsp.rename(part, at); break; } if (o.clash !== 'both') { await fsp.rm(part, { force: true }); throw new Error('zipExists'); } at = freeName(out); } } out = at; }
+  pr.on(total, total, ''); return { files: files.length, path: out };
 }
 /** A 7z made by the 7-Zip the app ships: `o.level` 0 (store), 1 (fast), 5 (normal) or 9 (best); `o.password` → AES-256 on the contents AND the
  *  names (`-mhe=on`: without the password the archive cannot even be listed). The inputs must share one folder (the sheet's own); they are

@@ -72,13 +72,14 @@ jobs:
           targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
 
       # The std-only modules' own tests, with rustc alone (the same ones run in the workspace): kt-core, the shell's
-      # recycle bin and API detection, and the shared crate's std-only parts. On Linux (/dev/shm is a second disk
+      # recycle bin and API detection, and the shared crate's std-only parts. (Tools 0.21 P11: the extraction engine
+      # through its test root, stdroots/extractjob.rs, which brings in archsafe.rs and vidjson.rs.) On Linux (/dev/shm is a second disk
       # there, so the file jobs' moves across disks are tested too).
       - name: Std-only unit tests
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohnames.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs; do
+          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohnames.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs apps/tools/core/kt-core/stdroots/extractjob.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"

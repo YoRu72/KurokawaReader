@@ -175,6 +175,12 @@
     archiveRestore: function (o) { return call('kt_archive_restore', { o: obj(o) }); },
     archiveExisting: function (o) { return call('kt_archive_existing', { o: obj(o) }); },
     archiveCancel: function (id) { return call('kt_archive_cancel', { id: str(id) }); },
+    /* the safe-extraction engine (Tools 0.21 P11: src-tauri/src/extractcmds.rs over kt-core's extractjob.rs, the port of
+       desktop/inplace.cjs — the same journal and shelf): the pre-flight report, the shelf of unfinished and just finished
+       jobs, a job acted on (finish, restore, undo, dismiss, restoreV1, leave). */
+    archivePreflight: function (o) { return call('kt_archive_preflight', { o: obj(o) }); },
+    archiveShelf: function (o) { return call('kt_archive_shelf', { o: obj(o) }); },
+    archiveJob: function (o) { return call('kt_archive_job', { o: obj(o) }); },
     onArchiveProgress: function (cb) { return subscribe('kt:archiveProgress', cb); },
     fontDirs: function () { return call('kt_font_dirs'); },
     fontIndex: function (dirs) { return call('kt_font_index', { dirs: (Array.isArray(dirs) ? dirs : []).map(str) }); },

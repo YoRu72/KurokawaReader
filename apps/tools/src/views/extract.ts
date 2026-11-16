@@ -204,7 +204,7 @@ export async function createZipSheet(): Promise<void> {
     const out = `${dir.replace(/[\\/]$/, '')}/${name.value.trim() || 'archive.zip'}`;
     const bar = h('div', { class: 'task-bar big' }, h('i', { style: { width: '0%' } })); const line = h('p', { class: 'src', dir: 'ltr' });
     sh.body.replaceChildren(h('div', { class: 'extract-progress' }, h('span', null, t('zipping')), bar, line)); sh.actions.replaceChildren();
-    try { const r = await createZip(out, files, (p) => { (bar.firstChild as HTMLElement).style.width = `${p.total ? Math.round((p.done / p.total) * 100) : 0}%`; line.textContent = p.file; }); toast(t('zipped', { name: baseName(r.path), size: formatBytes(r.size) })); sh.close(); }
+    try { const r = await createZip(out, files, (p) => { (bar.firstChild as HTMLElement).style.width = `${p.total ? Math.round((p.done / p.total) * 100) : 0}%`; line.textContent = p.file; }); if (!r.cancelled) toast(t('zipped', { name: baseName(r.path), size: formatBytes(r.size) })); sh.close(); }
     catch (e) { sh.body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
   } }, icon('archive'), t('createZip')));
 }

@@ -96,6 +96,39 @@ Do the same once before a local `tauri build` / `tauri dev`.
   and offers its settings (the app's own / the system's, transparent, the name) in Settings on the Tauri shell only.
   Electron keeps `ui/titlebar.ts`. The custom app icon system (`kt:appIcon`) is P6.
 
+## Tools 0.21 P11: the safe-extraction engine, ported
+
+- **The engine** (`../core/kt-core/src/extractjob.rs`, std only): desktop/inplace.cjs rule for rule — the facts and the
+  pre-flight (archsafe.cjs's `preflight`, here too, over kt-core's `archsafe.rs` name table), the plan (conflicts:
+  replace / skip / keep both, set aside), journal v2 (archsafe's text: JSON, newline, CRC-32), the saved tail («KTTAIL2»,
+  the plan, the archive's own tail), the shelf (`<id>.ref` in `<app data>/extract-jobs`), finish / restore / undo /
+  dismiss, cancel at a committed point, progress. The SAME formats as Electron's: a job either shell started, the other
+  can finish, restore or undo. ZIP (stored, deflate, ZipCrypto; AES's password checked by its PBKDF2 verifier) and tar.
+  Tested alone (`rustc --edition 2021 --test core/kt-core/stdroots/extractjob.rs`): `tests/data/extractjob-vectors.tsv`
+  (pre-flight reports, units — the overlap regression —, plans, journal and tail texts; made from the JS engine, run by
+  both: tests/extractsafe.cjs and the Rust tests), and the failure matrix of tests/extractsafe.cjs — killed at every
+  crash point then Finish or Restore, a Restore itself killed at every step, disk full at 10/50/90 %, damaged entries,
+  passwords, names, clashes, a file appearing meanwhile, corrupt / future / v1 journals, a changed archive, busy, cancel,
+  undo with set-aside files, 3,000 entries.
+- **The commands** (`src-tauri/src/extractcmds.rs`, thin): `kt_archive_preflight`, `kt_archive_shelf`, `kt_archive_job`
+  (main.cjs's channels; bridge.js has them, so the page's safety sheet, shelf and Undo appear on this shell), and
+  `kt_archive_extract`'s ZIP/tar part (archive.cjs's routing: through the engine when it decodes every entry itself, or
+  in place; a v2 journal beside the archive → Finish; a first-design one → the shared crate's resume). Here only flate2,
+  the free space, a pid's liveness, the registry and the progress/cancel plumbing. flate2 is miniz_oxide, not zlib: a
+  Restore puts a deflated file back byte for byte only when the bytes come out the same (else the archive is closed as a
+  smaller whole one and the file stays out — the engine's documented fallback).
+- **Found and fixed in both engines**: a Restore killed after it wrote the archive's end left the archive longer than
+  its journal's last commit, and the next Restore refused it («archiveChanged»): now a restoring job's archive may be
+  longer (the restore cuts it back). Added to both: tar devices / FIFOs / sparse files never made («layout»), each file
+  read back before an archive is cut, part files made exclusively under a per-run name, no output written through a link
+  already in the destination (Rust), `planOuts` exported for the shared vectors (JS).
+- **The shared crate** (`shared/shell-rs/src/archive.rs`): `tools_rules(true)` (Tools only; the Reader's answers are
+  unchanged) — formats by content (archiveformat.cjs's vectors), overlapping entries refused in place and `in_place_ok`
+  false, device / FIFO / sparse tar entries refused, setuid / setgid / sticky bits taken off what 7-Zip made, exclusive
+  per-run part files, read-back before the cut; `set_peek` (archives.rs: flate2 for gz, the shipped 7-Zip for xz / bz2).
+  `create_zip_clash`: a ZIP never replaces an archive unasked (`clash`: replace — one rename —, both, cancel; none →
+  «zipExists»); Electron's createZip the same.
+
 ## After P3: the Files page's gaps, P7 archives, P8 DoH and updater, P6 app icon
 
 - **Files on a computer** (`filecmds.rs`, kt-core `places.rs`): the shell's own `homeDir`, `filesRoots` (home, Downloads,

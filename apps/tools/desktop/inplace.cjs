@@ -86,7 +86,8 @@ async function tarUnits(fd, size) {
     if (type === 'x') { for (const rec of (await readAll(fd, data, sz)).toString('utf8').split('\n')) { const i = rec.indexOf(' path='); if (i > 0) longName = rec.slice(i + 6); } pos = next; continue; }
     if (type === 'g') { pos = next; continue; }
     const nm = (longName ?? name).replace(/^\.\//, ''); const u = { name: nm, start: group, dataStart: data, dataEnd: data + sz, end: next, usize: sz, csize: sz, method: 0, type, dir: type === '5' || nm.endsWith('/'), link: type === '2' ? 'sym' : type === '1' ? 'hard' : undefined, target: link };
-    if (!sumOk || next > size) { layoutBad.push(nm); u.bad = true; }
+    // (A device, a FIFO or a sparse file is never made on a computer: «layout» — refused in place, left out of a normal extraction and reported.)
+    if (!sumOk || next > size || '346S'.includes(type)) { layoutBad.push(nm); u.bad = true; }
     if (nm && nm !== '.') units.push(u); longName = null; group = -1; pos = next;
   }
   const tailStart = units.length ? units[units.length - 1].end : 0;
@@ -210,7 +211,8 @@ async function openJob(journal) {
   const { plan, raw } = readTail(tail);
   if (j.mode === 'inplace' && j.state !== 'done') {
     let size; try { size = (await fsp.stat(j.archive)).size; } catch { throw fail('archiveGone'); }
-    if (size !== j.committed && size !== j.prevCommitted) throw fail('archiveChanged');
+    // (A restore killed after it wrote the archive's end: longer than its last commit — the restore cuts that off again.)
+    if (size !== j.committed && size !== j.prevCommitted && !(j.state === 'restoring' && size > j.committed)) throw fail('archiveChanged');
     // The bytes still in the archive must be the units the plan says: each remaining unit's header compared.
     const fd = await fsp.open(j.archive, 'r');
     try { const left = plan.units.length - j.next; for (const k of new Set([0, left - 1])) { if (k < 0 || k >= left) continue; const u = plan.units[k]; const h = Buffer.from(u.head, 'base64'); if (!(await readAll(fd, u.start, h.length).catch(() => Buffer.alloc(0))).equals(h)) throw fail('archiveChanged'); } } finally { await fd.close(); }
@@ -301,7 +303,7 @@ async function run(jpath, j, plan, ctx) {
     let k = j.next;
     while (k < order.length) {
       if (pr?.stopped?.()) { j.state = 'paused'; await saveJournal(jpath, j, io); throw fail('stopped', { journal: jpath }); }
-      const free = (await io.freeSpace(j.dest)) - ctx.keepFree; let used = 0; let end = k; const written = [];
+      const free = (await io.freeSpace(j.dest)) - ctx.keepFree; let used = 0; let end = k; const written = []; const wcrc = [];
       while (end < order.length && end - k < BATCH.count && (end === k || used + plan.units[order[end]].usize <= Math.min(free < 0 ? Infinity : free, BATCH.bytes))) { used += plan.units[order[end]].usize; end++; }
       if (free >= 0 && plan.units[order[k]].usize > free) { j.state = 'paused'; j.why = 'noSpace'; await saveJournal(jpath, j, io); throw fail('noSpace', { journal: jpath, kept: files }); }
       try {
@@ -310,15 +312,17 @@ async function run(jpath, j, plan, ctx) {
           if (u.kind === 'dir') { await fsp.mkdir(path.join(j.dest, u.out), { recursive: true }); continue; }
           if (u.kind === 'link' || u.kind === 'skip') continue;
           let r; try { r = await writeUnit(fd, u, j.dest, wctx); } catch (e) { if (!e.crash && j.mode === 'normal' && /^crcMismatch /.test(e.message)) { damaged.push(u.name); continue; } throw e; }   // (a normal job leaves a damaged file out and goes on; in place stops at the last commit)
-          written.push(r.out); if (r.out !== u.out) j.outs[u.i] = r.out; j.raws[u.i] = r.raw; if (u.kind === 'file') files++;
+          written.push(r.out); wcrc.push(r.crc); if (r.out !== u.out) j.outs[u.i] = r.out; j.raws[u.i] = r.raw; if (u.kind === 'file') files++;
           await io.crash('unit');
         }
       } catch (e) {
         if (e.crash) throw e;
         const m = String(e.message || e); j.state = 'paused'; j.why = m.split(' ')[0]; await clearUncommitted(j, plan, io); await saveJournal(jpath, j, io); throw fail(m, { journal: jpath, kept: files });
       }
-      // Commit: files flushed, the journal moved, then the archive cut back to the batch's first byte.
+      // Commit: files flushed (and, before an archive is cut, each read back and its CRC compared), the journal moved, then the archive cut back to the batch's first byte.
       for (const w of written) await fsyncPath(path.join(j.dest, w)); for (const d of new Set(written.map((w) => path.dirname(path.join(j.dest, w))))) await fsyncPath(d, true);
+      if (j.mode === 'inplace') { const bad = []; for (let x = 0; x < written.length; x++) if ((await fileCrc(path.join(j.dest, written[x]))) !== wcrc[x]) bad.push(written[x]);
+        if (bad.length) { j.state = 'paused'; j.why = 'readBack'; await clearUncommitted(j, plan, io); await saveJournal(jpath, j, io); throw fail('readBack ' + bad[0], { journal: jpath, kept: files }); } }
       await io.crash('synced');
       j.next = end; j.prevCommitted = j.committed; if (j.mode === 'inplace') j.committed = plan.units[order[end - 1]].start;
       await saveJournal(jpath, j, io);
@@ -434,4 +438,4 @@ async function shelf(registry, o = {}) {
 /** A job registered so the shelf finds it (in-place jobs written by the phone or an older build: their journal beside the archive). */
 async function register(registry, jpath, id) { await fsp.mkdir(registry, { recursive: true }); await writeAtomic(path.join(registry, `${id}.ref`), jpath); }
 
-module.exports = { extract, finish, restore, undo, dismiss, shelf, register, facts, preflightOf: async (file, dest, o) => { const { facts: f } = await facts(file, dest, o); return { facts: f, report: S.preflight(f, { margin: o.keepFree || 0 }) }; }, unitsOf, checkPassword, verifyAll, openJob, BATCH, SUFFIX, OWN_METHODS, hostPlatform, Crash, journalOf, tailOf };
+module.exports = { planOuts, extract, finish, restore, undo, dismiss, shelf, register, facts, preflightOf: async (file, dest, o) => { const { facts: f } = await facts(file, dest, o); return { facts: f, report: S.preflight(f, { margin: o.keepFree || 0 }) }; }, unitsOf, checkPassword, verifyAll, openJob, BATCH, SUFFIX, OWN_METHODS, hostPlatform, Crash, journalOf, tailOf };

@@ -53,9 +53,13 @@ function fakeTauri({ lang, slow }) {
     // (The storages, new folder, rename, stat: the phone plugin's shapes.)
     // (Archives, stage P7: pack.zip holds In/one.txt and two.txt; extracting writes what was chosen into the tree.)
     kt_archive_list: (a) => (a.o.path === '/home/u/src/pack.zip' ? { format: 'zip', entries: [{ path: 'In/', size: 0, dir: true, mtime: 1760000000000 }, { path: 'In/one.txt', size: 3, dir: false, mtime: 1760000000000 }, { path: 'two.txt', size: 2, dir: false, mtime: 1760000000000 }], total: 5, encrypted: false, inPlaceOk: true, resumable: false, largest: 3, free: 5e9 } : Promise.reject('notArchive')),
-    kt_archive_extract: (a) => { window.__extracts = (window.__extracts || []).concat([a.o]); const all = [['In/one.txt', 3], ['two.txt', 2]]; const want = (n) => !a.o.only || a.o.only.some((w) => n === w || (w.endsWith('/') && n.startsWith(w))); const dest = a.o.dest; put(dest, true); let n = 0; for (const [p, size] of all) if (want(p)) { const parts = p.split('/'); for (let i = 1; i < parts.length; i++) put(dest + '/' + parts.slice(0, i).join('/'), true); put(dest + '/' + p, false, size); n++; } (ls['kt:archiveProgress'] || []).forEach((f) => f({ payload: { id: a.o.id, done: 5, total: 5, file: '' } })); return { files: n, dest }; },
+    kt_archive_extract: (a) => { window.__extracts = (window.__extracts || []).concat([a.o]); const all = [['In/one.txt', 3], ['two.txt', 2]]; const want = (n) => !a.o.only || a.o.only.some((w) => n === w || (w.endsWith('/') && n.startsWith(w))); const dest = a.o.dest; put(dest, true); let n = 0; const job = window.__giveJob ? '/home/u/.data/extract-jobs/j2.kurokawa-unzip' : undefined; for (const [p, size] of all) if (want(p)) { const parts = p.split('/'); for (let i = 1; i < parts.length; i++) put(dest + '/' + parts.slice(0, i).join('/'), true); put(dest + '/' + p, false, size); n++; } (ls['kt:archiveProgress'] || []).forEach((f) => f({ payload: { id: a.o.id, done: 5, total: 5, file: '' } })); return { files: n, dest, ...(job ? { job, appeared: [], damaged: [] } : {}) }; },
     kt_archive_create: (a) => { window.__zips = (window.__zips || []).concat([a.o]); put(a.o.out, false, 10); return { files: a.o.inputs.length, path: a.o.out, size: 10 }; },
     kt_archive_cancel: () => null,
+    // (Tools 0.21 P11: the safe-extraction engine's calls — the shelf, the pre-flight, a job acted on — recorded.)
+    kt_archive_shelf: (a) => { window.__shelfAsks = (window.__shelfAsks || []).concat([a.o]); return window.__shelfOn || sessionStorage.getItem('kt-test-shelf') ? [{ journal: '/home/u/src/pack.zip.kurokawa-unzip', id: 'j1', archive: '/home/u/src/pack.zip', dest: '/home/u/src/pack', mode: 'inplace', state: 'paused', why: 'noSpace', done: 1, total: 3, can: ['finish', 'restore', 'leave'] }] : []; },
+    kt_archive_preflight: (a) => { window.__pf = a.o; return { report: { ok: true, files: 2, total: 5, problems: [], rewrites: [], space: { free: 5e9, normal: 65541, inPlace: 65540, margin: 0, sameVolume: true, fitsNormal: true, fitsInPlace: true }, normal: { ok: true, why: [] }, inPlace: { ok: true, why: [] }, recommend: 'normal', why: 'bothFit' }, facts: { format: 'zip', platform: 'linux' } }; },
+    kt_archive_job: (a) => { window.__jobActs = (window.__jobActs || []).concat([a.o]); return a.o.act === 'undo' ? { identical: true, back: 0, removed: 2, keptOut: [] } : { files: 2, dest: '/home/u/src/pack' }; },
     kt_home_dir: () => '/home/u',
     kt_files_roots: () => ({ allFiles: true, roots: [{ kind: 'home', path: '/home/u', name: 'u', readable: true }, { kind: 'downloads', path: '/home/u/dst', name: 'dst', readable: true }, { kind: 'drive', path: '/', name: '/', readable: true, free: 5 * 2 ** 30, total: 9 * 2 ** 30 }, { kind: 'drive', path: '/media/u/USB', name: 'USB', readable: true, free: 2 ** 30, total: 2 ** 32 }] }),
     kt_files_stat: (a) => { const p = a.o.path.replace(/\/+$/, ''); const e = tree.get(p); return e ? { exists: true, name: base(p), path: p, dir: e.dir, size: e.dir ? 0 : e.size, mtime: 1760000000000, readable: true, writable: !p.startsWith('/home/u/ro'), hidden: false } : { exists: false, name: base(p), path: p, dir: false, size: 0, mtime: 0, readable: false, writable: false, hidden: false }; },
@@ -165,6 +169,26 @@ function fakeTauri({ lang, slow }) {
     const pwShown = await page.evaluate(() => [...document.querySelectorAll('.sheet input[type=password]')].some((e) => e.offsetParent !== null));
     await page.click(`.sheet button.primary:has-text("${T.filesCompress}")`); await page.waitForTimeout(600);
     const zips = await page.evaluate(() => window.__zips || []);
+    // the safe-extraction engine through the real bridge (Tools 0.21 P11, extractcmds.rs): the shelf asked at start;
+    // «Extract to…» → the engine's pre-flight; done → Undo sends the job's act; an unfinished job on the shelf → Finish
+    await goTo('/home/u/src');
+    ok(L('the shelf of unfinished extractions asked at start (kt_archive_shelf, atStart)'), await page.waitForFunction(() => (window.__shelfAsks || []).some((o) => o && o.atStart === true), null, { timeout: 8000 }).then(() => true).catch(() => false));
+    await page.locator('.files-row:has(.files-name[title="pack.zip"]) button[data-icon="more"]').first().click(); await page.waitForSelector('.sheet', { timeout: 3000 });
+    await page.click(`.sheet button:has-text("${T.extractTo}")`);
+    const pf = await page.waitForFunction(() => window.__pf, null, { timeout: 8000 }).then((h) => h.jsonValue()).catch(() => null);
+    ok(L('«Extract to…»: the engine\'s pre-flight asked for this archive and folder (kt_archive_preflight)'), !!pf && pf.path === '/home/u/src/pack.zip' && typeof pf.dest === 'string' && pf.dest.startsWith('/home/u/src'), pf);
+    await page.evaluate(() => { window.__giveJob = true; }); await page.waitForSelector('.extract-sheet .sheet-actions .btn.primary:not([disabled])', { timeout: 5000 }).catch(() => null);
+    await page.click('.extract-sheet .sheet-actions .btn.primary').catch(() => null);
+    const undoShown = await page.waitForSelector('.undo-hint', { timeout: 6000 }).then(() => true).catch(() => false);
+    if (undoShown) await page.locator('.extract-sheet .sheet-actions .btn.tonal').first().click();
+    const acts = await page.waitForFunction(() => (window.__jobActs || []).some((o) => o.act === 'undo'), null, { timeout: 6000 }).then(() => page.evaluate(() => window.__jobActs)).catch(() => null);
+    ok(L('done with a job: Undo offered, and it sends the job\'s act (kt_archive_job, undo)'), undoShown && !!acts && acts.some((o) => o.act === 'undo' && o.journal === '/home/u/.data/extract-jobs/j2.kurokawa-unzip'), acts);
+    await page.evaluate(() => sessionStorage.setItem('kt-test-shelf', '1')); await page.reload(); await page.waitForSelector('.files-row', { timeout: 15000 });
+    const card = await page.waitForSelector('.files-shelf .shelf-card', { timeout: 8000 }).then(() => true).catch(() => false);
+    if (card) await page.locator('.shelf-job').first().locator('.btn.primary').click();
+    const fin = await page.waitForFunction(() => (window.__jobActs || []).some((o) => o.act === 'finish'), null, { timeout: 6000 }).then(() => page.evaluate(() => window.__jobActs)).catch(() => null);
+    ok(L('an unfinished job on the shelf: shown in Files, Finish sent (kt_archive_job, finish)'), card && !!fin && fin.some((o) => o.act === 'finish' && o.journal === '/home/u/src/pack.zip.kurokawa-unzip'), fin);
+    await page.evaluate(() => sessionStorage.removeItem('kt-test-shelf'));
     ok(L('Compress: a zip of it made through archiveCreate (the default; no 7z options sent, no password or volumes offered for a zip)'), zips.length === 1 && zips[0].out === '/home/u/src/a.zip' && JSON.stringify(zips[0].inputs) === '["/home/u/src/a.txt"]' && fmts.includes('ZIP') && !('format' in zips[0]) && !pwShown, { zips, fmts: fmts.slice(0, 120) });
     ok(L('no page errors'), !errors.length, errors);
     await page.close();
