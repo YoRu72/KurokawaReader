@@ -12,7 +12,8 @@ const LEFT = 'kt.extract.left';
 const leftNow = (): string[] => { try { return JSON.parse(sessionStorage.getItem(LEFT) ?? '[]') as string[]; } catch { return []; } };
 const leave = (j: string) => { try { sessionStorage.setItem(LEFT, JSON.stringify([...leftNow(), j])); } catch { /* none */ } };
 type K = Parameters<typeof t>[0];
-const why = (w: string): string => { const k = `shelfWhy_${w}` as K; const v = t(k); return v === k ? w : v; };
+/** A stop's reason in words: the engine's first word (its code) looked up; one with no words of its own is said as an error while reading or writing, its code kept. */
+const why = (w: string): string => { const code = w.split(' ')[0]; const k = `shelfWhy_${code}` as K; const v = t(k); return v === k ? t('shelfWhy_other', { code: w }) : v; };
 
 /** What an Undo or a Restore did, said plainly (P11 review): the files that could not go back into the archive, the archive made again
  *  under another name (a file took its name), originals put back beside an edited file, files kept in the hidden folder. */

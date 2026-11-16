@@ -163,6 +163,9 @@ function conflictChoice(answers, path, isDir) {
 }
 
 /* ---------- the pre-flight ---------- */
+/** The endings of a job's own files (journal, its temporary copy and unit log, saved tail, lock, and theirs): an entry whose last name ends so — any
+ *  letter case, in any folder — is refused, whatever spelling the destination has (kt-core extractjob.rs JOB_SUFFIXES). */
+const JOB_SUFFIXES = ['.kurokawa-unzip', '.kurokawa-unzip.tmp', '.kurokawa-unzip.log', '.kurokawa-tail', '.kurokawa-tail.tmp', '.kurokawa-lock', '.kurokawa-lock.tmp'];
 const NAME_REFUSALS = new Set(['empty', 'nul', 'dot', 'dotdot', 'absolute', 'drive', 'reservedSuffix', 'pathLong']);
 /** What the user can do about each kind of problem (a key the page words; the same in every language file). */
 const FIX = { method: 'fixMethod', password: 'fixPassword', names: 'fixNames', clash: 'fixClash', links: 'fixLinks', space: 'fixSpace', layout: 'fixLayout', damaged: 'fixDamaged', volumes: 'fixVolumes', readonly: 'fixReadonly', saf: 'fixSaf', busy: 'fixBusy', ratio: 'fixRatio', existing: 'fixExisting', rewrite: 'fixRewrite', otherVolume: 'fixOtherVolume', resume: 'fixResume' };
@@ -183,7 +186,7 @@ function preflight(f, o = {}) {
   // The job's own names: an entry where the aside folder goes (any «.kurokawa-replaced…» first folder), or on the archive, its journal, tail,
   // lock, unit log or their temporary copies (`f.reserved`, when the destination is the archive's folder) — refused as an unsafe name.
   const reserved = new Set((f.reserved || []).map((x) => foldKey(x, f.platform))); const asideKey = foldKey(SPEC.asideDir, f.platform);
-  for (const x of set.items) { if (x.action === 'refuse' || refusedNames.includes(x.path)) continue; if (foldKey(x.out.split('/')[0], f.platform).startsWith(asideKey) || reserved.has(foldKey(x.out, f.platform))) refusedNames.push(x.path); }
+  for (const x of set.items) { if (x.action === 'refuse' || refusedNames.includes(x.path)) continue; if (foldKey(x.out.split('/')[0], f.platform).startsWith(asideKey) || reserved.has(foldKey(x.out, f.platform)) || JOB_SUFFIXES.some((s) => x.out.split('/').pop().toLowerCase().endsWith(s))) refusedNames.push(x.path); }
   const clashes = set.problems.filter((p) => ['duplicate', 'caseClash', 'rewriteClash', 'fileDir'].includes(p.kind));
   const links = set.problems.filter((p) => p.kind === 'linkOutside' || p.kind === 'throughLink').map((p) => p.path);
   const rewrites = set.items.filter((x) => x.action === 'rewrite' && x.reasons.length).map((x) => ({ from: x.path, to: x.out, reasons: x.reasons }));

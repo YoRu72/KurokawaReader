@@ -2,7 +2,7 @@
 //! tests/extractsafe.cjs can hand jobs between the two engines: a job the JavaScript engine started and was killed in is
 //! finished, restored or undone here, and the reverse. Stored entries only (std has no inflate: the tests' archives keep
 //! their bytes stored). Not part of the crate.
-//!   extractjob_cli extract <archive> <dest> <registry> <inPlace 0|1> <crash at n, 0: none>
+//!   extractjob_cli extract <archive> <dest> <registry> <inPlace 0|1> <crash at n, 0: none> [answers JSON]
 //!   extractjob_cli finish|restore|undo <journal>
 //! → one line: the engine's JSON answer, or «ERR <message>» (a crash: «CRASH <point>»).
 #[path = "../src/archsafe.rs"]
@@ -52,7 +52,8 @@ fn main() {
     let pr = Pr { on: &|_, _, _| {}, stopped: &|| false };
     let r = match arg(1).as_str() {
         "extract" => {
-            let o = Opts { in_place: arg(5) == "1", registry: Some(PathBuf::from(arg(4))), ..Default::default() };
+            let answers = if arg(7).is_empty() { None } else { vidjson::parse(&arg(7)).ok() };
+            let o = Opts { in_place: arg(5) == "1", registry: Some(PathBuf::from(arg(4))), answers, ..Default::default() };
             extract(Path::new(&arg(2)), Path::new(&arg(3)), &o, &env, &pr)
         }
         "finish" => finish(Path::new(&arg(2)), &env, &pr, None, 0),

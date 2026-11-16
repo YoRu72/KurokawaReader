@@ -144,6 +144,20 @@ Do the same once before a local `tauri build` / `tauri dev`.
   lists, restores and extracts by the journal's version (v2 → the engine). A real cross-engine test: tests/extractsafe.cjs
   kills a job of one engine at every cut point and finishes/restores it with the other (`stdroots/extractjob_cli.rs`).
 
+- **P11 review, round 3 (both engines, shared vectors):** the unit log is one JSON object per line, and a record counts
+  only for an open unit under its own planned name or a «name (n)» beside it (no name can forge a record or send a delete
+  outside the destination); each name is logged *before* it is linked, with a «placed» crash point right after. Any entry
+  whose last name ends like a job file (`.kurokawa-unzip[.tmp|.log]`, `.kurokawa-tail[.tmp]`, `.kurokawa-lock[.tmp]`, any
+  case, any folder) is refused; the archive's folder is compared resolved (realpath), not by spelling. Every journal is
+  validated before any path in it is used (where it sits, its tail, id, aside folder, every name relative and safe, saved
+  headers ZIP/tar-shaped); a journal found beside an archive is finished only as an in-place job of that very archive
+  (`finish_beside` / `finishBeside`). «done» is saved before the archive is removed; a job with every unit out and the
+  archive gone is finished. forget removes the journal first. Offsets past the directory are clamped; tails over 64 MiB
+  refuse in place; long names / pax over 1 MiB and short ZIP64 fields read alike; folder syncs fail the commit in JS too
+  (except the «cannot sync folders» answers); a restore always creates its file exclusively; «replace» never moves a
+  folder aside (a file over a folder is kept beside); a Finish proves the password first (`passwordNeeded` /
+  `wrongPassword`). The cross-engine test now crosses a «keep both» conflict and Undo of a finished job.
+
 ## After P3: the Files page's gaps, P7 archives, P8 DoH and updater, P6 app icon
 
 - **Files on a computer** (`filecmds.rs`, kt-core `places.rs`): the shell's own `homeDir`, `filesRoots` (home, Downloads,

@@ -97,11 +97,14 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractjob-vectors.tsv'), 'utf8').split('\n')) {
       if (!line || line.startsWith('#')) continue; const f = line.split('\t'); n++; let got, want;
       if (f[0] === 'preflight') { const r = S.preflight(JSON.parse(f[1]), { margin: Number(f[2]) }); got = [r.normal.ok ? 1 : 0, r.inPlace.ok ? 1 : 0, r.recommend, r.why, r.problems.map((p) => `${p.kind}:${p.severity}`).sort().join(',') || '-', r.space.normal, r.space.inPlace].join('\t'); want = f.slice(3, 10).join('\t'); }
-      else if (f[0] === 'units') { const p = path.join(vt, f[3]); fs.writeFileSync(p, Buffer.from(f[2], 'hex')); const s = await E.unitsOf(p); got = s.units.map((u) => [u.name, u.start, u.dataStart, u.dataEnd, u.end, u.bad ? 1 : 0].join(':')).join('|') + '\t' + (s.layoutBad.join(',') || '-'); want = f[4] + '\t' + f[5]; }
-      else if (f[0] === 'plan') { const dest = fs.mkdtempSync(path.join(vt, 'p-')); if (f[2] !== '-') for (const x of f[2].split('|')) { fs.mkdirSync(path.dirname(path.join(dest, x)), { recursive: true }); fs.writeFileSync(path.join(dest, x), 'old'); }
+      else if (f[0] === 'units') { const p = path.join(vt, f[3]); fs.writeFileSync(p, Buffer.from(f[2], 'hex')); let s; try { s = await E.unitsOf(p); } catch (e) { s = null; got = `ERR ${e.message}\t-`; } if (s) got = s.units.map((u) => [u.name, u.start, u.dataStart, u.dataEnd, u.end, u.bad ? 1 : 0].join(':')).join('|') + '\t' + (s.layoutBad.join(',') || '-'); want = f[4] + '\t' + f[5]; }
+      else if (f[0] === 'plan') { const dest = fs.mkdtempSync(path.join(vt, 'p-')); if (f[2] !== '-') for (const x of f[2].split('|')) { if (x.endsWith('/')) { fs.mkdirSync(path.join(dest, x), { recursive: true }); continue; } fs.mkdirSync(path.dirname(path.join(dest, x)), { recursive: true }); fs.writeFileSync(path.join(dest, x), 'old'); }
         const scan = { units: f[1].split('|').map((nm) => ({ name: nm, dir: nm.endsWith('/'), start: 0, dataStart: 0, dataEnd: 0, end: 0, method: 0, usize: 0, csize: 0 })) };
         try { const r = E.planOuts(scan, dest, f[5], f[3] === '-' ? undefined : JSON.parse(f[3]), f[4] === '1', 'ID'); got = r.units.map((u) => `${u.kind}:${u.out}`).join('|') + '\t' + (r.moves.map((m) => `${m.from}>${m.to}`).join('|') || '-'); } catch (e) { got = e.message + (e.names ? ' ' + e.names.join(',') : '') + '\t-'; }
         want = f[6] + '\t' + f[7]; }
+      else if (f[0] === 'log') { got = JSON.stringify(E.parseLog(JSON.parse(f[1]))); want = f[2]; }
+      else if (f[0] === 'own') { got = E.ownOutput(f[1], f[2]) ? '1' : '0'; want = f[3]; }
+      else if (f[0] === 'zipend') { got = E.zipEnd(Number(f[1]), Number(f[2]), Number(f[3])).toString('hex'); want = f[4]; }
       else if (f[0] === 'journal') { got = S.journalText(JSON.parse(f[1])).replace(/\n/g, '\\n'); want = f[2]; }
       else if (f[0] === 'tail') { const j = Buffer.from(f[1], 'utf8'); const tb = Buffer.concat([Buffer.from(`KTTAIL2\n${j.length}\n`), j, f[2] === '-' ? Buffer.alloc(0) : Buffer.from(f[2], 'hex')]); got = S.crc32(tb).toString(16).padStart(8, '0'); want = f[3]; }
       ok(`engine vector ${f[0]} ${f[1].slice(0, 50)}`, got === want, `want ${want}\n  got  ${got}`);
@@ -314,6 +317,31 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
       const sh = await E.shelf(c.registry); if (!sh[0]) continue; await E.finish(sh[0].journal, pr(), fakeIo());
       if (!fs.readFileSync(path.join(c.dest, 'last.txt')).equals(theirs) || !fs.readFileSync(path.join(c.dest, 'last (2).txt')).equals(dataOf(ENTRIES[7])) || fs.existsSync(path.join(c.dest, 'last (3).txt'))) { good = false; console.log('  leftovers', fmt, k); } }
     E.BATCH.count = 64; ok(`${fmt}: killed at each of ${k - 1} steps, Finish removes only the job's own leftovers (their same-size file stays; no third copy)`, good && k > 5, String(k)); }
+  /* ---- 17b. round 3 (kt-core extractjob.rs's tests too): no name forges a unit-log record; a job's own names refused through a linked destination;
+     a planted journal never replayed; power lost after the archive was removed ---- */
+  { const c = setup(Buffer.alloc(0), 'zip'); const victim = path.join(c.d, 'victim.txt'); const vb = Buffer.from('user data!!\n'); fs.writeFileSync(victim, vb);
+    fs.writeFileSync(c.file, mkZip([{ name: 'pad.bin', data: Buffer.alloc(vb.length, 122), method: 0, badCrc: true }, { name: `x\n0\t${victim}\t${S.crc32(vb)}`, data: 'hi', method: 0 }]));
+    await attempt(() => E.extract(c.file, c.dest, { inPlace: true, platform: 'linux', registry: c.registry }, pr(), fakeIo()));
+    const jp = c.file + '.kurokawa-unzip'; if (fs.existsSync(jp)) { fs.writeFileSync(jp + '.log', JSON.stringify({ i: 0, out: victim, crc: S.crc32(vb) }) + '\n'); await attempt(() => E.finish(jp, pr(), fakeIo())); }
+    ok('a name with a newline and a tab cannot forge a unit-log record; a forged record never deletes outside the destination', fs.readFileSync(victim).equals(vb)); }
+  if (process.platform !== 'win32') for (const name of ['a.zip.kurokawa-unzip.tmp', 'a.zip.kurokawa-unzip.log', 'sub/x.KUROKAWA-TAIL', 'b.kurokawa-lock.tmp']) {
+    const c = setup(mkZip([{ name, data: 'PRECIOUS ENTRY DATA' }, { name: 'y.txt' }]), 'zip'); const link = path.join(c.d, 'dl'); fs.symlinkSync(path.dirname(c.file), link); const orig = fs.readFileSync(c.file);
+    const { e } = await attempt(() => E.extract(c.file, link, { inPlace: true, registry: c.registry }, pr(), fakeIo())); ok(`«${name}» through a linked destination: refused as a name, nothing changed`, /^refused names/.test(e?.message) && fs.readFileSync(c.file).equals(orig), e?.message); }
+  { const c = setup(mkZip([]), 'zip'); const victim = path.join(c.d, 'Documents'); fs.mkdirSync(victim); fs.writeFileSync(path.join(victim, 'thesis.txt'), 'years of work');
+    const plan = { format: 'zip', size: 22, tailStart: 0, idCrc: 0, dest: 'x', units: [] }; const j0 = Buffer.from(JSON.stringify(plan)); const tb = Buffer.concat([Buffer.from(`KTTAIL2\n${j0.length}\n`), j0]); const tp = c.file + '.kurokawa-tail'; fs.writeFileSync(tp, tb);
+    let good = true;
+    for (const [mode, aside, from] of [['normal', 'x', victim], ['inplace', 'x', '../Documents'], ['inplace', '.kurokawa-replaced-e', '../Documents'], ['inplace', '.kurokawa-replaced-f', 'a.txt']]) {
+      fs.writeFileSync(c.file + '.kurokawa-unzip', S.journalText({ registry: null, id: 'e', mode, format: 'zip', archive: c.file, dest: path.dirname(c.file), tail: tp, tailLen: tb.length, tailCrc: S.crc32(tb), committed: 22, prevCommitted: 22, next: 0, outs: {}, raws: {}, aside: { dir: aside, moves: [{ from, to: `${aside}/replaced/${from}` }], moved: 0 }, state: 'paused', platform: 'linux', created: 0, password: false }));
+      const { e } = await attempt(() => E.finish(c.file + '.kurokawa-unzip', pr(), fakeIo())); const { e: e2 } = await attempt(() => E.finishBeside(c.file, pr(), fakeIo())); const { e: e3 } = await attempt(() => E.dismiss(c.file + '.kurokawa-unzip'));
+      if (e?.message !== 'journalCorrupt' || e2?.message !== 'journalCorrupt' || !e3 || !fs.existsSync(path.join(victim, 'thesis.txt'))) { good = false; console.log('  planted', mode, aside, from, e?.message, e2?.message); }
+    }
+    ok('a planted journal (outside paths, a foreign aside folder, a normal job beside an archive) is never replayed: the folder untouched', good); }
+  { let k = 1; let good = true; let hit = 0; E.BATCH.count = 3;
+    for (; k < 100; k++) { const c = setup(mkZip(ENTRIES), 'zip'); const orig = fs.readFileSync(c.file); const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: k }))); if (!e) break;
+      const jp = c.file + '.kurokawa-unzip'; if (!fs.existsSync(jp) || fs.statSync(c.file).size !== 0) continue; hit++; fs.rmSync(c.file);
+      const { e: ef } = await attempt(() => E.finish(jp, pr(), fakeIo())); const ok1 = !ef && same(tree(c.dest), expected(ENTRIES)); const { r: u, e: eu } = await attempt(() => E.undo(jp, fakeIo()));
+      if (!ok1 || eu || !u.identical || !fs.readFileSync(c.file).equals(orig)) { good = false; console.log('  power loss', k, ef?.message, eu?.message); } }
+    E.BATCH.count = 64; ok(`power lost after the archive was removed, before «done» (${hit} points): Finish, then Undo gives the archive back`, good && hit > 0, String(hit)); }
   /* ---- 18. across the two engines (the same journal, tail, unit log and part names): a job the JavaScript engine was killed in at every cut point is
      finished — or restored — by the Rust engine (core/kt-core/stdroots/extractjob_cli.rs, std only), and the reverse ---- */
   if (!QUICK) {
@@ -321,23 +349,32 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     try { execFileSync('rustc', ['--edition', '2021', '-O', path.join(ROOT, 'core/kt-core/stdroots/extractjob_cli.rs'), '-o', cli], { stdio: 'pipe' }); } catch (e) { built = false; ok('cross-shell: the Rust engine program built', false, String(e.stderr || e.message).slice(-400)); }
     const rs = (...args) => execFileSync(cli, args, { encoding: 'utf8' }).trim();
     const STORED = ENTRIES.map((e) => (e.dir ? e : { ...e, method: 0 }));   // (std has no inflate: stored entries)
+    // (Each with a file already there answered «keep both» — the conflict, the unit log and «name (2)» crossing too.)
+    const seed = (c) => { fs.mkdirSync(c.dest, { recursive: true }); fs.writeFileSync(path.join(c.dest, 'last.txt'), 'theirs'); };
+    const want = () => ({ ...expected(STORED), 'last.txt': sha(Buffer.from('theirs')), 'last (2).txt': sha(dataOf(ENTRIES[7])) });
+    const both = { default: 'both' };
     if (built) for (const fmt of ['zip', 'tar']) for (const inPlace of [true, false]) for (const dir of ['js→rust', 'rust→js']) {
       let k = 1; let good = true; let handed = 0; E.BATCH.count = 3;
       for (; k < 200; k++) {
         let crashed = false;
         for (const after of ['finish', 'restore']) {
-          const c = setup(build(fmt, STORED), fmt); const orig = fs.readFileSync(c.file);
-          if (dir === 'js→rust') { const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace, registry: c.registry }, pr(), fakeIo({ crashAt: k, registry: c.registry }))); if (!e) continue; }
-          else { const o = rs('extract', c.file, c.dest, c.registry, inPlace ? '1' : '0', String(k)); if (!o.startsWith('CRASH')) continue; }
+          const c = setup(build(fmt, STORED), fmt); const orig = fs.readFileSync(c.file); seed(c);
+          if (dir === 'js→rust') { const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace, registry: c.registry, answers: both }, pr(), fakeIo({ crashAt: k, registry: c.registry }))); if (!e) continue; }
+          else { const o = rs('extract', c.file, c.dest, c.registry, inPlace ? '1' : '0', String(k), JSON.stringify(both)); if (!o.startsWith('CRASH')) continue; }
           crashed = true; const sh = await E.shelf(c.registry); const jp = sh[0]?.journal; if (!jp) continue; handed++;
           let res;
           if (dir === 'js→rust') res = rs(after, jp); else { const { r, e } = await attempt(() => (after === 'finish' ? E.finish(jp, pr(), fakeIo()) : E.restore(jp, fakeIo()))); res = e ? 'ERR ' + e.message : JSON.stringify(r); }
-          const fine = !res.startsWith('ERR') && (after === 'finish' ? same(tree(c.dest), expected(STORED)) && (inPlace ? !fs.existsSync(c.file) : fs.readFileSync(c.file).equals(orig)) : fs.readFileSync(c.file).equals(orig) && Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/')).length === 0 && noTraces(c));
+          const fine = !res.startsWith('ERR') && (after === 'finish' ? same(tree(c.dest), want()) && (inPlace ? !fs.existsSync(c.file) : fs.readFileSync(c.file).equals(orig)) : fs.readFileSync(c.file).equals(orig) && JSON.stringify(Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/'))) === '["last.txt"]' && noTraces(c));
           if (!fine) { good = false; console.log('  cross', dir, fmt, inPlace, 'crash', k, after, res.slice(0, 160)); }
         }
         if (!crashed) break;
       }
-      E.BATCH.count = 64; ok(`cross-shell ${dir} ${fmt} ${inPlace ? 'in place' : 'normal'}: killed at each of ${k - 1} steps, the other engine finishes and restores (${handed} hand-overs)`, good && handed > 5, String(handed));
+      E.BATCH.count = 64; ok(`cross-shell ${dir} ${fmt} ${inPlace ? 'in place' : 'normal'}: killed at each of ${k - 1} steps (a «keep both» answer too), the other engine finishes and restores (${handed} hand-overs)`, good && handed > 5, String(handed));
+      // a finished job undone by the other engine
+      { const c = setup(build(fmt, STORED), fmt); const orig = fs.readFileSync(c.file); seed(c); let job;
+        if (dir === 'js→rust') job = (await E.extract(c.file, c.dest, { inPlace, registry: c.registry, answers: both }, pr(), fakeIo())).job; else job = JSON.parse(rs('extract', c.file, c.dest, c.registry, inPlace ? '1' : '0', '0', JSON.stringify(both))).job;
+        const res = dir === 'js→rust' ? rs('undo', job) : JSON.stringify(await E.undo(job, fakeIo()));
+        ok(`cross-shell ${dir} ${fmt} ${inPlace ? 'in place' : 'normal'}: a finished job undone by the other engine`, !res.startsWith('ERR') && fs.readFileSync(c.file).equals(orig) && JSON.stringify(Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/'))) === '["last.txt"]', res.slice(0, 200)); }
     }
   }
   ok('zip64 end records when the fallback closes a big archive', E.zipEnd(3, 10, 100).length === 22 && E.zipEnd(70000, 10, 100).length === 98 && E.zipEnd(1, 10, 5e9).readBigUInt64LE(48) === 5000000000n);

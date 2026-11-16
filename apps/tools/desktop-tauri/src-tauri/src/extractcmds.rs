@@ -84,7 +84,8 @@ pub fn extract(app: &AppHandle, path: &Path, dest: &Path, o: &Value, on: &dyn Fn
         return match ej::journal_version(path) {
             2 => {
                 // (Finished: with its journal, so the page offers Undo — main.cjs hands back the job the same way.)
-                let r = ej::finish(&journal, &env(), &pr, password.as_deref(), keep_free(o)).map_err(|f| f.msg)?;
+                // (Only an in-place job of this very archive, its journal validated: anything else there is never replayed.)
+                let r = ej::finish_beside(path, &env(), &pr, password.as_deref(), keep_free(o)).map_err(|f| f.msg)?;
                 let mut v = value(&r);
                 if let Some(m) = v.as_object_mut() {
                     m.remove("undo");

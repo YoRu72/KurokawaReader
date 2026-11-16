@@ -235,7 +235,7 @@ async function extract7z(file, dest, o, pr) {
 /** A journal beside the archive: the new engine's (version 2) or the first design's. */
 async function journalVersion(file) { try { const r = Safe.journalRead(await fsp.readFile(journalOf(file), 'utf8')); return r.ok ? 2 : r.why === 'v1' ? 1 : 0; } catch { return 0; } }
 async function extract(file, dest, o, pr) {
-  if (hasJournal(file)) { const v = await journalVersion(file); if (v === 2) { const r = await Engine.finish(journalOf(file), pr, undefined, { password: o.password, keepFree: o.keepFree }); last = r; return r.files; } if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
+  if (hasJournal(file)) { const v = await journalVersion(file); if (v === 2) { const r = await Engine.finishBeside(file, pr, undefined, { password: o.password, keepFree: o.keepFree }); last = r; return r.files; } if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
   const fmt = await formatOf(file); let n;
   // ZIP (one file, methods the app decodes itself, ZipCrypto too) and tar: the engine that checks everything first.
   if ((fmt === 'zip' || fmt === 'tar') && !/\.\d{3}$/.test(file)) {

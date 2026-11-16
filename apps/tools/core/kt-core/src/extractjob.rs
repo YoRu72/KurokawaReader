@@ -32,6 +32,8 @@ use crate::vidjson::{self, J};
 pub const JOURNAL_SUFFIX: &str = ".kurokawa-unzip";
 pub const TAIL_SUFFIX: &str = ".kurokawa-tail";
 pub const LOCK_SUFFIX: &str = ".kurokawa-lock";
+/// The most of an archive's own tail (its directory, end records, what follows the last entry) an in-place job keeps.
+pub const MAX_TAIL: u64 = 64 * 1024 * 1024;
 /// The methods this engine decodes itself (stored, deflate).
 pub const OWN_METHODS: [u16; 2] = [0, 8];
 /// The methods the shipped 7-Zip decodes for a normal extraction (archive.cjs `external()`).
@@ -220,6 +222,21 @@ fn write_atomic(file: &Path, bytes: &[u8]) -> R<()> {
         sync_real(d, true).map_err(|e| fail(format!("syncFailed {}", e)))?;
     }
     Ok(())
+}
+/// Whether two folders are one (resolved through links and letter case — the system's own answer), not by spelling.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+/// A file's path with its folder resolved (the file itself may be gone).
+fn canon_file(p: &Path) -> PathBuf {
+    let a = abs(p);
+    match (a.parent().and_then(|d| fs::canonicalize(d).ok()), a.file_name()) {
+        (Some(d), Some(n)) => d.join(n),
+        _ => a,
+    }
 }
 fn nearest_dir(p: &Path) -> PathBuf {
     let mut d = abs(p);
@@ -479,7 +496,8 @@ pub fn zip_units(f: &mut File, size: u64) -> R<Scan> {
     for i in 0..items.len() {
         let next = if i + 1 < items.len() { items[i + 1].start } else { cd_off };
         let it = &mut items[i];
-        it.end = next;
+        // (An entry whose offset lies past the directory: its end clamped to its start — no bytes, «layout bad».)
+        it.end = next.min(cd_off).max(it.start);
         // (A unit whose header cannot be read keeps no data of its own: data_start = data_end = start.)
         it.data_start = it.start;
         it.data_end = it.start;
@@ -1124,6 +1142,14 @@ impl Facts {
     }
 }
 
+/// The endings of a job's own files: journal, its temporary copy and unit log, saved tail, lock (and theirs).
+pub const JOB_SUFFIXES: [&str; 7] = [".kurokawa-unzip", ".kurokawa-unzip.tmp", ".kurokawa-unzip.log", ".kurokawa-tail", ".kurokawa-tail.tmp", ".kurokawa-lock", ".kurokawa-lock.tmp"];
+/// Whether a path's last name ends like one of a job's own files (any letter case, in any folder): such an entry is
+/// refused, so no job ever writes over its own record or a record writes over it — whatever spelling the destination has.
+pub fn job_file_name(out: &str) -> bool {
+    let last = out.rsplit('/').next().unwrap_or("").to_lowercase();
+    JOB_SUFFIXES.iter().any(|s| last.ends_with(s))
+}
 const NAME_REFUSALS: [&str; 8] = ["empty", "nul", "dot", "dotdot", "absolute", "drive", "reservedSuffix", "pathLong"];
 fn fix_of(kind: &str) -> Option<&'static str> {
     Some(match kind {
@@ -1192,7 +1218,7 @@ pub fn preflight(f: &Facts, margin: u64) -> J {
             continue;
         }
         let first = v.out.split('/').next().unwrap_or("");
-        if S::fold_key(first, p).starts_with(&aside_key) || reserved.contains(&S::fold_key(&v.out, p)) {
+        if S::fold_key(first, p).starts_with(&aside_key) || reserved.contains(&S::fold_key(&v.out, p)) || job_file_name(&v.out) {
             refused.push(path.clone());
         }
     }
@@ -1540,7 +1566,7 @@ pub fn facts(file: &Path, dest: &Path, o: &FactOpts, env: &Env, pr: &Pr) -> R<(F
         }
     }
     let mut reserved = Vec::new();
-    if abs(file).parent().map(|d| d.to_path_buf()) == Some(abs(dest)) {
+    if same_dir(&abs(file).parent().map(|d| d.to_path_buf()).unwrap_or_default(), &abs(dest)) {
         if let Some(nm) = file.file_name().map(|x| x.to_string_lossy().into_owned()) {
             for sfx in ["", JOURNAL_SUFFIX, TAIL_SUFFIX, LOCK_SUFFIX] {
                 reserved.push(format!("{}{}", nm, sfx));
@@ -1566,7 +1592,7 @@ pub fn facts(file: &Path, dest: &Path, o: &FactOpts, env: &Env, pr: &Pr) -> R<(F
             csize: u.csize as i64,
             usize: u.usize as i64,
             offset: Some(u.start),
-            unit_bytes: Some(u.end - u.start),
+            unit_bytes: Some(u.end.saturating_sub(u.start)),
         })
         .collect();
     let tail_bytes = scan.size.saturating_sub(scan.tail_start).saturating_add(scan.units.iter().map(|u| u.data_start.saturating_sub(u.start).saturating_add(u.end.saturating_sub(u.data_end))).fold(0u64, |a, b| a.saturating_add(b)));
@@ -1841,7 +1867,12 @@ pub fn plan_outs(scan: &Scan, dest: &Path, platform: &str, answers: Option<&J>, 
             let there = exists(&dest.join(&out)) || taken.contains(&S::fold_key(&out, p));
             let mut done = false;
             if there {
-                match conflict_choice(answers, &u.name, false).as_deref() {
+                // (A file never replaces a folder: moving a whole folder aside — and a Dismiss deleting it — is never what
+                // «replace» meant for one file; it is kept beside instead, as «keep both».)
+                let choice = conflict_choice(answers, &u.name, false);
+                let over_dir = fs::symlink_metadata(dest.join(&out)).map(|m| m.is_dir()).unwrap_or(false);
+                let choice = if over_dir && choice.as_deref() == Some("replace") { Some("both".to_string()) } else { choice };
+                match choice.as_deref() {
                     None => {
                         unanswered.push(u.name.clone());
                         set(&mut base, "file", out.clone());
@@ -2103,13 +2134,15 @@ pub fn open_job(journal: &Path) -> R<Job> {
         f
     })?;
     let j = Journal::from_j(&body);
+    validate(journal, &j, None)?;
     let tail = fs::read(&j.tail).map_err(|_| fail("tailMissing"))?;
     if tail.len() as u64 != j.tail_len || crc32(&tail, 0) != j.tail_crc {
         return Err(fail("tailCorrupt"));
     }
     let (plan, raw) = read_tail(&tail)?;
     let units: Vec<PUnit> = plan.get("units").and_then(|x| x.as_arr()).map(|a| a.iter().map(PUnit::from_j).collect()).unwrap_or_default();
-    if j.mode == "inplace" && j.state != "done" {
+    validate(journal, &j, Some((&units, &gs(&plan, "format"))))?;
+    if j.mode == "inplace" && j.state != "done" && !(j.next >= units.len() && !exists(Path::new(&j.archive)) && j.restore_at.is_none()) {
         // What is about to be cut or extended must be this job's: its size what the journal says (a restore: its last
         // commit, plus at most the write it announced), and the units' own header bytes where they should be.
         let target = j.target().to_string();
@@ -2121,7 +2154,7 @@ pub fn open_job(journal: &Path) -> R<Job> {
             Err(_) => return Err(fail("archiveGone")),
         };
         if let Some(size) = size {
-            let fits = if restoring { size >= j.committed && size <= j.committed + j.pending.unwrap_or(0) } else { size == j.committed || size == j.prev_committed };
+            let fits = if restoring { size >= j.committed && size <= j.committed.saturating_add(j.pending.unwrap_or(0)) } else { size == j.committed || size == j.prev_committed };
             if !fits {
                 return Err(fail("archiveChanged"));
             }
@@ -2145,7 +2178,7 @@ pub fn open_job(journal: &Path) -> R<Job> {
             check.dedup();
             for k in check {
                 let u = &units[k];
-                if u.start + u.head.len() as u64 > size.max(j.committed) {
+                if u.start.checked_add(u.head.len() as u64).map(|x| x > size.max(j.committed)).unwrap_or(true) {
                     return Err(fail("archiveChanged"));
                 }
                 if read_all(&mut f, u.start, u.head.len()).ok().as_deref() != Some(&u.head[..]) {
@@ -2156,6 +2189,88 @@ pub fn open_job(journal: &Path) -> R<Job> {
     }
     let format = gs(&plan, "format");
     Ok(Job { j, format, units, raw })
+}
+
+/// A journal is trusted only when it is where and what this engine writes: an in-place job's beside its archive
+/// (journal_of / tail_of the archive), a normal job's in its registry (<registry>/<id>.kurokawa-unzip and -tail); its id
+/// plain, its aside folder `.kurokawa-replaced-<id>`, its destination absolute, every name in it (outputs, moves, the
+/// plan's units) relative and already safe for its platform (path_rule leaves it as it is), each unit's saved header the
+/// shape of a ZIP or tar header. Anything else is never replayed: «journalCorrupt», nothing touched.
+fn validate(jpath: &Path, j: &Journal, plan: Option<(&[PUnit], &str)>) -> R<()> {
+    let bad = || Err(fail("journalCorrupt"));
+    if j.id.is_empty() || j.id.len() > 64 || !j.id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return bad();
+    }
+    if j.aside_dir != format!("{}-{}", S::ASIDE_DIR, j.id) {
+        return bad();
+    }
+    let p = match S::platform(&j.platform) {
+        Some(p) => p,
+        None => return bad(),
+    };
+    let rel_ok = |x: &str| !x.is_empty() && { let r = S::path_rule(x, p, 0); r.action != "refuse" && r.out == x };
+    if !Path::new(&j.dest).is_absolute() || !Path::new(&j.archive).is_absolute() {
+        return bad();
+    }
+    let me = canon_file(jpath);
+    match j.mode.as_str() {
+        "inplace" => {
+            let a = Path::new(&j.archive);
+            if me != canon_file(&journal_of(a)) || canon_file(Path::new(&j.tail)) != canon_file(&tail_of(a)) {
+                return bad();
+            }
+            if let Some(r) = &j.restore_at {
+                let rp = Path::new(r);
+                if !rp.is_absolute() || rp.parent().map(canon_file) != a.parent().map(canon_file) || job_file_name(&lossy(rp)) {
+                    return bad();
+                }
+            }
+        }
+        "normal" => {
+            let dir = match jpath.parent() {
+                Some(d) => d,
+                None => return bad(),
+            };
+            let named = jpath.file_name().map(|x| x.to_string_lossy().into_owned()) == Some(format!("{}{}", j.id, JOURNAL_SUFFIX));
+            let reg_ok = j.registry.as_deref().map(|r| same_dir(Path::new(r), dir)).unwrap_or(false);
+            if !named || !reg_ok || canon_file(Path::new(&j.tail)) != canon_file(&dir.join(format!("{}{}", j.id, TAIL_SUFFIX))) {
+                return bad();
+            }
+        }
+        _ => return bad(),
+    }
+    if j.outs.values().any(|o| !rel_ok(o)) {
+        return bad();
+    }
+    if j.moves.iter().any(|(f, t)| !rel_ok(f) || !rel_ok(t) || t != &format!("{}/replaced/{}", j.aside_dir, f)) {
+        return bad();
+    }
+    if let Some((units, format)) = plan {
+        for u in units {
+            if !rel_ok(&u.out) {
+                return bad();
+            }
+            if u.kind == "aside" && !u.out.starts_with(&format!("{}/", j.aside_dir)) {
+                return bad();
+            }
+            if let Some(o) = j.outs.get(&u.i) {
+                if !own_output(&u.out, o) {
+                    return bad();
+                }
+            }
+            // (A saved header the shape of the format's: an empty one would pass any comparison.)
+            if j.mode == "inplace" && !u.bad {
+                let ok = if format == "zip" { u.head.len() >= 30 && u.head[..4] == [0x50, 0x4b, 3, 4] } else { u.head.len() >= 512 && u.head.len() % 512 == 0 };
+                if !ok {
+                    return bad();
+                }
+            }
+        }
+        if j.outs.keys().any(|k| *k >= units.len()) {
+            return bad();
+        }
+    }
+    Ok(())
 }
 
 /* ---------- writing one unit ---------- */
@@ -2182,7 +2297,10 @@ struct Wctx<'a> {
     tick: &'a mut dyn FnMut(u64, &str),
 }
 /// Puts the part file at `dest/out` without replacing anything there: a hard link (refused when the name is taken),
-/// then the part removed; where links cannot be made, a rename after a check.
+/// then the part removed; where links cannot be made (FAT, exFAT), a rename after a check. That fallback has a race std
+/// cannot close: std has no no-replace rename (Linux's renameat2 RENAME_NOREPLACE, Windows' MoveFileEx without
+/// REPLACE_EXISTING need a platform crate), so a file made at that very name in the instant between the check and the
+/// rename is replaced. Known and left: on those disks only, and only for a file appearing within microseconds.
 fn place(part: &Path, target: &Path) -> io::Result<()> {
     match fs::hard_link(part, target) {
         Ok(()) => fs::remove_file(part),
@@ -2241,14 +2359,24 @@ fn write_unit(f: &mut File, u: &PUnit, j: &Journal, w: &mut Wctx) -> R<(String, 
         io.release(sz);
         return Err(fail(format!("crcMismatch {}", u.name)));
     }
-    // A file that appeared since the pre-flight is never overwritten: ours takes the next free «name (n)».
+    // A file that appeared since the pre-flight is never overwritten: ours takes the next free «name (n)». Each name is
+    // recorded as this job's own BEFORE it is linked (the log a stopped job's leftovers are cleaned by: so a crash between
+    // the link and anything after leaves nothing unrecorded, and nothing the job did not write is ever removed).
     let mut out = u.out.clone();
     let mut first = true;
     loop {
         let at = dest.join(&out);
         if !exists(&at) {
+            if let Err(e) = log_record(&w.log, u.i, &out, crc) {
+                let _ = fs::remove_file(&part);
+                return Err(fail(format!("syncFailed {} {}", u.name, e)));
+            }
             match place(&part, &at) {
-                Ok(()) => break,
+                Ok(()) => {
+                    // (A crash right after the link: the name is in the log, so a Finish removes it — never «name (2)» beside it.)
+                    w.env.io.crash("placed")?;
+                    break;
+                }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(e) => {
                     let _ = fs::remove_file(&part);
@@ -2266,32 +2394,56 @@ fn write_unit(f: &mut File, u: &PUnit, j: &Journal, w: &mut Wctx) -> R<(String, 
             first = false;
         }
     }
-    // Recorded as this job's own (the unit, the name it got, its CRC) — the log a stopped job's leftovers are cleaned by,
-    // so nothing the job did not write is ever removed —, then flushed where it is.
     let placed = dest.join(&out);
-    let logged = (|| -> io::Result<()> {
-        let mut l = OpenOptions::new().create(true).append(true).open(&w.log)?;
-        l.write_all(format!("{}\t{}\t{}\n", u.i, out, crc).as_bytes())?;
-        l.sync_all()
-    })();
-    if let Err(e) = logged.and_then(|_| io.sync(&placed, false)) {
+    if let Err(e) = io.sync(&placed, false) {
         let _ = fs::remove_file(&placed);
         return Err(fail(format!("syncFailed {} {}", u.name, e)));
     }
     Ok((out, crc, raw))
 }
-/// The unit log beside a journal: «unit<TAB>name<TAB>crc» for every output placed since the last commit.
+/// The unit log beside a journal: one JSON object per line, {"i":unit,"out":name,"crc":crc}, for every output about to be
+/// placed since the last commit — JSON, so no name (a newline, a tab in it) can make a second record.
 pub fn log_of(jpath: &Path) -> PathBuf {
     with_suffix(jpath, ".log")
 }
-fn read_log(jpath: &Path) -> Vec<(usize, String, u32)> {
+fn log_record(log: &Path, i: usize, out: &str, crc: u32) -> io::Result<()> {
+    let line = obj(vec![("i", n(i as f64)), ("out", s(out)), ("crc", n(crc))]).to_json();
+    let mut l = OpenOptions::new().create(true).append(true).open(log)?;
+    l.write_all(format!("{}\n", line).as_bytes())?;
+    l.sync_all()
+}
+/// The log's records, each kept only when it is well formed (an object with a whole unit number, a name, a CRC).
+pub fn read_log(jpath: &Path) -> Vec<(usize, String, u32)> {
     let t = fs::read(log_of(jpath)).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
-    t.lines()
+    t.split('\n')
         .filter_map(|l| {
-            let mut f = l.split('\t');
-            Some((f.next()?.parse().ok()?, f.next()?.to_string(), f.next()?.parse().ok()?))
+            let o = vidjson::parse(l).ok()?;
+            let (i, crc) = (gn(&o, "i")?, gn(&o, "crc")?);
+            let out = o.get("out")?.as_str()?.to_string();
+            if i < 0.0 || i.fract() != 0.0 || !(0.0..=4294967295.0).contains(&crc) || crc.fract() != 0.0 {
+                return None;
+            }
+            Some((i as usize, out, crc as u32))
         })
         .collect()
+}
+/// Whether a logged name may be a unit's output: its planned name, or a «name (n)» the job gives it in the same folder.
+pub fn own_output(planned: &str, out: &str) -> bool {
+    if out == planned {
+        return true;
+    }
+    let ((d0, n0), (d1, n1)) = (split_out(planned), split_out(out));
+    if d0 != d1 {
+        return false;
+    }
+    let (base, ext) = match n0.rfind('.') {
+        Some(d) if d > 0 => (&n0[..d], &n0[d..]),
+        _ => (n0, ""),
+    };
+    match n1.strip_prefix(&format!("{} (", base)).and_then(|r| r.strip_suffix(&format!("){}", ext))) {
+        Some(k) => !k.is_empty() && k.len() < 10 && k.bytes().all(|b| b.is_ascii_digit()) && !k.starts_with('0'),
+        None => false,
+    }
 }
 
 /* ---------- running a job ---------- */
@@ -2359,7 +2511,15 @@ pub fn extract(file: &Path, dest: &Path, o: &Opts, env: &Env, pr: &Pr) -> R<J> {
     let raw;
     {
         let mut fd = File::open(file).map_err(ioe)?;
-        raw = read_all(&mut fd, scan.tail_start, (scan.size - scan.tail_start) as usize)?;
+        // (Only an in-place job keeps the archive's own tail — and only a sane one: past MAX_TAIL the job is refused, never
+        // a size cut by a 32-bit `usize` or a whole archive's junk loaded into memory.)
+        let tail_len = scan.size.saturating_sub(scan.tail_start);
+        if o.in_place && tail_len > MAX_TAIL {
+            let mut e = fail("refused layout");
+            e.nothing_changed = true;
+            return Err(e);
+        }
+        raw = if o.in_place { read_all(&mut fd, scan.tail_start, tail_len as usize)? } else { Vec::new() };
         for (k, u) in plan.units.iter_mut().enumerate() {
             u.cd = scan.units[k].cd.clone();
             // (A unit left out for its bad layout is never put back by this job: no bytes of it kept.)
@@ -2464,7 +2624,8 @@ fn clear_uncommitted(jpath: &Path, j: &Journal, job: &Job, io: &dyn Io) {
         }
     }
     for (i, out, crc) in read_log(jpath) {
-        if !open.contains(&i) || i >= job.units.len() {
+        // (A record counts only for an open unit and its own name — planned, or a «name (n)» beside it.)
+        if !open.contains(&i) || i >= job.units.len() || !own_output(&job.units[i].out, &out) {
             continue;
         }
         let t = j.dest_p().join(&out);
@@ -2626,10 +2787,8 @@ fn run(jpath: &Path, j: &mut Journal, job: &Job, env: &Env, pr: &Pr, password: &
     let appeared = std::mem::take(&mut w.appeared);
     drop(w);
     drop(fd);
-    // Done: an archive extracted in place is gone (its tail kept for Undo until the offer ends); the job stays on the shelf as «done».
-    if in_place {
-        let _ = fs::remove_file(&j.archive);
-    }
+    // Done: «done» saved first, then the archive extracted in place (cut to nothing by now) removed — a power loss between
+    // the two leaves a finished job and an empty file it removes later (`leftover`), never a job that can do nothing.
     for u in job.units.iter() {
         if u.bad && !damaged.contains(&u.name) {
             damaged.push(u.name.clone());
@@ -2639,20 +2798,73 @@ fn run(jpath: &Path, j: &mut Journal, job: &Job, env: &Env, pr: &Pr, password: &
     j.finished = Some(now_ms());
     j.damaged = Some(damaged.clone());
     save_journal(jpath, j, io)?;
+    if in_place {
+        // (This run holds the lock and has just cut the archive: it is the job's own — removed.)
+        let _ = fs::remove_file(&j.archive);
+    }
     Ok(obj(vec![("files", n(files as f64)), ("dest", s(&j.dest)), ("job", s(&lossy(jpath))), ("appeared", strs(&appeared)), ("damaged", strs(&damaged)), ("undo", J::Bool(true))]))
 }
 
 /// A stopped or crashed job taken up again from its journal.
+/// An in-place job's archive after its last cut: nothing left in it (size 0, the job's last commit 0) — removed; any other
+/// file at that path is not the job's and is left alone.
+fn remove_leftover(j: &Journal) {
+    let a = Path::new(&j.archive);
+    if j.mode == "inplace" && j.committed == 0 {
+        if let Ok(m) = fs::symlink_metadata(a) {
+            if m.is_file() && m.len() == 0 {
+                let _ = fs::remove_file(a);
+            }
+        }
+    }
+}
+/// The password proved against a locked unit still in the archive before a Finish (a stopped job's): none given →
+/// «passwordNeeded»; wrong → «wrongPassword» — never a damaged file for a wrong password that passed the check byte.
+fn finish_password(j: &Journal, job: &Job, password: Option<&str>, codec: &dyn Codec) -> R<()> {
+    let order = order_of(j, job.units.len());
+    let left: Vec<&PUnit> = order[j.next.min(order.len())..].iter().map(|&i| &job.units[i]).filter(|u| u.encrypted && u.writes()).collect();
+    let u = match left.iter().min_by_key(|u| u.csize) {
+        Some(u) => *u,
+        None => return Ok(()),
+    };
+    let pw = match password {
+        Some(p) if !p.is_empty() => p,
+        _ => return Err(fail("passwordNeeded")),
+    };
+    let mut f = File::open(&j.archive).map_err(ioe)?;
+    match decode(&mut f, &u.as_unit(), pw, codec, &NoIo, None, &mut |_| {}, &|| false) {
+        Ok((c, _)) if Some(c) == u.crc => Ok(()),
+        _ => Err(fail("wrongPassword")),
+    }
+}
+/// A job found beside an archive (journal v2) finished — only an in-place job of that very archive (the shell finds
+/// the journal by the archive's name; anything else there is never replayed).
+pub fn finish_beside(file: &Path, env: &Env, pr: &Pr, password: Option<&str>, keep_free: u64) -> R<J> {
+    let jp = journal_of(file);
+    let job = open_job(&jp)?;
+    if job.j.mode != "inplace" || canon_file(Path::new(&job.j.archive)) != canon_file(file) {
+        return Err(fail("journalCorrupt"));
+    }
+    finish(&jp, env, pr, password, keep_free)
+}
 pub fn finish(jpath: &Path, env: &Env, pr: &Pr, password: Option<&str>, keep_free: u64) -> R<J> {
     let job = open_job(jpath)?;
     let mut j = job.j.clone();
+    // (Every unit out and the archive gone: a power loss after the last cut — finished.)
+    if j.state != "done" && j.state != "restoring" && j.state != "undoing" && j.mode == "inplace" && j.next >= job.units.len() && !exists(Path::new(&j.archive)) {
+        j.state = "done".into();
+        j.finished = Some(now_ms());
+        save_journal(jpath, &j, env.io)?;
+    }
     if j.state == "done" {
+        remove_leftover(&j);
         return Ok(obj(vec![("files", n(0)), ("dest", s(&j.dest)), ("job", s(&lossy(jpath))), ("appeared", J::Arr(vec![])), ("damaged", strs(&j.damaged.clone().unwrap_or_default())), ("undo", J::Bool(true))]));
     }
     if j.state == "restoring" || j.state == "undoing" {
         return Err(fail("restoreUnfinished"));
     }
     let _lock = take_lock(Path::new(&j.archive), env.io)?;
+    finish_password(&j, &job, password, env.codec)?;
     clear_uncommitted(jpath, &j, &job, env.io);
     j.state = "running".into();
     j.why = None;
@@ -2696,8 +2908,13 @@ pub fn restore(jpath: &Path, env: &Env) -> R<J> {
         if j.state != "done" {
             clear_uncommitted(jpath, &j, &job, io);
         }
-        j.restore_from = Some(if j.state == "done" { units.len() } else { j.next });
-        if j.state == "done" {
+        // (Every unit out and the archive gone — a power loss after the last cut — is a finished job too.)
+        let finished = j.state == "done" || (j.next >= units.len() && !exists(Path::new(&j.archive)));
+        if finished {
+            remove_leftover(&j);
+        }
+        j.restore_from = Some(if finished { units.len() } else { j.next });
+        if finished {
             // The archive was removed when the job finished: whatever is at its path now is not this job's and is never
             // touched — the archive is made again beside it under a free name, said in the answer (`restoredTo`).
             let a = PathBuf::from(&j.archive);
@@ -2718,8 +2935,14 @@ pub fn restore(jpath: &Path, env: &Env) -> R<J> {
     }
     let target = PathBuf::from(j.target());
     // (Made by this restore alone: exclusively, so a file that took the name meanwhile is never written into.)
-    if j.restore_at.is_some() && j.committed == 0 && j.restored == Some(0) && !exists(&target) {
-        OpenOptions::new().write(true).create_new(true).open(&target).map_err(|_| fail("archiveChanged"))?;
+    // (Always created exclusively — never an exists-check first; the one file accepted already there is the empty one this
+    // restore made before a crash, recorded in its journal: open_job allowed nothing past the last commit, 0 here.)
+    if j.restore_at.is_some() && j.committed == 0 && j.restored == Some(0) {
+        match OpenOptions::new().write(true).create_new(true).open(&target) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && fs::symlink_metadata(&target).map(|m| m.is_file() && m.len() == 0).unwrap_or(false) => {}
+            Err(_) => return Err(fail("archiveChanged")),
+        }
     }
     let order = order_of(&j, units.len());
     let (from, restored) = (j.restore_from.unwrap_or(0), j.restored.unwrap_or(0));
@@ -2961,9 +3184,10 @@ fn forget(jpath: &Path, j: &Journal, ended: bool) -> Option<String> {
         let _ = fs::remove_dir_all(&aside);
         None
     };
-    let _ = fs::remove_file(&j.tail);
-    let _ = fs::remove_file(log_of(jpath));
+    // (The journal first: a crash in between leaves at most a tail nobody reads, never a journal whose tail is gone.)
     let _ = fs::remove_file(jpath);
+    let _ = fs::remove_file(log_of(jpath));
+    let _ = fs::remove_file(&j.tail);
     if let Some(r) = &j.registry {
         let _ = fs::remove_file(Path::new(r).join(format!("{}.ref", j.id)));
     }
@@ -3021,7 +3245,11 @@ pub fn dismiss(jpath: &Path) -> R<J> {
         Err(e) => {
             let t = fs::read(jpath).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
             match journal_read(&t) {
-                Ok(b) => Journal::from_j(&b),
+                Ok(b) => {
+                    let j = Journal::from_j(&b);
+                    validate(jpath, &j, None)?;
+                    j
+                }
                 Err(_) => return Err(e),
             }
         }
@@ -3508,7 +3736,17 @@ mod tests {
                     let bytes: Vec<u8> = (0..f[2].len()).step_by(2).map(|i| u8::from_str_radix(&f[2][i..i + 2], 16).unwrap()).collect();
                     let p = tmp.join(f[3]);
                     fs::write(&p, &bytes).unwrap();
-                    let s = units_of(&p).unwrap();
+                    let s = match units_of(&p) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let g = format!("ERR {}\t-", e.msg);
+                            if g != format!("{}\t{}", f[4], f[5]) {
+                                bad += 1;
+                                eprintln!("MISMATCH units {}: {}", f[1], g);
+                            }
+                            continue;
+                        }
+                    };
                     let us: Vec<String> = s.units.iter().map(|u| format!("{}:{}:{}:{}:{}:{}", u.name, u.start, u.data_start, u.data_end, u.end, if u.bad { 1 } else { 0 })).collect();
                     (format!("{}\t{}", us.join("|"), if s.layout_bad.is_empty() { "-".into() } else { s.layout_bad.join(",") }), format!("{}\t{}", f[4], f[5]))
                 }
@@ -3517,6 +3755,10 @@ mod tests {
                     fs::create_dir_all(&dest).unwrap();
                     if f[2] != "-" {
                         for x in f[2].split('|') {
+                            if x.ends_with('/') {
+                                fs::create_dir_all(dest.join(x)).unwrap();
+                                continue;
+                            }
                             let p = dest.join(x);
                             fs::create_dir_all(p.parent().unwrap()).unwrap();
                             fs::write(p, "old").unwrap();
@@ -3539,6 +3781,14 @@ mod tests {
                     assert_eq!(back.1, raw);
                     (format!("{:08x}", crc32(&tb, 0)), f[3].to_string())
                 }
+                "log" => {
+                    let text = vidjson::parse(f[1]).unwrap().as_str().unwrap().to_string();
+                    let jp = tmp.join(format!("log{}", n));
+                    fs::write(log_of(&jp), &text).unwrap();
+                    let got = J::Arr(read_log(&jp).into_iter().map(|(i, o, c)| obj(vec![("i", J::num(i as f64)), ("out", J::s(&o)), ("crc", J::num(c as f64))])).collect()).to_json();
+                    (got, f[2].to_string())
+                }
+                "own" => ((if own_output(f[1], f[2]) { "1" } else { "0" }).to_string(), f[3].to_string()),
                 "zipend" => {
                     let e = zip_end(f[1].parse().unwrap(), f[2].parse().unwrap(), f[3].parse().unwrap());
                     (e.iter().map(|b| format!("{:02x}", b)).collect::<String>(), f[4].to_string())
@@ -4273,6 +4523,141 @@ mod tests {
             finish(&jp, &env(&Fake::default(), 64), &quiet(), None, 0).unwrap();
             assert_eq!(tree(&c.dest), expected(&es));
         }
+    }
+
+
+    /* ---- P11 review round 3: an entry name can never forge a unit-log record (newline, tab), nor send a delete outside ---- */
+    #[test]
+    fn a_name_cannot_forge_the_unit_log() {
+        let c = setup(&[], "zip");
+        let victim = c.d.join("victim.txt");
+        let vbody = b"user data!!\n".to_vec();
+        fs::write(&victim, &vbody).unwrap();
+        let evil = format!("x\n0\t{}\t{}", victim.display(), crc32(&vbody, 0));
+        let z = mk_zip(&[E { data: Some(vec![b'z'; vbody.len()]), method: 0, bad_crc: true, ..e("pad.bin") }, E { data: Some(b"hi".to_vec()), method: 0, ..e(&evil) }]);
+        fs::write(&c.file, &z).unwrap();
+        let r = extract(&c.file, &c.dest, &Opts { platform: Some("linux".into()), ..opts(&c, true) }, &env(&Fake::default(), 64), &quiet());
+        assert!(r.is_err());
+        assert_eq!(fs::read(&victim).unwrap(), vbody, "a file outside the destination deleted");
+        // and a forged record in a log is never taken
+        let jp = journal_of(&c.file);
+        if exists(&jp) {
+            fs::write(log_of(&jp), format!("{{\"i\":0,\"out\":\"{}\",\"crc\":{}}}\n", victim.display(), crc32(&vbody, 0))).unwrap();
+            let _ = finish(&jp, &env(&Fake::default(), 64), &quiet(), None, 0);
+            assert_eq!(fs::read(&victim).unwrap(), vbody);
+        }
+    }
+
+    /* ---- round 3: a job's own names refused through any spelling of the destination (a link to the archive's folder) ---- */
+    #[cfg(unix)]
+    #[test]
+    fn own_names_refused_through_a_linked_destination() {
+        for name in ["a.zip.kurokawa-unzip.tmp", "a.zip.kurokawa-unzip.log", "sub/x.KUROKAWA-TAIL", "b.kurokawa-lock.tmp"] {
+            let c = setup(&mk_zip(&[E { data: Some(b"PRECIOUS ENTRY DATA".to_vec()), ..e(name) }, e("y.txt")]), "zip");
+            let link = c.d.join("dl");
+            std::os::unix::fs::symlink(c.file.parent().unwrap(), &link).unwrap();
+            let orig = fs::read(&c.file).unwrap();
+            let er = extract(&c.file, &link, &opts(&c, true), &env(&Fake::default(), 1), &quiet()).err().map(|x| x.msg).unwrap_or_default();
+            assert!(er.starts_with("refused names"), "{}: {}", name, er);
+            assert_eq!(fs::read(&c.file).unwrap(), orig);
+        }
+    }
+
+    /* ---- round 3: a planted journal (paths outside, a foreign aside folder, empty heads) is never replayed ---- */
+    #[test]
+    fn a_planted_journal_is_never_replayed() {
+        let c = setup(&mk_zip(&[]), "zip");
+        let victim = c.d.join("Documents");
+        fs::create_dir_all(&victim).unwrap();
+        fs::write(victim.join("thesis.txt"), b"years of work").unwrap();
+        let plan = vidjson::parse(r#"{"format":"zip","size":22,"tailStart":0,"idCrc":0,"dest":"x","units":[]}"#).unwrap();
+        let tb = tail_buffer(&plan, &[]);
+        let tpath = tail_of(&c.file);
+        fs::write(&tpath, &tb).unwrap();
+        let mk = |mode: &str, aside: &str, from: &str| {
+            let body = format!(r#"{{"registry":null,"id":"e","mode":"{}","format":"zip","archive":"{}","dest":"{}","tail":"{}","tailLen":{},"tailCrc":{},"committed":22,"prevCommitted":22,"next":0,"outs":{{}},"raws":{{}},"aside":{{"dir":"{}","moves":[{{"from":"{}","to":"{}/replaced/{}"}}],"moved":0}},"state":"paused","platform":"linux","created":0,"password":false}}"#,
+                mode, c.file.display(), c.file.parent().unwrap().display(), tpath.display(), tb.len(), crc32(&tb, 0), aside, from, aside, from);
+            fs::write(journal_of(&c.file), journal_text(&vidjson::parse(&body).unwrap())).unwrap();
+        };
+        for (mode, aside, from) in [("normal", "x", victim.to_string_lossy().into_owned()), ("inplace", "x", "../Documents".to_string()), ("inplace", ".kurokawa-replaced-e", "../Documents".to_string()), ("inplace", ".kurokawa-replaced-f", "a.txt".to_string())] {
+            mk(mode, aside, &from);
+            assert_eq!(finish(&journal_of(&c.file), &env(&Fake::default(), 64), &quiet(), None, 0).err().map(|e| e.msg).as_deref(), Some("journalCorrupt"), "{} {} {}", mode, aside, from);
+            assert_eq!(finish_beside(&c.file, &env(&Fake::default(), 64), &quiet(), None, 0).err().map(|e| e.msg).as_deref(), Some("journalCorrupt"));
+            assert!(dismiss(&journal_of(&c.file)).is_err() && restore(&journal_of(&c.file), &env(&Fake::default(), 64)).is_err());
+            assert!(victim.join("thesis.txt").exists(), "{} {} {}: the folder moved", mode, aside, from);
+        }
+        // an in-place journal whose saved headers are empty
+        let es = entries();
+        let c2 = setup(&mk_zip(&es), "zip");
+        let _ = extract(&c2.file, &c2.dest, &opts(&c2, true), &env(&Fake { crash_at: Some(9), ..Default::default() }, 2), &quiet());
+        let jp = journal_of(&c2.file);
+        let body = journal_read(&fs::read_to_string(&jp).unwrap()).unwrap();
+        let j = Journal::from_j(&body);
+        let (mut planj, raw) = read_tail(&fs::read(&j.tail).unwrap()).unwrap();
+        if let J::Obj(v) = &mut planj {
+            for (k, x) in v.iter_mut() {
+                if k == "units" {
+                    if let J::Arr(a) = x {
+                        for u in a.iter_mut() {
+                            if let J::Obj(f) = u {
+                                for (kk, vv) in f.iter_mut() {
+                                    if kk == "head" {
+                                        *vv = J::s("");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let tb2 = tail_buffer(&planj, &raw);
+        fs::write(&j.tail, &tb2).unwrap();
+        let mut j2 = j.clone();
+        j2.tail_len = tb2.len() as u64;
+        j2.tail_crc = crc32(&tb2, 0);
+        fs::write(&jp, journal_text(&j2.to_j())).unwrap();
+        assert_eq!(finish(&jp, &env(&Fake::default(), 2), &quiet(), None, 0).err().map(|e| e.msg).as_deref(), Some("journalCorrupt"));
+    }
+
+    /* ---- round 3: power lost after the archive was removed, before «done» was saved: still Finish and Undo ---- */
+    #[test]
+    fn power_lost_after_the_archive_was_removed() {
+        let es = entries();
+        let c = setup(&mk_zip(&es), "zip");
+        let orig = fs::read(&c.file).unwrap();
+        let mut k = 1;
+        loop {
+            let _ = fs::remove_dir_all(&c.dest);
+            fs::write(&c.file, &orig).unwrap();
+            for f in [journal_of(&c.file), tail_of(&c.file)] {
+                let _ = fs::remove_file(f);
+            }
+            let r = extract(&c.file, &c.dest, &opts(&c, true), &env(&Fake { crash_at: Some(k), ..Default::default() }, 3), &quiet());
+            if r.is_ok() {
+                break;
+            }
+            let jp = journal_of(&c.file);
+            if exists(&jp) && fs::metadata(&c.file).map(|m| m.len() == 0).unwrap_or(false) {
+                // the archive cut to nothing: what a power loss before «done» leaves, the archive then removed
+                fs::remove_file(&c.file).unwrap();
+                finish(&jp, &env(&Fake::default(), 3), &quiet(), None, 0).unwrap();
+                assert_eq!(tree(&c.dest), expected(&es));
+                let u = undo(&jp, &env(&Fake::default(), 3)).unwrap();
+                assert!(gb(&u, "identical") && fs::read(&c.file).unwrap() == orig, "{:?}", u);
+                let _ = fs::remove_dir_all(c.registry.clone());
+            }
+            k += 1;
+        }
+        // an entry whose offset lies past the directory: the pre-flight answers, never panics
+        let mut z = mk_zip(&[e("a.txt"), e("b.txt")]);
+        let e0 = z.len() - 22;
+        let cdo = le32(&z, e0 + 16) as usize;
+        let second = cdo + 46 + 5;
+        z[second + 42..second + 46].copy_from_slice(&5000u32.to_le_bytes());
+        let c2 = setup(&z, "zip");
+        let r = preflight_of(&c2.file, &c2.dest, &FactOpts::default(), 0, &env(&Fake::default(), 64), &quiet()).unwrap();
+        assert!(!gb(r.get("report").unwrap().get("inPlace").unwrap(), "ok"));
     }
 
 }
