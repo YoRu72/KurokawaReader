@@ -116,7 +116,7 @@ export async function makeArchiveSheet(paths: string[], dir: string, started: (i
       const out = `${dir}/${shown}`;
       const done = pc ? createZip(out, paths, undefined, { format: format as never, level, password: format === '7z' ? pw.value || undefined : undefined, replace, clash }) : createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
       const id = `mk-${Date.now()}`; started(id, t('filesZipping', { name: shown }), done, () => void cancelArchive(id));
-      void done.then(() => { refresh(); toast(t('filesZipped', { name: shown })); }, async (err) => { const { sevenErrorText } = await import('../archives'); toast(pc ? sevenErrorText(err) : String((err as Error).message ?? err), 'error', 5000); });
+      void done.then((r) => { refresh(); if (r.cancelled) return; toast(t('filesZipped', { name: r.path ? r.path.split(/[\\/]/).pop() || shown : shown })); }, async (err) => { const { sevenErrorText } = await import('../archives'); toast(pc ? sevenErrorText(err) : String((err as Error).message ?? err), 'error', 5000); });
     })();
   } }, icon('archive'), t('filesCompress')));
 }

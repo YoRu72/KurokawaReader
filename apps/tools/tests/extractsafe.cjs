@@ -285,5 +285,61 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     const r8 = S.preflight({ ...f, volumes: { missing: ['x.zip.003'], odd: [] }, free: 1e9 }); ok('a missing volume refuses both', !r8.ok && r8.problems.some((p) => p.kind === 'volumes' && p.names[0] === 'x.zip.003'));
     const r9 = S.preflight({ ...f, existing: ['a'], free: 1e9 }); ok('existing files counted to ask', r9.problems.some((p) => p.kind === 'existing' && p.count === 1));
   }
+  /* ---- 17. P11 review (the same as kt-core extractjob.rs's tests): Undo never touches a file that took the archive's name; originals never lost;
+     the job's own names refused; a bad local header left out (no throw); only the job's own leftovers removed ---- */
+  for (const fmt of ['zip', 'tar']) {
+    const c = setup(build(fmt, ENTRIES), fmt); const orig = fs.readFileSync(c.file); const r = await E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo());
+    fs.writeFileSync(c.file, 'MY OTHER IMPORTANT FILE'); const u = await E.undo(r.job, fakeIo());
+    ok(`${fmt}: Undo of a finished job never touches a new file at the archive's path; the archive made again beside it`, fs.readFileSync(c.file, 'utf8') === 'MY OTHER IMPORTANT FILE' && path.basename(u.restoredTo || '') === `a (2).${fmt}` && u.identical && fs.readFileSync(u.restoredTo).equals(orig), JSON.stringify(u));
+  }
+  { let k = 1; let good = true;
+    for (; k < 100; k++) { const c = setup(mkZip(ENTRIES), 'zip'); const r = await E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo()); const { e } = await attempt(() => E.restore(r.job, fakeIo({ crashAt: k }))); if (!e) break;
+      const j = JSON.parse(fs.readFileSync(r.job, 'utf8').split('\n')[0]); if (j.restoreAt && fs.existsSync(j.restoreAt)) { fs.writeFileSync(j.restoreAt, Buffer.alloc(100000, 7)); const { e: e2 } = await attempt(() => E.restore(r.job, fakeIo())); if (e2?.message !== 'archiveChanged' || !fs.readFileSync(j.restoreAt).equals(Buffer.alloc(100000, 7))) { good = false; console.log('  restore crash', k, e2?.message); } } }
+    ok(`a finished job's restore killed at each of ${k - 1} steps, its file then replaced: never cut or extended`, good && k > 5, String(k)); }
+  for (const fmt of ['zip', 'tar']) for (const inPlace of [true, false]) {
+    const c = setup(build(fmt, ENTRIES), fmt); fs.mkdirSync(c.dest, { recursive: true }); fs.writeFileSync(path.join(c.dest, 'readme.txt'), 'ORIGINAL');
+    const r = await E.extract(c.file, c.dest, { inPlace, registry: c.registry, answers: { default: 'replace' } }, pr(), fakeIo()); fs.writeFileSync(path.join(c.dest, 'readme.txt'), 'edited after'); const u = await E.undo(r.job, fakeIo());
+    ok(`${fmt} ${inPlace ? 'in place' : 'normal'}: Undo puts the replaced original back as «readme (original).txt» when the name is taken`, fs.readFileSync(path.join(c.dest, 'readme (original).txt'), 'utf8') === 'ORIGINAL' && fs.readFileSync(path.join(c.dest, 'readme.txt'), 'utf8') === 'edited after' && JSON.stringify(u.originals) === '["readme (original).txt"]', JSON.stringify(u));
+  }
+  for (const name of ['a.zip.kurokawa-unzip.tmp', 'a.zip.kurokawa-tail', 'a.zip.kurokawa-lock', 'a.zip', '.kurokawa-replaced-x/a.txt']) for (const inPlace of [true, false]) {
+    const c = setup(mkZip([{ name, data: 'precious data' }, { name: 'y.txt' }]), 'zip'); const orig = fs.readFileSync(c.file);
+    const { e } = await attempt(() => E.extract(c.file, path.dirname(c.file), { inPlace, registry: c.registry }, pr(), fakeIo())); ok(`an entry «${name}» (${inPlace ? 'in place' : 'normal'}): refused as a name, nothing changed`, /^refused names/.test(e?.message) && fs.readFileSync(c.file).equals(orig), e?.message);
+  }
+  { const b = mkZip([{ name: 'x.txt' }, { name: 'y.txt' }]); b[30 + 5 + zlib.deflateRawSync(Buffer.from('body of x.txt\n'.repeat(3))).length] = 0; const c = setup(b, 'zip'); const orig = fs.readFileSync(c.file);
+    const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo())); ok('a bad local header: in place refused before any change', /^refused layout/.test(e?.message) && fs.readFileSync(c.file).equals(orig) && noTraces(c), e?.message);
+    const { r, e: e2 } = await attempt(() => E.extract(c.file, c.dest, { registry: c.registry }, pr(), fakeIo())); ok('a bad local header: a normal extraction leaves it out and says so (no throw)', r && JSON.stringify(r.damaged) === '["y.txt"]' && fs.existsSync(path.join(c.dest, 'x.txt')), e2?.message || JSON.stringify(r)); }
+  for (const fmt of ['tar', 'zip']) { let k = 1; let good = true; const theirs = Buffer.alloc(dataOf(ENTRIES[7]).length, 84); E.BATCH.count = 3;
+    for (; k < 200; k++) { const c = setup(build(fmt, ENTRIES), fmt); fs.mkdirSync(c.dest, { recursive: true }); fs.writeFileSync(path.join(c.dest, 'last.txt'), theirs);
+      const { e } = await attempt(() => E.extract(c.file, c.dest, { registry: c.registry, answers: { default: 'both' } }, pr(), fakeIo({ crashAt: k, registry: c.registry }))); if (!e) break;
+      const sh = await E.shelf(c.registry); if (!sh[0]) continue; await E.finish(sh[0].journal, pr(), fakeIo());
+      if (!fs.readFileSync(path.join(c.dest, 'last.txt')).equals(theirs) || !fs.readFileSync(path.join(c.dest, 'last (2).txt')).equals(dataOf(ENTRIES[7])) || fs.existsSync(path.join(c.dest, 'last (3).txt'))) { good = false; console.log('  leftovers', fmt, k); } }
+    E.BATCH.count = 64; ok(`${fmt}: killed at each of ${k - 1} steps, Finish removes only the job's own leftovers (their same-size file stays; no third copy)`, good && k > 5, String(k)); }
+  /* ---- 18. across the two engines (the same journal, tail, unit log and part names): a job the JavaScript engine was killed in at every cut point is
+     finished — or restored — by the Rust engine (core/kt-core/stdroots/extractjob_cli.rs, std only), and the reverse ---- */
+  if (!QUICK) {
+    const cli = path.join(TMP, 'extractjob_cli'); let built = true;
+    try { execFileSync('rustc', ['--edition', '2021', '-O', path.join(ROOT, 'core/kt-core/stdroots/extractjob_cli.rs'), '-o', cli], { stdio: 'pipe' }); } catch (e) { built = false; ok('cross-shell: the Rust engine program built', false, String(e.stderr || e.message).slice(-400)); }
+    const rs = (...args) => execFileSync(cli, args, { encoding: 'utf8' }).trim();
+    const STORED = ENTRIES.map((e) => (e.dir ? e : { ...e, method: 0 }));   // (std has no inflate: stored entries)
+    if (built) for (const fmt of ['zip', 'tar']) for (const inPlace of [true, false]) for (const dir of ['js→rust', 'rust→js']) {
+      let k = 1; let good = true; let handed = 0; E.BATCH.count = 3;
+      for (; k < 200; k++) {
+        let crashed = false;
+        for (const after of ['finish', 'restore']) {
+          const c = setup(build(fmt, STORED), fmt); const orig = fs.readFileSync(c.file);
+          if (dir === 'js→rust') { const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace, registry: c.registry }, pr(), fakeIo({ crashAt: k, registry: c.registry }))); if (!e) continue; }
+          else { const o = rs('extract', c.file, c.dest, c.registry, inPlace ? '1' : '0', String(k)); if (!o.startsWith('CRASH')) continue; }
+          crashed = true; const sh = await E.shelf(c.registry); const jp = sh[0]?.journal; if (!jp) continue; handed++;
+          let res;
+          if (dir === 'js→rust') res = rs(after, jp); else { const { r, e } = await attempt(() => (after === 'finish' ? E.finish(jp, pr(), fakeIo()) : E.restore(jp, fakeIo()))); res = e ? 'ERR ' + e.message : JSON.stringify(r); }
+          const fine = !res.startsWith('ERR') && (after === 'finish' ? same(tree(c.dest), expected(STORED)) && (inPlace ? !fs.existsSync(c.file) : fs.readFileSync(c.file).equals(orig)) : fs.readFileSync(c.file).equals(orig) && Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/')).length === 0 && noTraces(c));
+          if (!fine) { good = false; console.log('  cross', dir, fmt, inPlace, 'crash', k, after, res.slice(0, 160)); }
+        }
+        if (!crashed) break;
+      }
+      E.BATCH.count = 64; ok(`cross-shell ${dir} ${fmt} ${inPlace ? 'in place' : 'normal'}: killed at each of ${k - 1} steps, the other engine finishes and restores (${handed} hand-overs)`, good && handed > 5, String(handed));
+    }
+  }
+  ok('zip64 end records when the fallback closes a big archive', E.zipEnd(3, 10, 100).length === 22 && E.zipEnd(70000, 10, 100).length === 98 && E.zipEnd(1, 10, 5e9).readBigUInt64LE(48) === 5000000000n);
   console.log(`${passes} passed, ${fails} failed (${((Date.now() - t0) / 1000).toFixed(1)} s)`); console.log(fails ? 'errors' : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

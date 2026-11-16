@@ -85,7 +85,8 @@ const hasJournal = (file) => fs.existsSync(journalOf(file));
 /* ---------- listing ---------- */
 async function list(file, password) {
   const entries = []; let total = 0, encrypted = false, format;
-  if (hasJournal(file) && isTar(file)) { format = 'tar'; const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
+  if (hasJournal(file) && (await journalVersion(file)) === 2) { const l = await Engine.leftOf(file); format = l.format; for (const e of l.entries) { entries.push(e); total += e.size; } }
+  else if (hasJournal(file) && isTar(file)) { format = 'tar'; const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
   else if (hasJournal(file)) {
     format = 'zip'; const j = JSON.parse(await fsp.readFile(journalOf(file), 'utf8')); const t = await fsp.open(tailOf(file), 'r');
     try { const ix = await readZip(t, (await t.stat()).size); for (const it of ix.items) if (it.offset < j.committed) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir, ...(it.mtime ? { mtime: it.mtime } : {}) }); total += it.usize; } } finally { await t.close(); }
@@ -234,7 +235,7 @@ async function extract7z(file, dest, o, pr) {
 /** A journal beside the archive: the new engine's (version 2) or the first design's. */
 async function journalVersion(file) { try { const r = Safe.journalRead(await fsp.readFile(journalOf(file), 'utf8')); return r.ok ? 2 : r.why === 'v1' ? 1 : 0; } catch { return 0; } }
 async function extract(file, dest, o, pr) {
-  if (hasJournal(file)) { const v = await journalVersion(file); if (v === 2) return (await Engine.finish(journalOf(file), pr, undefined, { password: o.password, keepFree: o.keepFree })).files; if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
+  if (hasJournal(file)) { const v = await journalVersion(file); if (v === 2) { const r = await Engine.finish(journalOf(file), pr, undefined, { password: o.password, keepFree: o.keepFree }); last = r; return r.files; } if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
   const fmt = await formatOf(file); let n;
   // ZIP (one file, methods the app decodes itself, ZipCrypto too) and tar: the engine that checks everything first.
   if ((fmt === 'zip' || fmt === 'tar') && !/\.\d{3}$/.test(file)) {
@@ -293,6 +294,8 @@ async function createZip(out, inputs, pr, o = {}) {
   const loc = Buffer.alloc(20); loc.writeUInt32LE(0x07064b50, 0); loc.writeBigUInt64LE(BigInt(cdEnd), 8); loc.writeUInt32LE(1, 16);
   const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(Math.min(central.length, 0xffff), 8); eocd.writeUInt16LE(Math.min(central.length, 0xffff), 10); eocd.writeUInt32LE(Math.min(cdBuf.length, 0xffffffff), 12); eocd.writeUInt32LE(Math.min(cdStart, 0xffffffff), 16);
   await write(Buffer.concat([z64, loc, eocd])); await new Promise((r) => ws.end(r));
+  // (Flushed before it is put in place: a replace never leaves a name pointing at bytes not yet on the disk.)
+  { const h = await fsp.open(part, 'r+'); try { await h.sync(); } catch (e) { await h.close().catch(() => {}); await fsp.rm(part, { force: true }); throw e; } await h.close(); }
   if (o.clash === 'replace') await fsp.rename(part, out);
   else { let at = out; for (;;) { try { await fsp.link(part, at); await fsp.rm(part, { force: true }); break; } catch (e) { if (e.code !== 'EEXIST' && !taken(at)) { await fsp.rename(part, at); break; } if (o.clash !== 'both') { await fsp.rm(part, { force: true }); throw new Error('zipExists'); } at = freeName(out); } } out = at; }
   pr.on(total, total, ''); return { files: files.length, path: out };
@@ -484,7 +487,7 @@ async function preflight(file, dest, o = {}) {
 /** The shelf of unfinished (and just finished) jobs; a job acted on: finish, restore, undo, dismiss, restoreV1. */
 async function shelf(o = {}) { return REGISTRY ? Engine.shelf(REGISTRY, o) : []; }
 async function jobAct(journal, act, pr) {
-  if (act === 'finish') return Engine.finish(journal, pr);
+  if (act === 'finish') return Engine.finish(journal, pr, undefined, { password: pr?.password });
   if (act === 'restore' || act === 'undo') return Engine.restore(journal);
   if (act === 'dismiss') return Engine.dismiss(journal);
   if (act === 'restoreV1') { const file = journal.replace(/\.kurokawa-unzip$/, ''); const left = await restoreV1(file); return { left }; }

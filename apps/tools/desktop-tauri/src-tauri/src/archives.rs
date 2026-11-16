@@ -358,7 +358,15 @@ fn cache_dir() -> PathBuf {
 pub async fn kt_archive_list(o: Value) -> Result<Value, String> {
     let path = s(&o, "path");
     let password = opt_s(&o, "password");
-    blocking(move || archive::list(Path::new(&path), password.as_deref(), &ctx()).map(|i| info_value(&i))).await
+    blocking(move || {
+        // (Tools 0.21 P11: an unfinished engine job beside it — journal v2 — is listed from its plan; the shared crate's
+        // reader knows only the first design's journal and would read the saved tail as a directory.)
+        if kt_core::extractjob::journal_version(Path::new(&path)) == 2 {
+            return crate::extractcmds::list_v2(Path::new(&path));
+        }
+        archive::list(Path::new(&path), password.as_deref(), &ctx()).map(|i| info_value(&i))
+    })
+    .await
 }
 
 /// kt:archiveExtract({ id?, path, dest? («cache:» the temp folder's), only?, inPlace?, deleteAfter?, replace?, password?,
@@ -432,7 +440,15 @@ pub async fn kt_archive_test(app: AppHandle, o: Value) -> Result<Value, String> 
 #[tauri::command]
 pub async fn kt_archive_restore(o: Value) -> Result<Value, String> {
     let path = s(&o, "path");
-    let left = blocking(move || archive::restore(Path::new(&path))).await?;
+    // (Tools 0.21 P11: a journal v2 beside it is the engine's — restored by the engine, as archive.cjs restore does:
+    // -2 when the archive came back whole, else how many files stayed out; the first design's journal the old way.)
+    let left = blocking(move || {
+        if kt_core::extractjob::journal_version(Path::new(&path)) == 2 {
+            return crate::extractcmds::restore_v2(Path::new(&path));
+        }
+        archive::restore(Path::new(&path))
+    })
+    .await?;
     Ok(json!({ "left": left }))
 }
 

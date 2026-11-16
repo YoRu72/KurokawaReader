@@ -16,6 +16,7 @@ const S = require('./archsafe.cjs');
 const SUFFIX = { journal: S.SPEC.journalSuffix, tail: S.SPEC.tailSuffix, part: S.SPEC.tempSuffix, lock: '.kurokawa-lock' };
 const OWN_METHODS = [0, 8];
 const BATCH = { bytes: 512 * 1024 * 1024, count: 64 };
+const STOP_EVERY = 8 * 1024 * 1024;
 const hostPlatform = () => (process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux');
 const realIo = { freeSpace: async (d) => freeSpace(d), charge() {}, release() {}, async crash() {} };
 class Crash extends Error { constructor(p) { super('crash ' + p); this.crash = true; } }
@@ -59,16 +60,22 @@ async function zipUnits(fd, size) {
   const layoutBad = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i]; it.start = it.offset; it.end = i + 1 < items.length ? items[i + 1].offset : tailStart;
-    if (it.offset + 30 > size) { layoutBad.push(it.name); it.bad = true; continue; }
+    // (A unit whose header cannot be read, or whose data runs into the next one, keeps no data of its own: dataStart = dataEnd = start.)
+    it.dataStart = it.offset; it.dataEnd = it.offset;
+    if (it.offset + 30 > size || it.end < it.start) { layoutBad.push(it.name); it.bad = true; continue; }
     const h = await readAll(fd, it.offset, 30);
     if (h.readUInt32LE(0) !== 0x04034b50) { layoutBad.push(it.name); it.bad = true; continue; }
-    const lnl = h.readUInt16LE(26), lxl = h.readUInt16LE(28); it.dataStart = it.offset + 30 + lnl + lxl; it.dataEnd = it.dataStart + it.csize; it.dd = !!(h.readUInt16LE(6) & 8);
+    const lnl = h.readUInt16LE(26), lxl = h.readUInt16LE(28); const ds = it.offset + 30 + lnl + lxl; const de = ds + it.csize; it.dd = !!(h.readUInt16LE(6) & 8);
+    if (de > it.end) { layoutBad.push(it.name); it.bad = true; continue; }
+    it.dataStart = ds; it.dataEnd = de;
     const lname = await readAll(fd, it.offset + 30, lnl);
     // The local header must say what the directory says (else two readers would see two archives: refused in place).
     const lm = h.readUInt16LE(8), lcrc = h.readUInt32LE(14), lcs = h.readUInt32LE(18), lus = h.readUInt32LE(22);
     const sizesOk = it.dd || zip64 || (lcrc === it.crc && lcs === it.csize && lus === it.usize) || (lcs === 0xffffffff);
     if (!lname.equals(it.nameRaw) || lm !== it.method || !sizesOk || it.dataEnd > it.end) { layoutBad.push(it.name); it.bad = true; }
   }
+  // (Data before the first entry — a self-extractor's program —: a restore could not put it back; refused in place.)
+  if (items.length && items[0].start > 0 && !layoutBad.includes(items[0].name)) layoutBad.push(items[0].name);
   return { format: 'zip', units: items, tailStart, size, zip64, layoutBad, idCrc: S.crc32(cd) };
 }
 /** A tar's units: each entry with its long-name/pax records; the end blocks are the tail. */
@@ -87,15 +94,22 @@ async function tarUnits(fd, size) {
     if (type === 'g') { pos = next; continue; }
     const nm = (longName ?? name).replace(/^\.\//, ''); const u = { name: nm, start: group, dataStart: data, dataEnd: data + sz, end: next, usize: sz, csize: sz, method: 0, type, dir: type === '5' || nm.endsWith('/'), link: type === '2' ? 'sym' : type === '1' ? 'hard' : undefined, target: link };
     // (A device, a FIFO or a sparse file is never made on a computer: «layout» — refused in place, left out of a normal extraction and reported.)
-    if (!sumOk || next > size || '346S'.includes(type)) { layoutBad.push(nm); u.bad = true; }
+    if (!sumOk || next > size || '346S'.includes(type)) { layoutBad.push(nm); u.bad = true; u.dataEnd = u.dataStart; }
     if (nm && nm !== '.') units.push(u); longName = null; group = -1; pos = next;
   }
   const tailStart = units.length ? units[units.length - 1].end : 0;
   return { format: 'tar', units, tailStart, size, layoutBad, idCrc: units.length ? S.crc32(await readAll(fd, 0, Math.min(512, size))) : 0 };
 }
+/** zip by its first bytes; tar by its header (the «ustar» magic or a valid checksum), or by its name with nothing but zeros at its start (an empty tar). */
+function isTarHead(h) {
+  if (!h || h.length < 512) return false; if (h.toString('latin1', 257, 262) === 'ustar') return true;
+  const f = h.toString('latin1', 148, 156).replace(/[\0 ]+$/, '').trim(); if (!/^[0-7]+$/.test(f)) return false;
+  let sum = 0; for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : h[i]; return sum === parseInt(f, 8) && h.some((v) => v !== 0);
+}
 async function formatOf(file) {
-  const fd = await fsp.open(file, 'r'); const b = Buffer.alloc(8); try { await fd.read(b, 0, 8, 0); } finally { await fd.close(); }
-  if (b[0] === 0x50 && b[1] === 0x4b) return 'zip'; if (/\.tar$/i.test(file)) return 'tar'; return null;
+  const fd = await fsp.open(file, 'r'); const b = Buffer.alloc(512); let n = 0; try { n = (await fd.read(b, 0, 512, 0)).bytesRead; } finally { await fd.close(); }
+  if (n >= 2 && b[0] === 0x50 && b[1] === 0x4b) return 'zip';
+  if (n >= 512 && (isTarHead(b) || (/\.tar$/i.test(file) && b.every((v) => v === 0)))) return 'tar'; return null;
 }
 async function unitsOf(file) { const fmt = await formatOf(file); if (!fmt) throw fail('notArchive'); const fd = await fsp.open(file, 'r'); try { const size = (await fd.stat()).size; return fmt === 'zip' ? await zipUnits(fd, size) : await tarUnits(fd, size); } finally { await fd.close(); } }
 
@@ -150,6 +164,8 @@ async function facts(file, dest, o = {}) {
   const destDir = await nearestDir(dest); const free = await io.freeSpace(destDir);
   const sameVolume = (await devOf(path.dirname(file))) === (await devOf(destDir));
   const existing = []; for (const u of scan.units) { const r = S.pathRule(u.name, platform); if (r.action !== 'refuse' && !u.dir && exists(path.join(dest, r.out))) existing.push(r.out); }
+  // (The job's own names, when the destination is the archive's folder: the archive, its journal, tail, lock, unit log and their temporary copies.)
+  const reserved = []; if (path.resolve(path.dirname(file)) === path.resolve(dest)) { const nm = path.basename(file); for (const s of ['', SUFFIX.journal, SUFFIX.tail, SUFFIX.lock]) reserved.push(nm + s, nm + s + '.tmp'); reserved.push(nm + SUFFIX.journal + '.log'); }
   const vols = volumesOf(file); const lock = file + SUFFIX.lock;
   const busy = exists(lock) && lockAlive(lock); const journal = exists(file + SUFFIX.journal);
   const f = {
@@ -157,7 +173,7 @@ async function facts(file, dest, o = {}) {
     entries: scan.units.map((u) => ({ path: u.name, dir: u.dir, link: u.link, target: u.target, method: u.dir ? undefined : u.method, encrypted: u.encrypted, csize: u.csize, usize: u.usize, offset: u.start, unitBytes: u.end - u.start })),
     supported: OWN_METHODS, external: o.external || [], encrypted: scan.units.some((u) => u.encrypted), password, damaged, layoutBad: scan.layoutBad,
     volumes: vols ? { missing: vols.missing, odd: vols.odd } : null, archiveWritable: await writable(file), destWritable: await writable(destDir), saf: /^content:/.test(file), sameVolume, free, existing, busy: busy || journal,
-    inPlaceFormat: (scan.format === 'zip' || scan.format === 'tar') && !vols, tailBytes: scan.size - scan.tailStart + scan.units.reduce((a, u) => a + (u.dataStart - u.start) + (u.end - u.dataEnd), 0), blockSize: 4096,
+    inPlaceFormat: (scan.format === 'zip' || scan.format === 'tar') && !vols, tailBytes: scan.size - scan.tailStart + scan.units.reduce((a, u) => a + Math.max(0, u.dataStart - u.start) + Math.max(0, u.end - u.dataEnd), 0), reserved, blockSize: 4096,
   };
   return { facts: f, scan };
 }
@@ -196,6 +212,8 @@ function planOuts(scan, dest, platform, answers, inPlace, jobId, skip) {
 }
 
 /* ---------- the journal and the saved tail ---------- */
+/** The archive a restore writes: `restoreAt` when set (a finished job's: its path if free, else a free name beside it), else the archive's own. */
+const targetOf = (j) => j.restoreAt || j.archive;
 const journalOf = (file) => file + SUFFIX.journal; const tailOf = (file) => file + SUFFIX.tail;
 async function saveJournal(p, body, io) { await writeAtomic(p, S.journalText(body)); await io.crash('journal'); }
 /** The tail file: «KTTAIL2», the plan as JSON, then the archive's own tail bytes. */
@@ -210,29 +228,57 @@ async function openJob(journal) {
   if (tail.length !== j.tailLen || S.crc32(tail) !== j.tailCrc) throw fail('tailCorrupt');
   const { plan, raw } = readTail(tail);
   if (j.mode === 'inplace' && j.state !== 'done') {
-    let size; try { size = (await fsp.stat(j.archive)).size; } catch { throw fail('archiveGone'); }
-    // (A restore killed after it wrote the archive's end: longer than its last commit — the restore cuts that off again.)
-    if (size !== j.committed && size !== j.prevCommitted && !(j.state === 'restoring' && size > j.committed)) throw fail('archiveChanged');
-    // The bytes still in the archive must be the units the plan says: each remaining unit's header compared.
-    const fd = await fsp.open(j.archive, 'r');
-    try { const left = plan.units.length - j.next; for (const k of new Set([0, left - 1])) { if (k < 0 || k >= left) continue; const u = plan.units[k]; const h = Buffer.from(u.head, 'base64'); if (!(await readAll(fd, u.start, h.length).catch(() => Buffer.alloc(0))).equals(h)) throw fail('archiveChanged'); } } finally { await fd.close(); }
+    // What is about to be cut or extended must be this job's: its size what the journal says (a restore: its last commit, plus at most the
+    // write it announced), and the units' own header bytes where they should be.
+    const target = targetOf(j); const restoring = j.state === 'restoring'; const unmade = restoring && j.restoreAt && j.committed === 0 && !j.restored;
+    let size = null; try { size = (await fsp.stat(target)).size; } catch { if (!unmade) throw fail('archiveGone'); }
+    if (size !== null) {
+      const fits = restoring ? size >= j.committed && size <= j.committed + (j.pending || 0) : size === j.committed || size === j.prevCommitted;
+      if (!fits) throw fail('archiveChanged');
+      const check = [];
+      if (!j.restoreAt) { const left = plan.units.length - j.next; if (left > 0) check.push(0, left - 1); }
+      if (restoring && j.restored > 0 && j.restored <= j.restoreFrom) { const order = orderOf(j, plan); check.push(order[j.restoreFrom - 1], order[j.restoreFrom - j.restored]); }
+      const fd = await fsp.open(target, 'r');
+      try { for (const k of new Set(check)) { const u = plan.units[k]; const h = Buffer.from(u.head, 'base64'); if (u.start + h.length > Math.max(size, j.committed)) throw fail('archiveChanged'); if (!(await readAll(fd, u.start, h.length).catch(() => Buffer.alloc(0))).equals(h)) throw fail('archiveChanged'); } } finally { await fd.close(); }
+    }
   }
   return { j, plan, raw };
 }
 
 /* ---------- writing one unit ---------- */
-function meter(io, onBytes) { return new Transform({ transform(c, _e, cb) { try { io.charge(c.length); } catch (e) { return cb(e); } onBytes?.(c.length); cb(null, c); } }); }
-async function writeUnit(fd, u, dest, ctx) {
-  const target = path.join(dest, u.out); await fsp.mkdir(path.dirname(target), { recursive: true });
-  const part = target + SUFFIX.part; const st = { crc: 0, raw: 0 };
-  const rawTap = new Transform({ transform(c, _e, cb) { st.raw = S.crc32(c, st.raw); cb(null, c); } });
-  const chain = [rangeStream(fd, u.dataStart, u.csize), rawTap, ...(u.encrypted ? [zipCryptoStream(ctx.password || '', u.dd ? (u.time >> 8) & 0xff : u.crc >>> 24)] : []), ...(u.method === 8 ? [zlib.createInflateRaw()] : []), new Transform({ transform(c, _e, cb) { st.crc = S.crc32(c, st.crc); cb(null, c); } }), meter(ctx.io, ctx.tick), fs.createWriteStream(part, { flags: 'wx' })];
+/** Bytes charged to the volume and counted; a Cancel is heard inside a large file too (asked every 8 MiB). */
+function meter(io, onBytes, stopped) { let since = 0; return new Transform({ transform(c, _e, cb) { since += c.length; if (since >= STOP_EVERY) { since = 0; if (stopped?.()) return cb(fail('stopped')); } try { io.charge(c.length); } catch (e) { return cb(e); } onBytes?.(c.length); cb(null, c); } }); }
+/** No output is written through a link: every folder from the destination down to the unit's own must be a real folder. */
+function throughLink(dest, out) { const parts = out.split('/'); let p = dest; for (let i = 0; i < parts.length - 1; i++) { p = path.join(p, parts[i]); try { if (fs.lstatSync(p).isSymbolicLink()) return true; } catch { return false; } } return false; }
+/** This job's part file for a unit: named for the job and the unit alone, made exclusively, beside the output. */
+const partOf = (j, u) => path.join(path.dirname(path.join(j.dest, u.out)), `.kt${j.id}-${u.i}${SUFFIX.part}`);
+/** The unit log beside a journal: «unit<TAB>name<TAB>crc» for every output placed since the last commit (what a stopped job's leftovers are cleaned by). */
+const logOf = (jpath) => jpath + '.log';
+function readLog(jpath) { let t = ''; try { t = fs.readFileSync(logOf(jpath), 'utf8'); } catch { return []; } return t.split('\n').map((l) => l.split('\t')).filter((f) => f.length === 3 && /^\d+$/.test(f[0]) && /^\d+$/.test(f[2])).map((f) => ({ i: Number(f[0]), out: f[1], crc: Number(f[2]) })); }
+/** Flushed through a handle that may write; a failure fails the unit (nothing is cut on an unproved write). */
+async function syncFile(p) { const h = await fsp.open(p, 'r+'); try { await h.sync(); } finally { await h.close(); } }
+async function writeUnit(fd, u, j, ctx) {
+  const dest = j.dest; const target = path.join(dest, u.out);
+  if (throughLink(dest, u.out)) throw fail('throughLink ' + u.name);
+  await fsp.mkdir(path.dirname(target), { recursive: true });
   if (!OWN_METHODS.includes(u.method)) throw fail(`unsupportedMethod ${u.method} ${u.name}`);
-  try { await pipeline(chain); } catch (e) { const sz = exists(part) ? fs.statSync(part).size : 0; await fsp.rm(part, { force: true }); ctx.io.release(sz); throw e.code === 'ENOSPC' ? fail('noSpace') : e; }
+  const part = partOf(j, u); const st = { crc: 0, raw: 0 };
+  const rawTap = new Transform({ transform(c, _e, cb) { st.raw = S.crc32(c, st.raw); cb(null, c); } });
+  const chain = [rangeStream(fd, u.dataStart, u.csize), rawTap, ...(u.encrypted ? [zipCryptoStream(ctx.password || '', u.dd ? (u.time >> 8) & 0xff : u.crc >>> 24)] : []), ...(u.method === 8 ? [zlib.createInflateRaw()] : []), new Transform({ transform(c, _e, cb) { st.crc = S.crc32(c, st.crc); cb(null, c); } }), meter(ctx.io, ctx.tick, ctx.stopped), fs.createWriteStream(part, { flags: 'wx' })];
+  try { await pipeline(chain); await syncFile(part); } catch (e) { const sz = exists(part) ? fs.statSync(part).size : 0; await fsp.rm(part, { force: true }); ctx.io.release(sz); throw e.code === 'ENOSPC' ? fail('noSpace') : e.message === 'stopped' ? fail('stopped') : e; }
   if (ctx.format === 'zip' && st.crc !== u.crc) { const sz = fs.statSync(part).size; await fsp.rm(part, { force: true }); ctx.io.release(sz); throw fail('crcMismatch ' + u.name); }
-  // A file that appeared since the pre-flight is never overwritten: ours takes the next free «name (n)».
-  let out = u.out; if (exists(target)) { const dir = path.posix.dirname(out); const nm = S.keepBothName(path.posix.basename(out), (c) => exists(path.join(dest, dir === '.' ? c : `${dir}/${c}`))); out = dir === '.' ? nm : `${dir}/${nm}`; ctx.appeared.push(u.name); }
-  await fsp.rename(part, path.join(dest, out)); return { out, crc: st.crc, raw: st.raw };
+  // A file that appeared since the pre-flight is never overwritten: ours takes the next free «name (n)» (a hard link that fails when the name is taken; a rename after a check where links cannot be made).
+  let out = u.out; let first = true;
+  for (;;) {
+    const at = path.join(dest, out);
+    if (!exists(at)) { try { await fsp.link(part, at); await fsp.rm(part, { force: true }); break; } catch (e) { if (e.code !== 'EEXIST') { if (!exists(at)) { await fsp.rename(part, at); break; } } } }
+    const dir = path.posix.dirname(u.out); const nm = S.keepBothName(path.posix.basename(u.out), (c) => exists(path.join(dest, dir === '.' ? c : `${dir}/${c}`))); out = dir === '.' ? nm : `${dir}/${nm}`;
+    if (first) { ctx.appeared.push(u.name); first = false; }
+  }
+  // Recorded as this job's own (the unit, the name it got, its CRC), so nothing the job did not write is ever removed.
+  try { const h = await fsp.open(logOf(ctx.jpath), 'a'); try { await h.appendFile(`${u.i}\t${out}\t${st.crc}\n`); await h.sync(); } finally { await h.close(); } }
+  catch (e) { await fsp.rm(path.join(dest, out), { force: true }); throw fail(`syncFailed ${u.name} ${e.message}`); }
+  return { out, crc: st.crc, raw: st.raw };
 }
 
 /* ---------- running a job ---------- */
@@ -257,7 +303,7 @@ async function extract(file, dest, o, pr, io = realIo) {
     await fsp.mkdir(dest, { recursive: true });
     // The plan and the archive's own tail saved (CRC'd) before the first change; then the journal; then the aside moves.
     const fd0 = await fsp.open(file, 'r'); let raw, heads;
-    try { raw = await readAll(fd0, scan.tailStart, scan.size - scan.tailStart); heads = []; for (const u of units) heads.push({ head: (await readAll(fd0, u.start, u.dataStart - u.start)).toString('base64'), trail: (await readAll(fd0, u.dataEnd, u.end - u.dataEnd)).toString('base64') }); } finally { await fd0.close(); }
+    try { raw = await readAll(fd0, scan.tailStart, scan.size - scan.tailStart); heads = []; for (const u of units) if (scan.units[u.i].bad) heads.push({ head: '', trail: '' }); else heads.push({ head: (await readAll(fd0, u.start, u.dataStart - u.start)).toString('base64'), trail: (await readAll(fd0, u.dataEnd, u.end - u.dataEnd)).toString('base64') }); } finally { await fd0.close(); }
     const plan = { format: scan.format, size: scan.size, tailStart: scan.tailStart, idCrc: scan.idCrc, dest: path.resolve(dest), units: units.map((u, k) => ({ ...u, ...heads[k], cd: scan.units[k].cd ? scan.units[k].cd.toString('base64') : undefined })) };
     const registry = o.registry || io.registry; const jpath = o.inPlace ? journalOf(file) : path.join(registry, `${id}${SUFFIX.journal}`); if (!o.inPlace) await fsp.mkdir(registry, { recursive: true });
     const tpath = o.inPlace ? tailOf(file) : path.join(registry, `${id}${SUFFIX.tail}`);
@@ -279,13 +325,14 @@ async function settleAside(jpath, j, io) {
   }
 }
 /** Outputs of units not committed yet (a crash or a stop mid-batch): removed so the run goes on exactly. */
-async function clearUncommitted(j, plan, io) {
-  const order = orderOf(j, plan);
-  for (let k = j.next; k < order.length; k++) {
-    const u = plan.units[order[k]]; if (u.kind !== 'file' && u.kind !== 'aside') continue; const t = path.join(j.dest, u.out);
-    if (exists(t + SUFFIX.part)) { const sz = fs.statSync(t + SUFFIX.part).size; await fsp.rm(t + SUFFIX.part, { force: true }); io.release(sz); }
-    if (exists(t)) { const st = fs.statSync(t); if (st.isFile() && st.size === u.usize && (u.crc == null || (await fileCrc(t)) === u.crc)) { await fsp.rm(t, { force: true }); io.release(st.size); } }
-  }
+/** Outputs of units not committed yet (a crash or a stop mid-batch): removed so the run goes on exactly — only what this job wrote: its part files
+ *  (named for this job alone; an older build's «<out>.kt-part» left alone) and the outputs its unit log records (the name each got, «name (2)» too),
+ *  each only while it is still as written (same size and CRC). Nothing else at those names is touched. */
+async function clearUncommitted(jpath, j, plan, io) {
+  const order = orderOf(j, plan); const open = new Set(order.slice(j.next));
+  for (const i of open) { const u = plan.units[i]; if (u.kind !== 'file' && u.kind !== 'aside') continue; const p = partOf(j, u); if (exists(p)) { const sz = fs.lstatSync(p).size; await fsp.rm(p, { force: true }); io.release(sz); } }
+  for (const r of readLog(jpath)) { if (!open.has(r.i) || !plan.units[r.i]) continue; const t = path.join(j.dest, r.out); let st; try { st = fs.lstatSync(t); } catch { continue; } if (st.isFile() && st.size === plan.units[r.i].usize && (await fileCrc(t)) === r.crc) { await fsp.rm(t, { force: true }); io.release(st.size); } }
+  await fsp.rm(logOf(jpath), { force: true });
 }
 async function fileCrc(p) { let c = 0; for await (const b of fs.createReadStream(p, { highWaterMark: 1 << 20 })) c = S.crc32(b, c); return c; }
 /** The CRC a unit's file must have: the archive's (ZIP), or the one taken while it was written (tar keeps none). */
@@ -299,7 +346,7 @@ async function run(jpath, j, plan, ctx) {
   try {
     if (j.mode === 'inplace' && sizeNow > j.committed) { await fd.truncate(j.committed); await fd.sync().catch(() => {}); io.release(sizeNow - j.committed); }
     const total = plan.units.reduce((a, u) => a + (u.kind === 'file' || u.kind === 'aside' ? u.usize : 0), 0); let done = 0; for (let x = 0; x < j.next; x++) { const u = plan.units[order[x]]; if (u.kind === 'file' || u.kind === 'aside') done += u.usize; }
-    const wctx = { io, password: ctx.password, format: plan.format, appeared, tick: (n) => { done += n; pr?.on?.(done, total, cur); } }; let cur = '';
+    const wctx = { io, jpath, password: ctx.password, format: plan.format, appeared, stopped: () => !!pr?.stopped?.(), tick: (n) => { done += n; pr?.on?.(done, total, cur); } }; let cur = '';
     let k = j.next;
     while (k < order.length) {
       if (pr?.stopped?.()) { j.state = 'paused'; await saveJournal(jpath, j, io); throw fail('stopped', { journal: jpath }); }
@@ -309,23 +356,25 @@ async function run(jpath, j, plan, ctx) {
       try {
         for (let x = k; x < end; x++) {
           const u = plan.units[order[x]]; cur = u.name;
-          if (u.kind === 'dir') { await fsp.mkdir(path.join(j.dest, u.out), { recursive: true }); continue; }
+          if (u.kind === 'dir') { if (throughLink(j.dest, u.out + '/x')) throw fail('throughLink ' + u.name); await fsp.mkdir(path.join(j.dest, u.out), { recursive: true }); continue; }
           if (u.kind === 'link' || u.kind === 'skip') continue;
-          let r; try { r = await writeUnit(fd, u, j.dest, wctx); } catch (e) { if (!e.crash && j.mode === 'normal' && /^crcMismatch /.test(e.message)) { damaged.push(u.name); continue; } throw e; }   // (a normal job leaves a damaged file out and goes on; in place stops at the last commit)
-          written.push(r.out); wcrc.push(r.crc); if (r.out !== u.out) j.outs[u.i] = r.out; j.raws[u.i] = r.raw; if (u.kind === 'file') files++;
+          let r; try { r = await writeUnit(fd, u, j, wctx); } catch (e) { if (!e.crash && j.mode === 'normal' && /^crcMismatch /.test(e.message)) { damaged.push(u.name); continue; } throw e; }   // (a normal job leaves a damaged file out and goes on; in place stops at the last commit)
+          written.push(r.out); wcrc.push(r.crc); if (r.out !== u.out) j.outs[u.i] = r.out; else delete j.outs[u.i]; j.raws[u.i] = r.raw; if (u.kind === 'file') files++;
           await io.crash('unit');
         }
+        // Commit: each file was flushed as it was placed; then their folders (where the system can); and, before an archive is cut, each read back and its CRC compared.
+        for (const d of new Set(written.map((w) => path.dirname(path.join(j.dest, w))))) await fsyncPath(d, true);
+        if (j.mode === 'inplace') for (let x = 0; x < written.length; x++) if ((await fileCrc(path.join(j.dest, written[x]))) !== wcrc[x]) throw fail('readBack ' + written[x]);
       } catch (e) {
         if (e.crash) throw e;
-        const m = String(e.message || e); j.state = 'paused'; j.why = m.split(' ')[0]; await clearUncommitted(j, plan, io); await saveJournal(jpath, j, io); throw fail(m, { journal: jpath, kept: files });
+        // (This batch's own outputs are not committed: removed — a file that failed its read-back is bad, and a Finish then writes it again under its own name, never «name (2)» beside a bad one.)
+        for (const w of written) { const p = path.join(j.dest, w); try { const sz = fs.lstatSync(p).size; await fsp.rm(p, { force: true }); io.release(sz); } catch { /* gone */ } }
+        for (let x = k; x < end; x++) delete j.outs[plan.units[order[x]].i];
+        const m = String(e.message || e); j.state = 'paused'; j.why = m.split(' ')[0]; await clearUncommitted(jpath, j, plan, io); await saveJournal(jpath, j, io); throw fail(m, { journal: jpath, kept: files });
       }
-      // Commit: files flushed (and, before an archive is cut, each read back and its CRC compared), the journal moved, then the archive cut back to the batch's first byte.
-      for (const w of written) await fsyncPath(path.join(j.dest, w)); for (const d of new Set(written.map((w) => path.dirname(path.join(j.dest, w))))) await fsyncPath(d, true);
-      if (j.mode === 'inplace') { const bad = []; for (let x = 0; x < written.length; x++) if ((await fileCrc(path.join(j.dest, written[x]))) !== wcrc[x]) bad.push(written[x]);
-        if (bad.length) { j.state = 'paused'; j.why = 'readBack'; await clearUncommitted(j, plan, io); await saveJournal(jpath, j, io); throw fail('readBack ' + bad[0], { journal: jpath, kept: files }); } }
       await io.crash('synced');
       j.next = end; j.prevCommitted = j.committed; if (j.mode === 'inplace') j.committed = plan.units[order[end - 1]].start;
-      await saveJournal(jpath, j, io);
+      await saveJournal(jpath, j, io); await fsp.rm(logOf(jpath), { force: true });
       if (j.mode === 'inplace') { const before = (await fd.stat()).size; await fd.truncate(j.committed); await fd.sync().catch(() => {}); io.release(before - j.committed); await io.crash('cut'); }
       k = end;
     }
@@ -343,7 +392,7 @@ async function finish(jpath, pr, io = realIo, o = {}) {
   const { j, plan } = await openJob(jpath); if (j.state === 'done') return { files: 0, dest: j.dest, job: jpath, appeared: [], damaged: j.damaged || [], undo: true };
   if (j.state === 'restoring' || j.state === 'undoing') throw fail('restoreUnfinished');
   const unlock = await takeLock(j.archive);
-  try { await clearUncommitted(j, plan, io); j.state = 'running'; delete j.why; await saveJournal(jpath, j, io); return await run(jpath, j, plan, { pr, io, password: o.password, keepFree: o.keepFree || 0 }); }
+  try { await clearUncommitted(jpath, j, plan, io); j.state = 'running'; delete j.why; await saveJournal(jpath, j, io); return await run(jpath, j, plan, { pr, io, password: o.password, keepFree: o.keepFree || 0 }); }
   finally { await unlock(); }
 }
 
@@ -362,15 +411,26 @@ function rebuildData(u, buf, rawCrc) {
  * → { identical, back (units put back), keptOut (names left extracted) }.
  */
 async function restore(jpath, io = realIo) {
-  const { j, plan, raw } = await openJob(jpath); const unlock = j.mode === 'inplace' && j.state !== 'done' ? await takeLock(j.archive) : async () => {};
+  const { j, plan, raw } = await openJob(jpath); const unlock = j.mode === 'inplace' ? await takeLock(j.archive) : async () => {};
   try {
     if (j.mode === 'normal') return await undoNormal(jpath, j, plan, io);
-    if (j.state !== 'restoring') { if (j.state !== 'done') await clearUncommitted(j, plan, io); j.restoreFrom = j.state === 'done' ? plan.units.length : j.next; j.state = 'restoring'; j.restored = 0; if (!exists(j.archive)) { await fsp.writeFile(j.archive, Buffer.alloc(0)); j.committed = 0; } await saveJournal(jpath, j, io); }
+    if (j.state !== 'restoring') {
+      if (j.state !== 'done') await clearUncommitted(jpath, j, plan, io);
+      j.restoreFrom = j.state === 'done' ? plan.units.length : j.next;
+      // (The archive was removed when the job finished: whatever is at its path now is not this job's and is never touched — the archive is
+      //  made again beside it under a free name, said in the answer: `restoredTo`.)
+      if (j.state === 'done') { const dir = path.dirname(j.archive); j.restoreAt = exists(j.archive) ? path.join(dir, S.keepBothName(path.basename(j.archive), (c) => exists(path.join(dir, c)))) : j.archive; j.committed = 0; }
+      j.state = 'restoring'; j.restored = 0; delete j.pending; await saveJournal(jpath, j, io);
+    }
+    const target = targetOf(j);
+    // (Made by this restore alone: exclusively, so a file that took the name meanwhile is never written into.)
+    if (j.restoreAt && j.committed === 0 && !j.restored && !exists(target)) { try { await fsp.writeFile(target, Buffer.alloc(0), { flag: 'wx' }); } catch { throw fail('archiveChanged'); } }
     const order = orderOf(j, plan); const back = []; let stopAt = -1;
     // (A restore taken up again: a unit already appended whose file a crash left behind is removed now.)
     for (let k = j.restoreFrom - j.restored; k < j.restoreFrom; k++) { const u = plan.units[order[k]]; if (u.kind !== 'file' && u.kind !== 'aside') continue; const p = path.join(j.dest, j.outs[u.i] || u.out); if (exists(p) && (await fileCrc(p)) === crcOf(j, u)) await fsp.rm(p, { force: true }); }
-    const fd = await fsp.open(j.archive, 'r+');
+    const fd = await fsp.open(target, 'r+');
     try {
+      // (openJob proved what lies past the last commit is this restore's own unfinished write: cut off again.)
       let size = (await fd.stat()).size; if (size > j.committed) { await fd.truncate(j.committed); size = j.committed; }
       // Units go back lowest offset first: the reverse of the order they came out.
       for (let k = j.restoreFrom - 1 - j.restored; k >= 0; k--) {
@@ -379,40 +439,74 @@ async function restore(jpath, io = realIo) {
         if (u.kind === 'file' || u.kind === 'aside') { const p = path.join(j.dest, j.outs[u.i] || u.out); let buf; try { buf = await fsp.readFile(p); } catch { stopAt = k; break; } data = rebuildData(u, buf, j.raws[u.i]); if (!data) { stopAt = k; break; } }
         else if (u.kind === 'skip') { stopAt = k; break; }
         const bytes = Buffer.concat([Buffer.from(u.head, 'base64'), data, Buffer.from(u.trail, 'base64')]);
-        io.charge(bytes.length); await fd.write(bytes, 0, bytes.length, j.committed); await fd.sync().catch(() => {});
-        j.committed += bytes.length; j.restored++; await saveJournal(jpath, j, io); back.push(u);
+        // (The write announced first: a restore killed in it finds exactly so many bytes of its own past the commit.)
+        io.charge(bytes.length); j.pending = bytes.length; await saveJournal(jpath, j, io); await fd.write(bytes, 0, bytes.length, j.committed); await fd.sync();
+        j.committed += bytes.length; j.restored++; delete j.pending; await saveJournal(jpath, j, io); back.push(u);
         if (u.kind === 'file' || u.kind === 'aside') { const p = path.join(j.dest, j.outs[u.i] || u.out); const sz = fs.statSync(p).size; await fsp.rm(p, { force: true }); io.release(sz); }
       }
-      // The end: the saved tail (all units back: identical), else a new directory over what is there (ZIP) or two zero blocks (tar).
+      // The end: the saved tail (all units back: identical), else a new directory over what is there (ZIP; ZIP64 records when they are needed) or two zero blocks (tar).
       let end;
       if (j.restoreFrom === 0) end = Buffer.alloc(0);   // (nothing was ever cut: the archive is whole already)
       else if (stopAt < 0) end = raw;
       else if (plan.format === 'tar') end = Buffer.alloc(1024);
-      else { const kept = plan.units.filter((u) => u.end <= j.committed); const cd = Buffer.concat(kept.map((u) => Buffer.from(u.cd, 'base64'))); const e = Buffer.alloc(22); e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(Math.min(kept.length, 0xffff), 8); e.writeUInt16LE(Math.min(kept.length, 0xffff), 10); e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(j.committed, 16); end = Buffer.concat([cd, e]); }
-      if (end.length) await fd.write(end, 0, end.length, j.committed); await fd.truncate(j.committed + end.length); await fd.sync().catch(() => {}); io.charge(end.length);
+      else { const kept = plan.units.filter((u) => u.end <= j.committed); const cd = Buffer.concat(kept.map((u) => Buffer.from(u.cd || '', 'base64'))); end = Buffer.concat([cd, zipEnd(kept.length, cd.length, j.committed)]); }
+      if (end.length) { j.pending = end.length; await saveJournal(jpath, j, io); await fd.write(end, 0, end.length, j.committed); }
+      await fd.truncate(j.committed + end.length); await fd.sync(); io.charge(end.length);
     } finally { await fd.close(); }
     await io.crash('restored');
-    await putBack(j, io); const keptOut = stopAt < 0 ? [] : order.slice(0, stopAt + 1).map((i) => plan.units[i]).filter((u) => u.kind === 'file').map((u) => u.name);
-    await removeDirs(j, plan); await forget(jpath, j);
-    return { identical: stopAt < 0, back: back.length, keptOut };
+    const originals = await putBack(j, io); const keptOut = stopAt < 0 ? [] : order.slice(0, stopAt + 1).map((i) => plan.units[i]).filter((u) => u.kind === 'file').map((u) => u.name);
+    await removeDirs(j, plan); const asideKept = await forget(jpath, j);
+    return { identical: stopAt < 0, back: back.length, keptOut, originals, ...(targetOf(j) !== j.archive ? { restoredTo: targetOf(j) } : {}), ...(asideKept ? { asideKept } : {}) };
   } finally { await unlock(); }
 }
-/** The old items moved aside put back where they were (never over something there; then left in the aside folder). */
-async function putBack(j, io) { for (let k = j.aside.moved - 1; k >= 0; k--) { const m = j.aside.moves[k]; const from = path.join(j.dest, m.to), to = path.join(j.dest, m.from); if (exists(from) && !exists(to)) { await fsp.mkdir(path.dirname(to), { recursive: true }); await fsp.rename(from, to); } } void io; }
+/** A ZIP's end records for `count` entries whose directory (`cdLen` bytes) starts at `cdStart`: the ZIP64 record and its locator first when a
+ *  count or an offset does not fit the plain record (65,535 entries, 4 GB). */
+function zipEnd(count, cdLen, cdStart) {
+  const z64 = count >= 0xffff || cdLen >= 0xffffffff || cdStart >= 0xffffffff; const parts = [];
+  if (z64) { const z = Buffer.alloc(56); z.writeUInt32LE(0x06064b50, 0); z.writeBigUInt64LE(44n, 4); z.writeUInt16LE(45, 12); z.writeUInt16LE(45, 14); z.writeBigUInt64LE(BigInt(count), 24); z.writeBigUInt64LE(BigInt(count), 32); z.writeBigUInt64LE(BigInt(cdLen), 40); z.writeBigUInt64LE(BigInt(cdStart), 48);
+    const l = Buffer.alloc(20); l.writeUInt32LE(0x07064b50, 0); l.writeBigUInt64LE(BigInt(cdStart + cdLen), 8); l.writeUInt32LE(1, 16); parts.push(z, l); }
+  const e = Buffer.alloc(22); e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(Math.min(count, 0xffff), 8); e.writeUInt16LE(Math.min(count, 0xffff), 10); e.writeUInt32LE(Math.min(cdLen, 0xffffffff), 12); e.writeUInt32LE(Math.min(cdStart, 0xffffffff), 16); parts.push(e);
+  return Buffer.concat(parts);
+}
+/** «name (original).ext» — then «name (original 2).ext»… — the first not taken. */
+function originalName(name, taken) { const dot = name.lastIndexOf('.'); const base = dot > 0 ? name.slice(0, dot) : name; const ext = dot > 0 ? name.slice(dot) : ''; for (let i = 1; ; i++) { const c = i === 1 ? `${base} (original)${ext}` : `${base} (original ${i})${ext}`; if (!taken(c)) return c; } }
+/** The old items moved aside put back where they were; where the name is taken now (the extracted file edited and kept, a unit that stayed out),
+ *  under «name (original)» beside it — never left behind, never over anything. → the names put back under another name. */
+async function putBack(j, io) {
+  const other = [];
+  for (let k = j.aside.moved - 1; k >= 0; k--) {
+    const m = j.aside.moves[k]; const from = path.join(j.dest, m.to); if (!exists(from)) continue;
+    let rel = m.from; if (exists(path.join(j.dest, rel))) { const dir = path.posix.dirname(m.from); const nm = originalName(path.posix.basename(m.from), (c) => exists(path.join(j.dest, dir === '.' ? c : `${dir}/${c}`))); rel = dir === '.' ? nm : `${dir}/${nm}`; other.push(rel); }
+    const to = path.join(j.dest, rel); await fsp.mkdir(path.dirname(to), { recursive: true });
+    try { await fsp.link(from, to); await fsp.rm(from, { force: true }); } catch (e) { if (e.code !== 'EEXIST' && !exists(to)) await fsp.rename(from, to); }
+  }
+  void io; return other;
+}
 /** Folders the job made, removed when empty (deepest first). */
 async function removeDirs(j, plan) { const dirs = new Set(); for (const u of plan.units) { const parts = u.out.split('/'); for (let i = 1; i <= parts.length - (u.kind === 'dir' ? 0 : 1); i++) dirs.add(parts.slice(0, i).join('/')); } for (const d of [...dirs].sort((a, b) => b.length - a.length)) { try { await fsp.rmdir(path.join(j.dest, d)); } catch { /* not empty or not ours */ } } }
-async function forget(jpath, j) { const asideAbs = path.join(j.dest, j.aside.dir); await fsp.rm(asideAbs, { recursive: true, force: true }); await fsp.rm(j.tail, { force: true }); await fsp.rm(jpath, { force: true }); if (j.registry) await fsp.rm(path.join(j.registry, `${j.id}.ref`), { force: true }); }
+/** Whether a folder holds anything but empty folders. */
+function holdsFiles(d) { let es; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return false; } return es.some((e) => (e.isDirectory() ? holdsFiles(path.join(d, e.name)) : true)); }
+/** The job's own records removed (journal, tail, unit log, registry pointer). The aside folder only when nothing is left in it: anything still
+ *  there (an original that could not go back, an entry set aside in place) is kept → that folder. `ended`: the Undo offer ended (dismissed, or a
+ *  finished job tidied at start) — the replaced originals' folder goes then (the user chose «replace»: the replace completing); what an in-place
+ *  job set aside (entries skipped or damaged: the archive is gone, they exist nowhere else) is kept. */
+async function forget(jpath, j, ended = false) {
+  const asideAbs = path.join(j.dest, j.aside.dir || ''); let kept = null;
+  if (j.aside.dir && exists(asideAbs)) { if (ended) await fsp.rm(path.join(asideAbs, 'replaced'), { recursive: true, force: true }); if (holdsFiles(asideAbs)) kept = asideAbs; else await fsp.rm(asideAbs, { recursive: true, force: true }); }
+  await fsp.rm(j.tail, { force: true }); await fsp.rm(logOf(jpath), { force: true }); await fsp.rm(jpath, { force: true }); if (j.registry) await fsp.rm(path.join(j.registry, `${j.id}.ref`), { force: true });
+  return kept;
+}
 /** A normal job undone: what it wrote removed (only a file still as it wrote it), what it moved aside put back. */
 async function undoNormal(jpath, j, plan, io) {
-  const upto = j.state === 'done' ? plan.units.length : j.next; if (j.state !== 'done' && j.state !== 'undoing') await clearUncommitted(j, plan, io);
+  const upto = j.state === 'done' ? plan.units.length : j.next; if (j.state !== 'done' && j.state !== 'undoing') await clearUncommitted(jpath, j, plan, io);
   j.state = 'undoing'; j.upto = j.upto ?? upto; await saveJournal(jpath, j, io); const order = orderOf(j, plan); let removed = 0; const changed = [];
   for (let k = 0; k < j.upto; k++) { const u = plan.units[order[k]]; if (u.kind !== 'file') continue; const p = path.join(j.dest, j.outs[u.i] || u.out); if (!exists(p)) continue; if ((await fileCrc(p)) === crcOf(j, u)) { const sz = fs.statSync(p).size; await fsp.rm(p, { force: true }); io.release(sz); removed++; } else changed.push(u.name); }
-  await putBack(j, io); await removeDirs(j, plan); await forget(jpath, j); return { identical: true, back: 0, removed, keptOut: changed };
+  const originals = await putBack(j, io); await removeDirs(j, plan); const asideKept = await forget(jpath, j); return { identical: true, back: 0, removed, keptOut: changed, originals, ...(asideKept ? { asideKept } : {}) };
 }
 /** Undo a finished job (in place: the archive made again whole; normal: its files removed); both put the old items back. */
 async function undo(jpath, io = realIo) { return restore(jpath, io); }
 /** The Undo offer ended: the aside folder, the saved tail and the journal removed. */
-async function dismiss(jpath) { const { j } = await openJob(jpath).catch(async (e) => { const t = await fsp.readFile(jpath, 'utf8').catch(() => ''); const r = S.journalRead(t); if (r.ok) return { j: r.body }; throw e; }); if (j.state !== 'done') throw fail('notDone'); await forget(jpath, j); }
+async function dismiss(jpath) { const { j } = await openJob(jpath).catch(async (e) => { const t = await fsp.readFile(jpath, 'utf8').catch(() => ''); const r = S.journalRead(t); if (r.ok) return { j: r.body }; throw e; }); if (j.state !== 'done') throw fail('notDone'); const asideKept = await forget(jpath, j, true); return asideKept ? { asideKept } : {}; }
 
 /**
  * The shelf: every job the registry knows. Finished ones whose Undo offer ended (older than `undoMs`, or every finished
@@ -426,7 +520,7 @@ async function shelf(registry, o = {}) {
     if (!jpath || !exists(jpath)) { await fsp.rm(ref, { force: true }); continue; }
     try {
       const { j, plan } = await openJob(jpath);
-      if (j.state === 'done') { if (o.atStart || Date.now() - (j.finished || 0) > (o.undoMs ?? 3600e3)) { await forget(jpath, { ...j, registry }); continue; } out.push({ journal: jpath, id: j.id, archive: j.archive, dest: j.dest, mode: j.mode, state: 'done', done: plan.units.length, total: plan.units.length, can: ['undo', 'dismiss'] }); continue; }
+      if (j.state === 'done') { if (o.atStart || Date.now() - (j.finished || 0) > (o.undoMs ?? 3600e3)) { await forget(jpath, { ...j, registry }, true); continue; } out.push({ journal: jpath, id: j.id, archive: j.archive, dest: j.dest, mode: j.mode, state: 'done', done: plan.units.length, total: plan.units.length, can: ['undo', 'dismiss'] }); continue; }
       out.push({ journal: jpath, id: j.id, archive: j.archive, dest: j.dest, mode: j.mode, state: j.state, why: j.why, done: j.next, total: plan.units.length, can: j.state === 'restoring' || j.state === 'undoing' ? ['restore', 'leave'] : ['finish', 'restore', 'leave'] });
     } catch (e) {
       const why = String(e.message || e); const body = e.body || {};
@@ -438,4 +532,6 @@ async function shelf(registry, o = {}) {
 /** A job registered so the shelf finds it (in-place jobs written by the phone or an older build: their journal beside the archive). */
 async function register(registry, jpath, id) { await fsp.mkdir(registry, { recursive: true }); await writeAtomic(path.join(registry, `${id}.ref`), jpath); }
 
-module.exports = { planOuts, extract, finish, restore, undo, dismiss, shelf, register, facts, preflightOf: async (file, dest, o) => { const { facts: f } = await facts(file, dest, o); return { facts: f, report: S.preflight(f, { margin: o.keepFree || 0 }) }; }, unitsOf, checkPassword, verifyAll, openJob, BATCH, SUFFIX, OWN_METHODS, hostPlatform, Crash, journalOf, tailOf };
+/** What is still in an archive whose in-place job (journal v2 beside it) is unfinished: the units not taken out yet (a v1 reader would read the saved tail as a directory). */
+async function leftOf(file) { const { j, plan } = await openJob(journalOf(file)); const n = plan.units.length; const left = j.mode === 'inplace' && j.state !== 'restoring' ? n - j.next : n; return { format: plan.format, entries: plan.units.slice(0, left).map((u) => ({ path: u.name, size: u.usize, compressed: u.csize, dir: u.dir })) }; }
+module.exports = { leftOf, planOuts, zipEnd, extract, finish, restore, undo, dismiss, shelf, register, facts, preflightOf: async (file, dest, o) => { const { facts: f } = await facts(file, dest, o); return { facts: f, report: S.preflight(f, { margin: o.keepFree || 0 }) }; }, unitsOf, checkPassword, verifyAll, openJob, BATCH, SUFFIX, OWN_METHODS, hostPlatform, Crash, journalOf, tailOf };

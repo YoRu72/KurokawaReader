@@ -20,6 +20,7 @@ const errText = (m: string): string => {
   if (k === 'refused') { const [kind, ...nm] = what.split(' '); return t('errRefused', { what: `${pfTitle(kind)}${nm.length ? ` — ${nm.join(' ')}` : ''}` }); }
   if (k === 'unsupportedMethod') return t('errRefused', { what: `${t('pf_method')} — ${rest.slice(1).join(' ').replace(/ — nothing was modified$/, '')}` });
   if (k === 'encryptedInPlace') return t('errRefused', { what: t('pf_encryptedInPlace') });
+  if (k === 'throughLink') return t('errThroughLink', { name: what }); if (k === 'syncFailed') return t('errSyncFailed'); if (k === 'readBack') return t('errReadBack', { name: what });
   return k === 'unsafePath' ? t('archiveUnsafe', { name: what }) : k === 'duplicateEntry' ? t('archiveDuplicate', { name: what }) : k === 'damaged' ? t('archiveDamaged', { names: what }) : k === 'sfvMismatch' ? t('archiveSfvBad', { names: what }) : k === 'crcMismatch' ? t('archiveDamaged', { names: what }) : k === 'overlapping' ? t('archiveOverlap', { name: what }) : k === 'hardLinked' ? t('archiveHardLinked') : k === 'specialEntry' ? t('archiveSpecial', { name: what }) : k === 'sizeExceeded' ? t('archiveTooBig', { name: what }) : k === 'memoryLimit' ? t('archiveMemory') : /^(journal|tail|archive)(Corrupt|Future|V1|Changed|Gone|Missing)$/.test(k) ? shelfWhy(k) : m;
 };
 type PfKey = Parameters<typeof t>[0];
@@ -185,7 +186,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
       ...(r.appeared?.length ? [h('p', { class: 'hint' }, t('appearedKept', { n: countFiles(r.appeared.length) }))] : []),
       ...(r.job ? [h('p', { class: 'hint undo-hint' }, t(inPlace ? 'doneUndoHintInPlace' : 'doneUndoHint'))] : []));
     const finish = () => { if (r.job && !undone) void shelfAct(r.job, 'dismiss').catch(() => {}); };
-    sh.actions.replaceChildren(...(r.job ? [h('button', { type: 'button', class: 'btn tonal', onclick: async () => { undone = true; try { await shelfAct(r.job!, 'undo'); toast(t('undone')); } catch (e) { toast(errText(String((e as Error).message ?? e)), 'error'); } sh.close(); } }, icon('undo'), t('doneUndo'))] : []),
+    sh.actions.replaceChildren(...(r.job ? [h('button', { type: 'button', class: 'btn tonal', onclick: async () => { undone = true; try { const u = await shelfAct(r.job!, 'undo'); const { undoSummary } = await import('./extractShelf'); const partial = !!(u as { keptOut?: string[] } | undefined)?.keptOut?.length; toast(undoSummary(u), partial ? 'error' : undefined, partial ? 8000 : undefined); } catch (e) { toast(errText(String((e as Error).message ?? e)), 'error'); } sh.close(); } }, icon('undo'), t('doneUndo'))] : []),
       h('button', { type: 'button', class: 'btn tonal', onclick: () => { finish(); sh.close(); } }, t('done')), ...(canOpenFolder() ? [h('button', { type: 'button', class: 'btn primary', onclick: () => { finish(); sh.close(); void openFolder(r.dest); } }, icon('folder'), t('openFolder'))] : []));
   };
   await load();

@@ -295,6 +295,13 @@ function loadBridge(boot) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
     assert.deepEqual([...ks].sort(), [...params[cmd]].sort(), `${cmd}: bridge sends ${ks}, Rust takes ${params[cmd]}`);
   }
+  // (Tools 0.21 P11 review: an archive with the engine's journal v2 beside it is never handed to the shared crate's first-design code: list,
+  // restore and extract each ask the journal's version first — the shared crate would read the saved tail as a directory, or drop the journal.)
+  { const ar = fs.readFileSync(path.join(src, 'archives.rs'), 'utf8'); const body = (name) => { const i = ar.indexOf(`pub async fn ${name}(`); return ar.slice(i, ar.indexOf('\n}\n', i)); };
+    for (const [cmd, old] of [['kt_archive_list', 'archive::list('], ['kt_archive_restore', 'archive::restore('], ['kt_archive_extract', 'archive::extract(']]) {
+      const b = body(cmd); const v2 = cmd === 'kt_archive_extract' ? b.indexOf('crate::extractcmds::extract(') : b.indexOf('journal_version('); assert.ok(v2 > 0 && v2 < b.indexOf(old), `${cmd}: the journal's version asked before ${old}`); }
+    const ex = fs.readFileSync(path.join(src, 'extractcmds.rs'), 'utf8'); const fx = ex.slice(ex.indexOf('pub fn extract('), ex.indexOf('pub fn list_v2('));
+    assert.ok(fx.indexOf('journal_version(') > 0 && fx.indexOf('journal_version(') < fx.indexOf('archive::format_of('), 'extract: a v2 journal finished by the engine before anything else'); }
   // The self-test script: inert without its settings; its verdict; a full run against a fake bridge passes, and fails
   // when one answer is wrong.
   const stSrc = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'selftest.js'), 'utf8');

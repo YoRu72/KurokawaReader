@@ -308,6 +308,23 @@ pub fn target_for_only(dest: &Path, name: &str, replace: &str, only: Option<&[St
     }
     Ok(Some(out))
 }
+/// free_name with a link counted as there even when it points nowhere (a dangling link is a taken name, never looped on).
+pub fn free_name_nofollow(out: &Path) -> PathBuf {
+    let file = out.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let (base, ext) = match file.rfind('.') {
+        Some(i) if i > 0 => (file[..i].to_string(), file[i..].to_string()),
+        _ => (file.clone(), String::new()),
+    };
+    let dir = out.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let mut i = 2u32;
+    loop {
+        let alt = dir.join(format!("{} ({}){}", base, i, ext));
+        if fs::symlink_metadata(&alt).is_err() {
+            return alt;
+        }
+        i += 1;
+    }
+}
 /// `a.txt` → `a (2).txt`, `a (3).txt`… the first not there.
 pub fn free_name(out: &Path) -> PathBuf {
     let file = out.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -1854,12 +1871,17 @@ pub fn create_zip_clash(out: &Path, inputs: &[PathBuf], clash: Option<&str>, ctx
     if taken(&target) {
         match clash {
             Some("replace") => {}
-            Some("both") => target = free_name(out),
+            Some("both") => target = free_name_nofollow(out),
             Some("cancel") => return Err("cancelled".to_string()),
             _ => return Err("zipExists".to_string()),
         }
     }
     let (n, total, part) = create_zip_in(&target, inputs, ctx, pr, true)?;
+    // (Flushed before it is put in place: a replace never leaves a name pointing at bytes not yet on the disk.)
+    if let Err(e) = OpenOptions::new().write(true).open(&part).and_then(|f| f.sync_all()) {
+        let _ = fs::remove_file(&part);
+        return Err(es(e));
+    }
     let placed = (|| -> Result<PathBuf, String> {
         if clash == Some("replace") {
             fs::rename(&part, &target).map_err(es)?;
@@ -1883,7 +1905,7 @@ pub fn create_zip_clash(out: &Path, inputs: &[PathBuf], clash: Option<&str>, ctx
             if clash != Some("both") {
                 return Err("zipExists".to_string());
             }
-            at = free_name(&target);
+            at = free_name_nofollow(&target);
         }
         Err("zipExists".to_string())
     })();
@@ -2959,6 +2981,25 @@ mod tests {
         assert_eq!(create_zip_clash(&fresh, &inputs, None, &ctx(), &pr).unwrap().1, fresh);
         let parts: Vec<String> = fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".part")).collect();
         assert!(parts.is_empty(), "{:?}", parts);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+
+    /// A dangling link where «a (2).zip» would go is a taken name: keep both goes on to «a (3).zip», never loops.
+    #[cfg(unix)]
+    #[test]
+    fn zip_clash_dangling_link() {
+        let d = tmp("clash-link");
+        let src = d.join("in.txt");
+        fs::write(&src, b"x").unwrap();
+        let out = d.join("a.zip");
+        fs::write(&out, b"old").unwrap();
+        std::os::unix::fs::symlink(d.join("nowhere"), d.join("a (2).zip")).unwrap();
+        let stop = AtomicBool::new(false);
+        let pr = Pr { on: &quiet, stop: &stop };
+        let (_, at) = create_zip_clash(&out, &[src], Some("both"), &ctx(), &pr).unwrap();
+        assert_eq!(at, d.join("a (3).zip"));
+        assert!(!d.join("nowhere").exists());
         let _ = fs::remove_dir_all(&d);
     }
 

@@ -8,7 +8,7 @@ import type { ArchiveInfo } from '../archives';
 import { ktPlugin } from '../native';
 export type { Answers, Choice, Report };
 
-type Desk = { archivePreflight?(o: { path: string; dest: string; password?: string; verify?: boolean; keepFree?: number }): Promise<{ report: Report; facts: Partial<Facts> }>; archiveShelf?(o?: { atStart?: boolean }): Promise<ShelfJob[]>; archiveJob?(o: { id?: string; journal: string; act: string }): Promise<unknown> };
+type Desk = { archivePreflight?(o: { path: string; dest: string; password?: string; verify?: boolean; keepFree?: number }): Promise<{ report: Report; facts: Partial<Facts> }>; archiveShelf?(o?: { atStart?: boolean }): Promise<ShelfJob[]>; archiveJob?(o: { id?: string; journal: string; act: string; password?: string }): Promise<unknown> };
 const desk = (): Desk | null => { const k = window.kurokawaTools as unknown as Desk | undefined; return k?.archivePreflight ? k : null; };
 export interface ShelfJob { journal: string; id: string; archive: string; dest: string; mode: 'inplace' | 'normal'; state: string; why?: string; done: number; total: number; can: string[] }
 
@@ -31,5 +31,5 @@ export const keepBothName = (name: string, taken: (n: string) => boolean): strin
 
 /** The jobs left unfinished (the computer keeps their list; the phone has only the one beside an archive opened). */
 export async function shelfJobs(atStart = false): Promise<ShelfJob[]> { const d = desk(); try { return d?.archiveShelf ? await d.archiveShelf({ atStart }) : []; } catch { return []; } }
-export async function shelfAct(journal: string, act: 'finish' | 'restore' | 'undo' | 'dismiss' | 'restoreV1' | 'leave', id?: string): Promise<unknown> { const d = desk(); if (!d?.archiveJob) throw new Error('unsupported'); return d.archiveJob({ journal, act, id }); }
+export async function shelfAct(journal: string, act: 'finish' | 'restore' | 'undo' | 'dismiss' | 'restoreV1' | 'leave', id?: string, password?: string): Promise<unknown> { const d = desk(); if (!d?.archiveJob) throw new Error('unsupported'); return d.archiveJob({ journal, act, id, ...(password ? { password } : {}) }); }
 export const choiceOf = (a: Answers | undefined, path: string, dir: boolean): Choice | null => S.conflictChoice(a, path, dir);

@@ -129,6 +129,21 @@ Do the same once before a local `tauri build` / `tauri dev`.
   `create_zip_clash`: a ZIP never replaces an archive unasked (`clash`: replace — one rename —, both, cancel; none →
   «zipExists»); Electron's createZip the same.
 
+- **P11 review fixes (both engines, the same vectors):** Undo/Restore of a finished job never touches a file that took the
+  archive's name (the archive is made again beside it, `restoredTo`); a restore verifies what it is about to cut or extend
+  (size = its last commit plus the write it announced — `pending` —, the restored units' headers) and makes its file
+  exclusively; replaced originals never lost (put back as «name (original)», `originals`; the aside folder kept while
+  anything is in it, `asideKept`; at dismiss only the replaced originals' folder goes); the job's own names (the archive,
+  journal, tail, lock, unit log, their `.tmp`, any `.kurokawa-replaced…` first folder) refused as unsafe names; a bad local
+  header or overlapping data left out with no bytes of its own (checked arithmetic), prepended data refused in place; a
+  failed read-back or flush removes the batch's own outputs and cuts nothing; leftovers of a stopped job removed only from
+  the unit log (`<journal>.log`: unit, name, CRC of each output placed since the last commit) and the job's own part
+  files (`.kt<job>-<unit>.kt-part`, now in both engines); ZIP64 end records for the «smaller archive» fallback; Cancel
+  heard inside a large file (every 8 MiB); Finish can take a password. Rust also flushes every output through a handle
+  that may write and each folder before the journal moves (an `Io::sync` hook; a failed flush fails the commit). Tauri
+  lists, restores and extracts by the journal's version (v2 → the engine). A real cross-engine test: tests/extractsafe.cjs
+  kills a job of one engine at every cut point and finishes/restores it with the other (`stdroots/extractjob_cli.rs`).
+
 ## After P3: the Files page's gaps, P7 archives, P8 DoH and updater, P6 app icon
 
 - **Files on a computer** (`filecmds.rs`, kt-core `places.rs`): the shell's own `homeDir`, `filesRoots` (home, Downloads,

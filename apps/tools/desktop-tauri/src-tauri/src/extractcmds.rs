@@ -83,8 +83,14 @@ pub fn extract(app: &AppHandle, path: &Path, dest: &Path, o: &Value, on: &dyn Fn
     if journal.exists() {
         return match ej::journal_version(path) {
             2 => {
+                // (Finished: with its journal, so the page offers Undo — main.cjs hands back the job the same way.)
                 let r = ej::finish(&journal, &env(), &pr, password.as_deref(), keep_free(o)).map_err(|f| f.msg)?;
-                Ok(Some(json!({ "files": r.get("files").map(|x| x.number()).unwrap_or(0.0), "dest": dest.to_string_lossy() })))
+                let mut v = value(&r);
+                if let Some(m) = v.as_object_mut() {
+                    m.remove("undo");
+                    m.insert("dest".into(), json!(dest.to_string_lossy()));
+                }
+                Ok(Some(v))
             }
             1 => Ok(None),
             _ => Err("journalCorrupt".to_string()),
@@ -119,6 +125,24 @@ pub fn extract(app: &AppHandle, path: &Path, dest: &Path, o: &Value, on: &dyn Fn
         m.insert("dest".into(), json!(dest.to_string_lossy()));
     }
     Ok(Some(v))
+}
+
+/// kt:archiveList for an archive with an unfinished engine job beside it (journal v2): what is still in it, from the
+/// job's plan (archive.cjs list's v2 branch) — the page's ArchiveInfo.
+pub fn list_v2(path: &Path) -> Result<Value, String> {
+    let left = ej::left_entries(path).map_err(|f| f.msg)?;
+    let format = ej::open_job(&ej::journal_of(path)).map(|j| j.format).unwrap_or_else(|_| "zip".into());
+    let total: u64 = left.iter().map(|e| e.1).sum();
+    let largest = left.iter().filter(|e| !e.3).map(|e| e.1).max().unwrap_or(0);
+    let entries: Vec<Value> = left.iter().map(|(p, s, c, d)| json!({ "path": p, "size": s, "compressed": c, "dir": d })).collect();
+    let free = ej::Io::free_space(&DISK, path.parent().unwrap_or(Path::new(".")));
+    Ok(json!({ "format": format, "entries": entries, "total": total, "encrypted": false, "inPlaceOk": true, "resumable": true, "largest": largest, "free": free, "platform": ej::host_platform() }))
+}
+/// kt:archiveRestore for an archive with an engine journal (v2) beside it → archive.cjs restore's number: -2 when the
+/// archive came back whole, else how many files stayed extracted.
+pub fn restore_v2(path: &Path) -> Result<i64, String> {
+    let r = ej::restore(&ej::journal_of(path), &env()).map_err(|f| f.msg)?;
+    Ok(if r.get("identical").map(|x| x.truthy()).unwrap_or(false) { -2 } else { r.get("keptOut").and_then(|x| x.as_arr()).map(|a| a.len() as i64).unwrap_or(0) })
 }
 
 /// kt:archivePreflight({ path, dest, password?, verify?, keepFree? }) → { report, facts } — nothing written. ZIP and tar:
@@ -168,6 +192,8 @@ pub async fn kt_archive_job(app: AppHandle, o: Value) -> Result<Value, String> {
     let id = archives::id_of(&o);
     let journal = archives::s(&o, "journal");
     let act = archives::s(&o, "act");
+    // (A stopped job of a locked archive: the password the page asked for, to finish it; never kept.)
+    let password = archives::opt_s(&o, "password");
     let stop = archives::job(&id);
     let on = archives::emitter(app, id.clone());
     let r = archives::blocking(move || {
@@ -175,9 +201,9 @@ pub async fn kt_archive_job(app: AppHandle, o: Value) -> Result<Value, String> {
         let pr = ej::Pr { on: &on, stopped: &stopped };
         let jp = Path::new(&journal);
         match act.as_str() {
-            "finish" => ej::finish(jp, &env(), &pr, None, 0).map(|j| value(&j)).map_err(|f| f.msg),
+            "finish" => ej::finish(jp, &env(), &pr, password.as_deref(), 0).map(|j| value(&j)).map_err(|f| f.msg),
             "restore" | "undo" => ej::restore(jp, &env()).map(|j| value(&j)).map_err(|f| f.msg),
-            "dismiss" => ej::dismiss(jp).map(|_| Value::Null).map_err(|f| f.msg),
+            "dismiss" => ej::dismiss(jp).map(|j| value(&j)).map_err(|f| f.msg),
             "restoreV1" => {
                 let file = journal.strip_suffix(ej::JOURNAL_SUFFIX).unwrap_or(&journal).to_string();
                 archive::restore(Path::new(&file)).map(|left| json!({ "left": left }))
