@@ -43,6 +43,8 @@ export function tvTitleView(type: TvKind, id: string, season?: number): HTMLElem
             mm.type === 'series' ? h('button', { type: 'button', class: 'btn small ' + (fol?.enabled ? 'tonal on' : 'text'), onclick: () => followSheet(mm, draw) }, icon('bell'), fol?.enabled ? t('autoOn') : t('tvFollow')) : null,
             // (A series' subtitles: its pack, each episode's file loaded when it plays, and the search.)
             mm.type === 'series' ? h('button', { type: 'button', class: 'btn small tonal subs-btn', onclick: () => void import('./subPackSheet').then((x) => x.packSheet({ key: `imdb:${mm.id}`, title: mm.name, imdbId: mm.id, series: true, season: sel > 0 ? sel : 1, lengths: Object.fromEntries(cm.seasonsOf(mm).map((s) => [String(s), (mm.videos ?? []).filter((v) => v.season === s).length])) })) }, icon('subtitles'), t('navSubs')) : null,
+            // (A film's subtitles: one file, chosen by its title and year, the other languages beside it.)
+            mm.type !== 'series' ? h('button', { type: 'button', class: 'btn small tonal subs-btn', onclick: () => void import('./subPackSheet').then((x) => x.packSheet({ key: `imdb:${mm.id}`, title: mm.name, imdbId: mm.id, movie: true, year: Number(String((mm as { year?: string | number; releaseInfo?: string }).year ?? (mm as { releaseInfo?: string }).releaseInfo ?? '').slice(0, 4)) || undefined })) }, icon('subtitles'), t('navSubs')) : null,
             mm.trailer ? h('button', { type: 'button', class: 'btn small text', onclick: () => void openExternal(`https://www.youtube.com/watch?v=${mm.trailer}`) }, icon('play'), t('tvTrailer')) : null,
             // (Its IMDb page, and its link copied — to send it to someone.)
             h('button', { type: 'button', class: 'btn small text', onclick: () => void openExternal(`https://www.imdb.com/title/${mm.id}/`) }, icon('external'), 'IMDb'),
@@ -140,7 +142,7 @@ async function addRelease(m: TvMeta, r: TvRelease, v?: TvEpisode, choose = false
     files = got === 'all' ? undefined : got;
   }
   const tk = await getEngine().add({ source, name: r.url ? (r.file ?? r.title) : undefined, sequential: !!r.url, files, meta: metaOf(m, r, v) });
-  toast(t('taskAdded', { name: tk.name || r.title })); return true;
+  void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, r.title)); return true;
 }
 /** One episode, held: watch, download, choose a release, mark it (or every one up to it) seen or not, its
  *  download's details, and its download deleted (files and all). */

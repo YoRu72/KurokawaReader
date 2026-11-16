@@ -165,7 +165,7 @@ export function openPlayer(src: PlayerSource): void {
   if (src.headers && Object.keys(src.headers).length) toast(t('playerHeadersNote'));
   // (mpv that cannot start here — its libraries not loading on this phone, the file refused —: the browser's player
   // takes over at once, the same file at the same place.)
-  if (mpv) { let started = false; video.addEventListener('loadedmetadata', () => { started = true; }, { once: true }); video.addEventListener('error', () => { if (started || playerGone) return; toast(t('mpvFailed'), 'error', 5000); const at = video.currentTime; close(); openPlayer({ ...src, engine: 'web' }); void at; }, { once: true }); }
+  if (mpv) { let started = false; video.addEventListener('loadedmetadata', () => { started = true; }, { once: true }); video.addEventListener('error', () => { if (started || playerGone) return; toast(t('mpvFailed'), 'error', 5000); const at = video.currentTime; goingOn = true; close(); openPlayer({ ...src, engine: 'web' }); void at; }, { once: true }); }
   if (!mpv) video.src = src.url; video.preservesPitch = P.pitchCorrection; video.playbackRate = speed;
   video.addEventListener('loadedmetadata', () => {
     timeEnd.textContent = fmtTime(video.duration); applyAspect(); applyTransform(); drawMarks();
@@ -237,16 +237,16 @@ export function openPlayer(src: PlayerSource): void {
   }
   function flashText(s: string, long = false) { flash.textContent = s; flash.classList.add('on'); window.clearTimeout((flash as HTMLElement & { _t?: number })._t); (flash as HTMLElement & { _t?: number })._t = window.setTimeout(() => flash.classList.remove('on'), long ? 1400 : 700); }
   let preloadSent = false;
-  function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); void import('../downloads/episodeCache').then((c) => c.noteWatched(src.task)); const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); if (m?.imdbId) void import('../tv/library').then((l) => l.markWatched(m.imdbId!, m.season, m.episode)); void end; }
+  function markWatched(end: boolean) { if (watchedSent) return; watchedSent = true; remember(key, { watched: true }); void import('../downloads/episodeCache').then((c) => c.noteWatched(src.task)); const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode && getSettings().animeTrackAfterWatch !== false) void import('../anime/progress').then((p) => p.markWatched(m.anilistId!, m.episode!, m.title)); if (m?.imdbId) void import('../tv/library').then((l) => l.markWatched(m.imdbId!, m.season, m.episode)); void end; }
   function askResume(pos: number) { const sh = openSheet(t('resumeTitle'), t('close')); sh.body.append(h('p', null, t('resumeBody', { t: fmtTime(pos) }))); sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); } }, t('resumeFromStart')), h('button', { type: 'button', class: 'btn primary', onclick: () => { video.currentTime = pos; sh.close(); } }, t('resumeContinue'))); }
   function neighbour(dir: number, auto = false) {
     const list = src.playlist ?? []; const i = list.findIndex((x) => x.url === src.url);
     let nx = getPrefs().shuffle && dir > 0 && list.length > 1 ? list.filter((x) => x.url !== src.url)[Math.floor(Math.random() * (list.length - 1))] : list[i + dir];
     if (!nx && repeat === 'all' && list.length) nx = dir > 0 ? list[0] : list[list.length - 1];
     if (!nx) { if (!auto) toast(t(dir > 0 ? 'noNextFile' : 'noPreviousFile')); else showControls(); return; }
-    close(); openPlayer({ ...nx, playlist: list });
+    goingOn = true; close(); openPlayer({ ...nx, playlist: list });
   }
-  const playAt = (item: PlayerSource) => { close(); openPlayer({ ...item, playlist: src.playlist }); };
+  const playAt = (item: PlayerSource) => { goingOn = true; close(); openPlayer({ ...item, playlist: src.playlist }); };
 
   // ---- the system's media controls (desktop keys, a notification where the browser shows one)
   if ('mediaSession' in navigator) {
@@ -469,7 +469,8 @@ export function openPlayer(src: PlayerSource): void {
     if (!c) return; seekTo(c.start * sp + subDelay); flashText(c.text.split('\n')[0].slice(0, 60), true);
   }
   /* ---------- subtitles translated (Google, DeepL or an AI model: the translator of Translate on screen) ---------- */
-  let playerGone = false; let translating: string | null = null; let sleepAtEnd = false;
+  let playerGone = false; let goingOn = false; // (goingOn: closed only to open the next file or another engine — no return to the page.)
+  let translating: string | null = null; let sleepAtEnd = false;
   const plain = (s: string) => s.replace(/<\/?(b|i|u)>/gi, '');
   /** The track translated into `target` as a new track, shown at once — the lines from here on first, then the rest
    *  — with the original kept above it when asked. */
@@ -596,11 +597,12 @@ export function openPlayer(src: PlayerSource): void {
     return mine;
   }
   async function packSubs(): Promise<void> {
-    const PK = await import('./subPacks'); const s = await showMeta(); const p = PK.packOf(s.key); if (!s.key || !p?.on || s.episode === undefined) return;
-    const want = PK.wantFor(p, s.season, s.episode); let scan: import('./subPacks').PackScan;
+    const PK = await import('./subPacks'); const s = await showMeta(); const p = PK.packOf(s.key); if (!s.key || !p?.on || (s.episode === undefined && !p.movie)) return;
+    // (A film's pack: no episode — its best file by title, year and language, the others beside it as languages.)
+    const want = p.movie ? { episode: 0 } : PK.wantFor(p, s.season, s.episode!); let scan: import('./subPacks').PackScan;
     try { scan = await PK.scanPack(p); } catch (e) { toast(t('packUnreadable', { name: String((e as Error).message ?? e) }), 'error'); return; }
-    const r = PK.fileFor(p, scan, want, getSettings().subLangs); packInfo = { key: s.key, want, scan, ...r };
-    if (!r.file) { toast(t('packNoEpisode', { n: localDigits(s.episode) })); return; }
+    const r = p.movie ? PK.movieFileFor(p, scan, (src.task?.meta ?? src.meta)?.title ?? p.title ?? '', undefined, getSettings().subLangs) : PK.fileFor(p, scan, want, getSettings().subLangs); packInfo = { key: s.key, want, scan, ...r };
+    if (!r.file) { if (s.episode !== undefined) toast(t('packNoEpisode', { n: localDigits(s.episode) })); return; }
     const tr = await packFile(r.file, r.cands); if (!tr || playerGone) return;
     chosenByHand = true; await useTrack(tr);
   }
@@ -870,7 +872,7 @@ export function openPlayer(src: PlayerSource): void {
     const at = video.currentTime; const packs = await import('../packs');
     if (!(await packs.ensurePacks(['mpv'], t('packWhyMpv')))) return;
     const { mpvAvailable } = await import('./mpv'); if (!(await mpvAvailable()) || playerGone) return;
-    toast(t('playerSwitchMpv')); close(); openPlayer({ ...src, engine: 'mpv', startAt: at });
+    toast(t('playerSwitchMpv')); goingOn = true; close(); openPlayer({ ...src, engine: 'mpv', startAt: at });
   }
   async function startBeside(track: number, codec: string) {
     const c = await import('./compat'); const packs = await import('../packs');
@@ -1310,7 +1312,7 @@ export function openPlayer(src: PlayerSource): void {
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    converted?.stop(); converted = null; if (src.task?.kind === 'torrent') { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden);
+    converted?.stop(); converted = null; if (src.task?.kind === 'torrent') { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden); if (!goingOn) { const at = location.hash; void import('./returnTo').then((r) => r.playerClosed({ watched: watchedSent, meta: src.task?.meta ?? src.meta, at })); }
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void turnScreen('auto').catch(() => undefined);

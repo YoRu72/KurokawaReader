@@ -5,8 +5,16 @@
 import { request } from './http';
 import { parseFilename } from './anime/anitomy';
 import { getSettings, updateSettings } from './settings';
+import { coversReady } from './anime/covers';
 
 const API = 'https://graphql.anilist.co';
+/** Tests only: a stand-in server on loopback (window.__ktTestApi set before the app starts) — never any other address,
+ *  so nothing in the app can send the token elsewhere through it. */
+export function testApi(k: 'anilist' | 'mal'): string | undefined {
+  const u = (window as { __ktTestApi?: Record<string, unknown> }).__ktTestApi?.[k];
+  return typeof u === 'string' && /^http:\/\/127\.0\.0\.1:\d+(\/|$)/.test(u) ? u.replace(/\/$/, '') : undefined;
+}
+const api = (): string => testApi('anilist') ?? API;
 const TOKEN_KEY = 'kt.anilist.token';
 const USER_KEY = 'kt.anilist.user';
 
@@ -45,25 +53,30 @@ export function authUrl(): string { const id = getSettings().anilistClientId.tri
  *  used or kept). Its redirect address is AniList's pin page. */
 export const BUILTIN_CLIENT = '55772';
 
-const later = (m: string) => Object.assign(new Error(m), { later: true });
+const later = (m: string, retryAfter?: number) => Object.assign(new Error(m), { later: true, retryAfter });
 export const isLater = (e: unknown): boolean => !!(e as { later?: boolean })?.later;
+/** Seconds AniList asked to wait (its Retry-After) when it still refused after the one wait. */
+export const retryAfterOf = (e: unknown): number | undefined => (e as { retryAfter?: number })?.retryAfter;
 let lastCall = 0;
 /** One GraphQL call; AniList allows about thirty a minute, so calls are spaced out a little. */
 export async function gql<T>(query: string, variables: Record<string, unknown> = {}, auth = true): Promise<T> {
+  // (The user's own covers read once before the first answer is made into shows, so every card shows them.)
+  await coversReady();
   const wait = lastCall + 350 - Date.now(); if (wait > 0) await new Promise((r) => setTimeout(r, wait)); lastCall = Date.now();
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const tk = token(); if (auth && tk) headers.Authorization = `Bearer ${tk}`;
   let r: Awaited<ReturnType<typeof request>>;
   try {
-    r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) });
+    r = await request(api(), { method: 'POST', headers, body: JSON.stringify({ query, variables }) });
     // (As Hayase does: a 429 waits what Retry-After says and a second more, a 5xx a second, then once again.)
-    if (r.status === 429 || r.status >= 500) { const ra = Number(r.headers['retry-after']); await new Promise((ok) => setTimeout(ok, r.status === 429 ? Math.min(60, (isFinite(ra) && ra > 0 ? ra : 2) + 1) * 1000 : 1000)); lastCall = Date.now(); r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) }); }
+    if (r.status === 429 || r.status >= 500) { const ra = Number(r.headers['retry-after']); await new Promise((ok) => setTimeout(ok, r.status === 429 ? Math.min(60, (isFinite(ra) && ra > 0 ? ra : 2) + 1) * 1000 : 1000)); lastCall = Date.now(); r = await request(api(), { method: 'POST', headers, body: JSON.stringify({ query, variables }) }); }
   } catch (e) { throw later(String((e as Error)?.message ?? e)); }
   const busy = r.status === 429 || r.status >= 500 || r.status === 0;
+  const ra = r.status === 429 ? Number(r.headers['retry-after']) || 60 : undefined;
   let json: { data?: T; errors?: { message: string; status?: number }[] } = {};
-  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`); }
-  if (json.errors?.length) { const e = json.errors[0]; if ((e.status === 400 && /invalid token|unauthorized/i.test(e.message)) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message) : new Error(e.message); }
-  if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`);
+  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`, ra) : new Error(`AniList: HTTP ${r.status}`); }
+  if (json.errors?.length) { const e = json.errors[0]; if ((e.status === 400 && /invalid token|unauthorized/i.test(e.message)) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message, ra ?? (e.status === 429 ? 60 : undefined)) : new Error(e.message); }
+  if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`, ra) : new Error(`AniList: HTTP ${r.status}`);
   return json.data as T;
 }
 

@@ -5,10 +5,10 @@
 // shift, and files chosen by hand for single episodes.
 import { ktPlugin } from '../native';
 import { readLocal } from './files';
-import { SUB_RE, FONT_RE, packItems, matchEpisode, pickCandidate, type PackItem, type Want } from './subMatch';
+import { SUB_RE, FONT_RE, packItems, matchEpisode, pickCandidate, langOfName, type PackItem, type Want } from './subMatch';
 
 export interface PackSource { path: string; kind: 'folder' | 'archive' }
-export interface SubPack extends PackSource { at: number; on: boolean; title?: string; /** The kind of file (./subMatch variantOf) chosen when an episode has several. */ filter?: string; /** File number = episode + shift (set by hand). */ shift?: number; /** Files chosen by hand: «season:episode» → the file's id (./packFileId). */ manual?: Record<string, string>; /** More places (the show's downloaded subtitles folder beside another pack). */ more?: PackSource[]; /** Episodes per season ('' for a show without seasons), told by the show's page. */ lengths?: Record<string, number> }
+export interface SubPack extends PackSource { at: number; on: boolean; /** A film's: one file plays (no episodes), the others kept beside it as languages. */ movie?: boolean; title?: string; /** The kind of file (./subMatch variantOf) chosen when an episode has several. */ filter?: string; /** File number = episode + shift (set by hand). */ shift?: number; /** Files chosen by hand: «season:episode» → the file's id (./packFileId). */ manual?: Record<string, string>; /** More places (the show's downloaded subtitles folder beside another pack). */ more?: PackSource[]; /** Episodes per season ('' for a show without seasons), told by the show's page. */ lengths?: Record<string, number> }
 export interface PackFile extends PackItem { src: PackSource; /** The entry inside an archive / the full path in a folder. */ ref: string }
 export interface PackScan { files: PackFile[]; fonts: PackFile[] }
 type ShowMeta = { anilistId?: number; imdbId?: string; title?: string } | undefined;
@@ -121,4 +121,18 @@ export async function writeSubText(dir: string, name: string, text: string): Pro
   const pl = ktPlugin() as unknown as { filesWrite?(o: { path: string; text: string }): Promise<unknown> } | null; if (pl?.filesWrite) { await pl.filesWrite({ path, text }); return path; }
   const d = window.kurokawaTools as unknown as { writeText?(o: { path: string; text: string }): Promise<unknown> } | undefined; if (d?.writeText) { await d.writeText({ path, text }); return path; }
   throw new Error('unsupported');
+}
+
+/* ---------- a film's pack ---------- */
+/** The film's files, best first: chosen by hand, else those whose name carries the film's title and year, then the
+ *  user's languages. `several`: more than one fits as well as the first (the page offers the choice). */
+export function movieFileFor(p: SubPack, scan: PackScan, title: string, year: number | undefined, langs: string[]): { file?: PackFile; cands: PackFile[]; manual: boolean; several: boolean } {
+  const man = p.manual?.[epKey(undefined, 0)]; const mf = man ? scan.files.find((f) => packFileId(f) === man) : undefined;
+  const words = normTitle(title).split(' ').filter((w) => w.length > 1);
+  const fit = (f: PackFile) => { const n = normTitle(f.path.split(/[\\/]/).pop() ?? f.path); return words.filter((w) => n.includes(w)).length / Math.max(1, words.length) + (year && n.includes(String(year)) ? 0.5 : 0); };
+  const li = (f: PackFile) => { const l = langOfName(f.path); const i = l ? langs.indexOf(l) : -1; return i < 0 ? 99 : i; };
+  const cands = [...scan.files].sort((a, b) => fit(b) - fit(a) || li(a) - li(b) || a.path.localeCompare(b.path));
+  const top = cands[0]; const several = !!top && cands.filter((c) => fit(c) === fit(top) && li(c) === li(top)).length > 1;
+  if (mf) return { file: mf, cands: [mf, ...cands.filter((c) => c !== mf)], manual: true, several: false };
+  return { file: top, cands, manual: false, several };
 }

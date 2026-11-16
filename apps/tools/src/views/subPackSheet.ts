@@ -56,34 +56,48 @@ export async function saveToShow(key: string, title: string, files: { name: stri
   PK.addToPack(key, { path: dir, kind: 'folder' }, title); return dir;
 }
 
-export interface PackSheetOptions { key: string; title: string; anilistId?: number; imdbId?: string; /** A series: seasons in the names, a season field in the search. */ series?: boolean; season?: number; /** Episodes per season ('' for a show without seasons), for the missing ones and absolute numbering. */ lengths?: Record<string, number>; onChange?(): void }
+export interface PackSheetOptions { key: string; title: string; anilistId?: number; imdbId?: string; /** A series: seasons in the names, a season field in the search. */ series?: boolean; season?: number; /** Episodes per season ('' for a show without seasons), for the missing ones and absolute numbering. */ lengths?: Record<string, number>; /** A film: one file plays, chosen by its title and year (asked here when several fit). */ movie?: boolean; year?: number; onChange?(): void }
 /** The «Subtitles» sheet of a show's page. */
 export function packSheet(o: PackSheetOptions): void {
   const sh = openSheet(`${t('navSubs')} · ${o.title}`, t('close')); sh.el.classList.add('pack-sheet');
   const box = h('div', { class: 'pack-box' }); sh.body.append(box);
   const changed = () => { o.onChange?.(); void draw(true); };
-  const assign = async (kind: 'folder' | 'archive') => { try { const src = await PK.pickPackSource(kind); if (!src) return; if (/^content:/.test(src.path)) { toast(t('packPhoneFolder'), 'error', 6000); return; } PK.setPack(o.key, { ...src, at: Date.now(), on: true, title: o.title, lengths: o.lengths }); toast(t('packSet', { name: baseOf(src.path) })); changed(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
+  const assign = async (kind: 'folder' | 'archive') => { try { const src = await PK.pickPackSource(kind); if (!src) return; if (/^content:/.test(src.path)) { toast(t('packPhoneFolder'), 'error', 6000); return; } PK.setPack(o.key, { ...src, at: Date.now(), on: true, title: o.title, lengths: o.lengths, movie: o.movie || undefined }); toast(t('packSet', { name: baseOf(src.path) })); changed(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
   const find = () => void import('../subs/findSheet').then(({ findSubsSheet }) => findSubsSheet({ title: o.title, anilistId: o.anilistId, imdbId: o.imdbId, season: o.season, askSeason: o.series, openableOnly: true,
     onPick: async (r, query, done) => {
       const { resolveLink } = await import('../subs/search'); const { request } = await import('../http'); const { unpackSubtitle } = await import('../player/subPack');
       toast(t('loading')); const { url, name } = await resolveLink(r, query); const res = await request(url, { binary: true }); if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
       const bytes = Uint8Array.from(atob(res.body), (c) => c.charCodeAt(0)); const ep = query.animeEpisode ?? query.episode;
       const files = await unpackSubtitle(name ?? `${r.title}.${r.archive ?? 'srt'}`, bytes, ep);
-      const dir = await saveToShow(o.key, o.title, ep !== undefined ? files.slice(0, 1) : files, ep !== undefined ? { season: o.series ? query.season : undefined, episode: ep } : undefined);
-      done(); toast(t('savedTo', { path: dir })); changed();
+      // (What the pack was, for Undo; the files then matched to the episodes — the sheet shows which got one.)
+      const before = PK.packOf(o.key); const was = before ? JSON.parse(JSON.stringify(before)) as PK.SubPack : null;
+      const dir = await saveToShow(o.key, o.title, ep !== undefined || o.movie ? files.slice(0, o.movie ? 12 : 1) : files, ep !== undefined && !o.movie ? { season: o.series ? query.season : undefined, episode: ep } : undefined);
+      if (o.movie) PK.updatePack(o.key, { movie: true });
+      // (The search's sheet took this one's place: this one opened again, showing which episodes got a file.)
+      done(); o.onChange?.(); packSheet(o); toast(t('packAttachedTo', { path: baseOf(dir) }), 'info', 8000, { label: t('undoAct'), run: () => { PK.setPack(o.key, was); toast(t('undoneMsg')); o.onChange?.(); packSheet(o); } });
     } }));
   const draw = async (fresh = false) => {
     const p = PK.packOf(o.key); if (p && o.lengths && JSON.stringify(p.lengths ?? {}) !== JSON.stringify(o.lengths)) PK.updatePack(o.key, { lengths: o.lengths });
     const head: HTMLElement[] = []; const eps = h('div', { class: 'dest-list pack-eps' });
     const btns = h('div', { class: 'row-actions wrap' }, h('button', { type: 'button', class: 'btn tonal small pack-pick-folder', onclick: () => void assign('folder') }, icon('folder'), t('packFolder')), h('button', { type: 'button', class: 'btn tonal small pack-pick-archive', onclick: () => void assign('archive') }, icon('archive'), t('packArchive')),
       p ? h('button', { type: 'button', class: 'btn text small pack-remove', onclick: () => { PK.setPack(o.key, null); toast(t('subPackRemoved')); changed(); } }, icon('trash'), t('packRemove')) : null);
-    const findBtn = getSettings().addons.includes('subtitles') ? h('button', { type: 'button', class: 'btn primary small pack-find', onclick: find }, icon('search'), t('subsFind')) : null;
-    if (!p) { box.replaceChildren(h('h4', null, t('subPackTitle')), h('p', { class: 'hint' }, t('packNone')), btns, ...(findBtn ? [h('div', { class: 'row-actions' }, findBtn)] : [])); return; }
+    // (Always there: without the Subtitles add-on its sheet says so and offers the add-ons — the three buttons alike.)
+    btns.insertBefore(h('button', { type: 'button', class: 'btn tonal small pack-find', onclick: find }, icon('search'), t('subsSearchPack')), btns.querySelector('.pack-remove'));
+    if (!p) { box.replaceChildren(h('h4', null, t('subPackTitle')), h('p', { class: 'hint' }, o.movie ? t('packNoneMovie') : t('packNone')), btns); return; }
     const status = h('small', { class: 'src pack-count' }, t('loading'));
     head.push(h('h4', null, t('subPackTitle')), h('div', { class: 'dest-row pack-current' }, icon(p.kind === 'folder' ? 'folder' : 'archive'), h('span', { class: 'grow' }, h('span', { class: 'name', dir: 'ltr' }, baseOf(p.path)), h('small', { class: 'src', dir: 'ltr' }, [p.path, ...(p.more ?? []).map((m) => m.path)].join(' · ')), status)),
       h('label', { class: 'row switch-row' }, h('span', null, t('packOn')), h('input', { type: 'checkbox', checked: p.on, onchange: (e: Event) => { PK.updatePack(o.key, { on: (e.target as HTMLInputElement).checked }); o.onChange?.(); } })),
       ...(p.shift ? [h('div', { class: 'row' }, h('span', null, t('packShiftNow', { n: shiftText(p.shift) })), h('button', { type: 'button', class: 'btn text small', onclick: () => { PK.updatePack(o.key, { shift: undefined }); changed(); } }, icon('undo'), t('packShiftClear')))] : []));
-    box.replaceChildren(...head, btns, ...(findBtn ? [h('div', { class: 'row-actions' }, findBtn)] : []), h('h4', null, t('episodes')), eps);
+    box.replaceChildren(...head, btns, h('h4', null, o.movie ? t('packMoviePlays') : t('episodes')), eps);
+    if (o.movie) {
+      try {
+        const scan = await PK.scanPack(p, fresh); const r = PK.movieFileFor(p, scan, o.title, o.year, getSettings().subLangs);
+        status.textContent = t('packMovieFiles', { n: scan.files.length });
+        const pick = () => chooseFileSheet(scan, { episode: 0 }, r.manual, r.file, (f) => { PK.setManual(o.key, undefined, 0, f); void draw(); });
+        eps.replaceChildren(r.file ? h('button', { type: 'button', class: 'dest-row pack-ep pack-movie', onclick: pick }, icon('subtitles'), h('span', { class: 'grow' }, h('span', { class: 'name', dir: 'auto' }, baseOf(r.file.path)), h('small', { class: 'src' }, r.manual ? t('packByHand') : r.several ? t('packMovieSeveral') : t('packMovieAuto'))), icon('pencil')) : h('p', { class: 'hint' }, t('packNoFile')));
+      } catch (e) { status.textContent = t('packUnreadable', { name: String((e as Error).message ?? e) }); }
+      return;
+    }
     try {
       const scan = await PK.scanPack(p, fresh); const cov = covered(scan.files); const langs = getSettings().subLangs;
       const season = o.series ? o.season : undefined; const count = o.lengths?.[season !== undefined ? String(season) : ''] ?? o.lengths?.[''];
