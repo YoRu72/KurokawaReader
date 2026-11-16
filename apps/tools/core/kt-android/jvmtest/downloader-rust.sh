@@ -8,11 +8,11 @@ set -e
 SO=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); [ -f "$SO" ] || { echo "no library at $1"; exit 1; }
 HERE=$(cd "$(dirname "$0")" && pwd); A="$HERE/../../../native/android"; N="$HERE/../../../tests/native"; D=$(mktemp -d)
 trap 'rm -rf "$D"' EXIT   # (the test files — some 300 MB a run — gone when it ends)
-for f in KrDownloader KrDownloaderRs; do sed "s/^final class $f/public final class $f/; s/^package .*;//" "$A/$f.java" > "$D/$f.java"; done
+for f in KtNameSafe KrDownloader KrDownloaderRs; do sed "s/^final class $f/public final class $f/; s/^package .*;//" "$A/$f.java" > "$D/$f.java"; done
 cp "$A/KtCore.java" "$D/"
 # (Only the engine changes: every KrDownloader.fetch( becomes KrDownloaderRs.fetch( — the same arguments, Result, Opts.)
 sed 's/KrDownloader\.fetch(/KrDownloaderRs.fetch(/g' "$N/T.java" > "$D/T.java"
 grep -q 'KrDownloaderRs.fetch(' "$D/T.java" && ! grep -q 'KrDownloader\.fetch(' "$D/T.java" || { echo "T.java not switched to the Rust engine"; exit 1; }
-cd "$D"; S="KtCore.java KrDownloader.java KrDownloaderRs.java T.java"
+cd "$D"; S="KtCore.java KtNameSafe.java KrDownloader.java KrDownloaderRs.java T.java"
 javac -encoding UTF-8 -nowarn -d out $S 2>/dev/null || javac -encoding UTF-8 -d out $S
 java -Dkt.core.lib="$SO" -Dkt.dl.strict=true -cp out T && echo "downloader through the Rust engine: all passed"

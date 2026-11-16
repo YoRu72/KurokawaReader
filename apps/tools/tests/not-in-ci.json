@@ -2,25 +2,9 @@
   "_": "Tests that are deliberately not in the release workflow's test chain (they may be in a check workflow). name, reason (required); run:false = the preflight does not run it (a helper, or it needs something this machine lacks); args/env = how the preflight runs it properly (env value $TMPZIP = a small zip made by the preflight).",
   "tests": [
     {
-      "name": "addprobe.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
-    },
-    {
-      "name": "debrid.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
-    },
-    {
-      "name": "desktauri.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
-    },
-    {
       "name": "filesphone-fixture.cjs",
       "reason": "A helper (the pretend phone for filesclip.cjs and filesback.cjs), not a test.",
       "run": false
-    },
-    {
-      "name": "filestauri.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
     },
     {
       "name": "hunt.cjs",
@@ -44,28 +28,18 @@
       "run": false
     },
     {
-      "name": "screentauri.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
-    },
-    {
-      "name": "search.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
-    },
-    {
       "name": "stream.cjs",
       "reason": "Needs outside network hosts (see known-failures.json); not in any workflow."
     },
     {
-      "name": "streamtauri.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
+      "name": "tauribrowsertools.cjs",
+      "reason": "Runs in tauri-check.yml (Linux, Playwright 1.48.2, Chromium installed). It passes here (Playwright 1.56.0, 2.5 s) but timed out after 32 s in the preflight job, which installs Playwright 1.64.1; the cause there is not known, so the preflight does not run it.",
+      "run": false
     },
     {
-      "name": "subs.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
-    },
-    {
-      "name": "video.cjs",
-      "reason": "Passes (orchestrator's full Tools run, 2026-11-15) but is in no workflow; safe to add to the release-tools.yml chain."
+      "name": "webstream.cjs",
+      "reason": "Needs the webtorrent package from desktop/package.json (cd desktop && npm install), which the preflight and release-tools.yml jobs do not install; it runs in webstream-check.yml, which installs it on three systems.",
+      "run": false
     }
   ]
 }

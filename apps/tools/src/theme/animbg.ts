@@ -121,8 +121,8 @@ export function readPalette(kind: AnimKind, host: Element = document.documentEle
       : [lift(mix(ground, tc, 1), 2.3), lift(mix(ground, pc, 1), 2), lift(mix(ground, sc, 1), 2), lift(mix(ground, p, 0.24), 1.6), lift(mix(ground, tc, 0.85), 2.4), deep])
     : (light ? [mix(ground, pc, 0.8), mix(ground, tc, 0.8), mix(ground, sc, 0.7), mix(ground, p, 0.12)]
       : [mix(ground, pc, 0.72), mix(ground, tc, 0.78), mix(ground, sc, 0.66), mix(ground, p, 0.12)]);
-  const c = clampPalette(ground, cols.map(noYellow), texts);
-  return { light, ground, cols: c.cols, texts, worst: c.worst };
+  const pal = clampPalette(ground, cols.map(noYellow), texts);
+  return { light, ground, cols: pal.cols, texts, worst: pal.worst };
 }
 
 /* ---------- the two designs ---------- */

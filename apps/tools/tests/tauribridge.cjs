@@ -34,6 +34,10 @@ const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []] };
+// (The safe-extraction engine's calls — desktop/inplace.cjs over archsafe.cjs: the preflight, the shelf of unfinished jobs, the
+// job actions. Electron only for now: the Tauri bridge deliberately has none, because the page asks for them by presence
+// (src/archives/safety.ts desk(), main.ts) and falls back to the plain extraction without them, showing no shelf.)
+const ELECTRON_ONLY = ['archivePreflight', 'archiveShelf', 'archiveJob'];
 const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
@@ -87,7 +91,8 @@ function loadBridge(boot) {
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
   // (Every channel of the preload is here now — the screen translator's 8 were the last.)
-  for (const k of Object.keys(pre)) assert.ok(k in kt, `${k} is in preload.cjs but not in the bridge`);
+  for (const k of Object.keys(pre)) assert.ok(k in kt || ELECTRON_ONLY.includes(k), `${k} is in preload.cjs but not in the bridge`);
+  for (const k of ELECTRON_ONLY) assert.ok(k in pre && !(k in kt), `${k} is Electron-only: in the preload, not in the bridge`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
   const samples = {
