@@ -1388,6 +1388,8 @@ export const zh: Partial<Strings> = {
   animBgFlowHint: "大块色调形状滑动并变换形态",
   animBgMotes: "浮尘微光",
   animBgMotesHint: "柔和的微粒在三层景深中漂浮，时隐时现",
+  animBgNightSnow: "夜雪",
+  animBgNightSnowHint: "月光下的松林，雪花在三层景深中飘落",
   animBgSceneFallback: "此处无法加载场景引擎，因此改为显示霜之漂流。",
   animBgLevel: "动效",
   animBgFull: "完整",

@@ -1388,6 +1388,8 @@ export const ko: Partial<Strings> = {
   animBgFlowHint: "큰 톤의 도형이 미끄러지듯 움직이며 모양을 바꿈",
   animBgMotes: "떠도는 입자",
   animBgMotesHint: "부드러운 입자가 세 겹의 깊이로 떠다니며 나타났다 사라짐",
+  animBgNightSnow: "밤눈",
+  animBgNightSnowHint: "달빛 아래 소나무 숲에 세 겹의 깊이로 내리는 눈",
   animBgSceneFallback: "여기서는 장면 엔진을 불러오지 못해 프로스트 드리프트를 대신 표시합니다.",
   animBgLevel: "움직임",
   animBgFull: "전체",

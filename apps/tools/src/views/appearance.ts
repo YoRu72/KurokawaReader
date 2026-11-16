@@ -63,9 +63,9 @@ type AnimPref = NonNullable<Settings['animBg']>; type AnimLevel = NonNullable<Se
 function animRows(rerender: () => void): (HTMLElement | null)[] {
   const s = getSettings(); const pref: AnimPref = s.animBg ?? 'off';
   // (The hint says what the choice made does; a pick's third value would be an icon, so the words go here.)
-  // («Motes»: a scene of the Rust engine — core/kt-scene, loaded as wasm only when chosen; drift where it cannot load.)
-  const what = { off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint'), 'scene:motes': t('animBgMotesHint') }[pref] ?? t('animBgHint');
-  const choice = row(t('animBg'), pickButton(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene:motes', t('animBgMotes')]], pref, (v) => { updateSettings({ animBg: v as AnimPref }); rerender(); }, t('close')), what);
+  // («Motes», «Night snowfall»: scenes of the Rust engine — core/kt-scene, loaded as wasm only when chosen; drift where it cannot load.)
+  const what = { off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint'), 'scene:motes': t('animBgMotesHint'), 'scene:night-snowfall': t('animBgNightSnowHint') }[pref] ?? t('animBgHint');
+  const choice = row(t('animBg'), pickButton(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene:motes', t('animBgMotes')], ['scene:night-snowfall', t('animBgNightSnow')]], pref, (v) => { updateSettings({ animBg: v as AnimPref }); rerender(); }, t('close')), what);
   if (pref === 'off') return [choice];
   const level: AnimLevel = s.animBgLevel ?? 'full';
   const levelRow = row(t('animBgLevel'), pickButton(t('animBgLevel'), [['full', t('animBgFull')], ['reduced', t('animBgReduced')], ['still', t('animBgStill')]], level, (v) => { updateSettings({ animBgLevel: v as AnimLevel }); rerender(); }, t('close')), level === 'full' ? t('animBgHint') : t(level === 'reduced' ? 'animBgReducedHint' : 'animBgStillHint'));

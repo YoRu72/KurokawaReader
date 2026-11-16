@@ -21,7 +21,7 @@ crate-type = ["cdylib", "rlib"]
 
 # (The standalone checks of a module that uses its siblings: `--cfg 'kt_alone="<module>"'` brings them in by path.)
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kt_alone, values("particles", "forces", "drawlist", "scene", "abi"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kt_alone, values("scenefile", "scenery", "particles", "forces", "scene", "abi"))'] }
 
 # Small: the page fetches it when the scene is chosen. panic = "abort": a bug traps the wasm instance (the page then
 # falls back to «drift»); nothing in it may panic on any input (the native tests feed it hostile files).

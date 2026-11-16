@@ -1,0 +1,4 @@
+3606950339
+# The golden state hash: Motes (src/theme/scenes/motes.json), seed 42, viewport 1312x832, 600 steps of 1000/60 ms.
+# Read by the native tests (src/scene.rs GOLDEN) and by scripts/build-scene-wasm.sh, which checks the wasm gives the same.
+# Change it only when a change to the simulation or to motes.json was meant to change the motion.

@@ -2,19 +2,21 @@
   "format": "ktscene/1",
   "meta": { "id": "motes", "name": "Motes" },
   "view": { "fps": 24, "resolution": 0.5 },
-  "palette": { "roles": ["primary-container", "tertiary-container", "primary"] },
+  "space": { "w": 1600, "h": 1000, "overscan": 0.06, "fit": "cover" },
+  "palette": ["primary-container", "tertiary-container", "primary"],
+  "params": [{ "id": "amount", "type": "slider", "min": 0, "max": 1, "default": 1 }],
   "layers": [
-    { "id": "far", "depth": 0.15, "opacity": 0.7 },
-    { "id": "mid", "depth": 0.5, "opacity": 0.85 },
-    { "id": "near", "depth": 0.9, "opacity": 0.7 }
+    { "id": "far", "depth": 0.15, "opacity": 0.75 },
+    { "id": "mid", "depth": 0.5, "opacity": 0.9 },
+    { "id": "near", "depth": 0.9, "opacity": 0.75 }
   ],
   "emitters": [
     {
-      "layer": "far", "max": 340, "rate": 24, "prewarm": 1,
+      "id": "far", "layer": "far", "group": "motes", "max": 340, "rate": 24, "prewarm": 1, "wind": 0.4, "densityParam": "amount",
       "initializers": [
         { "kind": "lifetime", "min": 10, "max": 18 },
-        { "kind": "size", "min": 3, "max": 5 },
-        { "kind": "alpha", "min": 0.5, "max": 0.9 },
+        { "kind": "size", "min": 3.5, "max": 6 },
+        { "kind": "alpha", "min": 0.55, "max": 0.95 },
         { "kind": "velocity", "min": [-3, -4], "max": [3, 1] },
         { "kind": "colour", "roles": ["primary-container", "tertiary-container"] },
         { "kind": "sprite", "id": 0 }
@@ -28,11 +30,11 @@
       ]
     },
     {
-      "layer": "mid", "max": 180, "rate": 14, "prewarm": 1,
+      "id": "mid", "layer": "mid", "group": "motes", "max": 180, "rate": 14, "prewarm": 1, "wind": 0.7, "densityParam": "amount",
       "initializers": [
         { "kind": "lifetime", "min": 9, "max": 16 },
-        { "kind": "size", "min": 5, "max": 8 },
-        { "kind": "alpha", "min": 0.45, "max": 0.85 },
+        { "kind": "size", "min": 6, "max": 10 },
+        { "kind": "alpha", "min": 0.5, "max": 0.9 },
         { "kind": "velocity", "min": [-5, -6], "max": [5, 2] },
         { "kind": "colour", "roles": ["primary-container", "tertiary-container", "primary"] },
         { "kind": "sprite", "id": 0 }
@@ -41,16 +43,17 @@
         { "kind": "drift", "scale": 0.0028, "speed": 0.045, "strength": 8 },
         { "kind": "gravity", "x": 0, "y": -1.2 },
         { "kind": "drag", "k": 0.4 },
+        { "kind": "pointer", "strength": -40, "radius": 140 },
         { "kind": "bounds", "mode": "wrap", "margin": 16 },
         { "kind": "fade", "in": 0.2, "out": 0.3 }
       ]
     },
     {
-      "layer": "near", "max": 48, "rate": 3.5, "prewarm": 1,
+      "id": "near", "layer": "near", "group": "motes", "max": 48, "rate": 3.5, "prewarm": 1, "wind": 1, "densityParam": "amount",
       "initializers": [
         { "kind": "lifetime", "min": 11, "max": 17 },
-        { "kind": "size", "min": 12, "max": 22 },
-        { "kind": "alpha", "min": 0.16, "max": 0.34 },
+        { "kind": "size", "min": 14, "max": 26 },
+        { "kind": "alpha", "min": 0.2, "max": 0.4 },
         { "kind": "velocity", "min": [-8, -8], "max": [8, 3] },
         { "kind": "colour", "roles": ["tertiary-container", "primary"] },
         { "kind": "sprite", "id": 0 }
@@ -59,6 +62,8 @@
         { "kind": "drift", "scale": 0.002, "speed": 0.03, "strength": 11 },
         { "kind": "gravity", "x": 0, "y": -1.6 },
         { "kind": "drag", "k": 0.45 },
+        { "kind": "pointer", "strength": -60, "radius": 180 },
+        { "kind": "click", "impulse": 90, "radius": 240 },
         { "kind": "bounds", "mode": "wrap", "margin": 40 },
         { "kind": "fade", "in": 0.3, "out": 0.35 }
       ]

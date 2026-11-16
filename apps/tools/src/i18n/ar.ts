@@ -2480,6 +2480,8 @@ export const ar: Partial<Strings> = {
   animBgFlowHint: "أشكالٌ كبيرةٌ بألوانٍ متدرّجةٍ تنسابُ وتتبدّلُ هيئاتُها",
   animBgMotes: "الذرّاتُ السابحة",
   animBgMotesHint: "ذرّاتٌ ليّنةٌ تسبحُ في ثلاثةِ أعماقٍ، تلوحُ ثمّ تخبو",
+  animBgNightSnow: "ثلجُ الليل",
+  animBgNightSnowHint: "ثلجٌ يتساقطُ على صنوبرٍ تحتَ ضوءِ القمر، في ثلاثةِ أعماق",
   animBgSceneFallback: "تعذّر تحميلُ محرّكِ المشاهدِ هنا، فيُعرَضُ «انجرافُ الصقيع» مكانَه.",
   animBgLevel: "الحركة",
   animBgFull: "كاملة",

@@ -1,0 +1,100 @@
+{
+  "format": "ktscene/1",
+  "meta": { "id": "night-snowfall", "name": "Night snowfall" },
+  "view": { "fps": 24, "resolution": 0.5 },
+  "space": { "w": 1600, "h": 1000, "overscan": 0.06, "fit": "cover" },
+  "palette": [
+    { "id": "sky0", "dark": "#040822", "light": "#c9d7ef" },
+    { "id": "sky1", "dark": "#0e1e5c", "light": "#d9e3f5" },
+    { "id": "sky2", "dark": "#26357f", "light": "#e8eefa" },
+    { "id": "sky3", "dark": "#6a3c80", "light": "#efe4f1" },
+    { "id": "glow", "dark": "#e07aa6", "light": "#f4c8dd" },
+    { "id": "moon", "dark": "#eef3ff", "light": "#ffffff" },
+    { "id": "far", "dark": "#1f3078", "light": "#b4c3e3" },
+    { "id": "mid", "dark": "#10195a", "light": "#8aa0cc" },
+    { "id": "near", "dark": "#050a26", "light": "#5a74a8" },
+    { "id": "fog", "dark": "#8078d6", "light": "#ffffff" },
+    { "id": "snow", "dark": "#e6ecfb", "light": "#ffffff" },
+    { "id": "flake", "dark": "#eef3ff", "light": "#6d84b8" },
+    { "id": "flake2", "dark": "#c4d2ff", "light": "#93a8d4" }
+  ],
+  "params": [{ "id": "amount", "type": "slider", "min": 0, "max": 1, "default": 1 }],
+  "layers": [
+    { "id": "sky", "kind": "sky", "depth": 0, "parallax": 0,
+      "params": { "stops": [[0, "sky0"], [0.5, "sky1"], [0.8, "sky2"], [1, "sky3"]], "glow": { "x": 0.5, "y": 0.8, "r": 0.8, "colour": "glow", "alpha": 0.42 } } },
+    { "id": "moon", "kind": "disc", "depth": 0.02, "parallax": 0.05,
+      "params": { "x": 0.74, "y": 0.2, "r": 0.034, "halo": 4.5, "colour": "moon", "glow": 0.35 } },
+    { "id": "ridge", "kind": "silhouette", "depth": 0.12,
+      "params": { "form": "ridge", "base": 0.64, "amp": 0.1, "colour": "far", "hazeColour": "fog", "haze": 0.5 } },
+    { "id": "snow-far", "depth": 0.2 },
+    { "id": "hills-mid", "kind": "silhouette", "depth": 0.4,
+      "params": { "form": "hills", "base": 0.81, "amp": 0.09, "colour": "mid", "hazeColour": "fog", "haze": 0.25, "snow": "snow" } },
+    { "id": "fog", "kind": "fog", "depth": 0.5,
+      "params": { "y": 0.82, "h": 0.06, "count": 5, "size": 700, "speed": 5, "alpha": 0.12, "colour": "fog" } },
+    { "id": "snow-mid", "depth": 0.55 },
+    { "id": "ridge-near", "kind": "silhouette", "depth": 0.85,
+      "params": { "form": "ridge", "base": 0.94, "amp": 0.12, "rough": 0.45, "colour": "near", "snow": "snow" } },
+    { "id": "ground", "kind": "band", "depth": 0.9,
+      "params": { "y0": 0.95, "y1": 1.08, "top": "snow", "bottom": "far", "a0": 0.95, "a1": 1 } },
+    { "id": "snow-near", "depth": 0.95 }
+  ],
+  "emitters": [
+    {
+      "id": "far", "layer": "snow-far", "group": "snow", "max": 700, "rate": 30, "prewarm": 1, "wind": 0.4, "densityParam": "amount",
+      "initializers": [
+        { "kind": "lifetime", "min": 40, "max": 70 },
+        { "kind": "size", "min": 3, "max": 5.5 },
+        { "kind": "alpha", "min": 0.55, "max": 0.9 },
+        { "kind": "velocity", "min": [-3, 14], "max": [3, 22] },
+        { "kind": "colour", "roles": ["flake", "flake2"] },
+        { "kind": "sprite", "id": 1 }
+      ],
+      "operators": [
+        { "kind": "drift", "scale": 0.004, "speed": 0.05, "strength": 4 },
+        { "kind": "gravity", "x": 0, "y": 3 },
+        { "kind": "drag", "k": 0.15 },
+        { "kind": "bounds", "mode": "wrap", "margin": 8 },
+        { "kind": "fade", "in": 0.04, "out": 0.04 }
+      ]
+    },
+    {
+      "id": "mid", "layer": "snow-mid", "group": "snow", "max": 360, "rate": 14, "prewarm": 1, "wind": 0.7, "densityParam": "amount",
+      "initializers": [
+        { "kind": "lifetime", "min": 30, "max": 60 },
+        { "kind": "size", "min": 7, "max": 12 },
+        { "kind": "alpha", "min": 0.5, "max": 0.85 },
+        { "kind": "velocity", "min": [-5, 20], "max": [5, 30] },
+        { "kind": "colour", "roles": ["flake", "flake2"] },
+        { "kind": "sprite", "id": 0 }
+      ],
+      "operators": [
+        { "kind": "drift", "scale": 0.003, "speed": 0.06, "strength": 9 },
+        { "kind": "gravity", "x": 0, "y": 4 },
+        { "kind": "drag", "k": 0.15 },
+        { "kind": "pointer", "strength": -50, "radius": 150 },
+        { "kind": "bounds", "mode": "wrap", "margin": 16 },
+        { "kind": "fade", "in": 0.04, "out": 0.04 }
+      ]
+    },
+    {
+      "id": "near", "layer": "snow-near", "group": "snow", "max": 60, "rate": 2, "prewarm": 1, "wind": 1, "densityParam": "amount",
+      "initializers": [
+        { "kind": "lifetime", "min": 25, "max": 45 },
+        { "kind": "size", "min": 26, "max": 46 },
+        { "kind": "alpha", "min": 0.25, "max": 0.45 },
+        { "kind": "velocity", "min": [-8, 30], "max": [8, 44] },
+        { "kind": "colour", "roles": ["flake"] },
+        { "kind": "sprite", "id": 0 }
+      ],
+      "operators": [
+        { "kind": "drift", "scale": 0.002, "speed": 0.05, "strength": 14 },
+        { "kind": "gravity", "x": 0, "y": 6 },
+        { "kind": "drag", "k": 0.15 },
+        { "kind": "pointer", "strength": -70, "radius": 200 },
+        { "kind": "click", "impulse": 140, "radius": 260 },
+        { "kind": "bounds", "mode": "wrap", "margin": 50 },
+        { "kind": "fade", "in": 0.04, "out": 0.04 }
+      ]
+    }
+  ]
+}

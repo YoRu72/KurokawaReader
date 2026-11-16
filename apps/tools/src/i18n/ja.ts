@@ -1388,6 +1388,8 @@ export const ja: Partial<Strings> = {
   animBgFlowHint: "トーンの大きな図形が滑るように動き、形を変える",
   animBgMotes: "浮遊する粒",
   animBgMotesHint: "柔らかな粒が三層の奥行きで漂い、現れては消える",
+  animBgNightSnow: "夜の雪",
+  animBgNightSnowHint: "月明かりの松林に、三層の奥行きで雪が降る",
   animBgSceneFallback: "ここではシーンエンジンを読み込めなかったため、フロストドリフトを表示しています。",
   animBgLevel: "動き",
   animBgFull: "フル",

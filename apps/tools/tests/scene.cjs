@@ -1,25 +1,30 @@
-// node tests/scene.cjs: the scene engine's background «Motes» (animBg 'scene:motes': src/theme/sceneHost.ts drawing
-// what the Rust engine core/kt-scene computes, loaded as dist/scene/ktscene.wasm) on a computer.
+// node tests/scene.cjs: the scene engine's backgrounds «Motes» and «Night snowfall» (animBg 'scene:…': src/theme/
+// sceneHost.ts drawing what the Rust engine core/kt-scene computes, loaded as dist/scene/ktscene.wasm) on a computer.
 // The wasm is built in CI only (scripts/build-scene-wasm.sh; never committed). So this test has two paths:
 //  - the wasm present (dist/scene/ktscene.wasm, or the file named by KT_SCENE_WASM — e.g. the «ktscene-wasm» artifact of
 //    .github/workflows/scene-wasm.yml — served at scene/ktscene.wasm):
 //      1. chosen at the start: the engine loads, ONE canvas, frames change, the instances drawn are the engine's;
-//      2. the same pause gate as the designs: hidden → paused (no timer, no frame, no draw), visible → running;
-//         the system's «less motion» → still; Still → one frame;
+//         Night snowfall: a composition — static layers drawn once (sky, moon, ridges, pines, ground), snow moving;
+//      2. the same pause gate as the designs: hidden → paused, visible → running, «less motion» → still, Still → one frame;
 //      3. taken down from Appearance (Off), five times over: no canvas, timer, frame, listener, observer or engine
 //         scene left (sceneHost's liveScenes back to 0);
-//      4. readability (every text role ≥ 4.5:1 over the brightest and darkest pixel) and no yellow, dark and light;
-//      5. the perf gate's numbers printed beside «drift» (generous checks only; the real gate is the owner's PC);
-//  - the wasm absent: «Motes» chosen falls back to «drift» quietly — one console.info line, no error, drawing, the
-//    Appearance line saying so — and the test says «wasm absent: fallback path only» and passes.
-// Both: Appearance offers «Motes» on a computer (en, ar), never on a phone; never in the mini window.
+//      4. a trap (the engine throwing — the host's test hook, as a real trap would): «drift» drawn instead, one quiet
+//         line, no page error, the engine let go; chosen again later, a new engine instance runs the scene;
+//      5. readability, measured on the REAL text: every visible text's rectangle, the scene's pixels under it averaged,
+//         every panel between composited over them — 4.5:1 or more; no yellow; Motes clearly visible in dark;
+//      6. the perf gate's numbers printed beside «drift» (generous checks only; the real gate is the owner's PC);
+//  - the wasm absent: a scene chosen falls back to «drift» quietly — one console.info line, no error, drawing, the
+//    Appearance line saying so — and the test says «wasm absent: fallback path only» and passes, UNLESS
+//    KT_SCENE_REQUIRED=1 (the release workflow sets it): then the missing engine is a failure.
+// Both: Appearance offers both scenes on a computer (en, ar), never on a phone; never in the mini window.
 //
 // The perf numbers (with localStorage kt.anim.perf = '1', or ?animperf, `window.__ktAnimPerf()` in the page):
 //  engineMsPerSec  the background's own script time a second (its ticks: step + draw), ms/s
 //  rafLateAvgMs    after each drawn frame, how much later than 1/60 s the next frame came, averaged, ms
 //  rafGapAvgMs     the gap itself, averaged, ms (≈16.7 when nothing is behind)
 //  slow, tooSlow   the self-throttle now (1, 2, 4; true = it gave up to the still frame); slowDowns/slowUps counted
-//  scene.stepMs    the wasm step of this scene, ms a call; scene.drawMs the Canvas2D drawing, ms a frame
+//  scene.stepMs    the wasm step of this scene, ms a call; scene.drawMs the Canvas2D drawing, ms a frame;
+//  scene.statics   static canvases (composited once); scene.panelScrim / scrimMax: the contrast rule's pulls (0–1)
 //  __ktAnimPerf.bench()  the wasm step for 4,096 particles, ms (the critic's 1.5 ms gate)
 // The critic's STOP rules (on the owner's PC, glass on, 1280×800 and 1920×1080, compared with «drift»): lateness >
 // 2× drift's, or more than one slow-down in 60 s, or script > 25 ms/s, or the 4,096 step > 1.5 ms.
@@ -29,6 +34,7 @@ const DIST = path.join(__dirname, '..', 'dist');
 const LANG = process.argv[2] === 'ar' ? 'ar' : 'en';
 const WASM = process.env.KT_SCENE_WASM ? path.resolve(process.env.KT_SCENE_WASM) : path.join(DIST, 'scene', 'ktscene.wasm');
 const HAVE = fs.existsSync(WASM);
+const REQUIRED = process.env.KT_SCENE_REQUIRED === '1';
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.wasm': 'application/wasm' };
 const serve = () => http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
@@ -40,12 +46,13 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
 const PC = { viewport: { width: 1280, height: 800 } };
 const PHONE = { viewport: { width: 412, height: 915 }, hasTouch: true, isMobile: true };
 const T = {
-  en: { row: 'Animated background', motes: 'Motes', off: 'Off', fallback: /could not be loaded here/ },
-  ar: { row: 'خلفيّةٌ متحرّكة', motes: 'الذرّاتُ السابحة', off: 'معطَّلة', fallback: /تعذّر تحميلُ محرّكِ المشاهد/ },
+  en: { row: 'Animated background', motes: 'Motes', snow: 'Night snowfall', off: 'Off', fallback: /could not be loaded here/ },
+  ar: { row: 'خلفيّةٌ متحرّكة', motes: 'الذرّاتُ السابحة', snow: 'ثلجُ الليل', off: 'معطَّلة', fallback: /تعذّر تحميلُ محرّكِ المشاهد/ },
 }[LANG];
 
 /** In the page before anything runs: settings, the desktop bridge (or the phone's plugin), the counters (as animbg.cjs). */
-function init({ settings, phone, lang }) {
+function init({ settings, phone, lang, trapAfter }) {
+  if (typeof trapAfter === 'number') window.__ktSceneTrapAfter = trapAfter;
   localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.update.lastCheck', String(Date.now())); localStorage.setItem('kt.themeMigrated', '1'); localStorage.setItem('kt.mainTheme', '1');
   localStorage.setItem('kt.settings', JSON.stringify({ themeChosen: true, autoUpdateCheck: false, ...settings }));
   localStorage.setItem('kt.anim.perf', '1');
@@ -75,6 +82,7 @@ function init({ settings, phone, lang }) {
 
 (async () => {
   console.log(HAVE ? `wasm present: ${path.relative(process.cwd(), WASM)} (${fs.statSync(WASM).size} bytes) — the engine's path` : 'wasm absent: fallback path only (dist/scene/ktscene.wasm is built in CI: scripts/build-scene-wasm.sh)');
+  if (REQUIRED && !HAVE) { console.log('FAIL KT_SCENE_REQUIRED=1 and no ktscene.wasm: a release must carry the scene engine'); process.exit(1); }
   const web = serve().listen(0); const base = `http://127.0.0.1:${web.address().port}/`; const br = await chromium.launch();
   const open = async (o, opts, route = '#/') => {
     const ctx = await br.newContext(o); const p = await ctx.newPage(); const errs = []; const reqs = [];
@@ -98,7 +106,7 @@ function init({ settings, phone, lang }) {
     const { p, ctx, errs, fetched } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark' } }, '#/settings/appearance');
     await p.waitForSelector('#appearance');
     await p.locator('#appearance .row', { hasText: T.row }).first().locator('.pick-btn').click(); await p.waitForTimeout(250);
-    ok(`Appearance (PC, ${LANG}) offers «${T.motes}»`, (await p.locator('.sheet .dest-row', { hasText: T.motes }).count()) === 1);
+    ok(`Appearance (PC, ${LANG}) offers «${T.motes}» and «${T.snow}»`, (await p.locator('.sheet .dest-row', { hasText: T.motes }).count()) === 1 && (await p.locator('.sheet .dest-row', { hasText: T.snow }).count()) === 1);
     await p.keyboard.press('Escape'); await p.waitForTimeout(250);
     ok('…and nothing of the engine fetched before it is chosen', !fetched(/sceneHost|ktscene\.wasm/));
     ok('no page errors (0)', !errs.length, errs); await ctx.close();
@@ -195,32 +203,82 @@ function init({ settings, phone, lang }) {
     ok('no page errors (phone)', !errs.length, errs); await ctx.close();
   }
 
-  /* ---------- 4. readability and colour ---------- */
-  if (HAVE) {
-    for (const [theme, mode, accent] of [['frost', 'dark', 'graphite'], ['frost', 'light', 'graphite'], ['classic', 'dark', 'gold'], ['classic', 'light', 'gold'], ['frost', 'dark', 'coral']]) {
-      const { p, ctx, errs } = await open(PC, { settings: { theme, uiMode: mode, accent, animBg: 'scene:motes' } });
-      await waitState(p, 'running', 6000); await p.waitForTimeout(1200);
-      const r = await p.evaluate(() => {
-        const cv = document.querySelector('#kt-animbg .abg-canvas'); const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-        const probe = (v) => { const s = document.createElement('span'); s.style.color = v; document.body.append(s); const c = getComputedStyle(s).color; s.remove(); const k = document.createElement('canvas').getContext('2d'); k.fillStyle = c; k.fillRect(0, 0, 1, 1); const x = k.getImageData(0, 0, 1, 1).data; return [x[0], x[1], x[2], x[3] / 255]; };
-        const texts = ['var(--md-on-surface)', 'var(--md-on-surface-variant)', 'var(--md-on-surface-dim, var(--md-on-surface-variant))'].map(probe);
-        const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
-        const ov = (t, u) => [t[0] * t[3] + u[0] * (1 - t[3]), t[1] * t[3] + u[1] * (1 - t[3]), t[2] * t[3] + u[2] * (1 - t[3]), 1];
-        const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-        let hi = [0, 0, 0, 1], lo = [255, 255, 255, 1], hiL = -1, loL = 2; const yel = []; let lit = 0;
-        for (let j = 0; j < d.length; j += 4) {
-          const px = [d[j], d[j + 1], d[j + 2], 1]; const l = lum(px); if (l > hiL) { hiL = l; hi = px; } if (l < loL) { loL = l; lo = px; }
-          if (j && (d[j] !== d[0] || d[j + 1] !== d[1] || d[j + 2] !== d[2])) lit++;
-          const mx = Math.max(px[0], px[1], px[2]), mn = Math.min(px[0], px[1], px[2]);
-          if ((mx - mn) / 255 > 0.06) { let h = mx === px[0] ? ((px[1] - px[2]) / (mx - mn)) % 6 : mx === px[1] ? (px[2] - px[0]) / (mx - mn) + 2 : (px[0] - px[1]) / (mx - mn) + 4; h *= 60; if (h < 0) h += 360; if (h >= 40 && h <= 70 && yel.length < 3) yel.push([...px.slice(0, 3), Math.round(h)]); }
-        }
-        let w = 99; for (const b of [hi, lo]) for (const t of texts) w = Math.min(w, cr(ov(t, b), b));
-        return { w: +w.toFixed(2), yel, lit: +(lit / (d.length / 4)).toFixed(4) };
-      });
-      ok(`${theme} ${mode} ${accent}: text ≥ 4.5:1 over the brightest and darkest pixel (${r.w}), motes visible (${(r.lit * 100).toFixed(1)} % of pixels)`, r.w >= 4.5 && r.lit > 0.003, r);
-      ok(`${theme} ${mode} ${accent}: no yellow, amber or gold`, !r.yel.length, r.yel);
-      ok(`no page errors (${theme} ${mode} ${accent})`, !errs.length, errs); await ctx.close();
+  /* ---------- Night snowfall: a composition ---------- */
+  {
+    const { p, ctx, errs, snap } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark', animBg: 'scene:night-snowfall' } });
+    ok('Night snowfall: the engine settled', await waitFor(p, (w) => document.getElementById('kt-animbg')?.dataset.engine === w, WANT_ENGINE, 6000), await snap());
+    ok('Night snowfall: running', await waitState(p, 'running', 4000));
+    if (HAVE) {
+      const perf = await p.evaluate(() => window.__ktAnimPerf());
+      ok('static layers composited into canvases once (sky…pines), snow as instances', perf.scene && perf.scene.statics >= 2 && perf.scene.instances > 500, perf.scene);
+      const d0 = (await snap()).sprites; await p.waitForTimeout(800); const d1 = (await snap()).sprites;
+      ok('the snow moves (sprites drawn each frame)', d1 - d0 > 1000, { d0, d1 });
+      // (The sky, at the top of the window: the scene's own palette — a deep blue, not the theme's grey ground.)
+      const top = await p.evaluate(() => { const cv = document.querySelector('#kt-animbg .abg-canvas'); const d = cv.getContext('2d').getImageData(Math.round(cv.width * 0.3), 6, 1, 1).data; return [d[0], d[1], d[2]]; });
+      ok('its own palette: a night-blue sky', top[2] > top[0] + 6 && top[2] > top[1], top);
     }
+    ok('no page errors (snow)', !errs.length, errs); await ctx.close();
+  }
+
+  /* ---------- 4. a trap ---------- */
+  if (HAVE) {
+    const { p, ctx, errs, snap } = await open(PC, { settings: { theme: 'frost', uiMode: 'dark', animBg: 'scene:night-snowfall' }, trapAfter: 25 });
+    ok('a trap: «drift» drawn instead', await waitFor(p, () => document.getElementById('kt-animbg')?.dataset.fallback === 'drift', null, 8000), await snap());
+    ok('…running, drawing', (await waitState(p, 'running', 3000)) && (await drawsIn(p, 900)) > 3);
+    const s = await snap();
+    ok('…one quiet line saying the engine stopped, no error', s.info.filter((x) => /scene engine stopped/.test(x)).length === 1, s.info);
+    ok('…the scene let go in the engine', (await p.evaluate(() => window.__ktAnimPerf.liveScenes())) === 0);
+    ok('…one canvas still, the scrim taken off the page', s.hostCanvases === 1 && !(await p.evaluate(() => document.documentElement.classList.contains('abg-scene'))));
+    // (Chosen again later: a new engine instance runs it.)
+    await p.evaluate(() => { window.__ktSceneTrapAfter = undefined; });
+    await p.goto(base + '#/settings/appearance'); await p.waitForSelector('#appearance'); await choose(p, T.motes);
+    ok('chosen again: a new engine runs the scene', await waitFor(p, () => document.getElementById('kt-animbg')?.dataset.engine === 'scene', null, 6000), await snap());
+    ok('no page errors (trap)', !errs.length, errs); await ctx.close();
+  }
+
+  /* ---------- 5. readability, on the real text ---------- */
+  if (HAVE) {
+    const worst = []; const yellow = [];
+    for (const [scene, mode, accent, route] of [['scene:night-snowfall', 'dark', 'graphite', '#/'], ['scene:night-snowfall', 'dark', 'graphite', '#/settings/appearance'], ['scene:night-snowfall', 'light', 'graphite', '#/'], ['scene:night-snowfall', 'light', 'teal', '#/settings/appearance'], ['scene:night-snowfall', 'dark', 'violet', '#/'], ['scene:motes', 'dark', 'graphite', '#/'], ['scene:motes', 'light', 'teal', '#/settings/appearance'], ['scene:motes', 'dark', 'gold', '#/settings/appearance']]) {
+      const { p, ctx, errs } = await open(PC, { settings: { theme: 'frost', uiMode: mode, accent, animBg: scene } }, route);
+      await waitState(p, 'running', 6000); await p.waitForTimeout(3200);
+      const r = await p.evaluate(() => {
+        const cv = document.querySelector('#kt-animbg .abg-canvas'); const k = cv.width / (innerWidth + 32); const img = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+        const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+        const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+        const parse = (s) => { let m = /rgba?\(([^)]+)\)/.exec(s); if (m) { const v = m[1].split(/[ ,/]+/).filter(Boolean).map(parseFloat); return [v[0], v[1], v[2], v[3] ?? 1]; } m = /color\(srgb ([^)]+)\)/.exec(s); if (m) { const v = m[1].split(/[ /]+/).filter(Boolean).map(parseFloat); return [v[0] * 255, v[1] * 255, v[2] * 255, v[3] ?? 1]; } return [0, 0, 0, 0]; };
+        const over = (t, u) => [t[0] * t[3] + u[0] * (1 - t[3]), t[1] * t[3] + u[1] * (1 - t[3]), t[2] * t[3] + u[2] * (1 - t[3]), 1];
+        // (The ground under the canvas, for the rare pixel the canvas leaves: the scene fills it all anyway.)
+        let w = 99, at = null, n = 0; const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let node;
+        while ((node = walker.nextNode())) {
+          if (!node.nodeValue.trim()) continue; const el = node.parentElement; if (!el || el.closest('#kt-animbg,script,style,[hidden],[aria-hidden="true"]')) continue;
+          const st = getComputedStyle(el); if (st.visibility === 'hidden' || +st.opacity === 0) continue;
+          const range = document.createRange(); range.selectNodeContents(node); const rr = range.getBoundingClientRect();
+          if (rr.width < 2 || rr.height < 2 || rr.top < 0 || rr.left < 0 || rr.bottom > innerHeight || rr.right > innerWidth) continue;
+          // (The scene under the text, averaged — the local mean the rule speaks of.)
+          let sum = [0, 0, 0], c = 0; const x0 = Math.floor((rr.left + 16) * k), x1 = Math.ceil((rr.right + 16) * k), y0 = Math.floor((rr.top + 16) * k), y1 = Math.ceil((rr.bottom + 16) * k);
+          for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const j = (y * cv.width + x) * 4; sum[0] += img[j]; sum[1] += img[j + 1]; sum[2] += img[j + 2]; c++; }
+          if (!c) continue; let back = [sum[0] / c, sum[1] / c, sum[2] / c, 1];
+          // (Every panel between, outermost first, composited over it.)
+          const chain = []; for (let a = el; a && a !== document.documentElement; a = a.parentElement) chain.push(a);
+          // (Its colour, then a flat colour layered over it as a background image — the scenes' veil on themed surfaces.)
+          for (const a of chain.reverse()) { const cs = getComputedStyle(a); back = over(parse(cs.backgroundColor), back); const m = /^linear-gradient\((rgba?\([^)]*\)|color\([^)]*\)), \1\)$/.exec(cs.backgroundImage); if (m) back = over(parse(m[1]), back); }
+          const fg = parse(st.color); if (fg[3] < 0.05) continue; const ratio = cr(over(fg, back), back); n++;
+          if (ratio < w) { w = ratio; at = { text: node.nodeValue.trim().slice(0, 30), ratio: +ratio.toFixed(2), back: back.map(Math.round), fg: fg.map((v) => +v.toFixed(2)) }; }
+        }
+        // (Colours: any yellow, amber or gold in the scene's pixels; how far the brightest particles stand from the ground.)
+        const yel = []; const g0 = [img[0], img[1], img[2]]; let lit = 0, peak = 1;
+        for (let j = 0; j < img.length; j += 4 * 3) { const px = [img[j], img[j + 1], img[j + 2]]; const mx = Math.max(...px), mn = Math.min(...px); if ((mx - mn) / 255 > 0.08) { let h = mx === px[0] ? ((px[1] - px[2]) / (mx - mn)) % 6 : mx === px[1] ? (px[2] - px[0]) / (mx - mn) + 2 : (px[0] - px[1]) / (mx - mn) + 4; h *= 60; if (h < 0) h += 360; if (h >= 42 && h <= 68 && yel.length < 3) yel.push([...px, Math.round(h)]); } const q = cr(px, g0); if (q > 1.5) lit++; peak = Math.max(peak, q); }
+        return { w: +w.toFixed(2), at, n, yel, lit: lit / (img.length / 12), peak: +peak.toFixed(2) };
+      });
+      worst.push(`${scene.slice(6)}/${mode}/${accent}${route.length > 2 ? '/settings' : ''}: ${r.w} over ${r.n} texts`);
+      ok(`${scene.slice(6)} ${mode} ${accent} ${route}: every text ≥ 4.5:1 over the scene and its panels (lowest ${r.w}, ${r.n} texts)`, r.w >= 4.5 && r.n > 20, r);
+      if (scene === 'scene:motes' && mode === 'dark' && route === '#/') ok('Motes clearly visible in dark: particles stand out from the ground (peak ≥ 2:1)', r.peak >= 2 && r.lit > 0.001, { peak: r.peak, lit: r.lit });
+      if (r.yel.length) yellow.push({ scene, mode, accent, px: r.yel });
+      ok(`no page errors (${scene} ${mode} ${accent})`, !errs.length, errs); await ctx.close();
+    }
+    console.log('     lowest text contrast: ' + worst.join(' | '));
+    ok('no yellow, amber or gold in any scene', !yellow.length, yellow);
   }
 
   /* ---------- 5. the perf gate's numbers, beside «drift» (headless: a regression guard only) ---------- */

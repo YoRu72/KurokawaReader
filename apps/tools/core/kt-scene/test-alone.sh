@@ -11,10 +11,12 @@ run() { # name file [cfg]
   if [ -n "$3" ]; then rustc --edition 2021 --test -A dead_code --cfg "kt_alone=\"$3\"" "$2" -o "$OUT/$1"; else rustc --edition 2021 --test -A dead_code "$2" -o "$OUT/$1"; fi
   "$OUT/$1" -q
 }
+run json src/json.rs
 run math src/math.rs
-run scenefile src/scenefile.rs
 run graph src/graph.rs
 run drawlist src/drawlist.rs
+run scenefile src/scenefile.rs scenefile
+run scenery src/scenery.rs scenery
 run particles src/particles.rs particles
 run forces src/forces.rs forces
 run scene src/scene.rs scene

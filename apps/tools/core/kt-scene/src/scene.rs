@@ -1,6 +1,8 @@
-//! A running scene: the file read once, the pool, emitters, layers and draw list allocated once, and a fixed clock —
-//! steps of 1/60 s, at most 4 per call (a long gap is dropped, not caught up) — so the same file, seed and calls give
-//! the same state, natively and in wasm. No allocation after `load`.
+//! A running scene: the file read once; pool, emitters, scenery and draw list allocated once; a fixed clock — steps
+//! of 1/60 s, at most 4 per call (a long gap is dropped, not caught up) — so the same file, seed and calls give the
+//! same state, natively and in wasm. Everything lives in SCENE SPACE (the file's `space`, with its overscan margin):
+//! the window only changes the transform each layer command carries (fit × camera × parallax), so a resize, a zoom or
+//! a parallax shift never rescales or collapses the particles. No allocation after `load`.
 //! Standalone: `rustc --edition 2021 --test --cfg 'kt_alone="scene"' src/scene.rs`.
 
 #[cfg(kt_alone = "scene")]
@@ -13,6 +15,9 @@ mod forces;
 #[path = "graph.rs"]
 mod graph;
 #[cfg(kt_alone = "scene")]
+#[path = "json.rs"]
+mod json;
+#[cfg(kt_alone = "scene")]
 #[path = "math.rs"]
 mod math;
 #[cfg(kt_alone = "scene")]
@@ -21,48 +26,101 @@ mod particles;
 #[cfg(kt_alone = "scene")]
 #[path = "scenefile.rs"]
 mod scenefile;
+#[cfg(kt_alone = "scene")]
+#[path = "scenery.rs"]
+mod scenery;
 
-use crate::drawlist::{DrawList, Inst};
-use crate::forces::{accelerate, constrain, fade, integrate};
+use crate::drawlist::{Cmd, DrawList, Inst};
+use crate::forces::{accelerate, constrain, fade, integrate, Control};
 use crate::graph::Graph;
 use crate::math::{clampf, Fnv, Pcg32};
 use crate::particles::{Emitter, Pool, View};
-use crate::scenefile::{read, SceneDef, MAX_ROLES};
+use crate::scenefile::{read, Colour, LayerKind, ParamDef, SceneDef, Space, MAX_LAYERS};
+use crate::scenery::{bounds, seed_of, Scenery};
 
 /// One fixed step, milliseconds and seconds.
 pub const STEP_MS: f32 = 1000.0 / 60.0;
 pub const STEP_S: f32 = 1.0 / 60.0;
 /// Fixed steps at most per `step` call.
 pub const MAX_SUBSTEPS: u32 = 4;
-/// The viewport before the page gives one (CSS pixels), and its limits.
-pub const DEFAULT_VIEW: View = View { w: 1280.0, h: 800.0 };
-pub const MAX_VIEW: f32 = 16384.0;
+/// The window before the page gives one (CSS pixels), and its limits.
+pub const DEFAULT_VIEWPORT: (f32, f32) = (1280.0, 800.0);
+pub const MAX_VIEWPORT: f32 = 16384.0;
 /// Drawn only when at least this visible.
 const MIN_ALPHA: f32 = 1.0 / 512.0;
 
-/// Parameters the page sets (`scene_param`).
+/// Engine-wide parameters (`scene_param` ids); a file's own params follow from `PARAM_FILE`.
 pub const PARAM_SPEED: u32 = 0;
 pub const PARAM_DENSITY: u32 = 1;
+pub const PARAM_WIND_X: u32 = 2;
+pub const PARAM_WIND_Y: u32 = 3;
+pub const PARAM_SIZE: u32 = 4;
+pub const PARAM_FILE: u32 = 16;
+
+/// The golden hash: Motes, seed 42, viewport 1312×832, 600 steps of 1000/60 ms. Native and wasm must both give it
+/// (the tests here; scripts/build-scene-wasm.sh for the wasm). Kept in golden.txt beside Cargo.toml, which both read.
+pub const GOLDEN: u32 = golden();
+const fn golden() -> u32 {
+    let b = include_bytes!("../golden.txt");
+    let mut v: u32 = 0;
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c >= b'0' && c <= b'9' {
+            v = v.wrapping_mul(10).wrapping_add((c - b'0') as u32);
+        } else if v > 0 {
+            break;
+        }
+        i += 1;
+    }
+    v
+}
+
+/// One layer's fixed facts, kept for the command list.
+struct LayerInfo {
+    kind: u32,
+    blend: u32,
+    is_static: bool,
+    known: bool,
+}
 
 pub struct Scene {
     pub def_fps: f32,
     pub def_resolution: f32,
-    roles: usize,
-    palette: [u32; MAX_ROLES],
+    space: Space,
+    view: View,
+    palette: Vec<u32>,
+    params: Vec<ParamDef>,
+    values: Vec<f32>,
+    groups: Vec<(f32, f32)>,
+    info: Vec<LayerInfo>,
     pool: Pool,
     emitters: Vec<Emitter>,
     graph: Graph,
+    scenery: Scenery,
     draw: DrawList,
-    rng: Pcg32,
     seed: u32,
-    view: View,
-    /// Scene time (seconds) and fixed steps taken.
+    viewport: (f32, f32),
+    camera: (f32, f32, f32),
+    /// The pointer in CSS pixels (None: outside), and a click waiting for the next step (CSS pixels).
+    pointer: Option<(f32, f32)>,
+    click: Option<(f32, f32)>,
     time: f64,
     ticks: u64,
     acc_ms: f32,
     speed: f32,
     density: f32,
+    size: f32,
+    wind: (f32, f32),
     last_substeps: u32,
+}
+
+/// A palette entry's colour before the page gives the theme's: a literal as written (dark), a role mid grey.
+fn default_rgba(c: &Colour) -> u32 {
+    match c {
+        Colour::Rgba(v) => *v,
+        Colour::Role(_) => 0x8080_80ff,
+    }
 }
 
 impl Scene {
@@ -73,86 +131,210 @@ impl Scene {
     }
 
     pub fn from_def(def: &SceneDef, seed: u32) -> Scene {
-        let total: usize = def.emitters.iter().map(|e| e.max as usize).sum();
+        let total: usize = def.emitters.iter().map(|e| e.max as usize).sum::<usize>() + def.layers.iter().map(|l| if let LayerKind::Fog { count, .. } = l.kind { count as usize } else { 0 }).sum::<usize>();
+        let (x0, y0, x1, y1) = bounds(&def.space);
+        let view = View { w: def.space.w, h: def.space.h, x0, y0, x1, y1 };
         let mut start = 0;
         let mut emitters = Vec::with_capacity(def.emitters.len());
         for e in &def.emitters {
-            emitters.push(Emitter { start, max: e.max as usize, live: 0, layer: e.layer, rate: e.rate, carry: 0.0, prewarm: e.prewarm, shape: e.shape, inits: e.inits.clone(), ops: e.ops.clone() });
+            let s = seed_of(&e.id, seed);
+            emitters.push(Emitter {
+                rng: Pcg32::new(s, 0x6b74_7363),
+                noise_seed: (s ^ (s >> 32)) as u32,
+                group: e.group,
+                wind: e.wind,
+                density_param: e.density_param,
+                size_param: e.size_param,
+                start,
+                max: e.max as usize,
+                live: 0,
+                layer: e.layer,
+                rate: e.rate,
+                carry: 0.0,
+                prewarm: e.prewarm,
+                shape: e.shape,
+                inits: e.inits.clone(),
+                ops: e.ops.clone(),
+            });
             start += e.max as usize;
         }
-        let layers: Vec<(f32, f32)> = def.layers.iter().map(|l| (l.depth, l.opacity)).collect();
+        let layers: Vec<(f32, f32, f32)> = def.layers.iter().map(|l| (l.depth, l.parallax, l.opacity)).collect();
         let graph = Graph::new(&layers, &emitters.iter().map(|e| e.layer).collect::<Vec<_>>());
+        let info = def.layers.iter().map(|l| LayerInfo { kind: l.kind.code(), blend: l.blend as u32, is_static: l.kind.is_static(), known: !matches!(l.kind, LayerKind::Unknown(_)) }).collect();
         let mut s = Scene {
             def_fps: def.fps,
             def_resolution: def.resolution,
-            roles: def.roles.len().min(MAX_ROLES),
-            palette: [0; MAX_ROLES],
-            pool: Pool::new(total),
+            space: def.space,
+            view,
+            palette: def.palette.iter().map(|p| default_rgba(&p.dark)).collect(),
+            params: def.params.clone(),
+            values: def.params.iter().map(|p| p.default).collect(),
+            groups: def.groups.iter().map(|_| (1.0, 1.0)).collect(),
+            info,
+            pool: Pool::new(start),
             emitters,
             graph,
-            draw: DrawList::new(total),
-            rng: Pcg32::new(seed as u64, 0x6b74_7363),
+            scenery: Scenery::new(&def.layers, &def.space, seed),
+            draw: DrawList::new(total, def.layers.len().min(MAX_LAYERS)),
             seed,
-            view: DEFAULT_VIEW,
+            viewport: DEFAULT_VIEWPORT,
+            camera: (0.0, 0.0, 1.0),
+            pointer: None,
+            click: None,
             time: 0.0,
             ticks: 0,
             acc_ms: 0.0,
             speed: 1.0,
             density: 1.0,
+            size: 1.0,
+            wind: (0.0, 0.0),
             last_substeps: 0,
         };
-        // (Density is 1 at load: each emitter up to its own max.)
-        for e in s.emitters.iter_mut() {
-            e.prewarm(&mut s.pool, &mut s.rng, s.view, usize::MAX);
+        let view = s.view;
+        for k in 0..s.emitters.len() {
+            let limit = s.limit_of(k);
+            let e = &mut s.emitters[k];
+            e.prewarm(&mut s.pool, view, limit);
         }
         s.fill();
         s
     }
 
-    /// The live particles allowed in emitter `e` at the present density.
-    fn limit_of(&self, e: usize) -> usize {
-        let max = self.emitters.get(e).map(|x| x.max).unwrap_or(0);
-        ((max as f32) * self.density + 0.5) as usize
-    }
-
-    /// The viewport (CSS pixels). Particles keep their place as a share of it.
-    pub fn viewport(&mut self, w: f32, h: f32) {
-        let w = clampf(w, 1.0, MAX_VIEW);
-        let h = clampf(h, 1.0, MAX_VIEW);
-        let (kx, ky) = (w / self.view.w, h / self.view.h);
-        if kx != 1.0 || ky != 1.0 {
-            for e in &self.emitters {
-                for i in e.range() {
-                    self.pool.px[i] *= kx;
-                    self.pool.py[i] *= ky;
+    fn param_value(&self, p: Option<usize>) -> f32 {
+        match p {
+            Some(i) if i < self.values.len() => {
+                // (The value as a share of its declared range.)
+                let d = &self.params[i];
+                if d.max > d.min {
+                    (self.values[i] - d.min) / (d.max - d.min)
+                } else {
+                    1.0
                 }
             }
+            _ => 1.0,
         }
-        self.view = View { w, h };
+    }
+
+    /// The live particles allowed in emitter `e`: its max × the density (the scene's, its group's, its param's).
+    fn limit_of(&self, e: usize) -> usize {
+        match self.emitters.get(e) {
+            Some(x) => {
+                let g = self.groups.get(x.group).map(|g| g.0).unwrap_or(1.0);
+                ((x.max as f32) * clampf(self.density * g * self.param_value(x.density_param), 0.0, 1.0) + 0.5) as usize
+            }
+            None => 0,
+        }
+    }
+
+    /// The fit's scale and offset (CSS pixels) of the scene space in the window.
+    fn fit(&self) -> (f32, f32, f32) {
+        let (w, h) = self.viewport;
+        let (kx, ky) = (w / self.space.w, h / self.space.h);
+        let s = if self.space.cover { kx.max(ky) } else { kx.min(ky) };
+        (s, (w - self.space.w * s) * 0.5, (h - self.space.h * s) * 0.5)
+    }
+
+    /// A layer's transform (scale, tx, ty): the fit, the camera's zoom and shift times the layer's parallax. The shift
+    /// is at most 80 % of the overscan margin, so no edge ever shows.
+    pub fn transform(&self, parallax: f32) -> (f32, f32, f32) {
+        let (s, _, _) = self.fit();
+        let (w, h) = self.viewport;
+        let (cx, cy, zoom) = self.camera;
+        let k = s * (1.0 + (zoom - 1.0) * parallax);
+        let (mx, my) = (self.space.w * self.space.overscan * s * 0.8, self.space.h * self.space.overscan * s * 0.8);
+        (k, w * 0.5 - self.space.w * 0.5 * k - cx * parallax * mx, h * 0.5 - self.space.h * 0.5 * k - cy * parallax * my)
+    }
+
+    /// The window (CSS pixels). Particles never move: only the transform changes.
+    pub fn viewport(&mut self, w: f32, h: f32) {
+        self.viewport = (clampf(w, 1.0, MAX_VIEWPORT), clampf(h, 1.0, MAX_VIEWPORT));
         self.fill();
     }
 
-    /// A theme colour for role `i` (0xRRGGBBAA); false when there is no such role.
-    pub fn palette(&mut self, i: u32, rgba: u32) -> bool {
-        if (i as usize) < self.roles {
-            self.palette[i as usize] = rgba;
-            true
-        } else {
-            false
-        }
-    }
-    pub fn roles(&self) -> usize {
-        self.roles
+    /// The camera: a shift (−1…1 each way, scaled by each layer's parallax) and a zoom (1–1.5).
+    pub fn camera(&mut self, px: f32, py: f32, zoom: f32) {
+        self.camera = (clampf(px, -1.0, 1.0), clampf(py, -1.0, 1.0), clampf(zoom, 1.0, 1.5));
+        self.fill();
     }
 
-    /// Speed (0–4: 1 normal, 0.5 Reduced, 0 stopped) or density (0–1 of each emitter's max).
+    /// The pointer (CSS pixels; outside the window or NaN: none). `buttons` is kept for later reactions.
+    pub fn pointer(&mut self, x: f32, y: f32, _buttons: u32) {
+        let (w, h) = self.viewport;
+        self.pointer = if x >= 0.0 && y >= 0.0 && x <= w && y <= h { Some((x, y)) } else { None };
+    }
+
+    /// A click (CSS pixels): answered once, at the next fixed step.
+    pub fn click(&mut self, x: f32, y: f32) {
+        let (w, h) = self.viewport;
+        if x >= 0.0 && y >= 0.0 && x <= w && y <= h {
+            self.click = Some((x, y));
+        }
+    }
+
+    /// A point of the window (CSS pixels) in a layer's scene space.
+    fn to_scene(&self, p: (f32, f32), parallax: f32) -> (f32, f32) {
+        let (k, tx, ty) = self.transform(parallax);
+        ((p.0 - tx) / k, (p.1 - ty) / k)
+    }
+
+    /// A palette entry's colour (0xRRGGBBAA), as the page resolved it for the theme now.
+    pub fn palette(&mut self, i: u32, rgba: u32) -> bool {
+        match self.palette.get_mut(i as usize) {
+            Some(p) => {
+                *p = rgba;
+                true
+            }
+            None => false,
+        }
+    }
+    pub fn palette_get(&self, i: u32) -> Option<u32> {
+        self.palette.get(i as usize).copied()
+    }
+    pub fn roles(&self) -> usize {
+        self.palette.len()
+    }
+
+    /// An engine-wide parameter (speed 0–4, density 0–1, wind x/y −400…400 units/s, size 0.25–4) or a file's own
+    /// (`PARAM_FILE + i`, clamped to its declared range).
     pub fn param(&mut self, id: u32, v: f32) -> bool {
         match id {
             PARAM_SPEED => self.speed = clampf(v, 0.0, 4.0),
             PARAM_DENSITY => self.density = clampf(v, 0.0, 1.0),
+            PARAM_WIND_X => self.wind.0 = clampf(v, -400.0, 400.0),
+            PARAM_WIND_Y => self.wind.1 = clampf(v, -400.0, 400.0),
+            PARAM_SIZE => self.size = clampf(v, 0.25, 4.0),
+            _ if id >= PARAM_FILE && ((id - PARAM_FILE) as usize) < self.params.len() => {
+                let i = (id - PARAM_FILE) as usize;
+                let d = &self.params[i];
+                self.values[i] = clampf(v, d.min, d.max);
+            }
             _ => return false,
         }
+        self.fill();
         true
+    }
+    pub fn param_get(&self, id: u32) -> Option<f32> {
+        match id {
+            PARAM_SPEED => Some(self.speed),
+            PARAM_DENSITY => Some(self.density),
+            PARAM_WIND_X => Some(self.wind.0),
+            PARAM_WIND_Y => Some(self.wind.1),
+            PARAM_SIZE => Some(self.size),
+            _ if id >= PARAM_FILE => self.values.get((id - PARAM_FILE) as usize).copied(),
+            _ => None,
+        }
+    }
+
+    /// A group's density (0–1) and size (0.25–4): a mixer shares one budget between a base and its overlays.
+    pub fn group(&mut self, g: u32, density: f32, size: f32) -> bool {
+        match self.groups.get_mut(g as usize) {
+            Some(x) => {
+                *x = (clampf(density, 0.0, 1.0), clampf(size, 0.25, 4.0));
+                self.fill();
+                true
+            }
+            None => false,
+        }
     }
 
     /// Time passes (`dt_ms`, the page's frame gap): fixed steps for it, then the draw list rebuilt. Returns the
@@ -177,42 +359,95 @@ impl Scene {
 
     /// One fixed step of 1/60 s.
     pub fn substep(&mut self) {
-        let (dt, t, seed, view) = (STEP_S, self.time, self.seed, self.view);
+        let (dt, t, view) = (STEP_S, self.time, self.view);
         for k in 0..self.emitters.len() {
             let limit = self.limit_of(k);
+            let parallax = self.graph.layers.get(self.emitters[k].layer).map(|l| l.parallax).unwrap_or(0.5);
+            let ctl = Control { pointer: self.pointer.map(|p| self.to_scene(p, parallax)), click: self.click.map(|p| self.to_scene(p, parallax)) };
             let e = &mut self.emitters[k];
-            accelerate(&e.ops, &mut self.pool, e.range(), dt, t, seed.wrapping_add(k as u32 * 0x9E37));
-            integrate(&mut self.pool, e.range(), dt);
+            let wind = (self.wind.0 * e.wind, self.wind.1 * e.wind);
+            accelerate(&e.ops, &mut self.pool, e.range(), dt, t, e.noise_seed, &ctl);
+            integrate(&mut self.pool, e.range(), dt, wind);
             constrain(&e.ops, &mut self.pool, e.range(), view);
             e.reap(&mut self.pool);
-            e.emit(&mut self.pool, &mut self.rng, view, dt, limit);
+            e.emit(&mut self.pool, view, dt, limit);
         }
+        for (li, f) in self.scenery.fog.iter_mut().enumerate() {
+            if let Some(f) = f {
+                let p = self.graph.layers.get(li).map(|l| l.parallax).unwrap_or(0.5);
+                f.step(dt, self.wind.0 * p, view.x0, view.x1);
+            }
+        }
+        self.click = None;
         self.ticks += 1;
         self.time = self.ticks as f64 / 60.0;
     }
 
-    /// The draw list: far layers first, each particle's alpha with its fade and its layer's opacity.
+    /// The command list and the instances: every layer in file order, each particle's alpha with its fade and its
+    /// layer's opacity, its colour from the palette.
     fn fill(&mut self) {
         self.draw.clear();
-        for &li in &self.graph.order {
+        for li in 0..self.graph.layers.len() {
             let layer = &self.graph.layers[li];
+            let info = match self.info.get(li) {
+                Some(i) => i,
+                None => continue,
+            };
+            let first = self.draw.count();
+            let li8 = li.min(255) as u8;
             for &ei in &layer.emitters {
                 let e = &self.emitters[ei];
+                let gsize = self.groups.get(e.group).map(|g| g.1).unwrap_or(1.0) * self.size * size_mult(&self.params, &self.values, e.size_param);
                 for i in e.range() {
                     let p = &self.pool;
                     let a = p.alpha[i] * fade(&e.ops, p.age[i], p.life[i]) * layer.opacity;
+                    let sx = p.size[i] * gsize;
                     #[allow(clippy::neg_cmp_op_on_partial_ord)]
-                    if !(a >= MIN_ALPHA) || !(p.size[i] > 0.0) {
+                    if !(a >= MIN_ALPHA) || !(sx > 0.0) {
                         continue;
                     }
-                    self.draw.push(Inst { x: p.px[i], y: p.py[i], size: p.size[i], rot: p.rot[i], alpha: a, sprite: p.sprite[i], colour: p.colour[i], depth: layer.depth });
+                    let c = p.colour[i];
+                    let rgba = self.palette.get(c as usize).copied().unwrap_or(0x8080_80ff);
+                    self.draw.push(Inst { x: p.px[i], y: p.py[i], sx, sy: sx * p.stretch[i], rot: p.rot[i], alpha: a.min(1.0), rgba, sprite: p.sprite[i], layer: li8, depth: layer.depth, colour: c });
                 }
             }
+            if let Some(Some(f)) = self.scenery.fog.get(li) {
+                let rgba = self.palette.get(f.colour as usize).copied().unwrap_or(0x8080_80ff);
+                for i in 0..f.x.len() {
+                    let a = f.a[i] * layer.opacity;
+                    if a >= MIN_ALPHA {
+                        self.draw.push(Inst { x: f.x[i], y: f.y[i], sx: f.w[i], sy: f.w[i] * 0.32, rot: 0.0, alpha: a.min(1.0), rgba, sprite: 4, layer: li8, depth: layer.depth, colour: f.colour });
+                    }
+                }
+            }
+            let (scale, tx, ty) = self.transform(layer.parallax);
+            let geom_len = self.scenery.geom.get(li).map(|g| g.len()).unwrap_or(0) as u32;
+            self.draw.push_cmd(Cmd {
+                kind: info.kind,
+                blend: info.blend,
+                opacity: layer.opacity,
+                depth: layer.depth,
+                parallax: layer.parallax,
+                start: first as u32,
+                count: (self.draw.count() - first) as u32,
+                layer: li as u32,
+                scale,
+                tx,
+                ty,
+                is_static: info.is_static,
+                geom_len,
+                geom_ver: 1,
+                known: info.known,
+            });
         }
     }
 
     pub fn instances(&self) -> &DrawList {
         &self.draw
+    }
+    /// A layer's geometry (scenery.rs formats); empty for particles, fog and unknown kinds.
+    pub fn geom(&self, layer: usize) -> &[f32] {
+        self.scenery.geom.get(layer).map(|g| g.as_slice()).unwrap_or(&[])
     }
     pub fn last_substeps(&self) -> u32 {
         self.last_substeps
@@ -226,25 +461,37 @@ impl Scene {
     pub fn ticks(&self) -> u64 {
         self.ticks
     }
+    pub fn seed(&self) -> u32 {
+        self.seed
+    }
+    /// The scene space: (w, h, overscan).
+    pub fn transform_space(&self) -> (f32, f32, f32) {
+        (self.space.w, self.space.h, self.space.overscan)
+    }
 
-    /// A hash of everything the simulation holds (positions, velocities, ages…, the random stream, the clock): two
-    /// runs agree exactly or not at all.
+    /// A hash of everything the simulation holds (positions, velocities, ages…, the random streams, the clock, the fog):
+    /// two runs agree exactly or not at all.
     pub fn state_hash(&self) -> u32 {
         let mut h = Fnv::new();
         h.u64(self.ticks);
         h.f32(self.acc_ms);
-        let (a, b) = self.rng.state_bits();
-        h.u64(a);
-        h.u64(b);
         for e in &self.emitters {
+            let (a, b) = e.rng.state_bits();
+            h.u64(a);
+            h.u64(b);
             h.u32(e.live as u32);
             h.f32(e.carry);
             let p = &self.pool;
             for i in e.range() {
-                for v in [p.px[i], p.py[i], p.vx[i], p.vy[i], p.age[i], p.life[i], p.size[i], p.rot[i], p.spin[i], p.alpha[i]] {
+                for v in [p.px[i], p.py[i], p.vx[i], p.vy[i], p.age[i], p.life[i], p.size[i], p.stretch[i], p.rot[i], p.spin[i], p.alpha[i]] {
                     h.f32(v);
                 }
                 h.u32(p.colour[i] as u32 | (p.sprite[i] as u32) << 8);
+            }
+        }
+        for f in self.scenery.fog.iter().flatten() {
+            for &x in &f.x {
+                h.f32(x);
             }
         }
         h.fold()
@@ -254,32 +501,57 @@ impl Scene {
     pub fn all_finite(&self) -> bool {
         let p = &self.pool;
         self.emitters.iter().all(|e| e.range().all(|i| [p.px[i], p.py[i], p.vx[i], p.vy[i], p.age[i], p.life[i], p.size[i], p.rot[i], p.alpha[i]].iter().all(|v| v.is_finite())))
-            && self.draw.floats().iter().all(|v| v.is_finite())
+            && self.draw.all_finite()
+            && self.draw.cmd_floats().iter().all(|v| v.is_finite())
+    }
+}
+
+/// An emitter's size param as a multiplier: its share of the declared range × 2 (the middle is 1), 0.1–2.
+fn size_mult(params: &[ParamDef], values: &[f32], p: Option<usize>) -> f32 {
+    match p {
+        Some(i) if i < params.len() => {
+            let d = &params[i];
+            let share = if d.max > d.min { (values[i] - d.min) / (d.max - d.min) } else { 0.5 };
+            clampf(share * 2.0, 0.1, 2.0)
+        }
+        _ => 1.0,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drawlist::{CMD_STRIDE, C_COUNT, C_KIND, C_SCALE, C_START, C_STATIC, C_TX, I_X, I_Y};
 
     const MOTES: &str = include_str!("../../../src/theme/scenes/motes.json");
+    const SNOW: &str = include_str!("../../../src/theme/scenes/night-snowfall.json");
+    #[test]
+    fn golden_hash() {
+        let mut s = Scene::load(MOTES.as_bytes(), 42).unwrap();
+        s.viewport(1312.0, 832.0);
+        for _ in 0..600 {
+            s.step(1000.0 / 60.0);
+        }
+        assert_eq!(s.state_hash(), super::GOLDEN, "the golden hash changed: put the new number in golden.txt only if the change was meant");
+    }
 
     #[test]
     fn same_seed_same_state() {
-        let mut a = Scene::load(MOTES.as_bytes(), 7).unwrap();
-        let mut b = Scene::load(MOTES.as_bytes(), 7).unwrap();
-        let mut c = Scene::load(MOTES.as_bytes(), 8).unwrap();
-        assert_eq!(a.state_hash(), b.state_hash());
-        assert_ne!(a.state_hash(), c.state_hash());
-        for k in 0..600 {
-            let dt = 10.0 + (k % 7) as f32 * 3.0;
-            a.step(dt);
-            b.step(dt);
-            c.step(dt);
+        for src in [MOTES, SNOW] {
+            let mut a = Scene::load(src.as_bytes(), 7).unwrap();
+            let mut b = Scene::load(src.as_bytes(), 7).unwrap();
+            let mut c = Scene::load(src.as_bytes(), 8).unwrap();
+            assert_eq!(a.state_hash(), b.state_hash());
+            assert_ne!(a.state_hash(), c.state_hash());
+            for k in 0..600 {
+                let dt = 10.0 + (k % 7) as f32 * 3.0;
+                a.step(dt);
+                b.step(dt);
+                c.step(dt);
+            }
+            assert_eq!(a.state_hash(), b.state_hash());
+            assert_ne!(a.state_hash(), c.state_hash());
         }
-        assert_eq!(a.state_hash(), b.state_hash());
-        assert_ne!(a.state_hash(), c.state_hash());
-        // (The same time in other frame gaps: the same fixed steps → the same state.)
         let mut d = Scene::load(MOTES.as_bytes(), 7).unwrap();
         let mut e = Scene::load(MOTES.as_bytes(), 7).unwrap();
         for _ in 0..120 {
@@ -288,8 +560,57 @@ mod tests {
         for _ in 0..240 {
             e.step(STEP_MS);
         }
-        assert_eq!(d.ticks(), e.ticks());
         assert_eq!(d.state_hash(), e.state_hash());
+    }
+
+    #[test]
+    fn resize_zoom_and_parallax_never_move_particles() {
+        let mut s = Scene::load(SNOW.as_bytes(), 3).unwrap();
+        let h0 = s.state_hash();
+        s.viewport(400.0, 900.0);
+        s.camera(1.0, -1.0, 1.4);
+        s.viewport(3000.0, 600.0);
+        assert_eq!(s.state_hash(), h0);
+        // (The same steps after: the same state as a scene never resized.)
+        let mut t = Scene::load(SNOW.as_bytes(), 3).unwrap();
+        for _ in 0..300 {
+            s.step(STEP_MS);
+            t.step(STEP_MS);
+        }
+        assert_eq!(s.state_hash(), t.state_hash());
+    }
+
+    #[test]
+    fn the_command_list() {
+        let mut s = Scene::load(SNOW.as_bytes(), 1).unwrap();
+        s.viewport(1280.0, 800.0);
+        s.step(STEP_MS);
+        let d = s.instances();
+        assert_eq!(d.cmd_count(), 10);
+        let c = d.cmd_floats();
+        let at = |k: usize, f: usize| c[k * CMD_STRIDE + f];
+        // (Sky first, static, no instances; the particle and fog layers cover every instance, in order, once.)
+        assert_eq!((at(0, C_KIND), at(0, C_STATIC), at(0, C_COUNT)), (1.0, 1.0, 0.0));
+        let mut next = 0.0;
+        for k in 0..10 {
+            assert_eq!(at(k, C_START), next);
+            next += at(k, C_COUNT);
+        }
+        assert_eq!(next as usize, d.count());
+        // (Cover: 1280×800 from 1600×1000 is a scale of 0.8, centred.)
+        assert!((at(0, C_SCALE) - 0.8).abs() < 1e-6 && at(0, C_TX).abs() < 1e-3);
+        // (Every instance of a layer inside the scene's bounds with its margin.)
+        let (x0, y0, x1, y1) = bounds(&s.space);
+        for k in 0..d.count() {
+            let (x, y) = (d.get(k, I_X), d.get(k, I_Y));
+            assert!(x >= x0 - 400.0 && x <= x1 + 400.0 && y >= y0 - 60.0 && y <= y1 + 60.0, "{x} {y}");
+        }
+        // (A camera shift moves near layers more than far ones, and never further than the overscan.)
+        s.camera(1.0, 0.0, 1.0);
+        let c = s.instances().cmd_floats();
+        let (far, near) = (c[CMD_STRIDE + C_TX], c[7 * CMD_STRIDE + C_TX]);
+        assert!(near < far && far < 0.0 && near > -(1600.0 * 0.06 * 0.8));
+        assert!(!s.geom(0).is_empty() && s.geom(3).is_empty());
     }
 
     #[test]
@@ -305,58 +626,99 @@ mod tests {
         assert_eq!(s.ticks(), MAX_SUBSTEPS as u64);
         for bad in [f32::NAN, f32::INFINITY, -5.0, f32::NEG_INFINITY] {
             s.step(bad);
+            s.viewport(bad, bad);
+            s.camera(bad, bad, bad);
+            s.pointer(bad, bad, 0);
+            s.click(bad, bad);
             assert!(s.all_finite());
         }
     }
 
     #[test]
     fn caps_hold_and_long_runs_stay_finite() {
-        let mut s = Scene::load(MOTES.as_bytes(), 3).unwrap();
-        let cap = s.capacity();
-        assert!(cap <= crate::scenefile::MAX_TOTAL as usize);
-        s.viewport(1920.0, 1080.0);
-        for k in 0..36_000 {
-            // (10 minutes of scene time, with resizes and speed changes on the way.)
-            s.step(STEP_MS);
-            if k % 5000 == 0 {
-                s.viewport(400.0 + k as f32 / 10.0, 300.0 + k as f32 / 20.0);
+        for src in [MOTES, SNOW] {
+            let mut s = Scene::load(src.as_bytes(), 3).unwrap();
+            let cap = s.capacity();
+            assert!(cap <= crate::scenefile::MAX_TOTAL as usize);
+            s.viewport(1920.0, 1080.0);
+            for k in 0..36_000 {
+                // (10 minutes of scene time, with resizes, the pointer, clicks and wind on the way.)
+                s.step(STEP_MS);
+                if k % 5000 == 0 {
+                    s.viewport(400.0 + k as f32 / 10.0, 300.0 + k as f32 / 20.0);
+                    s.param(PARAM_WIND_X, (k % 3) as f32 * 40.0 - 40.0);
+                }
+                if k % 97 == 0 {
+                    s.pointer((k % 800) as f32, (k % 500) as f32, 0);
+                    s.click((k % 700) as f32, 200.0);
+                }
+                assert!(s.live() <= cap);
             }
-            assert!(s.live() <= cap);
-            assert!(s.instances().count() <= cap);
-        }
-        assert!(s.all_finite());
-        assert!(s.live() > cap / 2, "the scene keeps itself populated: {} of {}", s.live(), cap);
-        // (Every instance inside the viewport and its margin, alpha 0–1, its colour a role.)
-        let f = s.instances().floats();
-        for k in 0..s.instances().count() {
-            let v = &f[k * 8..k * 8 + 8];
-            assert!(v[0] >= -41.0 && v[0] <= s.view.w + 41.0 && v[1] >= -41.0 && v[1] <= s.view.h + 41.0, "{v:?}");
-            assert!(v[4] > 0.0 && v[4] <= 1.0);
-            assert!((v[6] as usize) < s.roles());
+            assert!(s.all_finite());
+            assert!(s.live() > cap / 2, "the scene keeps itself populated: {} of {}", s.live(), cap);
+            let d = s.instances();
+            for k in 0..d.count() {
+                let a = d.get(k, crate::drawlist::I_ALPHA);
+                assert!(a > 0.0 && a <= 1.0);
+                assert!((d.get(k, crate::drawlist::I_COLOUR) as usize) < s.roles());
+            }
         }
     }
 
     #[test]
-    fn density_and_speed() {
-        let mut s = Scene::load(MOTES.as_bytes(), 4).unwrap();
+    fn pointer_and_click_reach_particles() {
+        let mut a = Scene::load(MOTES.as_bytes(), 5).unwrap();
+        let mut b = Scene::load(MOTES.as_bytes(), 5).unwrap();
+        a.viewport(1280.0, 800.0);
+        b.viewport(1280.0, 800.0);
+        a.pointer(640.0, 400.0, 0);
+        a.click(640.0, 400.0);
+        for _ in 0..30 {
+            a.step(STEP_MS);
+            b.step(STEP_MS);
+        }
+        assert_ne!(a.state_hash(), b.state_hash(), "the pointer and the click changed the motion");
+        let mut c = Scene::load(MOTES.as_bytes(), 5).unwrap();
+        c.viewport(1280.0, 800.0);
+        c.pointer(-5.0, 400.0, 0);
+        c.click(99999.0, 1.0);
+        for _ in 0..30 {
+            c.step(STEP_MS);
+        }
+        assert_eq!(c.state_hash(), b.state_hash(), "outside the window: nothing");
+    }
+
+    #[test]
+    fn params_groups_and_density() {
+        let mut s = Scene::load(SNOW.as_bytes(), 4).unwrap();
         let full = s.live();
-        assert!(s.param(PARAM_DENSITY, 0.25));
-        for _ in 0..60 * 30 {
+        assert!(s.param(PARAM_FILE, 0.25));
+        assert_eq!(s.param_get(PARAM_FILE), Some(0.25));
+        assert!(s.param(PARAM_FILE, 9.0));
+        assert_eq!(s.param_get(PARAM_FILE), Some(1.0));
+        assert!(!s.param(PARAM_FILE + 1, 1.0));
+        assert!(s.group(0, 0.25, 2.0));
+        assert!(!s.group(9, 1.0, 1.0));
+        for _ in 0..60 * 80 {
             s.step(STEP_MS);
         }
-        assert!(s.live() <= full / 4 + 3, "{} of {}", s.live(), full);
+        assert!(s.live() <= full / 4 + 4, "{} of {}", s.live(), full);
+        // (The group's size doubles every flake.)
+        let d = s.instances();
+        assert!((0..d.count()).filter(|&k| d.get(k, crate::drawlist::I_SPRITE) != 4.0).all(|k| d.get(k, crate::drawlist::I_SX) >= 6.0));
         assert!(s.param(PARAM_SPEED, 0.0));
         let h = s.state_hash();
         s.step(100.0);
         assert_eq!(s.state_hash(), h);
-        assert!(!s.param(99, 1.0));
+        assert!(!s.param(99, 1.0) && !s.param(5, 1.0));
         assert!(s.param(PARAM_SPEED, f32::NAN));
-        assert!(s.palette(0, 0x11223344) && !s.palette(8, 0));
+        assert!(s.palette(0, 0x11223344) && !s.palette(99, 0));
+        assert_eq!(s.palette_get(0), Some(0x11223344));
     }
 
     #[test]
     fn a_full_scene_of_4096() {
-        let em = (0..2).map(|_| "{\"max\":2048,\"rate\":200,\"initializers\":[{\"kind\":\"lifetime\",\"min\":5,\"max\":9},{\"kind\":\"velocity\",\"min\":[-9,-9],\"max\":[9,9]}],\"operators\":[{\"kind\":\"drift\"},{\"kind\":\"gravity\",\"y\":3},{\"kind\":\"drag\",\"k\":0.3},{\"kind\":\"bounds\",\"mode\":\"kill\"},{\"kind\":\"fade\"}]}").collect::<Vec<_>>().join(",");
+        let em = (0..2).map(|k| format!("{{\"id\":\"e{k}\",\"max\":2048,\"rate\":200,\"initializers\":[{{\"kind\":\"lifetime\",\"min\":5,\"max\":9}},{{\"kind\":\"velocity\",\"min\":[-9,-9],\"max\":[9,9]}}],\"operators\":[{{\"kind\":\"drift\"}},{{\"kind\":\"gravity\",\"y\":3}},{{\"kind\":\"drag\",\"k\":0.3}},{{\"kind\":\"bounds\",\"mode\":\"kill\"}},{{\"kind\":\"fade\"}}]}}")).collect::<Vec<_>>().join(",");
         let text = format!("{{\"format\":\"ktscene/1\",\"emitters\":[{}]}}", em);
         let mut s = Scene::load(text.as_bytes(), 9).unwrap();
         assert_eq!(s.capacity(), 4096);

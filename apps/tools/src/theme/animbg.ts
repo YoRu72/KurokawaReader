@@ -12,7 +12,7 @@
 // it cannot be seen or should not move (see `Gate`). Text stays readable: the colours are drawn nearer the ground until
 // every text role passes WCAG AA over the brightest and darkest colour any frame can show (`clampPalette`).
 //
-// Scenes («scene:motes»): particles simulated by our Rust engine (core/kt-scene, loaded as wasm by sceneHost.ts, both
+// Scenes («scene:motes», «scene:night-snowfall»): compositions simulated by our Rust engine (core/kt-scene, loaded as wasm by sceneHost.ts, both
 // fetched only when a scene is chosen) and drawn on the same canvas, under the same gate, throttle and teardown. When
 // the engine cannot be loaded the background is «drift» instead, and one console.info line says why.
 import { getSettings } from '../settings';
@@ -22,7 +22,7 @@ import type { SceneRun } from './sceneHost';
 /** The two drawn designs. */
 export type Design = 'drift' | 'flow';
 /** The scenes of the engine. */
-export type SceneKind = 'scene:motes';
+export type SceneKind = 'scene:motes' | 'scene:night-snowfall';
 export type AnimKind = Design | SceneKind;
 export type AnimPref = 'off' | 'match' | AnimKind;
 export type AnimLevel = 'full' | 'reduced' | 'still';
@@ -134,25 +134,22 @@ export function readPalette(kind: Design, host: Element = document.documentEleme
   const pal = clampPalette(ground, cols.map(noYellow), texts);
   return { light, ground, cols: pal.cols, texts, worst: pal.worst };
 }
-/** A scene's colours: each of its palette roles (a theme role's name, e.g. «primary-container») read from the theme
- *  — a theme's own three animation colours standing in for the three containers —, drawn toward the primary so small
- *  soft dots still show (lighter in dark, a deeper cool tone in light), no yellow, and every text role kept at 4.5:1
- *  over them as over the designs. */
-export function sceneColours(roles: string[], host: Element = document.documentElement): { cols: RGBA[]; worst: number } {
+/** What a scene needs of the theme now (sceneHost.ts SceneTheme): light or dark, the ground, the text roles, a role's
+ *  colour by name (a theme's own three animation colours standing in for the three containers), the no-yellow rule.
+ *  The scene's own palette and the contrast rule (scrim map, particle cap) are the host's. */
+export function sceneTheme(host: Element = document.documentElement): { light: boolean; ground: RGBA; texts: RGBA[]; panel: RGBA | null; role(name: string): RGBA; noYellow(c: RGBA): RGBA } {
   const html = document.documentElement; const light = html.dataset.ui === 'light';
   const ground = cssColour(host, 'var(--th-ground, var(--md-surface))', light ? [238, 240, 246, 1] : [18, 19, 20, 1]);
   const texts = ['var(--md-on-surface)', 'var(--md-on-surface-variant)', 'var(--md-on-surface-dim, var(--md-on-surface-variant))'].map((v) => cssColour(host, v, light ? [24, 27, 35, 1] : [228, 228, 230, 1]));
   const own = html.dataset.anim && getComputedStyle(html).getPropertyValue('--th-anim-a').trim();
   const OWN: Record<string, string> = { 'primary-container': '--th-anim-a', 'tertiary-container': '--th-anim-b', 'secondary-container': '--th-anim-c' };
   const p = noYellow(cssColour(host, 'var(--md-primary)', light ? [61, 78, 153, 1] : [201, 204, 210, 1]));
-  const lift = (c: RGBA, k: number): RGBA => { const l = (c[0] + c[1] + c[2]) / 3; return [l + (c[0] - l) * k, l + (c[1] - l) * k, l + (c[2] - l) * k, 1].map((v, i) => (i < 3 ? Math.max(0, Math.min(255, v)) : v)) as RGBA; };
-  const cols = roles.map((r) => {
-    const name = /^[a-z][a-z-]{0,40}$/.test(r) ? r : 'primary';
-    const c = noYellow(cssColour(host, own && OWN[name] ? `var(${OWN[name]})` : `var(--md-${name}, var(--md-primary))`, p));
-    return noYellow(light ? lift(mix(c, p, 0.7), 1.8) : lift(mix(c, p, 0.6), 2.2));
-  });
-  const pal = clampPalette(ground, cols, texts);
-  return { cols: pal.cols, worst: pal.worst };
+  const roles = new Map<string, RGBA>();
+  // (The glass panels' own tint — before the scenes' scrim is mixed in —; solid panels need none.)
+  const glass = html.dataset.glass && html.dataset.glass !== 'off';
+  const panel = glass ? cssColour(host, 'var(--g-card-t)', light ? [255, 255, 255, 0.6] : [20, 22, 26, 0.6]) : null;
+  return { light, ground, texts, panel, noYellow,
+    role: (r: string): RGBA => { const name = /^[a-z][a-z-]{0,40}$/.test(r) ? r : 'primary'; let c = roles.get(name); if (!c) { c = cssColour(host, own && OWN[name] ? `var(${OWN[name]})` : `var(--md-${name}, var(--md-primary))`, p); roles.set(name, c); } return c; } };
 }
 
 /* ---------- the two designs ---------- */
@@ -272,9 +269,12 @@ const gate = {
     add(document, 'scroll', busy, { capture: true, passive: true });
     add(window, 'wheel', busy, { passive: true });
     add(window, 'pointermove', ((e: PointerEvent) => { if (e.buttons) busy(); for (const i of insts) i.pointer(e); }) as EventListener, { passive: true });
+    // (A click on the bare background — not on anything that answers clicks — reaches a scene.)
+    add(window, 'pointerdown', ((e: PointerEvent) => { const t = e.target as Element | null; if (t?.closest?.('button,a,input,select,textarea,label,summary,[role],[tabindex],[contenteditable]')) return; for (const i of insts) i.click(e); }) as EventListener, { passive: true });
     add(document, 'dragover', busy, { capture: true, passive: true });
     add(window, 'resize', () => { for (const i of insts) i.resize(); }, { passive: true });
-    add(window, 'hashchange', () => prune());
+    // (Another view: the scenes' scrim made again for its text, once it is drawn and once more when it has settled.)
+    add(window, 'hashchange', () => { prune(); const t = performance.now(); for (const i of insts) if (i.scene) i.rebakeAt = [t + 700, t + 2500]; });
     add(window, 'kt:animbg', ((e: CustomEvent<{ seek?: number | null }>) => { for (const i of insts) i.seek(e.detail?.seek ?? null); }) as EventListener);
     const mq = matchMedia('(prefers-reduced-motion: reduce)'); add(mq, 'change', upd);
     const nb = navigator as Navigator & { getBattery?(): Promise<EventTarget & { level: number; charging: boolean }> };
@@ -315,6 +315,8 @@ const CSS = `html.abg body{background:transparent}html.abg{background:var(--th-g
 #kt-animbg{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;contain:strict}
 .abg-canvas{position:absolute;inset:-16px;width:calc(100% + 32px);height:calc(100% + 32px);display:block;will-change:transform}
 .abg-grain{position:absolute;inset:0;background-size:96px 96px;pointer-events:none}
+html.abg-scene[data-glass]:not([data-glass='off']) :is(.task-card,.video-row,.video-folder,.files-section,.release-group,.doh-card,.screen-step,.files-job,.list-row,.empty){background-image:linear-gradient(var(--abg-veil,transparent),var(--abg-veil,transparent))}
+html.abg-scene[data-glass]:not([data-glass='off']){--g-pane:color-mix(in srgb,var(--th-ground) var(--abg-scrim,0%),var(--g-pane-t));--g-card:color-mix(in srgb,var(--th-ground) var(--abg-scrim,0%),var(--g-card-t));--g-sheet:color-mix(in srgb,var(--th-ground) var(--abg-scrim,0%),var(--g-sheet-t))}
 html.pc.abg:not([data-glass]) .downloads-view .body>.chips{background:transparent}
 html.pc.abg:not([data-glass]) .downloads-view>.topbar{background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
 .settings-view .card>.row.abg-row:not([hidden]){flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:6px}.settings-view .card>.row.abg-row>*{margin-inline:0;align-self:flex-start;text-align:start}.settings-view .card>.row.abg-row>.abg-now{text-align:start;align-self:stretch;margin-inline:0}
@@ -349,12 +351,43 @@ function perfHook(): void {
 }
 
 /* ---------- an instance: a canvas, its grain, its clock ---------- */
-let fellBack = false;
-/** Said once a page, quietly: the scene engine could not be loaded, so «drift» is drawn instead. */
+const saidFallback = new Set<string>();
+/** Said once a page for each reason, quietly: why «drift» is drawn instead of the scene. */
 function noteFallback(why: unknown): void {
-  if (fellBack) return; fellBack = true;
-  console.info(`[animbg] scene engine unavailable (${why instanceof Error ? why.message : String(why)}): drawing «drift» instead`);
+  const name = (why as { ktKind?: string } | null)?.ktKind ?? ''; const msg = why instanceof Error ? why.message : String(why);
+  const line = name === 'unknown' ? `[animbg] ${msg}: drawing «drift» instead`
+    : name === 'trap' ? `[animbg] the scene engine stopped (${msg}): drawing «drift» instead`
+    : `[animbg] scene engine unavailable (${msg}): drawing «drift» instead`;
+  if (saidFallback.has(name)) return; saidFallback.add(name);
+  console.info(line);
 }
+/** Where text sits with no panel under it: rectangles in the background canvas's CSS pixels (it reaches 16 px past the
+ *  window). A panel is an element with a glass blur or a background at least a third opaque. */
+function bareText(): { x: number; y: number; w: number; h: number }[] {
+  const out: { x: number; y: number; w: number; h: number }[] = []; const panel = new Map<Element, boolean>();
+  const isPanel = (el: Element | null): boolean => {
+    const seen: Element[] = []; let v = false;
+    for (let a = el; a && a !== document.documentElement; a = a.parentElement) {
+      const c = panel.get(a); if (c !== undefined) { v = c; break; }
+      seen.push(a); const st = getComputedStyle(a);
+      const bf = st.backdropFilter || (st as unknown as { webkitBackdropFilter?: string }).webkitBackdropFilter || 'none';
+      const bg = st.backgroundColor; let alpha = 0;
+      if (bg && bg !== 'transparent') { const m = /\/\s*([\d.]+%?)\s*\)/.exec(bg) || /rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/.exec(bg); alpha = m ? (m[1].endsWith('%') ? parseFloat(m[1]) / 100 : parseFloat(m[1])) : 1; }
+      if ((bf && bf !== 'none') || alpha >= 0.35) { v = true; break; }
+    }
+    for (const a of seen) panel.set(a, v);
+    return v;
+  };
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n: Node | null; let k = 0;
+  while ((n = w.nextNode()) && k < 4000) {
+    k++; if (!n.nodeValue || !n.nodeValue.trim()) continue; const el = n.parentElement; if (!el || el.closest('#kt-animbg,script,style,[hidden]')) continue;
+    const r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
+    if (!isPanel(el)) out.push({ x: r.left + 16, y: r.top + 16, w: r.width, h: r.height });
+  }
+  return out;
+}
+/** (Tests only, with the perf flag: a scene throws as a trap would after this many steps.) */
+const trapAfter = (): number => { const v = (window as unknown as { __ktSceneTrapAfter?: unknown }).__ktSceneTrapAfter; return PERF && typeof v === 'number' ? v : -1; };
 class Inst {
   canvas: HTMLCanvasElement; g: CanvasRenderingContext2D | null; grainEl: HTMLElement; pal: Palette | null = null;
   vt: number; last = 0; timer = 0; raf = 0; drawn = false; held: number | null = null; dead = false;
@@ -364,6 +397,8 @@ class Inst {
   /** The design drawn (a scene's fallback: drift); a scene once loaded, and device pixels per CSS pixel of its canvas. */
   kind: Design; scene: SceneRun | null = null; sceneState: 'loading' | 'ready' | 'failed' | null = null; k = 1;
   pf: PerfCount = perfNew();
+  /** When to make the scene's static canvases and scrim again (the page's text moved); the panels' scrim set now. */
+  rebakeAt: number[] = []; scrimNow = -1;
   constructor(public host: HTMLElement, public asked: AnimKind, public level: AnimLevel, public seed: number, public global: boolean) {
     this.kind = isScene(asked) ? 'drift' : asked;
     this.canvas = document.createElement('canvas'); this.canvas.className = 'abg-canvas'; this.canvas.setAttribute('aria-hidden', 'true');
@@ -380,14 +415,19 @@ class Inst {
     try {
       const m = await import('./sceneHost'); const run = await m.openScene(id, this.seed);
       if (this.dead) { run.free(); return; }
-      this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene';
-      run.setColours(sceneColours(run.roles, this.host).cols); run.setSpeed(this.level === 'reduced' ? 0.6 : 1);
+      run.trapAfter = trapAfter(); if (this.global) run.bare = bareText;
+      run.setTheme(sceneTheme(this.host)); run.setSpeed(this.level === 'reduced' ? 0.6 : 1);
+      this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene'; const t = performance.now(); this.rebakeAt = [t + 800, t + 2500];
       this.w = this.h = 0; this.resize();
-    } catch (e) {
-      if (this.dead) return;
-      this.sceneState = 'failed'; this.host.dataset.engine = 'canvas'; this.host.dataset.fallback = 'drift'; noteFallback(e);
-      this.drawn = false; this.paint(); for (const w of watchers) w();
-    }
+    } catch (e) { this.sceneFailed(e); }
+  }
+  /** The scene could not start, or its engine trapped: everything of it let go, «drift» drawn from now on. */
+  sceneFailed(e: unknown): void {
+    if (this.dead) return;
+    const run = this.scene; this.scene = null; try { run?.free(); } catch { /* a poisoned engine: nothing to free */ }
+    this.scrim(-1);
+    this.sceneState = 'failed'; this.host.dataset.engine = 'canvas'; this.host.dataset.fallback = 'drift'; noteFallback(e);
+    this.w = this.h = 0; this.drawn = false; this.resize(); this.paint(); for (const w of watchers) w();
   }
   /** Drawing a scene (loaded, or still loading), not a design. */
   get sceneMode(): boolean { return isScene(this.asked) && this.sceneState !== 'failed'; }
@@ -399,7 +439,8 @@ class Inst {
     if (this.scene) {
       let k = this.scene.resolution * Math.min(2, Math.max(1, devicePixelRatio || 1)); const cap = 1_200_000;
       if (W * k * H * k > cap) k = Math.sqrt(cap / (W * H));
-      w = Math.max(16, Math.ceil(W * k)); h = Math.max(16, Math.ceil(H * k)); this.k = w / W; this.scene.viewport(W, H);
+      w = Math.max(16, Math.ceil(W * k)); h = Math.max(16, Math.ceil(H * k)); this.k = w / W;
+      try { this.scene.viewport(W, H); } catch (e) { this.sceneFailed(e); return; }
     } else {
       const f = this.kind === 'drift' ? 1 / 16 : 1 / 4; const cap = this.kind === 'drift' ? 24_000 : 260_000;
       w = Math.max(16, Math.ceil(W * f)); h = Math.max(16, Math.ceil(H * f)); const k = Math.min(1, Math.sqrt(cap / (w * h))); w = Math.ceil(w * k); h = Math.ceil(h * k);
@@ -409,21 +450,38 @@ class Inst {
   /** The theme's colours read again (a theme, a mode or an accent changed). */
   refresh(): void {
     this.pal = readPalette(this.kind, this.host); this.host.dataset.worst = this.pal.worst.toFixed(2);
-    if (this.scene) { const sc = sceneColours(this.scene.roles, this.host); this.scene.setColours(sc.cols); this.host.dataset.worst = Math.min(this.pal.worst, sc.worst).toFixed(2); }
+    // (A scene: its colours told again only when they changed — another change on <html> remakes nothing.)
+    if (this.scene) { let changed = false; try { changed = this.scene.setTheme(sceneTheme(this.host)); } catch (e) { this.sceneFailed(e); return; } if (!changed && this.drawn) return; }
     this.drawn = false; this.paint();
   }
   pointer(e: PointerEvent): void {
+    // (A scene: the pointer, in the canvas's CSS pixels — it reaches 16 px past the window —, as its control point.)
+    if (this.scene) { if (this.global) { try { this.scene.pointer(e.clientX + 16, e.clientY + 16, e.buttons); } catch (err) { this.sceneFailed(err); } } return; }
     if (!this.global || this.kind !== 'drift' || this.sceneMode || this.level !== 'full') return;
     this.tx = ((e.clientX / innerWidth) - 0.5) * -10; this.ty = ((e.clientY / innerHeight) - 0.5) * -8;
   }
+  /** The panels' scrim on the page (the page's background only; −1: taken off). */
+  scrim(v: number): void {
+    if (!this.global) return; const html = document.documentElement; const r = v < 0 ? -1 : Math.round(v * 1000) / 10;
+    if (r === this.scrimNow) return; this.scrimNow = r;
+    if (r < 0) { html.style.removeProperty('--abg-scrim'); html.style.removeProperty('--abg-veil'); html.classList.remove('abg-scene'); return; }
+    // (The glass tints take the ground mixed in — --abg-scrim —; the surfaces coloured by the theme's own tokens (the
+    //  download cards…) a layer of the ground over them — --abg-veil —: the same result over any backdrop.)
+    const g = this.pal?.ground ?? [0, 0, 0, 1];
+    html.style.setProperty('--abg-scrim', `${r}%`); html.style.setProperty('--abg-veil', `rgba(${Math.round(g[0])},${Math.round(g[1])},${Math.round(g[2])},${(r / 100).toFixed(3)})`); if (!html.classList.contains('abg-scene')) html.classList.add('abg-scene');
+  }
+  click(e: PointerEvent): void { if (this.scene && this.global) { try { this.scene.click(e.clientX + 16, e.clientY + 16); } catch (err) { this.sceneFailed(err); } } }
   seek(t: number | null): void { this.held = t; this.drawn = false; this.cancel(); if (t !== null) { this.draw(t); this.host.dataset.state = 'held'; } else this.sync(); }
   /** A frame at loop time `t`; a scene steps `dtMs` instead and is drawn only when something moved (or not yet drawn). */
   draw(t: number, dtMs = 0): void {
     if (!this.g || !this.pal) return;
     if (this.sceneMode) {
       if (!this.scene) { if (!this.drawn) { const c = this.pal.ground; this.g.setTransform(1, 0, 0, 1, 0, 0); this.g.fillStyle = `rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])})`; this.g.fillRect(0, 0, this.w, this.h); this.drawn = true; } return; }
-      const moved = this.scene.step(dtMs);
-      if (moved || !this.drawn) { this.scene.render(this.g, this.w, this.h, this.k, this.pal.ground); this.drawn = true; }
+      try {
+        const moved = this.scene.step(dtMs);
+        if (this.rebakeAt.length && performance.now() > this.rebakeAt[0]) { this.rebakeAt.shift(); this.scene.rebake(); this.drawn = false; }
+        if (moved || !this.drawn) { this.scene.render(this.g, this.w, this.h, this.k); this.drawn = true; this.scrim(this.scene.panelScrim); }
+      } catch (e) { this.sceneFailed(e); }
       return;
     }
     drawFrame(this.g, this.w, this.h, this.kind, this.pal, this.seed, t, this.level === 'reduced' ? 0.6 : 1); this.drawn = true;
@@ -470,7 +528,7 @@ class Inst {
     this.schedule(1000 / this.fps() * this.slow - Math.max(0, performance.now() - p) - 6);
   };
   destroy(): void {
-    if (this.dead) return; this.dead = true; this.cancel(); this.scene?.free(); this.scene = null; this.canvas.width = this.canvas.height = 0; this.canvas.remove(); this.grainEl.remove(); insts.delete(this);
+    if (this.dead) return; this.dead = true; this.cancel(); this.scene?.free(); this.scene = null; this.scrim(-1); this.canvas.width = this.canvas.height = 0; this.canvas.remove(); this.grainEl.remove(); insts.delete(this);
     if (globalInst === this) globalInst = null;
     if (!insts.size) { gate.stop(); document.getElementById(CSS_ID)?.remove(); }
   }

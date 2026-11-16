@@ -2485,6 +2485,8 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   animBgFlowHint: "Large tonal shapes that glide and change form",
   animBgMotes: "Motes",
   animBgMotesHint: "Soft dust drifting at three depths, fading in and out",
+  animBgNightSnow: "Night snowfall",
+  animBgNightSnowHint: "Snow falling over moonlit pines, at three depths",
   animBgSceneFallback: "The scene engine could not be loaded here, so Frost drift is shown instead.",
   animBgLevel: "Motion",
   animBgFull: "Full",

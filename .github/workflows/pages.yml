@@ -34,7 +34,7 @@ jobs:
       # (Tools' scene engine, apps/tools/core/kt-scene, as wasm into public/scene/ before its web build.)
       - uses: ./.github/actions/scene-wasm
       - name: Build Kurokawa Tools
-        run: cd apps/tools && npm install && npm run build
+        run: cd apps/tools && npm install && npm run build && test -s dist/scene/ktscene.wasm
       - name: Assemble the site
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
