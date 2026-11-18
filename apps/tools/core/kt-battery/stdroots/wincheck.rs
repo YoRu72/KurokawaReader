@@ -9,6 +9,8 @@ pub mod allow;
 pub mod autostart;
 #[path = "../src/bluetooth.rs"]
 pub mod bluetooth;
+#[path = "../src/connect.rs"]
+pub mod connect;
 #[path = "../src/hidvalue.rs"]
 pub mod hidvalue;
 #[path = "../src/identity.rs"]

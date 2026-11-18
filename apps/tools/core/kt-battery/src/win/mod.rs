@@ -11,6 +11,7 @@
 // Copyright (C) 2026 Kurokawa contributors.
 pub mod autostart;
 pub mod bt;
+pub mod btconn;
 pub mod ffi;
 pub mod hid;
 pub mod wgi;

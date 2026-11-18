@@ -15,6 +15,15 @@
 // settings (set: a part of them, kept in <app data>/battery.json; turning the start with the system on or off writes
 // or removes its entry first — an error leaves the settings as they were); onBattery(cb) — { now, devices } after each
 // change.
+// Piece 3, connecting Bluetooth devices (kt-battery connect.rs over win/btconn.rs): btList() → { available, reason?,
+// radio: 'on' | 'off' | 'missing', stale, now, scanUntil, devices, found, busy } (each device { addr, name, kind,
+// picture, brand, le, paired, connected, battery, can: 'both' | 'disconnectOnly' | 'settings' | 'pair' }; busy
+// [{ addr, op, until }]); btScan({ stop?, seconds? }) → the same (a scan of 5–60 s, 20 by default, in rounds; stop ends
+// it); btAct({ op: 'connect' | 'disconnect' | 'pair' | 'cancel', addr }) → { result, code } once the action ends (its
+// limit, the device's answer, or a cancel — 'cancel' answers { result: 'cancelled' | 'none' } at once); btOpenSettings()
+// opens Windows' Bluetooth settings (ms-settings:bluetooth); onBt(cb) — the same object as btList's after each change
+// (kt:bt). Pairing is Windows' own window (no PIN of ours). With the background on, the tray gains Connect /
+// Disconnect lines for the paired devices that allow it. Elsewhere than Windows: available false.
 // Copyright (C) 2026 Kurokawa contributors.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -296,6 +305,9 @@ fn changed(app: &AppHandle, list: Vec<DeviceState>) {
     notices(app, &s, &list);
     *STATES.lock().unwrap_or_else(|e| e.into_inner()) = list;
     tray_push(app, &s);
+    if background_on(&s) {
+        bt_tray_tick(app);
+    }
 }
 
 fn notices(app: &AppHandle, s: &Value, list: &[DeviceState]) {
@@ -354,7 +366,8 @@ fn tray_push(app: &AppHandle, s: &Value) {
         .find(|d| matches!(current(*d), Some(Level::Exact(_)) | Some(Level::Coarse(_))))
         .map(|d| word("batTrayLowest", "Lowest: {name}, {level}").replace("{name}", &name_of(s, d)).replace("{level}", &level_word(d.reading.map(|r| r.level).unwrap_or(Level::Unknown))))
         .unwrap_or_default();
-    crate::desktop::set_battery_tray(app, Some(crate::desktop::BatTray { lines, tip }));
+    let bt = bt_tray_lines();
+    crate::desktop::set_battery_tray(app, Some(crate::desktop::BatTray { lines, tip, bt }));
 }
 
 /// The page's words changed (desktop.rs): the tray's list said again in them.
@@ -574,4 +587,246 @@ pub async fn kt_battery_settings(app: AppHandle, o: Value) -> Result<Value, Stri
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// ---- piece 3: connecting Bluetooth devices ----
+
+use kt_battery::connect::{self, Can, ConnDev, End, Op, Snapshot};
+
+fn conn_dev_json(d: &ConnDev) -> Value {
+    json!({
+        "addr": connect::addr_text(d.addr), "name": d.name, "kind": d.kind.as_str(), "picture": d.picture, "brand": d.brand,
+        "le": d.le, "paired": d.paired, "connected": d.connected, "battery": d.battery, "can": d.can.as_str(),
+    })
+}
+
+fn snap_json(s: &Snapshot) -> Value {
+    let busy: Vec<Value> = s.busy.iter().map(|(a, b)| json!({ "addr": connect::addr_text(*a), "op": b.op.as_str(), "until": b.until })).collect();
+    json!({
+        "available": true, "radio": s.radio.as_str(), "stale": s.stale, "now": s.now, "scanUntil": s.scan_until,
+        "devices": s.devices.iter().map(conn_dev_json).collect::<Vec<_>>(), "found": s.found.iter().map(conn_dev_json).collect::<Vec<_>>(), "busy": busy,
+    })
+}
+
+/// The battery loop's levels by container, for the connected Bluetooth devices (its keys are «bt:{container}»).
+fn bt_levels() -> Vec<(String, u8)> {
+    STATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|d| d.status == Status::Ok)
+        .filter_map(|d| match (d.device.key.strip_prefix("bt:"), d.reading.map(|r| r.level)) {
+            (Some(c), Some(Level::Exact(p))) => Some((c.to_string(), p.get())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The tray's Bluetooth lines: what each does (the menu's ids are their places in this list).
+static BT_TRAY: Mutex<Vec<(u64, Op, String)>> = Mutex::new(Vec::new());
+/// The last connect snapshot (the tray's lines are made from it).
+static BT_LAST: Mutex<Option<Snapshot>> = Mutex::new(None);
+/// When the tray's paired list was last read again (ms), with the background on.
+static BT_READ_AT: Mutex<u64> = Mutex::new(0);
+
+#[cfg(windows)]
+type BtConn = connect::Conn<kt_battery::win::btconn::WinBt>;
+
+#[cfg(windows)]
+static BT: OnceLock<(BtConn, Arc<kt_battery::win::btconn::WinBt>)> = OnceLock::new();
+
+#[cfg(windows)]
+fn bt(app: &AppHandle) -> Option<&'static BtConn> {
+    let (c, _) = BT.get_or_init(|| {
+        let p = Arc::new(kt_battery::win::btconn::WinBt::new());
+        let a2 = app.clone();
+        let publish = Arc::new(move |s: Snapshot| {
+            let _ = a2.emit("kt:bt", snap_json(&s));
+            *BT_LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some(s);
+            if let Some(v) = cached() {
+                tray_push(&a2, &v);
+            }
+        });
+        (connect::Conn::new(p.clone(), connect::Limits::default(), Arc::new(now_ms), publish), p)
+    });
+    Some(c)
+}
+
+#[cfg(windows)]
+fn bt_parent(app: &AppHandle) {
+    if let (Some((_, p)), Some(w)) = (BT.get(), app.get_webview_window("main")) {
+        if let Ok(h) = w.hwnd() {
+            p.set_parent(h.0 as isize);
+        }
+    }
+}
+
+/// The tray's Connect / Disconnect lines (at most four): paired devices Tools can act on.
+fn bt_tray_lines() -> Vec<String> {
+    let last = BT_LAST.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let mut acts: Vec<(u64, Op, String)> = Vec::new();
+    if let Some(s) = last.filter(|s| s.radio == connect::Radio::On) {
+        for d in s.devices.iter() {
+            let op = match (d.can, d.connected) {
+                (Can::Both | Can::DisconnectOnly, true) => Op::Disconnect,
+                (Can::Both, false) => Op::Connect,
+                _ => continue,
+            };
+            let name = if d.name.trim().is_empty() { word("batUnnamed", "Wireless device") } else { d.name.clone() };
+            acts.push((d.addr, op, name));
+            if acts.len() == 4 {
+                break;
+            }
+        }
+    }
+    let lines = acts
+        .iter()
+        .map(|(_, op, name)| match op {
+            Op::Disconnect => word("btcTrayDisconnect", "Disconnect {name}").replace("{name}", name),
+            _ => word("btcTrayConnect", "Connect {name}").replace("{name}", name),
+        })
+        .collect();
+    *BT_TRAY.lock().unwrap_or_else(|e| e.into_inner()) = acts;
+    lines
+}
+
+/// With the background on, the tray's paired list read again now and then (at most once a minute, on its own thread
+/// with the list's limit) — never while nothing asks for the tray.
+fn bt_tray_tick(app: &AppHandle) {
+    #[cfg(windows)]
+    {
+        let now = now_ms();
+        {
+            let mut at = BT_READ_AT.lock().unwrap_or_else(|e| e.into_inner());
+            if now.saturating_sub(*at) < 60_000 {
+                return;
+            }
+            *at = now;
+        }
+        let a2 = app.clone();
+        let _ = std::thread::Builder::new().name("kt-bt-tray".into()).spawn(move || {
+            if let Some(c) = bt(&a2) {
+                c.set_levels(bt_levels());
+                let _ = c.refresh();
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, &BT_READ_AT);
+    }
+}
+
+/// A tray line chosen: its action, on its own thread; a failure told as a notice.
+pub fn tray_bt(app: &AppHandle, i: usize) {
+    let Some((addr, op, name)) = BT_TRAY.lock().unwrap_or_else(|e| e.into_inner()).get(i).cloned() else { return };
+    #[cfg(windows)]
+    {
+        let a2 = app.clone();
+        let _ = std::thread::Builder::new().name("kt-bt-tray-act".into()).spawn(move || {
+            let Some(c) = bt(&a2) else { return };
+            let end = c.act(addr, op);
+            if end != End::Done && end != End::Cancelled {
+                use tauri_plugin_notification::NotificationExt;
+                let body = word(&format!("btcEnd_{}", end.as_str()), end.as_str()).replace("{code}", &end.code().to_string());
+                let _ = a2.notification().builder().title(&word("btcTrayFailed", "Could not do it for {name}").replace("{name}", &name)).body(&body).show();
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, addr, op, name);
+    }
+}
+
+fn bt_unavailable() -> Value {
+    json!({ "available": false, "reason": "platform", "radio": "missing", "stale": false, "now": now_ms(), "scanUntil": null, "devices": [], "found": [], "busy": [] })
+}
+
+fn bt_addr(o: &Value) -> Option<u64> {
+    o.get("addr").and_then(Value::as_str).and_then(connect::parse_addr)
+}
+
+#[tauri::command]
+pub async fn kt_bt_list(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(windows)]
+        {
+            let Some(c) = bt(&app) else { return bt_unavailable() };
+            c.set_levels(bt_levels());
+            snap_json(&c.refresh())
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (&app, snap_json as fn(&Snapshot) -> Value, bt_levels as fn() -> Vec<(String, u8)>);
+            bt_unavailable()
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn kt_bt_scan(app: AppHandle, o: Value) -> Result<Value, String> {
+    let stop = o.get("stop").and_then(Value::as_bool).unwrap_or(false);
+    let secs = o.get("seconds").and_then(Value::as_u64).unwrap_or(20);
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(windows)]
+        {
+            let Some(c) = bt(&app) else { return bt_unavailable() };
+            snap_json(&if stop { c.scan_stop() } else { c.scan_start(secs.saturating_mul(1_000)) })
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (&app, stop, secs);
+            bt_unavailable()
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn kt_bt_act(app: AppHandle, o: Value) -> Result<Value, String> {
+    let addr = bt_addr(&o).ok_or("no device address")?;
+    let what = o.get("op").and_then(Value::as_str).unwrap_or("").to_string();
+    let op = Op::parse(&what);
+    if op.is_none() && what != "cancel" {
+        return Err("unknown action".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(windows)]
+        {
+            let Some(c) = bt(&app) else { return json!({ "result": "noRadio", "code": 0 }) };
+            let Some(op) = op else {
+                return json!({ "result": if c.cancel(addr) { "cancelled" } else { "none" }, "code": 0 });
+            };
+            if op == Op::Pair {
+                bt_parent(&app);
+            }
+            let end = c.act(addr, op);
+            json!({ "result": end.as_str(), "code": end.code() })
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (&app, addr, op, End::Done);
+            json!({ "result": "noRadio", "code": 0 })
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn kt_bt_settings(app: AppHandle) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url("ms-settings:bluetooth", None::<&str>).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("not on this system yet".into())
+    }
 }

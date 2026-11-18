@@ -19,7 +19,9 @@ function deskLabels(): Record<string, string | boolean> {
     ...batteryLabels() };
 }
 const BAT_WORDS = ['batPct', 'batCoarse_empty', 'batCoarse_low', 'batCoarse_medium', 'batCoarse_high', 'batCoarse_full', 'batLevelUnknown', 'batCharging', 'batSt_waiting', 'batSt_asleep', 'batSt_notConnected', 'batSt_noAnswer', 'batUnnamed',
-  'batTrayLowest', 'batTrayNone', 'batTrayCheck', 'batTrayOpen', 'batNoticeLow', 'batNoticeLowBody', 'batNoticeFull', 'batNoticeFullBody', 'batAutostartComment'] as const;
+  'batTrayLowest', 'batTrayNone', 'batTrayCheck', 'batTrayOpen', 'batNoticeLow', 'batNoticeLowBody', 'batNoticeFull', 'batNoticeFullBody', 'batAutostartComment',
+  // (Piece 3: the tray's Bluetooth lines and why one did not work.)
+  'btcTrayConnect', 'btcTrayDisconnect', 'btcTrayFailed', 'btcEnd_refused', 'btcEnd_timedOut', 'btcEnd_unreachable', 'btcEnd_settings', 'btcEnd_noRadio', 'btcEnd_busy', 'btcEnd_failed'] as const;
 function batteryLabels(): Record<string, string> {
   // (The placeholders left in: the shell fills {n}, {name} and {level}; the digits as the interface writes them.)
   const out: Record<string, string> = { batDigits: localDigits('0123456789') };

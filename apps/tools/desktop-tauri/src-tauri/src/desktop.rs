@@ -61,6 +61,8 @@ struct Desk {
 pub struct BatTray {
     pub lines: Vec<String>,
     pub tip: String,
+    /// Piece 3: the Bluetooth devices' Connect / Disconnect lines (battery.rs keeps what each does).
+    pub bt: Vec<String>,
 }
 
 static DESK: OnceLock<Mutex<Desk>> = OnceLock::new();
@@ -162,10 +164,19 @@ fn tray_menu(app: &AppHandle, l: &Value) -> tauri::Result<tauri::menu::Menu<taur
     if devs.is_empty() {
         devs.push(MenuItem::with_id(app, "kt-tray-bat-none", word(l, "batTrayNone", "No device found"), false, None::<&str>)?);
     }
+    let mut bts: Vec<MenuItem<tauri::Wry>> = Vec::new();
+    for (i, line) in bat.bt.iter().enumerate() {
+        bts.push(MenuItem::with_id(app, format!("kt-tray-bt-{i}"), line, true, None::<&str>)?);
+    }
     let check = MenuItem::with_id(app, "kt-tray-bat-check", word(l, "batTrayCheck", "Check now"), true, None::<&str>)?;
     let open = MenuItem::with_id(app, "kt-tray-bat-open", word(l, "batTrayOpen", "Open Device battery"), true, None::<&str>)?;
     let (s1, s2, s3) = (PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?);
+    let s0 = PredefinedMenuItem::separator(app)?;
     let mut items: Vec<&dyn IsMenuItem<tauri::Wry>> = devs.iter().map(|d| d as &dyn IsMenuItem<tauri::Wry>).collect();
+    if !bts.is_empty() {
+        items.push(&s0);
+        items.extend(bts.iter().map(|d| d as &dyn IsMenuItem<tauri::Wry>));
+    }
     let rest: [&dyn IsMenuItem<tauri::Wry>; 7] = [&s1, &check, &open, &s2, &show, &s3, &quit];
     items.extend(rest);
     Menu::with_items(app, &items)
@@ -178,7 +189,7 @@ pub fn set_battery_tray(app: &AppHandle, b: Option<BatTray>) {
         if d.battery == b {
             return;
         }
-        let m = d.battery.as_ref().map(|x| &x.lines) != b.as_ref().map(|x| &x.lines) || d.battery.is_some() != b.is_some();
+        let m = d.battery.as_ref().map(|x| (&x.lines, &x.bt)) != b.as_ref().map(|x| (&x.lines, &x.bt)) || d.battery.is_some() != b.is_some();
         d.battery = b;
         m
     };
@@ -260,6 +271,12 @@ fn build_tray(app: &AppHandle, labels: &Value) -> Result<tauri::tray::TrayIcon<t
             "kt-tray-quit" => app.exit(0),
             "kt-tray-bat-check" => crate::battery::check_now(app),
             id if id == "kt-tray-bat-open" || id.starts_with("kt-tray-bat-dev-") => crate::battery::open_page(app),
+            // (Piece 3: a Bluetooth device's Connect / Disconnect.)
+            id if id.starts_with("kt-tray-bt-") => {
+                if let Ok(i) = id["kt-tray-bt-".len()..].parse::<usize>() {
+                    crate::battery::tray_bt(app, i);
+                }
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, ev| {

@@ -12,6 +12,8 @@
 //! - hidvalue: the generic HID battery field (range checks, length-checked bit reads)
 //! - kind: kind and brand (as text) of a device
 //! - bluetooth: Windows' Bluetooth battery property, decided per physical device
+//! - connect: piece 3 — the Bluetooth connect panel's list, actions (one per device, each with a limit and a cancel) and
+//!   bounded scan, over a BtPlatform (win/btconn.rs on Windows)
 //! - xbox: Windows.Gaming.Input's real percentage, XInput's coarse levels
 //! - identity: stable keys per unit and the explicit merge rules
 //! - sched: per-device timing, deadlines, back-off, asleep devices left alone
@@ -25,6 +27,7 @@
 pub mod allow;
 pub mod autostart;
 pub mod bluetooth;
+pub mod connect;
 pub mod hidvalue;
 pub mod identity;
 pub mod kind;

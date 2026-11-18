@@ -9,7 +9,12 @@
 // with the system hidden — needing the first, «not yet» on a Mac, a refusal from the shell said and drawn back —, low
 // and fully-charged notices), the low marks (10/15/20/30; a device's own mark or «no notice» in its menu, and the card's
 // red following it), none of it in the Electron build or another system. Screenshots (PC 1280×800) into KT_SHOTS when
-// set. `node tests/battery.cjs [en|ar]`.
+// set. Piece 3, «Connect a device» (btList, btScan, btAct, btOpenSettings, onBt — bridge.js's signatures): the paired
+// Bluetooth devices with our own drawn pictures (no picture files), connected or not, battery when known, the right
+// action per device; connect ok / refused / timed out / cancelled (a busy row with Cancel); a scan with Stop and its new
+// devices; pairing asked first with the device's picture, then handed to Windows' own window; Bluetooth off or missing
+// said calmly; equal button widths, no touching controls; nothing of it in the Electron build or another system; leaving
+// lets go of its subscription and stops a scan. `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
@@ -37,6 +42,20 @@ function fake({ lang, mode }) {
   let settings = { intervalMin: 1, low: 15, names: {}, hidden: [], noQuery: ['hid:5555:6666:p:x'], links: [], background: false, startup: false, notifyLow: true, notifyFull: false, thresholds: {} };
   const system = mode === 'mac' ? { autostart: 'notYet', tray: true } : { autostart: 'yes', tray: true };
   window.__calls = []; window.__subs = 0; let cb = null;
+  // (Piece 3: the connect panel's fake — a device: { addr, name, kind, picture, brand, le, paired, connected, battery, can }.)
+  const BT = (addr, o) => ({ addr, name: '', kind: 'other', picture: 'other', brand: '', le: false, paired: true, connected: false, battery: null, can: 'both', ...o });
+  const bt = { available: mode !== 'nothere', radio: mode === 'btoff' ? 'off' : mode === 'btmissing' ? 'missing' : 'on', stale: false, now: NOW, scanUntil: null, found: [], busy: [], devices: mode === 'nothere' ? [] : [
+    BT('00:11:22:33:44:55', { name: 'Field Phones', kind: 'headset', picture: 'headset', connected: true, battery: 9 }),
+    BT('AA:BB:CC:DD:EE:FF', { name: 'Shape Mouse', kind: 'mouse', picture: 'mouse', le: true, connected: true, battery: 64, can: 'settings' }),
+    BT('00:11:22:33:44:66', { name: 'Studio Speaker', kind: 'speaker', picture: 'speaker', brand: 'Acme' }),
+    BT('00:11:22:33:44:77', { name: 'Split Pads', kind: 'controller', picture: 'split', can: 'disconnectOnly' }),
+    BT('00:11:22:33:44:88', { name: 'Travel Keys', kind: 'keyboard', picture: 'keyboard', can: 'disconnectOnly' }),
+  ] };
+  const NEAR = [BT('10:20:30:40:50:60', { name: 'Field Pad', kind: 'controller', picture: 'pad', paired: false, can: 'pair' }), BT('10:20:30:40:50:61', { name: 'Retro Pad', kind: 'controller', picture: 'retro', paired: false, can: 'pair' }), BT('10:20:30:40:50:62', { picture: 'other', paired: false, can: 'pair' })];
+  let btCb = null; const pending = {}; window.__btSubs = 0; window.__btPlan = {};
+  const btSnap = () => JSON.parse(JSON.stringify(bt));
+  const btPush = () => { if (btCb) btCb(btSnap()); };
+  window.__btPush = (o) => { Object.assign(bt, o); btPush(); };
   window.__push = (devs) => { if (cb) cb({ now: NOW, devices: devs }); };
   const base = { platform: 'desktop', available: true, reason: '', os: 'win32', ready: async () => ({}), list: async () => [], onTasks: () => () => {}, onBrowser: () => () => {}, onUpdateProgress: () => () => {}, onPackProgress: () => () => {}, packStatus: async () => ({}), defaultDir: async () => 'C:\\Downloads' };
   if (mode === 'electron') { window.kurokawaTools = base; return; }
@@ -46,6 +65,34 @@ function fake({ lang, mode }) {
     batteryRefresh: function (o) { window.__calls.push(['refresh', o]); return Promise.resolve(true); },
     batterySettings: function (o) { window.__calls.push(['settings', o]); if (o && o.set && 'startup' in o.set && window.__failStartup) return Promise.reject(new Error('access denied')); if (o && o.set) settings = Object.assign({}, settings, o.set); return Promise.resolve(settings); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
+    // (Piece 3 — exactly bridge.js's signatures: btList(), btScan(o), btAct(o), btOpenSettings(), onBt(cb).)
+    btList: function () { window.__calls.push(['btList']); return Promise.resolve(btSnap()); },
+    btScan: function (o) {
+      window.__calls.push(['btScan', o]);
+      if (o && o.stop) { bt.scanUntil = null; return Promise.resolve(btSnap()); }
+      bt.scanUntil = NOW + 1000 * ((o && o.seconds) || 20); bt.found = [];
+      setTimeout(() => { if (bt.scanUntil) { bt.found = JSON.parse(JSON.stringify(NEAR)); btPush(); } }, 120);
+      return Promise.resolve(btSnap());
+    },
+    btAct: function (o) {
+      window.__calls.push(['btAct', o]);
+      if (o.op === 'cancel') { const r = pending[o.addr]; if (r) { delete pending[o.addr]; r({ result: 'cancelled', code: 0 }); } return Promise.resolve({ result: r ? 'cancelled' : 'none', code: 0 }); }
+      const plan = window.__btPlan[o.addr] || { result: 'ok', ms: 60 };
+      return new Promise((ok) => {
+        pending[o.addr] = ok;
+        setTimeout(() => {
+          if (pending[o.addr] !== ok) return; delete pending[o.addr];
+          if (plan.result === 'ok') {
+            if (o.op === 'pair') { const d = bt.found.find((x) => x.addr === o.addr); bt.found = bt.found.filter((x) => x.addr !== o.addr); if (d) bt.devices.push(Object.assign(d, { paired: true, can: 'disconnectOnly' })); }
+            for (const d of bt.devices) if (d.addr === o.addr && o.op !== 'pair') d.connected = o.op === 'connect';
+            btPush();
+          }
+          ok({ result: plan.result, code: plan.code || 0 });
+        }, plan.ms);
+      });
+    },
+    btOpenSettings: function () { window.__calls.push(['btOpenSettings']); return Promise.resolve(); },
+    onBt: function (f) { btCb = f; window.__btSubs++; return function () { if (btCb === f) btCb = null; window.__btSubs--; }; },
   });
 }
 
@@ -201,6 +248,94 @@ function fake({ lang, mode }) {
     await ctx.close();
   }
 
+  // ---- Piece 3: «Connect a device».
+  {
+    const { ctx, p } = await open('tauri');
+    await p.waitForSelector('.bt-panel .bt-row[data-addr="00:11:22:33:44:55"]');
+    const rows = await p.$$eval('.bt-paired > .bt-row', (r) => r.map((e) => ({ addr: e.dataset.addr, pic: e.querySelector('.bt-pic')?.dataset.picture, svg: !!e.querySelector('.bt-pic svg'), img: !!e.querySelector('img'), acts: [...e.querySelectorAll('.bt-act [data-act]')].map((b) => b.dataset.act), note: !!e.querySelector('.bt-note'), text: e.textContent })));
+    check('the paired devices listed, each with its own drawn picture (no picture files)', rows.length === 5 && rows.every((r) => r.svg && !r.img) && JSON.stringify(rows.map((r) => r.pic)) === JSON.stringify(['headset', 'mouse', 'speaker', 'split', 'keyboard']), rows);
+    check('the count in the heading, as the language writes it', (await p.textContent('.bt-panel h4')).includes(AR ? 'العدد: 5' : '(5)'));
+    const ph = rows[0];
+    check('connected, with its battery (low in the error colour)', ph.text.includes(AR ? 'متصل' : 'Connected') && /9/.test(ph.text) && !!(await p.$('.bt-row[data-addr="00:11:22:33:44:55"] .bt-chip.low[data-battery="9"]')), ph);
+    check('the action each device offers: disconnect / settings (LE) / connect / «press a button» (HID)', JSON.stringify(rows.map((r) => r.acts)) === JSON.stringify([['disconnect'], ['settings'], ['connect'], [], []]) && rows[3].note && rows[4].note, rows.map((r) => r.acts));
+    check('LE said, the brand as text', rows[1].text.includes(AR ? 'منخفض الطاقة' : 'Bluetooth LE') && rows[2].text.includes('Acme'));
+    const head = await p.$$eval('.bt-head-acts .btn', (b) => b.map((x) => { const r = x.getBoundingClientRect(); return { w: Math.round(r.width), l: r.left, r: r.right, t: r.top }; }));
+    check('the two head buttons share a width and keep a gap', head.length === 2 && Math.abs(head[0].w - head[1].w) <= 1 && Math.min(Math.abs(head[0].r - head[1].l), Math.abs(head[1].r - head[0].l)) >= 8, head);
+    const aw = await p.$$eval('.bt-paired .bt-act .btn', (b) => b.map((x) => Math.round(x.getBoundingClientRect().width)));
+    check('the rows\' buttons share a width', aw.length === 3 && aw.every((w) => Math.abs(w - aw[0]) <= 1), aw);
+    check('no sideways overflow (connect panel)', (await overflow(p)) <= 1);
+    await p.$eval('.bt-panel', (e) => e.scrollIntoView({ block: 'start' })); await p.waitForTimeout(150); await shot(p, 'bt-panel');
+    // Connect: a busy row with Cancel, then done.
+    await p.evaluate(() => { window.__btPlan['00:11:22:33:44:66'] = { result: 'ok', ms: 700 }; });
+    await p.click('.bt-row[data-addr="00:11:22:33:44:66"] [data-act="connect"]');
+    await p.waitForSelector('.bt-row[data-addr="00:11:22:33:44:66"][aria-busy="true"] [data-act="cancel"]');
+    const busy = await p.textContent('.bt-row[data-addr="00:11:22:33:44:66"] .bt-busy');
+    check('connecting: the row says so, with Cancel', busy.includes(AR ? 'جارٍ الاتصال' : 'Connecting'), busy);
+    await p.$eval('.bt-row[data-addr="00:11:22:33:44:66"]', (e) => e.scrollIntoView({ block: 'center' })); await shot(p, 'bt-connecting');
+    check('Connect asked through btAct({ op, addr })', JSON.stringify((await calls(p)).filter((c) => c[0] === 'btAct').pop()) === JSON.stringify(['btAct', { op: 'connect', addr: '00:11:22:33:44:66' }]));
+    await p.waitForSelector('.bt-row[data-addr="00:11:22:33:44:66"][aria-busy="false"] [data-act="disconnect"]');
+    const tt = await p.evaluate(() => document.querySelector('.toast')?.textContent ?? '');
+    check('connected: told, and the row now offers Disconnect', tt.includes('Studio Speaker') && tt.includes(AR ? 'اتصل' : 'is connected'), tt);
+    // Refused: in plain words with what to do, and the settings at hand.
+    await p.evaluate(() => { window.__btPlan['00:11:22:33:44:55'] = { result: 'refused', ms: 30 }; });
+    await p.click('.bt-row[data-addr="00:11:22:33:44:55"] [data-act="disconnect"]');
+    await p.waitForSelector('.bt-row[data-addr="00:11:22:33:44:55"] .bt-msg');
+    const ref = await p.textContent('.bt-row[data-addr="00:11:22:33:44:55"] .bt-msg');
+    check('refused: said with what to do', ref.includes(AR ? 'رفض ويندوز' : 'Windows refused'), ref);
+    await p.click('.bt-row[data-addr="00:11:22:33:44:55"] .bt-msg [data-act="settings"]'); await p.waitForTimeout(60);
+    check('«Bluetooth settings» opens Windows\' own (btOpenSettings())', JSON.stringify((await calls(p)).pop()) === JSON.stringify(['btOpenSettings']));
+    // Timed out.
+    await p.evaluate(() => { window.__btPlan['00:11:22:33:44:55'] = { result: 'timedOut', ms: 30 }; });
+    await p.click('.bt-row[data-addr="00:11:22:33:44:55"] [data-act="disconnect"]'); await p.waitForTimeout(250);
+    const to = await p.textContent('.bt-row[data-addr="00:11:22:33:44:55"] .bt-msg');
+    check('timed out: said with what to do', to.includes(AR ? 'طال الانتظار' : 'took too long'), to);
+    // Cancelled: the row free again, no error.
+    await p.evaluate(() => { window.__btPlan['00:11:22:33:44:55'] = { result: 'ok', ms: 8000 }; });
+    await p.click('.bt-row[data-addr="00:11:22:33:44:55"] [data-act="disconnect"]');
+    await p.click('.bt-row[data-addr="00:11:22:33:44:55"] [data-act="cancel"]');
+    await p.waitForSelector('.bt-row[data-addr="00:11:22:33:44:55"][aria-busy="false"]');
+    check('cancelled: btAct({ op: cancel }) and the row free, nothing said as a failure', (await calls(p)).some((c) => c[0] === 'btAct' && c[1].op === 'cancel' && c[1].addr === '00:11:22:33:44:55') && !(await p.$('.bt-row[data-addr="00:11:22:33:44:55"] .bt-msg')));
+    // A scan, then Stop.
+    await p.click('.bt-head [data-act="find"]');
+    await p.waitForSelector('.bt-found .bt-row[data-addr="10:20:30:40:50:60"]');
+    check('Find asks for a bounded scan (btScan({ seconds: 20 }))', JSON.stringify((await calls(p)).filter((c) => c[0] === 'btScan').pop()) === JSON.stringify(['btScan', { seconds: 20 }]));
+    const found = await p.$$eval('.bt-found > .bt-row', (r) => r.map((e) => ({ pic: e.querySelector('.bt-pic')?.dataset.picture, act: e.querySelector('[data-act]')?.dataset.act, name: e.querySelector('.bt-name').textContent })));
+    check('the new devices with their pictures and Pair; an unnamed one said so', found.length === 3 && found.every((f) => f.act === 'pair') && found[0].pic === 'pad' && found[1].pic === 'retro' && found[2].name === (AR ? 'جهاز بلا اسم' : 'Unnamed device'), found);
+    check('scanning: said, with a progress bar and Stop', !!(await p.$('.bt-scan .bt-bar > i')) && !!(await p.$('.bt-head [data-act="stop"]')));
+    await p.$eval('.bt-scan', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(120); await shot(p, 'bt-scan');
+    await p.click('.bt-head [data-act="stop"]'); await p.waitForTimeout(120);
+    check('Stop ends the scan (btScan({ stop: true }))', JSON.stringify((await calls(p)).filter((c) => c[0] === 'btScan').pop()) === JSON.stringify(['btScan', { stop: true }]) && !(await p.$('.bt-scan')) && !!(await p.$('.bt-head [data-act="find"]')));
+    // Pairing: our question with the picture, then Windows' own window.
+    await p.click('.bt-found .bt-row[data-addr="10:20:30:40:50:60"] [data-act="pair"]');
+    await p.waitForSelector('.sheet .bt-pair-sheet .bt-pic.big[data-picture="pad"]');
+    const sheet = await p.evaluate(() => { const s = document.querySelector('.sheet'); const b = s.querySelector('.sheet-body').getBoundingClientRect(); const last = s.querySelector('.bt-pair-sheet > :last-child').getBoundingClientRect(); const a = s.querySelector('.sheet-actions').getBoundingClientRect(); return { text: s.textContent, w: [...s.querySelectorAll('.sheet-actions .bat-eq')].map((x) => Math.round(x.getBoundingClientRect().width)), lastBottom: last.bottom, actionsTop: a.top, bodyBottom: b.bottom }; });
+    check('the pairing question shows the device\'s picture and name, and that Windows\' own window confirms (no code of ours)', sheet.text.includes('Field Pad') && sheet.text.includes(AR ? 'لا تُدخِل' : 'never enters a code'), sheet.text);
+    check('its two buttons share a width; the footer covers nothing', sheet.w.length === 2 && Math.abs(sheet.w[0] - sheet.w[1]) <= 1 && sheet.lastBottom <= sheet.actionsTop + 1, sheet);
+    await p.waitForTimeout(400); await shot(p, 'bt-pair');
+    await p.evaluate(() => { window.__btPlan['10:20:30:40:50:60'] = { result: 'ok', ms: 600 }; });
+    await p.click('.sheet [data-act="pair"]');
+    await p.waitForSelector('.bt-row[data-addr="10:20:30:40:50:60"][aria-busy="true"]');
+    check('pairing handed to the system: btAct({ op: pair }) and the row asks to answer Windows\' window', JSON.stringify((await calls(p)).filter((c) => c[0] === 'btAct').pop()) === JSON.stringify(['btAct', { op: 'pair', addr: '10:20:30:40:50:60' }]) && (await p.textContent('.bt-row[data-addr="10:20:30:40:50:60"] .bt-busy')).includes(AR ? 'نافذة الاقتران' : 'pairing window'));
+    await p.waitForSelector('.bt-paired .bt-row[data-addr="10:20:30:40:50:60"]');
+    check('paired: now among the paired devices', !(await p.$('.bt-found .bt-row[data-addr="10:20:30:40:50:60"]')));
+    check('no yellow, amber or orange in the panel', await p.evaluate(() => [...document.querySelectorAll('.bt-panel *, .bt-panel')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor, c.fill, c.stroke].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
+    // Leaving: the subscription let go, a running scan stopped.
+    await p.click('.bt-head [data-act="find"]'); await p.waitForSelector('.bt-scan');
+    check('subscribed to onBt once while open', (await p.evaluate(() => window.__btSubs)) === 1);
+    await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForTimeout(400);
+    check('leaving: onBt let go and the scan stopped', (await p.evaluate(() => window.__btSubs)) === 0 && JSON.stringify((await calls(p)).filter((c) => c[0] === 'btScan').pop()) === JSON.stringify(['btScan', { stop: true }]));
+    await ctx.close();
+  }
+  for (const m of ['btoff', 'btmissing']) {
+    const { ctx, p } = await open(m);
+    await p.waitForSelector(`.bt-state[data-radio="${m === 'btoff' ? 'off' : 'missing'}"]`);
+    const st = await p.evaluate(() => ({ text: document.querySelector('.bt-state').textContent, find: document.querySelector('.bt-head [data-act="find"]').disabled, settings: !!document.querySelector('.bt-head [data-act="settings"]'), rows: document.querySelectorAll('.bt-row').length }));
+    const want = m === 'btoff' ? (AR ? 'البلوتوث مُطفأ' : 'Bluetooth is off') : (AR ? 'لا بلوتوث' : 'has no Bluetooth');
+    check(`${m}: said calmly, no list, Find off, the settings at hand`, st.text.includes(want) && st.find && st.settings && st.rows === 0, st);
+    if (m === 'btoff') { await p.$eval('.bt-panel', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(150); await shot(p, 'bt-radio-off'); }
+    await ctx.close();
+  }
+
   // ---- Empty, not on this system, the Electron build, the phone.
   {
     const { ctx, p } = await open('empty');
@@ -217,6 +352,7 @@ function fake({ lang, mode }) {
     await p.waitForSelector('.bat-empty[data-state="notHere"]');
     check('another system: said calmly, no refresh button', !(await p.isVisible('.battery-view .topbar [data-icon="refresh"]')));
     check('another system: no Background group', !(await p.$('.bat-bg')));
+    check('another system: no connect panel', !(await p.$('.bt-panel')) || !(await p.isVisible('.bt-panel')));
     await ctx.close();
   }
   {
@@ -232,6 +368,7 @@ function fake({ lang, mode }) {
     const { ctx, p } = await open('electron');
     await p.waitForSelector('.bat-empty[data-state="mainBuild"]');
     check('the Electron build: no Background group', !(await p.$('.bat-bg')));
+    check('the Electron build: no connect panel', !(await p.$('.bt-panel')));
     check('the Electron build: «available in the main computer build», no dead button', !(await p.isVisible('.battery-view .topbar [data-icon="refresh"]')) && (await p.$$('.battery-view .bat-body button')).length === 0);
     await shot(p, 'electron');
     await ctx.close();

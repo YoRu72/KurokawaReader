@@ -7,8 +7,11 @@
 // a level is low. Piece 2, «Background» (the computer's Tauri build only): keep running in the background (closing the
 // window leaves the app in the tray, the checking goes on), start with the system hidden, low-battery notices (per
 // device mark — kt-battery notice.rs decides in the shell) and an optional «fully charged» one.
+// Piece 3, «Connect a device» (views/btconnect.ts): the paired Bluetooth devices with our own pictures, Connect /
+// Disconnect, «Find new devices» and pairing through Windows' own window.
 // The Electron build and the phone have no reader: a calm word instead, never a dead button. Loaded on first use.
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from '../ui/dom';
+import { btDesk, btPanel } from './btconnect';
 import { t, localDigits } from '../i18n';
 import { back } from '../router';
 
@@ -138,6 +141,8 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     return root;
   }
   let list: BatList | null = null; let showHidden = false; let gone = false;
+  // (Piece 3: made once, kept across redraws — its rows' busy states and messages are its own.)
+  const bd = btDesk(); const bt = bd ? btPanel(bd, (title, close) => openSheet(title, close), () => list?.settings.low ?? 15) : null;
   const grid = h('div', { class: 'bat-grid' }); const head = h('div', { class: 'bat-head' }); const extra = h('div');
   body.append(h('div', { class: 'spinner small' }));
   const nameOf = (x: BatDevice) => list?.settings.names[x.key] || x.name || t('batUnnamed');
@@ -251,13 +256,13 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     }
     const empty = !list.devices.length ? h('section', { class: 'card bat-empty', 'data-state': 'empty' }, h('div', { class: 'bat-ic' }, kindIcon('controller')), h('h3', null, t('batEmptyTitle')), h('p', null, t('batEmptyBody')),
       h('ul', null, h('li', null, t('batEmpty1')), h('li', null, t('batEmpty2')), h('li', null, t('batEmpty3'))), h('p', null, t('batEmptyLater'))) : null;
-    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, settingsCard(), backgroundCard()].filter(Boolean) as HTMLElement[]);
+    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, bt?.el ?? null, settingsCard(), backgroundCard()].filter(Boolean) as HTMLElement[]);
   }
 
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });
   // (The ages move on while the page is open: redrawn every half minute — no per-second timer.)
   const tick = window.setInterval(() => { if (list) { list.now += 30_000; draw(); } }, 30_000);
   void d.batteryList().then((l) => { list = l; draw(); }).catch((e) => { body.replaceChildren(h('section', { class: 'card' }, h('p', null, String((e as Error).message ?? e)))); });
-  root.dispose = () => { gone = true; off(); clearInterval(tick); };
+  root.dispose = () => { gone = true; off(); clearInterval(tick); bt?.dispose(); };
   return root;
 }

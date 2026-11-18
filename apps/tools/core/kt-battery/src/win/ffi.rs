@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Kurokawa Tools — device battery (kt-battery): the Windows calls the readers use, declared by hand from the Windows
-// SDK's headers (setupapi.h, hidsdi.h, hidpi.h, cfgmgr32.h, xinput.h, devpkey.h), linked by DLL name (raw-dylib: no
-// import library needed). Kept to what piece 1 needs. Copyright (C) 2026 Kurokawa contributors.
+// SDK's headers (setupapi.h, hidsdi.h, hidpi.h, cfgmgr32.h, xinput.h, devpkey.h; piece 3: bluetoothapis.h, bthioctl.h,
+// ks.h, ksmedia.h), linked by DLL name (raw-dylib: no import library needed). Kept to what the pieces need.
+// Copyright (C) 2026 Kurokawa contributors.
 // The link attributes apply on Windows only, so the module is type-checked on any system (stdroots/wincheck.rs).
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::upper_case_acronyms, dead_code)]
 use std::ffi::c_void;
@@ -259,6 +260,129 @@ extern "system" {
     pub fn XInputGetBatteryInformation(dwUserIndex: u32, devType: u8, pBatteryInformation: *mut XINPUT_BATTERY_INFORMATION) -> u32;
 }
 
+// ---- piece 3: Bluetooth connecting (bluetoothapis.h, bthsdpdef.h — bthprops.cpl; bthioctl.h; ksmedia.h, ks.h) ----
+
+pub const BLUETOOTH_MAX_NAME_SIZE: usize = 248;
+pub const ERROR_NO_MORE_ITEMS: u32 = 259;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SYSTEMTIME {
+    pub wYear: u16,
+    pub wMonth: u16,
+    pub wDayOfWeek: u16,
+    pub wDay: u16,
+    pub wHour: u16,
+    pub wMinute: u16,
+    pub wSecond: u16,
+    pub wMilliseconds: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct BLUETOOTH_FIND_RADIO_PARAMS {
+    pub dwSize: u32,
+}
+
+/// BLUETOOTH_DEVICE_INFO (560 bytes): the address is BLUETOOTH_ADDRESS, a union of a ULONGLONG and six bytes (8 bytes,
+/// 8-aligned: it starts at offset 8).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BLUETOOTH_DEVICE_INFO {
+    pub dwSize: u32,
+    pub Address: u64,
+    pub ulClassofDevice: u32,
+    pub fConnected: BOOL,
+    pub fRemembered: BOOL,
+    pub fAuthenticated: BOOL,
+    pub stLastSeen: SYSTEMTIME,
+    pub stLastUsed: SYSTEMTIME,
+    pub szName: [u16; BLUETOOTH_MAX_NAME_SIZE],
+}
+
+impl BLUETOOTH_DEVICE_INFO {
+    /// Empty, its size set, for `addr` (0 for a search).
+    pub fn new(addr: u64) -> BLUETOOTH_DEVICE_INFO {
+        BLUETOOTH_DEVICE_INFO {
+            dwSize: std::mem::size_of::<BLUETOOTH_DEVICE_INFO>() as u32,
+            Address: addr,
+            ulClassofDevice: 0,
+            fConnected: 0,
+            fRemembered: 0,
+            fAuthenticated: 0,
+            stLastSeen: SYSTEMTIME::default(),
+            stLastUsed: SYSTEMTIME::default(),
+            szName: [0; BLUETOOTH_MAX_NAME_SIZE],
+        }
+    }
+}
+
+/// BLUETOOTH_DEVICE_SEARCH_PARAMS (40 bytes on 64-bit Windows, 32 on 32-bit: the radio handle is pointer-aligned).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BLUETOOTH_DEVICE_SEARCH_PARAMS {
+    pub dwSize: u32,
+    pub fReturnAuthenticated: BOOL,
+    pub fReturnRemembered: BOOL,
+    pub fReturnUnknown: BOOL,
+    pub fReturnConnected: BOOL,
+    pub fIssueInquiry: BOOL,
+    /// In units of 1.28 s, at most 48.
+    pub cTimeoutMultiplier: u8,
+    pub hRadio: HANDLE,
+}
+
+// AUTHENTICATION_REQUIREMENTS: MITM protection not required, general bonding — Windows still shows its own numeric
+// comparison or passkey when both sides can (the association model follows the devices' input and output), and a
+// device without them (headphones) can still pair, as from Windows' own settings.
+pub const MITMProtectionNotRequiredGeneralBonding: i32 = 0x04;
+
+#[cfg_attr(windows, link(name = "bthprops.cpl", kind = "raw-dylib", modifiers = "+verbatim"))]
+extern "system" {
+    pub fn BluetoothFindFirstRadio(pbtfrp: *const BLUETOOTH_FIND_RADIO_PARAMS, phRadio: *mut HANDLE) -> isize;
+    pub fn BluetoothFindRadioClose(hFind: isize) -> BOOL;
+    pub fn BluetoothIsConnectable(hRadio: HANDLE) -> BOOL;
+    pub fn BluetoothFindFirstDevice(pbtsp: *const BLUETOOTH_DEVICE_SEARCH_PARAMS, pbtdi: *mut BLUETOOTH_DEVICE_INFO) -> isize;
+    pub fn BluetoothFindNextDevice(hFind: isize, pbtdi: *mut BLUETOOTH_DEVICE_INFO) -> BOOL;
+    pub fn BluetoothFindDeviceClose(hFind: isize) -> BOOL;
+    pub fn BluetoothGetDeviceInfo(hRadio: HANDLE, pbtdi: *mut BLUETOOTH_DEVICE_INFO) -> u32;
+    pub fn BluetoothEnumerateInstalledServices(hRadio: HANDLE, pbtdi: *const BLUETOOTH_DEVICE_INFO, pcServiceInout: *mut u32, pGuidServices: *mut GUID) -> u32;
+    /// Pairing through Windows' own window (no callback registered here: the system asks the user; no PIN of ours).
+    pub fn BluetoothAuthenticateDeviceEx(hwndParentIn: isize, hRadioIn: HANDLE, pbtdiInout: *mut BLUETOOTH_DEVICE_INFO, pbtOobData: *const c_void, authenticationRequirement: i32) -> u32;
+}
+
+/// bthioctl.h: BTH_CTL(BTH_IOCTL_BASE + 0x03) = CTL_CODE(FILE_DEVICE_BLUETOOTH 0x41, 0x03, METHOD_BUFFERED, FILE_ANY_ACCESS);
+/// the input is the device's BTH_ADDR. Drops the link, keeps the pairing.
+pub const IOCTL_BTH_DISCONNECT_DEVICE: u32 = (0x41 << 16) | (0x03 << 2);
+/// ks.h: CTL_CODE(FILE_DEVICE_KS 0x2F, 0x000, METHOD_NEITHER 3, FILE_ANY_ACCESS).
+pub const IOCTL_KS_PROPERTY: u32 = (0x2F << 16) | 3;
+
+/// ks.h KSPROPERTY (KSIDENTIFIER): 24 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KSPROPERTY {
+    pub Set: GUID,
+    pub Id: u32,
+    pub Flags: u32,
+}
+
+pub const KSPROPERTY_TYPE_GET: u32 = 0x0000_0001;
+/// ksmedia.h: KSPROPSETID_BtAudio and KSPROPERTY_ONESHOT_RECONNECT / _DISCONNECT — Windows' own way of connecting a
+/// paired Bluetooth audio device (the sound settings' Connect).
+pub const KSPROPSETID_BtAudio: GUID = GUID::new(0x7FA06C40, 0xB8F6, 0x4C7E, [0x85, 0x56, 0xE8, 0xC3, 0x3A, 0x12, 0xE5, 0x4D]);
+pub const KSPROPERTY_ONESHOT_RECONNECT: u32 = 0;
+pub const KSPROPERTY_ONESHOT_DISCONNECT: u32 = 1;
+/// ks.h KSCATEGORY_AUDIO: the sound filters' interface class.
+pub const KSCATEGORY_AUDIO: GUID = GUID::new(0x6994AD04, 0x93EF, 0x11D0, [0xA3, 0xCC, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96]);
+/// devguid.h GUID_DEVCLASS_BLUETOOTH: the radios' setup class (a radio there but none found: Bluetooth is off).
+pub const GUID_DEVCLASS_BLUETOOTH: GUID = GUID::new(0xE0CBF06C, 0xCD8B, 0x4647, [0xBB, 0x8A, 0x26, 0x3B, 0x43, 0xF0, 0xF9, 0x74]);
+
+#[cfg_attr(windows, link(name = "kernel32", kind = "raw-dylib"))]
+extern "system" {
+    pub fn DeviceIoControl(hDevice: HANDLE, dwIoControlCode: u32, lpInBuffer: *const c_void, nInBufferSize: u32, lpOutBuffer: *mut c_void, nOutBufferSize: u32, lpBytesReturned: *mut u32, lpOverlapped: *mut c_void) -> BOOL;
+    pub fn GetLastError() -> u32;
+}
+
 /// A Rust string as a NUL-ended UTF-16 one.
 pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -288,6 +412,25 @@ mod tests {
         assert_eq!(std::mem::size_of::<XINPUT_STATE>(), 16);
         assert_eq!(std::mem::size_of::<XINPUT_BATTERY_INFORMATION>(), 2);
         assert_eq!(std::mem::size_of::<CM_NOTIFY_FILTER>(), 416);
+        // (Piece 3: bluetoothapis.h and ks.h.)
+        assert_eq!(std::mem::size_of::<SYSTEMTIME>(), 16);
+        assert_eq!(std::mem::size_of::<BLUETOOTH_FIND_RADIO_PARAMS>(), 4);
+        assert_eq!(std::mem::size_of::<BLUETOOTH_DEVICE_INFO>(), 560);
+        assert_eq!(std::mem::offset_of!(BLUETOOTH_DEVICE_INFO, Address), 8);
+        assert_eq!(std::mem::offset_of!(BLUETOOTH_DEVICE_INFO, ulClassofDevice), 16);
+        assert_eq!(std::mem::offset_of!(BLUETOOTH_DEVICE_INFO, stLastSeen), 32);
+        assert_eq!(std::mem::offset_of!(BLUETOOTH_DEVICE_INFO, szName), 64);
+        assert_eq!(BLUETOOTH_DEVICE_INFO::new(7).dwSize, 560);
+        if cfg!(target_pointer_width = "64") {
+            assert_eq!(std::mem::size_of::<BLUETOOTH_DEVICE_SEARCH_PARAMS>(), 40);
+            assert_eq!(std::mem::offset_of!(BLUETOOTH_DEVICE_SEARCH_PARAMS, hRadio), 32);
+        }
+        assert_eq!(std::mem::offset_of!(BLUETOOTH_DEVICE_SEARCH_PARAMS, cTimeoutMultiplier), 24);
+        assert_eq!(std::mem::size_of::<KSPROPERTY>(), 24);
+        assert_eq!(IOCTL_BTH_DISCONNECT_DEVICE, 0x0041_000C);
+        assert_eq!(IOCTL_KS_PROPERTY, 0x002F_0003);
+        assert_eq!(KSPROPSETID_BtAudio.braced(), "{7FA06C40-B8F6-4C7E-8556-E8C33A12E54D}");
+        assert_eq!(KSCATEGORY_AUDIO.braced(), "{6994AD04-93EF-11D0-A3CC-00A0C9223196}");
         assert_eq!(DEVPKEY_Device_ContainerId.fmtid.braced(), "{8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C}");
         assert_eq!(from_wide(&wide("Mäus")), "Mäus");
         assert_eq!(from_wide(&[0x41, 0, 0x42]), "A");

@@ -302,7 +302,12 @@ fn main() {
             // (0.21, device battery: battery.rs over kt-battery.)
             battery::kt_battery_list,
             battery::kt_battery_refresh,
-            battery::kt_battery_settings
+            battery::kt_battery_settings,
+            // (Piece 3: connecting Bluetooth devices.)
+            battery::kt_bt_list,
+            battery::kt_bt_scan,
+            battery::kt_bt_act,
+            battery::kt_bt_settings
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);

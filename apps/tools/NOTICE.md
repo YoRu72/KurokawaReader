@@ -56,6 +56,22 @@ devices are told at «Low», and nothing is told from an old reading, an asleep 
 warned from the value it kept); an optional «fully charged» notice; the start with the system has its own Run value
 and starts the app hidden in the tray; the autostart file's Exec line is quoted by the Desktop Entry rules.
 
+### Piece 3: connecting Bluetooth devices — written for Tools
+
+Wireless Device Battery Monitor has no connecting, so nothing of it was taken for this piece: `connect.rs` (the list,
+the actions and the scan, with their limits and cancels) and `win/btconn.rs` (the Windows side) are new, written from
+the Windows SDK's documented calls and headers (`bluetoothapis.h`, `bthioctl.h`, `ks.h`, `ksmedia.h`, `devguid.h`),
+declared by hand in `win/ffi.rs`. The device pictures of the «Connect a device» panel (`src/views/btconnect.ts`) are our
+own drawings, one per kind and three controller silhouettes; no maker's logo, photo or artwork is used, and brands are
+shown as text only.
+
+How it behaves: the paired list is read from Windows without an inquiry; sound devices are connected and disconnected
+with Windows' own audio reconnect (`KSPROPERTY_ONESHOT_RECONNECT` / `_DISCONNECT`), other classic devices are only let
+go of (`IOCTL_BTH_DISCONNECT_DEVICE`, the pairing kept) — no service is ever turned off, installed or removed;
+pairing goes through Windows' own window (`BluetoothAuthenticateDeviceEx` with no callback of ours: Tools never makes
+up, stores or enters a code); Bluetooth LE devices and anything else are sent to Windows' Bluetooth settings. Every
+call runs on its own thread with a time limit; a scan is bounded (20 s by default) and runs in short rounds.
+
 ### What was changed
 
 - **Every device call has a deadline**, and each device is asked on its own thread: one stuck device never delays
