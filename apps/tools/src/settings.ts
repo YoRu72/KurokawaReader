@@ -136,6 +136,12 @@ export interface Settings {
   doh: string; dohSplit?: 'auto' | 'always' | 'off'; /** (0.21 P9) the system's DNS when every DoH resolver failed — off by default. */ dohSystem?: boolean; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
   playerWith: 'ask' | 'app' | 'external';
+  /** Another app as the player (src/player/external): for each kind of source «ask», «app» or «out» (the outside way) —
+   *  the phone's and the computer's apart (phone-only apps never offered on a computer, and the reverse). */
+  extPlayers?: Partial<Record<'android' | 'desktop', Partial<Record<'torrent' | 'online' | 'http' | 'local', string>>>>;
+  /** (Computer) which player the outside way uses: «auto» (the first known one found), a known player's id, or «chosen»
+   *  (the program picked in the shell's own dialog — kept by the shell, never here). */ extPcPlayer?: string;
+  /** «Mark as watched?» after an app that tells nothing: undefined — for a tracked episode; true — always; false — never. */ extAskWatched?: boolean;
   /** Sounds and the «Download complete» card (downloads/done.ts). */
   sounds?: import('./downloads/done').SoundPrefs;
   net?: Partial<import('./downloads/net').NetPrefs>;

@@ -13,7 +13,7 @@ type Plugin = { ffmpeg(o: { id: string; args: string[] }): Promise<{ code: numbe
 const desk = (): Bridge | null => { const d = window.kurokawaTools as unknown as Bridge | undefined; return d?.ffmpeg ? d : null; };
 const plug = (): Plugin | null => { const p = ktPlugin() as unknown as Plugin | null; return p?.ffmpeg ? p : null; };
 export const canConvert = (): boolean => !!(desk() || plug());
-export const kindOf = (name: string): 'video' | 'audio' | 'image' | null => (/\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|wmv|flv|3gp|mpg|mpeg)$/i.test(name) ? 'video' : /\.(mp3|m4a|aac|flac|wav|ogg|opus|wma|alac|aiff?)$/i.test(name) ? 'audio' : /\.(jpe?g|png|webp|avif|heic|heif|bmp|tiff?|gif)$/i.test(name) ? 'image' : null);
+export const kindOf = (name: string): 'video' | 'audio' | 'image' | null => (/\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|mts|wmv|flv|3gp|mpg|mpeg)$/i.test(name) ? 'video' : /\.(mp3|m4a|aac|flac|wav|ogg|opus|wma|alac|aiff?)$/i.test(name) ? 'audio' : /\.(jpe?g|png|webp|avif|heic|heif|bmp|tiff?|gif)$/i.test(name) ? 'image' : null);
 
 async function probe(path: string): Promise<{ duration: number; video: boolean }> {
   const d = desk(); const p = plug();

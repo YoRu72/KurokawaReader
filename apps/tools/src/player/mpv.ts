@@ -24,6 +24,8 @@ export async function mpvAvailable(): Promise<boolean> { const p = plug(); if (!
 
 export interface MpvControl {
   tracks(): MpvTrack[];
+  /** Whether mpv has told its track list yet (until then tracks() is empty, not «no tracks»). */
+  tracksKnown(): boolean;
   setTrack(type: 'audio' | 'sub', id: number | 'no'): void;
   addSub(urlOrData: string, title?: string, isData?: boolean): void;
   set(name: string, value: string | number | boolean): void;
@@ -38,7 +40,7 @@ export interface MpvControl {
 export function mpvVideo(url: string, opts: { start?: number; alang?: string; slang?: string; speed?: number; headers?: Record<string, string>; extra?: Record<string, string> } = {}): HTMLVideoElement & { _mpv: MpvControl } {
   const p = plug()!; const el = document.createElement('div'); el.className = 'kt-video kt-mpv-video';
   let time = 0, duration = NaN, paused = true, speed = opts.speed ?? 1, volume = 1, muted = false, ended = false, cache = 0, w = 0, h = 0, ready = 0, waiting = false, seeking = false;
-  let error: { code: number; message: string } | null = null; let tracks: MpvTrack[] = []; let lastTime = 0; let loaded = false; const trackFns: (() => void)[] = [];
+  let error: { code: number; message: string } | null = null; let tracks: MpvTrack[] = []; let tracksKnown = false; let lastTime = 0; let loaded = false; const trackFns: (() => void)[] = [];
   const fire = (type: string) => el.dispatchEvent(new Event(type));
   const set = (name: string, value: string | number | boolean) => { void p.mpvSet({ name, value: typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value) }).catch(() => undefined); };
   const command = (...args: string[]) => { void p.mpvCommand({ args }).catch(() => undefined); };
@@ -62,7 +64,7 @@ export function mpvVideo(url: string, opts: { start?: number; alang?: string; sl
       case 'demuxer-cache-time': if (typeof v === 'number') { cache = v; fire('progress'); } break;
       case 'video-params/w': if (typeof v === 'number') { w = v; fire('resize'); } break;
       case 'video-params/h': if (typeof v === 'number') { h = v; fire('resize'); } break;
-      case 'track-list': if (typeof v === 'string') { try { tracks = (JSON.parse(v) as { id: number; type: string; title?: string; lang?: string; codec?: string; selected?: boolean; external?: boolean; default?: boolean; 'demux-channel-count'?: number }[]).filter((t) => t.type === 'video' || t.type === 'audio' || t.type === 'sub').map((t) => ({ id: t.id, type: t.type as MpvTrack['type'], title: t.title, lang: t.lang, codec: t.codec, selected: !!t.selected, external: t.external, default: t.default, channels: t['demux-channel-count'] })); } catch { /* left */ } for (const f of trackFns) f(); fire('tracks'); } break;
+      case 'track-list': if (typeof v === 'string') { tracksKnown = true; try { tracks = (JSON.parse(v) as { id: number; type: string; title?: string; lang?: string; codec?: string; selected?: boolean; external?: boolean; default?: boolean; 'demux-channel-count'?: number }[]).filter((t) => t.type === 'video' || t.type === 'audio' || t.type === 'sub').map((t) => ({ id: t.id, type: t.type as MpvTrack['type'], title: t.title, lang: t.lang, codec: t.codec, selected: !!t.selected, external: t.external, default: t.default, channels: t['demux-channel-count'] })); } catch { /* left */ } for (const f of trackFns) f(); fire('tracks'); } break;
     }
   })).then((s) => { sub = s; });
   // (Audio tracks as a <video> lists them: the player's sound menu and its «b» key work on them as they are.)
@@ -77,6 +79,7 @@ export function mpvVideo(url: string, opts: { start?: number; alang?: string; sl
   });
   const control: MpvControl = {
     tracks: () => tracks,
+    tracksKnown: () => tracksKnown,
     setTrack: (type, id) => set(type === 'audio' ? 'aid' : 'sid', id),
     addSub: (u, title, isData) => command('sub-add', isData ? `memory://${u}` : u, 'select', title ?? ''),
     set, command: (...a) => command(...a),
