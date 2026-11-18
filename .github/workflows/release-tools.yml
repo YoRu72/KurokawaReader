@@ -12,8 +12,16 @@ on:
     paths: ['apps/tools/**', 'shared/**', '.github/workflows/release-tools.yml']
   workflow_dispatch:
 
+# (Read-only for every job but the ones that leave a comment on a failed commit and the one that publishes: those say
+# «contents: write» themselves.)
 permissions:
-  contents: write
+  contents: read
+
+# A newer run of the same branch (a manual run on a work branch) cancels the older one; a run on main is never
+# cancelled by a later push: it queues behind the running one (one waiting run is kept, an older waiting run is replaced).
+concurrency:
+  group: release-tools-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   APP: apps/tools
@@ -22,17 +30,22 @@ jobs:
   version:
     name: Version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       v: ${{ steps.v.outputs.v }}
+      tag: ${{ steps.v.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+      # (The one place the version and the tag come from. It stops the whole run, before anything is built, when the two
+      # package.json files differ or docs/notes/v<version>.md is missing, empty or unfinished: scripts/release-check.mjs.)
       - id: v
-        run: echo "v=$(node -p "require('./apps/tools/package.json').version")" >> $GITHUB_OUTPUT
+        run: node scripts/release-check.mjs tools --github-output "$GITHUB_OUTPUT"
 
   web:
     name: Web build & tests
     needs: version
     runs-on: ubuntu-latest
+    timeout-minutes: 75   # (21 minutes in the 0.20.0 run, some 30 with the 0.21 tests and the scene engine's native tests)
     defaults: { run: { working-directory: apps/tools } }
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +59,7 @@ jobs:
       # (The runner's package server is sometimes unreachable: tried twice with its system packages, then without
       # them — the runner already has what Chromium needs.)
       - run: npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium
-      - run: npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3 && node tests/desktop-files.cjs && node tests/ytdlp-js.cjs && node tests/aria2-start.cjs && node tests/shared-copies.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/files.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/av.cjs && node tests/tv.cjs && node tests/tvsearch.cjs && node tests/torrentstream.cjs && node tests/soundbeside.cjs && node tests/transcode.cjs && node tests/lettering.cjs && node tests/subfont.cjs && node tests/speedtest.cjs && node tests/inpaint.cjs && node tests/swipe.cjs && node tests/gestures.cjs && node tests/filesnames.cjs && node tests/filesjobs.cjs && node tests/filesclip.cjs && node tests/filesback.cjs && node tests/filesview.cjs && node tests/filesbatch.cjs && node tests/videoargs.cjs && node tests/videojob.cjs && node tests/videochoice.cjs en && node tests/videochoice.cjs ar && node tests/aria2poll.cjs && node tests/dlfix.cjs en && node tests/dlfix.cjs ar && node tests/desktoppaths.cjs && node tests/submatch.cjs && node tests/subpacks.cjs en && node tests/subpacks.cjs ar && node tests/mega.cjs && node tests/gdrive.cjs && node tests/mpvplayer.cjs && node tests/apk.cjs && node tests/swarm.cjs && node tests/settingscards.cjs && node tests/backnav.cjs && node tests/backlayers.cjs && node tests/videoback.cjs && node tests/thumbs.cjs && node tests/playerrotate.cjs && node tests/sharedsave.cjs && node tests/picker.cjs && node tests/settingstabs.cjs && node tests/updater.cjs && node tests/player.cjs && node tests/videos.cjs && node tests/taskfiles.cjs en && node tests/taskfiles.cjs ar && node tests/anilistlink.cjs en && node tests/anilistlink.cjs ar && node tests/ipa.cjs en && node tests/ipa.cjs ar && node tests/archive.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && sh tests/native/screen.sh && sh tests/native/hls.sh && sh tests/native/fileplan.sh && sh tests/native/video.sh && node tests/screen.cjs en && node tests/screen.cjs ar && node tests/screenpc.cjs en && node tests/screenpc.cjs ar && node tests/folderaccess.cjs en && node tests/folderaccess.cjs ar && node tests/relink.cjs en && node tests/relink.cjs ar && node tests/installroute.cjs && node tests/replay.cjs && node tests/playertr.cjs && node tests/intake.cjs && node tests/playerpad.cjs && node tests/navtabs.cjs && node tests/anime.cjs && node tests/pcui.cjs && node tests/pcengine.cjs && node tests/pcmenu.cjs && node tests/pcsettings.cjs && node tests/titlebar.cjs tools && node tests/desktopstarter.cjs && node tests/appicon.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs && node tests/discover.cjs && node tests/mpvclear.cjs && node tests/mpvsee.cjs && node tests/tlsfallback.cjs && node tests/imgretry.cjs && node tests/nativelint.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/handover.cjs && node tests/firstrun.cjs && node tests/setupui.cjs && node tests/hybridcookies.cjs && node tests/themes.cjs && node tests/themepacks.cjs && node tests/themeeditor.cjs && node tests/undo.cjs && node tests/dlengine.cjs && node tests/torengine.cjs && node tests/screenengine.cjs && node tests/rustcore.cjs && node tests/advancedrows.cjs && node tests/ytspeed.cjs && node tests/ytfail.cjs && node tests/ytjobs.cjs && node tests/rowpatch.cjs && node tests/videohosts.cjs && node tests/perfidle.cjs && node tests/longlist.cjs && node tests/ghcache.cjs && node tests/addprobe.cjs && node tests/debrid.cjs && node tests/desktauri.cjs && node tests/filestauri.cjs && node tests/archive7z.cjs && node tests/archiveformat.cjs && node tests/screentauri.cjs && node tests/streamtauri.cjs && node tests/search.cjs && node tests/subs.cjs && node tests/video.cjs && node tests/strings.cjs && node tests/perfviews.cjs && node tests/directfile.cjs en && node tests/directfile.cjs ar && node tests/filename.cjs && node tests/themedefault.cjs && node tests/animbg.cjs && node tests/openwith.cjs && node tests/extractsafe.cjs && node tests/extractsheet.cjs && sh tests/native/arc.sh && node tests/filesextras.cjs && node tests/filesextras-edit.cjs && node tests/filesextras-check.cjs && node tests/filesextras-misc.cjs && node tests/filesqueue.cjs && node tests/files7z.cjs && node tests/perfstart.cjs && node scripts/themes.mjs --check
+      - run: npm install --no-save playwright@1.64.1 ts-api@npm:typescript@6.0.3 && node tests/desktop-files.cjs && node tests/ytdlp-js.cjs && node tests/aria2-start.cjs && node tests/shared-copies.cjs && node tests/native-stub.cjs && node tests/packs.cjs && node tests/downloads-options.cjs en && node tests/done.cjs en && node tests/models.cjs en && node tests/models.cjs ar && node tests/engine2.cjs en && node tests/engine2.cjs ar && node tests/grab.cjs en && node tests/mini.cjs en && node tests/mini.cjs ar && node tests/tabs.cjs && node tests/browser.cjs en && node tests/browser.cjs ar && node tests/library.cjs && node tests/pick.cjs && node tests/files.cjs && node tests/social.cjs && node tests/grabjs.cjs && node tests/av.cjs && node tests/tv.cjs && node tests/tvsearch.cjs && node tests/torrentstream.cjs && node tests/soundbeside.cjs && node tests/transcode.cjs && node tests/lettering.cjs && node tests/subfont.cjs && node tests/speedtest.cjs && node tests/inpaint.cjs && node tests/swipe.cjs && node tests/gestures.cjs && node tests/filesnames.cjs && node tests/filesjobs.cjs && node tests/filesclip.cjs && node tests/filesback.cjs && node tests/filesview.cjs && node tests/filesbatch.cjs && node tests/videoargs.cjs && node tests/videojob.cjs && node tests/videochoice.cjs en && node tests/videochoice.cjs ar && node tests/aria2poll.cjs && node tests/dlfix.cjs en && node tests/dlfix.cjs ar && node tests/desktoppaths.cjs && node tests/submatch.cjs && node tests/subpacks.cjs en && node tests/subpacks.cjs ar && node tests/mega.cjs && node tests/gdrive.cjs && node tests/mpvplayer.cjs && node tests/apk.cjs && node tests/swarm.cjs && node tests/settingscards.cjs && node tests/backnav.cjs && node tests/backlayers.cjs && node tests/videoback.cjs && node tests/thumbs.cjs && node tests/playerrotate.cjs && node tests/sharedsave.cjs && node tests/picker.cjs && node tests/settingstabs.cjs && node tests/updater.cjs && node tests/player.cjs && node tests/videos.cjs && node tests/taskfiles.cjs en && node tests/taskfiles.cjs ar && node tests/anilistlink.cjs en && node tests/anilistlink.cjs ar && node tests/animenotes.cjs en && node tests/animenotes.cjs ar && node tests/animewatch.cjs en && node tests/animewatch.cjs ar && node tests/subsearchpack.cjs en && node tests/subsearchpack.cjs ar && node tests/ipa.cjs en && node tests/ipa.cjs ar && node tests/archive.cjs && node tests/tdz.cjs en && node tests/library.cjs ar && sh tests/native/downloader.sh && sh tests/native/screen.sh && sh tests/native/hls.sh && sh tests/native/fileplan.sh && sh tests/native/video.sh && node tests/screen.cjs en && node tests/screen.cjs ar && node tests/screenpc.cjs en && node tests/screenpc.cjs ar && node tests/folderaccess.cjs en && node tests/folderaccess.cjs ar && node tests/relink.cjs en && node tests/relink.cjs ar && node tests/installroute.cjs && node tests/replay.cjs && node tests/playertr.cjs && node tests/intake.cjs && node tests/playerpad.cjs && node tests/navtabs.cjs && node tests/anime.cjs && node tests/pcui.cjs && node tests/pcengine.cjs && node tests/pcmenu.cjs && node tests/pcsettings.cjs && node tests/titlebar.cjs tools && node tests/desktopstarter.cjs && node tests/appicon.cjs && node tests/smoke.cjs en && node tests/smoke.cjs ar && node tests/aria2.cjs && node tests/discover.cjs && node tests/mpvclear.cjs && node tests/mpvsee.cjs && node tests/tlsfallback.cjs && node tests/imgretry.cjs && node tests/nativelint.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/handover.cjs && node tests/firstrun.cjs && node tests/setupui.cjs && node tests/hybridcookies.cjs && node tests/themes.cjs && node tests/themepacks.cjs && node tests/themeeditor.cjs && node tests/undo.cjs && node tests/dlengine.cjs && node tests/torengine.cjs && node tests/screenengine.cjs && node tests/rustcore.cjs && node tests/advancedrows.cjs && node tests/ytspeed.cjs && node tests/ytfail.cjs && node tests/ytjobs.cjs && node tests/rowpatch.cjs && node tests/videohosts.cjs && node tests/perfidle.cjs && node tests/longlist.cjs && node tests/ghcache.cjs && node tests/addprobe.cjs && node tests/debrid.cjs && node tests/desktauri.cjs && node tests/filestauri.cjs && node tests/archive7z.cjs && node tests/archiveformat.cjs && node tests/screentauri.cjs && node tests/streamtauri.cjs && node tests/search.cjs && node tests/subs.cjs && node tests/video.cjs && node tests/strings.cjs && node tests/perfviews.cjs && node tests/directfile.cjs en && node tests/directfile.cjs ar && node tests/filename.cjs && node tests/themedefault.cjs && node tests/animbg.cjs && node tests/openwith.cjs && node tests/extractsafe.cjs && node tests/extractsheet.cjs && sh tests/native/arc.sh && node tests/filesextras.cjs && node tests/filesextras-edit.cjs && node tests/filesextras-check.cjs && node tests/filesextras-misc.cjs && node tests/filesqueue.cjs && node tests/files7z.cjs && node tests/perfstart.cjs && node scripts/themes.mjs --check && sh tests/native/doh.sh && node tests/dohchain.cjs && node tests/dohui.cjs en && node tests/dohui.cjs ar
       - name: Package web build
         run: cd dist && zip -r ../KurokawaTools-web.zip . && cd ..
       - uses: actions/upload-artifact@v4
@@ -56,6 +69,8 @@ jobs:
     needs: version
     name: Android APKs
     runs-on: ubuntu-latest
+    timeout-minutes: 60   # (6 minutes in the 0.20.0 run)
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/tools } }
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +112,11 @@ jobs:
             AL='${{ secrets.ANDROID_KEY_ALIAS }}'; [ -n "$AL" ] || AL=kurokawa
             KP='${{ secrets.ANDROID_KEY_PASSWORD }}'; [ -n "$KP" ] || KP="$SP"
             echo "KR_KEYSTORE_PASSWORD=$SP" >> $GITHUB_ENV; echo "KR_KEY_ALIAS=$AL" >> $GITHUB_ENV; echo "KR_KEY_PASSWORD=$KP" >> $GITHUB_ENV
+            # (A keystore that does not open with its alias and password would sign nothing, or sign with the wrong key: stop here, say nothing of the secrets themselves.)
+            keytool -list -keystore $RUNNER_TEMP/kr.keystore -storepass "$SP" -alias "$AL" > /dev/null 2>&1 && echo "Signing with alias $AL from the repository secrets." || { echo "::error::The keystore secret is there but alias '$AL' and the password do not open it."; exit 1; }
           else
+            # (A release from main must be signed with the repository's key, or phones cannot update over the last one: no key, no release. Other runs may use a one-off key.)
+            if [ "$GITHUB_REF" = refs/heads/main ]; then echo "::error::ANDROID_KEYSTORE_BASE64 secret missing — a release from main is not signed with a one-off key."; exit 1; fi
             echo "::warning::ANDROID_KEYSTORE_BASE64 secret missing — APKs signed with a one-off key."
             keytool -genkeypair -v -keystore $RUNNER_TEMP/kr.keystore -alias kurokawa -keyalg RSA -keysize 2048 -validity 10000 -storepass kurokawa -keypass kurokawa -dname "CN=KurokawaTools, O=Kurokawa, C=SA"
             echo "KR_KEYSTORE_PASSWORD=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_ALIAS=kurokawa" >> $GITHUB_ENV; echo "KR_KEY_PASSWORD=kurokawa" >> $GITHUB_ENV
@@ -145,6 +164,8 @@ jobs:
     needs: version
     name: Windows EXE
     runs-on: windows-latest
+    timeout-minutes: 60   # (2 minutes in the 0.20.0 run, 15 at most before)
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/tools } }
     steps:
       - uses: actions/checkout@v4
@@ -182,6 +203,8 @@ jobs:
     needs: version
     name: macOS DMG
     runs-on: macos-15
+    timeout-minutes: 60   # (13 minutes in the 0.20.0 run)
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/tools } }
     steps:
       - uses: actions/checkout@v4
@@ -218,6 +241,8 @@ jobs:
     needs: version
     name: Linux AppImage
     runs-on: ubuntu-latest
+    timeout-minutes: 45   # (1 minute in the 0.20.0 run)
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/tools } }
     steps:
       - uses: actions/checkout@v4
@@ -260,6 +285,7 @@ jobs:
     needs: version
     name: Rust ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90   # (6 to 11 minutes in the 0.20.0 run with a warm cache; a cold build of every crate takes about three times that)
     continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
@@ -391,6 +417,8 @@ jobs:
 
   release:
     name: Publish release
+    timeout-minutes: 30
+    permissions: { contents: write }   # (creates the release, uploads its files)
     needs: [version, web, android, windows, macos, linux, rust-desktop]
     if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
@@ -456,12 +484,14 @@ jobs:
           ls -la artifacts/android | grep -E 'deno|packs.json'
       - name: Release notes
         run: |
+          set -e
           V=${{ needs.version.outputs.v }}
+          [ -s "$APP/docs/notes/v$V.md" ] || { echo "::error::$APP/docs/notes/v$V.md is missing or empty"; exit 1; }
           {
             echo "## Kurokawa Tools v$V"
             echo
             echo "## What's new"
-            if [ -s "$APP/docs/notes/v$V.md" ]; then cat "$APP/docs/notes/v$V.md"; else echo "- Fixes and improvements"; fi
+            cat "$APP/docs/notes/v$V.md"   # (there is no fallback text: the version job has already refused a missing or empty file)
             if [ "${{ needs.macos.result }}" != "success" ]; then echo; echo "_The previous build's macOS disk image did not come this time; the next release will carry one._"; fi
             # (The new computer build is optional on macOS: without it the previous build's DMG is the Mac download, and the
             # previous build on a Mac keeps updating as before — it offers the move only when the new DMG is there.)
@@ -499,9 +529,24 @@ jobs:
           V=${{ needs.version.outputs.v }}
           (cd artifacts && find . -type f ! -name '*.blockmap' -print0 | sort -z | xargs -0 sha256sum | sed -E 's#  \./[^/]+/#  #') > "KurokawaTools-$V-SHA256SUMS.txt"
           cat "KurokawaTools-$V-SHA256SUMS.txt"
+      # (What a release must carry, by name: the files the job conditions above promise. A name that is not there stops
+      # the release before anything is published, instead of a release with a hole in it. The Rust build's files
+      # are optional by design — the notes say when they are missing — and are not asked for here.)
+      - name: The release's files are all there
+        run: |
+          V=${{ needs.version.outputs.v }}; missing=0
+          need() { if ! ls artifacts/*/"$1" > /dev/null 2>&1; then echo "::error::missing from the release: $1"; missing=1; fi; }
+          for abi in arm64-v8a armeabi-v7a x86_64 universal; do need "KurokawaTools-$V-$abi.apk"; need "KurokawaTools-$V-$abi-a11y.apk"; done
+          need "KurokawaTools-$V-win-x64.exe"; need "KurokawaTools-$V-win-x64-portable.exe"
+          need "KurokawaTools-$V-linux-x86_64.AppImage"
+          need "KurokawaTools-web.zip"; need "KurokawaTools-packs.json"
+          # (The scene engine, when this checkout has it: inside the web package, which the site and the apps serve.)
+          if [ -d apps/tools/core/kt-scene ]; then unzip -l artifacts/web/KurokawaTools-web.zip | grep -q ' scene/ktscene.wasm$' || { echo "::error::the web package has no scene/ktscene.wasm"; missing=1; }; fi
+          [ -s "KurokawaTools-$V-SHA256SUMS.txt" ] || { echo "::error::no checksums file"; missing=1; }
+          exit $missing
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: tools-v${{ needs.version.outputs.v }}
+          tag_name: ${{ needs.version.outputs.tag }}
           name: Kurokawa Tools v${{ needs.version.outputs.v }}
           target_commitish: ${{ github.sha }}
           body_path: notes.md
@@ -519,4 +564,4 @@ jobs:
       - name: The Rust build's files
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
-          for d in artifacts/rust-*; do [ -d "$d" ] && gh release upload "tools-v${{ needs.version.outputs.v }}" "$d"/* --clobber -R "$GITHUB_REPOSITORY"; done
+          for d in artifacts/rust-*; do [ -d "$d" ] && gh release upload "${{ needs.version.outputs.tag }}" "$d"/* --clobber -R "$GITHUB_REPOSITORY"; done

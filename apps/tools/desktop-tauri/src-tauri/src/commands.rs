@@ -366,33 +366,36 @@ pub async fn kt_http(o: Value) -> Result<Value, String> {
     net::http(&o).await
 }
 
-/// kt:setDoh({ provider }) → { provider }: the resolver the app's own requests use (stage P8; a name of main.cjs's
-/// table — kt-core's dohnames —, «auto», an https:// address, or «off» for the system's DNS). As Electron, the page
-/// sets it again at each start. (What the page's web view fetches itself keeps the system's DNS: ../PORTING.md.)
+/// kt:setDoh({ provider, allowSystem }) → { provider, allowSystem, on }: DNS over HTTPS for the app's own requests and
+/// aria2's (0.21 P9: dohtools.rs — kt-core's dohchain; «off», «auto», a provider's id, or the user's own address).
+/// As Electron, the page sets it again at each start. (What the page's web view fetches itself keeps the system's
+/// DNS: ../PORTING.md.)
 #[tauri::command]
 pub async fn kt_set_doh(o: Value) -> Result<Value, String> {
     let p = text_of(&o, "provider");
     let p = if p.is_empty() { "off".to_string() } else { p };
-    net::set_doh(&kt_core::dohnames::resolver_for(&p));
-    Ok(json!({ "provider": p }))
+    let allow = o.get("allowSystem").and_then(|v| v.as_bool()).unwrap_or(false);
+    Ok(tauri::async_runtime::spawn_blocking(move || crate::dohtools::apply(&p, allow)).await.map_err(|e| e.to_string())?)
 }
 
-/// kt:dohProbe() → { ok, ms, ips, resolver } or { ok: false, ms, why }: example.com's addresses asked of the resolver
-/// in force (its answers forgotten first), and timed — main.cjs's probe.
+/// kt:dohProbe() → the status (kt:dohStatus) with { ok, resolver, ms } or { ok: false, why }: every resolver asked a
+/// known name at once, each one's time and health kept — «auto» then asks the quickest healthy one first.
 #[tauri::command]
 pub async fn kt_doh_probe() -> Result<Value, String> {
-    net::clear_doh_cache();
-    let started = std::time::Instant::now();
-    let resolver = kt_core::dohnames::probe_label(&net::doh_server().unwrap_or_else(|| "off".to_string()));
-    let r = net::doh_lookup("example.com").await;
-    let ms = started.elapsed().as_millis() as u64;
-    Ok(match r {
-        Ok(ips) => {
-            let list: Vec<String> = ips.iter().map(|ip| ip.to_string()).collect();
-            json!({ "ok": !list.is_empty(), "ms": ms, "ips": list, "resolver": resolver })
-        }
-        Err(e) => json!({ "ok": false, "ms": ms, "why": e }),
-    })
+    Ok(crate::dohtools::probe(true).await)
+}
+
+/// kt:dohStatus() → the resolvers and their health, the order, the counters, the proxy aria2 uses.
+#[tauri::command]
+pub async fn kt_doh_status() -> Result<Value, String> {
+    Ok(crate::dohtools::status())
+}
+
+/// kt:dohUsed({ hosts }) → { on, hosts: { host: { via, at } } }: what answered each name (the details pages' line).
+#[tauri::command]
+pub async fn kt_doh_used(o: Value) -> Result<Value, String> {
+    let hosts: Vec<String> = o.get("hosts").and_then(|h| h.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).take(64).collect()).unwrap_or_default();
+    Ok(crate::dohtools::used(&hosts))
 }
 
 /// kt:checkUpdate: the newest tools-v* release (they are all pre-releases) newer than this one.

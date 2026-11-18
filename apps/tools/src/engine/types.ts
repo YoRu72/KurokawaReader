@@ -117,7 +117,7 @@ export interface AddOptions {
 
 export interface Limits { down: number; up: number; /** bytes/s; 0 = unlimited */ }
 
-export interface TorrentDetail { peers?: { ip: string; client: string; down: number; up: number; progress: number; total: number; utp: boolean }[]; trackers?: { url: string; tier: number; state: 'working' | 'updating' | 'failing' | 'waiting'; message: string; fails: number }[]; seeds?: number; peersConnected?: number; seedsInSwarm?: number; peersInSwarm?: number; ratio?: number; limitDown?: number; limitUp?: number }
+export interface TorrentDetail { peers?: { ip: string; client: string; down: number; up: number; progress: number; total: number; utp: boolean }[]; trackers?: { url: string; tier: number; state: 'working' | 'updating' | 'failing' | 'waiting'; message: string; fails: number; /** (0.21 P9) its own address when the engine got it by the DoH chain's */ name?: string; /** what found its name: a DoH answer code, or «engine» */ dns?: string }[]; seeds?: number; peersConnected?: number; seedsInSwarm?: number; peersInSwarm?: number; ratio?: number; limitDown?: number; limitUp?: number }
 /** One torrent's metadata, fetched before the download is added (to pick files, to see the size). */
 export interface TorrentInfo { name: string; infoHash: string; total: number; files: { index: number; path: string; size: number }[] }
 

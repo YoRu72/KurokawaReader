@@ -64,7 +64,7 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
   /* ---- 1. the name table: vectors in JS; the twins' constants; Java and Rust on the same file ---- */
   {
     const un = (s) => s.replace(/\\u\{([0-9a-f]+)\}|\\\\/gi, (m, h) => (h ? String.fromCodePoint(parseInt(h, 16)) : '\\')); let n = 0;
-    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'namesafe-vectors.tsv'), 'utf8').split('\n')) {
+    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'namesafe-vectors.tsv'), 'utf8').split(/\r?\n/)) {
       if (!line || line.startsWith('#')) continue; const [kind, pl, inp, act, out, rs, fl] = line.split('\t'); n++; let got;
       if (kind === 'set') { const es = un(inp).split(' | ').filter(Boolean).map((x) => { const t = x[0], r = x.slice(2); if (t === 'd') return { path: r, dir: true }; if (t === 's' || t === 'h') { const [p, tg] = r.split('>'); return { path: p, link: t === 's' ? 'sym' : 'hard', target: tg }; } return { path: r }; }); got = [S.checkSet(es, pl).problems.map((x) => `${x.kind}:${x.path}`).sort().join(',') || '-', '-', '-', '-']; }
       else { const r = kind === 'name' ? S.nameRule(un(inp), pl) : S.pathRule(un(inp), pl); got = [r.action, r.action === 'refuse' ? '-' : r.out, r.reasons.join(',') || '-', r.flags.join(',') || '-']; }
@@ -86,7 +86,7 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     }
   }
   /* ---- 1b. the space replay and the journal check: the same vectors as archsafe.rs ---- */
-  for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractsafe-vectors.tsv'), 'utf8').split('\n')) {
+  for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractsafe-vectors.tsv'), 'utf8').split(/\r?\n/)) {
     if (!line || line.startsWith('#')) continue; const f = line.split('\t');
     if (f[0] === 'replay') { const units = f[1] === '-' ? [] : f[1].split(',').map((u) => { const [o, r] = u.split(':').map(Number); return { out: o, freed: r }; }); const r = S.replaySpace(units, { sameVolume: f[2] === '1', blockSize: Number(f[3]), overhead: Number(f[4]) }); ok(`replay vector ${f[1]}`, r.normal === Number(f[5]) && r.inPlace === Number(f[6]) && r.peakAt === Number(f[7]), JSON.stringify(r)); }
     else { const r = S.journalRead(f[1].replace(/\\n/g, '\n')); ok(`journal vector ${f[2]}`, (r.ok ? 'ok' : r.why) === f[2]); }
@@ -94,7 +94,7 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
   /* ---- 1c. the engine's shared vectors (pre-flight, units, plan, journal and tail text): the same file kt-core's extractjob.rs runs ---- */
   {
     let n = 0; const vt = fs.mkdtempSync(path.join(TMP, 'vec-'));
-    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractjob-vectors.tsv'), 'utf8').split('\n')) {
+    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractjob-vectors.tsv'), 'utf8').split(/\r?\n/)) {
       if (!line || line.startsWith('#')) continue; const f = line.split('\t'); n++; let got, want;
       if (f[0] === 'preflight') { const r = S.preflight(JSON.parse(f[1]), { margin: Number(f[2]) }); got = [r.normal.ok ? 1 : 0, r.inPlace.ok ? 1 : 0, r.recommend, r.why, r.problems.map((p) => `${p.kind}:${p.severity}`).sort().join(',') || '-', r.space.normal, r.space.inPlace].join('\t'); want = f.slice(3, 10).join('\t'); }
       else if (f[0] === 'units') { const p = path.join(vt, f[3]); fs.writeFileSync(p, Buffer.from(f[2], 'hex')); let s; try { s = await E.unitsOf(p); } catch (e) { s = null; got = `ERR ${e.message}\t-`; } if (s) got = s.units.map((u) => [u.name, u.start, u.dataStart, u.dataEnd, u.end, u.bad ? 1 : 0].join(':')).join('|') + '\t' + (s.layoutBad.join(',') || '-'); want = f[4] + '\t' + f[5]; }

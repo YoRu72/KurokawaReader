@@ -14,8 +14,12 @@ const Module = require('node:module');
 const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
+// (Sources read for the checks below: their line endings made \n once here, so a Windows checkout — CRLF — reads alike. KT_TAURIBRIDGE_SRC points the
+//  reads at another copy of apps/tools, such as a CRLF copy that proves it.)
+const SRCROOT = process.env.KT_TAURIBRIDGE_SRC || ROOT;
+const readText = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
-  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'archivePreflight', 'archiveShelf', 'archiveJob', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'archivePreflight', 'archiveShelf', 'archiveJob', 'setDoh', 'dohProbe', 'dohStatus', 'dohUsed', 'installUpdate', 'appIcon',
   // (Stage P4.)
   'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl',
   // (Stage P6: desktop.rs.)
@@ -70,7 +74,7 @@ function loadBridge(boot) {
   };
   if (boot) window.__KT_BOOT__ = boot;
   const ctx = vm.createContext({ window, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, CustomEvent: FakeCustomEvent });
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), ctx, { filename: 'bridge.js' });
+  vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), ctx, { filename: 'bridge.js' });
   return window;
 }
 
@@ -108,7 +112,7 @@ function loadBridge(boot) {
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
     archivePreflight: [{ path: '/x/a.zip', dest: '/y', password: 'p', verify: true, keepFree: 1048576 }], archiveShelf: [{ atStart: true }], archiveJob: [{ id: 'a4', journal: '/x/a.zip.kurokawa-unzip', act: 'restore' }],
-    appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
+    appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad', allowSystem: true }], dohProbe: [], dohStatus: [], dohUsed: [{ hosts: ['files.test'] }], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
     streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }],
     desktopPrefs: [{ keepAwake: true, whenDone: 'sleep', notifyDone: false, tray: true, hotkeys: { clip: 'CommandOrControl+Shift+V' } }], mini: [{ action: 'auto', on: true }], registerMagnet: [],
     captureUrl: [{ url: 'https://anilist.co/api/v2/oauth/authorize?client_id=1&response_type=token', marker: 'access_token=', title: 'AniList' }], siteWindow: [{ url: 'https://e.org/', title: 'E' }],
@@ -201,7 +205,7 @@ function loadBridge(boot) {
   // Without window.__TAURI__.event: the event plugin's own listen command, through __TAURI_INTERNALS__.
   const icalls = [];
   const iwin = { __TAURI_INTERNALS__: { invoke: (cmd, args) => { icalls.push({ cmd, args }); return Promise.resolve(cmd === 'kt_list' ? [] : 1); }, transformCallback: (f) => (typeof f === 'function' ? 7 : 0) } };
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), vm.createContext({ window: iwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON }));
+  vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), vm.createContext({ window: iwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON }));
   iwin.kurokawaTools.onTasks(() => undefined);
   await new Promise((ok) => setTimeout(ok, 10));
   const ls = icalls.filter((c) => c.cmd === 'plugin:event|listen').map((c) => c.args);
@@ -209,7 +213,7 @@ function loadBridge(boot) {
   assert.ok(ls.every((a) => a.handler === 7 && a.target && a.target.kind === 'Any'));
   // No IPC at all: a clear rejection, not a TypeError at load.
   const bare = vm.createContext({ window: {}, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array });
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), bare);
+  vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), bare);
   await assert.rejects(bare.window.kurokawaTools.list(), /IPC/);
 
   // Stage P6: what the system handed the app reaches the page as the preload's kt:open DOM event, once the page listens
@@ -224,7 +228,7 @@ function loadBridge(boot) {
       dispatchEvent: (e) => { if (e.type === 'kt:open') got.push(e.detail); return true; },
       addEventListener: function () { return undefined; },
     };
-    vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), vm.createContext({ window: pwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, CustomEvent: FakeCustomEvent, setTimeout }));
+    vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), vm.createContext({ window: pwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, CustomEvent: FakeCustomEvent, setTimeout }));
     await new Promise((ok) => setTimeout(ok, 10));
     assert.equal(takes, 0, 'nothing taken before the page listens');
     pwin.addEventListener('kt:open', () => undefined); pwin.addEventListener('kt:open', () => undefined);
@@ -257,33 +261,33 @@ function loadBridge(boot) {
 
   // Stage P7: the browser's GRAB_JS is main.cjs's, unchanged.
   {
-    const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'));
+    const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(readText(path.join(SRCROOT, 'desktop', 'main.cjs')));
     assert.ok(m, 'GRAB_JS in main.cjs');
     // (Line ends compared as LF: a Windows checkout gives grab.js CRLF — CI run 43543617161's Windows job failed here.)
     const lf = (t) => t.replace(/\r\n/g, '\n').trim();
-    assert.equal(lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'), 'utf8')), lf(JSON.parse(m[1])), 'grab.js ≠ main.cjs GRAB_JS');
+    assert.equal(lf(readText(path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'))), lf(JSON.parse(m[1])), 'grab.js ≠ main.cjs GRAB_JS');
   }
 
   // Screen translator: the OCR helpers' scripts the Tauri shell writes are screentr.cjs's, unchanged (line ends as LF).
   {
-    const cjs = fs.readFileSync(path.join(ROOT, 'desktop', 'screentr.cjs'), 'utf8');
+    const cjs = readText(path.join(SRCROOT, 'desktop', 'screentr.cjs'));
     const lf = (t) => t.replace(/\r\n/g, '\n');
     for (const name of ['kt-ocr.ps1', 'kt-ocr.js']) {
       const at = cjs.indexOf(`script('${name}', \``); assert.ok(at > 0, `${name} in screentr.cjs`);
       let i = at + `script('${name}', \``.length; let body = '';
       for (;;) { const c = cjs[i]; if (c === '\\') { body += cjs[i + 1]; i += 2; continue; } if (c === '`') break; body += c; i++; }
-      assert.equal(lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', name), 'utf8')), lf(body), `src-tauri/src/${name} ≠ screentr.cjs's`);
+      assert.equal(lf(readText(path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src', name))), lf(body), `src-tauri/src/${name} ≠ screentr.cjs's`);
     }
   }
 
   // Rust: every command the bridge calls is registered, with the argument names the bridge sends.
-  const src = path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src');
-  const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
+  const src = path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src');
+  const main = readText(path.join(src, 'main.rs'));
   const handler = main.slice(main.indexOf('generate_handler!['), main.indexOf(']', main.indexOf('generate_handler![')));
   const registered = [...handler.matchAll(/\b\w+::(kt_\w+)/g)].map((m) => m[1]);
   const params = {};
   for (const f of fs.readdirSync(src).filter((x) => x.endsWith('.rs'))) {
-    const code = fs.readFileSync(path.join(src, f), 'utf8');
+    const code = readText(path.join(src, f));
     for (const m of code.matchAll(/#\[tauri::command\]\s*pub async fn (kt_\w+)\(([^)]*)\)/g)) {
       assert.ok(!(m[1] in params), `${m[1]} defined twice`);
       params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
@@ -297,10 +301,10 @@ function loadBridge(boot) {
   }
   // (Tools 0.21 P11 review: an archive with the engine's journal v2 beside it is never handed to the shared crate's first-design code: list,
   // restore and extract each ask the journal's version first — the shared crate would read the saved tail as a directory, or drop the journal.)
-  { const ar = fs.readFileSync(path.join(src, 'archives.rs'), 'utf8'); const body = (name) => { const i = ar.indexOf(`pub async fn ${name}(`); return ar.slice(i, ar.indexOf('\n}\n', i)); };
+  { const ar = readText(path.join(src, 'archives.rs')); const body = (name) => { const i = ar.indexOf(`pub async fn ${name}(`); return ar.slice(i, ar.indexOf('\n}\n', i)); };
     for (const [cmd, old] of [['kt_archive_list', 'archive::list('], ['kt_archive_restore', 'archive::restore('], ['kt_archive_extract', 'archive::extract(']]) {
       const b = body(cmd); const v2 = cmd === 'kt_archive_extract' ? b.indexOf('crate::extractcmds::extract(') : b.indexOf('journal_version('); assert.ok(v2 > 0 && v2 < b.indexOf(old), `${cmd}: the journal's version asked before ${old}`); }
-    const ex = fs.readFileSync(path.join(src, 'extractcmds.rs'), 'utf8'); const fx = ex.slice(ex.indexOf('pub fn extract('), ex.indexOf('pub fn list_v2('));
+    const ex = readText(path.join(src, 'extractcmds.rs')); const fx = ex.slice(ex.indexOf('pub fn extract('), ex.indexOf('pub fn list_v2('));
     assert.ok(fx.indexOf('journal_version(') > 0 && fx.indexOf('journal_version(') < fx.indexOf('archive::format_of('), 'extract: a v2 journal finished by the engine before anything else');
     // (Round four: finished without asking only when this app's registry points at the journal — or the page's sheet confirmed; restore and listing
     // only for the in-place job of that very archive; a finished job's journal beside a new archive: the archive listed and extracted as itself.)
@@ -313,7 +317,7 @@ function loadBridge(boot) {
     { const i = ex.indexOf('pub async fn kt_archive_job('); const kj = ex.slice(i, ex.indexOf('\n}\n', i)); assert.ok(/"forget" => ej::forget_blocked\(jp, reg\.as_deref\(\), &DISK\)/.test(kj) && /let reg = registry\(&app\);/.test(kj), 'kt_archive_job: forget'); } }
   // The self-test script: inert without its settings; its verdict; a full run against a fake bridge passes, and fails
   // when one answer is wrong.
-  const stSrc = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'selftest.js'), 'utf8');
+  const stSrc = readText(path.join(SRCROOT, 'desktop-tauri', 'selftest.js'));
   const sw = { addEventListener() { throw new Error('should be inert'); } };
   vm.runInContext(stSrc, vm.createContext({ window: sw, Promise, Object, Array, String, Error, JSON, Uint8Array, Date, setTimeout, clearTimeout }));
   const lib = sw.__KT_SELFTEST_LIB__;

@@ -41,7 +41,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   console.log('extract call:', JSON.stringify(await p.evaluate(() => window.__extracted)));
   await p.evaluate(() => { window.__zipping = true; }); await p.click('.fab'); await p.click('.fab-item >> nth=0'); await p.waitForSelector('.sheet'); await p.click('.sheet button:has-text("Make a zip")'); await p.waitForSelector('.sheet input[type=text]');
   console.log('zip name:', await p.$eval('.sheet input[type=text]', (e) => e.value), '| dir:', await p.$eval('.sheet p[dir=ltr]', (e) => e.textContent));
-  await p.click('.sheet .btn.primary'); await p.waitForSelector('.toast:has-text("made")'); console.log('zip toast:', await p.$eval('.toast', (e) => e.textContent));
+  await p.click('.sheet .btn.primary'); await p.waitForSelector('.files-clash-both'); /* (the name is taken in this fake: a computer's zip asks first — keep both) */ await p.click('.files-clash-both'); await p.waitForSelector('.toast:has-text("made")'); console.log('zip toast:', await p.$eval('.toast', (e) => e.textContent));
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed');
   await br.close(); web.close(); process.exit(errors.length ? 1 : 0);
 })();

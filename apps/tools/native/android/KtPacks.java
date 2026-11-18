@@ -64,7 +64,7 @@ final class KtPacks {
                 try {
                     boolean resume = done > 0;
                     for (int hop = 0; hop < 8; hop++) {
-                        c = attempt % 2 == 1 ? (HttpURLConnection) u.openConnection() : KrDoh.open(u); c.setInstanceFollowRedirects(false); c.setConnectTimeout(20000); c.setReadTimeout(60000);
+                        c = attempt % 2 == 1 && KrDoh.systemOk(u.getHost(), "a pack tried once more by the system's DNS") ? (HttpURLConnection) u.openConnection() : KrDoh.open(u); c.setInstanceFollowRedirects(false); c.setConnectTimeout(20000); c.setReadTimeout(60000);
                         c.setRequestProperty("User-Agent", "KurokawaTools"); if (resume) c.setRequestProperty("Range", "bytes=" + done + "-");
                         int code = c.getResponseCode();
                         if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) { u = new URL(u, c.getHeaderField("Location")); c.disconnect(); c = null; continue; }

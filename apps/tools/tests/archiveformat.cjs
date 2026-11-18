@@ -9,7 +9,7 @@ const tarOf = (magic = true) => Buffer.concat([tarHead('a.txt', 5, magic), Buffe
 // the stand-in 7-Zip: «e -so»: writes what KT_FAKE_INSIDE names (tar bytes or text) to the pipe
 const fake = path.join(bin, '7z'); fs.writeFileSync(path.join(tmp, 'tar.bin'), tarOf()); fs.writeFileSync(path.join(tmp, 'text.bin'), 'just some words\n');
 fs.writeFileSync(fake, `#!/bin/sh\ncat "${tmp}/$KT_FAKE_INSIDE.bin"\n`, { mode: 0o755 });
-process.env.PATH = bin + path.delimiter + process.env.PATH;
+process.env.PATH = bin + path.delimiter + process.env.PATH; process.env.KT_SEVENZIP = fake;   // (the stand-in, whatever 7-Zip the machine has)
 const A = require('../desktop/archive.cjs'); const w = (n, b) => { const f = path.join(tmp, n); fs.writeFileSync(f, b); return f; };
 const fmt = async (f) => { try { return await A.formatOf(f); } catch (e) { return String(e.message); } };
 (async () => {
@@ -29,9 +29,9 @@ const fmt = async (f) => { try { return await A.formatOf(f); } catch (e) { retur
   process.env.KT_FAKE_INSIDE = 'tar'; ok('xz / bzip2 named tar.* with a tar inside (by 7-Zip): tar.xz / tar.bz2', (await fmt(w('x.tar.xz', xzHead))) === 'tar.xz' && (await fmt(w('x.txz', xzHead))) === 'tar.xz' && (await fmt(w('x.tar.bz2', bzHead))) === 'tar.bz2');
   process.env.KT_FAKE_INSIDE = 'text'; ok('xz / bzip2 named tar.* with only text inside: xz / bz2', (await fmt(w('y.tar.xz', xzHead))) === 'xz' && (await fmt(w('y.tbz2', bzHead))) === 'bz2');
   ok('xz / bzip2 under plain names stay xz / bz2 (7-Zip not even asked)', (await fmt(w('z.xz', xzHead))) === 'xz' && (await fmt(w('z.bz2', bzHead))) === 'bz2');
-  fs.renameSync(fake, fake + '.off'); const t0 = Date.now();
+  process.env.KT_SEVENZIP = path.join(tmp, 'no-such-7z'); const t0 = Date.now();
   ok('no 7-Zip to look with: the name\'s word stands for xz', (await fmt(w('n.tar.xz', xzHead))) === 'tar.xz' && Date.now() - t0 < 4000);
-  fs.renameSync(fake + '.off', fake);
+  process.env.KT_SEVENZIP = fake;
   ok('zip, 7z and rar are still known by their first bytes whatever the name', (await fmt(w('a.dat', Buffer.from([0x50, 0x4b, 3, 4, 0, 0, 0, 0])))) === 'zip' && (await fmt(w('b.dat', Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0, 4])))) === '7z' && (await fmt(w('c.dat', Buffer.from('Rar!\x1a\x07\x00\x00')))) === 'rar');
 
   // ---- in place: two entries whose bytes overlap (the first one's data holds the second one's local header and data) are refused before anything is cut

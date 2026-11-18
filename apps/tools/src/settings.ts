@@ -133,7 +133,7 @@ export interface Settings {
   /** Torrent options (Senpwai's): peer discovery, encryption, when seeding stops (0 = never). */
   torrent: { dht: boolean; lsd: boolean; upnp: boolean; natpmp: boolean; enc: 'enabled' | 'forced' | 'disabled'; seedRatio: number; seedMinutes: number; addTrackers?: boolean; simpleDisk?: boolean; connsPerTorrent?: number; connsTotal?: number; torrentProxy?: boolean; bindIface?: string; anonymous?: boolean };
   /** Privacy (from the reader): DNS over HTTPS (off, a provider, or a resolver's address) and screenshots blocked. */
-  doh: string; dohSplit?: 'auto' | 'always' | 'off'; secureScreen: boolean;
+  doh: string; dohSplit?: 'auto' | 'always' | 'off'; /** (0.21 P9) the system's DNS when every DoH resolver failed — off by default. */ dohSystem?: boolean; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
   playerWith: 'ask' | 'app' | 'external';
   /** Sounds and the «Download complete» card (downloads/done.ts). */
@@ -146,6 +146,16 @@ export interface Settings {
   animeLibraryDirs?: string[];
   /** Hayase's «hide spoilers»: episodes past the one you are on keep their titles and pictures hidden. */
   animeHideSpoilers?: boolean;
+  /** Where an episode's note goes when Send is pressed on AniList: an activity, the list entry's notes, or nowhere. */
+  animeNotesMode?: 'local' | 'activity' | 'notes';
+  /** The user's own MyAnimeList API client ID (MyAnimeList gives apps none): for sending notes to its list comments. */
+  malClientId?: string;
+  /** After an episode counts as watched in the player: the progress on AniList (and MyAnimeList) moved to it (default on). */
+  animeTrackAfterWatch?: boolean;
+  /** After that: a small bar on the show's page offering to review the episode (default on). */
+  animeAskReview?: boolean;
+  /** Starting a download goes to the Downloads page (default off: a small floating progress bar instead). */
+  openDownloadsOnStart?: boolean;
   /** Halfway through an episode, the next one starts downloading. */
   animePreloadNext?: boolean;
   /** Episodes downloaded to be watched: kept, deleted once watched, or deleted some days after. */

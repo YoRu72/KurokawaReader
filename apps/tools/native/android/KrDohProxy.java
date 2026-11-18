@@ -92,9 +92,9 @@ final class KrDohProxy {
 
     /** The site's address, through the resolver; the connection to it. */
     private static Socket connect(String host, int port, boolean viaResolver) throws IOException {
-        // (Only a site the network hides — or one forced — is resolved through DoH; the others as the network gives them,
-        // as before the proxy: a healthy site's own address, its own CDN edge.)
-        InetAddress[] ips = KrDoh.on() && viaResolver ? KrDoh.resolve(host) : InetAddress.getAllByName(host);
+        // (0.21 P9: with DoH on, every name through the chain — the network's DNS never asked for a page's sites; the
+        // hello is split for the sites that need it — KrDoh.needed —; with DoH off, as the network gives them.)
+        InetAddress[] ips = KrDoh.on() ? KrDoh.resolve(host) : InetAddress.getAllByName(host);
         IOException last = null;
         for (int i = 0; i < Math.min(3, ips.length); i++) {
             Socket s = new Socket();

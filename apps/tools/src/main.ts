@@ -192,10 +192,10 @@ else {
   // (Once after 0.21 moved an install back to «Expressive 3»: the snackbar that says so and can undo it.)
   try { if (localStorage.getItem(MAIN_NOTE_KEY)) afterFirstPaint(() => window.setTimeout(() => void import('./theme/mainNote').then((m) => m.showMainNote()), 700)); } catch { /* private mode */ }
   // The privacy choices made once are applied at every start (DoH, screenshots blocked).
-  { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh }).catch(() => undefined);
+  { const s0 = getSettings(); const d = window.kurokawaTools as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | undefined; if (s0.doh !== 'off' && d?.setDoh) void d.setDoh({ provider: s0.doh, allowSystem: !!s0.dohSystem } as { provider: string }).catch(() => undefined);
     // (The phone: the app's Settings alone decide the app's DNS over HTTPS — «off» sent as much as a resolver, so the old
     // browser switch, which wrote the app's choice, cannot keep it on unseen. The browser has its own switch now.)
-    void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off' }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
+    void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off', allowSystem: !!s0.dohSystem } as { provider: string }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   // (Stage P9: the computer's two builds. The Tauri build: its first-run screen once — carrying the offer of the data the
   // previous (Electron) version handed over —, else that offer alone when there is one (ui/firstrun.ts startScreens).
   // The Electron build: the hand-over's maker reachable by the shell without an import (desktop/handover.cjs prepare
@@ -283,6 +283,8 @@ else {
   // (A video or a sound opened with «Kurokawa Player» from another app: straight into the player, where it asked.)
   window.addEventListener('kt:play', (e) => { const d = (e as CustomEvent<{ url: string; name: string; path?: string; position?: number; headers?: Record<string, string>; subs?: string[] }>).detail; if (!d?.url) return; void import('./views/player').then((m) => m.openPlayer(d.url, d.name || 'video', { localPath: d.path, startAt: d.position, headers: d.headers, forCaller: true, subtitles: (d.subs ?? []).map((u, i) => ({ url: u, name: u.split('/').pop()?.split('?')[0] || `subtitle ${i + 1}`, isDefault: i === 0 })) })); });
   window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
+  // (The app started again while a video was open in its player: back to that page, its history — player/returnTo.ts.)
+  try { if (localStorage.getItem('kt.tmp.playerFrom')) void import('./player/returnTo').then((m) => m.restoreAtStart()); } catch { /* none */ }
   if (location.hash.startsWith('#/open?')) { const u = new URLSearchParams(location.hash.split('?')[1]).get('u'); if (u) navigate(`/add?u=${encodeURIComponent(u)}`, true); }
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {

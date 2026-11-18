@@ -63,6 +63,6 @@ export async function addResult(r: SearchResult, meta: Record<string, unknown> =
     const eng = getEngine();
     if ((r.magnet || r.torrent) && eng.torrentInfo && eng.can.pickFiles) { const { pickFiles } = await import('../views/pickFiles'); const got = await pickFiles(source, r.title); if (got === null) return; files = got === 'all' ? undefined : got; }
     const tk = await eng.add({ source, name: r.magnet || r.torrent ? undefined : r.title, sequential: true, files, meta: m });
-    toast(t('taskAdded', { name: tk.name || r.title }));
+    void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, r.title));
   } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
 }

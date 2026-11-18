@@ -79,7 +79,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohnames.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs apps/tools/core/kt-core/stdroots/extractjob.rs; do
+          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohchain.rs apps/tools/core/kt-core/src/dohproxy.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs apps/tools/core/kt-core/stdroots/extractjob.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -175,6 +175,25 @@ jobs:
           mkdir -p aria2 ../desktop-tauri/aria2
           for d in aria2/*/; do [ -d "$d" ] && cp -R "${d%/}" ../desktop-tauri/aria2/; done
           find ../desktop-tauri/aria2 -type f -exec ls -la {} \;
+
+      # (0.21 P9: the bundled aria2c checks certificates — «--check-certificate=false» is gone. The only place the Windows build of
+      # aria2c, the one that ships, meets a self-signed server on a real Windows machine; Linux's static build too. It runs
+      # tests/aria2cert.cjs against the binary fetched just above (KT_ARIA2_RES = the folder whose aria2/<system>/ holds it;
+      # KT_REQUIRE_ARIA2 makes «no aria2c» a failure instead of a quiet skip). It is a verdict in the job summary and does not
+      # stop the job: read the line «aria2 certificates» of the run. Only on a checkout that has the test.)
+      - name: aria2c refuses a self-signed certificate (the bundled one)
+        id: aria2cert
+        if: runner.os != 'macOS' && hashFiles('apps/tools/tests/aria2cert.cjs') != ''
+        continue-on-error: true
+        working-directory: apps/tools
+        env: { KT_ARIA2_RES: '${{ github.workspace }}/apps/tools/desktop', KT_REQUIRE_ARIA2: '1' }
+        run: node tests/aria2cert.cjs
+      - name: aria2 certificates (verdict)
+        if: always() && steps.aria2cert.outcome != 'skipped'
+        env: { OUTCOME: '${{ steps.aria2cert.outcome }}', SYSTEM: '${{ matrix.name }}' }
+        run: |
+          if [ "$OUTCOME" = success ]; then txt="the bundled aria2c refused a self-signed certificate by default, fetched after the explicit choice, and refused the next one"; else txt="the bundled aria2c did NOT pass tests/aria2cert.cjs: read that step"; fi
+          echo "**aria2 certificates ($SYSTEM): $OUTCOME** — $txt" >> "$GITHUB_STEP_SUMMARY"
 
       # (Stage P7.) 7-Zip as the Electron build ships it: the npm package 7zip-bin at the version desktop/package.json
       # names, installed alone (no install scripts) into a folder of the runner's, this system's 7za copied into

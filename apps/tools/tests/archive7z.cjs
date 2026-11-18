@@ -17,7 +17,7 @@ printf '\\r  0%%\\r 40%% + one.txt\\r 80%% + two dir/b.txt' ; printf '\\n+ one.t
 [ -n "$KT_FAKE_SLOW" ] && exec sleep 5
 echo "7z-bytes" >> "$part"; exit 0
 `, { mode: 0o755 });
-process.env.PATH = bin + path.delimiter + process.env.PATH; delete process.env.KT_FAKE_FAIL; delete process.env.KT_FAKE_SLOW; delete process.env.KT_FAKE_ECHO;
+process.env.PATH = bin + path.delimiter + process.env.PATH; process.env.KT_SEVENZIP = fake;   // (the stand-in, whatever 7-Zip the machine has) delete process.env.KT_FAKE_FAIL; delete process.env.KT_FAKE_SLOW; delete process.env.KT_FAKE_ECHO;
 const A = require('../desktop/archive.cjs');
 const work = path.join(tmp, 'work'); fs.mkdirSync(path.join(work, 'two dir'), { recursive: true }); fs.writeFileSync(path.join(work, 'one.txt'), 'x'); fs.writeFileSync(path.join(work, 'two dir', 'b.txt'), 'y'); fs.writeFileSync(path.join(work, '-dash.txt'), 'z');
 const args = () => fs.readFileSync(path.join(note, 'args'), 'utf8').trim().split('\n'); const cwd = () => fs.readFileSync(path.join(note, 'cwd'), 'utf8').trim();
@@ -69,8 +69,8 @@ const pr = (log, stop = () => false) => ({ on: (d, t, f) => log.push([d, t, f]),
   // the password never leaves in an error: 7-Zip printing its command line, and 7-Zip not found at all
   process.env.KT_FAKE_ECHO = '1'; let msg = ''; try { await A.create7z(out, [path.join(work, 'one.txt')], { password: 'hunter2-pw', replace: true }, pr([])); } catch (e) { msg = String(e && e.message); }
   ok('7-Zip echoing its arguments: the error text has no password (' + msg.slice(0, 60) + ')', msg && !msg.includes('hunter2-pw') && msg.includes('***'), msg); delete process.env.KT_FAKE_ECHO;
-  fs.renameSync(fake, fake + '.off'); let err2 = null; try { await A.create7z(out, [path.join(work, 'one.txt')], { password: 'hunter2-pw', replace: true }, pr([])); } catch (e) { err2 = e; }
-  fs.renameSync(fake + '.off', fake);
+  process.env.KT_SEVENZIP = path.join(tmp, 'no-such-7z'); let err2 = null; try { await A.create7z(out, [path.join(work, 'one.txt')], { password: 'hunter2-pw', replace: true }, pr([])); } catch (e) { err2 = e; }
+  process.env.KT_SEVENZIP = fake;
   ok('7-Zip missing: only «sevenZipMissing» comes out — no password, no spawn arguments on the error', err2 && err2.message === 'sevenZipMissing' && !JSON.stringify(Object.getOwnPropertyNames(err2).map((k) => String(err2[k]))).includes('hunter2-pw') && !('spawnargs' in err2), err2 && err2.message);
   ok('the scrub function takes it out of any text', A.scrub('x -phunter2-pw y hunter2-pw', 'hunter2-pw') === 'x -p*** y ***' && A.scrub('plain', 'hunter2-pw') === 'plain' && A.scrub('plain') === 'plain');
   // putting in place: one rename over the target (never remove-then-rename); a stage folder of this run's own; a stale one of a crashed run left alone
@@ -88,7 +88,7 @@ const pr = (log, stop = () => false) => ({ on: (d, t, f) => log.push([d, t, f]),
   ok('extract: a progress line split between two reads is joined (50 % - a.txt), CR ends one, files counted', xl.some((x) => x[0] === 50 && x[2] === 'a.txt') && xn === 1, [xl, xn]);
   process.env.KT_FAKE_ECHO = '1'; let m2 = ''; try { await A.extract7z(path.join(work, 'one.txt'), path.join(tmp, 'xo'), { password: 'hunter2-pw' }, pr([])); } catch (e) { m2 = String(e && e.message); } delete process.env.KT_FAKE_ECHO;
   ok('extract: 7-Zip echoing its arguments: no password in the error', m2 && !m2.includes('hunter2-pw'), m2);
-  fs.renameSync(fake, fake + '.off'); let m3 = null; try { await A.extract7z(path.join(work, 'one.txt'), path.join(tmp, 'xo'), { password: 'hunter2-pw' }, pr([])); } catch (e) { m3 = e; } let m4 = null; try { await A.test(path.join(work, 'x.7z'), 'hunter2-pw', pr([])); } catch (e) { m4 = e; } fs.renameSync(fake + '.off', fake);
+  process.env.KT_SEVENZIP = path.join(tmp, 'no-such-7z'); let m3 = null; try { await A.extract7z(path.join(work, 'one.txt'), path.join(tmp, 'xo'), { password: 'hunter2-pw' }, pr([])); } catch (e) { m3 = e; } let m4 = null; try { await A.test(path.join(work, 'x.7z'), 'hunter2-pw', pr([])); } catch (e) { m4 = e; } process.env.KT_SEVENZIP = fake;
   ok('extract with 7-Zip missing: only «sevenZipMissing»', m3 && m3.message === 'sevenZipMissing' && !String(m3.stack).includes('hunter2-pw'), m3 && m3.message);
   ok('test with 7-Zip missing (or any failure): the result carries no password', !JSON.stringify(m4 || {}).includes('hunter2-pw'));
   // progress parsing: a line split between two reads, carriage returns, backspaces; nothing but the unfinished part is kept

@@ -1,0 +1,140 @@
+# DNS over HTTPS: the rules every copy keeps — kt-core dohchain.rs (Tauri), KrDoh.java (phone), desktop/dohchain.cjs
+# (Electron) — checked on these lines by dohchain.rs's tests, tests/native/doh/CT.java and tests/dohchain.cjs.
+#
+# order|choice|health|the resolvers asked, in order («custom» is the user's own address)
+#   health: id=ok:<ms> (answered the last probe or question in <ms>), id=fail (failed just now),
+#   id=fail-old (failed more than ten minutes ago: counts as not checked again)
+order|off||
+order|nonesuch||
+order|auto||cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+order|opendns||cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+order|mullvad||cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+order|auto|google=ok:40,quad9=ok:20,cloudflare=fail|quad9,google,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu,cloudflare
+order|auto|wikimedia=ok:30,dns4eu=ok:30,cloudflare=fail-old|wikimedia,dns4eu,cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld
+order|auto|google=fail,cloudflare=fail|quad9,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu,cloudflare,google
+order|quad9|google=ok:10|quad9,google,cloudflare,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+order|quad9|quad9=fail,google=ok:10|quad9,google,cloudflare,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+# (A resolver on this device — the user's own, plain http to 127.0.0.1 — is asked alone: its names go nowhere else.)
+order|http://127.0.0.1:5353/dns-query|google=ok:5|custom
+order|https://doh.example/dns-query|dnssb=ok:5|custom,dnssb,cloudflare,google,quad9,adguard,adguard-unfiltered,controld,wikimedia,dns4eu
+#
+# custom|the address typed|ok or why it is refused (notHttps, noHost, badPort, userinfo, badPath, space, tooLong)
+custom|https://doh.example/dns-query|ok
+custom|https://doh.example/q?profile=a1|ok
+custom|https://doh.example:8443/dns-query|ok
+custom|https://[2001:db8::53]/dns-query|ok
+custom|http://doh.example/dns-query|notHttps
+custom|ftp://doh.example/dns-query|notHttps
+custom|https://|noHost
+custom|https:///dns-query|noHost
+custom|https://doh.example:99999/dns-query|badPort
+custom|https://doh.example:/dns-query|badPort
+custom|https://user:pw@doh.example/dns-query|userinfo
+custom|https://doh.example|badPath
+custom|https://doh.example/|badPath
+custom|https://doh.example/q#frag|badPath
+custom|https://doh.example/dns query|space
+custom|http://127.0.0.1:5353/dns-query|ok
+custom|http://localhost:5353/dns-query|ok
+custom|http://127.0.0.1.doh.example/dns-query|notHttps
+#
+# tracker|tracker address|address the resolver gave|the address handed to the torrent engine («-»: left as it is)
+tracker|udp://tracker.test:1337/announce|203.0.113.5|udp://203.0.113.5:1337/announce
+tracker|udp://Tracker.Test:6969|2001:db8::1|udp://[2001:db8::1]:6969
+tracker|udp://tracker.test:80/announce?key=1|198.51.100.7|udp://198.51.100.7:80/announce?key=1
+tracker|http://tracker.test/announce|203.0.113.5|-
+tracker|https://tracker.test/announce|203.0.113.5|-
+tracker|udp://203.0.113.9:80/announce|203.0.113.5|-
+tracker|udp://[2001:db8::9]:80/announce|203.0.113.5|-
+tracker|udp://localhost:80/announce|203.0.113.5|-
+#
+# magnet|magnet|the chain's answers (host=address; a host not listed gets none)|the magnet handed to the engine
+#   (a UDP tracker the chain could not answer is left out — never a name for the engine to look up itself)
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=A%20B&tr=udp%3A%2F%2Ftracker.test%3A1337%2Fannounce&tr=http%3A%2F%2Fweb.test%2Fannounce|tracker.test=203.0.113.5|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=A%20B&tr=udp%3A%2F%2F203.0.113.5%3A1337%2Fannounce&tr=http%3A%2F%2Fweb.test%2Fannounce
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=udp://open.test:6969/announce&tr=udp%3A%2F%2Fgone.test%3A80|open.test=2001:db8::5|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=udp%3A%2F%2F%5B2001%3Adb8%3A%3A5%5D%3A6969%2Fannounce
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=x||magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=x
+magnet|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&TR=udp%3a%2f%2fUp.Test%3a1%2fa|up.test=198.51.100.9|magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&TR=udp%3A%2F%2F198.51.100.9%3A1%2Fa
+#
+# addr|address|from the user's own resolver (custom) or a public one (public)|kept or dropped
+#   (an answer from a public resolver that points a public name into a private network or at this device is
+#   dropped — a filter's «blocked» page or a rebinding; the user's own resolver may know private names, and names of
+#   this device: its loopback answers are kept too — the Tauri self-test's resolver answers 127.0.0.1)
+addr|203.0.113.5|public|kept
+addr|0.0.0.0|public|dropped
+addr|0.0.0.0|custom|dropped
+addr|127.0.0.1|custom|kept
+addr|127.0.0.1|public|dropped
+addr|10.1.2.3|public|dropped
+addr|10.1.2.3|custom|kept
+addr|192.168.1.10|public|dropped
+addr|172.20.0.1|public|dropped
+addr|172.32.0.1|public|kept
+addr|100.64.0.1|public|dropped
+addr|169.254.1.1|custom|dropped
+addr|224.0.0.1|public|dropped
+addr|255.255.255.255|custom|dropped
+addr|::|public|dropped
+addr|::1|custom|kept
+addr|::1|public|dropped
+addr|fe80::1|custom|dropped
+addr|fd00::1|public|dropped
+addr|fd00::1|custom|kept
+addr|2001:db8::1|public|kept
+addr|::ffff:10.0.0.1|public|dropped
+addr|::ffff:203.0.113.5|public|kept
+addr|198.18.0.1|public|dropped
+addr|198.19.255.1|custom|kept
+addr|240.0.0.1|custom|dropped
+addr|64:ff9b::a00:1|public|dropped
+addr|64:ff9b::7f00:1|custom|kept
+addr|64:ff9b::7f00:1|public|dropped
+addr|64:ff9b::cb00:7105|public|kept
+addr|2002:a00:1::1|public|dropped
+addr|2002:cb00:7105::1|public|kept
+addr|::a00:1|public|dropped
+addr|::cb00:7105|public|kept
+#
+# local|name|whether it is a name of this device or its network (never sent to a public resolver)
+local|localhost|yes
+local|printer.local|yes
+local|nas.home.arpa|yes
+local|router.lan|yes
+local|svc.internal|yes
+local|a.localhost|yes
+local|example.test|no
+local|router|yes
+local|router.|yes
+local|localhost.example|no
+#
+# probe|choice|all («Check now») or auto (the automatic probe)|the resolvers probed
+probe|auto|auto|cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+probe|quad9|auto|quad9
+probe|https://doh.example/dns-query|auto|custom
+probe|quad9|all|cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+probe|http://127.0.0.1:5353/dns-query|all|custom
+probe|http://127.0.0.1:5353/dns-query|auto|custom
+probe|https://doh.example/dns-query|all|custom,cloudflare,google,quad9,adguard,adguard-unfiltered,dnssb,controld,wikimedia,dns4eu
+probe|off|all|
+#
+# wire|what|name asked|type|id|the answer (hex)|ok:<addresses>:<least TTL> or err:<kind> — every decoder (shell-rs doh.rs
+#   decode_strict, KrDoh.parseStrict, dohchain.cjs decodeStrict) reads these the same way. kinds: nx, id, trunc,
+#   notanswer, question, server, loop, toomany, short, pointer, size
+wire|ok A|site.test|1|4660|123481800001000200000000047369746504746573740000010001c00c000100010000005a0004cb007105c00c000100010000003c0004cb007106|ok:203.0.113.5,203.0.113.6:60
+wire|ok AAAA|site.test|28|258|0102818000010001000000000473697465047465737400001c0001c00c001c00010000012c001020010db8000000000000000000000001|ok:2001:db8::1:300
+wire|cname chain|site.test|1|7|000781800001000300000000047369746504746573740000010001c00c000500010000012c000a0363646e047465737400056f7468657204746573740000010001000000050004c63364010363646e04746573740000010001000000090004c6336402|ok:198.51.100.2:9
+wire|another owner only|site.test|1|7|000781800001000100000000047369746504746573740000010001046576696c04746573740000010001000000050004c6336401|ok::0
+wire|no record|site.test|1|7|000781800001000000000000047369746504746573740000010001|ok::0
+wire|nxdomain|site.test|1|7|000781830001000000000000047369746504746573740000010001|err:nx
+wire|wrong id|site.test|1|7|000881800001000100000000047369746504746573740000010001c00c0001000100000009000401020304|err:id
+wire|truncated|site.test|1|7|000783800001000000000000047369746504746573740000010001|err:trunc
+wire|not an answer|site.test|1|7|000701000001000000000000047369746504746573740000010001|err:notanswer
+wire|another name|site.test|1|7|00078180000100000000000004656c736504746573740000010001|err:question
+wire|another type|site.test|1|7|0007818000010000000000000473697465047465737400001c0001|err:question
+wire|servfail|site.test|1|7|000781820001000000000000047369746504746573740000010001|err:server
+wire|cname loop|site.test|1|7|000781800001000200000000047369746504746573740000010001c00c000500010000003c000801620474657374000162047465737400000500010000003c000b0473697465047465737400|err:loop
+wire|too many cnames|site.test|1|7|000781800001000b00000000047369746504746573740000010001c00c000500010000003c0009026330047465737400026330047465737400000500010000003c0009026331047465737400026331047465737400000500010000003c0009026332047465737400026332047465737400000500010000003c0009026333047465737400026333047465737400000500010000003c0009026334047465737400026334047465737400000500010000003c0009026335047465737400026335047465737400000500010000003c0009026336047465737400026336047465737400000500010000003c0009026337047465737400026337047465737400000500010000003c0009026338047465737400026338047465737400000500010000003c0009026339047465737400026339047465737400000500010000003c000a03633130047465737400|err:toomany
+wire|cut short|site.test|1|7|000781800001000100000000047369746504746573740000010001c00c00010001000000090004010203|err:short
+wire|header only|site.test|1|7|0007818000010001000000|err:short
+wire|pointer to itself|site.test|1|7|000781800001000100000000047369746504746573740000010001c01b0001000100000009000401020304|err:pointer
+wire|wrong size|site.test|1|7|000781800001000100000000047369746504746573740000010001c00c00010001000000090003010203|err:size
+wire|class CH ignored|site.test|1|7|000781800001000100000000047369746504746573740000010001c00c0001000300000009000401020304|ok::0

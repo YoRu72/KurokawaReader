@@ -17,7 +17,7 @@ export const clientId = (): string => getSettings().anilistClientId.trim() || BU
 /** A client's ID from what is pasted: the number itself, or its page's link (…/settings/client/12345). */
 export const idFrom = (x: string): string => /client\/(\d+)/.exec(x)?.[1] ?? /\b(\d{3,8})\b/.exec(x)?.[1] ?? '';
 
-async function capture(url: string, marker: string, title: string): Promise<string | null | undefined> {
+export async function capture(url: string, marker: string, title: string): Promise<string | null | undefined> {
   const d = window.kurokawaTools as (typeof window.kurokawaTools & { captureUrl?(o: { url: string; marker: string; title: string }): Promise<string | null> }) | undefined;
   if (d?.captureUrl) return d.captureUrl({ url, marker, title });
   const p = ktPlugin() as (ReturnType<typeof ktPlugin> & { captureUrl?(o: { url: string; marker: string; title: string }): Promise<{ url: string | null }> }) | null;
