@@ -1,30 +1,56 @@
 // Furigana for ordinary Japanese books: readings come from the kuromoji
-// morphological analyser and its IPADIC dictionary (~6 MB), fetched once from a
-// CDN when the reader first asks for them and kept by the browser cache.
-// Paragraphs are annotated lazily as they scroll into view; a setting hides or
+// morphological analyser and its IPADIC dictionary, which the reader downloads once (src/readingdict.ts: a button
+// in the notice over the book and in the options) and keeps on the device; the analyser is built from that copy, so
+// it works offline afterwards. Paragraphs are annotated lazily as they scroll into view; a setting hides or
 // shows the readings instantly (the ruby stays in the DOM).
-
-const KUROMOJI_JS = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js';
-const KUROMOJI_DICT = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/';
+import { requireDict, dictScriptUrl, withLocalKuromoji, onDictForget, missingDict, loadFailed, withTimeout, abandonLocalKuromoji, KUROMOJI_DICT, KUROMOJI_CDN_JS } from './readingdict';
 
 interface Token { surface_form: string; reading?: string; word_type: string }
 interface Tokenizer { tokenize(text: string): Token[] }
 interface KuromojiGlobal { builder(o: { dicPath: string }): { build(cb: (err: Error | null, tk: Tokenizer) => void): void } }
 
 let tokenizerPromise: Promise<Tokenizer> | null = null;
+/** This session: building from the copy on the device failed, so the way before 0.64.2 (straight from the CDN) is used. */
+let storedBroken = false;
 export function furiganaReady(): boolean { return !!tokenizerPromise; }
+onDictForget('ja', () => { tokenizerPromise = null; storedBroken = false; });
 
-/** Loads the analyser + dictionary (once). Rejects offline. */
+const loadScript = (src: string, revoke = false): Promise<void> => new Promise<void>((res, rej) => {
+  const sc = document.createElement('script'); sc.src = src;
+  sc.onload = () => { if (revoke) URL.revokeObjectURL(src); res(); }; sc.onerror = () => { if (revoke) URL.revokeObjectURL(src); sc.remove(); rej(new Error('kuromoji script')); };
+  document.head.appendChild(sc);
+});
+const kuromoji = () => (window as unknown as { kuromoji?: KuromojiGlobal }).kuromoji;
+const build = (dicPath: string) => new Promise<Tokenizer>((res, rej) => kuromoji()!.builder({ dicPath }).build((err, tk) => (err ? rej(err) : res(tk))));
+
+/** From the copy on the device: its script, and the dictionary files answered from the cache. */
+async function buildStored(onStatus?: (s: string) => void): Promise<Tokenizer> {
+  onStatus?.('script');
+  if (!kuromoji()) await loadScript(await dictScriptUrl('ja'), true);
+  if (!kuromoji()) throw new Error('kuromoji missing');
+  onStatus?.('dict');
+  return withLocalKuromoji(() => build(KUROMOJI_DICT));
+}
+/** The way before 0.64.2: the script and the dictionary straight from the CDN (online only). */
+async function buildFromCdn(): Promise<Tokenizer> {
+  if (!kuromoji()) await loadScript(KUROMOJI_CDN_JS);
+  if (!kuromoji()) throw new Error('kuromoji missing');
+  return build(KUROMOJI_DICT);
+}
+
+/** Builds the analyser from the dictionary on the device (once). Rejects with 'dict-missing' while it is not downloaded.
+ *  If the copy on the device cannot be built from (script error, a loader that never answers, a file that will not
+ *  unzip), the old way is tried once when online; when that fails too, or offline, 'dict-load' (the state says why). */
 export function ensureTokenizer(onStatus?: (s: string) => void): Promise<Tokenizer> {
   tokenizerPromise ??= (async () => {
-    onStatus?.('script');
-    await new Promise<void>((res, rej) => {
-      if ((window as unknown as { kuromoji?: unknown }).kuromoji) { res(); return; }
-      const sc = document.createElement('script'); sc.src = KUROMOJI_JS; sc.onload = () => res(); sc.onerror = () => rej(new Error('kuromoji script')); document.head.appendChild(sc);
-    });
-    onStatus?.('dict');
-    const k = (window as unknown as { kuromoji: KuromojiGlobal }).kuromoji;
-    return new Promise<Tokenizer>((res, rej) => k.builder({ dicPath: KUROMOJI_DICT }).build((err, tk) => (err ? rej(err) : res(tk))));
+    await requireDict('ja');
+    if (!storedBroken) {
+      try { return await withTimeout(buildStored(onStatus), 'stored dictionary'); }
+      catch (e) { abandonLocalKuromoji(); if (missingDict(e)) throw e; storedBroken = true; console.warn('kuromoji from the stored copy failed', e); }
+    }
+    if (navigator.onLine === false) throw loadFailed('ja', new Error('offline'));
+    try { return await withTimeout(buildFromCdn(), 'dictionary from the CDN'); }
+    catch (e) { throw loadFailed('ja', e); }
   })();
   tokenizerPromise.catch(() => { tokenizerPromise = null; });
   return tokenizerPromise;

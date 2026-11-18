@@ -457,9 +457,18 @@ function showAutoReadings(text: string, lang: string | undefined, range: Range):
   autoPop?.remove();
   const pop = h('div', { class: 'readings-pop', lang: /[\u3040-\u30ff]/.test(text) ? 'ja' : 'zh' }, h('div', { class: 'spinner', style: { width: '16px', height: '16px' } }));
   autoPop = pop; document.body.appendChild(pop);
-  const place = () => { const r = range.getBoundingClientRect(); const w = pop.offsetWidth; let x = r.left + r.width / 2 - w / 2; x = Math.max(8, Math.min(window.innerWidth - w - 8, x)); pop.style.left = `${x}px`; pop.style.top = `${Math.max(8, r.bottom + 12)}px`; };
+  const place = () => { const r = range.getBoundingClientRect(); pop.style.left = '0px'; const w = pop.offsetWidth; let x = r.left + r.width / 2 - w / 2; x = Math.max(8, Math.min(window.innerWidth - w - 8, x)); pop.style.left = `${x}px`; pop.style.top = `${pop.classList.contains('dict-offer') && r.top - pop.offsetHeight - 12 >= 8 ? r.top - pop.offsetHeight - 12 : Math.max(8, r.bottom + 12)}px`; };
   place();
-  void import('../readings').then((m) => m.readingsHtml(text, lang)).then((html) => { if (autoPop !== pop) return; if (!html) { pop.remove(); return; } pop.innerHTML = html; place(); }).catch(() => pop.remove());
+  const load = (): void => void import('../readings').then((m) => m.readingsHtml(text, lang)).then((html) => { if (autoPop !== pop) return; if (!html) { pop.remove(); return; } pop.classList.remove('dict-offer'); pop.innerHTML = html; place(); }).catch(async (e) => {
+    // (A dictionary not on the device: the same offer as in the readings sheet; its button does not take the selection away.)
+    const { missingDict } = await import('../readingdict'); const kind = missingDict(e);
+    if (!kind || autoPop !== pop) { pop.remove(); return; }
+    const { dictNeeded } = await import('./readingdict');
+    pop.classList.add('dict-offer'); pop.addEventListener('pointerdown', (ev) => ev.preventDefault());
+    pop.replaceChildren(dictNeeded(kind, () => { if (autoPop !== pop) return; pop.replaceChildren(h('div', { class: 'spinner', style: { width: '16px', height: '16px' } })); load(); }));
+    place();
+  });
+  load();
   const onChange = () => { const sel = document.getSelection(); if (!sel || sel.isCollapsed || sel.toString().trim() !== text) { pop.remove(); if (autoPop === pop) autoPop = null; document.removeEventListener('selectionchange', onChange); } };
   setTimeout(() => document.addEventListener('selectionchange', onChange), 50);
 }
