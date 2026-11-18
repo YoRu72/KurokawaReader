@@ -9,10 +9,11 @@
     },
     {
       "name": "glassperf.cjs",
-      "reason": "Counts long tasks under a 6x CPU slow-down: on this machine pdf, bars hidden: Classic 25, Off 51, Full 54, so 'no more than Classic + 1' fails. Load-sensitive (a 2-CPU box shared by several test runs); not yet shown to be a product regression.",
+      "reason": "Counts long tasks under a 6x CPU slow-down; load-sensitive. It failed on a busy 2-CPU box (Classic 25, Off 51, Full 54) and PASSED in both full CI runs on 2026-11-16 (43875495962 and ff43cf7 run 43861566226), so no product regression is shown. Kept as flaky: a failure on a loaded machine stays KNOWN, a pass is quiet (no FIXED row).",
       "how": "on a quiet machine: node tests/glassperf.cjs, then KR_REVERSE=1 node tests/glassperf.cjs to see whether the order matters",
-      "date": "2026-11-15",
-      "loadSensitive": true
+      "date": "2026-11-16",
+      "loadSensitive": true,
+      "flaky": true
     },
     {
       "name": "jobs.cjs",

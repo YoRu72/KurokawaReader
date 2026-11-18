@@ -15,9 +15,11 @@ const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
-  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'installUpdate', 'appIcon',
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'dohStatus', 'dohUsed', 'installUpdate', 'appIcon',
   // (Stage P4.)
   'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl',
+  // (0.21 P8: another program as the player — extplayer.rs, the relay in streamserver.rs.)
+  'relayOpen', 'relayClose', 'relayStatus', 'extPlayers', 'extPlayerChoose', 'extPlayerArgs', 'extPlayerForget', 'extPlayerDropSub', 'extPlayerStart', 'extPlayerStatus', 'extPlayerStop',
   // (Stage P6: desktop.rs.)
   'desktopPrefs', 'mini', 'registerMagnet', 'captureUrl', 'siteWindow',
   // (Stage P7: browser.rs.)
@@ -107,8 +109,8 @@ function loadBridge(boot) {
     screenFontAdd: [{ name: 'a.ttf', b64: 'AAEC' }], screenFontRemove: [{ path: '/d/screen-fonts/1-a.ttf' }], titleBar: [{ own: true, act: 'maximize' }],
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
-    appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad' }], dohProbe: [], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
-    streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }],
+    appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad', allowSystem: true }], dohProbe: [], dohStatus: [], dohUsed: [{ hosts: ['files.test'] }], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
+    streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }], relayOpen: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' }, subs: [{ url: 'https://h/a.ass', name: 'a.ass' }], name: 'Show' }], relayClose: [{ token: 'ab' }], relayStatus: [{ token: 'ab' }], extPlayers: [], extPlayerChoose: [{ title: 'Pick' }], extPlayerArgs: [{ args: '--fs {url}' }], extPlayerForget: [], extPlayerDropSub: [{ path: '/tmp/kt-sub-a.srt' }], extPlayerStart: [{ player: 'mpv', target: 'https://h/a.m3u8', title: 'x', start: 3, subs: [], headers: {}, slang: [], alang: [] }], extPlayerStatus: [{ id: '1' }], extPlayerStop: [{ id: '1' }],
     desktopPrefs: [{ keepAwake: true, whenDone: 'sleep', notifyDone: false, tray: true, hotkeys: { clip: 'CommandOrControl+Shift+V' } }], mini: [{ action: 'auto', on: true }], registerMagnet: [],
     captureUrl: [{ url: 'https://anilist.co/api/v2/oauth/authorize?client_id=1&response_type=token', marker: 'access_token=', title: 'AniList' }], siteWindow: [{ url: 'https://e.org/', title: 'E' }],
     browse: [{ url: 'https://e.org/' }],
@@ -293,6 +295,28 @@ function loadBridge(boot) {
   for (const [cmd, ks] of Object.entries(sent)) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
     assert.deepEqual([...ks].sort(), [...params[cmd]].sort(), `${cmd}: bridge sends ${ks}, Rust takes ${params[cmd]}`);
+  }
+  // (0.21 P8 round 4) The outside players' relay asks for its sources through the shell's no-redirect client — the
+  // user's DNS-over-HTTPS choice and the app's cookie jar — never a bare reqwest client of its own; that client is
+  // built as client() is (same builder, DoH resolver on its DoH slot) and client() itself still follows redirects.
+  {
+    const ext = fs.readFileSync(path.join(src, 'extplayer.rs'), 'utf8');
+    const rc = ext.slice(ext.indexOf('fn relay_client()'), ext.indexOf('\n}\n', ext.indexOf('fn relay_client()')));
+    assert.ok(/kurokawa_shell::net::client_no_redirect\(\)/.test(rc), 'relay_client uses net::client_no_redirect()');
+    assert.ok(!/Client::builder\(\)|ClientBuilder|Policy::/.test(ext), 'extplayer.rs builds no reqwest client of its own');
+    for (const f of fs.readdirSync(src).filter((x) => x.endsWith('.rs'))) {
+      if (/streamproxy|extplayer|streamserver/.test(f)) assert.ok(!/reqwest::Client::builder\(\)/.test(fs.readFileSync(path.join(src, f), 'utf8')), `${f}: no bare reqwest client`);
+    }
+    const net = fs.readFileSync(path.join(ROOT, '..', '..', 'shared', 'shell-rs', 'src', 'net.rs'), 'utf8');
+    const fnBody = (name) => { const a = net.indexOf(`fn ${name}(`); assert.ok(a > 0, `net.rs: ${name}`); return net.slice(a, net.indexOf('\n}\n', a)); };
+    assert.ok(/client_slot\(doh_active\(\), true\)/.test(fnBody('client')), 'client(): DoH as chosen, redirects followed');
+    assert.ok(/doh_server\(\)\.is_some\(\) \|\| doh_hook\(\)\.is_some\(\)/.test(fnBody('doh_active')), 'doh_active: the chain hook or the one resolver');
+    assert.ok(/client_slot\(doh_active\(\), false\)/.test(fnBody('client_no_redirect')), 'client_no_redirect(): DoH as chosen, no redirects');
+    const sc = fnBody('slot_client');
+    assert.ok(/builder\(follow\)/.test(sc) && /slot_uses_doh\(slot\)/.test(sc) && /dns_resolver\(Arc::new\(DohResolver\)\)/.test(sc), 'slot_client: one builder, DoH resolver on the DoH slots');
+    const b = fnBody('builder');
+    assert.ok(/cookie_provider\(jar\(\)\)/.test(b) && /Policy::limited\(20\)/.test(b) && /Policy::none\(\)/.test(b), 'builder: the shared jar, 20 redirects or none');
+    for (const s of ['PLAIN', 'VIA_DOH', 'PLAIN_NR', 'VIA_DOH_NR']) assert.ok(new RegExp(`static ${s}: OnceLock<reqwest::Client>`).test(net), `net.rs caches ${s}`);
   }
   // The self-test script: inert without its settings; its verdict; a full run against a fake bridge passes, and fails
   // when one answer is wrong.

@@ -37,7 +37,9 @@ export function swarmCard(id: string, eng: Engine): { el: HTMLElement; dispose: 
       peers.replaceChildren(...(ps.length ? ps.slice(0, 40).map((p) => h('div', { class: 'swarm-row' }, h('span', { class: 'grow' }, h('span', { dir: 'ltr' }, p.ip), h('small', { class: 'src', dir: 'ltr' }, `${p.client || '?'}${p.utp ? ' · µTP' : ''} · ${localDigits(Math.round(p.progress * 100))}%`)), h('small', { class: 'src swarm-rate' }, `↓ ${rate(p.down)}`, h('br'), `↑ ${rate(p.up)}`))) : [h('p', { class: 'empty small' }, t('swarmNoPeers'))]));
       const trs = d.trackers ?? [];
       (trBox.firstChild as HTMLElement).textContent = `${t('swarmTrackers')} · ${localDigits(trs.filter((x) => x.state === 'working').length)}/${localDigits(trs.length)}`;
-      trackers.replaceChildren(...trs.map((x) => h('div', { class: 'swarm-row tr-' + x.state }, h('span', { class: 'tr-dot' }), h('span', { class: 'grow' }, h('span', { dir: 'ltr', class: 'tr-url' }, x.url), x.message ? h('small', { class: 'src', dir: 'auto' }, x.message) : null), h('small', { class: 'src' }, t(`swarmTr_${x.state}` as 'swarmTr_working')))));
+      // (0.21 P9: a tracker the DoH chain found shows its own name and which resolver answered; one the engine finds itself says so.)
+      const via = trs.some((x) => x.dns) ? await import('../ui/dohLine').then((m) => m.viaText).catch(() => null) : null; if (!alive) return;
+      trackers.replaceChildren(...trs.map((x) => h('div', { class: 'swarm-row tr-' + x.state }, h('span', { class: 'tr-dot' }), h('span', { class: 'grow' }, h('span', { dir: 'ltr', class: 'tr-url' }, x.name ?? x.url), x.message ? h('small', { class: 'src', dir: 'auto' }, x.message) : null, via && x.dns ? h('small', { class: 'src doh-line', 'data-via': x.dns.split(':')[0] }, via(x.dns)) : null), h('small', { class: 'src' }, t(`swarmTr_${x.state}` as 'swarmTr_working')))));
       drawLimits(d);
     } catch { /* gone, or not yet added */ }
     if (alive) timer = window.setTimeout(() => void tick(), 2000);

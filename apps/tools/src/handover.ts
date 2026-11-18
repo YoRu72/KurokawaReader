@@ -20,6 +20,8 @@
 // Unlike the settings backup the person shares (src/backup.ts leaves keys and tokens out), a hand-over keeps the
 // sign-ins and keys: it never leaves this computer and its user's own data folder.
 
+import { safeStored } from './settingsSafe';
+
 /* ---------- the shells' halves (desktop/preload.cjs, desktop-tauri/handover-bridge.js) ---------- */
 export interface MarkerFile { rel: string; size: number; sha256: string }
 export interface Counts { local: number; records: number; files: number; history: number; addons: number; downloads: number; moving: number; videos: number; lists: number; bytes: number }
@@ -347,7 +349,8 @@ export async function restoreHandover(f: Found, onProgress?: (p: RestoreProgress
   let localN = 0;
   for (const [k, val0] of Object.entries(local)) {
     if (localSkipped(k)) continue;
-    const val = k === 'kt.screen' ? movedPaths(val0, fromFonts, toFonts) : val0;
+    // (Never a program to run nor its arguments: settingsSafe.ts.)
+    const val = safeStored(k, k === 'kt.screen' ? movedPaths(val0, fromFonts, toFonts) : val0);
     try { if (copy || localStorage.getItem(k) === null) { localStorage.setItem(k, val); localN++; } } catch { /* full: the rest still tried */ }
   }
   // The Electron shell's own: its icon (also kept by the page, as app.icon).

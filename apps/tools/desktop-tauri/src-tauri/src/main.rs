@@ -9,7 +9,10 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
+mod sevenparse;
 mod commands;
+// (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
+mod dohtools;
 // (Stage P6: the computer's side of the downloads — tray, notices, hotkeys, keep-awake, when done, taskbar progress, the
 // mini window, launches handed over, a Mac's menu bar; desklogic.rs its rules, std only.)
 mod desklogic;
@@ -40,6 +43,8 @@ mod stream_hybrid;
 #[cfg(feature = "rqbit")]
 mod stream_rqbit;
 mod streamproxy;
+mod extplayer;
+mod relaylogic;
 mod streamserver;
 mod streamtest;
 mod torrentmake;
@@ -171,6 +176,8 @@ fn main() {
             commands::kt_check_update,
             commands::kt_set_doh,
             commands::kt_doh_probe,
+            commands::kt_doh_status,
+            commands::kt_doh_used,
             update::kt_install_update,
             update::kt_update_download,
             update::kt_update_install,
@@ -229,6 +236,17 @@ fn main() {
             streamserver::kt_audio_url,
             streamserver::kt_video_url,
             streamserver::kt_proxy_url,
+            extplayer::kt_relay_open,
+            extplayer::kt_relay_close,
+            extplayer::kt_relay_status,
+            extplayer::kt_ext_player_choose,
+            extplayer::kt_ext_player_args,
+            extplayer::kt_ext_player_forget,
+            extplayer::kt_ext_player_drop_sub,
+            extplayer::kt_ext_players,
+            extplayer::kt_ext_player_start,
+            extplayer::kt_ext_player_status,
+            extplayer::kt_ext_player_stop,
             streamtest::kt_selftest_stream,
             // (Stage P5: the video tools.)
             vtools::kt_video_info,
@@ -333,6 +351,8 @@ fn main() {
                     res_dirs.push(d.to_path_buf());
                 }
             }
+            // (0.21 P9: the DoH choice kept beside the engine's files, read before aria2 starts.)
+            dohtools::set_data_dir(&data_dir);
             engine::init(
                 handle.clone(),
                 data_dir,

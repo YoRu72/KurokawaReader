@@ -697,6 +697,66 @@ pub fn write_playlist(p: &Playlist) -> Vec<u8> {
     o
 }
 
+/// The AUDIO group of each variant, in the order `variants` lists them (one per #EXT-X-STREAM-INF followed by its
+/// address) — KtHls.audioGroups: the variant chosen is matched by its place, never by comparing addresses.
+pub fn audio_groups(text: &[u16]) -> Vec<Option<Vec<u16>>> {
+    let mut out = Vec::new();
+    let mut pending: Option<Option<Vec<u16>>> = None;
+    for raw in lines(text) {
+        let l = j_trim(raw);
+        if l.is_empty() {
+            continue;
+        }
+        if starts(l, "#EXT-X-STREAM-INF:") {
+            pending = Some(attr(&l[18..], "AUDIO"));
+            continue;
+        }
+        if starts(l, "#") {
+            continue;
+        }
+        if let Some(g) = pending.take() {
+            out.push(g);
+        }
+    }
+    out
+}
+/// KtHls.separateAudio: the variant's sound only in a rendition of its own — its AUDIO group has entries, and every
+/// one of them names a playlist (URI). An entry without a URI means the sound is muxed in the variant itself.
+pub fn separate_audio(text: &[u16], group: &[u16]) -> bool {
+    let mut any = false;
+    for raw in lines(text) {
+        let l = j_trim(raw);
+        if !starts(l, "#EXT-X-MEDIA:") {
+            continue;
+        }
+        let a = &l[13..];
+        let is_audio = attr(a, "TYPE").map(|t| t == "AUDIO".encode_utf16().collect::<Vec<u16>>()).unwrap_or(false);
+        if !is_audio || attr(a, "GROUP-ID").as_deref() != Some(group) {
+            continue;
+        }
+        if attr(a, "URI").is_none() {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+/// KtHls.mapsIn: how many different init sections (EXT-X-MAP: URI with its BYTERANGE) a media playlist names.
+pub fn maps_in(text: &[u16]) -> usize {
+    let mut seen: Vec<(Option<Vec<u16>>, Option<Vec<u16>>)> = Vec::new();
+    for raw in lines(text) {
+        let l = j_trim(raw);
+        if !starts(l, "#EXT-X-MAP:") {
+            continue;
+        }
+        let k = (attr(&l[11..], "URI"), attr(&l[11..], "BYTERANGE"));
+        if !seen.contains(&k) {
+            seen.push(k);
+        }
+    }
+    seen.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,6 +770,17 @@ mod tests {
         String::from_utf16(&resolve_str(&url(base), &s(spec)).unwrap()).unwrap()
     }
 
+    #[test]
+    fn audio_renditions() {
+        let m = s("#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"ja\",URI=\"audio/ja.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"mux\",NAME=\"main\",DEFAULT=YES\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"mux\",NAME=\"dub\",URI=\"dub.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"aud\"\nv720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2\nv1080.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=3,AUDIO=\"mux\"\nv480.m3u8\n");
+        let g = audio_groups(&m);
+        assert_eq!(g.len(), 3);
+        assert!(separate_audio(&m, g[0].as_ref().unwrap()));
+        assert!(g[1].is_none());
+        assert!(!separate_audio(&m, g[2].as_ref().unwrap()));
+        assert_eq!(maps_in(&s("#EXT-X-MAP:URI=\"a.mp4\",BYTERANGE=\"720@0\"\np1\n#EXT-X-MAP:URI=\"a.mp4\",BYTERANGE=\"800@720\"\np2\n")), 2);
+        assert_eq!(maps_in(&s("#EXT-X-MAP:URI=\"a.mp4\"\np1\n#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI=\"a.mp4\"\np2\n")), 1);
+    }
     #[test]
     fn urls_as_java() {
         // (Each answer is java.net.URL's own — RustBridgeT asks Java the same and compares on the JVM.)

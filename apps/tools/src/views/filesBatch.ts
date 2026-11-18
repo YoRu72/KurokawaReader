@@ -50,7 +50,7 @@ const hm = (x: Date): string => `${pad(x.getHours(), 2)}${pad(x.getMinutes(), 2)
 const escRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** The kinds an extension says (for the «this does not convert» warning); text covers subtitles. */
-const KIND_OF: [string, RegExp][] = [['image', /^(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg|tiff?|ico|jfif|apng)$/i], ['audio', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma|mka)$/i], ['video', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp)$/i], ['text', /^(txt|md|log|nfo|ass|ssa|srt|vtt|sub|json|xml|csv|ini|cfg|lrc)$/i], ['doc', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|rtf|odt|cbz|cbr)$/i], ['archive', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst)$/i], ['app', /^(apk|apks|xapk|apkm)$/i]];
+const KIND_OF: [string, RegExp][] = [['image', /^(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg|tiff?|ico|jfif|apng)$/i], ['audio', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma|mka)$/i], ['video', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|mts|flv|wmv|3gp)$/i], ['text', /^(txt|md|log|nfo|ass|ssa|srt|vtt|sub|json|xml|csv|ini|cfg|lrc)$/i], ['doc', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|rtf|odt|cbz|cbr)$/i], ['archive', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst)$/i], ['app', /^(apk|apks|xapk|apkm)$/i]];
 export const extKind = (ext: string): string => { const last = ext.split('.').pop() ?? ''; return KIND_OF.find(([, re]) => re.test(last))?.[0] ?? 'other'; };
 /** The usual endings offered for the kinds in a selection. */
 export const EXT_CHIPS: Record<string, string[]> = { image: ['jpg', 'png', 'webp'], text: ['ass', 'srt', 'vtt', 'txt', 'md'], video: ['mkv', 'mp4'], audio: ['mp3', 'flac', 'm4a'] };

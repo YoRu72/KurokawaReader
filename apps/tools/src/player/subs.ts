@@ -75,7 +75,9 @@ function loadJassub(): Promise<JassubCtor | null> {
 export async function createAssRenderer(video: HTMLVideoElement, canvas: HTMLCanvasElement, content: string, fonts: string[], extra: Record<string, string> = {}, fallback?: { name: string; url: string }): Promise<AssRenderer | null> {
   const J = await loadJassub(); if (!J) return null;
   const base = new URL('assets/jassub/', document.baseURI).href;
-  const r = new J({ video, canvas, subContent: content, workerUrl: `${base}jassub-worker.js`, wasmUrl: `${base}jassub-worker.wasm`, fonts, fallbackFont: fallback?.name ?? 'liberation sans', availableFonts: { 'liberation sans': `${base}default.woff2`, ...(fallback ? { [fallback.name]: fallback.url } : {}), ...extra }, prescaleFactor: 0.8, dropAllAnimations: false });
+  const r = new J({ video, canvas, subContent: content, workerUrl: `${base}jassub-worker.js`, wasmUrl: `${base}jassub-worker.wasm`, fonts, fallbackFont: fallback?.name ?? 'liberation sans', availableFonts: { 'liberation sans': `${base}default.woff2`, ...(fallback ? { [fallback.name]: fallback.url } : {}), ...extra }, prescaleFactor: 0.8, dropAllAnimations: false,
+    // (Never drawn finer than the screen can show: the picture's height on this screen at its pixel ratio, at most twice.)
+    maxRenderHeight: Math.round(Math.min(window.screen?.height || 1080, 2160) * Math.min(window.devicePixelRatio || 1, 2)) });
   return { setTrack: (c) => r.setTrack(c), free: () => r.destroy(), setOffset: (s) => { r.timeOffset = s; }, resize: () => r.resize() };
 }
 

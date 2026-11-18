@@ -3,6 +3,12 @@ import com.sun.net.httpserver.*; import java.io.*; import java.net.*; import jav
 public class HlsT {
   static int fails = 0; static void ok(String w, boolean c) { System.out.println((c ? "ok   " : "FAIL ") + w); if (!c) fails++; }
   public static void main(String[] a) throws Exception {
+    { String m = "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"ja\",URI=\"audio/ja.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"mux\",NAME=\"main\",DEFAULT=YES\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"mux\",NAME=\"dub\",URI=\"dub.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"aud\"\nv720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2\nv1080.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=3,AUDIO=\"mux\"\nv480.m3u8\n";
+      java.util.List<String> g = KtHls.audioGroups(m);
+      ok("audio groups by the variants' places: " + g, g.size() == 3 && "aud".equals(g.get(0)) && g.get(1) == null && "mux".equals(g.get(2)));
+      ok("a variant whose sound is only a separate audio rendition: told (refused, never a silent file)", KtHls.separateAudio(m, g.get(0)));
+      ok("…no group, or a group with one entry without a URI (the sound in the variant): not refused", !KtHls.separateAudio(m, g.get(1)) && !KtHls.separateAudio(m, g.get(2)));
+      ok("init sections counted with their byte ranges (two ranges of one file: two; the same one again: one)", KtHls.mapsIn("#EXT-X-MAP:URI=\"a.mp4\",BYTERANGE=\"720@0\"\np1\n#EXT-X-MAP:URI=\"a.mp4\",BYTERANGE=\"800@720\"\np2\n") == 2 && KtHls.mapsIn("#EXT-X-MAP:URI=\"a.mp4\"\np1\n#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI=\"a.mp4\"\np2\n") == 1); }
     byte[] key = new byte[16]; new Random(7).nextBytes(key); Random rnd = new Random(1);
     byte[][] plain = new byte[6][]; for (int i = 0; i < 6; i++) { plain[i] = new byte[188 * (20 + i)]; for (int k = 0; k < plain[i].length; k += 188) { plain[i][k] = 0x47; for (int j = 1; j < 188; j++) plain[i][k + j] = (byte) rnd.nextInt(256); } }
     byte[] ivGiven = new byte[16]; ivGiven[15] = 9;

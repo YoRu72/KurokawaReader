@@ -236,13 +236,15 @@
     /* network */
     http: function (o) { return call('kt_http', { o: obj(o) }); },
     checkUpdate: function (o) { return call('kt_check_update', { o: obj(o) }); },
-    /* stage P8: DNS over HTTPS for the app's own requests (the shared crate's resolver; kt-core's dohnames for Tools'
-       names), the probe; the updater (src-tauri/src/update.rs over kt-core's updatelogic: this build's own release
+    /* stage P8 (0.21 P9: the chain): DNS over HTTPS for the app's own requests and aria2's (src-tauri/src/dohtools.rs
+       over kt-core's dohchain), the probe, the status, what answered each name; the updater (src-tauri/src/update.rs over kt-core's updatelogic: this build's own release
        file, resumed, its size and SHA-256 checked, installed per system) and its progress as kt:update-progress.
        updateDownload({ beta }) / updateInstall() are this shell's own: a background download, installed now or silently
        when the app quits. */
     setDoh: function (o) { return call('kt_set_doh', { o: obj(o) }); },
     dohProbe: function () { return call('kt_doh_probe'); },
+    dohStatus: function () { return call('kt_doh_status'); },
+    dohUsed: function (o) { return call('kt_doh_used', { o: obj(o) }); },
     installUpdate: function (u) { return call('kt_install_update', { url: str(u) }); },
     onUpdateProgress: function (cb) { return subscribe('kt:update-progress', cb); },
     updateDownload: function (o) { return call('kt_update_download', { o: obj(o) }); },
@@ -263,6 +265,24 @@
     audioUrl: function () { return call('kt_audio_url'); },
     videoUrl: function () { return call('kt_video_url'); },
     proxyUrl: function (o) { return call('kt_proxy_url', { o: obj(o) }); },
+    /* a player on this computer (src-tauri/src/extplayer.rs): relayOpen({ url, headers, subs, name }) → { token, url,
+       subs } (a session of its own on the stream server, its token in the path), relayClose({ token }),
+       relayStatus({ token }) → { open, lastRead, reads, reading }; extPlayers() → { found, chosen },
+       extPlayerChoose({ title }) → { path } | null (the shell's own dialog; the path kept by the shell),
+       extPlayerArgs({ args }), extPlayerForget(), extPlayerStart({ player, target, title, start, subs, headers, slang,
+       alang }) → { id, reports } (a typed request: the shell picks the program and writes the arguments),
+       extPlayerStatus({ id }) → { running, code, pos, dur, eof }, extPlayerStop({ id }). */
+    relayOpen: function (o) { return call('kt_relay_open', { o: obj(o) }); },
+    relayClose: function (o) { return call('kt_relay_close', { o: obj(o) }); },
+    relayStatus: function (o) { return call('kt_relay_status', { o: obj(o) }); },
+    extPlayers: function () { return call('kt_ext_players'); },
+    extPlayerChoose: function (o) { return call('kt_ext_player_choose', { o: obj(o) }); },
+    extPlayerArgs: function (o) { return call('kt_ext_player_args', { o: obj(o) }); },
+    extPlayerForget: function () { return call('kt_ext_player_forget'); },
+    extPlayerDropSub: function (o) { return call('kt_ext_player_drop_sub', { o: obj(o) }); },
+    extPlayerStart: function (o) { return call('kt_ext_player_start', { o: obj(o) }); },
+    extPlayerStatus: function (o) { return call('kt_ext_player_status', { o: obj(o) }); },
+    extPlayerStop: function (o) { return call('kt_ext_player_stop', { o: obj(o) }); },
     /* stage P6 (src-tauri/src/desktop.rs, rules in desklogic.rs): the computer's side of the downloads — desktopPrefs(o)
        → the choices in force (keepAwake, whenDone, notifyDone, tray, hotkeys; this shell also takes o.labels, the
        interface's words for the tray's menu and a Mac's menu bar, and answers hotkeyErrors { mode: why } for a hotkey

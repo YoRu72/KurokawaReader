@@ -113,9 +113,10 @@ public final class KtArchive {
     /** A 7z opened — every volume of a split one joined — with its password when one is given. */
     static SevenZFile open7z(File f, char[] pw) throws IOException {
         java.util.List<File> vols = volumesOf(f);
-        if (vols == null) return pw != null && pw.length > 0 ? new SevenZFile(f, pw) : new SevenZFile(f);
+        org.apache.commons.compress.archivers.sevenz.SevenZFileOptions lim = org.apache.commons.compress.archivers.sevenz.SevenZFileOptions.builder().withMaxMemoryLimitInKb(MEM_LIMIT_KB).build();
+        if (vols == null) return pw != null && pw.length > 0 ? new SevenZFile(f, pw, lim) : new SevenZFile(f, lim);
         java.nio.channels.SeekableByteChannel ch = org.apache.commons.compress.utils.MultiReadOnlySeekableByteChannel.forFiles(vols.toArray(new File[0]));
-        return pw != null && pw.length > 0 ? new SevenZFile(ch, f.getName(), pw) : new SevenZFile(ch, f.getName());
+        return pw != null && pw.length > 0 ? new SevenZFile(ch, f.getName(), pw, lim) : new SevenZFile(ch, f.getName(), lim);
     }
     public static String formatOf(File f) throws IOException {
         if (volumesOf(f) != null) { f = volumesOf(f).get(0); }
@@ -196,9 +197,9 @@ public final class KtArchive {
 
     /* ---------- listing ---------- */
     public static JSONObject list(File f, String password) throws Exception {
-        JSONArray arr = new JSONArray(); long total = 0; boolean enc = false; String fmt;
+        JSONArray arr = new JSONArray(); long total = 0; boolean enc = false; String fmt; String spec = null;
         if (hasJournal(f) && isTar(f)) {
-            fmt = "tar"; try (Rnd r = Rnd.open(f, "r")) { for (TarItem it : scanTar(r)) { arr.put(item(it.name, it.size, 0, it.type == '5', it.mtime)); total += it.size; } }
+            fmt = "tar"; try (Rnd r = Rnd.open(f, "r")) { for (TarItem it : scanTar(r)) { if (spec == null && specialTar(it.type)) spec = it.name; arr.put(item(it.name, it.size, 0, it.type == '5', it.mtime)); total += it.size; } }
         } else if (hasJournal(f)) {
             // Half extracted in place: the directory lives in the tail file; what is left starts below the journal's mark.
             fmt = "zip"; long committed = new JSONObject(new String(readFile(new File(f.getPath() + ".kurokawa-unzip")), StandardCharsets.UTF_8)).getLong("committed");
@@ -212,8 +213,12 @@ public final class KtArchive {
         } else if (fmt.equals("rar")) {
             try (com.github.junrar.Archive a = password != null && !password.isEmpty() ? new com.github.junrar.Archive(f, password) : new com.github.junrar.Archive(f)) { for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) { arr.put(item(h.getFileName().replace('\\', '/'), h.getFullUnpackSize(), h.getFullPackSize(), h.isDirectory(), h.getMTime() != null ? h.getMTime().getTime() : 0)); total += h.getFullUnpackSize(); enc |= h.isEncrypted(); } }
         } else if (streamed(fmt)) {
-            try (org.apache.commons.compress.archivers.ArchiveInputStream<?> t = streamOf(fmt, rawStream(f))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getLastModifiedDate() != null ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); } }
-        } else { String inner = innerName(f.getName()); arr.put(item(inner, -1, f.length(), false, f.lastModified())); }
+            // (A cpio's hard links: every link but the last has size 0 and the data comes with the last — listed with that size.)
+            java.util.Map<String, Long> linkData = new java.util.HashMap<>(); List<Object[]> linkPending = new ArrayList<>();
+            try (org.apache.commons.compress.archivers.ArchiveInputStream<?> t = streamOf(fmt, rawStream(f))) { ArchiveEntry e; while ((e = t.getNextEntry()) != null) { if (spec == null && special(e)) spec = e.getName(); arr.put(item(e.getName(), e.getSize(), 0, e.isDirectory(), e.getLastModifiedDate() != null ? e.getLastModifiedDate().getTime() : 0)); total += e.getSize(); String lk = linkKey(e); if (lk != null) { if (e.getSize() > 0) linkData.put(lk, e.getSize()); else linkPending.add(new Object[]{ arr.length() - 1, lk }); } } }
+            for (Object[] pd : linkPending) { Long d = linkData.get((String) pd[1]); if (d != null) { arr.getJSONObject((Integer) pd[0]).put("size", (long) d); total += d; } }
+            
+        } else { String inner = innerName(f.getName(), fmt); long known = fmt.equals("lzma") ? lzmaSize(f) : -1; arr.put(item(inner, known, f.length(), false, f.lastModified())); if (known > 0) total += known; }
         long largest = 0; String dup = null, bad = null; String plat = KtNameSafe.platformOf(f.getAbsoluteFile().getParent()); List<KtNameSafe.Entry> names = new ArrayList<>();
         for (int i = 0; i < arr.length(); i++) { JSONObject e = arr.getJSONObject(i); if (!e.getBoolean("dir")) largest = Math.max(largest, e.optLong("size")); names.add(new KtNameSafe.Entry(e.getString("path"), e.getBoolean("dir"), null, null)); }
         // (Names through the one table for the volume beside the archive: the first refused, the first clash — case only where that volume folds it.)
@@ -224,7 +229,7 @@ public final class KtArchive {
         if (linked) o.put("hardLinked", true); if (overlap != null) o.put("overlap", overlap);
         if (splitZip(f) || volumesOf(f) != null) o.put("volumes", volumesOf(f) != null ? volumesOf(f).size() : countZipVolumes(f)); o.put("largest", largest);
         File dir = f.getAbsoluteFile().getParentFile(); if (dir != null) o.put("free", dir.getUsableSpace());
-        if (bad != null) o.put("unsafe", bad); if (dup != null) o.put("duplicate", dup);
+        if (bad != null) o.put("unsafe", bad); if (dup != null) o.put("duplicate", dup); if (spec != null) o.put("special", spec);
         File sfv = sfvOf(f); if (sfv != null) o.put("sfv", sfv.getName());
         return o;
     }
@@ -251,13 +256,21 @@ public final class KtArchive {
     static JSONObject item(String name, long size, long csize, boolean dir) throws Exception { return item(name, size, csize, dir, 0); }
     /** An entry as the page lists it; `mtime` (epoch ms) left out when the archive does not keep one. */
     static JSONObject item(String name, long size, long csize, boolean dir, long mtime) throws Exception { JSONObject o = new JSONObject(); o.put("path", name); o.put("size", size); if (csize > 0) o.put("compressed", csize); o.put("dir", dir); if (mtime > 0) o.put("mtime", mtime); return o; }
+    /** The most memory a decompressor may ask for (a dictionary or table larger than this is refused, not allocated): 128 MiB, for xz, lzma, .Z and 7z. */
+    static final int MEM_LIMIT_KB = 128 * 1024;
+    /** The xz reader asks for its memory on the first read: its refusal said as «memoryLimit» (the page has the words for it). */
+    static final class LimitedXz extends java.io.FilterInputStream {
+        LimitedXz(InputStream in) { super(in); }
+        @Override public int read() throws IOException { try { return super.read(); } catch (org.apache.commons.compress.MemoryLimitException e) { throw new IOException("memoryLimit"); } }
+        @Override public int read(byte[] b, int off, int len) throws IOException { try { return super.read(b, off, len); } catch (org.apache.commons.compress.MemoryLimitException e) { throw new IOException("memoryLimit"); } }
+    }
     static InputStream decompressor(String fmt, InputStream in) throws IOException {
         if (fmt.endsWith(".gz") || fmt.equals("gz")) return new GzipCompressorInputStream(in, true);
-        if (fmt.endsWith(".xz") || fmt.equals("xz")) return new XZCompressorInputStream(in, true);
+        if (fmt.endsWith(".xz") || fmt.equals("xz")) return new LimitedXz(new XZCompressorInputStream(in, true, MEM_LIMIT_KB));
         if (fmt.endsWith(".bz2") || fmt.equals("bz2")) return new BZip2CompressorInputStream(in, true);
         // (A dictionary or table larger than this is refused rather than allocated: 128 MiB.)
-        if (fmt.endsWith(".lzma") || fmt.equals("lzma")) return new org.tukaani.xz.LZMAInputStream(in, 128 * 1024);
-        if (fmt.endsWith(".Z") || fmt.equals("Z")) return new org.apache.commons.compress.compressors.z.ZCompressorInputStream(in, 128 * 1024);
+        if (fmt.endsWith(".lzma") || fmt.equals("lzma")) { try { return new org.tukaani.xz.LZMAInputStream(in, MEM_LIMIT_KB); } catch (org.tukaani.xz.MemoryLimitException e) { throw new IOException("memoryLimit"); } }
+        if (fmt.endsWith(".Z") || fmt.equals("Z")) return new org.apache.commons.compress.compressors.z.ZCompressorInputStream(in, MEM_LIMIT_KB);
         return in;
     }
 
@@ -270,6 +283,13 @@ public final class KtArchive {
         return new TarArchiveInputStream(decompressor(fmt, raw));
     }
     /** An entry that is a file to write (not a link, device, folder). */
+    /** A device, a pipe, a socket or a sparse file (names of the kind are made by a tar or a cpio of a whole system, not of someone's files): refused, never turned into a file or skipped unseen. */
+    static boolean special(ArchiveEntry e) {
+        if (e instanceof org.apache.commons.compress.archivers.tar.TarArchiveEntry) { org.apache.commons.compress.archivers.tar.TarArchiveEntry t = (org.apache.commons.compress.archivers.tar.TarArchiveEntry) e; return t.isCharacterDevice() || t.isBlockDevice() || t.isFIFO() || t.isSparse(); }
+        if (e instanceof org.apache.commons.compress.archivers.cpio.CpioArchiveEntry) { long k = ((org.apache.commons.compress.archivers.cpio.CpioArchiveEntry) e).getMode() & 0170000L; return k == 0020000L || k == 0060000L || k == 0010000L || k == 0140000L; }
+        return false;
+    }
+    static boolean specialTar(char type) { return type == '3' || type == '4' || type == '6' || type == 'S'; }
     static boolean regular(ArchiveEntry e) {
         if (e.isDirectory()) return false;
         if (e instanceof org.apache.commons.compress.archivers.tar.TarArchiveEntry) return ((org.apache.commons.compress.archivers.tar.TarArchiveEntry) e).isFile();
@@ -277,7 +297,20 @@ public final class KtArchive {
         return true;
     }
     /** The name of a one-file compressed file's content: its own without the compression's ending. */
-    static String innerName(String n) { return n.replaceAll("(?i)\\.(gz|xz|bz2|lzma|z)$", ""); }
+    static String innerName(String n, String fmt) {
+        String ext = fmt.equals("gz") ? "gz" : fmt.equals("xz") ? "xz" : fmt.equals("bz2") ? "bz2" : fmt.equals("lzma") ? "lzma" : fmt.equals("Z") ? "z" : null;
+        return ext == null ? n : n.replaceAll("(?i)\\." + ext + "$", "");   // (the ending of its own kind only, whatever the case: «x.z» is not stripped from a gzip)
+    }
+    /** An .lzma's own header says how long its content is (8 bytes after the 5 of settings; all ones when it does not say): -1 when unknown. */
+    static long lzmaSize(File f) { try (Rnd r = Rnd.open(f, "r")) { if (r.length() < 13) return -1; byte[] h = new byte[13]; r.readFully(h, 0, 13); long v = 0; for (int i = 12; i >= 5; i--) v = (v << 8) | (h[i] & 0xff); return v < 0 || v > (1L << 50) ? -1 : v; } catch (IOException e) { return -1; } }
+    /** A cpio hard link's identity (device and inode, for a regular file with more than one link); null for anything else. */
+    static String linkKey(ArchiveEntry e) {
+        if (!(e instanceof org.apache.commons.compress.archivers.cpio.CpioArchiveEntry)) return null;
+        org.apache.commons.compress.archivers.cpio.CpioArchiveEntry c = (org.apache.commons.compress.archivers.cpio.CpioArchiveEntry) e;
+        if (!c.isRegularFile() || c.getNumberOfLinks() <= 1) return null;
+        String dev; try { dev = c.getDeviceMaj() + "." + c.getDeviceMin(); } catch (UnsupportedOperationException x) { dev = String.valueOf(c.getDevice()); }
+        return dev + ":" + c.getInode();
+    }
 
     /* ---------- extracting ---------- */
     public static final class Options { public boolean inPlace, deleteAfter, verifyFirst; public String replace = "replace"; public String password; public long keepFree = 64L << 20; /** Only these entries (and what is under these folders); null: all. */ public java.util.Set<String> only; }
@@ -290,7 +323,7 @@ public final class KtArchive {
         String fmt = formatOf(f);
         // HatchZip's rules before anything is touched: a hostile archive is refused, an .sfv beside it checked,
         // and with «verify first» every file's checksum read before the archive is cut.
-        JSONObject info = list(f, o.password); if (info.has("unsafe")) throw new IOException("unsafePath " + info.getString("unsafe")); if (info.has("duplicate") && o.inPlace) throw new IOException("duplicateEntry " + info.getString("duplicate"));
+        JSONObject info = list(f, o.password); if (info.has("unsafe")) throw new IOException("unsafePath " + info.getString("unsafe")); if (info.has("special")) throw new IOException("specialEntry " + info.getString("special")); if (info.has("duplicate") && o.inPlace) throw new IOException("duplicateEntry " + info.getString("duplicate"));
         if (o.inPlace && info.has("overlap")) throw new IOException("overlapping " + info.getString("overlap")); if (o.inPlace && info.optBoolean("hardLinked")) throw new IOException("hardLinked");
         File sfv = sfvOf(f); if (sfv != null) { JSONObject chk = checkSfv(sfv, pr); if (chk.getJSONArray("bad").length() > 0) throw new IOException("sfvMismatch " + chk.getJSONArray("bad").join(", ").replace("\"", "")); }
         if (o.verifyFirst && o.inPlace && fmt.equals("zip")) { JSONObject tr = test(f, o.password, pr); if (tr.getJSONArray("bad").length() > 0) throw new IOException("damaged " + tr.getJSONArray("bad").join(", ").replace("\"", "")); }
@@ -302,7 +335,7 @@ public final class KtArchive {
         } else if (fmt.equals("7z")) n = extract7z(f, dest, o, pr);
         else if (fmt.equals("rar")) n = extractRar(f, dest, o, pr);
         else if (streamed(fmt)) n = extractTar(f, dest, fmt, o, pr);
-        else { File out = target(dest, innerName(f.getName()), o); if (out != null) { try (InputStream in = decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16))) { writeAll(in, out, -1, pr, f.length()); } n = 1; } else n = 0; }
+        else { File out = target(dest, innerName(f.getName(), fmt), o); if (out != null) { try (InputStream in = decompressor(fmt, new BufferedInputStream(new FileInputStream(f), 1 << 16))) { writeAll(in, out, -1, pr, f.length(), fmt.equals("lzma") ? lzmaSize(f) : -1); } n = 1; } else n = 0; }
         if (o.deleteAfter && !o.inPlace && !pr.stopped()) { if (!f.delete()) Log.w(TAG, "could not delete " + f); }
         return n;
     }
@@ -315,9 +348,14 @@ public final class KtArchive {
         if (out.exists()) { if ("skip".equals(o.replace)) return null; if ("both".equals(o.replace)) { String base = out.getName(), ext = ""; int dot = base.lastIndexOf('.'); if (dot > 0) { ext = base.substring(dot); base = base.substring(0, dot); } for (int i = 2; ; i++) { File alt = new File(out.getParentFile(), base + " (" + i + ")" + ext); if (!alt.exists()) return alt; } } }
         return out;
     }
-    static long writeAll(InputStream in, File out, long crcWant, Progress pr, long tick) throws IOException {
+    static final long STREAM_CHECK = 8L << 20, STREAM_KEEP_FREE = 16L << 20;
+    static long writeAll(InputStream in, File out, long crcWant, Progress pr, long tick) throws IOException { return writeAll(in, out, crcWant, pr, tick, -1); }
+    /** `limit`: the size the archive says this entry has (-1: it says none). More bytes than that come out of the stream: the entry is lying, the job stops («sizeExceeded») and the part file is removed. */
+    static long writeAll(InputStream in, File out, long crcWant, Progress pr, long tick, long limit) throws IOException {
         File part = new File(out.getPath() + KtNameSafe.TEMP_SUFFIX); CRC32 crc = new CRC32(); long n = 0; byte[] buf = new byte[1 << 16];
-        try (OutputStream os = new BufferedOutputStream(new FileOutputStream(part), 1 << 16)) { int r; while ((r = in.read(buf)) > 0) { if (pr.stopped()) throw new IOException("stopped"); os.write(buf, 0, r); crc.update(buf, 0, r); n += r; } }
+        long next = STREAM_CHECK;
+        // (A stream whose length is not known beforehand — a gzip, an .lzma, a .Z, a tar entry — is checked as it grows: when the volume has less than 16 MB left the job stops with «noSpace» and the part file is removed.)
+        try (OutputStream os = new BufferedOutputStream(new FileOutputStream(part), 1 << 16)) { int r; while ((r = in.read(buf)) > 0) { if (pr.stopped()) throw new IOException("stopped"); os.write(buf, 0, r); crc.update(buf, 0, r); n += r; if (limit >= 0 && n > limit) throw new IOException("sizeExceeded " + out.getName()); if (n >= next) { next += STREAM_CHECK; File dir = part.getAbsoluteFile().getParentFile(); if (dir != null && dir.getUsableSpace() < STREAM_KEEP_FREE) throw new IOException("noSpace"); } } }
         catch (IOException e) { part.delete(); throw e; }
         if (crcWant >= 0 && crc.getValue() != crcWant) { part.delete(); throw new IOException("crcMismatch " + out.getName()); }
         if (out.exists() && !out.delete()) throw new IOException("cannotReplace " + out);
@@ -333,7 +371,7 @@ public final class KtArchive {
                 if (it.dir) { if (!wanted(o, it.name)) continue; File d = new File(dest, nameFor(dest, it.name).out); if (unsafe(it.name)) throw new IOException("unsafePath"); d.mkdirs(); continue; }
                 File out = target(dest, it.name, o); if (out == null) { done += it.usize; continue; }
                 pr.on(done, total, it.name);
-                try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total); }
+                try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total, it.usize); }
                 done += it.usize; n++;
             }
             pr.on(total, total, "");
@@ -468,7 +506,7 @@ public final class KtArchive {
                     if (it.dir) { if (unsafe(it.name)) throw new IOException("unsafePath"); new File(dest, nameFor(dest, it.name).out).mkdirs(); continue; }
                     File out = target(dest, it.name, o); if (out == null) { done += it.usize; continue; }
                     pr.on(done, total, it.name);
-                    try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total); }
+                    try (InputStream in = entryStream(r, it)) { writeAll(in, out, it.crc, pr, total, it.usize); }
                     written.add(out); done += it.usize; n++;
                 }
                 // Commit: the files flushed, the journal moved, then the archive cut back to the batch's first byte.
@@ -629,7 +667,7 @@ public final class KtArchive {
                 File out = target(dest, e.getName(), o); if (out == null) { done += e.getSize(); continue; }
                 pr.on(done, total, e.getName());
                 final SevenZFile zz = z; InputStream in = new InputStream() { @Override public int read() throws IOException { return zz.read(); } @Override public int read(byte[] b, int off, int len) throws IOException { return zz.read(b, off, len); } };
-                writeAll(in, out, -1, pr, total); done += e.getSize(); n++;
+                writeAll(in, out, -1, pr, total, e.getSize()); done += e.getSize(); n++;
             }
         }
         pr.on(total, total, ""); return n;
@@ -654,18 +692,25 @@ public final class KtArchive {
     }
     static int extractTar(File f, File dest, String fmt, Options o, Progress pr) throws Exception {
         int n = 0; long done = 0, total = f.length() * (fmt.equals("tar") ? 1 : 3);
+        // (A cpio's hard links: the links before the last carry no data — written as copies of the last, not as empty files; links of a file that is empty at the end are empty files.)
+        java.util.Map<String, List<String>> links = new java.util.LinkedHashMap<>();
         try (org.apache.commons.compress.archivers.ArchiveInputStream<?> t = streamOf(fmt, rawStream(f))) {
             ArchiveEntry e;
             while ((e = t.getNextEntry()) != null) {
                 if (pr.stopped()) throw new IOException("stopped");
                 if (e.isDirectory()) { if (unsafe(e.getName())) throw new IOException("unsafePath"); new File(dest, nameFor(dest, e.getName()).out).mkdirs(); continue; }
+                if (special(e)) throw new IOException("specialEntry " + e.getName());
                 if (!regular(e)) continue;
-                File out = target(dest, e.getName(), o); if (out == null) { done += e.getSize(); continue; }
+                String lk = linkKey(e);
+                if (lk != null && e.getSize() == 0) { if (unsafe(e.getName())) throw new IOException("unsafePath"); links.computeIfAbsent(lk, k -> new ArrayList<>()).add(e.getName()); continue; }
+                File out = target(dest, e.getName(), o); if (out == null) { done += e.getSize(); if (lk != null) links.remove(lk); continue; }
                 pr.on(Math.min(done, total), total, e.getName());
                 final org.apache.commons.compress.archivers.ArchiveInputStream<?> tt = t; InputStream in = new InputStream() { @Override public int read() throws IOException { return tt.read(); } @Override public int read(byte[] b, int off, int len) throws IOException { return tt.read(b, off, len); } };
                 writeAll(in, out, -1, pr, total); done += e.getSize(); n++;
+                if (lk != null) { List<String> names = links.remove(lk); if (names != null) for (String nm : names) { File o2 = target(dest, nm, o); if (o2 == null) continue; try (InputStream src = new BufferedInputStream(new FileInputStream(out), 1 << 16)) { writeAll(src, o2, -1, pr, total); } n++; } }
             }
         }
+        for (List<String> names : links.values()) for (String nm : names) { File o2 = target(dest, nm, o); if (o2 == null) continue; writeAll(new java.io.ByteArrayInputStream(new byte[0]), o2, -1, pr, total); n++; }
         pr.on(total, total, ""); return n;
     }
     static int extractZip4j(File f, File dest, Options o, Progress pr) throws Exception {
@@ -677,7 +722,7 @@ public final class KtArchive {
             if (h.isDirectory()) { if (unsafe(h.getFileName())) throw new IOException("unsafePath"); new File(dest, nameFor(dest, h.getFileName()).out).mkdirs(); continue; }
             File out = target(dest, h.getFileName(), o); if (out == null) { done += h.getUncompressedSize(); continue; }
             pr.on(done, total, h.getFileName());
-            try (InputStream in = z.getInputStream(h)) { writeAll(in, out, h.getCrc(), pr, total); } catch (net.lingala.zip4j.exception.ZipException ex) { if (String.valueOf(ex.getMessage()).toLowerCase().contains("password")) throw new IOException("wrongPassword"); throw ex; }
+            try (InputStream in = z.getInputStream(h)) { writeAll(in, out, h.getCrc(), pr, total, h.getUncompressedSize()); } catch (net.lingala.zip4j.exception.ZipException ex) { if (String.valueOf(ex.getMessage()).toLowerCase().contains("password")) throw new IOException("wrongPassword"); throw ex; }
             done += h.getUncompressedSize(); n++;
         }
         pr.on(total, total, ""); return n;

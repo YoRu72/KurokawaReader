@@ -81,10 +81,11 @@ export async function streamSheet(a: Anime, episode: number): Promise<void> {
   }
   async function play(v: S.StreamSource, sv: S.StreamServer, ep: S.StreamEpisode, subs: S.StreamSource['subtitles']) {
     try {
-      const url = await S.playableUrl(v, sv.headers);
       const { openPlayer } = await import('./player');
       sh.close();
-      await openPlayer(url, `${titleOf(a)} - ${String(ep.number).padStart(2, '0')}`, { meta: { anilistId: a.id, title: titleOf(a), episode: n, cover: a.cover }, subtitles: subs.map((s) => ({ url: s.url, name: s.language, lang: s.language, isDefault: s.isDefault })) });
+      // (The site's own address and headers: another app reads them through the relay; the app's own player gets the
+      // proxy its web view needs, made only then — on a computer HLS that way needs ffmpeg, another app does not.)
+      await openPlayer('', `${titleOf(a)} - ${String(ep.number).padStart(2, '0')}`, { meta: { anilistId: a.id, title: titleOf(a), episode: n, cover: a.cover }, subtitles: subs.map((s) => ({ url: s.url, name: s.language, lang: s.language, isDefault: s.isDefault })), origin: { url: v.url, headers: sv.headers ?? {}, hls: v.type === 'm3u8' }, inAppUrl: () => S.playableUrl(v, sv.headers) });
     } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
   }
   async function download(v: S.StreamSource, sv: S.StreamServer, ep: S.StreamEpisode) {
@@ -95,7 +96,7 @@ export async function streamSheet(a: Anime, episode: number): Promise<void> {
       let tk;
       if (v.type === 'mp4') tk = await getEngine().add({ source: { url: v.url, headers: sv.headers }, name: `${name}.mp4`, sequential: true, meta });
       else { const { videoSupported } = await import('../video/ytdlp'); if (!videoSupported()) { toast(t('streamNeedsVideo'), 'error', 6000); return; } tk = await getEngine().add({ source: { url: v.url, headers: sv.headers }, name, meta, video: { title: name, site: p.name, label: v.quality, headers: sv.headers, outName: name } }); }
-      toast(t('taskAdded', { name: tk.name || name }), 'info', 5000, { label: t('toastShow'), run: () => navigate('/') }); sh.close();
+      void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, name)); sh.close();
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   }
   await go();

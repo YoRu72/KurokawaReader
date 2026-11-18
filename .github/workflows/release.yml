@@ -13,19 +13,33 @@ on:
 env:
   APP: apps/reader
 
+# (Read-only for every job but the ones that leave a comment on a failed commit and the one that publishes: those say
+# «contents: write» themselves.)
 permissions:
-  contents: write
+  contents: read
+
+# A newer run of the same branch (a manual run on a work branch) cancels the older one; a run on main — or for a tag —
+# is never cancelled by a later push: it queues behind the running one.
+concurrency:
+  group: release-reader-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   version:
     name: Version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # (The topics step below writes the repository's topics: REPO_ADMIN_TOKEN when there is one, else the run's own token, which may not.)
+    permissions: { contents: write }
     outputs:
       v: ${{ steps.v.outputs.v }}
+      tag: ${{ steps.v.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+      # (The one place the version and the tag come from. It stops the whole run, before anything is built, when the two
+      # package.json files differ or docs/notes/v<version>.md is missing, empty or unfinished: scripts/release-check.mjs.)
       - id: v
-        run: echo "v=$(node -p "require('./apps/reader/package.json').version")" >> $GITHUB_OUTPUT
+        run: node scripts/release-check.mjs reader --github-output "$GITHUB_OUTPUT"
       - name: Repository topics
         continue-on-error: true
         env: { GH_TOKEN: '${{ secrets.REPO_ADMIN_TOKEN || github.token }}' }
@@ -39,6 +53,7 @@ jobs:
     name: Web build & tests
     needs: version
     runs-on: ubuntu-latest
+    timeout-minutes: 90   # (47 minutes in the 0.64.0 run)
     defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +63,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - name: Tests (the updater, the AI translator)
-        run: npm install --no-save playwright@1.64.1 && (npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium) && node tests/updater.cjs && node tests/backpdf.cjs && node tests/ranobesession.cjs && node tests/pdffling.cjs && node tests/pdfzoom.cjs && node tests/pdfcrop.cjs && node tests/pdftextpic.cjs && node tests/pdf2docxrules.cjs && node tests/pendingmark.cjs && node tests/translator/run.cjs && node tests/customapi.cjs && node tests/pdfsearch.cjs && node tests/copybuttons.cjs && node tests/backupsafe.cjs && node tests/dbatomic.cjs && node tests/libselect.cjs && node tests/syncmerge.cjs && node tests/highlightplace.cjs && node tests/readpos.cjs && node tests/staysinbook.cjs && node tests/epubcrash.cjs && node tests/epubglue.cjs && node tests/chaptertitles.cjs && node tests/readgestures.cjs && node tests/perfbudget.cjs && node tests/diag.cjs && node tests/backkeys.cjs && node tests/readbar.cjs && node tests/readbuttons.cjs && node tests/lazychapters.cjs && node tests/pdfroom.cjs && node tests/statsshape.cjs && node tests/platformsettings.cjs && node tests/coverbadges.cjs && node tests/booksearch.cjs && node tests/speakstop.cjs && node tests/exportpins.cjs && node tests/textmeta.cjs && node tests/docxlists.cjs && node tests/epubanchors.cjs && node tests/pdfpassword.cjs && node tests/booksettings.cjs && node tests/chaptermap.cjs && node tests/chapterhealth.cjs && node tests/textrules.cjs && node tests/pdf2docxrunstate.cjs && node tests/pdf2docxchars.cjs && node tests/pdf2docxspaces.cjs && node tests/pdf2docxlines.cjs && node tests/pdf2docxpagenum.cjs && node tests/pdf2docxfonts.cjs && node tests/pdf2docxmem.cjs && node tests/anilistlink.cjs && node tests/glossary.cjs && node tests/glossarylang.cjs && node tests/pcui.cjs && node tests/pcmenu.cjs && node tests/pcread.cjs && node tests/titlebar.cjs reader && node tests/appicon.cjs && node tests/resettle.cjs && node tests/resettle.cjs late && node tests/scrollsites.cjs && node tests/convbudget.cjs && node tests/firstrun.cjs && node tests/handover.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/setupui.cjs && node tests/tauribridge.cjs && node tests/pins.cjs && node tests/deletebooks.cjs && node tests/undo.cjs && node tests/glass.cjs && node tests/styleeditor.cjs && node tests/stylepair.cjs && node tests/apptheme.cjs && node tests/shared-copies.cjs
+        run: npm install --no-save playwright@1.64.1 && (npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium) && node tests/updater.cjs && node tests/backpdf.cjs && node tests/ranobesession.cjs && node tests/pdffling.cjs && node tests/pdfzoom.cjs && node tests/pdfcrop.cjs && node tests/pdftextpic.cjs && node tests/pdf2docxrules.cjs && node tests/pendingmark.cjs && node tests/translator/run.cjs && node tests/customapi.cjs && node tests/pdfsearch.cjs && node tests/copybuttons.cjs && node tests/backupsafe.cjs && node tests/dbatomic.cjs && node tests/libselect.cjs && node tests/syncmerge.cjs && node tests/highlightplace.cjs && node tests/readpos.cjs && node tests/staysinbook.cjs && node tests/epubcrash.cjs && node tests/epubglue.cjs && node tests/chaptertitles.cjs && node tests/readgestures.cjs && node tests/perfbudget.cjs && node tests/diag.cjs && node tests/backkeys.cjs && node tests/readbar.cjs && node tests/readbuttons.cjs && node tests/lazychapters.cjs && node tests/pdfroom.cjs && node tests/statsshape.cjs && node tests/platformsettings.cjs && node tests/coverbadges.cjs && node tests/booksearch.cjs && node tests/speakstop.cjs && node tests/exportpins.cjs && node tests/textmeta.cjs && node tests/docxlists.cjs && node tests/epubanchors.cjs && node tests/pdfpassword.cjs && node tests/booksettings.cjs && node tests/chaptermap.cjs && node tests/chapterhealth.cjs && node tests/textrules.cjs && node tests/pdf2docxrunstate.cjs && node tests/pdf2docxchars.cjs && node tests/pdf2docxspaces.cjs && node tests/pdf2docxlines.cjs && node tests/pdf2docxpagenum.cjs && node tests/pdf2docxfonts.cjs && node tests/pdf2docxmem.cjs && node tests/anilistlink.cjs && node tests/glossary.cjs && node tests/glossarylang.cjs && node tests/pcui.cjs && node tests/pcmenu.cjs && node tests/pcread.cjs && node tests/titlebar.cjs reader && node tests/appicon.cjs && node tests/resettle.cjs && node tests/resettle.cjs late && node tests/scrollsites.cjs && node tests/convbudget.cjs && node tests/firstrun.cjs && node tests/handover.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/setupui.cjs && node tests/tauribridge.cjs && node tests/pins.cjs && node tests/deletebooks.cjs && node tests/undo.cjs && node tests/glass.cjs && node tests/styleeditor.cjs && node tests/stylepair.cjs && node tests/apptheme.cjs && node tests/readingdict.cjs && node tests/shared-copies.cjs
       - name: Package web build
         run: cd dist && zip -r ../KurokawaReader-web.zip . && cd ..
       - uses: actions/upload-artifact@v4
@@ -58,6 +73,8 @@ jobs:
     needs: version
     name: Android APKs
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
@@ -88,11 +105,13 @@ jobs:
             echo "KR_KEYSTORE_PASSWORD=$SP" >> $GITHUB_ENV
             echo "KR_KEY_ALIAS=$AL" >> $GITHUB_ENV
             echo "KR_KEY_PASSWORD=$KP" >> $GITHUB_ENV
-            keytool -list -keystore $RUNNER_TEMP/kr.keystore -storepass "$SP" -alias "$AL" > /dev/null && echo "Signing with alias $AL from the repository secrets." || echo "::error::Keystore secret present but alias '$AL' / password do not open it."
+            keytool -list -keystore $RUNNER_TEMP/kr.keystore -storepass "$SP" -alias "$AL" > /dev/null 2>&1 && echo "Signing with alias $AL from the repository secrets." || { echo "::error::Keystore secret present but alias '$AL' / password do not open it."; exit 1; }
 
           else
             # No keystore secret: sign with a throw-away key. Set the ANDROID_KEYSTORE_* secrets
             # (docs/INSTALL.md) so releases share one private signature and update over each other.
+            # (A release from main is never signed with a one-off key: phones could not update over the last one.)
+            if [ "$GITHUB_REF" = refs/heads/main ] || [[ "$GITHUB_REF" == refs/tags/* ]]; then echo "::error::ANDROID_KEYSTORE_BASE64 secret missing — a release is not signed with a one-off key."; exit 1; fi
             echo "::warning::ANDROID_KEYSTORE_BASE64 secret missing — APKs signed with a one-off key; they will not install over an earlier release."
             keytool -genkeypair -v -keystore $RUNNER_TEMP/kr.keystore -alias kurokawa -keyalg RSA -keysize 2048 -validity 10000 -storepass kurokawa -keypass kurokawa -dname "CN=KurokawaReader, O=Kurokawa, C=SA"
             echo "KR_KEYSTORE_PASSWORD=kurokawa" >> $GITHUB_ENV
@@ -174,6 +193,8 @@ jobs:
     needs: version
     name: Windows EXE
     runs-on: windows-latest
+    timeout-minutes: 60
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
@@ -209,6 +230,8 @@ jobs:
     needs: version
     name: macOS DMG
     runs-on: macos-15
+    timeout-minutes: 60   # (15 minutes in the 0.64.0 run)
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
@@ -244,6 +267,8 @@ jobs:
     needs: version
     name: Linux AppImage
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions: { contents: write }   # (the failure comment)
     defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
@@ -283,6 +308,7 @@ jobs:
     needs: version
     name: Rust ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90   # (7 to 11 minutes in the 0.64.0 run with a warm cache)
     continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
@@ -373,6 +399,8 @@ jobs:
     # Published when every build but the macOS ones succeeded (those may be missing when no macOS runner came).
     if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: { contents: write }   # (creates the release, uploads its files)
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -386,6 +414,7 @@ jobs:
         run: echo "MAC_NOTE=- _The macOS build did not run this time (no macOS runner came); the previous release's DMG still works, and the next release will carry a new one._" >> $GITHUB_ENV
       - name: Release notes
         run: |
+          [ -s "$APP/docs/notes/v${{ needs.version.outputs.v }}.md" ] || { echo "::error::$APP/docs/notes/v${{ needs.version.outputs.v }}.md is missing or empty"; exit 1; }
           # What's new: commit subjects since the previous release, split into bullets.
           git fetch --tags --quiet || true
           PREV=$(git tag --sort=-v:refname | grep "^v[0-9]" | grep -v "^v${{ needs.version.outputs.v }}$" | head -n 1)
@@ -395,8 +424,8 @@ jobs:
             echo "## KurokawaReader v${{ needs.version.outputs.v }}"
             echo
             echo "## What's new"
-            # (Notes written for this version, when there are any — docs/notes/v<version>.md — else the commits.)
-            if [ -s "$APP/docs/notes/v${{ needs.version.outputs.v }}.md" ]; then cat "$APP/docs/notes/v${{ needs.version.outputs.v }}.md"; elif [ -s whatsnew.txt ]; then cat whatsnew.txt; else echo "- Fixes and improvements"; fi
+            # (The notes written for this version, docs/notes/v<version>.md: the version job has already refused a missing or empty file, and there is no fallback text — the commit subjects above are only kept for the log.)
+            cat "$APP/docs/notes/v${{ needs.version.outputs.v }}.md"
             if [ -n "$IOS_NOTE" ]; then echo "$IOS_NOTE"; fi
             if [ -n "$MAC_NOTE" ]; then echo "$MAC_NOTE"; fi
             # (The new computer build is optional on macOS: without it the previous build's DMG is the Mac download, and
@@ -436,9 +465,19 @@ jobs:
           V=${{ needs.version.outputs.v }}
           (cd artifacts && find . -type f ! -name '*.blockmap' -print0 | sort -z | xargs -0 sha256sum | sed -E 's#  \./[^/]+/#  #') > "KurokawaReader-$V-SHA256SUMS.txt"
           cat "KurokawaReader-$V-SHA256SUMS.txt"
+      # (What a release must carry, by name — the files the job conditions above promise; the iOS and macOS files and the Rust
+      # build's are optional by design and are not asked for.)
+      - name: The release's files are all there
+        run: |
+          V=${{ needs.version.outputs.v }}; missing=0
+          need() { if ! ls artifacts/*/"$1" > /dev/null 2>&1; then echo "::error::missing from the release: $1"; missing=1; fi; }
+          for abi in arm64-v8a armeabi-v7a x86_64 universal; do need "KurokawaReader-$V-$abi.apk"; done
+          need "KurokawaReader-$V-win-x64.exe"; need "KurokawaReader-$V-linux-x86_64.AppImage"; need "KurokawaReader-web.zip"
+          [ -s "KurokawaReader-$V-SHA256SUMS.txt" ] || { echo "::error::no checksums file"; missing=1; }
+          exit $missing
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.version.outputs.v }}
+          tag_name: ${{ needs.version.outputs.tag }}
           name: KurokawaReader v${{ needs.version.outputs.v }}
           target_commitish: ${{ env.TARGET }}
           body_path: notes.md
@@ -457,6 +496,6 @@ jobs:
       - name: The Rust build's files
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
-          for d in artifacts/rust-*; do [ -d "$d" ] && gh release upload "v${{ needs.version.outputs.v }}" "$d"/* --clobber -R "$GITHUB_REPOSITORY"; done
+          for d in artifacts/rust-*; do [ -d "$d" ] && gh release upload "${{ needs.version.outputs.tag }}" "$d"/* --clobber -R "$GITHUB_REPOSITORY"; done
 
   # (The Pages site — both apps' web builds and the AltStore source — is deployed by pages.yml once this run ends.)

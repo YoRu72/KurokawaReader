@@ -1,6 +1,6 @@
 // Packs and the player choice on a stubbed phone: installing the Video add-on asks for Python and ffmpeg (sizes from
-// the release's packs file), downloads them with progress, then installs the add-on; Play asks how to watch, and
-// «another app» hands the finished file to the phone's chooser, remembered when asked to.
+// the release's packs file), downloads them with progress, then installs the add-on; Play asks how to watch (the one
+// chooser), and «another app» hands the finished file to the phone's list of video apps, remembered for that kind.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist'); const REPO = path.join(__dirname, '..', '..', '..', 'repo');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -22,6 +22,8 @@ const MANIFEST = { ydl: '0.18.1', packs: { python: { 'arm64-v8a': { file: 'Kurok
       packStatus: async () => ({ ...JSON.parse(JSON.stringify(packs)), abi: 'arm64-v8a' }),
       packInstall: async (o) => { window.__calls.push(['packInstall', o.name, o.url.split('/').pop(), o.sha256]); for (let i = 1; i <= 4; i++) { await new Promise((r) => setTimeout(r, 250)); emit('packProgress', { name: o.name, done: i * 1e6, total: 4e6 }); } packs[o.name] = { version: o.version, size: 5e7 }; },
       openWith: async (o) => { window.__calls.push(['openWith', o.path || o.url]); },
+      // (0.21 P8: «Another app» is one intent to the phone's own list of video apps — src/player/external.)
+      openPlayerApp: async (o) => { window.__calls.push(['openPlayerApp', o.path || o.data]); return { code: -1, action: 'is.xyz.mpv.MPVActivity.result', extras: {} }; },
       localUrl: async (o) => ({ url: 'http://127.0.0.1:9/file?p=' + encodeURIComponent(o.path) }), streamUrl: async () => ({ url: 'http://127.0.0.1:9/t1/0' }),
     }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
@@ -42,19 +44,19 @@ const MANIFEST = { ydl: '0.18.1', packs: { python: { 'arm64-v8a': { file: 'Kurok
   // Storage lists them with their size
   await p.goto(`http://127.0.0.1:${port}/#/settings/storage`); await p.waitForSelector('#storage .addon-row'); await p.evaluate(() => document.querySelector('#storage').classList.remove('collapsed'));
   const storage = (await p.$eval('#storage', (e) => e.innerText)).replace(/\s+/g, ' '); console.log('storage:', storage.slice(0, 200));
-  // Play: asked how; another app, remembered
-  await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.task-card'); await p.click('.task-card button[aria-label="Play"]'); await p.waitForSelector('.watch-choice');
+  // Play: asked how (the one chooser); another app, remembered for this kind of video (files on this device).
+  await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.task-card'); await p.click('.task-card button[aria-label="Play"]'); await p.waitForSelector('.ext-chooser .watch-choice');
   const choice = (await p.$eval('.sheet', (e) => e.innerText)).replace(/\s+/g, ' '); console.log('choice:', choice);
-  await p.click('.sheet .switch-row input'); await p.click('.watch-choice >> nth=1'); await p.waitForTimeout(400);
-  const calls2 = await p.evaluate(() => window.__calls.filter((c) => c[0] === 'openWith')); const pref = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).playerWith);
-  console.log('openWith:', JSON.stringify(calls2), '| remembered:', pref);
+  await p.click('.ext-chooser .switch-row input'); await p.click('.ext-chooser [data-way="out"]'); await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'openPlayerApp'), null, { timeout: 8000 }).catch(() => undefined); await p.waitForTimeout(300);
+  const calls2 = await p.evaluate(() => window.__calls.filter((c) => c[0] === 'openPlayerApp' || c[0] === 'openWith')); const pref = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).extPlayers?.android?.local);
+  console.log('another app:', JSON.stringify(calls2), '| remembered for files:', pref);
   // In-app chosen: the player is built in — no card to fetch it, it plays at once.
-  await p.evaluate(() => { const st = JSON.parse(localStorage.getItem('kt.settings')); st.playerWith = 'app'; localStorage.setItem('kt.settings', JSON.stringify(st)); });
+  await p.evaluate(() => { const st = JSON.parse(localStorage.getItem('kt.settings')); st.extPlayers.android.local = 'app'; localStorage.setItem('kt.settings', JSON.stringify(st)); });
   await p.reload(); await p.waitForSelector('.task-card'); await p.click('.task-card button[aria-label="Play"]'); await p.waitForTimeout(400);
   const card = (await p.$('.get-card')) ? (await p.$eval('.get-card', (e) => e.innerText)).replace(/\s+/g, ' ') : ''; console.log('player card:', card || '(none)');
   await p.waitForSelector('.kt-stage, video.kt-video', { state: 'attached', timeout: 10000 });
   const playerOn = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).addons.includes('player')); console.log('player add-on:', playerOn, '| player open:', !!(await p.$('.kt-stage, video.kt-video')));
-  const pass = /Python/.test(ask) && /ffmpeg/.test(ask) && /14 MB/.test(ask) && /37 MB/.test(ask) && calls1.length === 2 && calls1[0][2] === 'KurokawaTools-pack-python-0.18.1-arm64-v8a.zip' && installed.includes('video') && /Installed/.test(storage) && calls2.length === 1 && calls2[0][1] === '/sdcard/Download/Episode 05.mkv' && pref === 'external' && !card && playerOn;
+  const pass = /Python/.test(ask) && /ffmpeg/.test(ask) && /14 MB/.test(ask) && /37 MB/.test(ask) && calls1.length === 2 && calls1[0][2] === 'KurokawaTools-pack-python-0.18.1-arm64-v8a.zip' && installed.includes('video') && /Installed/.test(storage) && calls2.length === 1 && calls2[0][0] === 'openPlayerApp' && calls2[0][1] === '/sdcard/Download/Episode 05.mkv' && pref === 'out' && !card && playerOn;
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : pass ? 'all passed' : 'FAILED');
   await br.close(); web.close(); process.exit(errors.length || !pass ? 1 : 0);
 })();

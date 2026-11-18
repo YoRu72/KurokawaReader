@@ -28,7 +28,7 @@ const TRASH_DAYS = 30;
 /* ---------- the search: a name, and Solid Explorer's filters ---------- */
 const SIZES: [string, string, number, number][] = [['any', 'filesSizeAny', 0, Infinity], ['empty', 'filesSizeEmpty', 0, 0], ['tiny', 'filesSizeTiny', 1, 10 << 10], ['small', 'filesSizeSmall', 10 << 10, 1 << 20], ['medium', 'filesSizeMedium', 1 << 20, 10 << 20], ['big', 'filesSizeBig', 10 << 20, 100 << 20], ['large', 'filesSizeLarge', 100 << 20, 1 << 30], ['huge', 'filesSizeHuge', 1 << 30, Infinity]];
 const DATES: [string, string][] = [['any', 'filesDateAny'], ['today', 'today'], ['yesterday', 'yesterday'], ['week', 'filesDateWeek'], ['lastWeek', 'filesDateLastWeek'], ['month', 'filesDateMonth'], ['lastMonth', 'filesDateLastMonth'], ['year', 'filesDateYear'], ['lastYear', 'filesDateLastYear']];
-const KIND_RE: Record<string, RegExp | null> = { any: null, image: /^(jpe?g|png|gif|webp|bmp|heic|avif|svg)$/, audio: /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/, video: /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp)$/, doc: /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/, archive: /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/, apk: /^(apk|apks|xapk|apkm)$/ };
+const KIND_RE: Record<string, RegExp | null> = { any: null, image: /^(jpe?g|png|gif|webp|bmp|heic|avif|svg)$/, audio: /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/, video: /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|mts|flv|wmv|3gp)$/, doc: /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/, archive: /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/, apk: /^(apk|apks|xapk|apkm)$/ };
 function dateWindow(key: string): [number, number] {
   const now = new Date(); const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); const today = day(now); const D = 86400000;
   const weekStart = today - ((now.getDay() + 6) % 7) * D; const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime(); const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
@@ -95,17 +95,39 @@ export async function makeArchiveSheet(paths: string[], dir: string, started: (i
   const pwField = h('label', { class: 'field' }, h('span', null, t('password')), pw);
   if (pc) {
     const pwHint = h('p', { class: 'hint files-7z-note' }, icon('lock'), h('span', null, t('files7zPasswordHint'))); const zipHint = h('p', { class: 'hint' }, t('filesZipNoPasswordPc'));
-    only7z.push(lvlBtn, pwField, pwHint); onlyZip.push(zipHint); sync();
-    sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn), pwField, pwHint, zipHint, h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })));
+    const lvlField = h('label', { class: 'field' }, h('span', null, t('filesLevel')), lvlBtn);
+    only7z.push(lvlField, pwField, pwHint); onlyZip.push(zipHint); sync();
+    sh.body.append(h('div', { class: 'files-pcfields' }, h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('label', { class: 'field' }, h('span', null, t('filesFormat')), fmtBtn), lvlField, pwField), pwHint, zipHint, h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })));
   } else {
     sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), name), h('div', { class: 'chip-row files-filters' }, fmtBtn, lvlBtn, splitBtn), pwField, h('p', { class: 'hint' }, t('filesPasswordHint')), h('label', { class: 'field' }, h('span', null, t('filesComment')), comment), h('label', { class: 'check-row' }, del, h('span', null, t('filesDeleteSources'), h('small', { class: 'src' }, t('noUndoHint')))), h('p', { class: 'hint' }, t('filesCompressHint', { n: localDigits(paths.length) })), h('p', { class: 'hint' }, t('filesSplitHint')));
   }
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => {
-    const n = (name.value.trim() || stem).replace(/\.(zip|7z|tar|tar\.gz|tgz|tar\.xz)$/i, ''); const out = `${dir}/${n}.${format}`; sh.close();
-    const done = pc ? createZip(out, paths, undefined, { format: format as never, level, password: format === '7z' ? pw.value || undefined : undefined }) : createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
-    const id = `mk-${Date.now()}`; started(id, t('filesZipping', { name: `${n}.${format}` }), done, () => void cancelArchive(id));
-    void done.then(() => { refresh(); toast(t('filesZipped', { name: `${n}.${format}` })); }, (err) => toast(String((err as Error).message ?? err), 'error'));
+    const n = (name.value.trim() || stem).replace(/\.(zip|7z|tar|tar\.gz|tgz|tar\.xz)$/i, ''); sh.close();
+    void (async () => {
+      let shown = `${n}.${format}`; let replace = false;
+      // (A computer: a file of that name is not replaced unasked — keep both, replace, or cancel, as the app asks for other names that are taken.)
+      if (pc) {
+        const { pathExists } = await import('../archives');
+        if (await pathExists(`${dir}/${shown}`)) {
+          const a = await clashSheet(shown); if (a === 'cancel') return;
+          if (a === 'replace') replace = true; else { for (let k = 2; k < 100; k++) { const c = `${n} (${k}).${format}`; if (!(await pathExists(`${dir}/${c}`))) { shown = c; break; } } }
+        }
+      }
+      const out = `${dir}/${shown}`;
+      const done = pc ? createZip(out, paths, undefined, { format: format as never, level, password: format === '7z' ? pw.value || undefined : undefined, replace }) : createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
+      const id = `mk-${Date.now()}`; started(id, t('filesZipping', { name: shown }), done, () => void cancelArchive(id));
+      void done.then(() => { refresh(); toast(t('filesZipped', { name: shown })); }, async (err) => { const { sevenErrorText } = await import('../archives'); toast(pc ? sevenErrorText(err) : String((err as Error).message ?? err), 'error', 5000); });
+    })();
   } }, icon('archive'), t('filesCompress')));
+}
+/** The name of an archive is taken (a computer's Compress): keep both, replace, or cancel. */
+function clashSheet(name: string): Promise<'both' | 'replace' | 'cancel'> {
+  return new Promise((res) => {
+    let answered = false; const sh = openSheet(t('filesNameTakenTitle'), t('cancel'), { onClose: () => { if (!answered) res('cancel'); } });
+    const pick = (a: 'both' | 'replace') => () => { answered = true; sh.close(); res(a); };
+    sh.body.append(h('p', { dir: 'auto' }, t('filesNameTakenAsk', { name })));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal files-clash-both', onclick: pick('both') }, t('keepBoth')), h('button', { type: 'button', class: 'btn tonal files-clash-replace', onclick: pick('replace') }, t('replaceFiles')));
+  });
 }
 
 /* ---------- the recycle bin ---------- */

@@ -72,7 +72,9 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); } catch (Exception ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
+    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
+        // (0.21 P9: no automatic DoH probe on a metered connection.)
+        try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
      *  debuggable build its shadow mode on (each download rule also asked of Rust, differences counted — Java's answer
      *  used). Off the main thread; nothing changes for the user whether the library is there or not. */
@@ -384,6 +386,30 @@ public class KtPlugin extends Plugin {
         String path = pathOfTree(tree);
         JSObject r = new JSObject(); r.put("dir", path != null ? path : tree.toString()); r.put("writable", path != null && KtEngine.writable(new File(path))); call.resolve(r);
     }
+    /** A folder chosen on a storage the app has no path for (a content: tree — a memory card, another app's
+     *  storage): the files whose names match `pattern` copied, three levels deep at most, into `dest`; their paths. */
+    @PluginMethod public void treeCopy(PluginCall call) {
+        final String uri = call.getString("uri", ""); final File dest = fileOf(call.getString("dest", "")); final String re = call.getString("pattern", ".*");
+        bg.execute(() -> {
+            try {
+                DocumentFile root = DocumentFile.fromTreeUri(getContext(), Uri.parse(uri)); if (root == null || !root.canRead()) throw new java.io.IOException("unreadable");
+                java.util.regex.Pattern pat = java.util.regex.Pattern.compile(re, java.util.regex.Pattern.CASE_INSENSITIVE);
+                JSArray out = new JSArray(); copyTreeInto(root, dest, pat, out, 0);
+                JSObject r = new JSObject(); r.put("paths", out); call.resolve(r);
+            } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+        });
+    }
+    private void copyTreeInto(DocumentFile dir, File dest, java.util.regex.Pattern pat, JSArray out, int depth) throws java.io.IOException {
+        for (DocumentFile f : dir.listFiles()) {
+            String n = f.getName(); if (n == null || n.startsWith(".")) continue; String safe = n.replaceAll("[\\\\/:]", "_");
+            if (f.isDirectory()) { if (depth < 3) copyTreeInto(f, new File(dest, safe), pat, out, depth + 1); continue; }
+            if (!pat.matcher(n).find()) continue;
+            if (!dest.isDirectory() && !dest.mkdirs()) throw new java.io.IOException("mkdir " + dest);
+            File o = new File(dest, safe);
+            try (java.io.InputStream in = getContext().getContentResolver().openInputStream(f.getUri()); java.io.OutputStream os = new java.io.FileOutputStream(o)) { if (in == null) continue; byte[] b = new byte[1 << 16]; int k; while ((k = in.read(b)) > 0) os.write(b, 0, k); }
+            out.put(o.getAbsolutePath());
+        }
+    }
     private static String pathOfTree(Uri tree) {
         try { String id = android.provider.DocumentsContract.getTreeDocumentId(tree); String[] parts = id.split(":", 2); if ("primary".equalsIgnoreCase(parts[0])) return new File(android.os.Environment.getExternalStorageDirectory(), parts.length > 1 ? parts[1] : "").getAbsolutePath(); } catch (Exception ignored) {}
         return null;
@@ -500,7 +526,11 @@ public class KtPlugin extends Plugin {
     /** DNS over HTTPS up close: its state, counters and last events; `probe` tries the resolver first. */
     @PluginMethod public void dohStatus(PluginCall call) {
         final boolean probe = Boolean.TRUE.equals(call.getBoolean("probe", false));
-        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe()); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } r.put("proxy", KrDohProxy.status()); call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+        bg.execute(() -> { try { org.json.JSONObject r = new org.json.JSONObject(); if (probe) r.put("probe", KrDoh.probe(true)); org.json.JSONObject st = KrDoh.status(); for (java.util.Iterator<String> it = st.keys(); it.hasNext(); ) { String k = it.next(); r.put(k, st.get(k)); } r.put("proxy", KrDohProxy.status()); call.resolve(JSObject.fromJSONObject(r)); } catch (Exception e) { call.reject(e.getMessage()); } });
+    }
+    /** What answered each name (the details pages' status line): { on, hosts: { host: { via, at } } }. */
+    @PluginMethod public void dohUsed(PluginCall call) {
+        try { java.util.List<String> hs = new java.util.ArrayList<>(); JSArray a = call.getArray("hosts"); if (a != null) for (int i = 0; i < Math.min(64, a.length()); i++) hs.add(a.getString(i)); call.resolve(JSObject.fromJSONObject(KrDoh.usedFor(hs))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /** Each DoH event handed to the page as «doh» (the Settings page's live feed, the status chip). */
     static void wireDoh() { KrDoh.listener = (json) -> { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("doh", JSObject.fromJSONObject(new org.json.JSONObject(json)), true); } catch (Exception ignored) {} KtBrowserActivity.dohEvent(json); }; }
@@ -508,6 +538,8 @@ public class KtPlugin extends Plugin {
         String p = call.getString("provider", null); String sp = call.getString("split", null);
         if (p != null) { KrDoh.provider = p; KrDoh.forget(); getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("doh", p).apply(); }
         if (sp != null) { KrDoh.split = sp; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putString("dohSplit", sp).apply(); }
+        // (0.21 P9: the system's DNS when every resolver failed — the reader's choice, off by default.)
+        Boolean sys = call.getBoolean("allowSystem", null); if (sys != null) { KrDoh.allowSystem = sys; getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("dohSystem", sys).apply(); }
         if (p != null) bg.execute(KtPlugin::applyDohProxy);
         final String test = call.getString("test", null); JSObject r = new JSObject(); r.put("provider", KrDoh.provider);
         if (test == null) { call.resolve(r); return; }
@@ -1153,6 +1185,64 @@ public class KtPlugin extends Plugin {
     }
 
     /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
+    /* ---------- another app as the player (src/player/external) ---------- */
+    /** relayOpen({ url, headers, subs, name }) → { token, url, subs }; relayClose({ token }) → { closed }. */
+    @PluginMethod public void relayOpen(PluginCall call) { run(call, () -> call.resolve(obj(engine().stream().relayOpen(call.getData())))); }
+    @PluginMethod public void relayClose(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("closed", engine().stream().relayClose(call.getString("token", ""))); call.resolve(r); }); }
+    @PluginMethod public void relayStatus(PluginCall call) { run(call, () -> call.resolve(obj(engine().stream().relayStatus(call.getString("token", ""))))); }
+    /** A path another app may be given: not inside this app's own folders (its data, cache, files, external private ones). */
+    private boolean shareable(File f) {
+        try {
+            String c = f.getCanonicalPath(); android.content.Context x = getContext();
+            java.util.List<File> own = new java.util.ArrayList<>(java.util.Arrays.asList(x.getFilesDir(), x.getCacheDir(), x.getNoBackupFilesDir(), new File(x.getApplicationInfo().dataDir)));
+            File[] ext = x.getExternalFilesDirs(null); if (ext != null) own.addAll(java.util.Arrays.asList(ext)); File ec = x.getExternalCacheDir(); if (ec != null) own.add(ec);
+            for (File o : own) { if (o == null) continue; String op = o.getCanonicalPath(); if (c.equals(op) || c.startsWith(op + File.separator)) return false; }
+            return f.isFile();
+        } catch (Exception e) { return false; }
+    }
+    /** openPlayerApp({ data | path, mime, title, extras: [{ k, t, v }] }): ACTION_VIEW through the phone's own app list,
+     *  with the union of the documented extras of the players the app knows (t: s string, i int, l long, b boolean, sa
+     *  String[], ua Uri[] — Uri[] http(s) only). Answers when the chosen app closes: { code, action, extras } with only
+     *  the known result keys, each type-checked (VLC's extra_position / extra_duration, MX's and Just Player's
+     *  position / duration / end_by, mpv-android's position / duration). A file is shared by its FileProvider address,
+     *  and only outside this app's own folders; an address only when it is http(s). */
+    @PluginMethod public void openPlayerApp(PluginCall call) {
+        try {
+            String path = call.getString("path", null), data = call.getString("data", ""), mime = call.getString("mime", "video/*");
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            if (path != null && !path.isEmpty()) { File f = fileOf(path); if (!shareable(f)) { call.reject("refused: path"); return; } Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            else { if (!KtStream.isHttp(data)) { call.reject("refused: target"); return; } i.setDataAndType(Uri.parse(data), mime); }
+            JSArray ex = call.getArray("extras", new JSArray());
+            for (int n = 0; n < ex.length() && n < 40; n++) {
+                JSONObject e = ex.getJSONObject(n); String k = e.getString("k"), t = e.getString("t");
+                switch (t) {
+                    case "i": i.putExtra(k, e.getInt("v")); break;
+                    case "l": i.putExtra(k, e.getLong("v")); break;
+                    case "b": i.putExtra(k, e.getBoolean("v")); break;
+                    case "sa": { JSONArray a = e.getJSONArray("v"); String[] o = new String[Math.min(a.length(), 20)]; for (int j = 0; j < o.length; j++) o[j] = a.getString(j); i.putExtra(k, o); break; }
+                    case "ua": { JSONArray a = e.getJSONArray("v"); java.util.List<android.os.Parcelable> o = new java.util.ArrayList<>(); for (int j = 0; j < a.length() && j < 20; j++) { String u = a.getString(j); if (KtStream.isHttp(u)) o.add(Uri.parse(u)); } i.putExtra(k, o.toArray(new android.os.Parcelable[0])); break; }
+                    default: i.putExtra(k, e.optString("v", "")); break;
+                }
+            }
+            // (The chooser forwards the chosen app's result to this call.)
+            startActivityForResult(call, Intent.createChooser(i, call.getString("title", "")), "playerAppDone");
+        } catch (android.content.ActivityNotFoundException e) { call.reject("not installed"); }
+        catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    @ActivityCallback private void playerAppDone(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject r = new JSObject(); JSObject ex = new JSObject();
+        try {
+            r.put("code", result.getResultCode());
+            Intent d = result.getData(); r.put("action", d == null || d.getAction() == null ? "" : d.getAction());
+            android.os.Bundle b = d == null ? null : d.getExtras();
+            if (b != null) {
+                for (String k : new String[] { "extra_position", "extra_duration", "position", "duration" }) { try { Object v = b.get(k); if (v instanceof Integer || v instanceof Long) ex.put(k, ((Number) v).longValue()); } catch (Throwable ignored) { /* a value that would not unparcel */ } }
+                try { Object v = b.get("end_by"); if (v instanceof String && ((String) v).length() < 40) ex.put("end_by", v); } catch (Throwable ignored) { /* */ }
+            }
+        } catch (Throwable ignored) { /* a result that cannot be read: nothing told */ }
+        r.put("extras", ex); call.resolve(r);
+    }
     @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
     /* ---------- the Player add-on's engine: mpv (KtMpv), from the mpv pack ---------- */
     @PluginMethod public void mpvAvailable(PluginCall call) { JSObject r = new JSObject(); r.put("available", KtMpv.available(getContext())); call.resolve(r); }
@@ -1166,7 +1256,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void mpvGet(PluginCall call) { try { JSObject r = new JSObject(); r.put("value", KtMpv.get().getString(call.getString("name", ""))); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }
     @PluginMethod public void mpvClose(PluginCall call) { KtMpv.get().close(); call.resolve(); }
     /** The player's sound for tracks a web view cannot decode: ffmpeg turning them into AAC as they play (needs the ffmpeg pack). */
-    @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); r.put("url", engine().stream().audioBase()); call.resolve(r); }); }
+    @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); String src = call.getString("src", ""); if (src == null || src.isEmpty()) throw new Exception("src"); r.put("url", engine().stream().audioUrl(src)); call.resolve(r); }); }
     @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }
     @PluginMethod public void siblings(PluginCall call) {
         File f = fileOf(call.getString("path", "")); JSArray out = new JSArray(); File dir = f.getParentFile(); String base = f.getName().replaceAll("\\.[^.]+$", "").toLowerCase();
@@ -1303,7 +1393,7 @@ public class KtPlugin extends Plugin {
             } catch (javax.net.ssl.SSLException e) {
                 // (Refused at the TLS handshake through the resolver's way: asked once more the plain way, kept a day.)
                 String host = ""; try { host = new URL(urlStr).getHost(); } catch (Exception ignored) {}
-                if (KrDoh.on() && !KrDoh.isDirect(host)) { KrDoh.goDirect(host); httpRequest(call); return; }
+                if (KrDoh.on() && !KrDoh.isDirect(host) && KrDoh.goDirect(host)) { httpRequest(call); return; }
                 call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e);
             } catch (Exception e) { call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e); }
         });

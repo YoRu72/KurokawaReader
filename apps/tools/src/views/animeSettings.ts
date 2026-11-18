@@ -17,8 +17,9 @@ const toggle = (label: string, on: boolean, set: (v: boolean) => void) => { cons
 export function anilistCard(rerender: () => void): HTMLElement {
   const s = getSettings(); const u = al.user();
   const acct: HTMLElement[] = [];
-  if (u) acct.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })), h('button', { type: 'button', class: 'btn small', onclick: () => { al.unlink(); rerender(); } }, icon('close'), t('anilistUnlink'))),
-    toggle(t('anilistAutoProgress'), s.anilistAutoProgress, (v) => updateSettings({ anilistAutoProgress: v })));
+  if (u) acct.push(h('div', { class: 'track-user' }, u.avatar ? h('img', { src: u.avatar, alt: '' }) : null, h('span', null, t('anilistLinkedAs', { name: u.name })), h('button', { type: 'button', class: 'btn small', onclick: () => { al.unlink(); rerender(); } }, icon('close'), t('anilistUnlink'))));
+  // (Automatic list updates have one switch, «Update my list after watching», in the Anime card: it covers AniList and
+  // MyAnimeList, after watching and after a download finishes.)
   // (Not linked: one button — the sign-in, or the short guide that makes the client with you.)
   else acct.push(h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => void import('./anilistLink').then((m) => m.anilistSignIn(rerender)) }, icon('user'), t('anilistSignInWith')),
     h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./anilistLink').then((m) => m.anilistLinkSheet(rerender)) }, t('anilistOwnClient'))));
@@ -54,7 +55,9 @@ export function animeSettingsCard(rerender: () => void): HTMLElement {
   const urlIn = h('input', { type: 'url', placeholder: 'https://…/index.json', dir: 'ltr', class: 'grow' }) as HTMLInputElement;
   const addBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { const u = urlIn.value.trim(); if (!u) return; addBtn.disabled = true; try { const r = await installRepo(u); toast(t('animeRepoAdded', { what: countSources(r.length) })); urlIn.value = ''; rerender(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } finally { addBtn.disabled = false; } } }, icon('plus'), t('animeRepoAdd')) as HTMLButtonElement;
   const repos = getSettings().animeRepos.map((u) => h('div', { class: 'repo-row' }, h('span', { class: 'src grow', dir: 'ltr' }, u), iconButton('trash', t('animeRepoRemove'), async () => { const ps = await providers(); for (const p of ps) if (p.repo === u) await removeProvider(p.id); updateSettings({ animeRepos: getSettings().animeRepos.filter((x) => x !== u) }); rerender(); })));
-  return card('anime', t('navAnime'), ...prefs,
+  // (Notes and reviews: where an episode's note goes on AniList, and MyAnimeList's account — drawn by their module.)
+  const notesBox = h('div', { class: 'notes-settings' }); void import('./animeNotes').then((m) => notesBox.replaceChildren(...m.notesSettingsRows(rerender)));
+  return card('anime', t('navAnime'), ...prefs, notesBox,
     h('h4', null, t('animeProviders')), list, h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn text small', onclick: async (e: Event) => { const b = e.currentTarget as HTMLButtonElement; b.disabled = true; try { const n = await updateAll(); toast(t('animeRepoAdded', { what: countSources(n) })); void drawList(); } finally { b.disabled = false; } } }, icon('refresh'), t('animeProvidersUpdate'))),
     h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn primary small', onclick: () => marketSheet(() => void drawList()) }, icon('apps'), t('animeMarket'))),
     h('h4', null, t('animeRepos')), h('p', { class: 'hint' }, t('animeReposHint')), ...repos, h('div', { class: 'repo-add' }, urlIn, addBtn));

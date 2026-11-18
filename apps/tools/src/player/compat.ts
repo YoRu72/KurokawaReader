@@ -8,7 +8,7 @@ import { ktPlugin } from '../native';
 export interface Probe { audio: { index: number; codec: string; lang?: string; title?: string; channels?: number; isDefault?: boolean }[]; video?: { codec: string; profile?: string; pixFmt?: string }; duration?: number }
 type Raw = { format?: { duration?: string }; streams?: { codec_type?: string; codec_name?: string; profile?: string; pix_fmt?: string; channels?: number; tags?: { language?: string; title?: string }; disposition?: { default?: number } }[] };
 type Desk = { ffprobe?(p: string): Promise<Raw>; audioUrl?(): Promise<{ url: string }> };
-type Plug = { ffprobe?(o: { path: string }): Promise<{ json: string }>; audioUrl?(): Promise<{ url: string }> };
+type Plug = { ffprobe?(o: { path: string }): Promise<{ json: string }>; audioUrl?(o: { src: string }): Promise<{ url: string }> };
 const desk = (): Desk | null => { const d = window.kurokawaTools as unknown as Desk | undefined; return d?.audioUrl ? d : null; };
 const plug = (): Plug | null => { const p = ktPlugin() as unknown as Plug | null; return p?.audioUrl ? p : null; };
 
@@ -48,7 +48,9 @@ export class SoundBeside {
   private mirrorVolume() { this.el.volume = Math.min(1, this.video.volume); this.el.muted = false; if (!this.video.muted) this.video.muted = true; }
   restart(track = this.track) {
     this.track = track; const ss = Math.max(0, this.video.currentTime); this.base = ss; this.lastRestart = Date.now();
-    this.el.src = `${this.audioBase}?src=${encodeURIComponent(this.src)}&ss=${ss.toFixed(2)}&a=${track}`;
+    // (A phone's address is already signed over this source — KtStream's /audio?src=…&e=…&t=… —: only the start and the
+    // track are added. A computer's carries the run's token in its path, and takes the source here.)
+    this.el.src = this.audioBase.includes('?') ? `${this.audioBase}&ss=${ss.toFixed(2)}&a=${track}` : `${this.audioBase}?src=${encodeURIComponent(this.src)}&ss=${ss.toFixed(2)}&a=${track}`;
     this.el.playbackRate = this.video.playbackRate;
     if (!this.video.paused) { this.restarting = true; void this.el.play().catch(() => undefined).finally(() => { this.restarting = false; }); }
   }
@@ -62,8 +64,9 @@ export class SoundBeside {
   }
   stop() { window.clearInterval(this.timer); for (const f of this.off) f(); this.off = []; this.el.pause(); this.el.removeAttribute('src'); this.el.load(); this.video.muted = false; }
 }
-/** The address the sound comes from (null: no ffmpeg here — the pack not installed —, or no app server). */
-export async function audioBase(): Promise<string | null> {
-  try { const d = desk(); if (d?.audioUrl) return (await d.audioUrl()).url; const p = plug(); if (p?.audioUrl) return (await p.audioUrl()).url; } catch (e) { if (/pack:ffmpeg/.test(String((e as Error).message ?? e))) throw e; }
+/** The address the sound of `src` comes from (null: no ffmpeg here — the pack not installed —, or no app server). A
+ *  phone's is signed over that one source, with an expiry: no other app can make the app's server run ffmpeg. */
+export async function audioBase(src: string): Promise<string | null> {
+  try { const d = desk(); if (d?.audioUrl) return (await d.audioUrl()).url; const p = plug(); if (p?.audioUrl) return (await p.audioUrl({ src })).url; } catch (e) { if (/pack:ffmpeg/.test(String((e as Error).message ?? e))) throw e; }
   return null;
 }

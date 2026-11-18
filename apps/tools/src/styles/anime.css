@@ -591,3 +591,105 @@ html.pc .kt-player .kt-bottom .chip:hover, html.pc .kt-player .kt-bottom .kt-chi
 .voice-dots { display: inline-flex; gap: 3px; margin-inline-end: 8px; }
 .voice-dots i { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--md-on-surface) 18%, transparent); }
 .voice-dots i.on { background: var(--md-primary); }
+
+/* (0.21 P7) A show's own cover; notes and reviews (views/animeNotes.ts) */
+.anime-cover.cover-btn { padding: 0; border: 0; cursor: pointer; font: inherit; }
+.anime-cover.cover-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 3px; }
+.cover-edit { position: absolute; inset-block-end: 6px; inset-inline-end: 6px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); box-shadow: 0 2px 6px rgb(0 0 0 / .25); }
+.cover-edit svg { width: 16px; height: 16px; }
+.cover-head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
+.cover-head .cover-preview { width: 104px; flex: none; }
+.cover-head b { display: block; margin-bottom: 4px; }
+.cover-head .hint { margin: 0 0 6px; }
+.cover-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.cover-url { display: flex; gap: 10px; align-items: center; }
+.cover-url input { min-width: 0; }
+.cover-msg { min-height: 1.4em; margin: 10px 0 0; font-size: 13px; color: var(--md-on-surface-variant); }
+.cover-msg.bad, .send-status.bad, .note-status.bad { color: var(--md-error); }
+.ep-badge.note { background: var(--md-secondary-container); color: var(--md-on-secondary-container); padding: 1px 6px; line-height: 0; }
+.ep-badge.note svg { width: 12px; height: 12px; }
+.anime-notes .card-head { flex-wrap: wrap; gap: 10px; }
+.note-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--md-outline-variant); }
+.note-row:first-of-type { border-top: 0; }
+.note-row-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.note-score { display: inline-flex; align-items: center; gap: 3px; font-size: 13px; color: var(--md-on-surface-variant); }
+.note-score svg { width: 14px; height: 14px; }
+.note-summary-line { margin: 4px 0 0; font-weight: 600; }
+.note-body { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-body.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.note-status { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.note-status svg { width: 14px; height: 14px; }
+.note-actions { display: flex; gap: 4px; flex: none; }
+.note-sheet .note-text { width: 100%; resize: vertical; }
+.note-sheet .note-summary { width: 100%; }
+.note-count { margin-top: 2px; } .note-count.short { color: var(--md-error); }
+.note-rules { display: flex; gap: 8px; align-items: flex-start; } .note-rules svg { flex: none; width: 18px; height: 18px; margin-top: 2px; }
+.note-sheet .field + .field, .note-sheet .field + .switch-row, .note-sheet .note-rules + .field { margin-top: 14px; }
+.note-scores { gap: 8px; }
+.send-target { padding: 12px 0; border-top: 1px solid var(--md-outline-variant); }
+.send-target h4 { margin: 0 0 8px; }
+.send-how { gap: 8px; margin: 8px 0; }
+.send-public, .send-problem { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; font-size: 13.5px; }
+.send-public svg, .send-problem svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
+.send-problem { color: var(--md-error); } .send-problem.soft { color: var(--md-on-surface-variant); }
+.send-preview { margin: 8px 0 0; padding: 12px 14px; border-radius: var(--sh-lg, 16px); background: var(--md-surface-container); border: 1px solid var(--md-outline-variant); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13.5px; max-height: 220px; overflow: auto; }
+.send-status { min-height: 1.4em; font-size: 13px; margin: 8px 0 0; }
+.notes-settings h4 { margin: 18px 0 8px; }
+.notes-mode { gap: 8px; }
+.notes-mal { margin-top: 12px; gap: 12px; }
+.mal-sheet .field { margin: 12px 0; }
+/* (0.21 P7) after watching: the review bar; the episode's pen; the floating download bar (ui/dlFloat.ts) */
+.ep-note-btn.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.ep-note-btn.on .rv-star { fill: currentColor; }
+.float-bar { position: fixed; z-index: 60; inset-inline: 12px; margin-inline: auto; max-width: 440px; display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 4px; border-radius: 20px; color: var(--md-on-surface); box-shadow: var(--el-3); overflow: hidden; animation: float-in 140ms ease-out;
+  /* (An opaque raised surface in every theme: the tone laid over the page's own solid surface, so nothing behind shows through.) */
+  background-color: var(--md-surface); background-image: linear-gradient(var(--md-surface-container-high), var(--md-surface-container-high)); border: 1px solid var(--md-outline-variant); }
+html[data-glass] .float-bar { background-image: linear-gradient(var(--g-sheet-s), var(--g-sheet-s)); box-shadow: var(--g-sheen), var(--g-ring), var(--g-shadow); }
+.float-bar.leaving { opacity: 0; transition: opacity .2s; }
+.float-bar > button:first-child { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; border-radius: 14px; }
+.float-bar > button:first-child:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+.float-bar > button:first-child > svg { flex: none; width: 20px; height: 20px; color: var(--md-primary); }
+.review-bar { top: calc(var(--safe-top, 0px) + 68px); }
+html.pc .review-bar { top: 12px; inset-inline: auto 24px; width: 420px; margin: 0; }   /* (in the top bar's row, where the show's page has no actions) */
+.rb-line, .dlf-line { position: absolute; inset-inline: 0; bottom: 0; height: 3px; background: color-mix(in srgb, var(--md-primary) 16%, transparent); }
+.rb-line i, .dlf-line i { display: block; height: 100%; background: var(--md-primary); }
+.rb-line i { width: 100%; transform-origin: left; animation: rb-run linear forwards; }
+html[dir='rtl'] .rb-line i { transform-origin: right; }
+.review-bar.held .rb-line i { animation-play-state: paused; }
+.review-bar.still .rb-line i { animation: none; opacity: .6; }
+@keyframes rb-run { to { transform: scaleX(0); } }
+/* (The floating bars: only a short fade of the whole bar — never a see-through bar to read through.) */
+@keyframes float-in { from { opacity: 0; } }
+.dl-float { bottom: calc(var(--safe-bottom, 0px) + 150px); }
+/* (A short screen with the review bar up: the two stacked at the top, never in one spot.) */
+@media (max-height: 600px) { html:not(.pc) body:has(> .review-bar) .dl-float { bottom: auto; top: calc(var(--safe-top, 0px) + 68px + 68px); } }
+html.pc .dl-float { bottom: 20px; inset-inline: auto 24px; width: 380px; margin: 0; }
+.dl-float .grow { display: flex; flex-direction: column; min-width: 0; }
+.dlf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; }
+.dlf-pct { color: var(--md-on-surface-variant); font-size: 12.5px; }
+.dlf-line i { width: 3%; transition: width .4s; }
+.dl-float.failed .dlf-line i { background: var(--md-error); }
+.dl-float.failed .dlf-pct { color: var(--md-error); }
+@media (prefers-reduced-motion: reduce) { .float-bar { animation: none; } .dlf-line i { transition: none; } }
+/* (0.21 P7) A phone's episode row: the picture smaller, the title kept readable — the row's buttons go to a second
+   line at the end when they do not fit beside it (the pen made them four, five with streaming). */
+@media (max-width: 520px) {
+  .ep-row { flex-wrap: wrap; gap: 8px 10px; }
+  .ep-row .ep-pic { width: 96px; }
+  .ep-row > .grow { flex: 1 1 130px; min-width: 130px; }
+  .ep-row > .grow + .icon-btn { margin-inline-start: auto; }
+}
+/* (0.21 P7) The subtitles sheet's pack row: its name, its place and its count each on a line of their own (they ran
+   together). */
+.pack-current .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.pack-current .grow > * { overflow-wrap: anywhere; }
+.pack-movie .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+/* (0.21 P7 fixes) The subtitles sheet's three buttons: real, equal gaps. The Episodes card's head: its buttons wrap
+   with a gap at a phone's width, never against the card's edge. */
+.pack-sheet .row-actions { gap: 12px; }
+.anime-episodes > .card-head { flex-wrap: wrap; row-gap: 10px; column-gap: 10px; }
+.anime-episodes > .card-head > .btn { flex: none; }
+/* (A file with no audio track and the like: a small notice under the player's top bar — player.ts notice().) */
+.kt-notice { position: absolute; top: calc(64px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); z-index: 6; max-width: min(90vw, 520px); padding: 10px 18px; border-radius: 999px; background: rgba(18, 20, 24, 0.82); color: #f1f3f6; font-size: 14px; line-height: 1.4; text-align: center; pointer-events: none; }
+.kt-notice[hidden] { display: none; }
+.kt-problem p.kt-problem-msg { margin: 4px 0 12px; line-height: 1.55; }
