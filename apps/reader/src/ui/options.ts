@@ -14,6 +14,7 @@ import { getSettings, updateSettings, setBgImage, loadBgImage, activeBookId, boo
 import { fontsSync } from '../fonts';
 import { placedItemsEditor } from './placeditems';
 import { buttonsField } from './buttonsheet';
+import { dictPanel } from './readingdict';
 import { historyButtons, arrowFor, arrowAct, resetAllOptions, offerOptionsUndo, stepCount, onHistory, scopeOrigin } from './optionsundo';
 import { barItems, barText, BAR_ITEM_LABEL, type BarItem, type BarValues } from './readbar';
 /** The reading bar's items as the editor shows them, each with an example. */
@@ -256,6 +257,8 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   grid.append(section([t('pdfNoteStyle'), 'pdfNoteStyle'], segmented(pinStyles, s.pdfNoteStyle, (v) => { updateSettings({ pdfNoteStyle: v }); rerender(); })));
   grid.append(toggle([t('furigana'), 'furigana'], s.furigana, (v) => { updateSettings({ furigana: v }); bump(); }));
   grid.append(toggle([t('autoReadings'), 'autoReadings'], s.autoReadings, (v) => updateSettings({ autoReadings: v })));
+  // The dictionaries behind the readings: downloaded once, kept on the device — here, and in Settings (the same panel).
+  grid.append(dictPanel());
   grid.append(toggle([t('publisherStyles'), 'publisherStyles'], s.publisherStyles, (v) => { updateSettings({ publisherStyles: v }); bump(); }));
   const translators: [VisualSettings['translator'], string][] = [['builtin', t('translatorBuiltin')], ['system', t('translatorSystem')]];
   grid.append(section([t('translatorChoice'), 'translator'], segmented(translators, s.translator, (v) => { updateSettings({ translator: v }); rerender(); })));
