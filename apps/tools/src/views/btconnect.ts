@@ -28,6 +28,9 @@ const PIC: Record<string, string> = {
   pad: '<path d="M15.5 13h17c6.6 0 11 6.2 9.7 13.2l-1.5 8a4.4 4.4 0 0 1-7.7 1.9L29.4 32H18.6L15 36.1a4.4 4.4 0 0 1-7.7-1.9l-1.5-8C4.5 19.2 8.9 13 15.5 13Z"/><circle class="f" cx="18.5" cy="26.5" r="3"/><circle class="f" cx="29.5" cy="26.5" r="3"/><path d="M13 18v5M10.5 20.5h5"/><path d="M35 17.4h.01M38 20.4h.01M32 20.4h.01M35 23.4h.01" stroke-width="3.4"/>',
   retro: '<rect x="3.5" y="14" width="41" height="20" rx="10"/><path d="M13 19.5v9M8.5 24h9"/><path d="M34.5 19.8h.01M38.6 24h.01M30.4 24h.01M34.5 28.2h.01" stroke-width="3.6"/><rect class="f" x="20" y="25" width="3.4" height="2" rx="1"/><rect class="f" x="24.6" y="25" width="3.4" height="2" rx="1"/>',
   split: '<path d="M21 6h-4.5A7.5 7.5 0 0 0 9 13.5v21A7.5 7.5 0 0 0 16.5 42H21Z"/><path d="M27 6h4.5a7.5 7.5 0 0 1 7.5 7.5v21a7.5 7.5 0 0 1-7.5 7.5H27Z"/><circle class="f" cx="15.5" cy="16" r="3"/><circle class="f" cx="32.5" cy="29" r="3"/><path d="M15.5 25.5h.01M15.5 32.5h.01M12 29h.01M19 29h.01M32.5 13h.01M32.5 19.5h.01M29.2 16.2h.01M35.8 16.2h.01" stroke-width="3"/>',
+  // (Piece 4: one Joy-Con alone, and a pad with two trackpads.)
+  half: '<path d="M27.5 5H22a8.5 8.5 0 0 0-8.5 8.5v21A8.5 8.5 0 0 0 22 43h5.5Z"/><circle class="f" cx="21" cy="15.5" r="3.2"/><path d="M21 25.5h.01M21 33.5h.01M17 29.5h.01M25 29.5h.01" stroke-width="3"/><path d="M33.5 10v28"/>',
+  trackpads: '<path d="M14 11h20c6.5 0 10.6 6 9.4 12.7l-1.8 10a4.6 4.6 0 0 1-8 2.1L30 32H18l-3.6 3.8a4.6 4.6 0 0 1-8-2.1l-1.8-10C3.4 17 7.5 11 14 11Z"/><circle cx="15.5" cy="20.5" r="5"/><circle cx="32.5" cy="20.5" r="5"/><circle class="f" cx="24" cy="27.5" r="2.6"/>',
   speaker: '<rect x="11.5" y="4.5" width="25" height="39" rx="7"/><circle cx="24" cy="28" r="8"/><circle class="f" cx="24" cy="28" r="3"/><circle class="f" cx="24" cy="13" r="2.4"/>',
   phone: '<rect x="13.5" y="4" width="21" height="40" rx="5.5"/><path d="M21 9h6"/><path d="M21.5 39h5"/>',
   pen: '<path d="M33.5 6.5l8 8L19 37l-10.5 3 3-10.5L33.5 6.5Z"/><path d="M29.3 10.7l8 8"/><path class="f" d="M11.5 29.5l7.5 7.5-10.5 3Z"/>',
@@ -39,6 +42,12 @@ function pic(name: string, size: 'row' | 'big' = 'row'): HTMLElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 48 48'); svg.setAttribute('aria-hidden', 'true');
   svg.innerHTML = PIC[name] ?? PIC.other;
   return h('div', { class: 'bt-pic' + (size === 'big' ? ' big' : ''), 'data-picture': PIC[name] ? name : 'other' }, svg);
+}
+/** One of our drawings as a bare SVG (the battery cards' controller pictures, by family). */
+export function picSvg(name: string): SVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 48 48'); svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = PIC[name] ?? PIC.other; svg.classList.add('bt-drawn'); svg.dataset.picture = PIC[name] ? name : 'other';
+  return svg;
 }
 function rune(): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.innerHTML = RUNE; return svg;

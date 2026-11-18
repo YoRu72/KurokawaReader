@@ -6,7 +6,10 @@
 // Changed here: the HID collections are enumerated once per round (the original enumerated them several times a
 // minute), sorted by registry.rs, and only those with a battery field are queried — later, each on its own thread with
 // a deadline (runner.rs); the readers' results are merged by identity.rs's explicit rules; device arrival comes from
-// CM_Register_Notification (no window, no polling).
+// CM_Register_Notification (no window, no polling). Piece 4: a collection a controller reader claims (pads/*.rs, by
+// vendor, product, usage page and usage) becomes that controller's entry — one per unit, or per slot of a receiver —
+// and the generic reader leaves that unit alone; its query listens on its own handle (shared, never exclusive), and
+// sends a status request only for a family the user turned on.
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere); real devices decide.
 // Copyright (C) 2026 Kurokawa contributors.
 pub mod autostart;
@@ -21,8 +24,9 @@ use crate::bluetooth;
 use crate::identity::{self, Candidate};
 use crate::kind;
 use crate::model::{Charging, Connection, Device, Kind, Level, Reading, Source};
+use crate::pads::{self, Family, Way};
 use crate::registry::{self, Claim, Collection};
-use crate::runner::Platform;
+use crate::runner::{Platform, Prefs};
 use crate::sched::Outcome;
 use crate::transport::TErr;
 use crate::xbox;
@@ -34,6 +38,10 @@ use std::time::Instant;
 #[derive(Default)]
 pub struct WinPlatform {
     colls: Mutex<BTreeMap<String, Vec<hid::HidColl>>>,
+    /// Each controller's collections with their reader (a pad may have two: 8BitDo's vendor channel and its gamepad).
+    pads: Mutex<BTreeMap<String, Vec<(hid::HidColl, &'static pads::Model)>>>,
+    /// The families the user turned on whose reading sends a request.
+    pad_on: Mutex<Vec<Family>>,
 }
 
 impl WinPlatform {
@@ -50,6 +58,39 @@ fn hid_connection(path: &str) -> Connection {
     } else {
         Connection::Usb
     }
+}
+
+type PadMap = BTreeMap<String, Vec<(hid::HidColl, &'static pads::Model)>>;
+
+/// The controllers among the collections: one entry per pad key, with the reader's name, picture and brand.
+fn pad_candidates(all: &[hid::HidColl]) -> (Vec<Candidate>, PadMap) {
+    let mut by: PadMap = BTreeMap::new();
+    for c in all {
+        let Some(m) = pads::find(&c.ident) else { continue };
+        if !pads::fits(m, c.input_len, c.output_len) {
+            continue;
+        }
+        let key = identity::pad_key(c.ident.vid, c.ident.pid, &c.serial, &c.container, &c.path, m.per_interface);
+        by.entry(key).or_default().push((c.clone(), m));
+    }
+    let mut out = Vec::new();
+    for (key, cs) in &by {
+        let (c0, m) = (&cs[0].0, cs[0].1);
+        let mut d = Device::new(key.clone(), Source::Pad);
+        d.vid = c0.ident.vid;
+        d.pid = c0.ident.pid;
+        d.container = c0.container.clone();
+        d.serial = c0.serial.clone();
+        d.kind = Kind::Controller;
+        d.connection = if m.link == pads::Link::Receiver { Connection::Dongle } else { hid_connection(&c0.path) };
+        // (A Switch-mode pad names itself — an 8BitDo says «Pro Controller»; the others by the reader's model.)
+        d.name = if m.driver == "nintendo" && !c0.product.is_empty() { c0.product.clone() } else { m.name.to_string() };
+        d.brand = m.driver().family.brand().to_string();
+        d.driver = m.driver;
+        d.picture = m.picture;
+        out.push(Candidate { device: d, reading: None, offline: false });
+    }
+    (out, by)
 }
 
 fn hid_candidates(all: &[hid::HidColl]) -> (Vec<Candidate>, BTreeMap<String, Vec<hid::HidColl>>) {
@@ -115,12 +156,100 @@ fn bt_candidates(nodes: &[bluetooth::BtNode], hid: &[hid::HidColl], now: u64) ->
         .collect()
 }
 
+impl WinPlatform {
+    fn query_pad(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
+        let list = match self.pads.lock() {
+            Ok(m) => m.get(&device.key).cloned().unwrap_or_default(),
+            Err(_) => return Outcome::Failed,
+        };
+        let on = self.pad_on.lock().map(|g| g.clone()).unwrap_or_default();
+        let is_on = |m: &pads::Model| on.contains(&m.driver().family);
+        // (A family turned on: its request first; else the listening reader first.)
+        let mut order: Vec<&(hid::HidColl, &'static pads::Model)> = list.iter().collect();
+        order.sort_by_key(|(_, m)| match (m.driver().way, is_on(m)) {
+            (Way::Query, true) => 0,
+            (Way::Passive, _) => 1,
+            (Way::Query, false) => 2,
+        });
+        let mut best = Outcome::Failed;
+        for (c, m) in order {
+            let send = m.driver().way == Way::Query && is_on(m);
+            let out = if m.driver().way == Way::Query && !send {
+                pads::read(&mut NoDevice(c.ident.clone()), m, false, false, deadline, now)
+            } else {
+                match hid::WinHid::open_listen(c, send) {
+                    Ok(mut t) => pads::read(&mut t, m, hid_connection(&c.path) == Connection::Bluetooth, send, deadline, now),
+                    Err(_) => Outcome::Failed,
+                }
+            };
+            if let Outcome::Read(r) = out {
+                if r.level != Level::Unknown {
+                    return out;
+                }
+            }
+            if rank(&out) > rank(&best) {
+                best = out;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+        }
+        best
+    }
+}
+
+/// Which outcome says more, when no reader of a pad found its level.
+fn rank(o: &Outcome) -> u8 {
+    match o {
+        Outcome::Read(r) if r.charging != Charging::Unknown => 4,
+        Outcome::Read(r) if r.note != crate::model::Note::QueryOff => 3,
+        Outcome::Read(_) => 2,
+        Outcome::Asleep => 2,
+        Outcome::NoAnswer => 1,
+        Outcome::Failed => 0,
+    }
+}
+
+/// A reader switched off is given no device at all: pads::read answers «off» without a call.
+struct NoDevice(crate::allow::HidIdent);
+impl crate::transport::HidTransport for NoDevice {
+    fn ident(&self) -> &crate::allow::HidIdent {
+        &self.0
+    }
+    fn mode(&self) -> crate::transport::OpenMode {
+        crate::transport::OpenMode::QueryOnly
+    }
+    fn get_feature(&mut self, _: u8, _: usize, _: Instant) -> Result<Vec<u8>, TErr> {
+        Err(TErr::Refused)
+    }
+    fn get_input(&mut self, _: u8, _: usize, _: Instant) -> Result<Vec<u8>, TErr> {
+        Err(TErr::Refused)
+    }
+    fn send_allowed(&mut self, _: &crate::allow::AllowedWrite, _: Instant) -> Result<(), TErr> {
+        Err(TErr::Refused)
+    }
+}
+
 impl Platform for WinPlatform {
+    fn set_prefs(&self, p: &Prefs) {
+        if let Ok(mut g) = self.pad_on.lock() {
+            *g = p.pad_queries.iter().filter_map(|s| Family::parse(s)).collect();
+        }
+    }
+
     fn enumerate(&self, now: u64) -> Vec<Candidate> {
         let colls = hid::enumerate();
-        let (mut out, by) = hid_candidates(&colls);
+        let (pad_list, pad_map) = pad_candidates(&colls);
+        let pad_keys: Vec<String> = pad_map.keys().cloned().collect();
+        let (generic, mut by) = hid_candidates(&colls);
+        by.retain(|k, _| !pad_keys.iter().any(|p| p == k || p.starts_with(&format!("{}:i:", k))));
+        let mut out = identity::drop_claimed(generic, &pad_keys);
+        out.extend(pad_list);
         if let Ok(mut m) = self.colls.lock() {
             *m = by;
+        }
+        if let Ok(mut m) = self.pads.lock() {
+            *m = pad_map;
         }
         let bt = bt_candidates(&bt::nodes(), &colls, now);
         let bt_xbox = bt.iter().any(|c| c.device.vid == 0x045E && c.device.kind == Kind::Controller);
@@ -155,6 +284,9 @@ impl Platform for WinPlatform {
     }
 
     fn query(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
+        if device.source == Source::Pad {
+            return self.query_pad(device, deadline, now);
+        }
         let colls = match self.colls.lock() {
             Ok(m) => m.get(&device.key).cloned().unwrap_or_default(),
             Err(_) => return Outcome::Failed,

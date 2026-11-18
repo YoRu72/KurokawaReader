@@ -13,17 +13,23 @@ pub const MAX_LINES: usize = 6;
 /// Windows' tooltip holds 127 UTF-16 units (NOTIFYICONDATAW.szTip, 128 with its end).
 pub const TIP_MAX_UTF16: usize = 127;
 
+fn coarse_weight(c: Coarse) -> u16 {
+    5 + match c {
+        Coarse::Empty => 0,
+        Coarse::Low => 100,
+        Coarse::Medium => 500,
+        Coarse::High => 750,
+        Coarse::Full => 1000,
+    }
+}
+
 /// Sort weight: lower is emptier. A device with no current level comes after every one with a level.
 pub fn weight(level: Option<Level>) -> u16 {
     match level {
         Some(Level::Exact(p)) => u16::from(p.get()) * 10,
-        Some(Level::Coarse(c)) => 5 + match c {
-            Coarse::Empty => 0,
-            Coarse::Low => 100,
-            Coarse::Medium => 500,
-            Coarse::High => 750,
-            Coarse::Full => 1000,
-        },
+        Some(Level::Coarse(c)) => coarse_weight(c),
+        // (Steps between their scale's points: 3 of 10 weighs as 30 %, a hair above it, like a coarse word.)
+        Some(Level::Steps(s)) => 5 + u16::from(s.n()) * 1000 / u16::from(s.max()),
         Some(Level::Unknown) | None => 2000,
     }
 }

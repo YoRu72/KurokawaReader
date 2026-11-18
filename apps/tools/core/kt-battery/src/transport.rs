@@ -51,6 +51,15 @@ pub trait HidTransport {
     fn get_feature(&mut self, report_id: u8, len: usize, deadline: Instant) -> Result<Vec<u8>, TErr>;
     /// The current input report through the control pipe: `len` bytes, the first the report id.
     fn get_input(&mut self, report_id: u8, len: usize, deadline: Instant) -> Result<Vec<u8>, TErr>;
+    /// The next input report the device sends on its own (the interrupt pipe), by `deadline`: the report id first (0
+    /// when the collection does not number its reports, as Windows gives it). Every open handle gets its own copy of
+    /// each report, so listening takes nothing from a game reading the same pad. Timeout when nothing came in time.
+    fn read_input(&mut self, _deadline: Instant) -> Result<Vec<u8>, TErr> {
+        Err(TErr::Failed("no input pipe".into()))
+    }
+    /// Drops the reports this handle has queued (not the device's, not another program's): a reply read after a
+    /// request is then the device's answer to it, not an older report.
+    fn flush(&mut self) {}
     /// Sends what `w` carries, nothing else — only reached through `send`.
     fn send_allowed(&mut self, w: &AllowedWrite, deadline: Instant) -> Result<(), TErr>;
     /// The one way to send: refused unless `w` was made for this very collection and it is open for writing.
@@ -90,20 +99,26 @@ pub fn left(deadline: Instant) -> Result<std::time::Duration, TErr> {
 #[cfg(test)]
 pub(crate) mod fake {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
 
-    /// A transport that answers from a table and records every byte sent.
+    /// A transport that answers from a table and records every byte sent. `stream`: the input reports the device
+    /// sends on its own, in order; `replies`: what it sends after each write (the n-th list after the n-th write);
+    /// `flushes`: how often the queue was dropped.
     pub struct FakeHid {
         pub id: HidIdent,
         pub mode: OpenMode,
         pub features: HashMap<u8, Vec<u8>>,
         pub inputs: HashMap<u8, Vec<u8>>,
         pub sent: Vec<Vec<u8>>,
+        pub stream: VecDeque<Vec<u8>>,
+        pub replies: VecDeque<Vec<Vec<u8>>>,
+        pub flushes: usize,
+        pub reads: usize,
     }
     impl FakeHid {
         pub fn new(id: HidIdent) -> FakeHid {
             let mode = open_mode_for(&id, false);
-            FakeHid { id, mode, features: HashMap::new(), inputs: HashMap::new(), sent: Vec::new() }
+            FakeHid { id, mode, features: HashMap::new(), inputs: HashMap::new(), sent: Vec::new(), stream: VecDeque::new(), replies: VecDeque::new(), flushes: 0, reads: 0 }
         }
     }
     impl HidTransport for FakeHid {
@@ -125,8 +140,21 @@ pub(crate) mod fake {
             r.truncate(len);
             Ok(r)
         }
+        fn read_input(&mut self, deadline: Instant) -> Result<Vec<u8>, TErr> {
+            left(deadline)?;
+            self.reads += 1;
+            // (Nothing queued: the device is quiet — the real read would wait for the deadline.)
+            self.stream.pop_front().ok_or(TErr::Timeout)
+        }
+        fn flush(&mut self) {
+            self.flushes += 1;
+            self.stream.clear();
+        }
         fn send_allowed(&mut self, w: &AllowedWrite, _deadline: Instant) -> Result<(), TErr> {
             self.sent.push(w.bytes().to_vec());
+            if let Some(r) = self.replies.pop_front() {
+                self.stream.extend(r);
+            }
             Ok(())
         }
     }

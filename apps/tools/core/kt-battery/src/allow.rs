@@ -5,7 +5,9 @@
 // under other makers' vendor ids. Here a write is possible only as an `AllowedWrite`, and only `permit` makes one: for a
 // device this table names exactly (vendor AND product, plus usage page / usage / interface where given), with exactly the
 // bytes the table lists. The transport (transport.rs) sends nothing else and opens a device for writing only when the
-// table has an entry for it. Piece 1's readers only read: the table is empty.
+// table has an entry for it. Piece 1's readers only read. Piece 4 (controllers) adds four families' status requests,
+// each one that only asks (no mode, light, rumble, pairing, calibration or firmware path); pads/*.rs send them only
+// once the user turned that family's reading on.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 
 /// What identifies one HID collection of a device.
@@ -59,9 +61,39 @@ pub struct AllowEntry {
     pub why: &'static str,
 }
 
-/// The table. Piece 1 (generic readers: HID battery fields, Windows' Bluetooth property, Xbox through Windows) never
-/// writes. Vendor drivers add their documented requests here, each with its source.
-pub static ALLOWED: &[AllowEntry] = &[];
+const fn on(vid: u16, pid: u16, page: u16, usage: Option<u16>) -> DeviceMatch {
+    DeviceMatch { vid, pid, usage_page: Some(page), usage, interface: None }
+}
+
+const E8: &str = "8BitDo Ultimate 2 vendor channel, a status request (MiguelSanzBr/8bitdo-ultimate2-linux docs/PROTOCOL.md): asks, sets nothing";
+const GS: &str = "GameSir Nova «device info» request, as GameSir's own app sends it (GamesirBatteryTray): asks, sets nothing";
+const FD: &str = "Flydigi Vader 5 Pro architecture / info request (SDL_hidapi_flydigi.c): asks, no takeover, no setting";
+const BT: &str = "BEITONG KP20 «get base info» request, as iControl sends it for its home page: asks, no config mode";
+
+/// The table. The generic readers (HID battery fields, Windows' Bluetooth property, Xbox through Windows) and the
+/// passive controller readers never write. Only these requests exist (output reports, the report id first):
+/// - 8BitDo Ultimate 2 (receiver 310B, idle receiver 6013, the pad on its cable 6012), page FF7A usage 1: «linked?»
+///   81 04 20 01, «battery» 81 04 21 01 00 00 06, «info» 81 04 00 01.
+/// - GameSir Nova (receivers 1098, 1040; cable 100F), page FF7A: «device info» 00 01 01.
+/// - Flydigi Vader 5 Pro (2401), page FFA0 usage 1: «architecture» 00 5A A5 07 00 00, «info» 00 5A A5 01 02 00.
+/// - BEITONG KP20 receiver (5128), page 00FF usage 3: «base info» 02 AD (02 15 in its cipher).
+pub static ALLOWED: &[AllowEntry] = &[
+    AllowEntry { device: on(0x2DC8, 0x310B, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x20, 0x01], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x310B, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x21, 0x01, 0x00, 0x00, 0x06], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x310B, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x00, 0x01], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x6013, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x20, 0x01], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x6013, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x21, 0x01, 0x00, 0x00, 0x06], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x6013, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x00, 0x01], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x6012, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x20, 0x01], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x6012, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x21, 0x01, 0x00, 0x00, 0x06], why: E8 },
+    AllowEntry { device: on(0x2DC8, 0x6012, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x00, 0x01], why: E8 },
+    AllowEntry { device: on(0x3537, 0x1098, 0xFF7A, None), kind: ReportKind::Output, bytes: &[0x00, 0x01, 0x01], why: GS },
+    AllowEntry { device: on(0x3537, 0x1040, 0xFF7A, None), kind: ReportKind::Output, bytes: &[0x00, 0x01, 0x01], why: GS },
+    AllowEntry { device: on(0x3537, 0x100F, 0xFF7A, None), kind: ReportKind::Output, bytes: &[0x00, 0x01, 0x01], why: GS },
+    AllowEntry { device: on(0x37D7, 0x2401, 0xFFA0, Some(1)), kind: ReportKind::Output, bytes: &[0x00, 0x5A, 0xA5, 0x07, 0x00, 0x00], why: FD },
+    AllowEntry { device: on(0x37D7, 0x2401, 0xFFA0, Some(1)), kind: ReportKind::Output, bytes: &[0x00, 0x5A, 0xA5, 0x01, 0x02, 0x00], why: FD },
+    AllowEntry { device: on(0x20BC, 0x5128, 0x00FF, Some(3)), kind: ReportKind::Output, bytes: &[0x02, 0xAD], why: BT },
+];
 
 /// Private: only this module can make an AllowedWrite.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,13 +165,52 @@ mod tests {
     }];
 
     #[test]
-    fn the_shipped_table_allows_nothing_in_piece_1() {
-        assert!(ALLOWED.is_empty());
+    fn the_shipped_table_names_only_the_controllers_status_requests() {
+        assert_eq!(ALLOWED.len(), 15);
         for bytes in [&[0x10u8, 0xFF, 0x83, 0xB5][..], &[0xF7][..], &[0x00][..], &[0x11, 0x01, 0x02][..]] {
             assert!(permit(&id(0x1234, 0x5678), ReportKind::Output, bytes).is_none());
             assert!(permit(&id(0x046D, 0xC547), ReportKind::Feature, bytes).is_none());
         }
         assert!(!may_write(&id(0x1234, 0x5678)));
+        for e in ALLOWED {
+            // (Each entry: one product with its page; output reports only — no feature report is ever set.)
+            assert!(e.device.pid != 0 && e.device.usage_page.is_some(), "{:04X}:{:04X}", e.device.vid, e.device.pid);
+            assert_eq!(e.kind, ReportKind::Output);
+            assert!(!e.why.is_empty());
+            let at = HidIdent { vid: e.device.vid, pid: e.device.pid, usage_page: e.device.usage_page.unwrap(), usage: e.device.usage.unwrap_or(1), interface: 0 };
+            assert!(permit(&at, e.kind, e.bytes).is_some());
+            assert!(permit(&at, ReportKind::Feature, e.bytes).is_none(), "the same bytes as a feature report: refused");
+            // (Any one byte changed, one byte more or less: refused.)
+            for i in 0..e.bytes.len() {
+                for delta in [1u8, 0x80, 0xFF] {
+                    let mut b = e.bytes.to_vec();
+                    b[i] = b[i].wrapping_add(delta);
+                    let listed = ALLOWED.iter().any(|o| o.device.matches(&at) && o.bytes == &b[..]);
+                    assert_eq!(permit(&at, e.kind, &b).is_some(), listed, "{:02X?}", b);
+                }
+            }
+            let mut longer = e.bytes.to_vec();
+            longer.push(0);
+            assert!(permit(&at, e.kind, &longer).is_none());
+            assert!(permit(&at, e.kind, &e.bytes[..e.bytes.len() - 1]).is_none());
+            // (Another product of the vendor, the right product on another page: refused.)
+            let mut other = at.clone();
+            other.pid = other.pid.wrapping_add(0x0100);
+            assert!(permit(&other, e.kind, e.bytes).is_none());
+            let mut page = at.clone();
+            page.usage_page = 0x0001;
+            assert!(permit(&page, e.kind, e.bytes).is_none());
+        }
+        // (The requests the original sent that change a pad are not in the table: Cyclone 2's stream start, the
+        //  PlayStation / 8BitDo feature reads are reads — but nothing for those products at all.)
+        let cyclone = HidIdent { vid: 0x3537, pid: 0x100B, usage_page: 0xFFF0, usage: 0x40, interface: -1 };
+        assert!(permit(&cyclone, ReportKind::Output, &[0x0F, 0x03]).is_none() && !may_write(&cyclone));
+        for pid in [0x05C4u16, 0x09CC, 0x0CE6, 0x0DF2] {
+            assert!(!may_write(&HidIdent { vid: 0x054C, pid, usage_page: 1, usage: 5, interface: -1 }));
+        }
+        assert!(!may_write(&HidIdent { vid: 0x057E, pid: 0x2009, usage_page: 1, usage: 5, interface: -1 }), "no Switch sub-command");
+        assert!(!may_write(&HidIdent { vid: 0x2DC8, pid: 0x6003, usage_page: 1, usage: 5, interface: -1 }));
+        assert!(!may_write(&HidIdent { vid: 0x2DC8, pid: 0x3109, usage_page: 0xFF7A, usage: 1, interface: -1 }), "an undocumented receiver");
     }
 
     #[test]

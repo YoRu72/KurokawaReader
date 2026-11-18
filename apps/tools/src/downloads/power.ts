@@ -18,7 +18,7 @@ function deskLabels(): Record<string, string | boolean> {
     // (0.21, device battery in the background — battery.rs: its tray lines, tooltip and notices, said in these words.)
     ...batteryLabels() };
 }
-const BAT_WORDS = ['batPct', 'batCoarse_empty', 'batCoarse_low', 'batCoarse_medium', 'batCoarse_high', 'batCoarse_full', 'batLevelUnknown', 'batCharging', 'batSt_waiting', 'batSt_asleep', 'batSt_notConnected', 'batSt_noAnswer', 'batUnnamed',
+const BAT_WORDS = ['batPct', 'batSteps', 'batCoarse_empty', 'batCoarse_low', 'batCoarse_medium', 'batCoarse_high', 'batCoarse_full', 'batLevelUnknown', 'batCharging', 'batSt_waiting', 'batSt_asleep', 'batSt_notConnected', 'batSt_noAnswer', 'batUnnamed',
   'batTrayLowest', 'batTrayNone', 'batTrayCheck', 'batTrayOpen', 'batNoticeLow', 'batNoticeLowBody', 'batNoticeFull', 'batNoticeFullBody', 'batAutostartComment',
   // (Piece 3: the tray's Bluetooth lines and why one did not work.)
   'btcTrayConnect', 'btcTrayDisconnect', 'btcTrayFailed', 'btcEnd_refused', 'btcEnd_timedOut', 'btcEnd_unreachable', 'btcEnd_settings', 'btcEnd_noRadio', 'btcEnd_busy', 'btcEnd_failed'] as const;

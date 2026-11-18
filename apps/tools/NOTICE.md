@@ -40,7 +40,8 @@ Each ported file of `apps/tools/core/kt-battery` names the original files it com
 | `src/brands.cpp` (brand by vendor id and name — text only) | `kind.rs` |
 | `lang/*.txt` (the phrase list) | a checklist for Tools' own strings (`src/i18n`); Arabic written anew |
 
-The vendor drivers (Logitech, Razer, PlayStation, …), the taskbar widget and the support request are not ported yet.
+The other vendor drivers (Logitech, Razer, …), the taskbar widget and the support request are not ported yet (the
+controllers came in piece 4, below).
 Drivers that send undocumented commands are not ported until they are understood.
 
 ### What was taken (piece 2: the background)
@@ -72,6 +73,43 @@ pairing goes through Windows' own window (`BluetoothAuthenticateDeviceEx` with n
 up, stores or enters a code); Bluetooth LE devices and anything else are sent to Windows' Bluetooth settings. Every
 call runs on its own thread with a time limit; a scan is bounded (20 s by default) and runs in short rounds.
 
+### Piece 4: game controllers
+
+Every controller driver of the original is ported, each into its own file of `core/kt-battery/src/pads/`; every one
+is marked «ported, untested» (no real hardware here). Listening readers are on by default; the four families whose
+reading sends a request are off until the user turns them on («Controllers» on the page, or a pad's own menu).
+
+| Original (C++) | Here | How it reads; what changed |
+|---|---|---|
+| `src/drivers/playstation.cpp` | `pads/playstation.rs` | DualShock 4, DualSense, DualSense Edge, the DS4 adaptor: listens to the input report it sends anyway. The level stays the pad's 0–10 steps (was level × 10 + 5 %); a fault state is no level. **Not ported:** the Bluetooth feature read 05 — it switches the pad's report mode; over Bluetooth the pad is read once a game or Steam has switched it, else «needs a query we do not send». |
+| `src/drivers/switch_pro.cpp` | `pads/nintendo.rs` | Switch Pro Controller (and pads in Switch mode); **added** Joy-Con (L) and (R), and reports 21 / 31 beside 30 (same byte, from the public reverse-engineering notes). Listens only, as the original; 0–4 steps (was 25 × level %). |
+| `src/drivers/steam_controller.cpp` | `pads/steam.rs` | Steam Controller 2015 (receiver) and 2026 (cable, Bluetooth, puck, internal receiver): listens; real percentages; an empty slot says «no controller linked»; the listening ends at the deadline (was up to 5 s). Steam Deck: not in the original. |
+| `src/drivers/eightbitdo.cpp` (PollDInputGamepad) | `pads/eightbitdo.rs` | D-input / Bluetooth pads (Ultimate 2, Ultimate 3-mode, Ultimate 2C, Ultimate 2.4G, Ultimate Bluetooth, Pro 2, Pro 3, SN30 Pro, SF30 Pro): listens; real percentages. **Not ported:** the feature read 06 for Pro 2 / Pro 3 / SN30 Pro / SF30 Pro — it turns on another report format; their report 04 is read when something else turned it on. |
+| `src/drivers/eightbitdo.cpp` (PollVendorCollection) | `pads/eightbitdo.rs` | Ultimate 2 Wireless receiver (310B, 6013) and cable (6012), vendor collection FF7A: three status requests, sealed in `allow.rs`. Sent to those three products only (the original asked every 8BitDo product with such a collection); no old level kept as current (the original kept the last one for a docked pad, in a global). |
+| `src/drivers/gamesir.cpp` (PollGameSir) | `pads/gamesir.rs` | Nova / Nova 2 Lite / Nova Lite 2: the «device info» request 01 01, sealed in `allow.rs`; FF is «charging, no level» (was «keep the last value»). |
+| `src/drivers/gamesir.cpp` (PollGameSirCyclone) | `pads/gamesir.rs` | Cyclone 2: listens for report 12. **Not ported:** the request 0F 03 — it starts the pad's state stream; without that stream: «needs a query we do not send». |
+| `src/drivers/flydigi.cpp` | `pads/flydigi.rs` | Vader 5 Pro: the architecture and info requests, sealed in `allow.rs`; 0–5 steps (was 20 × level %); unknown connection or identity: no reading. |
+| `src/drivers/beitong.cpp` | `pads/beitong.rs` | BEITONG KP20 receiver: the «base info» request in its nibble cipher, sealed in `allow.rs`. |
+| `src/drivers/xinput.cpp` | `xbox.rs` (piece 1), `pads/mod.rs` (its row in the table) | Xbox pads through Windows.Gaming.Input and XInput — nothing in the original beyond piece 1's port. |
+
+What every controller reader shares (`pads/mod.rs`): matched by vendor, product, usage page and usage — never vendor
+alone; length and range checks on every report; a percentage only where the pad sends one, else steps; a malformed
+report is no reading; a handle opened to listen is shared (never exclusive, a game keeps its reports); every call
+under the deadline; a reply taken only when it answers the request just sent. New merge rules (`identity.rs`): a unit a
+controller reader claims is not also read by the generic HID reader; one model seen under two product ids (8BitDo's
+Ultimate 2) is one card when the serials agree; a pad's own reader outranks Windows' Bluetooth entry of the same
+container. The controller pictures are our own drawings by family (`src/views/btconnect.ts`; piece 4 adds one Joy-Con
+and a pad with trackpads); no logo, product photo or artwork, brands as text.
+
+The only bytes Tools can send to any device (`allow.rs`, output reports, report id first):
+
+| Device (vendor:product, usage page / usage) | Bytes | What it asks |
+|---|---|---|
+| 8BitDo 2DC8:310B, 2DC8:6013, 2DC8:6012 (FF7A / 1) | `81 04 20 01` · `81 04 21 01 00 00 06` · `81 04 00 01` | linked? · battery · which product answers |
+| GameSir 3537:1098, 3537:1040, 3537:100F (FF7A) | `00 01 01` | device info |
+| Flydigi 37D7:2401 (FFA0 / 1) | `00 5A A5 07 00 00` · `00 5A A5 01 02 00` | architecture · device info |
+| BEITONG 20BC:5128 (00FF / 3) | `02 AD` | base info (02 15 before its cipher) |
+
 ### What was changed
 
 - **Every device call has a deadline**, and each device is asked on its own thread: one stuck device never delays
@@ -79,7 +117,8 @@ call runs on its own thread with a time limit; a scan is bounded (20 s by defaul
   device in turn on one thread).
 - **One table of allowed writes** (`allow.rs`): nothing can be sent to a device unless the table names the device
   exactly (vendor and product, with usage and interface where needed) and the exact bytes. Devices are opened for
-  queries only, never read/write by default, never exclusively. In this piece the table is empty: the readers only read.
+  queries only, never read/write by default, never exclusively. The table holds only the controllers' status requests
+  above, each sent only once the user turned its family on.
 - **No device is matched by its vendor id alone.**
 - **Coarse levels stay coarse**: XInput's four levels are shown as bars, never as made-up percentages (the original
   showed 5/25/60/100 %).

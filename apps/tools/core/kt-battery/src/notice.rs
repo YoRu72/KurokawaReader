@@ -77,7 +77,7 @@ pub struct Seen<'a> {
 }
 
 fn is_full(l: Level) -> bool {
-    matches!(l, Level::Exact(p) if p.get() >= 100) || l == Level::Coarse(Coarse::Full)
+    matches!(l, Level::Exact(p) if p.get() >= 100) || l.as_coarse() == Some(Coarse::Full)
 }
 
 /// The rule, one reading at a time. A reading that is missing, old, asleep or from a device that is not live leaves
@@ -94,6 +94,7 @@ pub fn step(memo: &mut Memo, mark: Mark, full_notice: bool, seen: Seen) -> Optio
             (Mark::Off, _) => true,
             (Mark::At(t), Level::Exact(p)) => u16::from(p.get()) > u16::from(t) + u16::from(REARM),
             (Mark::At(_), Level::Coarse(c)) => c >= Coarse::Medium,
+            (Mark::At(_), Level::Steps(s)) => s.coarse() >= Coarse::Medium,
             (Mark::At(_), Level::Unknown) => false,
         };
     if rearm {
@@ -104,6 +105,7 @@ pub fn step(memo: &mut Memo, mark: Mark, full_notice: bool, seen: Seen) -> Optio
             let low = match r.level {
                 Level::Exact(p) => p.get() <= t,
                 Level::Coarse(c) => c <= Coarse::Low,
+                Level::Steps(s) => s.coarse() <= Coarse::Low,
                 Level::Unknown => false,
             };
             if low {
@@ -214,6 +216,15 @@ mod tests {
         assert!(matches!(go(&mut m, k, false, &co(Coarse::Empty, 5), 5), Some(Notice::Low(_))), "re-armed at Medium");
         let mut o = Memo::default();
         assert_eq!(go(&mut o, Mark::Off, false, &co(Coarse::Empty, 0), 0), None, "off: nothing");
+        // (Steps follow their nearest word: 1 of 4 is Low, 3 of 4 re-arms, 4 of 4 is full.)
+        let st = |n, m, ch, at| Reading::new(Level::Steps(crate::model::Steps::new(n, m).unwrap()), ch, at);
+        let mut s = Memo::default();
+        assert!(matches!(go(&mut s, k, false, &st(1, 4, Charging::No, 10), 10), Some(Notice::Low(Level::Steps(_)))));
+        assert_eq!(go(&mut s, k, false, &st(1, 4, Charging::No, 11), 11), None);
+        assert_eq!(go(&mut s, k, false, &st(3, 4, Charging::No, 12), 12), None);
+        assert!(matches!(go(&mut s, k, false, &st(2, 10, Charging::No, 13), 13), Some(Notice::Low(_))), "re-armed at Medium");
+        assert_eq!(go(&mut s, k, true, &st(5, 10, Charging::Yes, 14), 14), None);
+        assert_eq!(go(&mut s, k, true, &st(10, 10, Charging::No, 15), 15), Some(Notice::Full), "charged to the top of its scale");
     }
 
     #[test]

@@ -8,6 +8,11 @@
 // (enough for feature and input reports) unless allow.rs names it — never read/write by default, never exclusive —,
 // and closed at once; every call has a deadline: the HID calls themselves cannot be cancelled, so a call that returns
 // after its deadline is discarded, and the runner gives up on it at the deadline (one thread per query, runner.rs).
+// Piece 4 (controllers): a collection can be opened to listen to the reports the device sends (overlapped ReadFile
+// with the deadline: at the deadline the read is cancelled — CancelIoEx — and the cancellation awaited), and an
+// allow-listed output report goes out by WriteFile as the original's HidDev::Write did, under the same deadline. A
+// listening handle shares the device (FILE_SHARE_READ | FILE_SHARE_WRITE, never exclusive): Windows gives every handle
+// its own copy of each input report, so a game reading the pad loses nothing.
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere); real devices decide.
 // Copyright (C) 2026 Kurokawa contributors.
 use super::ffi::*;
@@ -67,13 +72,17 @@ impl Drop for DevInfo {
 }
 
 fn open(path: &str, mode: OpenMode) -> Option<Handle> {
+    open_flags(path, mode, 0)
+}
+
+fn open_flags(path: &str, mode: OpenMode, flags: u32) -> Option<Handle> {
     let access = match mode {
         OpenMode::QueryOnly => 0,
         OpenMode::Read => GENERIC_READ,
         OpenMode::ReadWrite => GENERIC_READ | GENERIC_WRITE,
     };
     let w = wide(path);
-    let h = unsafe { CreateFileW(w.as_ptr(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, std::ptr::null(), OPEN_EXISTING, 0, 0) };
+    let h = unsafe { CreateFileW(w.as_ptr(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, std::ptr::null(), OPEN_EXISTING, flags, 0) };
     if h == INVALID_HANDLE_VALUE || h == 0 {
         None
     } else {
@@ -210,14 +219,78 @@ pub struct WinHid {
     h: Handle,
     output_len: usize,
     feature_len: usize,
+    input_len: usize,
+    /// Opened for overlapped reads and writes (to listen): feature and control-pipe calls are not used on it.
+    overlapped: bool,
 }
 
 impl WinHid {
     pub fn open(c: &HidColl) -> Result<WinHid, TErr> {
         let mode = open_mode_for(&c.ident, false);
         let h = open(&c.path, mode).ok_or(TErr::Gone)?;
-        Ok(WinHid { ident: c.ident.clone(), mode, h, output_len: c.output_len, feature_len: c.feature_len })
+        Ok(WinHid { ident: c.ident.clone(), mode, h, output_len: c.output_len, feature_len: c.feature_len, input_len: c.input_len, overlapped: false })
     }
+    /// Opened to listen (read access; read/write only when allow.rs names the collection and `may_send`).
+    pub fn open_listen(c: &HidColl, may_send: bool) -> Result<WinHid, TErr> {
+        let mode = match open_mode_for(&c.ident, true) {
+            OpenMode::ReadWrite if !may_send => OpenMode::Read,
+            m => m,
+        };
+        let h = open_flags(&c.path, mode, FILE_FLAG_OVERLAPPED).ok_or(TErr::Gone)?;
+        Ok(WinHid { ident: c.ident.clone(), mode, h, output_len: c.output_len, feature_len: c.feature_len, input_len: c.input_len, overlapped: true })
+    }
+}
+
+struct Event(HANDLE);
+impl Drop for Event {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+/// One overlapped transfer on `h` with `buf`, waited for until `deadline`; past it, cancelled and the cancel awaited
+/// (the buffer must outlive the transfer). Returns the bytes moved.
+fn overlapped_io(h: HANDLE, buf: &mut [u8], write: bool, deadline: Instant) -> Result<usize, TErr> {
+    let ms = left(deadline)?.as_millis().min(u32::MAX as u128 - 1) as u32;
+    let ev = Event(unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) });
+    if ev.0 == 0 {
+        return Err(TErr::Failed("CreateEventW".into()));
+    }
+    let mut ov = OVERLAPPED { hEvent: ev.0, ..Default::default() };
+    let started = unsafe {
+        if write {
+            WriteFile(h, buf.as_ptr() as *const c_void, buf.len() as u32, std::ptr::null_mut(), &mut ov)
+        } else {
+            ReadFile(h, buf.as_mut_ptr() as *mut c_void, buf.len() as u32, std::ptr::null_mut(), &mut ov)
+        }
+    };
+    if started == 0 {
+        let e = unsafe { GetLastError() };
+        if e != ERROR_IO_PENDING {
+            return Err(if e == ERROR_DEVICE_NOT_CONNECTED { TErr::Gone } else { TErr::Failed(format!("I/O {}", e)) });
+        }
+    }
+    let waited = unsafe { WaitForSingleObject(ev.0, ms) };
+    let mut n = 0u32;
+    if waited == WAIT_OBJECT_0 {
+        let ok = unsafe { GetOverlappedResult(h, &ov, &mut n, 0) };
+        if ok == 0 {
+            let e = unsafe { GetLastError() };
+            return Err(if e == ERROR_DEVICE_NOT_CONNECTED { TErr::Gone } else { TErr::Failed(format!("I/O {}", e)) });
+        }
+        return Ok(n as usize);
+    }
+    // (Past the deadline: cancelled; GetOverlappedResult with wait returns once the HID driver has let go of the
+    // buffer — at once for a cancelled read. A transfer that completed meanwhile is still too late: dropped.)
+    unsafe {
+        CancelIoEx(h, &ov);
+        GetOverlappedResult(h, &ov, &mut n, 1);
+    }
+    Err(TErr::Timeout)
 }
 
 impl HidTransport for WinHid {
@@ -249,8 +322,35 @@ impl HidTransport for WinHid {
         }
         Ok(buf)
     }
+    fn read_input(&mut self, deadline: Instant) -> Result<Vec<u8>, TErr> {
+        if !self.overlapped || self.input_len == 0 || self.mode == OpenMode::QueryOnly {
+            return Err(TErr::Refused);
+        }
+        let mut buf = vec![0u8; self.input_len];
+        let n = overlapped_io(self.h.0, &mut buf, false, deadline)?;
+        if n == 0 {
+            return Err(TErr::BadReply);
+        }
+        buf.truncate(n);
+        Ok(buf)
+    }
+    fn flush(&mut self) {
+        unsafe {
+            HidD_FlushQueue(self.h.0);
+        }
+    }
     fn send_allowed(&mut self, w: &AllowedWrite, deadline: Instant) -> Result<(), TErr> {
         left(deadline)?;
+        if self.overlapped {
+            // (As the original's HidDev::Write: the interrupt pipe, padded to the output report's length.)
+            if w.kind() != ReportKind::Output || self.output_len == 0 || w.bytes().len() > self.output_len {
+                return Err(TErr::Refused);
+            }
+            let mut buf = vec![0u8; self.output_len];
+            buf[..w.bytes().len()].copy_from_slice(w.bytes());
+            let n = overlapped_io(self.h.0, &mut buf, true, deadline)?;
+            return if n == buf.len() { Ok(()) } else { Err(TErr::Failed("short write".into())) };
+        }
         let size = match w.kind() {
             ReportKind::Output => self.output_len,
             ReportKind::Feature => self.feature_len,

@@ -6,7 +6,7 @@
 //! Std only. The core modules hold the rules and are tested with made-up devices, together, through
 //! stdroots/core.rs (`rustc --edition 2021 --test stdroots/core.rs`):
 //! - model: Device, Reading, Level (exact, coarse or unknown), Charging
-//! - allow: the one table of what may be sent to a device (empty in piece 1: the generic readers only read)
+//! - allow: the one table of what may be sent to a device (the generic readers only read; four controller families' status requests)
 //! - transport: one HID collection with a deadline on every call; query-only opens; writes only through `allow`
 //! - registry: which reader may look at a collection (full matches only, never a vendor id alone)
 //! - hidvalue: the generic HID battery field (range checks, length-checked bit reads)
@@ -15,6 +15,8 @@
 //! - connect: piece 3 — the Bluetooth connect panel's list, actions (one per device, each with a limit and a cancel) and
 //!   bounded scan, over a BtPlatform (win/btconn.rs on Windows)
 //! - xbox: Windows.Gaming.Input's real percentage, XInput's coarse levels
+//! - pads: piece 4 — game controllers' own readers (PlayStation, Nintendo, Steam, 8BitDo, GameSir, Flydigi, BEITONG):
+//!   passive listening first; four families' status requests, sealed in allow, only when the user turns them on
 //! - identity: stable keys per unit and the explicit merge rules
 //! - sched: per-device timing, deadlines, back-off, asleep devices left alone
 //! - runner: the background loop over a Platform
@@ -33,6 +35,7 @@ pub mod identity;
 pub mod kind;
 pub mod model;
 pub mod notice;
+pub mod pads;
 pub mod registry;
 pub mod runner;
 pub mod sched;

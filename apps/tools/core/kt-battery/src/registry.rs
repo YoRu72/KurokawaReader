@@ -12,7 +12,8 @@
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use crate::allow::{DeviceMatch, HidIdent};
 
-/// A vendor driver's claim. Piece 1 ships none: later pieces add theirs (each with a DeviceMatch per product).
+/// A vendor driver's claim (mice, keyboards, headsets in later pieces; each with a DeviceMatch per product). The
+/// controllers' readers claim through pads::find (vendor, product, usage page and usages — never vendor alone).
 pub struct DriverEntry {
     pub device: DeviceMatch,
     pub driver: &'static str,
@@ -76,6 +77,9 @@ fn classify_in(table: &[DriverEntry], all: &[Collection], c: &Collection, no_que
     if let Some(d) = driver_for_in(table, &c.ident) {
         return Claim::Driver(d.driver);
     }
+    if let Some(m) = crate::pads::find(&c.ident) {
+        return Claim::Driver(m.driver);
+    }
     if c.battery_field {
         Claim::Generic
     } else {
@@ -91,6 +95,19 @@ mod tests {
         Collection { ident: HidIdent { vid, pid, usage_page: page, usage, interface: -1 }, battery_field: battery, key: key.into() }
     }
     static TABLE: &[DriverEntry] = &[DriverEntry { device: DeviceMatch { vid: 0x1234, pid: 0x0001, usage_page: Some(0xFF00), usage: Some(1), interface: None }, driver: "test" }];
+
+    #[test]
+    fn controllers_are_claimed_by_their_readers_and_nothing_else_is() {
+        let ds = coll(0x054C, 0x0CE6, 0x01, 0x05, false, "p");
+        assert_eq!(classify(&[ds.clone()], &ds, &[]), Claim::Driver("playstation"));
+        let ds_audio = coll(0x054C, 0x0CE6, 0x0C, 0x01, true, "p");
+        assert_eq!(classify(&[ds.clone(), ds_audio.clone()], &ds_audio, &[]), Claim::Generic, "the pad's other collection: only the generic reader");
+        let other_sony = coll(0x054C, 0x0268, 0x01, 0x05, false, "q");
+        assert_eq!(classify(&[other_sony.clone()], &other_sony, &[]), Claim::Skip(Skip::NoBattery), "another Sony product: not claimed by vendor");
+        let rx = coll(0x2DC8, 0x310B, 0xFF7A, 0x01, false, "r");
+        assert_eq!(classify(&[rx.clone()], &rx, &[]), Claim::Driver("8bitdo-rx"));
+        assert_eq!(classify(&[rx.clone()], &rx, &["r".into()]), Claim::Skip(Skip::UserSaid), "the user's word first");
+    }
 
     #[test]
     fn no_vendor_driver_ships_in_piece_1() {

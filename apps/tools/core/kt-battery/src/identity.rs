@@ -53,6 +53,24 @@ pub fn hid_key(vid: u16, pid: u16, serial: &str, container: &str, path: &str) ->
     format!("{}:p:{}", base, digest(&unit))
 }
 
+/// A controller's key: its unit's key, and for a receiver with several pad slots (pads::Model::per_interface) the
+/// slot's interface path too.
+pub fn pad_key(vid: u16, pid: u16, serial: &str, container: &str, path: &str, per_interface: bool) -> String {
+    let unit = hid_key(vid, pid, serial, container, path);
+    if per_interface {
+        let lower = path.to_ascii_lowercase();
+        let iface = lower.find("&mi_").map(|i| lower[i + 4..].chars().take(2).collect::<String>()).unwrap_or_else(|| digest(&lower)[..8].to_string());
+        format!("{}:i:{}", unit, iface)
+    } else {
+        unit
+    }
+}
+
+/// The generic reader's entries without the units a controller reader claims (their keys `pad_keys`).
+pub fn drop_claimed(generic: Vec<Candidate>, pad_keys: &[String]) -> Vec<Candidate> {
+    generic.into_iter().filter(|c| !pad_keys.iter().any(|k| k == &c.device.key || k.starts_with(&format!("{}:i:", c.device.key)))).collect()
+}
+
 pub fn bt_key(container: &str) -> String {
     format!("bt:{}", container.to_ascii_uppercase())
 }
@@ -106,6 +124,12 @@ fn same_unit(a: &Device, b: &Device, links: &[(String, String)]) -> bool {
     }
     if !a.serial.is_empty() && a.vid == b.vid && a.pid == b.pid && a.serial == b.serial {
         return true;
+    }
+    if a.source == Source::Pad && b.source == Source::Pad && !a.serial.is_empty() && a.serial == b.serial && a.vid == b.vid {
+        let g = crate::pads::group_of(a.vid, a.pid);
+        if !g.is_empty() && g == crate::pads::group_of(b.vid, b.pid) {
+            return true;
+        }
     }
     let keys = |d: &Device| std::iter::once(d.key.clone()).chain(d.merged.iter().cloned()).collect::<Vec<_>>();
     let (ka, kb) = (keys(a), keys(b));
@@ -218,6 +242,60 @@ mod tests {
         let got = merge(vec![dongle, bt2], &[("bt:{E}".into(), "hid:dongle".into())]);
         assert_eq!(got.len(), 1, "the user joined them");
         assert_eq!(got[0].device.key, "bt:{E}");
+    }
+
+    fn pad(key: &str, vid: u16, pid: u16, container: &str, serial: &str) -> Candidate {
+        let mut c = dev(key, Source::Pad, Kind::Controller, vid, container, serial);
+        c.device.pid = pid;
+        c.device.driver = "x";
+        c
+    }
+
+    #[test]
+    fn controllers() {
+        // (A pad over Bluetooth: its reader's entry and Windows' Bluetooth entry, one container → one card, the
+        //  reader's.)
+        let p = pad("hid:054C:0CE6:c:{P}", 0x054C, 0x0CE6, "{P}", "");
+        let mut b = dev("bt:{P}", Source::Bluetooth, Kind::Controller, 0, "{P}", "");
+        b.reading = Some(Reading::new(Level::Exact(Percent::new(80).unwrap()), Charging::Unknown, 1));
+        let got = merge(vec![b, p], &[]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].device.key, "hid:054C:0CE6:c:{P}");
+        assert_eq!(got[0].device.driver, "x");
+        assert_eq!(got[0].device.merged, vec!["bt:{P}".to_string()]);
+        // (Two identical pads: two cards.)
+        let a = pad("hid:054C:0CE6:c:{A}", 0x054C, 0x0CE6, "{A}", "");
+        let c = pad("hid:054C:0CE6:c:{C}", 0x054C, 0x0CE6, "{C}", "");
+        assert_eq!(merge(vec![a, c], &[]).len(), 2);
+        // (The Ultimate 2 by its cable (6012) and its receiver (310B), the same serial → one; another serial → two.)
+        let cable = pad("hid:2DC8:6012:s:U1", 0x2DC8, 0x6012, "{X}", "U1");
+        let rx = pad("hid:2DC8:310B:s:U1", 0x2DC8, 0x310B, "{Y}", "U1");
+        assert_eq!(merge(vec![cable.clone(), rx.clone()], &[]).len(), 1);
+        let mut rx2 = rx.clone();
+        rx2.device.serial = "U2".into();
+        assert_eq!(merge(vec![cable.clone(), rx2], &[]).len(), 2);
+        // (Same serial, products of no one group: two.)
+        let pro2 = pad("hid:2DC8:6003:s:U1", 0x2DC8, 0x6003, "{Z}", "U1");
+        assert_eq!(merge(vec![cable, pro2], &[]).len(), 2);
+        // (A unit a controller reader claims: the generic reader's entry for it dropped; a receiver's slots too.)
+        let g1 = dev("hid:054C:0CE6:c:{P}", Source::HidGeneric, Kind::Controller, 0x054C, "{P}", "");
+        let g2 = dev("hid:28DE:1142:c:{S}", Source::HidGeneric, Kind::Controller, 0x28DE, "{S}", "");
+        let g3 = dev("hid:1111:2222:s:M", Source::HidGeneric, Kind::Mouse, 0x1111, "", "M");
+        let kept = drop_claimed(vec![g1, g2, g3], &["hid:054C:0CE6:c:{P}".into(), "hid:28DE:1142:c:{S}:i:01".into()]);
+        assert_eq!(kept.iter().map(|c| c.device.key.as_str()).collect::<Vec<_>>(), vec!["hid:1111:2222:s:M"]);
+        // (XInput's pad is never joined to a controller of ours by guess.)
+        let xi = dev("xinput:0:pad", Source::XInput, Kind::Controller, 0, "", "");
+        let nova = pad("hid:3537:1098:c:{N}", 0x3537, 0x1098, "{N}", "");
+        assert_eq!(merge(vec![xi, nova], &[]).len(), 2);
+    }
+
+    #[test]
+    fn pad_keys() {
+        let p1 = r"\\?\hid#vid_28de&pid_1142&mi_01#7&1&0&0000#{4d1e55b2}";
+        let p2 = r"\\?\hid#vid_28de&pid_1142&mi_02#7&1&0&0001#{4d1e55b2}";
+        assert_ne!(pad_key(0x28DE, 0x1142, "", "{R}", p1, true), pad_key(0x28DE, 0x1142, "", "{R}", p2, true), "a receiver's slots are two pads");
+        assert_eq!(pad_key(0x28DE, 0x1142, "", "{R}", p1, true), "hid:28DE:1142:c:{R}:i:01");
+        assert_eq!(pad_key(0x054C, 0x0CE6, "", "{R}", p1, false), hid_key(0x054C, 0x0CE6, "", "{R}", p1));
     }
 
     #[test]

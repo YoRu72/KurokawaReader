@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Kurokawa Tools — device battery (kt-battery): the Windows calls the readers use, declared by hand from the Windows
 // SDK's headers (setupapi.h, hidsdi.h, hidpi.h, cfgmgr32.h, xinput.h, devpkey.h; piece 3: bluetoothapis.h, bthioctl.h,
-// ks.h, ksmedia.h), linked by DLL name (raw-dylib: no import library needed). Kept to what the pieces need.
+// ks.h, ksmedia.h; piece 4: minwinbase.h OVERLAPPED, fileapi.h ReadFile / WriteFile, ioapiset.h, synchapi.h,
+// hidsdi.h HidD_FlushQueue), linked by DLL name (raw-dylib: no import library needed). Kept to what the pieces need.
 // Copyright (C) 2026 Kurokawa contributors.
 // The link attributes apply on Windows only, so the module is type-checked on any system (stdroots/wincheck.rs).
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::upper_case_acronyms, dead_code)]
@@ -137,10 +138,34 @@ pub const OPEN_EXISTING: u32 = 3;
 pub const GENERIC_READ: u32 = 0x8000_0000;
 pub const GENERIC_WRITE: u32 = 0x4000_0000;
 
+pub const FILE_FLAG_OVERLAPPED: u32 = 0x4000_0000;
+pub const ERROR_IO_PENDING: u32 = 997;
+pub const ERROR_DEVICE_NOT_CONNECTED: u32 = 1167;
+pub const ERROR_OPERATION_ABORTED: u32 = 995;
+pub const WAIT_OBJECT_0: u32 = 0;
+pub const WAIT_TIMEOUT: u32 = 258;
+
+/// minwinbase.h OVERLAPPED (the Offset / Pointer union as two u32s).
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct OVERLAPPED {
+    pub Internal: usize,
+    pub InternalHigh: usize,
+    pub Offset: u32,
+    pub OffsetHigh: u32,
+    pub hEvent: HANDLE,
+}
+
 #[cfg_attr(windows, link(name = "kernel32", kind = "raw-dylib"))]
 extern "system" {
     pub fn CreateFileW(lpFileName: *const u16, dwDesiredAccess: u32, dwShareMode: u32, lpSecurityAttributes: *const c_void, dwCreationDisposition: u32, dwFlagsAndAttributes: u32, hTemplateFile: HANDLE) -> HANDLE;
     pub fn CloseHandle(hObject: HANDLE) -> BOOL;
+    pub fn CreateEventW(lpEventAttributes: *const c_void, bManualReset: BOOL, bInitialState: BOOL, lpName: *const u16) -> HANDLE;
+    pub fn ReadFile(hFile: HANDLE, lpBuffer: *mut c_void, nNumberOfBytesToRead: u32, lpNumberOfBytesRead: *mut u32, lpOverlapped: *mut OVERLAPPED) -> BOOL;
+    pub fn WriteFile(hFile: HANDLE, lpBuffer: *const c_void, nNumberOfBytesToWrite: u32, lpNumberOfBytesWritten: *mut u32, lpOverlapped: *mut OVERLAPPED) -> BOOL;
+    pub fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: u32) -> u32;
+    pub fn CancelIoEx(hFile: HANDLE, lpOverlapped: *const OVERLAPPED) -> BOOL;
+    pub fn GetOverlappedResult(hFile: HANDLE, lpOverlapped: *const OVERLAPPED, lpNumberOfBytesTransferred: *mut u32, bWait: BOOL) -> BOOL;
 }
 
 #[repr(C)]
@@ -213,6 +238,7 @@ extern "system" {
     pub fn HidD_GetAttributes(HidDeviceObject: HANDLE, Attributes: *mut HIDD_ATTRIBUTES) -> BOOLEAN;
     pub fn HidD_GetPreparsedData(HidDeviceObject: HANDLE, PreparsedData: *mut isize) -> BOOLEAN;
     pub fn HidD_FreePreparsedData(PreparsedData: isize) -> BOOLEAN;
+    pub fn HidD_FlushQueue(HidDeviceObject: HANDLE) -> BOOLEAN;
     pub fn HidD_GetFeature(HidDeviceObject: HANDLE, ReportBuffer: *mut c_void, ReportBufferLength: u32) -> BOOLEAN;
     pub fn HidD_GetInputReport(HidDeviceObject: HANDLE, ReportBuffer: *mut c_void, ReportBufferLength: u32) -> BOOLEAN;
     pub fn HidD_SetFeature(HidDeviceObject: HANDLE, ReportBuffer: *mut c_void, ReportBufferLength: u32) -> BOOLEAN;
@@ -427,6 +453,9 @@ mod tests {
         }
         assert_eq!(std::mem::offset_of!(BLUETOOTH_DEVICE_SEARCH_PARAMS, cTimeoutMultiplier), 24);
         assert_eq!(std::mem::size_of::<KSPROPERTY>(), 24);
+        // (Piece 4: OVERLAPPED, 32 bytes on 64-bit, 20 on 32-bit.)
+        assert_eq!(std::mem::size_of::<OVERLAPPED>(), if cfg!(target_pointer_width = "64") { 32 } else { 20 });
+        assert_eq!(std::mem::offset_of!(OVERLAPPED, hEvent), 2 * std::mem::size_of::<usize>() + 8);
         assert_eq!(IOCTL_BTH_DISCONNECT_DEVICE, 0x0041_000C);
         assert_eq!(IOCTL_KS_PROPERTY, 0x002F_0003);
         assert_eq!(KSPROPSETID_BtAudio.braced(), "{7FA06C40-B8F6-4C7E-8556-E8C33A12E54D}");

@@ -26,11 +26,14 @@ pub trait Platform: Send + Sync + 'static {
     fn enumerate(&self, now_ms: u64) -> Vec<Candidate>;
     /// One device asked, by `deadline`.
     fn query(&self, device: &Device, deadline: Instant, now_ms: u64) -> Outcome;
+    /// The user's settings, before the first round and after each change (the controller families whose status
+    /// request may be sent, Prefs::pad_queries).
+    fn set_prefs(&self, _prefs: &Prefs) {}
 }
 
 /// Whether a device is asked through `query` (else its reader brought its reading with the enumeration).
 pub fn needs_query(d: &Device) -> bool {
-    d.source == Source::HidGeneric
+    d.source == Source::HidGeneric || d.source == Source::Pad
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +83,8 @@ pub struct Prefs {
     pub deadline_ms: u64,
     pub no_query: Vec<String>,
     pub links: Vec<(String, String)>,
+    /// The controller families (pads::Family::as_str) the user turned on whose reading sends a status request.
+    pub pad_queries: Vec<String>,
 }
 
 pub enum Msg {
@@ -240,6 +245,7 @@ fn set_reading(st: &mut DeviceState, r: Reading, now: u64) {
 pub fn spawn<P: Platform>(platform: Arc<P>, prefs: Prefs, clock: Arc<dyn Fn() -> u64 + Send + Sync>, publish: Box<dyn Fn(Vec<DeviceState>) + Send>) -> std::io::Result<(Handle, thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc::channel();
     let handle = Handle { tx: tx.clone() };
+    platform.set_prefs(&prefs);
     let lp = Loop { platform, sched: Scheduler::new(timing(&prefs)), states: BTreeMap::new(), prefs, tx, clock, enum_running: None, enum_seq: 0, next_enum: 0 };
     let j = thread::Builder::new().name("kt-battery".into()).spawn(move || run(lp, rx, publish))?;
     Ok((handle, j))
@@ -300,6 +306,7 @@ fn run<P: Platform>(mut lp: Loop<P>, rx: Receiver<Msg>, publish: Box<dyn Fn(Vec<
             // was asleep; one still present and asleep is left alone.)
             Msg::Arrival | Msg::Wake => lp.next_enum = lp.next_enum.min(now + ARRIVAL_SETTLE_MS),
             Msg::Prefs(p) => {
+                lp.platform.set_prefs(&p);
                 lp.sched.set_timing(timing(&p));
                 lp.prefs = p;
                 lp.sched.set_no_query(&lp.prefs.no_query);

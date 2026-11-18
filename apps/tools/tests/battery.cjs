@@ -14,7 +14,12 @@
 // action per device; connect ok / refused / timed out / cancelled (a busy row with Cancel); a scan with Stop and its new
 // devices; pairing asked first with the device's picture, then handed to Windows' own window; Bluetooth off or missing
 // said calmly; equal button widths, no touching controls; nothing of it in the Electron build or another system; leaving
-// lets go of its subscription and stops a scan. `node tests/battery.cjs [en|ar]`.
+// lets go of its subscription and stops a scan. Piece 4, controllers (mode 'pads', made-up pads): each family's own
+// drawing (no picture files), a level in steps («7 of 10», as many bars, no number), a charging pad, «needs a query we do
+// not send», a family switched off, a receiver with no pad (dimmed); the card menu says the reader and «ported, not yet
+// tested» and turns a family's request on only for families that send one; «Controllers» has one switch per such
+// family, off by default, kept through batterySettings({ set: { padQueries } }) and followed by a refresh, and names
+// the families read by listening alone. `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
@@ -30,7 +35,21 @@ function fake({ lang, mode }) {
   const rd = (level, at, charging = 'unknown') => ({ level, charging, asleep: false, takenAt: at });
   const ex = (v) => ({ kind: 'exact', value: v });
   const dev = (o) => ({ name: '', kind: 'other', brand: '', connection: 'usb', source: 'hid', vid: 0, pid: 0, merged: [], status: 'ok', reading: null, lastGood: null, checkedAt: NOW, ...o });
-  const devices = mode !== 'tauri' && mode !== 'mac' ? [] : [
+  const st = (n, max) => ({ kind: 'steps', value: n, max });
+  const pad = (o) => dev({ kind: 'controller', source: 'pad', proven: 'untested', way: 'passive', ...o });
+  const PADS = [
+    pad({ key: 'hid:054C:0CE6:c:{DS}', name: 'DualSense', brand: 'PlayStation', connection: 'bluetooth', picture: 'pad', driver: 'playstation', family: 'playstation', reading: rd(st(7, 10), NOW - min, 'no') }),
+    pad({ key: 'hid:057E:2009:c:{SW}', name: 'Pro Controller', brand: 'Nintendo', connection: 'usb', picture: 'pad', driver: 'nintendo', family: 'nintendo', reading: rd(st(2, 4), NOW, 'yes') }),
+    pad({ key: 'hid:057E:2006:c:{JL}', name: 'Joy-Con (L)', brand: 'Nintendo', connection: 'bluetooth', picture: 'half', driver: 'nintendo', family: 'nintendo', reading: Object.assign(rd({ kind: 'unknown' }, NOW), { note: 'needsQuery' }) }),
+    pad({ key: 'hid:28DE:1304:c:{SC}:i:01', name: 'Steam Controller', brand: 'Steam', connection: 'dongle', picture: 'trackpads', driver: 'steam', family: 'steam', reading: rd(ex(64), NOW) }),
+    pad({ key: 'hid:28DE:1304:c:{SC}:i:02', name: 'Steam Controller', brand: 'Steam', connection: 'dongle', picture: 'trackpads', driver: 'steam', family: 'steam', reading: Object.assign(rd({ kind: 'unknown' }, NOW), { note: 'noPad' }) }),
+    pad({ key: 'hid:2DC8:6001:c:{SN}', name: '8BitDo SN30 Pro', brand: '8BitDo', connection: 'bluetooth', picture: 'retro', driver: '8bitdo', family: 'eightbitdo', reading: rd(ex(81), NOW - 2 * min, 'no') }),
+    pad({ key: 'hid:3537:1098:c:{GS}', name: 'GameSir Nova', brand: 'GameSir', connection: 'dongle', picture: 'pad', driver: 'gamesir-nova', family: 'gamesir', way: 'query', reading: Object.assign(rd({ kind: 'unknown' }, NOW), { note: 'queryOff' }) }),
+    dev({ key: 'xinput:0:pad', name: 'Xbox controller 1', kind: 'controller', brand: 'Xbox', connection: 'dongle', source: 'xinput', reading: rd({ kind: 'coarse', value: 'medium', bars: 3 }, NOW - 2 * min) }),
+  ];
+  const fam = (family, brand, ask, listen, models = []) => ({ family, brand, proven: 'untested', ask, listen, models, on: false });
+  const padRows = [fam('playstation', 'PlayStation', false, true), fam('xbox', 'Xbox', false, true), fam('nintendo', 'Nintendo', false, true), fam('steam', 'Steam', false, true), fam('eightbitdo', '8BitDo', true, true, ['8BitDo Ultimate 2 Wireless', '8BitDo Ultimate 2']), fam('gamesir', 'GameSir', true, true, ['GameSir Nova', 'GameSir Nova Lite 2', 'GameSir Nova 2 Lite']), fam('flydigi', 'Flydigi', true, false, ['Flydigi Vader 5 Pro']), fam('beitong', 'BEITONG', true, false, ['BEITONG KP20'])];
+  const devices = mode === 'pads' ? PADS : mode !== 'tauri' && mode !== 'mac' ? [] : [
     dev({ key: 'hid:1111:2222:s:A1', name: 'Shape Mouse One', kind: 'mouse', brand: 'Acme', reading: rd(ex(64), NOW - 3 * min), lastGood: rd(ex(64), NOW - 3 * min) }),
     dev({ key: 'bt:{K}', name: 'Studio Keys', kind: 'keyboard', brand: '', connection: 'bluetooth', source: 'bluetooth', status: 'notConnected', lastGood: rd(ex(40), NOW - 26 * 60 * min) }),
     dev({ key: 'bt:{H}', name: 'Field Phones', kind: 'headset', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(9), NOW - 30_000), lastGood: rd(ex(9), NOW - 30_000) }),
@@ -61,7 +80,7 @@ function fake({ lang, mode }) {
   if (mode === 'electron') { window.kurokawaTools = base; return; }
   window.kurokawaTools = Object.assign(base, {
     // (Exactly bridge.js's signatures.)
-    batteryList: function () { window.__calls.push(['list']); return Promise.resolve(mode === 'nothere' ? { available: false, reason: 'platform', now: NOW, devices: [], settings, system } : { available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings, system }); },
+    batteryList: function () { window.__calls.push(['list']); return Promise.resolve(mode === 'nothere' ? { available: false, reason: 'platform', now: NOW, devices: [], settings, system } : { available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings, system, pads: JSON.parse(JSON.stringify(padRows)) }); },
     batteryRefresh: function (o) { window.__calls.push(['refresh', o]); return Promise.resolve(true); },
     batterySettings: function (o) { window.__calls.push(['settings', o]); if (o && o.set && 'startup' in o.set && window.__failStartup) return Promise.reject(new Error('access denied')); if (o && o.set) settings = Object.assign({}, settings, o.set); return Promise.resolve(settings); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
@@ -245,6 +264,60 @@ function fake({ lang, mode }) {
     // (Within its tab — Settings —: the page replaced, so disposed; another tab would keep it for coming back.)
     await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForTimeout(400);
     check('leaving the page unsubscribes', (await p.evaluate(() => window.__subs)) === 0);
+    await ctx.close();
+  }
+
+  // ---- Piece 4: controllers.
+  {
+    const { ctx, p } = await open('pads');
+    await p.waitForSelector('.bat-card[data-key="hid:054C:0CE6:c:{DS}"]');
+    const card = (k) => p.$eval(`.bat-card[data-key="${k}"]`, (e) => ({ cls: e.className, pic: e.querySelector('.bat-ic svg')?.dataset.picture, img: !!e.querySelector('img'), bars: e.querySelectorAll('.bat-bars > i').length, on: e.querySelectorAll('.bat-bars > i.on').length, word: e.querySelector('.bat-word')?.textContent, pct: e.querySelector('.bat-pct')?.textContent ?? null, note: e.querySelector('.bat-note')?.dataset.note ?? '', noteText: e.querySelector('.bat-note')?.textContent ?? '', chip: e.querySelector('.bat-chip.charging')?.textContent ?? '' }));
+    const ds = await card('hid:054C:0CE6:c:{DS}');
+    check('a pad in steps: as many bars as steps, «7 of 10», never a percentage', ds.bars === 10 && ds.on === 7 && ds.pct === null && ds.word === (AR ? '7 من 10' : '7 of 10'), ds);
+    const pics = await p.$$eval('.bat-card[data-kind="controller"]', (els) => els.map((e) => e.querySelector('.bat-ic svg')?.dataset.picture));
+    check('each controller drawn by its family (our own drawings, no picture files)', JSON.stringify(pics.slice().sort()) === JSON.stringify(['half', 'pad', 'pad', 'pad', 'pad', 'retro', 'trackpads', 'trackpads'].sort()) && !(await p.$('.bat-card img')), pics);
+    const sw = await card('hid:057E:2009:c:{SW}');
+    check('a charging pad in steps: 2 of 4 with the charging mark', sw.bars === 4 && sw.on === 2 && sw.chip.includes(AR ? 'الشحن' : 'Charging') && sw.word === (AR ? '2 من 4' : '2 of 4'), sw);
+    check('2 of 4 is not low, 1 of 4 would be', !sw.cls.includes('low'));
+    const jl = await card('hid:057E:2006:c:{JL}');
+    check('«needs a query we do not send», said', jl.note === 'needsQuery' && jl.noteText === (AR ? 'لا يُخبر بمستواه إلا في وضعٍ لا تُشغِّله أدوات كروكاوا' : 'Tells its level only in a mode Kurokawa Tools does not switch on'), jl);
+    const gs = await card('hid:3537:1098:c:{GS}');
+    check('a family switched off: said with its name', gs.note === 'queryOff' && gs.noteText.includes('GameSir'), gs);
+    const slot = await card('hid:28DE:1304:c:{SC}:i:02');
+    check('a receiver with no pad: dimmed, said', slot.cls.includes('dim') && slot.note === 'noPad', slot);
+    const sn = await card('hid:2DC8:6001:c:{SN}');
+    check('a pad that gives a percentage: shown as one', /81/.test(sn.pct || '') && sn.pic === 'retro', sn);
+    check('no sideways overflow (controllers)', (await overflow(p)) <= 1);
+    await shot(p, 'pads');
+    // The card menu: the reader and its proof, quietly; the family's request only where the family sends one.
+    await p.click('.bat-card[data-key="hid:054C:0CE6:c:{DS}"] .bat-more'); await p.waitForSelector('.sheet .bat-reader');
+    const rd1 = await p.textContent('.sheet .bat-reader');
+    check('the menu names the reader and «ported, not yet tested on real hardware»', rd1 === (AR ? 'القارئ: PlayStation — منقولٌ لم يُختبَر بعدُ على جهازٍ حقيقي' : 'Reader: PlayStation — ported, not yet tested on real hardware'), rd1);
+    check('a passive family offers no request', !(await p.$('.sheet [data-act="padQuery"]')));
+    await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+    await p.click('.bat-card[data-key="hid:3537:1098:c:{GS}"] .bat-more'); await p.waitForSelector('.sheet [data-act="padQuery"]');
+    check('a family that must be asked: «Try reading: GameSir» in its menu', (await p.textContent('.sheet [data-act="padQuery"]')) === (AR ? 'جرِّب القراءة: GameSir' : 'Try reading: GameSir'));
+    await p.waitForTimeout(400); await shot(p, 'pads-menu');
+    await p.click('.sheet [data-act="padQuery"]'); await p.waitForTimeout(250);
+    const set1 = (await calls(p)).filter((c) => c[0] === 'settings').pop();
+    check('turned on from the menu: padQueries kept, then a refresh asked', set1 && JSON.stringify(set1[1].set.padQueries) === '["gamesir"]' && (await calls(p)).some((c) => c[0] === 'refresh'), set1);
+    // «Controllers»: a switch per family that sends a request, off by default.
+    const pads = await p.$$eval('.bat-pads .bat-switch', (rows) => rows.map((r) => ({ fam: r.dataset.family, on: r.querySelector('input').checked, role: r.querySelector('input').getAttribute('role'), title: r.querySelector('.bat-sw-title').textContent, hint: r.querySelector('small').textContent })));
+    check('«Controllers»: one switch per family that must be asked', JSON.stringify(pads.map((x) => x.fam)) === '["eightbitdo","gamesir","flydigi","beitong"]' && pads.every((x) => x.role === 'switch'), pads);
+    check('off by default, but GameSir now on', pads.filter((x) => x.on).map((x) => x.fam).join() === 'gamesir', pads);
+    check('each says «Try reading: {family}» and «ported, not yet tested»', pads.every((x) => x.title.startsWith(AR ? 'جرِّب القراءة: ' : 'Try reading: ') && x.hint.includes(AR ? 'لم يُختبَر بعدُ' : 'not yet tested')), pads);
+    check('the products it would ask are named', pads.find((x) => x.fam === 'flydigi').hint.includes('Vader 5 Pro'));
+    await p.click('.bat-pads [data-row="pad-flydigi"]'); await p.waitForTimeout(250);
+    const set2 = (await calls(p)).filter((c) => c[0] === 'settings').pop();
+    check('a switch kept: padQueries with both', JSON.stringify(set2[1].set.padQueries) === '["gamesir","flydigi"]', set2);
+    await p.click('.bat-pads [data-row="pad-gamesir"]'); await p.waitForTimeout(250);
+    check('and off again', JSON.stringify((await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set.padQueries) === '["flydigi"]');
+    const listen = await p.textContent('.bat-pads .bat-listen');
+    check('the families read by listening alone are named', ['PlayStation', 'Xbox', 'Nintendo', 'Steam', '8BitDo'].every((b) => listen.includes(b)) && !listen.includes('Flydigi'), listen);
+    const geo = await p.$$eval('.bat-pads .bat-switch', (rows) => rows.map((r) => { const a = r.querySelector('.bat-sw-text').getBoundingClientRect(); const b = r.querySelector('input').getBoundingClientRect(); return Math.min(Math.abs(b.left - a.right), Math.abs(a.left - b.right)); }));
+    check('the switches keep a real gap from their words', geo.every((g) => g >= 12), geo);
+    check('no yellow, amber or orange (controllers)', await p.evaluate(() => [...document.querySelectorAll('.battery-view *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor, c.fill, c.stroke].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
+    await p.$eval('.bat-pads', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); await shot(p, 'pads-switches');
     await ctx.close();
   }
 

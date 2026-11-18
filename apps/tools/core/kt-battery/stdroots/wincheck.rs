@@ -21,6 +21,8 @@ pub mod kind;
 pub mod model;
 #[path = "../src/notice.rs"]
 pub mod notice;
+#[path = "../src/pads/mod.rs"]
+pub mod pads;
 #[path = "../src/registry.rs"]
 pub mod registry;
 #[path = "../src/runner.rs"]

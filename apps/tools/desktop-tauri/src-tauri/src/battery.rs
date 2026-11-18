@@ -24,6 +24,11 @@
 // opens Windows' Bluetooth settings (ms-settings:bluetooth); onBt(cb) — the same object as btList's after each change
 // (kt:bt). Pairing is Windows' own window (no PIN of ours). With the background on, the tray gains Connect /
 // Disconnect lines for the paired devices that allow it. Elsewhere than Windows: available false.
+// Piece 4, game controllers (kt-battery pads/*.rs): a device may carry { driver, family, proven: 'tested' |
+// 'untested', way: 'passive' | 'query', picture } and a reading { level: { kind: 'steps', value, max } …, note:
+// '' | 'needsQuery' | 'queryOff' | 'noPad' }; batteryList() also gives pads: [{ family, brand, proven, ask, listen,
+// models, on }] (one row per reader family), and the setting padQueries — the families whose status request the user allows (off by
+// default; only families whose reader sends a request are kept).
 // Copyright (C) 2026 Kurokawa contributors.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -36,6 +41,7 @@ use tauri::Emitter;
 
 use kt_battery::autostart;
 use kt_battery::model::{Charging, Level, Reading};
+use kt_battery::pads::{self, Way};
 use kt_battery::notice::{self, Mark, Memo, Notice, Seen};
 use kt_battery::runner::{self, DeviceState, Msg, Prefs, Status};
 use kt_battery::summary;
@@ -55,7 +61,7 @@ static STATES: Mutex<Vec<DeviceState>> = Mutex::new(Vec::new());
 static MEMO: Mutex<BTreeMap<String, Memo>> = Mutex::new(BTreeMap::new());
 const FILE: &str = "battery.json";
 /// The settings the page may change.
-const KEYS: [&str; 11] = ["intervalMin", "low", "names", "hidden", "noQuery", "links", "background", "startup", "notifyLow", "notifyFull", "thresholds"];
+const KEYS: [&str; 12] = ["intervalMin", "low", "names", "hidden", "noQuery", "links", "background", "startup", "notifyLow", "notifyFull", "thresholds", "padQueries"];
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -65,12 +71,43 @@ fn level_json(l: Level) -> Value {
     match l {
         Level::Exact(p) => json!({ "kind": "exact", "value": p.get() }),
         Level::Coarse(c) => json!({ "kind": "coarse", "value": c.as_str(), "bars": c.bars() }),
+        Level::Steps(st) => json!({ "kind": "steps", "value": st.n(), "max": st.max() }),
         Level::Unknown => json!({ "kind": "unknown" }),
     }
 }
 
 fn reading_json(r: &Reading) -> Value {
-    json!({ "level": level_json(r.level), "charging": r.charging.as_str(), "asleep": r.asleep, "takenAt": r.taken_at })
+    json!({ "level": level_json(r.level), "charging": r.charging.as_str(), "asleep": r.asleep, "takenAt": r.taken_at, "note": r.note.as_str() })
+}
+
+fn way_str(w: Way) -> &'static str {
+    match w {
+        Way::Passive => "passive",
+        Way::Query => "query",
+    }
+}
+
+/// The controller readers, one row per family: its brand as text, the least proven of its readers, whether one of them
+/// listens and whether one sends a request (with the products it sends it to), and whether that is allowed now.
+fn pads_json(settings: &Value) -> Value {
+    let on = settings.get("padQueries").and_then(Value::as_array).cloned().unwrap_or_default();
+    let rows: Vec<Value> = pads::Family::ALL
+        .iter()
+        .map(|f| {
+            let ds: Vec<&pads::Driver> = pads::DRIVERS.iter().filter(|d| d.family == *f).collect();
+            let ask = ds.iter().any(|d| d.way == Way::Query);
+            let listen = ds.iter().any(|d| d.way == Way::Passive);
+            let tested = !ds.is_empty() && ds.iter().all(|d| d.proven == pads::Proven::Tested);
+            let mut models: Vec<&str> = Vec::new();
+            for m in pads::query_models(*f) {
+                if !models.contains(&m.name) {
+                    models.push(m.name);
+                }
+            }
+            json!({ "family": f.as_str(), "brand": f.brand(), "proven": if tested { "tested" } else { "untested" }, "ask": ask, "listen": listen, "models": models, "on": ask && on.iter().any(|x| x.as_str() == Some(f.as_str())) })
+        })
+        .collect();
+    json!(rows)
 }
 
 fn state_json(s: &DeviceState) -> Value {
@@ -79,7 +116,9 @@ fn state_json(s: &DeviceState) -> Value {
         "key": d.key, "name": d.name, "kind": d.kind.as_str(), "brand": d.brand, "connection": d.connection.as_str(),
         "source": d.source.as_str(), "vid": d.vid, "pid": d.pid, "merged": d.merged,
         "status": s.status.as_str(), "reading": s.reading.as_ref().map(reading_json), "lastGood": s.last_good.as_ref().map(reading_json),
-        "checkedAt": s.checked_at,
+        "checkedAt": s.checked_at, "picture": d.picture,
+        "driver": d.driver, "family": pads::driver(d.driver).map(|x| x.family.as_str()).unwrap_or(""),
+        "proven": pads::driver(d.driver).map(|x| x.proven.as_str()).unwrap_or(""), "way": pads::driver(d.driver).map(|x| way_str(x.way)).unwrap_or(""),
     })
 }
 
@@ -138,6 +177,14 @@ fn clean(v: &Value) -> Value {
             }
         }
     }
+    // (Only families whose reader sends a request can be switched; each once.)
+    let mut pad_queries: Vec<Value> = Vec::new();
+    let allowed: Vec<&str> = pads::query_families().iter().map(|f| f.as_str()).collect();
+    for f in o.and_then(|o| o.get("padQueries")).and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or(&[]).iter().take(20).filter_map(Value::as_str) {
+        if allowed.contains(&f) && !pad_queries.iter().any(|x| x.as_str() == Some(f)) {
+            pad_queries.push(json!(f));
+        }
+    }
     json!({
         "intervalMin": num("intervalMin", 1, 60, 1),
         "low": notice::snap(o.and_then(|o| o.get("low")).and_then(Value::as_u64)),
@@ -150,6 +197,7 @@ fn clean(v: &Value) -> Value {
         "notifyLow": flag("notifyLow", true),
         "notifyFull": flag("notifyFull", false),
         "thresholds": thresholds,
+        "padQueries": pad_queries,
     })
 }
 
@@ -183,7 +231,7 @@ fn save(app: &AppHandle, v: &Value) -> Result<(), String> {
 fn prefs_of(v: &Value) -> Prefs {
     let keys = |k: &str| -> Vec<String> { v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
     let links: Vec<(String, String)> = v.get("links").and_then(Value::as_array).map(|a| a.iter().filter_map(|l| Some((l.get(0)?.as_str()?.to_string(), l.get(1)?.as_str()?.to_string()))).collect()).unwrap_or_default();
-    Prefs { interval_ms: v.get("intervalMin").and_then(Value::as_u64).unwrap_or(1) * 60_000, deadline_ms: 0, no_query: keys("noQuery"), links }
+    Prefs { interval_ms: v.get("intervalMin").and_then(Value::as_u64).unwrap_or(1) * 60_000, deadline_ms: 0, no_query: keys("noQuery"), links, pad_queries: keys("padQueries") }
 }
 
 fn flag(v: &Value, k: &str) -> bool {
@@ -279,6 +327,7 @@ fn level_word(l: Level) -> String {
             };
             word(&format!("batCoarse_{}", c.as_str()), en)
         }
+        Level::Steps(st) => word("batSteps", "{n} of {max}").replace("{n}", &digits(st.n())).replace("{max}", &digits(st.max())),
         Level::Unknown => word("batLevelUnknown", "Level unknown"),
     }
 }
@@ -363,7 +412,7 @@ fn tray_push(app: &AppHandle, s: &Value) {
         .collect();
     let tip = ordered
         .iter()
-        .find(|d| matches!(current(*d), Some(Level::Exact(_)) | Some(Level::Coarse(_))))
+        .find(|d| matches!(current(*d), Some(Level::Exact(_)) | Some(Level::Coarse(_)) | Some(Level::Steps(_))))
         .map(|d| word("batTrayLowest", "Lowest: {name}, {level}").replace("{name}", &name_of(s, d)).replace("{level}", &level_word(d.reading.map(|r| r.level).unwrap_or(Level::Unknown))))
         .unwrap_or_default();
     let bt = bt_tray_lines();
@@ -524,9 +573,9 @@ pub async fn kt_battery_list(app: AppHandle) -> Result<Value, String> {
         match live(&app) {
             Some((_, last)) => {
                 let devices = last.lock().map(|g| g.clone()).unwrap_or_default();
-                json!({ "available": true, "now": now_ms(), "devices": devices, "settings": settings, "system": system_json() })
+                json!({ "available": true, "now": now_ms(), "devices": devices, "pads": pads_json(&settings), "settings": settings, "system": system_json() })
             }
-            None => json!({ "available": false, "reason": "platform", "now": now_ms(), "devices": [], "settings": settings, "system": system_json() }),
+            None => json!({ "available": false, "reason": "platform", "now": now_ms(), "devices": [], "pads": pads_json(&settings), "settings": settings, "system": system_json() }),
         }
     })
     .await
