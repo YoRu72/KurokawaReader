@@ -263,6 +263,17 @@ html.pc .fab-item { flex-direction: row-reverse; }
 .watch-choice:hover, .watch-choice:focus-visible { background: var(--md-secondary-container); }
 .watch-choice b { display: block; font-size: 15px; } .watch-choice small { display: block; color: var(--md-on-surface-variant); font-size: 12.5px; margin-top: 2px; }
 .watch-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--md-primary-container); color: var(--md-on-primary-container); flex: none; }
+.ext-inapp .watch-ic { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.ext-error-msg { margin: 4px 0 6px; line-height: 1.5; }
+.ext-error-why { margin: 0 0 12px; font-size: 12px; opacity: .8; overflow-wrap: anywhere; }
+.ext-error-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 8px 0 4px; }
+.ext-error-actions .btn { justify-content: center; width: 100%; }
+.ext-mark p { margin: 4px 0 14px; line-height: 1.5; }
+.ext-settings { display: grid; gap: 10px; margin: 6px 0 4px; }
+.ext-settings .ext-title { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
+.ext-settings > .hint { margin: 0; }
+.ext-settings .ext-custom { min-width: 0; width: min(100%, 320px); }
+.ext-none { margin: 0 0 10px; }
 .watch-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Packs: a component being fetched */

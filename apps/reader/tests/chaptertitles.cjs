@@ -264,7 +264,10 @@ async function session(dist, fn) {
       // The furigana pass (on by default for Japanese text) needs the analyser from a CDN: a stand-in for it is served here, giving each
       // kanji a reading, so the titles are met with <ruby> in them as on a phone (第だい一いち話わ …).
       await p.route('**/kuromoji.js', (r) => r.fulfill({ contentType: 'text/javascript', body: `window.kuromoji = { builder: () => ({ build: (cb) => cb(null, { tokenize: (t) => [...t].map((c) => ({ surface_form: c, word_type: 'KNOWN', reading: /[㐀-鿿]/.test(c) ? 'ア' : undefined })) }) }) };` }));
+      // (The dictionary is downloaded by the reader's choice — the notice's Download button — not by itself: its files are made-up ones here.)
+      await p.route('**/kuromoji@0.1.2/dict/*.dat.gz', (r) => r.fulfill({ contentType: 'application/gzip', headers: { 'access-control-allow-origin': '*' }, body: Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0]) }));
       await openReader(p, bj.id);
+      await p.waitForSelector('.kr-notice [data-act=download]', { timeout: 15000 }).then(() => p.click('.kr-notice [data-act=download]')).catch(() => {});
       await p.waitForFunction(() => document.querySelector('.reader-flow .kr-content ruby'), null, { timeout: 20000 }).catch(() => {});
       await p.waitForFunction(() => [...document.querySelectorAll('.reader-flow .kr-content p')].some((x) => x.textContent.includes('第')), null, { timeout: 15000 }).catch(() => {});
       const j1 = await block(p, '第一話');

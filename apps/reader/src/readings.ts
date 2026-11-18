@@ -1,20 +1,32 @@
 // Readings for CJK text: furigana for Japanese (kuromoji, see furigana.ts) and
-// pinyin for Chinese (pinyin-pro, fetched once from a CDN and kept by the service
-// worker). Used by the selection toolbar ("Reading") and the auto-reading option.
+// pinyin for Chinese (pinyin-pro; both downloaded once and kept on the device, src/readingdict.ts).
+// Used by the selection toolbar ("Reading") and the auto-reading option.
 import { ensureTokenizer, annotate, isJapanese } from './furigana';
+import { requireDict, dictScriptUrl, onDictForget, missingDict, loadFailed, withTimeout, PINYIN_CDN_JS } from './readingdict';
 
-const PINYIN_JS = 'https://cdn.jsdelivr.net/npm/pinyin-pro@3.26.0/dist/index.js';
 interface PinyinPro { pinyin(text: string, o: { type: 'array'; toneType?: 'symbol' | 'num' | 'none'; nonZh?: 'consecutive' | 'removed' | 'spaced' }): string[] }
 
 let pinyinPromise: Promise<PinyinPro> | null = null;
+onDictForget('zh', () => { pinyinPromise = null; });
+/** The pinyin script, from the copy on the device (the CDN once, online, if that copy will not run). Rejects with
+ *  'dict-missing' while it is not downloaded, 'dict-load' when it is there but will not load. */
 export function ensurePinyin(): Promise<PinyinPro> {
-  pinyinPromise ??= new Promise<PinyinPro>((res, rej) => {
-    const w = window as unknown as { pinyinPro?: PinyinPro };
-    if (w.pinyinPro) { res(w.pinyinPro); return; }
-    const sc = document.createElement('script'); sc.src = PINYIN_JS;
-    sc.onload = () => (w.pinyinPro ? res(w.pinyinPro) : rej(new Error('pinyin-pro')));
-    sc.onerror = () => rej(new Error('pinyin-pro script')); document.head.appendChild(sc);
+  const w = window as unknown as { pinyinPro?: PinyinPro };
+  const run = (src: string, revoke: boolean) => new Promise<PinyinPro>((res, rej) => {
+    const sc = document.createElement('script'); sc.src = src;
+    sc.onload = () => { if (revoke) URL.revokeObjectURL(src); if (w.pinyinPro) res(w.pinyinPro); else rej(new Error('pinyin-pro')); };
+    sc.onerror = () => { if (revoke) URL.revokeObjectURL(src); sc.remove(); rej(new Error('pinyin-pro script')); };
+    document.head.appendChild(sc);
   });
+  pinyinPromise ??= (async () => {
+    await requireDict('zh');
+    if (w.pinyinPro) return w.pinyinPro;
+    try { return await withTimeout(run(await dictScriptUrl('zh'), true), 'stored pinyin'); }
+    catch (e) { if (missingDict(e)) throw e; }
+    if (navigator.onLine === false) throw loadFailed('zh', new Error('offline'));
+    try { return await withTimeout(run(PINYIN_CDN_JS, false), 'pinyin from the CDN'); }
+    catch (e) { throw loadFailed('zh', e); }
+  })();
   pinyinPromise.catch(() => { pinyinPromise = null; });
   return pinyinPromise;
 }

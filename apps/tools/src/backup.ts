@@ -2,6 +2,7 @@
 // search histories, notes — what lives in the app's own storage under «kt.» —, not the downloads themselves (the
 // list has its own export) nor caches. Restored, the app reloads to take them up.
 import { saveText } from './native';
+import { safeStored } from './settingsSafe';
 
 const SKIP = /^kt\.(cache|tmp|anilist\.token|debrid\.key)|token|secret|password/i;
 export function backupText(): string {
@@ -22,7 +23,7 @@ export function parseBackup(text: string): Record<string, string> {
 /** What a restore would do: the keys it writes, and how many of them differ from what is here now. */
 export function restorePlan(data: Record<string, string>, kr = false): { keys: string[]; differ: number } {
   const keys = Object.keys(data).filter((k) => backupKey(k, kr) && typeof data[k] === 'string');
-  return { keys, differ: keys.filter((k) => localStorage.getItem(k) !== data[k]).length };
+  return { keys, differ: keys.filter((k) => localStorage.getItem(k) !== safeStored(k, data[k])).length };
 }
 /** A restore that can be taken back: what each key held before (or that it was not there) kept first, until the
  *  «Undo restore» after the reload is dismissed; then the backup's keys written. How many were. */
@@ -31,7 +32,8 @@ export function applyRestore(data: Record<string, string>, kr = false): number {
   const { keys } = restorePlan(data, kr); const prev: Record<string, string | null> = {};
   for (const k of keys) prev[k] = localStorage.getItem(k);
   localStorage.setItem(UNDO, JSON.stringify({ at: Date.now(), n: keys.length, prev }));
-  let n = 0; for (const k of keys) { try { localStorage.setItem(k, data[k]); n++; } catch { /* full */ } }
+  // (Never a program to run nor its arguments: settingsSafe.ts.)
+  let n = 0; for (const k of keys) { try { localStorage.setItem(k, safeStored(k, data[k])); n++; } catch { /* full */ } }
   return n;
 }
 /** Asked first — how many settings the backup writes, how many of them differ from these — then restored (null: not). */

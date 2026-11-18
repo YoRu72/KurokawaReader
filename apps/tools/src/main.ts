@@ -281,6 +281,8 @@ else {
   }
   // Links handed to the app (a magnet opened with it, a .torrent shared): straight into the add sheet.
   // (A video or a sound opened with «Kurokawa Player» from another app: straight into the player, where it asked.)
+  // (A phone app's answer that came after Android let this app go: Capacitor hands it back on the next start.)
+  try { (window.Capacitor as unknown as { Plugins?: { App?: { addListener?(ev: string, fn: (r: { pluginId?: string; methodName?: string; data?: unknown }) => void): unknown } } } | undefined)?.Plugins?.App?.addListener?.('appRestoredResult', (r) => { if (r?.pluginId === 'KurokawaTools' && r.methodName === 'openPlayerApp') void import('./player/external/run').then((m) => m.restoredResult(r.data as never)); }); } catch { /* no App plugin */ }
   window.addEventListener('kt:play', (e) => { const d = (e as CustomEvent<{ url: string; name: string; path?: string; position?: number; headers?: Record<string, string>; subs?: string[] }>).detail; if (!d?.url) return; void import('./views/player').then((m) => m.openPlayer(d.url, d.name || 'video', { localPath: d.path, startAt: d.position, headers: d.headers, forCaller: true, subtitles: (d.subs ?? []).map((u, i) => ({ url: u, name: u.split('/').pop()?.split('?')[0] || `subtitle ${i + 1}`, isDefault: i === 0 })) })); });
   window.addEventListener('kt:open', (e) => { const u = (e as CustomEvent<string>).detail; if (u) navigate(`/add?u=${encodeURIComponent(u)}`); });
   // (The app started again while a video was open in its player: back to that page, its history — player/returnTo.ts.)

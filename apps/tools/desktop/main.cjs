@@ -117,6 +117,8 @@ function createWindow() {
   // (The screen translator kept in the tray: closing the window hides it; Quit is in the tray's menu.)
   win.on('close', (e) => { saveState(); if (!quitting && ScreenTr.keepInTray()) { e.preventDefault(); win.hide(); } });
   win.on('closed', () => { win = null; closeMini(); });
+  // (The page reloaded: what it knew of programs it started is gone, so the records go too; the players keep playing.)
+  win.webContents.on('did-start-navigation', (_e, _u, inPlace, mainFrame) => { if (!mainFrame || inPlace) return; try { require('./extplayer.cjs').release(); } catch { /* */ } });
   // (The mini window when the main one is put away, if chosen.)
   win.on('minimize', () => { if (loadState().miniOnMinimize) openMini(); });
   win.on('restore', () => { if (loadState().miniOnMinimize) closeMini(); });
@@ -173,7 +175,7 @@ else {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin' && !ScreenTr.keepInTray()) app.quit(); });
-  app.on('before-quit', () => { quitting = true; if (RUST_SWITCH) owner?.release(); void WebStream.stopAll(); ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); });
+  app.on('before-quit', () => { quitting = true; if (RUST_SWITCH) owner?.release(); void WebStream.stopAll(); ScreenTr.stopAll(); engine?.stop(); videos?.stop(); StreamProxy.stop(); try { require('./extplayer.cjs').release(); } catch { /* */ } });
 }
 
 /* ---------- the engine, to the page ---------- */
@@ -363,6 +365,20 @@ ipcMain.handle('kt:streamStats', async (_e, o) => { const h = handed.get(String(
 ipcMain.handle('kt:audioUrl', async () => ({ url: await StreamProxy.audioBase() }));
 ipcMain.handle('kt:videoUrl', async () => ({ url: await StreamProxy.videoBase() }));
 ipcMain.handle('kt:proxyUrl', (_e, o) => StreamProxy.url(String(o.url), o.headers || {}));
+// Another program as the player (extplayer.cjs) and the relay it reads a source with headers through (relay.cjs).
+ipcMain.handle('kt:relayOpen', (_e, o) => StreamProxy.relayOpen(o || {}));
+ipcMain.handle('kt:relayClose', (_e, o) => StreamProxy.relayClose(o || {}));
+ipcMain.handle('kt:relayStatus', (_e, o) => StreamProxy.relayStatus(o || {}));
+const ExtPlayer = () => { const m = require('./extplayer.cjs'); m.init(path.join(app.getPath('userData'), 'ext-player.json')); return m; };
+ipcMain.handle('kt:extPlayers', () => ExtPlayer().find());
+// (The program is picked in this process's own dialog and kept here; the page only ever names «chosen».)
+ipcMain.handle('kt:extPlayerChoose', async (_e, o) => { const r = await dialog.showOpenDialog(win, { title: String(o && o.title || ''), properties: ['openFile'] }); if (r.canceled || !r.filePaths[0]) return null; return ExtPlayer().setChosen(r.filePaths[0]); });
+ipcMain.handle('kt:extPlayerArgs', (_e, o) => ExtPlayer().setArgs(o || {}));
+ipcMain.handle('kt:extPlayerForget', () => ExtPlayer().forget());
+ipcMain.handle('kt:extPlayerDropSub', (_e, o) => ExtPlayer().dropSub(o || {}));
+ipcMain.handle('kt:extPlayerStart', (_e, o) => ExtPlayer().start(o || {}));
+ipcMain.handle('kt:extPlayerStatus', (_e, o) => ExtPlayer().status(o || {}));
+ipcMain.handle('kt:extPlayerStop', (_e, o) => ExtPlayer().stop(o || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 ipcMain.handle('kt:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : AppIcon.current()));
 // DNS over HTTPS (0.21 P9: desktop/dohchain.cjs — kt-core's dohchain rules in JavaScript): Chromium's own resolver

@@ -31,6 +31,9 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "relay.cjs",
+      "extplayer.cjs",
+      "extcmd.cjs",
       "aria2.cjs",
       "dohchain.cjs",
       "paths.cjs",

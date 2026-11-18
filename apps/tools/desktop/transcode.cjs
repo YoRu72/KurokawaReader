@@ -43,22 +43,22 @@ function args(src, ss, a, enc) {
 }
 /** The handler for /video?src=&ss=&a=&c= — the answer's head is sent with ffmpeg's first bytes, so an encoder that
  *  fails at once is replaced by x264 within the same request. */
-async function serve(q, req, out) {
+async function serve(q, req, out, cors = {}) {
   const src = q.searchParams.get('src') || ''; const ss = Math.max(0, Number(q.searchParams.get('ss')) || 0); const a = Math.max(0, Math.floor(Number(q.searchParams.get('a')) || 0));
   const vp9 = q.searchParams.get('c') === 'vp9'; const type = vp9 ? 'video/webm' : 'video/mp4';
-  if (req.method === 'HEAD' || !src) { out.writeHead(src ? 200 : 400, { 'content-type': type, 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); out.end(); return; }
+  if (req.method === 'HEAD' || !src) { out.writeHead(src ? 200 : 400, { 'content-type': type, ...cors, 'cache-control': 'no-store' }); out.end(); return; }
   let enc = vp9 ? 'libvpx-vp9' : await encoder(); let gone = false; let p = null;
   req.on('close', () => { gone = true; try { p?.kill('SIGKILL'); } catch { /* gone */ } });
   for (let attempt = 0; attempt < 2 && !gone; attempt++) {
     const sent = await new Promise((done) => {
       p = spawn(Ffmpeg.binary(), args(src, ss, a, enc), { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); let err = ''; let any = false;
       p.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-      p.stdout.on('data', (d) => { if (!any) { any = true; out.writeHead(200, { 'content-type': type, 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-kt-encoder': enc }); } if (!out.write(d)) { p.stdout.pause(); out.once('drain', () => p.stdout.resume()); } });
+      p.stdout.on('data', (d) => { if (!any) { any = true; out.writeHead(200, { 'content-type': type, ...cors, 'cache-control': 'no-store', 'x-kt-encoder': enc }); } if (!out.write(d)) { p.stdout.pause(); out.once('drain', () => p.stdout.resume()); } });
       p.on('error', (e) => { err = e.code === 'ENOENT' ? 'pack:ffmpeg' : String(e.message); });
       p.on('close', (code) => { if (any) { out.end(); done(true); return; } if (code && err) console.warn(`transcode (${enc}):`, err.trim().split('\n').pop()); done(err || `ffmpeg ${code}`); });
     });
     if (sent === true) return;
-    if (enc === 'libx264' || enc === 'libvpx-vp9' || /pack:ffmpeg/.test(sent)) { if (!gone) { out.writeHead(502, { 'access-control-allow-origin': '*' }); out.end(String(sent)); } return; }
+    if (enc === 'libx264' || enc === 'libvpx-vp9' || /pack:ffmpeg/.test(sent)) { if (!gone) { out.writeHead(502, { ...cors }); out.end(String(sent)); } return; }
     chosen = Promise.resolve('libx264'); enc = 'libx264'; // (the card's encoder refused this file: x264 from now on)
   }
 }

@@ -275,6 +275,11 @@ fn remux(s: &mut TcpStream, url: &str, headers: &[(String, String)], head_only: 
 /// the headers a player needs passed back, the body as it comes.
 pub fn proxy(s: &mut TcpStream, query: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
     let u = sl::query_get(query, "u").unwrap_or_default();
+    // (http(s) only: never a file or another scheme read on behalf of whoever has the address.)
+    if !crate::relaylogic::is_http(&u) {
+        simple(s, 403, "");
+        return;
+    }
     let headers = page_headers(query);
     if sl::is_playlist("", &u) {
         remux(s, &u, &headers, head_only, stop);
