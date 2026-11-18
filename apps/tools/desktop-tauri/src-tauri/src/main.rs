@@ -9,6 +9,8 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
+// (Tools 0.21 P11: the safe-extraction engine's commands over kt-core's extractjob.rs.)
+mod extractcmds;
 mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
@@ -205,6 +207,9 @@ fn main() {
             archives::kt_archive_restore,
             archives::kt_archive_existing,
             archives::kt_archive_cancel,
+            extractcmds::kt_archive_preflight,
+            extractcmds::kt_archive_shelf,
+            extractcmds::kt_archive_job,
             archives::kt_archive_create,
             archives::kt_selftest_7z,
             archives::kt_selftest_write,

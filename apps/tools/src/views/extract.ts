@@ -16,10 +16,12 @@ import { extractArchiveJob, cancelArchive, createZip, pickFiles, parentOf, baseN
 export const keepFreeNow = (): number => { const k = getSettings().archiveKeepFree; return k >= 0 ? k : nativePlatform() === 'desktop' ? 2 * 1024 ** 3 : 512 * 1024 ** 2; };
 const errText = (m: string): string => {
   if (m === 'noSpace') return t('errNoSpace'); if (m === 'notArchive') return t('notAnArchive'); if (m === 'busy' || m === 'journalExists') return t('errBusy');
+  if (m === 'nothingToRestore') return t('errNothingToRestore'); if (/^refused oldJob\b/.test(m)) return `${t('pf_oldJob')}. ${t('fixOldJob')}`; if (/^refused staleJob\b/.test(m)) return `${t('pf_staleJob')}. ${t('fixStaleJob')}`;
   const [k, ...rest] = m.split(' '); const what = rest.join(' ').replace(/ — nothing was modified$/, '');
   if (k === 'refused') { const [kind, ...nm] = what.split(' '); return t('errRefused', { what: `${pfTitle(kind)}${nm.length ? ` — ${nm.join(' ')}` : ''}` }); }
   if (k === 'unsupportedMethod') return t('errRefused', { what: `${t('pf_method')} — ${rest.slice(1).join(' ').replace(/ — nothing was modified$/, '')}` });
   if (k === 'encryptedInPlace') return t('errRefused', { what: t('pf_encryptedInPlace') });
+  if (k === 'throughLink') return t('errThroughLink', { name: what }); if (k === 'syncFailed') return t('errSyncFailed'); if (k === 'readBack') return t('errReadBack', { name: what });
   return k === 'unsafePath' ? t('archiveUnsafe', { name: what }) : k === 'duplicateEntry' ? t('archiveDuplicate', { name: what }) : k === 'damaged' ? t('archiveDamaged', { names: what }) : k === 'sfvMismatch' ? t('archiveSfvBad', { names: what }) : k === 'crcMismatch' ? t('archiveDamaged', { names: what }) : k === 'overlapping' ? t('archiveOverlap', { name: what }) : k === 'hardLinked' ? t('archiveHardLinked') : k === 'specialEntry' ? t('archiveSpecial', { name: what }) : k === 'sizeExceeded' ? t('archiveTooBig', { name: what }) : k === 'memoryLimit' ? t('archiveMemory') : /^(journal|tail|archive)(Corrupt|Future|V1|Changed|Gone|Missing)$/.test(k) ? shelfWhy(k) : m;
 };
 type PfKey = Parameters<typeof t>[0];
@@ -80,7 +82,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   const load = async () => { try { const r = await listArchiveAuto(path, password || undefined); info = r.info; password = r.password ?? ''; if (password) savePassword(password); draw(); } catch (e) { const m = String((e as Error).message ?? e); if (/password/i.test(m)) { drawPassword(m); return; } sh.body.replaceChildren(h('p', { class: 'empty small' }, errText(m))); } };
   const drawPassword = (why: string) => { const pw = h('input', { type: 'password', dir: 'ltr', autocomplete: 'off' }) as HTMLInputElement; sh.body.replaceChildren(h('p', { class: 'hint' }, /wrong/i.test(why) ? t('wrongPassword') : t('passwordNeeded')), h('label', { class: 'field' }, h('span', null, t('password')), pw), h('label', { class: 'row switch-row' }, h('span', null, t('archiveRememberPw')), h('input', { type: 'checkbox', checked: rememberPasswords(), onchange: (e: Event) => setRememberPasswords((e.target as HTMLInputElement).checked) }))); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { password = pw.value; void load(); } }, t('open'))); };
   let destMode: 'here' | 'folder' | 'other' = opts.dest ? 'other' : 'here'; let other = opts.dest ? `${opts.dest.replace(/\/+$/, '')}/${stem(baseName(path))}` : ''; let inPlace = false; let deleteAfter = false; let verifyFirst = getSettings().archiveVerifyFirst !== false;
-  let report: Report | null = null; let existing: string[] = []; let answers: Answers | undefined; let skip: string[] | undefined;
+  let report: Report | null = null; let existing: string[] = []; let answers: Answers | undefined; let skip: string[] | undefined; let finishBeside = false;
   const destOf = () => (destMode === 'here' ? (topLevel(info.entries) === 'one' ? parentOf(path) : `${parentOf(path)}/${stem(baseName(path))}`) : destMode === 'folder' ? `${parentOf(path)}/${stem(baseName(path))}` : other);
   const draw = () => {
     const files = info.entries.filter((e) => !e.dir);
@@ -123,6 +125,9 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
       const [free, ex] = await Promise.all([dest ? freeSpaceAt(dest) : Promise.resolve(info.free ?? -1), dest ? existingIn(dest, names.slice(0, 5000)) : Promise.resolve([])]); existing = ex;
       report = await preflightFor(info, path, dest, { password: password || undefined, free, keepFree: keepFreeNow(), existing: ex });
       pfBox.replaceChildren(reportEl(report));
+      // (Round six: a stopped job beside this archive that cannot be used for it — said with its reason, and Forget offered here as on the shelf.)
+      const stale = (report as { staleJob?: { journal: string; why: string } }).staleJob;
+      if (stale) { const sx = await import('./extractShelf'); pfBox.append(h('div', { class: 'pf-stale' }, h('p', { class: 'hint' }, t('besideStale'), ' ', sx.why(stale.why)), h('button', { type: 'button', class: 'btn tonal', onclick: () => void sx.forgetJob({ journal: stale.journal, archive: path, dest: '' }, () => void check(), true) }, t('shelfForget')))); }
       if (!info.resumable && report.recommend === 'inPlace' && !deleteAfter) { inPlace = true; inPlaceIn.checked = true; }
       existRow.hidden = !ex.length; conflicts.textContent = ex.length ? t('existingAsk', { n: countFiles(ex.length) }) : '';
       sync();
@@ -151,6 +156,12 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
     try { const left = await restoreArchive(path); toast(left === -2 ? t('restoredWhole') : left >= 0 ? t('archiveRestored', { n: countFiles(left) }) : t('archiveRestoredTar')); void load(); }
     catch (e) { failed(String((e as Error).message ?? e)); }
   };
+  /** An unfinished job beside the archive that this app did not start: where its files go, then Finish, Restore the archive or Leave it. */
+  const besideChoice = (dest: string) => {
+    sh.body.replaceChildren(h('div', { class: 'pf-report' }, h('div', { class: 'pf-head' }, icon('info'), h('span', null, t('besideAsk'))), h('p', { class: 'src', dir: 'ltr' }, dest)));
+    sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('shelfLeave')), h('button', { type: 'button', class: 'btn tonal', onclick: () => void giveUp() }, t('shelfRestore')),
+      h('button', { type: 'button', class: 'btn primary', onclick: () => { finishBeside = true; void start(); } }, t('shelfFinish')));
+  };
   /** A damaged file found before anything changed: extract the rest normally, or stop. */
   const damagedChoice = (names: string[]) => {
     sh.body.replaceChildren(h('div', { class: 'pf-report' }, h('div', { class: 'pf-head' }, icon('info'), h('span', null, t('pf_damaged'))), ...names.slice(0, 5).map((n) => h('div', { class: 'pf-name', dir: 'auto' }, n)), h('p', { class: 'pf-fix' }, t('fixDamaged'))));
@@ -159,7 +170,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   const start = async () => {
     const dest = destOf(); if (!dest) { toast(t('chooseFolder'), 'error'); return; }
     if (existing.length && !answers && !info.resumable) { const a = await askConflicts(existing); if (!a) return; answers = a; }
-    const job = extractArchiveJob({ path, dest, inPlace, deleteAfter, replace: answers?.default ?? 'both', answers, skip, password: password || undefined, verifyFirst: inPlace && verifyFirst, keepFree: keepFreeNow() }, progressUi(t('extracting')));
+    const job = extractArchiveJob({ path, dest, inPlace, deleteAfter, replace: answers?.default ?? 'both', answers, skip, password: password || undefined, verifyFirst: inPlace && verifyFirst, keepFree: keepFreeNow(), ...(finishBeside ? { finishBeside } : {}) }, progressUi(t('extracting')));
     sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => void cancelArchive(job.id) }, t('cancel')));
     try {
       const r = await job.done; opts.onDone?.(r.dest);
@@ -173,6 +184,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
       if (m === 'stopped') { toast(t(inPlace ? 'extractPausedInPlace' : 'cancelled')); sh.close(); return; }
       if (/password/i.test(m)) { drawPassword(m); return; }
       if (m === 'conflictsUnanswered') { answers = undefined; void load(); return; }
+      { const ab = /(?:^|: )askBeside (.+)$/s.exec(m); if (ab) { besideChoice(ab[1]); return; } }
       if (/^refused damaged /.test(m) || /^damaged /.test(m)) { damagedChoice(m.replace(/^refused damaged |^damaged /, '').split(', ')); return; }
       failed(m);
     }
@@ -185,7 +197,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
       ...(r.appeared?.length ? [h('p', { class: 'hint' }, t('appearedKept', { n: countFiles(r.appeared.length) }))] : []),
       ...(r.job ? [h('p', { class: 'hint undo-hint' }, t(inPlace ? 'doneUndoHintInPlace' : 'doneUndoHint'))] : []));
     const finish = () => { if (r.job && !undone) void shelfAct(r.job, 'dismiss').catch(() => {}); };
-    sh.actions.replaceChildren(...(r.job ? [h('button', { type: 'button', class: 'btn tonal', onclick: async () => { undone = true; try { await shelfAct(r.job!, 'undo'); toast(t('undone')); } catch (e) { toast(errText(String((e as Error).message ?? e)), 'error'); } sh.close(); } }, icon('undo'), t('doneUndo'))] : []),
+    sh.actions.replaceChildren(...(r.job ? [h('button', { type: 'button', class: 'btn tonal', onclick: async () => { undone = true; try { const u = await shelfAct(r.job!, 'undo'); const { undoSummary } = await import('./extractShelf'); const partial = !!(u as { keptOut?: string[] } | undefined)?.keptOut?.length; toast(undoSummary(u), partial ? 'error' : undefined, partial ? 8000 : undefined); } catch (e) { toast(errText(String((e as Error).message ?? e)), 'error'); } sh.close(); } }, icon('undo'), t('doneUndo'))] : []),
       h('button', { type: 'button', class: 'btn tonal', onclick: () => { finish(); sh.close(); } }, t('done')), ...(canOpenFolder() ? [h('button', { type: 'button', class: 'btn primary', onclick: () => { finish(); sh.close(); void openFolder(r.dest); } }, icon('folder'), t('openFolder'))] : []));
   };
   await load();
@@ -204,7 +216,7 @@ export async function createZipSheet(): Promise<void> {
     const out = `${dir.replace(/[\\/]$/, '')}/${name.value.trim() || 'archive.zip'}`;
     const bar = h('div', { class: 'task-bar big' }, h('i', { style: { width: '0%' } })); const line = h('p', { class: 'src', dir: 'ltr' });
     sh.body.replaceChildren(h('div', { class: 'extract-progress' }, h('span', null, t('zipping')), bar, line)); sh.actions.replaceChildren();
-    try { const r = await createZip(out, files, (p) => { (bar.firstChild as HTMLElement).style.width = `${p.total ? Math.round((p.done / p.total) * 100) : 0}%`; line.textContent = p.file; }); toast(t('zipped', { name: baseName(r.path), size: formatBytes(r.size) })); sh.close(); }
+    try { const r = await createZip(out, files, (p) => { (bar.firstChild as HTMLElement).style.width = `${p.total ? Math.round((p.done / p.total) * 100) : 0}%`; line.textContent = p.file; }); if (!r.cancelled) toast(t('zipped', { name: baseName(r.path), size: formatBytes(r.size) })); sh.close(); }
     catch (e) { sh.body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))); }
   } }, icon('archive'), t('createZip')));
 }

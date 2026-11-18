@@ -7,11 +7,11 @@ import { t, localDigits } from './i18n';
 
 export interface ArchiveEntry { path: string; size: number; compressed?: number; dir: boolean; /** When the archive keeps it (epoch ms). */ mtime?: number }
 export interface ArchiveInfo { format: string; entries: ArchiveEntry[]; total: number; encrypted: boolean; inPlaceOk: boolean; resumable?: boolean; largest?: number; free?: number; unsafe?: string; duplicate?: string; sfv?: string; /** How many volumes a split archive has. */ volumes?: number }
-export interface ExtractOptions { path: string; /** A folder, or «cache:» for a look at one file (the app's own cache). */ dest?: string; /** Only these entries (and what is under these folders). */ only?: string[]; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; /** What to do with files already there (one item, its kind, the rest): asked before anything changes. */ answers?: import('./archives/safety').Answers; /** Damaged entries left out of a normal extraction. */ skip?: string[]; password?: string; verifyFirst?: boolean; keepFree?: number }
+export interface ExtractOptions { path: string; /** A folder, or «cache:» for a look at one file (the app's own cache). */ dest?: string; /** Only these entries (and what is under these folders). */ only?: string[]; inPlace?: boolean; deleteAfter?: boolean; replace?: 'replace' | 'skip' | 'both'; /** What to do with files already there (one item, its kind, the rest): asked before anything changes. */ answers?: import('./archives/safety').Answers; /** Damaged entries left out of a normal extraction. */ skip?: string[]; password?: string; verifyFirst?: boolean; keepFree?: number; /** An unfinished job beside the archive that this app did not start: finished only once the user chose Finish on the sheet that showed where its files go. */ finishBeside?: boolean }
 export type ExtractResult = { files: number; dest: string; /** The job's journal (Undo while it is offered). */ job?: string; appeared?: string[]; damaged?: string[] };
 export type ArchiveProgress = { id: string; done: number; total: number; file: string };
 
-type Bridge = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[]; format?: string; level?: number; password?: string; replace?: boolean }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
+type Bridge = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(id: string): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[]; format?: string; level?: number; password?: string; replace?: boolean; clash?: string }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<string[] | null>; pathInfo(p: string): Promise<{ exists: boolean; dir?: boolean; size?: number; name?: string; parent?: string }>; onArchiveProgress(cb: (p: ArchiveProgress) => void): () => void };
 type Plugin = { archiveList(o: { path: string; password?: string; charset?: string }): Promise<ArchiveInfo>; archiveExtract(o: ExtractOptions & { id: string }): Promise<ExtractResult>; archiveCancel(o: { id: string }): Promise<void>; archiveCreate(o: { id: string; out: string; inputs: string[] }): Promise<{ files: number; path: string; size: number }>; pickFile(o?: { multiple?: boolean }): Promise<{ paths: string[] }>; addListener(ev: 'archiveProgress', fn: (p: ArchiveProgress) => void): Promise<{ remove(): void }> };
 const desk = () => (window.kurokawaTools as unknown as Bridge | undefined)?.archiveList ? (window.kurokawaTools as unknown as Bridge) : null;
 const plug = () => { const p = ktPlugin() as unknown as Plugin | null; return p?.archiveList ? p : null; };
@@ -82,16 +82,19 @@ export async function entryThumb(path: string, entry: string, px: number, passwo
   if (!p?.archiveThumb) return null; try { return (await p.archiveThumb({ path: firstVolume(path), entry, px, password })).url; } catch { return null; }
 }
 export async function cancelArchive(id: string): Promise<void> { const d = desk(); if (d) return d.archiveCancel(id); await plug()?.archiveCancel({ id }); }
-export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string; /** Volumes of this many MiB (0: one file). */ splitMb?: number; /** A computer's 7z: an existing file of that name may be replaced (the user said so). */ replace?: boolean }
+export interface MakeOptions { format?: 'zip' | '7z' | 'tar' | 'tar.gz' | 'tar.xz'; level?: number; password?: string; deleteAfter?: boolean; comment?: string; /** Volumes of this many MiB (0: one file). */ splitMb?: number; /** A computer's 7z: an existing file of that name may be replaced (the user said so). */ replace?: boolean; /** A computer's ZIP: the answer for a name already there (the engine refuses «zipExists» without one; asked here when not given). */ clash?: 'both' | 'replace' | 'cancel' }
 /** The volume sizes offered, in MiB (0: one file). */
 export const splitSizes: number[] = [0, 10, 25, 50, 100, 250, 700, 1024, 2048, 4096];
 /** The formats the engine here can make: the phone's zip, 7z and tar kinds; a computer's zip and 7z (the 7-Zip the app ships). */
 export const makeFormats = (): MakeOptions['format'][] => (desk() ? ['zip', '7z'] : ['zip', '7z', 'tar.gz', 'tar.xz', 'tar']);
 /** Making an archive here goes through a computer's shell (its options are fewer: no volumes, no comment). */
 export const makesOnComputer = (): boolean => !!desk();
-export async function createZip(out: string, inputs: string[], onProgress?: (p: ArchiveProgress) => void, o: MakeOptions = {}): Promise<{ files: number; path: string; size: number }> {
+export async function createZip(out: string, inputs: string[], onProgress?: (p: ArchiveProgress) => void, o: MakeOptions = {}): Promise<{ files: number; path: string; size: number; cancelled?: boolean }> {
+  // (A computer's ZIP: the engine never replaces an archive unasked — a name already there is asked about here, keep both / replace / cancel.)
+  let clash = o.clash; const zipOnDesk = !!desk() && o.format !== '7z';
+  if (zipOnDesk && !clash && (await pathExists(out))) { const { clashSheet } = await import('./views/filesMore'); clash = await clashSheet(out.split(/[\\/]/).pop() || out); if (clash === 'cancel') return { files: 0, path: '', size: 0, cancelled: true }; }
   wire(); const id = uid(); if (onProgress) listeners.set(id, onProgress);
-  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs, ...(o.format === '7z' ? { format: '7z', level: o.level, password: o.password, replace: o.replace === true } : {}) }) : await (plug()!.archiveCreate as unknown as (x: MakeOptions & { id: string; out: string; inputs: string[] }) => Promise<{ files: number; path: string; size: number }>)({ id, out, inputs, ...o }); } finally { listeners.delete(id); }
+  try { const d = desk(); return d ? await d.archiveCreate({ id, out, inputs, ...(o.format === '7z' ? { format: '7z', level: o.level, password: o.password, replace: o.replace === true } : clash ? { clash } : {}) }) : await (plug()!.archiveCreate as unknown as (x: MakeOptions & { id: string; out: string; inputs: string[] }) => Promise<{ files: number; path: string; size: number }>)({ id, out, inputs, ...o }); } finally { listeners.delete(id); }
 }
 export async function pickFiles(multiple = false): Promise<string[]> {
   const d = desk(); if (d) return (await d.pickFile({ multiple })) ?? [];
@@ -104,7 +107,7 @@ export async function pathExists(p: string): Promise<boolean> { const d = desk()
 export function sevenErrorText(err: unknown): string {
   const m = String((err as Error | undefined)?.message ?? err); const hit = (k: string) => m.includes(k);
   if (hit('stopped')) return t('filesCancelled');
-  if (hit('sevenZipSameName')) return t('files7zErrSameName'); if (hit('sevenZipOutInside')) return t('files7zErrOutInside'); if (hit('sevenZipExists')) return t('files7zErrExists');
+  if (hit('sevenZipSameName')) return t('files7zErrSameName'); if (hit('sevenZipOutInside')) return t('files7zErrOutInside'); if (hit('sevenZipExists') || hit('zipExists')) return t('files7zErrExists');
   if (hit('sevenZipMissing')) return t('files7zErrMissing'); if (hit('sevenZipNoFolder')) return t('files7zErrNoFolder'); if (hit('sevenZipFailed')) return t('files7zErrFailed');
   const nf = /notFound (.+)$/m.exec(m); if (nf) return t('files7zErrNotFound', { name: nf[1].trim() });
   const ex = /7z exit (-?\d+)/.exec(m); if (ex) return t('files7zErrExit', { n: localDigits(Number(ex[1])) });
