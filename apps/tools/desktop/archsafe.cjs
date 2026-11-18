@@ -147,10 +147,26 @@ function replaySpace(units, { sameVolume = true, blockSize = 4096, overhead = 0 
 }
 
 /* ---------- conflicts ---------- */
-/** «name (2).ext» from 2 on, the first `taken` does not hold (the batch rename's numbering: the last dot, the extension's case kept; a folder takes no extension). */
-function keepBothName(name, taken, dir = false) {
-  const dot = dir ? -1 : name.lastIndexOf('.'); const base = dot > 0 ? name.slice(0, dot) : name; const ext = dot > 0 ? name.slice(dot) : '';
-  for (let i = 2; ; i++) { const c = `${base} (${i})${ext}`; if (!taken(c)) return c; }
+/** The longest name a job's output may have on `platform` (pathRule's limit: the part file's suffix still fits after it). */
+const nameRoom = (platform) => { const P = SPEC.platforms[platform]; return { room: P.maxName - SPEC.tempSuffix.length, unit: P.unit }; };
+const cutUnits = (s, room, unit) => { let out = ''; let n = 0; for (const ch of s) { const w = measure(ch, unit); if (n + w > room) break; out += ch; n += w; } return out; };
+/**
+ * «base (k).ext» kept within `room` (extractjob.rs both_form): when the whole form is too long the base is cut between
+ * characters; an extension too long to leave one character of the base goes with it (the whole name is cut instead).
+ */
+function bothForm(name, k, room = Infinity, unit = 'utf8', dir = false) {
+  const dot = dir ? -1 : name.lastIndexOf('.'); const base = dot > 0 ? name.slice(0, dot) : name; const ext = dot > 0 ? name.slice(dot) : ''; const tag = ` (${k})`;
+  const full = `${base}${tag}${ext}`; if (measure(full, unit) <= room) return full;
+  const b = cutUnits(base, Math.max(0, room - measure(tag, unit) - measure(ext, unit)), unit); if (b !== '') return `${b}${tag}${ext}`;
+  return `${cutUnits(name, Math.max(0, room - measure(tag, unit)), unit)}${tag}`;
+}
+/**
+ * «name (2).ext» from 2 on, the first `taken` does not hold (the batch rename's numbering: the last dot, the extension's
+ * case kept; a folder takes no extension). With `platform`, kept within its name limit (bothForm).
+ */
+function keepBothName(name, taken, dir = false, platform = null) {
+  const { room, unit } = platform ? nameRoom(platform) : { room: Infinity, unit: 'utf8' };
+  for (let i = 2; ; i++) { const c = bothForm(name, i, room, unit, dir); if (!taken(c)) return c; }
 }
 /**
  * One conflict model (extraction now, copy/move later): each item that meets an existing one gets «replace», «skip» or
@@ -163,15 +179,18 @@ function conflictChoice(answers, path, isDir) {
 }
 
 /* ---------- the pre-flight ---------- */
+/** The endings of a job's own files (journal, its temporary copy and unit log, saved tail, lock, and theirs): an entry whose last name ends so — any
+ *  letter case, in any folder — is refused, whatever spelling the destination has (kt-core extractjob.rs JOB_SUFFIXES). */
+const JOB_SUFFIXES = ['.kurokawa-unzip', '.kurokawa-unzip.tmp', '.kurokawa-unzip.log', '.kurokawa-tail', '.kurokawa-tail.tmp', '.kurokawa-lock', '.kurokawa-lock.tmp', '.kurokawa-tail.kept'];
 const NAME_REFUSALS = new Set(['empty', 'nul', 'dot', 'dotdot', 'absolute', 'drive', 'reservedSuffix', 'pathLong']);
 /** What the user can do about each kind of problem (a key the page words; the same in every language file). */
-const FIX = { method: 'fixMethod', password: 'fixPassword', names: 'fixNames', clash: 'fixClash', links: 'fixLinks', space: 'fixSpace', layout: 'fixLayout', damaged: 'fixDamaged', volumes: 'fixVolumes', readonly: 'fixReadonly', saf: 'fixSaf', busy: 'fixBusy', ratio: 'fixRatio', existing: 'fixExisting', rewrite: 'fixRewrite', otherVolume: 'fixOtherVolume', resume: 'fixResume' };
+const FIX = { method: 'fixMethod', password: 'fixPassword', names: 'fixNames', clash: 'fixClash', links: 'fixLinks', space: 'fixSpace', layout: 'fixLayout', damaged: 'fixDamaged', volumes: 'fixVolumes', readonly: 'fixReadonly', saf: 'fixSaf', busy: 'fixBusy', oldJob: 'fixOldJob', staleJob: 'fixStaleJob', ratio: 'fixRatio', existing: 'fixExisting', rewrite: 'fixRewrite', otherVolume: 'fixOtherVolume', resume: 'fixResume' };
 /**
  * Everything checked before anything is written. `f` (facts the engine gathered, nothing changed yet): { format, size,
  * entries: [{ path, dir, link?, target?, method?, encrypted?, csize?, usize, crc?, headerOk? }], supported: [methods the
  * device decodes itself], external?: [methods a helper (7-Zip) decodes — normal mode only], encrypted, password: 'none'|
  * 'ok'|'wrong'|'missing', damaged?: [names] (verify-first), layoutBad?: [names] (directory vs local header, overlap),
- * volumes?: { missing: [], odd: [] }, archiveWritable, destWritable, saf, sameVolume, free, existing: [paths], busy,
+ * volumes?: { missing: [], odd: [] }, archiveWritable, destWritable, saf, sameVolume, free, existing: [paths], busy, oldJob,
  * platform, destLen, inPlaceFormat (zip/tar), blockSize }. `o`: { margin, answers }. → the report the sheet shows.
  */
 function preflight(f, o = {}) {
@@ -180,6 +199,10 @@ function preflight(f, o = {}) {
   // Names, for the real destination.
   const set = checkSet(f.entries.map((e) => ({ path: e.path, dir: !!e.dir, link: e.link, target: e.target })), f.platform, f.destLen || 0);
   const refusedNames = set.problems.filter((p) => NAME_REFUSALS.has(p.kind)).map((p) => p.path);
+  // The job's own names: an entry where the aside folder goes (any «.kurokawa-replaced…» first folder), or on the archive, its journal, tail,
+  // lock, unit log or their temporary copies (`f.reserved`, when the destination is the archive's folder) — refused as an unsafe name.
+  const reserved = new Set((f.reserved || []).map((x) => foldKey(x, f.platform))); const asideKey = foldKey(SPEC.asideDir, f.platform);
+  for (const x of set.items) { if (x.action === 'refuse' || refusedNames.includes(x.path)) continue; if (foldKey(x.out.split('/')[0], f.platform).startsWith(asideKey) || reserved.has(foldKey(x.out, f.platform)) || JOB_SUFFIXES.some((s) => x.out.split('/').pop().toLowerCase().endsWith(s))) refusedNames.push(x.path); }
   const clashes = set.problems.filter((p) => ['duplicate', 'caseClash', 'rewriteClash', 'fileDir'].includes(p.kind));
   const links = set.problems.filter((p) => p.kind === 'linkOutside' || p.kind === 'throughLink').map((p) => p.path);
   const rewrites = set.items.filter((x) => x.action === 'rewrite' && x.reasons.length).map((x) => ({ from: x.path, to: x.out, reasons: x.reasons }));
@@ -198,6 +221,9 @@ function preflight(f, o = {}) {
   if (f.layoutBad && f.layoutBad.length) add('layout', 'inPlace', f.layoutBad);
   if (f.volumes && (f.volumes.missing.length || f.volumes.odd.length)) add('volumes', 'block', [...f.volumes.missing, ...f.volumes.odd]);
   if (f.busy) add('busy', 'block', ['busy']);
+  // (A finished in-place job's journal beside this new archive of the same name: in place waits until that job leaves the shelf.)
+  // (The job beside cannot be used for this file — its own reason, so the page offers to forget it.)
+  if (f.staleJob) add('staleJob', 'inPlace', ['staleJob']); else if (f.oldJob) add('oldJob', 'inPlace', ['oldJob']);
   if (f.saf) add('saf', 'inPlace', ['saf']);
   if (!f.archiveWritable) add('readonly', 'inPlace', ['archive']);
   if (!f.destWritable) add('readonly', 'block', ['destination']);
@@ -244,4 +270,4 @@ function journalRead(text) {
   return { ok: true, body: o };
 }
 
-module.exports = { SPEC, PLATFORMS, measure, cutName, nameRule, pathRule, foldKey, checkSet, crc32, crcTable, blocks, replaySpace, keepBothName, conflictChoice, preflight, journalText, journalRead, JOURNAL_VERSION, NAME_REFUSALS };
+module.exports = { SPEC, PLATFORMS, measure, cutName, nameRule, pathRule, foldKey, checkSet, crc32, crcTable, blocks, replaySpace, keepBothName, bothForm, nameRoom, conflictChoice, preflight, journalText, journalRead, JOURNAL_VERSION, NAME_REFUSALS };

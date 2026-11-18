@@ -62,10 +62,10 @@ async function sevenz(browser, port, z, lang) {
     await p.keyboard.press('Escape'); await p.waitForTimeout(400);
     ok(L(`${fmt}: cancel (closing the question): nothing is made`), (await p.evaluate(() => window.__mk.length)) === 0);
     await compress('report.txt', fmt === '7z'); await p.waitForSelector('.files-clash-both'); await p.locator('.files-clash-both').click(); await p.waitForTimeout(500);
-    let mk3 = await p.evaluate(() => window.__mk); ok(L(`${fmt}: keep both: a new name ("… (2)"), the old one untouched, no replace flag`), mk3.length === 1 && mk3[0].out !== first.out && /\(2\)\.(7z|zip)$/.test(mk3[0].out) && !mk3[0].replace, mk3);
+    let mk3 = await p.evaluate(() => window.__mk); ok(L(`${fmt}: keep both: a new name ("… (2)"), the old one untouched, no replace flag`), mk3.length === 1 && mk3[0].out !== first.out && /\(2\)\.(7z|zip)$/.test(mk3[0].out) && !mk3[0].replace && (fmt === '7z' || mk3[0].clash === 'both'), mk3);
     await p.evaluate(() => { window.__mk = []; });
     await compress('report.txt', fmt === '7z'); await p.waitForSelector('.files-clash-both'); await p.locator('.files-clash-replace').click(); await p.waitForTimeout(500);
-    mk3 = await p.evaluate(() => window.__mk); ok(L(`${fmt}: replace: the same name, with replace asked for`), mk3.length === 1 && mk3[0].out === first.out && (fmt === 'zip' || mk3[0].replace === true), mk3);  // (a computer's ZIP always writes over the name it is given: asking is the UI's part)
+    mk3 = await p.evaluate(() => window.__mk); ok(L(`${fmt}: replace: the same name, with replace asked for`), mk3.length === 1 && mk3[0].out === first.out && (fmt === 'zip' ? mk3[0].clash === 'replace' : mk3[0].replace === true), mk3);  // (a computer's ZIP: the answer goes with it — the engine refuses «zipExists» without one, Tools 0.21 P11)
   }
   // ---- failures are said in words, never as a code
   for (const code of ['sevenZipExists', 'sevenZipOutInside', 'sevenZipSameName', 'sevenZipMissing', 'sevenZipNoFolder', 'sevenZipFailed', 'notFound x.txt', '7z exit 2']) {

@@ -64,7 +64,7 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
   /* ---- 1. the name table: vectors in JS; the twins' constants; Java and Rust on the same file ---- */
   {
     const un = (s) => s.replace(/\\u\{([0-9a-f]+)\}|\\\\/gi, (m, h) => (h ? String.fromCodePoint(parseInt(h, 16)) : '\\')); let n = 0;
-    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'namesafe-vectors.tsv'), 'utf8').split('\n')) {
+    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'namesafe-vectors.tsv'), 'utf8').split(/\r?\n/)) {
       if (!line || line.startsWith('#')) continue; const [kind, pl, inp, act, out, rs, fl] = line.split('\t'); n++; let got;
       if (kind === 'set') { const es = un(inp).split(' | ').filter(Boolean).map((x) => { const t = x[0], r = x.slice(2); if (t === 'd') return { path: r, dir: true }; if (t === 's' || t === 'h') { const [p, tg] = r.split('>'); return { path: p, link: t === 's' ? 'sym' : 'hard', target: tg }; } return { path: r }; }); got = [S.checkSet(es, pl).problems.map((x) => `${x.kind}:${x.path}`).sort().join(',') || '-', '-', '-', '-']; }
       else { const r = kind === 'name' ? S.nameRule(un(inp), pl) : S.pathRule(un(inp), pl); got = [r.action, r.action === 'refuse' ? '-' : r.out, r.reasons.join(',') || '-', r.flags.join(',') || '-']; }
@@ -86,10 +86,31 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     }
   }
   /* ---- 1b. the space replay and the journal check: the same vectors as archsafe.rs ---- */
-  for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractsafe-vectors.tsv'), 'utf8').split('\n')) {
+  for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractsafe-vectors.tsv'), 'utf8').split(/\r?\n/)) {
     if (!line || line.startsWith('#')) continue; const f = line.split('\t');
     if (f[0] === 'replay') { const units = f[1] === '-' ? [] : f[1].split(',').map((u) => { const [o, r] = u.split(':').map(Number); return { out: o, freed: r }; }); const r = S.replaySpace(units, { sameVolume: f[2] === '1', blockSize: Number(f[3]), overhead: Number(f[4]) }); ok(`replay vector ${f[1]}`, r.normal === Number(f[5]) && r.inPlace === Number(f[6]) && r.peakAt === Number(f[7]), JSON.stringify(r)); }
     else { const r = S.journalRead(f[1].replace(/\\n/g, '\n')); ok(`journal vector ${f[2]}`, (r.ok ? 'ok' : r.why) === f[2]); }
+  }
+  /* ---- 1c. the engine's shared vectors (pre-flight, units, plan, journal and tail text): the same file kt-core's extractjob.rs runs ---- */
+  {
+    let n = 0; const vt = fs.mkdtempSync(path.join(TMP, 'vec-'));
+    for (const line of fs.readFileSync(path.join(__dirname, 'data', 'extractjob-vectors.tsv'), 'utf8').split(/\r?\n/)) {
+      if (!line || line.startsWith('#')) continue; const f = line.split('\t'); n++; let got, want;
+      if (f[0] === 'preflight') { const r = S.preflight(JSON.parse(f[1]), { margin: Number(f[2]) }); got = [r.normal.ok ? 1 : 0, r.inPlace.ok ? 1 : 0, r.recommend, r.why, r.problems.map((p) => `${p.kind}:${p.severity}`).sort().join(',') || '-', r.space.normal, r.space.inPlace].join('\t'); want = f.slice(3, 10).join('\t'); }
+      else if (f[0] === 'units') { const p = path.join(vt, f[3]); fs.writeFileSync(p, Buffer.from(f[2], 'hex')); let s; try { s = await E.unitsOf(p); } catch (e) { s = null; got = `ERR ${e.message}\t-`; } if (s) got = s.units.map((u) => [u.name, u.start, u.dataStart, u.dataEnd, u.end, u.bad ? 1 : 0].join(':')).join('|') + '\t' + (s.layoutBad.join(',') || '-'); want = f[4] + '\t' + f[5]; }
+      else if (f[0] === 'plan') { const dest = fs.mkdtempSync(path.join(vt, 'p-')); if (f[2] !== '-') for (const x of f[2].split('|')) { if (x.endsWith('/')) { fs.mkdirSync(path.join(dest, x), { recursive: true }); continue; } fs.mkdirSync(path.dirname(path.join(dest, x)), { recursive: true }); fs.writeFileSync(path.join(dest, x), 'old'); }
+        const scan = { units: f[1].split('|').map((nm) => ({ name: nm, dir: nm.endsWith('/'), start: 0, dataStart: 0, dataEnd: 0, end: 0, method: 0, usize: 0, csize: 0 })) };
+        try { const r = E.planOuts(scan, dest, f[5], f[3] === '-' ? undefined : JSON.parse(f[3]), f[4] === '1', 'ID'); got = r.units.map((u) => `${u.kind}:${u.out}`).join('|') + '\t' + (r.moves.map((m) => `${m.from}>${m.to}`).join('|') || '-'); } catch (e) { got = e.message + (e.names ? ' ' + e.names.join(',') : '') + '\t-'; }
+        want = f[6] + '\t' + f[7]; }
+      else if (f[0] === 'log') { got = JSON.stringify(E.parseLog(JSON.parse(f[1]))); want = f[2]; }
+      else if (f[0] === 'own') { got = E.ownOutput(f[1], f[2], f[4] || 'linux') ? '1' : '0'; want = f[3]; }
+      else if (f[0] === 'zipend') { got = E.zipEnd(Number(f[1]), Number(f[2]), Number(f[3])).toString('hex'); want = f[4]; }
+      else if (f[0] === 'journal') { got = S.journalText(JSON.parse(f[1])).replace(/\n/g, '\\n'); want = f[2]; }
+      else if (f[0] === 'tail') { const j = Buffer.from(f[1], 'utf8'); const tb = Buffer.concat([Buffer.from(`KTTAIL2\n${j.length}\n`), j, f[2] === '-' ? Buffer.alloc(0) : Buffer.from(f[2], 'hex')]); got = S.crc32(tb).toString(16).padStart(8, '0'); want = f[3]; }
+      ok(`engine vector ${f[0]} ${f[1].slice(0, 50)}`, got === want, `want ${want}\n  got  ${got}`);
+    }
+    ok('engine vectors read', n >= 60, String(n));
+    if (!QUICK) { try { const bin = path.join(TMP, 'extractjob_t'); execFileSync('rustc', ['--edition', '2021', '--test', path.join(ROOT, 'core/kt-core/stdroots/extractjob.rs'), '-o', bin], { stdio: 'pipe' }); const o = execFileSync(bin, [], { encoding: 'utf8', stdio: 'pipe' }); ok('Rust engine (rustc --test stdroots/extractjob.rs): the same vectors and the failure matrix', /test result: ok/.test(o), o.slice(-300)); } catch (e) { ok('Rust engine (rustc --test stdroots/extractjob.rs)', false, String(e.stdout || e.stderr || e.message).slice(-600)); } }
   }
   /* ---- 2. pre-flight: unsupported method in the first / middle / last entry ---- */
   for (const at of [0, 3, 7]) for (const inPlace of [true, false]) {
@@ -187,19 +208,32 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     ok(`${label}: killed at each of ${steps} steps, Finish always ends with every file right`, allFinish && steps > 5, String(steps));
     ok(`${label}: killed at each of ${steps} steps, Restore always gives the archive back byte for byte`, allRestore && steps > 5, String(steps));
   }
+  /* ---- 9b. a Restore itself killed after every step, then taken up again: the archive back byte for byte (a restore killed
+     after it wrote the archive's end left it longer than its journal said, and was refused «archiveChanged» before) ---- */
+  for (const fmt of ['zip', 'tar']) {
+    let k = 1; let good = true;
+    for (; k < 100; k++) {
+      const c = setup(build(fmt, ENTRIES), fmt); const orig = fs.readFileSync(c.file); E.BATCH.count = 2;
+      await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr({ stopAfter: 2 }), fakeIo())); E.BATCH.count = 64;
+      const j = c.file + '.kurokawa-unzip'; const { e } = await attempt(() => E.restore(j, fakeIo({ crashAt: k }))); if (!e) break;
+      const { e: e2 } = await attempt(() => E.restore(j, fakeIo()));
+      if (!(e.crash && !e2 && fs.readFileSync(c.file).equals(orig) && noTraces(c) && Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/')).length === 0)) { good = false; console.log('  restore crash', k, e.message, e2?.message); }
+    }
+    ok(`${fmt}: a Restore killed at each of ${k - 1} steps, taken up again, gives the archive back byte for byte`, good && k > 3, String(k));
+  }
   /* ---- 10. the journal corrupted, cut, of a later version; the archive changed after the crash; a v1 journal ---- */
   for (const fmt of ['zip', 'tar']) {
     const crashed = async () => { const c = setup(build(fmt, ENTRIES), fmt); E.BATCH.count = 2; await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: 9 }))); E.BATCH.count = 64; return { c, j: c.file + '.kurokawa-unzip' }; };
     for (const [what, spoil, why] of [['corrupted', (t) => t.replace('"next":', '"next" :'), 'journalCorrupt'], ['cut short', (t) => t.slice(0, t.length / 2), 'journalCorrupt'], ['of a later version', (t) => { const o = JSON.parse(t.split('\n')[0]); o.version = 9; const s = JSON.stringify(o); return `${s}\n${S.crc32(s).toString(16).padStart(8, '0')}\n`; }, 'journalFuture']]) {
       const { c, j } = await crashed(); const before = fs.readFileSync(c.file); fs.writeFileSync(j, spoil(fs.readFileSync(j, 'utf8')));
       const { e } = await attempt(() => E.finish(j, pr(), fakeIo())); const sh = await E.shelf(c.registry);
-      ok(`${fmt} journal ${what}: never replayed, nothing touched`, e && e.message === why && fs.readFileSync(c.file).equals(before) && sh[0]?.state === 'blocked' && sh[0].why === why && sh[0].can.join() === 'leave', `${e?.message} ${JSON.stringify(sh)}`);
+      ok(`${fmt} journal ${what}: never replayed, nothing touched`, e && e.message === why && fs.readFileSync(c.file).equals(before) && sh[0]?.state === 'blocked' && sh[0].why === why && sh[0].can.join() === 'forget,leave', `${e?.message} ${JSON.stringify(sh)}`);
     }
     { const { c, j } = await crashed(); fs.appendFileSync(c.file, 'x'); const before = fs.readFileSync(c.file); const { e } = await attempt(() => E.finish(j, pr(), fakeIo())); const { e: e2 } = await attempt(() => E.restore(j, fakeIo()));
       ok(`${fmt} archive changed after the crash: neither Finish nor Restore replays the journal`, e?.message === 'archiveChanged' && e2?.message === 'archiveChanged' && fs.readFileSync(c.file).equals(before)); }
     { const { c, j } = await crashed(); const fd = fs.openSync(c.file, 'r+'); fs.writeSync(fd, Buffer.from('ZZ'), 0, 2, 0); fs.closeSync(fd); const { e } = await attempt(() => E.finish(j, pr(), fakeIo())); ok(`${fmt} archive's first bytes rewritten after the crash: refused`, e?.message === 'archiveChanged', e?.message); }
   }
-  { const c = setup(mkZip(ENTRIES), 'zip'); fs.writeFileSync(c.file + '.kurokawa-unzip', JSON.stringify({ version: 1, committed: 100, output: c.dest, length: 999 })); await E.register(c.registry, c.file + '.kurokawa-unzip', 'old1'); const sh = await E.shelf(c.registry); ok('a v1 journal: offered restore-only (the old way)', sh[0]?.why === 'journalV1' && sh[0].can.join() === 'restoreV1,leave', JSON.stringify(sh)); }
+  { const c = setup(mkZip(ENTRIES), 'zip'); fs.writeFileSync(c.file + '.kurokawa-unzip', JSON.stringify({ version: 1, committed: 100, output: c.dest, length: 999 })); await E.register(c.registry, c.file + '.kurokawa-unzip', 'old1'); const sh = await E.shelf(c.registry); ok('a v1 journal: offered restore-only (the old way)', sh[0]?.why === 'journalV1' && sh[0].can.join() === 'restoreV1,forget,leave', JSON.stringify(sh)); }
   /* ---- 11. two jobs on the same archive ---- */
   { const c = setup(mkZip(ENTRIES), 'zip'); let release; const gate = new Promise((r) => { release = r; }); let reached; const at = new Promise((r) => { reached = r; });
     const a = E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ hook: async (p) => { if (p === 'unit') { reached(); await gate; } } }));
@@ -234,6 +268,11 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     const sets = { scripts: [{ name: 'كتب/إعجاز القرآن.txt' }, { name: '日本語/進撃の巨人.txt' }, { name: '\u{1f600}/\u{1f389}.txt' }, { name: 'Cafe\u0301.txt' }, { name: 'a'.repeat(120) + '/long name.txt' }], empty: [{ name: 'z1', data: '' }, { name: 'z/z2', data: '' }], dirs: [{ name: 'only/', dir: true }, { name: 'only/nested/', dir: true }, { name: 'only/nested/deeper/', dir: true }], none: [] };
     for (const [k, es] of Object.entries(sets)) { const c = setup(build(fmt, es), fmt); const r = await E.extract(c.file, c.dest, { inPlace, registry: c.registry }, pr(), fakeIo()); ok(`${fmt} ${inPlace ? 'in place' : 'normal'} ${k}`, r.files === es.filter((e) => !e.dir).length && same(tree(c.dest), expected(es)) && (inPlace ? !fs.existsSync(c.file) : true), JSON.stringify(tree(c.dest)).slice(0, 200)); }
   }
+  /* ---- 15b. tar devices, FIFOs and sparse files are never made: refused in place, left out of a normal extraction and reported ---- */
+  { const es = [{ name: 'a.txt' }, { name: 'z.txt' }]; const tarOf = () => { const b = mkTar(es); const dev = mkTar([{ name: 'pipe' }]).subarray(0, 512); dev[156] = 0x36; dev.fill(32, 148, 156); dev.write('0000000', 124); let s = 0; for (const v of dev) s += v; dev.write(s.toString(8).padStart(6, '0') + '\0 ', 148); return Buffer.concat([dev, b]); };
+    const c = setup(tarOf(), 'tar'); const orig = fs.readFileSync(c.file); const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo()));
+    ok('a FIFO in a tar: in place refused before any change', e && /^refused layout/.test(e.message) && fs.readFileSync(c.file).equals(orig) && noTraces(c), e?.message);
+    const r = await E.extract(c.file, c.dest, { registry: c.registry }, pr(), fakeIo()); ok('a FIFO in a tar: a normal extraction leaves it out and says so', r.damaged.includes('pipe') && !fs.existsSync(path.join(c.dest, 'pipe')) && fs.existsSync(path.join(c.dest, 'z.txt')), JSON.stringify(r)); }
   /* ---- 16. the report: space (peak, both modes, other volume), volumes, read-only, ratio ---- */
   {
     const f = { format: 'zip', platform: 'linux', entries: [{ path: 'a', usize: 1000, csize: 900, method: 8, offset: 0 }, { path: 'b', usize: 9000, csize: 8900, method: 8, offset: 1000 }], supported: [0, 8], password: 'none', archiveWritable: true, destWritable: true, sameVolume: true, free: 12000, inPlaceFormat: true, blockSize: 1 };
@@ -249,5 +288,214 @@ const build = (fmt, entries) => (fmt === 'zip' ? mkZip(entries) : mkTar(entries)
     const r8 = S.preflight({ ...f, volumes: { missing: ['x.zip.003'], odd: [] }, free: 1e9 }); ok('a missing volume refuses both', !r8.ok && r8.problems.some((p) => p.kind === 'volumes' && p.names[0] === 'x.zip.003'));
     const r9 = S.preflight({ ...f, existing: ['a'], free: 1e9 }); ok('existing files counted to ask', r9.problems.some((p) => p.kind === 'existing' && p.count === 1));
   }
+  /* ---- 17. P11 review (the same as kt-core extractjob.rs's tests): Undo never touches a file that took the archive's name; originals never lost;
+     the job's own names refused; a bad local header left out (no throw); only the job's own leftovers removed ---- */
+  for (const fmt of ['zip', 'tar']) {
+    const c = setup(build(fmt, ENTRIES), fmt); const orig = fs.readFileSync(c.file); const r = await E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo());
+    fs.writeFileSync(c.file, 'MY OTHER IMPORTANT FILE'); const u = await E.undo(r.job, fakeIo());
+    ok(`${fmt}: Undo of a finished job never touches a new file at the archive's path; the archive made again beside it`, fs.readFileSync(c.file, 'utf8') === 'MY OTHER IMPORTANT FILE' && path.basename(u.restoredTo || '') === `a (2).${fmt}` && u.identical && fs.readFileSync(u.restoredTo).equals(orig), JSON.stringify(u));
+  }
+  { let k = 1; let good = true;
+    for (; k < 100; k++) { const c = setup(mkZip(ENTRIES), 'zip'); const r = await E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo()); const { e } = await attempt(() => E.restore(r.job, fakeIo({ crashAt: k }))); if (!e) break;
+      const j = JSON.parse(fs.readFileSync(r.job, 'utf8').split('\n')[0]); if (j.restoreAt && fs.existsSync(j.restoreAt)) { fs.writeFileSync(j.restoreAt, Buffer.alloc(100000, 7)); const { e: e2 } = await attempt(() => E.restore(r.job, fakeIo())); if (e2?.message !== 'archiveChanged' || !fs.readFileSync(j.restoreAt).equals(Buffer.alloc(100000, 7))) { good = false; console.log('  restore crash', k, e2?.message); } } }
+    ok(`a finished job's restore killed at each of ${k - 1} steps, its file then replaced: never cut or extended`, good && k > 5, String(k)); }
+  for (const fmt of ['zip', 'tar']) for (const inPlace of [true, false]) {
+    const c = setup(build(fmt, ENTRIES), fmt); fs.mkdirSync(c.dest, { recursive: true }); fs.writeFileSync(path.join(c.dest, 'readme.txt'), 'ORIGINAL');
+    const r = await E.extract(c.file, c.dest, { inPlace, registry: c.registry, answers: { default: 'replace' } }, pr(), fakeIo()); fs.writeFileSync(path.join(c.dest, 'readme.txt'), 'edited after'); const u = await E.undo(r.job, fakeIo());
+    ok(`${fmt} ${inPlace ? 'in place' : 'normal'}: Undo puts the replaced original back as «readme (original).txt» when the name is taken`, fs.readFileSync(path.join(c.dest, 'readme (original).txt'), 'utf8') === 'ORIGINAL' && fs.readFileSync(path.join(c.dest, 'readme.txt'), 'utf8') === 'edited after' && JSON.stringify(u.originals) === '["readme (original).txt"]', JSON.stringify(u));
+  }
+  for (const name of ['a.zip.kurokawa-unzip.tmp', 'a.zip.kurokawa-tail', 'a.zip.kurokawa-lock', 'a.zip', '.kurokawa-replaced-x/a.txt']) for (const inPlace of [true, false]) {
+    const c = setup(mkZip([{ name, data: 'precious data' }, { name: 'y.txt' }]), 'zip'); const orig = fs.readFileSync(c.file);
+    const { e } = await attempt(() => E.extract(c.file, path.dirname(c.file), { inPlace, registry: c.registry }, pr(), fakeIo())); ok(`an entry «${name}» (${inPlace ? 'in place' : 'normal'}): refused as a name, nothing changed`, /^refused names/.test(e?.message) && fs.readFileSync(c.file).equals(orig), e?.message);
+  }
+  { const b = mkZip([{ name: 'x.txt' }, { name: 'y.txt' }]); b[30 + 5 + zlib.deflateRawSync(Buffer.from('body of x.txt\n'.repeat(3))).length] = 0; const c = setup(b, 'zip'); const orig = fs.readFileSync(c.file);
+    const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo())); ok('a bad local header: in place refused before any change', /^refused layout/.test(e?.message) && fs.readFileSync(c.file).equals(orig) && noTraces(c), e?.message);
+    const { r, e: e2 } = await attempt(() => E.extract(c.file, c.dest, { registry: c.registry }, pr(), fakeIo())); ok('a bad local header: a normal extraction leaves it out and says so (no throw)', r && JSON.stringify(r.damaged) === '["y.txt"]' && fs.existsSync(path.join(c.dest, 'x.txt')), e2?.message || JSON.stringify(r)); }
+  for (const fmt of ['tar', 'zip']) { let k = 1; let good = true; const theirs = Buffer.alloc(dataOf(ENTRIES[7]).length, 84); E.BATCH.count = 3;
+    for (; k < 200; k++) { const c = setup(build(fmt, ENTRIES), fmt); fs.mkdirSync(c.dest, { recursive: true }); fs.writeFileSync(path.join(c.dest, 'last.txt'), theirs);
+      const { e } = await attempt(() => E.extract(c.file, c.dest, { registry: c.registry, answers: { default: 'both' } }, pr(), fakeIo({ crashAt: k, registry: c.registry }))); if (!e) break;
+      const sh = await E.shelf(c.registry); if (!sh[0]) continue; await E.finish(sh[0].journal, pr(), fakeIo());
+      if (!fs.readFileSync(path.join(c.dest, 'last.txt')).equals(theirs) || !fs.readFileSync(path.join(c.dest, 'last (2).txt')).equals(dataOf(ENTRIES[7])) || fs.existsSync(path.join(c.dest, 'last (3).txt'))) { good = false; console.log('  leftovers', fmt, k); } }
+    E.BATCH.count = 64; ok(`${fmt}: killed at each of ${k - 1} steps, Finish removes only the job's own leftovers (their same-size file stays; no third copy)`, good && k > 5, String(k)); }
+  /* ---- 17b. round 3 (kt-core extractjob.rs's tests too): no name forges a unit-log record; a job's own names refused through a linked destination;
+     a planted journal never replayed; power lost after the archive was removed ---- */
+  { const c = setup(Buffer.alloc(0), 'zip'); const victim = path.join(c.d, 'victim.txt'); const vb = Buffer.from('user data!!\n'); fs.writeFileSync(victim, vb);
+    fs.writeFileSync(c.file, mkZip([{ name: 'pad.bin', data: Buffer.alloc(vb.length, 122), method: 0, badCrc: true }, { name: `x\n0\t${victim}\t${S.crc32(vb)}`, data: 'hi', method: 0 }]));
+    await attempt(() => E.extract(c.file, c.dest, { inPlace: true, platform: 'linux', registry: c.registry }, pr(), fakeIo()));
+    const jp = c.file + '.kurokawa-unzip'; if (fs.existsSync(jp)) { fs.writeFileSync(jp + '.log', JSON.stringify({ i: 0, out: victim, crc: S.crc32(vb) }) + '\n'); await attempt(() => E.finish(jp, pr(), fakeIo())); }
+    ok('a name with a newline and a tab cannot forge a unit-log record; a forged record never deletes outside the destination', fs.readFileSync(victim).equals(vb)); }
+  if (process.platform !== 'win32') for (const name of ['a.zip.kurokawa-unzip.tmp', 'a.zip.kurokawa-unzip.log', 'sub/x.KUROKAWA-TAIL', 'b.kurokawa-lock.tmp']) {
+    const c = setup(mkZip([{ name, data: 'PRECIOUS ENTRY DATA' }, { name: 'y.txt' }]), 'zip'); const link = path.join(c.d, 'dl'); fs.symlinkSync(path.dirname(c.file), link); const orig = fs.readFileSync(c.file);
+    const { e } = await attempt(() => E.extract(c.file, link, { inPlace: true, registry: c.registry }, pr(), fakeIo())); ok(`«${name}» through a linked destination: refused as a name, nothing changed`, /^refused names/.test(e?.message) && fs.readFileSync(c.file).equals(orig), e?.message); }
+  { const c = setup(mkZip([]), 'zip'); const victim = path.join(c.d, 'Documents'); fs.mkdirSync(victim); fs.writeFileSync(path.join(victim, 'thesis.txt'), 'years of work');
+    const plan = { format: 'zip', size: 22, tailStart: 0, idCrc: 0, dest: 'x', units: [] }; const j0 = Buffer.from(JSON.stringify(plan)); const tb = Buffer.concat([Buffer.from(`KTTAIL2\n${j0.length}\n`), j0]); const tp = c.file + '.kurokawa-tail'; fs.writeFileSync(tp, tb);
+    let good = true;
+    for (const [mode, aside, from] of [['normal', 'x', victim], ['inplace', 'x', '../Documents'], ['inplace', '.kurokawa-replaced-e', '../Documents'], ['inplace', '.kurokawa-replaced-f', 'a.txt']]) {
+      fs.writeFileSync(c.file + '.kurokawa-unzip', S.journalText({ registry: null, id: 'e', mode, format: 'zip', archive: c.file, dest: path.dirname(c.file), tail: tp, tailLen: tb.length, tailCrc: S.crc32(tb), committed: 22, prevCommitted: 22, next: 0, outs: {}, raws: {}, aside: { dir: aside, moves: [{ from, to: `${aside}/replaced/${from}` }], moved: 0 }, state: 'paused', platform: 'linux', created: 0, password: false }));
+      const { e } = await attempt(() => E.finish(c.file + '.kurokawa-unzip', pr(), fakeIo())); const { r: r2, e: e2 } = await attempt(() => E.finishBeside(c.file, pr(), fakeIo())); const { e: e3 } = await attempt(() => E.dismiss(c.file + '.kurokawa-unzip'));
+      // (round five: a journal not this archive's is left out of its extraction — finishBeside answers null, nothing replayed)
+      if (e?.message !== 'journalCorrupt' || e2 || r2 !== null || !e3 || !fs.existsSync(path.join(victim, 'thesis.txt'))) { good = false; console.log('  planted', mode, aside, from, e?.message, e2?.message); }
+    }
+    ok('a planted journal (outside paths, a foreign aside folder, a normal job beside an archive) is never replayed: the folder untouched', good); }
+  { let k = 1; let good = true; let hit = 0; E.BATCH.count = 3;
+    for (; k < 100; k++) { const c = setup(mkZip(ENTRIES), 'zip'); const orig = fs.readFileSync(c.file); const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: k }))); if (!e) break;
+      // (the archive cut to nothing, or already removed — round four removes it before saying «done»: what a power loss there leaves)
+      const jp = c.file + '.kurokawa-unzip'; const size = fs.existsSync(c.file) ? fs.statSync(c.file).size : 0; if (!fs.existsSync(jp) || size !== 0) continue; hit++; fs.rmSync(c.file, { force: true });
+      const { e: ef } = await attempt(() => E.finish(jp, pr(), fakeIo())); const ok1 = !ef && same(tree(c.dest), expected(ENTRIES)); const { r: u, e: eu } = await attempt(() => E.undo(jp, fakeIo()));
+      if (!ok1 || eu || !u.identical || !fs.readFileSync(c.file).equals(orig)) { good = false; console.log('  power loss', k, ef?.message, eu?.message); } }
+    E.BATCH.count = 64; ok(`power lost after the archive was removed, before «done» (${hit} points): Finish, then Undo gives the archive back`, good && hit > 0, String(hit)); }
+  /* ---- 18. across the two engines (the same journal, tail, unit log and part names): a job the JavaScript engine was killed in at every cut point is
+     finished — or restored — by the Rust engine (core/kt-core/stdroots/extractjob_cli.rs, std only), and the reverse ---- */
+  if (!QUICK) {
+    const cli = path.join(TMP, 'extractjob_cli'); let built = true;
+    try { execFileSync('rustc', ['--edition', '2021', '-O', path.join(ROOT, 'core/kt-core/stdroots/extractjob_cli.rs'), '-o', cli], { stdio: 'pipe' }); } catch (e) { built = false; ok('cross-shell: the Rust engine program built', false, String(e.stderr || e.message).slice(-400)); }
+    const rs = (...args) => execFileSync(cli, args, { encoding: 'utf8' }).trim();
+    const STORED = ENTRIES.map((e) => (e.dir ? e : { ...e, method: 0 }));   // (std has no inflate: stored entries)
+    // (Each with a file already there answered «keep both» — the conflict, the unit log and «name (2)» crossing too.)
+    const seed = (c) => { fs.mkdirSync(c.dest, { recursive: true }); fs.writeFileSync(path.join(c.dest, 'last.txt'), 'theirs'); };
+    const want = () => ({ ...expected(STORED), 'last.txt': sha(Buffer.from('theirs')), 'last (2).txt': sha(dataOf(ENTRIES[7])) });
+    const both = { default: 'both' };
+    if (built) for (const fmt of ['zip', 'tar']) for (const inPlace of [true, false]) for (const dir of ['js→rust', 'rust→js']) {
+      let k = 1; let good = true; let handed = 0; E.BATCH.count = 3;
+      for (; k < 200; k++) {
+        let crashed = false;
+        for (const after of ['finish', 'restore']) {
+          const c = setup(build(fmt, STORED), fmt); const orig = fs.readFileSync(c.file); seed(c);
+          if (dir === 'js→rust') { const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace, registry: c.registry, answers: both }, pr(), fakeIo({ crashAt: k, registry: c.registry }))); if (!e) continue; }
+          else { const o = rs('extract', c.file, c.dest, c.registry, inPlace ? '1' : '0', String(k), JSON.stringify(both)); if (!o.startsWith('CRASH')) continue; }
+          crashed = true; const sh = await E.shelf(c.registry); const jp = sh[0]?.journal; if (!jp) continue; handed++;
+          let res;
+          if (dir === 'js→rust') res = rs(after, jp); else { const { r, e } = await attempt(() => (after === 'finish' ? E.finish(jp, pr(), fakeIo()) : E.restore(jp, fakeIo()))); res = e ? 'ERR ' + e.message : JSON.stringify(r); }
+          const fine = !res.startsWith('ERR') && (after === 'finish' ? same(tree(c.dest), want()) && (inPlace ? !fs.existsSync(c.file) : fs.readFileSync(c.file).equals(orig)) : fs.readFileSync(c.file).equals(orig) && JSON.stringify(Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/'))) === '["last.txt"]' && noTraces(c));
+          if (!fine) { good = false; console.log('  cross', dir, fmt, inPlace, 'crash', k, after, res.slice(0, 160)); }
+        }
+        if (!crashed) break;
+      }
+      E.BATCH.count = 64; ok(`cross-shell ${dir} ${fmt} ${inPlace ? 'in place' : 'normal'}: killed at each of ${k - 1} steps (a «keep both» answer too), the other engine finishes and restores (${handed} hand-overs)`, good && handed > 5, String(handed));
+      // a finished job undone by the other engine
+      { const c = setup(build(fmt, STORED), fmt); const orig = fs.readFileSync(c.file); seed(c); let job;
+        if (dir === 'js→rust') job = (await E.extract(c.file, c.dest, { inPlace, registry: c.registry, answers: both }, pr(), fakeIo())).job; else job = JSON.parse(rs('extract', c.file, c.dest, c.registry, inPlace ? '1' : '0', '0', JSON.stringify(both))).job;
+        const res = dir === 'js→rust' ? rs('undo', job) : JSON.stringify(await E.undo(job, fakeIo()));
+        ok(`cross-shell ${dir} ${fmt} ${inPlace ? 'in place' : 'normal'}: a finished job undone by the other engine`, !res.startsWith('ERR') && fs.readFileSync(c.file).equals(orig) && JSON.stringify(Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/'))) === '["last.txt"]', res.slice(0, 200)); }
+    }
+  }
+  /* ---- 19. round four (kt-core extractjob.rs's tests too): «keep both» of a name at the limit; a job beside an archive finished without asking only
+   *  when this app started it; restore and listing only for that very archive; a finished job's journal beside a new archive; journal rules ---- */
+  const L = 'n'.repeat(243) + '.txt'; const CUT = S.bothForm(L, 2, 247); const WHOLE = 'n'.repeat(243) + ' (2).txt';
+  ok('round 4: «keep both» of a 247-byte name stays within the limit; the whole form (older builds) and the cut one are the unit\'s own', CUT === 'n'.repeat(239) + ' (2).txt' && S.keepBothName(L, (c) => c === CUT, false, 'linux') === S.bothForm(L, 3, 247) && E.ownOutput(L, CUT) && E.ownOutput(L, WHOLE) && !E.ownOutput(L, 'n'.repeat(238) + ' (2).txt') && S.bothForm('ب'.repeat(243) + '.txt', 2, 247, 'utf16').length === 247 && S.bothForm('a.' + 'e'.repeat(244), 2, 247) === 'a.' + 'e'.repeat(241) + ' (2)');
+  { const es = [{ name: 'b.txt', rep: 4 }, { name: L, rep: 5 }, { name: 'c.txt', rep: 6 }]; const zip = mkZip(es); let k = 1; let good = true; let oldDone = false; E.BATCH.count = 1;
+    const theirsOnly = (c) => fs.readFileSync(path.join(c.dest, L), 'utf8') === 'THEIRS' && Object.keys(tree(c.dest)).filter((x) => !x.endsWith('/')).length === 1;
+    for (; k < 200; k++) {
+      const c = setup(zip, 'zip'); fs.mkdirSync(c.dest, { recursive: true }); fs.writeFileSync(path.join(c.dest, L), 'THEIRS'); const jp = c.file + '.kurokawa-unzip';
+      const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry, answers: { default: 'both' }, platform: 'linux' }, pr(), fakeIo({ crashAt: k })));
+      if (!e) { good = good && fs.readFileSync(path.join(c.dest, CUT)).equals(dataOf(es[1])); break; }
+      if (!fs.existsSync(jp)) continue;
+      const { r: job, e: eo } = await attempt(() => E.openJob(jp)); if (eo) { good = false; console.log('  long name: journal refused at', k, eo.message); continue; }
+      const placed = job.plan.units.some((u) => u.out === CUT && u.i < job.j.next) && fs.existsSync(path.join(c.dest, CUT));
+      if (placed && !oldDone) {
+        // as a build before round four left it: the plan and the journal name the whole «name (2)», and that file is there
+        oldDone = true; const t = fs.readFileSync(job.j.tail); const a = t.indexOf(10); const b = t.indexOf(10, a + 1); const n = Number(t.subarray(a + 1, b).toString()); const pj = t.subarray(b + 1, b + 1 + n).toString().split(JSON.stringify(CUT)).join(JSON.stringify(WHOLE)); const pjb = Buffer.from(pj);
+        const tb = Buffer.concat([Buffer.from(`KTTAIL2\n${pjb.length}\n`), pjb, t.subarray(b + 1 + n)]); fs.writeFileSync(job.j.tail, tb);
+        const j = { ...job.j, tailLen: tb.length, tailCrc: S.crc32(tb), outs: Object.fromEntries(Object.entries(job.j.outs || {}).map(([x, v]) => [x, v === CUT ? WHOLE : v])) }; fs.writeFileSync(jp, S.journalText(j));
+        fs.renameSync(path.join(c.dest, CUT), path.join(c.dest, WHOLE)); fs.rmSync(jp + '.log', { force: true });
+        const { e: ef } = await attempt(() => E.finish(jp, pr(), fakeIo())); const { r: u, e: eu } = await attempt(() => E.undo(jp, fakeIo()));
+        if (ef || eu || !u.identical || !theirsOnly(c) || !fs.readFileSync(c.file).equals(zip)) { good = false; console.log('  old journal', k, ef?.message, eu?.message); }
+      } else if (k % 2 === 0) {
+        const { e: ef } = await attempt(() => E.finish(jp, pr(), fakeIo())); const okf = !ef && fs.readFileSync(path.join(c.dest, CUT)).equals(dataOf(es[1]));
+        const { r: u, e: eu } = await attempt(() => E.undo(jp, fakeIo())); if (!okf || eu || !u.identical || !theirsOnly(c) || !fs.readFileSync(c.file).equals(zip)) { good = false; console.log('  long name finish/undo', k, ef?.message, eu?.message); }
+      } else {
+        const { r: u, e: eu } = await attempt(() => E.restore(jp, fakeIo())); if (eu || !u.identical || !theirsOnly(c) || !fs.readFileSync(c.file).equals(zip)) { good = false; console.log('  long name restore', k, eu?.message); }
+      }
+    }
+    E.BATCH.count = 64; ok(`round 4: «keep both» of a 247-byte name — every one of ${k - 1} stopping points finishes and undoes, or restores; a journal an older build wrote with the whole name still opens`, good && oldDone); }
+  const stoppedInPlace = async () => { const c = setup(mkZip(ENTRIES), 'zip'); E.BATCH.count = 3; const f = fakeIo(); const c0 = setup(mkZip(ENTRIES), 'zip'); await E.extract(c0.file, c0.dest, { inPlace: true, registry: c0.registry }, pr(), f); const at = f.points.indexOf('cut') + 1;
+    const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: at }))); E.BATCH.count = 64; if (!e) throw new Error('not stopped'); return c; };
+  { const c = await stoppedInPlace(); const jp = c.file + '.kurokawa-unzip'; const arc = fs.readFileSync(c.file); const jt = fs.readFileSync(jp); let good = true;
+    for (const reg of [null, path.join(c.d, 'elsewhere')]) { const { e } = await attempt(() => E.finishBeside(c.file, pr(), fakeIo(), { registry: reg })); if (e?.message !== `askBeside ${path.resolve(c.dest)}` || e.info?.dest !== path.resolve(c.dest) || !(e.info.total > e.info.done) || !fs.readFileSync(c.file).equals(arc) || !fs.readFileSync(jp).equals(jt)) { good = false; console.log('  ask', reg, e?.message); } }
+    const id = S.journalRead(jt.toString()).body.id; const ref = path.join(c.registry, `${id}.ref`); const mine = fs.readFileSync(ref); fs.writeFileSync(ref, path.join(c.d, 'other.zip.kurokawa-unzip'));
+    { const { e } = await attempt(() => E.finishBeside(c.file, pr(), fakeIo(), { registry: c.registry })); if (!/^askBeside /.test(e?.message || '')) { good = false; console.log('  another journal\'s pointer', e?.message); } }
+    fs.writeFileSync(ref, mine); const r = await E.finishBeside(c.file, pr(), fakeIo(), { registry: c.registry }); good = good && r.files > 0 && same(tree(c.dest), expected(ENTRIES)) && !fs.existsSync(c.file);
+    const c2 = await stoppedInPlace(); const r2 = await E.finishBeside(c2.file, pr(), fakeIo(), { confirmed: true }); good = good && r2.files > 0 && same(tree(c2.dest), expected(ENTRIES));
+    ok('round 4: a job beside an archive is finished without asking only when this registry points at that very journal; any other — «askBeside <dest>», nothing touched — until confirmed', good); }
+  { const c = await stoppedInPlace(); const other = path.join(c.d, 'src', 'b.zip'); const theirs = mkZip([{ name: 'x.txt' }]); fs.writeFileSync(other, theirs); fs.copyFileSync(c.file + '.kurokawa-unzip', other + '.kurokawa-unzip'); fs.copyFileSync(c.file + '.kurokawa-tail', other + '.kurokawa-tail');
+    const { e: e1 } = await attempt(() => E.restoreBeside(other, fakeIo())); const { r: l2 } = await attempt(() => E.leftOf(other)); const { r: f3, e: e3 } = await attempt(() => E.finishBeside(other, pr(), fakeIo(), { confirmed: true }));
+    const left = await E.leftOf(c.file); const rr = await E.restoreBeside(c.file, fakeIo()); const gone = path.join(c.d, 'no', 'such', 'a.zip');
+    ok('round 4: restore and listing from an archive\'s page reach only the in-place job of that very archive (a journal copied beside another archive is left out: nothing to restore, the archive listed and extracted as itself)', e1?.message === 'nothingToRestore' && l2 === null && !e3 && f3 === null && fs.readFileSync(other).equals(theirs) && left.entries.length > 0 && rr.identical && fs.readFileSync(c.file).equals(mkZip(ENTRIES)) && E.samePath(c.file, path.join(c.d, 'src', '..', 'src', 'a.zip')) && !E.samePath(c.file, other) && E.samePath(gone, path.join(c.d, 'no', 'such', '.', 'a.zip')) && !E.samePath(gone, c.file) && !E.samePath(c.file, gone)); }
+  { const c = setup(mkZip(ENTRIES), 'zip'); const orig = fs.readFileSync(c.file); const jp = c.file + '.kurokawa-unzip'; await E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo());
+    const fresh = mkZip([{ name: 'new.txt' }, { name: 'two.txt' }]); fs.writeFileSync(c.file, fresh); const o2 = path.join(c.d, 'o2');
+    const b = await E.beside(c.file, c.registry); const fb = await E.finishBeside(c.file, pr(), fakeIo(), { registry: c.registry }); const lo = await E.leftOf(c.file); const { e: er } = await attempt(() => E.restoreBeside(c.file, fakeIo()));
+    const pf = await E.preflightOf(c.file, o2, {}); const { e: ei } = await attempt(() => E.extract(c.file, o2, { inPlace: true, registry: c.registry }, pr(), fakeIo())); const rn = await E.extract(c.file, o2, { registry: c.registry }, pr(), fakeIo());
+    await E.finish(jp, pr(), fakeIo()); const stillNew = fs.readFileSync(c.file).equals(fresh); const u = await E.undo(jp, fakeIo());
+    const c3 = setup(mkZip(ENTRIES), 'zip'); await E.extract(c3.file, c3.dest, { inPlace: true, registry: c3.registry }, pr(), fakeIo()); fs.writeFileSync(c3.file, ''); await E.finish(c3.file + '.kurokawa-unzip', pr(), fakeIo()); const kept = fs.existsSync(c3.file); const u3 = await E.restore(c3.file + '.kurokawa-unzip', fakeIo());
+    ok('round 4: a finished job\'s journal beside a new archive of that name — not «0 files», listed and restored as itself, a normal extraction goes ahead (in place waits: oldJob), the old Undo makes its archive beside the new one, nothing at the path removed',
+      b.kind === 'old' && fb === null && lo === null && er?.message === 'nothingToRestore' && pf.facts.oldJob && !pf.facts.busy && !pf.report.inPlace.ok && pf.report.normal.ok && /^refused oldJob/.test(ei?.message || '') && rn.files === 2 && stillNew && u.identical && fs.readFileSync(u.restoredTo).equals(orig) && fs.readFileSync(c.file).equals(fresh) && kept && fs.existsSync(c3.file) && fs.statSync(c3.file).size === 0 && fs.readFileSync(u3.restoredTo).equals(mkZip(ENTRIES)),
+      JSON.stringify({ b, fb, lo, er: er?.message, ei: ei?.message, u })); }
+  { const c = await stoppedInPlace(); const jp = c.file + '.kurokawa-unzip'; const text = fs.readFileSync(jp, 'utf8'); const body = text.split('\n')[0]; let good = body.includes('"outs":{}');
+    const put = (b) => fs.writeFileSync(jp, `${b}\n${S.crc32(Buffer.from(b)).toString(16).padStart(8, '0')}\n`); const outs = (v) => body.replace('"outs":{}', `"outs":${v}`);
+    for (const bad of [body.replace('{', '{"state":"done",'), outs('{"x":"a.txt"}'), outs('{"01":"a.txt"}'), outs('{"0":"a.txt","0":"b.txt"}'), outs('"a"'), outs('["a"]')]) { put(bad); const { e } = await attempt(() => E.openJob(jp)); if (e?.message !== 'journalCorrupt') { good = false; console.log('  journal kept', bad.slice(0, 80), e?.message); } }
+    fs.writeFileSync(jp, text); good = good && !(await attempt(() => E.openJob(jp))).e && E.dupKeys('{"a":1,"a":2}') && !E.dupKeys('{"a":{"b":1},"b":[{"c":1},{"c":2}]}') && E.dupKeys('{"a":"\\"a","b":{"c":1,"c":1}}');
+    // the older log: a stopped job's placed-but-uncommitted files cleaned by Finish (no second copy)
+    let seen = false; E.BATCH.count = 3;
+    for (let k = 1; k < 200; k++) { const c2 = setup(mkZip(ENTRIES), 'zip'); const { e } = await attempt(() => E.extract(c2.file, c2.dest, { registry: c2.registry }, pr(), fakeIo({ crashAt: k }))); if (!e) break;
+      const sh = await E.shelf(c2.registry); const j2 = sh[0]?.journal; if (!j2 || !fs.existsSync(j2 + '.log')) continue; const recs = E.parseLog(fs.readFileSync(j2 + '.log', 'utf8')); if (!recs.length) continue; seen = true;
+      fs.writeFileSync(j2 + '.log', recs.map((x) => `${x.i}\t${x.out}\t${x.crc}\n`).join('')); const back = E.parseLog(fs.readFileSync(j2 + '.log', 'utf8'));
+      const { e: ef } = await attempt(() => E.finish(j2, pr(), fakeIo())); if (JSON.stringify(back) !== JSON.stringify(recs) || ef || !same(tree(c2.dest), expected(ENTRIES))) { good = false; console.log('  tab log', k, ef?.message); } }
+    E.BATCH.count = 64; ok('round 4: duplicate keys and odd unit numbers refuse a journal; an older build\'s tab-separated unit log still cleans a stopped job up', good && seen); }
+  /* ---- 20. round five (kt-core extractjob.rs's tests too): a stopped job beside a replaced archive never locks the name, and Forget removes its record
+   *  only; a crash at «removed» then a new file at the path: finished, Undo kept ---- */
+  { const c = await stoppedInPlace(); const jp = c.file + '.kurokawa-unzip'; const outBefore = tree(c.dest); const fresh = mkZip([{ name: 'new.txt' }, { name: 'two.txt' }]); fs.writeFileSync(c.file, fresh); let good = Object.keys(outBefore).length > 0;
+    const b = await E.beside(c.file, c.registry); const lo = await E.leftOf(c.file); const fb = await E.finishBeside(c.file, pr(), fakeIo(), { registry: c.registry }); const { e: er } = await attempt(() => E.restoreBeside(c.file, fakeIo()));
+    const pf = await E.preflightOf(c.file, path.join(c.d, 'o2'), {}); const { e: ei } = await attempt(() => E.extract(c.file, path.join(c.d, 'o2'), { inPlace: true, registry: c.registry }, pr(), fakeIo())); const rn = await E.extract(c.file, path.join(c.d, 'o2'), { registry: c.registry }, pr(), fakeIo());
+    good = good && b.kind === 'old' && b.stale === 'archiveChanged' && lo === null && fb === null && er?.message === 'nothingToRestore' && pf.facts.oldJob && pf.facts.staleJob?.why === 'archiveChanged' && pf.facts.staleJob.journal === jp && pf.report.problems.some((x) => x.kind === 'staleJob') && !pf.report.inPlace.ok && ei?.message === 'refused staleJob' && ei.nothingChanged && rn.files === 2 && fs.readFileSync(c.file).equals(fresh);
+    const sh = (await E.shelf(c.registry)).filter((x) => x.journal === jp); good = good && sh[0]?.state === 'blocked' && sh[0].why === 'archiveChanged' && sh[0].can.join() === 'forget,leave';
+    const c2 = await stoppedInPlace(); const { e: enb } = await attempt(() => E.forgetBlocked(c2.file + '.kurokawa-unzip', c2.registry)); good = good && enb?.message === 'notBlocked';
+    const aside = path.join(c.dest, S.SPEC.asideDir + '-x'); fs.mkdirSync(aside, { recursive: true }); fs.writeFileSync(path.join(aside, 'keep.txt'), 'k');
+    await E.forgetBlocked(jp, c.registry); good = good && !fs.existsSync(jp) && !fs.existsSync(c.file + '.kurokawa-tail') && !fs.existsSync(jp + '.log') && same(tree(c.dest), outBefore) && fs.existsSync(path.join(aside, 'keep.txt')) && fs.readFileSync(c.file).equals(fresh) && !(await E.shelf(c.registry)).some((x) => x.journal === jp);
+    const r3 = await E.extract(c.file, path.join(c.d, 'o3'), { inPlace: true, registry: c.registry }, pr(), fakeIo()); good = good && r3.files === 2 && !fs.existsSync(c.file);
+    ok('round 5: a stopped job beside a replaced archive — the new one listed and extracted as itself (in place: «refused oldJob»), Forget removes only the record, then in place works', good, JSON.stringify({ b, ei: ei?.message, sh })); }
+  { const crashAt = async (name) => { const c0 = setup(mkZip(ENTRIES), 'zip'); const f = fakeIo(); E.BATCH.count = 3; await E.extract(c0.file, c0.dest, { inPlace: true, registry: c0.registry }, pr(), f); return f.points.indexOf(name) + 1; };
+    const at = await crashAt('removed'); let good = at > 0; const fresh = mkZip([{ name: 'new.txt' }]);
+    for (const first of ['finish', 'undo']) {
+      const c = setup(mkZip(ENTRIES), 'zip'); const orig = fs.readFileSync(c.file); const jp = c.file + '.kurokawa-unzip'; E.BATCH.count = 3;
+      const { e } = await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: at }))); E.BATCH.count = 64; good = good && e?.message === 'crash removed'; fs.writeFileSync(c.file, fresh);
+      const { e: eo } = await attempt(() => E.openJob(jp)); const b = await E.beside(c.file, c.registry); good = good && !eo && b.kind === 'old';
+      if (first === 'finish') { const f = await E.finish(jp, pr(), fakeIo()); good = good && f.undo && same(tree(c.dest), expected(ENTRIES)) && fs.readFileSync(c.file).equals(fresh); }
+      const u = await E.undo(jp, fakeIo()); good = good && u.identical && fs.readFileSync(u.restoredTo).equals(orig) && fs.readFileSync(c.file).equals(fresh);
+    }
+    ok('round 5: a crash at «removed», then a new file at the path — the job is finished, the new file never touched, its Undo kept (the archive made again beside it)', good); }
+  /* ---- 21. round six (kt-core extractjob.rs's tests too): a tail that cannot be read just now; Forget keeps what can still be recovered; a file merely
+   *  named like a journal; a moved drive re-roots its job; the job's own cut archive told by more than its size ---- */
+  { let good = true; const c = await stoppedInPlace(); const jp = c.file + '.kurokawa-unzip'; const tail = c.file + '.kurokawa-tail'; const saved = fs.readFileSync(tail);
+    fs.rmSync(tail); fs.mkdirSync(tail); { const { e } = await attempt(() => E.openJob(jp)); good = good && e?.message === 'tailUnreadable'; }
+    { const sh = await E.shelf(c.registry); good = good && sh[0]?.why === 'tailUnreadable' && sh[0].can.join() === 'leave'; const { e } = await attempt(() => E.forgetBlocked(jp, c.registry)); good = good && e?.message === 'tailUnreadable'; }
+    fs.rmdirSync(tail); { const { e } = await attempt(() => E.openJob(jp)); good = good && e?.message === 'tailMissing'; } fs.writeFileSync(tail, saved);
+    const arc = fs.readFileSync(c.file); fs.writeFileSync(jp, fs.readFileSync(jp, 'utf8').replace('"state"', '"stat"')); { const { e } = await attempt(() => E.openJob(jp)); good = good && e?.message === 'journalCorrupt'; }
+    const r = await E.forgetBlocked(jp, c.registry); const kept = c.file + '.kurokawa-tail.kept';
+    good = good && r.kept === kept && fs.readFileSync(kept).equals(saved) && !fs.existsSync(tail) && !fs.existsSync(jp) && fs.readFileSync(c.file).equals(arc);
+    await E.preflightOf(c.file, path.join(c.d, 'o2'), {}).catch(() => {}); good = good && fs.existsSync(kept);
+    const pfn = S.preflight({ format: 'zip', platform: 'linux', entries: [{ path: 'x/a.ZIP.Kurokawa-Tail.Kept', usize: 1, csize: 1, method: 0 }], supported: [0], password: 'none', archiveWritable: true, destWritable: true, sameVolume: true, free: 1e9, existing: [], inPlaceFormat: true }); good = good && pfn.problems.some((x) => x.kind === 'names');
+    const c2 = await stoppedInPlace(); const jp2 = c2.file + '.kurokawa-unzip'; fs.writeFileSync(jp2, fs.readFileSync(jp2, 'utf8').replace('"state"', '"stat"')); fs.writeFileSync(c2.file + '.kurokawa-tail.kept', 'earlier');
+    { const { e } = await attempt(() => E.forgetBlocked(jp2, null)); good = good && e?.message === 'keptExists' && fs.existsSync(jp2) && fs.existsSync(c2.file + '.kurokawa-tail') && fs.readFileSync(c2.file + '.kurokawa-tail.kept', 'utf8') === 'earlier'; }
+    const c3 = setup(mkZip(ENTRIES), 'zip'); const jp3 = c3.file + '.kurokawa-unzip'; fs.writeFileSync(jp3, 'my notes');
+    { const { e } = await attempt(() => E.forgetBlocked(jp3, c3.registry)); good = good && e?.message === 'notJournal'; } await E.register(c3.registry, jp3, 'z9'); await E.forgetBlocked(jp3, c3.registry); good = good && !fs.existsSync(jp3);
+    ok('round 6: a tail unreadable just now is «tailUnreadable» (Leave only, never forgotten); Forget keeps the saved tail beside a half-extracted archive («.kurokawa-tail.kept», refused as an entry name, never twice); a file merely named like a journal is never forgotten', good); }
+  { let good = true; const c = await stoppedInPlace(); const moved = path.join(c.d, 'moved'); fs.renameSync(path.join(c.d, 'src'), moved); const file = path.join(moved, 'a.zip'); const jp = file + '.kurokawa-unzip';
+    const { j } = await E.openJob(jp); good = good && j.archive === file && j.tail === file + '.kurokawa-tail' && j.dest === path.join(moved, 'out');
+    const { e } = await attempt(() => E.finishBeside(file, pr(), fakeIo(), { registry: c.registry })); good = good && e?.message === `askBeside ${path.join(moved, 'out')}`;
+    await E.finishBeside(file, pr(), fakeIo(), { registry: c.registry, confirmed: true }); good = good && same(tree(path.join(moved, 'out')), expected(ENTRIES)) && !fs.existsSync(file);
+    const saved = S.journalRead(fs.readFileSync(jp, 'utf8')).body; good = good && saved.archive === file && saved.state === 'done';
+    const c2 = await stoppedInPlace(); const other = path.join(c2.d, 'src', 'b.zip'); fs.copyFileSync(c2.file, other); fs.copyFileSync(c2.file + '.kurokawa-unzip', other + '.kurokawa-unzip'); fs.copyFileSync(c2.file + '.kurokawa-tail', other + '.kurokawa-tail');
+    { const { e: e2 } = await attempt(() => E.openJob(other + '.kurokawa-unzip')); good = good && e2?.message === 'journalCorrupt'; }
+    ok('round 6: a stopped job whose drive moved opens from beside its archive (re-rooted), is asked about, then finishes into the moved destination; a journal copied beside another name is never re-rooted', good); }
+  { let good = true; E.BATCH.count = 3; const f0 = fakeIo(); const c0 = setup(mkZip(ENTRIES), 'zip'); await E.extract(c0.file, c0.dest, { inPlace: true, registry: c0.registry }, pr(), f0); const cut = f0.points.lastIndexOf('cut') + 1; const at = cut - 1;
+    const c = setup(mkZip(ENTRIES), 'zip'); const orig = fs.readFileSync(c.file); const jp = c.file + '.kurokawa-unzip'; await attempt(() => E.extract(c.file, c.dest, { inPlace: true, registry: c.registry }, pr(), fakeIo({ crashAt: at })));
+    const { j } = await E.openJob(jp); const len = fs.statSync(c.file).size; good = good && len === j.prevCommitted && len > 0;
+    const theirs = Buffer.alloc(len, 7); fs.writeFileSync(c.file, theirs); await E.finish(jp, pr(), fakeIo()); good = good && fs.readFileSync(c.file).equals(theirs);
+    const u = await E.undo(jp, fakeIo()); good = good && u.identical && fs.readFileSync(u.restoredTo).equals(orig) && fs.readFileSync(c.file).equals(theirs);
+    const c2 = setup(mkZip(ENTRIES), 'zip'); await attempt(() => E.extract(c2.file, c2.dest, { inPlace: true, registry: c2.registry }, pr(), fakeIo({ crashAt: at }))); await E.finish(c2.file + '.kurokawa-unzip', pr(), fakeIo()); good = good && !fs.existsSync(c2.file) && same(tree(c2.dest), expected(ENTRIES));
+    for (const later of [false, true]) { const c3 = setup(mkZip(ENTRIES), 'zip'); await attempt(() => E.extract(c3.file, c3.dest, { inPlace: true, registry: c3.registry }, pr(), fakeIo({ crashAt: cut }))); good = good && fs.statSync(c3.file).size === 0;
+      if (later) { const t = new Date(Date.now() + 60000); fs.utimesSync(c3.file, t, t); } await E.finish(c3.file + '.kurokawa-unzip', pr(), fakeIo()); good = good && fs.existsSync(c3.file) === later; }
+    E.BATCH.count = 64; ok('round 6: the job\'s own cut archive is told by more than its size (its first header at the commit before; an empty file written well after the journal is not its own)', good); }
+  ok('zip64 end records when the fallback closes a big archive', E.zipEnd(3, 10, 100).length === 22 && E.zipEnd(70000, 10, 100).length === 98 && E.zipEnd(1, 10, 5e9).readBigUInt64LE(48) === 5000000000n);
   console.log(`${passes} passed, ${fails} failed (${((Date.now() - t0) / 1000).toFixed(1)} s)`); console.log(fails ? 'errors' : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -96,5 +96,12 @@ const pr = (log, stop = () => false) => ({ on: (d, t, f) => log.push([d, t, f]),
   ok('lines: a split line is joined; carriage return, newline and backspace all end a line', JSON.stringify(got) === JSON.stringify(['  5% 1 + a.txt', ' 10% 2 + b.txt', ' 20%', ' 30% 3 + c']) && L.finish() === 'tail', got);
   const L2 = A.makeLines(); L2.feed('x'.repeat(1000000)); ok('lines: a million characters without an end do not pile up', L2.finish().length <= 4096);
   ok('progress line: percent and name', JSON.stringify(A.seven7Progress(' 40% 1 + one.txt')) === '{"pct":40,"name":"one.txt"}' && A.seven7Progress('+ one.txt') === null && A.seven7Progress(' 7%').pct === 7);
+  // a ZIP (Tools 0.21 P11): the engine itself never replaces an archive unasked — no answer «zipExists», cancel, keep both, replace in one rename
+  { const zo = path.join(tmp, 'z', 'a.zip'); fs.mkdirSync(path.dirname(zo), { recursive: true }); fs.writeFileSync(zo, 'the old archive'); const ins = [path.join(work, 'one.txt')];
+    await assert.rejects(() => A.createZip(zo, ins, pr([])), /zipExists/); await assert.rejects(() => A.createZip(zo, ins, pr([]), { clash: 'cancel' }), /cancelled/);
+    ok('zip: a name already there is refused without an answer (and on «cancel»), the old file untouched', fs.readFileSync(zo, 'utf8') === 'the old archive');
+    const b = await A.createZip(zo, ins, pr([]), { clash: 'both' }); ok('zip: keep both — «a (2).zip», the old one untouched', b.path === path.join(tmp, 'z', 'a (2).zip') && b.files === 1 && fs.readFileSync(zo, 'utf8') === 'the old archive' && fs.readFileSync(b.path).readUInt32LE(0) === 0x04034b50, b);
+    const r = await A.createZip(zo, ins, pr([]), { clash: 'replace' }); ok('zip: replace — put over the old one', r.path === zo && fs.readFileSync(zo).readUInt32LE(0) === 0x04034b50);
+    const f = await A.createZip(path.join(tmp, 'z', 'new.zip'), ins, pr([])); ok('zip: a free name needs no answer; no part file left anywhere', f.path === path.join(tmp, 'z', 'new.zip') && !fs.readdirSync(path.dirname(zo)).some((n) => n.endsWith('.part')), fs.readdirSync(path.dirname(zo))); }
   fs.rmSync(tmp, { recursive: true, force: true }); console.log(fails ? `\n${fails} failed` : '\nall ok'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.log('FAIL', e); process.exit(1); });
