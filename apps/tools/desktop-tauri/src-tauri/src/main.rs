@@ -9,6 +9,8 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
+// (0.21, device battery: the page's commands over kt-battery — GPL-3.0-or-later, ../../../NOTICE.md.)
+mod battery;
 mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
@@ -295,7 +297,11 @@ fn main() {
             // (The hybrid's self-test side.)
             hybridtest::kt_selftest_hybrid,
             // (The original system: a notice's click kept until the page listens — the bridge's onOpenTask.)
-            notifier::kt_task_take
+            notifier::kt_task_take,
+            // (0.21, device battery: battery.rs over kt-battery.)
+            battery::kt_battery_list,
+            battery::kt_battery_refresh,
+            battery::kt_battery_settings
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -457,6 +463,8 @@ fn main() {
                 vtjobs::stop_all();
                 // (Screen translator: «auto» and its OCR helpers ended.)
                 screentr::at_exit();
+                // (Device battery: its loop told to stop.)
+                battery::at_exit();
                 // (The original system: this run's toasts left in the Action Center made to start this program, or
                 // removed.)
                 notifier::at_exit();

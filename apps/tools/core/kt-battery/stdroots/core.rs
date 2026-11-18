@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The std-only test root of kt-battery's core (tauri-check.yml's std-only tests; locally `rustc --edition 2021 --test
+//! stdroots/core.rs`): the modules come in as the crate's lib.rs has them, so their `crate::` paths hold. Not part of
+//! the crate.
+#[path = "../src/allow.rs"]
+pub mod allow;
+#[path = "../src/bluetooth.rs"]
+pub mod bluetooth;
+#[path = "../src/hidvalue.rs"]
+pub mod hidvalue;
+#[path = "../src/identity.rs"]
+pub mod identity;
+#[path = "../src/kind.rs"]
+pub mod kind;
+#[path = "../src/model.rs"]
+pub mod model;
+#[path = "../src/registry.rs"]
+pub mod registry;
+#[path = "../src/runner.rs"]
+pub mod runner;
+#[path = "../src/sched.rs"]
+pub mod sched;
+#[path = "../src/transport.rs"]
+pub mod transport;
+#[path = "../src/xbox.rs"]
+pub mod xbox;

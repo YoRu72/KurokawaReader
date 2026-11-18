@@ -364,6 +364,16 @@
     screenOcrLangs: function () { return call('kt_screen_ocr_langs'); },
     screenCaptionSize: function (o) { return call('kt_screen_caption', { o: obj(o) }); },
     onScreenCaption: function (cb) { return subscribe('kt:screenCaption', cb); },
+    /* 0.21, device battery (this shell's own; src-tauri/src/battery.rs over apps/tools/core/kt-battery, GPL-3.0-or-later):
+       batteryList() → { available, reason?, now, devices: [{ key, name, kind, brand, connection, source, vid, pid,
+       merged, status, reading, lastGood, checkedAt }], settings } (the loop started on this first call; Windows only for
+       now — elsewhere available: false); batteryRefresh({ key? }) → true (one device, or all); batterySettings({ set? })
+       → the settings { intervalMin, low, names, hidden, noQuery, links } (set: a part of them, kept by the shell);
+       onBattery(cb) — { now, devices } after each change (kt:battery). */
+    batteryList: function () { return call('kt_battery_list'); },
+    batteryRefresh: function (o) { return call('kt_battery_refresh', { o: obj(o) }); },
+    batterySettings: function (o) { return call('kt_battery_settings', { o: obj(o) }); },
+    onBattery: function (cb) { return subscribe('kt:battery', cb); },
   };
   /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a
      second launch's, a Mac's Apple Events — kept by the shell (kt_open_take) and handed to the page as the preload's

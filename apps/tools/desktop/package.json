@@ -5,6 +5,7 @@
   "main": "main.cjs",
   "private": true,
   "author": "Kurokawa",
+  "license": "GPL-3.0-or-later",
   "kurokawa": {
     "repo": "YoRu72/KurokawaReader"
   },

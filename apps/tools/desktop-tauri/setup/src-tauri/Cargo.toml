@@ -8,6 +8,8 @@ version = "0.0.0"
 description = "Kurokawa Tools Setup — a designed window over the NSIS installer"
 edition = "2021"
 publish = false
+# (Kurokawa Tools is GPL-3.0-or-later from 0.21: ../../../LICENSE, ../../../NOTICE.md.)
+license = "GPL-3.0-or-later"
 
 [[bin]]
 name = "KurokawaToolsSetup"

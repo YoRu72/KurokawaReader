@@ -35,7 +35,11 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
-  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []] };
+  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []],
+  // (0.21, device battery: battery.rs.)
+  batteryList: ['kt_battery_list', []], batteryRefresh: ['kt_battery_refresh', ['o']], batterySettings: ['kt_battery_settings', ['o']] };
+// (The shell's own events: no channel in the preload.)
+const OWN_EVENTS = ['onFilesJob', 'onBattery'];
 // (The safe-extraction engine's calls — desktop/inplace.cjs over archsafe.cjs: the preflight, the shelf of unfinished jobs, the
 // job actions. Electron only for now: the Tauri bridge deliberately has none, because the page asks for them by presence
 // (src/archives/safety.ts desk(), main.ts) and falls back to the plain extraction without them, showing no shelf.)
@@ -85,9 +89,9 @@ function loadBridge(boot) {
 
   // Names: the slice and the boot-safe ones, every one of them a name the preload has; nothing else.
   const keys = Object.keys(kt).sort();
-  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), 'onFilesJob'])].sort(), 'bridge methods ≠ slice + boot-safe + own');
-  for (const k of keys) assert.ok(k in pre || k in OWN || k === 'onFilesJob', `${k} is not in preload.cjs`);
-  for (const k of [...Object.keys(OWN), 'onFilesJob']) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
+  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), ...OWN_EVENTS])].sort(), 'bridge methods ≠ slice + boot-safe + own');
+  for (const k of keys) assert.ok(k in pre || k in OWN || OWN_EVENTS.includes(k), `${k} is not in preload.cjs`);
+  for (const k of [...Object.keys(OWN), ...OWN_EVENTS]) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
   assert.equal(kt.platform, 'desktop');
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
@@ -138,7 +142,8 @@ function loadBridge(boot) {
 
   // The shell's own methods: each one command, its object under «o».
   const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' },
-    updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' } };
+    updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' },
+    batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'] } } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');
@@ -240,6 +245,15 @@ function loadBridge(boot) {
     // (The original system: a click kept before the page listened — kt_task_take — handed to the callback first.)
     assert.deepEqual(JSON.parse(JSON.stringify(hk)), [{ mode: 'clip', text: 'magnet:?x' }]); assert.deepEqual(ot, ['cold1', 'g1']);
     assert.equal(p6calls.filter((c) => c.cmd === 'kt_task_take').length, 1, 'kt_task_take asked once per subscription');
+  }
+
+  // Device battery: kt:battery to onBattery's callback until it is removed.
+  {
+    const got = []; const offB = fresh.onBattery((x) => got.push(x)); await new Promise((ok) => setTimeout(ok, 5));
+    listeners['kt:battery'][0]({ event: 'kt:battery', payload: { now: 5, devices: [{ key: 'bt:{A}' }] } }); offB();
+    for (const f of listeners['kt:battery'] || []) f({ event: 'kt:battery', payload: { now: 6, devices: [] } });
+    assert.deepEqual(JSON.parse(JSON.stringify(got)), [{ now: 5, devices: [{ key: 'bt:{A}' }] }]);
+    assert.equal((listeners['kt:battery'] || []).length, 0, 'unlistened');
   }
 
   // Screen translator: a region of null (the whole picture) sent as null, as the preload sends it; kt:screenCaption to

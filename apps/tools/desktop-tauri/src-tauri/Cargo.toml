@@ -5,6 +5,8 @@ version = "0.0.0"
 description = "Kurokawa Tools — the Tauri shell"
 edition = "2021"
 publish = false
+# (From 0.21 Kurokawa Tools is GPL-3.0-or-later: ../../LICENSE, ../../NOTICE.md. The Reader stays MIT.)
+license = "GPL-3.0-or-later"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -17,6 +19,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 kurokawa-shell = { path = "../../../../shared/shell-rs" }
 kt-core = { path = "../../core/kt-core" }
+# (0.21: the device battery — std only, GPL-3.0-or-later; its Windows readers declared in its own src/win/ffi.rs.)
+kt-battery = { path = "../../core/kt-battery" }
 # ("image-png", stage P6 part: a PNG read for the app icon of the user's choosing — the shared appicon.rs. "tray-icon",
 # stage P6: the downloads' tray icon — Tauri's own, behind its feature; it brings the tray-icon crate (muda is already in
 # through the menus), which on Linux loads libayatana-appindicator3 / libappindicator3 at run time: desktop.rs makes no
@@ -91,6 +95,10 @@ wv2 = ["dep:webview2-com", "dep:windows"]
 native-toast = ["dep:windows", "windows/UI_Notifications", "windows/Data_Xml_Dom", "windows/Foundation", "windows/Foundation_Collections", "windows/Win32_UI_Shell"]
 wkgtk = []
 mac-unc = []
+#  - battery-wgi (Windows, 0.21 device battery): the Xbox controllers' real percentage through Windows.Gaming.Input —
+#    kt-battery's `wgi` feature, the `windows` crate's WinRT parts (the same 0.62 copy). OFF until CI compiles it
+#    (tauri-check.yml «Device battery — WGI compile try»); without it Xbox pads show XInput's coarse levels.
+battery-wgi = ["kt-battery/wgi"]
 
 [profile.release]
 opt-level = "s"

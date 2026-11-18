@@ -12,7 +12,7 @@ const EN = fs.readFileSync(path.join(__dirname, '..', 'src/i18n/en.ts'), 'utf8')
 // (Keys that cannot be plain words: a capital inside, a _ or a digit.)
 const KEYS = new Set([...EN.matchAll(/(?:^|[\s,{])([A-Za-z_]\w*):\s*["'`]/g)].map((m) => m[1]).filter((k) => /[a-z][A-Z]|_|\d/.test(k)));
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x).slice(0, 400))); if (!c) fails++; };
-const ROUTES = ['#/', '#/settings', '#/settings/addons', '#/files', '#/videos', '#/courses', '#/anime', '#/anime?tab=search', '#/tv', '#/subs', '#/search', '#/screen', '#/task/none'];
+const ROUTES = ['#/', '#/settings', '#/settings/addons', '#/files', '#/videos', '#/courses', '#/anime', '#/anime?tab=search', '#/tv', '#/subs', '#/search', '#/screen', '#/battery', '#/task/none'];
 (async () => {
   ok(`the key list read (${KEYS.size})`, KEYS.size > 1000);
   // (The start: app.js and what it imports statically — how many keys it carries.)
