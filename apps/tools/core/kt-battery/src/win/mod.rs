@@ -9,6 +9,7 @@
 // CM_Register_Notification (no window, no polling).
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere); real devices decide.
 // Copyright (C) 2026 Kurokawa contributors.
+pub mod autostart;
 pub mod bt;
 pub mod ffi;
 pub mod hid;

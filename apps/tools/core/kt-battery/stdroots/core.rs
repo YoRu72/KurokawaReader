@@ -4,6 +4,8 @@
 //! the crate.
 #[path = "../src/allow.rs"]
 pub mod allow;
+#[path = "../src/autostart.rs"]
+pub mod autostart;
 #[path = "../src/bluetooth.rs"]
 pub mod bluetooth;
 #[path = "../src/hidvalue.rs"]
@@ -14,12 +16,16 @@ pub mod identity;
 pub mod kind;
 #[path = "../src/model.rs"]
 pub mod model;
+#[path = "../src/notice.rs"]
+pub mod notice;
 #[path = "../src/registry.rs"]
 pub mod registry;
 #[path = "../src/runner.rs"]
 pub mod runner;
 #[path = "../src/sched.rs"]
 pub mod sched;
+#[path = "../src/summary.rs"]
+pub mod summary;
 #[path = "../src/transport.rs"]
 pub mod transport;
 #[path = "../src/xbox.rs"]

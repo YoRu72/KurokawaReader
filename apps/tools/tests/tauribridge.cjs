@@ -143,7 +143,7 @@ function loadBridge(boot) {
   // The shell's own methods: each one command, its object under «o».
   const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' },
     updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' },
-    batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'] } } };
+    batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'], background: true, startup: true, thresholds: { 'bt:{A}': 15 } } } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');

@@ -366,10 +366,12 @@
     onScreenCaption: function (cb) { return subscribe('kt:screenCaption', cb); },
     /* 0.21, device battery (this shell's own; src-tauri/src/battery.rs over apps/tools/core/kt-battery, GPL-3.0-or-later):
        batteryList() → { available, reason?, now, devices: [{ key, name, kind, brand, connection, source, vid, pid,
-       merged, status, reading, lastGood, checkedAt }], settings } (the loop started on this first call; Windows only for
-       now — elsewhere available: false); batteryRefresh({ key? }) → true (one device, or all); batterySettings({ set? })
-       → the settings { intervalMin, low, names, hidden, noQuery, links } (set: a part of them, kept by the shell);
-       onBattery(cb) — { now, devices } after each change (kt:battery). */
+       merged, status, reading, lastGood, checkedAt }], settings, system: { autostart: 'yes' | 'notYet', tray } } (the
+       loop started on this first call, or at the app's start with the background on; Windows only for now — elsewhere
+       available: false); batteryRefresh({ key? }) → true (one device, or all); batterySettings({ set? }) → the settings
+       { intervalMin, low, names, hidden, noQuery, links, background, startup, notifyLow, notifyFull, thresholds } (set:
+       a part of them, kept by the shell; turning the start with the system on or off writes or removes its entry first
+       and rejects with the reason when it cannot); onBattery(cb) — { now, devices } after each change (kt:battery). */
     batteryList: function () { return call('kt_battery_list'); },
     batteryRefresh: function (o) { return call('kt_battery_refresh', { o: obj(o) }); },
     batterySettings: function (o) { return call('kt_battery_settings', { o: obj(o) }); },

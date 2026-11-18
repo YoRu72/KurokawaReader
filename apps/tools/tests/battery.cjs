@@ -1,11 +1,15 @@
-// Device battery (0.21, piece 1) on a computer, with the Tauri bridge faked — its methods named and called exactly as
+// Device battery (0.21, pieces 1–2) on a computer, with the Tauri bridge faked — its methods named and called exactly as
 // desktop-tauri/bridge.js has them: batteryList(), batteryRefresh(o), batterySettings(o), onBattery(cb). Made-up devices:
 // an exact level, a low one, a charging one, a coarse (stepped) controller, an asleep mouse with its last reading, a
 // Bluetooth keyboard not connected, one the user said not to query. Checked: Settings' card (computer only) opens the
 // page; levels, steps, charging, ages and dimming as they should be; low in the error colour; the menu renames, hides,
 // stops querying and refreshes one device through the bridge; a pushed change redrawn; the empty state; «not on this
 // system»; the Electron build's calm word with no button; no sideways overflow; leaving the page lets go of the
-// subscription and the timer. Screenshots (PC 1280×800) into KT_SHOTS when set. `node tests/battery.cjs [en|ar]`.
+// subscription and the timer. Piece 2: the «Background» group (switches only: keep running in the background, start
+// with the system hidden — needing the first, «not yet» on a Mac, a refusal from the shell said and drawn back —, low
+// and fully-charged notices), the low marks (10/15/20/30; a device's own mark or «no notice» in its menu, and the card's
+// red following it), none of it in the Electron build or another system. Screenshots (PC 1280×800) into KT_SHOTS when
+// set. `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
@@ -14,14 +18,14 @@ const errors = []; const check = (what, ok, x) => { console.log(ok ? 'ok  ' : 'F
 const lang = process.argv[2] || 'en'; const SHOTS = process.env.KT_SHOTS || '';
 const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, `battery-${name}-${lang}.png`) }); } };
 
-// (Run in the page: the fake bridge. mode: 'tauri' | 'empty' | 'nothere' | 'electron'.)
+// (Run in the page: the fake bridge. mode: 'tauri' | 'mac' | 'empty' | 'nothere' | 'electron'.)
 function fake({ lang, mode }) {
   localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.update.lastCheck', String(Date.now())); localStorage.setItem('kt.pc.starter', '1');
   const NOW = 1_800_000_000_000; const min = 60_000;
   const rd = (level, at, charging = 'unknown') => ({ level, charging, asleep: false, takenAt: at });
   const ex = (v) => ({ kind: 'exact', value: v });
   const dev = (o) => ({ name: '', kind: 'other', brand: '', connection: 'usb', source: 'hid', vid: 0, pid: 0, merged: [], status: 'ok', reading: null, lastGood: null, checkedAt: NOW, ...o });
-  const devices = mode !== 'tauri' ? [] : [
+  const devices = mode !== 'tauri' && mode !== 'mac' ? [] : [
     dev({ key: 'hid:1111:2222:s:A1', name: 'Shape Mouse One', kind: 'mouse', brand: 'Acme', reading: rd(ex(64), NOW - 3 * min), lastGood: rd(ex(64), NOW - 3 * min) }),
     dev({ key: 'bt:{K}', name: 'Studio Keys', kind: 'keyboard', brand: '', connection: 'bluetooth', source: 'bluetooth', status: 'notConnected', lastGood: rd(ex(40), NOW - 26 * 60 * min) }),
     dev({ key: 'bt:{H}', name: 'Field Phones', kind: 'headset', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(9), NOW - 30_000), lastGood: rd(ex(9), NOW - 30_000) }),
@@ -30,16 +34,17 @@ function fake({ lang, mode }) {
     dev({ key: 'hid:3333:4444:c:{M}', name: 'Travel Mouse', kind: 'mouse', status: 'asleep', lastGood: rd(ex(71), NOW - 95 * min) }),
     dev({ key: 'hid:5555:6666:p:x', name: 'Quiet Pad', kind: 'controller', status: 'notQueried' }),
   ];
-  let settings = { intervalMin: 1, low: 15, names: {}, hidden: [], noQuery: ['hid:5555:6666:p:x'], links: [] };
+  let settings = { intervalMin: 1, low: 15, names: {}, hidden: [], noQuery: ['hid:5555:6666:p:x'], links: [], background: false, startup: false, notifyLow: true, notifyFull: false, thresholds: {} };
+  const system = mode === 'mac' ? { autostart: 'notYet', tray: true } : { autostart: 'yes', tray: true };
   window.__calls = []; window.__subs = 0; let cb = null;
   window.__push = (devs) => { if (cb) cb({ now: NOW, devices: devs }); };
   const base = { platform: 'desktop', available: true, reason: '', os: 'win32', ready: async () => ({}), list: async () => [], onTasks: () => () => {}, onBrowser: () => () => {}, onUpdateProgress: () => () => {}, onPackProgress: () => () => {}, packStatus: async () => ({}), defaultDir: async () => 'C:\\Downloads' };
   if (mode === 'electron') { window.kurokawaTools = base; return; }
   window.kurokawaTools = Object.assign(base, {
     // (Exactly bridge.js's signatures.)
-    batteryList: function () { window.__calls.push(['list']); return Promise.resolve(mode === 'nothere' ? { available: false, reason: 'platform', now: NOW, devices: [], settings } : { available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings }); },
+    batteryList: function () { window.__calls.push(['list']); return Promise.resolve(mode === 'nothere' ? { available: false, reason: 'platform', now: NOW, devices: [], settings, system } : { available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings, system }); },
     batteryRefresh: function (o) { window.__calls.push(['refresh', o]); return Promise.resolve(true); },
-    batterySettings: function (o) { window.__calls.push(['settings', o]); if (o && o.set) settings = Object.assign({}, settings, o.set); return Promise.resolve(settings); },
+    batterySettings: function (o) { window.__calls.push(['settings', o]); if (o && o.set && 'startup' in o.set && window.__failStartup) return Promise.reject(new Error('access denied')); if (o && o.set) settings = Object.assign({}, settings, o.set); return Promise.resolve(settings); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
   });
 }
@@ -132,6 +137,62 @@ function fake({ lang, mode }) {
     await p.evaluate(() => window.__push([{ key: 'bt:{N}', name: 'New Pad', kind: 'controller', brand: 'PlayStation', connection: 'bluetooth', source: 'bluetooth', vid: 0, pid: 0, merged: [], status: 'ok', reading: { level: { kind: 'exact', value: 50 }, charging: 'no', asleep: false, takenAt: 1_800_000_000_000 }, lastGood: null, checkedAt: 1 }]));
     await p.waitForTimeout(150);
     check('a change pushed by the shell is drawn', (await p.$$('.bat-grid:not(.bat-hidden) > .bat-card')).length === 1 && !!(await p.$('.bat-card[data-key="bt:{N}"]')));
+    // The low marks: the default's choices, a device's own mark from its menu, the card's red following it.
+    await p.click('[data-name="low"]'); await p.waitForSelector('.sheet .dest-row');
+    const bare = (x) => x.replace(/[\u200F\u2068\u2069]/g, '');
+    const marks = (await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent))).map(bare);
+    check('the default mark offers 10, 15, 20 and 30', JSON.stringify(marks) === JSON.stringify(AR ? ['10٪', '15٪', '20٪', '30٪'] : ['10%', '15%', '20%', '30%']), marks);
+    await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+    await p.evaluate(() => window.__push([{ key: 'bt:{N}', name: 'New Pad', kind: 'controller', brand: '', connection: 'bluetooth', source: 'bluetooth', vid: 0, pid: 0, merged: [], status: 'ok', reading: { level: { kind: 'exact', value: 12 }, charging: 'no', asleep: false, takenAt: 1_800_000_000_000 }, lastGood: null, checkedAt: 1 }]));
+    await p.waitForTimeout(150);
+    check('12% under the default mark (20%): red', (await p.getAttribute('.bat-card[data-key="bt:{N}"]', 'class')).includes('low'));
+    await p.click('.bat-card[data-key="bt:{N}"] .bat-more'); await p.waitForSelector('.sheet [data-act="mark"]');
+    check('the menu shows the device\'s mark (as the others)', (await p.textContent('.sheet [data-act="mark"] .bat-mark-val')) === (AR ? 'كسائر الأجهزة (20٪)' : 'Same as the others (20%)'));
+    await p.click('.sheet [data-act="mark"]'); await p.waitForSelector('.sheet .dest-row input[type=radio]');
+    const opts = (await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent))).map(bare);
+    check('a device\'s own mark: as the others, 10–30, or no notice', opts.length === 6 && opts[5] === (AR ? 'بلا تنبيه' : 'No notice'), opts);
+    await p.waitForTimeout(450); await shot(p, 'mark');
+    await p.click('.sheet .dest-row:has-text("' + (AR ? '10٪' : '10%') + '")'); await p.waitForTimeout(250);
+    const th = (await calls(p)).filter((c) => c[0] === 'settings').pop();
+    check('its own mark kept through batterySettings({ set: { thresholds } })', th && th[1].set.thresholds && th[1].set.thresholds['bt:{N}'] === 10, th);
+    check('12% over its own mark (10%): not red', !(await p.getAttribute('.bat-card[data-key="bt:{N}"]', 'class')).includes('low'));
+    await p.click('.bat-card[data-key="bt:{N}"] .bat-more'); await p.waitForSelector('.sheet [data-act="mark"]');
+    await p.click('.sheet [data-act="mark"]'); await p.waitForSelector('.sheet .dest-row input[type=radio]');
+    await p.click('.sheet .dest-row:has-text("' + (AR ? 'بلا تنبيه' : 'No notice') + '")'); await p.waitForTimeout(250);
+    check('«no notice» kept as 0', (await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set.thresholds['bt:{N}'] === 0);
+    check('no notice: the card still reddens at the default mark', (await p.getAttribute('.bat-card[data-key="bt:{N}"]', 'class')).includes('low'));
+    await p.click('.bat-card[data-key="bt:{N}"] .bat-more'); await p.waitForSelector('.sheet [data-act="mark"]');
+    check('the menu says «no notice»', (await p.textContent('.sheet [data-act="mark"] .bat-mark-val')) === (AR ? 'بلا تنبيه' : 'No notice'));
+    await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+
+    // Piece 2: the Background group.
+    const bg = await p.$('.bat-bg[data-group="background"]');
+    check('the Background group is on the page', !!bg);
+    const sws = await p.$$eval('.bat-bg input', (e) => e.map((x) => ({ type: x.type, role: x.getAttribute('role'), app: getComputedStyle(x).appearance, w: x.getBoundingClientRect().width })));
+    check('four switches (drawn switches, not checkboxes)', sws.length === 4 && sws.every((x) => x.type === 'checkbox' && x.role === 'switch' && x.app === 'none' && x.w >= 48), sws);
+    check('no native number spinner on the page', !(await p.$('.battery-view input[type=number]')));
+    const st = async (n) => p.$eval(`.bat-bg [data-row="${n}"]`, (e) => ({ on: e.querySelector('input').checked, dis: e.querySelector('input').disabled, hint: e.querySelector('small').textContent }));
+    let s0 = await st('startup');
+    check('off by default; start with the system needs the background first', !(await st('background')).on && !s0.on && s0.dis && s0.hint === (AR ? 'يقتضي تشغيلَ «مواصلة العمل في الخلفية».' : 'Needs «Keep running in the background».'), s0);
+    check('low notices on, fully charged off by default', (await st('notifyLow')).on && !(await st('notifyFull')).on);
+    await p.click('.bat-bg [data-row="background"]'); await p.waitForTimeout(250);
+    check('keep running in the background kept', JSON.stringify((await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set) === JSON.stringify({ background: true }));
+    s0 = await st('startup');
+    check('then the start with the system can be chosen', !s0.dis && !s0.on && s0.hint === (AR ? 'يُفتَح في علبة النظام عند تسجيل دخولك.' : 'Opens in the tray when you sign in.'), s0);
+    await p.evaluate(() => { window.__failStartup = true; });
+    await p.click('.bat-bg [data-row="startup"]'); await p.waitForTimeout(300);
+    const toastT = await p.evaluate(() => document.querySelector('.toast, .snackbar')?.textContent ?? '');
+    check('a refusal from the shell said, the switch drawn back', !(await st('startup')).on && toastT.includes('access denied'), toastT);
+    await p.evaluate(() => { window.__failStartup = false; }); await p.waitForTimeout(2300);
+    await p.click('.bat-bg [data-row="startup"]'); await p.waitForTimeout(250);
+    check('start with the system kept', (await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set.startup === true && (await st('startup')).on);
+    await p.click('.bat-bg [data-row="notifyFull"]'); await p.waitForTimeout(250);
+    check('the fully-charged notice kept', (await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set.notifyFull === true);
+    // (Controls never touch: the rows apart, the switch apart from its words.)
+    const geo = await p.$$eval('.bat-bg .bat-switch', (rows) => rows.map((r) => { const a = r.querySelector('.bat-sw-text').getBoundingClientRect(); const b = r.querySelector('input').getBoundingClientRect(); return { gap: Math.min(Math.abs(b.left - a.right), Math.abs(a.left - b.right)), h: r.getBoundingClientRect().height }; }));
+    check('each switch keeps a real gap from its words', geo.every((g) => g.gap >= 12), geo);
+    check('no sideways overflow (background group)', (await overflow(p)) <= 1);
+    await p.$eval('.bat-bg', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); await shot(p, 'background');
     // Leaving lets go.
     check('subscribed once while open', (await p.evaluate(() => window.__subs)) === 1);
     // (Within its tab — Settings —: the page replaced, so disposed; another tab would keep it for coming back.)
@@ -155,11 +216,22 @@ function fake({ lang, mode }) {
     const { ctx, p } = await open('nothere');
     await p.waitForSelector('.bat-empty[data-state="notHere"]');
     check('another system: said calmly, no refresh button', !(await p.isVisible('.battery-view .topbar [data-icon="refresh"]')));
+    check('another system: no Background group', !(await p.$('.bat-bg')));
+    await ctx.close();
+  }
+  {
+    // (A Mac: the start with the system is «not yet», said calmly, its switch off.)
+    const { ctx, p } = await open('mac');
+    await p.waitForSelector('.bat-bg [data-row="startup"]');
+    await p.click('.bat-bg [data-row="background"]'); await p.waitForTimeout(250);
+    const m = await p.$eval('.bat-bg [data-row="startup"]', (e) => ({ dis: e.querySelector('input').disabled, hint: e.querySelector('small').textContent }));
+    check('a Mac: start with the system «not yet», its switch off', m.dis && m.hint === (AR ? 'لم يُتَح هذا على هذا النظام بعدُ.' : 'Not available on this system yet.'), m);
     await ctx.close();
   }
   {
     const { ctx, p } = await open('electron');
     await p.waitForSelector('.bat-empty[data-state="mainBuild"]');
+    check('the Electron build: no Background group', !(await p.$('.bat-bg')));
     check('the Electron build: «available in the main computer build», no dead button', !(await p.isVisible('.battery-view .topbar [data-icon="refresh"]')) && (await p.$$('.battery-view .bat-body button')).length === 0);
     await shot(p, 'electron');
     await ctx.close();

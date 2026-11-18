@@ -52,6 +52,15 @@ struct Desk {
     last_down: f64,
     last_moving: usize,
     mini_was_min: bool,
+    /// Device battery's part of the tray (battery.rs, its background on): None leaves the icon to the downloads' setting.
+    battery: Option<BatTray>,
+}
+
+/// Device battery's part of the tray: its menu's device lines (lowest first, at most six) and the tooltip's line.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BatTray {
+    pub lines: Vec<String>,
+    pub tip: String,
 }
 
 static DESK: OnceLock<Mutex<Desk>> = OnceLock::new();
@@ -138,17 +147,66 @@ fn tray_icon(app: &AppHandle) -> Option<tauri::tray::TrayIcon<tauri::Wry>> {
 }
 
 fn tray_menu(app: &AppHandle, l: &Value) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
     let show = MenuItem::with_id(app, "kt-tray-show", word(l, "app", APP), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "kt-tray-quit", word(l, "quit", "Quit"), true, None::<&str>)?;
-    Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit])
+    let bat = desk().battery.clone();
+    let Some(bat) = bat else {
+        return Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit]);
+    };
+    // (Device battery's background on: its devices — each opens its page —, «Check now», «Open Device battery».)
+    let mut devs: Vec<MenuItem<tauri::Wry>> = Vec::new();
+    for (i, line) in bat.lines.iter().enumerate() {
+        devs.push(MenuItem::with_id(app, format!("kt-tray-bat-dev-{i}"), line, true, None::<&str>)?);
+    }
+    if devs.is_empty() {
+        devs.push(MenuItem::with_id(app, "kt-tray-bat-none", word(l, "batTrayNone", "No device found"), false, None::<&str>)?);
+    }
+    let check = MenuItem::with_id(app, "kt-tray-bat-check", word(l, "batTrayCheck", "Check now"), true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "kt-tray-bat-open", word(l, "batTrayOpen", "Open Device battery"), true, None::<&str>)?;
+    let (s1, s2, s3) = (PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?);
+    let mut items: Vec<&dyn IsMenuItem<tauri::Wry>> = devs.iter().map(|d| d as &dyn IsMenuItem<tauri::Wry>).collect();
+    let rest: [&dyn IsMenuItem<tauri::Wry>; 7] = [&s1, &check, &open, &s2, &show, &s3, &quit];
+    items.extend(rest);
+    Menu::with_items(app, &items)
+}
+
+/// battery.rs: its part of the tray set (None: taken away). The menu is made again only when the lines changed.
+pub fn set_battery_tray(app: &AppHandle, b: Option<BatTray>) {
+    let menu_changed = {
+        let mut d = desk();
+        if d.battery == b {
+            return;
+        }
+        let m = d.battery.as_ref().map(|x| &x.lines) != b.as_ref().map(|x| &x.lines) || d.battery.is_some() != b.is_some();
+        d.battery = b;
+        m
+    };
+    let a2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if menu_changed {
+            let l = desk().labels.clone();
+            if let Some(t) = tray_icon(&a2) {
+                if let Ok(m) = tray_menu(&a2, &l) {
+                    let _ = t.set_menu(Some(m));
+                }
+            }
+        }
+        tray_update(&a2);
+    });
+}
+
+/// Whether the tray icon is there now (battery.rs: closing to the tray only then).
+pub fn tray_is_on() -> bool {
+    desk().tray_on
 }
 
 /// main.cjs's trayUpdate: the icon made (once) or hidden; its tooltip the speed over every moving download.
 fn tray_update(app: &AppHandle) {
-    let (on, labels, moving, down) = {
+    let (on, labels, moving, down, bat_tip) = {
         let d = desk();
-        (d.prefs.tray, d.labels.clone(), d.last_moving, d.last_down)
+        // (Shown for the downloads' own setting, or while device battery keeps running in the background.)
+        (d.prefs.tray || d.battery.is_some(), d.labels.clone(), d.last_moving, d.last_down, d.battery.as_ref().map(|b| b.tip.clone()).unwrap_or_default())
     };
     let mut g = tray_icon(app);
     if !on {
@@ -178,7 +236,11 @@ fn tray_update(app: &AppHandle) {
     }
     if let Some(t) = g.as_ref() {
         let _ = t.set_visible(true);
-        let _ = t.set_tooltip(Some(logic::tooltip(&word(&labels, "app", APP), moving, down)));
+        let mut tip = logic::tooltip(&word(&labels, "app", APP), moving, down);
+        if !bat_tip.is_empty() {
+            tip = kt_battery::summary::clip_utf16(&format!("{tip}\n{bat_tip}"), kt_battery::summary::TIP_MAX_UTF16);
+        }
+        let _ = t.set_tooltip(Some(tip));
         let mut d = desk();
         d.tray_on = true;
         d.tray_why = String::new();
@@ -196,6 +258,8 @@ fn build_tray(app: &AppHandle, labels: &Value) -> Result<tauri::tray::TrayIcon<t
         .on_menu_event(|app, ev| match ev.id().as_ref() {
             "kt-tray-show" => show_main(app),
             "kt-tray-quit" => app.exit(0),
+            "kt-tray-bat-check" => crate::battery::check_now(app),
+            id if id == "kt-tray-bat-open" || id.starts_with("kt-tray-bat-dev-") => crate::battery::open_page(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, ev| {
@@ -583,6 +647,10 @@ pub async fn kt_desktop_prefs(app: AppHandle, o: Value) -> Result<Value, String>
             tray_update(&a2);
         });
         mac_menu_later(&app, &o);
+        // (Device battery's lines said again in the new words.)
+        if o.get("labels").is_some() {
+            crate::battery::tray_again(&app);
+        }
     }
     if o.get("keepAwake").is_some() {
         let awake = {
@@ -834,11 +902,15 @@ pub fn at_start(app: &AppHandle) {
 }
 
 /// A second launch, handed over by the single-instance plugin (which ends it): its links kept, this window brought to
-/// the front (main.cjs's second-instance).
+/// the front (main.cjs's second-instance) unless it is a hidden start.
 pub fn second_launch(app: &AppHandle, argv: Vec<String>, cwd: String) {
     let args: Vec<String> = argv.into_iter().skip(1).collect();
     queue(app, &args, Path::new(&cwd));
-    show_main(app);
+    // (A start with the system — --hidden: the screen translator's entry and device battery's each launch one — never
+    // brings the window up.)
+    if !kt_battery::autostart::wants_hidden(&args) {
+        show_main(app);
+    }
 }
 
 /// Addresses a Mac hands over (magnet:, kurokawatools:, a .torrent as file://).

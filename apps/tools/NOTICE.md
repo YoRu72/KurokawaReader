@@ -40,8 +40,21 @@ Each ported file of `apps/tools/core/kt-battery` names the original files it com
 | `src/brands.cpp` (brand by vendor id and name — text only) | `kind.rs` |
 | `lang/*.txt` (the phrase list) | a checklist for Tools' own strings (`src/i18n`); Arabic written anew |
 
-The vendor drivers (Logitech, Razer, PlayStation, …), the taskbar widget, the tray, notices and the support request
-are not ported in this piece. Drivers that send undocumented commands are not ported until they are understood.
+The vendor drivers (Logitech, Razer, PlayStation, …), the taskbar widget and the support request are not ported yet.
+Drivers that send undocumented commands are not ported until they are understood.
+
+### What was taken (piece 2: the background)
+
+| Original (C++) | Here |
+|---|---|
+| `src/main.cpp` (UpdateTrayIcon: the low-battery balloon and its re-arming) | `notice.rs` |
+| `src/main.cpp` (the tray's tooltip and menu) | `summary.rs`; the shell's one tray icon (`desktop-tauri/src-tauri/src/desktop.rs`) |
+| `src/main.cpp` (SetAutostart / AutostartEnabled), `src/linux/main_linux.cpp` (ApplyAutostart) | `autostart.rs`, `win/autostart.rs` |
+
+Changed: the low mark is the user's, per device (10/15/20/30 % or off; re-armed at mark + 5 % or by charging), coarse
+devices are told at «Low», and nothing is told from an old reading, an asleep device or one not connected (the original
+warned from the value it kept); an optional «fully charged» notice; the start with the system has its own Run value
+and starts the app hidden in the tray; the autostart file's Exec line is quoted by the Desktop Entry rules.
 
 ### What was changed
 

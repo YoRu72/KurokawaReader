@@ -3,9 +3,12 @@
 // read by the Tauri shell over kt-battery (derived from Wireless Device Battery Monitor by krisgfx9 — NOTICE.md). A card
 // per device with our own drawn icon for its kind (no makers' logos), its name (the user's own if he gave one), its
 // brand as text, its level (exact, in steps, or unknown), charging, the reading's age, asleep or away dimmed; a menu
-// per device (refresh, rename, hide, do not query); the hidden ones apart; how often to check and when a level is low.
+// per device (refresh, rename, hide, do not query, its own low mark); the hidden ones apart; how often to check and when
+// a level is low. Piece 2, «Background» (the computer's Tauri build only): keep running in the background (closing the
+// window leaves the app in the tray, the checking goes on), start with the system hidden, low-battery notices (per
+// device mark — kt-battery notice.rs decides in the shell) and an optional «fully charged» one.
 // The Electron build and the phone have no reader: a calm word instead, never a dead button. Loaded on first use.
-import { h, icon, iconButton, openSheet, pickButton, toast } from '../ui/dom';
+import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from '../ui/dom';
 import { t, localDigits } from '../i18n';
 import { back } from '../router';
 
@@ -13,8 +16,16 @@ type Lvl = { kind: 'exact'; value: number } | { kind: 'coarse'; value: 'empty' |
 type Rd = { level: Lvl; charging: 'yes' | 'no' | 'unknown'; asleep: boolean; takenAt: number };
 export type BatDevice = { key: string; name: string; kind: string; brand: string; connection: string; source: string; vid: number; pid: number; merged: string[];
   status: 'ok' | 'waiting' | 'asleep' | 'notConnected' | 'noAnswer' | 'notQueried'; reading: Rd | null; lastGood: Rd | null; checkedAt: number };
-export type BatSettings = { intervalMin: number; low: number; names: Record<string, string>; hidden: string[]; noQuery: string[]; links: [string, string][] };
-type BatList = { available: boolean; reason?: string; now: number; devices: BatDevice[]; settings: BatSettings };
+export type BatSettings = { intervalMin: number; low: number; names: Record<string, string>; hidden: string[]; noQuery: string[]; links: [string, string][];
+  /** Piece 2: closing the window leaves the app in the tray; the start with the system, hidden (needs the background). */
+  background: boolean; startup: boolean;
+  /** Low-battery notices (on by default) and the «fully charged» one (off); a device's own mark: 0 = no notice. */
+  notifyLow: boolean; notifyFull: boolean; thresholds: Record<string, number> };
+/** What the shell can do here: a start with the system ('notYet' on a Mac), a tray icon. */
+type BatSystem = { autostart: 'yes' | 'notYet'; tray: boolean };
+type BatList = { available: boolean; reason?: string; now: number; devices: BatDevice[]; settings: BatSettings; system?: BatSystem };
+/** The marks offered (kt-battery notice.rs CHOICES). */
+const MARKS = [10, 15, 20, 30];
 /** The bridge's methods (desktop-tauri/bridge.js — the same names and arguments). */
 type Desk = { batteryList(): Promise<BatList>; batteryRefresh(o: { key?: string }): Promise<boolean>; batterySettings(o: { set?: Partial<BatSettings> }): Promise<BatSettings>; onBattery(cb: (e: { now: number; devices: BatDevice[] }) => void): () => void };
 const desk = (): Desk | null => { const d = (window as unknown as { kurokawaTools?: Partial<Desk> }).kurokawaTools; return d?.batteryList && d.onBattery ? d as Desk : null; };
@@ -77,6 +88,17 @@ const CSS = `
 .battery-view .bat-settings .bat-row > span { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 3px; color: var(--md-on-surface); }
 .battery-view .bat-settings .bat-row > span > small { color: var(--md-on-surface-variant); font-size: 12.5px; }
 .battery-view .bat-settings .bat-row .pick-btn { flex: 0 0 168px; width: 168px; }
+.battery-view .bat-bg { gap: 4px; }
+.battery-view .bat-bg h3 { margin-bottom: 6px; }
+.battery-view .bat-switch { gap: 20px; padding: 12px 0; cursor: pointer; }
+.battery-view .bat-switch + .bat-switch { border-top: 1px solid var(--md-outline-variant); }
+.battery-view .bat-switch .bat-sw-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.battery-view .bat-switch .bat-sw-title { color: var(--md-on-surface); font-size: 15px; }
+.battery-view .bat-switch small { color: var(--md-on-surface-variant); font-size: 12.5px; line-height: 1.5; }
+.battery-view .bat-switch.is-off { cursor: default; }
+.battery-view .bat-switch.is-off .bat-sw-title { color: var(--md-on-surface-variant); }
+.sheet .dest-row[data-act="mark"] .name { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: start; }
+.sheet .dest-row .bat-mark-val { color: var(--md-on-surface-variant); font-size: 12.5px; }
 .bat-rename { display: flex; flex-direction: column; gap: 12px; }
 .sheet-actions .bat-eq { flex: 1 1 0; min-width: 0; justify-content: center; }
 .bat-rename input { height: 44px; padding: 0 14px; border-radius: 12px; }
@@ -99,6 +121,8 @@ export function levelText(l: Lvl): string {
   if (l.kind === 'coarse') return t(`batCoarse_${l.value}` as 'batCoarse_low');
   return t('batLevelUnknown');
 }
+/** A device's own mark (0: no notice), else the default. */
+export function markOf(S: BatSettings, key: string): number { const v = S.thresholds?.[key]; return typeof v === 'number' && (v === 0 || MARKS.includes(v)) ? v : S.low; }
 const isLow = (l: Lvl | undefined, low: number): boolean => !!l && (l.kind === 'exact' ? l.value <= low : l.kind === 'coarse' ? l.value === 'empty' || l.value === 'low' : false);
 
 export function batteryView(): HTMLElement & { dispose?: () => void } {
@@ -117,13 +141,14 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
   const grid = h('div', { class: 'bat-grid' }); const head = h('div', { class: 'bat-head' }); const extra = h('div');
   body.append(h('div', { class: 'spinner small' }));
   const nameOf = (x: BatDevice) => list?.settings.names[x.key] || x.name || t('batUnnamed');
-  const saveSettings = async (set: Partial<BatSettings>) => { try { const s = await d.batterySettings({ set }); if (list) list.settings = s; draw(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } };
+  // (A refusal — the start with the system could not be written — said, and the switches drawn back as they were.)
+  const saveSettings = async (set: Partial<BatSettings>, errKey?: 'batStartFailed') => { try { const s = await d.batterySettings({ set }); if (list) list.settings = s; draw(); } catch (e) { const m = String((e as Error)?.message ?? e); toast(errKey ? t(errKey, { error: m }) : m, 'error'); draw(); } };
   async function refreshAll(): Promise<void> { await d!.batteryRefresh({}).catch(() => false); }
 
   const card = (x: BatDevice): HTMLElement => {
     const S = list!.settings; const r = x.reading; const lvl = r?.level;
     const dim = x.status !== 'ok' && x.status !== 'waiting';
-    const low = x.status === 'ok' && isLow(lvl, S.low);
+    const mk = markOf(S, x.key); const low = x.status === 'ok' && isLow(lvl, mk || S.low);
     const via = t(`batVia_${x.connection}` as 'batVia_usb');
     const sub = [x.brand, t(`batKind_${x.kind}` as 'batKind_mouse')].filter(Boolean).join(' · ');
     const level = h('div', { class: 'bat-level' });
@@ -145,11 +170,27 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     const S = list!.settings; const sh = openSheet(nameOf(x), t('close'), { at: ev });
     const act = (ic: string, label: string, fn: () => void, name: string) => h('button', { type: 'button', class: 'dest-row', 'data-act': name, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     const hidden = S.hidden.includes(x.key); const quiet = S.noQuery.includes(x.key);
+    const markRow = act('bell', t('batMark'), () => markPick(x, ev), 'mark'); markRow.querySelector('.name')?.append(h('small', { class: 'bat-mark-val', dir: 'auto' }, markText(S, x.key)));
     sh.body.append(h('div', { class: 'dest-list' },
       ...(quiet ? [] : [act('refresh', t('batRefreshOne'), () => void d.batteryRefresh({ key: x.key }).catch(() => false), 'refresh')]),
       act('pencil', t('batRename'), () => rename(x), 'rename'),
+      markRow,
       act(hidden ? 'eye' : 'eyeOff', hidden ? t('batUnhide') : t('batHide'), () => void saveSettings({ hidden: hidden ? S.hidden.filter((k) => k !== x.key) : [...S.hidden, x.key] }), 'hide'),
       act(quiet ? 'refresh' : 'shield', quiet ? t('batQueryAgain') : t('batNoQuery'), () => { void saveSettings({ noQuery: quiet ? S.noQuery.filter((k) => k !== x.key) : [...S.noQuery, x.key] }).then(() => { if (!quiet) toast(t('batNoQueryDone', { name: nameOf(x) })); }); }, 'noQuery')));
+  };
+
+  const pct = (n: number) => t('batPct', { n: localDigits(n) });
+  // (Right to left: a choice that is only a number opens with a right-to-left mark, so it sits beside its radio as the
+  // words do; a device's name kept apart from the words around it.)
+  const rtl = (s: string) => (document.documentElement.dir === 'rtl' ? '\u200F' + s : s);
+  const iso = (s: string) => '\u2068' + s + '\u2069';
+  const markText = (S: BatSettings, key: string) => { const own = S.thresholds?.[key]; return own === undefined || !(own === 0 || MARKS.includes(own)) ? t('batMarkDefault', { level: pct(S.low) }) : own === 0 ? t('batMarkOff') : pct(own); };
+  // A device's own low mark: as the others, one of the marks, or no notice.
+  const markPick = (x: BatDevice, ev: Event) => {
+    const S = list!.settings; const own = S.thresholds?.[x.key];
+    const cur = own === undefined || !(own === 0 || MARKS.includes(own)) ? 'default' : String(own);
+    const opts: [string, string][] = [['default', t('batMarkDefault', { level: pct(S.low) })], ...MARKS.map((m) => [String(m), rtl(pct(m))] as [string, string]), ['0', t('batMarkOff')]];
+    pickSheet(t('batMarkFor', { name: iso(nameOf(x)) }), opts, cur, (v) => { const next = { ...(S.thresholds ?? {}) }; if (v === 'default') delete next[x.key]; else next[x.key] = Number(v); void saveSettings({ thresholds: next }); }, t('close'), ev);
   };
 
   const rename = (x: BatDevice) => {
@@ -166,13 +207,29 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
 
   const settingsCard = (): HTMLElement => {
     const S = list!.settings;
-    const every = pickButton(t('batEvery'), ['1', '2', '5', '10', '15', '30', '60'].map((v) => [v, t('batEveryN', { n: localDigits(v) })] as [string, string]), String(S.intervalMin), (v) => void saveSettings({ intervalMin: Number(v) }), t('close'));
-    const low = pickButton(t('batLow'), ['5', '10', '15', '20', '25', '30', '40', '50'].map((v) => [v, t('batPct', { n: localDigits(v) })] as [string, string]), String(S.low), (v) => void saveSettings({ low: Number(v) }), t('close'));
+    const every = pickButton(t('batEvery'), ['1', '2', '5', '10', '15', '30', '60'].map((v) => [v, rtl(t('batEveryN', { n: localDigits(v) }))] as [string, string]), String(S.intervalMin), (v) => void saveSettings({ intervalMin: Number(v) }), t('close'));
+    const low = pickButton(t('batLow'), MARKS.map((v) => [String(v), rtl(pct(v))] as [string, string]), String(S.low), (v) => void saveSettings({ low: Number(v) }), t('close'));
     every.dataset.name = 'every'; low.dataset.name = 'low';
     return h('section', { class: 'card bat-settings' }, h('h3', null, t('batSettingsTitle')),
       h('div', { class: 'bat-row' }, h('span', null, t('batEvery')), every),
       h('div', { class: 'bat-row' }, h('span', null, t('batLow'), h('small', null, t('batLowHint'))), low),
       h('p', { class: 'hint' }, t('batSafeNote')));
+  };
+
+  // Piece 2: «Background» — switches, each with its line of explanation; what cannot be had here said, not hidden.
+  const backgroundCard = (): HTMLElement => {
+    const S = list!.settings; const sys: BatSystem = list!.system ?? { autostart: 'yes', tray: true };
+    const sw = (name: string, title: string, hint: string, on: boolean, off: boolean, fn: (v: boolean) => void): HTMLElement => {
+      const i = h('input', { type: 'checkbox', role: 'switch', checked: on, disabled: off, 'aria-label': title, onchange: () => fn(i.checked) }) as HTMLInputElement;
+      return h('label', { class: 'switch-row bat-switch' + (off ? ' is-off' : ''), 'data-row': name }, h('span', { class: 'bat-sw-text' }, h('span', { class: 'bat-sw-title' }, title), h('small', null, hint)), i);
+    };
+    const canKeep = sys.tray; const canStart = sys.autostart === 'yes' && canKeep && S.background;
+    const startHint = sys.autostart !== 'yes' ? t('batBgStartNotYet') : !S.background ? t('batBgStartNeeds') : t('batBgStartHint');
+    return h('section', { class: 'card bat-settings bat-bg', 'data-group': 'background' }, h('h3', null, t('batBgTitle')),
+      sw('background', t('batBgKeep'), canKeep ? t('batBgKeepHint') : t('batBgNoTray'), canKeep && S.background, !canKeep, (v) => void saveSettings({ background: v }, 'batStartFailed')),
+      sw('startup', t('batBgStart'), startHint, canStart && S.startup, !canStart, (v) => void saveSettings({ startup: v }, 'batStartFailed')),
+      sw('notifyLow', t('batBgLowOn'), t('batBgLowOnHint'), S.notifyLow !== false, false, (v) => void saveSettings({ notifyLow: v })),
+      sw('notifyFull', t('batBgFullOn'), t('batBgFullOnHint'), !!S.notifyFull, false, (v) => void saveSettings({ notifyFull: v })));
   };
 
   function draw(): void {
@@ -194,7 +251,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     }
     const empty = !list.devices.length ? h('section', { class: 'card bat-empty', 'data-state': 'empty' }, h('div', { class: 'bat-ic' }, kindIcon('controller')), h('h3', null, t('batEmptyTitle')), h('p', null, t('batEmptyBody')),
       h('ul', null, h('li', null, t('batEmpty1')), h('li', null, t('batEmpty2')), h('li', null, t('batEmpty3'))), h('p', null, t('batEmptyLater'))) : null;
-    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, settingsCard()].filter(Boolean) as HTMLElement[]);
+    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, settingsCard(), backgroundCard()].filter(Boolean) as HTMLElement[]);
   }
 
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });

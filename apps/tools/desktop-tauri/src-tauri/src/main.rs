@@ -9,7 +9,8 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
-// (0.21, device battery: the page's commands over kt-battery — GPL-3.0-or-later, ../../../NOTICE.md.)
+// (0.21, device battery: the page's commands over kt-battery, its background, tray part, notices and start with the
+// system — GPL-3.0-or-later, ../../../NOTICE.md.)
 mod battery;
 mod sevenparse;
 mod commands;
@@ -311,6 +312,8 @@ fn main() {
             browser::on_event(window, event);
             // (Screen translator: close to the tray while it is on; its windows' focus and ends.)
             screentr::on_event(window, event);
+            // (Device battery: close to the tray while it keeps running in the background.)
+            battery::on_event(window, event);
         })
         .setup(|app| {
             // (Before any request: the app's own requests named as Tools' (shared crate's net.rs), the cookies sites
@@ -439,6 +442,9 @@ fn main() {
             // (Screen translator: its settings read, its keys / tray / start-with-the-computer applied; a --hidden
             // start left in the tray when chosen.)
             screentr::init(&handle);
+            // (Device battery, piece 2: with its background on, its loop and its part of the tray from the start; a
+            // --hidden start with the system left in the tray.)
+            battery::init(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())

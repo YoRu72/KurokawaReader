@@ -16,18 +16,24 @@
 //! - identity: stable keys per unit and the explicit merge rules
 //! - sched: per-device timing, deadlines, back-off, asleep devices left alone
 //! - runner: the background loop over a Platform
+//! - notice: when a low-battery or fully-charged notice is due (per device, with re-arming)
+//! - summary: the tray's short list, lowest first, and its tooltip's clipping
+//! - autostart: «start with the system, hidden» — the Run value's data and the XDG autostart file
 //!
-//! `win` (Windows only) is the platform: SetupAPI, HID, CfgMgr32 and XInput declared in win/ffi.rs, type-checked on
+//! `win` (Windows only) is the platform: SetupAPI, HID, CfgMgr32, XInput and the Run key (advapi32) declared in win/ffi.rs, type-checked on
 //! any system through stdroots/wincheck.rs; Windows.Gaming.Input behind the `wgi` feature.
 pub mod allow;
+pub mod autostart;
 pub mod bluetooth;
 pub mod hidvalue;
 pub mod identity;
 pub mod kind;
 pub mod model;
+pub mod notice;
 pub mod registry;
 pub mod runner;
 pub mod sched;
+pub mod summary;
 pub mod transport;
 pub mod xbox;
 #[cfg(windows)]
