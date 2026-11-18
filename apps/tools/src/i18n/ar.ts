@@ -724,7 +724,7 @@ export const ar: Partial<Strings> = {
   tvGenre_Sport: "رياضة",
   tvGenre_Thriller: "تشويق",
   tvGenre_War: "حرب",
-  tvGenre_Western: "غرب أمريكي",
+  tvGenre_Western: "غربي",
   packWhyMpv: "حاوية هذا الملفّ (MKV ونحوه) تحتاج محرّك mpv لإظهار الصورة؛ ولا يشغّل عارض الويب إلّا صوته.",
   decoderDirect: "عتاديّ، مباشرةً إلى الشاشة",
   decoderDirectHint: "MediaCodec مباشرةً إلى السطح؛ الأخفّ على الهواتف الضعيفة، لكنّ mpv لا يرسم ترجمات ولا مرشّحات بهذه الطريقة.",
