@@ -104,24 +104,24 @@ export async function makeArchiveSheet(paths: string[], dir: string, started: (i
   sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => {
     const n = (name.value.trim() || stem).replace(/\.(zip|7z|tar|tar\.gz|tgz|tar\.xz)$/i, ''); sh.close();
     void (async () => {
-      let shown = `${n}.${format}`; let replace = false;
+      let shown = `${n}.${format}`; let replace = false; let clash: 'both' | 'replace' | undefined;
       // (A computer: a file of that name is not replaced unasked — keep both, replace, or cancel, as the app asks for other names that are taken.)
       if (pc) {
         const { pathExists } = await import('../archives');
         if (await pathExists(`${dir}/${shown}`)) {
           const a = await clashSheet(shown); if (a === 'cancel') return;
-          if (a === 'replace') replace = true; else { for (let k = 2; k < 100; k++) { const c = `${n} (${k}).${format}`; if (!(await pathExists(`${dir}/${c}`))) { shown = c; break; } } }
+          if (a === 'replace') { replace = true; clash = 'replace'; } else { clash = 'both'; for (let k = 2; k < 100; k++) { const c = `${n} (${k}).${format}`; if (!(await pathExists(`${dir}/${c}`))) { shown = c; break; } } }
         }
       }
       const out = `${dir}/${shown}`;
-      const done = pc ? createZip(out, paths, undefined, { format: format as never, level, password: format === '7z' ? pw.value || undefined : undefined, replace }) : createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
+      const done = pc ? createZip(out, paths, undefined, { format: format as never, level, password: format === '7z' ? pw.value || undefined : undefined, replace, clash }) : createZip(out, paths, undefined, { format: format as never, level, password: pw.value || undefined, deleteAfter: del.checked, comment: (format === 'zip' && comment.value.trim()) || undefined, splitMb });
       const id = `mk-${Date.now()}`; started(id, t('filesZipping', { name: shown }), done, () => void cancelArchive(id));
-      void done.then(() => { refresh(); toast(t('filesZipped', { name: shown })); }, async (err) => { const { sevenErrorText } = await import('../archives'); toast(pc ? sevenErrorText(err) : String((err as Error).message ?? err), 'error', 5000); });
+      void done.then((r) => { refresh(); if (r.cancelled) return; toast(t('filesZipped', { name: r.path ? r.path.split(/[\\/]/).pop() || shown : shown })); }, async (err) => { const { sevenErrorText } = await import('../archives'); toast(pc ? sevenErrorText(err) : String((err as Error).message ?? err), 'error', 5000); });
     })();
   } }, icon('archive'), t('filesCompress')));
 }
 /** The name of an archive is taken (a computer's Compress): keep both, replace, or cancel. */
-function clashSheet(name: string): Promise<'both' | 'replace' | 'cancel'> {
+export function clashSheet(name: string): Promise<'both' | 'replace' | 'cancel'> {
   return new Promise((res) => {
     let answered = false; const sh = openSheet(t('filesNameTakenTitle'), t('cancel'), { onClose: () => { if (!answered) res('cancel'); } });
     const pick = (a: 'both' | 'replace') => () => { answered = true; sh.close(); res(a); };

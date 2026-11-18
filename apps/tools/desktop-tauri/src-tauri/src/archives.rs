@@ -120,6 +120,49 @@ pub fn init(app: &AppHandle) {
     let _ = RES.set(v);
     archive::route_split_volumes(true);
     archive::set_local_offset(local_offset());
+    // (Tools 0.21 P11: the shared crate's stricter rules — a format by what is in the file, a gz / xz / bz2 a tar only
+    // with a tar header inside (looked into by `peek_inside`), overlapping entries refused in place, no device, FIFO or
+    // sparse entry made and no setuid / setgid / sticky bit kept, part files made exclusively under a per-run name, each
+    // file read back before an archive is cut. Off for the Reader unless it asks.)
+    archive::tools_rules(true);
+    archive::set_peek(peek_inside);
+}
+
+/// The first 512 bytes a reader gives (fewer at its end or on an error).
+fn first_512(r: &mut dyn Read) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 512];
+    while out.len() < 512 {
+        match r.read(&mut buf[..512 - out.len()]) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+        }
+    }
+    out
+}
+/// What a gz / xz / bz2 holds first, up to 512 bytes (archive.cjs peekInside — the shared crate's stricter format
+/// check): gzip by flate2; xz and bzip2 by the shipped 7-Zip writing to a pipe (stopped after 512 bytes, and after 5 s
+/// whatever happens). None — no 7-Zip, a damaged file, a password —: the name's word stands.
+fn peek_inside(file: &Path, kind: &str) -> Option<Vec<u8>> {
+    if kind == "gz" {
+        let f = std::fs::File::open(file).ok()?;
+        let out = first_512(&mut flate2::read::GzDecoder::new(f.take(1 << 16)));
+        return if out.is_empty() { None } else { Some(out) };
+    }
+    let sv = seven()?.0;
+    let mut c = std::process::Command::new(&sv);
+    c.args(["e", "-so", "-y", "-p", "--"]).arg(file).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    no_window(&mut c);
+    let mut child = c.spawn().ok()?;
+    let mut so = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(first_512(&mut so));
+    });
+    let got = rx.recv_timeout(Duration::from_secs(5)).ok();
+    let _ = child.kill();
+    let _ = child.wait();
+    got.filter(|x| !x.is_empty())
 }
 
 /// The 7-Zip to run → (its path, whether it is the app's own).
@@ -148,7 +191,7 @@ pub fn seven() -> Option<(PathBuf, bool)> {
     None
 }
 
-fn ctx() -> Ctx<'static> {
+pub(crate) fn ctx() -> Ctx<'static> {
     Ctx { codec: &Flate, seven: seven().map(|x| x.0), free: &free_of }
 }
 
@@ -160,7 +203,7 @@ fn jobs() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
 }
 /// A job's stop flag, registered before its work starts (a Cancel that comes at once finds it); one asked to stop
 /// before it was registered (its id cancelled first) starts stopped.
-fn job(id: &Option<String>) -> Arc<AtomicBool> {
+pub(crate) fn job(id: &Option<String>) -> Arc<AtomicBool> {
     let stop = Arc::new(AtomicBool::new(false));
     if let Some(i) = id {
         if take_early(i) {
@@ -172,7 +215,7 @@ fn job(id: &Option<String>) -> Arc<AtomicBool> {
     }
     stop
 }
-fn end_job(id: &Option<String>) {
+pub(crate) fn end_job(id: &Option<String>) {
     if let Some(i) = id {
         if let Ok(mut m) = jobs().lock() {
             m.remove(i);
@@ -200,7 +243,7 @@ fn take_early(id: &str) -> bool {
 }
 
 /// The job's progress to the page: { id, done, total, file }, at most every 250 ms, and always at the end.
-fn emitter(app: AppHandle, id: Option<String>) -> impl Fn(u64, u64, &str) {
+pub(crate) fn emitter(app: AppHandle, id: Option<String>) -> impl Fn(u64, u64, &str) {
     let last: Mutex<Option<Instant>> = Mutex::new(None);
     move |done: u64, total: u64, file: &str| {
         let now = Instant::now();
@@ -216,13 +259,13 @@ fn emitter(app: AppHandle, id: Option<String>) -> impl Fn(u64, u64, &str) {
     }
 }
 
-fn s(o: &Value, k: &str) -> String {
+pub(crate) fn s(o: &Value, k: &str) -> String {
     shell::text_of(o, k)
 }
-fn opt_s(o: &Value, k: &str) -> Option<String> {
+pub(crate) fn opt_s(o: &Value, k: &str) -> Option<String> {
     o.get(k).and_then(|v| v.as_str()).map(|x| x.to_string()).filter(|x| !x.is_empty())
 }
-fn id_of(o: &Value) -> Option<String> {
+pub(crate) fn id_of(o: &Value) -> Option<String> {
     match o.get("id") {
         Some(Value::String(x)) => Some(x.clone()),
         Some(Value::Number(n)) => Some(n.to_string()),
@@ -236,7 +279,7 @@ fn strings(o: &Value, k: &str) -> Option<Vec<String>> {
     o.get(k).and_then(|v| v.as_array()).map(|a| a.iter().map(|x| x.as_str().map(|y| y.to_string()).unwrap_or_else(|| x.to_string())).collect())
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     match tauri::async_runtime::spawn_blocking(f).await {
         Ok(r) => r,
         Err(e) => Err(e.to_string()),
@@ -315,7 +358,19 @@ fn cache_dir() -> PathBuf {
 pub async fn kt_archive_list(o: Value) -> Result<Value, String> {
     let path = s(&o, "path");
     let password = opt_s(&o, "password");
-    blocking(move || archive::list(Path::new(&path), password.as_deref(), &ctx()).map(|i| info_value(&i))).await
+    blocking(move || {
+        // (Tools 0.21 P11: an unfinished engine job beside it — journal v2 — is listed from its plan; the shared crate's
+        // reader knows only the first design's journal and would read the saved tail as a directory.)
+        if kt_core::extractjob::journal_version(Path::new(&path)) == 2 {
+            if let Some(v) = crate::extractcmds::list_v2(Path::new(&path))? {
+                return Ok(v);
+            }
+            // (Round four: a finished job's journal beside a new archive of that name — the archive listed as itself.)
+            return archive::list_fresh(Path::new(&path), password.as_deref(), &ctx()).map(|i| info_value(&i));
+        }
+        archive::list(Path::new(&path), password.as_deref(), &ctx()).map(|i| info_value(&i))
+    })
+    .await
 }
 
 /// kt:archiveExtract({ id?, path, dest? («cache:» the temp folder's), only?, inPlace?, deleteAfter?, replace?, password?,
@@ -340,24 +395,36 @@ pub async fn kt_archive_extract(app: AppHandle, o: Value) -> Result<Value, Strin
         only,
     };
     let stop = job(&id);
+    let app2 = app.clone();
     let on = emitter(app, id.clone());
     let d2 = dest.clone();
+    let o2 = o.clone();
     let r = blocking(move || {
         let pr = Pr { on: &on, stop: &stop };
         // Pre-flight before anything is written: every name through the table for this computer (a refused name or,
         // in place, a clash stops the job here — nothing changed yet; «nothing was modified»).
-        if !archive::has_journal(Path::new(&path)) {
-            let info = archive::list(Path::new(&path), opts.password.as_deref(), &ctx())?;
+        // (Round four: a finished job's journal beside a new archive of that name says nothing about it — checked as itself.)
+        let old_job = crate::extractcmds::old_job_beside(Path::new(&path));
+        if !archive::has_journal(Path::new(&path)) || old_job {
+            let info = if old_job { archive::list_fresh(Path::new(&path), opts.password.as_deref(), &ctx())? } else { archive::list(Path::new(&path), opts.password.as_deref(), &ctx())? };
             let (bad, clash) = name_check(&info);
             if let Some(b) = bad.or(info.unsafe_path.clone()) { return Err(format!("unsafePath {}", b)); }
             if opts.in_place { if let Some(c) = clash { return Err(format!("duplicateEntry {}", c)); } }
         }
-        archive::extract(Path::new(&path), Path::new(&d2), &opts, &ctx(), &pr)
+        // (Tools 0.21 P11: then ZIP and tar go through the engine that checks everything else first — kt-core's
+        // extractjob.rs, desktop/inplace.cjs's port — as archive.cjs sends them to inplace.cjs: { files, dest, job,
+        // appeared, damaged }; the rest — 7-Zip's formats, a first-design journal — as before.)
+        if let Some(v) = crate::extractcmds::extract(&app2, Path::new(&path), Path::new(&d2), &o2, &on, &stop)? {
+            return Ok(v);
+        }
+        if old_job {
+            return archive::extract_fresh(Path::new(&path), Path::new(&d2), &opts, &ctx(), &pr).map(|files| json!({ "files": files, "dest": d2 }));
+        }
+        archive::extract(Path::new(&path), Path::new(&d2), &opts, &ctx(), &pr).map(|files| json!({ "files": files, "dest": d2 }))
     })
     .await;
     end_job(&id);
-    let files = r?;
-    Ok(json!({ "files": files, "dest": dest }))
+    r
 }
 
 /// kt:archiveTest({ id?, path, password? }) → { ok, files, bad }.
@@ -382,7 +449,15 @@ pub async fn kt_archive_test(app: AppHandle, o: Value) -> Result<Value, String> 
 #[tauri::command]
 pub async fn kt_archive_restore(o: Value) -> Result<Value, String> {
     let path = s(&o, "path");
-    let left = blocking(move || archive::restore(Path::new(&path))).await?;
+    // (Tools 0.21 P11: a journal v2 beside it is the engine's — restored by the engine, as archive.cjs restore does:
+    // -2 when the archive came back whole, else how many files stayed out; the first design's journal the old way.)
+    let left = blocking(move || {
+        if kt_core::extractjob::journal_version(Path::new(&path)) == 2 {
+            return crate::extractcmds::restore_v2(Path::new(&path));
+        }
+        archive::restore(Path::new(&path))
+    })
+    .await?;
     Ok(json!({ "left": left }))
 }
 
@@ -611,22 +686,25 @@ pub async fn kt_archive_create(app: AppHandle, o: Value) -> Result<Value, String
     let level = o.get("level").and_then(|v| v.as_i64()).unwrap_or(5);
     let password = opt_s(&o, "password");
     let replace = o.get("replace").and_then(|v| v.as_bool()).unwrap_or(false);
+    // (Tools 0.21 P11: a ZIP never replaces an archive unasked — `clash` is the user's answer: replace / both / cancel.)
+    let clash = opt_s(&o, "clash");
     let r = blocking(move || {
-        let n: u64 = if format == "7z" {
+        let (n, at): (u64, PathBuf) = if format == "7z" {
             // (A 7z: by the 7-Zip the app ships — desktop/archive.cjs's create7z, the same call.)
             let sv = seven().map(|x| x.0).ok_or_else(|| "sevenZipMissing".to_string())?;
-            create_7z(&sv, Path::new(&out2), &inputs, level, password.as_deref(), replace, &on, &stop)?
+            (create_7z(&sv, Path::new(&out2), &inputs, level, password.as_deref(), replace, &on, &stop)?, PathBuf::from(&out2))
         } else {
             let pr = Pr { on: &on, stop: &stop };
-            archive::create_zip(Path::new(&out2), &inputs, &ctx(), &pr)? as u64
+            archive::create_zip_clash(Path::new(&out2), &inputs, clash.as_deref(), &ctx(), &pr)?
         };
-        let size = std::fs::metadata(&out2).map(|m| m.len()).map_err(|e| e.to_string())?;
-        Ok((n, size))
+        let size = std::fs::metadata(&at).map(|m| m.len()).map_err(|e| e.to_string())?;
+        Ok((n, size, at.to_string_lossy().into_owned()))
     })
     .await;
     end_job(&id);
-    let (files, size) = r?;
-    Ok(json!({ "files": files, "path": out, "size": size }))
+    let (files, size, at) = r?;
+    let _ = out;
+    Ok(json!({ "files": files, "path": at, "size": size }))
 }
 
 /* ---------- the self-test's own (KT_SELFTEST runs only) ---------- */

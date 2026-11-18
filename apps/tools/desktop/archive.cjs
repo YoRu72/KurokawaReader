@@ -85,8 +85,12 @@ const hasJournal = (file) => fs.existsSync(journalOf(file));
 /* ---------- listing ---------- */
 async function list(file, password) {
   const entries = []; let total = 0, encrypted = false, format;
-  if (hasJournal(file) && isTar(file)) { format = 'tar'; const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
-  else if (hasJournal(file)) {
+  // (A journal v2 beside it: the engine's job of this archive — what is left, from its plan; or a finished job's beside a new archive of that name,
+  //  null — then the archive is listed as itself, never from that job's saved tail.)
+  const v2 = hasJournal(file) && (await journalVersion(file)) === 2; const l = v2 ? await Engine.leftOf(file) : null; const journal = hasJournal(file) && !(v2 && !l);
+  if (l) { format = l.format; for (const e of l.entries) { entries.push(e); total += e.size; } }
+  else if (journal && isTar(file)) { format = 'tar'; const fd = await fsp.open(file, 'r'); try { for (const it of await scanTar(fd)) { entries.push({ path: it.name, size: it.size, dir: it.type === '5' }); total += it.size; } } finally { await fd.close(); } }
+  else if (journal) {
     format = 'zip'; const j = JSON.parse(await fsp.readFile(journalOf(file), 'utf8')); const t = await fsp.open(tailOf(file), 'r');
     try { const ix = await readZip(t, (await t.stat()).size); for (const it of ix.items) if (it.offset < j.committed) { entries.push({ path: it.name, size: it.usize, compressed: it.csize, dir: it.dir, ...(it.mtime ? { mtime: it.mtime } : {}) }); total += it.usize; } } finally { await t.close(); }
   } else if ((format = await formatOf(file)) === 'zip') {
@@ -101,7 +105,7 @@ async function list(file, password) {
   let largest = 0; for (const e of entries) if (!e.dir) largest = Math.max(largest, e.size);
   const chk = Safe.checkSet(entries.map((e) => ({ path: e.path, dir: e.dir })), PLATFORM); const bad = chk.problems.find((p) => Safe.NAME_REFUSALS.has(p.kind))?.path; const duplicate = chk.problems.find((p) => ['duplicate', 'caseClash', 'rewriteClash', 'fileDir'].includes(p.kind))?.path;
   const sfv = sfvOf(file);
-  return { format, platform: PLATFORM, entries, total, encrypted, inPlaceOk: (format === 'zip' && !encrypted) || format === 'tar', resumable: hasJournal(file), largest, free: await freeSpace(path.dirname(file)), ...(bad ? { unsafe: bad } : {}), ...(duplicate ? { duplicate } : {}), ...(sfv ? { sfv: path.basename(sfv) } : {}) };
+  return { format, platform: PLATFORM, entries, total, encrypted, inPlaceOk: (format === 'zip' && !encrypted) || format === 'tar', resumable: journal, largest, free: await freeSpace(path.dirname(file)), ...(bad ? { unsafe: bad } : {}), ...(duplicate ? { duplicate } : {}), ...(sfv ? { sfv: path.basename(sfv) } : {}) };
 }
 
 /* ---------- 7-Zip ---------- */
@@ -236,7 +240,14 @@ async function extract7z(file, dest, o, pr) {
 /** A journal beside the archive: the new engine's (version 2) or the first design's. */
 async function journalVersion(file) { try { const r = Safe.journalRead(await fsp.readFile(journalOf(file), 'utf8')); return r.ok ? 2 : r.why === 'v1' ? 1 : 0; } catch { return 0; } }
 async function extract(file, dest, o, pr) {
-  if (hasJournal(file)) { const v = await journalVersion(file); if (v === 2) return (await Engine.finish(journalOf(file), pr, undefined, { password: o.password, keepFree: o.keepFree })).files; if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
+  // A journal beside it. v2: the engine's — only an in-place job of this very archive; this app's (REGISTRY points at it) finished at once,
+  // another's only once the page's sheet showed where its files go and the user chose Finish (`o.finishBeside`), else «askBeside <dest>»; a
+  // finished job's beside a new archive of that name: left out (null) — the archive extracted as usual, never in place while that job is on the shelf.
+  if (hasJournal(file)) {
+    const v = await journalVersion(file);
+    if (v === 2) { const r = await Engine.finishBeside(file, pr, undefined, { password: o.password, keepFree: o.keepFree, registry: REGISTRY, confirmed: !!o.finishBeside }); if (r) { last = r; return r.files; } if (o.inPlace && !o.only) throw new Error((await Engine.beside(file).catch(() => ({}))).stale ? 'refused staleJob' : 'refused oldJob'); }
+    else { if (v !== 1) throw new Error('journalCorrupt'); await fsp.mkdir(dest, { recursive: true }); return isTar(file) ? extractTarInPlace(file, dest, o, pr) : extractZipInPlace(file, dest, o, pr); }
+  }
   const fmt = await formatOf(file); let n;
   // ZIP (one file, methods the app decodes itself, ZipCrypto too) and tar: the engine that checks everything first.
   if ((fmt === 'zip' || fmt === 'tar') && !/\.\d{3}$/.test(file)) {
@@ -261,10 +272,17 @@ async function extract(file, dest, o, pr) {
 
 /* ---------- making a zip ---------- */
 const STORED = /\.(png|jpe?g|gif|webp|avif|mp4|mkv|webm|mp3|m4a|ogg|opus|flac|zip|7z|rar|gz|xz|bz2|apk|woff2?)$/i;
-async function createZip(out, inputs, pr) {
+/** A zip of `inputs` at `out` → { files, path }. A name already there is never replaced unasked (Tools 0.21 P11): `o.clash` is the user's
+ *  answer — «replace» (the new archive renamed over the old in one step: a crash leaves the one or the other, whole), «both» (the next free
+ *  «name (2).zip»), «cancel» (nothing made: «cancelled»); none → «zipExists», nothing written. Written to a part file made exclusively for this
+ *  run; without «replace» put in place only where nothing is (a name taken meanwhile: the next free one with «both», else «zipExists»). */
+async function createZip(out, inputs, pr, o = {}) {
+  const taken = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
+  const freeName = (p) => { const dir = path.dirname(p); const b = path.basename(p); const dot = b.lastIndexOf('.'); const stem = dot > 0 ? b.slice(0, dot) : b; const ext = dot > 0 ? b.slice(dot) : ''; for (let k = 2; ; k++) { const c = path.join(dir, `${stem} (${k})${ext}`); if (!taken(c)) return c; } };
+  if (taken(out)) { if (o.clash === 'cancel') throw new Error('cancelled'); if (o.clash === 'both') out = freeName(out); else if (o.clash !== 'replace') throw new Error('zipExists'); }
   const files = []; for (const i of inputs) { const st = await fsp.stat(i); if (st.isDirectory()) await walk(i, path.basename(i) + '/', files); else files.push([i, path.basename(i)]); }
   let total = 0; for (const [f] of files) total += (await fsp.stat(f)).size; let done = 0;
-  const part = out + '.part'; const ws = fs.createWriteStream(part); let pos = 0; const central = []; const T = crcTable();
+  const part = path.join(path.dirname(out), `.kt${process.pid}-${crypto.randomBytes(6).toString('hex')}.part`); const ws = fs.createWriteStream(part, { flags: 'wx' }); let pos = 0; const central = []; const T = crcTable();
   const write = (b) => new Promise((res, rej) => { pos += b.length; ws.write(b, (e) => (e ? rej(e) : res())); });
   const dos = (d) => { const t = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xffff, dd = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xffff; return [t, dd]; };
   for (const [f, name] of files) {
@@ -288,7 +306,11 @@ async function createZip(out, inputs, pr) {
   const loc = Buffer.alloc(20); loc.writeUInt32LE(0x07064b50, 0); loc.writeBigUInt64LE(BigInt(cdEnd), 8); loc.writeUInt32LE(1, 16);
   const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(Math.min(central.length, 0xffff), 8); eocd.writeUInt16LE(Math.min(central.length, 0xffff), 10); eocd.writeUInt32LE(Math.min(cdBuf.length, 0xffffffff), 12); eocd.writeUInt32LE(Math.min(cdStart, 0xffffffff), 16);
   await write(Buffer.concat([z64, loc, eocd])); await new Promise((r) => ws.end(r));
-  await fsp.rm(out, { force: true }); await fsp.rename(part, out); pr.on(total, total, ''); return files.length;
+  // (Flushed before it is put in place: a replace never leaves a name pointing at bytes not yet on the disk.)
+  { const h = await fsp.open(part, 'r+'); try { await h.sync(); } catch (e) { await h.close().catch(() => {}); await fsp.rm(part, { force: true }); throw e; } await h.close(); }
+  if (o.clash === 'replace') await fsp.rename(part, out);
+  else { let at = out; for (;;) { try { await fsp.link(part, at); await fsp.rm(part, { force: true }); break; } catch (e) { if (e.code !== 'EEXIST' && !taken(at)) { await fsp.rename(part, at); break; } if (o.clash !== 'both') { await fsp.rm(part, { force: true }); throw new Error('zipExists'); } at = freeName(out); } } out = at; }
+  pr.on(total, total, ''); return { files: files.length, path: out };
 }
 /** A 7z made by the 7-Zip the app ships: `o.level` 0 (store), 1 (fast), 5 (normal) or 9 (best); `o.password` → AES-256 on the contents AND the
  *  names (`-mhe=on`: without the password the archive cannot even be listed). The inputs must share one folder (the sheet's own); they are
@@ -389,7 +411,8 @@ async function test(file, password, pr) {
 /** Giving up an extraction in place: what is left becomes a normal ZIP again (the remaining entries' directory
  *  records written after them, then the end records); a cut tar is a valid tar already. */
 async function restore(file) {
-  if (await journalVersion(file) === 2) { const r = await Engine.restore(journalOf(file)); return r.identical ? -2 : r.keptOut.length; }
+  // (Only the in-place job of this very archive — restoreBeside; a finished job's beside a new archive: «nothingToRestore».)
+  if (await journalVersion(file) === 2) { const r = await Engine.restoreBeside(file); return r.identical ? -2 : r.keptOut.length; }
   return restoreV1(file);
 }
 async function restoreV1(file) {
@@ -477,9 +500,11 @@ async function preflight(file, dest, o = {}) {
 /** The shelf of unfinished (and just finished) jobs; a job acted on: finish, restore, undo, dismiss, restoreV1. */
 async function shelf(o = {}) { return REGISTRY ? Engine.shelf(REGISTRY, o) : []; }
 async function jobAct(journal, act, pr) {
-  if (act === 'finish') return Engine.finish(journal, pr);
+  if (act === 'finish') return Engine.finish(journal, pr, undefined, { password: pr?.password });
   if (act === 'restore' || act === 'undo') return Engine.restore(journal);
   if (act === 'dismiss') return Engine.dismiss(journal);
+  // (A blocked job's own record only — journal, tail, unit log, this registry's pointers; never its files.)
+  if (act === 'forget') return Engine.forgetBlocked(journal, REGISTRY);
   if (act === 'restoreV1') { const file = journal.replace(/\.kurokawa-unzip$/, ''); const left = await restoreV1(file); return { left }; }
   return {};
 }

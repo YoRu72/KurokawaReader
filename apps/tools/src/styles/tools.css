@@ -1515,3 +1515,10 @@ html.pc:not(.rail-off) .toast.files-unfinished, html.pc .toast.files-unfinished 
 .files-pcfields { display: flex; flex-direction: column; gap: 14px; margin-bottom: 10px; }
 .files-pcfields { gap: 18px; } .files-pcfields .field { display: flex; flex-direction: column; gap: 6px; margin: 0; } .files-pcfields .field > span { margin: 0; }
 .toast.files-unfinished .toast-act { padding: 8px 12px; } .toast.files-unfinished > .grow { white-space: nowrap; }
+
+/* «Forget this job» (P11 round five): the words spaced apart, the two choices the same width. */
+.forget-sheet .sheet-body { display: grid; gap: 12px; }
+.forget-sheet .sheet-body p { margin: 0; }
+.forget-sheet .forget-name { font-weight: 600; }
+.sheet-actions.equal { flex-wrap: nowrap; }
+.sheet-actions.equal > .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
