@@ -68,3 +68,7 @@ pub mod remoterules;
 // (Tools 0.21 P5: archive safety — the one name table, the peak-space replay, the pre-flight's decisions, the conflict
 // plan and the extraction journal's text; the twin of desktop/archsafe.cjs and KtNameSafe.java.)
 pub mod archsafe;
+// (Tools 0.21: fast file search on a computer — the index core: the walk, the folded names and the queries, the
+// watchers (inotify, ReadDirectoryChangesW, an mtime poller), the saved file; a folder of modules, tested through
+// stdroots/fileindex.rs.)
+pub mod fileindex;
