@@ -117,11 +117,19 @@ export function showReadings(text: string, lang?: string): void {
   const s = openSheet(t('readings'), t('close'));
   s.body.style.fontFamily = 'var(--font-read)';
   s.body.append(h('div', { class: 'center' }, h('div', { class: 'spinner' }), t('loading')));
-  void import('../readings').then((m) => m.readingsHtml(text, lang)).then((html) => {
+  const load = (): void => void import('../readings').then((m) => m.readingsHtml(text, lang)).then((html) => {
     s.body.innerHTML = '';
     if (!html) { s.body.append(h('p', { class: 'src' }, t('noReadings'))); return; }
     const d = h('div', { class: 'readings', lang: /[\u3040-\u30ff]/.test(text) ? 'ja' : 'zh' }); d.innerHTML = html; s.body.append(d);
     s.actions.append(h('button', { class: 'btn small', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(d.innerText); toast(t('copied')); } catch { /* ignore */ } } }, icon('copy'), t('copySelected')));
-  }).catch(() => { s.body.innerHTML = ''; s.body.append(h('p', { class: 'src' }, t('furiganaOffline'))); });
+  }).catch(async (e) => {
+    // (A dictionary not on the device: the offer, with its button; the readings come once it is there.)
+    const { missingDict } = await import('../readingdict'); const kind = missingDict(e);
+    s.body.innerHTML = '';
+    if (!kind) { s.body.append(h('p', { class: 'src' }, t('serviceFailed'))); return; }
+    const { dictNeeded } = await import('./readingdict');
+    s.body.append(dictNeeded(kind, () => { s.body.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner' }), t('loading'))); load(); }));
+  });
+  load();
 }
 

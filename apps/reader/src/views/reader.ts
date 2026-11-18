@@ -51,6 +51,7 @@ import { speakPassage, stopSpeech, speechLangOf, ttsAvailable, languageName, ins
 import { attachFurigana, isJapanese } from '../furigana';
 import { textRules, applyTextRules } from '../textrules';
 import { attachPinyin } from '../readings';
+import { readingAid } from '../ui/readingdict';
 import { scheduleSync, markDeleted } from '../sync';
 import { offerPutBack, offerNoteBack } from '../undoitems';
 import { mountBars, moreList, type ActionRun } from '../ui/buttonbars';
@@ -751,22 +752,20 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   const isKo = !isJa && !isZh && /[\uac00-\ud7af]/.test(sample);
   scroll.classList.toggle('cjk-book', isJa || isZh || isKo);
   if (isJa || isZh || isKo) scroll.dataset.cjk = isJa ? 'ja' : isZh ? 'zh' : 'ko';
+  // (Readings need a dictionary on the device: when it is not there a notice offers the download, and the readings
+  // appear in the open book as soon as it has come — src/ui/readingdict.ts.)
   if (isZh) {
-    // Pinyin above the characters of Chinese books (same switch as furigana; readings load from the CDN once).
-    let py: (() => void) & { refresh?: () => void } | null = null;
-    const start = () => { if (py || !getSettings().furigana) return; py = attachPinyin(scroll, () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks), () => toast(t('pinyinOffline'), 'error', 4000)); };
-    start();
-    chapterListeners.push(() => py?.refresh?.());
-    onDispose(onSettingsChange((st) => { if (st.furigana) start(); }));
-    onDispose(() => py?.());
+    // Pinyin above the characters of Chinese books (same switch as furigana).
+    const aid = readingAid('zh', (onError) => attachPinyin(scroll, () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks), onError));
+    aid.start();
+    chapterListeners.push(() => aid.refresh());
+    onDispose(() => aid.dispose());
   }
   if (isJa) {
-    let furi: (() => void) & { refresh?: () => void } | null = null;
-    const start = () => { if (furi || !getSettings().furigana) return; furi = attachFurigana(scroll, () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks), () => toast(t('furiganaOffline'), 'error', 4000)); };
-    start();
-    chapterListeners.push(() => furi?.refresh?.());
-    onDispose(onSettingsChange((st) => { if (st.furigana) start(); }));
-    onDispose(() => furi?.());
+    const aid = readingAid('ja', (onError) => attachFurigana(scroll, () => docs.filter((d) => !d.wrapper.hidden).flatMap((d) => d.blocks), onError));
+    aid.start();
+    chapterListeners.push(() => aid.refresh());
+    onDispose(() => aid.dispose());
   }
   // Fade pictures in as they decode rather than letting them pop.
   flow.querySelectorAll('img').forEach((img) => { if (img.complete && img.naturalWidth) return; img.decoding = 'async'; img.classList.add('kr-img-pending'); const done = () => img.classList.remove('kr-img-pending'); img.addEventListener('load', done, { once: true }); img.addEventListener('error', () => { if (img.getAttribute('src')) { img.classList.remove('kr-img-pending'); img.classList.add('kr-img-failed'); } }); });
