@@ -269,6 +269,17 @@ final class KtEngine {
                 p.setTrackers(tr); p.setTrackerTiers(tiers);
             }
         } catch (Throwable e) { Log.w(TAG, "trackers", e); }
+        // (0.21 P9: with DoH on, the UDP trackers given by the chain's addresses — libtorrent would ask the network's DNS
+        // for their names; an HTTP(S) tracker keeps its name, and the swarm page says the engine finds it.)
+        // (A UDP tracker the chain could not answer is left out — never a name for libtorrent to look up by the network's
+        // DNS; each one's own name and what answered it kept with the task, so the swarm page shows them after a restart.)
+        try { if (KrDoh.on()) { if (x.meta == null) x.meta = new JSONObject(); java.util.List<String> tr = new java.util.ArrayList<>(p.getTrackers()); java.util.List<Integer> tiers = new java.util.ArrayList<>(p.getTrackerTiers()); while (tiers.size() < tr.size()) tiers.add(0);
+            java.util.List<String> via = KrDoh.trackersViaDoh(tr, 5000);
+            if (!via.equals(tr)) { java.util.List<Integer> nt = new java.util.ArrayList<>(); JSONObject names = new JSONObject(); JSONArray dropped = new JSONArray();
+                for (int i = 0; i < tr.size(); i++) { String u = tr.get(i); String[] og = null; for (String v : via) { String[] o2 = KrDoh.trackerOrigin.get(v); if (o2 != null && o2[0].equals(u)) og = o2; } if (via.contains(u)) nt.add(tiers.get(i)); else if (og != null) { nt.add(tiers.get(i)); } else dropped.put(u); }
+                for (String v : via) { String[] o2 = KrDoh.trackerOrigin.get(v); if (o2 != null && !o2[0].equals(v)) names.put(v, new JSONArray().put(o2[0]).put(o2[1])); }
+                while (nt.size() > via.size()) nt.remove(nt.size() - 1); while (nt.size() < via.size()) nt.add(0);
+                p.setTrackers(via); p.setTrackerTiers(nt); x.meta.put("dohTrackers", names); x.meta.put("dohDropped", dropped); persist(); } } } catch (Throwable e) { Log.w(TAG, "trackers via DoH", e); }
         p.setSavePath(x.dir);
         // (A paused one is added paused and not auto-managed: libtorrent's queue starts auto-managed paused torrents by
         // itself — so a download paused by the user started again each time the app was opened.)
@@ -385,8 +396,14 @@ final class KtEngine {
         for (org.libtorrent4j.AnnounceEntry e : x.th.trackers()) {
             JSONObject q = new JSONObject(); q.put("url", e.url()); q.put("tier", e.tier()); String state = "waiting", msg = ""; int fails = 0;
             for (org.libtorrent4j.AnnounceEndpoint ep : e.endpoints()) { org.libtorrent4j.AnnounceInfohash ih = ep.infohashV1(); if (ih == null) continue; if (ih.updating()) state = "updating"; else if (ih.isWorking() && !"updating".equals(state)) state = "working"; else if (ih.fails() > 0 && "waiting".equals(state)) state = "failing"; if (!ih.message().isEmpty()) msg = ih.message(); fails = Math.max(fails, ih.fails()); }
-            q.put("state", state); q.put("message", msg); q.put("fails", fails); trs.put(q);
+            q.put("state", state); q.put("message", msg); q.put("fails", fails);
+            // (Which way its name was found: the DoH chain — its own name and the resolver that answered — or the engine's own.)
+            JSONObject kept = x.meta == null ? null : x.meta.optJSONObject("dohTrackers"); JSONArray kn = kept == null ? null : kept.optJSONArray(e.url());
+            String[] og = kn != null ? new String[] { kn.optString(0), kn.optString(1) } : KrDoh.trackerOrigin.get(e.url()); if (og != null) { q.put("name", og[0]); q.put("dns", og[1]); } else if (KrDoh.on() && !e.url().toLowerCase(java.util.Locale.ROOT).startsWith("udp://")) q.put("dns", "engine");
+            trs.put(q);
         }
+        // (The UDP trackers left out because no resolver answered for them: listed, said so.)
+        JSONArray dropped = x.meta == null ? null : x.meta.optJSONArray("dohDropped"); if (dropped != null) for (int i = 0; i < dropped.length(); i++) { JSONObject q = new JSONObject(); q.put("url", dropped.optString(i)); q.put("tier", 0); q.put("state", "waiting"); q.put("message", ""); q.put("fails", 0); q.put("dns", "dropped"); trs.put(q); }
         o.put("peers", peers); o.put("trackers", trs); o.put("limitDown", x.limitDown); o.put("limitUp", x.limitUp);
         try { TorrentStatus st = x.th.status(); o.put("seeds", st.numSeeds()); o.put("peersConnected", st.numPeers()); o.put("seedsInSwarm", st.listSeeds()); o.put("peersInSwarm", st.listPeers()); o.put("ratio", st.allTimeDownload() > 0 ? (double) st.allTimeUpload() / st.allTimeDownload() : 0); } catch (Throwable ignored) {}
         return o;
@@ -819,7 +836,8 @@ final class KtEngine {
     private HttpURLConnection open(URL u, JSONObject headers, boolean plainDns) throws IOException {
         takeTurn(hostOf(u.toString()));
         java.net.Proxy px = proxyOf(proxy);
-        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
+        // (The network's own DNS only when DoH is off, or the reader allowed it as a fall-back — 0.21 P9; else DoH again.)
+        HttpURLConnection c = px != null ? (HttpURLConnection) u.openConnection(px) : plainDns && KrDoh.systemOk(u.getHost(), "a download tried once more by the system's DNS") ? (HttpURLConnection) u.openConnection() : KrDoh.open(u);
         // (The cookies the site set — here or in the app's browser, where a site's check is passed.)
         try { String ck = android.webkit.CookieManager.getInstance().getCookie(u.toString()); if (ck != null && !ck.isEmpty() && (headers == null || (!headers.has("Cookie") && !headers.has("cookie")))) c.setRequestProperty("Cookie", ck); } catch (Throwable ignored) {}
         c.setConnectTimeout(Math.min(30000, timeoutS * 1000)); c.setReadTimeout(timeoutS * 1000); c.setInstanceFollowRedirects(false);

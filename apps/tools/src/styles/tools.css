@@ -1492,3 +1492,12 @@ html:not(.pc) .files-view.has-fast .files-body:has(> .files-list:not(.gallery)) 
 .files-7z-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 :dir(rtl) .files-qline bdi { text-align: right; }
 html.pc .sheet .chip-row.files-filters { display: flex; flex-direction: column; gap: 10px; }
+/* (With the Jobs button there are eight buttons on a phone's Files bar: each a little narrower so they stay on one row beside the back button.) */
+@media (max-width: 420px) { .view > .topbar:has(.files-jobs-btn:not([hidden])) :is(.icon-btn) { width: 36px; } .view > .topbar:has(.files-jobs-btn:not([hidden])) .topbar-actions { gap: 0; } }
+/* (The unfinished-jobs bar: clear of the round add button, and its words kept a real gap from the buttons.) */
+.toast.files-unfinished { bottom: calc(var(--nav-h, 64px) + 90px + var(--safe-bottom, 0px)); gap: 8px; }
+.toast.files-unfinished > .grow { padding-inline-end: 12px; }
+html.pc:not(.rail-off) .toast.files-unfinished, html.pc .toast.files-unfinished { bottom: calc(32px + var(--safe-bottom, 0px)); }
+.files-pcfields { display: flex; flex-direction: column; gap: 14px; margin-bottom: 10px; }
+.files-pcfields { gap: 18px; } .files-pcfields .field { display: flex; flex-direction: column; gap: 6px; margin: 0; } .files-pcfields .field > span { margin: 0; }
+.toast.files-unfinished .toast-act { padding: 8px 12px; } .toast.files-unfinished > .grow { white-space: nowrap; }

@@ -14,6 +14,20 @@ export interface ContinueItem { image?: string; title: string; line?: string; ch
 const img = (src: string | undefined, cls = '') => (src ? h('img', { class: cls, src, alt: '', loading: 'lazy', decoding: 'async', onerror: (e: Event) => { (e.target as HTMLElement).remove(); } }) : null);
 const reduced = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('reduce-motion'); } catch { return false; } };
 
+// One shared seven-second clock for every hero on screen, so none outlives its view: it runs only while some hero is in
+// the page and the document is visible, and is cleared at once when the page changes (hashchange), the tab is hidden, or
+// no hero is left in the page. A view kept aside for a tab (out of the page, not torn down) starts again on its return.
+// The two listeners are added once, for the life of this (lazily loaded) module; heroes are held weakly.
+const turners: { ref: WeakRef<HTMLElement>; turn: () => void }[] = [];
+let clock = 0; let wired = false;
+function syncTurners(): void {
+  for (let i = turners.length - 1; i >= 0; i--) if (!turners[i].ref.deref()) turners.splice(i, 1);
+  const live = !document.hidden && turners.some((x) => x.ref.deref()?.isConnected);
+  if (live && !clock) clock = window.setInterval(() => { syncTurners(); if (!clock) return; for (const x of turners) if (x.ref.deref()?.isConnected) x.turn(); }, 7000);
+  else if (!live && clock) { window.clearInterval(clock); clock = 0; }
+  if (!wired) { wired = true; window.addEventListener('hashchange', () => { window.setTimeout(syncTurners, 0); }); document.addEventListener('visibilitychange', syncTurners); }
+}
+
 /** The hero: wide pictures, one at a time, turned by a swipe, the dots, or by itself every seven seconds. */
 export function hero(items: HeroItem[]): HTMLElement {
   const track = h('div', { class: 'dc-hero-track' });
@@ -37,8 +51,9 @@ export function hero(items: HeroItem[]): HTMLElement {
   const mark = () => [...dots.children].forEach((d, k) => d.classList.toggle('on', k === at));
   track.addEventListener('scroll', () => { const w = track.clientWidth || 1; const i = Math.round(Math.abs(track.scrollLeft) / w); if (i !== at) { at = i; mark(); } }, { passive: true });
   track.addEventListener('pointerdown', () => { touched = Date.now(); }, { passive: true });
-  // (Turning by itself — not while a finger was on it a moment ago, nor when motion is to be reduced, nor once the page is gone.)
-  const timer = window.setInterval(() => { if (!el.isConnected) { window.clearInterval(timer); return; } if (reduced() || Date.now() - touched < 12000 || document.hidden) return; go(at + 1); }, 7000);
+  // (Turning by itself — not while a finger was on it a moment ago, nor when motion is to be reduced, nor while the page is hidden.)
+  turners.push({ ref: new WeakRef(el), turn: () => { if (reduced() || Date.now() - touched < 12000) return; go(at + 1); } });
+  window.setTimeout(syncTurners, 0); // (it is put into the page just after this returns)
   return el;
 }
 

@@ -148,7 +148,7 @@ else {
     const userData = app.getPath('userData'); fs.mkdirSync(userData, { recursive: true }); Archive.setRegistry(path.join(userData, 'extract-jobs'));
     engine = new Aria2Engine({ userData, resources: process.resourcesPath || path.join(__dirname, 'resources'), defaultDir: path.join(app.getPath('downloads'), 'Kurokawa') });
     engine.watching = (hash) => (WebStream.watching(hash.toLowerCase()) ? WebStream.stats(hash.toLowerCase()) : null); engine.handedOver = (gid) => handed.has(gid);
-    engine.onState = () => send('kt:engineState', engineState());
+    engine.onState = () => send('kt:engineState', engineState()); engine.dohMagnet = (m) => doh.rewriteMagnet(m); engine.beforeStart = initDohFromDisk;
     // (Not waited for: the window opens at once; the page is told when aria2c is up — it may take a while on a
     // first start under Windows' antivirus.)
     void engine.ensure();
@@ -381,21 +381,29 @@ ipcMain.handle('kt:extPlayerStatus', (_e, o) => ExtPlayer().status(o || {}));
 ipcMain.handle('kt:extPlayerStop', (_e, o) => ExtPlayer().stop(o || {}));
 ipcMain.handle('kt:clipboardText', () => require('electron').clipboard.readText());
 ipcMain.handle('kt:appIcon', (_e, o) => (o && 'set' in o ? AppIcon.set(o.set) : AppIcon.current()));
-// DNS over HTTPS for the app's own requests (Chromium's resolver), the same providers as on Android.
-const DOH = { cloudflare: 'https://cloudflare-dns.com/dns-query', google: 'https://dns.google/dns-query', quad9: 'https://dns.quad9.net/dns-query', adguard: 'https://dns.adguard-dns.com/dns-query', mullvad: 'https://dns.mullvad.net/dns-query', dnssb: 'https://doh.dns.sb/dns-query', controld: 'https://freedns.controld.com/p0', opendns: 'https://doh.opendns.com/dns-query' };
-// (The resolver tried: a known name asked through the app's own resolver — the one configureHostResolver set —
-// and timed; on an older Electron without resolveHost, the resolver's JSON endpoint is asked directly.)
-ipcMain.handle('kt:dohProbe', async () => {
-  const t0 = Date.now();
-  try {
-    if (typeof app.resolveHost === 'function') { const r = await app.resolveHost('example.com', { queryType: 'A' }); const ips = (r.endpoints || []).map((e) => e.address); return { ok: ips.length > 0, ms: Date.now() - t0, ips, resolver: 'secure DNS' }; }
-    const { net } = require('electron'); const url = `${(DOH[String(_dohProvider)] || _dohProvider || DOH.cloudflare).replace(/\/dns-query$/, '')}/dns-query?name=example.com&type=A`;
-    const body = await new Promise((ok, bad) => { const rq = net.request({ url, headers: { accept: 'application/dns-json' } }); let d = ''; rq.on('response', (res) => { res.on('data', (c) => { d += c; }); res.on('end', () => ok(d)); }); rq.on('error', bad); rq.end(); });
-    const j = JSON.parse(body); const ips = (j.Answer || []).map((a) => a.data); return { ok: ips.length > 0, ms: Date.now() - t0, ips, resolver: url.replace(/\?.*$/, '') };
-  } catch (e) { return { ok: false, ms: Date.now() - t0, why: String(e.message || e) }; }
-});
-let _dohProvider = 'off';
-ipcMain.handle('kt:setDoh', (_e, o) => { const p = String(o.provider || 'off'); _dohProvider = p; try { app.configureHostResolver(p === 'off' ? { secureDnsMode: 'off' } : { secureDnsMode: 'secure', secureDnsServers: p === 'auto' ? Object.values(DOH) : [DOH[p] || p] }); } catch (err) { throw new Error(String(err.message || err)); } return { provider: p }; });
+// DNS over HTTPS (0.21 P9: desktop/dohchain.cjs — kt-core's dohchain rules in JavaScript): Chromium's own resolver
+// for the app's requests, given the chain's order (the quickest healthy first; «secure» — no system DNS — unless the
+// user allowed it), and the chain itself for aria2 (pointed at its small proxy) and the health probe.
+const DohChain = require('./dohchain.cjs'); const doh = new DohChain.DohChain();
+// (Chromium takes https resolvers only: a resolver on this device — http://127.0.0.1… — cannot be given to it, so the
+// app's own requests then use the public resolvers in the chain's order, still «secure» — never DoH silently off; the
+// settings' coverage list says so. aria2 goes through the chain, which asks the device's resolver alone.)
+const chromiumServers = () => { const ord = doh.order(); const list = ord.length === 1 && ord[0] === 'custom' && DohChain.isOnDevice(doh.choice.url) ? DohChain.order({ kind: 'auto' }, doh.health, Math.floor(Date.now() / 1000)) : ord; return list.map((id) => (id === 'custom' ? (doh.choice.url || '') : doh.server(id)?.url || '')).filter((u) => /^https:\/\//.test(u)); };
+const applyChromium = () => { const servers = chromiumServers(); app.configureHostResolver(!doh.on ? { secureDnsMode: 'off' } : { secureDnsMode: doh.allowSystem ? 'automatic' : 'secure', secureDnsServers: servers }); };
+const applyProxy = async () => {
+  if (doh.on && !doh.proxy) { doh.proxy = await DohChain.startProxy((h) => doh.lookup(h)); }
+  else if (!doh.on && doh.proxy) { const p = doh.proxy; doh.proxy = null; await p.close(); }
+  require('./aria2.cjs').setDohProxy(doh.proxy, engine instanceof Aria2Engine ? engine : null);
+};
+// (The choice kept in userData, so the main process puts it in force before aria2 starts — the page sets it again.)
+const dohFile = () => path.join(app.getPath('userData'), 'doh.json');
+let dohInit = null;
+const initDohFromDisk = () => (dohInit ??= (async () => { try { const j = JSON.parse(fs.readFileSync(dohFile(), 'utf8')); if (j && j.provider && j.provider !== 'off') { doh.configure({ provider: String(j.provider), allowSystem: !!j.allowSystem }); try { applyChromium(); } catch { /* the page sets it again */ } await applyProxy(); } } catch { /* none saved */ } })());
+ipcMain.handle('kt:setDoh', async (_e, o) => { dohInit ??= Promise.resolve(); const r = doh.configure({ provider: String(o?.provider || 'off'), allowSystem: !!o?.allowSystem }); try { fs.writeFileSync(dohFile(), JSON.stringify({ provider: r.provider, allowSystem: r.allowSystem })); } catch { /* kept for this run */ } try { applyChromium(); } catch (err) { throw new Error(String(err.message || err)); } await applyProxy(); return r; });
+ipcMain.handle('kt:dohProbe', async () => { const r = await doh.probe(true); try { applyChromium(); } catch { /* the order kept */ } return r; });
+ipcMain.handle('kt:dohStatus', () => doh.status());
+ipcMain.handle('kt:dohUsed', (_e, o) => doh.usedFor(Array.isArray(o?.hosts) ? o.hosts.slice(0, 64).map(String) : []));
+app.on('will-quit', () => { if (doh.proxy) void doh.proxy.close(); });
 ipcMain.handle('kt:openPath', async (_e, p) => { const err = await shell.openPath(NP(String(p))); if (err) throw new Error(err); });
 ipcMain.handle('kt:archivePreflight', async (_e, o) => Archive.preflight(String(o.path), String(o.dest), { password: o.password, verify: !!o.verify, keepFree: typeof o.keepFree === 'number' ? o.keepFree : 0 }));
 ipcMain.handle('kt:archiveShelf', async (_e, o) => Archive.shelf({ atStart: !!o?.atStart }));
@@ -406,7 +414,7 @@ ipcMain.handle('kt:archiveExisting', async (_e, o) => ({ existing: await Archive
 ipcMain.handle('kt:archiveCancel', (_e, id) => { const s = archiveJobs.get(id); if (s) s.v = true; });
 ipcMain.handle('kt:archiveCreate', async (e, o) => {
   const stop = { v: false }; if (o.id) archiveJobs.set(o.id, stop); let last = 0;
-  try { const make = o.format === '7z' ? (out, ins, pr) => Archive.create7z(out, ins, { level: o.level, password: o.password ? String(o.password) : undefined }, pr) : Archive.createZip; const files = await make(String(o.out), (o.inputs || []).map(String), { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, path: o.out, size: fs.statSync(String(o.out)).size }; }
+  try { const make = o.format === '7z' ? (out, ins, pr) => Archive.create7z(out, ins, { level: o.level, password: o.password ? String(o.password) : undefined, replace: o.replace === true }, pr) : Archive.createZip; const files = await make(String(o.out), (o.inputs || []).map(String), { on: (done, total, file) => { const now = Date.now(); if (now - last < 250 && done < total) return; last = now; e.sender.send('kt:archiveProgress', { id: o.id, done, total, file }); }, stopped: () => stop.v }); return { files, path: o.out, size: fs.statSync(String(o.out)).size }; }
   finally { if (o.id) archiveJobs.delete(o.id); }
 });
 ipcMain.handle('kt:pickFile', async (_e, o) => { const r = await dialog.showOpenDialog(win, { properties: ['openFile', ...(o?.multiple ? ['multiSelections'] : [])], filters: o?.filters }); return r.canceled ? null : r.filePaths; });

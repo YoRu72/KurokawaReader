@@ -122,7 +122,7 @@ Do the same once before a local `tauri build` / `tauri dev`.
   moved in by a file job — the name-taken question, Cancel —, the hidden folder always removed); a zip made of the
   chosen. Electron's Files page offers none of it (it has no file jobs).
 - **DNS over HTTPS (P8)**: `setDoh` / `dohProbe` over the shared resolver (`net::set_doh`, `net::doh_lookup`), Tools'
-  provider names from kt-core `dohnames.rs` (main.cjs's table; «auto» is its first). What the web view fetches itself
+  provider names from kt-core `dohchain.rs` (doh-providers.txt; since 0.21 P9 the whole chain — order, health, cache, the system-DNS rule — through dohtools.rs, and aria2 pointed at kt-core `dohproxy.rs`). What the web view fetches itself
   keeps the system's DNS (see «DoH» below).
 - **The updater (P8)**: `update.rs` + kt-core `updatelogic.rs` — the Reader's (download resumed up to six tries, size and
   SHA-256 against GitHub's digest and/or the release's SHA256SUMS, refused and removed on a mismatch or with neither,
@@ -654,7 +654,7 @@ done · P6 6 done · P7 8 done + the screen translator's 8 (`kt:archiveFree` cou
 | `kt:shareWifiStop` | done (P8) |  |
 | `kt:shareWifiStatus` | done (P8) | `{running, url, sent, hits}` |
 | `kt:localApi` | done (P8) | 127.0.0.1 only, port 8977 unless given; the same routes, token (Bearer or ?token=) and CORS |
-| `kt:setDoh` | done (P8) | `net::set_doh` with kt-core `dohnames` (Tools' names) |
+| `kt:setDoh` | done (P8; chain 0.21 P9) | dohtools.rs over kt-core `dohchain` (with `kt:dohStatus`, `kt:dohUsed`) |
 | `kt:dohProbe` | done (P8) | example.com asked of the resolver in force (`net::doh_lookup`), timed |
 | `kt:avScan` | done (P8) | Defender's MpCmdRun / ClamAV's clamscan / the user's program, run directly (no shell), 10 min |
 | `kt:avAvailable` | done (P8) |  |

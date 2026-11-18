@@ -1,0 +1,29 @@
+# The public DNS-over-HTTPS resolvers Tools offers by name — the one table. dohchain.rs reads it (include_str!);
+# KrDoh.java (phone), desktop/dohchain.cjs (Electron) and src/dohProviders.ts (the settings page) carry copies that
+# tests/dohchain.cjs checks against this file, field by field. No resolver that needs an account or a key.
+# id|label|address (RFC 8484)|bootstrap addresses (the resolver reached by these, never by the network's DNS)|json|filters
+# json: «json» when the provider documents the JSON form (GET ?name=&type=) as well; filters: what it blocks by
+# itself (none, malware, ads, phishing, legal = court-ordered blocks only). Sources, read 2026-11-16:
+#  cloudflare  developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/ (+ /1.1.1.1/ip-addresses/)
+#  google      developers.google.com/speed/public-dns/docs/doh (+ docs/using)
+#  quad9       quad9.net/service/service-addresses-and-features/
+#  adguard     adguard-dns.io/en/public-dns.html (Default and Non-filtering)
+#  dnssb       dns.sb/doh/ («pure IP DNS over HTTPS»: https://185.222.222.222/dns-query — the address itself is the
+#              name checked, so no CDN name is guessed; its IPv6 form is a different address, left out)
+#  controld    docs.controld.com/docs/free-dns (Unfiltered, no account)
+#  wikimedia   meta.wikimedia.org/wiki/Wikimedia_DNS
+#  dns4eu      joindns4.eu/for-public (Unfiltered profile)
+# (OpenDNS was removed in 0.21's fix round: Cisco's own DoH article names doh.umbrella.com and gives no address for
+# doh.opendns.com, so its bootstrap could not be confirmed — a saved «opendns» now means «auto». IPv6 bootstrap
+# addresses are those each provider documents, for IPv6-only networks.)
+# (Mullvad's public DNS was discontinued on 2 November 2026 — mullvad.net/en/help/dns-over-https-and-dns-over-tls —:
+# a saved «mullvad» choice now means «auto».)
+cloudflare|Cloudflare|https://cloudflare-dns.com/dns-query|1.1.1.1,1.0.0.1,2606:4700:4700::1111,2606:4700:4700::1001|json|none
+google|Google|https://dns.google/dns-query|8.8.8.8,8.8.4.4,2001:4860:4860::8888,2001:4860:4860::8844|json|none
+quad9|Quad9|https://dns.quad9.net/dns-query|9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9|-|malware
+adguard|AdGuard|https://dns.adguard-dns.com/dns-query|94.140.14.14,94.140.15.15,2a10:50c0::ad1:ff,2a10:50c0::ad2:ff|-|ads
+adguard-unfiltered|AdGuard (unfiltered)|https://unfiltered.adguard-dns.com/dns-query|94.140.14.140,94.140.14.141,2a10:50c0::1:ff,2a10:50c0::2:ff|-|none
+dnssb|DNS.SB|https://185.222.222.222/dns-query|185.222.222.222|-|none
+controld|Control D|https://freedns.controld.com/p0|76.76.2.0,76.76.10.0,2606:1a40::,2606:1a40:1::|-|none
+wikimedia|Wikimedia DNS|https://wikimedia-dns.org/dns-query|185.71.138.138,2001:67c:930::1|-|none
+dns4eu|DNS4EU|https://unfiltered.joindns4.eu/dns-query|86.54.11.100,86.54.11.200,2a13:1001::86:54:11:100,2a13:1001::86:54:11:200|-|legal

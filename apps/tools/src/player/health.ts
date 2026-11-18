@@ -23,6 +23,7 @@ export interface HealthOpts {
   sound(): { busy: boolean; tracks: number | null };
   /** The app is converting the picture itself (no verdict on the picture then). */
   pictureBusy(): boolean;
+  /** mpv's tracks (the phone's mpv engine), null until mpv has told its list. */
   mpvTracks?(): { type: string }[] | null;
   onNoAudio(kind: 'none' | 'unplayable'): void; onNoPicture(): void; seconds?: number;
 }
@@ -38,8 +39,13 @@ export function watchHealth(video: V, o: HealthOpts): () => void {
   const onVis = () => restart();
   const check = () => {
     if (gone || document.hidden || video.paused || video.currentTime - from < need) return;
-    const mt = o.mpvTracks?.();
-    if (mt) { pictureDone = true; if (!soundDone) { soundDone = true; if (!mt.some((x) => x.type === 'audio')) o.onNoAudio('none'); } }
+    // (On mpv only its track list is read — the page's video is a stand-in —, and only once mpv has told it: an empty
+    // list before then is «not known yet», never «no audio».)
+    if (o.mpvTracks) {
+      const mt = o.mpvTracks(); if (!mt) return;
+      if (!mt.some((x) => x.type === 'audio')) o.onNoAudio('none');
+      stop(); return;
+    }
     if (!pictureDone && !o.pictureBusy()) {
       pictureDone = true;
       const decoded = video.requestVideoFrameCallback ? frames : (video.getVideoPlaybackQuality?.().totalVideoFrames ?? 1);

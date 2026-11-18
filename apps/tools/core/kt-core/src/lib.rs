@@ -10,7 +10,9 @@
 //! - mega: AES-128-CTR for a MEGA file fetched whole (kt:megaDecrypt, P3; the Android downloader's at M2)
 //! - places: a computer's storages for the Files page (home, Downloads, Desktop, Documents, disks), shallow stat, names
 //! - updatelogic: the PC updater's decisions — the Reader's updatelogic.rs with Tools' names (P8)
-//! - dohnames: the DNS-over-HTTPS resolvers Tools' settings name (desktop/main.cjs's DOH table) (P8)
+//! - dohchain: DNS over HTTPS — the resolvers offered (doh-providers.txt), their order and health, the cache, the
+//!   chain and its fall-back rule, UDP trackers by address (0.21 P9; replaces P8's dohnames)
+//! - dohproxy: the small HTTP proxy aria2 is pointed at while DoH is on (CONNECT and plain GET, names by the chain)
 //! - streamlogic: torrent streaming's and the local stream server's rules — ranges, types, aria2's pieces, ffmpeg's
 //!   arguments (P4)
 //! - videotools: yt-dlp / gallery-dl / ffmpeg rules — release files, versions, a replaced program checked and rolled
@@ -22,7 +24,8 @@ pub mod fontnames;
 pub mod mega;
 pub mod places;
 pub mod updatelogic;
-pub mod dohnames;
+pub mod dohchain;
+pub mod dohproxy;
 // (Stage P4: torrent streaming and the local stream server.)
 pub mod streamlogic;
 // (Stage P5: the video tools.)

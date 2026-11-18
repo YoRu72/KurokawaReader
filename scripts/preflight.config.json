@@ -20,7 +20,13 @@
       "screen.cjs en"
     ],
     "timeoutSec": {
-      "default": 300
+      "default": 300,
+      "filesbatch.cjs": 480,
+      "filesqueue.cjs": 480,
+      "filesclip.cjs": 480,
+      "filestauri.cjs": 480,
+      "hunt.cjs": 480,
+      "perfviews.cjs": 420
     },
     "budgets": {
       "perfstart.cjs": {

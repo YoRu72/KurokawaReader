@@ -60,7 +60,9 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
   const runJob = async ({ id, op, paths, dest, conflict }) => {
     const j = { cancel: false, standing: conflict && conflict !== 'ask' ? conflict : null, answer: null, wake: null }; jobs.set(id, j);
     const failed = []; let files = 0, skipped = 0, left = 0; const remaining = []; const total = paths.length;
-    await sleep(20);
+    const stuck = !!window.__stuck; await sleep(20);
+    // (A job that never ends and ignores Cancel — an engine gone wrong: window.__stuck, read when the job starts.)
+    if (stuck) await new Promise(() => undefined);
     for (const p of paths) {
       if (j.cancel) { if (op === 'move' && tree.has(p)) { left++; remaining.push(p); } continue; }
       if (window.__slow) await sleep(window.__slow);
@@ -102,7 +104,7 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
       if (to !== p && [...tree.keys()].some((k) => parent(k) === parent(p) && k.toLowerCase() === to.toLowerCase() && k !== p)) throw new Error('exists');
       copyTree(p, to); removeTree(p); return { ok: true, path: to };
     },
-    filesJob: async (o) => { window.__calls.push(`${o.op}:${o.paths.map(base).join('|')}>${o.dest ?? ''}`); void runJob(o); return { id: o.id }; },
+    filesJob: async (o) => { window.__calls.push(`${o.op}:${o.paths.map(base).join('|')}>${o.dest ?? ''}`); window.__ids = (window.__ids || []).concat([o.id]); if (window.__startDelay) await sleep(window.__startDelay); void runJob(o); return { id: o.id }; },
     filesAnswer: async ({ id, answer }) => { window.__calls.push('answer:' + answer); const j = jobs.get(id); if (!j) return; if (answer.endsWith('All')) j.standing = answer.slice(0, -3); const w = j.wake; j.wake = null; w && w(answer.replace('All', '')); },
     filesCancel: async ({ id }) => { window.__calls.push('cancel'); const j = jobs.get(id); if (!j) return; j.cancel = true; const w = j.wake; j.wake = null; w && w('skip'); },
     archiveList: async ({ path: p }) => { window.__calls.push('arcList:' + base(p)); if (!tree.has(p)) throw new Error('not found'); return z; },

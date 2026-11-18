@@ -173,6 +173,45 @@ pub fn net_options(n: &NetConfig) -> Vec<(String, String)> {
     o
 }
 
+/// The proxies aria2 is given for http and https (0.21 P9): the user's own when set (it finds the sites then);
+/// else, while DNS over HTTPS is on, the app's DoH proxy (address, user, password — kt-core dohproxy.rs), so the
+/// downloads and the HTTP trackers find their sites through the chain; else none. FTP keeps all-proxy (the user's
+/// own or none): the DoH proxy does not carry FTP. aria2.cjs proxyOptions is the twin.
+pub fn proxy_options(user_proxy: &str, doh: Option<(&str, &str, &str)>) -> Vec<(String, String)> {
+    let u = user_proxy.trim();
+    let (addr, user, pass) = if !u.is_empty() { (u, "", "") } else { doh.unwrap_or(("", "", "")) };
+    let mut o = Vec::new();
+    for k in ["http", "https"] {
+        o.push((format!("{}-proxy", k), addr.to_string()));
+        o.push((format!("{}-proxy-user", k), user.to_string()));
+        o.push((format!("{}-proxy-passwd", k), pass.to_string()));
+    }
+    o
+}
+
+/// aria2's config file (--conf-path): one «key=value» a line — how a password reaches aria2 without its command
+/// line, which other programs on the computer can read. A value with a line break is left out.
+pub fn conf_text(opts: &[(String, String)]) -> String {
+    let mut t = String::new();
+    for (k, v) in opts {
+        if v.contains('\n') || v.contains('\r') || k.contains('=') {
+            continue;
+        }
+        t.push_str(&format!("{}={}\n", k, v));
+    }
+    t
+}
+
+/// The certificate authorities aria2 is pointed at on Linux (the static build has no store of its own): the first
+/// of the usual system bundles that exists; None elsewhere (Windows' aria2 uses the system's store, a Mac's Homebrew
+/// build its own).
+pub fn ca_bundle(exists: &dyn Fn(&str) -> bool, linux: bool) -> Option<String> {
+    if !linux {
+        return None;
+    }
+    ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem"].iter().find(|p| exists(p)).map(|p| p.to_string())
+}
+
 /// What aria2c is started with: aria2.cjs's list, in its order, then `--stop-with-process` (aria2 quits by itself
 /// when the app is gone, however it went).
 pub struct StartPaths<'a> {
@@ -219,7 +258,6 @@ pub fn start_args(
         "--bt-enable-lpd=true".to_string(),
         "--follow-torrent=true".to_string(),
         "--file-allocation=none".to_string(),
-        "--check-certificate=false".to_string(),
         "--user-agent=KurokawaTools/0.1 aria2".to_string(),
         "--summary-interval=0".to_string(),
         "--console-log-level=warn".to_string(),
@@ -882,8 +920,8 @@ mod tests {
         assert!(a.contains(&"--connect-timeout=30".to_string()));
         assert!(a.contains(&"--all-proxy=".to_string()));
         assert_eq!(a.last().unwrap(), "--stop-with-process=42");
-        // 35 fixed + 2 ports + seed-time + lpd + 7 net + stop-with-process
-        assert_eq!(a.len(), 35 + 2 + 1 + 1 + 7 + 1);
+        // 34 fixed (no --check-certificate=false since 0.21 P9) + 2 ports + seed-time + lpd + 7 net + stop-with-process
+        assert_eq!(a.len(), 34 + 2 + 1 + 1 + 7 + 1);
         let c2 = EngineConfig {
             seed: true,
             seed_ratio: 1.5,
@@ -1174,5 +1212,19 @@ mod tests {
         let r = random_hex(12);
         assert_eq!(r.len(), 24);
         assert_ne!(r, random_hex(12));
+    }
+
+    #[test]
+    fn doh_proxy_and_certificates() {
+        let a = start_args(&EngineConfig::default(), 1, "s", &StartPaths { default_dir: Path::new("/d"), session_file: Path::new("/s"), data_dir: Path::new("/x"), windows: false }, 1);
+        assert!(!a.iter().any(|x| x.contains("check-certificate")), "certificates are checked (aria2's default)");
+        let d = proxy_options("", Some(("http://127.0.0.1:5", "kt", "pw")));
+        assert!(d.contains(&("http-proxy".to_string(), "http://127.0.0.1:5".to_string())) && d.contains(&("https-proxy-passwd".to_string(), "pw".to_string())));
+        let u = proxy_options("http://p:1", Some(("http://127.0.0.1:5", "kt", "pw")));
+        assert!(u.contains(&("https-proxy".to_string(), "http://p:1".to_string())) && u.contains(&("http-proxy-passwd".to_string(), String::new())));
+        assert!(proxy_options("", None).iter().all(|(_, v)| v.is_empty()));
+        assert_eq!(conf_text(&[("a".into(), "1".into()), ("b".into(), "x\ny".into())]), "a=1\n");
+        assert_eq!(ca_bundle(&|p| p == "/etc/pki/tls/certs/ca-bundle.crt", true).as_deref(), Some("/etc/pki/tls/certs/ca-bundle.crt"));
+        assert_eq!(ca_bundle(&|_| true, false), None);
     }
 }
