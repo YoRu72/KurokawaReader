@@ -1660,3 +1660,43 @@ html[data-density='compact'] .te-row { min-height: 38px; }
 .files-state-acts { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; width: min(100%, 360px); margin-top: 8px; }
 .files-state-acts .btn { min-height: 48px; min-width: 0; justify-content: center; }
 .files-state-acts .btn > span, .files-state-acts .btn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Files, a phone's list (F2a): one compact header, one strip, dense rows with the date at the end, a «..» row ---- */
+.files-view > :is(.files-strip, .files-strip > *) { flex-shrink: 0; }
+.files-strip { display: contents; }
+.topbar .files-head .files-path { display: none; }
+.files-uprow { display: none; }
+.files-date { display: none; }
+@media (max-width: 839.98px) {
+  html:not(.pc) .files-view .topbar .icon-btn { width: 40px; height: 40px; }
+  html:not(.pc) .files-view .topbar { gap: 0; padding-inline: 4px 6px; }
+  html:not(.pc) .files-view .topbar .topbar-actions { gap: 0; }
+  html:not(.pc) .files-view .topbar > .files-head { padding-inline: 2px; }
+  html:not(.pc) .files-view .topbar .files-head { cursor: pointer; justify-content: center; gap: 1px; }
+  html:not(.pc) .files-head2 { display: flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; }
+  html:not(.pc) .topbar .files-head .files-path { display: block; flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; font-size: 11.5px; line-height: 1.25; }
+  html:not(.pc) .topbar .files-head .files-path > bdi { direction: ltr; unicode-bidi: isolate; }
+  html:not(.pc) .files-head2 .files-sub { display: none; }
+  html:not(.pc) .files-view .topbar .files-title { font-size: 18px; }
+  html:not(.pc) .files-strip { display: flex; align-items: center; gap: 6px; flex: none; height: 36px; padding: 0 12px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; margin-block: 2px; }
+  html:not(.pc) .files-strip::-webkit-scrollbar { display: none; }
+  html:not(.pc) .files-strip > .chip-row { display: contents; }
+  html:not(.pc) .files-strip .chip { flex: none; height: 32px; padding: 0 12px; }
+  html:not(.pc) .files-strip > .files-kinds > .chip:first-child { margin-inline-start: 6px; }
+  html:not(.pc) .files-strip > .files-crumbs { position: fixed; z-index: 40; top: calc(var(--topbar-h) + var(--safe-top) - 4px); inset-inline: 8px; display: none; flex-direction: column; align-items: stretch; gap: 0; padding: 6px; max-height: 60vh; overflow-y: auto; white-space: normal; border-radius: 20px; background: var(--md-surface-container-high); box-shadow: 0 6px 24px rgba(0,0,0,.28); }
+  html:not(.pc) .files-strip > .files-crumbs.open { display: flex; }
+  html:not(.pc) .files-strip > .files-crumbs[hidden] { display: none; }
+  html:not(.pc) .files-crumbs .crumb-sep { display: none; }
+  html:not(.pc) .files-crumbs .crumb { display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: 14px; font-size: 14px; letter-spacing: 0; text-align: start; }
+  html:not(.pc) .files-crumbs .crumb:last-child { background: color-mix(in srgb, var(--md-primary) 12%, transparent); }
+  html:not(.pc) .files-uprow { display: flex; align-items: center; gap: 12px; padding: 0 6px; height: 48px; border-radius: 14px; cursor: pointer; }
+  html:not(.pc) .files-uprow:active { background: var(--md-secondary-container); }
+  html:not(.pc) .files-uprow .files-ic { width: 36px; height: 36px; border-radius: 10px; }
+  html:not(.pc) .files-uprow .files-name { font-weight: 600; letter-spacing: .08em; }
+  html:not(.pc) .files-list.dense .files-row { gap: 12px; padding-block: 0; height: 56px; min-height: 56px; box-sizing: border-box; contain-intrinsic-size: auto 56px; }
+  html:not(.pc) .files-list.dense .files-ic { width: 36px; height: 36px; border-radius: 10px; }
+  html:not(.pc) .files-list.dense .files-ic svg { width: 22px; height: 22px; }
+  html:not(.pc) .files-list.dense .files-main { flex: 1; min-width: 0; line-height: 1.25; }
+  html:not(.pc) .files-list.dense .files-main small { font-size: 12px; opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html:not(.pc) .files-list.dense .files-date { display: block; flex: none; font-size: 11.5px; color: var(--md-on-surface-variant); opacity: .85; white-space: nowrap; font-variant-numeric: tabular-nums; padding-inline-end: 4px; }
+}

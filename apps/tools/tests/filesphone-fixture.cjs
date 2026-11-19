@@ -132,11 +132,13 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
 }
 
 /** A browser page on the pretend phone: `phoneLayout` 412×915, else a computer's 1280×800; pictures at twice the pixels. */
-async function open(browser, { lang = 'en', pc = false, z, many = 0, width = 412, height = 915 }) {
+async function open(browser, { lang = 'en', pc = false, z, many = 0, width = 412, height = 915, dense = false }) {
   const page = await browser.newPage({ viewport: pc ? { width: 1280, height: 800 } : { width, height }, deviceScaleFactor: 2, hasTouch: !pc, isMobile: false });
   const errors = []; page.on('pageerror', (e) => errors.push(String(e))); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|blocked by CORS policy/.test(m.text())) errors.push(m.text()); });
   await page.route(/api\.github\.com/, (r) => r.fulfill({ json: [], headers: { 'access-control-allow-origin': '*' } }));
   await page.addInitScript(phone, { z, lang, K, P, SD, ZIP, many });
+  // (The phone's rows are compact by default — no ⋮ on them; these tests drive the comfortable row unless asked.)
+  if (!dense) await page.addInitScript(() => { try { const v = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); v.density = 'comfortable'; localStorage.setItem('kt.files.prefs', JSON.stringify(v)); } catch { /* none */ } });
   return { page, errors };
 }
 module.exports = { K, P, SD, ZIP, LONG, ARABIC, WHEN, zipListing, serve, open, buildZip };

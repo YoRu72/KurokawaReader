@@ -9,7 +9,7 @@ import { sideDrawer, swipeToOpen } from '../ui/sideSwipe';
 import { swipeable } from '../ui/swipe';
 import { pullToRefresh } from '../ui/gestures';
 import { h, icon, iconButton, toast, openSheet, pickSheet, onLongPress } from '../ui/dom';
-import { t, formatBytes, formatDate, formatDateShort, localDigits, countFiles, countItems, countFolders } from '../i18n';
+import { t, formatBytes, formatDate, formatDateShort, formatRowDate, localDigits, countFiles, countItems, countFolders } from '../i18n';
 import { ktPlugin, listen, nativePlatform } from '../native';
 import { navigate, previousPath } from '../router';
 import { onBack as onBackStep } from '../ui/backstack';
@@ -20,6 +20,8 @@ import { isArc, arcPath, parseArc, arcName, looksArchive, canExtractName } from 
 import { isApps, appsPath, parseApps, appsAvailable } from './filesApps';
 import { nameDotExt } from '../ui/nameExt';
 import { sizeOf, calcSize, watchSize, sizeRunning, type SizeInfo } from './filesSize';
+import { refitTopbar } from '../ui/fitTopbar';
+import { folderIcon } from './filesGlyph';
 import { splitExt, nameParts, joinMeta, readablePath, placeName, readShared, readSaved } from './filesNames';
 type AppEntry = Entry & { pkg?: string; sub?: string; special?: 'data' | 'obb' | 'media' };
 
@@ -245,6 +247,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const clipBar = h('div', { class: 'files-clipbar', role: 'toolbar', 'aria-label': t('filesClipboard'), hidden: true });
   const backBtn = iconButton('back', t('back'), () => { backStep(); }); backBtn.classList.add('files-back'); backBtn.hidden = true;
   const titleEl = h('span', { class: 'files-title' }, t('navFiles')); const subEl = h('small', { class: 'files-sub' });
+  // (A phone's header: the folder's name, its parent's path under it; a tap opens the folders above — the crumbs, as a drop-down.)
+  const pathEl = h('small', { class: 'files-path', dir: 'ltr' }, h('bdi', null)); const phoneNow = () => !document.documentElement.classList.contains('pc');
+  const denseNow = () => phoneNow() && !pk && prefs.view === 'list' && prefs.density !== 'comfortable';
+  let pathOpen = false; const offPath = () => { document.removeEventListener('pointerdown', onPathOut, true); document.removeEventListener('keydown', onPathKey, true); };
+  const onPathOut = (e: Event) => { if (!(e.target as Element).closest?.('.files-crumbs, .files-head')) setPath(false); };
+  const onPathKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPath(false); };
+  const setPath = (on: boolean) => { pathOpen = on && phoneNow() && !crumbs.hidden; crumbs.classList.toggle('open', pathOpen); headEl.setAttribute('aria-expanded', String(pathOpen)); offPath(); if (pathOpen) { document.addEventListener('pointerdown', onPathOut, true); document.addEventListener('keydown', onPathKey, true); } };
+  const headEl = h('div', { class: 'title files-head', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-label': t('filesPathMenu'), onclick: () => { if (phoneNow()) setPath(!pathOpen); } }, titleEl, h('span', { class: 'files-head2' }, pathEl, subEl)) as HTMLElement;
   /** The title, a long name cut in its middle so its end (the extension) stays in sight. */
   const setTitle = (text: string, isDir = true) => { const np = nameParts(text, isDir); titleEl.setAttribute('dir', np.dir); titleEl.title = text; titleEl.replaceChildren(h('span', { class: 'mid-head' }, np.head), h('span', { class: 'mid-tail' }, np.tail)); };
   const fab = h('button', { type: 'button', class: 'fab files-fab', 'aria-label': t('newFolder'), onclick: () => fabSheet() }, icon('plus'));
@@ -257,13 +267,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const jobsBtn = iconButton('jobs', t('filesJobs'), () => void useQueue().then((m) => m.jobsSheet(() => (prefs.jobsMode === 'together' ? 'together' : 'one')))); jobsBtn.classList.add('files-jobs-btn'); jobsBtn.hidden = true; jobsBtn.append(jobsBadge);
   const drawJobsBadge = () => { const n = Q?.count() ?? 0; jobsBtn.hidden = n === 0; jobsBadge.textContent = localDigits(n); const lbl = n ? t('filesJobsCount', { n: localDigits(n) }) : t('filesJobs'); jobsBtn.title = lbl; jobsBtn.setAttribute('aria-label', lbl); };
   const root = h('div', { class: 'view files-view' },
-    h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' }, jobsBtn,
+    h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, headEl, h('div', { class: 'topbar-actions' }, jobsBtn,
       iconButton('search', t('search'), () => { if (canEverywhere() && !pk) { void everywhere(); return; } if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       viewBtn,
       iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
-    clipBar, search, shelfEl, rootsRow, crumbs, kindRow, body, selBar, fab) as HTMLElement & { dispose?: () => void };
+    clipBar, search, shelfEl, h('div', { class: 'files-strip' }, rootsRow, crumbs, kindRow), body, selBar, fab) as HTMLElement & { dispose?: () => void };
   // (Extractions left half done — a stop, a crash, a full disk: Finish, Restore the archive, or Leave as is.)
   if (!quiet) void import('./extractShelf').then((m) => m.shelfBanner(shelfEl)).catch(() => {});
   body.append(sizeNote, listEl, status, jobsEl);
@@ -308,9 +318,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     try { const local = await m.arcFetch(e.path); await open({ ...e, path: local }); } catch (err) { toast(String((err as Error).message ?? err), 'error', 5000); }
   };
   const askAccess = async () => { const pl = plug(); if (!pl) return; const sh = openSheet(t('filesAccessTitle'), t('close')); sh.body.append(h('p', { class: 'hint' }, t('filesAccessHint'))); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void pl.filesAccess({ ask: true }); } }, icon('key'), t('filesAccessAllow'))); };
+  const syncBack = () => { const hide = !collection && (!upOf(at) || (phoneNow() && prefs.view === 'list')); if (backBtn.hidden !== hide) { backBtn.hidden = hide; requestAnimationFrame(() => refitTopbar(root.querySelector('.topbar'))); } };
   const drawCrumbs = () => {
-    backBtn.hidden = !collection && !upOf(at);
-    if (collection) { crumbs.hidden = true; const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); titleEl.removeAttribute('dir'); return; }
+    syncBack(); { const up = collection ? null : upOf(at); pathEl.firstElementChild!.textContent = up ? readablePath(up) : ''; }
+    if (collection) { crumbs.hidden = true; setPath(false); const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); titleEl.removeAttribute('dir'); return; }
     // (Inside an archive: the folder there, or the archive's own name at its top — decoded, never «%2Fstorage%2F…».)
     const rootHere = roots.find((x) => x.path === at); if (rootHere) setTitle(rootHere.name); else if (isApps(at) && at === 'apps://') setTitle(t('appsTitle')); else setTitle(placeName(at) || t('navFiles'), !isArc(at) || !!parseArc(at).inner);
     const r = roots.find((x) => at === x.path || at.startsWith(x.path + '/')); const base = r?.path ?? (isApps(at) ? 'apps://' : isArc(at) ? arcPath(parseArc(at).archive) : isRemote(at) ? `remote://${parseRemote(at).id}` : at.startsWith('saf://') ? at.replace(/^(saf:\/\/[^/]*).*$/, '$1') : at.startsWith('root://') ? 'root://' : '/'); const rest = at.slice(base.length).split('/').filter(Boolean);
@@ -318,7 +329,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     let acc = base; for (const seg of rest) { acc += `/${seg}`; const p = acc; parts.push(h('span', { class: 'crumb-sep' }, '›'), h('button', { type: 'button', class: 'crumb', onclick: () => go(p) }, h('bdi', null, seg))); }
     crumbs.replaceChildren(...parts); crumbs.scrollLeft = crumbs.scrollWidth;
     // (At a place's own top the path would only say the title again: left out until there is a way back to show.)
-    crumbs.hidden = parts.length === 1 && !rest.length && !isArc(at);
+    crumbs.hidden = parts.length === 1 && !rest.length && !isArc(at); setPath(false);
   };
   const drawKinds = () => kindRow.replaceChildren(...KINDS.map(([k, label]) => h('button', { type: 'button', class: 'chip small' + (prefs.kind === k ? ' on' : ''), onclick: () => { prefs.kind = k; savePrefs(); drawKinds(); draw(); } }, t(label as 'filesKindAll'))));
 
@@ -465,12 +476,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
         track: () => { const nav = document.querySelector('.bottom-nav') as HTMLElement | null; const fb = fab.getBoundingClientRect(); const navTop = nav && nav.offsetHeight ? nav.getBoundingClientRect().top : window.innerHeight; const bottom = (fb.height && fab.isConnected && getComputedStyle(fab).display !== 'none' ? Math.min(fb.top, navTop) : navTop) - 10; return { top: Math.max(pageTop(), 0) + 8, bottom }; } });
     }).catch(() => undefined);
   };
+  /** A phone's list: «..» first when there is a folder above — its own row, in no selection, sort or count. */
+  const upRow = (): HTMLElement[] => { syncBack(); const up = collection || !phoneNow() || prefs.view !== 'list' ? null : upOf(at); return up ? [h('div', { class: 'files-uprow', role: 'button', tabindex: '0', 'aria-label': t('filesUpRow'), onclick: () => { if (!selecting) goUp(up); } }, h('span', { class: 'files-ic' }, folderIcon('', true)), h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'ltr' }, '..')))] : []; };
   let moreIo: IntersectionObserver | null = null; let chunkIo: IntersectionObserver | null = null;
   const draw = (minPx = 0, ensure = '') => {
-    const list = shown(); listEl.className = `files-list ${prefs.view === 'gallery' ? 'grid gallery' : prefs.view}${forcedCols(list) ? ' cols' : ''}${prefs.density === 'compact' ? ' compact' : ''}${prefs.textSize ? ` ts-${prefs.textSize}` : ''}`; root.classList.toggle('eink', !!prefs.eink);
+    const list = shown(); listEl.className = `files-list ${prefs.view === 'gallery' ? 'grid gallery' : prefs.view}${forcedCols(list) ? ' cols' : ''}${prefs.density === 'compact' ? ' compact' : ''}${denseNow() ? ' dense' : ''}${prefs.textSize ? ` ts-${prefs.textSize}` : ''}`; root.classList.toggle('eink', !!prefs.eink);
     moreIo?.disconnect(); moreIo = null; chunkIo?.disconnect(); chunkIo = null; dropThumbs(listEl); rowEls.clear();
     paintSizeNote(list);
-    if (!list.length) { fastList = []; syncFast(); subEl.textContent = ''; listEl.replaceChildren(h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
+    if (!list.length) { fastList = []; syncFast(); subEl.textContent = ''; listEl.replaceChildren(...upRow(), h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
     // (Big folders drawn in slices: the first screenfuls at once, the rest as the list is scrolled towards — a folder of
     // twenty thousand entries opens as fast as one of twenty. Each slice is a block of its own, and a block a few screens
     // away from what is seen keeps only its height — its rows let go, drawn again when it comes back near —: the page
@@ -495,7 +508,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       }
     }, { root: null, rootMargin: '1600px 0px' }) : null;
     const slice = (): HTMLElement => { const from = drawn; drawn = Math.min(list.length, drawn + CHUNK); const c = h('div', { class: 'files-chunk' }) as HTMLElement & { from?: number; to?: number }; c.from = from; c.to = drawn; c.append(rowsOf(from, drawn)); chunkIo?.observe(c); return c; };
-    listEl.replaceChildren(slice());
+    listEl.replaceChildren(...upRow(), slice());
     // (The fast scroller's: slices drawn down to an index, in place before the sentinel that asks for more.)
     fastList = list; drawTo = (i) => { const sen = listEl.querySelector('.files-more-sentinel'); while (drawn <= i && drawn < list.length) { const c = slice(); if (sen) sen.before(c); else listEl.append(c); } if (drawn >= list.length) { moreIo?.disconnect(); moreIo = null; sen?.remove(); } };
     // (A scroll to come back to: drawn down to it first.)
@@ -528,11 +541,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
     const ae = e as AppEntry; const appIc = !!ae.pkg && isApps(e.path) && e.dir;
     const canThumb = (thumbable && plug() && (!isVirtual(e.path) || isArc(e.path))) || appIc || (thumbable && pcThumbs() && !isVirtual(e.path) && pcThumbable(e.name));
-    const ic = h('span', { class: 'files-ic' + ((thumbable && (!isVirtual(e.path) || isArc(e.path)) || appIc) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': canThumb ? e.path : undefined }, icon(e.dir ? (ae.special ? 'folder' : appIc ? 'apps' : 'folder') : ICON[k] ?? 'file'));
+    const ic = h('span', { class: 'files-ic' + ((thumbable && (!isVirtual(e.path) || isArc(e.path)) || appIc) && prefs.thumbs !== false ? ' thumb' : ''), 'data-thumb': canThumb ? e.path : undefined }, e.dir && phoneNow() && !ae.special && !appIc && !isVirtual(e.path) ? folderIcon(e.name) : icon(e.dir ? (ae.special ? 'folder' : appIc ? 'apps' : 'folder') : ICON[k] ?? 'file'));
     // (The second line: only what is known — an archive's entry without a date shows its size alone, never «10 MB ·».)
     const when = e.mtime > 0 ? (prefs.view !== 'list' ? formatDateShort(e.mtime) : formatDate(e.mtime)) : '';
     const known = e.dir && prefs.dirSizes !== false && sizeable(e) ? sizeOf(e.path, e.mtime) : null;
     const meta = ae.sub ? joinMeta([ae.sub, ae.pkg && e.dir && !ae.special ? formatBytes(e.size) : '']) : e.dir ? joinMeta([e.count !== undefined && e.count >= 0 ? countItems(e.count) : '', known ? formatBytes(known.bytes) : '', isArc(e.path) ? when : '']) : collection ? joinMeta([formatBytes(e.size), baseOf(parentOf(e.path))]) : joinMeta([e.size >= 0 ? formatBytes(e.size) : '', when]);
+    const dense = denseNow();
+    const metaD = dense && !ae.sub && !collection ? (e.dir ? joinMeta([e.count !== undefined && e.count >= 0 ? (e.count === 0 ? t('filesRowEmpty') : countItems(e.count)) : '', known ? formatBytes(known.bytes) : '']) : e.size >= 0 ? formatBytes(e.size) : '') : meta;
     if (pk) {
       // (The picker's row: a folder opens; a file is chosen — or, of another kind than asked, greyed and said so.)
       const ok = e.dir || pickable(e);
@@ -543,7 +558,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       return pr;
     }
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
-      ic, h('span', { class: 'grow files-main' }, nameEl(e.name, e.dir), h('small', { class: 'src' }, ...metaNodes(meta))),
+      ic, h('span', { class: 'grow files-main' }, nameEl(e.name, e.dir), h('small', { class: 'src' }, ...metaNodes(metaD))),
       trail(e)); rowEls.set(e.path, { el, e });
     // (A computer's right-click: the item's menu at the pointer; a long press — or a right-click while choosing —: choosing.)
     onLongPress(el, (ev) => { if (ev.type === 'contextmenu' && !selecting && document.documentElement.classList.contains('pc')) { itemSheet(e, ev); return; } if (!selecting) { selecting = true; } toggle(e); });
@@ -566,7 +581,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // let-go item gives its place up. Two or more chosen: each shows its number where the tick was.)
   let orderOf = new Map<string, number>();
   const reorder = () => { orderOf = new Map(); let i = 0; for (const p of picked) orderOf.set(p, ++i); };
-  const trail = (e: Entry): HTMLElement => { if (!selecting) return iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }); const on = picked.has(e.path); const n = orderOf.get(e.path); return on && picked.size > 1 && n ? h('span', { class: 'files-check order', 'data-on': 'true', 'data-n': String(n), 'aria-label': t('btPicked', { n: localDigits(n) }) }, localDigits(n)) : h('span', { class: 'files-check', 'data-on': String(on) }, icon(on ? 'check' : 'circle')); };
+  const trail = (e: Entry): HTMLElement => { if (!selecting && denseNow()) return h('span', { class: 'files-date' }, formatRowDate(e.mtime)); if (!selecting) return iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }); const on = picked.has(e.path); const n = orderOf.get(e.path); return on && picked.size > 1 && n ? h('span', { class: 'files-check order', 'data-on': 'true', 'data-n': String(n), 'aria-label': t('btPicked', { n: localDigits(n) }) }, localDigits(n)) : h('span', { class: 'files-check', 'data-on': String(on) }, icon(on ? 'check' : 'circle')); };
   const applySel = () => {
     reorder();
     for (const [p, { el, e }] of rowEls) {
@@ -1284,7 +1299,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; offPath(); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };

@@ -141,7 +141,7 @@ async function phone(browser, port, z, lang) {
 
   // ---- gestures
   await go(fresh(`p=${encodeURIComponent(K)}`)); await p.waitForSelector(rowSel('Song.mp3'));
-  { const r = await rect(p, '.files-kinds'); const y = r.t + r.h / 2; const x0 = rtl ? 330 : 30, x1 = rtl ? 150 : 210; await touch(line(x0, y, x1, y, 12), 8); }
+  { const r = await rect(p, '.files-strip'); const y = r.t + r.h / 2; const x0 = rtl ? 330 : 30, x1 = rtl ? 150 : 210; await touch(line(x0, y, x1, y, 12), 8); }
   await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 250))));
   ok(L('a swipe along the strip of chips never opens the drawer'), !(await p.$('.files-drawer')));
   if (await p.$('.files-drawer')) { await p.keyboard.press('Escape'); await p.waitForFunction(() => !document.querySelector('.sheet')); }

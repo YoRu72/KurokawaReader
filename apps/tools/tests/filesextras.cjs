@@ -99,7 +99,7 @@ async function scroller(browser, port, z, lang) {
     const near = dots.find((r) => r.top < t.bottom && r.bottom > t.top) ?? dots[0]; const hit = document.elementFromPoint(near.left + near.width / 2, near.top + near.height / 2); return { tw: t.width, gw: g.width, overlap: dots.some((r) => r.left < t.right && r.right > t.left && r.top < t.bottom && r.bottom > t.top), hitDots: !!hit?.closest('.icon-btn[data-icon="more"]'), n: dots.length, edge: document.documentElement.dir === 'rtl' ? t.left : innerWidth - t.right }; });
   ok(L(`idle handle: slim (grip ${clear.gw}px, hit area ${clear.tw}px), at the screen edge (${clear.edge}px), over no ⋮`), clear.gw <= 5 && clear.tw <= 24 && clear.edge <= 1 && !clear.overlap && clear.n > 3, clear);
   ok(L('the ⋮ beside the handle is hit by a tap point'), clear.hitDots, clear);
-  const crumbH = await p.evaluate(() => ['.files-crumbs', '.files-kinds', '.files-roots'].map((q) => { const e = document.querySelector(q); return e && !e.hidden ? Math.round(e.getBoundingClientRect().height) : -1; }));
+  const crumbH = await p.evaluate(() => ['.files-strip'].map((q) => { const e = document.querySelector(q); return e && !e.hidden ? Math.round(e.getBoundingClientRect().height) : -1; }));
   ok(L(`header rows keep their height with a long list (${crumbH})`), crumbH.every((h) => h === -1 || h >= 30), crumbH);
   const track = await p.evaluate(() => { const e = document.querySelector('.files-fast'); const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
   const mid = (track.top + track.bottom) / 2;

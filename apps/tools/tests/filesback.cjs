@@ -18,7 +18,7 @@ async function phone(browser, port, z, lang) {
   await p.click('[data-dest="files"]'); await p.waitForSelector('.files-row'); await p.waitForTimeout(500);
   ok(L('Files opens on its folder; no arrow at the top'), (await p.textContent('.files-title')) === 'Kurokawa' && await p.$eval('.files-view .files-back', (b) => b.hidden), await where());
   await tap('Sub'); await tap('Deeper');
-  ok(L('down two folders'), (await where()) === `${K}/Sub/Deeper` && !(await p.$eval('.files-view .files-back', (b) => b.hidden)));
+  ok(L('down two folders (the «..» row stands in for the arrow)'), (await where()) === `${K}/Sub/Deeper` && !!(await p.$('.files-uprow')));
   await row('deep.txt').locator('.icon-btn[data-icon="more"]').click(); await p.waitForSelector('.sheet'); await sysBack();
   ok(L('Back closes the open sheet first, the folder stays'), !(await p.$('.sheet')) && (await where()) === `${K}/Sub/Deeper`);
   const b = await row('deep.txt').boundingBox(); await p.mouse.move(b.x + 80, b.y + 20); await p.mouse.down(); await p.waitForTimeout(650); await p.mouse.up(); await p.waitForTimeout(200);
@@ -34,7 +34,7 @@ async function phone(browser, port, z, lang) {
   await sysBack(); ok(L('Back: the zip\'s top'), (await where()) === arcOf(`${K}/${ZIP}`), await where());
   await sysBack(); ok(L('Back from the zip\'s top: the folder that holds it'), (await where()) === K, await where());
   // the arrow in the bar does the same
-  await tap('Sub'); await p.click('.files-view .files-back'); await p.waitForTimeout(500); ok(L('the arrow in the bar: up a folder'), (await where()) === K);
+  await tap('Sub'); await p.click('.files-view .files-uprow'); await p.waitForTimeout(500); ok(L('the «..» row: up a folder'), (await where()) === K);
   // a folder's scroll comes back with it
   await tap('Many'); await p.evaluate(() => { window.scrollTo(0, 1500); document.querySelector('.files-body').scrollTop = 1500; }); await p.waitForTimeout(250);
   const y0 = await p.evaluate(() => Math.max(window.scrollY, document.querySelector('.files-body').scrollTop));
