@@ -112,7 +112,6 @@ async function phone(browser, port, z, lang) {
   await go(fresh(`p=${encodeURIComponent(K)}`)); await p.waitForSelector('.files-unfinished', { timeout: 5000 }).catch(() => undefined);
   const ux = await rect(p, '.files-unfinished .toast-x');
   ok(L('«Unfinished jobs» has a close button too (48 px)'), !!ux && ux.w >= 47.5, ux);
-  await shot('unfinished');
   if (ux) { await p.click('.files-unfinished .toast-x'); await p.waitForFunction(() => !document.querySelector('.files-unfinished')); }
   await go(fresh(`p=${encodeURIComponent(K)}`)); await p.waitForSelector(rowSel('Song.mp3'));
   ok(L('closed: not offered again in this run, its jobs still kept'), !(await p.$('.files-unfinished')) && !!(await p.evaluate(() => localStorage.getItem('kt.files.queue.unfinished'))));
@@ -123,13 +122,13 @@ async function phone(browser, port, z, lang) {
   await p.waitForSelector('.files-state[data-state="still"]', { timeout: 5000 }).catch(() => undefined);
   ok(L('a listing that does not answer: «Still reading» with Try again and the storage\'s top'), (await p.$eval('.files-state[data-state="still"] b', (e) => e.textContent).catch(() => '')) === s.still && !!(await p.$('.files-state .files-state-retry')) && !!(await p.$('.files-state .files-state-root')));
   await p.evaluate(() => document.querySelectorAll('.files-state .spinner').forEach((x) => { x.style.animation = 'none'; }));
-  await shot('still');
+  if (lang === 'en') await shot('still');
   if (await p.$('.files-state .files-state-root')) { await p.click('.files-state .files-state-root'); await p.waitForSelector(rowSel('Music'), { timeout: 5000 }).catch(() => undefined); }
   ok(L('«Storage root»: the phone\'s top, listed'), !!(await p.$(rowSel('Music'))));
   await go(`/files?p=${encodeURIComponent(`${P}/Odd`)}`); await p.waitForSelector(rowSel('ok.txt'), { timeout: 5000 }).catch(() => undefined);
   ok(L('odd entries (no name, a broken date, a lone surrogate, a bad size, null, no path): the others still drawn'), (await p.$$eval('.files-view .files-row', (r) => r.length)) === 4, await p.$$eval('.files-view .files-row', (r) => r.map((x) => x.textContent)));
   // a remembered folder that is gone: its storage's top
-  await go(`/files?p=${encodeURIComponent(`${K}/Sub/Deeper`)}`); await p.waitForSelector(rowSel('deep.txt'));
+  await go(`/files?p=${encodeURIComponent(K)}`); await p.waitForSelector(rowSel('Sub')); await p.click(`${rowSel('Sub')} .files-main`); await p.waitForSelector(rowSel('Deeper')); await p.click(`${rowSel('Deeper')} .files-main`); await p.waitForSelector(rowSel('deep.txt'));
   await p.evaluate((k) => { for (const x of [...window.__tree.keys()]) if (x.startsWith(`${k}/Sub/Deeper`)) window.__tree.delete(x); }, K);
   await go(fresh(''));
   await p.waitForSelector(rowSel('Song.mp3'), { timeout: 5000 }).catch(() => undefined);

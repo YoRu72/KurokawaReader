@@ -46,7 +46,7 @@ async function run(browser, port, z, lang) {
   await p.waitForSelector('.files-job', { timeout: 4000 }).catch(() => undefined);
   ok(L('the job still running shows again'), (await p.$$eval('.files-job', (j) => j.length)) === 1 && !(await p.$eval('.files-jobs-btn', (b) => b.hidden)));
   ok(L('…and its waiting question is asked again'), !!(await p.$('.sheet .files-compare')));
-  if (SHOTS) { await p.keyboard.press('Escape').catch(() => undefined); await p.waitForFunction(() => !document.querySelector('.sheet')).catch(() => undefined); await p.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.files-body').scrollTop = 0; for (const x of document.querySelectorAll('.toast')) x.style.animation = 'none'; }); if (await p.$('.toast')) await p.screenshot({ path: path.join(SHOTS, `F1-back${lang === 'ar' ? '-ar' : ''}.png`) }); }
+  if (SHOTS && lang === 'en') { await p.keyboard.press('Escape').catch(() => undefined); await p.waitForFunction(() => !document.querySelector('.sheet')).catch(() => undefined); await p.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.files-body').scrollTop = 0; for (const x of document.querySelectorAll('.toast')) x.style.animation = 'none'; }); if (await p.$('.toast')) await p.screenshot({ path: path.join(SHOTS, `F1-back${lang === 'ar' ? '-ar' : ''}.png`) }); }
   // a plain start: as always
   await p.evaluate(() => sessionStorage.removeItem('kt-test-live')); await p.goto(`http://localhost:${port}/index.html`); await p.waitForFunction(() => window.__liveAsked !== undefined || document.querySelector('.view'));
   await p.waitForSelector('.view'); await p.evaluate(() => new Promise((r) => setTimeout(r, 400)));

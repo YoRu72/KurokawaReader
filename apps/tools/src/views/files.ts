@@ -360,9 +360,9 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const STILL_MS = (window as unknown as { __ktStillMs?: number }).__ktStillMs ?? 8000;
   const topOf = (p: string): string | null => roots.find((x) => p === x.path || p.startsWith(x.path + '/'))?.path ?? roots[0]?.path ?? null;
   const stateCard = (kind: 'still' | 'gone' | 'failed', why = ''): HTMLElement => {
-    const top = topOf(at); const lines = { still: [t('filesStillReading'), t('filesStillHint')], gone: [t('folderNotFound'), ''], failed: [t('filesShowFailed'), why] }[kind];
+    const top = topOf(at); const lines = { still: [t('filesStillReading'), t('filesStillHint')], gone: ['', ''], failed: [t('filesShowFailed'), why] }[kind];
     return h('div', { class: 'files-state', 'data-state': kind, role: 'status' }, kind === 'still' ? h('div', { class: 'spinner small' }) : icon(kind === 'gone' ? 'folder' : 'alert'),
-      h('b', null, lines[0]), lines[1] ? h('small', { class: 'src', dir: 'auto' }, lines[1]) : null,
+      lines[0] ? h('b', null, lines[0]) : null, lines[1] ? h('small', { class: 'src', dir: 'auto' }, lines[1]) : null,
       h('div', { class: 'files-state-acts' }, h('button', { type: 'button', class: 'btn tonal files-state-retry', onclick: () => void load() }, icon('refresh'), t('tryAgain')),
         top && top !== at ? h('button', { type: 'button', class: 'btn tonal files-state-root', onclick: () => go(top) }, icon('storage'), t('filesGoRoot')) : null));
   };
@@ -375,7 +375,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     let got: Entry[] = []; let note = ''; let missing = false;
     try {
       if (collection) { const pl = plug(); const r = pl ? await pl.filesCollection({ kind: collection, limit: 600 }) : { entries: [] }; if (stale()) return; got = r.entries; }
-      else { const r = await listDir(at); if (stale()) return; const hid = (await import('./filesMore')).hiddenPaths(); if (stale()) return; const all = sane(r?.entries); got = (hid.length ? all.filter((e) => !hid.includes(e.path)) : all).filter((e) => !e.name.startsWith(STAGE)); if (r?.exists !== false && !quiet) { if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); } if (r?.exists === false) { note = t('folderNotFound'); missing = true; } if (r?.truncated) toast(t('filesTruncated'), 'info'); }
+      else { const r = await listDir(at); if (stale()) return; const hid = (await import('./filesMore')).hiddenPaths(); if (stale()) return; const all = sane(r?.entries); got = (hid.length ? all.filter((e) => !hid.includes(e.path)) : all).filter((e) => !e.name.startsWith(STAGE)); if (r?.exists === false) { note = t('folderNotFound'); missing = true; } if (r?.truncated) toast(t('filesTruncated'), 'info'); }
     }
     catch (e) { if (stale()) return; got = []; note = String((e as Error)?.message ?? e); }
     finally { window.clearTimeout(still); }
@@ -385,7 +385,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     // (Back to a folder seen before: where it was scrolled to.)
     const y = scrollMemo.get(want) ?? 0;
     try { draw(y); drawSel(); } catch (err) { listEl.replaceChildren(stateCard('failed', String((err as Error)?.message ?? err))); return; }
-    if (missing) listEl.replaceChildren(stateCard('gone')); else status.textContent = note;
+    // (A folder gone: the list says it is empty, the line under it why, and the way to the storage's top beside them.)
+    status.textContent = note; if (missing) listEl.append(stateCard('gone'));
     if (!quiet && !collection && !missing) keepResume(po.side === 'b' ? { b: at } : { at, y });
     if (y) requestAnimationFrame(() => { if (stale()) return; window.scrollTo(0, y); body.scrollTop = y; });
   };
@@ -490,7 +491,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
         // (The page taken out — another tab, kept to come back to —: nothing is «out of sight» then; slices stay as they are.)
         if (!c.isConnected || !listEl.isConnected) continue;
         if (x.isIntersecting && c.dataset.away) { delete c.dataset.away; c.replaceChildren(rowsOf(c.from!, c.to!)); c.style.height = ''; }
-        else if (!x.isIntersecting && !c.dataset.away && c.childElementCount) { c.style.height = `${c.offsetHeight}px`; c.dataset.away = '1'; dropThumbs(c); c.replaceChildren(); }
+        else if (!x.isIntersecting && !c.dataset.away && c.childElementCount) { c.style.height = `${c.offsetHeight}px`; c.dataset.away = '1'; dropThumbs(c); for (const [k, v] of rowEls) if (c.contains(v.el)) rowEls.delete(k); c.replaceChildren(); }
       }
     }, { root: null, rootMargin: '1600px 0px' }) : null;
     const slice = (): HTMLElement => { const from = drawn; drawn = Math.min(list.length, drawn + CHUNK); const c = h('div', { class: 'files-chunk' }) as HTMLElement & { from?: number; to?: number }; c.from = from; c.to = drawn; c.append(rowsOf(from, drawn)); chunkIo?.observe(c); return c; };

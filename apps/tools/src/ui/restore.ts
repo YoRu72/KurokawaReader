@@ -5,6 +5,7 @@
 import { ktPlugin } from '../native';
 import { navigate } from '../router';
 import { toast } from './dom';
+import { placePill } from './pill';
 import { t } from '../i18n';
 
 /** `route`: the place the page was at (read before this load could write over it). */
@@ -19,4 +20,7 @@ export async function afterRendererLoss(route: string | null): Promise<void> {
   const to = route && /^#\/[^\s]{0,2000}$/.test(route) ? route.slice(1) : null;
   if (to && to !== (location.hash.replace(/^#/, '') || '/')) navigate(to, true);
   toast(t('pageRestored'), 'info', 6000);
+  // (Its line wide enough to read in one or two lines, above the bars along the bottom — the clipboard's among them —, as they come.)
+  const el = [...document.querySelectorAll<HTMLElement>('.toast')].pop(); if (!el) return; el.classList.add('restored-line');
+  const place = () => placePill(el); place(); let n = 0; const tick = window.setInterval(() => { if (!el.isConnected || ++n > 30) { window.clearInterval(tick); return; } place(); }, 200);
 }

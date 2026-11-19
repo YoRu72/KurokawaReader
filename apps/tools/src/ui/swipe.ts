@@ -13,8 +13,9 @@ export function swipeable(el: HTMLElement, sides: () => { right?: SwipeAction | 
   el.addEventListener('pointerdown', (e) => { unStop(); if (e.pointerType === 'mouse' || !enabled() || document.documentElement.classList.contains('pc')) return; id = e.pointerId; x0 = e.clientX; y0 = e.clientY; dx = 0; axis = ''; act = sides(); });
   el.addEventListener('pointermove', (e) => {
     if (e.pointerId !== id) return; const mx = e.clientX - x0, my = e.clientY - y0;
-    // (ui/touchOwner.ts: 12 px before the direction is read; sideways only at twice as much across as down.)
-    if (!axis) { if (Math.abs(mx) < 12 && Math.abs(my) < 12) return; axis = Math.abs(mx) > Math.abs(my) * 2 && claimTouch('row') ? 'x' : 'y'; if (axis === 'y') { id = -1; return; } try { el.setPointerCapture(id); } catch { /* fine */ } }
+    // (ui/touchOwner.ts: 12 px before the direction is read; sideways only at twice as much across as down, and only toward a
+    // side that has an action — the other way is left to the drawer.)
+    if (!axis) { if (Math.abs(mx) < 12 && Math.abs(my) < 12) return; axis = Math.abs(mx) > Math.abs(my) * 2 && (mx > 0 ? act.right : act.left) && claimTouch('row') ? 'x' : 'y'; if (axis === 'y') { id = -1; return; } try { el.setPointerCapture(id); } catch { /* fine */ } }
     // (Turned into a scroll after all: let go, nothing done.)
     if (Math.abs(my) > 40) { reset(); return; }
     const side = mx > 0 ? act.right : act.left; if (!side) { dx = 0; for (const k of kids()) k.style.transform = ''; under.remove(); el.classList.remove('swiping', 'armed'); return; }
