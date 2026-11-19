@@ -525,6 +525,18 @@ pub fn parse(text_in: &str) -> Result<Definition, DefErr> {
     let pid = need(num(get(mo, "product"), "match.product", 0, 0xFFFF, true)?, "match.product")? as u16;
     let usage_page = num(get(mo, "usagePage"), "match.usagePage", 0, 0xFFFF, true)?.map(|n| n as u16);
     let usage = num(get(mo, "usage"), "match.usage", 0, 0xFFFF, true)?.map(|n| n as u16);
+    // (A collection «Teach me» never listens to — a keyboard, a pointer, consumer or system keys, a digitizer, a UPS —
+    // is refused here too: a definition imported by hand must not reach what the assistant would not.)
+    if let Some(p) = usage_page {
+        if forbidden_page(p) {
+            return Err(err("forbidden", "match.usagePage"));
+        }
+        if let Some(u) = usage {
+            if forbidden_usage(p, u) {
+                return Err(err("forbidden", "match.usage"));
+            }
+        }
+    }
     let interface = num(get(mo, "interface"), "match.interface", 0, 15, false)?.map(|n| n as i32);
     let product = text(get(mo, "productName"), "match.productName", MAX_PRODUCT, false)?;
     if get(mo, "productName").is_some() && product.is_empty() {
@@ -677,6 +689,30 @@ pub fn builtin_for(vid: u16, pid: u16) -> Option<&'static str> {
         return Some(m.driver().family.as_str());
     }
     crate::mice::all_models().find(|m| m.vid == vid && m.pid == pid).map(|m| m.driver().family.as_str())
+}
+
+/// A page whose every collection is what the user types or does, or a power supply (teach.rs's rule): keyboard / keypad
+/// 0x07, consumer 0x0C, digitizer 0x0D, power device 0x84, battery system 0x85.
+pub fn forbidden_page(page: u16) -> bool {
+    matches!(page, 0x07 | 0x0C | 0x0D | 0x84 | 0x85)
+}
+
+/// A generic-desktop collection of the same kind: pointer 1, mouse 2, keyboard 6, keypad 7, system control 0x80.
+pub fn forbidden_usage(page: u16, usage: u16) -> bool {
+    forbidden_page(page) || (page == 0x01 && matches!(usage, 0x01 | 0x02 | 0x06 | 0x07 | 0x80))
+}
+
+/// Whether a definition may read this collection, by teach.rs's own rule (`verdict`), the same one «Teach me» follows:
+/// `unit` every (page, usage) of its unit, `builtin` the family of a built-in reader that handles its product. A
+/// built-in reader's device passes only with «use mine instead» (`mine_first`), and then only when the collection would
+/// be listened to without that reader.
+pub fn collection_ok(id: &HidIdent, unit: &[(u16, u16)], builtin: Option<&'static str>, input_len: usize, mine_first: bool) -> bool {
+    use crate::teach::{verdict, Verdict};
+    match verdict(id, unit, builtin, input_len) {
+        Verdict::Allowed => true,
+        Verdict::BuiltIn(_) => mine_first && verdict(id, unit, None, input_len) == Verdict::Allowed,
+        _ => false,
+    }
 }
 
 /// One definition as the platform holds it: on, and whether it goes before a built-in reader of the same product
@@ -863,6 +899,53 @@ mod tests {
         p.mode = OpenMode::Read;
         p.stream.push_back(vec![3, 0, 0, 0, 0, 50, 0]);
         assert_eq!(read(&mut p, &d, Instant::now() - Duration::from_millis(1), None, 9).0, Outcome::NoAnswer);
+    }
+
+    #[test]
+    fn a_definition_naming_a_forbidden_collection_is_refused() {
+        let page = |p: &str| with(r#""usagePage": "0xFF00""#, &format!("\"usagePage\": \"{}\"", p));
+        for p in ["0x07", "0x0C", "0x0D", "0x84", "0x85"] {
+            assert_eq!(code(&page(p)), ("forbidden", "match.usagePage".into()), "page {}", p);
+        }
+        for u in ["1", "2", "6", "7", "128"] {
+            let t = with(r#""usagePage": "0xFF00", "usage": 1"#, &format!("\"usagePage\": 1, \"usage\": {}", u));
+            assert_eq!(code(&t), ("forbidden", "match.usage".into()), "generic desktop usage {}", u);
+        }
+        // (A keyboard page with no usage named, too; the pads' and vendors' own collections still read.)
+        let no_usage = with(r#""usagePage": "0xFF00", "usage": 1"#, r#""usagePage": 7"#);
+        assert_eq!(code(&no_usage), ("forbidden", "match.usagePage".into()));
+        for (p, u) in [(1, 5), (1, 4), (1, 8), (6, 0x20), (0xFF00, 1), (0xFFA0, 0x80)] {
+            let t = with(r#""usagePage": "0xFF00", "usage": 1"#, &format!("\"usagePage\": {}, \"usage\": {}", p, u));
+            assert!(parse(&t).is_ok(), "{:#x}/{:#x} allowed", p, u);
+        }
+        assert!(forbidden_usage(0x01, 0x80) && forbidden_usage(0x0C, 1) && !forbidden_usage(0x01, 0x05));
+    }
+
+    #[test]
+    fn collection_ok_follows_the_teach_rule() {
+        let c = |page: u16, usage: u16| HidIdent { vid: 0x1234, pid: 0x5678, usage_page: page, usage, interface: 1 };
+        // (A made-up unit whose keyboard is listed BEFORE its vendor collection: the vendor collection passes, the
+        // keyboard never.)
+        let unit = [(0x01, 0x06), (0xFF00, 0x01)];
+        assert!(!collection_ok(&c(0x01, 0x06), &unit, None, 8, false), "the keyboard");
+        assert!(!collection_ok(&c(0x01, 0x06), &unit, None, 8, true), "the keyboard, even «use mine instead»");
+        assert!(collection_ok(&c(0xFF00, 0x01), &unit, None, 8, false), "its vendor collection");
+        // (A pure keyboard, a mouse, consumer keys.)
+        assert!(!collection_ok(&c(0x07, 0x00), &[(0x07, 0x00)], None, 8, true));
+        assert!(!collection_ok(&c(0x01, 0x02), &[(0x01, 0x02)], None, 8, true), "a mouse");
+        assert!(!collection_ok(&c(0x0C, 0x01), &[(0x0C, 0x01)], None, 8, true), "media keys");
+        // (A controller: allowed; a built-in reader's controller only with «use mine instead».)
+        assert!(collection_ok(&c(0x01, 0x05), &[(0x01, 0x05)], None, 8, false));
+        assert!(!collection_ok(&c(0x01, 0x05), &[(0x01, 0x05)], Some("playstation"), 8, false), "a built-in reader's: not without «use mine instead»");
+        assert!(collection_ok(&c(0x01, 0x05), &[(0x01, 0x05)], Some("playstation"), 8, true));
+        // (A built-in reader's mouse: «use mine instead» does not open the pointer.)
+        assert!(!collection_ok(&c(0x01, 0x02), &[(0x01, 0x02), (0xFF00, 1)], Some("logitech"), 8, true));
+        assert!(collection_ok(&c(0xFF00, 0x01), &[(0x01, 0x02), (0xFF00, 1)], Some("logitech"), 8, true), "its vendor collection with «use mine instead»");
+        // (A unit with a digitizer: nothing of it, even its vendor collection.)
+        let pen = [(0xFF00, 0x01), (0x0D, 0x02)];
+        assert!(!collection_ok(&c(0xFF00, 0x01), &pen, None, 8, true));
+        // (No input report: nothing to read.)
+        assert!(!collection_ok(&c(0xFF00, 0x01), &[(0xFF00, 1)], None, 1, false));
     }
 
     #[test]

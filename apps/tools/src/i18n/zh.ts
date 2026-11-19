@@ -2601,6 +2601,7 @@ export const zh: Partial<Strings> = {
   batDefErr_kind: "未知的设备类型。",
   batDefErr_scale: "{field}：请给出两端不同的刻度或表格（二者择一）。",
   batDefErr_text: "{field} 含有不允许的字符。",
+  batDefErr_forbidden: "{field} 指向键盘、鼠标、媒体键、触摸屏或电源：这类设备从不监听。",
   batDefErr_exists: "此定义已在列表中。",
   batDefErr_save: "无法保存：{field}",
   batDefErr_full: "列表已满（50 个定义），请先删除一个。",

@@ -2601,6 +2601,7 @@ export const ko: Partial<Strings> = {
   batDefErr_kind: "알 수 없는 장치 종류입니다.",
   batDefErr_scale: "{field}: 양 끝이 다른 눈금이나 표 중 하나만 지정하세요.",
   batDefErr_text: "{field}에 허용되지 않는 문자가 있습니다.",
+  batDefErr_forbidden: "{field}이(가) 키보드, 마우스, 미디어 키, 터치스크린 또는 전원 장치를 가리킵니다. 이런 장치는 절대 듣지 않습니다.",
   batDefErr_exists: "이 정의는 이미 목록에 있습니다.",
   batDefErr_save: "저장하지 못했습니다: {field}",
   batDefErr_full: "목록이 가득 찼습니다(정의 50개). 먼저 하나를 삭제하세요.",

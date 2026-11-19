@@ -3691,6 +3691,7 @@ export const ar: Partial<Strings> = {
   batDefErr_kind: "نوع الجهاز غير معروف.",
   batDefErr_scale: "{field}: اذكر مقياسًا أو جدولًا (لا كليهما)، بطرفين مختلفين.",
   batDefErr_text: "في الحقل {field} محارفُ غير مسموحٍ بها.",
+  batDefErr_forbidden: "يعيّن الحقل {field} لوحةَ مفاتيح أو فأرةً أو مفاتيحَ وسائطَ أو شاشةَ لمسٍ أو مصدرَ طاقة، ولا يُستمَع إلى شيءٍ من ذلك أبدًا.",
   batDefErr_exists: "هذا التعريف في قائمتك من قبلُ.",
   batDefErr_save: "تعذّر حفظه: {field}",
   batDefErr_full: "امتلأت قائمتك (50 تعريفًا)، فأزِل واحدًا أولًا.",

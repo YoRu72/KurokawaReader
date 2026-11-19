@@ -216,6 +216,12 @@ impl<P: Port> HidState<P> {
         for (i, (k, c)) in keyed.iter().enumerate() {
             let builtin = pads::find(c.ident()).is_some() || mice::find_any(c.ident()).is_some();
             let Some(a) = defs::find(&list, c.ident(), c.product(), builtin) else { continue };
+            // (teach.rs's rule, as «Teach me» follows it: never a keyboard, pointer, keys, digitizer unit or UPS.)
+            let unit: Vec<(u16, u16)> = keyed.iter().filter(|(x, _)| x == k).map(|(_, o)| (o.ident().usage_page, o.ident().usage)).collect();
+            let family = defs::builtin_for(c.ident().vid, c.ident().pid).or(if builtin { Some("builtin") } else { None });
+            if !defs::collection_ok(c.ident(), &unit, family, c.input_len(), a.mine_first) {
+                continue;
+            }
             if registry::classify_defs(&regs, &regs[i], &[], Some(a.mine_first)) == Claim::Defined && !by.contains_key(k) {
                 by.insert(k.clone(), ((*c).clone(), a.clone()));
             }
@@ -712,6 +718,46 @@ mod tests {
         st.set_defs(&[def(0x054C, 0x0CE6, 0x01, true)]);
         let c = st.candidates(&[ds]);
         assert_eq!(c.iter().map(|c| c.device.source).collect::<Vec<_>>(), vec![Source::Defined], "the user's word: his definition instead");
+    }
+
+    /// A definition that names only the product (no usage page): what the importer allows.
+    fn def_any(vid: u16, pid: u16, mine_first: bool) -> defs::Active {
+        let text = format!(r#"{{"kurokawaDevice":1,"name":"Taught","kind":"headset","match":{{"vendor":{},"product":{}}},"level":{{"report":7,"byte":2,"scale":{{"min":0,"max":100}}}}}}"#, vid, pid);
+        defs::Active { id: "d1".into(), def: defs::parse(&text).unwrap(), mine_first }
+    }
+
+    #[test]
+    fn a_definition_never_listens_to_a_keyboard_mouse_or_digitizer_unit() {
+        let st: HidState<FakePort> = HidState::default();
+        let src = |cs: &[Candidate]| cs.iter().filter(|c| c.device.source == Source::Defined).count();
+        // (The keyboard listed BEFORE its vendor collection: the definition reads the vendor collection.)
+        let kbd = port(0x1111, 0x5555, 0x01, 0x06, false, "usb-5");
+        let mut vendor = port(0x1111, 0x5555, 0xFF00, 0x01, false, "usb-5");
+        vendor.stream = vec![vec![7, 0, 33]];
+        st.set_defs(&[def_any(0x1111, 0x5555, false)]);
+        let cands = st.candidates(&[kbd.clone(), vendor.clone()]);
+        let d = cands.iter().find(|c| c.device.source == Source::Defined).expect("a card");
+        let picked = st.defined.lock().unwrap().get(&d.device.key).map(|(c, _)| c.id.clone()).unwrap();
+        assert_eq!((picked.usage_page, picked.usage), (0xFF00, 0x01), "the vendor collection, never the keyboard");
+        // (A pure keyboard, a mouse, consumer keys: no card.)
+        for (p, u) in [(0x01, 0x06), (0x07, 0x00), (0x01, 0x02), (0x0C, 0x01), (0x01, 0x80)] {
+            let only = port(0x1111, 0x6666, p, u, false, "usb-6");
+            st.set_defs(&[def_any(0x1111, 0x6666, true)]);
+            assert_eq!(src(&st.candidates(&[only])), 0, "{:#x}/{:#x}", p, u);
+        }
+        // (A unit with a digitizer: nothing of it.)
+        let pen = port(0x1111, 0x7777, 0x0D, 0x02, false, "usb-7");
+        let pen_vendor = port(0x1111, 0x7777, 0xFF00, 0x01, false, "usb-7");
+        st.set_defs(&[def_any(0x1111, 0x7777, true)]);
+        assert_eq!(src(&st.candidates(&[pen_vendor, pen])), 0);
+        // (A controller: read.)
+        st.set_defs(&[def_any(0x1111, 0x8888, false)]);
+        assert_eq!(src(&st.candidates(&[port(0x1111, 0x8888, 0x01, 0x05, false, "usb-8")])), 1);
+        // (A built-in reader's mouse: «use mine instead» never opens its pointer collection.)
+        st.set_defs(&[def_any(0x046D, 0xC547, true)]);
+        let lg = port(0x046D, 0xC547, 0x01, 0x02, false, "usb-9");
+        let c = st.candidates(&[lg]);
+        assert_eq!(src(&c), 0);
     }
 
     #[test]

@@ -103,7 +103,7 @@ function style(): void {
 export function errText(e: DefErr | undefined): string {
   if (!e) return t('batDefErr_notJson');
   if (e.code === 'count' && e.field === 'list') return t('batDefErr_full');
-  const known = ['tooBig', 'notJson', 'notObject', 'version', 'unknown', 'missing', 'type', 'range', 'length', 'count', 'duplicate', 'kind', 'scale', 'text', 'exists', 'save'];
+  const known = ['tooBig', 'notJson', 'notObject', 'version', 'unknown', 'missing', 'type', 'range', 'length', 'count', 'duplicate', 'kind', 'scale', 'text', 'forbidden', 'exists', 'save'];
   return t(`batDefErr_${known.includes(e.code) ? e.code : 'notJson'}` as 'batDefErr_notJson', { field: '\u2068' + e.field + '\u2069' });
 }
 

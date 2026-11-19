@@ -3696,6 +3696,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   batDefErr_kind: "Unknown kind of device.",
   batDefErr_scale: "{field}: give a scale or a table (not both), with two different ends.",
   batDefErr_text: "{field} holds characters that are not allowed.",
+  batDefErr_forbidden: "{field} names a keyboard, a mouse, media keys, a touch screen or a power supply: such devices are never listened to.",
   batDefErr_exists: "This definition is already in your list.",
   batDefErr_save: "It could not be saved: {field}",
   batDefErr_full: "Your list is full (50 definitions): remove one first.",

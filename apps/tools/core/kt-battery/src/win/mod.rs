@@ -279,6 +279,12 @@ impl WinPlatform {
         for (i, (k, c)) in keyed.iter().enumerate() {
             let builtin = pads::find(&c.ident).is_some() || crate::mice::find_any(&c.ident).is_some();
             let Some(a) = defs::find(&list, &c.ident, &c.product, builtin) else { continue };
+            // (teach.rs's rule, as «Teach me» follows it: never a keyboard, pointer, keys, digitizer unit or UPS.)
+            let unit: Vec<(u16, u16)> = keyed.iter().filter(|(x, _)| x == k).map(|(_, o)| (o.ident.usage_page, o.ident.usage)).collect();
+            let family = defs::builtin_for(c.ident.vid, c.ident.pid).or(if builtin { Some("builtin") } else { None });
+            if !defs::collection_ok(&c.ident, &unit, family, c.input_len, a.mine_first) {
+                continue;
+            }
             if registry::classify_defs(&regs, &regs[i], &[], Some(a.mine_first)) == Claim::Defined && !by.contains_key(k) {
                 by.insert(k.clone(), ((*c).clone(), a.clone()));
             }

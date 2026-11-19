@@ -1099,6 +1099,15 @@ pub const fn ms(n: u64) -> Duration {
 }
 
 /// A pause between a request and reading its reply (the device's own time), never past `deadline`. In tests: none.
+/// How long the closing request of a session (aula X9's END, PMO's STOP) may take: its own time, never what is left of
+/// the read's deadline — a read that ran out of time must still close what it opened.
+pub const CLOSE_STEP: Duration = ms(200);
+
+/// The deadline of a session's closing request: CLOSE_STEP from now.
+pub fn close_deadline() -> Instant {
+    Instant::now() + CLOSE_STEP
+}
+
 pub fn pause(d: Duration, deadline: Instant) {
     if cfg!(test) {
         return;

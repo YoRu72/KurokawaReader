@@ -85,6 +85,13 @@ async function manifest() {
   // since the snapshot; Bluetooth itself not required.)
   const BT = /\n {4}<uses-permission android:name="android\.permission\.BLUETOOTH" android:maxSdkVersion="30" \/>\n {4}<uses-permission android:name="android\.permission\.BLUETOOTH_CONNECT" \/>\n {4}<uses-feature android:name="android\.hardware\.bluetooth" android:required="false" \/>/;
   ok('device battery (P2): «Nearby devices» and the old Bluetooth permission (to Android 11), no scan, no location, Bluetooth not required', BT.test(out) && !/BLUETOOTH_SCAN|BLUETOOTH_ADMIN|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION/.test(out));
+  {
+    // (A manifest that already names BLUETOOTH_CONNECT — a plugin's, say: the legacy line and the feature still added, once.)
+    const pre = fixture.replace('<application', '<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <application');
+    const o2 = M.patchManifest(pre); const count = (re) => (o2.match(re) || []).length;
+    ok('a manifest already naming BLUETOOTH_CONNECT: the legacy BLUETOOTH (to Android 11) added exactly once, CONNECT and the feature once', count(/<uses-permission android:name="android\.permission\.BLUETOOTH" android:maxSdkVersion="30" \/>/g) === 1 && count(/android\.permission\.BLUETOOTH"/g) === 1 && count(/android\.permission\.BLUETOOTH_CONNECT"/g) === 1 && count(/<uses-feature android:name="android\.hardware\.bluetooth"/g) === 1);
+    ok('… and patched again: nothing added twice', M.patchManifest(o2) === o2);
+  }
   ok('no permission asked anew (beyond those two)', (out.match(/<uses-permission /g) || []).length === (before.match(/<uses-permission /g) || []).length + 2);
   // (Android's matching over the result: who answers which file — disabled aliases left out.)
   const on = F.filter((f) => f.enabled);

@@ -19,7 +19,7 @@ const errors = []; const check = (what, ok, x) => { console.log(ok ? 'ok  ' : 'F
 const lang = process.argv[2] || 'en'; const SHOTS = process.env.KT_SHOTS || '';
 const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, `sysS1-${name}-${lang}.png`) }); } };
 
-// (Run in the page: the fake bridge. mode: 'win' | 'bare' (no CPU temperature, no graphics card) | 'linux'.)
+// (Run in the page: the fake bridge. mode: 'win' | 'bare' (no CPU temperature, no graphics card) | 'linux' | 'unknown' (the shell names no OS).)
 function fake({ lang, mode }) {
   localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.update.lastCheck', String(Date.now())); localStorage.setItem('kt.pc.starter', '1');
   const NOW = 1_800_000_000_000;
@@ -31,7 +31,7 @@ function fake({ lang, mode }) {
   window.__calls = []; window.__subs = 0; let cb = null;
   const probe = mode === 'bare' ? { available: true, os: 'windows', values: { cpu: 7, cpuTemp: null, ram: 48.4, gpu: null, gpuTemp: null, vram: null, drive: null }, gpu: '' }
     : { available: true, os: 'windows', values: { cpu: 12.3, cpuTemp: 54.2, ram: 61, gpu: 4, gpuTemp: 44.5, vram: 6.2, drive: 38 }, gpu: 'Made-up Graphics 7700' };
-  const base = { platform: 'desktop', available: true, reason: '', os: mode === 'linux' ? 'linux' : 'windows', ready: async () => ({}), list: async () => [], onTasks: () => () => {}, onBrowser: () => () => {}, onUpdateProgress: () => () => {}, onPackProgress: () => () => {}, packStatus: async () => ({}), defaultDir: async () => 'C:\\Downloads' };
+  const base = { platform: 'desktop', available: true, reason: '', os: mode === 'linux' ? 'linux' : mode === 'unknown' ? '' : 'windows', ready: async () => ({}), list: async () => [], onTasks: () => () => {}, onBrowser: () => () => {}, onUpdateProgress: () => () => {}, onPackProgress: () => () => {}, packStatus: async () => ({}), defaultDir: async () => 'C:\\Downloads' };
   window.kurokawaTools = Object.assign(base, {
     // (Exactly bridge.js's signatures.)
     batteryList: function () { window.__calls.push(['list']); return Promise.resolve({ available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings, system, pads: [], mice: [] }); },
@@ -41,7 +41,7 @@ function fake({ lang, mode }) {
     batteryHistory: function (o) { window.__calls.push(['history', o]); return Promise.resolve({ key: o.key, on: true, days: 30, now: Date.now(), since: Date.now() - 7 * 864e5, gap: 72e5, points: [], stats: { count: 0, lowest: null, highest: null, first: null, last: null }, estimate: { state: 'none', why: 'collecting' } }); },
     batteryHistoryClear: function (o) { window.__calls.push(['historyClear', o]); return Promise.resolve(false); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
-    sysmonProbe: function () { window.__calls.push(['probe', arguments.length]); return new Promise((ok) => setTimeout(() => ok(mode === 'linux' ? { available: false, os: 'linux', values: {}, gpu: '' } : JSON.parse(JSON.stringify(probe))), 80)); },
+    sysmonProbe: function () { window.__calls.push(['probe', arguments.length]); return new Promise((ok) => setTimeout(() => ok(mode === 'linux' || mode === 'unknown' ? { available: false, os: mode === 'linux' ? 'linux' : '', values: {}, gpu: '' } : JSON.parse(JSON.stringify(probe))), 80)); },
   });
 }
 
@@ -151,6 +151,14 @@ function fake({ lang, mode }) {
     await p.waitForSelector('.bat-sys');
     check('Linux: «Windows only for now», nothing else', (await p.textContent('.bat-sys [data-state="notWindows"]')) === (AR ? 'على ويندوز وحده في الوقت الحاضر.' : 'Windows only for now.') && !(await p.$('.bat-sys input, .bat-sys button')));
     check('… and no look asked', !(await calls(p)).some((c) => c[0] === 'probe'));
+    await ctx.close();
+  }
+  {
+    // (An OS the shell did not name: not taken for Windows — the same calm line, nothing to switch.)
+    const { ctx, p } = await open('unknown');
+    await p.waitForSelector('.bat-sys');
+    check('unknown OS: «Windows only for now», nothing else', (await p.textContent('.bat-sys [data-state="notWindows"]')) === (AR ? 'على ويندوز وحده في الوقت الحاضر.' : 'Windows only for now.') && !(await p.$('.bat-sys input, .bat-sys button')));
+    check('… and no look asked (unknown OS)', !(await calls(p)).some((c) => c[0] === 'probe'));
     await ctx.close();
   }
   await br.close(); web.close();

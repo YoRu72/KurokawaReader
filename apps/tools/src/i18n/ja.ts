@@ -2601,6 +2601,7 @@ export const ja: Partial<Strings> = {
   batDefErr_kind: "不明なデバイスの種類です。",
   batDefErr_scale: "{field}：両端の異なる目盛りか表のどちらか一方を指定してください。",
   batDefErr_text: "{field} に使えない文字が含まれています。",
+  batDefErr_forbidden: "{field} はキーボード、マウス、メディアキー、タッチ画面、電源装置のいずれかを指しています。これらの機器は決して読み取りません。",
   batDefErr_exists: "この定義はすでにリストにあります。",
   batDefErr_save: "保存できませんでした: {field}",
   batDefErr_full: "リストがいっぱいです（定義 50 件）。先に 1 つ削除してください。",

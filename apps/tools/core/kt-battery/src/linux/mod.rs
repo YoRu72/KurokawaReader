@@ -132,12 +132,19 @@ impl Port for LinPort {
         Ok(t)
     }
     fn read_battery(&self, deadline: Instant) -> Result<Percent, TErr> {
-        let mut t = LinHid::open(&self.coll, open_mode_for(&self.coll.ident, false))?;
+        let mut t = LinHid::open(&self.coll, generic_mode())?;
         let caps: Vec<crate::hidvalue::ValueCap> = self.battery.iter().map(|f| f.cap).collect();
         let fields = self.battery.clone();
         let extract = move |cap: &crate::hidvalue::ValueCap, rep: &mut [u8]| hiddesc::field_value(&fields, cap, rep);
         crate::hidvalue::read_generic(&mut t, &caps, self.coll.feature_len, self.coll.input_len, crate::hidvalue::percent_quirk(self.coll.ident.vid), deadline, &extract)
     }
+}
+
+/// How the generic reader opens a node: query only (the file read-only), whatever allow.rs lists for the device — the
+/// generic reader asks the battery field the descriptor declares and never sends, so it never needs the node writable
+/// (a node opened writable for a device allow.rs names is the family readers' alone).
+fn generic_mode() -> OpenMode {
+    OpenMode::QueryOnly
 }
 
 /// The kernel's batteries of peripherals as cards (Source::System: nothing to ask; read again each round).
@@ -395,6 +402,14 @@ mod tests {
             Outcome::Read(r) => assert_eq!(r.note, crate::model::Note::NoAccess),
             o => panic!("{:?}", o),
         }
+    }
+
+    #[test]
+    fn the_generic_reader_never_opens_a_node_writable() {
+        // (A device allow.rs names — open_mode_for would give it ReadWrite: the generic reader still opens query only.)
+        let listed = crate::mice::all_models().map(|m| crate::mice::testkit::ident(m)).find(|id| crate::allow::may_write(id)).expect("a listed device");
+        assert_eq!(open_mode_for(&listed, false), OpenMode::ReadWrite);
+        assert_eq!(generic_mode(), OpenMode::QueryOnly);
     }
 
     #[test]

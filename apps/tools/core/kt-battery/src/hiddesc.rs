@@ -235,7 +235,9 @@ pub fn parse(desc: &[u8]) -> Vec<DescColl> {
                                 bit_size: g.report_size as u16,
                                 report_count: 1,
                             };
-                            out[c].battery.push(Field { cap, bit_offset: 8 + (at + f * g.report_size) as usize });
+                            // (A field whose place overflows is no field.)
+                            let Some(bit_offset) = field_offset(at, f, g.report_size) else { break };
+                            out[c].battery.push(Field { cap, bit_offset });
                         }
                     }
                     let next = at.saturating_add(n);
@@ -252,7 +254,7 @@ pub fn parse(desc: &[u8]) -> Vec<DescColl> {
     }
     for (c, b) in out.iter_mut().zip(bits.iter()) {
         c.numbered = numbered;
-        let len = |k: K| b.iter().filter(|((kk, _), _)| *kk == k).map(|(_, v)| (*v as usize + 7) / 8 + 1).max().unwrap_or(0);
+        let len = |k: K| b.iter().filter(|((kk, _), _)| *kk == k).map(|(_, v)| (*v as usize).saturating_add(7) / 8 + 1).max().unwrap_or(0);
         c.input_len = len(K::Input);
         c.output_len = len(K::Output);
         c.feature_len = len(K::Feature);
@@ -261,6 +263,13 @@ pub fn parse(desc: &[u8]) -> Vec<DescColl> {
         }
     }
     out
+}
+
+/// Where field `index` (of `size` bits) of a main item starting at bit `at` of its report sits in the report as the
+/// transport gives it (the report id byte first): None when that overflows — a hostile descriptor's field is no field.
+fn field_offset(at: u32, index: u32, size: u32) -> Option<usize> {
+    let bits = index.checked_mul(size)?.checked_add(at)?;
+    usize::try_from(bits).ok()?.checked_add(8)
 }
 
 /// A battery field's raw value from a report the transport gave (the report id byte first).
@@ -374,7 +383,25 @@ mod tests {
         assert!(cs.len() <= 64 && cs.iter().all(|c| c.battery.len() <= 16));
         // (Unbalanced ends never underflow; a huge report size is bounded.)
         let _ = parse(&[0xC0, 0xC0, 0x77, 0xFF, 0xFF, 0xFF, 0xFF, 0x97, 0xFF, 0xFF, 0xFF, 0xFF, 0x81, 0x02]);
-        // (Every prefix of a real descriptor parses.)
+        // (A field's place that overflows: no field, never a panic.)
+        assert_eq!(field_offset(u32::MAX, 1, 32), None);
+        assert_eq!(field_offset(u32::MAX - 10, 0, 32), Some(u32::MAX as usize - 10 + 8));
+        assert_eq!(field_offset(0, u32::MAX, 2), None);
+        assert_eq!(field_offset(16, 2, 8), Some(8 + 32));
+        // (Fields pushed as far as a descriptor of the largest size can: huge padding, then Battery Strength fields.)
+        let mut h = vec![0x05, 0x06, 0xA1, 0x01, 0x76, 0x00, 0x01, 0x96, 0x00, 0x10];
+        while h.len() < MAX_DESCRIPTOR - 16 {
+            h.extend_from_slice(&[0x81, 0x01]);
+        }
+        h.extend_from_slice(&[0x09, 0x20, 0x75, 0x20, 0x95, 0xFF, 0x81, 0x02, 0xC0]);
+        let cs = parse(&h);
+        assert!(cs.iter().all(|c| c.battery.iter().all(|f| f.bit_offset >= 8)));
+        let r = vec![0u8; 64];
+        for c in &cs {
+            for f in &c.battery {
+                assert_eq!(field_value(&c.battery, &f.cap, &r), None, "far past any report: no value");
+            }
+        }
         let m = mouse_with_battery();
         for n in 0..m.len() {
             let _ = parse(&m[..n]);

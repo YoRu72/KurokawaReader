@@ -171,14 +171,18 @@ final class KtBattery {
         Context app = c.getApplicationContext();
         boolean want = (pageOpen || sp(app).getBoolean("notify", false)) && granted(app);
         if (want && receiver == null) {
-            receiver = new BroadcastReceiver() { @Override public void onReceive(Context cx, Intent i) { heard(app, i); } };
+            // (Every callback guarded: onReceive runs on the main thread, and nothing a broadcast carries may close the app.)
+            receiver = new BroadcastReceiver() { @Override public void onReceive(Context cx, Intent i) { try { heard(app, i); } catch (Throwable ignored) {} } };
             IntentFilter f = new IntentFilter(); f.addAction(ACTION_LEVEL); f.addAction(BluetoothDevice.ACTION_ACL_CONNECTED); f.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED); f.addAction(BluetoothAdapter.ACTION_STATE_CHANGED); f.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
             IntentFilter v = new IntentFilter(ACTION_VENDOR); v.addCategory(CAT_COMPANY + 76); v.addCategory(CAT_COMPANY + 85);
+            // (Only a sender holding Bluetooth's own permission is heard — the Bluetooth process holds it, an ordinary
+            // app does not: BLUETOOTH_CONNECT on Android 12+, the legacy BLUETOOTH below. Still exported on 13+: the
+            // sender is another process.)
+            String perm = Build.VERSION.SDK_INT >= 31 ? "android.permission.BLUETOOTH_CONNECT" : "android.permission.BLUETOOTH";
             try {
-                // (System broadcasts: exported, as Android 13+ wants it said.)
-                if (Build.VERSION.SDK_INT >= 33) { app.registerReceiver(receiver, f, Context.RECEIVER_EXPORTED); app.registerReceiver(receiver, v, Context.RECEIVER_EXPORTED); }
-                else { app.registerReceiver(receiver, f); app.registerReceiver(receiver, v); }
-            } catch (Throwable e) { receiver = null; }
+                if (Build.VERSION.SDK_INT >= 33) { app.registerReceiver(receiver, f, perm, null, Context.RECEIVER_EXPORTED); app.registerReceiver(receiver, v, perm, null, Context.RECEIVER_EXPORTED); }
+                else { app.registerReceiver(receiver, f, perm, null); app.registerReceiver(receiver, v, perm, null); }
+            } catch (Throwable e) { try { app.unregisterReceiver(receiver); } catch (Throwable ignored) {} receiver = null; }
         } else if (!want && receiver != null) {
             try { app.unregisterReceiver(receiver); } catch (Throwable ignored) {}
             receiver = null;

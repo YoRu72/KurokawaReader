@@ -81,7 +81,8 @@ export function sysPanel(desk: unknown, redraw: () => void): { card(S: SysSettin
   function card(S: SysSettings, can: boolean, tray: boolean, save: (set: SysSettings) => void): HTMLElement {
     const root = h('section', { class: 'card bat-settings bat-sys', 'data-group': 'system' }, h('h3', null, t('sysTitle')));
     const os = sysName();
-    if (os && os !== 'windows') { root.append(h('p', { class: 'hint', 'data-state': 'notWindows' }, t('sysNotWindows'))); return root; }
+    // (Only Windows reads these: an OS the shell did not name ('') is not taken for Windows.)
+    if (os !== 'windows') { root.append(h('p', { class: 'hint', 'data-state': 'notWindows' }, t('sysNotWindows'))); return root; }
     ask();
     const unit = S.sysUnit === 'f' ? 'f' : 'c';
     root.append(h('p', { class: 'hint' }, can ? t('sysHint') : tray ? tBase('batTbNeeds') : tBase('batBgNoTray')));
