@@ -38,6 +38,9 @@
 //! - sysmon: piece S1, the system on the taskbar — CPU, memory, graphics card and drive figures beside the devices
 //!   (pure: choice, order, texts, warm and hot marks, change detection, the raw figures read, the pictures;
 //!   win/sysmon.rs samples them from Windows' public interfaces, no driver and no administrator rights)
+//! - json, report, cli: piece W4 — a small JSON writer; «Report a device» (the text a user copies or saves so that support
+//!   for a device can be added: no serial numbers, no Bluetooth addresses, no computer or user name, no raw reports);
+//!   the command line's one reading pass, its JSON document and its help text
 //! - autostart: «start with the system, hidden» — the Run value's data and the XDG autostart file
 //! - defs: W3, a device definition (data, not code: where an input report carries the level, listened to only — no
 //!   field for bytes to send) — its strict bounded parser, its canonical text and the «defined» reader
@@ -51,6 +54,7 @@ pub mod allow;
 pub mod autostart;
 pub mod bluetooth;
 pub mod bluez;
+pub mod cli;
 pub mod connect;
 pub mod defs;
 pub mod fastpair;
@@ -61,6 +65,7 @@ pub mod hidplat;
 pub mod hidvalue;
 pub mod history;
 pub mod identity;
+pub mod json;
 pub mod kind;
 pub mod macos;
 pub mod macparse;
@@ -71,6 +76,7 @@ pub mod notice;
 pub mod pads;
 pub mod phonelink;
 pub mod registry;
+pub mod report;
 pub mod runner;
 pub mod sched;
 pub mod summary;

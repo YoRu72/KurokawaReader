@@ -22,6 +22,7 @@ pub mod autostart;
 pub mod ble;
 pub mod bt;
 pub mod btconn;
+pub mod console;
 pub mod ffi;
 pub mod hid;
 pub mod mice;
@@ -440,6 +441,27 @@ impl Platform for WinPlatform {
             return Err(TErr::Refused);
         }
         Ok(Box::new(t))
+    }
+
+    /// Piece W4: every HID collection Windows lists (the ones `hid::enumerate` can open), for «Report a device».
+    fn inventory(&self) -> Vec<crate::report::HidSeen> {
+        hid::enumerate()
+            .iter()
+            .map(|c| crate::report::HidSeen {
+                unit: identity::hid_key(c.ident.vid, c.ident.pid, &c.serial, &c.container, &c.path),
+                vid: c.ident.vid,
+                pid: c.ident.pid,
+                product: c.product.clone(),
+                connection: hid_connection(&c.path),
+                usage_page: c.ident.usage_page,
+                usage: c.ident.usage,
+                interface: c.ident.interface,
+                input_len: c.input_len,
+                output_len: c.output_len,
+                feature_len: c.feature_len,
+                battery_field: !c.battery.is_empty(),
+            })
+            .collect()
     }
 
     fn enumerate(&self, now: u64) -> Vec<Candidate> {

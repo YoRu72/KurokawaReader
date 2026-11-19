@@ -3,6 +3,9 @@
 //! the readers hand to Windows have the SDK's sizes. Not part of the crate.
 #[path = "../src/win/ffi.rs"]
 pub mod ffi;
+// (Piece W4: the command line's console and version calls, src/win/console.rs.)
+#[path = "../src/win/console.rs"]
+pub mod console;
 // (The taskbar strip's own declarations, src/win/strip.rs, with what it takes from the core.)
 #[path = "../src/model.rs"]
 pub mod model;

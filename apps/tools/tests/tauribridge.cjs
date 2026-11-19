@@ -51,6 +51,8 @@ const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel'
   batteryDefs: ['kt_battery_defs', []], batteryDefImport: ['kt_battery_def_import', ['o']], batteryDefExport: ['kt_battery_def_export', ['o']], batteryDefRemove: ['kt_battery_def_remove', ['o']], batteryDefSet: ['kt_battery_def_set', ['o']],
   batteryTeachList: ['kt_battery_teach_list', []], batteryTeachStart: ['kt_battery_teach_start', ['o']], batteryTeachStop: ['kt_battery_teach_stop', []], batteryTeachState: ['kt_battery_teach_state', []],
   batteryTeachMark: ['kt_battery_teach_mark', ['o']], batteryTeachSave: ['kt_battery_teach_save', ['o']], batteryTeachClose: ['kt_battery_teach_close', []],
+  // (0.21 W4: «Report a device», batreport.rs.)
+  batteryReport: ['kt_battery_report', []],
   // (0.21, device battery piece 3: connecting Bluetooth devices, battery.rs.)
   btList: ['kt_bt_list', []], btScan: ['kt_bt_scan', ['o']], btAct: ['kt_bt_act', ['o']], btOpenSettings: ['kt_bt_settings', []],
   // (0.21, piece S1: the system on the taskbar, battery.rs.)

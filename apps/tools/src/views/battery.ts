@@ -86,7 +86,9 @@ const MARKS = [5, 10, 15, 20, 25, 30, 35, 40];
 /** The bridge's methods (desktop-tauri/bridge.js — the same names and arguments). */
 type Desk = { batteryList(): Promise<BatList>; batteryRefresh(o: { key?: string }): Promise<boolean>; batterySettings(o: { set?: Partial<BatSettings> }): Promise<BatSettings>; onBattery(cb: (e: { now: number; devices: BatDevice[] }) => void): () => void;
   /** W2 (bathistory.ts's HistDesk): a device's history, and clearing it. */
-  batteryHistory?: import('./bathistory').HistDesk['batteryHistory']; batteryHistoryClear?: import('./bathistory').HistDesk['batteryHistoryClear'] };
+  batteryHistory?: import('./bathistory').HistDesk['batteryHistory']; batteryHistoryClear?: import('./bathistory').HistDesk['batteryHistoryClear'];
+  /** W4 (batreport.ts's ReportDesk): the text of «Report a device» — the computer's build only. */
+  batteryReport?: import('./batreport').ReportDesk['batteryReport'] };
 const desk = (): Desk | null => { const d = (window as unknown as { kurokawaTools?: Partial<Desk> }).kurokawaTools; return d?.batteryList && d.onBattery ? d as Desk : null; };
 
 // Our own drawings, one per kind (24×24, strokes like the app's icons).
@@ -268,6 +270,9 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     return root;
   }
   let list: BatList | null = null; let showHidden = false; let gone = false;
+  // (W4: the page's «More» — «Report a device» — where the shell can build the report: the computer's build.)
+  const moreBtn = d.batteryReport ? iconButton('more', t('batMoreTitle'), (e) => void import('./batreport').then((m) => { if (!gone) m.openMore(d as unknown as import('./batreport').ReportDesk, e); })) : null;
+  if (moreBtn) { moreBtn.hidden = true; root.querySelector('header.topbar')?.append(moreBtn); }
   // (Piece 3: made once, kept across redraws — its rows' busy states and messages are its own.)
   const bd = btDesk(); const bt = bd ? btPanel(bd, (title, close) => openSheet(title, close), () => list?.settings.low ?? 15) : null;
   const grid = h('div', { class: 'bat-grid' }); const head = h('div', { class: 'bat-head' }); const extra = h('div');
@@ -597,7 +602,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });
   // (The ages move on while the page is open: redrawn every half minute — no per-second timer.)
   const tick = window.setInterval(() => { if (list) { list.now += 30_000; draw(); } }, 30_000);
-  void d.batteryList().then((l) => { list = l; draw(); }).catch((e) => { body.replaceChildren(h('section', { class: 'card' }, h('p', null, String((e as Error).message ?? e)))); });
+  void d.batteryList().then((l) => { list = l; if (moreBtn) moreBtn.hidden = !l.available; draw(); }).catch((e) => { body.replaceChildren(h('section', { class: 'card' }, h('p', null, String((e as Error).message ?? e)))); });
   root.dispose = () => { gone = true; off(); clearInterval(tick); bt?.dispose(); sys?.dispose(); defs?.dispose(); };
   return root;
 }

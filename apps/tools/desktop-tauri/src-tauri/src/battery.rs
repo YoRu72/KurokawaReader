@@ -1661,3 +1661,15 @@ fn bt(app: &AppHandle) -> Option<&'static BtConn> {
 /// Linux: pairing is the desktop's own settings' (bluetoothctl's pair is never used) — no window to parent.
 #[cfg(target_os = "linux")]
 fn bt_parent(_app: &AppHandle) {}
+
+// ---- piece W4: what batreport.rs reads from here ----
+
+/// The loop's last list as it is (empty until the first round is done).
+pub(crate) fn states_now() -> Vec<DeviceState> {
+    STATES.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// The devices the user said not to read (their keys).
+pub(crate) fn no_query_now(app: &AppHandle) -> Vec<String> {
+    prefs_of(&load(app)).no_query
+}
