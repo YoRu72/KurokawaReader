@@ -115,6 +115,17 @@ jobs:
             "$d/$n$ext"
           done
 
+      # (Tools 0.21: fast file search's index core — src/fileindex/, a folder of modules, through its test root
+      # stdroots/fileindex.rs — on every system: the Windows watcher (ReadDirectoryChangesW, declared by hand) is
+      # compiled and run only here, inotify on Linux, the mtime poller everywhere. Built -O, as the shell runs it.)
+      - name: Std-only unit tests (file index)
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/rs-tests-fi"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          rustc --edition 2021 --test -O apps/tools/core/kt-core/stdroots/fileindex.rs -o "$d/fileindex$ext"
+          KT_TEST_TMP="$RUNNER_TEMP" "$d/fileindex$ext"
+
       # (Screen translator: its std-only rules — kt-core's screenlogic.rs: monitors and regions, the OCR answers, pixels
       # and the PNG, the portal's answers — on every system.)
       - name: Std-only unit tests (screen translator)

@@ -54,6 +54,10 @@ export function wirePcBack(): void {
   const typing = (e: Event) => !!(e.target as HTMLElement).matches?.('input, textarea, select, [contenteditable], [contenteditable] *');
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { if (!e.defaultPrevented && !e.altKey && !e.ctrlKey && !e.metaKey && !typing(e) && goBack('esc')) e.preventDefault(); return; }
+    // (Ctrl+Shift+F: the Files page's «Everywhere in my folders», where the Tauri shell has its file index.)
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f' && (window.kurokawaTools as unknown as { fileSearch?: unknown } | undefined)?.fileSearch && document.documentElement.classList.contains('pc')) {
+      e.preventDefault(); if (location.hash.startsWith('#/files')) window.dispatchEvent(new Event('kt:filesearch')); else { (window as unknown as { __ktFsearch?: number }).__ktFsearch = 1; navigate('/files'); } return;
+    }
     if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.ctrlKey || e.metaKey || e.shiftKey || typing(e)) return;
     e.preventDefault(); if (e.key === 'ArrowLeft') goBack(); else history.forward();
   });

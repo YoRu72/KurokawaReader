@@ -11,6 +11,8 @@ mod appicon;
 mod archives;
 // (Tools 0.21 P11: the safe-extraction engine's commands over kt-core's extractjob.rs.)
 mod extractcmds;
+// (Tools 0.21: fast file search — kt-core's fileindex for the Files page's «Everywhere in my folders».)
+mod filesearch;
 mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
@@ -210,6 +212,14 @@ fn main() {
             extractcmds::kt_archive_preflight,
             extractcmds::kt_archive_shelf,
             extractcmds::kt_archive_job,
+            filesearch::kt_fsearch_status,
+            filesearch::kt_fsearch_query,
+            filesearch::kt_fsearch_add,
+            filesearch::kt_fsearch_remove,
+            filesearch::kt_fsearch_exclude,
+            filesearch::kt_fsearch_rebuild,
+            filesearch::kt_fsearch_forget,
+            filesearch::kt_fsearch_pause,
             archives::kt_archive_create,
             archives::kt_selftest_7z,
             archives::kt_selftest_write,
@@ -438,6 +448,8 @@ fn main() {
             // (Screen translator: its settings read, its keys / tray / start-with-the-computer applied; a --hidden
             // start left in the tray when chosen.)
             screentr::init(&handle);
+            // (Fast file search: started now only when folders were chosen before, on a thread of its own.)
+            filesearch::at_start(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -462,6 +474,8 @@ fn main() {
                 vtjobs::stop_all();
                 // (Screen translator: «auto» and its OCR helpers ended.)
                 screentr::at_exit();
+                // (Fast file search: its index saved, its threads stopped.)
+                filesearch::at_exit();
                 // (The original system: this run's toasts left in the Action Center made to start this program, or
                 // removed.)
                 notifier::at_exit();
