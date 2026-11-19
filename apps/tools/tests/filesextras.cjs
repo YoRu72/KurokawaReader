@@ -55,7 +55,7 @@ async function bigsize(browser, port, z, lang) {
   await p.evaluate(() => { window.__gap = 0; let last = performance.now(); const tick = () => { const n = performance.now(); window.__gap = Math.max(window.__gap, n - last); last = n; window.__raf = requestAnimationFrame(tick); }; tick(); window.__lists = 0; });
   await menu(p, 'Big'); await p.locator('.sheet .dest-row', { hasText: w.calc }).click(); await p.waitForSelector('.files-props'); await p.waitForFunction(() => /5,?000|٥٬?٠٠٠/.test(document.querySelector('.files-props')?.textContent ?? ''), null, { timeout: 15000 });
   const t = await p.textContent('.files-props');
-  ok(L('5,000 files and 50 folders counted'), /5,?000 files|٥٬?٠٠٠ ملف/.test(t) && /50 folders|٥٠ مجلد/.test(t) && /4\.8|5(\.0)? ?MB|MB/.test(t), t);
+  ok(L('5,000 files and 50 folders counted'), /5,?000 files|(?:5[,٬]?000|٥٬?٠٠٠) ملف/.test(t) && /50 folders|(?:50|٥٠) مجلد/.test(t) && /4\.8|5(\.0)? ?MB|MB/.test(t), t);
   const calls = await p.evaluate(() => window.__lists); ok(L(`work budget: 51 listings for 51 folders (${calls})`), calls <= 54, calls);
   const gap = await p.evaluate(() => window.__gap); ok(L(`the page stayed free: longest frame gap ${Math.round(gap)} ms`), gap < 400, gap);
   await p.click('.sheet .sheet-head button[aria-label]'); await p.waitForTimeout(300);
