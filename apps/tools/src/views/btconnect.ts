@@ -7,7 +7,9 @@
 // per device with Cancel; each failure said in plain words with what to do; «Bluetooth settings» where only Windows'
 // own settings can help. The shell decides (kt-battery connect.rs); this draws. Part of views/battery's lazy chunk.
 import { h, toast } from '../ui/dom';
-import { t, localDigits, getLang, countSeconds } from '../i18n';
+import { localDigits, getLang, countSeconds } from '../i18n';
+// (Piece P1: Linux's own words where these say «Windows» — views/batplat.ts.)
+import { osT as t } from './batplat';
 
 export type BtDev = { addr: string; name: string; kind: string; picture: string; brand: string; le: boolean; paired: boolean; connected: boolean; battery: number | null; can: 'both' | 'disconnectOnly' | 'settings' | 'pair' };
 export type BtSnap = { available: boolean; reason?: string; radio: 'on' | 'off' | 'missing'; stale: boolean; now: number; scanUntil: number | null; devices: BtDev[]; found: BtDev[]; busy: { addr: string; op: string; until: number }[] };
