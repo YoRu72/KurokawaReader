@@ -9,6 +9,9 @@
 //                                            byte 11: bits 0–3 the level 0–5, bits 4–7 0 on battery / 1 charging / 2 full
 //   Some firmware keeps a report id 04 before the reply. Both requests only ask (no takeover, no setting). Sent only
 //   once the user turned Flydigi's reading on.
+// D1 (the original's v1.1.0 flydigi.cpp at commit 7cc44f2): the Apex 5 (37D7:2501) the same way, its requests as output
+// report 03 (SDL's FLYDIGI_V2_CMD_REPORT_ID) and its identity one of 128, 129, 133, 134, 135 (135 seen on a real Apex 5,
+// not in SDL's table). Each model takes only its own report id and identities.
 // Changed here: the level stays the pad's 0–5 steps (the original showed 20 × level %); an unknown connection value or
 // identity is no reading; the replies are tied to their request by the echoed command.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -18,15 +21,26 @@ use crate::sched::Outcome;
 use crate::transport::{HidTransport, TErr};
 use std::time::{Duration, Instant};
 
-pub static MODELS: &[Model] = &[{
-    let mut m = Model::new("flydigi", 0x37D7, 0x2401, 0xFFA0, &[0x01], "Flydigi Vader 5 Pro", "pad", Link::Pad);
+const fn fd(pid: u16, name: &'static str) -> Model {
+    let mut m = Model::new("flydigi", 0x37D7, pid, 0xFFA0, &[0x01], name, "pad", Link::Pad);
     m.min_in = 12;
     m.min_out = 6;
     m
-}];
+}
+pub static MODELS: &[Model] = &[fd(0x2401, "Flydigi Vader 5 Pro"), fd(0x2501, "Flydigi Apex 5")];
 
 pub const ARCH: [u8; 6] = [0x00, 0x5A, 0xA5, 0x07, 0x00, 0x00];
 pub const INFO: [u8; 6] = [0x00, 0x5A, 0xA5, 0x01, 0x02, 0x00];
+pub const APEX_ARCH: [u8; 6] = [0x03, 0x5A, 0xA5, 0x07, 0x00, 0x00];
+pub const APEX_INFO: [u8; 6] = [0x03, 0x5A, 0xA5, 0x01, 0x02, 0x00];
+
+/// The identities a model's «device info» may carry.
+pub fn ids(pid: u16) -> &'static [u8] {
+    match pid {
+        0x2501 => &[128, 129, 133, 134, 135],
+        _ => &[130],
+    }
+}
 const STEP: Duration = Duration::from_millis(800);
 
 /// The reply without the report id 04 some firmware keeps.
@@ -47,8 +61,11 @@ fn is_reply(cmd: u8) -> impl Fn(&[u8]) -> bool {
 
 /// What the «device info» reply says, given whether the architecture reply was the newer one. None: not a reading.
 pub fn info(r: &[u8], modern: bool) -> Option<(Level, Charging, bool)> {
+    info_of(r, modern, &[130])
+}
+pub fn info_of(r: &[u8], modern: bool, ids: &[u8]) -> Option<(Level, Charging, bool)> {
     let b = body(r);
-    if b.len() < 12 || b[5] != 130 {
+    if b.len() < 12 || !ids.contains(&b[5]) {
         return None;
     }
     let level = b[11] & 0x0F;
@@ -70,8 +87,9 @@ pub fn info(r: &[u8], modern: bool) -> Option<(Level, Charging, bool)> {
     Some((Level::Steps(Steps::new(i64::from(n), 5)?), ch, receiver))
 }
 
-pub fn query(t: &mut dyn HidTransport, deadline: Instant, now: u64) -> Outcome {
-    let modern = match ask(t, &ARCH, deadline, STEP, &is_reply(0x07)) {
+pub fn query(t: &mut dyn HidTransport, m: &Model, deadline: Instant, now: u64) -> Outcome {
+    let (arch, inf) = if m.pid == 0x2501 { (APEX_ARCH, APEX_INFO) } else { (ARCH, INFO) };
+    let modern = match ask(t, &arch, deadline, STEP, &is_reply(0x07)) {
         Ok(r) => {
             let b = body(&r);
             b.len() >= 5 && b[3] == 1 && b[4] == 0
@@ -79,8 +97,8 @@ pub fn query(t: &mut dyn HidTransport, deadline: Instant, now: u64) -> Outcome {
         Err(TErr::Gone) => return Outcome::Failed,
         Err(_) => false,
     };
-    match ask(t, &INFO, deadline, STEP, &is_reply(0x01)) {
-        Ok(r) => match info(&r, modern) {
+    match ask(t, &inf, deadline, STEP, &is_reply(0x01)) {
+        Ok(r) => match info_of(&r, modern, ids(m.pid)) {
             Some((l, c, _receiver)) => Outcome::Read(Reading::new(l, c, now)),
             None => Outcome::Read(Reading::unknown(Note::None, Charging::Unknown, now)),
         },
@@ -142,5 +160,15 @@ mod tests {
         let mut f = fake(m);
         f.replies.extend([vec![], vec![]]);
         assert_eq!(read(&mut f, m, false, true, soon(), 8), Outcome::NoAnswer);
+        // (D1: the Apex 5 — report 03, its own identities.)
+        let a = &MODELS[1];
+        let mut f = fake(a);
+        f.replies.extend([vec![rep(0x07, &[(3, 1), (4, 0)])], vec![rep(0x01, &[(5, 135), (6, 1), (11, 0x04)])]]);
+        assert_eq!(read(&mut f, a, false, true, soon(), 8), Outcome::Read(Reading::new(st(4), Charging::No, 8)));
+        assert_eq!(f.sent, vec![APEX_ARCH.to_vec(), APEX_INFO.to_vec()]);
+        let mut f = fake(a);
+        f.replies.extend([vec![rep(0x07, &[(3, 1), (4, 0)])], vec![rep(0x01, &[(5, 130), (6, 1), (11, 0x04)])]]);
+        assert_eq!(read(&mut f, a, false, true, soon(), 8), Outcome::Read(Reading::unknown(Note::None, Charging::Unknown, 8)), "the Vader's identity on the Apex id");
+        assert!(crate::allow::permit(&ident(a), crate::allow::ReportKind::Output, &INFO).is_none(), "the Vader's report id on the Apex");
     }
 }

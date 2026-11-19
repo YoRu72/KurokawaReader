@@ -19,10 +19,12 @@
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 pub mod allowed;
 
+pub mod airoha;
 pub mod alienware;
 pub mod astro;
 pub mod audeze;
 pub mod corsair;
+pub mod darkrim;
 pub mod fractal;
 pub mod hyperx;
 pub mod jabra;
@@ -36,6 +38,7 @@ pub mod razer;
 pub mod rog;
 pub mod sony;
 pub mod steelseries;
+pub mod vgn;
 
 use crate::mice::{Answer, Chans, Model};
 use crate::sched::Outcome;
@@ -66,6 +69,7 @@ pub static TABLES: &[&[Model]] = &[
     hyperx::MODELS,
     sony::MODELS,
     &jabra::MODELS,
+    &jabra::CABLE,
     jbl::MODELS,
     plantronics::MODELS,
     maono::MODELS,
@@ -74,6 +78,9 @@ pub static TABLES: &[&[Model]] = &[
     alienware::MODELS,
     fractal::MODELS,
     rog::MODELS,
+    darkrim::MODELS,
+    airoha::MODELS,
+    vgn::MODELS,
 ];
 
 /// What a product string says before anything is asked: an Audeze dongle naming itself «… Dongle» has no headset linked
@@ -97,7 +104,7 @@ pub fn read(ch: &mut Chans, m: &Model, slot: Option<u8>, deadline: Instant, now:
         "hs-audeze" => audeze::read(ch, m, deadline, now).into(),
         "hs-hyperx" => hyperx::read(ch, m, deadline, now).into(),
         "hs-sony" => sony::read(ch, m, deadline, now).into(),
-        "hs-jabra" => jabra::read(ch, deadline, now),
+        "hs-jabra" => jabra::read(ch, m, deadline, now),
         "hs-jbl" | "hs-jbl-350" => jbl::read(ch, m, deadline, now).into(),
         "hs-poly" => plantronics::read(ch, deadline, now).into(),
         "ot-maono" => maono::read(ch, deadline, now).into(),
@@ -106,6 +113,10 @@ pub fn read(ch: &mut Chans, m: &Model, slot: Option<u8>, deadline: Instant, now:
         "hs-alienware" => alienware::read(ch, deadline, now).into(),
         "hs-fractal" => fractal::read(ch, m, deadline, now).into(),
         "hs-rog" => rog::read(ch, deadline, now).into(),
+        "hs-rog-cetra" => rog::read_cetra(ch, deadline, now).into(),
+        "hs-darkrim" => darkrim::read(ch, deadline, now).into(),
+        "hs-akg" | "hs-endorfy" => airoha::read(ch, m, deadline, now).into(),
+        "hs-vgn" => vgn::read(ch, deadline, now).into(),
         _ => Outcome::Failed.into(),
     }
 }

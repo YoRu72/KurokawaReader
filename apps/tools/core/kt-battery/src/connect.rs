@@ -219,6 +219,7 @@ pub fn picture_of(kind: Kind, name: &str, cod: u32) -> &'static str {
         Kind::Keyboard => "keyboard",
         Kind::Speaker => "speaker",
         Kind::Phone => "phone",
+        Kind::Microphone => "microphone",
         Kind::Other => "other",
     }
 }

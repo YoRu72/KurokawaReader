@@ -130,6 +130,9 @@ pub fn ardor_tier(r: &[u8]) -> Option<i64> {
 /// The model's name and whether its level is in tens (0–10).
 pub fn xenta_model(code: u8) -> Option<(&'static str, bool)> {
     match code {
+        // (D1, v1.1.0: Inphic HUB's own model table — a unit sold as IN10 MAX reported 73, «IN10RMax» there.)
+        0x73 => Some(("Inphic IN10R MAX", false)),
+        0x74 => Some(("Inphic IN10 MAX", false)),
         0x3D | 0x30 | 0x50 => Some(("Delux M900 Pro", false)),
         0x55 => Some(("Attack Shark X11", false)),
         0x4E => Some(("Attack Shark X3 Max", false)),

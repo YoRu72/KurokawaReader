@@ -6,6 +6,7 @@
 // 285d64254216857e94ca3ea3e1deb536f863e282, by krisgfx9 and its contributors, GPL-3.0-or-later.
 // Changed here: earbuds and speakers are told from headsets (our drawn icons differ); the brand is only a name shown as
 // text — no colours, no logos —; the brand is never taken from a vendor id another maker shares (as the original).
+// D1: v1.1.0's additions (commit 7cc44f2): the NuPhy WH80's Bluetooth ids a keyboard; «Redragon» by name.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use crate::model::Kind;
 
@@ -51,8 +52,9 @@ pub fn from_category(c: &str) -> Kind {
 
 /// Bluetooth LE keyboards that also expose a mouse collection, by their exact ids (the original's list).
 pub fn from_ble_ids(vid: u16, pid: u16) -> Kind {
-    // (3151:4013 Attack Shark K86 over Bluetooth, from the original's issue #168.)
-    if vid == 0x3151 && pid == 0x4013 {
+    // (3151:4013 Attack Shark K86 over Bluetooth, from the original's issue #168; D1, v1.1.0: 19F5:324A the NuPhy WH80
+    //  over Bluetooth, whose two keyboard collections sit next to a mouse collection.)
+    if (vid == 0x3151 && pid == 0x4013) || (vid == 0x19F5 && pid == 0x324A) {
         Kind::Keyboard
     } else {
         Kind::Other
@@ -164,6 +166,8 @@ const NAMES: &[(&str, How, &str)] = &[
     ("steam controller", How::Contains, "Steam"),
     ("8bitdo", How::Contains, "8BitDo"),
     ("gamesir", How::Contains, "GameSir"),
+    // (D1: the original's v1.1.0 brand rule.)
+    ("redragon", How::Contains, "Redragon"),
 ];
 
 fn has_word(n: &str, w: &str) -> bool {
@@ -268,6 +272,7 @@ mod tests {
 
     #[test]
     fn brands() {
+        assert_eq!(brand_of(0x3554, "Redragon M916 Pro", Kind::Mouse), "Redragon", "D1: by name");
         assert_eq!(brand_of(0x046D, "Anything", Kind::Mouse), "Logitech");
         assert_eq!(brand_of(0x054C, "DualSense Wireless Controller", Kind::Controller), "PlayStation");
         assert_eq!(brand_of(0x054C, "WH-1000XM4", Kind::Headset), "Sony", "Sony audio is not PlayStation");

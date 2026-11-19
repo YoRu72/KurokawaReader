@@ -6,14 +6,15 @@
 //   Interface 3, page 0C usage 01, 64-byte reports, no feature report. Register GET (04) of 0042, the battery:
 //   C4 09 00 00 04 42 00 <checksum ED FE>; reply C4 <len> 00 00 04 (register, value) pairs, a 16-bit checksum.
 //   Only GET is sent, never SET (03). No charging flag.
-// Changed here: nothing but the shapes of this crate; in «Other» on the page (a microphone is not a headset).
+// Changed here: nothing but the shapes of this crate; in «Other» on the page (a microphone is not a headset). D1: its
+// kind is «microphone», the original's v1.1.0 new kind (its own drawn picture and word on the page).
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use crate::mice::*;
 use crate::model::{Charging, Kind, Level};
 use crate::sched::Outcome;
 use std::time::Instant;
 
-pub static MODELS: &[Model] = &[Model::new("ot-maono", 0x352F, 0x040E, "MAONO PD200W", Kind::Other, Via::Receiver).iface(3).page(0x000C).usage(0x0001).input(Len::Eq(64)).output(Len::Eq(64)).feature(Len::Eq(0))];
+pub static MODELS: &[Model] = &[Model::new("ot-maono", 0x352F, 0x040E, "MAONO PD200W", Kind::Microphone, Via::Receiver).iface(3).page(0x000C).usage(0x0001).input(Len::Eq(64)).output(Len::Eq(64)).feature(Len::Eq(0))];
 
 pub const Q: [u8; 9] = [0xC4, 0x09, 0x00, 0x00, 0x04, 0x42, 0x00, 0xED, 0xFE];
 

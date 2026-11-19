@@ -25,6 +25,10 @@ from **Wireless Device Battery Monitor** by **krisgfx9** and its contributors, l
 
 - Repository: <https://github.com/krisgfx9/Wireless-Device-Battery-Monitor>
 - Ported from commit `285d64254216857e94ca3ea3e1deb536f863e282` (18 Nov 2026, version 1.0.8 and later)
+- Brought up to its **v1.1.0** (commit `7cc44f2b2c63341e2b478463c7467759837a74a9`, 19 Nov 2026), with which the
+  upstream renamed itself **BatteryHub** (formerly «Wireless Battery»), same author, same repository and licence.
+  What of v1.1.0 was taken is in the section «D1» below; its auto-update is not ported (Tools updates only through its
+  own releases).
 
 Each ported file of `apps/tools/core/kt-battery` names the original files it comes from in its header.
 
@@ -256,6 +260,45 @@ feature):
 | Poly BT600 | `07 01 01 10 06 20 00 00 02 0A 1A` | GET battery |
 | MOONDROP · MCHOSE · Alienware · Fractal · ROG · MAONO | `4B 80 27 00` / `4B 80 31 00` · `55 AA 01 00 01 00 01 0B 00` · `06 C0 0A` · `02 11 21` / `02 F1 21` · `CC 12 07` / `CC 12 08` · `C4 09 00 00 04 42 00 ED FE` | battery, link, status — one or two each |
 | Logitech G headsets (HID++, `permit_hidpp`) | piece 5's rule, with ADC_MEASUREMENT (1F20) function 0 | battery voltage |
+
+### D1: the original's v1.1.0 (BatteryHub) — its new and changed device readers
+
+Each file below names `… at v1.1.0 (commit 7cc44f2)` in its header. Every new reader that sends a request is off until
+the user turns its family on, «ported, untested»; each request is listed byte for byte in `mice/allowed.rs`,
+`heads/allowed.rs` or `allow.rs`.
+
+| Original (C++, v1.1.0) | Here | How it reads; what changed |
+|---|---|---|
+| `ajazz_ak992.cpp` | `mice/atk.rs` | AJAZZ AK992 (320F:50C3): the Evision status request, one fixed sequence number. |
+| `akg.cpp`, `endorfy.cpp` | `heads/airoha.rs` | AKG N9 Hybrid (0ECB:20D9), ENDORFY Viro Wireless (3738:0072): Airoha RACE «get battery», the Audeze request. |
+| `akko.cpp` | `mice/cherry.rs` | Akko V9 Dash Pro (38EE:000C): the FF1C channel's status query. |
+| `atk_bitmouse.cpp` (8K Nano), `atk_keyboard.cpp` (VGN / VXE), `redragon_evision.cpp` | `mice/atk.rs` | ATK 8K Nano dongle (GetConfigData as feature report 0); VGN / VXE keyboards and «Wireless Gaming Keyboard» receivers on 320F:5088 / 5055, told apart by their product strings (`mice::find_for`); Redragon on 320F:226F. |
+| `aula_mouse.cpp`, `aula_mouse_protocol.h`, `aula.cpp` (SC580, 05AC:024F) | `mice/aula.rs` | AULA X9 / V9 (START, battery, END — END always sent); AULA SC580 (GetDeviceInfo 30, resent on busy, a charging mouse's fixed 100 not taken as a level); MCHOSE BY receivers on 05AC:024F by their own layout only. |
+| `chimera.cpp`, `zenith.cpp`, `cherry.cpp` (XTRFY), `kysona.cpp` | `mice/kysona.rs` | Chimera V2, Zenith Pro, Cherry XTRFY 1K receiver, HECATE's receiver D3FB: the Compx 17 frames; VXE R1 cable and receiver one card. |
+| `darkrim.cpp`, `docs/darkrim.md` | `heads/darkrim.rs` | DARKRIM SHADOW: the documented GET 0010 frame byte for byte (fixed sequence 03), CRC and TLV checked. |
+| `darmoshark.cpp` | `mice/darmoshark.rs` | M3S (248A:FF31); M3S Pro on the Nordic receiver (1915:0723). |
+| `dareu.cpp` | `mice/dareu.rs` | Sharkoon Skiller SGM50W (the EM901X request); DAREU A84 (04 F6); DAREU «Togran» (receiver 1131 with a card per paired mouse, A980 Pro cable 1148); a level whose maximum is not 100 stays steps. |
+| `eweadn.cpp` | `mice/eweadn.rs` | EWEADN S7 / S9 (checkWirelessOnline 47 00, getBasics 4F 81). |
+| `mchose_a5.cpp`, `mchose_keyboard.cpp`, `mchose_modern.cpp` | `mice/mchose.rs` | A5 Pro / Pro Max (route 02 page 00 command 83); GLW keyboards on 3837:3033 (func config read, at most every ten minutes); K7 V2 Ultra+ cable 4028. |
+| `nuphy.cpp`, `docs/nuphy.md` | `mice/nuphy.rs`, `kind.rs` | NuPhy WH80 on its cable (GetFunc 05); its Bluetooth ids a keyboard. |
+| `scyrox.cpp` | `mice/scyrox.rs` | Scyrox V12M (read profiles 08 01; the active profile's battery). |
+| `via_dongle.cpp` | `mice/pmo.rs` | 36B0:3002 dongle (VIA custom value 7, then the PMO Hub session START / battery / STOP), PMO keyboards on their cables. Changed: no memory of which firmware answered. |
+| `vgn.cpp` | `heads/vgn.rs` | VGN OMNISOUND (ZHOUTING) dongle: read battery (65 01). |
+| `rog.cpp` (Cetra Open) | `heads/rog.rs` | ROG Cetra Open Wireless: left, right and case as one card's parts. |
+| `keychron.cpp` (Ultra-Link 8K) | `mice/keychron.rs` | Ultra-Link 8K receiver (B5 03 slots, B3 06 base info). **Not ported:** Keychron keyboards' A4 — answered only by a community firmware patch; on stock firmware the id's meaning is not documented. |
+| `astro.cpp` | `heads/astro.rs` | A50 Gen 3: the «current UI» read (72 01) after 7C is refused, on the Gen 3 ids only. Not taken: the second framing. |
+| `steelseries.cpp` | `mice/steelseries.rs` | Aerox 3 CS2 Dragon Lore, Aerox 3 Gen 2 (percent layout); the request resent until echoed. |
+| `hyperx.cpp`, `jbl.cpp`, `jabra.cpp`, `razer_headset.cpp`, `maono.cpp` | `heads/*.rs` | Haste 2 Mini, Cloud Flight S, Stinger Core DTS; JBL Quantum 610 / 360 (reply id checked); the Evolve3 75 on its cable (address 08 — v1.1.0's asking of every Jabra product is not taken); BlackShark V3 GET 2A and its cables named; MAONO as a microphone (a new kind, its own drawing). |
+| `beitong.cpp`, `flydigi.cpp` | `pads/beitong.rs`, `pads/flydigi.rs` | BEITONG KP40D; Flydigi Apex 5 (report 03, its own identities). |
+| `wlmouse.cpp`, `rapoo.cpp`, `sonix.cpp`, `misc_mice.cpp`, `phonelink.cpp`, `generic.cpp`, `brands.cpp` | their files | Beast G, Beast X Pro cable; Rapoo VT3 Pro Max and the 13-byte VT3 Max Gen 2; AK820 Pro receiver, the echo instead of the checksum; Inphic model codes; Phone Link's «, charging»; a container connected when its classic or LE node is; «Redragon» by name. |
+| `fastpair.cpp`, `ble_adverts.cpp` | `fastpair.rs` | **Parse only:** Fast Pair battery broadcasts; our listening path does not yet hand over service data. |
+| `nothing_ear.cpp`, `nothing_ear_protocol.h` | `nothingear.rs` | **Parse only:** the status frames and the query's bytes; the serial-port connection is not made. |
+| `gamesir_ble.cpp`, `gamesir_ble_protocol.h` | `pads/gamesir.rs` | **Parse only:** the Cyclone Pro's base-info packet; it needs a GATT connection we do not make. |
+| `rawm.cpp`, `rawm_protocol.h` | `mice/rawm.rs` | **Parse only, no reader:** the query carries the host's system and clock (its effect on the mouse undocumented) and needs a stream of pings. |
+| `turtlebeach.cpp` | — | **Not ported:** its first request switches the chip's CoAP client on (a state change, not a read). |
+| `xinput.cpp` (v1.1.0) | — | **Not ported:** the claim check uses an undocumented, unnamed XInput export (ordinal 108). |
+| `sony_inzone.cpp` (v1.1.0) | — | Nothing to take: the buds' left, right and case were already one card's parts here. |
+| `update_*.cpp` (auto-update) | — | **Not ported:** Tools updates only through its own releases. |
 
 ### What of the original is not ported, and why (the whole project)
 

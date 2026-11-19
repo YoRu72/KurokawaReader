@@ -228,10 +228,8 @@ impl<P: Port> HidState<P> {
         let (ask, mute) = (lock(&self.ask), lock(&self.mute));
         let mut by: BTreeMap<String, Vec<(P, &'static MkModel)>> = BTreeMap::new();
         for c in all {
-            let Some(m) = mice::find(c.ident(), c.input_len(), c.output_len(), c.feature_len()) else { continue };
-            if !m.product_ok(c.product()) {
-                continue;
-            }
+            // (D1: products that share their ids are told apart by the product string — the first row that takes it.)
+            let Some(m) = mice::find_for(c.ident(), c.input_len(), c.output_len(), c.feature_len(), c.product()) else { continue };
             by.entry(key_of(c)).or_default().push((c.clone(), m));
         }
         let mut units: Vec<(String, Vec<(P, &'static MkModel)>, &'static MkModel)> = Vec::new();

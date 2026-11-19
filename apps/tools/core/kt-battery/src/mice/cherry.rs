@@ -5,6 +5,9 @@
 // GPL-3.0-or-later. Its reference: B1Chat/BatteryWatch.
 // FF1C:0092, 64-byte reports: [04][checksum LE = the sum of bytes 3–63][type][payload]; status query type 1A, payload
 // 03 00 00 55; reply [04]…[1A]…[8] percent [9] non-zero while USB powered. Over Bluetooth Windows' own level is used.
+// D1 (the original's v1.1.0 akko.cpp at commit 7cc44f2): the Akko V9 Dash Pro on its Telink receiver (38EE:000C, «Akko
+// 2.4G Wireless Mouse») speaks the same channel; the same query, the same reply, two tries. (The Cherry XTRFY 1K mouse
+// receiver, also in cherry.cpp now, takes the Compx frames: kysona.rs.)
 // Changed here: the dongle and the cable: one card by the pair rule.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use super::*;
@@ -13,7 +16,11 @@ const fn c(pid: u16, via: Via) -> Model {
     Model::new("mk-cherry", 0x046A, pid, "CHERRY MX 3.0S Wireless", Kind::Keyboard, via).page(0xFF1C).usage(0x0092).input(Len::Eq(64)).output(Len::Eq(64)).pair("cherry:mx30s")
 }
 
-pub static MODELS: &[Model] = &[c(0x00E3, Via::Cable), c(0x00EA, Via::Receiver)];
+pub static MODELS: &[Model] = &[
+    c(0x00E3, Via::Cable),
+    c(0x00EA, Via::Receiver),
+    Model::new("mk-akko", 0x38EE, 0x000C, "Akko V9 Dash Pro", Kind::Mouse, Via::Receiver).page(0xFF1C).usage(0x0092).input(Len::Eq(64)).output(Len::Eq(64)),
+];
 
 pub const QUERY: [u8; 8] = [0x04, 0x72, 0x00, 0x1A, 0x03, 0x00, 0x00, 0x55];
 
@@ -47,5 +54,11 @@ mod tests {
         let mut f = fake(m);
         f.replies.push_back(vec![report(0x04, 64, &[(3, 0x1A), (8, 0xFF)])]);
         assert_eq!(read1(&mut f, m), dozing(7));
+        // (Akko: the same query.)
+        let a = model("mk-akko", 0x000C);
+        let mut f = fake(a);
+        f.replies.extend([vec![], vec![report(0x04, 64, &[(3, 0x1A), (8, 41), (9, 1)])]]);
+        assert_eq!(read1(&mut f, a), at(pctl(41), Charging::Yes), "answered on the second try");
+        assert_eq!(f.sent, vec![QUERY.to_vec(), QUERY.to_vec()]);
     }
 }

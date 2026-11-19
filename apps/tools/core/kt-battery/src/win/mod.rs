@@ -206,12 +206,12 @@ fn other_candidates(m: &mice::MiceState, nodes: &[bluetooth::BtNode], now: u64) 
         }
     }
     if m.family_on(F::PhoneLink) {
-        if let Some((name, level, written)) = phone_link() {
+        if let Some((name, level, chg, written)) = phone_link() {
             let mut d = Device::new("phonelink".into(), Source::PhoneLink);
             d.name = name;
             d.kind = Kind::Phone;
             d.driver = "ot-phonelink";
-            if let Some(r) = crate::phonelink::reading(level, written, now) {
+            if let Some(r) = crate::phonelink::reading_with(level, chg, written, now) {
                 out.push(Candidate { device: d, reading: Some(r), offline: false });
             }
         }
@@ -234,7 +234,7 @@ fn other_candidates(m: &mice::MiceState, nodes: &[bluetooth::BtNode], now: u64) 
 
 /// Phone Link's companion card in the user's own %LOCALAPPDATA%: (phone, level, when the file was written, ms) — read
 /// only, at most 4 MB, sharing the file with Phone Link (std's open shares reading and writing).
-fn phone_link() -> Option<(String, u8, u64)> {
+fn phone_link() -> Option<(String, u8, bool, u64)> {
     let base = std::env::var_os("LOCALAPPDATA")?;
     let path = std::path::Path::new(&base).join(crate::phonelink::REL_PATH);
     let meta = std::fs::metadata(&path).ok()?;
@@ -246,8 +246,9 @@ fn phone_link() -> Option<(String, u8, u64)> {
     use std::io::Read;
     std::fs::File::open(&path).ok()?.take(crate::phonelink::MAX_BYTES).read_to_end(&mut bytes).ok()?;
     let text = String::from_utf8(bytes).ok()?;
-    let (name, level) = crate::phonelink::parse(text.trim_start_matches('\u{FEFF}'))?;
-    Some((name, level, written))
+    let text = text.trim_start_matches('\u{FEFF}');
+    let (name, level) = crate::phonelink::parse(text)?;
+    Some((name, level, crate::phonelink::charging_of(text), written))
 }
 
 impl WinPlatform {

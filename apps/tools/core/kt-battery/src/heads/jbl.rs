@@ -7,6 +7,10 @@
 //   (get device info, feature 000D); the reply is input report 86 … [10] bit 7 error, [11–12] 0D 00, [13–14] size,
 //   [15] bit 7 charging, bits 0–6 percent.
 //   Quantum 350 (206B, interface 3, page 1 usage 0): feature reports 68 (01: linked) and 49 (percent) read — nothing sent.
+// D1 (the original's v1.1.0 jbl.cpp at commit 7cc44f2; its references: JBL's QuantumUSBAudio.inf as listed by
+// sidmax7/QuantumEngine, Tymon3310/jbl-quantum-linux QUANTUM610_PACKETS.md and QUANTUM_LINEUP.md): the Quantum 610
+// (0ECB:205C, interface 5) and 360 (0ECB:2115, interface 5, 0001:0000) are read the 350's way. Their firmware answers an
+// id it does not have with the last one it has, so a reply counts only when its first byte is the id asked for.
 // Changed here: the Quantum 350 is a reader that only reads its feature reports (on by default); the HIDV3 reply read on
 // the request collection's own input reports through a second, listening handle.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -35,6 +39,10 @@ pub static MODELS: &[Model] = &[
     j(0x219A, "JBL Quantum 850 Wireless", Via::Receiver),
     j(0x219B, "JBL Quantum 850 Wireless", Via::Cable),
     Model::new("hs-jbl-350", 0x0ECB, 0x206B, "JBL Quantum 350 Wireless", Kind::Headset, Via::Receiver).iface(3).page(0x0001).usage(0x0000).feature(Len::Min(2)),
+    // (D1, v1.1.0: the same HIDV1 GET 68 / GET 49 on the Quantum 610 — interface 5, any collection with a feature
+    //  report — and the Quantum 360 — interface 5, 0001:0000.)
+    Model::new("hs-jbl-350", 0x0ECB, 0x205C, "JBL Quantum 610 Wireless", Kind::Headset, Via::Receiver).iface(5).feature(Len::Min(2)),
+    Model::new("hs-jbl-350", 0x0ECB, 0x2115, "JBL Quantum 360 Wireless", Kind::Headset, Via::Receiver).iface(5).page(0x0001).usage(0x0000).feature(Len::Min(2)),
 ];
 
 pub const Q: [u8; 11] = [0x88, 0x00, 0xDD, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x0D, 0x00];
@@ -57,7 +65,7 @@ pub fn read(ch: &mut Chans, m: &Model, deadline: Instant, now: u64) -> Outcome {
     if m.driver == "hs-jbl-350" {
         let len = ch.main.feature_len().max(2);
         let linked = match ch.main.get_feature(0x68, len, deadline) {
-            Ok(r) if r.len() >= 2 => r[1],
+            Ok(r) if r.len() >= 2 && r[0] == 0x68 => r[1],
             Ok(_) => return Outcome::NoAnswer,
             Err(e) => return failed(&e),
         };
@@ -65,7 +73,7 @@ pub fn read(ch: &mut Chans, m: &Model, deadline: Instant, now: u64) -> Outcome {
             return unlinked(now);
         }
         return match ch.main.get_feature(0x49, len, deadline) {
-            Ok(r) if r.len() >= 2 => match pct(i64::from(r[1])) {
+            Ok(r) if r.len() >= 2 && r[0] == 0x49 => match pct(i64::from(r[1])) {
                 Some(l) => got(l, Charging::Unknown, now),
                 None => no_level(Charging::Unknown, now),
             },

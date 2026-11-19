@@ -14,6 +14,13 @@
 //    [percent][charging].
 //  - Nape Pro on the Link-KM (D026) or its cable (0440), FF60:0061, unnumbered 32 bytes: B2 → the receiver's slots
 //    (at 2 / 7 / 12: vid, pid, status 1 = connected); A7 31 → [A7][31][percent][charging].
+// D1 (the original's v1.1.0 keychron.cpp at commit 7cc44f2; its reference: launcher.keychron.com main.js): mice on the
+// Ultra-Link 8K receiver (3434:D028), the Launcher's «8k» protocol on FFC1:0001 (numbered 64-byte reports): report B5
+// [03] asks the receiver for its slots ([B5][03] then vid LE16, pid LE16, status at 3 / 8 / 13; not 0 = connected), report
+// B3 [06] the mouse's base info, whose byte 20 is the power byte: bits 0–6 percent, bit 7 charging. Read only.
+// Not ported: v1.1.0's Keychron keyboards on the Link receiver or their cable (B2, then A4): A4 is answered only by a
+// community firmware patch (KC_GET_BATTERY); on stock firmware the id is in Keychron's own command range, its meaning
+// not documented — not sent.
 // Changed here: products by id — the original sent the Launcher request to every 3434 product with such a collection
 // (Keychron keyboards among them); here the receivers and mice its sources name. Nothing else.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -30,7 +37,31 @@ pub static MODELS: &[Model] = &[
     Model::new("mk-keychron", 0x3434, 0xD031, "Keychron mouse", Kind::Mouse, Via::Receiver).page(0x008C).feature(Len::Min(16)).arg(1),
     Model::new("mk-keychron", 0x3434, 0xD026, "Keychron Nape Pro", Kind::Mouse, Via::Receiver).page(0xFF60).usage(0x0061).output(Len::Eq(33)).arg(2).pair("kc:nape"),
     Model::new("mk-keychron", 0x3434, 0x0440, "Keychron Nape Pro", Kind::Mouse, Via::Cable).page(0xFF60).usage(0x0061).output(Len::Eq(33)).arg(2).pair("kc:nape"),
+    Model::new("mk-keychron-ul", 0x3434, 0xD028, "Keychron mouse", Kind::Mouse, Via::Receiver).page(0xFFC1).usage(0x0001).input(Len::Min(21)).output(Len::Min(21)).product_name(),
 ];
+
+pub const ULTRA_SLOTS: [u8; 2] = [0xB5, 0x03];
+pub const ULTRA_INFO: [u8; 2] = [0xB3, 0x06];
+
+pub fn read_ultra(ch: &mut Chans, _m: &Model, deadline: Instant, now: u64) -> Outcome {
+    let slots = out_ask(ch, &ULTRA_SLOTS, ms(600), deadline, &mut |r| if r.len() >= 21 && r[1] == 0x03 { Some(r.to_vec()) } else { None });
+    match slots {
+        Ok(r) => {
+            if ![3usize, 8, 13].iter().any(|&o| (r[o] | r[o + 1]) != 0 && r[o + 4] != 0) {
+                return unlinked(now);
+            }
+        }
+        Err(e) => return failed(&e),
+    }
+    match out_ask(ch, &ULTRA_INFO, ms(600), deadline, &mut |r| if r.len() >= 21 && r[1] == 0x06 { Some(r[20]) } else { None }) {
+        Ok(p) => match pct(i64::from(p & 0x7F)) {
+            Some(l) if p & 0x7F >= 1 => got(l, charging(p & 0x80 != 0), now),
+            _ => no_level(Charging::Unknown, now),
+        },
+        Err(TErr::Gone) => Outcome::Failed,
+        Err(_) => dozing(now),
+    }
+}
 
 pub const fn frame(cmd: u8, sub: u8) -> [u8; 65] {
     let mut b = [0u8; 65];
@@ -183,5 +214,18 @@ mod tests {
         let mut f = fake(n);
         f.replies.push_back(vec![report(0x00, 33, &[(1, 0xB2)])]);
         assert_eq!(read1(&mut f, n), unlinked(7));
+    }
+
+    #[test]
+    fn v110_ultra_link() {
+        let m = model("mk-keychron-ul", 0xD028);
+        let mut f = fake(m);
+        f.replies.extend([vec![report(0xB5, 64, &[(1, 0x03), (8, 0x34), (9, 0x34), (12, 1)])], vec![report(0xB3, 64, &[(1, 0x06), (20, 0x80 | 62)])]]);
+        assert_eq!(read1(&mut f, m), at(pctl(62), Charging::Yes));
+        assert_eq!(f.sent, vec![ULTRA_SLOTS.to_vec(), ULTRA_INFO.to_vec()]);
+        let mut f = fake(m);
+        f.replies.push_back(vec![report(0xB5, 64, &[(1, 0x03), (3, 0x34), (4, 0x34)])]);
+        assert_eq!(read1(&mut f, m), unlinked(7), "a slot without its connected status");
+        assert_eq!(f.sent.len(), 1);
     }
 }

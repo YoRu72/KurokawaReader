@@ -5,6 +5,9 @@
 // krisgfx9 and its contributors, GPL-3.0-or-later. Its references: djnawara/mouse-gauge, Waturus/HaloBattery.
 // The vendor collection FFFF (65-byte feature report 0); status A1 / A2 answered, A0 the mouse asleep.
 // Not here, as in the original: A887 / A888 (Beast X 4K, the first Beast X) — the sources disagree on their protocol.
+// D1 (the original's v1.1.0 wlmouse.cpp at commit 7cc44f2; WL MOUSE HUB's device list as recorded by
+// late-autumn-gif/mousedock, OpenMouse-Project/mouse-protocol, Zelozzzz/dorsal): the Beast G — A860 its 8K receiver (an
+// unnamed cable before), A861 its cable — and the Beast X Pro's cable A871.
 // Changed here: a mouse on its cable with its receiver also plugged in: one card by the pair rule.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use super::*;
@@ -16,12 +19,14 @@ const fn w(pid: u16, name: &'static str, via: Via, pair: &'static str) -> Model 
 pub static MODELS: &[Model] = &[
     w(0xA879, "WLMouse Sword X 8K", Via::Cable, "wl:swordx"),
     w(0xA884, "WLMouse Beast X 8K", Via::Cable, "wl:beastx8k"),
-    w(0xA860, "WLMouse mouse", Via::Cable, ""),
+    w(0xA861, "WLMouse Beast G", Via::Cable, "wl:beastg"),
+    w(0xA860, "WLMouse Beast G", Via::Receiver, "wl:beastg"),
+    w(0xA871, "WLMouse Beast X Pro", Via::Cable, "wl:beastxpro"),
     w(0xA866, "WLMouse mouse", Via::Cable, ""),
     w(0xA867, "WLMouse mouse", Via::Cable, ""),
     w(0xA856, "WLMouse Beast X V2", Via::Receiver, ""),
     w(0xA868, "WLMouse Beast X Mini Pro", Via::Receiver, ""),
-    w(0xA870, "WLMouse Beast X Pro", Via::Receiver, ""),
+    w(0xA870, "WLMouse Beast X Pro", Via::Receiver, "wl:beastxpro"),
     w(0xA878, "WLMouse Sword X 8K", Via::Receiver, "wl:swordx"),
     w(0xA880, "WLMouse Beast MAX", Via::Receiver, ""),
     w(0xA883, "WLMouse Beast X 8K", Via::Receiver, "wl:beastx8k"),

@@ -344,8 +344,8 @@ pub fn read(t: &mut dyn HidTransport, m: &Model, bluetooth: bool, queries_on: bo
         "8bitdo-rx" => eightbitdo::query(t, deadline, now),
         "gamesir-nova" => gamesir::query_nova(t, deadline, now),
         "gamesir-cyclone" => heard_outcome(m, listen(t, deadline, gamesir::CYCLONE_WINDOW, &mut |r| gamesir::parse_cyclone(r)), now),
-        "flydigi" => flydigi::query(t, deadline, now),
-        "beitong" => beitong::query(t, deadline, now),
+        "flydigi" => flydigi::query(t, m, deadline, now),
+        "beitong" => beitong::query(t, m, deadline, now),
         _ => Outcome::Failed,
     }
 }

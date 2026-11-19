@@ -8,6 +8,12 @@
 //     [00][06][00 | 0C][percent][…][charging]; volume and mix events in between are skipped.
 //   A50 Gen 4 / Gen 3, A20 (9886, FF32 / FF31 / FF00, 64-byte reports): [02][cmd] → [02][status 02 ok, 01 error][len]
 //     [value]: 54 headset status (bit 0 docked, bit 1 linked), 7C battery (bit 7 charging, bits 0–6 percent).
+// D1 (the original's v1.1.0 astro.cpp at commit 7cc44f2; its reference: BenStein1/OpenAstroCC docs/A50-PROTOCOL.md): an
+// A50 Gen 3 base (9886:0015 and the other Gen 3 ids) refuses 7C; its battery is in the «current UI» read [02][72][01][01]
+// → [02][02 ok][len ≥ 16][data: four [02][field][value][00] groups], field 04 at data 12–15: bits 0–6 percent, bit 7
+// charging. Asked only on the Gen 3 ids and only after 7C was refused (on Gen 4, 72 means something else). Not taken:
+// v1.1.0's second framing ([00][02][cmd], for Gen 3 firmware that declares no report id) — the same request behind
+// another byte, tried when the first write fails; here one framing per collection.
 // Changed here: no last reading kept and shown while Astro Command Center holds the collection exclusively (the
 // original showed its cached level then): «no answer», the last reading dimmed with its age; the base station's
 // collection with page 0 (an exclusive lock seen through its path) is not taken for the headset.
@@ -40,6 +46,26 @@ pub static A20_00: [Model; 6] = many(L.named("ASTRO A20 Wireless").page(0xFF00),
 pub const Q_X: [u8; 6] = [0x02, 0x0C, 0x03, 0x00, 0x06, 0x0C];
 pub const Q_STATUS: [u8; 2] = [0x02, 0x54];
 pub const Q_BATTERY: [u8; 2] = [0x02, 0x7C];
+pub const Q_GEN3_UI: [u8; 4] = [0x02, 0x72, 0x01, 0x01];
+
+/// A Gen 3 base's «current UI» reply: the battery byte of field 04, or None.
+pub fn gen3_ui(r: &[u8]) -> Option<Result<u8, TErr>> {
+    if r.len() < 4 || r[0] != 0x02 {
+        return None;
+    }
+    match r[1] {
+        0x01 => Some(Err(TErr::Refused)),
+        0x02 if usize::from(r[2] & 0x3F) >= 16 && r.len() >= 3 + 16 => {
+            let d = &r[3..];
+            if d[12] == 0x02 && d[13] == 0x04 && d[14] & 0x7F <= 100 {
+                Some(Ok(d[14]))
+            } else {
+                Some(Err(TErr::BadReply))
+            }
+        }
+        _ => None,
+    }
+}
 
 /// A50 X / Gen 5's battery reply, or None for anything else (an event, a partial frame).
 pub fn x_reply(r: &[u8]) -> Option<(u8, bool)> {
@@ -95,6 +121,14 @@ pub fn read(ch: &mut Chans, m: &Model, deadline: Instant, now: u64) -> Outcome {
             let p = b & 0x7F;
             got(pct(i64::from(p)).unwrap_or(Level::Unknown), charging(b & 0x80 != 0 || (docked && p < 100)), now)
         }
+        Err(TErr::Refused) if GEN3.contains(&m.pid) => match out_ask(ch, &Q_GEN3_UI, ms(500), deadline, &mut gen3_ui) {
+            Ok(Ok(b)) => {
+                let p = b & 0x7F;
+                got(pct(i64::from(p)).unwrap_or(Level::Unknown), charging(b & 0x80 != 0 || (docked && p < 100)), now)
+            }
+            Err(TErr::Gone) => Outcome::Failed,
+            _ => no_level(if docked { Charging::Yes } else { Charging::Unknown }, now),
+        },
         Ok(_) | Err(TErr::Refused) => no_level(if docked { Charging::Yes } else { Charging::Unknown }, now),
         Err(e) => failed(&e),
     }
@@ -133,5 +167,24 @@ mod tests {
         let mut f = fake(m);
         f.replies.push_back(vec![vec![0x02, 0x01, 0x00, 0x00]]);
         assert_eq!(read1(&mut f, m), no_level(Charging::Unknown, 7), "an error status");
+    }
+
+    #[test]
+    fn gen3_current_ui() {
+        let m = model("hs-astro", 0x0015);
+        let mut ui = vec![0x02, 0x02, 16];
+        ui.extend_from_slice(&[0x02, 0x01, 9, 0, 0x02, 0x02, 5, 0, 0x02, 0x03, 1, 0, 0x02, 0x04, 0x80 | 58, 0]);
+        let mut f = fake(m);
+        f.replies.extend([vec![vec![0x02, 0x02, 0x01, 0x02]], vec![vec![0x02, 0x01, 0x00, 0x00]], vec![ui.clone()]]);
+        assert_eq!(read1(&mut f, m), at(pctl(58), Charging::Yes));
+        assert_eq!(f.sent, vec![Q_STATUS.to_vec(), Q_BATTERY.to_vec(), Q_GEN3_UI.to_vec()]);
+        // (A Gen 4 base that refuses 7C is never sent 72.)
+        let g4 = model("hs-astro", 0x002C);
+        let mut f = fake(g4);
+        f.replies.extend([vec![vec![0x02, 0x02, 0x01, 0x02]], vec![vec![0x02, 0x01, 0x00, 0x00]]]);
+        assert_eq!(read1(&mut f, g4), no_level(Charging::Unknown, 7));
+        assert_eq!(f.sent, vec![Q_STATUS.to_vec(), Q_BATTERY.to_vec()]);
+        assert!(crate::allow::permit(&ident(g4), crate::allow::ReportKind::Output, &Q_GEN3_UI).is_none(), "72 only on Gen 3");
+        assert!(crate::allow::permit(&ident(m), crate::allow::ReportKind::Output, &Q_GEN3_UI).is_some());
     }
 }

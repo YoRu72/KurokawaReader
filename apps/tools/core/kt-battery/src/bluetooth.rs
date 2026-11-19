@@ -92,8 +92,10 @@ pub fn gather(nodes: &[BtNode]) -> Vec<BtFound> {
             if n.category.as_deref().map_or(false, |c| !c.is_empty()) {
                 a.category = n.category.clone();
             }
-            if n.connected.is_some() {
-                a.main_connected = n.connected;
+            // (D1, the original's v1.1.0 MergeConnectedState: a classic and an LE main node can share one container;
+            //  it is connected when either is, whatever the order Windows lists them in.)
+            if let Some(c) = n.connected {
+                a.main_connected = Some(a.main_connected.unwrap_or(false) || c);
             }
         }
         let Some(pct) = n.battery else { continue };
@@ -232,6 +234,20 @@ mod tests {
         for f in gather(&nodes) {
             assert!(f.level.map_or(true, |p| p.get() <= 100));
             assert!(f.connected || f.level.is_none());
+        }
+    }
+
+    #[test]
+    fn classic_and_le_nodes_of_one_container() {
+        // (D1: either main node connected — in either order — is connected.)
+        for order in [[true, false], [false, true]] {
+            let mut a = node("BTHENUM\\DEV_A1A1A1A1A1A1\\X", "{M}", "Shape Mouse");
+            a.connected = Some(order[0]);
+            a.battery = Some(60);
+            let mut b = node("BTHLE\\DEV_A1A1A1A1A1A1\\Y", "{M}", "Shape Mouse");
+            b.connected = Some(order[1]);
+            let got = gather(&[a, b]);
+            assert!(got[0].connected && got[0].level.is_some(), "{:?}", order);
         }
     }
 }

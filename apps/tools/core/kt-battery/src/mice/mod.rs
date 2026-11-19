@@ -53,6 +53,7 @@ pub mod corsair;
 pub mod dareu;
 pub mod darmoshark;
 pub mod endgame;
+pub mod eweadn;
 pub mod fantech;
 pub mod finalmouse;
 pub mod glorious;
@@ -66,12 +67,16 @@ pub mod misc;
 pub mod msi;
 pub mod ninjutso;
 pub mod niceboy;
+pub mod nuphy;
 pub mod nzxt;
+pub mod pmo;
 pub mod pulsar;
 pub mod rapoo;
+pub mod rawm;
 pub mod razer;
 pub mod rog;
 pub mod royal_kludge;
+pub mod scyrox;
 pub mod semico;
 pub mod sonix;
 pub mod steelseries;
@@ -130,6 +135,16 @@ pub enum Family {
     Delux,
     Ajazz,
     Incott,
+    // (D1, the original's v1.1.0.)
+    Akko,
+    Chimera,
+    Eweadn,
+    Zenith,
+    Nuphy,
+    Scyrox,
+    Vgn,
+    Pmo,
+    Sharkoon,
     // (Piece 6: headsets and earbuds — heads/*.rs, airpods.rs, galaxybuds.rs — and the rest: a microphone, a phone.)
     RazerHs,
     SteelSeriesHs,
@@ -151,6 +166,11 @@ pub enum Family {
     GalaxyBuds,
     Maono,
     PhoneLink,
+    // (D1.)
+    Darkrim,
+    Akg,
+    Endorfy,
+    VgnHs,
 }
 
 /// Which list of the page a family is in.
@@ -175,7 +195,7 @@ impl Group {
 }
 
 impl Family {
-    pub const ALL: [Family; 62] = [
+    pub const ALL: [Family; 75] = [
         Family::Logitech,
         Family::Razer,
         Family::SteelSeries,
@@ -218,6 +238,15 @@ impl Family {
         Family::Delux,
         Family::Ajazz,
         Family::Incott,
+        Family::Akko,
+        Family::Chimera,
+        Family::Eweadn,
+        Family::Zenith,
+        Family::Nuphy,
+        Family::Scyrox,
+        Family::Vgn,
+        Family::Pmo,
+        Family::Sharkoon,
         Family::RazerHs,
         Family::SteelSeriesHs,
         Family::CorsairHs,
@@ -238,6 +267,10 @@ impl Family {
         Family::GalaxyBuds,
         Family::Maono,
         Family::PhoneLink,
+        Family::Darkrim,
+        Family::Akg,
+        Family::Endorfy,
+        Family::VgnHs,
     ];
     /// The setting's id (prefixed: never one of the controllers' ids).
     pub fn as_str(self) -> &'static str {
@@ -284,6 +317,15 @@ impl Family {
             Family::Delux => "mk-delux",
             Family::Ajazz => "mk-ajazz",
             Family::Incott => "mk-incott",
+            Family::Akko => "mk-akko",
+            Family::Chimera => "mk-chimera",
+            Family::Eweadn => "mk-eweadn",
+            Family::Zenith => "mk-zenith",
+            Family::Nuphy => "mk-nuphy",
+            Family::Scyrox => "mk-scyrox",
+            Family::Vgn => "mk-vgn",
+            Family::Pmo => "mk-pmo",
+            Family::Sharkoon => "mk-sharkoon",
             Family::RazerHs => "hs-razer",
             Family::SteelSeriesHs => "hs-steelseries",
             Family::CorsairHs => "hs-corsair",
@@ -304,6 +346,10 @@ impl Family {
             Family::GalaxyBuds => "hs-galaxybuds",
             Family::Maono => "ot-maono",
             Family::PhoneLink => "ot-phonelink",
+            Family::Darkrim => "hs-darkrim",
+            Family::Akg => "hs-akg",
+            Family::Endorfy => "hs-endorfy",
+            Family::VgnHs => "hs-vgn",
         }
     }
     pub fn parse(s: &str) -> Option<Family> {
@@ -354,6 +400,15 @@ impl Family {
             Family::Delux => "Delux",
             Family::Ajazz => "AJAZZ",
             Family::Incott => "Incott / Wraith",
+            Family::Akko => "Akko",
+            Family::Chimera => "Chimera",
+            Family::Eweadn => "EWEADN",
+            Family::Zenith => "Zenith",
+            Family::Nuphy => "NuPhy",
+            Family::Scyrox => "Scyrox",
+            Family::Vgn => "VGN / VXE",
+            Family::Pmo => "PMO / URX",
+            Family::Sharkoon => "Sharkoon",
             Family::RazerHs => "Razer",
             Family::SteelSeriesHs => "SteelSeries",
             Family::CorsairHs => "Corsair",
@@ -374,6 +429,10 @@ impl Family {
             Family::GalaxyBuds => "Galaxy Buds",
             Family::Maono => "MAONO",
             Family::PhoneLink => "Phone Link",
+            Family::Darkrim => "DARKRIM",
+            Family::Akg => "AKG",
+            Family::Endorfy => "ENDORFY",
+            Family::VgnHs => "VGN",
         }
     }
     /// The page's list it is in.
@@ -472,6 +531,28 @@ pub static DRIVERS: &[Driver] = &[
     d("mk-delux", Family::Delux, Way::Query, "src/drivers/misc_mice.cpp (Delux M800 Pro)"),
     d("mk-ajazz", Family::Ajazz, Way::Query, "src/drivers/misc_mice.cpp (AJ139 V2)"),
     d("mk-incott", Family::Incott, Way::Query, "src/drivers/misc_mice.cpp (Incott, Wraith W1)"),
+    // (D1: the original's v1.1.0, commit 7cc44f2.)
+    d("mk-atk-8k", Family::Atk, Way::Query, "src/drivers/atk_bitmouse.cpp (8K Nano dongle) @ v1.1.0"),
+    d("mk-vgn-kb", Family::Vgn, Way::Query, "src/drivers/atk_keyboard.cpp (VGN / VXE) @ v1.1.0"),
+    d("mk-ajazz-ak992", Family::Ajazz, Way::Query, "src/drivers/ajazz_ak992.cpp @ v1.1.0"),
+    d("mk-redragon-ev", Family::Redragon, Way::Query, "src/drivers/redragon_evision.cpp @ v1.1.0"),
+    d("mk-akko", Family::Akko, Way::Query, "src/drivers/akko.cpp @ v1.1.0"),
+    d("mk-chimera", Family::Chimera, Way::Query, "src/drivers/chimera.cpp @ v1.1.0"),
+    d("mk-zenith", Family::Zenith, Way::Query, "src/drivers/zenith.cpp @ v1.1.0"),
+    d("mk-cherry-x", Family::Cherry, Way::Query, "src/drivers/cherry.cpp (XTRFY 1K receiver) @ v1.1.0"),
+    d("mk-aula-x9", Family::Aula, Way::Query, "src/drivers/aula_mouse.cpp, aula_mouse_protocol.h @ v1.1.0"),
+    d("mk-aula-sc580", Family::Aula, Way::Query, "src/drivers/aula.cpp (SC580) @ v1.1.0"),
+    d("mk-eweadn", Family::Eweadn, Way::Query, "src/drivers/eweadn.cpp @ v1.1.0"),
+    d("mk-darmoshark-nrf", Family::Darmoshark, Way::Query, "src/drivers/darmoshark.cpp (M3S Pro, Nordic receiver) @ v1.1.0"),
+    d("mk-mchose-a5", Family::Mchose, Way::Query, "src/drivers/mchose_a5.cpp @ v1.1.0"),
+    d("mk-mchose-kb", Family::Mchose, Way::Query, "src/drivers/mchose_keyboard.cpp @ v1.1.0"),
+    d("mk-nuphy", Family::Nuphy, Way::Query, "src/drivers/nuphy.cpp, docs/nuphy.md @ v1.1.0"),
+    d("mk-scyrox", Family::Scyrox, Way::Query, "src/drivers/scyrox.cpp @ v1.1.0"),
+    d("mk-pmo", Family::Pmo, Way::Query, "src/drivers/via_dongle.cpp @ v1.1.0"),
+    d("mk-keychron-ul", Family::Keychron, Way::Query, "src/drivers/keychron.cpp (Ultra-Link 8K) @ v1.1.0"),
+    d("mk-sharkoon", Family::Sharkoon, Way::Query, "src/drivers/dareu.cpp (Sharkoon Skiller SGM50W) @ v1.1.0"),
+    d("mk-dareu-a84", Family::Dareu, Way::Query, "src/drivers/dareu.cpp (A84) @ v1.1.0"),
+    d("mk-dareu-togran", Family::Dareu, Way::Query, "src/drivers/dareu.cpp (Togran: A980 Pro, receiver 1131) @ v1.1.0"),
     // (Piece 6.)
     d("hs-razer-hs", Family::RazerHs, Way::Query, "src/drivers/razer_headset.cpp (BlackShark V2 HyperSpeed)"),
     d("hs-razer-v2pro", Family::RazerHs, Way::Query, "src/drivers/razer_headset.cpp (BlackShark V2 Pro 2020)"),
@@ -500,6 +581,12 @@ pub static DRIVERS: &[Driver] = &[
     d("hs-galaxybuds", Family::GalaxyBuds, Way::Query, "src/drivers/galaxy_buds.cpp, galaxy_buds_protocol.h"),
     d("ot-maono", Family::Maono, Way::Query, "src/drivers/maono.cpp"),
     d("ot-phonelink", Family::PhoneLink, Way::Passive, "src/drivers/phonelink.cpp"),
+    // (D1.)
+    d("hs-darkrim", Family::Darkrim, Way::Query, "src/drivers/darkrim.cpp, docs/darkrim.md @ v1.1.0"),
+    d("hs-akg", Family::Akg, Way::Query, "src/drivers/akg.cpp @ v1.1.0"),
+    d("hs-endorfy", Family::Endorfy, Way::Query, "src/drivers/endorfy.cpp @ v1.1.0"),
+    d("hs-vgn", Family::VgnHs, Way::Query, "src/drivers/vgn.cpp @ v1.1.0"),
+    d("hs-rog-cetra", Family::RogHs, Way::Query, "src/drivers/rog.cpp (Cetra Open Wireless) @ v1.1.0"),
 ];
 
 pub fn driver(id: &str) -> Option<&'static Driver> {
@@ -671,9 +758,9 @@ impl Model {
         self.feat_len = n;
         self
     }
-    /// The collection's product string is the one the model needs.
+    /// The collection's product string is the one the model needs (one of them: «|» between names).
     pub fn product_ok(&self, product: &str) -> bool {
-        self.product.is_empty() || product.trim_end().eq_ignore_ascii_case(self.product)
+        self.product.is_empty() || self.product.split('|').any(|p| product.trim_end().eq_ignore_ascii_case(p))
     }
     pub const fn product_name(mut self) -> Model {
         self.product_name = true;
@@ -758,6 +845,7 @@ pub static TABLES: &[&[Model]] = &[
     dareu::MODELS,
     areson::MODELS,
     rapoo::MODELS,
+    rapoo::V110,
     keychron::MODELS,
     royal_kludge::MODELS,
     sonix::MODELS,
@@ -772,6 +860,13 @@ pub static TABLES: &[&[Model]] = &[
     nzxt::MODELS,
     niceboy::MODELS,
     misc::MODELS,
+    aula::MOUSE,
+    eweadn::MODELS,
+    &mchose::A5,
+    nuphy::MODELS,
+    scyrox::MODELS,
+    pmo::MODELS,
+    dareu::V110,
 ];
 
 /// Every family's table, the headsets' (piece 6, heads/mod.rs) after the mice' and keyboards'.
@@ -782,6 +877,12 @@ pub fn all_models() -> impl Iterator<Item = &'static Model> {
 /// The reader for one collection, by its identity and report lengths.
 pub fn find(id: &HidIdent, input: usize, output: usize, feature: usize) -> Option<&'static Model> {
     all_models().find(|m| m.matches(id, input, output, feature))
+}
+
+/// The reader for one collection whose product string is `product` (D1: products that share their ids — the Evision
+/// receivers — are told apart by it): the first model that matches and takes that string.
+pub fn find_for(id: &HidIdent, input: usize, output: usize, feature: usize, product: &str) -> Option<&'static Model> {
+    all_models().find(|m| m.matches(id, input, output, feature) && m.product_ok(product))
 }
 
 /// Whether `id` is a collection the tables give reader `driver` as the one its requests go to (allow.rs's
@@ -1127,7 +1228,7 @@ pub fn read(ch: &mut Chans, m: &Model, slot: Option<u8>, on: bool, deadline: Ins
         "mk-razer" => razer::read(ch, m, deadline, now).into(),
         "mk-steelseries" => steelseries::read(ch, m, deadline, now).into(),
         "mk-corsair-bragi" => corsair::read_bragi(ch, m, slot, deadline, now),
-        "mk-corsair-compx" | "mk-kysona" | "mk-gwolves-k" | "mk-redragon-k" | "mk-atk-k" | "mk-hitscan-k" | "mk-pulsar-k" => kysona::read(ch, m, deadline, now).into(),
+        "mk-corsair-compx" | "mk-kysona" | "mk-gwolves-k" | "mk-redragon-k" | "mk-atk-k" | "mk-hitscan-k" | "mk-pulsar-k" | "mk-chimera" | "mk-zenith" | "mk-cherry-x" => kysona::read(ch, m, deadline, now).into(),
         "mk-p83" | "mk-hitscan" | "mk-gwolves" | "mk-wlmouse" | "mk-lamzu" | "mk-arbiter" => proto::read_p83(ch, m, deadline, now).into(),
         "mk-pulsar" => pulsar::read(ch, m, deadline, now).into(),
         "mk-finalmouse" => finalmouse::read(ch, m, deadline, now).into(),
@@ -1139,7 +1240,22 @@ pub fn read(ch: &mut Chans, m: &Model, slot: Option<u8>, on: bool, deadline: Ins
         "mk-ninjutso-ten" => ninjutso::read_ten(ch, m, deadline, now).into(),
         "mk-darmoshark" => darmoshark::read(ch, m, deadline, now).into(),
         "mk-atk-nk" => atk::read_nk(ch, m, deadline, now).into(),
-        "mk-atk-kb" => atk::read_kb(ch, m, deadline, now).into(),
+        "mk-atk-kb" | "mk-vgn-kb" | "mk-ajazz-ak992" | "mk-redragon-ev" => atk::read_kb(ch, m, deadline, now).into(),
+        "mk-atk-8k" => atk::read_8k(ch, m, deadline, now).into(),
+        "mk-akko" => cherry::read(ch, m, deadline, now).into(),
+        "mk-aula-x9" => aula::read_x9(ch, m, deadline, now).into(),
+        "mk-aula-sc580" => aula::read_sc580(ch, m, deadline, now).into(),
+        "mk-eweadn" => eweadn::read(ch, m, deadline, now).into(),
+        "mk-darmoshark-nrf" => darmoshark::read_nrf(ch, m, deadline, now).into(),
+        "mk-mchose-a5" => mchose::read_a5(ch, m, deadline, now).into(),
+        "mk-mchose-kb" => mchose::read_glw(ch, m, deadline, now).into(),
+        "mk-nuphy" => nuphy::read(ch, m, deadline, now).into(),
+        "mk-scyrox" => scyrox::read(ch, m, deadline, now).into(),
+        "mk-pmo" => pmo::read(ch, m, deadline, now).into(),
+        "mk-keychron-ul" => keychron::read_ultra(ch, m, deadline, now).into(),
+        "mk-sharkoon" => proto::read_compx_feature(ch, m, deadline, now).into(),
+        "mk-dareu-a84" => dareu::read_a84(ch, m, deadline, now).into(),
+        "mk-dareu-togran" => dareu::read_togran(ch, m, slot, deadline, now),
         "mk-rapoo" => rapoo::read(ch, m, deadline, now).into(),
         "mk-keychron" => keychron::read(ch, m, deadline, now),
         "mk-rk" => royal_kludge::read(ch, m, deadline, now).into(),
@@ -1221,7 +1337,7 @@ mod tests {
                 assert!(matches!(m.kind, Kind::Mouse | Kind::Keyboard), "{}: mice and keyboards only in that list", m.name);
             }
             // (One model per collection: the same product, page, usage, interface and lengths never twice.)
-            let k = (m.vid, m.pid, format!("{:?}{:?}{:?}{:?}{:?}{:?}", m.page, m.usage, m.iface, m.input, m.output, m.feature));
+            let k = (m.vid, m.pid, format!("{:?}{:?}{:?}{:?}{:?}{:?}{}", m.page, m.usage, m.iface, m.input, m.output, m.feature, m.product));
             assert!(seen.insert(k), "{} {:04X}:{:04X} listed twice for one collection", m.name, m.vid, m.pid);
         }
         assert!(all_models().count() > 500);

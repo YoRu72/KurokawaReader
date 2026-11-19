@@ -88,10 +88,8 @@ impl MiceState {
         let key_of = |c: &hid::HidColl| identity::hid_key(c.ident.vid, c.ident.pid, &c.serial, &c.container, &c.path);
         let mut by: BTreeMap<String, Vec<(hid::HidColl, &'static Model)>> = BTreeMap::new();
         for c in all {
-            let Some(m) = mice::find(&c.ident, c.input_len, c.output_len, c.feature_len) else { continue };
-            if !m.product_ok(&c.product) {
-                continue;
-            }
+            // (D1: products that share their ids are told apart by the product string — the first row that takes it.)
+            let Some(m) = mice::find_for(&c.ident, c.input_len, c.output_len, c.feature_len, &c.product) else { continue };
             by.entry(key_of(c)).or_default().push((c.clone(), m));
         }
         // (Units with a request collection; a family switched off whose unit has its own battery field: the generic

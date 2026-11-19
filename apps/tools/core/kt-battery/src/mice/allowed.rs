@@ -76,6 +76,29 @@ pub static SETS: &[SetEntry] = &[
     set("mk-motospeed", O, &[&misc::MOTOSPEED], "Motospeed X6: battery (B5 06)"),
     set("mk-ajazz", O, &[&misc::AJ139_A, &misc::AJ139_B], "AJAZZ AJ139 V2: battery (55 30), both checksums"),
     set("mk-incott", F, &[&misc::INCOTT_INFO, &misc::INCOTT_STATUS], "PixArt: device info (8F), status (89)"),
+    // (D1: the original's v1.1.0.)
+    set("mk-atk-8k", F, &[&atk::NANO_8K], "ATK 8K Nano dongle: GetConfigData (82), ATK HUB"),
+    set("mk-vgn-kb", O, &[&atk::KB_VGN], "Evision status (1A 06), VGN HUB's getElectricQuantity"),
+    set("mk-ajazz-ak992", O, &[&atk::KB], "Evision status (1A), HaloBattery docs/protocols.md"),
+    set("mk-redragon-ev", O, &[&atk::KB_REDRAGON], "Evision status (1A 02), as Redragon's software sends"),
+    set("mk-akko", O, &[&cherry::QUERY], "the FF1C channel's status query (1A)"),
+    set("mk-chimera", O, &[&proto::COMPX_LINK, &proto::COMPX_BATTERY], "Compx 17: online (03), battery (04)"),
+    set("mk-zenith", O, &[&proto::COMPX_BATTERY], "Compx 17: battery (04)"),
+    set("mk-cherry-x", O, &[&proto::COMPX_LINK, &proto::COMPX_BATTERY], "Compx 17: online (03), battery (04)"),
+    set("mk-aula-x9", O, &[&aula::X9_START, &aula::X9_BATTERY, &aula::X9_END], "AULA X9 read transaction: START (01), battery (1A), END (02)"),
+    set("mk-aula-sc580", O, &[&aula::SC580_INFO], "AULA SC580: GetDeviceInfo (30)"),
+    set("mk-eweadn", F, &[&eweadn::ONLINE, &eweadn::BASICS], "EWEADN: checkWirelessOnline (47 00), getBasics (4F 81)"),
+    set("mk-darmoshark-nrf", O, &[&darmoshark::NRF], "Darmoshark M3S Pro (Nordic receiver): battery (41 00 81 01)"),
+    set("mk-mchose-a5", F, &[&proto::P83], "MCHOSE A5: battery (route 02, page 00, command 83)"),
+    set("mk-mchose-kb", O, &[&mchose::GLW_FUNC], "MCHOSE GLW: func config read (05, offset 0, 56 bytes)"),
+    set("mk-nuphy", O, &[&nuphy::GET_BATTERY], "NuPhyIO getBatteryState: GetFunc (05) offset 0020, one byte"),
+    set("mk-scyrox", O, &[&scyrox::READ_PROFILES], "Scyrox S-Center: read profiles (08 01)"),
+    SetEntry { devices: Products::of(0x36B0, &[0x3002]).page(0xFF60).usage(0x0061).iface(1), kind: O, bytes: &[&pmo::VIA_BATTERY, &pmo::START_DONGLE, &pmo::BATTERY, &pmo::STOP_DONGLE], why: "VIA custom get (value 7); PMO Hub START / GET_BATTERY / STOP" },
+    SetEntry { devices: Products::of(0x36B0, &[0x3009, 0x3004, 0x302B, 0x3012]).page(0xFF60).usage(0x0061).iface(1), kind: O, bytes: &[&pmo::START_CABLE, &pmo::BATTERY, &pmo::STOP_CABLE], why: "PMO Hub START / GET_BATTERY / STOP (cable length)" },
+    set("mk-keychron-ul", O, &[&keychron::ULTRA_SLOTS, &keychron::ULTRA_INFO], "Keychron Launcher «8k»: receiver slots (B5 03), base info (B3 06)"),
+    set("mk-sharkoon", F, &[&proto::COMPX_BATTERY], "Compx 17 as a feature report: battery"),
+    set("mk-dareu-a84", F, &[&dareu::A84], "DAREU A84 launcher: battery (04 F6)"),
+    set("mk-dareu-togran", F, &[&dareu::TOGRAN_LIST], "DAREU Togran: paired mice (slot 0, 00 A0)"),
 ];
 
 pub static TEMPLATES: &[Template] = &[
@@ -85,6 +108,8 @@ pub static TEMPLATES: &[Template] = &[
     Template { devices: Products::driver("mk-corsair-bragi"), kind: O, pattern: &[B::Is(0x00), B::In(0x08, 0x0B), B::Is(0x02), B::OneOf(&corsair::PROPS)], why: "Bragi GET (plain framing)", check: None },
     // (Delux M800 Pro status query: [0C][01][20][00][sequence 01–7F][00 × 28].)
     Template { devices: Products::driver("mk-delux"), kind: F, pattern: &misc::DELUX_PATTERN, why: "Delux M800 status query, its sequence number", check: None },
+    // (D1: DAREU Togran battery: [0A][slot 0–5 << 4][04][07][80].)
+    Template { devices: Products::driver("mk-dareu-togran"), kind: F, pattern: &[B::Is(0x0A), B::OneOf(&[0x00, 0x10, 0x20, 0x30, 0x40, 0x50]), B::Is(0x04), B::Is(0x07), B::Is(0x80)], why: "DAREU Togran: a slot's battery (07 80)", check: None },
 ];
 
 #[cfg(test)]

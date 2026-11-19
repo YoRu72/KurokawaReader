@@ -77,6 +77,8 @@ const BT: &str = "BEITONG KP20 «get base info» request, as iControl sends it f
 /// - GameSir Nova (receivers 1098, 1040; cable 100F), page FF7A: «device info» 00 01 01.
 /// - Flydigi Vader 5 Pro (2401), page FFA0 usage 1: «architecture» 00 5A A5 07 00 00, «info» 00 5A A5 01 02 00.
 /// - BEITONG KP20 receiver (5128), page 00FF usage 3: «base info» 02 AD (02 15 in its cipher).
+/// - D1 (the original's v1.1.0): Flydigi Apex 5 (2501), the Vader's two requests as output report 03; BEITONG KP40D
+///   receiver (515C), KP20's request.
 pub static ALLOWED: &[AllowEntry] = &[
     AllowEntry { device: on(0x2DC8, 0x310B, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x20, 0x01], why: E8 },
     AllowEntry { device: on(0x2DC8, 0x310B, 0xFF7A, Some(1)), kind: ReportKind::Output, bytes: &[0x81, 0x04, 0x21, 0x01, 0x00, 0x00, 0x06], why: E8 },
@@ -93,6 +95,10 @@ pub static ALLOWED: &[AllowEntry] = &[
     AllowEntry { device: on(0x37D7, 0x2401, 0xFFA0, Some(1)), kind: ReportKind::Output, bytes: &[0x00, 0x5A, 0xA5, 0x07, 0x00, 0x00], why: FD },
     AllowEntry { device: on(0x37D7, 0x2401, 0xFFA0, Some(1)), kind: ReportKind::Output, bytes: &[0x00, 0x5A, 0xA5, 0x01, 0x02, 0x00], why: FD },
     AllowEntry { device: on(0x20BC, 0x5128, 0x00FF, Some(3)), kind: ReportKind::Output, bytes: &[0x02, 0xAD], why: BT },
+    // (D1, the original's v1.1.0: the Flydigi Apex 5 — the same requests as output report 03 —, the BEITONG KP40D receiver.)
+    AllowEntry { device: on(0x37D7, 0x2501, 0xFFA0, Some(1)), kind: ReportKind::Output, bytes: &[0x03, 0x5A, 0xA5, 0x07, 0x00, 0x00], why: FD },
+    AllowEntry { device: on(0x37D7, 0x2501, 0xFFA0, Some(1)), kind: ReportKind::Output, bytes: &[0x03, 0x5A, 0xA5, 0x01, 0x02, 0x00], why: FD },
+    AllowEntry { device: on(0x20BC, 0x515C, 0x00FF, Some(3)), kind: ReportKind::Output, bytes: &[0x02, 0xAD], why: BT },
 ];
 
 // ---- Piece 5: mice and keyboards ----
@@ -413,7 +419,7 @@ mod tests {
 
     #[test]
     fn the_shipped_table_names_only_the_controllers_status_requests() {
-        assert_eq!(ALLOWED.len(), 15);
+        assert_eq!(ALLOWED.len(), 18, "D1: the Apex 5's two, the KP40D's one");
         for bytes in [&[0x10u8, 0xFF, 0x83, 0xB5][..], &[0xF7][..], &[0x00][..], &[0x11, 0x01, 0x02][..]] {
             assert!(permit(&id(0x1234, 0x5678), ReportKind::Output, bytes).is_none());
             assert!(permit(&id(0x046D, 0xC547), ReportKind::Feature, bytes).is_none());

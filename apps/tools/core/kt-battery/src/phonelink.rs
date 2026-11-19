@@ -11,6 +11,8 @@
 // network, no device). The file is an undocumented detail of Phone Link: the parse is strict — anything unexpected, no
 // phone. Its English phrases are Phone Link's in an English Windows; in another language the card says them otherwise
 // and nothing is shown.
+// D1 (the original's v1.1.0 phonelink.cpp at commit 7cc44f2): «, charging» right after «% remaining» while the phone
+// charges — read as the charging state (else: not charging).
 // Changed here: the reading's time is the file's own (when Phone Link wrote it), so the page shows its true age and an
 // old card is never shown as fresh (the original marked a card older than 3 h as asleep).
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -63,6 +65,21 @@ fn battery(json: &str) -> Option<u8> {
     None
 }
 
+/// D1: whether the first «Battery <n>% remaining» goes on «, charging».
+pub fn charging_of(json: &str) -> bool {
+    let pat = "Battery ";
+    let mut from = 0;
+    while let Some(i) = json[from..].find(pat) {
+        let j = from + i + pat.len();
+        let digits: String = json[j..].chars().take_while(|c| c.is_ascii_digit()).take(3).collect();
+        if !digits.is_empty() && json[j + digits.len()..].starts_with("% remaining") {
+            return json[j + digits.len() + "% remaining".len()..].starts_with(", charging");
+        }
+        from = j;
+    }
+    false
+}
+
 /// The phone's name and level from the card, or None (not connected, another card, anything unexpected).
 pub fn parse(json: &str) -> Option<(String, u8)> {
     const SUFFIX: &str = " - Connected to your PC";
@@ -77,6 +94,11 @@ pub fn parse(json: &str) -> Option<(String, u8)> {
 /// The reading, at the time the file was written (never later than now).
 pub fn reading(level: u8, written_ms: u64, now: u64) -> Option<Reading> {
     Percent::new(i64::from(level)).map(|p| Reading::new(Level::Exact(p), Charging::Unknown, written_ms.min(now)))
+}
+
+/// D1: the reading with the card's charging state.
+pub fn reading_with(level: u8, charging: bool, written_ms: u64, now: u64) -> Option<Reading> {
+    Percent::new(i64::from(level)).map(|p| Reading::new(Level::Exact(p), if charging { Charging::Yes } else { Charging::No }, written_ms.min(now)))
 }
 
 #[cfg(test)]
@@ -97,5 +119,9 @@ mod tests {
         let r = reading(64, 1_000, 5_000).unwrap();
         assert_eq!((r.taken_at, r.level), (1_000, Level::Exact(Percent::new(64).unwrap())), "the file's own time");
         assert_eq!(reading(64, 9_000, 5_000).unwrap().taken_at, 5_000, "a time ahead of the clock: now");
+        // (D1: «, charging».)
+        let c = card.replace("64% remaining", "64% remaining, charging");
+        assert_eq!((parse(&c).map(|x| x.1), charging_of(&c), charging_of(card)), (Some(64), true, false));
+        assert_eq!(reading_with(64, true, 1_000, 5_000).unwrap().charging, Charging::Yes);
     }
 }

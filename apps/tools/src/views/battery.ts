@@ -88,6 +88,7 @@ const KIND_SVG: Record<string, string> = {
   controller: '<path d="M7 7h10a5 5 0 0 1 4.8 6.4l-1 3.4a2.5 2.5 0 0 1-4.3.9L14.8 16H9.2l-1.7 1.7a2.5 2.5 0 0 1-4.3-.9l-1-3.4A5 5 0 0 1 7 7Z"/><path d="M7.5 10v3M6 11.5h3"/><path d="M16 10.5h.01M17.5 12.5h.01"/>',
   speaker: '<rect x="5" y="2.5" width="14" height="19" rx="3"/><circle cx="12" cy="14.5" r="3.5"/><path d="M12 7h.01"/>',
   phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  microphone: '<rect x="9" y="2.5" width="6" height="11.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5v4M9 21.5h6"/>',
   other: '<rect x="4" y="5" width="16" height="14" rx="3"/><path d="M9 12h6"/>',
 };
 const BOLT = '<path d="M13 2.5 5.5 13H12l-1 8.5L18.5 11H12l1-8.5Z"/>';
