@@ -1155,7 +1155,10 @@ mod tests {
         assert!(s.scan_until.is_some());
         // (Asked twice: one scanning thread.)
         c.scan_start(400);
-        thread::sleep(Duration::from_millis(200));
+        let t = Instant::now();
+        while c.snapshot().found.is_empty() && t.elapsed() < Duration::from_millis(350) {
+            thread::sleep(Duration::from_millis(20));
+        }
         let s = c.snapshot();
         assert_eq!(s.found.iter().map(|d| d.addr).collect::<Vec<_>>(), vec![A2], "the paired one is not «new»");
         assert!(c.scan_stop().scan_until.is_none());
@@ -1169,7 +1172,11 @@ mod tests {
         assert_eq!(c.act(A1, Op::Pair), End::Settings, "a paired device is not paired again");
         *f.pair_end.lock().unwrap() = None;
         c.scan_start(5_000);
-        thread::sleep(Duration::from_millis(150));
+        // (Until the scan has found it, however slow the machine: a fixed wait failed on a loaded runner.)
+        let t = Instant::now();
+        while !c.snapshot().found.iter().any(|d| d.addr == A2) && t.elapsed() < Duration::from_secs(4) {
+            thread::sleep(Duration::from_millis(20));
+        }
         assert_eq!(c.act(A2, Op::Pair), End::Done);
         assert!(c.snapshot().scan_until.is_none(), "a pairing ends the scan (no inquiry while Windows pairs)");
         let s = c.snapshot();
