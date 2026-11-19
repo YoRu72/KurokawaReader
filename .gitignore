@@ -4,3 +4,5 @@ node_modules/
 __pycache__/
 .untangle/
 apps/*/meta.json
+# (Tools' scene engine as wasm: built by scripts/build-scene-wasm.sh in CI, never committed.)
+apps/tools/public/scene/ktscene.wasm

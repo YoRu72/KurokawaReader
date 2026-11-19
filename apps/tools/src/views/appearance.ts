@@ -11,6 +11,7 @@ import type { EditorDeps } from '../theme/editor';
 import { themeById, DEFAULT_THEME, type BlurPref } from '../theme/themes';
 import { themeGallery } from '../theme/gallery';
 import { themeIo } from '../themeIo';
+import { SCENE_GROUPS, sceneEntry } from '../theme/sceneList';
 
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
@@ -56,18 +57,31 @@ export function editorDeps(rerender: () => void): EditorDeps {
     keys: (handler) => undoScope(handler),
   };
 }
-const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel'] as const;
+const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel', 'animBgWhere', 'animBgTint', 'animBgReact'] as const;
 type AnimPref = NonNullable<Settings['animBg']>; type AnimLevel = NonNullable<Settings['animBgLevel']>;
 /** A computer's animated background: the choice, how much it moves, a live preview and one line saying what it does
  *  now and why (paused, still). Its engine (theme/animbg.ts) is fetched only once it is chosen. */
 function animRows(rerender: () => void): (HTMLElement | null)[] {
   const s = getSettings(); const pref: AnimPref = s.animBg ?? 'off';
   // (The hint says what the choice made does; a pick's third value would be an icon, so the words go here.)
-  const what = { off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') }[pref];
-  const choice = row(t('animBg'), pickButton(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')]], pref, (v) => { updateSettings({ animBg: v as AnimPref }); rerender(); }, t('close')), what);
+  // («Motes», «Night snowfall»: scenes of the Rust engine — core/kt-scene, loaded as wasm only when chosen; drift where it cannot load.)
+  // (The scenes are many: the row offers «Scene», and the grid below it shows them all, grouped, as pictures.)
+  const isSceneNow = pref.startsWith('scene:'); const entry = isSceneNow ? sceneEntry(pref.slice(6)) : undefined;
+  type Choice = 'off' | 'match' | 'drift' | 'flow' | 'scene';
+  const what = entry ? t(entry.hint as 'animBgHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
+  const choice = row(t('animBg'), pickButton<Choice>(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene', t('animBgScenes')]], isSceneNow ? 'scene' : (pref as Choice), (v) => { updateSettings({ animBg: v === 'scene' ? (isSceneNow ? pref : 'scene:night-snowfall') : v }); rerender(); }, t('close')), what);
   if (pref === 'off') return [choice];
+  const grid = isSceneNow ? sceneGrid(pref.slice(6), rerender) : null;
   const level: AnimLevel = s.animBgLevel ?? 'full';
   const levelRow = row(t('animBgLevel'), pickButton(t('animBgLevel'), [['full', t('animBgFull')], ['reduced', t('animBgReduced')], ['still', t('animBgStill')]], level, (v) => { updateSettings({ animBgLevel: v as AnimLevel }); rerender(); }, t('close')), level === 'full' ? t('animBgHint') : t(level === 'reduced' ? 'animBgReducedHint' : 'animBgStillHint'));
+  // (A scene: where it shows, whether the app's colours follow it, how much it answers the mouse.)
+  const scene = pref.startsWith('scene:');
+  const where = s.animBgWhere ?? 'whole'; const react = s.animBgReact ?? 'subtle';
+  const sceneRows = scene ? [
+    row(t('animBgWhereRow'), pickButton(t('animBgWhereRow'), [['whole', t('animBgWhole')], ['content', t('animBgContent')]], where, (v) => { updateSettings({ animBgWhere: v as 'whole' | 'content' }); rerender(); }, t('close')), t('animBgWhereHint')),
+    toggle(t('animBgTintRow'), s.animBgTint === true, (v) => { updateSettings({ animBgTint: v }); rerender(); }, t('animBgTintHint')),
+    row(t('animBgReactRow'), pickButton(t('animBgReactRow'), [['off', t('animBgReactOff')], ['subtle', t('animBgReactSubtle')], ['lively', t('animBgReactLively')]], react, (v) => { updateSettings({ animBgReact: v as 'off' | 'subtle' | 'lively' }); rerender(); }, t('close')), t('animBgReactHint')),
+  ] : [];
   const box = h('div', { class: 'abg-preview', role: 'img', 'aria-label': t('animBgPreview') }, h('div', { class: 'abg-sample' }, h('b', null, t('animBgSample')), h('small', null, t('animBgSampleDim'))));
   const now = h('small', { class: 'src abg-now', 'aria-live': 'polite' });
   void import('../theme/animbg').then((m) => {
@@ -78,13 +92,44 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
     const say = (): void => {
       if (!now.isConnected) { off(); stop(); return; }
       const st = m.animState(); const lv = getSettings().animBgLevel ?? 'full';
-      now.textContent = st.paused ? t(({ hidden: 'animBgPausedHidden', focus: 'animBgPausedFocus', video: 'animBgPausedVideo', fullscreen: 'animBgPausedFull' } as const)[st.paused])
+      now.textContent = st.fallback ? t('animBgSceneFallback') : st.paused ? t(({ hidden: 'animBgPausedHidden', focus: 'animBgPausedFocus', video: 'animBgPausedVideo', fullscreen: 'animBgPausedFull' } as const)[st.paused])
         : lv === 'still' ? t('animBgStillChosen') : st.still ? t(({ motion: 'animBgStillMotion', battery: 'animBgStillBattery', slow: 'animBgStillSlow' } as const)[st.still])
         : t(lv === 'reduced' ? 'animBgMovingReduced' : 'animBgMoving');
     };
     const off = m.watchAnim(say); say();
   });
-  return [choice, levelRow, h('div', { class: 'row abg-row' }, box, now)];
+  return [choice, grid, levelRow, ...sceneRows, h('div', { class: 'row abg-row' }, box, now)];
+}
+
+/** The scenes as a grid of pictures, grouped; each drawn once by the engine (theme/sceneThumbs.ts) and kept. A radio
+ *  group: the chosen one marked, Tab reaches it, the arrow keys move between them. */
+function sceneGrid(current: string, rerender: () => void): HTMLElement {
+  const tiles: HTMLButtonElement[] = [];
+  const pick = (id: string): void => { updateSettings({ animBg: `scene:${id}` }); rerender(); };
+  const groups = SCENE_GROUPS.map((gr) => h('div', { class: 'abg-group' }, h('div', { class: 'abg-group-title' }, t(gr.key as 'animBg')),
+    h('div', { class: 'abg-tiles' }, ...gr.scenes.map((sc) => {
+      const on = sc.id === current;
+      const b = h('button', { type: 'button', class: 'abg-tile' + (on ? ' on' : ''), role: 'radio', 'aria-checked': on ? 'true' : 'false', tabindex: on ? '0' : '-1', 'data-scene': sc.id, title: t(sc.hint as 'animBg'), onclick: () => pick(sc.id) },
+        h('span', { class: 'abg-thumb' }), h('span', { class: 'abg-name' }, t(sc.name as 'animBg'))) as HTMLButtonElement;
+      tiles.push(b); return b;
+    }))));
+  const grid = h('div', { class: 'abg-grid', role: 'radiogroup', 'aria-label': t('animBgScenes'), onkeydown: (e: KeyboardEvent) => {
+    const i = tiles.indexOf(document.activeElement as HTMLButtonElement); if (i < 0) return;
+    const rtl = document.documentElement.dir === 'rtl'; const fwd = ['ArrowDown', rtl ? 'ArrowLeft' : 'ArrowRight']; const back = ['ArrowUp', rtl ? 'ArrowRight' : 'ArrowLeft'];
+    const j = fwd.includes(e.key) ? (i + 1) % tiles.length : back.includes(e.key) ? (i - 1 + tiles.length) % tiles.length : e.key === 'Home' ? 0 : e.key === 'End' ? tiles.length - 1 : -1;
+    if (j < 0) return; e.preventDefault(); tiles[i].tabIndex = -1; tiles[j].tabIndex = 0; tiles[j].focus();
+  } }, ...groups);
+  if (!tiles.some((b) => b.tabIndex === 0) && tiles[0]) tiles[0].tabIndex = 0;
+  // (The pictures: drawn one after another once the grid is on the page.)
+  void import('../theme/sceneThumbs').then(async (m) => {
+    await new Promise((r) => requestAnimationFrame(r));
+    for (const b of tiles) {
+      if (!grid.isConnected) break;
+      const url = await m.sceneThumb(b.dataset.scene!); const th = b.querySelector<HTMLElement>('.abg-thumb'); if (!th) continue;
+      th.style.backgroundImage = url.startsWith('gradient:') ? url.slice(9) : `url("${url}")`; th.classList.add('drawn');
+    }
+  });
+  return h('div', { class: 'row abg-grid-row' }, grid);
 }
 
 export function appearanceCard(rerender: () => void): HTMLElement {
@@ -124,7 +169,7 @@ export function appearanceCard(rerender: () => void): HTMLElement {
     row(t('accent'), swatches, ownColours ? t('accentThemeHint') : undefined),
     h('div', { class: 'row' }, h('span', null, t('appearanceReset'), h('small', { class: 'src' }, t('appearanceResetHint'))), h('button', { type: 'button', class: 'btn text small', onclick: () => {
       const cur = getSettings(); const before = Object.fromEntries(RESET_KEYS.map((k) => [k, cur[k]])) as Partial<Settings>;
-      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined, animBg: undefined, animBgLevel: undefined }); reloadThemePictures(); rerender();
+      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined, animBg: undefined, animBgLevel: undefined, animBgWhere: undefined, animBgTint: undefined, animBgReact: undefined }); reloadThemePictures(); rerender();
       toast(t('appearanceResetDone'), 'info', 6000, { label: t('undo'), run: () => { updateSettings(before); reloadThemePictures(); rerender(); } });
     } }, icon('refresh'), t('appearanceReset'))),
     def.by ? h('div', { class: 'row theme-credit' }, h('span', null, t('themeBy', { who: def.by }), h('small', { class: 'src' }, t('themeLicence'))), h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses'))) : null);

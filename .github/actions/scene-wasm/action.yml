@@ -1,0 +1,17 @@
+name: Scene engine (wasm)
+description: >-
+  Builds Kurokawa Tools' scene engine (apps/tools/core/kt-scene) to apps/tools/public/scene/ktscene.wasm with the
+  pinned Rust toolchain (scripts/build-scene-wasm.sh). Run it before the web build of any workflow that ships Tools'
+  web app to a computer (Electron, Tauri, the site); the binary is never committed.
+inputs:
+  tests:
+    description: "'true': the crate's native tests first"
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Build ktscene.wasm
+      shell: bash
+      # (A composite step runs from the workspace root, whatever the job's working-directory.)
+      run: bash scripts/build-scene-wasm.sh ${{ inputs.tests == 'true' && ' ' || '--no-tests' }}

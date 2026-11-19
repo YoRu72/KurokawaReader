@@ -1,0 +1,61 @@
+{
+  "format": "ktscene/1",
+  "meta": { "id": "aurora-lake", "name": "Aurora over a lake" },
+  "view": { "fps": 24, "resolution": 0.5 },
+  "space": { "w": 1600, "h": 1000, "overscan": 0.06, "fit": "cover" },
+  "palette": [
+    { "id": "sky0", "dark": "#02050f", "light": "#8fa3cc" },
+    { "id": "sky1", "dark": "#06122b", "light": "#a9b9dc" },
+    { "id": "sky2", "dark": "#0b2140", "light": "#c3cfe9" },
+    { "id": "sky3", "dark": "#123150", "light": "#d6def0" },
+    { "id": "glow", "dark": "#1c6f68", "light": "#b4e4da" },
+    { "id": "aur1", "dark": "#43f0a4", "light": "#2fae7c" },
+    { "id": "aur2", "dark": "#8a76ff", "light": "#6f5fd0" },
+    { "id": "aur3", "dark": "#2cd2c6", "light": "#2a9f98" },
+    { "id": "far", "dark": "#0c1c33", "light": "#7286ad" },
+    { "id": "near", "dark": "#040a16", "light": "#3f5278" },
+    { "id": "star", "dark": "#e4ecff", "light": "#ffffff" },
+    { "id": "water", "dark": "#03101f", "light": "#7d93bd" },
+    { "id": "mist", "dark": "#2f6e86", "light": "#e8f0fb" }
+  ],
+  "ui": {
+    "dark": { "accent": "#5fe3b4", "accent2": "#a495ff", "tint": "#0f2a3c" },
+    "light": { "accent": "#1f7a5a", "accent2": "#5a4cc0", "tint": "#b7c8e6" }
+  },
+  "params": [{ "id": "amount", "type": "slider", "min": 0, "max": 1, "default": 1 }],
+  "layers": [
+    { "id": "sky", "kind": "sky", "depth": 0, "parallax": 0,
+      "params": { "stops": [[0, "sky0"], [0.35, "sky1"], [0.58, "sky2"], [0.66, "sky3"]], "glow": { "x": 0.45, "y": 0.62, "r": 0.7, "colour": "glow", "alpha": 0.3 } } },
+    { "id": "stars", "depth": 0.03, "parallax": 0.04 },
+    { "id": "aurora", "kind": "ribbon", "depth": 0.08, "parallax": 0.08, "blend": "screen",
+      "params": { "y": 0.24, "amp": 0.07, "thickness": 0.24, "bands": 3, "speed": 0.04, "freq": 1.4, "alpha": 0.5, "colours": ["aur1", "aur3", "aur2"] } },
+    { "id": "ridge", "kind": "silhouette", "depth": 0.2,
+      "params": { "form": "ridge", "base": 0.6, "amp": 0.1, "rough": 0.35, "colour": "far", "hazeColour": "glow", "haze": 0.3 } },
+    { "id": "shore", "kind": "silhouette", "depth": 0.35,
+      "params": { "form": "hills", "base": 0.655, "amp": 0.025, "colour": "near" } },
+    { "id": "lake", "kind": "mirror", "depth": 0.4,
+      "params": { "y": 0.66, "ripple": 5, "alpha": 0.7, "tint": "water", "strength": 0.45 } },
+    { "id": "mist", "kind": "fog", "depth": 0.5,
+      "params": { "y": 0.67, "h": 0.03, "count": 6, "size": 650, "speed": 4, "alpha": 0.07, "colour": "mist" } },
+    { "id": "reeds", "kind": "silhouette", "depth": 0.92,
+      "params": { "form": "reeds", "base": 1.0, "count": 60, "h0": 0.05, "h1": 0.15, "colour": "near" } }
+  ],
+  "emitters": [
+    {
+      "id": "stars", "layer": "stars", "group": "stars", "max": 180, "rate": 5, "prewarm": 1, "wind": 0, "densityParam": "amount",
+      "shape": { "kind": "rect", "x": 0, "y": 0, "w": 1, "h": 0.55 },
+      "initializers": [
+        { "kind": "lifetime", "min": 20, "max": 45 },
+        { "kind": "size", "min": 1.6, "max": 3.4 },
+        { "kind": "alpha", "min": 0.35, "max": 0.9 },
+        { "kind": "velocity", "min": [-0.4, -0.1], "max": [0.4, 0.1] },
+        { "kind": "colour", "roles": ["star"] },
+        { "kind": "sprite", "id": 1 }
+      ],
+      "operators": [
+        { "kind": "fade", "in": 0.2, "out": 0.25 },
+        { "kind": "bounds", "mode": "wrap", "margin": 4 }
+      ]
+    }
+  ]
+}

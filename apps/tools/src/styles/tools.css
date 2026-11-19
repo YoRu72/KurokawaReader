@@ -1492,6 +1492,20 @@ html:not(.pc) .files-view.has-fast .files-body:has(> .files-list:not(.gallery)) 
 .files-7z-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 :dir(rtl) .files-qline bdi { text-align: right; }
 html.pc .sheet .chip-row.files-filters { display: flex; flex-direction: column; gap: 10px; }
+/* The scenes picker (Settings → Appearance, a computer): pictures in groups, the chosen one ringed in the accent. */
+.settings-view .card > .row.abg-grid-row { display: block; }
+.abg-grid { display: flex; flex-direction: column; gap: 14px; }
+.abg-group-title { font-size: 12.5px; font-weight: 600; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+.abg-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.abg-tile { display: flex; flex-direction: column; gap: 6px; padding: 4px; border: 0; border-radius: var(--sh-md, 14px); background: none; color: var(--md-on-surface); font: inherit; font-size: 13px; text-align: start; cursor: pointer; }
+.abg-tile:hover .abg-thumb { box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-on-surface) 30%, transparent); }
+.abg-tile:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.abg-thumb { display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: var(--sh-sm, 10px); background: var(--md-surface-container-high) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--md-outline-variant); transition: opacity .25s; opacity: .55; }
+.abg-thumb.drawn { opacity: 1; }
+.abg-tile.on .abg-thumb { box-shadow: 0 0 0 3px var(--md-primary); }
+.abg-tile.on .abg-name { font-weight: 650; color: var(--md-primary); }
+.abg-name { padding-inline: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* (With the Jobs button there are eight buttons on a phone's Files bar: each a little narrower so they stay on one row beside the back button.) */
 @media (max-width: 420px) { .view > .topbar:has(.files-jobs-btn:not([hidden])) :is(.icon-btn) { width: 36px; } .view > .topbar:has(.files-jobs-btn:not([hidden])) .topbar-actions { gap: 0; } }
 /* (The unfinished-jobs bar: clear of the round add button, and its words kept a real gap from the buttons.) */

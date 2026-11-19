@@ -1,0 +1,475 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "snowflakes",
+  "name": "Snowflakes"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#020a18",
+   "light": "#87a9d0"
+  },
+  {
+   "id": "sky1",
+   "dark": "#06213b",
+   "light": "#a3c0e2"
+  },
+  {
+   "id": "sky2",
+   "dark": "#0c3a5c",
+   "light": "#bcd4ee"
+  },
+  {
+   "id": "glow",
+   "dark": "#4fc8f0",
+   "light": "#ffffff"
+  },
+  {
+   "id": "bok",
+   "dark": "#6fb8e0",
+   "light": "#ffffff"
+  },
+  {
+   "id": "flake",
+   "dark": "#e9f7ff",
+   "light": "#ffffff"
+  },
+  {
+   "id": "flake2",
+   "dark": "#bfe6ff",
+   "light": "#f2f9ff"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#7fd8ff",
+   "accent2": "#b3a4ff",
+   "tint": "#0b2c48"
+  },
+  "light": {
+   "accent": "#1d6f99",
+   "accent2": "#5a4ab0",
+   "tint": "#b9d4ea"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky2"
+     ],
+     [
+      0.55,
+      "sky1"
+     ],
+     [
+      1,
+      "sky0"
+     ]
+    ],
+    "glow": {
+     "x": 0.5,
+     "y": -0.05,
+     "r": 0.9,
+     "colour": "glow",
+     "alpha": 0.28
+    }
+   }
+  },
+  {
+   "id": "bokeh",
+   "kind": "bokeh",
+   "depth": 0.1,
+   "parallax": 0.08,
+   "params": {
+    "count": 26,
+    "y0": 0.0,
+    "y1": 1.0,
+    "rmin": 30,
+    "rmax": 90,
+    "alpha": 0.1,
+    "colours": [
+     "bok"
+    ]
+   }
+  },
+  {
+   "id": "far",
+   "depth": 0.2
+  },
+  {
+   "id": "mid",
+   "depth": 0.55
+  },
+  {
+   "id": "near",
+   "depth": 0.92
+  }
+ ],
+ "emitters": [
+  {
+   "id": "far",
+   "layer": "far",
+   "max": 420,
+   "rate": 30,
+   "prewarm": 1,
+   "wind": 0.4,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 30,
+     "max": 60
+    },
+    {
+     "kind": "size",
+     "min": 2,
+     "max": 3.6
+    },
+    {
+     "kind": "alpha",
+     "min": 0.4,
+     "max": 0.8
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -4,
+      12
+     ],
+     "max": [
+      4,
+      22
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "flake",
+      "flake2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 1
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.004,
+     "speed": 0.05,
+     "strength": 4
+    },
+    {
+     "kind": "drag",
+     "k": 0.1
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 8
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "mid",
+   "layer": "mid",
+   "max": 130,
+   "rate": 8,
+   "prewarm": 1,
+   "wind": 0.7,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 40,
+     "max": 70
+    },
+    {
+     "kind": "size",
+     "min": 9,
+     "max": 15
+    },
+    {
+     "kind": "alpha",
+     "min": 0.6,
+     "max": 0.95
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -6,
+      16
+     ],
+     "max": [
+      6,
+      28
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -0.5,
+     "max": 0.5
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "flake",
+      "flake2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 5
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.003,
+     "speed": 0.05,
+     "strength": 6
+    },
+    {
+     "kind": "drag",
+     "k": 0.1
+    },
+    {
+     "kind": "pointer",
+     "strength": -60,
+     "radius": 180
+    },
+    {
+     "kind": "click",
+     "impulse": 120,
+     "radius": 240
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 20
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "mid2",
+   "layer": "mid",
+   "max": 90,
+   "rate": 6,
+   "prewarm": 1,
+   "wind": 0.7,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 40,
+     "max": 70
+    },
+    {
+     "kind": "size",
+     "min": 10,
+     "max": 17
+    },
+    {
+     "kind": "alpha",
+     "min": 0.6,
+     "max": 0.95
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -6,
+      16
+     ],
+     "max": [
+      6,
+      28
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -0.5,
+     "max": 0.5
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "flake"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 6
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.003,
+     "speed": 0.05,
+     "strength": 6
+    },
+    {
+     "kind": "drag",
+     "k": 0.1
+    },
+    {
+     "kind": "pointer",
+     "strength": -60,
+     "radius": 180
+    },
+    {
+     "kind": "click",
+     "impulse": 120,
+     "radius": 240
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 20
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "near",
+   "layer": "near",
+   "max": 22,
+   "rate": 1.2,
+   "prewarm": 1,
+   "wind": 1,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 30,
+     "max": 50
+    },
+    {
+     "kind": "size",
+     "min": 26,
+     "max": 40
+    },
+    {
+     "kind": "alpha",
+     "min": 0.7,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -8,
+      24
+     ],
+     "max": [
+      8,
+      40
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -0.35,
+     "max": 0.35
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "flake"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 7
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.002,
+     "speed": 0.05,
+     "strength": 8
+    },
+    {
+     "kind": "drag",
+     "k": 0.1
+    },
+    {
+     "kind": "pointer",
+     "strength": -80,
+     "radius": 220
+    },
+    {
+     "kind": "click",
+     "impulse": 160,
+     "radius": 280
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 40
+    },
+    {
+     "kind": "fade",
+     "in": 0.08,
+     "out": 0.08
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}
