@@ -225,7 +225,8 @@ pub fn windows_name(major: u32, minor: u32, build: u32) -> (String, String) {
 /// This system's name and version for the report: Linux's distribution and kernel (from /etc/os-release and the kernel's
 /// own file — no host name), Windows' number, a Mac's product version. Empty parts when it cannot be read.
 pub fn os_info() -> (String, String) {
-    #[cfg(windows)]
+    // (Not in the test builds: the std-only test root, stdroots/core.rs, has no `win` module on Windows.)
+    #[cfg(all(windows, not(test)))]
     {
         return match crate::win::console::os_version() {
             Some((a, b, c)) => windows_name(a, b, c),
