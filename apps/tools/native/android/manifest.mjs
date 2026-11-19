@@ -157,11 +157,14 @@ ${pathPatterns(['torrent']).map((p) => `        <data android:pathPattern="${p}"
 // (BLUETOOTH_CONNECT, Android 12+, asked on the page) — never BLUETOOTH_SCAN (nothing is searched for, so neither
 // location nor neverForLocation), never BLUETOOTH_ADMIN (nothing is paired). The old BLUETOOTH up to Android 11 only.
 // Bluetooth is not required: a phone without it still installs the app (the page says so calmly). ---
-if (!manifest.includes('BLUETOOTH_CONNECT')) {
-  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
-    <application`);
+// Each line added on its own: a manifest that already names one of them (a plugin's BLUETOOTH_CONNECT, say) still gets
+// the others, and none twice.
+{
+  const bt = [];
+  if (!/android:name="android\.permission\.BLUETOOTH"/.test(manifest)) bt.push('<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />');
+  if (!/android:name="android\.permission\.BLUETOOTH_CONNECT"/.test(manifest)) bt.push('<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />');
+  if (!/<uses-feature android:name="android\.hardware\.bluetooth"/.test(manifest)) bt.push('<uses-feature android:name="android.hardware.bluetooth" android:required="false" />');
+  if (bt.length) manifest = manifest.replace('<application', `${bt.join('\n    ')}\n    <application`);
 }
 // --- the screen translator (the «Translate on screen» add-on): appearing over other apps, reading the screen's text
 // (accessibility service) or a picture of it (screen capture), its foreground service and quick-settings tile ---

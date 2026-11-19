@@ -18,6 +18,9 @@ pub mod connect;
 pub mod defs;
 #[path = "../src/fastpair.rs"]
 pub mod fastpair;
+#[cfg(test)]
+#[path = "../src/fuzz.rs"]
+mod fuzz;
 #[path = "../src/galaxybuds.rs"]
 pub mod galaxybuds;
 #[path = "../src/heads/mod.rs"]

@@ -50,14 +50,19 @@ fn pmo_read(ch: &mut Chans, cable: bool, deadline: Instant) -> Result<Option<u8>
         // (The link waking up.)
         s = out_ask(ch, &start, ms(600), deadline, &mut echo(0x10));
     }
-    let ok = match s {
-        Ok(r) => r[7] == 0x55,
-        Err(TErr::Gone) => return Err(TErr::Gone),
-        Err(_) => false,
-    };
-    let level = if ok { out_ask(ch, &BATTERY, ms(600), deadline, &mut echo(0x30)).ok().filter(|r| r[7] == 0x55).map(|r| r[8]) } else { None };
-    // (Always closed, in case START was taken.)
-    let _ = out_ask(ch, &stop, ms(300), deadline, &mut echo(0x11));
+    // (START refused before anything went out: no session to close.)
+    if s == Err(TErr::Refused) {
+        return Err(TErr::Refused);
+    }
+    let gone = s == Err(TErr::Gone);
+    let ok = matches!(&s, Ok(r) if r.get(7) == Some(&0x55));
+    let level = if ok { out_ask(ch, &BATTERY, ms(600), deadline, &mut echo(0x30)).ok().filter(|r| r.get(7) == Some(&0x55)).and_then(|r| r.get(8).copied()) } else { None };
+    // (Always closed, in case START was taken — with its own time (mod.rs's close_deadline): a read whose time ran out
+    // still closes the session.)
+    let _ = out_ask(ch, &stop, CLOSE_STEP, close_deadline(), &mut echo(0x11));
+    if gone {
+        return Err(TErr::Gone);
+    }
     if !ok {
         return Err(TErr::Timeout);
     }
@@ -117,5 +122,29 @@ mod tests {
         f.replies.extend([vec![rep(0x10, &[(7, 0x55)])], vec![rep(0x30, &[(7, 0x55), (8, 101)])], vec![]]);
         assert_eq!(read1(&mut f, c), no_level(Charging::Unknown, 7));
         assert_eq!(f.sent, vec![START_CABLE.to_vec(), BATTERY.to_vec(), STOP_CABLE.to_vec()]);
+    }
+
+    #[test]
+    fn stop_is_sent_after_the_time_ran_out() {
+        let c = model("mk-pmo", 0x3009);
+        // (START answered, the battery step silent until the read's deadline: STOP still sent, with its own time.)
+        let mut f = fake(c);
+        f.wait_when_quiet = true;
+        f.replies.extend([vec![rep(0x10, &[(7, 0x55)])], vec![], vec![]]);
+        let soon = Instant::now() + ms(120);
+        assert_eq!(crate::mice::read(&mut Chans::one(&mut f), c, None, true, soon, 7).out, no_level(Charging::Unknown, 7));
+        assert!(Instant::now() >= soon);
+        assert_eq!(f.sent, vec![START_CABLE.to_vec(), BATTERY.to_vec(), STOP_CABLE.to_vec()], "STOP after a timed-out middle step");
+        // (START's replies lost — the resend found no time left: STOP still sent.)
+        let mut f = fake(c);
+        f.wait_when_quiet = true;
+        let soon = Instant::now() + ms(120);
+        assert_eq!(crate::mice::read(&mut Chans::one(&mut f), c, None, true, soon, 7).out, dozing(7));
+        assert_eq!(f.sent.first(), Some(&START_CABLE.to_vec()));
+        assert_eq!(f.sent.last(), Some(&STOP_CABLE.to_vec()), "STOP after lost START replies: {:?}", f.sent);
+        // (A short START echo: no session, never an index past its end.)
+        let mut f = fake(c);
+        f.replies.extend([vec![report(0xAA, 9, &[(1, 0x10)])], vec![]]);
+        assert_eq!(read1(&mut f, c), dozing(7));
     }
 }

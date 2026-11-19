@@ -55,9 +55,17 @@ final class KtBatPure {
         return "other";
     }
 
-    private static int num(Object o) {
+    /** A number the event carries; Integer.MIN_VALUE when there is none (a Number beyond int's range is none). */
+    static int num(Object o) {
         if (o instanceof Integer) return (Integer) o;
-        if (o instanceof Number) return ((Number) o).intValue();
+        if (o instanceof Long || o instanceof Short || o instanceof Byte) {
+            long v = ((Number) o).longValue();
+            return v < Integer.MIN_VALUE + 1L || v > Integer.MAX_VALUE ? Integer.MIN_VALUE : (int) v;
+        }
+        if (o instanceof Number) {
+            double v = ((Number) o).doubleValue();
+            return Double.isNaN(v) || v != Math.rint(v) || v <= Integer.MIN_VALUE || v > Integer.MAX_VALUE ? Integer.MIN_VALUE : (int) v;
+        }
         if (o instanceof String) { try { return Integer.parseInt(((String) o).trim()); } catch (NumberFormatException e) { return Integer.MIN_VALUE; } }
         return Integer.MIN_VALUE;
     }
@@ -68,7 +76,9 @@ final class KtBatPure {
      */
     static int fromAppleEvent(Object[] args) {
         if (args == null || args.length < 3) return -1;
-        int pairs = num(args[0]); if (pairs <= 0 || args.length < 1 + pairs * 2) return -1;
+        int pairs = num(args[0]);
+        // (Compared by division: a hostile count such as 2^30 must not overflow pairs × 2.)
+        if (pairs <= 0 || pairs > (args.length - 1) / 2) return -1;
         for (int i = 0; i < pairs; i++) {
             int key = num(args[1 + i * 2]), val = num(args[2 + i * 2]);
             if (key == 1) return val < 0 || val > 9 ? -1 : (val + 1) * 10;
@@ -82,7 +92,8 @@ final class KtBatPure {
         if (!(args[0] instanceof String) || !"BATTERY".equalsIgnoreCase(((String) args[0]).trim())) return -1;
         int level = num(args[1]), levels = num(args[2]);
         if (level < 0 || levels <= 1 || level > levels) return -1;
-        return Math.min(100, level * 100 / (levels - 1));
+        // (In long: level × 100 overflows int for a hostile level.)
+        return (int) Math.min(100L, (long) level * 100L / ((long) levels - 1L));
     }
 
     /** A level the system gave (BluetoothDevice.getBatteryLevel, the BATTERY_LEVEL_CHANGED broadcast): 0–100, else -1. */

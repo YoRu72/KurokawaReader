@@ -8,7 +8,9 @@
 // Kept in <app data>/battery-defs.json ({ version: 1, list: [{ id, on, mineFirst, text }] }, at most 50; written to a
 // temp file, then renamed): each definition as its canonical text, read and checked again on every load (one that no
 // longer passes is dropped). The loop gets the definitions that are on through runner::Prefs::defs.
-// The bridge's methods (../../bridge.js): batteryDefs() → { list, max, teach } (an entry: { id, on, mineFirst, name,
+// A file not wholly good is renamed to battery-defs.json.bad (one kept) before anything is saved over it.
+// The bridge's methods (../../bridge.js): batteryDefs() → { list, max, teach, aside } (aside: true once, after the file
+// was set aside; an entry: { id, on, mineFirst, name,
 // kind, note, vid, pid, usagePage, usage, interface, productName, builtin, level: { report, byte, mask, shift, how:
 // 'scale' | 'steps' | 'table' }, charging }); batteryDefImport({ text, mineFirst? }) → { ok: true, id, list } or { ok:
 // false, error: { code, field } } (code 'builtin' with field the family: the page asks «use mine instead?» and sends
@@ -19,8 +21,9 @@
 // changing }], marks: [{ kind, at }], level: [candidates with their preview], charging: [candidates] } (the proposals
 // are worked out from the marks each time — «propose»); batteryTeachMark({ mark, undo? }) → the state (or { error:
 // 'quiet' | 'tooMany' }); batteryTeachSave({ level, charging?, name, kind }) → { ok, id } — the definition made, kept,
-// switched on, and the captured bytes dropped; batteryTeachClose() drops them too (the page calls it whenever its sheet
-// closes). The captured bytes live only in this process's memory: never written, never logged.
+// switched on, and the captured bytes dropped; batteryTeachClose({ o }) drops them too (the page calls it whenever its
+// sheet closes). «o»: the page's per-sheet token, sent with batteryTeachStart too — a start that finishes after its
+// sheet closed stops and keeps nothing; a run nobody polls for 30 s stops itself (teach.rs IDLE_MS). The captured bytes live only in this process's memory: never written, never logged.
 // Copyright (C) 2026 Kurokawa contributors.
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -51,9 +54,24 @@ struct Session {
     target: Target,
     cap: Arc<Mutex<Capture>>,
     run: Option<Listening>,
+    /// The page's sheet that started it (its token «o»; "" for none).
+    sheet: String,
 }
 
 static TEACH: Mutex<Option<Session>> = Mutex::new(None);
+/// The sheets already closed (their tokens, the latest few): a start that finishes after its sheet closed stops at once
+/// and keeps nothing. Written and read under TEACH's lock.
+static CLOSED: Mutex<std::collections::VecDeque<String>> = Mutex::new(std::collections::VecDeque::new());
+const CLOSED_KEPT: usize = 32;
+
+/// The page's per-sheet token: short, plain.
+fn sheet_of(o: &Value) -> String {
+    o.get("o").and_then(Value::as_str).filter(|s| s.len() <= 64 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')).unwrap_or("").to_string()
+}
+
+fn closed(sheet: &str) -> bool {
+    !sheet.is_empty() && CLOSED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|s| s == sheet)
+}
 
 pub(crate) fn set_platform(p: Arc<dyn Platform>) {
     *PLAT.lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
@@ -63,28 +81,64 @@ fn file(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join(FILE))
 }
 
-/// The definitions, read once (a damaged file or entry is dropped, never run).
+/// The file was set aside on this run's first read (told to the page once, by batteryDefs).
+static ASIDE: Mutex<bool> = Mutex::new(false);
+
+/// Where a damaged definitions file is kept: «battery-defs.json.bad» (one kept).
+fn bad_path(p: &std::path::Path) -> PathBuf {
+    let mut s = p.as_os_str().to_os_string();
+    s.push(".bad");
+    PathBuf::from(s)
+}
+
+/// What is read from the file: its good entries, and whether all of it was good.
+fn read_file(p: &std::path::Path) -> (Vec<Stored>, bool) {
+    let mut out: Vec<Stored> = Vec::new();
+    let Ok(m) = std::fs::metadata(p) else { return (out, true) };
+    if m.len() > (defs::MAX_DEFS * (defs::MAX_FILE + 256)) as u64 {
+        return (out, false);
+    }
+    let Ok(bytes) = std::fs::read(p) else { return (out, false) };
+    let Some(v) = String::from_utf8(bytes).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { return (out, false) };
+    let Some(list) = v.get("list").and_then(Value::as_array) else { return (out, false) };
+    let mut whole = list.len() <= defs::MAX_DEFS;
+    for e in list.iter().take(defs::MAX_DEFS) {
+        let (Some(id), Some(t)) = (e.get("id").and_then(Value::as_str), e.get("text").and_then(Value::as_str)) else {
+            whole = false;
+            continue;
+        };
+        let Ok(def) = defs::parse(t) else {
+            whole = false;
+            continue;
+        };
+        if !clean_id(id) || out.iter().any(|s| s.id == id) {
+            whole = false;
+            continue;
+        }
+        out.push(Stored { id: id.to_string(), on: e.get("on").and_then(Value::as_bool).unwrap_or(true), mine_first: e.get("mineFirst").and_then(Value::as_bool).unwrap_or(false), def });
+    }
+    (out, whole)
+}
+
+/// The definitions, read once (a damaged entry is dropped, never run). A file not wholly good — not JSON, no list, too
+/// large, any entry that no longer passes — is first renamed to «.bad» (an earlier one replaced), so that no save ever
+/// replaces it silently; the page says so once.
 fn load(app: &AppHandle) -> Vec<Stored> {
     let mut g = DEFS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(v) = g.as_ref() {
         return v.clone();
     }
-    let text = file(app).and_then(|p| {
-        let m = std::fs::metadata(&p).ok()?;
-        if m.len() > (defs::MAX_DEFS * (defs::MAX_FILE + 256)) as u64 {
-            return None;
+    let mut out = Vec::new();
+    if let Some(p) = file(app) {
+        let (list, whole) = read_file(&p);
+        out = list;
+        if !whole {
+            let bad = bad_path(&p);
+            let _ = std::fs::remove_file(&bad);
+            if std::fs::rename(&p, &bad).is_ok() {
+                *ASIDE.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            }
         }
-        std::fs::read_to_string(p).ok()
-    });
-    let v: Value = text.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
-    let mut out: Vec<Stored> = Vec::new();
-    for e in v.get("list").and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or(&[]).iter().take(defs::MAX_DEFS) {
-        let (Some(id), Some(t)) = (e.get("id").and_then(Value::as_str), e.get("text").and_then(Value::as_str)) else { continue };
-        let Ok(def) = defs::parse(t) else { continue };
-        if !clean_id(id) || out.iter().any(|s| s.id == id) {
-            continue;
-        }
-        out.push(Stored { id: id.to_string(), on: e.get("on").and_then(Value::as_bool).unwrap_or(true), mine_first: e.get("mineFirst").and_then(Value::as_bool).unwrap_or(false), def });
     }
     *g = Some(out.clone());
     out
@@ -186,7 +240,14 @@ fn add(app: &AppHandle, def: Definition, mine_first: bool) -> Value {
 
 #[tauri::command]
 pub async fn kt_battery_defs(app: AppHandle) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || json!({ "list": list_json(&load(&app)), "max": defs::MAX_DEFS, "teach": cfg!(any(windows, target_os = "linux")) })).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let list = load(&app);
+        // (Told once: a file set aside on this run's first read.)
+        let aside = std::mem::take(&mut *ASIDE.lock().unwrap_or_else(|e| e.into_inner()));
+        json!({ "list": list_json(&list), "max": defs::MAX_DEFS, "teach": cfg!(any(windows, target_os = "linux")), "aside": aside })
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -334,13 +395,21 @@ fn teach_lock() -> std::sync::MutexGuard<'static, Option<Session>> {
 pub async fn kt_battery_teach_start(app: AppHandle, o: Value) -> Result<Value, String> {
     let id = o.get("id").and_then(Value::as_str).filter(|s| !s.is_empty() && s.len() <= 400).map(str::to_string).ok_or("no device id")?;
     let seconds = o.get("seconds").and_then(Value::as_u64).unwrap_or(teach::DEFAULT_SECONDS).min(teach::MAX_SECONDS);
+    let sheet = sheet_of(&o);
     tauri::async_runtime::spawn_blocking(move || -> Result<Value, String> {
+        if closed(&sheet) {
+            return Ok(json!({ "open": false }));
+        }
         let p = platform(&app).ok_or("not on this system")?;
         let target = p.teach_targets().into_iter().find(|t| t.id == id).ok_or("this device is not connected now")?;
         if target.verdict != teach::Verdict::Allowed {
             return Err(format!("not listened to: {}", target.verdict.as_str()));
         }
         let mut g = teach_lock();
+        // (Its sheet closed while this start was on the way — close took the lock first: nothing starts.)
+        if closed(&sheet) {
+            return Ok(json!({ "open": false }));
+        }
         // (Another device: its session ends and its bytes are dropped. The same one: its marks kept, a new run.)
         if g.as_ref().map_or(false, |s| s.target.id != id) {
             g.take();
@@ -351,7 +420,13 @@ pub async fn kt_battery_teach_start(app: AppHandle, o: Value) -> Result<Value, S
         let t = p.teach_open(&id).map_err(|e| format!("{:?}", e))?;
         let cap = g.as_ref().map(|s| s.cap.clone()).unwrap_or_else(|| Arc::new(Mutex::new(Capture::default())));
         let run = Listening::start(t, seconds, cap.clone(), Arc::new(crate::battery::now_ms_pub)).map_err(|e| format!("{:?}", e))?;
-        *g = Some(Session { target, cap, run: Some(run) });
+        // (Checked again under the same lock, after the run began: a sheet closed meanwhile stops it and drops it.)
+        if closed(&sheet) {
+            run.stop();
+            g.take();
+            return Ok(json!({ "open": false }));
+        }
+        *g = Some(Session { target, cap, run: Some(run), sheet });
         Ok(state_json(g.as_ref()))
     })
     .await
@@ -373,7 +448,16 @@ pub async fn kt_battery_teach_stop() -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn kt_battery_teach_state() -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || state_json(teach_lock().as_ref())).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let g = teach_lock();
+        // (The page looked: the run is not idle — teach.rs stops one nobody looks at for IDLE_MS.)
+        if let Some(s) = g.as_ref() {
+            s.cap.lock().unwrap_or_else(|e| e.into_inner()).touch(crate::battery::now_ms_pub());
+        }
+        state_json(g.as_ref())
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -433,10 +517,23 @@ pub async fn kt_battery_teach_save(app: AppHandle, o: Value) -> Result<Value, St
 }
 
 #[tauri::command]
-pub async fn kt_battery_teach_close() -> Result<Value, String> {
+pub async fn kt_battery_teach_close(o: Value) -> Result<Value, String> {
+    let sheet = sheet_of(&o);
     tauri::async_runtime::spawn_blocking(move || {
-        // (The run stopped — its handle closed — and every captured byte dropped.)
-        let had = teach_lock().take().is_some();
+        // (The session lock first, then the sheet remembered as closed: a start still on the way sees it under that
+        // lock. The run stopped — its handle closed — and every captured byte dropped; another sheet's session is left.)
+        let mut g = teach_lock();
+        if !sheet.is_empty() {
+            let mut c = CLOSED.lock().unwrap_or_else(|e| e.into_inner());
+            if !c.iter().any(|s| *s == sheet) {
+                c.push_back(sheet.clone());
+                while c.len() > CLOSED_KEPT {
+                    c.pop_front();
+                }
+            }
+        }
+        let mine = g.as_ref().map_or(false, |s| sheet.is_empty() || s.sheet.is_empty() || s.sheet == sheet);
+        let had = mine && g.take().is_some();
         json!(had)
     })
     .await

@@ -405,13 +405,13 @@
     batteryHistory: function (o) { return call('kt_battery_history', { o: obj(o) }); },
     batteryHistoryClear: function (o) { return call('kt_battery_history_clear', { o: obj(o) }); },
     /* 0.21 W3 — the user's own device definitions and «Teach me this device» (batdefs.rs over kt-battery defs.rs and
-       teach.rs; listened to only — nothing is ever sent to a device): batteryDefs() → { list, max, teach };
+       teach.rs; listened to only — nothing is ever sent to a device): batteryDefs() → { list, max, teach, aside };
        batteryDefImport({ text, mineFirst? }) → { ok, id?, list?, error?: { code, field } }; batteryDefExport({ id }) →
        { name, text }; batteryDefRemove({ id }) and batteryDefSet({ id, on?, mineFirst? }) → { list };
-       batteryTeachList() → { available, devices }; batteryTeachStart({ id, seconds? }), batteryTeachStop(),
+       batteryTeachList() → { available, devices }; batteryTeachStart({ id, seconds?, o }), batteryTeachStop(),
        batteryTeachState(), batteryTeachMark({ mark, undo? }) → the session's state (live rows, marks, proposals);
-       batteryTeachSave({ level, charging?, name, kind }) → { ok, id?, error? }; batteryTeachClose() drops every captured
-       byte (in memory only). */
+       batteryTeachSave({ level, charging?, name, kind }) → { ok, id?, error? }; batteryTeachClose({ o }) drops every captured
+       byte (in memory only; «o» the page's per-sheet token: a start that ends after its sheet closed keeps nothing). */
     batteryDefs: function () { return call('kt_battery_defs'); },
     batteryDefImport: function (o) { return call('kt_battery_def_import', { o: obj(o) }); },
     batteryDefExport: function (o) { return call('kt_battery_def_export', { o: obj(o) }); },
@@ -423,7 +423,7 @@
     batteryTeachState: function () { return call('kt_battery_teach_state'); },
     batteryTeachMark: function (o) { return call('kt_battery_teach_mark', { o: obj(o) }); },
     batteryTeachSave: function (o) { return call('kt_battery_teach_save', { o: obj(o) }); },
-    batteryTeachClose: function () { return call('kt_battery_teach_close'); },
+    batteryTeachClose: function (o) { return call('kt_battery_teach_close', { o: obj(o) }); },
     /* 0.21 W4 — «Report a device» (battery.rs's sibling batreport.rs over kt-battery report.rs): batteryReport() → { text,
        devices, collections } — an English text for the people who add support for a device: the devices the app sees, their
        HID collections (ids, usage pages, report lengths), the reader that matched, the app's and the system's version; no

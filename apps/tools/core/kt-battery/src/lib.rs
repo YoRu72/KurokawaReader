@@ -58,6 +58,9 @@ pub mod cli;
 pub mod connect;
 pub mod defs;
 pub mod fastpair;
+/// The sweep: every reader and parser fed wild input (a test only).
+#[cfg(test)]
+mod fuzz;
 pub mod galaxybuds;
 pub mod heads;
 pub mod hiddesc;

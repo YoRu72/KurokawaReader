@@ -69,7 +69,8 @@ function fake({ lang, mode }) {
     batterySettings: function (o) { C('settings', o); return Promise.resolve(settings); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
     saveText: function (o) { C('saveText', o); window.__saved = o; return Promise.resolve({ path: '/home/user/' + o.name }); },
-    batteryDefs: function () { C('defs'); return Promise.resolve({ list: copy(defs), max: 50, teach: mode !== 'mac' }); },
+    // (Linux: the shell set a damaged file aside — told once, on the first answer.)
+    batteryDefs: function () { C('defs'); const aside = mode === 'linux' && !window.__asideTold; window.__asideTold = true; return Promise.resolve({ list: copy(defs), max: 50, teach: mode !== 'mac', aside }); },
     batteryDefImport: function (o) {
       C('import', o);
       let j; try { j = JSON.parse(o.text); } catch { return Promise.resolve({ ok: false, error: { code: 'notJson', field: '' } }); }
@@ -91,7 +92,13 @@ function fake({ lang, mode }) {
         { id: 'hid:054C:0CE6:c:p|0001:0005:-1', unit: 'hid:054C:0CE6:c:p', name: 'Field Pad', vid: '054C', pid: '0CE6', usagePage: '0001', usage: '0005', interface: -1, verdict: 'builtin', family: 'playstation' },
       ] });
     },
-    batteryTeachStart: function (o) { C('teachStart', o); open = true; listening = true; tick = 1; return Promise.resolve(st()); },
+    // (window.__holdStart: the answer kept back until window.__releaseStart() — a start still on the way.)
+    batteryTeachStart: function (o) {
+      C('teachStart', o);
+      const go = () => { open = true; listening = true; tick = 1; return st(); };
+      if (window.__holdStart) return new Promise((ok) => { window.__releaseStart = () => ok(go()); });
+      return Promise.resolve(go());
+    },
     batteryTeachStop: function () { C('teachStop'); listening = false; return Promise.resolve(st()); },
     batteryTeachState: function () { C('teachState'); if (listening) tick++; return Promise.resolve(st()); },
     batteryTeachMark: function (o) {
@@ -101,7 +108,7 @@ function fake({ lang, mode }) {
       marks.push({ kind: o.mark, at: NOW + tick * 1000, value: level }); return Promise.resolve(st());
     },
     batteryTeachSave: function (o) { C('teachSave', o); const id = 'd' + n++; defs.push(entry({ id, name: o.name, kind: o.kind, vid: '1234', pid: '5678' })); return Promise.resolve({ ok: true, id, list: copy(defs) }); },
-    batteryTeachClose: function () { C('teachClose'); open = false; listening = false; marks = []; tick = 0; return Promise.resolve(true); },
+    batteryTeachClose: function (o) { C('teachClose', o); open = false; listening = false; marks = []; tick = 0; return Promise.resolve(true); },
   };
 }
 
@@ -136,6 +143,7 @@ function fake({ lang, mode }) {
     check('the count as the language writes it', card.count === (AR ? 'العدد: 2' : 'Definitions: 2'), card.count);
     check('a built-in reader\'s product used instead says so', (await p.textContent('.bat-def[data-id="d2"]')).includes('PlayStation'));
     check('no touching controls in the card', (await touching(p, '.bat-defs button, .bat-defs input')) === 0);
+    check('a file read whole: no «set aside» line', !(await p.$('.bat-defs [data-state="aside"]')));
     check('no sideways overflow', (await overflow(p)) <= 1);
     await p.$eval('.bat-defs', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(150);
     await shot(p, 'card'); if (SHOTS) { await dark(p, true); await shot(p, 'card-dark'); await dark(p, false); }
@@ -220,7 +228,8 @@ function fake({ lang, mode }) {
     check('listening only once asked: nothing started yet', (await calls(p, 'teachStart')).length === 0 && (await p.$$eval('.bat-t-marks .btn', (bs) => bs.every((b) => b.disabled))));
     await p.click('.bat-t-status [data-act="start"]');
     await p.waitForSelector('.bat-t-row[data-report="4"]');
-    check('started: batteryTeachStart({ id })', JSON.stringify((await calls(p, 'teachStart'))[0]) === JSON.stringify({ id: 'hid:1234:5678:c:x|FF00:0001:1' }));
+    const started = (await calls(p, 'teachStart'))[0];
+    check('started: batteryTeachStart({ id, o }) with the sheet\'s own token', started.id === 'hid:1234:5678:c:x|FF00:0001:1' && /^s[a-z0-9]{6,}$/.test(started.o) && Object.keys(started).length === 2, started);
     const bytes = await p.$$eval('.bat-t-row[data-report="1"] .bat-t-bytes > span', (els) => els.map((e) => e.className));
     check('live rows: changing bytes bright, the rest dimmed', JSON.stringify(bytes) === JSON.stringify(['still', 'moving', 'moving', 'still']), bytes);
     await p.$eval('.sheet .sheet-body', (e) => { e.scrollTop = 0; }); await p.waitForTimeout(150);
@@ -269,6 +278,22 @@ function fake({ lang, mode }) {
     await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'teachClose'));
     const n1 = (await calls(p, 'teachState')).length; await p.waitForTimeout(1300);
     check('closed while listening: dropped, no look after it', (await calls(p, 'teachState')).length === n1);
+    const tok = (await calls(p, 'teachStart'))[0].o;
+    check('… the close names the same sheet (batteryTeachClose({ o }))', JSON.stringify((await calls(p, 'teachClose'))[0]) === JSON.stringify({ o: tok }), await calls(p, 'teachClose'));
+    // Closed while the start is still on the way: when its answer comes, closed again — and never polled.
+    await p.evaluate(() => { window.__calls = []; window.__holdStart = true; });
+    await p.click('.bat-defs [data-act="teach"]'); await p.click('.bat-teach .dest-row[data-id="hid:1234:5678:c:x|FF00:0001:1"]');
+    await p.click('.bat-t-status [data-act="start"]');
+    await p.waitForFunction(() => typeof window.__releaseStart === 'function' && window.__calls.some((c) => c[0] === 'teachStart'));
+    await p.keyboard.press('Escape');
+    await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'teachClose'));
+    const tok2 = (await calls(p, 'teachStart'))[0].o;
+    await p.evaluate(() => { window.__holdStart = false; window.__releaseStart(); });
+    await p.waitForFunction(() => window.__calls.filter((c) => c[0] === 'teachClose').length >= 2);
+    const closes = await calls(p, 'teachClose');
+    check('closed during start: the late start closed again, by the same sheet token', closes.length >= 2 && closes.every((c) => c && c.o === tok2) && tok2 !== tok, { closes, tok2 });
+    await p.waitForTimeout(1300);
+    check('… and no look after it', (await calls(p, 'teachState')).length === 0);
     // «Show its switch» for a built-in reader's device.
     await p.click('.bat-defs [data-act="teach"]'); await p.waitForSelector('.bat-t-ref [data-act="showFamily"]');
     await p.click('.bat-t-ref [data-act="showFamily"]');
@@ -284,6 +309,8 @@ function fake({ lang, mode }) {
     const { ctx, p } = await open('linux');
     await p.waitForSelector('.bat-defs');
     check('Linux: the card is there', true);
+    const aside = await p.textContent('.bat-defs [data-state="aside"]').catch(() => '');
+    check('a damaged definitions file set aside: said calmly in the card', aside.includes('battery-defs.json.bad') && aside.includes(AR ? 'نُحّي جانبًا' : 'kept aside'), aside);
     await ctx.close();
   }
   {

@@ -35,6 +35,26 @@ public class BatT {
         eq("Apple: out of range", -1, KtBatPure.fromAppleEvent(new Object[] { 1, 1, 12 }));
         eq("Apple: too short", -1, KtBatPure.fromAppleEvent(new Object[] { 2, 1, 3 }));
         eq("Apple: nothing", -1, KtBatPure.fromAppleEvent(null));
+        // Hostile events (a crafted headset, or a broadcast sent with junk): never a throw, never a level.
+        eq("Apple: count 2^30 (pairs × 2 would overflow)", -1, KtBatPure.fromAppleEvent(new Object[] { 1073741824, 0, 0 }));
+        eq("Apple: count 2^30 as a string", -1, KtBatPure.fromAppleEvent(new Object[] { "1073741824", 1, 9 }));
+        eq("Apple: count Integer.MAX_VALUE", -1, KtBatPure.fromAppleEvent(new Object[] { Integer.MAX_VALUE, 1, 9 }));
+        eq("Apple: count negative", -1, KtBatPure.fromAppleEvent(new Object[] { -2, 1, 9 }));
+        eq("Apple: count Integer.MIN_VALUE", -1, KtBatPure.fromAppleEvent(new Object[] { Integer.MIN_VALUE, 1, 9 }));
+        eq("Apple: count a Long beyond int (2^32 + 1 is not 1)", -1, KtBatPure.fromAppleEvent(new Object[] { 4294967297L, 1, 9 }));
+        eq("Apple: count a fraction", -1, KtBatPure.fromAppleEvent(new Object[] { 1.5, 1, 9 }));
+        eq("Apple: junk words", -1, KtBatPure.fromAppleEvent(new Object[] { "x", "y", "z" }));
+        eq("Apple: nulls", -1, KtBatPure.fromAppleEvent(new Object[] { null, null, null }));
+        eq("Apple: a null value", -1, KtBatPure.fromAppleEvent(new Object[] { 1, 1, null }));
+        eq("Apple: empty", -1, KtBatPure.fromAppleEvent(new Object[0]));
+        eq("Apple: value a Long beyond int", -1, KtBatPure.fromAppleEvent(new Object[] { 1, 1, 4294967300L }));
+        eq("Apple: a Long count in range still read", 50, KtBatPure.fromAppleEvent(new Object[] { 1L, 1L, 4L }));
+        eq("XEVENT: level and levels MAX_VALUE (level × 100 overflowed)", 100, KtBatPure.fromXEvent(new Object[] { "BATTERY", Integer.MAX_VALUE, Integer.MAX_VALUE }));
+        eq("XEVENT: a large level of more levels, in range", 50, KtBatPure.fromXEvent(new Object[] { "BATTERY", 1000000000, 2000000001 }));
+        eq("XEVENT: nulls", -1, KtBatPure.fromXEvent(new Object[] { null, null, null }));
+        eq("XEVENT: empty", -1, KtBatPure.fromXEvent(new Object[0]));
+        eq("XEVENT: junk numbers", -1, KtBatPure.fromXEvent(new Object[] { "BATTERY", "lots", "5" }));
+        eq("XEVENT: a Long level beyond int", -1, KtBatPure.fromXEvent(new Object[] { "BATTERY", 1L << 40, 5 }));
         // Plantronics' +XEVENT=BATTERY,level,levels,…
         eq("XEVENT: 3 of 5 levels → 75 %", 75, KtBatPure.fromXEvent(new Object[] { "BATTERY", 3, 5, 120, 0 }));
         eq("XEVENT: full → 100 %", 100, KtBatPure.fromXEvent(new Object[] { "BATTERY", "4", "5" }));

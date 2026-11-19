@@ -6,8 +6,9 @@
 // percentage, and only exact percentages feed the estimate; «away» (asleep or not connected) is recorded as a mark so
 // the chart shows a gap instead of a line across a time nobody saw; charging may be unknown (it never counts as
 // charging); a level is also recorded when it changes (at most once a minute per device), not only every half hour;
-// each device has its own bounded ring (and the devices are bounded); the file is one text file with a header and a
-// checked footer (a count and an FNV-1a hash): a damaged file is started afresh, never half-read; how long readings are
+// each device has its own bounded ring (and the devices are bounded, and all rows together: MAX_ROWS, so the file always
+// fits its bound); the file is one text file with a header and a checked footer (a count and an FNV-1a hash): a damaged
+// file is set aside (`.bad`, one kept) and started afresh, never half-read; how long readings are
 // kept is the user's choice (7, 30 or 90 days); an estimate «full in about …» while charging, from the same kind of
 // evidence as the original's discharge one (it gave none while charging). No charge-cycle count: the original has none.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -30,8 +31,18 @@ pub const MAX_PER_DEVICE: usize = 6_000;
 pub const MAX_DEVICES: usize = 64;
 /// A device key's length, as the settings keep it.
 pub const MAX_KEY: usize = 200;
-/// The file's bound; a larger one is not read (started afresh).
+/// The file's bound (format 2); a larger one is not read (set aside, started afresh).
 pub const MAX_FILE: usize = 4 * 1024 * 1024;
+/// A format-1 file (each row carrying its device's key) may be up to this and is still read, then trimmed to MAX_ROWS.
+pub const MAX_FILE_V1: usize = 16 * 1024 * 1024;
+/// The longest row of format 2: a 10-digit time, a tab, the longest level («cmedium», 7), a tab, y|n|u, a newline.
+pub const MAX_ROW_BYTES: usize = 10 + 1 + 7 + 1 + 1 + 1;
+/// The longest device section line: «k», a tab, the key in hex, a newline.
+pub const MAX_SECTION_BYTES: usize = 2 + 2 * MAX_KEY + 1;
+/// All the rows kept, every device together (the oldest go first, whichever device they are of): the worst case —
+/// MAX_DEVICES sections of the longest key, MAX_ROWS rows of the longest kind, the header and the footer — fits
+/// MAX_FILE (21 × 170,000 + 64 × 403 + 64 < 4 MiB; checked by a test).
+pub const MAX_ROWS: usize = 170_000;
 /// How long readings may be kept (days), and the default (the original's 30).
 pub const KEEP_CHOICES: [u64; 3] = [7, 30, 90];
 pub const KEEP_DEFAULT: u64 = 30;
@@ -40,7 +51,8 @@ pub const GAP_MIN_S: u64 = 2 * 3600;
 /// A time before 2000 or after 2100 is not a reading's.
 const T_MIN: u64 = 946_684_800;
 const T_MAX: u64 = 4_102_444_800;
-const HEADER: &str = "kt-battery-history 1";
+const HEADER: &str = "kt-battery-history 2";
+const HEADER_V1: &str = "kt-battery-history 1";
 
 /// The kept-days setting, snapped to a choice.
 pub fn keep_days(v: Option<u64>) -> u64 {
@@ -157,7 +169,32 @@ impl History {
             ring.pop_front();
         }
         self.prune(now, keep_s);
+        self.trim_rows(MAX_ROWS);
         true
+    }
+
+    /// Every row, every device together.
+    pub fn rows(&self) -> usize {
+        self.devices.values().map(VecDeque::len).sum()
+    }
+
+    /// At most `max` rows: the oldest dropped first, whichever device they are of (a ring left starting with «away»
+    /// loses that mark too; an empty device is forgotten).
+    pub fn trim_rows(&mut self, max: usize) {
+        let mut total = self.rows();
+        while total > max {
+            let Some(k) = self.devices.iter().filter(|(_, r)| !r.is_empty()).min_by_key(|(_, r)| r.front().map_or(u64::MAX, |x| x.t)).map(|(k, _)| k.clone()) else { break };
+            let Some(ring) = self.devices.get_mut(&k) else { break };
+            ring.pop_front();
+            total -= 1;
+            while ring.front().map_or(false, |r| r.level.is_none()) {
+                ring.pop_front();
+                total -= 1;
+            }
+            if ring.is_empty() {
+                self.devices.remove(&k);
+            }
+        }
     }
 
     /// Readings older than `keep_s` (or more than an hour in the future) dropped; empty devices forgotten.
@@ -186,14 +223,42 @@ impl History {
         self.devices.clear();
     }
 
-    /// The file's text: a header, one row per reading (the key in hex, so no key can break a row), a checked footer.
+    /// The file's text (format 2): a header; per device a section line (its key in hex, so no key can break a line),
+    /// then its rows «time, level, y|n|u»; a checked footer (the rows' count and the body's hash). Never larger than
+    /// MAX_FILE: should it be (it cannot while MAX_ROWS holds), the oldest rows are dropped until it fits.
     pub fn serialize(&self) -> String {
+        let text = self.render();
+        if text.len() <= MAX_FILE {
+            return text;
+        }
+        let mut h = self.clone();
+        let mut text = text;
+        while text.len() > MAX_FILE && h.rows() > 0 {
+            // (A row is at least 16 bytes: dropping this many takes off at least the excess.)
+            let drop = (text.len() - MAX_FILE) / 16 + 1;
+            h.trim_rows(h.rows().saturating_sub(drop));
+            text = h.render();
+        }
+        text
+    }
+
+    fn render(&self) -> String {
         let mut body = String::new();
         let mut n = 0usize;
         for (k, ring) in &self.devices {
-            let hk = hex(k);
+            if ring.is_empty() {
+                continue;
+            }
+            body.push_str("k\t");
+            body.push_str(&hex(k));
+            body.push('\n');
             for r in ring {
-                body.push_str(&format!("{}\t{}\t{}\t{}\n", hk, r.t, level_code(r.level), r.charging.as_str()));
+                let c = match r.charging {
+                    Charging::Yes => 'y',
+                    Charging::No => 'n',
+                    Charging::Unknown => 'u',
+                };
+                body.push_str(&format!("{}\t{}\t{}\n", r.t, level_code(r.level), c));
                 n += 1;
             }
         }
@@ -201,55 +266,154 @@ impl History {
     }
 
     /// The file read back, or None when it is not one of ours whole (too large, wrong header, a bad row, a count or hash
-    /// that does not match, cut short): the caller then starts afresh. Old readings are pruned.
+    /// that does not match, cut short): the caller then sets it aside and starts afresh. Format 2, or format 1 (up to
+    /// MAX_FILE_V1). Old readings are pruned, and at most MAX_ROWS rows kept (the oldest dropped).
     pub fn parse(text: &str, now: u64, keep_s: u64) -> Option<History> {
-        if text.len() > MAX_FILE {
-            return None;
-        }
-        let rest = text.strip_prefix(HEADER)?.strip_prefix('\n')?;
-        let body_end = rest.rfind("end\t")?;
-        if body_end != 0 && !rest[..body_end].ends_with('\n') {
-            return None;
-        }
-        let (body, foot) = rest.split_at(body_end);
-        let foot = foot.strip_suffix('\n')?;
-        let mut f = foot.split('\t');
-        let (_, count, hash) = (f.next()?, f.next()?.parse::<usize>().ok()?, u64::from_str_radix(f.next()?, 16).ok()?);
-        if f.next().is_some() || hash != fnv(body.as_bytes()) {
-            return None;
-        }
-        let mut h = History::new();
-        let mut n = 0usize;
-        for row in body.lines() {
-            let mut c = row.split('\t');
-            let key = unhex(c.next()?)?;
-            let t: u64 = c.next()?.parse().ok()?;
-            let level = parse_level(c.next()?)?;
-            let charging = match c.next()? {
-                "yes" => Charging::Yes,
-                "no" => Charging::No,
-                "unknown" => Charging::Unknown,
-                _ => return None,
-            };
-            if c.next().is_some() || !key_ok(&key) || !(T_MIN..=T_MAX).contains(&t) {
+        let mut h = if text.starts_with(HEADER_V1) {
+            if text.len() > MAX_FILE_V1 {
                 return None;
             }
-            let ring = h.devices.entry(key).or_default();
-            if ring.back().map_or(false, |r| r.t > t) {
+            parse_v1(text)?
+        } else {
+            if text.len() > MAX_FILE {
                 return None;
             }
-            ring.push_back(Rec { t, level, charging });
-            if ring.len() > MAX_PER_DEVICE {
-                ring.pop_front();
-            }
-            n += 1;
-        }
-        if n != count || h.devices.len() > MAX_DEVICES {
-            return None;
-        }
+            parse_v2(text)?
+        };
         h.prune(now, keep_s);
+        h.trim_rows(MAX_ROWS);
         Some(h)
     }
+
+    /// The file at `path` read (History::parse): a missing file is an empty history; one too large or unreadable as
+    /// ours is set aside (`set_aside`, one `.bad` kept) and an empty history begins — never half-read, never silently
+    /// overwritten. A file that cannot be opened just now (another program holds it) is left where it is.
+    pub fn load_file(path: &std::path::Path, now: u64, keep_s: u64) -> History {
+        let Ok(meta) = std::fs::metadata(path) else { return History::new() };
+        if !meta.is_file() {
+            return History::new();
+        }
+        if meta.len() > MAX_FILE_V1 as u64 {
+            set_aside(path);
+            return History::new();
+        }
+        let Ok(bytes) = std::fs::read(path) else { return History::new() };
+        match String::from_utf8(bytes).ok().and_then(|t| History::parse(&t, now, keep_s)) {
+            Some(h) => h,
+            None => {
+                set_aside(path);
+                History::new()
+            }
+        }
+    }
+}
+
+/// Where a damaged history file is kept: the same name with «.bad» after it.
+pub fn bad_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(".bad");
+    std::path::PathBuf::from(s)
+}
+
+/// The file at `path` moved aside to `bad_path` (an earlier one there replaced: one kept); whether it was.
+pub fn set_aside(path: &std::path::Path) -> bool {
+    let bad = bad_path(path);
+    let _ = std::fs::remove_file(&bad);
+    std::fs::rename(path, &bad).is_ok()
+}
+
+/// The body and the rows' count of a file whose header is `header`, when its footer checks out.
+fn checked_body<'a>(text: &'a str, header: &str) -> Option<(&'a str, usize)> {
+    let rest = text.strip_prefix(header)?.strip_prefix('\n')?;
+    let body_end = rest.rfind("end\t")?;
+    if body_end != 0 && !rest[..body_end].ends_with('\n') {
+        return None;
+    }
+    let (body, foot) = rest.split_at(body_end);
+    let foot = foot.strip_suffix('\n')?;
+    let mut f = foot.split('\t');
+    let (_, count, hash) = (f.next()?, f.next()?.parse::<usize>().ok()?, u64::from_str_radix(f.next()?, 16).ok()?);
+    if f.next().is_some() || hash != fnv(body.as_bytes()) {
+        return None;
+    }
+    Some((body, count))
+}
+
+fn parse_v2(text: &str) -> Option<History> {
+    let (body, count) = checked_body(text, HEADER)?;
+    let mut h = History::new();
+    let mut n = 0usize;
+    let mut cur: Option<String> = None;
+    for row in body.lines() {
+        if let Some(hk) = row.strip_prefix("k\t") {
+            let key = unhex(hk)?;
+            // (A key twice, or more devices than kept: not one of ours.)
+            if !key_ok(&key) || h.devices.contains_key(&key) || h.devices.len() >= MAX_DEVICES {
+                return None;
+            }
+            h.devices.insert(key.clone(), VecDeque::new());
+            cur = Some(key);
+            continue;
+        }
+        let ring = h.devices.get_mut(cur.as_deref()?)?;
+        let mut c = row.split('\t');
+        let t: u64 = c.next()?.parse().ok()?;
+        let level = parse_level(c.next()?)?;
+        let charging = match c.next()? {
+            "y" => Charging::Yes,
+            "n" => Charging::No,
+            "u" => Charging::Unknown,
+            _ => return None,
+        };
+        if c.next().is_some() || !(T_MIN..=T_MAX).contains(&t) || ring.back().map_or(false, |r| r.t > t) {
+            return None;
+        }
+        ring.push_back(Rec { t, level, charging });
+        if ring.len() > MAX_PER_DEVICE {
+            ring.pop_front();
+        }
+        n += 1;
+    }
+    if n != count {
+        return None;
+    }
+    h.devices.retain(|_, r| !r.is_empty());
+    Some(h)
+}
+
+/// Format 1: each row «key in hex, time, level, yes|no|unknown».
+fn parse_v1(text: &str) -> Option<History> {
+    let (body, count) = checked_body(text, HEADER_V1)?;
+    let mut h = History::new();
+    let mut n = 0usize;
+    for row in body.lines() {
+        let mut c = row.split('\t');
+        let key = unhex(c.next()?)?;
+        let t: u64 = c.next()?.parse().ok()?;
+        let level = parse_level(c.next()?)?;
+        let charging = match c.next()? {
+            "yes" => Charging::Yes,
+            "no" => Charging::No,
+            "unknown" => Charging::Unknown,
+            _ => return None,
+        };
+        if c.next().is_some() || !key_ok(&key) || !(T_MIN..=T_MAX).contains(&t) {
+            return None;
+        }
+        let ring = h.devices.entry(key).or_default();
+        if ring.back().map_or(false, |r| r.t > t) {
+            return None;
+        }
+        ring.push_back(Rec { t, level, charging });
+        if ring.len() > MAX_PER_DEVICE {
+            ring.pop_front();
+        }
+        n += 1;
+    }
+    if n != count || h.devices.len() > MAX_DEVICES {
+        return None;
+    }
+    Some(h)
 }
 
 fn level_code(l: Option<Level>) -> String {
@@ -563,14 +727,15 @@ mod tests {
         h.observe("hid:Mysz:ą🎧 x", NOW - 2000, Seen::Away, KEEP);
         h.observe("bt:other", NOW - 100, live(70), KEEP);
         let text = h.serialize();
-        assert!(text.starts_with("kt-battery-history 1\n") && text.lines().count() == 6);
+        assert!(text.starts_with("kt-battery-history 2\n") && text.lines().count() == 8, "{}", text);
+        assert_eq!(text.matches("\nk\t").count(), 2, "each key once");
         assert_eq!(History::parse(&text, NOW, KEEP), Some(h.clone()));
         // (Cut short, a flipped character, an extra row, a wrong header, a bad level, junk: none read.)
         assert_eq!(History::parse(&text[..text.len() - 5], NOW, KEEP), None);
         assert_eq!(History::parse(&text.replacen("\tp85\t", "\tp86\t", 1), NOW, KEEP), None, "hash");
         let extra = text.replacen("end\t", "626f6f\t1795000000\tp5\tno\nend\t", 1);
         assert_eq!(History::parse(&extra, NOW, KEEP), None, "row not in the hash");
-        assert_eq!(History::parse(&text.replacen("history 1", "history 9", 1), NOW, KEEP), None);
+        assert_eq!(History::parse(&text.replacen("history 2", "history 9", 1), NOW, KEEP), None);
         assert_eq!(History::parse("", NOW, KEEP), None);
         assert_eq!(History::parse("\u{0}\u{1}garbage", NOW, KEEP), None);
         let big = "x".repeat(MAX_FILE + 1);
@@ -583,6 +748,131 @@ mod tests {
         let good = format!("kt-battery-history 1\n{}end\t1\t{:016x}\n", body, fnv(body.as_bytes()));
         assert_eq!(History::parse(&good, NOW, KEEP).map(|h| h.len("k")), Some(1));
         assert_eq!(History::parse("kt-battery-history 1\nend\t0\tcbf29ce484222325\n", NOW, KEEP), Some(History::new()), "an empty file");
+    }
+
+    /// A history of `devices` devices with keys of the longest length, `per` rows each of the longest kind, the rows of
+    /// all devices interleaved in time (device d's row i at BASE + i × 64 + d).
+    fn worst(devices: usize, per: usize) -> History {
+        keyed(devices, per, MAX_KEY)
+    }
+    fn keyed(devices: usize, per: usize, key_len: usize) -> History {
+        let base = NOW - 80 * 86_400;
+        let mut h = History::new();
+        for d in 0..devices {
+            let key = format!("{:03}{}", d, "k".repeat(key_len - 3));
+            let ring: VecDeque<Rec> = (0..per).map(|i| Rec { t: base + (i * 64 + d) as u64, level: Some(Level::Coarse(Coarse::Medium)), charging: Charging::Unknown }).collect();
+            h.devices.insert(key, ring);
+        }
+        h
+    }
+
+    #[test]
+    fn the_worst_case_fits_the_file_and_reads_back() {
+        assert!(MAX_DEVICES * MAX_SECTION_BYTES + MAX_ROWS * MAX_ROW_BYTES + 64 <= MAX_FILE, "the bound holds by arithmetic");
+        assert_eq!(format!("{}\t{}\t{}\n", T_MAX - 1, level_code(Some(Level::Coarse(Coarse::Medium))), 'u').len(), MAX_ROW_BYTES);
+        let per = MAX_ROWS / MAX_DEVICES;
+        let h = worst(MAX_DEVICES, per);
+        let text = h.serialize();
+        assert!(text.len() <= MAX_FILE, "{} bytes", text.len());
+        assert_eq!(text, h.render(), "nothing trimmed: it fits");
+        assert_eq!(History::parse(&text, NOW, 90 * 86_400), Some(h));
+    }
+
+    #[test]
+    fn over_the_bound_the_oldest_rows_go_first() {
+        // (observe keeps MAX_ROWS: the oldest row of all — whichever device — goes.)
+        let mut h = worst(MAX_DEVICES, MAX_ROWS / MAX_DEVICES);
+        let extra = MAX_ROWS - h.rows();
+        for (i, d) in h.devices.values_mut().enumerate().take(extra) {
+            let t = d.back().unwrap().t;
+            d.push_back(Rec { t: t + 1 + i as u64, level: Some(Level::Coarse(Coarse::Medium)), charging: Charging::Unknown });
+        }
+        assert_eq!(h.rows(), MAX_ROWS);
+        let oldest = h.devices.values().filter_map(|r| r.front()).map(|r| r.t).min().unwrap();
+        // (Another device's new reading: the oldest row of all goes — device 0's first, not that device's own.)
+        let k = h.devices.keys().nth(5).unwrap().clone();
+        let before = h.len(&k);
+        assert!(h.observe(&k, NOW, live(50), 90 * 86_400));
+        assert_eq!(h.rows(), MAX_ROWS);
+        assert!(h.devices.values().all(|r| r.front().map_or(true, |x| x.t > oldest)), "the oldest row went");
+        assert_eq!(h.len(&k), before + 1);
+        // (A history over the bound — 64 devices of 3,300 rows, more than 4 MiB as text: serialize trims oldest-first.)
+        let big = worst(MAX_DEVICES, 3_300);
+        assert!(big.render().len() > MAX_FILE);
+        let text = big.serialize();
+        assert!(text.len() <= MAX_FILE, "{} bytes", text.len());
+        let back = History::parse(&text, NOW, 90 * 86_400).expect("reads back");
+        assert!(back.rows() < big.rows());
+        let cut = back.devices.values().filter_map(|r| r.front()).map(|r| r.t).min().unwrap();
+        for (k, ring) in &big.devices {
+            let kept: Vec<&Rec> = ring.iter().filter(|r| r.t >= cut).collect();
+            assert_eq!(back.len(k), kept.len(), "only rows older than every kept one dropped");
+        }
+    }
+
+    /// The text format 1 wrote (each row with its key).
+    fn v1(h: &History) -> String {
+        let mut body = String::new();
+        let mut n = 0;
+        for (k, ring) in &h.devices {
+            for r in ring {
+                body.push_str(&format!("{}\t{}\t{}\t{}\n", hex(k), r.t, level_code(r.level), r.charging.as_str()));
+                n += 1;
+            }
+        }
+        format!("kt-battery-history 1\n{}end\t{}\t{:016x}\n", body, n, fnv(body.as_bytes()))
+    }
+
+    #[test]
+    fn a_format_1_file_still_loads_and_is_trimmed() {
+        let mut h = History::new();
+        h.observe("hid:a", NOW - 7200, live(85), KEEP);
+        h.observe("hid:a", NOW - 3000, Seen::Live(ex(80), Charging::Yes), KEEP);
+        h.observe("bt:b", NOW - 100, live(70), KEEP);
+        assert_eq!(History::parse(&v1(&h), NOW, KEEP), Some(h.clone()));
+        // (A large format-1 file — more than 4 MiB, more than MAX_ROWS rows: read, then the oldest rows dropped.)
+        let big = keyed(MAX_DEVICES, 3_000, 10);
+        let t1 = v1(&big);
+        assert!(t1.len() > MAX_FILE && t1.len() <= MAX_FILE_V1);
+        let back = History::parse(&t1, NOW, 90 * 86_400).expect("format 1 read");
+        assert_eq!(back.rows(), MAX_ROWS);
+        assert!(back.serialize().len() <= MAX_FILE);
+        assert!(History::parse(&format!("kt-battery-history 1\n{}", "x".repeat(MAX_FILE_V1)), NOW, KEEP).is_none(), "beyond 16 MiB: not read");
+    }
+
+    #[test]
+    fn a_damaged_or_too_large_file_is_set_aside_once() {
+        let dir = std::env::temp_dir().join(format!("kt-bat-hist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("battery-history.txt");
+        let bad = bad_path(&p);
+        assert_eq!(bad.file_name().unwrap(), "battery-history.txt.bad");
+        // (No file: an empty history, nothing set aside.)
+        assert_eq!(History::load_file(&p, NOW, KEEP), History::new());
+        assert!(!bad.exists());
+        // (A good file: read, left where it is.)
+        let mut h = History::new();
+        h.observe("k", NOW - 100, live(40), KEEP);
+        std::fs::write(&p, h.serialize()).unwrap();
+        assert_eq!(History::load_file(&p, NOW, KEEP), h);
+        assert!(p.exists() && !bad.exists());
+        // (Damaged: set aside, an empty history; a second damaged one replaces the first — one kept.)
+        std::fs::write(&p, "kt-battery-history 2\nfirst damage").unwrap();
+        assert_eq!(History::load_file(&p, NOW, KEEP), History::new());
+        assert!(!p.exists() && std::fs::read_to_string(&bad).unwrap().contains("first damage"));
+        std::fs::write(&p, [0xFFu8, 0xFE, 0x00]).unwrap();
+        assert_eq!(History::load_file(&p, NOW, KEEP), History::new());
+        assert_eq!(std::fs::read(&bad).unwrap(), vec![0xFF, 0xFE, 0x00], "the newer damage kept, once");
+        let n_bad = std::fs::read_dir(&dir).unwrap().filter(|e| e.as_ref().map_or(false, |e| e.file_name().to_string_lossy().ends_with(".bad"))).count();
+        assert_eq!(n_bad, 1);
+        // (Too large to read: set aside without reading it.)
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_len(MAX_FILE_V1 as u64 + 1).unwrap();
+        drop(f);
+        assert_eq!(History::load_file(&p, NOW, KEEP), History::new());
+        assert!(!p.exists() && std::fs::metadata(&bad).unwrap().len() == MAX_FILE_V1 as u64 + 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

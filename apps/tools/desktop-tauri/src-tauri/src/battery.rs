@@ -1068,14 +1068,13 @@ fn keep_s(s: &Value) -> u64 {
     history::keep_days(s.get("historyDays").and_then(Value::as_u64)) * 86_400
 }
 
-/// The history under its lock, read from the file the first time (a missing or damaged file: an empty history — the
-/// damaged one is overwritten by the next save).
+/// The history under its lock, read from the file the first time (history::History::load_file: a missing file is an
+/// empty history; a damaged or too large one is set aside as «.bad», one kept, before anything is saved over it).
 fn with_hist<R>(app: &AppHandle, s: &Value, f: impl FnOnce(&mut History) -> R) -> R {
     let mut g = HIST.lock().unwrap_or_else(|e| e.into_inner());
     if g.is_none() {
         let p = app.path().app_data_dir().ok().map(|d| d.join(HIST_FILE));
-        let text = p.as_ref().filter(|p| std::fs::metadata(p).map_or(false, |m| m.len() as usize <= history::MAX_FILE)).and_then(|p| std::fs::read_to_string(p).ok());
-        *g = Some(text.and_then(|t| History::parse(&t, now_s(), keep_s(s))).unwrap_or_default());
+        *g = Some(p.as_ref().map(|p| History::load_file(p, now_s(), keep_s(s))).unwrap_or_default());
         *HIST_PATH.lock().unwrap_or_else(|e| e.into_inner()) = p;
     }
     f(g.get_or_insert_with(History::new))

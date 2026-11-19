@@ -137,11 +137,14 @@ pub(crate) mod fake {
         /// A sibling collection's fake: its queued reports stand for what the device sends after the request made on
         /// the other collection, so a flush counts but keeps them.
         pub keep_on_flush: bool,
+        /// Nothing queued: wait until the read's deadline as a real quiet device makes the read wait (a test of what
+        /// happens once time ran out), instead of a Timeout at once.
+        pub wait_when_quiet: bool,
     }
     impl FakeHid {
         pub fn new(id: HidIdent) -> FakeHid {
             let mode = open_mode_for(&id, false);
-            FakeHid { id, mode, features: HashMap::new(), inputs: HashMap::new(), sent: Vec::new(), stream: VecDeque::new(), replies: VecDeque::new(), feature_replies: VecDeque::new(), kinds: Vec::new(), flushes: 0, reads: 0, keep_on_flush: false }
+            FakeHid { id, mode, features: HashMap::new(), inputs: HashMap::new(), sent: Vec::new(), stream: VecDeque::new(), replies: VecDeque::new(), feature_replies: VecDeque::new(), kinds: Vec::new(), flushes: 0, reads: 0, keep_on_flush: false, wait_when_quiet: false }
         }
     }
     impl HidTransport for FakeHid {
@@ -167,7 +170,18 @@ pub(crate) mod fake {
             left(deadline)?;
             self.reads += 1;
             // (Nothing queued: the device is quiet — the real read would wait for the deadline.)
-            self.stream.pop_front().ok_or(TErr::Timeout)
+            match self.stream.pop_front() {
+                Some(r) => Ok(r),
+                None => {
+                    if self.wait_when_quiet {
+                        let now = Instant::now();
+                        if now < deadline {
+                            std::thread::sleep(deadline - now);
+                        }
+                    }
+                    Err(TErr::Timeout)
+                }
+            }
         }
         fn flush(&mut self) {
             self.flushes += 1;

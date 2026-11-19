@@ -77,6 +77,11 @@ fn x9_is_reply(r: &[u8], cmd: u8) -> bool {
     r.len() >= 8 && r[0] == 4 && r[1] == 0 && r[2] == 0 && r[3] == cmd && r[4..8].iter().all(|&b| b == 0)
 }
 
+/// END, with its own time (mod.rs's close_deadline): sent once START was.
+fn close_x9(ch: &mut Chans) {
+    let _ = out_ask(ch, &X9_END, CLOSE_STEP, close_deadline(), &mut |r| Some(()).filter(|_| x9_is_reply(r, 0x02)));
+}
+
 pub fn read_x9(ch: &mut Chans, _m: &Model, deadline: Instant, now: u64) -> Outcome {
     let mut down = false;
     let started = out_ask(ch, &X9_START, ms(450), deadline, &mut |r| {
@@ -86,7 +91,12 @@ pub fn read_x9(ch: &mut Chans, _m: &Model, deadline: Instant, now: u64) -> Outco
         }
         Some(()).filter(|_| x9_is_reply(r, 0x01))
     });
+    // (START refused before anything went out: no session to close.)
+    if started == Err(TErr::Refused) {
+        return Outcome::Failed;
+    }
     if started == Err(TErr::Gone) {
+        close_x9(ch);
         return Outcome::Failed;
     }
     let mut level = None;
@@ -100,8 +110,8 @@ pub fn read_x9(ch: &mut Chans, _m: &Model, deadline: Instant, now: u64) -> Outco
         })
         .ok();
     }
-    // (The transaction is closed even when the battery reply is missing.)
-    let _ = out_ask(ch, &X9_END, ms(200), deadline, &mut |r| Some(()).filter(|_| x9_is_reply(r, 0x02)));
+    // (The transaction is closed even when the battery reply is missing — and when the read's time ran out.)
+    close_x9(ch);
     match level {
         _ if down => dozing(now),
         Some((p, s)) if (1..=100).contains(&p) && s <= 2 => got(pct(i64::from(p)).unwrap_or(Level::Unknown), charging(s != 0), now),
@@ -290,6 +300,25 @@ mod tests {
         let id = |iface: i32, page: u16| HidIdent { vid: 0x05AC, pid: 0x024F, usage_page: page, usage: 2, interface: iface };
         assert_eq!(find(&id(1, 0xFF02), 20, 20, 0).map(|m| m.driver), Some("mk-aula-by"));
         assert!(find(&id(1, 0xFF02), 64, 64, 0).is_none() && find(&id(3, 0xFF02), 20, 20, 0).is_none());
+    }
+
+    #[test]
+    fn x9_end_is_sent_after_the_time_ran_out() {
+        let m = model("mk-aula-x9", 0x22A0);
+        // (START answered, the battery step silent until the read's deadline: END still sent, with its own time.)
+        let mut f = fake(m);
+        f.wait_when_quiet = true;
+        f.replies.extend([vec![report(0x04, 64, &[(3, 0x01)])], vec![], vec![]]);
+        let soon = Instant::now() + ms(120);
+        assert_eq!(crate::mice::read(&mut Chans::one(&mut f), m, None, true, soon, 7).out, dozing(7));
+        assert!(Instant::now() >= soon);
+        assert_eq!(f.sent, vec![X9_START.to_vec(), X9_BATTERY.to_vec(), X9_END.to_vec()], "END after a timed-out middle step");
+        // (START's reply lost: END still sent.)
+        let mut f = fake(m);
+        f.wait_when_quiet = true;
+        let soon = Instant::now() + ms(120);
+        assert_eq!(crate::mice::read(&mut Chans::one(&mut f), m, None, true, soon, 7).out, dozing(7));
+        assert_eq!(f.sent, vec![X9_START.to_vec(), X9_END.to_vec()], "END after lost START replies");
     }
 
     #[test]
