@@ -3,7 +3,7 @@
 // they run, and what it does when they are all done (nothing, quit the app, sleep, shut down).
 import { getSettings, updateSettings } from '../settings';
 import { ktPlugin, nativePlatform } from '../native';
-import { t } from '../i18n';
+import { t, localDigits, loadRest, onLangChange } from '../i18n';
 
 /** The interface's words for the shell's tray menu and a Mac's menu bar (the Tauri shell's desktop.rs). */
 function deskLabels(): Record<string, string | boolean> {
@@ -14,7 +14,28 @@ function deskLabels(): Record<string, string | boolean> {
     browserBack: t('browserBarBack'), browserForward: t('browserBarForward'), browserReload: t('browserBarReload'), browserAddress: t('browserBarAddress'),
     browserGrab: t('browserBarGrab'), browserCopy: t('browserBarCopy'), browserExternal: t('browserBarExternal'), rtl: document.documentElement.dir === 'rtl',
     // (The hybrid: a Linux notice's action that opens the finished download.)
-    noticeOpen: t('noticeOpen') };
+    noticeOpen: t('noticeOpen'),
+    // (0.21, device battery in the background — battery.rs: its tray lines, tooltip and notices, said in these words.)
+    ...batteryLabels() };
+}
+const BAT_WORDS = ['batPct', 'batSteps', 'batCoarse_empty', 'batCoarse_low', 'batCoarse_medium', 'batCoarse_high', 'batCoarse_full', 'batLevelUnknown', 'batCharging', 'batSt_waiting', 'batSt_asleep', 'batSt_notConnected', 'batSt_noAnswer', 'batUnnamed', 'batXboxPad', 'batXboxHeadset',
+  'batTrayLowest', 'batTrayNone', 'batTrayCheck', 'batTrayOpen', 'batNoticeLow', 'batNoticeLowBody', 'batNoticeFull', 'batNoticeFullBody', 'batAutostartComment',
+  // (Piece 3: the tray's Bluetooth lines and why one did not work.)
+  'btcTrayConnect', 'btcTrayDisconnect', 'btcTrayFailed', 'btcEnd_refused', 'btcEnd_timedOut', 'btcEnd_unreachable', 'btcEnd_settings', 'btcEnd_noRadio', 'btcEnd_busy', 'btcEnd_failed'] as const;
+function batteryLabels(): Record<string, string> {
+  // (The placeholders left in: the shell fills {n}, {name} and {level}; the digits as the interface writes them.)
+  const out: Record<string, string> = { batDigits: localDigits('0123456789') };
+  for (const k of BAT_WORDS) out[k] = t(k);
+  return out;
+}
+/** The words alone sent again (after the rest of the strings came, and when the language changes): the shell's tray and
+ *  notices then speak the interface's language. Once per run. */
+let relabelWired = false;
+function wireRelabel(d: { desktopPrefs?(o: Record<string, unknown>): Promise<unknown> }): void {
+  if (relabelWired) return; relabelWired = true;
+  const send = () => { void d.desktopPrefs?.({ labels: deskLabels() })?.catch?.(() => undefined); };
+  void loadRest().then(send, () => undefined);
+  onLangChange(() => send());
 }
 
 export interface Power { wifiOnly?: boolean; batteryGuard?: boolean; keepAwake?: boolean; whenDone?: 'nothing' | 'quit' | 'sleep' | 'shutdown';
@@ -31,6 +52,7 @@ export async function applyPower(): Promise<void> {
       // (The Tauri shell also takes the interface's words for its tray menu and a Mac's menu bar, and says which hotkeys
       // the system refused — Electron ignores the one and never answers the other.)
       const r = await d?.desktopPrefs?.({ keepAwake: p.keepAwake !== false, whenDone: p.whenDone ?? 'nothing', notifyDone: p.notifyDone !== false, tray: !!p.tray, hotkeys: p.hotkeys ?? {}, labels: deskLabels() }) as { hotkeyErrors?: Record<string, string> } | undefined;
+      if (d?.desktopPrefs && (window as unknown as { __KT_SHELL__?: string }).__KT_SHELL__ === 'tauri') wireRelabel(d);
       const bad = r && r.hotkeyErrors && typeof r.hotkeyErrors === 'object' ? Object.entries(r.hotkeyErrors) : [];
       // (One toast for them all: a later toast takes an earlier one's place.)
       if (bad.length) { const { toast } = await import('../ui/dom'); toast(bad.map(([mode, why]) => t('hotkeyRefused', { keys: String((p.hotkeys as Record<string, string> | undefined)?.[mode] ?? mode), why: t(why === 'key' ? 'hotkeyWhyKey' : why === 'taken' ? 'hotkeyWhyTaken' : 'hotkeyWhyNone') })).join(' · '), 'error', 6000 + 2000 * (bad.length - 1)); }

@@ -15,6 +15,8 @@ export type Route =
   | { name: 'videos'; tab?: string; folder?: string; srv?: string; p?: string }
   | { name: 'courses'; url?: string }
   | { name: 'screen' }
+  /** Device battery (a computer's: the batteries of mice, keyboards, headsets, controllers). */
+  | { name: 'battery' }
   | { name: 'files'; p?: string; save?: string; c?: string; /** A stamp that only forces the page to be built anew (panes toggled). */ t?: string }
   | { name: 'install'; p: string }
   | { name: 'pick' }
@@ -37,6 +39,7 @@ export function parseRoute(hash = location.hash): Route {
   if (p.startsWith('/subs')) return { name: 'subs', q: sp.get('q') ?? undefined };
   const tvt = /^\/tv\/(movie|series)\/(tt\d+)/.exec(p); if (tvt) return { name: 'tvTitle', type: tvt[1] as 'movie', id: tvt[2], season: sp.get('s') ? Number(sp.get('s')) : undefined };
   if (p.startsWith('/screen')) return { name: 'screen' };
+  if (p.startsWith('/battery')) return { name: 'battery' };
   if (p.startsWith('/pick')) return { name: 'pick' };
   if (p.startsWith('/files')) return { name: 'files', p: sp.get('p') ?? undefined, save: sp.get('save') ?? undefined, c: sp.get('c') ?? undefined, t: sp.get('t') ?? undefined };
   // (An app opened with «Kurokawa Installer»: the app's installer for it.)
@@ -63,7 +66,7 @@ export function navigate(path: string, replace = false): void {
 export function sectionOfRoute(r: Route): string {
   switch (r.name) {
     case 'downloads': case 'task': case 'add': case 'install': return 'downloads';
-    case 'settings': case 'addons': case 'screen': return 'settings';
+    case 'settings': case 'addons': case 'screen': case 'battery': return 'settings';
     case 'anime': case 'animeEntry': case 'animeStudio': return 'anime';
     case 'tv': case 'tvTitle': return 'tv';
     case 'videos': case 'courses': return 'videos';

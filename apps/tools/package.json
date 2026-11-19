@@ -22,5 +22,5 @@
     "@capacitor/cli": "^6.1.0",
     "@capacitor/android": "^6.1.0"
   },
-  "license": "MIT"
+  "license": "GPL-3.0-or-later"
 }

@@ -148,6 +148,21 @@ jobs:
           "$d/gaplogic$ext"
           if [ "$RUNNER_OS" = Linux ]; then (cd apps/tools && node tests/hybridcookies.cjs); fi
 
+      # (0.21, device battery: kt-battery's core — model, allow-list, registry, readers' rules, identity, scheduler and
+      # its threaded runner with a stuck fake device — tested together through its test root; the Windows declarations'
+      # sizes; and its Windows platform type-checked (its link attributes apply on Windows only), on every system.)
+      - name: Std-only unit tests (device battery)
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/rs-tests-batt"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          for f in apps/tools/core/kt-battery/stdroots/core.rs apps/tools/core/kt-battery/stdroots/winffi.rs; do
+            n=batt-$(basename "$f" .rs)
+            rustc --edition 2021 --test "$f" -o "$d/$n$ext"
+            "$d/$n$ext"
+          done
+          rustc --edition 2021 --crate-type lib --emit=metadata apps/tools/core/kt-battery/stdroots/wincheck.rs -o "$d/batt-wincheck.rmeta"
+
       # (Stage P4, the hybrid torrent engine: its std-only rules — which engine serves a watched torrent, one owner per
       # info-hash, the fallback to aria2, where librqbit writes — and the switch that turns librqbit on in CI's copy.)
       - name: Std-only unit tests (stage P4, hybrid torrent engine)
@@ -264,6 +279,23 @@ jobs:
           tail -3 "$RUNNER_TEMP/original.log"
           built=no; if [ "$code" = 0 ]; then built=yes; echo "KT_ORIGINAL=$f" >> "$GITHUB_ENV"; fi
           echo "cargo check --features $f ($RUNNER_OS): exit $code — built into this run's program: $built" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # (0.21, device battery: the Xbox controllers' real percentage — Cargo feature battery-wgi, kt-battery's `wgi`, the
+      # windows crate's WinRT parts — is off until it compiles; this try prints the compiler's word on Windows and is
+      # never built into the program here. The rest of kt-battery is in every build.)
+      - name: Device battery — WGI compile try
+        if: matrix.target == '' && runner.os == 'Windows'
+        continue-on-error: true
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        shell: bash
+        run: |
+          set +e
+          cargo check --release --features battery-wgi --message-format short > "$RUNNER_TEMP/battwgi.log" 2>&1
+          code=$?
+          set -e
+          grep -E 'error|warning: unused' "$RUNNER_TEMP/battwgi.log" | head -80 || true
+          tail -3 "$RUNNER_TEMP/battwgi.log"
+          echo "cargo check --features battery-wgi (Windows): exit $code" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # (Stage P4, hybrid engine: librqbit on for CI's builds — the default feature of this checkout's Cargo.toml only,
       # rqbit-feature.cjs; the committed file leaves it out. A build that fails with it is made again without it by
