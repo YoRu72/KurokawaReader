@@ -2991,7 +2991,6 @@ export const zh: Partial<Strings> = {
   batHistOnHint: "每 30 分钟以及每次变化时记录各设备的电量，仅保存在这台电脑上。剩余时间估计需要它。",
   batHistKeep: "记录保留",
   batHistKeepHint: "较旧的记录会被删除。关闭后不再记录新内容，已保存的记录会保留到过期或被清除。",
-  batHistAway: "不在或休眠",
   batHistKeyHint: "用方向键在记录之间移动。",
   batPic_microphone: "麦克风",
 };

@@ -2991,7 +2991,6 @@ export const ja: Partial<Strings> = {
   batHistOnHint: "各デバイスの残量を 30 分ごとと変化時に記録し、このコンピューターにだけ保存します。残り時間の推定に必要です。",
   batHistKeep: "保存期間",
   batHistKeepHint: "古い記録は削除されます。オフにすると新しい記録は行われず、保存済みの記録は期限切れになるか消去するまで残ります。",
-  batHistAway: "不在またはスリープ",
   batHistKeyHint: "矢印キーで記録を移動できます。",
   batPic_microphone: "マイク",
 };

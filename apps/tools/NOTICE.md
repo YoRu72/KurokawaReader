@@ -320,9 +320,9 @@ the user turns its family on, «ported, untested»; each request is listed byte 
 | Single requests not sent (the device is still read when something else made it speak, else «needs a query we do not send»): PlayStation's Bluetooth feature 05, 8BitDo's feature 06, GameSir Cyclone 2's 0F 03 (piece 4); Finalmouse's «wake/all» and its lift-off / profile reads, Endgame Gear 4K's 0F probe, Wraith W1's read sweep, AULA HERO 68 Air's message session (piece 5); BlackShark V3's handshake, Poly's attach and HELLOs (piece 6) | Each changes a mode, wakes a link or opens a session. |
 | `src/widget.cpp`: the copies on other monitors' taskbars and the Windows 11 Widgets-button and clock checks | They need UI Automation, which the original runs on a thread of its own to keep Explorer from hanging; Tools' strip stays on the main taskbar. |
 | `src/brands.cpp` brand colours | Makers' colours (several yellow or orange); Tools draws in calm colours of its own. |
-| `src/report.cpp`, `.h` (support request) | It posts to the author's server (§9.12); Tools sends nothing — a local report is planned (piece 11). |
+| `src/report.cpp`, `.h` (support request) | It posts to the author's server (§9.12); Tools sends nothing: «Report a device» builds a text on this computer (`core/kt-battery/src/report.rs`) that the user reads, edits, copies or saves; no serials, addresses or names in it. |
 | `src/main.cpp` (beyond the tray, notices and autostart taken in piece 2), `src/i18n.cpp`, `.h`, `lang/*.txt` | Tools has its own window, settings and five languages; the phrase list was the checklist, Arabic written anew, Hebrew not carried. |
-| `src/linux/*`, `linux/*` (udev rule, desktop file), `src/platform_compat.h`, `build-linux.sh`, `Makefile*` | The Linux build is a later piece (PLAN piece 10); its udev rule (all raw HID nodes, read/write: §9.11) will not be taken as it is. |
+| `src/linux/*`, `linux/*` (udev rule, desktop file), `src/platform_compat.h`, `build-linux.sh`, `Makefile*` | Tools reads on Linux through its own code (`core/kt-battery/src/linux/*`, `sysfs.rs`, `upower.rs`, `bluez.rs`) and on macOS through the system's own reports; the original's udev rule (all raw HID nodes, read/write: §9.11) is not taken — Tools generates a rule for the listed devices only (`udev.rs`) and never installs it itself. |
 | `installer/*`, `res/*`, `build.bat`, `scripts/*` | The original's own installer, icons and release scripts: Tools has its own. |
 | `tests/*`, `docs/*` | Their C++ tests and protocol notes were read as references; our tests are written anew with made-up reports. |
 
@@ -368,6 +368,11 @@ the system drive's temperature, beside the devices on the taskbar) was inspired 
 - Not taken either: no kernel driver (TraySense installs PawnIO for the CPU temperature), no installer downloaded or
   run, no restart as administrator, no copy to Program Files, no processor registers read; none of its PawnIO modules.
   A value Windows does not give an ordinary program without a driver is simply not shown.
+
+## Device definitions and «Teach me this device»
+
+Our own design, in neither project above: `core/kt-battery/src/defs.rs`, `teach.rs`,
+`desktop-tauri/src-tauri/src/batdefs.rs`, `src/views/batdefs.ts`. A definition only listens; it cannot hold bytes to send.
 
 ## Other notices
 

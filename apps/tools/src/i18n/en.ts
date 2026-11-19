@@ -4086,7 +4086,6 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   batHistOnHint: "Each device's level every half hour and whenever it changes, kept on this computer only. The time-left estimate needs it.",
   batHistKeep: "Keep readings for",
   batHistKeepHint: "Older readings are removed. With the history off nothing new is recorded; what is kept stays until it ages out or you clear it.",
-  batHistAway: "Away or asleep",
   batHistKeyHint: "Arrow keys move along the readings.",
   batPic_microphone: "Microphone",
 } as const;

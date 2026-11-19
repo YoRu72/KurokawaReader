@@ -2991,7 +2991,6 @@ export const ko: Partial<Strings> = {
   batHistOnHint: "각 기기의 잔량을 30분마다, 그리고 바뀔 때마다 이 컴퓨터에만 기록합니다. 남은 시간 추정에 필요합니다.",
   batHistKeep: "보관 기간",
   batHistKeepHint: "오래된 기록은 지워집니다. 기록을 끄면 새로 기록하지 않으며, 저장된 기록은 기간이 지나거나 지울 때까지 남습니다.",
-  batHistAway: "연결 끊김 또는 절전",
   batHistKeyHint: "화살표 키로 기록 사이를 이동합니다.",
   batPic_microphone: "마이크",
 };
