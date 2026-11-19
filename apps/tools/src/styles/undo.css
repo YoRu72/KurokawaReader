@@ -9,6 +9,8 @@
 .toast-x { background: none; border: 0; color: inherit; width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center; cursor: pointer; opacity: .8; flex: none; }
 .toast-x:hover { background: color-mix(in srgb, currentColor 12%, transparent); opacity: 1; }
 .toast-x svg { width: 18px; height: 18px; }
+/* (A phone: the × a full 48 px target, so the pill can always be closed by a thumb.) */
+html:not(.pc) .toast-x { width: 48px; height: 48px; margin-block: -4px; }
 /* (A plain message while the Undo waits: above it, both readable.) */
 .toast.undo-snack ~ .toast:not(.undo-snack), .toast.with-action ~ .toast:not(.with-action) { margin-bottom: 64px; }
 /* (In the player: at the top, clear of its controls along the bottom.) */

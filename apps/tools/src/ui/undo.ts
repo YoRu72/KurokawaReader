@@ -7,9 +7,10 @@
 // subtitle workshop) takes the keys first while it is open (`undoScope`).
 import { h, icon, openSheet, toast } from './dom';
 import { t } from '../i18n';
+import { placePill, swipeAway } from './pill';
 
 type Fn = () => unknown;
-interface Entry { label: string; undo: Fn; redo?: Fn; commit?: Fn; scope: string; state: 'done' | 'undone'; at: number; timer?: number; sticky?: boolean }
+interface Entry { label: string; undo: Fn; redo?: Fn; commit?: Fn; scope: string; state: 'done' | 'undone'; at: number; timer?: number; /** A held action's deadline (the clock's ms). */ until?: number; sticky?: boolean }
 export interface UndoOpts {
   /** Held: what really happens when the chance to undo is over (the snackbar's time, the page left). */
   commit?: Fn;
@@ -30,10 +31,16 @@ const fail = (e: unknown) => toast(String((e as Error)?.message ?? e), 'error', 
 const run = async (f: Fn | undefined): Promise<boolean> => { try { await f?.(); return true; } catch (e) { fail(e); return false; } };
 
 /* ---------- the snackbar ---------- */
-let snack: { el: HTMLElement; timer?: number; entry: Entry } | null = null;
-function hideSnack(): void { if (!snack) return; window.clearTimeout(snack.timer); snack.el.remove(); snack = null; }
+// (Its time is a deadline on the clock, not only a timer: a phone's web view put in the background stops or slows its
+// timers, so the deadline is looked at again whenever the page is seen again — and four times a second while the
+// pill is up, which also keeps it above the bars along the bottom as they come and go. It can always be closed: its ×
+// (48 px) or a swipe aside; closing a held action does it then, exactly once.)
+let snack: { el: HTMLElement; tick: number; until: number; entry: Entry } | null = null;
+function hideSnack(): void { if (!snack) return; window.clearInterval(snack.tick); snack.el.remove(); snack = null; }
+/** The snackbar closed by hand (its ×, a swipe): a held action is done now; an Undo offer simply ends. */
+function closeSnack(e: Entry): void { if (snack?.entry === e) hideSnack(); if (e.state === 'done' && e.commit) void settle(e); }
 function showSnack(e: Entry, mode: 'undo' | 'redo', ms: number): void {
-  hideSnack();
+  hideSnack(); wireClock();
   // (A plain message on the screen gives way: what it said is this action's own line now.)
   document.querySelectorAll('.toast:not(.undo-snack)').forEach((x) => x.remove());
   const pc = isPc(); const key = mode === 'undo' ? 'Ctrl+Z' : 'Ctrl+Shift+Z';
@@ -41,21 +48,37 @@ function showSnack(e: Entry, mode: 'undo' | 'redo', ms: number): void {
   const el = h('div', { class: 'toast with-action undo-snack' + (e.scope === 'player' ? ' in-player' : ''), role: 'status', 'data-mode': mode },
     h('span', { class: 'grow', dir: 'auto' }, mode === 'undo' ? e.label : t('undoneMsg')), act,
     pc ? h('kbd', { class: 'undo-key', dir: 'ltr' }, key) : null,
-    !ms || pc ? h('button', { type: 'button', class: 'toast-x', 'aria-label': t('dismiss'), title: t('dismiss'), onclick: () => { hideSnack(); if (!ms && e.state === 'done' && e.commit) void settle(e); } }, icon('close')) : null);
+    h('button', { type: 'button', class: 'toast-x', 'aria-label': t('dismiss'), title: t('dismiss'), onclick: () => closeSnack(e) }, icon('close')));
+  swipeAway(el, () => closeSnack(e));
   document.body.appendChild(el);
-  // (A floating button where the snackbar sits — the downloads' «Add» —: the snackbar rides above it, both in reach.)
-  // (Looked at again once the page has settled: a selection left as the action ends brings the button back.)
-  const lift = () => { if (!el.isConnected || e.scope === 'player') return; const fab = Array.from(document.querySelectorAll<HTMLElement>('.fab')).find((f) => f.getClientRects().length && getComputedStyle(f).visibility !== 'hidden' && getComputedStyle(f).display !== 'none'); if (!fab) return;
-    const f = fab.getBoundingClientRect(), s = el.getBoundingClientRect(); if (s.bottom > f.top - 4 && s.top < f.bottom && s.right > f.left && s.left < f.right) el.style.bottom = `${Math.round(innerHeight - f.top + 12)}px`; };
-  lift(); requestAnimationFrame(() => requestAnimationFrame(lift));
-  snack = { el, entry: e, timer: ms ? window.setTimeout(hideSnack, ms) : undefined };
+  const tick = window.setInterval(() => { sweep(); if (snack?.el === el) placePill(el); }, 250);
+  snack = { el, entry: e, tick, until: ms ? Date.now() + ms : Infinity };
+  placePill(el); requestAnimationFrame(() => placePill(el));
 }
 
 /* ---------- the history ---------- */
 function drop(e: Entry): void { const i = entries.indexOf(e); if (i >= 0) entries.splice(i, 1); if (snack?.entry === e) hideSnack(); }
-/** A held action done for real; it cannot be taken back after this. */
-async function settle(e: Entry): Promise<void> { window.clearTimeout(e.timer); const c = e.commit; e.commit = undefined; drop(e); await run(c); }
-function arm(e: Entry, ms: number): void { window.clearTimeout(e.timer); if (e.commit && ms) e.timer = window.setTimeout(() => void settle(e), ms); }
+/** A held action done for real, once; it cannot be taken back after this. */
+async function settle(e: Entry): Promise<void> { window.clearTimeout(e.timer); e.until = undefined; const c = e.commit; e.commit = undefined; drop(e); if (c) await run(c); }
+function arm(e: Entry, ms: number): void { window.clearTimeout(e.timer); e.until = undefined; if (e.commit && ms) { e.until = Date.now() + ms; e.timer = window.setTimeout(sweep, ms + 20); } }
+/** Whatever's time is over goes now: held actions done, the snackbar gone (a timer late or never run changes nothing). */
+function sweep(): void {
+  const now = Date.now();
+  for (const e of [...entries]) if (e.commit && e.state === 'done' && e.until !== undefined && e.until <= now) void settle(e);
+  if (snack && snack.until <= now) hideSnack();
+}
+let clockWired = false;
+function wireClock(): void {
+  if (clockWired) return; clockWired = true;
+  const seenAgain = () => { if (document.visibilityState !== 'hidden') sweep(); };
+  document.addEventListener('visibilitychange', seenAgain); addEventListener('focus', seenAgain); addEventListener('pageshow', seenAgain); document.addEventListener('resume', seenAgain);
+  // (Another page: its snackbar does not follow — a held action of the page left is done then, as its comment says.)
+  addEventListener('hashchange', () => {
+    const s = snack; if (!s) return; const e = s.entry;
+    if (e.scope === '*' || e.scope === 'player' || e.sticky || e.scope === scopeNow()) return;
+    if (e.commit && e.state === 'done') void settle(e); else hideSnack();
+  });
+}
 
 /** Offers «Undo» for what was just done: `undo` takes it back exactly, `redo` (when given) does it again.
  *  With `opts.commit` the action is only held (shown done) until its chance is over. */
@@ -70,7 +93,7 @@ export function offerUndo(label: string, undo: Fn, redo?: Fn, opts: UndoOpts = {
 }
 async function undoEntry(e: Entry): Promise<void> {
   if (e.state !== 'done' || !entries.includes(e)) return;
-  window.clearTimeout(e.timer); e.state = 'undone'; e.at = ++seq;
+  window.clearTimeout(e.timer); e.until = undefined; e.state = 'undone'; e.at = ++seq;
   if (!(await run(e.undo))) { drop(e); return; }
   if (e.redo) showSnack(e, 'redo', WAIT); else { drop(e); hideSnack(); toast(t('undoneMsg')); }
 }
