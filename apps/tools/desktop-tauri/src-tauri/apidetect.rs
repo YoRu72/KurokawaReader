@@ -167,6 +167,18 @@ pub fn detect_shortcut(src: &str) -> Vec<Found> {
     vec![Found { cfg: "kt_shortcuts", what: "global shortcuts (with_handler, register, unregister_all)", on }]
 }
 
+/* ---------- device battery (battery.rs) ---------- */
+
+/// (0.21, device battery) the cfg name of a notice's sound chosen (the «Sound» switch of the notices).
+pub const CFGS_BAT: [&str; 1] = ["kt_notify_sound"];
+
+/// What the squeezed source of tauri-plugin-notification offers: the builder's `sound` (without it the switch is
+/// kept but the notices sound as Windows plays them).
+pub fn detect_notification(src: &str) -> Vec<Found> {
+    let has = |s: &str| src.contains(&squeeze(s));
+    vec![Found { cfg: "kt_notify_sound", what: "a notice's sound chosen (NotificationBuilder::sound)", on: has("pub fn sound(mut self, sound: impl Into<String>) -> Self") }]
+}
+
 /* ---------- screen translator (screentr.rs) ---------- */
 
 /// The cfg names of the screen translator's calls: the mouse's place, a click-through window, a window that takes no
@@ -362,6 +374,14 @@ mod tests {
         let mut all: Vec<&str> = detect_tauri_p6("").iter().map(|x| x.cfg).collect();
         all.extend(detect_shortcut("").iter().map(|x| x.cfg));
         assert_eq!(all, CFGS_P6.to_vec());
+    }
+
+    #[test]
+    fn battery_sound() {
+        let src = squeeze("    pub fn sound(mut self, sound: impl Into<String>) -> Self {\n        self.data.sound.replace(sound.into());");
+        assert!(detect_notification(&src)[0].on);
+        assert!(!detect_notification(&squeeze("pub fn sound(&self) -> Option<&str>"))[0].on);
+        assert_eq!(detect_notification("").iter().map(|x| x.cfg).collect::<Vec<_>>(), CFGS_BAT.to_vec());
     }
 
     #[test]

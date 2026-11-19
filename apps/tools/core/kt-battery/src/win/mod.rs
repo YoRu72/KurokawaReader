@@ -23,6 +23,7 @@ pub mod ffi;
 pub mod hid;
 pub mod mice;
 pub mod spp;
+pub mod strip;
 pub mod wgi;
 pub mod xinput;
 

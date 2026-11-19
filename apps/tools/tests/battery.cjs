@@ -29,14 +29,20 @@
 // said), «both in the case», «needs a part of Windows this build does not include», headsets in per cent and in steps, a
 // phone from Phone Link, an Xbox pad named in the page's language; «Headsets and earbuds» and «Other» in the same
 // collapsed, searchable design (Galaxy Buds' switch says it connects, off by default; AirPods' and Phone Link's on); the
-// rename sheet's Save is the app's real filled button. `node tests/battery.cjs [en|ar]`.
+// rename sheet's Save is the app's real filled button. W1, the taskbar like the original (mode 'tauri'): «Taskbar» (the
+// tray's three ways and two drawings as pickers, asleep and disconnected devices, the strip on the taskbar with its two
+// looks — switches, needing the background), «Notices» (sound, quiet hours with hour pickers), the checking interval
+// from 30 s, the low marks 5–40 %; a device's menu moves it up and down (the cards follow, kept as order), gives it one
+// of our drawn pictures (kept as pictures; the card shows it) or its own back, joins two entries (links) and separates
+// them; Phone Link named as Windows names it in the page's language. Screenshots batW1-* when KT_SHOTS is set.
+// `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
 const serve = () => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(DIST, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
 const errors = []; const check = (what, ok, x) => { console.log(ok ? 'ok  ' : 'FAIL', what, ok || x === undefined ? '' : JSON.stringify(x).slice(0, 300)); if (!ok) errors.push(what); };
 const lang = process.argv[2] || 'en'; const SHOTS = process.env.KT_SHOTS || '';
-const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, `battery-${name}-${lang}.png`) }); } };
+const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, name.startsWith('batW1-') ? `${name}-${lang}.png` : `battery-${name}-${lang}.png`) }); } };
 
 // (Run in the page: the fake bridge. mode: 'tauri' | 'mac' | 'empty' | 'nothere' | 'electron'.)
 function fake({ lang, mode }) {
@@ -248,7 +254,8 @@ function fake({ lang, mode }) {
     await p.click('[data-name="low"]'); await p.waitForSelector('.sheet .dest-row');
     const bare = (x) => x.replace(/[\u200F\u2068\u2069]/g, '');
     const marks = (await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent))).map(bare);
-    check('the default mark offers 10, 15, 20 and 30', JSON.stringify(marks) === JSON.stringify(AR ? ['10٪', '15٪', '20٪', '30٪'] : ['10%', '15%', '20%', '30%']), marks);
+    const MK = [5, 10, 15, 20, 25, 30, 35, 40];
+    check('the default mark offers 5 to 40 in steps of 5 (the original\'s v1.1.0)', JSON.stringify(marks) === JSON.stringify(MK.map((n) => n + (AR ? '٪' : '%'))), marks);
     await p.keyboard.press('Escape'); await p.waitForTimeout(300);
     await p.evaluate(() => window.__push([{ key: 'bt:{N}', name: 'New Pad', kind: 'controller', brand: '', connection: 'bluetooth', source: 'bluetooth', vid: 0, pid: 0, merged: [], status: 'ok', reading: { level: { kind: 'exact', value: 12 }, charging: 'no', asleep: false, takenAt: 1_800_000_000_000 }, lastGood: null, checkedAt: 1 }]));
     await p.waitForTimeout(150);
@@ -257,9 +264,9 @@ function fake({ lang, mode }) {
     check('the menu shows the device\'s mark (as the others)', (await p.textContent('.sheet [data-act="mark"] .bat-mark-val')) === (AR ? 'كسائر الأجهزة (20٪)' : 'Same as the others (20%)'));
     await p.click('.sheet [data-act="mark"]'); await p.waitForSelector('.sheet .dest-row input[type=radio]');
     const opts = (await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent))).map(bare);
-    check('a device\'s own mark: as the others, 10–30, or no notice', opts.length === 6 && opts[5] === (AR ? 'بلا تنبيه' : 'No notice'), opts);
+    check('a device\'s own mark: as the others, 5–40, or no notice', opts.length === 10 && opts[9] === (AR ? 'بلا تنبيه' : 'No notice'), opts);
     await p.waitForTimeout(450); await shot(p, 'mark');
-    await p.click('.sheet .dest-row:has-text("' + (AR ? '10٪' : '10%') + '")'); await p.waitForTimeout(250);
+    await p.click('.sheet .dest-row >> text=/^\\u200F?10' + (AR ? '٪' : '%') + '$/'); await p.waitForTimeout(250);
     const th = (await calls(p)).filter((c) => c[0] === 'settings').pop();
     check('its own mark kept through batterySettings({ set: { thresholds } })', th && th[1].set.thresholds && th[1].set.thresholds['bt:{N}'] === 10, th);
     check('12% over its own mark (10%): not red', !(await p.getAttribute('.bat-card[data-key="bt:{N}"]', 'class')).includes('low'));
@@ -443,6 +450,7 @@ function fake({ lang, mode }) {
     check('a headset in steps: «6 of 8», its kind said', ns.word === (AR ? '6 من 8' : '6 of 8') && ns.bars === 8 && ns.sub.includes(AR ? 'سماعة رأس' : 'Headset'), ns);
     const ph = await p.$eval('.bat-card[data-key="phonelink"]', (e) => ({ name: e.querySelector('.bat-name').textContent, sub: e.querySelector('.bat-sub').textContent, kind: e.dataset.kind }));
     check('a phone through Phone Link: a «phone» card', ph.kind === 'phone' && ph.name === 'Field Phone' && ph.sub.includes(AR ? 'هاتف' : 'Phone'), ph);
+    check('Phone Link named as Windows names it in the page\'s language', ph.sub.includes(AR ? 'ارتباط الهاتف' : 'Phone Link') && (AR ? !ph.sub.includes('Phone Link') : true), ph.sub);
     check('an Xbox pad named in the page\'s language', (await p.textContent('.bat-card[data-key="xinput:1:pad"] .bat-name')) === (AR ? 'يد Xbox رقم 2' : 'Xbox controller 2'));
     check('no sideways overflow (headsets)', (await overflow(p)) <= 1);
     await shot(p, 'heads');
@@ -464,7 +472,9 @@ function fake({ lang, mode }) {
     await p.fill('.bat-heads .bat-mk-find', ''); await p.waitForTimeout(100);
     await p.click('.bat-other .bat-mk-toggle'); await p.waitForSelector('.bat-other .bat-switch');
     const orr = await p.$$eval('.bat-other .bat-switch', (r) => r.map((e) => ({ fam: e.dataset.family, on: e.querySelector('input').checked })));
-    check('«Other»: the microphone off, Phone Link (read only) on', JSON.stringify(orr) === JSON.stringify([{ fam: 'ot-maono', on: false }, { fam: 'ot-phonelink', on: true }]), orr);
+    check('«Other»: the microphone off, Phone Link (read only) on', JSON.stringify(orr.slice().sort((a, b) => a.fam.localeCompare(b.fam))) === JSON.stringify([{ fam: 'ot-maono', on: false }, { fam: 'ot-phonelink', on: true }]), orr);
+    const plTitle = await p.textContent('.bat-other [data-row="ot-phonelink"] .bat-sw-title'); const plHint = await p.textContent('.bat-other > .hint');
+    check('… Phone Link\'s row and the group\'s words in the page\'s language', AR ? plTitle === 'ارتباط الهاتف' && !plHint.includes('Phone Link') : plTitle === 'Phone Link', [plTitle, plHint]);
     check('no yellow, amber or orange (headsets)', await p.evaluate(() => [...document.querySelectorAll('.battery-view *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor, c.fill, c.stroke].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
     check('no sideways overflow (the headset families open)', (await overflow(p)) <= 1);
     await p.$eval('.bat-heads', (e) => e.scrollIntoView({ block: 'start' })); await p.waitForTimeout(200); await shot(p, 'heads-families');
@@ -584,6 +594,110 @@ function fake({ lang, mode }) {
     check('another system: said calmly, no refresh button', !(await p.isVisible('.battery-view .topbar [data-icon="refresh"]')));
     check('another system: no Background group', !(await p.$('.bat-bg')));
     check('another system: no connect panel', !(await p.$('.bt-panel')) || !(await p.isVisible('.bt-panel')));
+    await ctx.close();
+  }
+  // ---- W1: the taskbar like the original, device order, pictures, joins, notices.
+  {
+    const { ctx, p } = await open('tauri');
+    await p.waitForSelector('.bat-tb[data-group="taskbar"]');
+    const last = async () => (await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set;
+    const tb = async () => p.$$eval('.bat-tb .bat-switch', (r) => r.map((e) => ({ row: e.dataset.row, on: e.querySelector('input').checked, dis: e.querySelector('input').disabled, role: e.querySelector('input').getAttribute('role') })));
+    let rows = await tb();
+    check('«Taskbar»: switches, all waiting for the background at first', rows.length === 5 && rows.every((r) => r.dis && r.role === 'switch'), rows);
+    check('… its pickers too, and the reason said', (await p.$eval('[data-name="trayStyle"]', (e) => e.disabled)) && (await p.textContent('.bat-tb > .hint')) === (AR ? 'يقتضي تشغيلَ «مواصلة العمل في الخلفية».' : 'Needs «Keep running in the background».'));
+    await p.click('.bat-bg [data-row="background"]'); await p.waitForTimeout(250);
+    rows = await tb();
+    const by = (n) => rows.find((r) => r.row === n);
+    check('with the background: asleep devices shown, disconnected ones not, the strip off — as the original', by('trayAway').on && !by('trayGone').on && !by('strip').on && by('stripStacked').dis && by('stripPlate').dis, rows);
+    check('one icon per device by default, drawn as the number', (await p.textContent('[data-name="trayStyle"]')) === (AR ? 'أيقونةٌ لكل جهاز' : 'One icon per device') && (await p.textContent('[data-name="trayDraw"]')) === (AR ? 'الرقم' : 'The number'));
+    await p.click('[data-name="trayStyle"]'); await p.waitForSelector('.sheet .dest-row');
+    const styles = await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent));
+    check('the tray\'s three ways', styles.length === 3, styles);
+    await p.waitForTimeout(400); await shot(p, 'batW1-tray-style');
+    await p.click('.sheet .dest-row:nth-child(2)'); await p.waitForTimeout(250);
+    check('«one icon with the lowest level» kept', (await last()).trayStyle === 'lowest');
+    await p.click('[data-name="trayDraw"]'); await p.waitForSelector('.sheet .dest-row'); await p.click('.sheet .dest-row:nth-child(2)'); await p.waitForTimeout(250);
+    check('«a battery» kept', (await last()).trayDraw === 'bar');
+    await p.click('.bat-tb [data-row="trayGone"]'); await p.waitForTimeout(250);
+    check('disconnected devices shown: kept', (await last()).trayGone === true);
+    await p.click('.bat-tb [data-row="strip"]'); await p.waitForTimeout(250);
+    rows = await tb();
+    check('the strip turned on, then its two looks can be chosen', (await last()).strip === true && !rows.find((r) => r.row === 'stripStacked').dis && !rows.find((r) => r.row === 'stripPlate').dis, rows);
+    await p.click('.bat-tb [data-row="stripPlate"]'); await p.waitForTimeout(250);
+    check('a background behind the strip kept', (await last()).stripPlate === true);
+    const geo = await p.$$eval('.bat-tb .bat-row, .bat-tb .bat-switch', (rs) => rs.map((r) => { const kids = [...r.children].map((c) => c.getBoundingClientRect()).filter((b) => b.width > 0); let g = 1e9; for (let i = 1; i < kids.length; i++) g = Math.min(g, Math.abs(kids[i].left - kids[i - 1].right), Math.abs(kids[i - 1].left - kids[i].right)); return g; }));
+    check('nothing touches in «Taskbar»', geo.every((g) => g >= 12), geo);
+    const pw = await p.$$eval('.bat-tb .pick-btn', (b) => b.map((x) => Math.round(x.getBoundingClientRect().width)));
+    check('its pickers share a width', pw.length === 2 && pw[0] === pw[1], pw);
+    await p.$eval('.bat-tb', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); await shot(p, 'batW1-taskbar');
+    // «Notices».
+    const nt = await p.$$eval('.bat-nt .bat-switch', (r) => r.map((e) => ({ row: e.dataset.row, on: e.querySelector('input').checked })));
+    check('«Notices»: sound on, quiet hours off by default', JSON.stringify(nt) === JSON.stringify([{ row: 'sound', on: true }, { row: 'quiet', on: false }]), nt);
+    check('… the hours wait for the quiet hours', await p.$eval('[data-name="quietFrom"]', (e) => e.disabled));
+    await p.click('.bat-nt [data-row="sound"]'); await p.waitForTimeout(250);
+    check('the sound turned off: kept', (await last()).sound === false);
+    await p.click('.bat-nt [data-row="quiet"]'); await p.waitForTimeout(250);
+    check('quiet hours on: kept, said with their hours', (await last()).quiet === true && (await p.textContent('.bat-nt [data-row="quiet"] small')).replace(/\u200F/g, '') === (AR ? 'لا تنبيهات من 22:00 إلى 07:00.' : 'No notices from 22:00 to 07:00.'));
+    await p.click('[data-name="quietFrom"]'); await p.waitForSelector('.sheet .dest-row');
+    check('24 hours offered', (await p.$$('.sheet .dest-row')).length === 24);
+    await p.click('.sheet .dest-row:nth-child(24)'); await p.waitForTimeout(250);
+    check('from 23:00 kept', (await last()).quietFrom === 23);
+    check('no native number spinner', !(await p.$('.battery-view input[type=number]')));
+    await p.$eval('.bat-nt', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); await shot(p, 'batW1-notices');
+    // (The same two cards in a dark system theme, for the pictures.)
+    if (SHOTS) {
+      await p.emulateMedia({ colorScheme: 'dark' }); await p.waitForTimeout(300);
+      await shot(p, 'batW1-notices-dark');
+      await p.$eval('.bat-tb', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); await shot(p, 'batW1-taskbar-dark');
+      await p.emulateMedia({ colorScheme: 'light' }); await p.waitForTimeout(300);
+    }
+    // The checking interval from 30 s.
+    await p.click('[data-name="every"]'); await p.waitForSelector('.sheet .dest-row');
+    const ev = (await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent.replace(/\u200F/g, ''))));
+    check('checking every 30 s to every hour', ev.length === 8 && ev[0] === (AR ? '30 ثانيةً' : '30 seconds') && ev[7] === (AR ? '60 دقيقةً' : '60 minutes'), ev);
+    await p.click('.sheet .dest-row:nth-child(1)'); await p.waitForTimeout(250);
+    check('30 s kept as intervalSec', (await last()).intervalSec === 30);
+    // Order: the cards follow the user's order; up and down from a device's menu.
+    await p.$eval('.bat-grid', (e) => e.scrollIntoView({ block: 'start' }));
+    const keys = () => p.$$eval('.bat-grid:not(.bat-hidden) > .bat-card', (c) => c.map((e) => e.dataset.key));
+    const k0 = await keys();
+    check('by default: by kind (headsets first), then name', k0[0] === 'bt:{H}' && k0[1] === 'bt:{E}', k0);
+    await p.click('.bat-card[data-key="bt:{H}"] .bat-more'); await p.waitForSelector('.sheet [data-act="rename"]');
+    check('the first has no «Move up»', !(await p.$('.sheet [data-act="up"]')) && !!(await p.$('.sheet [data-act="down"]')));
+    await p.waitForTimeout(400); await shot(p, 'batW1-menu');
+    await p.click('.sheet [data-act="down"]'); await p.waitForTimeout(250);
+    const o1 = (await last()).order;
+    check('moved down: kept as order, the cards follow', o1[0] === 'bt:{E}' && o1[1] === 'bt:{H}' && (await keys())[1] === 'bt:{H}', o1);
+    check('… the menu button keeps the focus', (await p.evaluate(() => document.activeElement?.closest('.bat-card')?.dataset.key)) === 'bt:{H}');
+    await p.click('.bat-card[data-key="bt:{H}"] .bat-more'); await p.click('.sheet [data-act="up"]'); await p.waitForTimeout(250);
+    check('moved up again', (await keys())[0] === 'bt:{H}');
+    // A picture of our own.
+    await p.click('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-more'); await p.click('.sheet [data-act="picture"]'); await p.waitForSelector('.bat-pics button');
+    const pics = await p.$$eval('.bat-pics button', (b) => b.map((x) => ({ p: x.dataset.picture, svg: !!x.querySelector('svg'), img: !!x.querySelector('img'), label: x.getAttribute('aria-label') })));
+    check('our own drawn pictures, each named', pics.length === 13 && pics.every((x) => x.svg && !x.img && x.label), pics.slice(0, 3));
+    const pg = await p.$$eval('.bat-pics button', (b) => { const r = b.map((x) => x.getBoundingClientRect()); let g = 1e9; for (let i = 1; i < r.length; i++) if (Math.abs(r[i].top - r[i - 1].top) < 2) g = Math.min(g, Math.max(r[i].left - r[i - 1].right, r[i - 1].left - r[i].right)); return g; });
+    check('the pictures keep a real gap', pg >= 8, pg);
+    await p.waitForTimeout(400); await shot(p, 'batW1-picture');
+    await p.click('.bat-pics button[data-picture="retro"]'); await p.waitForTimeout(250);
+    check('a picture kept as pictures; the card shows it', (await last()).pictures['hid:1111:2222:s:A1'] === 'retro' && (await p.$eval('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-ic svg', (e) => e.dataset.picture)) === 'retro');
+    await p.click('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-more'); await p.click('.sheet [data-act="picture"]'); await p.waitForSelector('.bat-pics button');
+    check('the chosen one is marked', (await p.getAttribute('.bat-pics button[data-picture="retro"]', 'aria-pressed')) === 'true');
+    await p.click('.sheet [data-act="pictureOwn"]'); await p.waitForTimeout(250);
+    check('its own picture back', !('hid:1111:2222:s:A1' in (await last()).pictures));
+    // Join two entries, then separate them.
+    await p.click('.bat-card[data-key="bt:{K}"] .bat-more'); await p.click('.sheet [data-act="join"]'); await p.waitForSelector('.sheet .dest-row[data-key]');
+    await p.waitForTimeout(400); await shot(p, 'batW1-join');
+    await p.click('.sheet .dest-row[data-key="hid:1111:2222:s:A1"]'); await p.waitForTimeout(250);
+    const ln = (await last()).links;
+    check('joined: kept as a link, then the list read again', JSON.stringify(ln) === JSON.stringify([['bt:{K}', 'hid:1111:2222:s:A1']]) && (await calls(p)).some((c) => c[0] === 'refresh'), ln);
+    await p.click('.bat-card[data-key="bt:{K}"] .bat-more');
+    check('a joined device offers to separate', !!(await p.$('.sheet [data-act="separate"]')) && !(await p.$('.sheet [data-act="join"]')));
+    await p.click('.sheet [data-act="separate"]'); await p.waitForTimeout(250);
+    check('separated: the link gone', JSON.stringify((await last()).links) === '[]');
+    check('no sideways overflow (W1)', (await overflow(p)) <= 1);
+    check('no yellow, amber or orange (W1)', await p.evaluate(() => [...document.querySelectorAll('.battery-view *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
+    await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForTimeout(400);
+    check('leaving the page unsubscribes (W1)', (await p.evaluate(() => window.__subs)) === 0);
     await ctx.close();
   }
   {

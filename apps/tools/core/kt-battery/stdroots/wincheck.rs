@@ -41,6 +41,8 @@ pub mod runner;
 pub mod sched;
 #[path = "../src/summary.rs"]
 pub mod summary;
+#[path = "../src/taskbar.rs"]
+pub mod taskbar;
 #[path = "../src/transport.rs"]
 pub mod transport;
 #[path = "../src/xbox.rs"]

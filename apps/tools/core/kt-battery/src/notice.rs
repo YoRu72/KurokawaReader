@@ -3,7 +3,7 @@
 // Derived from Wireless Device Battery Monitor (https://github.com/krisgfx9/Wireless-Device-Battery-Monitor), src/main.cpp
 // (UpdateTrayIcon: one «Low battery» balloon at 15 %, again only once the level is past 25 % or the device charges) at
 // commit 285d64254216857e94ca3ea3e1deb536f863e282, by krisgfx9 and its contributors, GPL-3.0-or-later.
-// Changed here: the mark is the user's, per device (10/15/20/30 %, or off), and it re-arms at mark + 5 %; a coarse
+// Changed here: the mark is the user's, per device (5–40 % in steps of 5, as the original's v1.1.0 alert_rules.h, or off), and it re-arms at mark + 5 %; a coarse
 // device (XInput's steps) is told at «Low» and re-armed at «Medium», never through a made-up percentage; nothing is
 // told from a reading older than the checking interval, from an asleep device or from one not connected (the original
 // warned from the last value it kept); an optional «fully charged» notice, only after the device was seen charging
@@ -12,7 +12,7 @@
 use crate::model::{Charging, Coarse, Level, Reading};
 
 /// The marks a user can choose (the page's list), and the one used when he chose none.
-pub const CHOICES: [u8; 4] = [10, 15, 20, 30];
+pub const CHOICES: [u8; 8] = [5, 10, 15, 20, 25, 30, 35, 40];
 pub const DEFAULT_MARK: u8 = 20;
 /// A device told once is told again only after rising above its mark by this much (or after charging).
 pub const REARM: u8 = 5;
@@ -265,13 +265,17 @@ mod tests {
     fn marks_from_settings() {
         assert_eq!(Mark::from_setting(0), Some(Mark::Off));
         assert_eq!(Mark::from_setting(15), Some(Mark::At(15)));
-        assert_eq!(Mark::from_setting(25), None);
+        assert_eq!(Mark::from_setting(25), Some(Mark::At(25)));
+        assert_eq!(Mark::from_setting(12), None);
+        assert_eq!(Mark::from_setting(45), None);
         assert_eq!(Mark::from_setting(u64::MAX), None);
         assert_eq!(snap(None), 20);
-        assert_eq!(snap(Some(25)), 20, "a tie goes to the lower");
-        assert_eq!(snap(Some(5)), 10);
-        assert_eq!(snap(Some(50)), 30);
-        assert_eq!(snap(Some(u64::MAX)), 30);
+        assert_eq!(snap(Some(25)), 25);
+        assert_eq!(snap(Some(12)), 10, "the nearest");
+        assert_eq!(snap(Some(5)), 5);
+        assert_eq!(snap(Some(1)), 5);
+        assert_eq!(snap(Some(50)), 40);
+        assert_eq!(snap(Some(u64::MAX)), 40);
         assert_eq!(snap(Some(15)), 15);
     }
 }

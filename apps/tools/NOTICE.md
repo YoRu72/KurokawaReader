@@ -40,8 +40,21 @@ Each ported file of `apps/tools/core/kt-battery` names the original files it com
 | `src/brands.cpp` (brand by vendor id and name — text only) | `kind.rs` |
 | `lang/*.txt` (the phrase list) | a checklist for Tools' own strings (`src/i18n`); Arabic written anew |
 
-The vendor drivers came in pieces 4 to 6 (below); the taskbar widget and the support request are not ported (the last
-table says why).
+The vendor drivers came in pieces 4 to 6 (below); the support request is not ported (the last table says why).
+
+### What was taken (W1: the taskbar, as the original shows it — v1.0.8, then its v1.1.0)
+
+| Original (C++) | Here |
+|---|---|
+| `src/main.cpp` (RenderIcon / IconFor: the level drawn in a tray icon; one icon per device; KindOrder, OrderedEntries, the order moved left / right; «Hide last known / asleep devices»; v1.1.0: «Show disconnected devices», «Check battery every» from 30 s, «fully charged») | `taskbar.rs`; the shell's tray (`desktop-tauri/src-tauri/src/desktop.rs`, `battery.rs`) |
+| `src/widget.cpp`, `.h` (the strip beside the notification area, its «icons above percentages» and «background behind taskbar text», made again when Explorer restarts; v1.1.0: the green check of «fully charged», Windows 10's news button kept clear), `src/labels.cpp` (captions when two devices share a drawing) | `taskbar.rs` (drawing, layout, place), `win/strip.rs` (the window) |
+| v1.1.0 `src/alert_rules.h` (per-device alert levels 5–40 %, off) | `notice.rs` (CHOICES) |
+| v1.1.0 `src/device_aliases.h`, `src/rename_dialog.cpp` (a device's own name, 1–64 characters) | the page's rename (`src/views/battery.ts`) and `battery.rs`'s settings check |
+
+Changed: every picture is our own drawing made in code (no icon font, no bundled art); a level in steps is never drawn
+as a number; calm colours (red low, blue charging, green full, the taskbar's own otherwise; no brand colours); captions
+are numbers; the strip is off by default, on the main taskbar only, checked every 2 s on its own thread, and gives way to
+the tray icons whenever it cannot be shown; quiet hours, a sound switch, pictures, joins and the order are Tools' own.
 Drivers that send undocumented commands are not ported until they are understood.
 
 ### What was taken (piece 2: the background)
@@ -52,7 +65,7 @@ Drivers that send undocumented commands are not ported until they are understood
 | `src/main.cpp` (the tray's tooltip and menu) | `summary.rs`; the shell's one tray icon (`desktop-tauri/src-tauri/src/desktop.rs`) |
 | `src/main.cpp` (SetAutostart / AutostartEnabled), `src/linux/main_linux.cpp` (ApplyAutostart) | `autostart.rs`, `win/autostart.rs` |
 
-Changed: the low mark is the user's, per device (10/15/20/30 % or off; re-armed at mark + 5 % or by charging), coarse
+Changed: the low mark is the user's, per device (5–40 % in steps of 5 since W1, or off; re-armed at mark + 5 % or by charging), coarse
 devices are told at «Low», and nothing is told from an old reading, an asleep device or one not connected (the original
 warned from the value it kept); an optional «fully charged» notice; the start with the system has its own Run value
 and starts the app hidden in the tray; the autostart file's Exec line is quoted by the Desktop Entry rules.
@@ -257,7 +270,8 @@ feature):
 | `rog.cpp`: ROG Omni Receiver (1ACE) and the Omni-channel entries | The channel is chosen by the collection's position in its path — piece 5. |
 | `misc_mice.cpp`: AJAZZ AJ179 and the AJ-series on 3151; `msi.cpp`: CLUTCH GM41 | No product ids in the sources / a raw byte made into a percentage — piece 5. |
 | Single requests not sent (the device is still read when something else made it speak, else «needs a query we do not send»): PlayStation's Bluetooth feature 05, 8BitDo's feature 06, GameSir Cyclone 2's 0F 03 (piece 4); Finalmouse's «wake/all» and its lift-off / profile reads, Endgame Gear 4K's 0F probe, Wraith W1's read sweep, AULA HERO 68 Air's message session (piece 5); BlackShark V3's handshake, Poly's attach and HELLOs (piece 6) | Each changes a mode, wakes a link or opens a session. |
-| `src/widget.cpp`, `.h`, `src/labels.cpp`, `.h` (the taskbar widget and its captions) | It lives inside Explorer's taskbar by its internal window classes (§9.9). Tools has its tray icon; an optional strip of its own is planned (PLAN piece 11), not this port. |
+| `src/widget.cpp`: the copies on other monitors' taskbars and the Windows 11 Widgets-button and clock checks | They need UI Automation, which the original runs on a thread of its own to keep Explorer from hanging; Tools' strip stays on the main taskbar. |
+| `src/brands.cpp` brand colours | Makers' colours (several yellow or orange); Tools draws in calm colours of its own. |
 | `src/report.cpp`, `.h` (support request) | It posts to the author's server (§9.12); Tools sends nothing — a local report is planned (piece 11). |
 | `src/main.cpp` (beyond the tray, notices and autostart taken in piece 2), `src/i18n.cpp`, `.h`, `lang/*.txt` | Tools has its own window, settings and five languages; the phrase list was the checklist, Arabic written anew, Hebrew not carried. |
 | `src/linux/*`, `linux/*` (udev rule, desktop file), `src/platform_compat.h`, `build-linux.sh`, `Makefile*` | The Linux build is a later piece (PLAN piece 10); its udev rule (all raw HID nodes, read/write: §9.11) will not be taken as it is. |

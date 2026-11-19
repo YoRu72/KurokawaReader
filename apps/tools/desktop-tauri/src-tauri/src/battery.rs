@@ -34,6 +34,14 @@
 // user allows (off by default) — and mkMute — the families read by listening that the user turned off (on by default).
 // A device read by one of them carries its { driver, family, proven, way } as a controller's does; a reading's note
 // may be 'unlinked' (a receiver with no device linked to it).
+// W1, the taskbar like the original (kt-battery taskbar.rs, win/strip.rs): «trayStyle» — the app's icon with the devices
+// in its menu ('app'), one icon showing the lowest device's level ('lowest'), or one icon per device with its level drawn
+// in it ('each', the default, as the original's tray mode); «trayDraw» — the number with a bar under it ('number') or a
+// small battery ('bar'); «trayAway» — asleep and away devices shown dimmed (on) or left out; «strip» (off by default) —
+// the original's strip on the taskbar beside the notification area, «stripStacked» and «stripPlate» its two looks; while
+// the strip is on the taskbar the device icons step aside, as in the original. Device management: «order» (the user's
+// order of keys), «pictures» (a device's drawing, from our own set), and the notices' «quiet» hours («quietFrom» to
+// «quietTo», whole hours, local time) and «sound».
 // Copyright (C) 2026 Kurokawa contributors.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -51,6 +59,7 @@ use kt_battery::pads::{self, Way};
 use kt_battery::notice::{self, Mark, Memo, Notice, Seen};
 use kt_battery::runner::{self, DeviceState, Msg, Prefs, Status};
 use kt_battery::summary;
+use kt_battery::taskbar::{self, DrawStyle, Face, StripItem, StripLook, TrayStyle};
 
 struct Live {
     handle: runner::Handle,
@@ -67,7 +76,11 @@ static STATES: Mutex<Vec<DeviceState>> = Mutex::new(Vec::new());
 static MEMO: Mutex<BTreeMap<String, Memo>> = Mutex::new(BTreeMap::new());
 const FILE: &str = "battery.json";
 /// The settings the page may change.
-const KEYS: [&str; 14] = ["intervalMin", "low", "names", "hidden", "noQuery", "links", "background", "startup", "notifyLow", "notifyFull", "thresholds", "padQueries", "mkAsk", "mkMute"];
+const KEYS: &[&str] = &[
+    "intervalMin", "low", "names", "hidden", "noQuery", "links", "background", "startup", "notifyLow", "notifyFull", "thresholds", "padQueries", "mkAsk", "mkMute",
+    // (W1.)
+    "trayStyle", "trayDraw", "trayAway", "trayGone", "intervalSec", "strip", "stripStacked", "stripPlate", "order", "pictures", "quiet", "quietFrom", "quietTo", "sound",
+];
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -237,8 +250,25 @@ fn clean(v: &Value) -> Value {
     let mk_ask_ok: Vec<&str> = mice::query_families().iter().map(|f| f.as_str()).collect();
     let mk_mute_ok: Vec<&str> = mice::Family::ALL.iter().filter(|f| !mk_ask_ok.contains(&f.as_str())).map(|f| f.as_str()).collect();
     let (mk_ask, mk_mute) = (pick("mkAsk", &mk_ask_ok), pick("mkMute", &mk_mute_ok));
+    let interval_sec = o.and_then(|o| o.get("intervalSec")).and_then(Value::as_u64).map_or_else(|| num("intervalMin", 1, 60, 1) * 60, |n| n.clamp(30, 3600));
+    // (W1: a choice among its words, else its default; a device's picture only from our own drawn set.)
+    let choice = |k: &str, ok: &[&str], def: &str| -> String { o.and_then(|o| o.get(k)).and_then(Value::as_str).filter(|v| ok.contains(v)).unwrap_or(def).to_string() };
+    let mut pictures = Map::new();
+    if let Some(m) = o.and_then(|o| o.get("pictures")).and_then(Value::as_object) {
+        for (k, n) in m.iter().take(500) {
+            if let (Some(k), Some(n)) = (clean_key(&json!(k)), n.as_str()) {
+                if taskbar::PICTURES.contains(&n) {
+                    pictures.insert(k, json!(n));
+                }
+            }
+        }
+    }
+    let mut order: Vec<Value> = clean_keys(o.and_then(|o| o.get("order"))).as_array().cloned().unwrap_or_default();
+    order.truncate(200);
     json!({
-        "intervalMin": num("intervalMin", 1, 60, 1),
+        // (v1.1.0 of the original checks every 30 s to every hour: kept in seconds; the minutes follow for older readers.)
+        "intervalSec": interval_sec,
+        "intervalMin": (interval_sec / 60).max(1),
         "low": notice::snap(o.and_then(|o| o.get("low")).and_then(Value::as_u64)),
         "names": names,
         "hidden": clean_keys(o.and_then(|o| o.get("hidden"))),
@@ -252,6 +282,19 @@ fn clean(v: &Value) -> Value {
         "padQueries": pad_queries,
         "mkAsk": mk_ask,
         "mkMute": mk_mute,
+        "trayStyle": choice("trayStyle", &["app", "lowest", "each"], "each"),
+        "trayDraw": choice("trayDraw", &["number", "bar"], "number"),
+        "trayAway": flag("trayAway", true),
+        "trayGone": flag("trayGone", false),
+        "strip": flag("strip", false),
+        "stripStacked": flag("stripStacked", false),
+        "stripPlate": flag("stripPlate", false),
+        "order": order,
+        "pictures": pictures,
+        "quiet": flag("quiet", false),
+        "quietFrom": num("quietFrom", 0, 23, 22),
+        "quietTo": num("quietTo", 0, 23, 7),
+        "sound": flag("sound", true),
     })
 }
 
@@ -285,7 +328,7 @@ fn save(app: &AppHandle, v: &Value) -> Result<(), String> {
 fn prefs_of(v: &Value) -> Prefs {
     let keys = |k: &str| -> Vec<String> { v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
     let links: Vec<(String, String)> = v.get("links").and_then(Value::as_array).map(|a| a.iter().filter_map(|l| Some((l.get(0)?.as_str()?.to_string(), l.get(1)?.as_str()?.to_string()))).collect()).unwrap_or_default();
-    Prefs { interval_ms: v.get("intervalMin").and_then(Value::as_u64).unwrap_or(1) * 60_000, deadline_ms: 0, no_query: keys("noQuery"), links, pad_queries: keys("padQueries"), mk_ask: keys("mkAsk"), mk_mute: keys("mkMute") }
+    Prefs { interval_ms: v.get("intervalSec").and_then(Value::as_u64).unwrap_or(60).clamp(30, 3600) * 1_000, deadline_ms: 0, no_query: keys("noQuery"), links, pad_queries: keys("padQueries"), mk_ask: keys("mkAsk"), mk_mute: keys("mkMute") }
 }
 
 fn flag(v: &Value, k: &str) -> bool {
@@ -344,8 +387,14 @@ fn start(_app: &AppHandle) -> Option<Live> {
     None
 }
 
-/// Quitting: the loop told to stop (its threads end with the program).
+/// Quitting: the loop told to stop (its threads end with the program); the strip taken off the taskbar.
 pub fn at_exit() {
+    #[cfg(windows)]
+    {
+        if let Some(x) = STRIP.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            x.stop();
+        }
+    }
     if let Some(cell) = LIVE.get() {
         if let Ok(g) = cell.lock() {
             if let Some(l) = g.as_ref() {
@@ -426,7 +475,7 @@ fn changed(app: &AppHandle, list: Vec<DeviceState>) {
 fn notices(app: &AppHandle, s: &Value, list: &[DeviceState]) {
     let hidden = hidden_keys(s);
     let full_on = flag(s, "notifyFull");
-    let max_age = s.get("intervalMin").and_then(Value::as_u64).unwrap_or(1).clamp(1, 60) * 60_000;
+    let max_age = s.get("intervalSec").and_then(Value::as_u64).unwrap_or(60).clamp(30, 3600) * 1_000;
     let now = now_ms();
     let mut due: Vec<(String, String)> = Vec::new();
     {
@@ -441,20 +490,134 @@ fn notices(app: &AppHandle, s: &Value, list: &[DeviceState]) {
             }
         }
     }
+    // (W1: in the quiet hours nothing is shown — the memo above has moved on, so nothing is told later either: one
+    // notice per drop, as before.)
+    if flag(s, "quiet") && quiet_now(s) {
+        return;
+    }
+    let sound = s.get("sound").and_then(Value::as_bool).unwrap_or(true);
     for (title, body) in due {
         let app = app.clone();
         let _ = std::thread::Builder::new().name("kt-battery-notice".into()).spawn(move || {
             use tauri_plugin_notification::NotificationExt;
-            let _ = app.notification().builder().title(&title).body(&body).show();
+            let b = app.notification().builder().title(&title).body(&body);
+            // (Windows' toast: «Default» plays its sound, a name it does not know makes it silent. UNVERIFIED on Windows.)
+            #[cfg(kt_notify_sound)]
+            let b = b.sound(if sound { "Default" } else { "Silent" });
+            #[cfg(not(kt_notify_sound))]
+            let _ = sound;
+            let _ = b.show();
         });
     }
 }
 
-/// The tray's part (desktop.rs): with the background on, the devices lowest first (at most six; hidden and
-/// not-queried ones left out) and the lowest in the tooltip; with it off, none (the icon then follows the downloads'
-/// own setting alone).
+/// Whether the local time is in the user's quiet hours (Windows' local time; elsewhere never — the background is
+/// Windows' alone for now).
+fn quiet_now(s: &Value) -> bool {
+    let from = s.get("quietFrom").and_then(Value::as_u64).unwrap_or(22).min(23) as u8;
+    let to = s.get("quietTo").and_then(Value::as_u64).unwrap_or(7).min(23) as u8;
+    #[cfg(windows)]
+    {
+        taskbar::quiet_now(kt_battery::win::strip::local_minute(), from, to)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (from, to);
+        false
+    }
+}
+
+/// What a device says in the tray's menu and hover text: its level (and charging), or its state.
+fn what_of(d: &DeviceState) -> String {
+    match (d.status, d.reading) {
+        (Status::Ok, Some(r)) if r.charging == Charging::Yes => format!("{} · {}", level_word(r.level), word("batCharging", "Charging")),
+        (Status::Ok, Some(r)) => level_word(r.level),
+        (st, _) => word(&format!("batSt_{}", st.as_str()), st.as_str()),
+    }
+}
+
+/// The level under which a device is drawn red: its own mark when it has one, else the default (as the page).
+fn red_mark(s: &Value, key: &str) -> u8 {
+    let low = notice::snap(s.get("low").and_then(Value::as_u64));
+    match s.get("thresholds").and_then(|m| m.get(key)).and_then(Value::as_u64) {
+        Some(v) if (1..=100).contains(&v) => v as u8,
+        _ => low,
+    }
+}
+
+/// A device's face in the tray and on the strip: its current level, else (asleep, away) the last good one, dimmed.
+fn face_of(s: &Value, d: &DeviceState) -> Face {
+    let live = d.status == Status::Ok;
+    let r = if live { d.reading } else { d.last_good.or(d.reading) };
+    taskbar::face(r.map(|r| r.level), r.map_or(false, |r| r.charging == Charging::Yes), live, red_mark(s, &d.device.key))
+}
+
+/// A device's drawing: the user's choice, else its reader's picture, else its kind.
+fn picture_of(s: &Value, d: &DeviceState) -> String {
+    s.get("pictures").and_then(|m| m.get(&d.device.key)).and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| d.device.picture.to_string())
+}
+
+fn keys_of(s: &Value, k: &str) -> Vec<String> {
+    s.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
+
+/// The taskbar's colour and the icons' size (Windows'; elsewhere dark, 16 px).
+fn taskbar_look() -> (bool, u32) {
+    #[cfg(windows)]
+    {
+        (kt_battery::win::strip::light_taskbar(), taskbar::icon_px(kt_battery::win::strip::system_dpi()))
+    }
+    #[cfg(not(windows))]
+    {
+        (false, taskbar::icon_px(96))
+    }
+}
+
+fn pic(c: taskbar::Canvas) -> crate::desktop::Pic {
+    crate::desktop::Pic { px: c.w, rgba: c.px }
+}
+
+#[cfg(windows)]
+static STRIP: Mutex<Option<kt_battery::win::strip::Strip>> = Mutex::new(None);
+
+/// The strip on the taskbar started, given its devices, or taken away; whether it is on the taskbar now.
+fn strip_apply(app: &AppHandle, s: &Value, items: Vec<StripItem>) -> bool {
+    #[cfg(windows)]
+    {
+        let on = background_on(s) && flag(s, "strip");
+        let mut g = STRIP.lock().unwrap_or_else(|e| e.into_inner());
+        if !on {
+            if let Some(x) = g.take() {
+                x.stop();
+            }
+            return false;
+        }
+        if g.is_none() {
+            let (a2, a3) = (app.clone(), app.clone());
+            *g = kt_battery::win::strip::Strip::start(Box::new(move |_left| open_page(&a2)), Box::new(move || tray_again(&a3)));
+        }
+        match g.as_ref() {
+            Some(x) => {
+                x.show(items, StripLook { light: false, stacked: flag(s, "stripStacked"), plate: flag(s, "stripPlate") });
+                x.alive()
+            }
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, s, items, StripLook { light: false, stacked: false, plate: false });
+        false
+    }
+}
+
+/// The tray's part (desktop.rs): with the background on, the menu's devices lowest first (at most six; hidden and
+/// not-queried ones left out) and the lowest in the tooltip; then, as the user chose, the app's icon carrying the
+/// lowest level, or one icon per device in his order, and the strip; with it off, none (the icon then follows the
+/// downloads' own setting alone).
 fn tray_push(app: &AppHandle, s: &Value) {
     if !background_on(s) {
+        strip_apply(app, s, Vec::new());
         crate::desktop::set_battery_tray(app, None);
         return;
     }
@@ -462,25 +625,46 @@ fn tray_push(app: &AppHandle, s: &Value) {
     let list = STATES.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let shown: Vec<&DeviceState> = list.iter().filter(|d| !hidden.contains(&d.device.key) && d.status != Status::NotQueried).collect();
     let current = |d: &&DeviceState| if d.status == Status::Ok { d.reading.map(|r| r.level) } else { None };
-    let ordered = summary::lowest_first(shown, current, summary::MAX_LINES);
-    let lines: Vec<String> = ordered
-        .iter()
-        .map(|d| {
-            let what = match (d.status, d.reading) {
-                (Status::Ok, Some(r)) if r.charging == Charging::Yes => format!("{} · {}", level_word(r.level), word("batCharging", "Charging")),
-                (Status::Ok, Some(r)) => level_word(r.level),
-                (st, _) => word(&format!("batSt_{}", st.as_str()), st.as_str()),
-            };
-            format!("{} — {}", name_of(s, d), what)
-        })
-        .collect();
+    let ordered = summary::lowest_first(shown.clone(), current, summary::MAX_LINES);
+    let lines: Vec<String> = ordered.iter().map(|d| format!("{} — {}", name_of(s, d), what_of(d))).collect();
     let tip = ordered
         .iter()
         .find(|d| matches!(current(*d), Some(Level::Exact(_)) | Some(Level::Coarse(_)) | Some(Level::Steps(_))))
         .map(|d| word("batTrayLowest", "Lowest: {name}, {level}").replace("{name}", &name_of(s, d)).replace("{level}", &level_word(d.reading.map(|r| r.level).unwrap_or(Level::Unknown))))
         .unwrap_or_default();
     let bt = bt_tray_lines();
-    crate::desktop::set_battery_tray(app, Some(crate::desktop::BatTray { lines, tip, bt }));
+    // (W1: the devices in the user's order; those that get a picture: not hidden, not left alone, and — unless asleep and
+    // away ones are wanted — answering now.)
+    let style = s.get("trayStyle").and_then(Value::as_str).and_then(TrayStyle::parse).unwrap_or(TrayStyle::Each);
+    let draw = s.get("trayDraw").and_then(Value::as_str).and_then(DrawStyle::parse).unwrap_or(DrawStyle::Number);
+    let away = s.get("trayAway").and_then(Value::as_bool).unwrap_or(true);
+    let gone = s.get("trayGone").and_then(Value::as_bool).unwrap_or(false);
+    let all: Vec<&DeviceState> = list.iter().collect();
+    let in_order = taskbar::ordered(all, |d| d.device.key.clone(), |d| d.device.kind.as_str().to_string(), |d| name_of(s, d), &keys_of(s, "order"));
+    let presence = |d: &DeviceState| match d.status {
+        Status::Ok | Status::Waiting => taskbar::Presence::Live,
+        Status::NotConnected => taskbar::Presence::Gone,
+        _ => taskbar::Presence::Asleep,
+    };
+    let wants: Vec<(taskbar::Presence, bool)> = in_order.iter().map(|d| (presence(*d), !hidden.contains(&d.device.key) && d.status != Status::NotQueried)).collect();
+    let picks: Vec<&DeviceState> = taskbar::icon_picks(&wants, away, gone).into_iter().filter_map(|i| in_order.get(i).copied()).collect();
+    let glyphs: Vec<taskbar::Glyph> = picks.iter().map(|d| taskbar::Glyph::of(&picture_of(s, d), d.device.kind.as_str())).collect();
+    let caps = taskbar::captions(&glyphs);
+    let items: Vec<StripItem> = picks.iter().zip(glyphs.iter().zip(caps)).map(|(d, (g, c))| StripItem { glyph: *g, face: face_of(s, d), caption: c }).collect();
+    let on_bar = strip_apply(app, s, items);
+    let (light, px) = taskbar_look();
+    let icons: Vec<crate::desktop::DevPic> = if style == TrayStyle::Each && !on_bar {
+        picks.iter().map(|d| crate::desktop::DevPic { pic: pic(taskbar::render_icon(&face_of(s, d), draw, light, px)), tip: taskbar::device_tip(&name_of(s, d), &what_of(d)) }).collect()
+    } else {
+        Vec::new()
+    };
+    let app_icon = if style == TrayStyle::Lowest {
+        let f = summary::lowest_first(picks.clone(), current, 1).first().map(|d| face_of(s, d)).unwrap_or(Face::NOTHING);
+        Some(pic(taskbar::render_icon(&f, draw, light, px)))
+    } else {
+        None
+    };
+    crate::desktop::set_battery_tray(app, Some(crate::desktop::BatTray { lines, tip, bt, app_icon, icons }));
 }
 
 /// The page's words changed (desktop.rs): the tray's list said again in them.
@@ -668,6 +852,10 @@ pub async fn kt_battery_settings(app: AppHandle, o: Value) -> Result<Value, Stri
         let cur = load(&app);
         let Some(set) = o.get("set").and_then(Value::as_object) else { return Ok(cur) };
         let mut merged = cur.as_object().cloned().unwrap_or_default();
+        // (Minutes alone given — an older page —: they decide, not the seconds kept before.)
+        if set.contains_key("intervalMin") && !set.contains_key("intervalSec") {
+            merged.remove("intervalSec");
+        }
         for (k, v) in set {
             if KEYS.contains(&k.as_str()) {
                 merged.insert(k.clone(), v.clone());

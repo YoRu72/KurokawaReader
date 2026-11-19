@@ -23,10 +23,16 @@
 // the card's own level is the lowest part in use, never the case (kt-battery model.rs); «both in the case», «needs a
 // part of Windows this build does not include» said calmly; Galaxy Buds' switch says it connects. Xbox pads named in
 // the page's language.
+// W1, the taskbar like the original: «Taskbar» — in the notification area one icon with the devices in its menu, one
+// icon showing the lowest level, or one icon per device (the level drawn in it: the number or a small battery), asleep
+// and away devices shown dimmed or left out, and the original's strip on the taskbar itself (off by default; the
+// drawing above the level, a background behind it); «Notices» — their sound and quiet hours. A device's menu moves it
+// up or down (the page, the tray and the strip follow that order), gives it another of our drawn pictures, and joins
+// two entries of one device (its receiver and Bluetooth) or separates them again. Phone Link said in the page's words.
 // The Electron build and the phone have no reader: a calm word instead, never a dead button. Loaded on first use.
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from '../ui/dom';
 import { btDesk, btPanel, picSvg } from './btconnect';
-import { t, localDigits, getLang, countMinutes, countHours, countDays } from '../i18n';
+import { t, localDigits, getLang, countMinutes, countHours, countDays, countSeconds } from '../i18n';
 import { back } from '../router';
 
 type Lvl = { kind: 'exact'; value: number } | { kind: 'coarse'; value: 'empty' | 'low' | 'medium' | 'high' | 'full'; bars: number } | { kind: 'steps'; value: number; max: number } | { kind: 'unknown' };
@@ -50,12 +56,22 @@ export type BatSettings = { intervalMin: number; low: number; names: Record<stri
   /** Piece 4: the controller families whose status request may be sent. */
   padQueries?: string[];
   /** Piece 5: mice / keyboards families whose request may be sent; those read by listening that are turned off. */
-  mkAsk?: string[]; mkMute?: string[] };
+  mkAsk?: string[]; mkMute?: string[];
+  /** W1: the tray ('app' | 'lowest' | 'each'), its drawing, asleep and away devices shown, the strip on the taskbar and its
+   *  looks; the user's order of devices, a device's own picture; the notices' sound and quiet hours (whole hours). */
+  trayStyle?: 'app' | 'lowest' | 'each'; trayDraw?: 'number' | 'bar'; trayAway?: boolean; trayGone?: boolean;
+  /** The checking interval in seconds (30 s to an hour, the original's v1.1.0 choices); intervalMin follows it. */
+  intervalSec?: number; strip?: boolean; stripStacked?: boolean; stripPlate?: boolean;
+  order?: string[]; pictures?: Record<string, string>; quiet?: boolean; quietFrom?: number; quietTo?: number; sound?: boolean };
 /** What the shell can do here: a start with the system ('notYet' on a Mac), a tray icon. */
 type BatSystem = { autostart: 'yes' | 'notYet'; tray: boolean };
 type BatList = { available: boolean; reason?: string; now: number; devices: BatDevice[]; settings: BatSettings; system?: BatSystem; pads?: PadRow[]; mice?: MkRow[] };
+/** Our drawn pictures a device may be given (btconnect.ts's set; kt-battery taskbar.rs PICTURES). */
+const PICTURES = ['mouse', 'keyboard', 'headset', 'earbuds', 'pad', 'retro', 'split', 'half', 'trackpads', 'speaker', 'phone', 'pen', 'other'];
+/** The default order by kind (kt-battery taskbar.rs kind_rank, as the original's). */
+const KIND_RANK: Record<string, number> = { headset: 0, earbuds: 1, mouse: 2, keyboard: 3, controller: 4, phone: 5, speaker: 6 };
 /** The marks offered (kt-battery notice.rs CHOICES). */
-const MARKS = [10, 15, 20, 30];
+const MARKS = [5, 10, 15, 20, 25, 30, 35, 40];
 /** The bridge's methods (desktop-tauri/bridge.js — the same names and arguments). */
 type Desk = { batteryList(): Promise<BatList>; batteryRefresh(o: { key?: string }): Promise<boolean>; batterySettings(o: { set?: Partial<BatSettings> }): Promise<BatSettings>; onBattery(cb: (e: { now: number; devices: BatDevice[] }) => void): () => void };
 const desk = (): Desk | null => { const d = (window as unknown as { kurokawaTools?: Partial<Desk> }).kurokawaTools; return d?.batteryList && d.onBattery ? d as Desk : null; };
@@ -76,9 +92,10 @@ function kindIcon(kind: string): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
   svg.innerHTML = KIND_SVG[kind] ?? KIND_SVG.other; return svg;
 }
-/** A controller's picture: its family's drawing (the reader's, else a two-stick pad); other kinds: the kind's icon. */
-function deviceIcon(x: { kind: string; picture?: string }): SVGElement {
-  if (x.picture || x.kind === 'controller') { const s = picSvg(x.picture || 'pad'); s.classList.add('bat-drawn'); return s; }
+/** A device's picture: the user's choice, else its family's drawing (a controller: a two-stick pad), else its kind's icon. */
+function deviceIcon(x: { kind: string; picture?: string }, own?: string): SVGElement {
+  const p = own || x.picture;
+  if (p || x.kind === 'controller') { const s = picSvg(p || 'pad'); s.classList.add('bat-drawn'); return s; }
   return kindIcon(x.kind);
 }
 function bolt(): SVGElement { const s = kindIcon('other'); s.innerHTML = BOLT; s.classList.add('bat-bolt'); return s; }
@@ -163,6 +180,25 @@ const CSS = `
 .bat-rename { display: flex; flex-direction: column; gap: 12px; }
 .sheet-actions .bat-eq { flex: 1 1 0; min-width: 0; justify-content: center; }
 .bat-rename input { height: 44px; padding: 0 14px; border-radius: 12px; }
+.bat-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 10px; }
+.bat-pics > button { display: grid; place-items: center; height: 72px; border-radius: 18px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container); color: var(--md-on-surface); cursor: pointer; }
+.bat-pics > button[aria-pressed="true"] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); border-color: transparent; outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.bat-pics > button:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.bat-pics svg { width: 40px; height: 40px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
+.bat-pics svg .f { fill: currentColor; fill-opacity: .22; stroke: none; }
+.sheet .dest-row .bat-join-ic { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; }
+.sheet .dest-row .bat-join-ic svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sheet .dest-row .bat-join-ic svg.bat-drawn { stroke-width: 2.6; }
+.sheet .dest-row .bat-join-ic svg .f { fill: currentColor; fill-opacity: .22; stroke: none; }
+.sheet .bat-join-hint { margin: 0 4px 10px; font-size: 13px; color: var(--md-on-surface-variant); line-height: 1.5; }
+.battery-view .bat-tb .bat-row + .bat-row, .battery-view .bat-nt .bat-row + .bat-row { margin-top: 10px; }
+.battery-view .bat-tb .bat-switch:first-of-type, .battery-view .bat-nt .bat-switch:first-of-type { border-top: 1px solid var(--md-outline-variant); margin-top: 8px; }
+.battery-view .bat-tb .bat-sub-sw { padding-inline-start: 20px; }
+.battery-view .bat-tb .bat-row .pick-btn { flex: 0 1 300px; width: 300px; max-width: 100%; }
+.battery-view .bat-tb .hint, .battery-view .bat-nt .hint { margin: 0 0 8px; }
+.battery-view .bat-hours { display: flex; flex-wrap: wrap; gap: 12px; padding: 4px 0 8px; }
+.battery-view .bat-hours > label { flex: 1 1 160px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--md-on-surface-variant); }
+.battery-view .bat-hours .pick-btn { width: 100%; }
 `;
 function style(): void {
   if (document.getElementById('kt-battery-css')) return;
@@ -217,7 +253,9 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
   const saveSettings = async (set: Partial<BatSettings>, errKey?: 'batStartFailed') => { try { const s = await d.batterySettings({ set }); if (list) list.settings = s; draw(); } catch (e) { const m = String((e as Error)?.message ?? e); toast(errKey ? t(errKey, { error: m }) : m, 'error'); draw(); } };
   async function refreshAll(): Promise<void> { await d!.batteryRefresh({}).catch(() => false); }
 
-  const padBrand = (x: BatDevice): string => list?.pads?.find((p) => p.family === x.family)?.brand || list?.mice?.find((p) => p.family === x.family)?.brand || x.brand;
+  // (Phone Link is named as Windows names it in the page's language.)
+  const brandOf = (family: string | undefined, brand: string): string => family === 'ot-phonelink' ? t('batPhoneLink') : brand;
+  const padBrand = (x: BatDevice): string => brandOf(x.family, list?.pads?.find((p) => p.family === x.family)?.brand || list?.mice?.find((p) => p.family === x.family)?.brand || x.brand);
   // (Piece 5's and 6's families: one setting, mkAsk / mkMute, for mice, headsets and the rest alike.)
   const isMk = (family?: string): boolean => !!family && /^(mk|hs|ot)-/.test(family);
   const card = (x: BatDevice): HTMLElement => {
@@ -225,7 +263,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     const dim = (x.status !== 'ok' && x.status !== 'waiting') || r?.note === 'noPad' || r?.note === 'unlinked';
     const mk = markOf(S, x.key); const low = x.status === 'ok' && isLow(lvl, mk || S.low);
     const via = t(`batVia_${x.connection}` as 'batVia_usb');
-    const sub = [x.brand, t(`batKind_${x.kind}` as 'batKind_mouse')].filter(Boolean).join(' · ');
+    const sub = [x.family === 'ot-phonelink' ? t('batPhoneLink') : x.brand, t(`batKind_${x.kind}` as 'batKind_mouse')].filter(Boolean).join(' · ');
     const level = h('div', { class: 'bat-level' });
     if (r && lvl?.kind === 'exact') level.append(h('span', { class: 'bat-pct', dir: 'ltr' }, levelText(lvl)), h('div', { class: 'bat-meter', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(lvl.value), 'aria-label': t('batTitle') }, h('i', { style: { width: `${lvl.value}%` } })));
     else if (r && lvl?.kind === 'coarse') level.append(h('div', { class: 'bat-bars', title: t('batCoarseHint'), 'aria-label': levelText(lvl) }, ...[1, 2, 3, 4, 5].map((i) => h('i', { class: i <= lvl.bars ? 'on' : '' }))), h('span', { class: 'bat-word' }, levelText(lvl)));
@@ -255,7 +293,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     if (x.connection !== 'unknown') foot.append(h('span', { class: 'bat-via' }, via));
     const more = iconButton('more', t('batMenu', { name: nameOf(x) }), (e) => menu(x, e)); more.classList.add('bat-more');
     return h('article', { class: 'bat-card' + (low ? ' low' : '') + (dim ? ' dim' : ''), 'data-key': x.key, 'data-kind': x.kind, 'data-status': x.status },
-      h('div', { class: 'bat-ic' }, deviceIcon(x)), h('div', { class: 'bat-who' }, h('span', { class: 'bat-name', dir: 'auto', title: nameOf(x) }, nameOf(x)), h('span', { class: 'bat-sub', dir: 'auto' }, sub)), more, level, parts, foot);
+      h('div', { class: 'bat-ic' }, deviceIcon(x, S.pictures?.[x.key])), h('div', { class: 'bat-who' }, h('span', { class: 'bat-name', dir: 'auto', title: nameOf(x) }, nameOf(x)), h('span', { class: 'bat-sub', dir: 'auto' }, sub)), more, level, parts, foot);
   };
 
   const menu = (x: BatDevice, ev: Event) => {
@@ -263,9 +301,16 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     const act = (ic: string, label: string, fn: () => void, name: string) => h('button', { type: 'button', class: 'dest-row', 'data-act': name, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     const hidden = S.hidden.includes(x.key); const quiet = S.noQuery.includes(x.key);
     const markRow = act('bell', t('batMark'), () => markPick(x, ev), 'mark'); markRow.querySelector('.name')?.append(h('small', { class: 'bat-mark-val', dir: 'auto' }, markText(S, x.key)));
+    // (Its place among the shown devices: up and down while there is room — the tray and the strip follow it.)
+    const keys = shownKeys(); const at = keys.indexOf(x.key);
+    const joined = (x.merged?.length ?? 0) > 0 || (S.links ?? []).some((l) => l.includes(x.key));
     sh.body.append(h('div', { class: 'dest-list' },
       ...(quiet ? [] : [act('refresh', t('batRefreshOne'), () => void d.batteryRefresh({ key: x.key }).catch(() => false), 'refresh')]),
       act('pencil', t('batRename'), () => rename(x), 'rename'),
+      act('images', t('batPicture'), () => picturePick(x), 'picture'),
+      ...(at > 0 ? [act('arrowUp', t('batMoveUp'), () => move(x.key, -1), 'up')] : []),
+      ...(at >= 0 && at < keys.length - 1 ? [act('arrowDown', t('batMoveDown'), () => move(x.key, 1), 'down')] : []),
+      joined ? act('swap', t('batSeparate'), () => separate(x), 'separate') : act('link', t('batJoin'), () => joinPick(x, ev), 'join'),
       markRow,
       act(hidden ? 'eye' : 'eyeOff', hidden ? t('batUnhide') : t('batHide'), () => void saveSettings({ hidden: hidden ? S.hidden.filter((k) => k !== x.key) : [...S.hidden, x.key] }), 'hide'),
       act(quiet ? 'refresh' : 'shield', quiet ? t('batQueryAgain') : t('batNoQuery'), () => { void saveSettings({ noQuery: quiet ? S.noQuery.filter((k) => k !== x.key) : [...S.noQuery, x.key] }).then(() => { if (!quiet) toast(t('batNoQueryDone', { name: nameOf(x) })); }); }, 'noQuery'),
@@ -301,6 +346,48 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     pickSheet(t('batMarkFor', { name: iso(nameOf(x)) }), opts, cur, (v) => { const next = { ...(S.thresholds ?? {}) }; if (v === 'default') delete next[x.key]; else next[x.key] = Number(v); void saveSettings({ thresholds: next }); }, t('close'), ev);
   };
 
+  // W1: the order (the user's keys first, then by kind and name — kt-battery taskbar.rs ordered).
+  const sorted = (xs: BatDevice[]): BatDevice[] => {
+    const order = list?.settings.order ?? []; const rank = (k: string) => { const i = order.indexOf(k); return i < 0 ? 1e9 : i; };
+    return xs.slice().sort((a, b) => rank(a.key) - rank(b.key) || (KIND_RANK[a.kind] ?? 7) - (KIND_RANK[b.kind] ?? 7) || nameOf(a).toLowerCase().localeCompare(nameOf(b).toLowerCase()) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  };
+  const shownKeys = (): string[] => { const hid = new Set(list?.settings.hidden ?? []); return sorted((list?.devices ?? []).filter((v) => !hid.has(v.key))).map((v) => v.key); };
+  // (As kt-battery taskbar.rs moved: the shown ones swapped, the keys of absent devices kept after them.)
+  const move = (key: string, dir: -1 | 1) => {
+    const order = shownKeys(); const i = order.indexOf(key); const j = i + dir;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    for (const k of list?.settings.order ?? []) if (!order.includes(k)) order.push(k);
+    void saveSettings({ order: order.slice(0, 200) }).then(() => { (document.querySelector(`.bat-card[data-key="${window.CSS.escape(key)}"] .bat-more`) as HTMLElement | null)?.focus(); });
+  };
+  // A device's picture: one of our own drawings, or the one it was found with.
+  const picturePick = (x: BatDevice) => {
+    const sh = openSheet(t('batPictureFor', { name: iso(nameOf(x)) }), t('close'));
+    const own = list!.settings.pictures?.[x.key];
+    const choose = (p: string | null) => { const next = { ...(list!.settings.pictures ?? {}) }; if (p) next[x.key] = p; else delete next[x.key]; sh.close(); void saveSettings({ pictures: next }); };
+    sh.body.append(h('div', { class: 'bat-pics', role: 'group', 'aria-label': t('batPicture') }, ...PICTURES.map((p) => {
+      const b = h('button', { type: 'button', 'data-picture': p, 'aria-pressed': String(own === p), 'aria-label': t(`batPic_${p}` as 'batPic_mouse'), title: t(`batPic_${p}` as 'batPic_mouse'), onclick: () => choose(p) }, picSvg(p)); return b;
+    })));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal bat-eq', 'data-act': 'pictureOwn', disabled: !own, onclick: () => choose(null) }, t('batPictureOwn')));
+  };
+  // Two entries of one device (its receiver and Bluetooth, say) joined into one — kept as a link the shell's identity
+  // rules follow (kt-battery identity.rs) —, or separated again.
+  const joinPick = (x: BatDevice, ev: Event) => {
+    const others = sorted(list!.devices.filter((v) => v.key !== x.key));
+    const sh = openSheet(t('batJoinFor', { name: iso(nameOf(x)) }), t('close'), { at: ev });
+    sh.body.append(h('p', { class: 'bat-join-hint' }, t('batJoinHint')));
+    if (!others.length) { sh.body.append(h('p', { class: 'bat-join-hint', 'data-none': '1' }, t('batJoinNone'))); return; }
+    sh.body.append(h('div', { class: 'dest-list' }, ...others.map((v) => h('button', { type: 'button', class: 'dest-row', 'data-key': v.key, onclick: () => {
+      sh.close(); const links = [...(list!.settings.links ?? []).filter((l) => !(l.includes(x.key) && l.includes(v.key))), [x.key, v.key] as [string, string]];
+      void saveSettings({ links }).then(() => { toast(t('batJoined', { a: iso(nameOf(x)), b: iso(nameOf(v)) })); void d.batteryRefresh({}).catch(() => false); });
+    } }, h('span', { class: 'bat-join-ic' }, deviceIcon(v, list!.settings.pictures?.[v.key])), h('span', { class: 'name', dir: 'auto' }, nameOf(v))))));
+  };
+  const separate = (x: BatDevice) => {
+    const mine = new Set([x.key, ...(x.merged ?? [])]);
+    const links = (list!.settings.links ?? []).filter((l) => !l.some((k) => mine.has(k)));
+    void saveSettings({ links }).then(() => void d.batteryRefresh({}).catch(() => false));
+  };
+
   const rename = (x: BatDevice) => {
     const sh = openSheet(t('batRename'), t('close'));
     const input = h('input', { type: 'text', value: list!.settings.names[x.key] ?? '', placeholder: x.name || t('batUnnamed'), maxlength: '64', dir: 'auto', 'aria-label': t('batRename') }) as HTMLInputElement;
@@ -315,7 +402,10 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
 
   const settingsCard = (): HTMLElement => {
     const S = list!.settings;
-    const every = pickButton(t('batEvery'), ['1', '2', '5', '10', '15', '30', '60'].map((v) => [v, rtl(t('batEveryN', { n: localDigits(v) }))] as [string, string]), String(S.intervalMin), (v) => void saveSettings({ intervalMin: Number(v) }), t('close'));
+    // (Every 30 s to every hour, as the original's v1.1.0 «Check battery every».)
+    const secs = ['30', '60', '120', '300', '600', '900', '1800', '3600'];
+    const cur = String(S.intervalSec ?? S.intervalMin * 60);
+    const every = pickButton(t('batEvery'), secs.map((v) => [v, rtl(Number(v) < 60 ? countSeconds(Number(v)) : countMinutes(Number(v) / 60))] as [string, string]), secs.includes(cur) ? cur : '60', (v) => void saveSettings({ intervalSec: Number(v) }), t('close'));
     const low = pickButton(t('batLow'), MARKS.map((v) => [String(v), rtl(pct(v))] as [string, string]), String(S.low), (v) => void saveSettings({ low: Number(v) }), t('close'));
     every.dataset.name = 'every'; low.dataset.name = 'low';
     return h('section', { class: 'card bat-settings' }, h('h3', null, t('batSettingsTitle')),
@@ -350,7 +440,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
   const famState: Record<GroupId, { open: boolean; find: string }> = { mice: { open: false, find: '' }, heads: { open: false, find: '' }, other: { open: false, find: '' } };
   const famCard = (g: GroupId): HTMLElement | null => {
     const st = famState[g]; const G = GROUPS[g];
-    const rows = (list!.mice ?? []).filter((p) => (p.group ?? 'mice') === g).sort((a, b) => a.brand.localeCompare(b.brand)); if (!rows.length) return null;
+    const rows = (list!.mice ?? []).filter((p) => (p.group ?? 'mice') === g).sort((a, b) => brandOf(a.family, a.brand).localeCompare(brandOf(b.family, b.brand))); if (!rows.length) return null;
     const toggle = h('button', { type: 'button', class: 'btn tonal small bat-mk-toggle', 'aria-expanded': String(st.open), onclick: () => { st.open = !st.open; draw(); } }, icon(st.open ? 'chevronUp' : 'chevronDown'), st.open ? t('batMiceHide') : t('batMiceShow', { n: localDigits(rows.length) }));
     const head = h('div', { class: 'bat-mk-head' }, toggle);
     const card = h('section', { class: `card bat-settings bat-fams ${G.cls}`, 'data-group': g }, h('h3', null, t(G.title)), h('p', { class: 'hint' }, t(G.hint)), head);
@@ -359,12 +449,12 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     const els = rows.map((p) => {
       const way = p.connects ? t('batMiceConnect') : p.ask && p.listen ? t('batMiceBoth') : p.ask ? t('batMiceAsk') : t('batMiceListen');
       const hint = [way, p.proven === 'tested' ? t('batProven_tested') : t('batProven_untested')].join(' — ');
-      const row = sw(p.family, p.brand, hint, p.ask ? (list!.settings.mkAsk ?? []).includes(p.family) : !(list!.settings.mkMute ?? []).includes(p.family), false, (v) => setMk(p.family, p.ask, v));
+      const row = sw(p.family, brandOf(p.family, p.brand), hint, p.ask ? (list!.settings.mkAsk ?? []).includes(p.family) : !(list!.settings.mkMute ?? []).includes(p.family), false, (v) => setMk(p.family, p.ask, v));
       // (The brand is a name, set in the page's direction: a Latin brand in an Arabic list stays at the row's start.)
       row.querySelector('.bat-sw-title')?.removeAttribute('dir');
       row.dataset.family = p.family; return { p, row };
     });
-    const filter = () => { const q = st.find.trim().toLowerCase(); let n = 0; for (const e of els) { e.row.hidden = !!q && !e.p.brand.toLowerCase().includes(q); if (!e.row.hidden) n++; } none.hidden = n > 0; };
+    const filter = () => { const q = st.find.trim().toLowerCase(); let n = 0; for (const e of els) { e.row.hidden = !!q && !e.p.brand.toLowerCase().includes(q) && !brandOf(e.p.family, e.p.brand).toLowerCase().includes(q); if (!e.row.hidden) n++; } none.hidden = n > 0; };
     const find = h('input', { type: 'search', class: 'bat-mk-find', dir: 'auto', value: st.find, placeholder: t('batMiceSearch'), 'aria-label': t('batMiceSearch'), oninput: () => { st.find = find.value; filter(); } }) as HTMLInputElement;
     head.append(find); card.append(h('div', { class: 'bat-mk-list' }, ...els.map((e) => e.row)), none); filter();
     return card;
@@ -382,6 +472,40 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
       sw('notifyFull', t('batBgFullOn'), t('batBgFullOnHint'), !!S.notifyFull, false, (v) => void saveSettings({ notifyFull: v })));
   };
 
+  // W1: «Taskbar» — how the devices show in the notification area and on the taskbar itself (the background needed).
+  const taskbarCard = (): HTMLElement => {
+    const S = list!.settings; const sys: BatSystem = list!.system ?? { autostart: 'yes', tray: true };
+    const can = sys.tray && S.background; const strip = !!S.strip;
+    const style = pickButton(t('batTbStyle'), (['each', 'lowest', 'app'] as const).map((v) => [v, t(`batTbStyle_${v}` as 'batTbStyle_each')] as [string, string]), S.trayStyle ?? 'each', (v) => void saveSettings({ trayStyle: v as 'each' }), t('close'));
+    const drawn = pickButton(t('batTbDraw'), (['number', 'bar'] as const).map((v) => [v, t(`batTbDraw_${v}` as 'batTbDraw_number')] as [string, string]), S.trayDraw ?? 'number', (v) => void saveSettings({ trayDraw: v as 'number' }), t('close'));
+    style.dataset.name = 'trayStyle'; drawn.dataset.name = 'trayDraw'; style.disabled = !can; drawn.disabled = !can || (S.trayStyle ?? 'each') === 'app';
+    const sub = (el: HTMLElement) => { el.classList.add('bat-sub-sw'); return el; };
+    return h('section', { class: 'card bat-settings bat-tb', 'data-group': 'taskbar' }, h('h3', null, t('batTbTitle')),
+      h('p', { class: 'hint' }, can ? t('batTbHint') : sys.tray ? t('batTbNeeds') : t('batBgNoTray')),
+      h('div', { class: 'bat-row' }, h('span', null, t('batTbStyle'), h('small', null, t('batTbStyleHint'))), style),
+      h('div', { class: 'bat-row' }, h('span', null, t('batTbDraw'), h('small', null, t('batTbDrawHint'))), drawn),
+      sw('trayAway', t('batTbAway'), t('batTbAwayHint'), S.trayAway !== false, !can, (v) => void saveSettings({ trayAway: v })),
+      sw('trayGone', t('batTbGone'), t('batTbGoneHint'), !!S.trayGone, !can, (v) => void saveSettings({ trayGone: v })),
+      sw('strip', t('batTbStrip'), t('batTbStripHint'), can && strip, !can, (v) => void saveSettings({ strip: v })),
+      sub(sw('stripStacked', t('batTbStacked'), t('batTbStackedHint'), !!S.stripStacked, !can || !strip, (v) => void saveSettings({ stripStacked: v }))),
+      sub(sw('stripPlate', t('batTbPlate'), t('batTbPlateHint'), !!S.stripPlate, !can || !strip, (v) => void saveSettings({ stripPlate: v }))),
+      h('p', { class: 'hint', style: { marginTop: '10px' } }, t('batTbOrderHint')));
+  };
+  // W1: «Notices» — their sound, and quiet hours (whole hours of the computer's clock).
+  const hourText = (n: number) => rtl(localDigits(String(n).padStart(2, '0')) + ':' + localDigits('00'));
+  const noticesCard = (): HTMLElement => {
+    const S = list!.settings; const from = S.quietFrom ?? 22; const to = S.quietTo ?? 7; const q = !!S.quiet;
+    const hours = Array.from({ length: 24 }, (_, i) => [String(i), hourText(i)] as [string, string]);
+    const fromB = pickButton(t('batNtFrom'), hours, String(from), (v) => void saveSettings({ quietFrom: Number(v) }), t('close'));
+    const toB = pickButton(t('batNtTo'), hours, String(to), (v) => void saveSettings({ quietTo: Number(v) }), t('close'));
+    fromB.dataset.name = 'quietFrom'; toB.dataset.name = 'quietTo'; fromB.disabled = !q; toB.disabled = !q;
+    return h('section', { class: 'card bat-settings bat-nt', 'data-group': 'notices' }, h('h3', null, t('batNtTitle')),
+      h('p', { class: 'hint' }, t('batNtHint')),
+      sw('sound', t('batNtSound'), t('batNtSoundHint'), S.sound !== false, false, (v) => void saveSettings({ sound: v })),
+      sw('quiet', t('batNtQuiet'), from === to ? t('batNtQuietSame') : t('batNtQuietHint', { from: hourText(from), to: hourText(to) }), q, false, (v) => void saveSettings({ quiet: v })),
+      h('div', { class: 'bat-hours' }, h('label', null, h('span', null, t('batNtFrom')), fromB), h('label', null, h('span', null, t('batNtTo')), toB)));
+  };
+
   function draw(): void {
     if (!list || gone) return;
     if (!list.available) {
@@ -390,7 +514,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
       return;
     }
     const S = list.settings; const hid = new Set(S.hidden);
-    const shown = list.devices.filter((x) => !hid.has(x.key)).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    const shown = sorted(list.devices.filter((x) => !hid.has(x.key)));
     const hiddenOnes = list.devices.filter((x) => hid.has(x.key));
     head.replaceChildren(h('p', { class: 'bat-count' }, t('batCount', { n: localDigits(shown.length) })));
     grid.replaceChildren(...shown.map(card));
@@ -401,7 +525,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     }
     const empty = !list.devices.length ? h('section', { class: 'card bat-empty', 'data-state': 'empty' }, h('div', { class: 'bat-ic' }, kindIcon('controller')), h('h3', null, t('batEmptyTitle')), h('p', null, t('batEmptyBody')),
       h('ul', null, h('li', null, t('batEmpty1')), h('li', null, t('batEmpty2')), h('li', null, t('batEmpty3'))), h('p', null, t('batEmptyLater'))) : null;
-    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), settingsCard(), backgroundCard()].filter(Boolean) as HTMLElement[]);
+    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), settingsCard(), backgroundCard(), taskbarCard(), noticesCard()].filter(Boolean) as HTMLElement[]);
   }
 
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });
