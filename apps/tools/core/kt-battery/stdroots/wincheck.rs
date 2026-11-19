@@ -11,6 +11,8 @@ pub mod allow;
 pub mod autostart;
 #[path = "../src/bluetooth.rs"]
 pub mod bluetooth;
+#[path = "../src/cli.rs"]
+pub mod cli;
 #[path = "../src/connect.rs"]
 pub mod connect;
 #[path = "../src/fastpair.rs"]
@@ -39,6 +41,8 @@ pub mod udev;
 pub mod upower;
 #[path = "../src/identity.rs"]
 pub mod identity;
+#[path = "../src/json.rs"]
+pub mod json;
 #[path = "../src/kind.rs"]
 pub mod kind;
 #[path = "../src/macos.rs"]
@@ -59,6 +63,8 @@ pub mod pads;
 pub mod phonelink;
 #[path = "../src/registry.rs"]
 pub mod registry;
+#[path = "../src/report.rs"]
+pub mod report;
 #[path = "../src/runner.rs"]
 pub mod runner;
 #[path = "../src/sched.rs"]

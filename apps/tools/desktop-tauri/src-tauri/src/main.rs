@@ -16,6 +16,8 @@ mod filesearch;
 // (0.21, device battery: the page's commands over kt-battery, its background, tray part, notices and start with the
 // system — GPL-3.0-or-later, ../../../NOTICE.md.)
 mod battery;
+// (0.21, device battery, piece W4: «Report a device» and the command line, --battery-json and --battery-help.)
+mod batreport;
 mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
@@ -121,6 +123,11 @@ fn main() {
     // answers as that program and ends here — vtfake.rs; None at once otherwise. First, before any plugin: a stand-in
     // must never reach the single-instance hand-over.)
     if let Some(code) = vtfake::maybe_run() {
+        std::process::exit(code);
+    }
+    // (Device battery, piece W4: --battery-json prints the devices and --battery-help the help, then the program ends —
+    // before the single-instance guard, the window, the tray, the start with the system: a running copy is left alone.)
+    if let Some(code) = batreport::run_cli() {
         std::process::exit(code);
     }
     let mut builder = tauri::Builder::default();
@@ -320,6 +327,8 @@ fn main() {
             battery::kt_battery_settings,
             battery::kt_battery_history,
             battery::kt_battery_history_clear,
+            // (Piece W4: «Report a device».)
+            batreport::kt_battery_report,
             // (Piece 3: connecting Bluetooth devices.)
             battery::kt_bt_list,
             battery::kt_bt_scan,

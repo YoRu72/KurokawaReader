@@ -258,6 +258,35 @@ impl Platform for LinuxPlatform {
     fn query(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
         self.hid.query(device, deadline, now)
     }
+
+    /// Piece W4: every hidraw node's collections — the kernel's own devices too, which `enumerate` leaves out.
+    fn inventory(&self) -> Vec<crate::report::HidSeen> {
+        inventory_of(&sysfs::hidraw_nodes(&self.sys))
+    }
+}
+
+/// The report's list from the nodes: one entry per collection, nothing opened.
+pub fn inventory_of(nodes: &[HidrawNode]) -> Vec<crate::report::HidSeen> {
+    ports(nodes, &[], Path::new("/dev"), &|_| true)
+        .iter()
+        .map(|p| {
+            let id = &p.coll.ident;
+            crate::report::HidSeen {
+                unit: crate::identity::hid_key(id.vid, id.pid, &p.serial, &p.container, &p.key_path),
+                vid: id.vid,
+                pid: id.pid,
+                product: p.product.clone(),
+                connection: p.connection(),
+                usage_page: id.usage_page,
+                usage: id.usage,
+                interface: id.interface,
+                input_len: p.coll.input_len,
+                output_len: p.coll.output_len,
+                feature_len: p.coll.feature_len,
+                battery_field: !p.battery.is_empty(),
+            }
+        })
+        .collect()
 }
 
 /// Whether a node is one Tools would read: a reader's device, or one declaring a battery field (the generic reader).
@@ -321,6 +350,22 @@ mod tests {
         assert_eq!(c.reading.unwrap().level, Level::Exact(Percent::new(60).unwrap()));
         assert_eq!(c.reading.unwrap().charging, Charging::Yes);
         assert!(!c.offline);
+    }
+
+    #[test]
+    fn the_inventory_lists_every_collection_even_the_kernels_and_keeps_serials_in_the_unit_key_only() {
+        let ds = node("hidraw4", 0x054C, 0x0CE6, 5, pad_desc(), "/sys/devices/x/0005:054C:0CE6.0001");
+        let list = inventory_of(&[ds]);
+        assert_eq!(list.len(), 1);
+        let h = &list[0];
+        assert_eq!((h.vid, h.pid, h.usage_page, h.usage, h.input_len, h.output_len, h.connection), (0x054C, 0x0CE6, 1, 5, 64, 48, Connection::Bluetooth));
+        assert_eq!(h.product, "Made Up");
+        assert!(h.unit.starts_with("hid:054C:0CE6:"));
+        // (The report keeps the key out of its text and the address out of the name: report.rs tests that.)
+        let text = crate::report::build(&crate::report::Input { app: "a", os_name: "Linux", os_version: "", hid: &list, devices: &[], secrets: &[], no_query: &[] });
+        assert!(!text.to_lowercase().contains("aa:bb:cc:dd:ee:07") && !text.contains("hid:054C"));
+        assert!(text.contains("usage page: 0x0001, usage: 0x0005") && text.contains("input 64, output 48, feature 0"));
+        assert!(text.contains("playstation"), "the built-in reader that matches is named:\n{}", text);
     }
 
     #[test]

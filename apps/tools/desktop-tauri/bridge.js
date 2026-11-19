@@ -404,6 +404,12 @@
        batterySettings; a device in batteryList / onBattery carries estimate: { state, minutes } | null. */
     batteryHistory: function (o) { return call('kt_battery_history', { o: obj(o) }); },
     batteryHistoryClear: function (o) { return call('kt_battery_history_clear', { o: obj(o) }); },
+    /* 0.21 W4 — «Report a device» (battery.rs's sibling batreport.rs over kt-battery report.rs): batteryReport() → { text,
+       devices, collections } — an English text for the people who add support for a device: the devices the app sees, their
+       HID collections (ids, usage pages, report lengths), the reader that matched, the app's and the system's version; no
+       serial number, Bluetooth address, computer or user name, folder or report content. The page shows it whole; the user
+       copies or saves it. Nothing is sent. (The command line's --battery-json and --battery-help are no bridge method.) */
+    batteryReport: function () { return call('kt_battery_report'); },
     /* 0.21, device battery piece 3 — connecting Bluetooth devices (battery.rs over kt-battery connect.rs): btList() →
        { available, reason?, radio: 'on' | 'off' | 'missing', stale, now, scanUntil, devices, found, busy } (a device:
        { addr, name, kind, picture, brand, le, paired, connected, battery, can }); btScan({ stop?, seconds? }) → the same;

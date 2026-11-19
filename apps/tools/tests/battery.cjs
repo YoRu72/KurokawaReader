@@ -42,6 +42,11 @@
 // red below the low mark, blue while charging with a band, a gap where the device was away, the value under the pointer
 // and with the arrow keys, time running from the right in Arabic; «Clear this device's history» asked first, then
 // cleared through the bridge; a microphone may be given our microphone drawing. Screenshots batW2-* (light and dark).
+// W4, «Report a device» (batteryReport() — bridge.js's signature — and saveText(o)): the page's «More» button (the
+// computer's build only, none where the platform has no reader) opens a sheet with one row, which opens the report: its
+// text whole in a box (left to right even in Arabic), the English-text sentence, the counts; Copy and Save (the real
+// saveText with the name and the text as shown); the text editable and what is copied the edited text; nothing forbidden
+// (serial, Bluetooth address, user name, folder) in what is shown; no network request carries it. Screenshots batW4-*.
 // `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
@@ -49,7 +54,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const serve = () => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(DIST, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
 const errors = []; const check = (what, ok, x) => { console.log(ok ? 'ok  ' : 'FAIL', what, ok || x === undefined ? '' : JSON.stringify(x).slice(0, 300)); if (!ok) errors.push(what); };
 const lang = process.argv[2] || 'en'; const SHOTS = process.env.KT_SHOTS || '';
-const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, /^batW[12]-/.test(name) ? `${name}-${lang}.png` : `battery-${name}-${lang}.png`) }); } };
+const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, /^batW[124]-/.test(name) ? `${name}-${lang}.png` : `battery-${name}-${lang}.png`) }); } };
 
 // (Run in the page: the fake bridge. mode: 'tauri' | 'mac' | 'empty' | 'nothere' | 'electron'.)
 function fake({ lang, mode }) {
@@ -188,6 +193,16 @@ function fake({ lang, mode }) {
       });
     },
     btOpenSettings: function () { window.__calls.push(['btOpenSettings']); return Promise.resolve(); },
+    // (W4 — exactly bridge.js's signature: batteryReport() → { text, devices, collections }; the text as kt-battery's report.rs writes it, of made-up devices.)
+    batteryReport: function () {
+      window.__calls.push(['report']);
+      const text = ['Kurokawa Tools device report', 'Format: 1', 'App: Kurokawa Tools 0.21.0', 'System: Windows 11 10.0.22631', "Left out on purpose: serial numbers, Bluetooth addresses, the computer's and the user's name, folders, and what the devices send (only the sizes of their reports are given).", 'A device is called "device N" by its place in this text.', '',
+        'Devices the app sees (2)', '', 'device 1: Shape Mouse One', '  kind (a guess): mouse, connection: usb', '  vendor id: 1111, product id: 2222', '  built-in reader: generic HID battery field', '  test level: untested', '  status: ok', '  last reading: exact 64%, charging: unknown, asleep: no', '  note: none', '',
+        'device 2: [name]\'s Buds [address]', '  kind (a guess): earbuds, connection: bluetooth', '  vendor id: unknown, product id: unknown', '  built-in reader: bluetooth (the system\'s own or a built-in generic reader)', '  test level: untested', '  status: notConnected', '  last reading: none', '  note: none', '',
+        'HID collections seen (1)', '', 'device 1: Shape Mouse One', '  vendor id: 1111, product id: 2222, connection: usb', '  usage page: 0x0001, usage: 0x0002, interface: 0', '  report lengths: input 8, output 0, feature 0', '  battery field declared: yes', '  built-in reader: generic HID battery field (untested)', ''].join('\n');
+      return Promise.resolve({ text, devices: 2, collections: 1 });
+    },
+    saveText: function (o) { window.__saved = o; return Promise.resolve({ path: 'C:/Users/x/Downloads/' + o.name }); },
     onBt: function (f) { btCb = f; window.__btSubs++; return function () { if (btCb === f) btCb = null; window.__btSubs--; }; },
   });
 }
@@ -823,6 +838,50 @@ function fake({ lang, mode }) {
     check('no sideways overflow (W2)', (await overflow(p)) <= 1);
     await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForFunction(() => window.__subs === 0);
     check('leaving the page unsubscribes (W2)', true);
+    await ctx.close();
+  }
+  {
+    // ---- W4: «Report a device».
+    const { ctx, p } = await open('tauri');
+    await p.waitForSelector('.bat-card');
+    const net = []; p.on('request', (r) => { if (!/^http:\/\/127\.0\.0\.1/.test(r.url()) && !/^(data|blob):/.test(r.url())) net.push(r.url()); });
+    check('«More» is in the page\'s bar', await p.isVisible('.battery-view .topbar [data-icon="more"], .battery-view .topbar button[aria-label="' + (AR ? 'المزيد' : 'More') + '"]'));
+    await p.click('.battery-view .topbar button[aria-label="' + (AR ? 'المزيد' : 'More') + '"]'); await p.waitForSelector('.sheet [data-act="report"]');
+    check('one row: «Report a device»', (await p.$$('.sheet .dest-row')).length === 1 && (await p.textContent('.sheet [data-act="report"] .name')).includes(AR ? 'الإبلاغ عن جهاز' : 'Report a device'));
+    await shot(p, 'batW4-more');
+    await p.click('.sheet [data-act="report"]'); await p.waitForSelector('.sheet textarea.bat-rep-text'); await p.waitForFunction(() => document.querySelector('.sheet textarea.bat-rep-text').value.startsWith('Kurokawa Tools device report'));
+    check('asked of the shell once', (await calls(p)).filter((c) => c[0] === 'report').length === 1);
+    const shown = await p.$eval('.sheet textarea.bat-rep-text', (e) => ({ v: e.value, dir: getComputedStyle(e).direction, ro: e.readOnly, label: e.getAttribute('aria-label') }));
+    check('the whole text is shown, left to right, editable', shown.v.includes('Devices the app sees (2)') && shown.v.includes('HID collections seen (1)') && shown.dir === 'ltr' && !shown.ro && !!shown.label, shown);
+    check('nothing forbidden in what is shown (serial, address, user name, folder)', !/[0-9a-f]{2}([:-])[0-9a-f]{2}(\1[0-9a-f]{2}){4}/i.test(shown.v) && !/serial number:|SN-|Users[\\/]|\/home\//i.test(shown.v) && !/\bTester\b|MY-PC/i.test(shown.v), shown.v.slice(0, 200));
+    const words = await p.$eval('.sheet .bat-rep', (e) => e.innerText);
+    check('says the text is English, what is left out, that nothing is sent by the app, and that it can be edited', words.includes(AR ? 'بالإنجليزية' : 'in English') && words.includes(AR ? 'حُذف عمدًا' : 'Left out on purpose') && words.includes(AR ? 'لا يرسل منه شيئًا' : 'sends nothing') && words.includes(AR ? 'تعديل النص' : 'edit the text') && words.includes('Kurokawa Tools'), words);
+    check('the counts', words.includes(AR ? 'الأجهزة: 2، ومجموعات HID: 1' : 'Devices: 2, HID collections: 1'), words);
+    check('no link in the sheet', !(await p.$('.sheet .bat-rep a')));
+    // Copy: the clipboard gets the text as it is shown — after an edit too.
+    await p.evaluate(() => { window.__clip = null; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: (t) => { window.__clip = t; return Promise.resolve(); } } }); });
+    await p.click('.sheet [data-act="copy"]'); await p.waitForFunction(() => window.__clip !== null);
+    check('Copy puts the shown text on the clipboard', (await p.evaluate(() => window.__clip)) === shown.v);
+    await p.fill('.sheet textarea.bat-rep-text', shown.v.split('Shape Mouse One').join('My mouse')); await p.evaluate(() => { window.__clip = null; });
+    await p.click('.sheet [data-act="copy"]'); await p.waitForFunction(() => window.__clip !== null);
+    check('an edited text is what is copied', (await p.evaluate(() => window.__clip)).includes('My mouse') && !(await p.evaluate(() => window.__clip)).includes('Shape Mouse One'));
+    await shot(p, 'batW4-report');
+    await p.click('.sheet [data-act="save"]'); await p.waitForFunction(() => window.__saved);
+    const sv = await p.evaluate(() => window.__saved);
+    check('Save goes through saveText with a file name and the shown text', sv.name === 'kurokawa-tools-device-report.txt' && sv.text.includes('My mouse') && Object.keys(sv).sort().join() === 'name,text', sv.name);
+    const eq = await p.$$eval('.sheet-actions .btn', (bs) => bs.map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.left), Math.round(r.right)]; }));
+    check('Copy and Save are equal and do not touch', eq.length === 2 && Math.abs(eq[0][0] - eq[1][0]) <= 1 && (eq[0][2] <= eq[1][1] - 4 || eq[1][2] <= eq[0][1] - 4), eq);
+    check('the last line is not covered by the footer', await p.evaluate(() => { const b = document.querySelector('.sheet .sheet-body'); const a = document.querySelector('.sheet .sheet-actions'); const hnt = [...b.querySelectorAll('.hint')].pop(); b.scrollTop = b.scrollHeight; return hnt.getBoundingClientRect().bottom <= a.getBoundingClientRect().top + 1; }));
+    check('no network request (the page sent nothing anywhere)', net.length === 0, net);
+    check('no sideways overflow (W4)', (await overflow(p)) <= 1);
+    await p.keyboard.press('Escape'); await p.waitForFunction(() => !document.querySelector('.sheet'));
+    await ctx.close();
+  }
+  {
+    // (Where the platform has no reader the page has no «More».)
+    const { ctx, p } = await open('nothere');
+    await p.waitForSelector('.bat-empty[data-state="notHere"]');
+    check('no «More» where the platform has no reader', !(await p.isVisible('.battery-view .topbar button[aria-label="' + (AR ? 'المزيد' : 'More') + '"]')));
     await ctx.close();
   }
   {

@@ -29,6 +29,11 @@ pub trait Platform: Send + Sync + 'static {
     /// The user's settings, before the first round and after each change (the controller families whose status
     /// request may be sent, Prefs::pad_queries).
     fn set_prefs(&self, _prefs: &Prefs) {}
+    /// Piece W4 («Report a device» and the command line): every HID collection this system lists, those no reader wants
+    /// too — nothing opened, nothing sent. Platforms with no such list give none.
+    fn inventory(&self) -> Vec<crate::report::HidSeen> {
+        Vec::new()
+    }
 }
 
 /// Whether a device is asked through `query` (else its reader brought its reading with the enumeration).
