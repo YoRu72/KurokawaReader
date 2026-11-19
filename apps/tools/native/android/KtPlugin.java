@@ -62,7 +62,9 @@ public class KtPlugin extends Plugin {
     }
     private volatile boolean visible = true, behind = false;
     @Override protected void handleOnPause() { super.handleOnPause(); visible = false; }
-    @Override protected void handleOnResume() { super.handleOnResume(); visible = true; if (behind) { behind = false; JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(lastTasks.toString())); } catch (Exception ignored) {} notifyListeners("tasksChanged", ev); } }
+    @Override protected void handleOnResume() { super.handleOnResume(); visible = true; if (behind) { behind = false; JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(lastTasks.toString())); } catch (Exception ignored) {} notifyListeners("tasksChanged", ev); }
+        // (0.21 P2: back from the «Nearby devices» dialog — the device battery page told the answer.)
+        if (KtBattery.askPending) { KtBattery.askPending = false; final android.app.Activity a = getActivity(); bg.execute(() -> batteryEvent(KtBattery.state(getContext(), a))); } }
     private static KtPlugin self;
     /** The engine when the app made it (for the notification's and the tile's buttons). */
     static KtEngine engineIfAny() { KtPlugin p = self; return p == null ? null : p.engine; }
@@ -72,7 +74,7 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
+    @Override public void load() { wireDoh(); self = this; KtBattery.sink = this::batteryEvent; try { KtBattery.watch(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
         // (0.21 P9: no automatic DoH probe on a metered connection.)
         try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
@@ -282,6 +284,18 @@ public class KtPlugin extends Plugin {
         }
         JSObject r = new JSObject(); r.put("granted", on); call.resolve(r);
     }
+    /* ---------- device battery on the phone (0.21 P2, KtBattery): the paired Bluetooth devices, read only ---------- */
+    private void batteryEvent(JSONObject st) { try { notifyListeners("btBattery", JSObject.fromJSONObject(st)); } catch (Exception ignored) {} }
+    /** Bluetooth here and on, «Nearby devices» allowed, the paired devices with what Android knows of their batteries. */
+    @PluginMethod public void batteryPhoneState(PluginCall call) { final android.app.Activity a = getActivity(); run(call, () -> call.resolve(obj(KtBattery.state(getContext(), a)))); }
+    /** «Allow» tapped: the system's dialog (Android 12+), or App info once Android will not show it again. */
+    @PluginMethod public void batteryPhoneAsk(PluginCall call) { JSObject r = new JSObject(); r.put("access", KtBattery.ask(getContext(), getActivity())); call.resolve(r); }
+    /** what: 'bluetooth' (the system's Bluetooth settings, where pairing is done) | 'app' (App info). */
+    @PluginMethod public void batteryPhoneOpen(PluginCall call) { KtBattery.open(getContext(), call.getString("what", "bluetooth")); call.resolve(); }
+    /** The notices' settings (set: notify, low, marks) and their words in the page's language (labels). */
+    @PluginMethod public void batteryPhoneConfig(PluginCall call) { final JSObject set = call.getObject("set", null), labels = call.getObject("labels", null); run(call, () -> call.resolve(obj(KtBattery.configure(getContext(), set, labels)))); }
+    /** The page open (on: true) or closed: the Bluetooth broadcasts heard while it is open or the notices are on. */
+    @PluginMethod public void batteryPhoneWatch(PluginCall call) { KtBattery.page(getContext(), Boolean.TRUE.equals(call.getBoolean("on", false))); call.resolve(); }
     @PluginMethod public void add(PluginCall call) { askNotify(); run(call, () -> { JSObject r = new JSObject(); r.put("task", obj(engine().add(new JSONObject(call.getData().toString())))); call.resolve(r); }); }
     @PluginMethod public void pause(PluginCall call) { run(call, () -> { engine().pause(call.getString("id", "")); call.resolve(); }); }
     /** `anyway`: «Download now» on one held (Wi-Fi only on mobile data, a low battery) — started in spite of the hold. */

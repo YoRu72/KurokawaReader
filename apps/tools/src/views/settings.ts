@@ -384,8 +384,9 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
     // Translate on screen (the add-on, Android): its own page.
     const screen = (plat === 'android' || plat === 'desktop') && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
-    // Device battery (0.21): a computer's own page — never on a phone (views/battery.ts).
-    const battery = plat === 'desktop' ? card('battery', t('batTitle'), h('p', { class: 'hint' }, t('batCardHint')), h('a', { class: 'btn filled', href: '#/battery' }, icon('gauge'), t('batOpenPage'))) : null;
+    // Device battery (0.21): the computer's page (views/battery.ts); on Android its own, smaller one — the paired
+    // Bluetooth devices (0.21 P2, views/batphone.ts) —, said in the phone's words.
+    const battery = plat === 'desktop' || plat === 'android' ? card('battery', t('batTitle'), h('p', { class: 'hint' }, t(plat === 'android' ? 'bphCardHint' : 'batCardHint')), h('a', { class: 'btn filled', href: '#/battery' }, icon('gauge'), t('batOpenPage'))) : null;
     // Advanced (phones that carry the Rust core): the download engine — views/engineSettings.ts.
     const advanced = advancedCard(rerender);
     return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, battery, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
