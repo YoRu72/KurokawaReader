@@ -306,6 +306,12 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void setSequential(PluginCall call) { run(call, () -> { engine().setSequential(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("on", true))); call.resolve(); }); }
     /** The device's network interfaces that are up (for binding torrents to a VPN's). */
     @PluginMethod public void interfaces(PluginCall call) { run(call, () -> { JSArray out = new JSArray(); java.util.Enumeration<java.net.NetworkInterface> e = java.net.NetworkInterface.getNetworkInterfaces(); while (e != null && e.hasMoreElements()) { java.net.NetworkInterface n = e.nextElement(); if (!n.isUp() || n.isLoopback()) continue; JSObject o = new JSObject(); o.put("name", n.getName()); o.put("vpn", n.getName().matches("(tun|wg|ppp|tap|ipsec).*")); out.put(o); } JSObject r = new JSObject(); r.put("interfaces", out); call.resolve(r); }); }
+    /** Whether the page was loaded again because Android ended its renderer (memory, or a crash). Given once. */
+    @PluginMethod public void pageRestored(PluginCall call) { JSObject r = new JSObject(); long at = MainActivity.renderGoneAt; r.put("gone", at > 0); r.put("crashed", MainActivity.renderGoneCrash); r.put("at", at); MainActivity.renderGoneAt = 0; call.resolve(r); }
+    /** The Files jobs still running in the engine (a page loaded anew shows them again), each with the name-taken question it waits on, if any. */
+    @PluginMethod public void filesLive(PluginCall call) { JSArray out = new JSArray(); for (KtFileJobs.Job j : KtFileJobs.jobs.values()) { JSObject o = new JSObject(); o.put("id", j.id); org.json.JSONObject q = j.asking; if (q != null) { try { o.put("asking", JSObject.fromJSONObject(q)); } catch (Exception ignored) {} } out.put(o); } JSObject r = new JSObject(); r.put("jobs", out); call.resolve(r); }
+    /** A Files job's event to the page that is there now — the plugin of a page loaded anew, not the one that started it. */
+    private static void filesEvent(org.json.JSONObject ev) { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }
     /** What went wrong last time (written down by the app as it happened, or from Android's record at the start). Given once. */
     @PluginMethod public void lastCrash(PluginCall call) {
         JSObject r = new JSObject(); java.io.File f = new java.io.File(new java.io.File(getContext().getFilesDir(), "kt"), "crash.txt"); String text = null;
@@ -905,7 +911,7 @@ public class KtPlugin extends Plugin {
         final String id = call.getString("id", String.valueOf(System.currentTimeMillis())); final String op = call.getString("op", "copy"); final String conflict = call.getString("conflict", "ask");
         final java.util.List<File> paths = new java.util.ArrayList<>(); JSArray a = call.getArray("paths"); if (a != null) for (int i = 0; i < a.length(); i++) paths.add(fileOf(a.optString(i, "")));
         final File dest = call.getString("dest", null) == null ? null : fileOf(call.getString("dest", ""));
-        new Thread(() -> KtFiles.run(id, op, paths, dest, conflict, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-job").start();
+        new Thread(() -> KtFiles.run(id, op, paths, dest, conflict, KtPlugin::filesEvent), "kt-files-job").start();
         JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
     }
     @PluginMethod public void filesCollection(PluginCall call) { final String kind = call.getString("kind", "recent"); final int limit = call.getInt("limit", 500); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("entries", new JSArray(KtFiles.collection(getContext(), kind, limit).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
@@ -927,7 +933,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
     // (Stage M5: the Rust engine's journals — the list, a job cut short resumed or rolled back, a finished one undone.)
     @PluginMethod public void filesJournals(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("items", new JSArray(KtFileExec.journals().toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
-    @PluginMethod public void filesJournalResume(PluginCall call) { final String jid = call.getString("journal", ""); final String id = call.getString("id", "resume-" + System.currentTimeMillis()); new Thread(() -> KtFileExec.resume(jid, id, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-resume").start(); JSObject r = new JSObject(); r.put("id", id); call.resolve(r); }
+    @PluginMethod public void filesJournalResume(PluginCall call) { final String jid = call.getString("journal", ""); final String id = call.getString("id", "resume-" + System.currentTimeMillis()); new Thread(() -> KtFileExec.resume(jid, id, KtPlugin::filesEvent), "kt-files-resume").start(); JSObject r = new JSObject(); r.put("id", id); call.resolve(r); }
     @PluginMethod public void filesJournalRollback(PluginCall call) { final String jid = call.getString("journal", ""); final boolean undo = Boolean.TRUE.equals(call.getBoolean("undo", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFileExec.rollback(jid, undo))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void filesJournalDismiss(PluginCall call) { final String jid = call.getString("journal", ""); bg.execute(() -> { JSObject r = new JSObject(); r.put("ok", KtFileExec.dismiss(jid)); call.resolve(r); }); }
     /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */

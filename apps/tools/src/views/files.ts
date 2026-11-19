@@ -137,11 +137,11 @@ const liveNote = (id: string, n: LiveNote | null) => { const all = liveNotes(); 
  *  comes back after Android ended its renderer (ui/restore.ts reads it once, then only on such a return). */
 const RESUME = 'kt.resume.files';
 type ResumeFiles = { at?: string; b?: string; y?: number; clip?: { op: 'copy' | 'move'; paths: string[] } | null };
-let resumeTimer = 0;
+let resumeTimer = 0; let resumeNext: ResumeFiles | null = null;
 const keepResume = (part: Partial<ResumeFiles>) => {
   if (!plug()) return; // (the phone only: a computer's page is never ended this way)
-  let cur: ResumeFiles = {}; try { cur = JSON.parse(localStorage.getItem(RESUME) ?? '{}') as ResumeFiles; } catch { cur = {}; }
-  const next = { ...cur, ...part }; if (next.clip) next.clip = { op: next.clip.op, paths: next.clip.paths.slice(0, 500) };
+  if (!resumeNext) { try { resumeNext = JSON.parse(localStorage.getItem(RESUME) ?? '{}') as ResumeFiles; } catch { resumeNext = {}; } }
+  const next: ResumeFiles = { ...resumeNext, ...part }; if (next.clip) next.clip = { op: next.clip.op, paths: next.clip.paths.slice(0, 500) }; resumeNext = next;
   window.clearTimeout(resumeTimer); resumeTimer = window.setTimeout(() => { try { const t0 = JSON.stringify(next); if (t0.length < 200000) localStorage.setItem(RESUME, t0); } catch { /* none */ } }, 300);
 };
 /** What ui/restore.ts handed over for the page that came back (taken once). */

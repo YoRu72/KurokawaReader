@@ -254,7 +254,7 @@ final class KtFileExec {
             File f = new File(from), t = new File(to);
             JSONObject o = new JSONObject(); o.put("id", id); o.put("status", "conflict"); o.put("from", f.getAbsolutePath()); o.put("to", t.getAbsolutePath()); o.put("size", f.isFile() ? f.length() : 0); o.put("existingSize", t.isFile() ? t.length() : 0); o.put("mtime", f.lastModified()); o.put("existingMtime", t.lastModified()); o.put("dir", f.isDirectory());
             String standing = j.conflict;
-            synchronized (j.lock) { j.answer = null; ev.on(o); while (j.answer == null && !j.cancel.get()) j.lock.wait(60000); String a = j.answer == null ? "skip" : j.answer; return !standing.equals(j.conflict) && j.conflict.equals(a) ? a + "All" : a; }
+            synchronized (j.lock) { j.answer = null; j.asking = o; try { ev.on(o); while (j.answer == null && !j.cancel.get()) j.lock.wait(60000); } finally { j.asking = null; } String a = j.answer == null ? "skip" : j.answer; return !standing.equals(j.conflict) && j.conflict.equals(a) ? a + "All" : a; }
         }
 
         /** One step; false: a rename failed (to be re-planned with it copied). */

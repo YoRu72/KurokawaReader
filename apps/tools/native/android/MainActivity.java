@@ -7,6 +7,9 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     /** The player is playing and the floating window is wanted when the app is left (set by the page). */
+    /** When Android last ended the page's renderer (0: not since the app started) and whether it crashed: the page loaded
+     *  again asks once (KtPlugin.pageRestored) and brings the reader back where he was. */
+    static volatile long renderGoneAt = 0; static volatile boolean renderGoneCrash = false;
     static volatile boolean pipAuto = false; static volatile int pipW = 16, pipH = 9;
     // (Android 12 and later enter by themselves from the params; before that, leaving the app is the cue.)
     @Override protected void onUserLeaveHint() {
@@ -28,12 +31,14 @@ public class MainActivity extends BridgeActivity {
             getBridge().setWebViewClient(new com.getcapacitor.BridgeWebViewClient(getBridge()) {
                 @Override public boolean onRenderProcessGone(android.webkit.WebView view, android.webkit.RenderProcessGoneDetail detail) {
                     note(getApplicationContext(), "the page's renderer ended (" + (detail != null && detail.didCrash() ? "crashed" : "stopped by Android to free memory") + ")");
+                    renderGoneCrash = detail != null && detail.didCrash(); renderGoneAt = System.currentTimeMillis();
                     try { recreate(); } catch (Throwable ignored) {}
                     return true;
                 }
             });
         } catch (Throwable ignored) {}
-        handOver(getIntent());
+        // (Made again after the renderer ended: the intent that started the app is not handed over a second time.)
+        if (savedInstanceState == null || renderGoneAt == 0) handOver(getIntent());
     }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handOver(intent); }
 
