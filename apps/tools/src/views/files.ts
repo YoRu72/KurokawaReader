@@ -789,31 +789,35 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
 
   // ---- sheets: an item's, the selection's, sort, more, rename, new folder, properties, delete
-  const itemSheet = (e: Entry, at?: Event) => {
+  const itemSheet = (e: Entry, at?: Event, rest = false) => {
     if ((e as AppEntry).pkg && isApps(e.path) && e.dir && !(e as AppEntry).special) { void import('./filesApps').then((m) => m.appSheet((e as AppEntry).pkg!, e.name, { go, pickDir: async () => { try { const { ktPlugin } = await import('../native'); return (await ktPlugin()?.pickDir())?.dir ?? null; } catch { return null; } }, defaultDir: `${roots.find((r) => r.kind === 'app')?.path ?? '/storage/emulated/0/Download/Kurokawa'}/Apps` })); return; }
     if (isArc(e.path)) { arcItemSheet(e, at); return; }
     const pl = isVirtual(e.path) ? null : plug(); const sh = openSheet(e.name, t('close'), { at });
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
-    sh.body.append(h('p', { class: 'src', dir: 'ltr' }, readablePath(e.path)), h('div', { class: 'dest-list' },
-      act('external', t('open'), () => void open(e)),
-      ...(pl && !e.dir ? [act('apps', t('openWith'), () => { if (pl.appsFor) void chooseThenOpen(e); else void pl.openWith({ path: e.path, mime: mimeOf(e.name), title: e.name }); }), act('type', t('filesOpenAs'), () => openAs(e))] : []),
-      ...(!pl && !e.dir && !isVirtual(e.path) && !isArc(e.path) && desk()?.openPath ? [act('apps', t('openWith'), () => void chooseThenOpen(e))] : []),
-      ...(pl ? [act('share', t('share'), () => void pl.shareFile({ path: e.path, title: e.name }))] : []),
-      ...(canJobs() ? [act('copy', t('filesCopy'), () => copyPicked('copy', [e.path])), act('scissors', t('filesCut'), () => copyPicked('move', [e.path]))] : []),
-      act('pen', t('rename'), () => renameSheet(e)),
-      ...(pl ? [act('lock', /\.kurokawa$/i.test(e.name) ? t('vaultUnlock') : t('vaultLock'), () => void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!/\.kurokawa$/i.test(e.name), [e.path], jobRow, () => void load()); }))] : []),
-      ...(e.path.startsWith('root://') ? [act('terminal', t('filesPermissions'), () => rootOpsSheet(e))] : []),
-      ...(pl && e.dir ? [act('eyeOff', t('filesHideFolder'), () => void import('./filesMore').then((m) => { m.hidePath(e.path); toast(t('filesHiddenNow')); void load(); })), act('images', t('filesNomedia'), () => void import('./filesMore').then((m) => m.toggleNomedia(e.path)).then((on) => toast(on ? t('filesNomediaOn') : t('filesNomediaOff'))).catch((err) => toast(String((err as Error).message ?? err), 'error')))] : []),
-      ...(!e.dir && !isVirtual(e.path) && looksArchive(e.name) ? [act('folder', /\.(apk|apks|xapk|apkm)$/i.test(e.name) ? t('apkBrowse') : t('filesOpenAsArchive'), () => { sh.close(); go(arcPath(e.path)); })] : []),
-      ...(arcOk() && !e.dir && canExtractName(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : []),
-      ...(arcOk() ? [act('archive', t('filesCompress'), () => void compress([e.path]))] : []),
-      act('check', t('filesSelect'), () => { selecting = true; picked.add(e.path); applySel(); drawSel(); }),
-      ...(sizeable(e) ? [act('refresh', t('filesCalcSize'), () => void propertiesSheet(e, true))] : []),
-      act('info', t('properties'), () => void propertiesSheet(e)),
-      act('trash', t('delete'), () => void confirmDelete([e.path]))));
+    // (rest: the «More» of a phone's selection — what the bar's slots do not: Open with, Open as, Share · the archive's ways · size and facts · hide, .nomedia, vault; apart in groups.)
+    const G = (g: number, xs: HTMLElement[]): HTMLElement[] => { for (const x of xs) x.dataset.g = String(g); return rest && g === 0 ? [] : xs; };
+    const lists = (xs: HTMLElement[]): HTMLElement[] => { if (!rest) return [h('div', { class: 'dest-list' }, ...xs)]; const gs = new Map<string, HTMLElement[]>(); for (const x of xs) { const k = x.dataset.g ?? '9'; (gs.get(k) ?? gs.set(k, []).get(k)!).push(x); } return [...gs.keys()].sort().map((k) => h('div', { class: 'dest-list more-grp' }, ...gs.get(k)!)); };
+    sh.body.append(h('p', { class: 'src', dir: 'ltr' }, readablePath(e.path)), ...lists([
+      ...G(0, [act('external', t('open'), () => void open(e))]),
+      ...G(1, (pl && !e.dir ? [act('apps', t('openWith'), () => { if (pl.appsFor) void chooseThenOpen(e); else void pl.openWith({ path: e.path, mime: mimeOf(e.name), title: e.name }); }), act('type', t('filesOpenAs'), () => openAs(e))] : [])),
+      ...G(1, (!pl && !e.dir && !isVirtual(e.path) && !isArc(e.path) && desk()?.openPath ? [act('apps', t('openWith'), () => void chooseThenOpen(e))] : [])),
+      ...G(1, (pl ? [act('share', t('share'), () => void pl.shareFile({ path: e.path, title: e.name }))] : [])),
+      ...G(0, (canJobs() ? [act('copy', t('filesCopy'), () => copyPicked('copy', [e.path])), act('scissors', t('filesCut'), () => copyPicked('move', [e.path]))] : [])),
+      ...G(0, [act('pen', t('rename'), () => renameSheet(e))]),
+      ...G(4, (pl ? [act('lock', /\.kurokawa$/i.test(e.name) ? t('vaultUnlock') : t('vaultLock'), () => void import('./filesMore').then((m) => { if (!m.canVault()) { toast(t('vaultUnavailable'), 'error'); return; } m.vaultSheet(!/\.kurokawa$/i.test(e.name), [e.path], jobRow, () => void load()); }))] : [])),
+      ...G(4, (e.path.startsWith('root://') ? [act('terminal', t('filesPermissions'), () => rootOpsSheet(e))] : [])),
+      ...G(4, (pl && e.dir ? [act('eyeOff', t('filesHideFolder'), () => void import('./filesMore').then((m) => { m.hidePath(e.path); toast(t('filesHiddenNow')); void load(); })), act('images', t('filesNomedia'), () => void import('./filesMore').then((m) => m.toggleNomedia(e.path)).then((on) => toast(on ? t('filesNomediaOn') : t('filesNomediaOff'))).catch((err) => toast(String((err as Error).message ?? err), 'error')))] : [])),
+      ...G(2, (!e.dir && !isVirtual(e.path) && looksArchive(e.name) ? [act('folder', /\.(apk|apks|xapk|apkm)$/i.test(e.name) ? t('apkBrowse') : t('filesOpenAsArchive'), () => { sh.close(); go(arcPath(e.path)); })] : [])),
+      ...G(2, (arcOk() && !e.dir && canExtractName(e.name) ? [act('archive', t('extractHere'), () => void extractHere(e)), act('archive', t('extractTo'), () => void import('./extract').then((m) => m.extractSheet(e.path)))] : [])),
+      ...G(2, (arcOk() ? [act('archive', t('filesCompress'), () => void compress([e.path]))] : [])),
+      ...G(0, [act('check', t('filesSelect'), () => { selecting = true; picked.add(e.path); applySel(); drawSel(); })]),
+      ...G(3, (sizeable(e) ? [act('refresh', t('filesCalcSize'), () => void propertiesSheet(e, true))] : [])),
+      ...G(3, [act('info', t('properties'), () => void propertiesSheet(e))]),
+      ...G(0, [act('trash', t('delete'), () => void confirmDelete([e.path]))]),
+    ]));
     // (A book the Reader opens: «Open in Kurokawa Reader» — only where the system says the Reader is installed and takes it.)
     const rm = readerMime(e.name); if (pl?.appsFor && pl.openIn && !e.dir && rm) void pl.appsFor({ path: e.path, mime: rm }).then((r) => {
-      const app = r.apps.find((a) => a.pkg === READER_PKG); if (!app || !sh.body.isConnected) return; const list = sh.body.querySelector('.dest-list'); if (!list || list.querySelector('.files-open-reader')) return;
+      const app = r.apps.find((a) => a.pkg === READER_PKG); if (!app || !sh.body.isConnected) return; const list = rest ? null : sh.body.querySelector('.dest-list'); if (rest) { if (!sh.body.querySelector('.files-open-reader')) { const rr = act('books', t('filesOpenInReader'), () => void pl.openIn!({ path: e.path, mime: rm, pkg: READER_PKG, cls: app.cls }).catch(() => toast(t('filesReaderFailed'), 'error'))); rr.classList.add('files-open-reader'); sh.body.append(h('div', { class: 'dest-list more-grp' }, rr)); } return; } if (!list || list.querySelector('.files-open-reader')) return;
       const row = act('books', t('filesOpenInReader'), () => void pl.openIn!({ path: e.path, mime: rm, pkg: READER_PKG, cls: app.cls }).catch(() => toast(t('filesReaderFailed'), 'error'))); row.classList.add('files-open-reader'); list.firstElementChild?.after(row);
     }).catch(() => undefined);
   };

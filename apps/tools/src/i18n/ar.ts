@@ -1471,6 +1471,7 @@ export const ar: Partial<Strings> = {
   filesClipClear: "إفراغ الحافظة",
   filesClipboard: "الحافظة",
   filesClipCount: "العدد: {n}",
+  filesSelCount: "العدد: {n}",
   filesClipCopy: "نسخ",
   filesClipMove: "نقل",
   filesClipExtract: "نسخٌ من الأرشيف",
