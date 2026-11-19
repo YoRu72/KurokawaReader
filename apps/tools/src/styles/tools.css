@@ -1545,3 +1545,84 @@ html.pc:not(.rail-off) .toast.files-unfinished, html.pc .toast.files-unfinished 
 .forget-sheet .forget-name { font-weight: 600; }
 .sheet-actions.equal { flex-wrap: nowrap; }
 .sheet-actions.equal > .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+
+/* «Everywhere in my folders» (views/filesearch.ts — a computer's Tauri shell only): the panel takes the folder's place
+   under the top bar; its list is virtual (rows placed absolutely, ROW_H = 60 px). */
+.files-view.fs-on > :not(.topbar):not(.fs-panel) { display: none !important; }
+.fs-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 4px 16px 12px; box-sizing: border-box; }
+.fs-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fs-mode { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--md-surface-container); flex: none; }
+.fs-mode-btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--md-on-surface-variant); font: 500 14px/1 var(--font-ui); cursor: pointer; }
+.fs-mode-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-mode-btn:hover { background: var(--md-surface-container-highest); }
+.fs-mode-btn.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 600; }
+.fs-field { flex: 1 1 280px; min-width: 200px; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 16px; border-radius: 22px; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
+.fs-field:focus-within { box-shadow: inset 0 0 0 2px var(--md-primary); }
+.fs-field > svg { flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-field input.fs-input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; outline: 0; box-shadow: none; background: transparent; color: var(--md-on-surface); font: inherit; font-size: 15px; }
+.fs-field input.fs-input:focus-visible { box-shadow: none; }
+.fs-field input.fs-input::-webkit-search-cancel-button { cursor: pointer; }
+.fs-chips { gap: 8px; align-items: center; }
+.fs-chip svg:last-child:not(:first-child) { width: 14px; height: 14px; opacity: .7; }
+.fs-sep { width: 1px; height: 24px; background: var(--md-outline-variant); margin: 0 4px; }
+.fs-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-radius: 14px; background: var(--md-surface-container); color: var(--md-on-surface-variant); font-size: 13.5px; }
+.fs-banner[hidden] { display: none; }
+.fs-paused { font-weight: 600; color: var(--md-on-surface); }
+.fs-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--md-outline-variant); border-top-color: var(--md-primary); animation: fs-turn 0.9s linear infinite; flex: none; }
+.fs-line { display: flex; align-items: baseline; gap: 10px; padding: 0 6px; font-size: 13px; color: var(--md-on-surface-variant); }
+.fs-line[hidden] { display: none; }
+.fs-took { opacity: .75; }
+.fs-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; border-radius: 18px; outline: 0; overscroll-behavior: contain; }
+.fs-scroll[hidden] { display: none; }
+.fs-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--md-primary); }
+.fs-space { position: relative; width: 100%; }
+.fs-row { position: absolute; inset-inline: 0; height: 56px; margin: 2px 0; box-sizing: border-box; display: grid; grid-template-columns: 40px minmax(0, 1fr) 92px 92px 40px 40px; align-items: center; gap: 12px; padding: 0 8px 0 10px; border-radius: 14px; cursor: pointer; color: var(--md-on-surface); }
+.fs-row:hover { background: var(--md-surface-container); }
+.fs-row.active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--md-primary); }
+.fs-ic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-ic.k-folder { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fs-l1, .fs-l2 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs-l1 { font-size: 14.5px; font-weight: 500; }
+.fs-l2 { font-size: 12.5px; color: var(--md-on-surface-variant); }
+.fs-name, .fs-dir { unicode-bidi: isolate; }
+[dir='rtl'] :is(.fs-root-path, .fs-excl-row > bdi) { text-align: right; }
+.fs-row.active .fs-dir { color: inherit; opacity: .8; }
+.fs-mark { background: color-mix(in srgb, var(--md-primary) 26%, transparent); color: inherit; border-radius: 4px; padding: 0 1px; }
+.fs-size, .fs-date { font-size: 13px; color: var(--md-on-surface-variant); text-align: end; white-space: nowrap; unicode-bidi: isolate; }
+.fs-row.active :is(.fs-size, .fs-date) { color: inherit; }
+.fs-row .icon-btn { width: 40px; height: 40px; opacity: .0; transition: opacity var(--dur-short, .15s); }
+.fs-row:hover .icon-btn, .fs-row.active .icon-btn, .fs-row .icon-btn:focus-visible { opacity: 1; }
+.fs-empty { flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 48px; }
+.fs-empty[hidden] { display: none; }
+.fs-card { max-width: 460px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 32px; border-radius: 28px; background: var(--md-surface-container-low); }
+.fs-card h3 { margin: 4px 0 0; font: 600 19px/1.3 var(--font-ui); color: var(--md-on-surface); }
+.fs-card p { margin: 0; }
+.fs-card .btn { margin-top: 8px; }
+.fs-card-ic { width: 64px; height: 64px; border-radius: 22px; display: grid; place-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-card-ic svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.fs-empty.indexing .fs-card-ic svg { animation: fs-turn 1.6s linear infinite; }
+/* The manage sheet. */
+.fs-sheet .sheet-body { display: flex; flex-direction: column; gap: 10px; }
+.fs-sheet .section-title { margin: 4px 0 0; }
+.fs-roots { display: flex; flex-direction: column; gap: 8px; }
+.fs-root { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 18px; background: var(--md-surface-container); }
+.fs-root-head { display: flex; align-items: center; gap: 12px; }
+.fs-root-ic { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-root-ic svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-root-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-family: var(--font-ui); }
+.fs-root-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 500; unicode-bidi: isolate; text-align: start; }
+.fs-root-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: none; }
+.fs-root-acts .btn { justify-content: center; min-width: 0; }
+.fs-excl { display: flex; flex-direction: column; gap: 4px; padding-inline-start: 50px; }
+.fs-excl-title { font: 600 12px/1.4 var(--font-ui); color: var(--md-on-surface-variant); }
+.fs-excl-row { display: flex; align-items: center; gap: 8px; font: 13px/1.4 var(--font-ui); }
+.fs-excl-row > svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; opacity: .7; }
+.fs-excl-row > bdi { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
+.fs-add { align-self: flex-start; }
+.fs-facts { margin: 2px 0; font-family: var(--font-ui); }
+.fs-switch small { display: block; margin-top: 3px; font-size: 12.5px; opacity: .85; }
+.fs-sheet-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+.fs-sheet-btns .btn { justify-content: center; min-width: 0; }
+@keyframes fs-turn { to { transform: rotate(360deg); } }

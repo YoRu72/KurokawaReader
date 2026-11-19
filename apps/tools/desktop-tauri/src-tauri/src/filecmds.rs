@@ -41,6 +41,7 @@ pub async fn kt_delete_path(p: String) -> Result<Value, String> {
     blocking(move || {
         let path = PathBuf::from(&p);
         if trash::trash(&path).is_ok() {
+            crate::filesearch::removed(&path);
             return Ok(json!({ "ok": true, "trashed": true }));
         }
         let gone = match std::fs::symlink_metadata(&path) {
@@ -49,6 +50,9 @@ pub async fn kt_delete_path(p: String) -> Result<Value, String> {
             // (Nothing there: as fs.rm with force, nothing to do.)
             Err(_) => true,
         };
+        if gone {
+            crate::filesearch::removed(&path);
+        }
         Ok(json!({ "ok": gone, "trashed": false }))
     })
     .await
@@ -379,6 +383,9 @@ pub async fn kt_files_mkdir(o: Value) -> Result<Value, String> {
             return Err("exists".to_string());
         }
         let ok = std::fs::create_dir_all(&p).is_ok() && p.is_dir();
+        if ok {
+            crate::filesearch::created(&p);
+        }
         Ok(json!({ "ok": ok, "path": lossy(&p) }))
     })
     .await
@@ -398,6 +405,7 @@ pub async fn kt_files_rename(o: Value) -> Result<Value, String> {
             return Err("bad name".to_string());
         }
         let to = filejobs::rename(&p, &name)?;
+        crate::filesearch::moved(&p, &to);
         Ok(json!({ "ok": true, "path": lossy(&to) }))
     })
     .await

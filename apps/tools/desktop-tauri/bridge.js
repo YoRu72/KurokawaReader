@@ -210,6 +210,21 @@
     filesStat: function (o) { return call('kt_files_stat', { o: obj(o) }); },
     filesMkdir: function (o) { return call('kt_files_mkdir', { o: obj(o) }); },
     filesRename: function (o) { return call('kt_files_rename', { o: obj(o) }); },
+    /* fast file search (this shell's own, Tools 0.21: src-tauri/src/filesearch.rs over kt-core's fileindex): the
+       folders chosen, the index's state and size — fileSearchStatus() —; a search as the user types, a newer one
+       stopping the one before — fileSearch({ text, kinds, sizeMin, sizeMax, after, before, sort, desc, limit }) →
+       { hits, total, micros } | { cancelled } | { idle } —; a folder chosen or forgotten — fileSearchAdd({ path }) →
+       { ok } | { ok: false, reason, other }, fileSearchRemove({ path }) —; a folder inside one left out —
+       fileSearchExclude({ root, path, remove }) —; fileSearchRebuild(), fileSearchForget() (the index removed),
+       fileSearchPause({ paused, pauseOnBattery }) → the state. Nothing is sent anywhere. */
+    fileSearchStatus: function () { return call('kt_fsearch_status'); },
+    fileSearch: function (o) { return call('kt_fsearch_query', { o: obj(o) }); },
+    fileSearchAdd: function (o) { return call('kt_fsearch_add', { o: obj(o) }); },
+    fileSearchRemove: function (o) { return call('kt_fsearch_remove', { o: obj(o) }); },
+    fileSearchExclude: function (o) { return call('kt_fsearch_exclude', { o: obj(o) }); },
+    fileSearchRebuild: function () { return call('kt_fsearch_rebuild'); },
+    fileSearchForget: function () { return call('kt_fsearch_forget'); },
+    fileSearchPause: function (o) { return call('kt_fsearch_pause', { o: obj(o) }); },
     openPath: function (p) { return call('kt_open_path', { p: str(p) }); },
     openExternal: function (u) { return call('kt_open_external', { u: str(u) }); },
 

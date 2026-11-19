@@ -71,3 +71,7 @@ pub mod archsafe;
 // (Tools 0.21 P11: the extraction engine on the Tauri shell — desktop/inplace.cjs's pre-flight, plan, journal v2, shelf,
 // finish / restore / undo, run over archsafe and vidjson; tested through stdroots/extractjob.rs.)
 pub mod extractjob;
+// (Tools 0.21: fast file search on a computer — the index core: the walk, the folded names and the queries, the
+// watchers (inotify, ReadDirectoryChangesW, an mtime poller), the saved file; a folder of modules, tested through
+// stdroots/fileindex.rs.)
+pub mod fileindex;
