@@ -8,7 +8,7 @@ import { getSettings, updateSettings } from '../../settings';
 import { SERVICES, autoPick, type Service, type Way } from './logic';
 import { platform, defaultFor, setDefault, outName, pcPlayer, chooseProgram } from './run';
 
-const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
+const row = (label: string, control: Node, hint?: string | Node, cls = '') => h('div', { class: 'row' + (cls ? ` ${cls}` : '') }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const LABEL: Record<Service, () => string> = { torrent: () => t('extForTorrent'), online: () => t('extForOnline'), http: () => t('extForHttp'), local: () => t('extForLocal') };
 
 export function externalRows(): HTMLElement | null {
@@ -32,10 +32,10 @@ async function pcRows(slot: HTMLElement): Promise<void> {
   const cur = opts.some((o) => o[0] === want) ? want : 'auto';
   const b = pickButton(t('extPcPlayerLabel'), opts, cur, (v) => { if (v === 'pick') void chooseProgram().then(() => void pcRows(slot)); else { updateSettings({ extPcPlayer: v }); void pcRows(slot); } }, t('close'));
   b.classList.add('ext-pc-pick');
-  const kids: Node[] = [row(t('extPcPlayerLabel'), b, list.chosen?.there && cur === 'chosen' ? list.chosen.path : undefined)];
+  const kids: Node[] = [row(t('extPcPlayerLabel'), b, list.chosen?.there && cur === 'chosen' ? h('bdi', { dir: 'ltr' }, list.chosen.path) : undefined)];
   if (list.chosen?.there && cur === 'chosen') {
     const d = window.kurokawaTools as unknown as { extPlayerArgs?(o: { args: string }): Promise<unknown> } | undefined;
-    kids.push(row(t('extArgsLabel'), h('input', { type: 'text', dir: 'ltr', class: 'ext-args', spellcheck: false, value: list.chosen.args, placeholder: '--fullscreen {url}', onchange: (e: Event) => void d?.extPlayerArgs?.({ args: (e.target as HTMLInputElement).value.trim() }) }), t('extArgsHint')));
+    kids.push(row(t('extArgsLabel'), h('input', { type: 'text', dir: 'ltr', class: 'ext-args', spellcheck: false, value: list.chosen.args, placeholder: '--fullscreen {url}', onchange: (e: Event) => void d?.extPlayerArgs?.({ args: (e.target as HTMLInputElement).value.trim() }) }), t('extArgsHint'), 'ext-args-row'));
   }
   slot.replaceChildren(...kids);
 }

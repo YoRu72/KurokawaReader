@@ -51,6 +51,7 @@ html.pc .sheet.we-sheet{max-width:1040px;width:min(1040px,calc(100vw - 48px))}
 .we-tile:focus-visible{outline:2px solid var(--md-primary);outline-offset:2px}
 .we-tile canvas{display:block;width:100%;aspect-ratio:16/9;border-radius:var(--sh-sm,10px);background:var(--md-surface-container-high,var(--md-surface));box-shadow:inset 0 0 0 1px var(--md-outline-variant)}
 .we-tile .we-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-inline:2px}
+html[dir='rtl'] .we-tile .we-name{text-align:right}
 .we-tile .we-type{position:absolute;inset-inline-start:10px;top:10px;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;background:var(--md-surface-container-highest,var(--md-surface));color:var(--md-on-surface);box-shadow:0 0 0 1px var(--md-outline-variant)}
 .we-tile .we-later{position:absolute;inset-inline-end:10px;top:10px;padding:2px 8px;border-radius:999px;font-size:11.5px;background:color-mix(in srgb,var(--md-tertiary,var(--md-primary)) 22%,var(--md-surface));color:var(--md-on-surface)}
 .we-detail canvas{display:block;width:100%;max-width:640px;aspect-ratio:16/9;border-radius:var(--sh-md,14px);background:var(--md-surface-container-high,var(--md-surface))}
@@ -253,7 +254,7 @@ export function openWe(rerender: () => void): void {
       const later = it.type !== 'video';
       const cv = h('canvas', { width: '320', height: '180', 'aria-hidden': 'true' }) as HTMLCanvasElement;
       const tile = h('button', { type: 'button', class: 'we-tile', role: 'listitem', 'data-we-key': it.key, 'data-we-type': it.type, title: it.title, style: { width: `${tw}px`, transform: `translate(${(document.documentElement.dir === 'rtl' ? cols - 1 - (i % cols) : i % cols) * (tw + gap)}px, ${Math.floor(i / cols) * (th + gap)}px)` }, onclick: () => detail(it) },
-        cv, h('span', { class: 'we-type' }, t(TYPE_KEY[it.type] as 'weVideo')), later ? h('span', { class: 'we-later' }, t('weLater')) : null, h('span', { class: 'we-name', dir: 'auto' }, it.title));
+        cv, h('span', { class: 'we-type' }, t(TYPE_KEY[it.type] as 'weVideo')), later ? h('span', { class: 'we-later' }, t('weLater')) : null, h('span', { class: 'we-name', dir: 'auto', title: it.title }, it.title));
       nodes.push(tile); paint(it, cv);
     }
     grid.replaceChildren(...nodes);

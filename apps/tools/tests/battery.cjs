@@ -192,7 +192,7 @@ function fake({ lang, mode }) {
     const mouse = await p.$eval('.bat-card[data-key="hid:1111:2222:s:A1"]', (e) => ({ pct: e.querySelector('.bat-pct')?.textContent, w: e.querySelector('.bat-meter > i')?.style.width, sub: e.querySelector('.bat-sub')?.textContent, via: e.querySelector('.bat-via')?.textContent, age: e.querySelector('.bat-age')?.textContent, svg: !!e.querySelector('.bat-ic svg'), img: !!e.querySelector('img') }));
     check('exact level as a number and a meter', /64/.test(mouse.pct) && mouse.w === '64%', mouse);
     check('brand as text and kind; the connection below', mouse.sub.includes('Acme') && mouse.sub.includes(AR ? 'فأرة' : 'Mouse') && mouse.via === (AR ? 'منفذ USB أو مستقبِل' : 'USB or receiver'), mouse);
-    check('the reading\'s age', mouse.age.includes(AR ? 'بالدقائق' : '3 min ago'), mouse.age);
+    check('the reading\'s age', mouse.age.includes(AR ? 'قبل 3 دقائق' : '3 min ago'), mouse.age);
     check('our own drawn icon, no picture', mouse.svg && !mouse.img);
     const low = await p.$eval('.bat-card[data-key="bt:{H}"]', (e) => ({ cls: e.className, colour: getComputedStyle(e.querySelector('.bat-pct')).color, err: getComputedStyle(document.documentElement).getPropertyValue('--md-error').trim() }));
     check('a level under the threshold is marked low (the error colour)', low.cls.includes('low'), low);

@@ -186,7 +186,7 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
     }
   } catch (e) {
     const why = String((e as Error)?.message ?? e);
-    failed(/not installed|ENOENT|ActivityNotFound/i.test(why) ? t('extNotInstalled', { app: name }) : t('extFailed', { app: name }), req, p, again, why, giveUp);
+    failed(/not installed|ENOENT|ActivityNotFound/i.test(why) ? t('extNotInstalled', { app: name }) : t('extFailed', { app: name }), req, p, again, /^\s*not installed\s*$/i.test(why) ? undefined : why, giveUp); // (a bare «not installed» is what the message already says)
   } finally {
     if (!keep) letGo(false);
   }

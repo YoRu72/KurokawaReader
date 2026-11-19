@@ -7,7 +7,7 @@
 // per device with Cancel; each failure said in plain words with what to do; «Bluetooth settings» where only Windows'
 // own settings can help. The shell decides (kt-battery connect.rs); this draws. Part of views/battery's lazy chunk.
 import { h, toast } from '../ui/dom';
-import { t, localDigits } from '../i18n';
+import { t, localDigits, getLang, countSeconds } from '../i18n';
 
 export type BtDev = { addr: string; name: string; kind: string; picture: string; brand: string; le: boolean; paired: boolean; connected: boolean; battery: number | null; can: 'both' | 'disconnectOnly' | 'settings' | 'pair' };
 export type BtSnap = { available: boolean; reason?: string; radio: 'on' | 'off' | 'missing'; stale: boolean; now: number; scanUntil: number | null; devices: BtDev[]; found: BtDev[]; busy: { addr: string; op: string; until: number }[] };
@@ -174,7 +174,7 @@ export function btPanel(d: BtDesk, openSheet: (title: string, close: string) => 
       actBox.append(settingsBtn());
     }
     const r = h('div', { class: 'bt-row' + (x.connected ? ' on' : '') + (busyOp ? ' busy' : ''), 'data-addr': x.addr, 'data-can': x.can, 'aria-busy': busyOp ? 'true' : 'false' },
-      pic(x.picture), h('div', { class: 'bt-who' }, h('span', { class: 'bt-name', dir: 'auto' }, nameOf(x)), sub), actBox);
+      pic(x.picture), h('div', { class: 'bt-who' }, h('span', { class: 'bt-name', dir: 'auto', title: nameOf(x) }, nameOf(x)), sub), actBox);
     const m = msgs.get(x.addr);
     if (m && !busyOp) r.append(h('div', { class: 'bt-msg', role: 'alert' }, h('span', null, m.text), m.settings ? settingsBtn('btn text') : null));
     return r;
@@ -184,7 +184,7 @@ export function btPanel(d: BtDesk, openSheet: (title: string, close: string) => 
     if (!s.scanUntil) return null;
     const left = Math.max(0, s.scanUntil - s.now);
     return h('div', { class: 'bt-scan', role: 'status' }, h('div', { class: 'bt-scan-line' }, rune(), h('span', null, t('btcScanning'))),
-      h('div', { class: 'bt-bar' }, h('i', { style: { animationDuration: `${left}ms` } })), h('p', { class: 'bt-empty-line' }, t('btcScanHint', { n: localDigits(Math.round(left / 1000)) })));
+      h('div', { class: 'bt-bar' }, h('i', { style: { animationDuration: `${left}ms` } })), h('p', { class: 'bt-empty-line' }, t('btcScanHint', { n: getLang() === 'ar' ? countSeconds(Math.round(left / 1000)) : localDigits(Math.round(left / 1000)) })));
   };
 
   function draw(): void {

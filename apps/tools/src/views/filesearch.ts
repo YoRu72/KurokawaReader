@@ -78,7 +78,9 @@ function marked(name: string, words: string[]): (Node | string)[] {
 }
 const entryOf = (x: Hit): Entry => ({ name: x.name, path: x.path, dir: x.folder, size: x.size, mtime: x.mtime, ext: x.folder ? undefined : (x.name.split('.').pop() ?? '').toLowerCase() });
 const noteText = (n: string | null): string | null => (!n ? null : /looking every few seconds/.test(n) ? t('fsNotePolling') : t('fsNoteRebuilt'));
-const refusalText = (r: Refused, root = ''): string => ({ inside: t('fsRefInside', { other: r.other ?? '' }), holds: t('fsRefHolds', { other: r.other ?? '' }), same: t('fsRefSame'), appData: t('fsRefAppData'), missing: t('fsRefMissing'), tooMany: t('fsRefMany'), outside: t('fsRefOutside', { root }) } as Record<string, string>)[r.reason ?? ''] ?? t('filesFailed');
+// (A path inside a sentence is isolated, so «/home/u/Media» keeps its own order in an Arabic line.)
+const iso = (p: string): string => (p ? `\u2068${p}\u2069` : p);
+const refusalText = (r: Refused, root = ''): string => ({ inside: t('fsRefInside', { other: iso(r.other ?? '') }), holds: t('fsRefHolds', { other: iso(r.other ?? '') }), same: t('fsRefSame'), appData: t('fsRefAppData'), missing: t('fsRefMissing'), tooMany: t('fsRefMany'), outside: t('fsRefOutside', { root: iso(root) }) } as Record<string, string>)[r.reason ?? ''] ?? t('filesFailed');
 
 /** Opens the «Everywhere» panel in the Files page `host` (under its top bar). */
 export function openEverywhere(host: HTMLElement, ctx: Ctx): Everywhere {
@@ -262,7 +264,7 @@ export function openEverywhere(host: HTMLElement, ctx: Ctx): Everywhere {
       const p = await br.pickDir().catch(() => null); if (!p || !sh.el.isConnected) return;
       const r = await br.fileSearchAdd({ path: p }).catch(() => ({ ok: false, reason: 'missing' }) as Refused);
       if (!r.ok) { toast(refusalText(r), 'error', 5000); return; }
-      toast(t('fsAdded', { name: p })); reread();
+      toast(t('fsAdded', { name: iso(p) })); reread();
     };
     const exclude = async (root: string) => {
       const p = await br.pickDir().catch(() => null); if (!p || !sh.el.isConnected) return;

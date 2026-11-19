@@ -274,6 +274,11 @@ html.pc .fab-item { flex-direction: row-reverse; }
 .ext-settings .ext-title { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
 .ext-settings > .hint { margin: 0; }
 .ext-settings .ext-custom { min-width: 0; width: min(100%, 320px); }
+/* (Its rows sit one level below the card, so the card's own row layout is given here: label and control side by side,
+   the arguments line free to wrap under its label.) */
+.settings-view .ext-settings .row:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; min-height: 44px; }
+html.pc .settings-view .ext-settings .row:not([hidden]):not(.ext-args-row) { flex-wrap: nowrap; min-height: 60px; gap: 24px; box-sizing: border-box; }
+.settings-view .ext-settings .ext-args { font-family: 'Inter', system-ui, sans-serif; }
 .ext-none { margin: 0 0 10px; }
 .watch-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -1349,7 +1354,9 @@ html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg
 .shelf-job.blocked { border-inline-start: 4px solid var(--md-outline); }
 .shelf-name { display: flex; align-items: center; gap: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .shelf-hints { margin: 0; padding-inline-start: 18px; font-size: 12.5px; line-height: 1.5; color: var(--md-on-surface-variant); }
-.shelf-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.shelf-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+/* (One width for a row's buttons; a long label such as «Forget this job» wraps inside its button, never cut.) */
+.shelf-actions .btn { width: 100%; min-width: 0; justify-content: center; text-align: center; white-space: normal; line-height: 1.25; }
 .shelf-actions .btn.busy { opacity: .6; }
 
 /* Text size in lists (Files setting): names and details scaled; the grid's own small sizes scaled likewise. */
@@ -1506,6 +1513,8 @@ html.pc .sheet .chip-row.files-filters { display: flex; flex-direction: column; 
 .abg-tile.on .abg-thumb { box-shadow: 0 0 0 3px var(--md-primary); }
 .abg-tile.on .abg-name { font-weight: 650; color: var(--md-primary); }
 .abg-name { padding-inline: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* (A Latin name in an Arabic page sits on the same side as the Arabic ones.) */
+html[dir='rtl'] .abg-name { text-align: right; }
 /* The mixer: «Mix your own» in the picker, the saved mixes' actions, the sheet (views/mixer.ts). */
 .abg-plus { display: grid; place-items: center; background: linear-gradient(135deg, color-mix(in srgb, #6f9fd8 26%, transparent), color-mix(in srgb, #9585dc 22%, transparent)); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #6f9fd8 55%, transparent); opacity: 1; }
 .abg-plus svg { width: 30px; height: 30px; fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; }
@@ -1546,6 +1555,9 @@ html.pc:not(.rail-off) .toast.files-unfinished, html.pc .toast.files-unfinished 
 .forget-sheet .forget-name { font-weight: 600; }
 .sheet-actions.equal { flex-wrap: nowrap; }
 .sheet-actions.equal > .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+/* (A question's answers side by side at one width, wrapping to a second row on a narrow screen rather than cutting a label.) */
+.sheet-actions.even { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.sheet-actions.even > .btn { min-width: 0; justify-content: center; text-align: center; white-space: normal; line-height: 1.25; }
 
 /* «Everywhere in my folders» (views/filesearch.ts — a computer's Tauri shell only): the panel takes the folder's place
    under the top bar; its list is virtual (rows placed absolutely, ROW_H = 60 px). */

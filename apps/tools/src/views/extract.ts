@@ -87,7 +87,7 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   const draw = () => {
     const files = info.entries.filter((e) => !e.dir);
     if (info.resumable) inPlace = true;
-    const summary = h('p', { class: 'src' }, [info.format.toUpperCase(), countFiles(files.length), info.total > 0 ? formatBytes(info.total) : '', info.encrypted ? t('encrypted') : '', info.volumes ? t('archiveVolumes', { n: localDigits(info.volumes) }) : '', info.resumable ? t('extractResumable') : '', info.sfv ? `.sfv ✓` : ''].filter(Boolean).join(' · '));
+    const summary = h('p', { class: 'src' }, [info.format.toUpperCase(), countFiles(files.length), info.total > 0 ? formatBytes(info.total) : '', info.encrypted ? t('encrypted') : '', info.volumes ? t('archiveVolumes', { n: localDigits(info.volumes) }) : '', info.resumable ? t('extractResumable') : '', info.sfv ? `.sfv ✓` : ''].filter(Boolean).map((x) => `\u2068${x}\u2069`).join(' · ')); // (each fact isolated: «6 ملفات» stays whole beside «ZIP»)
     const list = h('details', { class: 'entry-details' }, h('summary', null, t('archiveContents')), h('div', { class: 'entry-list' }, ...info.entries.slice(0, 300).map((e) => h('div', { class: 'entry-row' + (e.dir ? ' dir' : '') }, icon(e.dir ? 'folder' : 'file'), h('span', { class: 'grow', dir: 'ltr' }, e.path), e.dir || e.size < 0 ? null : h('small', { class: 'src' }, formatBytes(e.size)))), info.entries.length > 300 ? h('p', { class: 'src' }, t('andMore', { n: info.entries.length - 300 })) : null));
     const pfBox = h('div', { class: 'pf-box' }, h('div', { class: 'center' }, h('div', { class: 'spinner small' })));
     const fitBox = h('div', { class: 'fit-box' });
@@ -159,15 +159,18 @@ export async function extractSheet(path: string, opts: { onDone?: (dest: string)
   /** An unfinished job beside the archive that this app did not start: where its files go, then Finish, Restore the archive or Leave it. */
   const besideChoice = (dest: string) => {
     sh.body.replaceChildren(h('div', { class: 'pf-report' }, h('div', { class: 'pf-head' }, icon('info'), h('span', null, t('besideAsk'))), h('p', { class: 'src', dir: 'ltr' }, dest)));
+    sh.actions.classList.add('even');
     sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('shelfLeave')), h('button', { type: 'button', class: 'btn tonal', onclick: () => void giveUp() }, t('shelfRestore')),
       h('button', { type: 'button', class: 'btn primary', onclick: () => { finishBeside = true; void start(); } }, t('shelfFinish')));
   };
   /** A damaged file found before anything changed: extract the rest normally, or stop. */
   const damagedChoice = (names: string[]) => {
     sh.body.replaceChildren(h('div', { class: 'pf-report' }, h('div', { class: 'pf-head' }, icon('info'), h('span', null, t('pf_damaged'))), ...names.slice(0, 5).map((n) => h('div', { class: 'pf-name', dir: 'auto' }, n)), h('p', { class: 'pf-fix' }, t('fixDamaged'))));
+    sh.actions.classList.add('even');
     sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('damagedStop')), h('button', { type: 'button', class: 'btn primary', onclick: () => { inPlace = false; skip = names; void start(); } }, t('damagedRest')));
   };
   const start = async () => {
+    sh.actions.classList.remove('even');
     const dest = destOf(); if (!dest) { toast(t('chooseFolder'), 'error'); return; }
     if (existing.length && !answers && !info.resumable) { const a = await askConflicts(existing); if (!a) return; answers = a; }
     const job = extractArchiveJob({ path, dest, inPlace, deleteAfter, replace: answers?.default ?? 'both', answers, skip, password: password || undefined, verifyFirst: inPlace && verifyFirst, keepFree: keepFreeNow(), ...(finishBeside ? { finishBeside } : {}) }, progressUi(t('extracting')));

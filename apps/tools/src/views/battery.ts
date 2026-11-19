@@ -26,7 +26,7 @@
 // The Electron build and the phone have no reader: a calm word instead, never a dead button. Loaded on first use.
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from '../ui/dom';
 import { btDesk, btPanel, picSvg } from './btconnect';
-import { t, localDigits } from '../i18n';
+import { t, localDigits, getLang, countMinutes, countHours, countDays } from '../i18n';
 import { back } from '../router';
 
 type Lvl = { kind: 'exact'; value: number } | { kind: 'coarse'; value: 'empty' | 'low' | 'medium' | 'high' | 'full'; bars: number } | { kind: 'steps'; value: number; max: number } | { kind: 'unknown' };
@@ -173,9 +173,13 @@ function style(): void {
 export function ageText(at: number, now: number): string {
   const s = Math.max(0, Math.round((now - at) / 1000));
   if (s < 60) return t('batAgoNow');
-  if (s < 3600) return t('batAgoMin', { n: localDigits(Math.floor(s / 60)) });
-  if (s < 86400) return t('batAgoHour', { n: localDigits(Math.floor(s / 3600)) });
-  return t('batAgoDay', { n: localDigits(Math.floor(s / 86400)) });
+  // (Arabic counts its noun by the number's grammar: «قبل 3 دقائق»، «قبل 11 دقيقةً»; the others write the figure alone.)
+  // (After «قبل» the dual is genitive: «قبل دقيقتين».)
+  const ar = getLang() === 'ar';
+  const n = (v: number, count: (x: number) => string, two: string) => (!ar ? localDigits(v) : v === 2 ? two : count(v));
+  if (s < 3600) return t('batAgoMin', { n: n(Math.floor(s / 60), countMinutes, 'دقيقتين') });
+  if (s < 86400) return t('batAgoHour', { n: n(Math.floor(s / 3600), countHours, 'ساعتين') });
+  return t('batAgoDay', { n: n(Math.floor(s / 86400), countDays, 'يومين') });
 }
 export function levelText(l: Lvl): string {
   if (l.kind === 'exact') return t('batPct', { n: localDigits(l.value) });
@@ -251,7 +255,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     if (x.connection !== 'unknown') foot.append(h('span', { class: 'bat-via' }, via));
     const more = iconButton('more', t('batMenu', { name: nameOf(x) }), (e) => menu(x, e)); more.classList.add('bat-more');
     return h('article', { class: 'bat-card' + (low ? ' low' : '') + (dim ? ' dim' : ''), 'data-key': x.key, 'data-kind': x.kind, 'data-status': x.status },
-      h('div', { class: 'bat-ic' }, deviceIcon(x)), h('div', { class: 'bat-who' }, h('span', { class: 'bat-name', dir: 'auto' }, nameOf(x)), h('span', { class: 'bat-sub', dir: 'auto' }, sub)), more, level, parts, foot);
+      h('div', { class: 'bat-ic' }, deviceIcon(x)), h('div', { class: 'bat-who' }, h('span', { class: 'bat-name', dir: 'auto', title: nameOf(x) }, nameOf(x)), h('span', { class: 'bat-sub', dir: 'auto' }, sub)), more, level, parts, foot);
   };
 
   const menu = (x: BatDevice, ev: Event) => {

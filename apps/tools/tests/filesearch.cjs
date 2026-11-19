@@ -100,13 +100,13 @@ function fakeTauri({ lang }) {
     await page.evaluate(() => { window.__fs.pick = '/home/u/Media'; }); await page.click('.fs-add'); await page.waitForSelector('.fs-root');
     ok(L('a folder added through pickDir'), JSON.stringify(await calls('kt_fsearch_add')) === JSON.stringify([{ o: { path: '/home/u/Media' } }]));
     await page.evaluate(() => { window.__fs.pick = '/home/u/Media/Group 01'; }); await page.click('.fs-add'); await page.waitForSelector('.toast.error');
-    ok(L('a folder inside a chosen one refused, the reason said'), (await page.textContent('.toast.error')).includes(fill(T.fsRefInside, { other: '/home/u/Media' })));
+    ok(L('a folder inside a chosen one refused, the reason said'), (await page.textContent('.toast.error')).includes(fill(T.fsRefInside, { other: '\u2068/home/u/Media\u2069' })));
     await page.evaluate(() => { window.__fs.pick = '/home/u'; document.querySelectorAll('.toast').forEach((x) => x.remove()); }); await page.click('.fs-add'); await page.waitForSelector('.toast.error');
-    ok(L('a folder around a chosen one refused, the reason said'), (await page.textContent('.toast.error')).includes(fill(T.fsRefHolds, { other: '/home/u/Media' })));
+    ok(L('a folder around a chosen one refused, the reason said'), (await page.textContent('.toast.error')).includes(fill(T.fsRefHolds, { other: '\u2068/home/u/Media\u2069' })));
     ok(L('one folder listed'), (await page.locator('.fs-root').count()) === 1);
     // An exclusion: outside the folder refused; inside taken, and given back.
     await page.evaluate(() => { window.__fs.pick = '/elsewhere'; document.querySelectorAll('.toast').forEach((x) => x.remove()); }); await page.click('.fs-exclude'); await page.waitForSelector('.toast.error');
-    ok(L('an exclusion outside the folder refused'), (await page.textContent('.toast.error')).includes(fill(T.fsRefOutside, { root: '/home/u/Media' })));
+    ok(L('an exclusion outside the folder refused'), (await page.textContent('.toast.error')).includes(fill(T.fsRefOutside, { root: '\u2068/home/u/Media\u2069' })));
     await page.evaluate(() => { window.__fs.pick = '/home/u/Media/Group 07'; }); await page.click('.fs-exclude'); await page.waitForSelector('.fs-excl-row');
     ok(L('an exclusion listed under its folder'), (await page.textContent('.fs-excl-row')).includes('/home/u/Media/Group 07'));
     await page.click('.fs-excl-row button'); await page.waitForTimeout(200);
