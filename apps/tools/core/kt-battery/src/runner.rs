@@ -29,11 +29,20 @@ pub trait Platform: Send + Sync + 'static {
     /// The user's settings, before the first round and after each change (the controller families whose status
     /// request may be sent, Prefs::pad_queries).
     fn set_prefs(&self, _prefs: &Prefs) {}
+    /// W3, «Teach me this device»: every HID collection with its verdict (teach.rs — what may be listened to).
+    /// Platforms without a HID transport give none.
+    fn teach_targets(&self) -> Vec<crate::teach::Target> {
+        Vec::new()
+    }
+    /// W3: one collection `teach_targets` allowed, opened to listen only (never for writing). Anything else: Refused.
+    fn teach_open(&self, _id: &str) -> Result<Box<dyn crate::transport::HidTransport + Send>, crate::transport::TErr> {
+        Err(crate::transport::TErr::Refused)
+    }
 }
 
 /// Whether a device is asked through `query` (else its reader brought its reading with the enumeration).
 pub fn needs_query(d: &Device) -> bool {
-    d.source == Source::HidGeneric || d.source == Source::Pad || d.source == Source::Vendor || d.source == Source::Spp
+    d.source == Source::HidGeneric || d.source == Source::Pad || d.source == Source::Vendor || d.source == Source::Spp || d.source == Source::Defined
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +98,8 @@ pub struct Prefs {
     /// request (off by default), and those read by listening that the user turned off (on by default).
     pub mk_ask: Vec<String>,
     pub mk_mute: Vec<String>,
+    /// W3: the user's device definitions that are on (defs.rs), each listened to only.
+    pub defs: Vec<crate::defs::Active>,
 }
 
 pub enum Msg {

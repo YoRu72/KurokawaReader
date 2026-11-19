@@ -100,6 +100,9 @@ pub enum Source {
     /// peripherals (the kernel's own drivers: hid-*, sony, playstation, nintendo, hidpp…), BlueZ's level through UPower,
     /// macOS's IORegistry «BatteryPercent» and its Bluetooth report. Read only; nothing is sent by Tools.
     System,
+    /// W3: the user's own device definition (defs.rs): a byte of an input report the device sends by itself, listened
+    /// to only. Its test level is «your definition».
+    Defined,
 }
 
 impl Source {
@@ -115,6 +118,7 @@ impl Source {
             Source::PhoneLink => "phonelink",
             Source::Spp => "spp",
             Source::System => "system",
+            Source::Defined => "defined",
         }
     }
     /// Which reading wins when two readers see one physical device (identity.rs): a controller's own reader first (it
@@ -122,7 +126,7 @@ impl Source {
     /// original: «its HID field can read 0»), a real percentage over a coarse one.
     pub fn rank(self) -> u8 {
         match self {
-            Source::Pad | Source::Vendor | Source::Advert | Source::PhoneLink | Source::Spp => 5,
+            Source::Pad | Source::Vendor | Source::Advert | Source::PhoneLink | Source::Spp | Source::Defined => 5,
             Source::Bluetooth | Source::System => 4,
             Source::XboxWgi => 3,
             Source::HidGeneric => 2,

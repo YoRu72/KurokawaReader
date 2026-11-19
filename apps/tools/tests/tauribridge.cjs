@@ -47,6 +47,10 @@ const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel'
   batteryList: ['kt_battery_list', []], batteryRefresh: ['kt_battery_refresh', ['o']], batterySettings: ['kt_battery_settings', ['o']],
   // (0.21 W2: the battery history, battery.rs.)
   batteryHistory: ['kt_battery_history', ['o']], batteryHistoryClear: ['kt_battery_history_clear', ['o']],
+  // (0.21 W3: device definitions and «Teach me this device», batdefs.rs.)
+  batteryDefs: ['kt_battery_defs', []], batteryDefImport: ['kt_battery_def_import', ['o']], batteryDefExport: ['kt_battery_def_export', ['o']], batteryDefRemove: ['kt_battery_def_remove', ['o']], batteryDefSet: ['kt_battery_def_set', ['o']],
+  batteryTeachList: ['kt_battery_teach_list', []], batteryTeachStart: ['kt_battery_teach_start', ['o']], batteryTeachStop: ['kt_battery_teach_stop', []], batteryTeachState: ['kt_battery_teach_state', []],
+  batteryTeachMark: ['kt_battery_teach_mark', ['o']], batteryTeachSave: ['kt_battery_teach_save', ['o']], batteryTeachClose: ['kt_battery_teach_close', []],
   // (0.21, device battery piece 3: connecting Bluetooth devices, battery.rs.)
   btList: ['kt_bt_list', []], btScan: ['kt_bt_scan', ['o']], btAct: ['kt_bt_act', ['o']], btOpenSettings: ['kt_bt_settings', []],
   // (0.21, piece S1: the system on the taskbar, battery.rs.)
@@ -160,7 +164,9 @@ function loadBridge(boot) {
     fileSearch: { text: 'report ext:pdf', kinds: ['document'], sizeMin: 1024, sizeMax: 1048576, after: 1700000000000, before: 1800000000000, sort: 'date', desc: true, limit: 500 },
     fileSearchAdd: { path: '/a/Videos' }, fileSearchRemove: { path: '/a/Videos' }, fileSearchExclude: { root: '/a/Videos', path: '/a/Videos/old', remove: false }, fileSearchPause: { paused: true, pauseOnBattery: false },
     batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batteryHistory: { key: 'hid:046D:C547:s:A1', range: 'week' }, batteryHistoryClear: { key: 'bt:{A}' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'], background: true, startup: true, thresholds: { 'bt:{A}': 15 } } },
-    btScan: { seconds: 20 }, btAct: { op: 'connect', addr: '00:11:22:33:44:55' } };
+    btScan: { seconds: 20 }, btAct: { op: 'connect', addr: '00:11:22:33:44:55' },
+    batteryDefImport: { text: '{"kurokawaDevice":1}', mineFirst: true }, batteryDefExport: { id: 'd1a2b' }, batteryDefRemove: { id: 'd1a2b' }, batteryDefSet: { id: 'd1a2b', on: false, mineFirst: false },
+    batteryTeachStart: { id: 'hid:1234:5678:c:x|FF00:0001:1', seconds: 600 }, batteryTeachMark: { mark: 'full' }, batteryTeachSave: { level: 0, charging: 1, name: 'Desk pad', kind: 'controller' } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');

@@ -13,6 +13,9 @@
 // (mice/*.rs) the same way — win/mice.rs. Piece 6: the headsets go through win/mice.rs too (heads/*.rs); AirPods' Bluetooth
 // LE broadcasts (win/ble.rs, behind `wgi`), Phone Link's card file and Galaxy Buds' status service (win/spp.rs) are
 // added here, each under its family's switch.
+// W3: the user's device definitions (defs.rs) — a card each, claimed in registry.rs's order (after the family readers
+// unless the user said «use mine instead», before the generic battery field), opened to listen only — and «Teach me»'s
+// list of collections with their verdicts (teach.rs) and its read-only opening; as hidplat.rs does it over a Port.
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere); real devices decide.
 // Copyright (C) 2026 Kurokawa contributors.
 pub mod autostart;
@@ -29,6 +32,7 @@ pub mod wgi;
 pub mod xinput;
 
 use crate::bluetooth;
+use crate::defs;
 use crate::identity::{self, Candidate};
 use crate::kind;
 use crate::model::{Charging, Connection, Device, Kind, Level, Reading, Source};
@@ -54,6 +58,12 @@ pub struct WinPlatform {
     mice: mice::MiceState,
     /// Piece 6: Galaxy Buds' cards and their Bluetooth addresses.
     buds: Mutex<BTreeMap<String, u64>>,
+    /// W3: the definitions that are on, each card's collection, when each last sent its level's report, and the
+    /// collections «Teach me» may open.
+    defs: Mutex<Vec<defs::Active>>,
+    defined: Mutex<BTreeMap<String, (hid::HidColl, defs::Active)>>,
+    heard: Mutex<BTreeMap<String, u64>>,
+    teach: Mutex<BTreeMap<String, hid::HidColl>>,
 }
 
 impl WinPlatform {
@@ -251,7 +261,59 @@ fn phone_link() -> Option<(String, u8, bool, u64)> {
     Some((name, level, crate::phonelink::charging_of(text), written))
 }
 
+fn coll_key(c: &hid::HidColl) -> String {
+    identity::hid_key(c.ident.vid, c.ident.pid, &c.serial, &c.container, &c.path)
+}
+
 impl WinPlatform {
+    /// W3: the cards of the user's definitions (one per unit: the first collection a definition that is on claims).
+    fn defined_candidates(&self, all: &[hid::HidColl]) -> (Vec<Candidate>, BTreeMap<String, (hid::HidColl, defs::Active)>) {
+        let list = self.defs.lock().map(|g| g.clone()).unwrap_or_default();
+        let mut by: BTreeMap<String, (hid::HidColl, defs::Active)> = BTreeMap::new();
+        if list.is_empty() {
+            return (Vec::new(), by);
+        }
+        let keyed: Vec<(String, &hid::HidColl)> = all.iter().map(|c| (coll_key(c), c)).collect();
+        let regs: Vec<Collection> = keyed.iter().map(|(k, c)| Collection { ident: c.ident.clone(), battery_field: !c.battery.is_empty(), key: k.clone() }).collect();
+        for (i, (k, c)) in keyed.iter().enumerate() {
+            let builtin = pads::find(&c.ident).is_some() || crate::mice::find_any(&c.ident).is_some();
+            let Some(a) = defs::find(&list, &c.ident, &c.product, builtin) else { continue };
+            if registry::classify_defs(&regs, &regs[i], &[], Some(a.mine_first)) == Claim::Defined && !by.contains_key(k) {
+                by.insert(k.clone(), ((*c).clone(), a.clone()));
+            }
+        }
+        let mut out = Vec::new();
+        for (key, (c, a)) in &by {
+            let mut d = Device::new(key.clone(), Source::Defined);
+            d.vid = c.ident.vid;
+            d.pid = c.ident.pid;
+            d.container = c.container.clone();
+            d.serial = c.serial.clone();
+            d.connection = hid_connection(&c.path);
+            d.kind = a.def.kind;
+            d.name = a.def.name.clone();
+            d.brand = kind::brand_of(d.vid, &c.product, d.kind).to_string();
+            d.driver = "defined";
+            out.push(Candidate { device: d, reading: None, offline: false });
+        }
+        if let Ok(mut h) = self.heard.lock() {
+            h.retain(|k, _| by.contains_key(k));
+        }
+        (out, by)
+    }
+
+    fn query_defined(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
+        let Some((c, a)) = self.defined.lock().ok().and_then(|g| g.get(&device.key).cloned()) else { return Outcome::Failed };
+        // (Opened to listen, never to send: open_listen(c, false) — defs::read refuses any handle but a Read one.)
+        let Ok(mut t) = hid::WinHid::open_listen(&c, false) else { return Outcome::Failed };
+        let last = self.heard.lock().ok().and_then(|g| g.get(&device.key).copied());
+        let (out, heard) = defs::read(&mut t, &a.def, deadline, last, now);
+        if let (Some(at), Ok(mut g)) = (heard, self.heard.lock()) {
+            g.insert(device.key.clone(), at);
+        }
+        out
+    }
+
     fn query_buds(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
         if !self.mice.family_on(crate::mice::Family::GalaxyBuds) {
             // (Off: no connection is made — said on the card.)
@@ -344,18 +406,64 @@ impl Platform for WinPlatform {
             *g = p.pad_queries.iter().filter_map(|s| Family::parse(s)).collect();
         }
         self.mice.set_prefs(&p.mk_ask, &p.mk_mute);
+        if let Ok(mut g) = self.defs.lock() {
+            *g = p.defs.clone();
+        }
+    }
+
+    fn teach_targets(&self) -> Vec<crate::teach::Target> {
+        use crate::teach;
+        let colls = hid::enumerate();
+        let keyed: Vec<(String, &hid::HidColl)> = colls.iter().map(|c| (coll_key(c), c)).collect();
+        let mut keep: BTreeMap<String, hid::HidColl> = BTreeMap::new();
+        let mut out = Vec::new();
+        for (k, c) in &keyed {
+            let unit: Vec<(u16, u16)> = keyed.iter().filter(|(x, _)| x == k).map(|(_, o)| (o.ident.usage_page, o.ident.usage)).collect();
+            let v = teach::verdict(&c.ident, &unit, defs::builtin_for(c.ident.vid, c.ident.pid), c.input_len);
+            let id = teach::target_id(k, &c.ident);
+            if v == teach::Verdict::Allowed {
+                keep.entry(id.clone()).or_insert_with(|| (*c).clone());
+            }
+            out.push(teach::Target { id, unit: k.clone(), name: c.product.trim().to_string(), ident: c.ident.clone(), verdict: v });
+        }
+        if let Ok(mut g) = self.teach.lock() {
+            *g = keep;
+        }
+        out
+    }
+
+    fn teach_open(&self, id: &str) -> Result<Box<dyn crate::transport::HidTransport + Send>, TErr> {
+        use crate::transport::{HidTransport, OpenMode};
+        let c = self.teach.lock().ok().and_then(|g| g.get(id).cloned()).ok_or(TErr::Gone)?;
+        let t = hid::WinHid::open_listen(&c, false)?;
+        if t.mode() != OpenMode::Read {
+            return Err(TErr::Refused);
+        }
+        Ok(Box::new(t))
     }
 
     fn enumerate(&self, now: u64) -> Vec<Candidate> {
         let colls = hid::enumerate();
-        let (pad_list, pad_map) = pad_candidates(&colls);
+        let (def_list, def_map) = self.defined_candidates(&colls);
+        let def_keys: Vec<String> = def_map.keys().cloned().collect();
+        let first: Vec<String> = def_map.iter().filter(|(_, (_, a))| a.mine_first).map(|(k, _)| k.clone()).collect();
+        let mine = |key: &str| first.iter().any(|k| key == k || key.starts_with(&format!("{}:", k)));
+        let (mut pad_list, mut pad_map) = pad_candidates(&colls);
+        pad_list.retain(|c| !mine(&c.device.key));
+        pad_map.retain(|k, _| !mine(k));
         let pad_keys: Vec<String> = pad_map.keys().cloned().collect();
-        let (mice_list, mice_keys) = self.mice.candidates(&colls);
+        let (mut mice_list, mut mice_keys) = self.mice.candidates(&colls);
+        mice_list.retain(|c| !mine(&c.device.key));
+        mice_keys.retain(|k| !mine(k));
         let (generic, mut by) = hid_candidates(&colls);
-        by.retain(|k, _| !pad_keys.iter().any(|p| p == k || p.starts_with(&format!("{}:i:", k))) && !mice_keys.contains(k));
-        let mut out = identity::drop_claimed(identity::drop_claimed(generic, &pad_keys), &mice_keys);
+        by.retain(|k, _| !pad_keys.iter().any(|p| p == k || p.starts_with(&format!("{}:i:", k))) && !mice_keys.contains(k) && !def_keys.contains(k));
+        let mut out = identity::drop_claimed(identity::drop_claimed(identity::drop_claimed(generic, &pad_keys), &mice_keys), &def_keys);
         out.extend(pad_list);
         out.extend(mice_list);
+        out.extend(def_list);
+        if let Ok(mut m) = self.defined.lock() {
+            *m = def_map;
+        }
         if let Ok(mut m) = self.colls.lock() {
             *m = by;
         }
@@ -410,6 +518,9 @@ impl Platform for WinPlatform {
         }
         if device.source == Source::Spp {
             return self.query_buds(device, deadline, now);
+        }
+        if device.source == Source::Defined {
+            return self.query_defined(device, deadline, now);
         }
         let colls = match self.colls.lock() {
             Ok(m) => m.get(&device.key).cloned().unwrap_or_default(),

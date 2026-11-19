@@ -243,6 +243,20 @@ impl LinuxPlatform {
 impl Platform for LinuxPlatform {
     fn set_prefs(&self, p: &Prefs) {
         self.hid.set_prefs(&p.pad_queries, &p.mk_ask, &p.mk_mute);
+        self.hid.set_defs(&p.defs);
+    }
+
+    /// W3, «Teach me»: the raw HID nodes' collections with their verdicts (hidplat.rs, teach.rs).
+    fn teach_targets(&self) -> Vec<crate::teach::Target> {
+        let supplies = sysfs::power_supplies(&self.sys);
+        let nodes = sysfs::hidraw_nodes(&self.sys);
+        let ports = ports(&nodes, &supplies, &self.dev, &|p| hidraw::may_open(p, false));
+        self.hid.teach_targets(&ports)
+    }
+
+    /// W3: an allowed collection opened to listen only (read-only open of its node).
+    fn teach_open(&self, id: &str) -> Result<Box<dyn crate::transport::HidTransport + Send>, TErr> {
+        self.hid.teach_open(id)
     }
 
     fn enumerate(&self, now: u64) -> Vec<Candidate> {

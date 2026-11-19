@@ -25,6 +25,8 @@ pub static DRIVERS: &[DriverEntry] = &[];
 pub enum Claim {
     /// A vendor driver's (its name).
     Driver(&'static str),
+    /// W3: the user's own device definition's (defs.rs), listened to only.
+    Defined,
     /// The generic HID battery reader's.
     Generic,
     /// Left alone, and why.
@@ -63,7 +65,21 @@ pub fn classify(all: &[Collection], c: &Collection, no_query: &[String]) -> Clai
     classify_in(DRIVERS, all, c, no_query)
 }
 
+/// W3: the same with the user's definitions. `defined`: a definition that is on matches this collection — Some(true)
+/// when the user said «use mine instead» for its device. The order: the user's «do not query», a tablet or a power
+/// supply left alone (a definition cannot undo that); a definition the user put first; the built-in family readers
+/// (they know their device's protocol, its steps and its charging; a definition only guesses one byte); the user's
+/// definitions; the generic HID battery field last (a definition is the user's word for a device whose battery field
+/// is missing or wrong, so it goes before it).
+pub fn classify_defs(all: &[Collection], c: &Collection, no_query: &[String], defined: Option<bool>) -> Claim {
+    classify_full(DRIVERS, all, c, no_query, defined)
+}
+
 fn classify_in(table: &[DriverEntry], all: &[Collection], c: &Collection, no_query: &[String]) -> Claim {
+    classify_full(table, all, c, no_query, None)
+}
+
+fn classify_full(table: &[DriverEntry], all: &[Collection], c: &Collection, no_query: &[String], defined: Option<bool>) -> Claim {
     if no_query.iter().any(|k| k == &c.key) {
         return Claim::Skip(Skip::UserSaid);
     }
@@ -74,6 +90,9 @@ fn classify_in(table: &[DriverEntry], all: &[Collection], c: &Collection, no_que
     if c.ident.usage_page == 0x84 || c.ident.usage_page == 0x85 {
         return Claim::Skip(Skip::PowerSupply);
     }
+    if defined == Some(true) {
+        return Claim::Defined;
+    }
     if let Some(d) = driver_for_in(table, &c.ident) {
         return Claim::Driver(d.driver);
     }
@@ -82,6 +101,9 @@ fn classify_in(table: &[DriverEntry], all: &[Collection], c: &Collection, no_que
     }
     if let Some(m) = crate::mice::find_any(&c.ident) {
         return Claim::Driver(m.driver);
+    }
+    if defined.is_some() {
+        return Claim::Defined;
     }
     if c.battery_field {
         Claim::Generic
@@ -136,6 +158,22 @@ mod tests {
         assert_eq!(classify_in(TABLE, &all, &mine, &[]), Claim::Driver("test"));
         assert_eq!(classify_in(TABLE, &all, &other_product, &[]), Claim::Skip(Skip::NoBattery), "same vendor, another product: not the driver's");
         assert_eq!(classify_in(TABLE, &all, &other_usage, &[]), Claim::Generic, "the driver's product, another collection: only the generic reader");
+    }
+
+    #[test]
+    fn a_definition_sits_after_the_family_readers_and_before_the_generic_one() {
+        let ds = coll(0x054C, 0x0CE6, 0x01, 0x05, false, "p");
+        assert_eq!(classify_defs(&[ds.clone()], &ds, &[], Some(false)), Claim::Driver("playstation"), "a built-in reader first");
+        assert_eq!(classify_defs(&[ds.clone()], &ds, &[], Some(true)), Claim::Defined, "unless the user said «use mine instead»");
+        let gen = coll(0x1111, 0x2222, 0xFF00, 0x01, true, "g");
+        assert_eq!(classify_defs(&[gen.clone()], &gen, &[], Some(false)), Claim::Defined, "before the generic battery field");
+        assert_eq!(classify_defs(&[gen.clone()], &gen, &[], None), Claim::Generic);
+        assert_eq!(classify_defs(&[gen.clone()], &gen, &["g".into()], Some(true)), Claim::Skip(Skip::UserSaid));
+        let pen = coll(0x28BD, 0x0947, 0x0D, 0x02, false, "t");
+        let tab = coll(0x28BD, 0x0947, 0xFF00, 0x01, false, "t");
+        assert_eq!(classify_defs(&[pen, tab.clone()], &tab, &[], Some(true)), Claim::Skip(Skip::Digitizer), "a tablet is never read, not even by a definition");
+        let ups = coll(0x051D, 0x0002, 0x84, 0x04, true, "u");
+        assert_eq!(classify_defs(&[ups.clone()], &ups, &[], Some(true)), Claim::Skip(Skip::PowerSupply));
     }
 
     #[test]

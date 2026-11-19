@@ -12,6 +12,8 @@ pub mod autostart;
 pub mod bluetooth;
 #[path = "../src/connect.rs"]
 pub mod connect;
+#[path = "../src/defs.rs"]
+pub mod defs;
 #[path = "../src/fastpair.rs"]
 pub mod fastpair;
 #[path = "../src/galaxybuds.rs"]
@@ -68,6 +70,8 @@ pub mod summary;
 pub mod sysmon;
 #[path = "../src/taskbar.rs"]
 pub mod taskbar;
+#[path = "../src/teach.rs"]
+pub mod teach;
 #[path = "../src/transport.rs"]
 pub mod transport;
 #[path = "../src/xbox.rs"]

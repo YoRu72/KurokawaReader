@@ -10,8 +10,12 @@
 // The rules are win/mod.rs's and win/mice.rs's (that file's header lists the changes from the original); here they are
 // written over the `Port` trait instead of Windows' collections. (Windows keeps its own copy for now: a later piece may
 // move it onto this one.) A port the user cannot open says so (Note::NoAccess) instead of «no answer».
+// W3: the user's device definitions (defs.rs) as cards of their own — claimed through registry.rs's order (after the
+// family readers unless the user said «use mine instead», before the generic battery field), opened to listen only —,
+// and «Teach me»'s list of collections with their verdicts (teach.rs) and its read-only opening.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use crate::allow::HidIdent;
+use crate::defs;
 use crate::identity::{self, Candidate};
 use crate::kind;
 use crate::mice::{self, Chans, Family as MkFamily, Model as MkModel, Role, Via};
@@ -19,7 +23,8 @@ use crate::model::{Charging, Connection, Device, Kind, Level, Note, Percent, Rea
 use crate::pads::{self, Family, Way};
 use crate::registry::{self, Claim, Collection};
 use crate::sched::Outcome;
-use crate::transport::{HidTransport, TErr};
+use crate::teach;
+use crate::transport::{HidTransport, OpenMode, TErr};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -105,11 +110,17 @@ pub struct HidState<P: Port> {
     learned: Mutex<BTreeMap<String, Learned>>,
     ask: Mutex<Vec<MkFamily>>,
     mute: Mutex<Vec<MkFamily>>,
+    /// W3: the definitions that are on, the collection each card reads, when each last sent its level's report, and
+    /// the collections «Teach me» may open (from its last list).
+    defs: Mutex<Vec<defs::Active>>,
+    defined: Mutex<BTreeMap<String, (P, defs::Active)>>,
+    heard: Mutex<BTreeMap<String, u64>>,
+    teach: Mutex<BTreeMap<String, P>>,
 }
 
 impl<P: Port> Default for HidState<P> {
     fn default() -> Self {
-        HidState { generic: Mutex::default(), pads: Mutex::default(), pad_on: Mutex::default(), units: Mutex::default(), kept: Mutex::default(), slots: Mutex::default(), learned: Mutex::default(), ask: Mutex::default(), mute: Mutex::default() }
+        HidState { generic: Mutex::default(), pads: Mutex::default(), pad_on: Mutex::default(), units: Mutex::default(), kept: Mutex::default(), slots: Mutex::default(), learned: Mutex::default(), ask: Mutex::default(), mute: Mutex::default(), defs: Mutex::default(), defined: Mutex::default(), heard: Mutex::default(), teach: Mutex::default() }
     }
 }
 
@@ -144,16 +155,36 @@ impl<P: Port> HidState<P> {
         }
     }
 
-    /// Every card the HID readers make of `all`: controllers, mice / keyboards / headsets, then the generic reader's.
+    /// W3: the definitions that are on.
+    pub fn set_defs(&self, list: &[defs::Active]) {
+        if let Ok(mut g) = self.defs.lock() {
+            *g = list.to_vec();
+        }
+    }
+
+    /// Every card the HID readers make of `all`: controllers, mice / keyboards / headsets, the user's definitions, then
+    /// the generic reader's.
     pub fn candidates(&self, all: &[P]) -> Vec<Candidate> {
-        let (pad_list, pad_map) = pad_candidates(all);
+        let (def_list, def_map) = self.defined_candidates(all);
+        let def_keys: Vec<String> = def_map.keys().cloned().collect();
+        let first: Vec<String> = def_map.iter().filter(|(_, (_, a))| a.mine_first).map(|(k, _)| k.clone()).collect();
+        let mine = |key: &str| first.iter().any(|k| key == k || key.starts_with(&format!("{}:", k)));
+        let (mut pad_list, mut pad_map) = pad_candidates(all);
+        pad_list.retain(|c| !mine(&c.device.key));
+        pad_map.retain(|k, _| !mine(k));
         let pad_keys: Vec<String> = pad_map.keys().cloned().collect();
-        let (mice_list, mice_keys) = self.mice_candidates(all);
+        let (mut mice_list, mut mice_keys) = self.mice_candidates(all);
+        mice_list.retain(|c| !mine(&c.device.key));
+        mice_keys.retain(|k| !mine(k));
         let (generic, mut by) = hid_candidates(all);
-        by.retain(|k, _| !pad_keys.iter().any(|p| p == k || p.starts_with(&format!("{}:i:", k))) && !mice_keys.contains(k));
-        let mut out = identity::drop_claimed(identity::drop_claimed(generic, &pad_keys), &mice_keys);
+        by.retain(|k, _| !pad_keys.iter().any(|p| p == k || p.starts_with(&format!("{}:i:", k))) && !mice_keys.contains(k) && !def_keys.contains(k));
+        let mut out = identity::drop_claimed(identity::drop_claimed(identity::drop_claimed(generic, &pad_keys), &mice_keys), &def_keys);
         out.extend(pad_list);
         out.extend(mice_list);
+        out.extend(def_list);
+        if let Ok(mut m) = self.defined.lock() {
+            *m = def_map;
+        }
         if let Ok(mut m) = self.generic.lock() {
             *m = by;
         }
@@ -167,8 +198,97 @@ impl<P: Port> HidState<P> {
         match device.source {
             Source::Pad => self.query_pad(device, deadline, now),
             Source::Vendor => self.query_mice(device, deadline, now),
+            Source::Defined => self.query_defined(device, deadline, now),
             _ => self.query_generic(device, deadline, now),
         }
+    }
+
+    /// W3: the cards of the user's definitions — one per unit, the first collection a definition that is on claims
+    /// through registry.rs's order.
+    fn defined_candidates(&self, all: &[P]) -> (Vec<Candidate>, BTreeMap<String, (P, defs::Active)>) {
+        let list = lock(&self.defs);
+        let mut by: BTreeMap<String, (P, defs::Active)> = BTreeMap::new();
+        if list.is_empty() {
+            return (Vec::new(), by);
+        }
+        let keyed: Vec<(String, &P)> = all.iter().map(|c| (key_of(c), c)).collect();
+        let regs: Vec<Collection> = keyed.iter().map(|(k, c)| Collection { ident: c.ident().clone(), battery_field: c.has_battery(), key: k.clone() }).collect();
+        for (i, (k, c)) in keyed.iter().enumerate() {
+            let builtin = pads::find(c.ident()).is_some() || mice::find_any(c.ident()).is_some();
+            let Some(a) = defs::find(&list, c.ident(), c.product(), builtin) else { continue };
+            if registry::classify_defs(&regs, &regs[i], &[], Some(a.mine_first)) == Claim::Defined && !by.contains_key(k) {
+                by.insert(k.clone(), ((*c).clone(), a.clone()));
+            }
+        }
+        let mut out = Vec::new();
+        for (key, (c, a)) in &by {
+            let mut d = Device::new(key.clone(), Source::Defined);
+            d.vid = c.ident().vid;
+            d.pid = c.ident().pid;
+            d.container = c.container().to_string();
+            d.serial = c.serial().to_string();
+            d.connection = c.connection();
+            d.kind = a.def.kind;
+            d.name = a.def.name.clone();
+            d.brand = kind::brand_of(d.vid, c.product(), d.kind).to_string();
+            d.driver = "defined";
+            out.push(Candidate { device: d, reading: None, offline: false });
+        }
+        if let Ok(mut h) = self.heard.lock() {
+            h.retain(|k, _| by.contains_key(k));
+        }
+        (out, by)
+    }
+
+    fn query_defined(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
+        let Some((c, a)) = self.defined.lock().ok().and_then(|g| g.get(&device.key).cloned()) else { return Outcome::Failed };
+        if !c.accessible() {
+            return no_access(now);
+        }
+        // (Opened to listen, never to send: open_listen(false) gives a Read handle — defs::read refuses any other.)
+        let Ok(mut t) = c.open_listen(false) else { return Outcome::Failed };
+        let last = self.heard.lock().ok().and_then(|g| g.get(&device.key).copied());
+        let (out, heard) = defs::read(&mut t, &a.def, deadline, last, now);
+        if let (Some(at), Ok(mut g)) = (heard, self.heard.lock()) {
+            g.insert(device.key.clone(), at);
+        }
+        out
+    }
+
+    /// W3, «Teach me»: every collection of `all` with its verdict (teach.rs); the allowed ones kept for `teach_open`.
+    pub fn teach_targets(&self, all: &[P]) -> Vec<teach::Target> {
+        let keyed: Vec<(String, &P)> = all.iter().map(|c| (key_of(c), c)).collect();
+        let mut keep: BTreeMap<String, P> = BTreeMap::new();
+        let mut out = Vec::new();
+        for (k, c) in &keyed {
+            let unit: Vec<(u16, u16)> = keyed.iter().filter(|(x, _)| x == k).map(|(_, o)| (o.ident().usage_page, o.ident().usage)).collect();
+            let mut v = teach::verdict(c.ident(), &unit, defs::builtin_for(c.ident().vid, c.ident().pid), c.input_len());
+            if v == teach::Verdict::Allowed && !c.accessible() {
+                v = teach::Verdict::NoAccess;
+            }
+            let id = teach::target_id(k, c.ident());
+            if v == teach::Verdict::Allowed {
+                keep.entry(id.clone()).or_insert_with(|| (*c).clone());
+            }
+            out.push(teach::Target { id, unit: k.clone(), name: c.product().trim().to_string(), ident: c.ident().clone(), verdict: v });
+        }
+        if let Ok(mut g) = self.teach.lock() {
+            *g = keep;
+        }
+        out
+    }
+
+    /// W3: one collection `teach_targets` allowed, opened to listen only.
+    pub fn teach_open(&self, id: &str) -> Result<Box<dyn HidTransport + Send>, TErr>
+    where
+        P::T: Send,
+    {
+        let c = self.teach.lock().ok().and_then(|g| g.get(id).cloned()).ok_or(TErr::Gone)?;
+        let t = c.open_listen(false)?;
+        if t.mode() != OpenMode::Read {
+            return Err(TErr::Refused);
+        }
+        Ok(Box::new(t))
     }
 
     fn query_generic(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
@@ -556,6 +676,59 @@ mod tests {
             }
         }
         assert_eq!(cands.len(), 2);
+    }
+
+    fn def(vid: u16, pid: u16, page: u16, mine_first: bool) -> defs::Active {
+        let text = format!(r#"{{"kurokawaDevice":1,"name":"Taught","kind":"headset","match":{{"vendor":{},"product":{},"usagePage":{}}},"level":{{"report":7,"byte":2,"scale":{{"min":0,"max":100}}}}}}"#, vid, pid, page);
+        defs::Active { id: "d1".into(), def: defs::parse(&text).unwrap(), mine_first }
+    }
+
+    #[test]
+    fn a_definition_makes_its_own_card_and_only_listens() {
+        let st: HidState<FakePort> = HidState::default();
+        let mut own = port(0x1111, 0x4444, 0xFF00, 0x01, true, "usb-4");
+        own.stream = vec![vec![1, 2, 3], vec![7, 0, 61]];
+        let other = port(0x1111, 0x2222, 0x0C, 0x01, true, "usb-2");
+        st.set_defs(&[def(0x1111, 0x4444, 0xFF00, false)]);
+        let cands = st.candidates(&[own.clone(), other.clone()]);
+        assert_eq!(cands.len(), 2, "{:?}", cands.iter().map(|c| (&c.device.key, c.device.source)).collect::<Vec<_>>());
+        let d = cands.iter().find(|c| c.device.source == Source::Defined).expect("the definition's card, not the generic reader's");
+        assert_eq!((d.device.name.as_str(), d.device.kind, d.device.driver), ("Taught", Kind::Headset, "defined"));
+        let far = Instant::now() + Duration::from_secs(2);
+        assert_eq!(st.query(&d.device, far, 3), Outcome::Read(Reading::new(Level::Exact(Percent::new(61).unwrap()), Charging::Unknown, 3)));
+        // (Turned off: the generic reader has it again.)
+        st.set_defs(&[]);
+        let back = st.candidates(&[own, other]);
+        assert!(back.iter().all(|c| c.device.source == Source::HidGeneric));
+    }
+
+    #[test]
+    fn a_built_in_readers_device_needs_use_mine_instead() {
+        let st: HidState<FakePort> = HidState::default();
+        let ds = port(0x054C, 0x0CE6, 0x01, 0x05, false, "usb-1");
+        st.set_defs(&[def(0x054C, 0x0CE6, 0x01, false)]);
+        let c = st.candidates(&[ds.clone()]);
+        assert_eq!(c.iter().map(|c| c.device.source).collect::<Vec<_>>(), vec![Source::Pad], "the family reader keeps it");
+        st.set_defs(&[def(0x054C, 0x0CE6, 0x01, true)]);
+        let c = st.candidates(&[ds]);
+        assert_eq!(c.iter().map(|c| c.device.source).collect::<Vec<_>>(), vec![Source::Defined], "the user's word: his definition instead");
+    }
+
+    #[test]
+    fn teach_lists_verdicts_and_opens_only_allowed_ones_to_listen() {
+        let st: HidState<FakePort> = HidState::default();
+        let vendor = port(0x1111, 0x5555, 0xFF00, 0x01, false, "usb-5");
+        let kbd = port(0x1111, 0x5555, 0x01, 0x06, false, "usb-5");
+        let ds = port(0x054C, 0x0CE6, 0x01, 0x05, false, "usb-1");
+        let ts = st.teach_targets(&[vendor.clone(), kbd.clone(), ds]);
+        let v: Vec<(&str, teach::Verdict)> = ts.iter().map(|t| (t.name.as_str(), t.verdict)).collect();
+        assert_eq!(v[0].1, teach::Verdict::Allowed);
+        assert_eq!(v[1].1, teach::Verdict::Keyboard);
+        assert_eq!(v[2].1, teach::Verdict::BuiltIn("playstation"));
+        let t = st.teach_open(&ts[0].id).unwrap();
+        assert_eq!(t.mode(), OpenMode::Read);
+        assert_eq!(st.teach_open(&ts[1].id).err(), Some(TErr::Gone), "a keyboard is never opened");
+        assert_eq!(st.teach_open(&ts[2].id).err(), Some(TErr::Gone));
     }
 
     #[test]

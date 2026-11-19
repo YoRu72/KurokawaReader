@@ -16,6 +16,8 @@ mod filesearch;
 // (0.21, device battery: the page's commands over kt-battery, its background, tray part, notices and start with the
 // system — GPL-3.0-or-later, ../../../NOTICE.md.)
 mod battery;
+// (0.21 W3: the user's own device definitions and «Teach me this device» — listened to only.)
+mod batdefs;
 mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
@@ -320,6 +322,19 @@ fn main() {
             battery::kt_battery_settings,
             battery::kt_battery_history,
             battery::kt_battery_history_clear,
+            // (W3: device definitions and «Teach me this device».)
+            batdefs::kt_battery_defs,
+            batdefs::kt_battery_def_import,
+            batdefs::kt_battery_def_export,
+            batdefs::kt_battery_def_remove,
+            batdefs::kt_battery_def_set,
+            batdefs::kt_battery_teach_list,
+            batdefs::kt_battery_teach_start,
+            batdefs::kt_battery_teach_stop,
+            batdefs::kt_battery_teach_state,
+            batdefs::kt_battery_teach_mark,
+            batdefs::kt_battery_teach_save,
+            batdefs::kt_battery_teach_close,
             // (Piece 3: connecting Bluetooth devices.)
             battery::kt_bt_list,
             battery::kt_bt_scan,

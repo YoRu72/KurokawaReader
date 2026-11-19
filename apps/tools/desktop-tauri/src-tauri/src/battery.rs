@@ -70,6 +70,8 @@
 // last }, estimate: { state: 'empty' | 'full' | 'none', minutes?, perHour?, samples?, why? } }; batteryHistoryClear({ key })
 // → whether there was any. The tray icons are drawn again when Windows' light / dark choice changes (the main window's
 // ThemeChanged).
+// W3, the user's own device definitions and «Teach me this device»: batdefs.rs (its header lists the bridge's methods);
+// the definitions that are on reach the loop as Prefs::defs, the platform the loop runs over is lent to it for «Teach me».
 // Copyright (C) 2026 Kurokawa contributors.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -81,7 +83,7 @@ use tauri::{AppHandle, Manager};
 use tauri::Emitter;
 
 use kt_battery::autostart;
-use kt_battery::history::{self, Estimate, History, Seen};
+use kt_battery::history::{self, Estimate, History, Seen as HistSeen};
 use kt_battery::model::{Charging, Level, Reading};
 use kt_battery::mice;
 use kt_battery::pads::{self, Way};
@@ -116,11 +118,15 @@ const KEYS: &[&str] = &[
     "history", "historyDays",
 ];
 
+pub(crate) fn now_ms_pub() -> u64 {
+    now_ms()
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-fn level_json(l: Level) -> Value {
+pub(crate) fn level_json(l: Level) -> Value {
     match l {
         Level::Exact(p) => json!({ "kind": "exact", "value": p.get() }),
         Level::Coarse(c) => json!({ "kind": "coarse", "value": c.as_str(), "bars": c.bars() }),
@@ -204,7 +210,8 @@ fn state_json(s: &DeviceState) -> Value {
         "source": d.source.as_str(), "vid": d.vid, "pid": d.pid, "merged": d.merged,
         "status": s.status.as_str(), "reading": s.reading.as_ref().map(reading_json), "lastGood": s.last_good.as_ref().map(reading_json),
         "checkedAt": s.checked_at, "picture": d.picture, "estimate": card_estimate(&d.key),
-        "driver": d.driver, "family": reader_of(d.driver).0, "proven": reader_of(d.driver).1, "way": reader_of(d.driver).2,
+        // (W3: a definition's card — its test level is «your definition»: read by listening, as the user taught it.)
+        "driver": d.driver, "family": reader_of(d.driver).0, "proven": if d.source.as_str() == "defined" { "yours" } else { reader_of(d.driver).1 }, "way": if d.source.as_str() == "defined" { "passive" } else { reader_of(d.driver).2 },
     })
 }
 
@@ -307,7 +314,10 @@ fn clean(v: &Value) -> Value {
     let cpu = marks("sysCpuWarm", "sysCpuHot", (80, 90), sysmon::CHIP_RANGE);
     let gpu = marks("sysGpuWarm", "sysGpuHot", (80, 90), sysmon::CHIP_RANGE);
     let drive = marks("sysDriveWarm", "sysDriveHot", (65, 75), sysmon::DRIVE_RANGE);
-    json!({
+    // (Built in three smaller maps merged into one: a single json! literal of this many keys passes serde_json's macro
+    // recursion limit — GitHub's compile refused it.)
+    let mut out = Map::new();
+    let part1 = json!({
         // (v1.1.0 of the original checks every 30 s to every hour: kept in seconds; the minutes follow for older readers.)
         "intervalSec": interval_sec,
         "intervalMin": (interval_sec / 60).max(1),
@@ -324,6 +334,8 @@ fn clean(v: &Value) -> Value {
         "padQueries": pad_queries,
         "mkAsk": mk_ask,
         "mkMute": mk_mute,
+    });
+    let part2 = json!({
         "trayStyle": choice("trayStyle", &["app", "lowest", "each"], "each"),
         "trayDraw": choice("trayDraw", &["number", "bar"], "number"),
         "trayAway": flag("trayAway", true),
@@ -337,6 +349,8 @@ fn clean(v: &Value) -> Value {
         "quietFrom": num("quietFrom", 0, 23, 22),
         "quietTo": num("quietTo", 0, 23, 7),
         "sound": flag("sound", true),
+    });
+    let part3 = json!({
         "sysOn": sys_on,
         "sysOrder": sys_order,
         "sysUnit": choice("sysUnit", &["c", "f"], "c"),
@@ -348,7 +362,13 @@ fn clean(v: &Value) -> Value {
         "sysDriveWarm": drive.warm, "sysDriveHot": drive.hot,
         "history": flag("history", true),
         "historyDays": history::keep_days(o.and_then(|o| o.get("historyDays")).and_then(Value::as_u64)),
-    })
+    });
+    for part in [part1, part2, part3] {
+        if let Value::Object(m) = part {
+            out.extend(m);
+        }
+    }
+    Value::Object(out)
 }
 
 fn load(app: &AppHandle) -> Value {
@@ -381,7 +401,7 @@ fn save(app: &AppHandle, v: &Value) -> Result<(), String> {
 fn prefs_of(v: &Value) -> Prefs {
     let keys = |k: &str| -> Vec<String> { v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
     let links: Vec<(String, String)> = v.get("links").and_then(Value::as_array).map(|a| a.iter().filter_map(|l| Some((l.get(0)?.as_str()?.to_string(), l.get(1)?.as_str()?.to_string()))).collect()).unwrap_or_default();
-    Prefs { interval_ms: v.get("intervalSec").and_then(Value::as_u64).unwrap_or(60).clamp(30, 3600) * 1_000, deadline_ms: 0, no_query: keys("noQuery"), links, pad_queries: keys("padQueries"), mk_ask: keys("mkAsk"), mk_mute: keys("mkMute") }
+    Prefs { interval_ms: v.get("intervalSec").and_then(Value::as_u64).unwrap_or(60).clamp(30, 3600) * 1_000, deadline_ms: 0, no_query: keys("noQuery"), links, pad_queries: keys("padQueries"), mk_ask: keys("mkAsk"), mk_mute: keys("mkMute"), defs: crate::batdefs::active_cached() }
 }
 
 fn flag(v: &Value, k: &str) -> bool {
@@ -399,6 +419,22 @@ fn startup_wanted(v: &Value) -> bool {
 }
 
 // ---- the loop ----
+
+/// W3: the loop running (started if it was not), for «Teach me» — which lists and opens through its platform.
+pub(crate) fn ensure_live(app: &AppHandle) -> bool {
+    live(app).is_some()
+}
+
+/// W3: the loop, when it runs, given the settings again — the definitions that are on with them —, then a new look.
+pub(crate) fn push_prefs(app: &AppHandle) {
+    let v = load(app);
+    if let Some(c) = LIVE.get() {
+        let g = c.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(l) = g.as_ref() {
+            l.handle.send(Msg::Prefs(prefs_of(&v)));
+        }
+    }
+}
 
 /// The loop, started once (Windows); None where there is no reader yet.
 fn live(app: &AppHandle) -> Option<(runner::Handle, Arc<Mutex<Vec<Value>>>)> {
@@ -427,6 +463,9 @@ fn start(app: &AppHandle) -> Option<Live> {
         changed(&app2, list);
     });
     let platform = Arc::new(kt_battery::win::WinPlatform::new());
+    // (W3: the definitions read before the first round; the platform lent to «Teach me».)
+    let _ = crate::batdefs::active(app);
+    crate::batdefs::set_platform(platform.clone());
     let (handle, _join) = runner::spawn(platform, prefs_of(&load(app)), Arc::new(now_ms), publish).ok()?;
     let h2 = handle.clone();
     let watch = kt_battery::win::watch_arrivals(Box::new(move || {
@@ -1075,10 +1114,10 @@ fn hist_save() {
 
 /// What the loop saw of a device, for the history: a level now, away (asleep, not connected), or nothing to record
 /// (waiting, no answer, not queried, a level unknown).
-fn seen_of(d: &DeviceState) -> Option<Seen> {
+fn seen_of(d: &DeviceState) -> Option<HistSeen> {
     match (d.status, d.reading) {
-        (Status::Ok, Some(r)) if !r.asleep && r.level != Level::Unknown => Some(Seen::Live(r.level, r.charging)),
-        (Status::Asleep, _) | (Status::NotConnected, _) => Some(Seen::Away),
+        (Status::Ok, Some(r)) if !r.asleep && r.level != Level::Unknown => Some(HistSeen::Live(r.level, r.charging)),
+        (Status::Asleep, _) | (Status::NotConnected, _) => Some(HistSeen::Away),
         _ => None,
     }
 }
@@ -1524,6 +1563,8 @@ fn start_on<P: runner::Platform>(app: &AppHandle, platform: Arc<P>) -> Option<Li
         let _ = app2.emit("kt:battery", json!({ "now": now_ms(), "devices": v }));
         changed(&app2, list);
     });
+    let _ = crate::batdefs::active(app);
+    crate::batdefs::set_platform(platform.clone());
     let (handle, _join) = runner::spawn(platform, prefs_of(&load(app)), Arc::new(now_ms), publish).ok()?;
     Some(Live { handle, last })
 }

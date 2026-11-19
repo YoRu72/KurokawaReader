@@ -50,7 +50,7 @@ type Rd = { level: Lvl; charging: 'yes' | 'no' | 'unknown'; asleep: boolean; tak
 export type BatDevice = { key: string; name: string; kind: string; brand: string; connection: string; source: string; vid: number; pid: number; merged: string[];
   status: 'ok' | 'waiting' | 'asleep' | 'notConnected' | 'noAnswer' | 'notQueried'; reading: Rd | null; lastGood: Rd | null; checkedAt: number;
   /** Piece 4: a controller's reader, family, how far proven, whether it sends a request, and its drawing. */
-  picture?: string; driver?: string; family?: string; proven?: 'tested' | 'untested' | ''; way?: 'passive' | 'query' | '';
+  picture?: string; driver?: string; family?: string; proven?: 'tested' | 'untested' | 'yours' | ''; way?: 'passive' | 'query' | '';
   /** W2: about this long until empty, or until full while charging (from the recorded history); null: nothing to say. */
   estimate?: { state: 'empty' | 'full'; minutes: number } | null };
 /** One controller family: its brand as text, how far proven, whether its reading sends a request, allowed now. */
@@ -75,7 +75,7 @@ export type BatSettings = { intervalMin: number; low: number; names: Record<stri
   /** W2: keep a battery history (on by default), for 7, 30 or 90 days. */
   history?: boolean; historyDays?: number };
 /** What the shell can do here: a start with the system ('notYet' on a Mac), a tray icon. */
-type BatSystem = { autostart: 'yes' | 'notYet'; tray: boolean };
+type BatSystem = { autostart: 'yes' | 'notYet'; tray: boolean; os?: string };
 type BatList = { available: boolean; reason?: string; now: number; devices: BatDevice[]; settings: BatSettings; system?: BatSystem; pads?: PadRow[]; mice?: MkRow[] };
 /** Our drawn pictures a device may be given (btconnect.ts's set; kt-battery taskbar.rs PICTURES). */
 const PICTURES = ['mouse', 'keyboard', 'headset', 'earbuds', 'pad', 'retro', 'split', 'half', 'trackpads', 'speaker', 'phone', 'microphone', 'pen', 'other'];
@@ -274,6 +274,18 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
   // (Piece S1: the system's card, its module fetched once the page is up — the page draws again when it comes.)
   let sys: ReturnType<typeof import('./sysmon')['sysPanel']> | null = null;
   void import('./sysmon').then((m) => { if (gone) return; sys = m.sysPanel(d, () => draw()); draw(); }, () => undefined);
+  // (W3: the definitions' card and «Teach me», fetched once the page is up — only where the shell has them.)
+  let defs: ReturnType<typeof import('./batdefs')['defsPanel']> | null = null;
+  const familyName = (f: string): string => brandOf(f, list?.pads?.find((p) => p.family === f)?.brand || list?.mice?.find((p) => p.family === f)?.brand || f);
+  const showFamily = (f: string): void => {
+    let sel = '.bat-pads';
+    if (isMk(f)) { const row = list?.mice?.find((p) => p.family === f); const g = (row?.group ?? 'mice') as GroupId; famState[g].open = true; famState[g].find = row ? brandOf(f, row.brand) : ''; sel = `.bat-fams[data-group="${g}"]`; draw(); }
+    (document.querySelector(sel) as HTMLElement | null)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
+  if ((window as unknown as { kurokawaTools?: { batteryDefs?: unknown } }).kurokawaTools?.batteryDefs) void import('./batdefs').then((m) => {
+    const dd = m.defsDesk(); if (gone || !dd) return;
+    defs = m.defsPanel(dd, { redraw: () => draw(), levelText: levelText as (l: unknown) => string, kindIcon, familyName, showFamily, refreshAll: () => void refreshAll() }); draw();
+  }, () => undefined);
   body.append(h('div', { class: 'spinner small' }));
   // (An XInput slot is named in the page's words — its key «xinput:<user>:pad|headset»; the shell's tray says the same.)
   const xboxName = (key: string): string => { const m = /^xinput:(\d+):(pad|headset)$/.exec(key); return !m ? '' : m[2] === 'headset' ? t('batXboxHeadset') : t('batXboxPad', { n: localDigits(Number(m[1]) + 1) }); };
@@ -347,7 +359,10 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
       markRow,
       act(hidden ? 'eye' : 'eyeOff', hidden ? t('batUnhide') : t('batHide'), () => void saveSettings({ hidden: hidden ? S.hidden.filter((k) => k !== x.key) : [...S.hidden, x.key] }), 'hide'),
       act(quiet ? 'refresh' : 'shield', quiet ? t('batQueryAgain') : t('batNoQuery'), () => { void saveSettings({ noQuery: quiet ? S.noQuery.filter((k) => k !== x.key) : [...S.noQuery, x.key] }).then(() => { if (!quiet) toast(t('batNoQueryDone', { name: nameOf(x) })); }); }, 'noQuery'),
-      ...(x.way === 'query' && x.family ? [padToggle(x.family, padBrand(x), sh.close)] : [])));
+      ...(x.way === 'query' && x.family ? [padToggle(x.family, padBrand(x), sh.close)] : []),
+      // (W3: a device no reader gives a level — «Teach me this device».)
+      ...(defs && list?.system?.os !== 'macos' && x.source === 'hid' && (!x.reading || x.reading.level.kind === 'unknown') ? [act('target', t('batTeachEntry'), () => defs?.teach({ vid: x.vid, pid: x.pid }), 'teach')] : [])));
+    if (x.source === 'defined') sh.body.append(h('p', { class: 'bat-reader', dir: 'auto', 'data-proven': 'yours' }, t('batDefReaderLine')));
     // (Which reader read it, and how far that reader is proven — said quietly at the end.)
     if (x.family && x.proven) sh.body.append(h('p', { class: 'bat-reader', dir: 'auto', 'data-proven': x.proven }, t('batReader', { family: padBrand(x), status: t(`batProven_${x.proven}` as 'batProven_untested') })));
   };
@@ -576,13 +591,13 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
       h('ul', null, h('li', null, t('batEmpty1')), h('li', null, t('batEmpty2')), h('li', null, t('batEmpty3'))), h('p', null, t('batEmptyLater'))) : null;
     const tb: BatSystem = list.system ?? { autostart: 'yes', tray: true };
     const sysCard = sys ? sys.card(S as import('./sysmon').SysSettings, tb.tray && S.background, tb.tray, (set) => void saveSettings(set as Partial<BatSettings>)) : null;
-    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, platCard(list.system, d), bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), settingsCard(), historyCard(), backgroundCard(), taskbarCard(), sysCard, noticesCard()].filter(Boolean) as HTMLElement[]);
+    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, platCard(list.system, d), bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), list.system?.os === 'macos' ? null : defs?.card() ?? null, settingsCard(), historyCard(), backgroundCard(), taskbarCard(), sysCard, noticesCard()].filter(Boolean) as HTMLElement[]);
   }
 
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });
   // (The ages move on while the page is open: redrawn every half minute — no per-second timer.)
   const tick = window.setInterval(() => { if (list) { list.now += 30_000; draw(); } }, 30_000);
   void d.batteryList().then((l) => { list = l; draw(); }).catch((e) => { body.replaceChildren(h('section', { class: 'card' }, h('p', null, String((e as Error).message ?? e)))); });
-  root.dispose = () => { gone = true; off(); clearInterval(tick); bt?.dispose(); sys?.dispose(); };
+  root.dispose = () => { gone = true; off(); clearInterval(tick); bt?.dispose(); sys?.dispose(); defs?.dispose(); };
   return root;
 }

@@ -39,6 +39,10 @@
 //!   (pure: choice, order, texts, warm and hot marks, change detection, the raw figures read, the pictures;
 //!   win/sysmon.rs samples them from Windows' public interfaces, no driver and no administrator rights)
 //! - autostart: «start with the system, hidden» — the Run value's data and the XDG autostart file
+//! - defs: W3, a device definition (data, not code: where an input report carries the level, listened to only — no
+//!   field for bytes to send) — its strict bounded parser, its canonical text and the «defined» reader
+//! - teach: W3, «Teach me this device» — which collections may be listened to, the in-memory capture, the marks and
+//!   the proposals (read only)
 //!
 //! `win` (Windows only) is the platform: SetupAPI, HID, CfgMgr32, XInput and the Run key (advapi32) declared in win/ffi.rs, type-checked on
 //! any system through stdroots/wincheck.rs; Windows.Gaming.Input behind the `wgi` feature.
@@ -48,6 +52,7 @@ pub mod autostart;
 pub mod bluetooth;
 pub mod bluez;
 pub mod connect;
+pub mod defs;
 pub mod fastpair;
 pub mod galaxybuds;
 pub mod heads;
@@ -73,6 +78,7 @@ pub mod sysfs;
 pub mod sysmon;
 pub mod sysprog;
 pub mod taskbar;
+pub mod teach;
 pub mod transport;
 pub mod udev;
 pub mod upower;
