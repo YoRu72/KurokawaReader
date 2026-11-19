@@ -42,7 +42,13 @@ const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel'
   updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []],
   // (Tools 0.21: fast file search — filesearch.rs.)
   fileSearchStatus: ['kt_fsearch_status', []], fileSearch: ['kt_fsearch_query', ['o']], fileSearchAdd: ['kt_fsearch_add', ['o']], fileSearchRemove: ['kt_fsearch_remove', ['o']],
-  fileSearchExclude: ['kt_fsearch_exclude', ['o']], fileSearchRebuild: ['kt_fsearch_rebuild', []], fileSearchForget: ['kt_fsearch_forget', []], fileSearchPause: ['kt_fsearch_pause', ['o']] };
+  fileSearchExclude: ['kt_fsearch_exclude', ['o']], fileSearchRebuild: ['kt_fsearch_rebuild', []], fileSearchForget: ['kt_fsearch_forget', []], fileSearchPause: ['kt_fsearch_pause', ['o']],
+  // (0.21, device battery: battery.rs.)
+  batteryList: ['kt_battery_list', []], batteryRefresh: ['kt_battery_refresh', ['o']], batterySettings: ['kt_battery_settings', ['o']],
+  // (0.21, device battery piece 3: connecting Bluetooth devices, battery.rs.)
+  btList: ['kt_bt_list', []], btScan: ['kt_bt_scan', ['o']], btAct: ['kt_bt_act', ['o']], btOpenSettings: ['kt_bt_settings', []] };
+// (The shell's own events: no channel in the preload.)
+const OWN_EVENTS = ['onFilesJob', 'onBattery', 'onBt'];
 // (Preload methods the Tauri bridge has none of. Empty since Tools 0.21 P11 ported the safe-extraction engine —
 // archivePreflight, archiveShelf, archiveJob: extractcmds.rs over kt-core's extractjob.rs —; kept so a new Electron-only
 // call has to be named here.)
@@ -92,9 +98,9 @@ function loadBridge(boot) {
 
   // Names: the slice and the boot-safe ones, every one of them a name the preload has; nothing else.
   const keys = Object.keys(kt).sort();
-  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), 'onFilesJob'])].sort(), 'bridge methods ≠ slice + boot-safe + own');
-  for (const k of keys) assert.ok(k in pre || k in OWN || k === 'onFilesJob', `${k} is not in preload.cjs`);
-  for (const k of [...Object.keys(OWN), 'onFilesJob']) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
+  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), ...OWN_EVENTS])].sort(), 'bridge methods ≠ slice + boot-safe + own');
+  for (const k of keys) assert.ok(k in pre || k in OWN || OWN_EVENTS.includes(k), `${k} is not in preload.cjs`);
+  for (const k of [...Object.keys(OWN), ...OWN_EVENTS]) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
   assert.equal(kt.platform, 'desktop');
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
@@ -148,7 +154,9 @@ function loadBridge(boot) {
   const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' },
     updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' },
     fileSearch: { text: 'report ext:pdf', kinds: ['document'], sizeMin: 1024, sizeMax: 1048576, after: 1700000000000, before: 1800000000000, sort: 'date', desc: true, limit: 500 },
-    fileSearchAdd: { path: '/a/Videos' }, fileSearchRemove: { path: '/a/Videos' }, fileSearchExclude: { root: '/a/Videos', path: '/a/Videos/old', remove: false }, fileSearchPause: { paused: true, pauseOnBattery: false } };
+    fileSearchAdd: { path: '/a/Videos' }, fileSearchRemove: { path: '/a/Videos' }, fileSearchExclude: { root: '/a/Videos', path: '/a/Videos/old', remove: false }, fileSearchPause: { paused: true, pauseOnBattery: false },
+    batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'], background: true, startup: true, thresholds: { 'bt:{A}': 15 } } },
+    btScan: { seconds: 20 }, btAct: { op: 'connect', addr: '00:11:22:33:44:55' } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');
@@ -250,6 +258,21 @@ function loadBridge(boot) {
     // (The original system: a click kept before the page listened — kt_task_take — handed to the callback first.)
     assert.deepEqual(JSON.parse(JSON.stringify(hk)), [{ mode: 'clip', text: 'magnet:?x' }]); assert.deepEqual(ot, ['cold1', 'g1']);
     assert.equal(p6calls.filter((c) => c.cmd === 'kt_task_take').length, 1, 'kt_task_take asked once per subscription');
+  }
+
+  // Device battery: kt:battery to onBattery's callback until it is removed.
+  {
+    const got = []; const offB = fresh.onBattery((x) => got.push(x)); await new Promise((ok) => setTimeout(ok, 5));
+    listeners['kt:battery'][0]({ event: 'kt:battery', payload: { now: 5, devices: [{ key: 'bt:{A}' }] } }); offB();
+    for (const f of listeners['kt:battery'] || []) f({ event: 'kt:battery', payload: { now: 6, devices: [] } });
+    assert.deepEqual(JSON.parse(JSON.stringify(got)), [{ now: 5, devices: [{ key: 'bt:{A}' }] }]);
+    assert.equal((listeners['kt:battery'] || []).length, 0, 'unlistened');
+    // (Piece 3: kt:bt to onBt's callback until it is removed.)
+    const gotBt = []; const offBt = fresh.onBt((x) => gotBt.push(x)); await new Promise((ok) => setTimeout(ok, 5));
+    listeners['kt:bt'][0]({ event: 'kt:bt', payload: { available: true, radio: 'on', devices: [] } }); offBt();
+    for (const f of listeners['kt:bt'] || []) f({ event: 'kt:bt', payload: { radio: 'off' } });
+    assert.deepEqual(JSON.parse(JSON.stringify(gotBt)), [{ available: true, radio: 'on', devices: [] }]);
+    assert.equal((listeners['kt:bt'] || []).length, 0, 'kt:bt unlistened');
   }
 
   // Screen translator: a region of null (the whole picture) sent as null, as the preload sends it; kt:screenCaption to

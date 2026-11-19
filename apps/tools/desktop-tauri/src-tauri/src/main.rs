@@ -13,6 +13,9 @@ mod archives;
 mod extractcmds;
 // (Tools 0.21: fast file search — kt-core's fileindex for the Files page's «Everywhere in my folders».)
 mod filesearch;
+// (0.21, device battery: the page's commands over kt-battery, its background, tray part, notices and start with the
+// system — GPL-3.0-or-later, ../../../NOTICE.md.)
+mod battery;
 mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
@@ -310,7 +313,16 @@ fn main() {
             // (The hybrid's self-test side.)
             hybridtest::kt_selftest_hybrid,
             // (The original system: a notice's click kept until the page listens — the bridge's onOpenTask.)
-            notifier::kt_task_take
+            notifier::kt_task_take,
+            // (0.21, device battery: battery.rs over kt-battery.)
+            battery::kt_battery_list,
+            battery::kt_battery_refresh,
+            battery::kt_battery_settings,
+            // (Piece 3: connecting Bluetooth devices.)
+            battery::kt_bt_list,
+            battery::kt_bt_scan,
+            battery::kt_bt_act,
+            battery::kt_bt_settings
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -320,6 +332,8 @@ fn main() {
             browser::on_event(window, event);
             // (Screen translator: close to the tray while it is on; its windows' focus and ends.)
             screentr::on_event(window, event);
+            // (Device battery: close to the tray while it keeps running in the background.)
+            battery::on_event(window, event);
         })
         .setup(|app| {
             // (Before any request: the app's own requests named as Tools' (shared crate's net.rs), the cookies sites
@@ -450,6 +464,9 @@ fn main() {
             screentr::init(&handle);
             // (Fast file search: started now only when folders were chosen before, on a thread of its own.)
             filesearch::at_start(&handle);
+            // (Device battery, piece 2: with its background on, its loop and its part of the tray from the start; a
+            // --hidden start with the system left in the tray.)
+            battery::init(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -476,6 +493,8 @@ fn main() {
                 screentr::at_exit();
                 // (Fast file search: its index saved, its threads stopped.)
                 filesearch::at_exit();
+                // (Device battery: its loop told to stop.)
+                battery::at_exit();
                 // (The original system: this run's toasts left in the Action Center made to start this program, or
                 // removed.)
                 notifier::at_exit();

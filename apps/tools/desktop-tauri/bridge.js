@@ -385,6 +385,29 @@
     screenOcrLangs: function () { return call('kt_screen_ocr_langs'); },
     screenCaptionSize: function (o) { return call('kt_screen_caption', { o: obj(o) }); },
     onScreenCaption: function (cb) { return subscribe('kt:screenCaption', cb); },
+    /* 0.21, device battery (this shell's own; src-tauri/src/battery.rs over apps/tools/core/kt-battery, GPL-3.0-or-later):
+       batteryList() → { available, reason?, now, devices: [{ key, name, kind, brand, connection, source, vid, pid,
+       merged, status, reading, lastGood, checkedAt }], settings, system: { autostart: 'yes' | 'notYet', tray } } (the
+       loop started on this first call, or at the app's start with the background on; Windows only for now — elsewhere
+       available: false); batteryRefresh({ key? }) → true (one device, or all); batterySettings({ set? }) → the settings
+       { intervalMin, low, names, hidden, noQuery, links, background, startup, notifyLow, notifyFull, thresholds } (set:
+       a part of them, kept by the shell; turning the start with the system on or off writes or removes its entry first
+       and rejects with the reason when it cannot); onBattery(cb) — { now, devices } after each change (kt:battery). */
+    batteryList: function () { return call('kt_battery_list'); },
+    batteryRefresh: function (o) { return call('kt_battery_refresh', { o: obj(o) }); },
+    batterySettings: function (o) { return call('kt_battery_settings', { o: obj(o) }); },
+    onBattery: function (cb) { return subscribe('kt:battery', cb); },
+    /* 0.21, device battery piece 3 — connecting Bluetooth devices (battery.rs over kt-battery connect.rs): btList() →
+       { available, reason?, radio: 'on' | 'off' | 'missing', stale, now, scanUntil, devices, found, busy } (a device:
+       { addr, name, kind, picture, brand, le, paired, connected, battery, can }); btScan({ stop?, seconds? }) → the same;
+       btAct({ op: 'connect' | 'disconnect' | 'pair' | 'cancel', addr }) → { result, code } when the action ends (pairing
+       goes through Windows' own window); btOpenSettings() opens Windows' Bluetooth settings; onBt(cb) — the same object
+       as btList's after each change (kt:bt). */
+    btList: function () { return call('kt_bt_list'); },
+    btScan: function (o) { return call('kt_bt_scan', { o: obj(o) }); },
+    btAct: function (o) { return call('kt_bt_act', { o: obj(o) }); },
+    btOpenSettings: function () { return call('kt_bt_settings'); },
+    onBt: function (cb) { return subscribe('kt:bt', cb); },
   };
   /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a
      second launch's, a Mac's Apple Events — kept by the shell (kt_open_take) and handed to the page as the preload's
