@@ -515,6 +515,8 @@ pub enum Glyph {
     Pad,
     Phone,
     Speaker,
+    /// W2: a microphone (the kind D1 added; our own drawing, as the page's).
+    Microphone,
     Other,
 }
 
@@ -529,6 +531,7 @@ impl Glyph {
             "pad" | "retro" | "split" | "half" | "trackpads" | "controller" => Some(Glyph::Pad),
             "phone" => Some(Glyph::Phone),
             "speaker" => Some(Glyph::Speaker),
+            "microphone" => Some(Glyph::Microphone),
             "pen" | "other" => Some(Glyph::Other),
             _ => None,
         };
@@ -537,7 +540,7 @@ impl Glyph {
 }
 
 /// The pictures a user may choose for a device (the page's set; btconnect.ts PIC).
-pub const PICTURES: [&str; 13] = ["mouse", "keyboard", "headset", "earbuds", "pad", "retro", "split", "half", "trackpads", "speaker", "phone", "pen", "other"];
+pub const PICTURES: [&str; 14] = ["mouse", "keyboard", "headset", "earbuds", "pad", "retro", "split", "half", "trackpads", "speaker", "phone", "microphone", "pen", "other"];
 
 fn rrect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Vec<(f32, f32)> {
     let mut v = Vec::new();
@@ -585,6 +588,11 @@ fn glyph_paths(g: Glyph) -> Vec<Vec<(f32, f32)>> {
         ],
         Glyph::Phone => vec![rrect(7.0, 2.5, 10.0, 19.0, 2.5), vec![(11.0, 18.5), (13.0, 18.5)]],
         Glyph::Speaker => vec![rrect(5.0, 2.5, 14.0, 19.0, 3.0), circle(12.0, 14.5, 3.5), dot(12.0, 7.0)],
+        Glyph::Microphone => {
+            // (The capsule, the stand's cradle — a half circle under it — and its foot.)
+            let cradle: Vec<(f32, f32)> = (0..=8).map(|k| { let a = (180.0 - k as f32 * 22.5f32).to_radians(); (12.0 + 6.5 * a.cos(), 11.0 + 6.5 * a.sin()) }).collect();
+            vec![rrect(9.0, 2.5, 6.0, 11.5, 3.0), cradle, vec![(12.0, 17.5), (12.0, 21.5)], vec![(9.0, 21.5), (15.0, 21.5)]]
+        }
         Glyph::Other => vec![rrect(4.0, 5.0, 16.0, 14.0, 3.0), vec![(9.0, 12.0), (15.0, 12.0)]],
     }
 }
@@ -1188,6 +1196,8 @@ mod tests {
         assert_eq!(Glyph::of("", "earbuds"), Glyph::Earbuds);
         assert_eq!(Glyph::of("phone", "mouse"), Glyph::Phone, "the user's picture wins");
         assert_eq!(Glyph::of("nonsense", "nonsense"), Glyph::Other);
+        assert_eq!(Glyph::of("", "microphone"), Glyph::Microphone, "W2: the microphone kind has its drawing");
+        assert_eq!(Glyph::of("microphone", "mouse"), Glyph::Microphone);
         assert!(PICTURES.iter().all(|p| *p == "other" || *p == "pen" || Glyph::of(p, "") != Glyph::Other));
     }
 

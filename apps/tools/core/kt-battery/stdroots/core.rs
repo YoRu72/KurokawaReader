@@ -20,6 +20,8 @@ pub mod galaxybuds;
 pub mod heads;
 #[path = "../src/hidvalue.rs"]
 pub mod hidvalue;
+#[path = "../src/history.rs"]
+pub mod history;
 #[path = "../src/bluez.rs"]
 pub mod bluez;
 #[path = "../src/hiddesc.rs"]

@@ -31,6 +31,10 @@
 // two entries of one device (its receiver and Bluetooth) or separates them again. Phone Link said in the page's words.
 // The Electron build and the phone have no reader: a calm word instead, never a dead button. Loaded on first use.
 // Piece S1: «System on the taskbar» (views/sysmon.ts, loaded with the page's first draw) after «Taskbar».
+// W2, the battery history (after the original's v1.1.0): a card says «about 5 hours left» or «full in about 40 minutes»
+// quietly under its level when the shell's estimate (kt-battery history.rs) has one, and nothing otherwise; a device's
+// menu opens its history (views/bathistory.ts, loaded on first use); «History» keeps a battery history (on by default,
+// as the original) for 7, 30 or 90 days. A microphone may be given our microphone drawing.
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from '../ui/dom';
 import { btDesk, btPanel, picSvg } from './btconnect';
 import { localDigits, getLang, countMinutes, countHours, countDays, countSeconds } from '../i18n';
@@ -46,7 +50,9 @@ type Rd = { level: Lvl; charging: 'yes' | 'no' | 'unknown'; asleep: boolean; tak
 export type BatDevice = { key: string; name: string; kind: string; brand: string; connection: string; source: string; vid: number; pid: number; merged: string[];
   status: 'ok' | 'waiting' | 'asleep' | 'notConnected' | 'noAnswer' | 'notQueried'; reading: Rd | null; lastGood: Rd | null; checkedAt: number;
   /** Piece 4: a controller's reader, family, how far proven, whether it sends a request, and its drawing. */
-  picture?: string; driver?: string; family?: string; proven?: 'tested' | 'untested' | ''; way?: 'passive' | 'query' | '' };
+  picture?: string; driver?: string; family?: string; proven?: 'tested' | 'untested' | ''; way?: 'passive' | 'query' | '';
+  /** W2: about this long until empty, or until full while charging (from the recorded history); null: nothing to say. */
+  estimate?: { state: 'empty' | 'full'; minutes: number } | null };
 /** One controller family: its brand as text, how far proven, whether its reading sends a request, allowed now. */
 type PadRow = { family: string; brand: string; proven: 'tested' | 'untested'; ask: boolean; listen: boolean; models: string[]; on: boolean };
 /** Piece 5: one mice / keyboards family — its switch is on when its request is allowed (ask) or its listening kept. */
@@ -65,18 +71,22 @@ export type BatSettings = { intervalMin: number; low: number; names: Record<stri
   trayStyle?: 'app' | 'lowest' | 'each'; trayDraw?: 'number' | 'bar'; trayAway?: boolean; trayGone?: boolean;
   /** The checking interval in seconds (30 s to an hour, the original's v1.1.0 choices); intervalMin follows it. */
   intervalSec?: number; strip?: boolean; stripStacked?: boolean; stripPlate?: boolean;
-  order?: string[]; pictures?: Record<string, string>; quiet?: boolean; quietFrom?: number; quietTo?: number; sound?: boolean };
+  order?: string[]; pictures?: Record<string, string>; quiet?: boolean; quietFrom?: number; quietTo?: number; sound?: boolean;
+  /** W2: keep a battery history (on by default), for 7, 30 or 90 days. */
+  history?: boolean; historyDays?: number };
 /** What the shell can do here: a start with the system ('notYet' on a Mac), a tray icon. */
 type BatSystem = { autostart: 'yes' | 'notYet'; tray: boolean };
 type BatList = { available: boolean; reason?: string; now: number; devices: BatDevice[]; settings: BatSettings; system?: BatSystem; pads?: PadRow[]; mice?: MkRow[] };
 /** Our drawn pictures a device may be given (btconnect.ts's set; kt-battery taskbar.rs PICTURES). */
-const PICTURES = ['mouse', 'keyboard', 'headset', 'earbuds', 'pad', 'retro', 'split', 'half', 'trackpads', 'speaker', 'phone', 'pen', 'other'];
+const PICTURES = ['mouse', 'keyboard', 'headset', 'earbuds', 'pad', 'retro', 'split', 'half', 'trackpads', 'speaker', 'phone', 'microphone', 'pen', 'other'];
 /** The default order by kind (kt-battery taskbar.rs kind_rank, as the original's). */
 const KIND_RANK: Record<string, number> = { headset: 0, earbuds: 1, mouse: 2, keyboard: 3, controller: 4, phone: 5, speaker: 6 };
 /** The marks offered (kt-battery notice.rs CHOICES). */
 const MARKS = [5, 10, 15, 20, 25, 30, 35, 40];
 /** The bridge's methods (desktop-tauri/bridge.js — the same names and arguments). */
-type Desk = { batteryList(): Promise<BatList>; batteryRefresh(o: { key?: string }): Promise<boolean>; batterySettings(o: { set?: Partial<BatSettings> }): Promise<BatSettings>; onBattery(cb: (e: { now: number; devices: BatDevice[] }) => void): () => void };
+type Desk = { batteryList(): Promise<BatList>; batteryRefresh(o: { key?: string }): Promise<boolean>; batterySettings(o: { set?: Partial<BatSettings> }): Promise<BatSettings>; onBattery(cb: (e: { now: number; devices: BatDevice[] }) => void): () => void;
+  /** W2 (bathistory.ts's HistDesk): a device's history, and clearing it. */
+  batteryHistory?: import('./bathistory').HistDesk['batteryHistory']; batteryHistoryClear?: import('./bathistory').HistDesk['batteryHistoryClear'] };
 const desk = (): Desk | null => { const d = (window as unknown as { kurokawaTools?: Partial<Desk> }).kurokawaTools; return d?.batteryList && d.onBattery ? d as Desk : null; };
 
 // Our own drawings, one per kind (24×24, strokes like the app's icons).
@@ -203,6 +213,9 @@ const CSS = `
 .battery-view .bat-hours { display: flex; flex-wrap: wrap; gap: 12px; padding: 4px 0 8px; }
 .battery-view .bat-hours > label { flex: 1 1 160px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--md-on-surface-variant); }
 .battery-view .bat-hours .pick-btn { width: 100%; }
+.bat-card .bat-est { grid-column: 1 / -1; margin: -4px 0 0; font-size: 13px; line-height: 1.4; color: var(--md-on-surface-variant); }
+.battery-view .bat-hs .bat-row { margin-top: 10px; }
+.battery-view .bat-hs .bat-switch:first-of-type { border-top: 1px solid var(--md-outline-variant); margin-top: 8px; }
 `;
 function style(): void {
   if (document.getElementById('kt-battery-css')) return;
@@ -220,6 +233,15 @@ export function ageText(at: number, now: number): string {
   if (s < 3600) return t('batAgoMin', { n: n(Math.floor(s / 60), countMinutes, 'دقيقتين') });
   if (s < 86400) return t('batAgoHour', { n: n(Math.floor(s / 3600), countHours, 'ساعتين') });
   return t('batAgoDay', { n: n(Math.floor(s / 86400), countDays, 'يومين') });
+}
+/** «5 hours», «40 minutes», «3 days» for an estimate (rounded as an estimate should be: five minutes under an hour and a
+ *  half, hours under two days, else days). Arabic's dual is genitive here (after «نحو»). */
+export function durText(min: number): string {
+  const lang = getLang();
+  const [n, u] = min < 90 ? [Math.max(5, Math.round(min / 5) * 5), 'm'] as const : min < 48 * 60 ? [Math.round(min / 60), 'h'] as const : [Math.round(min / 1440), 'd'] as const;
+  if (lang === 'ja' || lang === 'ko' || lang === 'zh') return t(u === 'm' ? 'batDurMin' : u === 'h' ? 'batDurHour' : 'batDurDay', { n: localDigits(n) });
+  if (lang === 'ar' && n === 2) return u === 'm' ? 'دقيقتين' : u === 'h' ? 'ساعتين' : 'يومين';
+  return u === 'm' ? countMinutes(n) : u === 'h' ? countHours(n) : countDays(n);
 }
 export function levelText(l: Lvl): string {
   if (l.kind === 'exact') return t('batPct', { n: localDigits(l.value) });
@@ -292,6 +314,9 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
         h('span', { class: 'bat-part-val', dir: 'auto' }, val),
         p.level.kind === 'exact' ? h('div', { class: 'bat-meter', 'aria-hidden': 'true' }, h('i', { style: { width: `${p.level.value}%` } })) : p.level.kind === 'steps' ? h('div', { class: 'bat-meter', 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.round(100 * p.level.value / Math.max(1, p.level.max))}%` } })) : null);
     })) : null;
+    // (W2: the estimate, quietly, when the shell has one for a device answering now.)
+    const e = x.status === 'ok' ? x.estimate : null;
+    const estLine = e && (e.state === 'empty' || e.state === 'full') && e.minutes > 0 ? h('p', { class: 'bat-est', 'data-est': e.state, title: t('batEstHint') }, t(e.state === 'empty' ? 'batEstLeft' : 'batEstFull', { d: durText(e.minutes) })) : null;
     const foot = h('div', { class: 'bat-foot' });
     // (Charging sits with the level it qualifies, so the foot's line of small facts stays one line on a narrow card.)
     if (r?.charging === 'yes') level.append(h('span', { class: 'bat-chip charging' }, bolt(), t('batCharging')));
@@ -300,7 +325,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     if (x.connection !== 'unknown') foot.append(h('span', { class: 'bat-via' }, via));
     const more = iconButton('more', t('batMenu', { name: nameOf(x) }), (e) => menu(x, e)); more.classList.add('bat-more');
     return h('article', { class: 'bat-card' + (low ? ' low' : '') + (dim ? ' dim' : ''), 'data-key': x.key, 'data-kind': x.kind, 'data-status': x.status },
-      h('div', { class: 'bat-ic' }, deviceIcon(x, S.pictures?.[x.key])), h('div', { class: 'bat-who' }, h('span', { class: 'bat-name', dir: 'auto', title: nameOf(x) }, nameOf(x)), h('span', { class: 'bat-sub', dir: 'auto' }, sub)), more, level, parts, foot);
+      h('div', { class: 'bat-ic' }, deviceIcon(x, S.pictures?.[x.key])), h('div', { class: 'bat-who' }, h('span', { class: 'bat-name', dir: 'auto', title: nameOf(x) }, nameOf(x)), h('span', { class: 'bat-sub', dir: 'auto' }, sub)), more, level, estLine, parts, foot);
   };
 
   const menu = (x: BatDevice, ev: Event) => {
@@ -313,6 +338,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     const joined = (x.merged?.length ?? 0) > 0 || (S.links ?? []).some((l) => l.includes(x.key));
     sh.body.append(h('div', { class: 'dest-list' },
       ...(quiet ? [] : [act('refresh', t('batRefreshOne'), () => void d.batteryRefresh({ key: x.key }).catch(() => false), 'refresh')]),
+      ...(d.batteryHistory && d.batteryHistoryClear ? [act('chart', t('batHistory'), () => history(x), 'history')] : []),
       act('pencil', t('batRename'), () => rename(x), 'rename'),
       act('images', t('batPicture'), () => picturePick(x), 'picture'),
       ...(at > 0 ? [act('arrowUp', t('batMoveUp'), () => move(x.key, -1), 'up')] : []),
@@ -395,6 +421,11 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     void saveSettings({ links }).then(() => void d.batteryRefresh({}).catch(() => false));
   };
 
+  // W2: a device's history (its module fetched on first use).
+  const history = (x: BatDevice) => {
+    const S = list!.settings; const mk = markOf(S, x.key);
+    void import('./bathistory').then((m) => { if (!gone) m.openHistory(d as unknown as import('./bathistory').HistDesk, x.key, { name: nameOf(x), low: mk || S.low, levelText: levelText as (l: unknown) => string, durText }); }, (e) => toast(String((e as Error)?.message ?? e), 'error'));
+  };
   const rename = (x: BatDevice) => {
     const sh = openSheet(t('batRename'), t('close'));
     const input = h('input', { type: 'text', value: list!.settings.names[x.key] ?? '', placeholder: x.name || t('batUnnamed'), maxlength: '64', dir: 'auto', 'aria-label': t('batRename') }) as HTMLInputElement;
@@ -467,6 +498,17 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     return card;
   };
 
+  // W2: «History» — keep a battery history (on by default, as the original's «Record battery history»), and how long.
+  const historyCard = (): HTMLElement | null => {
+    if (!d.batteryHistory) return null;
+    const S = list!.settings; const on = S.history !== false; const days = [7, 30, 90];
+    const keep = pickButton(t('batHistKeep'), days.map((v) => [String(v), rtl(countDays(v))] as [string, string]), String(days.includes(S.historyDays ?? 30) ? S.historyDays ?? 30 : 30), (v) => void saveSettings({ historyDays: Number(v) }), t('close'));
+    keep.dataset.name = 'historyDays';
+    return h('section', { class: 'card bat-settings bat-hs', 'data-group': 'history' }, h('h3', null, t('batHistTitle')),
+      sw('history', t('batHistOn'), t('batHistOnHint'), on, false, (v) => void saveSettings({ history: v })),
+      h('div', { class: 'bat-row' }, h('span', null, t('batHistKeep'), h('small', null, t('batHistKeepHint'))), keep));
+  };
+
   // Piece 2: «Background» — switches, each with its line of explanation; what cannot be had here said, not hidden.
   const backgroundCard = (): HTMLElement => {
     const S = list!.settings; const sys: BatSystem = list!.system ?? { autostart: 'yes', tray: true };
@@ -534,7 +576,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
       h('ul', null, h('li', null, t('batEmpty1')), h('li', null, t('batEmpty2')), h('li', null, t('batEmpty3'))), h('p', null, t('batEmptyLater'))) : null;
     const tb: BatSystem = list.system ?? { autostart: 'yes', tray: true };
     const sysCard = sys ? sys.card(S as import('./sysmon').SysSettings, tb.tray && S.background, tb.tray, (set) => void saveSettings(set as Partial<BatSettings>)) : null;
-    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, platCard(list.system, d), bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), settingsCard(), backgroundCard(), taskbarCard(), sysCard, noticesCard()].filter(Boolean) as HTMLElement[]);
+    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, platCard(list.system, d), bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), settingsCard(), historyCard(), backgroundCard(), taskbarCard(), sysCard, noticesCard()].filter(Boolean) as HTMLElement[]);
   }
 
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });

@@ -59,6 +59,17 @@
 // are empty and the page says so. Start with the system: the XDG autostart file (Linux), a LaunchAgent (macOS).
 // Connecting on Linux goes through bluetoothctl (kt-battery linux/bt.rs); btOpenSettings opens the desktop's own
 // Bluetooth settings (Linux) or the system's (macOS).
+// W2, the battery history and the time-left estimate (kt-battery history.rs, after the original's v1.1.0): with «history»
+// on (the default, as the original's «Record battery history»), each device's readings are recorded from the loop's
+// list — every half hour while it answers, and when its level, charging or presence changes (at most once a minute) —
+// for «historyDays» (7, 30 by default, or 90 days), in <app data>/battery-history.txt (a header, rows, a checked footer;
+// written on a thread of its own, a temp file then a rename; a damaged file is started afresh). A device in the list
+// carries estimate: { state: 'empty' | 'full', minutes } | null (about that long until empty, or full while charging is
+// known — nothing when the readings cannot support it). batteryHistory({ key, range: 'day' | 'week' | 'month' }) → { key,
+// on, days, now, since, gap, points: [{ t, level | null (away), charging }], stats: { count, lowest, highest, first,
+// last }, estimate: { state: 'empty' | 'full' | 'none', minutes?, perHour?, samples?, why? } }; batteryHistoryClear({ key })
+// → whether there was any. The tray icons are drawn again when Windows' light / dark choice changes (the main window's
+// ThemeChanged).
 // Copyright (C) 2026 Kurokawa contributors.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -70,6 +81,7 @@ use tauri::{AppHandle, Manager};
 use tauri::Emitter;
 
 use kt_battery::autostart;
+use kt_battery::history::{self, Estimate, History, Seen};
 use kt_battery::model::{Charging, Level, Reading};
 use kt_battery::mice;
 use kt_battery::pads::{self, Way};
@@ -100,6 +112,8 @@ const KEYS: &[&str] = &[
     "trayStyle", "trayDraw", "trayAway", "trayGone", "intervalSec", "strip", "stripStacked", "stripPlate", "order", "pictures", "quiet", "quietFrom", "quietTo", "sound",
     // (S1.)
     "sysOn", "sysOrder", "sysUnit", "sysEvery", "sysClick", "sysSide", "sysCpuWarm", "sysCpuHot", "sysGpuWarm", "sysGpuHot", "sysDriveWarm", "sysDriveHot",
+    // (W2.)
+    "history", "historyDays",
 ];
 
 fn now_ms() -> u64 {
@@ -189,7 +203,7 @@ fn state_json(s: &DeviceState) -> Value {
         "key": d.key, "name": d.name, "kind": d.kind.as_str(), "brand": d.brand, "connection": d.connection.as_str(),
         "source": d.source.as_str(), "vid": d.vid, "pid": d.pid, "merged": d.merged,
         "status": s.status.as_str(), "reading": s.reading.as_ref().map(reading_json), "lastGood": s.last_good.as_ref().map(reading_json),
-        "checkedAt": s.checked_at, "picture": d.picture,
+        "checkedAt": s.checked_at, "picture": d.picture, "estimate": card_estimate(&d.key),
         "driver": d.driver, "family": reader_of(d.driver).0, "proven": reader_of(d.driver).1, "way": reader_of(d.driver).2,
     })
 }
@@ -332,6 +346,8 @@ fn clean(v: &Value) -> Value {
         "sysCpuWarm": cpu.warm, "sysCpuHot": cpu.hot,
         "sysGpuWarm": gpu.warm, "sysGpuHot": gpu.hot,
         "sysDriveWarm": drive.warm, "sysDriveHot": drive.hot,
+        "history": flag("history", true),
+        "historyDays": history::keep_days(o.and_then(|o| o.get("historyDays")).and_then(Value::as_u64)),
     })
 }
 
@@ -402,6 +418,7 @@ fn start(app: &AppHandle) -> Option<Live> {
     let last: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let (l2, app2) = (last.clone(), app.clone());
     let publish = Box::new(move |list: Vec<DeviceState>| {
+        history_observe(&app2, &list);
         let v: Vec<Value> = list.iter().map(state_json).collect();
         if let Ok(mut g) = l2.lock() {
             *g = v.clone();
@@ -420,7 +437,7 @@ fn start(app: &AppHandle) -> Option<Live> {
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn start(_app: &AppHandle) -> Option<Live> {
-    let _ = (state_json, changed);
+    let _ = (state_json, changed, history_observe);
     None
 }
 
@@ -885,6 +902,12 @@ pub fn on_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             let _ = window.hide();
         }
     }
+    // (W2: Windows' light / dark choice changed — the tray icons drawn again for the taskbar's new colour at once, not at
+    // the next change of a device. The main window hears it, hidden or not; the strip hears it on its own window.
+    // UNVERIFIED on Windows: this follows the apps' mode, so a change of the taskbar's colour alone waits as before.)
+    if let ("main", tauri::WindowEvent::ThemeChanged(_)) = (window.label(), event) {
+        tray_again(window.app_handle());
+    }
 }
 
 /// The program that a start with the system should launch: an AppImage's own file on Linux (the running one is a
@@ -986,6 +1009,161 @@ pub fn init(app: &AppHandle) {
             }
         }
     });
+}
+
+// ---- W2: the battery history and the time-left estimate ----
+
+const HIST_FILE: &str = "battery-history.txt";
+/// The history, read from its file on first use (None before).
+static HIST: Mutex<Option<History>> = Mutex::new(None);
+/// The app data folder's history file, known once the first look is made.
+static HIST_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// A save running (one at a time), and another wanted after it.
+static HIST_SAVE: Mutex<(bool, bool)> = Mutex::new((false, false));
+
+fn now_s() -> u64 {
+    now_ms() / 1000
+}
+
+fn keep_s(s: &Value) -> u64 {
+    history::keep_days(s.get("historyDays").and_then(Value::as_u64)) * 86_400
+}
+
+/// The history under its lock, read from the file the first time (a missing or damaged file: an empty history — the
+/// damaged one is overwritten by the next save).
+fn with_hist<R>(app: &AppHandle, s: &Value, f: impl FnOnce(&mut History) -> R) -> R {
+    let mut g = HIST.lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_none() {
+        let p = app.path().app_data_dir().ok().map(|d| d.join(HIST_FILE));
+        let text = p.as_ref().filter(|p| std::fs::metadata(p).map_or(false, |m| m.len() as usize <= history::MAX_FILE)).and_then(|p| std::fs::read_to_string(p).ok());
+        *g = Some(text.and_then(|t| History::parse(&t, now_s(), keep_s(s))).unwrap_or_default());
+        *HIST_PATH.lock().unwrap_or_else(|e| e.into_inner()) = p;
+    }
+    f(g.get_or_insert_with(History::new))
+}
+
+/// The history written on a thread of its own (the loop never waits on the disk): a temp file, then a rename. One
+/// save at a time; a change during it is saved right after.
+fn hist_save() {
+    {
+        let mut g = HIST_SAVE.lock().unwrap_or_else(|e| e.into_inner());
+        if g.0 {
+            g.1 = true;
+            return;
+        }
+        *g = (true, false);
+    }
+    let _ = std::thread::Builder::new().name("kt-battery-history".into()).spawn(|| loop {
+        let text = HIST.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(History::serialize);
+        let path = HIST_PATH.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let (Some(text), Some(p)) = (text, path) {
+            let tmp = p.with_extension("txt.tmp");
+            let ok = p.parent().map_or(false, |d| std::fs::create_dir_all(d).is_ok()) && std::fs::write(&tmp, text.as_bytes()).is_ok() && std::fs::rename(&tmp, &p).is_ok();
+            if !ok {
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
+        let mut g = HIST_SAVE.lock().unwrap_or_else(|e| e.into_inner());
+        if g.1 {
+            g.1 = false;
+            continue;
+        }
+        g.0 = false;
+        break;
+    });
+}
+
+/// What the loop saw of a device, for the history: a level now, away (asleep, not connected), or nothing to record
+/// (waiting, no answer, not queried, a level unknown).
+fn seen_of(d: &DeviceState) -> Option<Seen> {
+    match (d.status, d.reading) {
+        (Status::Ok, Some(r)) if !r.asleep && r.level != Level::Unknown => Some(Seen::Live(r.level, r.charging)),
+        (Status::Asleep, _) | (Status::NotConnected, _) => Some(Seen::Away),
+        _ => None,
+    }
+}
+
+/// From the loop's list (its publish, before the page and the tray hear of it): each device's reading recorded when
+/// the policy says so, with the history on.
+fn history_observe(app: &AppHandle, list: &[DeviceState]) {
+    let s = load(app);
+    if !s.get("history").and_then(Value::as_bool).unwrap_or(true) {
+        return;
+    }
+    let (now, keep) = (now_s(), keep_s(&s));
+    let any = with_hist(app, &s, |h| list.iter().fold(false, |any, d| seen_of(d).map_or(false, |seen| h.observe(&d.device.key, now, seen, keep)) || any));
+    if any {
+        hist_save();
+    }
+}
+
+fn estimate_json(e: Estimate) -> Value {
+    match e {
+        Estimate::Empty { minutes, per_hour, samples } => json!({ "state": "empty", "minutes": minutes, "perHour": (per_hour * 100.0).round() / 100.0, "samples": samples }),
+        Estimate::Full { minutes, per_hour, samples } => json!({ "state": "full", "minutes": minutes, "perHour": (per_hour * 100.0).round() / 100.0, "samples": samples }),
+        Estimate::None(w) => json!({ "state": "none", "why": w.as_str() }),
+    }
+}
+
+/// A card's estimate: { state: 'empty' | 'full', minutes }, or null (the history off or not read yet, or nothing to
+/// say). Never reads the file itself: the loop's first publish has.
+fn card_estimate(key: &str) -> Value {
+    if !cached().map_or(false, |s| s.get("history").and_then(Value::as_bool).unwrap_or(true)) {
+        return Value::Null;
+    }
+    let now = now_s();
+    let g = HIST.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(h) = g.as_ref() else { return Value::Null };
+    match history::estimate(&h.points(key, now.saturating_sub(4 * 86_400), now + 300), now) {
+        Estimate::Empty { minutes, .. } => json!({ "state": "empty", "minutes": minutes }),
+        Estimate::Full { minutes, .. } => json!({ "state": "full", "minutes": minutes }),
+        Estimate::None(_) => Value::Null,
+    }
+}
+
+#[tauri::command]
+pub async fn kt_battery_history(app: AppHandle, o: Value) -> Result<Value, String> {
+    let key = o.get("key").and_then(clean_key).ok_or("no device key")?;
+    let days: u64 = match o.get("range").and_then(Value::as_str) {
+        Some("day") => 1,
+        Some("month") => 30,
+        _ => 7,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let s = load(&app);
+        let (now, keep) = (now_s(), keep_s(&s));
+        let since = now.saturating_sub(days * 86_400);
+        let (points, est) = with_hist(&app, &s, |h| {
+            h.prune(now, keep);
+            (h.points(&key, since, now + 300), history::estimate(&h.points(&key, now.saturating_sub(4 * 86_400), now + 300), now))
+        });
+        let st = history::stats(&points);
+        let interval = s.get("intervalSec").and_then(Value::as_u64).unwrap_or(60);
+        json!({
+            "key": key, "on": s.get("history").and_then(Value::as_bool).unwrap_or(true), "days": history::keep_days(s.get("historyDays").and_then(Value::as_u64)),
+            "now": now * 1000, "since": since * 1000, "gap": history::gap_s(interval) * 1000,
+            "points": points.iter().map(|r| json!({ "t": r.t * 1000, "level": r.level.map(level_json), "charging": r.charging.as_str() })).collect::<Vec<_>>(),
+            "stats": { "count": st.count, "lowest": st.lowest, "highest": st.highest, "first": st.first, "last": st.last },
+            "estimate": estimate_json(est),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn kt_battery_history_clear(app: AppHandle, o: Value) -> Result<Value, String> {
+    let key = o.get("key").and_then(clean_key).ok_or("no device key")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let s = load(&app);
+        let had = with_hist(&app, &s, |h| h.clear(&key));
+        if had {
+            hist_save();
+        }
+        json!(had)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // ---- commands ----
@@ -1338,6 +1516,7 @@ fn start_on<P: runner::Platform>(app: &AppHandle, platform: Arc<P>) -> Option<Li
     let last: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let (l2, app2) = (last.clone(), app.clone());
     let publish = Box::new(move |list: Vec<DeviceState>| {
+        history_observe(&app2, &list);
         let v: Vec<Value> = list.iter().map(state_json).collect();
         if let Ok(mut g) = l2.lock() {
             *g = v.clone();

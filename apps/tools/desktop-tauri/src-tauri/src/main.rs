@@ -318,6 +318,8 @@ fn main() {
             battery::kt_battery_list,
             battery::kt_battery_refresh,
             battery::kt_battery_settings,
+            battery::kt_battery_history,
+            battery::kt_battery_history_clear,
             // (Piece 3: connecting Bluetooth devices.)
             battery::kt_bt_list,
             battery::kt_bt_scan,

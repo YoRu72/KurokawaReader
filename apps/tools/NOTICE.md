@@ -54,11 +54,16 @@ The vendor drivers came in pieces 4 to 6 (below); the support request is not por
 | `src/widget.cpp`, `.h` (the strip beside the notification area, its «icons above percentages» and «background behind taskbar text», made again when Explorer restarts; v1.1.0: the green check of «fully charged», Windows 10's news button kept clear), `src/labels.cpp` (captions when two devices share a drawing) | `taskbar.rs` (drawing, layout, place), `win/strip.rs` (the window) |
 | v1.1.0 `src/alert_rules.h` (per-device alert levels 5–40 %, off) | `notice.rs` (CHOICES) |
 | v1.1.0 `src/device_aliases.h`, `src/rename_dialog.cpp` (a device's own name, 1–64 characters) | the page's rename (`src/views/battery.ts`) and `battery.rs`'s settings check |
+| v1.1.0 `src/history_model.h`, `src/runtime_estimate.h`, `src/battery_history.cpp` (W2: the battery history — a reading every 30 minutes or on a change of charging, at most one a minute, 30 days kept; the discharge estimate's rules; «Last 24 hours / 7 days / 30 days», «Clear device history», «Record battery history») | `history.rs`; the shell's file and commands (`battery.rs`); the page's history sheet (`src/views/bathistory.ts`) |
 
 Changed: every picture is our own drawing made in code (no icon font, no bundled art); a level in steps is never drawn
 as a number; calm colours (red low, blue charging, green full, the taskbar's own otherwise; no brand colours); captions
 are numbers; the strip is off by default, on the main taskbar only, checked every 2 s on its own thread, and gives way to
 the tray icons whenever it cannot be shown; quiet hours, a sound switch, pictures, joins and the order are Tools' own.
+The history (W2) keeps a coarse word or steps as they are (never a made-up percentage; only percentages feed the
+estimate), records a change of level too, marks «away» so the chart shows a gap, keeps 7, 30 or 90 days in a checked
+file (a damaged one is started afresh), and adds a «full in about …» estimate while charging is known; its chart is
+drawn by the page; no charge-cycle count (the original has none).
 Drivers that send undocumented commands are not ported until they are understood.
 
 ### What was taken (piece 2: the background)

@@ -45,6 +45,8 @@ const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel'
   fileSearchExclude: ['kt_fsearch_exclude', ['o']], fileSearchRebuild: ['kt_fsearch_rebuild', []], fileSearchForget: ['kt_fsearch_forget', []], fileSearchPause: ['kt_fsearch_pause', ['o']],
   // (0.21, device battery: battery.rs.)
   batteryList: ['kt_battery_list', []], batteryRefresh: ['kt_battery_refresh', ['o']], batterySettings: ['kt_battery_settings', ['o']],
+  // (0.21 W2: the battery history, battery.rs.)
+  batteryHistory: ['kt_battery_history', ['o']], batteryHistoryClear: ['kt_battery_history_clear', ['o']],
   // (0.21, device battery piece 3: connecting Bluetooth devices, battery.rs.)
   btList: ['kt_bt_list', []], btScan: ['kt_bt_scan', ['o']], btAct: ['kt_bt_act', ['o']], btOpenSettings: ['kt_bt_settings', []],
   // (0.21, piece S1: the system on the taskbar, battery.rs.)
@@ -157,7 +159,7 @@ function loadBridge(boot) {
     updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' },
     fileSearch: { text: 'report ext:pdf', kinds: ['document'], sizeMin: 1024, sizeMax: 1048576, after: 1700000000000, before: 1800000000000, sort: 'date', desc: true, limit: 500 },
     fileSearchAdd: { path: '/a/Videos' }, fileSearchRemove: { path: '/a/Videos' }, fileSearchExclude: { root: '/a/Videos', path: '/a/Videos/old', remove: false }, fileSearchPause: { paused: true, pauseOnBattery: false },
-    batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'], background: true, startup: true, thresholds: { 'bt:{A}': 15 } } },
+    batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batteryHistory: { key: 'hid:046D:C547:s:A1', range: 'week' }, batteryHistoryClear: { key: 'bt:{A}' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'], background: true, startup: true, thresholds: { 'bt:{A}': 15 } } },
     btScan: { seconds: 20 }, btAct: { op: 'connect', addr: '00:11:22:33:44:55' } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);

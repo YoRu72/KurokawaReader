@@ -37,6 +37,9 @@ function fake({ lang, mode }) {
     batteryList: function () { window.__calls.push(['list']); return Promise.resolve({ available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings, system, pads: [], mice: [] }); },
     batteryRefresh: function (o) { window.__calls.push(['refresh', o]); return Promise.resolve(true); },
     batterySettings: function (o) { window.__calls.push(['settings', o]); if (o && o.set) settings = Object.assign({}, settings, o.set); return Promise.resolve(settings); },
+    // (W2: bridge.js's batteryHistory(o) and batteryHistoryClear(o) — no readings here.)
+    batteryHistory: function (o) { window.__calls.push(['history', o]); return Promise.resolve({ key: o.key, on: true, days: 30, now: Date.now(), since: Date.now() - 7 * 864e5, gap: 72e5, points: [], stats: { count: 0, lowest: null, highest: null, first: null, last: null }, estimate: { state: 'none', why: 'collecting' } }); },
+    batteryHistoryClear: function (o) { window.__calls.push(['historyClear', o]); return Promise.resolve(false); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
     sysmonProbe: function () { window.__calls.push(['probe', arguments.length]); return new Promise((ok) => setTimeout(() => ok(mode === 'linux' ? { available: false, os: 'linux', values: {}, gpu: '' } : JSON.parse(JSON.stringify(probe))), 80)); },
   });

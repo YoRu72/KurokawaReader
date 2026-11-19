@@ -30,6 +30,8 @@
 //! - sched: per-device timing, deadlines, back-off, asleep devices left alone
 //! - runner: the background loop over a Platform
 //! - notice: when a low-battery or fully-charged notice is due (per device, with re-arming)
+//! - history: W2, a device's battery history (a bounded ring per device, the checked file's text) and the time-left
+//!   estimate (from recorded percentages only; nothing when the readings cannot support one)
 //! - summary: the tray's short list, lowest first, and its tooltip's clipping
 //! - taskbar: the tray icons with the level drawn in them, the strip on the taskbar, their order and captions, quiet
 //!   hours (pure; win/strip.rs puts the strip on Windows' taskbar)
@@ -52,6 +54,7 @@ pub mod heads;
 pub mod hiddesc;
 pub mod hidplat;
 pub mod hidvalue;
+pub mod history;
 pub mod identity;
 pub mod kind;
 pub mod macos;

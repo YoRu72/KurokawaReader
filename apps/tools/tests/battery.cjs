@@ -35,6 +35,13 @@
 // from 30 s, the low marks 5–40 %; a device's menu moves it up and down (the cards follow, kept as order), gives it one
 // of our drawn pictures (kept as pictures; the card shows it) or its own back, joins two entries (links) and separates
 // them; Phone Link named as Windows names it in the page's language. Screenshots batW1-* when KT_SHOTS is set.
+// W2, the battery history (batteryHistory(o), batteryHistoryClear(o) — bridge.js's signatures; made-up readings): a
+// card's quiet «about 5 hours left» / «full in about 40 minutes» (Arabic's counted nouns, the dual genitive), none for an
+// asleep device; «History» (on by default, 7/30/90 days — kept as history, historyDays); a device's menu opens its
+// history: three periods (a week first), the summary sentence that is also the chart's text, the line in the accent,
+// red below the low mark, blue while charging with a band, a gap where the device was away, the value under the pointer
+// and with the arrow keys, time running from the right in Arabic; «Clear this device's history» asked first, then
+// cleared through the bridge; a microphone may be given our microphone drawing. Screenshots batW2-* (light and dark).
 // `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
@@ -42,7 +49,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const serve = () => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(DIST, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
 const errors = []; const check = (what, ok, x) => { console.log(ok ? 'ok  ' : 'FAIL', what, ok || x === undefined ? '' : JSON.stringify(x).slice(0, 300)); if (!ok) errors.push(what); };
 const lang = process.argv[2] || 'en'; const SHOTS = process.env.KT_SHOTS || '';
-const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, name.startsWith('batW1-') ? `${name}-${lang}.png` : `battery-${name}-${lang}.png`) }); } };
+const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, /^batW[12]-/.test(name) ? `${name}-${lang}.png` : `battery-${name}-${lang}.png`) }); } };
 
 // (Run in the page: the fake bridge. mode: 'tauri' | 'mac' | 'empty' | 'nothere' | 'electron'.)
 function fake({ lang, mode }) {
@@ -99,12 +106,12 @@ function fake({ lang, mode }) {
     dev({ key: 'xinput:1:pad', name: '', kind: 'controller', brand: 'Xbox', connection: 'dongle', source: 'xinput', reading: rd({ kind: 'coarse', value: 'high', bars: 4 }, NOW) }),
   ];
   const devices = mode === 'heads' ? HEADS : mode === 'mice' ? MICE : mode === 'pads' ? PADS : mode !== 'tauri' && mode !== 'mac' ? [] : [
-    dev({ key: 'hid:1111:2222:s:A1', name: 'Shape Mouse One', kind: 'mouse', brand: 'Acme', reading: rd(ex(64), NOW - 3 * min), lastGood: rd(ex(64), NOW - 3 * min) }),
+    dev({ key: 'hid:1111:2222:s:A1', name: 'Shape Mouse One', kind: 'mouse', brand: 'Acme', reading: rd(ex(64), NOW - 3 * min), lastGood: rd(ex(64), NOW - 3 * min), estimate: { state: 'empty', minutes: 302 } }),
     dev({ key: 'bt:{K}', name: 'Studio Keys', kind: 'keyboard', brand: '', connection: 'bluetooth', source: 'bluetooth', status: 'notConnected', lastGood: rd(ex(40), NOW - 26 * 60 * min) }),
-    dev({ key: 'bt:{H}', name: 'Field Phones', kind: 'headset', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(9), NOW - 30_000), lastGood: rd(ex(9), NOW - 30_000) }),
-    dev({ key: 'bt:{E}', name: 'Pocket Buds', kind: 'earbuds', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(88), NOW, 'yes'), lastGood: rd(ex(88), NOW) }),
+    dev({ key: 'bt:{H}', name: 'Field Phones', kind: 'headset', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(9), NOW - 30_000), lastGood: rd(ex(9), NOW - 30_000), estimate: { state: 'empty', minutes: 118 } }),
+    dev({ key: 'bt:{E}', name: 'Pocket Buds', kind: 'earbuds', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(88), NOW, 'yes'), lastGood: rd(ex(88), NOW), estimate: { state: 'full', minutes: 41 } }),
     dev({ key: 'xinput:0:pad', name: 'Xbox controller 1', kind: 'controller', brand: 'Xbox', connection: 'dongle', source: 'xinput', reading: rd({ kind: 'coarse', value: 'medium', bars: 3 }, NOW - 2 * min) }),
-    dev({ key: 'hid:3333:4444:c:{M}', name: 'Travel Mouse', kind: 'mouse', status: 'asleep', lastGood: rd(ex(71), NOW - 95 * min) }),
+    dev({ key: 'hid:3333:4444:c:{M}', name: 'Travel Mouse', kind: 'mouse', status: 'asleep', lastGood: rd(ex(71), NOW - 95 * min), estimate: { state: 'empty', minutes: 600 } }),
     dev({ key: 'hid:5555:6666:p:x', name: 'Quiet Pad', kind: 'controller', status: 'notQueried' }),
   ];
   let settings = { intervalMin: 1, low: 15, names: {}, hidden: [], noQuery: ['hid:5555:6666:p:x'], links: [], background: false, startup: false, notifyLow: true, notifyFull: false, thresholds: {} };
@@ -126,6 +133,15 @@ function fake({ lang, mode }) {
   const btPush = () => { if (btCb) btCb(btSnap()); };
   window.__btPush = (o) => { Object.assign(bt, o); btPush(); };
   window.__push = (devs) => { if (cb) cb({ now: NOW, devices: devs }); };
+  // (W2: a made-up week of one mouse — a slow discharge, a charge, a night away, a discharge below the low mark.)
+  const HOUR = 3_600_000; const cleared = new Set();
+  const hist = []; const P = (t, v, charging = 'no') => hist.push({ t: NOW - t, level: v === null ? null : ex(v), charging });
+  for (let i = 0, v = 96; i <= 120; i++) { if (i % 3 === 0 && v > 22) v -= 2; P((168 - i * 0.5) * HOUR, v); }
+  for (let i = 0; i <= 12; i++) P((107 - i * (10 / 60)) * HOUR, Math.min(97, 22 + i * 6), 'yes');
+  P(104.5 * HOUR, null);
+  for (let i = 0, v = 97; i <= 190; i++) { if (i % 2 === 0 && v > 9) v -= 1; P((96 - i * 0.5) * HOUR, v); }
+  hist.sort((a, b) => a.t - b.t);
+  window.__histCalls = [];
   const base = { platform: 'desktop', available: true, reason: '', os: 'win32', ready: async () => ({}), list: async () => [], onTasks: () => () => {}, onBrowser: () => () => {}, onUpdateProgress: () => () => {}, onPackProgress: () => () => {}, packStatus: async () => ({}), defaultDir: async () => 'C:\\Downloads' };
   if (mode === 'electron') { window.kurokawaTools = base; return; }
   window.kurokawaTools = Object.assign(base, {
@@ -134,6 +150,17 @@ function fake({ lang, mode }) {
     batteryRefresh: function (o) { window.__calls.push(['refresh', o]); return Promise.resolve(true); },
     batterySettings: function (o) { window.__calls.push(['settings', o]); if (o && o.set && 'startup' in o.set && window.__failStartup) return Promise.reject(new Error('access denied')); if (o && o.set) settings = Object.assign({}, settings, o.set); return Promise.resolve(settings); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
+    // (W2 — exactly bridge.js's signatures: batteryHistory(o), batteryHistoryClear(o).)
+    batteryHistory: function (o) {
+      window.__histCalls.push(['history', o]);
+      const days = o.range === 'day' ? 1 : o.range === 'month' ? 30 : 7; const since = NOW - days * 24 * HOUR;
+      const points = cleared.has(o.key) || o.key !== 'hid:1111:2222:s:A1' ? [] : hist.filter((x) => x.t >= since);
+      const pc = points.filter((x) => x.level).map((x) => x.level.value);
+      const stats = { count: pc.length, lowest: pc.length ? Math.min(...pc) : null, highest: pc.length ? Math.max(...pc) : null, first: pc.length ? pc[0] : null, last: pc.length ? pc[pc.length - 1] : null };
+      return Promise.resolve(JSON.parse(JSON.stringify({ key: o.key, on: settings.history !== false, days: settings.historyDays || 30, now: NOW, since, gap: 2 * HOUR, points, stats,
+        estimate: points.length ? { state: 'empty', minutes: 302, perHour: 1.6, samples: 24 } : { state: 'none', why: 'collecting' } })));
+    },
+    batteryHistoryClear: function (o) { window.__histCalls.push(['clear', o]); const had = !cleared.has(o.key); cleared.add(o.key); return Promise.resolve(had); },
     // (Piece 3 — exactly bridge.js's signatures: btList(), btScan(o), btAct(o), btOpenSettings(), onBt(cb).)
     btList: function () { window.__calls.push(['btList']); return Promise.resolve(btSnap()); },
     btScan: function (o) {
@@ -679,7 +706,7 @@ function fake({ lang, mode }) {
     // A picture of our own.
     await p.click('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-more'); await p.click('.sheet [data-act="picture"]'); await p.waitForSelector('.bat-pics button');
     const pics = await p.$$eval('.bat-pics button', (b) => b.map((x) => ({ p: x.dataset.picture, svg: !!x.querySelector('svg'), img: !!x.querySelector('img'), label: x.getAttribute('aria-label') })));
-    check('our own drawn pictures, each named', pics.length === 13 && pics.every((x) => x.svg && !x.img && x.label), pics.slice(0, 3));
+    check('our own drawn pictures, each named', pics.length === 14 && pics.every((x) => x.svg && !x.img && x.label), pics.slice(0, 3));
     const pg = await p.$$eval('.bat-pics button', (b) => { const r = b.map((x) => x.getBoundingClientRect()); let g = 1e9; for (let i = 1; i < r.length; i++) if (Math.abs(r[i].top - r[i - 1].top) < 2) g = Math.min(g, Math.max(r[i].left - r[i - 1].right, r[i - 1].left - r[i].right)); return g; });
     check('the pictures keep a real gap', pg >= 8, pg);
     await p.waitForTimeout(400); await shot(p, 'batW1-picture');
@@ -703,6 +730,99 @@ function fake({ lang, mode }) {
     check('no yellow, amber or orange (W1)', await p.evaluate(() => [...document.querySelectorAll('.battery-view *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
     await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForTimeout(400);
     check('leaving the page unsubscribes (W1)', (await p.evaluate(() => window.__subs)) === 0);
+    await ctx.close();
+  }
+  // ---- W2: the battery history and the time-left estimate; the microphone's picture.
+  {
+    const { ctx, p } = await open('tauri');
+    await p.waitForSelector('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-est');
+    const est = await p.$$eval('.bat-card', (cs) => Object.fromEntries(cs.map((c) => [c.dataset.key, c.querySelector('.bat-est')?.textContent ?? null])));
+    check('a card says its time left, quietly', est['hid:1111:2222:s:A1'] === (AR ? 'يبقى نحوُ 5 ساعات' : 'About 5 hours left'), est);
+    check('… two hours in Arabic\'s dual, genitive after «نحو»', est['bt:{H}'] === (AR ? 'يبقى نحوُ ساعتين' : 'About 2 hours left'), est);
+    check('… «full in» while charging', est['bt:{E}'] === (AR ? 'يكتمل شحنُه بعد نحوِ 40 دقيقةً' : 'Full in about 40 minutes'), est);
+    check('… nothing for an asleep device or one without an estimate', est['hid:3333:4444:c:{M}'] === null && est['xinput:0:pad'] === null, est);
+    const estStyle = await p.$eval('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-est', (e) => ({ size: parseFloat(getComputedStyle(e).fontSize), colour: getComputedStyle(e).color, title: e.title }));
+    check('… small, in the quiet colour, with a word that it is a trend', estStyle.size <= 13.5 && !!estStyle.title, estStyle);
+    await shot(p, 'batW2-cards');
+    if (SHOTS) { await p.emulateMedia({ colorScheme: 'dark' }); await p.waitForFunction(() => document.documentElement.dataset.ui !== 'light'); await shot(p, 'batW2-cards-dark'); await p.emulateMedia({ colorScheme: 'light' }); await p.waitForFunction(() => document.documentElement.dataset.ui === 'light'); }
+    // «History»: on by default, 30 days; kept through batterySettings.
+    const last = async () => (await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set;
+    const hs = await p.$eval('.bat-hs[data-group="history"]', (e) => ({ on: e.querySelector('[data-row="history"] input').checked, role: e.querySelector('[data-row="history"] input').getAttribute('role'), keep: e.querySelector('[data-name="historyDays"]').textContent }));
+    check('«History»: a switch, on by default, kept 30 days', hs.on && hs.role === 'switch' && hs.keep.includes('30'), hs);
+    await p.click('[data-name="historyDays"]'); await p.waitForSelector('.sheet .dest-row');
+    const keeps = await p.$$eval('.sheet .dest-row .name', (e) => e.map((x) => x.textContent));
+    check('… 7, 30 or 90 days', keeps.length === 3 && /7/.test(keeps[0]) && /90/.test(keeps[2]), keeps);
+    await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'settings' && c[1].set && c[1].set.historyDays === 90));
+    check('… 90 days kept as historyDays', (await last()).historyDays === 90);
+    await p.$eval('.bat-hs', (e) => e.scrollIntoView({ block: 'center' })); await shot(p, 'batW2-settings');
+
+    // The history of a device, from its menu.
+    await p.click('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-more'); await p.waitForSelector('.sheet [data-act="history"]');
+    await p.click('.sheet [data-act="history"]'); await p.waitForSelector('.bat-hist-chart svg .ln', { state: 'attached' });
+    const hc = await p.evaluate(() => window.__histCalls);
+    check('asked of the shell for that device and a week', JSON.stringify(hc[0]) === JSON.stringify(['history', { key: 'hid:1111:2222:s:A1', range: 'week' }]), hc);
+    const v = await p.evaluate(() => {
+      const svg = document.querySelector('.bat-hist-chart svg'); const st = (sel) => [...svg.querySelectorAll(sel)].map((e) => getComputedStyle(e).stroke);
+      const root = getComputedStyle(document.documentElement);
+      return { pressed: [...document.querySelectorAll('.bat-hist-range button')].map((b) => b.getAttribute('aria-pressed')), role: svg.getAttribute('role'), tab: svg.getAttribute('tabindex'), label: svg.getAttribute('aria-label'),
+        sum: document.querySelector('.bat-hist-sum').textContent, est: document.querySelector('.bat-hist-est').textContent, acc: st('.ln.acc'), low: st('.ln.low'), chg: st('.ln.chg'), bands: svg.querySelectorAll('.band').length,
+        runs: new Set([...svg.querySelectorAll('.ln')].map((e) => e.dataset.run)).size, primary: root.getPropertyValue('--md-primary').trim(), W: Number(svg.getAttribute('width')),
+        now: Number(svg.querySelector('text.now').getAttribute('x')), yLab: Number(svg.querySelector('text').getAttribute('x')), title: document.querySelector('.sheet .sheet-head h3').textContent };
+    });
+    check('three periods, a week first', JSON.stringify(v.pressed) === '["false","true","false"]', v.pressed);
+    check('the summary: readings, lowest, highest, latest', v.sum.includes(AR ? 'عدد القراءات' : 'readings') && /9/.test(v.sum) && /96/.test(v.sum), v.sum);
+    check('the chart is an image with that sentence, reachable by the keyboard', v.role === 'img' && v.tab === '0' && v.label.includes(v.sum), v.label);
+    check('the estimate with its rate', v.est.includes(AR ? 'يبقى نحوُ 5 ساعات' : 'About 5 hours left') && /1\.6/.test(v.est), v.est);
+    const rgb = (c) => (/rgba?\((\d+), (\d+), (\d+)/.exec(c) || []).slice(1).map(Number);
+    check('the line in the accent', v.acc.length > 10 && v.acc.every((c) => c === v.acc[0]), v.acc.slice(0, 2));
+    check('red only below the low mark', v.low.length > 0 && v.low.every((c) => { const [r, g, b] = rgb(c); return r > g && r > b; }), v.low.slice(0, 2));
+    check('blue while charging, with a band behind', v.chg.length > 0 && v.bands > 0 && v.chg.every((c) => { const [r, g, b] = rgb(c); return b > r && b > g; }), [v.chg[0], v.bands]);
+    check('a gap where the device was away (two runs at least)', v.runs >= 2, v.runs);
+    check(AR ? 'right to left: «now» on the left, the level\'s labels on the right' : '«now» on the right, the level\'s labels on the left', AR ? v.now < v.W / 2 && v.yLab > v.W / 2 : v.now > v.W / 2 && v.yLab < v.W / 2, v);
+    check('the sheet names the device', v.title.includes('Shape Mouse One'), v.title);
+    check('no yellow, amber or orange (W2)', await p.evaluate(() => [...document.querySelectorAll('.sheet *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor, c.stroke, c.fill].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
+    // (The value under the pointer, then with the keys.)
+    const box = await p.$eval('.bat-hist-chart svg', (e) => { const b = e.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; });
+    await p.mouse.move(box.x + box.w * 0.5, box.y + box.h * 0.5); await p.waitForSelector('.bat-hist-tip:not([hidden])');
+    const tip1 = await p.textContent('.bat-hist-tip');
+    check('the pointer shows a reading\'s time and level', /\d/.test(tip1) && tip1.includes(AR ? '٪' : '%'), tip1);
+    await shot(p, 'batW2-history');
+    await p.focus('.bat-hist-chart svg'); await p.keyboard.press('End');
+    const tipEnd = await p.textContent('.bat-hist-tip');
+    check('End: the latest reading', tipEnd.includes(AR ? '9٪' : '9%'), tipEnd);
+    await p.keyboard.press(AR ? 'ArrowRight' : 'ArrowLeft'); await p.waitForFunction((x) => document.querySelector('.bat-hist-tip').textContent !== x, tipEnd);
+    check('the arrow toward the past moves back a reading', (await p.textContent('.bat-hist-tip')) !== tipEnd);
+    if (SHOTS) { await p.emulateMedia({ colorScheme: 'dark' }); await p.waitForFunction(() => document.documentElement.dataset.ui !== 'light'); await shot(p, 'batW2-history-dark'); await p.emulateMedia({ colorScheme: 'light' }); await p.waitForFunction(() => document.documentElement.dataset.ui === 'light'); }
+    // (Another period.)
+    await p.click('.bat-hist-range [data-range="day"]'); await p.waitForFunction(() => window.__histCalls.some((c) => c[1] && c[1].range === 'day'));
+    await p.waitForFunction(() => document.querySelector('.bat-hist-range [data-range="day"]').getAttribute('aria-pressed') === 'true' && document.querySelectorAll('.bat-hist-chart svg .ln').length > 0);
+    check('the last 24 hours asked for', true);
+    await p.click('.bat-hist-range [data-range="month"]'); await p.waitForFunction(() => window.__histCalls.some((c) => c[1] && c[1].range === 'month'));
+    await p.waitForFunction(() => document.querySelectorAll('.bat-hist-chart svg .ln').length > 0);
+    await shot(p, 'batW2-history-month');
+    check('no sideways overflow in the sheet', await p.evaluate(() => { const s = document.querySelector('.sheet'); return s.scrollWidth <= s.clientWidth + 1; }));
+    // (Clearing: asked first.)
+    await p.click('.sheet [data-act="historyClear"]'); await p.waitForSelector('.sheet [data-act="historyClearYes"]');
+    check('clearing asks first, naming the device', (await p.textContent('.sheet .bat-hist-ask')).includes('Shape Mouse One'));
+    await shot(p, 'batW2-clear');
+    await p.click('.sheet [data-act="historyCancel"]'); await p.waitForFunction(() => !document.querySelector('.sheet [data-act="historyClearYes"]'));
+    check('Cancel clears nothing', !(await p.evaluate(() => window.__histCalls.some((c) => c[0] === 'clear'))));
+    await p.click('.sheet [data-act="historyClear"]'); await p.click('.sheet [data-act="historyClearYes"]');
+    await p.waitForFunction(() => window.__histCalls.some((c) => c[0] === 'clear'));
+    check('… cleared through the bridge for that device', JSON.stringify((await p.evaluate(() => window.__histCalls.find((c) => c[0] === 'clear')))) === JSON.stringify(['clear', { key: 'hid:1111:2222:s:A1' }]));
+    await p.waitForSelector('.bat-hist-empty');
+    check('… then nothing to show, said', (await p.textContent('.bat-hist-sum')) === (AR ? 'لا قراءاتِ في هذه المدة بعدُ؛ وإنما تُسجَّل ما دامت أدوات كروكاوا تفحص هذا الجهاز.' : 'No readings in this period yet. They are recorded while Kurokawa Tools checks this device.'));
+    await p.keyboard.press('Escape'); await p.waitForFunction(() => !document.querySelector('.sheet'));
+    // (History off: kept through the settings; the sheet then says recording is off.)
+    await p.click('.bat-hs [data-row="history"]'); await p.waitForFunction(() => window.__calls.some((c) => c[0] === 'settings' && c[1].set && c[1].set.history === false));
+    check('turning the history off is kept', (await last()).history === false);
+    // (The microphone's picture, among ours.)
+    await p.click('.bat-card[data-key="hid:1111:2222:s:A1"] .bat-more'); await p.click('.sheet [data-act="picture"]'); await p.waitForSelector('.bat-pics [data-picture="microphone"] svg');
+    check('a microphone drawing among the pictures', (await p.getAttribute('.bat-pics [data-picture="microphone"]', 'aria-label')) === (AR ? 'لاقط صوت' : 'Microphone'));
+    await p.keyboard.press('Escape');
+    check('no sideways overflow (W2)', (await overflow(p)) <= 1);
+    await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForFunction(() => window.__subs === 0);
+    check('leaving the page unsubscribes (W2)', true);
     await ctx.close();
   }
   {

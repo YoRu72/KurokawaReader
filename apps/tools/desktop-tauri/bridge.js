@@ -397,6 +397,13 @@
     batteryRefresh: function (o) { return call('kt_battery_refresh', { o: obj(o) }); },
     batterySettings: function (o) { return call('kt_battery_settings', { o: obj(o) }); },
     onBattery: function (cb) { return subscribe('kt:battery', cb); },
+    /* 0.21 W2 — the battery history and the time-left estimate (battery.rs over kt-battery history.rs):
+       batteryHistory({ key, range: 'day' | 'week' | 'month' }) → { key, on, days, now, since, gap, points: [{ t, level |
+       null (away), charging }], stats, estimate: { state: 'empty' | 'full' | 'none', minutes?, why? } };
+       batteryHistoryClear({ key }) → whether there was any. The settings history and historyDays go through
+       batterySettings; a device in batteryList / onBattery carries estimate: { state, minutes } | null. */
+    batteryHistory: function (o) { return call('kt_battery_history', { o: obj(o) }); },
+    batteryHistoryClear: function (o) { return call('kt_battery_history_clear', { o: obj(o) }); },
     /* 0.21, device battery piece 3 — connecting Bluetooth devices (battery.rs over kt-battery connect.rs): btList() →
        { available, reason?, radio: 'on' | 'off' | 'missing', stale, now, scanUntil, devices, found, busy } (a device:
        { addr, name, kind, picture, brand, le, paired, connected, battery, can }); btScan({ stop?, seconds? }) → the same;
