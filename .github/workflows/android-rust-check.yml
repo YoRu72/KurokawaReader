@@ -185,7 +185,7 @@ jobs:
         working-directory: apps/tools
         run: |
           set -o pipefail
-          cd android && sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties && chmod +x gradlew && (./gradlew --version >/dev/null 2>&1 || ./gradlew --version >/dev/null 2>&1 || true) && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
+          cd android && sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties && sed -i '/^org.gradle.jvmargs=/d' gradle.properties && echo 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' >> gradle.properties && chmod +x gradlew && (./gradlew --version >/dev/null 2>&1 || ./gradlew --version >/dev/null 2>&1 || true) && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
           ls -la app/build/outputs/apk/release/
       - name: Each APK carries its library; sizes
         working-directory: apps/tools
