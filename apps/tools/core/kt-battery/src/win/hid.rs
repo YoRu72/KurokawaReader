@@ -77,7 +77,7 @@ fn open(path: &str, mode: OpenMode) -> Option<Handle> {
 
 fn open_flags(path: &str, mode: OpenMode, flags: u32) -> Option<Handle> {
     let access = match mode {
-        OpenMode::QueryOnly => 0,
+        OpenMode::QueryOnly | OpenMode::Feature => 0,
         OpenMode::Read => GENERIC_READ,
         OpenMode::ReadWrite => GENERIC_READ | GENERIC_WRITE,
     };
@@ -230,6 +230,21 @@ impl WinHid {
         let h = open(&c.path, mode).ok_or(TErr::Gone)?;
         Ok(WinHid { ident: c.ident.clone(), mode, h, output_len: c.output_len, feature_len: c.feature_len, input_len: c.input_len, overlapped: false })
     }
+    /// Piece 5: a mouse's or keyboard's collection asked through feature reports only — no read or write access
+    /// (Windows holds a mouse's and a keyboard's own collections; the control pipe stays open to everyone), and a
+    /// feature report allow.rs lists may be set on it when `may_send`.
+    pub fn open_feature(c: &HidColl, may_send: bool) -> Result<WinHid, TErr> {
+        let mode = if may_send && crate::allow::may_write(&c.ident) { OpenMode::Feature } else { OpenMode::QueryOnly };
+        let h = open(&c.path, OpenMode::QueryOnly).ok_or(TErr::Gone)?;
+        Ok(WinHid { ident: c.ident.clone(), mode, h, output_len: c.output_len, feature_len: c.feature_len, input_len: c.input_len, overlapped: false })
+    }
+    /// The length a feature report is sent with, when a device wants its own report's length rather than the
+    /// collection's longest (Machenike's 21-byte report 51 on a collection whose longest feature report is 1001).
+    pub fn set_feature_len(&mut self, n: usize) {
+        if n > 0 {
+            self.feature_len = n;
+        }
+    }
     /// Opened to listen (read access; read/write only when allow.rs names the collection and `may_send`).
     pub fn open_listen(c: &HidColl, may_send: bool) -> Result<WinHid, TErr> {
         let mode = match open_mode_for(&c.ident, true) {
@@ -341,9 +356,9 @@ impl HidTransport for WinHid {
     }
     fn send_allowed(&mut self, w: &AllowedWrite, deadline: Instant) -> Result<(), TErr> {
         left(deadline)?;
-        if self.overlapped {
+        if self.overlapped && w.kind() == ReportKind::Output {
             // (As the original's HidDev::Write: the interrupt pipe, padded to the output report's length.)
-            if w.kind() != ReportKind::Output || self.output_len == 0 || w.bytes().len() > self.output_len {
+            if self.output_len == 0 || w.bytes().len() > self.output_len {
                 return Err(TErr::Refused);
             }
             let mut buf = vec![0u8; self.output_len];

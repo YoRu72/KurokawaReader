@@ -14,6 +14,10 @@
 // missing (only in a mode Tools does not switch on, its family's reading off, no controller linked to a receiver); its
 // menu says discreetly which reader read it and how far that reader is proven, and turns a family's status request on
 // or off; «Controllers» holds one switch per family whose reading sends a request (off by default: ported, untested).
+// Piece 5, mice and keyboards: «Mice and keyboards» lists every family (collapsed; a field finds a brand), each with
+// its switch — a family whose reading sends a status request off until turned on, one read by listening alone on until
+// turned off; a card's menu turns its family's request on or off as a controller's does; «no device linked to this
+// receiver» for a receiver alone.
 // The Electron build and the phone have no reader: a calm word instead, never a dead button. Loaded on first use.
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from '../ui/dom';
 import { btDesk, btPanel, picSvg } from './btconnect';
@@ -21,7 +25,7 @@ import { t, localDigits } from '../i18n';
 import { back } from '../router';
 
 type Lvl = { kind: 'exact'; value: number } | { kind: 'coarse'; value: 'empty' | 'low' | 'medium' | 'high' | 'full'; bars: number } | { kind: 'steps'; value: number; max: number } | { kind: 'unknown' };
-/** note: why a level is missing — '' | 'needsQuery' | 'queryOff' | 'noPad' (piece 4). */
+/** note: why a level is missing — '' | 'needsQuery' | 'queryOff' | 'noPad' (piece 4) | 'unlinked' (piece 5). */
 type Rd = { level: Lvl; charging: 'yes' | 'no' | 'unknown'; asleep: boolean; takenAt: number; note?: string };
 export type BatDevice = { key: string; name: string; kind: string; brand: string; connection: string; source: string; vid: number; pid: number; merged: string[];
   status: 'ok' | 'waiting' | 'asleep' | 'notConnected' | 'noAnswer' | 'notQueried'; reading: Rd | null; lastGood: Rd | null; checkedAt: number;
@@ -29,16 +33,20 @@ export type BatDevice = { key: string; name: string; kind: string; brand: string
   picture?: string; driver?: string; family?: string; proven?: 'tested' | 'untested' | ''; way?: 'passive' | 'query' | '' };
 /** One controller family: its brand as text, how far proven, whether its reading sends a request, allowed now. */
 type PadRow = { family: string; brand: string; proven: 'tested' | 'untested'; ask: boolean; listen: boolean; models: string[]; on: boolean };
+/** Piece 5: one mice / keyboards family — its switch is on when its request is allowed (ask) or its listening kept. */
+type MkRow = { family: string; brand: string; proven: 'tested' | 'untested'; ask: boolean; listen: boolean; on: boolean };
 export type BatSettings = { intervalMin: number; low: number; names: Record<string, string>; hidden: string[]; noQuery: string[]; links: [string, string][];
   /** Piece 2: closing the window leaves the app in the tray; the start with the system, hidden (needs the background). */
   background: boolean; startup: boolean;
   /** Low-battery notices (on by default) and the «fully charged» one (off); a device's own mark: 0 = no notice. */
   notifyLow: boolean; notifyFull: boolean; thresholds: Record<string, number>;
   /** Piece 4: the controller families whose status request may be sent. */
-  padQueries?: string[] };
+  padQueries?: string[];
+  /** Piece 5: mice / keyboards families whose request may be sent; those read by listening that are turned off. */
+  mkAsk?: string[]; mkMute?: string[] };
 /** What the shell can do here: a start with the system ('notYet' on a Mac), a tray icon. */
 type BatSystem = { autostart: 'yes' | 'notYet'; tray: boolean };
-type BatList = { available: boolean; reason?: string; now: number; devices: BatDevice[]; settings: BatSettings; system?: BatSystem; pads?: PadRow[] };
+type BatList = { available: boolean; reason?: string; now: number; devices: BatDevice[]; settings: BatSettings; system?: BatSystem; pads?: PadRow[]; mice?: MkRow[] };
 /** The marks offered (kt-battery notice.rs CHOICES). */
 const MARKS = [10, 15, 20, 30];
 /** The bridge's methods (desktop-tauri/bridge.js — the same names and arguments). */
@@ -84,11 +92,16 @@ const CSS = `
 .battery-view .bat-pads { gap: 4px; }
 .battery-view .bat-pads h3 { margin-bottom: 2px; }
 .battery-view .bat-pads > .hint { margin: 0 0 6px; }
+.battery-view .bat-word { white-space: nowrap; }
+.battery-view .bat-mice .bat-mk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
+.battery-view .bat-mice .bat-mk-find { flex: 1 1 200px; min-width: 0; height: 44px; padding: 0 16px; border-radius: 22px; border: 1px solid var(--md-outline-variant); background: var(--md-surface-container); color: var(--md-on-surface); font: inherit; }
+.battery-view .bat-mice .bat-mk-list { display: flex; flex-direction: column; margin-top: 8px; }
+.battery-view .bat-mice .bat-mk-none { margin: 10px 0 0; color: var(--md-on-surface-variant); }
 .battery-view .bat-pads .bat-listen { margin: 6px 0 0; font-size: 12.5px; color: var(--md-on-surface-variant); line-height: 1.5; }
 .bat-card .bat-who { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .bat-card .bat-name { font-weight: 650; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--md-on-surface); }
 .bat-card .bat-sub { font-size: 12.5px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bat-card .bat-level { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; min-height: 36px; }
+.bat-card .bat-level { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 36px; }
 .bat-card .bat-pct { font-size: 28px; font-weight: 700; letter-spacing: -.01em; color: var(--md-on-surface); font-variant-numeric: tabular-nums; min-width: 3.4ch; }
 .bat-card .bat-meter { flex: 1; height: 10px; border-radius: 5px; background: var(--md-surface-container-highest); overflow: hidden; }
 .bat-card .bat-meter > i { display: block; height: 100%; border-radius: inherit; background: var(--md-primary); }
@@ -181,10 +194,11 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
   const saveSettings = async (set: Partial<BatSettings>, errKey?: 'batStartFailed') => { try { const s = await d.batterySettings({ set }); if (list) list.settings = s; draw(); } catch (e) { const m = String((e as Error)?.message ?? e); toast(errKey ? t(errKey, { error: m }) : m, 'error'); draw(); } };
   async function refreshAll(): Promise<void> { await d!.batteryRefresh({}).catch(() => false); }
 
-  const padBrand = (x: BatDevice): string => list?.pads?.find((p) => p.family === x.family)?.brand || x.brand;
+  const padBrand = (x: BatDevice): string => list?.pads?.find((p) => p.family === x.family)?.brand || list?.mice?.find((p) => p.family === x.family)?.brand || x.brand;
+  const isMk = (family?: string): boolean => !!family && family.startsWith('mk-');
   const card = (x: BatDevice): HTMLElement => {
     const S = list!.settings; const r = x.reading; const lvl = r?.level;
-    const dim = (x.status !== 'ok' && x.status !== 'waiting') || r?.note === 'noPad';
+    const dim = (x.status !== 'ok' && x.status !== 'waiting') || r?.note === 'noPad' || r?.note === 'unlinked';
     const mk = markOf(S, x.key); const low = x.status === 'ok' && isLow(lvl, mk || S.low);
     const via = t(`batVia_${x.connection}` as 'batVia_usb');
     const sub = [x.brand, t(`batKind_${x.kind}` as 'batKind_mouse')].filter(Boolean).join(' · ');
@@ -196,7 +210,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
       const n = Math.min(lvl.max, 10); const on = Math.round(lvl.value * n / Math.max(1, lvl.max));
       level.append(h('div', { class: 'bat-bars steps', title: t('batStepsHint'), 'aria-label': levelText(lvl) }, ...Array.from({ length: n }, (_, i) => h('i', { class: i < on ? 'on' : '' }))), h('span', { class: 'bat-word', dir: 'auto' }, levelText(lvl)));
     }
-    else if (r && r.note && x.status === 'ok') level.append(h('span', { class: 'bat-note', 'data-note': r.note }, t(`batNote_${r.note}` as 'batNote_noPad', { family: padBrand(x) })));
+    else if (r && r.note && x.status === 'ok') level.append(h('span', { class: 'bat-note', 'data-note': r.note }, t(`batNote_${r.note === 'queryOff' && isMk(x.family) ? 'queryOffMk' : r.note}` as 'batNote_noPad', { family: padBrand(x) })));
     else if (x.lastGood && dim) level.append(h('span', { class: 'bat-unknown' }, t('batLastKnown', { age: ageText(x.lastGood.takenAt, list!.now), level: levelText(x.lastGood.level) })));
     else level.append(h('span', { class: 'bat-unknown' }, x.status === 'waiting' ? t('batSt_waiting') : t('batLevelUnknown')));
     const foot = h('div', { class: 'bat-foot' });
@@ -225,13 +239,20 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     // (Which reader read it, and how far that reader is proven — said quietly at the end.)
     if (x.family && x.proven) sh.body.append(h('p', { class: 'bat-reader', dir: 'auto', 'data-proven': x.proven }, t('batReader', { family: padBrand(x), status: t(`batProven_${x.proven}` as 'batProven_untested') })));
   };
-  const padOn = (family: string): boolean => (list?.settings.padQueries ?? []).includes(family);
-  const setPad = (family: string, on: boolean) => { const cur = list?.settings.padQueries ?? []; void saveSettings({ padQueries: on ? [...cur.filter((f) => f !== family), family] : cur.filter((f) => f !== family) }).then(() => void d.batteryRefresh({}).catch(() => false)); };
+  const padOn = (family: string): boolean => isMk(family) ? (list?.settings.mkAsk ?? []).includes(family) : (list?.settings.padQueries ?? []).includes(family);
+  const setPad = (family: string, on: boolean) => { if (isMk(family)) { setMk(family, true, on); return; } const cur = list?.settings.padQueries ?? []; void saveSettings({ padQueries: on ? [...cur.filter((f) => f !== family), family] : cur.filter((f) => f !== family) }).then(() => void d.batteryRefresh({}).catch(() => false)); };
   const padToggle = (family: string, brand: string, close: () => void): HTMLElement => {
     const on = padOn(family);
     return h('button', { type: 'button', class: 'dest-row', 'data-act': 'padQuery', 'data-family': family, onclick: () => { close(); setPad(family, !on); } }, icon(on ? 'stop' : 'chip'), h('span', { class: 'name' }, on ? t('batPadsStop', { family: brand }) : t('batPadsTry', { family: brand })));
   };
 
+  // (Piece 5: a family that sends — its request allowed or not (mkAsk); one read by listening alone — kept or turned
+  // off (mkMute). Followed by a refresh, as the controllers' switches.)
+  const setMk = (family: string, ask: boolean, on: boolean) => {
+    const S = list?.settings; const key = ask ? 'mkAsk' : 'mkMute'; const cur = (ask ? S?.mkAsk : S?.mkMute) ?? [];
+    const add = ask ? on : !on; const next = add ? [...cur.filter((f) => f !== family), family] : cur.filter((f) => f !== family);
+    void saveSettings({ [key]: next } as Partial<BatSettings>).then(() => void d.batteryRefresh({}).catch(() => false));
+  };
   const pct = (n: number) => t('batPct', { n: localDigits(n) });
   // (Right to left: a choice that is only a number opens with a right-to-left mark, so it sits beside its radio as the
   // words do; a device's name kept apart from the words around it.)
@@ -287,6 +308,30 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
       listen.length ? h('p', { class: 'bat-listen', dir: 'auto' }, t('batPadsListen', { list: listen.map((p) => p.brand).join(t('batListSep')) })) : null);
   };
 
+  // Piece 5: «Mice and keyboards» — every family with its switch, collapsed until asked for; a field finds a brand
+  // (the rows hidden in place, so the field keeps its focus while typing).
+  let mkOpen = false; let mkFind = '';
+  const miceCard = (): HTMLElement | null => {
+    const rows = (list!.mice ?? []).slice().sort((a, b) => a.brand.localeCompare(b.brand)); if (!rows.length) return null;
+    const toggle = h('button', { type: 'button', class: 'btn tonal small bat-mk-toggle', 'aria-expanded': String(mkOpen), onclick: () => { mkOpen = !mkOpen; draw(); } }, icon(mkOpen ? 'chevronUp' : 'chevronDown'), mkOpen ? t('batMiceHide') : t('batMiceShow', { n: localDigits(rows.length) }));
+    const head = h('div', { class: 'bat-mk-head' }, toggle);
+    const card = h('section', { class: 'card bat-settings bat-mice', 'data-group': 'mice' }, h('h3', null, t('batMiceTitle')), h('p', { class: 'hint' }, t('batMiceHint')), head);
+    if (!mkOpen) return card;
+    const none = h('p', { class: 'bat-mk-none' }, t('batMiceNone')); none.hidden = true;
+    const els = rows.map((p) => {
+      const way = p.ask && p.listen ? t('batMiceBoth') : p.ask ? t('batMiceAsk') : t('batMiceListen');
+      const hint = [way, p.proven === 'tested' ? t('batProven_tested') : t('batProven_untested')].join(' — ');
+      const row = sw(p.family, p.brand, hint, p.ask ? (list!.settings.mkAsk ?? []).includes(p.family) : !(list!.settings.mkMute ?? []).includes(p.family), false, (v) => setMk(p.family, p.ask, v));
+      // (The brand is a name, set in the page's direction: a Latin brand in an Arabic list stays at the row's start.)
+      row.querySelector('.bat-sw-title')?.removeAttribute('dir');
+      row.dataset.family = p.family; return { p, row };
+    });
+    const filter = () => { const q = mkFind.trim().toLowerCase(); let n = 0; for (const e of els) { e.row.hidden = !!q && !e.p.brand.toLowerCase().includes(q); if (!e.row.hidden) n++; } none.hidden = n > 0; };
+    const find = h('input', { type: 'search', class: 'bat-mk-find', dir: 'auto', value: mkFind, placeholder: t('batMiceSearch'), 'aria-label': t('batMiceSearch'), oninput: () => { mkFind = find.value; filter(); } }) as HTMLInputElement;
+    head.append(find); card.append(h('div', { class: 'bat-mk-list' }, ...els.map((e) => e.row)), none); filter();
+    return card;
+  };
+
   // Piece 2: «Background» — switches, each with its line of explanation; what cannot be had here said, not hidden.
   const backgroundCard = (): HTMLElement => {
     const S = list!.settings; const sys: BatSystem = list!.system ?? { autostart: 'yes', tray: true };
@@ -318,7 +363,7 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     }
     const empty = !list.devices.length ? h('section', { class: 'card bat-empty', 'data-state': 'empty' }, h('div', { class: 'bat-ic' }, kindIcon('controller')), h('h3', null, t('batEmptyTitle')), h('p', null, t('batEmptyBody')),
       h('ul', null, h('li', null, t('batEmpty1')), h('li', null, t('batEmpty2')), h('li', null, t('batEmpty3'))), h('p', null, t('batEmptyLater'))) : null;
-    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, bt?.el ?? null, padsCard(), settingsCard(), backgroundCard()].filter(Boolean) as HTMLElement[]);
+    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, bt?.el ?? null, padsCard(), miceCard(), settingsCard(), backgroundCard()].filter(Boolean) as HTMLElement[]);
   }
 
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });

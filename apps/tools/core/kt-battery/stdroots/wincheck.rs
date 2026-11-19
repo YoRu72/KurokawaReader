@@ -17,6 +17,8 @@ pub mod hidvalue;
 pub mod identity;
 #[path = "../src/kind.rs"]
 pub mod kind;
+#[path = "../src/mice/mod.rs"]
+pub mod mice;
 #[path = "../src/model.rs"]
 pub mod model;
 #[path = "../src/notice.rs"]

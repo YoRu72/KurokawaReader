@@ -11,12 +11,16 @@ use crate::allow::{self, AllowedWrite, HidIdent};
 use std::time::Instant;
 
 /// How a collection is opened. QueryOnly (no read or write access) is enough for feature and input reports through
-/// the control pipe; Read for listening to input reports; ReadWrite only for a device allow.rs names.
+/// the control pipe; Read for listening to input reports; ReadWrite only for a device allow.rs names. Feature (piece
+/// 5): no read or write access either — a mouse's or keyboard's own collection is held by Windows, which lets other
+/// handles only through the control pipe — but a feature report allow.rs lists may be set on it (a status request
+/// sent as a feature report, as Razer's, Glorious', LAMZU's and others' are); nothing else may be sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenMode {
     QueryOnly,
     Read,
     ReadWrite,
+    Feature,
 }
 
 /// The least a device needs: ReadWrite only when the allow-list has an entry for it.
@@ -62,9 +66,15 @@ pub trait HidTransport {
     fn flush(&mut self) {}
     /// Sends what `w` carries, nothing else — only reached through `send`.
     fn send_allowed(&mut self, w: &AllowedWrite, deadline: Instant) -> Result<(), TErr>;
-    /// The one way to send: refused unless `w` was made for this very collection and it is open for writing.
+    /// The one way to send: refused unless `w` was made for this very collection and it is open for writing (or, on
+    /// a Feature handle, `w` is a feature report).
     fn send(&mut self, w: &AllowedWrite, deadline: Instant) -> Result<(), TErr> {
-        if w.ident() != self.ident() || self.mode() != OpenMode::ReadWrite {
+        let open = match self.mode() {
+            OpenMode::ReadWrite => true,
+            OpenMode::Feature => w.kind() == allow::ReportKind::Feature,
+            OpenMode::QueryOnly | OpenMode::Read => false,
+        };
+        if w.ident() != self.ident() || !open {
             return Err(TErr::Refused);
         }
         if Instant::now() >= deadline {
@@ -112,13 +122,21 @@ pub(crate) mod fake {
         pub sent: Vec<Vec<u8>>,
         pub stream: VecDeque<Vec<u8>>,
         pub replies: VecDeque<Vec<Vec<u8>>>,
+        /// What a feature report set makes the device hold (the n-th set report answers with the n-th entry, kept as
+        /// the feature report of its first byte's id; an empty entry: nothing changes).
+        pub feature_replies: VecDeque<Vec<u8>>,
+        /// The kinds of the reports sent, in order (sent[i] went as kinds[i]).
+        pub kinds: Vec<crate::allow::ReportKind>,
         pub flushes: usize,
         pub reads: usize,
+        /// A sibling collection's fake: its queued reports stand for what the device sends after the request made on
+        /// the other collection, so a flush counts but keeps them.
+        pub keep_on_flush: bool,
     }
     impl FakeHid {
         pub fn new(id: HidIdent) -> FakeHid {
             let mode = open_mode_for(&id, false);
-            FakeHid { id, mode, features: HashMap::new(), inputs: HashMap::new(), sent: Vec::new(), stream: VecDeque::new(), replies: VecDeque::new(), flushes: 0, reads: 0 }
+            FakeHid { id, mode, features: HashMap::new(), inputs: HashMap::new(), sent: Vec::new(), stream: VecDeque::new(), replies: VecDeque::new(), feature_replies: VecDeque::new(), kinds: Vec::new(), flushes: 0, reads: 0, keep_on_flush: false }
         }
     }
     impl HidTransport for FakeHid {
@@ -148,11 +166,21 @@ pub(crate) mod fake {
         }
         fn flush(&mut self) {
             self.flushes += 1;
-            self.stream.clear();
+            if !self.keep_on_flush {
+                self.stream.clear();
+            }
         }
         fn send_allowed(&mut self, w: &AllowedWrite, _deadline: Instant) -> Result<(), TErr> {
             self.sent.push(w.bytes().to_vec());
-            if let Some(r) = self.replies.pop_front() {
+            self.kinds.push(w.kind());
+            if w.kind() == crate::allow::ReportKind::Feature && !self.feature_replies.is_empty() {
+                if let Some(r) = self.feature_replies.pop_front() {
+                    if let Some(&id) = r.first() {
+                        self.features.insert(id, r);
+                    }
+                }
+            } else if let Some(r) = self.replies.pop_front() {
+                // (An output request's reply — or a feature request's that comes back as input reports.)
                 self.stream.extend(r);
             }
             Ok(())

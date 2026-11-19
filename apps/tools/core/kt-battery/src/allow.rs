@@ -95,6 +95,226 @@ pub static ALLOWED: &[AllowEntry] = &[
     AllowEntry { device: on(0x20BC, 0x5128, 0x00FF, Some(3)), kind: ReportKind::Output, bytes: &[0x02, 0xAD], why: BT },
 ];
 
+// ---- Piece 5: mice and keyboards ----
+// Three more forms, each as tight as the exact entries above:
+// - SetEntry: exact bytes (each listed in full) for a list of products of one vendor (Razer's 250 mice and keyboards
+//   take the same ten requests): never a vendor alone — every product id is listed.
+// - Template: a request with one or more variable bytes, each restricted to a listed value or a small closed range
+//   (Corsair's Bragi target and property, Delux M800's sequence number); every other byte fixed.
+// - HID++ (Logitech): checked by `permit_hidpp` against a Session that has seen the device's own answer to the root
+//   feature's getFeature — a battery or name function goes only to the feature index the device itself named for that
+//   feature, never to an index guessed or carried over (the device index, the feature index and the software id are
+//   the variable bytes; each is bounded; see `hidpp`).
+// Every one of them only asks: battery, charging, link state, device information or a feature index. Nothing here sets
+// DPI, polling rate, lighting, a profile, a sleep timer, pairing, firmware or bootloader mode, wakes a device or
+// switches its mode, or stores anything (the requests the original sent that do are not here at all: mice/*.rs say
+// which, and why).
+
+/// Products of one vendor a SetEntry or Template is for (and, where given, the collection's page, usage, interface) —
+/// or, with `driver`, exactly the collections mice/*.rs's tables give that reader as the one its requests go to
+/// (Role::Main: vendor, product, page, usage and interface as each table row has them; never a vendor alone — the
+/// tables list every product by id, mice/mod.rs's tests check it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Products {
+    pub vid: u16,
+    pub pids: &'static [u16],
+    pub usage_page: Option<u16>,
+    pub usage: Option<u16>,
+    pub interface: Option<i32>,
+    pub driver: Option<&'static str>,
+}
+
+impl Products {
+    pub const fn of(vid: u16, pids: &'static [u16]) -> Products {
+        Products { vid, pids, usage_page: None, usage: None, interface: None, driver: None }
+    }
+    /// The request collections of one mice/keyboards reader (its table's Role::Main rows).
+    pub const fn driver(d: &'static str) -> Products {
+        Products { vid: 0, pids: &[], usage_page: None, usage: None, interface: None, driver: Some(d) }
+    }
+    pub const fn page(mut self, p: u16) -> Products {
+        self.usage_page = Some(p);
+        self
+    }
+    pub const fn usage(mut self, u: u16) -> Products {
+        self.usage = Some(u);
+        self
+    }
+    pub const fn iface(mut self, i: i32) -> Products {
+        self.interface = Some(i);
+        self
+    }
+    pub fn matches(&self, id: &HidIdent) -> bool {
+        if let Some(d) = self.driver {
+            return crate::mice::claims(d, id);
+        }
+        self.vid == id.vid
+            && self.pids.contains(&id.pid)
+            && self.usage_page.map_or(true, |p| p == id.usage_page)
+            && self.usage.map_or(true, |u| u == id.usage)
+            && self.interface.map_or(true, |i| i == id.interface)
+    }
+}
+
+/// Exact requests for a list of products.
+pub struct SetEntry {
+    pub devices: Products,
+    pub kind: ReportKind,
+    pub bytes: &'static [&'static [u8]],
+    pub why: &'static str,
+}
+
+/// One byte of a template: this value, or one of these values, or in this closed range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum B {
+    Is(u8),
+    OneOf(&'static [u8]),
+    In(u8, u8),
+}
+
+impl B {
+    fn takes(self, v: u8) -> bool {
+        match self {
+            B::Is(x) => v == x,
+            B::OneOf(xs) => xs.contains(&v),
+            B::In(lo, hi) => (lo..=hi).contains(&v),
+        }
+    }
+}
+
+/// A request with bounded variable bytes: exactly `pattern.len()` bytes, each one taken by its B.
+pub struct Template {
+    pub devices: Products,
+    pub kind: ReportKind,
+    pub pattern: &'static [B],
+    pub why: &'static str,
+}
+
+impl Template {
+    pub fn takes(&self, bytes: &[u8]) -> bool {
+        bytes.len() == self.pattern.len() && self.pattern.iter().zip(bytes).all(|(b, &v)| b.takes(v))
+    }
+}
+
+/// The mice' and keyboards' exact requests (frames.rs-style data below, built at compile time).
+pub static ALLOWED_SETS: &[SetEntry] = crate::mice::allowed::SETS;
+/// The mice' and keyboards' bounded templates.
+pub static TEMPLATES: &[Template] = crate::mice::allowed::TEMPLATES;
+
+/// Logitech HID++ (1.0 and 2.0), the protocol's public description (Logitech's HID++ 2.0 drafts; Solaar): a short
+/// report (id 10, 7 bytes) or a long one (id 11, 20 bytes): [id][device index][feature index][function << 4 | sw id]
+/// [parameters]. Allowed, with the software id 0D always:
+/// - root (feature index 00) function 0 getFeature, parameters = one of FEATURES' ids, nothing after;
+/// - root function 1 getProtocolVersion (the ping), parameters 00 00 5A;
+/// - HID++ 1.0 GET_REGISTER (sub id 81) of register 0D (battery %) or 07 (battery level), parameters 00;
+/// - a feature's own get function (FEATURES), to the index the device named for that feature on this handle's Session;
+///   getDeviceName's one parameter is the character index, 0–63.
+/// Device index: 1–6 (a receiver's slots) or FF (the device itself). Every other byte zero.
+pub mod hidpp {
+    /// The software id every request carries (replies to G HUB's or Options+' requests carry theirs).
+    pub const SW: u8 = 0x0D;
+    /// (feature id, the functions that only read it).
+    pub const FEATURES: &[(u16, &[u8])] = &[
+        (0x1004, &[0x01]),             // UNIFIED_BATTERY get_status
+        (0x1000, &[0x00]),             // BATTERY_STATUS GetBatteryLevelStatus
+        (0x1001, &[0x00]),             // BATTERY_VOLTAGE GetBatteryInfo
+        (0x0005, &[0x00, 0x01, 0x02]), // DEVICE_NAME getCount, getDeviceName, getDeviceType
+        (0x0003, &[0x00]),             // DEVICE_INFORMATION getDeviceInfo (the unit id)
+    ];
+    pub const REGISTERS: &[u8] = &[0x0D, 0x07];
+    pub fn device_index_ok(i: u8) -> bool {
+        (1..=6).contains(&i) || i == 0xFF
+    }
+    /// A feature index a device may name (00 is the root; FF and 8F mark error replies).
+    pub fn feature_index_ok(i: u8) -> bool {
+        (0x01..=0x7F).contains(&i)
+    }
+}
+
+/// What one HID++ handle has learned from its device: (device index, feature id) → the feature index the device named.
+/// Only `learn` adds to it, and only from the reply to a root getFeature this module permitted.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HidppSession {
+    learned: Vec<(u8, u16, u8)>,
+}
+
+impl HidppSession {
+    pub fn new() -> HidppSession {
+        HidppSession::default()
+    }
+    /// The reply `reply` (report id first) to `req`: when `req` was a root getFeature and the reply echoes it, the index
+    /// it names (None when 00 — not supported — or out of bounds).
+    pub fn learn(&mut self, req: &AllowedWrite, reply: &[u8]) -> Option<u8> {
+        let q = req.bytes();
+        if q.len() < 6 || q[2] != 0x00 || q[3] != hidpp::SW || reply.len() < 5 {
+            return None;
+        }
+        if !(reply[0] == 0x10 || reply[0] == 0x11) || reply[1] != q[1] || reply[2] != 0x00 || reply[3] != hidpp::SW {
+            return None;
+        }
+        let feature = u16::from(q[4]) << 8 | u16::from(q[5]);
+        let idx = reply[4];
+        if !hidpp::FEATURES.iter().any(|f| f.0 == feature) || !hidpp::feature_index_ok(idx) {
+            return None;
+        }
+        self.learned.retain(|&(d, f, i)| !(d == q[1] && (f == feature || i == idx)));
+        self.learned.push((q[1], feature, idx));
+        Some(idx)
+    }
+    fn feature_at(&self, dev: u8, idx: u8) -> Option<u16> {
+        self.learned.iter().find(|&&(d, _, i)| d == dev && i == idx).map(|&(_, f, _)| f)
+    }
+}
+
+/// The HID++ collections of the Logitech products mice/logitech.rs lists (receivers, the devices on their cable or
+/// Bluetooth): short FF00:0001, long FF00:0002, Bluetooth LE's long FF43:0202, the PRO X SUPERSTRIKE receiver's
+/// FF43:0301 / 0302.
+pub fn hidpp_device(id: &HidIdent) -> bool {
+    id.vid == 0x046D
+        && crate::mice::logitech::PIDS.contains(&id.pid)
+        && matches!((id.usage_page, id.usage), (0xFF00, 0x0001) | (0xFF00, 0x0002) | (0xFF43, 0x0202) | (0xFF43, 0x0301) | (0xFF43, 0x0302))
+}
+
+fn hidpp_ok(s: &HidppSession, b: &[u8]) -> bool {
+    let short = b.len() == 7 && b[0] == 0x10;
+    let long = b.len() == 20 && b[0] == 0x11;
+    if !(short || long) || !hidpp::device_index_ok(b[1]) {
+        return false;
+    }
+    let zero_from = |i: usize| b[i..].iter().all(|&x| x == 0);
+    match b[2] {
+        0x00 if b[3] == hidpp::SW => {
+            let f = u16::from(b[4]) << 8 | u16::from(b[5]);
+            hidpp::FEATURES.iter().any(|x| x.0 == f) && zero_from(6)
+        }
+        0x00 if b[3] == 0x10 | hidpp::SW => b[4] == 0 && b[5] == 0 && b[6] == 0x5A && zero_from(7),
+        0x81 => short && hidpp::REGISTERS.contains(&b[3]) && zero_from(4),
+        idx if hidpp::feature_index_ok(idx) && b[3] & 0x0F == hidpp::SW => {
+            let Some(f) = s.feature_at(b[1], idx) else { return false };
+            let func = b[3] >> 4;
+            let Some(&(_, fns)) = hidpp::FEATURES.iter().find(|x| x.0 == f) else { return false };
+            if !fns.contains(&func) {
+                return false;
+            }
+            if f == 0x0005 && func == 0x01 {
+                b[4] <= 63 && zero_from(5)
+            } else {
+                zero_from(4)
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The only way to a HID++ write: `bytes` (7 or 20, the report id first) as `hidpp` allows, to a Logitech HID++
+/// collection, given what `s` learned on this handle. Output reports only.
+pub fn permit_hidpp(s: &HidppSession, id: &HidIdent, bytes: &[u8]) -> Option<AllowedWrite> {
+    if !hidpp_device(id) || !hidpp_ok(s, bytes) {
+        return None;
+    }
+    Some(AllowedWrite { ident: id.clone(), kind: ReportKind::Output, bytes: bytes.to_vec(), _seal: Seal })
+}
+
 /// Private: only this module can make an AllowedWrite.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Seal;
@@ -130,14 +350,28 @@ fn permit_from(table: &[AllowEntry], id: &HidIdent, kind: ReportKind, bytes: &[u
         .map(|_| AllowedWrite { ident: id.clone(), kind, bytes: bytes.to_vec(), _seal: Seal })
 }
 
-/// The only way to a write: `bytes` exactly as the table lists them for this device and kind, else None.
-pub fn permit(id: &HidIdent, kind: ReportKind, bytes: &[u8]) -> Option<AllowedWrite> {
-    permit_from(ALLOWED, id, kind, bytes)
+fn permit_sets(sets: &[SetEntry], templates: &[Template], id: &HidIdent, kind: ReportKind, bytes: &[u8]) -> Option<AllowedWrite> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let listed = sets.iter().any(|e| e.kind == kind && e.devices.matches(id) && e.bytes.iter().any(|b| *b == bytes));
+    let shaped = templates.iter().any(|t| t.kind == kind && t.devices.matches(id) && t.takes(bytes));
+    if listed || shaped {
+        Some(AllowedWrite { ident: id.clone(), kind, bytes: bytes.to_vec(), _seal: Seal })
+    } else {
+        None
+    }
 }
 
-/// Whether the table allows any write to this device (else it is opened for queries only).
+/// The only way to a write (HID++ apart: `permit_hidpp`): `bytes` exactly as the tables list them for this device and
+/// kind — or as a template bounds them —, else None.
+pub fn permit(id: &HidIdent, kind: ReportKind, bytes: &[u8]) -> Option<AllowedWrite> {
+    permit_from(ALLOWED, id, kind, bytes).or_else(|| permit_sets(ALLOWED_SETS, TEMPLATES, id, kind, bytes))
+}
+
+/// Whether the tables allow any write to this device (else it is opened for queries only).
 pub fn may_write(id: &HidIdent) -> bool {
-    may_write_in(ALLOWED, id)
+    may_write_in(ALLOWED, id) || ALLOWED_SETS.iter().any(|e| e.devices.matches(id)) || TEMPLATES.iter().any(|t| t.devices.matches(id)) || hidpp_device(id)
 }
 
 fn may_write_in(table: &[AllowEntry], id: &HidIdent) -> bool {

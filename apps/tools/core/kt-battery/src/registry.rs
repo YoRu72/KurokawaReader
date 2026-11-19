@@ -80,6 +80,9 @@ fn classify_in(table: &[DriverEntry], all: &[Collection], c: &Collection, no_que
     if let Some(m) = crate::pads::find(&c.ident) {
         return Claim::Driver(m.driver);
     }
+    if let Some(m) = crate::mice::find_any(&c.ident) {
+        return Claim::Driver(m.driver);
+    }
     if c.battery_field {
         Claim::Generic
     } else {
@@ -107,14 +110,20 @@ mod tests {
         let rx = coll(0x2DC8, 0x310B, 0xFF7A, 0x01, false, "r");
         assert_eq!(classify(&[rx.clone()], &rx, &[]), Claim::Driver("8bitdo-rx"));
         assert_eq!(classify(&[rx.clone()], &rx, &["r".into()]), Claim::Skip(Skip::UserSaid), "the user's word first");
+        // (Piece 5: a mouse's vendor collection goes to its reader; another product of that vendor does not.)
+        let lg = coll(0x046D, 0xC52B, 0xFF00, 0x0001, false, "l");
+        assert_eq!(classify(&[lg.clone()], &lg, &[]), Claim::Driver("mk-logitech"));
+        let lg_other = coll(0x046D, 0xC077, 0xFF00, 0x0001, true, "m");
+        assert_eq!(classify(&[lg_other.clone()], &lg_other, &[]), Claim::Generic, "an unlisted Logitech product: never claimed by vendor");
     }
 
     #[test]
     fn no_vendor_driver_ships_in_piece_1() {
         assert!(DRIVERS.is_empty());
-        let c = coll(0x046D, 0xC547, 0xFF00, 1, false, "k");
+        // (C547 is a Lightspeed receiver mice/logitech.rs lists since piece 5: an id no table lists here.)
+        let c = coll(0x046D, 0xC5FF, 0xFF00, 1, false, "k");
         assert_eq!(classify(&[c.clone()], &c, &[]), Claim::Skip(Skip::NoBattery), "an unknown receiver without a battery field is left alone");
-        let g = coll(0x046D, 0xC547, 0x01, 0x02, true, "k");
+        let g = coll(0x046D, 0xC5FF, 0x01, 0x02, true, "k");
         assert_eq!(classify(&[g.clone()], &g, &[]), Claim::Generic);
     }
 

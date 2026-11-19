@@ -17,6 +17,9 @@
 //! - xbox: Windows.Gaming.Input's real percentage, XInput's coarse levels
 //! - pads: piece 4 — game controllers' own readers (PlayStation, Nintendo, Steam, 8BitDo, GameSir, Flydigi, BEITONG):
 //!   passive listening first; four families' status requests, sealed in allow, only when the user turns them on
+//! - mice: piece 5 — mice' and keyboards' own readers (Logitech HID++, Razer, SteelSeries, Corsair and some forty
+//!   more families): passive listening on by default; status requests, sealed in allow (exact bytes, bounded templates,
+//!   HID++ with the device's own feature index), only when the user turns that family on
 //! - identity: stable keys per unit and the explicit merge rules
 //! - sched: per-device timing, deadlines, back-off, asleep devices left alone
 //! - runner: the background loop over a Platform
@@ -33,6 +36,7 @@ pub mod connect;
 pub mod hidvalue;
 pub mod identity;
 pub mod kind;
+pub mod mice;
 pub mod model;
 pub mod notice;
 pub mod pads;

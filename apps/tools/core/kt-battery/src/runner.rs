@@ -33,7 +33,7 @@ pub trait Platform: Send + Sync + 'static {
 
 /// Whether a device is asked through `query` (else its reader brought its reading with the enumeration).
 pub fn needs_query(d: &Device) -> bool {
-    d.source == Source::HidGeneric || d.source == Source::Pad
+    d.source == Source::HidGeneric || d.source == Source::Pad || d.source == Source::Vendor
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +85,10 @@ pub struct Prefs {
     pub links: Vec<(String, String)>,
     /// The controller families (pads::Family::as_str) the user turned on whose reading sends a status request.
     pub pad_queries: Vec<String>,
+    /// Piece 5: the mice' and keyboards' families (mice::Family::as_str) the user turned on whose reading sends a status
+    /// request (off by default), and those read by listening that the user turned off (on by default).
+    pub mk_ask: Vec<String>,
+    pub mk_mute: Vec<String>,
 }
 
 pub enum Msg {

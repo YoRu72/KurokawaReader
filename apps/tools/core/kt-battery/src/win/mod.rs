@@ -9,7 +9,8 @@
 // CM_Register_Notification (no window, no polling). Piece 4: a collection a controller reader claims (pads/*.rs, by
 // vendor, product, usage page and usage) becomes that controller's entry — one per unit, or per slot of a receiver —
 // and the generic reader leaves that unit alone; its query listens on its own handle (shared, never exclusive), and
-// sends a status request only for a family the user turned on.
+// sends a status request only for a family the user turned on. Piece 5: the mice' and keyboards' own readers
+// (mice/*.rs) the same way — win/mice.rs.
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere); real devices decide.
 // Copyright (C) 2026 Kurokawa contributors.
 pub mod autostart;
@@ -17,6 +18,7 @@ pub mod bt;
 pub mod btconn;
 pub mod ffi;
 pub mod hid;
+pub mod mice;
 pub mod wgi;
 pub mod xinput;
 
@@ -42,6 +44,8 @@ pub struct WinPlatform {
     pads: Mutex<BTreeMap<String, Vec<(hid::HidColl, &'static pads::Model)>>>,
     /// The families the user turned on whose reading sends a request.
     pad_on: Mutex<Vec<Family>>,
+    /// Piece 5: the mice' and keyboards' units, slots and switches.
+    mice: mice::MiceState,
 }
 
 impl WinPlatform {
@@ -50,7 +54,7 @@ impl WinPlatform {
     }
 }
 
-fn hid_connection(path: &str) -> Connection {
+pub(crate) fn hid_connection(path: &str) -> Connection {
     let l = path.to_ascii_lowercase();
     // (HID over Bluetooth: classic HID's service 1124, LE's HID over GATT 1812.)
     if l.contains("{00001124-0000-1000-8000-00805f9b34fb}") || l.contains("{00001812-0000-1000-8000-00805f9b34fb}") || l.contains("_vid&0002") {
@@ -199,7 +203,7 @@ impl WinPlatform {
 }
 
 /// Which outcome says more, when no reader of a pad found its level.
-fn rank(o: &Outcome) -> u8 {
+pub(crate) fn rank(o: &Outcome) -> u8 {
     match o {
         Outcome::Read(r) if r.charging != Charging::Unknown => 4,
         Outcome::Read(r) if r.note != crate::model::Note::QueryOff => 3,
@@ -211,7 +215,7 @@ fn rank(o: &Outcome) -> u8 {
 }
 
 /// A reader switched off is given no device at all: pads::read answers «off» without a call.
-struct NoDevice(crate::allow::HidIdent);
+pub(crate) struct NoDevice(pub(crate) crate::allow::HidIdent);
 impl crate::transport::HidTransport for NoDevice {
     fn ident(&self) -> &crate::allow::HidIdent {
         &self.0
@@ -235,16 +239,19 @@ impl Platform for WinPlatform {
         if let Ok(mut g) = self.pad_on.lock() {
             *g = p.pad_queries.iter().filter_map(|s| Family::parse(s)).collect();
         }
+        self.mice.set_prefs(&p.mk_ask, &p.mk_mute);
     }
 
     fn enumerate(&self, now: u64) -> Vec<Candidate> {
         let colls = hid::enumerate();
         let (pad_list, pad_map) = pad_candidates(&colls);
         let pad_keys: Vec<String> = pad_map.keys().cloned().collect();
+        let (mice_list, mice_keys) = self.mice.candidates(&colls);
         let (generic, mut by) = hid_candidates(&colls);
-        by.retain(|k, _| !pad_keys.iter().any(|p| p == k || p.starts_with(&format!("{}:i:", k))));
-        let mut out = identity::drop_claimed(generic, &pad_keys);
+        by.retain(|k, _| !pad_keys.iter().any(|p| p == k || p.starts_with(&format!("{}:i:", k))) && !mice_keys.contains(k));
+        let mut out = identity::drop_claimed(identity::drop_claimed(generic, &pad_keys), &mice_keys);
         out.extend(pad_list);
+        out.extend(mice_list);
         if let Ok(mut m) = self.colls.lock() {
             *m = by;
         }
@@ -286,6 +293,9 @@ impl Platform for WinPlatform {
     fn query(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
         if device.source == Source::Pad {
             return self.query_pad(device, deadline, now);
+        }
+        if device.source == Source::Vendor {
+            return self.mice.query(device, deadline, now);
         }
         let colls = match self.colls.lock() {
             Ok(m) => m.get(&device.key).cloned().unwrap_or_default(),

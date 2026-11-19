@@ -29,6 +29,11 @@
 // '' | 'needsQuery' | 'queryOff' | 'noPad' }; batteryList() also gives pads: [{ family, brand, proven, ask, listen,
 // models, on }] (one row per reader family), and the setting padQueries — the families whose status request the user allows (off by
 // default; only families whose reader sends a request are kept).
+// Piece 5, mice and keyboards (kt-battery mice/*.rs): batteryList() also gives mice: [{ family, brand, proven, ask,
+// listen, on }] (one row per family, every family), and two settings: mkAsk — the families whose status request the
+// user allows (off by default) — and mkMute — the families read by listening that the user turned off (on by default).
+// A device read by one of them carries its { driver, family, proven, way } as a controller's does; a reading's note
+// may be 'unlinked' (a receiver with no device linked to it).
 // Copyright (C) 2026 Kurokawa contributors.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -41,6 +46,7 @@ use tauri::Emitter;
 
 use kt_battery::autostart;
 use kt_battery::model::{Charging, Level, Reading};
+use kt_battery::mice;
 use kt_battery::pads::{self, Way};
 use kt_battery::notice::{self, Mark, Memo, Notice, Seen};
 use kt_battery::runner::{self, DeviceState, Msg, Prefs, Status};
@@ -61,7 +67,7 @@ static STATES: Mutex<Vec<DeviceState>> = Mutex::new(Vec::new());
 static MEMO: Mutex<BTreeMap<String, Memo>> = Mutex::new(BTreeMap::new());
 const FILE: &str = "battery.json";
 /// The settings the page may change.
-const KEYS: [&str; 12] = ["intervalMin", "low", "names", "hidden", "noQuery", "links", "background", "startup", "notifyLow", "notifyFull", "thresholds", "padQueries"];
+const KEYS: [&str; 14] = ["intervalMin", "low", "names", "hidden", "noQuery", "links", "background", "startup", "notifyLow", "notifyFull", "thresholds", "padQueries", "mkAsk", "mkMute"];
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -110,6 +116,38 @@ fn pads_json(settings: &Value) -> Value {
     json!(rows)
 }
 
+/// The mice' and keyboards' families, one row each: brand as text, how far proven, whether a reader of it listens and
+/// whether one sends a request, and whether its switch is on (a family that sends: in mkAsk; one that only listens: not
+/// in mkMute).
+fn mice_json(settings: &Value) -> Value {
+    let list = |k: &str| settings.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    let (ask_on, mute) = (list("mkAsk"), list("mkMute"));
+    let has = |l: &[Value], f: &str| l.iter().any(|x| x.as_str() == Some(f));
+    let rows: Vec<Value> = mice::Family::ALL
+        .iter()
+        .map(|f| {
+            let ds: Vec<&mice::Driver> = mice::DRIVERS.iter().filter(|d| d.family == *f).collect();
+            let ask = ds.iter().any(|d| d.way == Way::Query);
+            let listen = ds.iter().any(|d| d.way == Way::Passive);
+            let tested = !ds.is_empty() && ds.iter().all(|d| d.proven == pads::Proven::Tested);
+            let on = if ask { has(&ask_on, f.as_str()) } else { !has(&mute, f.as_str()) };
+            json!({ "family": f.as_str(), "brand": f.brand(), "proven": if tested { "tested" } else { "untested" }, "ask": ask, "listen": listen, "on": on })
+        })
+        .collect();
+    json!(rows)
+}
+
+/// A device's reader: (family, proven, way) of a controller's or a mouse's / keyboard's reader.
+fn reader_of(driver: &str) -> (&'static str, &'static str, &'static str) {
+    if let Some(x) = pads::driver(driver) {
+        return (x.family.as_str(), x.proven.as_str(), way_str(x.way));
+    }
+    if let Some(x) = mice::driver(driver) {
+        return (x.family.as_str(), x.proven.as_str(), way_str(x.way));
+    }
+    ("", "", "")
+}
+
 fn state_json(s: &DeviceState) -> Value {
     let d = &s.device;
     json!({
@@ -117,8 +155,7 @@ fn state_json(s: &DeviceState) -> Value {
         "source": d.source.as_str(), "vid": d.vid, "pid": d.pid, "merged": d.merged,
         "status": s.status.as_str(), "reading": s.reading.as_ref().map(reading_json), "lastGood": s.last_good.as_ref().map(reading_json),
         "checkedAt": s.checked_at, "picture": d.picture,
-        "driver": d.driver, "family": pads::driver(d.driver).map(|x| x.family.as_str()).unwrap_or(""),
-        "proven": pads::driver(d.driver).map(|x| x.proven.as_str()).unwrap_or(""), "way": pads::driver(d.driver).map(|x| way_str(x.way)).unwrap_or(""),
+        "driver": d.driver, "family": reader_of(d.driver).0, "proven": reader_of(d.driver).1, "way": reader_of(d.driver).2,
     })
 }
 
@@ -185,6 +222,19 @@ fn clean(v: &Value) -> Value {
             pad_queries.push(json!(f));
         }
     }
+    // (Piece 5: mkAsk only families whose reader sends, mkMute only families read by listening; each once.)
+    let pick = |k: &str, allowed: &[&str]| -> Vec<Value> {
+        let mut out: Vec<Value> = Vec::new();
+        for f in o.and_then(|o| o.get(k)).and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or(&[]).iter().take(100).filter_map(Value::as_str) {
+            if allowed.contains(&f) && !out.iter().any(|x| x.as_str() == Some(f)) {
+                out.push(json!(f));
+            }
+        }
+        out
+    };
+    let mk_ask_ok: Vec<&str> = mice::query_families().iter().map(|f| f.as_str()).collect();
+    let mk_mute_ok: Vec<&str> = mice::Family::ALL.iter().filter(|f| !mk_ask_ok.contains(&f.as_str())).map(|f| f.as_str()).collect();
+    let (mk_ask, mk_mute) = (pick("mkAsk", &mk_ask_ok), pick("mkMute", &mk_mute_ok));
     json!({
         "intervalMin": num("intervalMin", 1, 60, 1),
         "low": notice::snap(o.and_then(|o| o.get("low")).and_then(Value::as_u64)),
@@ -198,6 +248,8 @@ fn clean(v: &Value) -> Value {
         "notifyFull": flag("notifyFull", false),
         "thresholds": thresholds,
         "padQueries": pad_queries,
+        "mkAsk": mk_ask,
+        "mkMute": mk_mute,
     })
 }
 
@@ -231,7 +283,7 @@ fn save(app: &AppHandle, v: &Value) -> Result<(), String> {
 fn prefs_of(v: &Value) -> Prefs {
     let keys = |k: &str| -> Vec<String> { v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
     let links: Vec<(String, String)> = v.get("links").and_then(Value::as_array).map(|a| a.iter().filter_map(|l| Some((l.get(0)?.as_str()?.to_string(), l.get(1)?.as_str()?.to_string()))).collect()).unwrap_or_default();
-    Prefs { interval_ms: v.get("intervalMin").and_then(Value::as_u64).unwrap_or(1) * 60_000, deadline_ms: 0, no_query: keys("noQuery"), links, pad_queries: keys("padQueries") }
+    Prefs { interval_ms: v.get("intervalMin").and_then(Value::as_u64).unwrap_or(1) * 60_000, deadline_ms: 0, no_query: keys("noQuery"), links, pad_queries: keys("padQueries"), mk_ask: keys("mkAsk"), mk_mute: keys("mkMute") }
 }
 
 fn flag(v: &Value, k: &str) -> bool {
@@ -573,9 +625,9 @@ pub async fn kt_battery_list(app: AppHandle) -> Result<Value, String> {
         match live(&app) {
             Some((_, last)) => {
                 let devices = last.lock().map(|g| g.clone()).unwrap_or_default();
-                json!({ "available": true, "now": now_ms(), "devices": devices, "pads": pads_json(&settings), "settings": settings, "system": system_json() })
+                json!({ "available": true, "now": now_ms(), "devices": devices, "pads": pads_json(&settings), "mice": mice_json(&settings), "settings": settings, "system": system_json() })
             }
-            None => json!({ "available": false, "reason": "platform", "now": now_ms(), "devices": [], "pads": pads_json(&settings), "settings": settings, "system": system_json() }),
+            None => json!({ "available": false, "reason": "platform", "now": now_ms(), "devices": [], "pads": pads_json(&settings), "mice": mice_json(&settings), "settings": settings, "system": system_json() }),
         }
     })
     .await

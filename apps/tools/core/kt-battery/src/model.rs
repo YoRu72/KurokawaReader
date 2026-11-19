@@ -82,6 +82,8 @@ pub enum Source {
     XInput,
     /// A controller's own reader (pads/*.rs: PlayStation, Nintendo, Steam, 8BitDo, GameSir, Flydigi, BEITONG).
     Pad,
+    /// A mouse's or keyboard's own reader (mice/*.rs: Logitech HID++, Razer, SteelSeries, Corsair and the rest).
+    Vendor,
 }
 
 impl Source {
@@ -92,6 +94,7 @@ impl Source {
             Source::XboxWgi => "xbox",
             Source::XInput => "xinput",
             Source::Pad => "pad",
+            Source::Vendor => "vendor",
         }
     }
     /// Which reading wins when two readers see one physical device (identity.rs): a controller's own reader first (it
@@ -99,7 +102,7 @@ impl Source {
     /// original: «its HID field can read 0»), a real percentage over a coarse one.
     pub fn rank(self) -> u8 {
         match self {
-            Source::Pad => 5,
+            Source::Pad | Source::Vendor => 5,
             Source::Bluetooth => 4,
             Source::XboxWgi => 3,
             Source::HidGeneric => 2,
@@ -239,6 +242,8 @@ pub enum Note {
     QueryOff,
     /// A receiver with no controller linked to it.
     NoPad,
+    /// A mouse's or keyboard's receiver with no device linked to it (or the device switched off).
+    Unlinked,
 }
 
 impl Note {
@@ -248,6 +253,7 @@ impl Note {
             Note::NeedsQuery => "needsQuery",
             Note::QueryOff => "queryOff",
             Note::NoPad => "noPad",
+            Note::Unlinked => "unlinked",
         }
     }
 }

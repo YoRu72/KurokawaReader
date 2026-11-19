@@ -19,7 +19,12 @@
 // not send», a family switched off, a receiver with no pad (dimmed); the card menu says the reader and «ported, not yet
 // tested» and turns a family's request on only for families that send one; «Controllers» has one switch per such
 // family, off by default, kept through batterySettings({ set: { padQueries } }) and followed by a refresh, and names
-// the families read by listening alone. `node tests/battery.cjs [en|ar]`.
+// the families read by listening alone. Piece 5, mice and keyboards (mode 'mice', made-up devices): «Mice and
+// keyboards» lists every family, collapsed until asked for, sorted by brand, each row brand + status + a switch (a family
+// that sends: off by default, kept as mkAsk; one read by listening alone: on by default, turned off as mkMute), a field
+// that finds a brand (and says when none matches), its count as the language writes it; a mouse in steps, a receiver
+// with no device linked (dimmed), a family switched off said with its brand, a card's menu turning its family's
+// request on. `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
@@ -49,7 +54,20 @@ function fake({ lang, mode }) {
   ];
   const fam = (family, brand, ask, listen, models = []) => ({ family, brand, proven: 'untested', ask, listen, models, on: false });
   const padRows = [fam('playstation', 'PlayStation', false, true), fam('xbox', 'Xbox', false, true), fam('nintendo', 'Nintendo', false, true), fam('steam', 'Steam', false, true), fam('eightbitdo', '8BitDo', true, true, ['8BitDo Ultimate 2 Wireless', '8BitDo Ultimate 2']), fam('gamesir', 'GameSir', true, true, ['GameSir Nova', 'GameSir Nova Lite 2', 'GameSir Nova 2 Lite']), fam('flydigi', 'Flydigi', true, false, ['Flydigi Vader 5 Pro']), fam('beitong', 'BEITONG', true, false, ['BEITONG KP20'])];
-  const devices = mode === 'pads' ? PADS : mode !== 'tauri' && mode !== 'mac' ? [] : [
+  // (Piece 5: made-up mice and keyboards; the families' rows as the shell gives them, every family.)
+  const mk = (o) => dev({ source: 'vendor', proven: 'untested', way: 'query', ...o });
+  const MICE = [
+    mk({ key: 'hid:046D:C52B:c:{LR}:slot:1', name: 'Shape Mouse Pro', kind: 'mouse', brand: 'Logitech', connection: 'dongle', driver: 'mk-logitech', family: 'mk-logitech', reading: rd(ex(77), NOW - min, 'no') }),
+    mk({ key: 'hid:046D:C52B:c:{LR}:slot:2', name: 'Shape Keys', kind: 'keyboard', brand: 'Logitech', connection: 'dongle', driver: 'mk-logitech', family: 'mk-logitech', reading: rd({ kind: 'coarse', value: 'high', bars: 4 }, NOW - min) }),
+    mk({ key: 'hid:1038:1838:c:{AX}', name: 'SteelSeries Aerox 3 Wireless', kind: 'mouse', brand: 'SteelSeries', connection: 'dongle', driver: 'mk-steelseries', family: 'mk-steelseries', reading: rd(st(14, 20), NOW, 'yes') }),
+    mk({ key: 'hid:1532:00B6:c:{RZ}', name: 'Razer mouse', kind: 'mouse', brand: 'Razer', connection: 'usb', driver: 'mk-razer', family: 'mk-razer', reading: Object.assign(rd({ kind: 'unknown' }, NOW), { note: 'queryOff' }) }),
+    mk({ key: 'hid:1B1C:2B00:c:{CS}', name: 'Corsair Slipstream receiver', kind: 'mouse', brand: 'Corsair', connection: 'dongle', driver: 'mk-corsair-bragi', family: 'mk-corsair', reading: Object.assign(rd({ kind: 'unknown' }, NOW), { note: 'unlinked' }) }),
+    mk({ key: 'hid:24AE:1410:c:{RP}', name: 'Rapoo VT0', kind: 'mouse', brand: 'Rapoo', connection: 'dongle', driver: 'mk-rapoo', family: 'mk-rapoo', way: 'passive', reading: rd(ex(42), NOW - 2 * min, 'no') }),
+  ];
+  const MK = ['Logitech:q', 'Razer:q', 'SteelSeries:q', 'Corsair:q', 'Glorious:q', 'Hitscan:q', 'G-Wolves:q', 'WLMouse:q', 'LAMZU:q', 'Arbiter Studio:q', 'Pulsar:q', 'Finalmouse:q', 'Endgame Gear:q', 'VAXEE:q', 'ZOWIE:q', 'Ninjutso:q', 'Sprime:q', 'Darmoshark:q', 'ATK / VXE:q', 'Kysona:q', 'Fantech:q', 'DAREU:q', 'Redragon:q', 'Rapoo:l', 'Keychron:q', 'Royal Kludge:q', 'SONiX:q', 'Semico:q', 'AULA:b', 'MCHOSE:q', 'CHERRY:q', 'Cooler Master:q', 'Machenike:q', 'MSI:q', 'ASUS ROG:q', 'NZXT:q', 'Niceboy:q', 'Motospeed:q', 'Xenta:l', 'Delux:q', 'AJAZZ:q', 'Incott / Wraith:q'];
+  const ids = { 'Logitech': 'mk-logitech', 'Razer': 'mk-razer', 'SteelSeries': 'mk-steelseries', 'Corsair': 'mk-corsair', 'Rapoo': 'mk-rapoo', 'AULA': 'mk-aula', 'Xenta': 'mk-xenta', 'Royal Kludge': 'mk-rk' };
+  const miceRows = MK.map((x) => { const [brand, w] = x.split(':'); const ask = w !== 'l'; const listen = w !== 'q'; return { family: ids[brand] || 'mk-' + brand.toLowerCase().replace(/[^a-z0-9]+/g, ''), brand, proven: 'untested', ask, listen, on: !ask }; });
+  const devices = mode === 'mice' ? MICE : mode === 'pads' ? PADS : mode !== 'tauri' && mode !== 'mac' ? [] : [
     dev({ key: 'hid:1111:2222:s:A1', name: 'Shape Mouse One', kind: 'mouse', brand: 'Acme', reading: rd(ex(64), NOW - 3 * min), lastGood: rd(ex(64), NOW - 3 * min) }),
     dev({ key: 'bt:{K}', name: 'Studio Keys', kind: 'keyboard', brand: '', connection: 'bluetooth', source: 'bluetooth', status: 'notConnected', lastGood: rd(ex(40), NOW - 26 * 60 * min) }),
     dev({ key: 'bt:{H}', name: 'Field Phones', kind: 'headset', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(9), NOW - 30_000), lastGood: rd(ex(9), NOW - 30_000) }),
@@ -80,7 +98,7 @@ function fake({ lang, mode }) {
   if (mode === 'electron') { window.kurokawaTools = base; return; }
   window.kurokawaTools = Object.assign(base, {
     // (Exactly bridge.js's signatures.)
-    batteryList: function () { window.__calls.push(['list']); return Promise.resolve(mode === 'nothere' ? { available: false, reason: 'platform', now: NOW, devices: [], settings, system } : { available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings, system, pads: JSON.parse(JSON.stringify(padRows)) }); },
+    batteryList: function () { window.__calls.push(['list']); return Promise.resolve(mode === 'nothere' ? { available: false, reason: 'platform', now: NOW, devices: [], settings, system } : { available: true, now: NOW, devices: JSON.parse(JSON.stringify(devices)), settings, system, pads: JSON.parse(JSON.stringify(padRows)), mice: JSON.parse(JSON.stringify(miceRows)) }); },
     batteryRefresh: function (o) { window.__calls.push(['refresh', o]); return Promise.resolve(true); },
     batterySettings: function (o) { window.__calls.push(['settings', o]); if (o && o.set && 'startup' in o.set && window.__failStartup) return Promise.reject(new Error('access denied')); if (o && o.set) settings = Object.assign({}, settings, o.set); return Promise.resolve(settings); },
     onBattery: function (f) { cb = f; window.__subs++; return function () { if (cb === f) cb = null; window.__subs--; }; },
@@ -318,6 +336,67 @@ function fake({ lang, mode }) {
     check('the switches keep a real gap from their words', geo.every((g) => g >= 12), geo);
     check('no yellow, amber or orange (controllers)', await p.evaluate(() => [...document.querySelectorAll('.battery-view *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor, c.fill, c.stroke].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
     await p.$eval('.bat-pads', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); await shot(p, 'pads-switches');
+    await ctx.close();
+  }
+
+  // ---- Piece 5: mice and keyboards.
+  {
+    const { ctx, p } = await open('mice');
+    await p.waitForSelector('.bat-card[data-key="hid:046D:C52B:c:{LR}:slot:1"]');
+    const card = (k) => p.$eval(`.bat-card[data-key="${k}"]`, (e) => ({ cls: e.className, bars: e.querySelectorAll('.bat-bars > i').length, on: e.querySelectorAll('.bat-bars > i.on').length, word: e.querySelector('.bat-word')?.textContent, pct: e.querySelector('.bat-pct')?.textContent ?? null, note: e.querySelector('.bat-note')?.dataset.note ?? '', noteText: e.querySelector('.bat-note')?.textContent ?? '', sub: e.querySelector('.bat-sub')?.textContent ?? '' }));
+    const s1 = await card('hid:046D:C52B:c:{LR}:slot:1'); const s2 = await card('hid:046D:C52B:c:{LR}:slot:2');
+    check('a receiver\'s two devices: two cards, each its own level', /77/.test(s1.pct || '') && s2.bars === 5 && s2.on === 4 && s1.sub.includes('Logitech'), [s1, s2]);
+    const ax = await card('hid:1038:1838:c:{AX}');
+    check('a mouse in steps: «14 of 20» drawn in tenths, never a percentage', ax.pct === null && ax.word === (AR ? '14 من 20' : '14 of 20') && ax.bars === 10 && ax.on === 7, ax);
+    const rz = await card('hid:1532:00B6:c:{RZ}');
+    check('a family switched off: said with its brand (not a controller\'s words)', rz.note === 'queryOff' && rz.noteText === (AR ? 'القراءة موقوفة لأجهزة Razer' : 'Reading is off for Razer'), rz);
+    const cs = await card('hid:1B1C:2B00:c:{CS}');
+    check('a receiver with no device linked: dimmed, said', cs.cls.includes('dim') && cs.note === 'unlinked' && cs.noteText === (AR ? 'لم يُوصَل بهذا المستقبِل جهاز' : 'No device linked to this receiver'), cs);
+    check('no sideways overflow (mice)', (await overflow(p)) <= 1);
+    await shot(p, 'mice');
+    // «Mice and keyboards»: collapsed, its count, then every family sorted by brand.
+    check('«Mice and keyboards»: collapsed at first', (await p.$$('.bat-mice .bat-switch')).length === 0 && (await p.getAttribute('.bat-mice .bat-mk-toggle', 'aria-expanded')) === 'false');
+    const tg = await p.textContent('.bat-mice .bat-mk-toggle');
+    check('the count, as the language writes it', tg.includes(AR ? 'العدد: 42' : '(42)'), tg);
+    await p.click('.bat-mice .bat-mk-toggle'); await p.waitForSelector('.bat-mice .bat-switch');
+    const rows = await p.$$eval('.bat-mice .bat-switch', (r) => r.map((e) => ({ fam: e.dataset.family, on: e.querySelector('input').checked, role: e.querySelector('input').getAttribute('role'), title: e.querySelector('.bat-sw-title').textContent, hint: e.querySelector('small').textContent })));
+    check('one row per family, each a switch', rows.length === 42 && rows.every((x) => x.role === 'switch'), rows.length);
+    const titles = rows.map((x) => x.title);
+    check('sorted by brand, brands as text', JSON.stringify(titles) === JSON.stringify(titles.slice().sort((a, b) => a.localeCompare(b))) && titles.includes('Logitech') && titles.includes('Incott / Wraith'), titles.slice(0, 6));
+    check('a family that sends: off by default; one that listens: on', rows.filter((x) => x.on).map((x) => x.fam).sort().join() === 'mk-rapoo,mk-xenta', rows.filter((x) => x.on));
+    const hintOf = (f) => rows.find((x) => x.fam === f).hint;
+    check('each row says its way and «ported, not yet tested»', hintOf('mk-logitech').startsWith(AR ? 'يُرسِل سؤالًا عن الحال' : 'Sends a status request') && hintOf('mk-rapoo').startsWith(AR ? 'يُنصِت فحسب' : 'Listens only') && hintOf('mk-aula').startsWith(AR ? 'يُنصِت دائمًا' : 'Always listens') && rows.every((x) => x.hint.includes(AR ? 'لم يُختبَر بعدُ' : 'not yet tested')), [hintOf('mk-logitech'), hintOf('mk-aula')]);
+    await p.click('.bat-mice [data-row="mk-logitech"]'); await p.waitForTimeout(250);
+    let set = (await calls(p)).filter((c) => c[0] === 'settings').pop();
+    check('a family turned on: mkAsk kept, then a refresh asked', JSON.stringify(set[1].set.mkAsk) === '["mk-logitech"]' && (await calls(p)).some((c) => c[0] === 'refresh'), set);
+    check('the list stays open after a switch', (await p.$$('.bat-mice .bat-switch')).length === 42);
+    await p.click('.bat-mice [data-row="mk-rapoo"]'); await p.waitForTimeout(250);
+    set = (await calls(p)).filter((c) => c[0] === 'settings').pop();
+    check('a listening family turned off: mkMute kept', JSON.stringify(set[1].set.mkMute) === '["mk-rapoo"]', set);
+    await p.click('.bat-mice [data-row="mk-rapoo"]'); await p.waitForTimeout(250);
+    check('and on again', JSON.stringify((await calls(p)).filter((c) => c[0] === 'settings').pop()[1].set.mkMute) === '[]');
+    // The field finds a brand; none matching is said.
+    await p.fill('.bat-mice .bat-mk-find', 'stee'); await p.waitForTimeout(100);
+    const vis = await p.$$eval('.bat-mice .bat-switch', (r) => r.filter((e) => !e.hidden).map((e) => e.dataset.family));
+    check('the field finds a brand', JSON.stringify(vis) === '["mk-steelseries"]' && (await p.isHidden('.bat-mice .bat-mk-none')), vis);
+    check('the field keeps its focus while typing', await p.evaluate(() => document.activeElement?.classList.contains('bat-mk-find')));
+    await p.fill('.bat-mice .bat-mk-find', 'zzzz'); await p.waitForTimeout(100);
+    check('no family by that name: said', (await p.isVisible('.bat-mice .bat-mk-none')) && (await p.$$eval('.bat-mice .bat-switch', (r) => r.filter((e) => !e.hidden).length)) === 0);
+    await p.fill('.bat-mice .bat-mk-find', ''); await p.waitForTimeout(100);
+    const geo = await p.$$eval('.bat-mice .bat-switch', (r) => r.slice(0, 8).map((e) => { const a = e.querySelector('.bat-sw-text').getBoundingClientRect(); const b = e.querySelector('input').getBoundingClientRect(); return Math.min(Math.abs(b.left - a.right), Math.abs(a.left - b.right)); }));
+    check('the switches keep a real gap from their words (mice)', geo.every((g) => g >= 12), geo);
+    const gap = await p.$eval('.bat-mice .bat-mk-head', (e) => { const [a, b] = [...e.children].map((x) => x.getBoundingClientRect()); return b.top >= a.bottom ? b.top - a.bottom : Math.min(Math.abs(b.left - a.right), Math.abs(a.left - b.right)); });
+    check('the toggle and the field do not touch', gap >= 8, gap);
+    check('no yellow, amber or orange (mice)', await p.evaluate(() => [...document.querySelectorAll('.battery-view *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor, c.fill, c.stroke].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
+    check('no sideways overflow (the families open)', (await overflow(p)) <= 1);
+    await p.$eval('.bat-mice', (e) => e.scrollIntoView({ block: 'start' })); await p.waitForTimeout(200); await shot(p, 'mice-families');
+    // A card's menu turns its family's request on, as a controller's does.
+    await p.click('.bat-card[data-key="hid:1532:00B6:c:{RZ}"] .bat-more'); await p.waitForSelector('.sheet [data-act="padQuery"]');
+    check('a mouse\'s menu: «Try reading: Razer»', (await p.textContent('.sheet [data-act="padQuery"]')) === (AR ? 'جرِّب القراءة: Razer' : 'Try reading: Razer'));
+    check('… and its reader quietly', (await p.textContent('.sheet .bat-reader')).startsWith(AR ? 'القارئ: Razer' : 'Reader: Razer'));
+    await p.click('.sheet [data-act="padQuery"]'); await p.waitForTimeout(250);
+    set = (await calls(p)).filter((c) => c[0] === 'settings').pop();
+    check('turned on from the menu: mkAsk with both', JSON.stringify(set[1].set.mkAsk) === '["mk-logitech","mk-razer"]', set);
     await ctx.close();
   }
 
