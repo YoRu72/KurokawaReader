@@ -33,6 +33,9 @@
 //! - summary: the tray's short list, lowest first, and its tooltip's clipping
 //! - taskbar: the tray icons with the level drawn in them, the strip on the taskbar, their order and captions, quiet
 //!   hours (pure; win/strip.rs puts the strip on Windows' taskbar)
+//! - sysmon: piece S1, the system on the taskbar — CPU, memory, graphics card and drive figures beside the devices
+//!   (pure: choice, order, texts, warm and hot marks, change detection, the raw figures read, the pictures;
+//!   win/sysmon.rs samples them from Windows' public interfaces, no driver and no administrator rights)
 //! - autostart: «start with the system, hidden» — the Run value's data and the XDG autostart file
 //!
 //! `win` (Windows only) is the platform: SetupAPI, HID, CfgMgr32, XInput and the Run key (advapi32) declared in win/ffi.rs, type-checked on
@@ -62,6 +65,7 @@ pub mod runner;
 pub mod sched;
 pub mod summary;
 pub mod sysfs;
+pub mod sysmon;
 pub mod sysprog;
 pub mod taskbar;
 pub mod transport;

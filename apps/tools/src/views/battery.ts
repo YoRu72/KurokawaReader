@@ -30,6 +30,7 @@
 // up or down (the page, the tray and the strip follow that order), gives it another of our drawn pictures, and joins
 // two entries of one device (its receiver and Bluetooth) or separates them again. Phone Link said in the page's words.
 // The Electron build and the phone have no reader: a calm word instead, never a dead button. Loaded on first use.
+// Piece S1: «System on the taskbar» (views/sysmon.ts, loaded with the page's first draw) after «Taskbar».
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from '../ui/dom';
 import { btDesk, btPanel, picSvg } from './btconnect';
 import { localDigits, getLang, countMinutes, countHours, countDays, countSeconds } from '../i18n';
@@ -247,6 +248,9 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
   // (Piece 3: made once, kept across redraws — its rows' busy states and messages are its own.)
   const bd = btDesk(); const bt = bd ? btPanel(bd, (title, close) => openSheet(title, close), () => list?.settings.low ?? 15) : null;
   const grid = h('div', { class: 'bat-grid' }); const head = h('div', { class: 'bat-head' }); const extra = h('div');
+  // (Piece S1: the system's card, its module fetched once the page is up — the page draws again when it comes.)
+  let sys: ReturnType<typeof import('./sysmon')['sysPanel']> | null = null;
+  void import('./sysmon').then((m) => { if (gone) return; sys = m.sysPanel(d, () => draw()); draw(); }, () => undefined);
   body.append(h('div', { class: 'spinner small' }));
   // (An XInput slot is named in the page's words — its key «xinput:<user>:pad|headset»; the shell's tray says the same.)
   const xboxName = (key: string): string => { const m = /^xinput:(\d+):(pad|headset)$/.exec(key); return !m ? '' : m[2] === 'headset' ? t('batXboxHeadset') : t('batXboxPad', { n: localDigits(Number(m[1]) + 1) }); };
@@ -527,13 +531,15 @@ export function batteryView(): HTMLElement & { dispose?: () => void } {
     }
     const empty = !list.devices.length ? h('section', { class: 'card bat-empty', 'data-state': 'empty' }, h('div', { class: 'bat-ic' }, kindIcon('controller')), h('h3', null, t('batEmptyTitle')), h('p', null, t('batEmptyBody')),
       h('ul', null, h('li', null, t('batEmpty1')), h('li', null, t('batEmpty2')), h('li', null, t('batEmpty3'))), h('p', null, t('batEmptyLater'))) : null;
-    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, platCard(list.system, d), bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), settingsCard(), backgroundCard(), taskbarCard(), noticesCard()].filter(Boolean) as HTMLElement[]);
+    const tb: BatSystem = list.system ?? { autostart: 'yes', tray: true };
+    const sysCard = sys ? sys.card(S as import('./sysmon').SysSettings, tb.tray && S.background, tb.tray, (set) => void saveSettings(set as Partial<BatSettings>)) : null;
+    body.replaceChildren(...[empty ? null : head, empty ?? grid, extra, platCard(list.system, d), bt?.el ?? null, padsCard(), famCard('mice'), famCard('heads'), famCard('other'), settingsCard(), backgroundCard(), taskbarCard(), sysCard, noticesCard()].filter(Boolean) as HTMLElement[]);
   }
 
   const off = d.onBattery((e) => { if (!list || !e) return; list.now = e.now; list.devices = Array.isArray(e.devices) ? e.devices : []; draw(); });
   // (The ages move on while the page is open: redrawn every half minute — no per-second timer.)
   const tick = window.setInterval(() => { if (list) { list.now += 30_000; draw(); } }, 30_000);
   void d.batteryList().then((l) => { list = l; draw(); }).catch((e) => { body.replaceChildren(h('section', { class: 'card' }, h('p', null, String((e as Error).message ?? e)))); });
-  root.dispose = () => { gone = true; off(); clearInterval(tick); bt?.dispose(); };
+  root.dispose = () => { gone = true; off(); clearInterval(tick); bt?.dispose(); sys?.dispose(); };
   return root;
 }

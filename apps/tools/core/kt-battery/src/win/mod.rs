@@ -24,6 +24,7 @@ pub mod hid;
 pub mod mice;
 pub mod spp;
 pub mod strip;
+pub mod sysmon;
 pub mod wgi;
 pub mod xinput;
 

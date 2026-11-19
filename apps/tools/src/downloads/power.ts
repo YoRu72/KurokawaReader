@@ -26,6 +26,8 @@ function batteryLabels(): Record<string, string> {
   // (The placeholders left in: the shell fills {n}, {name} and {level}; the digits as the interface writes them.)
   const out: Record<string, string> = { batDigits: localDigits('0123456789') };
   for (const k of BAT_WORDS) out[k] = t(k);
+  // (Piece S1: a system value's hover text — its name, «{value}» left for the shell.)
+  for (const k of ['cpu', 'cpuTemp', 'ram', 'gpu', 'gpuTemp', 'vram', 'drive'] as const) out[`sysTip_${k}`] = t('sysTip', { name: t(`sys_${k}`), value: '{value}' });
   return out;
 }
 /** The words alone sent again (after the rest of the strings came, and when the language changes): the shell's tray and

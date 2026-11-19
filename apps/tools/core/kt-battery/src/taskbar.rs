@@ -443,6 +443,18 @@ fn glyph(c: char) -> &'static [Path] {
             &[(0.8, 0.2), (1.5, 0.9), (0.8, 1.6), (0.1, 0.9), (0.8, 0.2)],
             &[(3.2, 5.4), (3.9, 6.1), (3.2, 6.8), (2.5, 6.1), (3.2, 5.4)],
         ],
+        // (Piece S1, the system on the taskbar: the labels' letters and the degree sign — our own strokes too.)
+        'C' => &[&[(4.0, 1.2), (3.0, 0.0), (1.0, 0.0), (0.0, 1.2), (0.0, 5.8), (1.0, 7.0), (3.0, 7.0), (4.0, 5.8)]],
+        'P' => &[&[(0.0, 7.0), (0.0, 0.0), (3.0, 0.0), (4.0, 1.0), (4.0, 2.7), (3.0, 3.7), (0.0, 3.7)]],
+        'U' => &[&[(0.0, 0.0), (0.0, 5.8), (1.0, 7.0), (3.0, 7.0), (4.0, 5.8), (4.0, 0.0)]],
+        'R' => &[&[(0.0, 7.0), (0.0, 0.0), (3.0, 0.0), (4.0, 1.0), (4.0, 2.7), (3.0, 3.7), (0.0, 3.7)], &[(2.0, 3.7), (4.0, 7.0)]],
+        'A' => &[&[(0.0, 7.0), (0.0, 1.6), (1.3, 0.0), (2.7, 0.0), (4.0, 1.6), (4.0, 7.0)], &[(0.0, 4.3), (4.0, 4.3)]],
+        'M' => &[&[(0.0, 7.0), (0.0, 0.0), (2.0, 3.8), (4.0, 0.0), (4.0, 7.0)]],
+        'G' => &[&[(4.0, 1.2), (3.0, 0.0), (1.0, 0.0), (0.0, 1.2), (0.0, 5.8), (1.0, 7.0), (3.0, 7.0), (4.0, 5.8), (4.0, 4.0), (2.3, 4.0)]],
+        'V' => &[&[(0.0, 0.0), (2.0, 7.0), (4.0, 0.0)]],
+        'S' => &[&[(4.0, 1.0), (3.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.0, 2.6), (1.0, 3.5), (3.0, 3.5), (4.0, 4.4), (4.0, 6.0), (3.0, 7.0), (1.0, 7.0), (0.0, 6.0)]],
+        'D' => &[&[(0.0, 0.0), (0.0, 7.0), (2.4, 7.0), (4.0, 5.4), (4.0, 1.6), (2.4, 0.0), (0.0, 0.0)]],
+        '°' => &[&[(1.0, 0.1), (2.2, 0.1), (2.9, 0.9), (2.9, 1.5), (2.2, 2.3), (1.0, 2.3), (0.3, 1.5), (0.3, 0.9), (1.0, 0.1)]],
         _ => &[],
     }
 }
@@ -760,7 +772,8 @@ pub fn strip_layout(items: &[StripItem], bar_h: u32, look: StripLook) -> StripLa
     StripLayout { cells, width, height: height as u32, glyph: g, text_h: th }
 }
 
-/// The strip drawn: straight RGBA, `width × height` of strip_layout.
+/// The strip drawn: straight RGBA, `width × height` of strip_layout. (Piece S1: sysmon::render_bar draws the same
+/// devices with the system's cells beside them; with none, the very same picture.)
 pub fn render_strip(items: &[StripItem], bar_h: u32, look: StripLook) -> Canvas {
     let lay = strip_layout(items, bar_h, look);
     let mut cv = Canvas::new(lay.width.max(1), lay.height.max(1));
@@ -770,59 +783,65 @@ pub fn render_strip(items: &[StripItem], bar_h: u32, look: StripLook) -> Canvas 
         cv.round_rect(0.0, 0.0, lay.width as f32, hh, hh * 0.3, back, 0.86);
     }
     for (it, &(x, w)) in items.iter().zip(lay.cells.iter()) {
-        let mut cell = Canvas::new(w.ceil().max(1.0) as u32, lay.height.max(1));
-        let line = fg(look.light);
-        let (g, th) = (lay.glyph, lay.text_h);
-        let text = strip_text(&it.face);
-        let colour = if powered(it.face.tone) { line } else { tone_rgb(it.face.tone, look.light) };
-        let (gx, gy, tx, ty) = if look.stacked {
-            let total = g + th * 0.2 + th;
-            let top = (hh - total) / 2.0;
-            ((w - g) / 2.0, top, 0.0, top + g + th * 0.2)
-        } else {
-            (0.0, (hh - g) / 2.0, g + (bar_h as f32 * 0.08).round().max(2.0), (hh - th) / 2.0)
-        };
-        draw_glyph(&mut cell, it.glyph, gx, gy, g, line, 1.0);
-        if let Some(n) = it.caption {
-            let ch = (g * 0.46).round().max(6.0);
-            let s = (n % 10).to_string();
-            let cw = ch * 0.75;
-            cell.round_rect(gx + g - cw * 0.9, gy - ch * 0.15, cw + 2.0, ch + 1.0, 2.0, if look.light { Rgb(248, 248, 250) } else { Rgb(32, 32, 36) }, 0.9);
-            draw_text(&mut cell, &s, gx + g - cw * 0.9 + 1.0, gy - ch * 0.15 + 0.5, ch, cw, line, 1.0);
-        }
-        let mut used = 0.0;
-        match text {
-            Some(t) => {
-                let tx = if look.stacked {
-                    let mut probe = Canvas::new(cell.w, cell.h);
-                    let tw = draw_text(&mut probe, &t, 0.0, 0.0, th, w, colour, 1.0) + if powered(it.face.tone) { th * 0.8 } else { 0.0 };
-                    ((w - tw) / 2.0).max(0.0)
-                } else {
-                    tx
-                };
-                used = draw_text(&mut cell, &t, tx, ty, th, w - tx, colour, 1.0);
-                if powered(it.face.tone) {
-                    draw_power(&mut cell, it.face.tone, tx + used, ty, th * 0.8, look.light);
-                }
-            }
-            None => {
-                let bx = if look.stacked { (w - th * 1.7) / 2.0 } else { tx };
-                draw_battery(&mut cell, &it.face, bx, ty + th * 0.12, th * 1.7, th * 0.76, look.light);
-                if powered(it.face.tone) {
-                    draw_power(&mut cell, it.face.tone, bx + th * 1.7, ty, th * 0.8, look.light);
-                }
-            }
-        }
-        let _ = used;
-        if it.face.dim {
-            cell.fade(DIM);
-        }
+        let cell = render_device_cell(it, w, lay.height, &lay, bar_h, look);
         blit(&mut cv, &cell, x.round() as i64, 0);
     }
     cv
 }
 
-fn blit(dst: &mut Canvas, src: &Canvas, ox: i64, oy: i64) {
+/// One device's cell on the strip, `w × height`, with the sizes of `lay` (strip_layout's).
+pub fn render_device_cell(it: &StripItem, w: f32, height: u32, lay: &StripLayout, bar_h: u32, look: StripLook) -> Canvas {
+    let hh = height as f32;
+    let mut cell = Canvas::new(w.ceil().max(1.0) as u32, height.max(1));
+    let line = fg(look.light);
+    let (g, th) = (lay.glyph, lay.text_h);
+    let text = strip_text(&it.face);
+    let colour = if powered(it.face.tone) { line } else { tone_rgb(it.face.tone, look.light) };
+    let (gx, gy, tx, ty) = if look.stacked {
+        let total = g + th * 0.2 + th;
+        let top = (hh - total) / 2.0;
+        ((w - g) / 2.0, top, 0.0, top + g + th * 0.2)
+    } else {
+        (0.0, (hh - g) / 2.0, g + (bar_h as f32 * 0.08).round().max(2.0), (hh - th) / 2.0)
+    };
+    draw_glyph(&mut cell, it.glyph, gx, gy, g, line, 1.0);
+    if let Some(n) = it.caption {
+        let ch = (g * 0.46).round().max(6.0);
+        let s = (n % 10).to_string();
+        let cw = ch * 0.75;
+        cell.round_rect(gx + g - cw * 0.9, gy - ch * 0.15, cw + 2.0, ch + 1.0, 2.0, if look.light { Rgb(248, 248, 250) } else { Rgb(32, 32, 36) }, 0.9);
+        draw_text(&mut cell, &s, gx + g - cw * 0.9 + 1.0, gy - ch * 0.15 + 0.5, ch, cw, line, 1.0);
+    }
+    match text {
+        Some(t) => {
+            let tx = if look.stacked {
+                let mut probe = Canvas::new(cell.w, cell.h);
+                let tw = draw_text(&mut probe, &t, 0.0, 0.0, th, w, colour, 1.0) + if powered(it.face.tone) { th * 0.8 } else { 0.0 };
+                ((w - tw) / 2.0).max(0.0)
+            } else {
+                tx
+            };
+            let used = draw_text(&mut cell, &t, tx, ty, th, w - tx, colour, 1.0);
+            if powered(it.face.tone) {
+                draw_power(&mut cell, it.face.tone, tx + used, ty, th * 0.8, look.light);
+            }
+        }
+        None => {
+            let bx = if look.stacked { (w - th * 1.7) / 2.0 } else { tx };
+            draw_battery(&mut cell, &it.face, bx, ty + th * 0.12, th * 1.7, th * 0.76, look.light);
+            if powered(it.face.tone) {
+                draw_power(&mut cell, it.face.tone, bx + th * 1.7, ty, th * 0.8, look.light);
+            }
+        }
+    }
+    if it.face.dim {
+        cell.fade(DIM);
+    }
+    cell
+}
+
+/// `src` laid over `dst` with its top-left at (ox, oy).
+pub fn blit(dst: &mut Canvas, src: &Canvas, ox: i64, oy: i64) {
     for y in 0..src.h {
         for x in 0..src.w {
             let i = ((y * src.w + x) * 4) as usize;

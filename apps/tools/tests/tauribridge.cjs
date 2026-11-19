@@ -46,7 +46,9 @@ const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel'
   // (0.21, device battery: battery.rs.)
   batteryList: ['kt_battery_list', []], batteryRefresh: ['kt_battery_refresh', ['o']], batterySettings: ['kt_battery_settings', ['o']],
   // (0.21, device battery piece 3: connecting Bluetooth devices, battery.rs.)
-  btList: ['kt_bt_list', []], btScan: ['kt_bt_scan', ['o']], btAct: ['kt_bt_act', ['o']], btOpenSettings: ['kt_bt_settings', []] };
+  btList: ['kt_bt_list', []], btScan: ['kt_bt_scan', ['o']], btAct: ['kt_bt_act', ['o']], btOpenSettings: ['kt_bt_settings', []],
+  // (0.21, piece S1: the system on the taskbar, battery.rs.)
+  sysmonProbe: ['kt_sysmon_probe', []] };
 // (The shell's own events: no channel in the preload.)
 const OWN_EVENTS = ['onFilesJob', 'onBattery', 'onBt'];
 // (Preload methods the Tauri bridge has none of. Empty since Tools 0.21 P11 ported the safe-extraction engine —

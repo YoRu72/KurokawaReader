@@ -42,6 +42,15 @@
 // the strip is on the taskbar the device icons step aside, as in the original. Device management: «order» (the user's
 // order of keys), «pictures» (a device's drawing, from our own set), and the notices' «quiet» hours («quietFrom» to
 // «quietTo», whole hours, local time) and «sound».
+// Piece S1, the system on the taskbar (kt-battery sysmon.rs, win/sysmon.rs; Windows only): «sysOn» — the values shown
+// (none by default: cpu, cpuTemp, ram, gpu, gpuTemp, vram, drive), «sysOrder» their order, «sysUnit» 'c' | 'f',
+// «sysEvery» 1 | 2 | 5 s, «sysClick» what a left click on one does ('taskmgr' — Task Manager from the system folder —,
+// 'tools', 'nothing'), «sysSide» 'before' | 'after' the devices, and the warm (rose) and hot (red) marks in °C
+// («sysCpuWarm» 80, «sysCpuHot» 90, «sysGpuWarm» 80, «sysGpuHot» 90, «sysDriveWarm» 65, «sysDriveHot» 75). They join
+// the devices' taskbar presence: on the strip when it is on the taskbar, else one tray icon per value with its number
+// drawn; sampled on one thread only while a value is chosen and the background on, resting while the display is off or
+// the session locked, the picture redrawn only when a shown number changes. sysmonProbe() → { available, os, values:
+// { id: number | null }, gpu } — one look at what this computer gives (two rounds 600 ms apart), for the page.
 // Piece P1, Linux and macOS (the end of this file): the loop runs over kt-battery's LinuxPlatform (the kernel's
 // peripheral batteries, the raw HID nodes through every family reader, BlueZ's levels) or MacPlatform (ioreg and
 // system_profiler); system gains { os, access? } — on Linux, when a node Tools would read is closed to this user,
@@ -67,6 +76,7 @@ use kt_battery::pads::{self, Way};
 use kt_battery::notice::{self, Mark, Memo, Notice, Seen};
 use kt_battery::runner::{self, DeviceState, Msg, Prefs, Status};
 use kt_battery::summary;
+use kt_battery::sysmon::{self, SysCell};
 use kt_battery::taskbar::{self, DrawStyle, Face, StripItem, StripLook, TrayStyle};
 
 struct Live {
@@ -88,6 +98,8 @@ const KEYS: &[&str] = &[
     "intervalMin", "low", "names", "hidden", "noQuery", "links", "background", "startup", "notifyLow", "notifyFull", "thresholds", "padQueries", "mkAsk", "mkMute",
     // (W1.)
     "trayStyle", "trayDraw", "trayAway", "trayGone", "intervalSec", "strip", "stripStacked", "stripPlate", "order", "pictures", "quiet", "quietFrom", "quietTo", "sound",
+    // (S1.)
+    "sysOn", "sysOrder", "sysUnit", "sysEvery", "sysClick", "sysSide", "sysCpuWarm", "sysCpuHot", "sysGpuWarm", "sysGpuHot", "sysDriveWarm", "sysDriveHot",
 ];
 
 fn now_ms() -> u64 {
@@ -273,6 +285,14 @@ fn clean(v: &Value) -> Value {
     }
     let mut order: Vec<Value> = clean_keys(o.and_then(|o| o.get("order"))).as_array().cloned().unwrap_or_default();
     order.truncate(200);
+    // (S1: known values only, each once; the order completed with the rest; the marks bounded, warm under hot.)
+    let ids = |k: &str| -> Vec<String> { o.and_then(|o| o.get(k)).and_then(Value::as_array).map(|a| a.iter().take(20).filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
+    let sys_on: Vec<&str> = sysmon::chosen(&ids("sysOn")).iter().map(|m| m.id()).collect();
+    let sys_order: Vec<&str> = sysmon::full_order(&ids("sysOrder")).iter().map(|m| m.id()).collect();
+    let marks = |w: &str, h: &str, (dw, dh): (u64, u64), (lo, hi): (u8, u8)| sysmon::Marks::checked(num(w, 0, 255, dw), num(h, 0, 255, dh), lo, hi);
+    let cpu = marks("sysCpuWarm", "sysCpuHot", (80, 90), sysmon::CHIP_RANGE);
+    let gpu = marks("sysGpuWarm", "sysGpuHot", (80, 90), sysmon::CHIP_RANGE);
+    let drive = marks("sysDriveWarm", "sysDriveHot", (65, 75), sysmon::DRIVE_RANGE);
     json!({
         // (v1.1.0 of the original checks every 30 s to every hour: kept in seconds; the minutes follow for older readers.)
         "intervalSec": interval_sec,
@@ -303,6 +323,15 @@ fn clean(v: &Value) -> Value {
         "quietFrom": num("quietFrom", 0, 23, 22),
         "quietTo": num("quietTo", 0, 23, 7),
         "sound": flag("sound", true),
+        "sysOn": sys_on,
+        "sysOrder": sys_order,
+        "sysUnit": choice("sysUnit", &["c", "f"], "c"),
+        "sysEvery": sysmon::every_s(num("sysEvery", 0, 60, 2)),
+        "sysClick": choice("sysClick", &["taskmgr", "tools", "nothing"], "taskmgr"),
+        "sysSide": choice("sysSide", &["before", "after"], "before"),
+        "sysCpuWarm": cpu.warm, "sysCpuHot": cpu.hot,
+        "sysGpuWarm": gpu.warm, "sysGpuHot": gpu.hot,
+        "sysDriveWarm": drive.warm, "sysDriveHot": drive.hot,
     })
 }
 
@@ -401,6 +430,9 @@ pub fn at_exit() {
     {
         if let Some(x) = STRIP.lock().unwrap_or_else(|e| e.into_inner()).take() {
             x.stop();
+        }
+        if let Some(m) = SYSMON.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            m.stop();
         }
     }
     if let Some(cell) = LIVE.get() {
@@ -588,8 +620,9 @@ fn pic(c: taskbar::Canvas) -> crate::desktop::Pic {
 #[cfg(windows)]
 static STRIP: Mutex<Option<kt_battery::win::strip::Strip>> = Mutex::new(None);
 
-/// The strip on the taskbar started, given its devices, or taken away; whether it is on the taskbar now.
-fn strip_apply(app: &AppHandle, s: &Value, items: Vec<StripItem>) -> bool {
+/// The strip on the taskbar started, given its devices (and the system's cells, S1), or taken away; whether it is on
+/// the taskbar now.
+fn strip_apply(app: &AppHandle, s: &Value, items: Vec<StripItem>, system: Vec<SysCell>) -> bool {
     #[cfg(windows)]
     {
         let on = background_on(s) && flag(s, "strip");
@@ -602,11 +635,11 @@ fn strip_apply(app: &AppHandle, s: &Value, items: Vec<StripItem>) -> bool {
         }
         if g.is_none() {
             let (a2, a3) = (app.clone(), app.clone());
-            *g = kt_battery::win::strip::Strip::start(Box::new(move |_left| open_page(&a2)), Box::new(move || tray_again(&a3)));
+            *g = kt_battery::win::strip::Strip::start(Box::new(move |left, sys| click(&a2, left && sys)), Box::new(move || tray_again(&a3)));
         }
         match g.as_ref() {
             Some(x) => {
-                x.show(items, StripLook { light: false, stacked: flag(s, "stripStacked"), plate: flag(s, "stripPlate") });
+                x.show_all(items, system, sys_first(s), StripLook { light: false, stacked: flag(s, "stripStacked"), plate: flag(s, "stripPlate") });
                 x.alive()
             }
             None => false,
@@ -614,7 +647,7 @@ fn strip_apply(app: &AppHandle, s: &Value, items: Vec<StripItem>) -> bool {
     }
     #[cfg(not(windows))]
     {
-        let _ = (app, s, items, StripLook { light: false, stacked: false, plate: false });
+        let _ = (app, s, items, system, StripLook { light: false, stacked: false, plate: false });
         false
     }
 }
@@ -625,7 +658,8 @@ fn strip_apply(app: &AppHandle, s: &Value, items: Vec<StripItem>) -> bool {
 /// downloads' own setting alone).
 fn tray_push(app: &AppHandle, s: &Value) {
     if !background_on(s) {
-        strip_apply(app, s, Vec::new());
+        strip_apply(app, s, Vec::new(), Vec::new());
+        sys_apply(app, s);
         crate::desktop::set_battery_tray(app, None);
         return;
     }
@@ -659,13 +693,20 @@ fn tray_push(app: &AppHandle, s: &Value) {
     let glyphs: Vec<taskbar::Glyph> = picks.iter().map(|d| taskbar::Glyph::of(&picture_of(s, d), d.device.kind.as_str())).collect();
     let caps = taskbar::captions(&glyphs);
     let items: Vec<StripItem> = picks.iter().zip(glyphs.iter().zip(caps)).map(|(d, (g, c))| StripItem { glyph: *g, face: face_of(s, d), caption: c }).collect();
-    let on_bar = strip_apply(app, s, items);
+    // (S1: the system's values, as last sampled — on the strip with the devices, else as icons of their own.)
+    let values = sys_apply(app, s);
+    let on_bar = strip_apply(app, s, items, sysmon::cells(&values));
     let (light, px) = taskbar_look();
-    let icons: Vec<crate::desktop::DevPic> = if style == TrayStyle::Each && !on_bar {
-        picks.iter().map(|d| crate::desktop::DevPic { pic: pic(taskbar::render_icon(&face_of(s, d), draw, light, px)), tip: taskbar::device_tip(&name_of(s, d), &what_of(d)) }).collect()
+    let mut icons: Vec<crate::desktop::DevPic> = if style == TrayStyle::Each && !on_bar {
+        picks.iter().map(|d| crate::desktop::DevPic { pic: pic(taskbar::render_icon(&face_of(s, d), draw, light, px)), tip: taskbar::device_tip(&name_of(s, d), &what_of(d)), sys: false }).collect()
     } else {
         Vec::new()
     };
+    if !on_bar && !values.is_empty() {
+        let unit = sys_unit(s);
+        let sys: Vec<crate::desktop::DevPic> = values.iter().map(|v| crate::desktop::DevPic { pic: pic(sysmon::render_icon(v, light, px)), tip: sysmon::tip(&sys_words(v.metric), v, unit), sys: true }).collect();
+        icons = if sys_first(s) { sys.into_iter().chain(icons).collect() } else { icons.into_iter().chain(sys).collect() };
+    }
     let app_icon = if style == TrayStyle::Lowest {
         let f = summary::lowest_first(picks.clone(), current, 1).first().map(|d| face_of(s, d)).unwrap_or(Face::NOTHING);
         Some(pic(taskbar::render_icon(&f, draw, light, px)))
@@ -673,6 +714,133 @@ fn tray_push(app: &AppHandle, s: &Value) {
         None
     };
     crate::desktop::set_battery_tray(app, Some(crate::desktop::BatTray { lines, tip, bt, app_icon, icons }));
+}
+
+// ---- S1: the system on the taskbar ----
+
+#[cfg(windows)]
+static SYSMON: Mutex<Option<kt_battery::win::sysmon::Monitor>> = Mutex::new(None);
+/// The values last sampled (what the strip or the icons show); empty while nothing is sampled.
+static SYS_VALUES: Mutex<Vec<sysmon::Shown>> = Mutex::new(Vec::new());
+
+fn sys_unit(s: &Value) -> sysmon::Unit {
+    s.get("sysUnit").and_then(Value::as_str).and_then(sysmon::Unit::parse).unwrap_or(sysmon::Unit::C)
+}
+
+fn sys_first(s: &Value) -> bool {
+    s.get("sysSide").and_then(Value::as_str) != Some("after")
+}
+
+/// The sampler's configuration from the settings (as clean() keeps them).
+fn sys_cfg(s: &Value) -> sysmon::Cfg {
+    let order = sysmon::full_order(&keys_of(s, "sysOrder"));
+    let on = sysmon::chosen(&keys_of(s, "sysOn"));
+    let n = |k: &str, d: u64| s.get(k).and_then(Value::as_u64).unwrap_or(d);
+    let m = |w: &str, h: &str, dw: u64, dh: u64, (lo, hi): (u8, u8)| sysmon::Marks::checked(n(w, dw), n(h, dh), lo, hi);
+    sysmon::Cfg {
+        shown: order.into_iter().filter(|x| on.contains(x)).collect(),
+        unit: sys_unit(s),
+        limits: sysmon::Limits { cpu: m("sysCpuWarm", "sysCpuHot", 80, 90, sysmon::CHIP_RANGE), gpu: m("sysGpuWarm", "sysGpuHot", 80, 90, sysmon::CHIP_RANGE), drive: m("sysDriveWarm", "sysDriveHot", 65, 75, sysmon::DRIVE_RANGE) },
+        every_s: sysmon::every_s(n("sysEvery", 2)),
+    }
+}
+
+/// A value's hover words in the page's language («{value}» left for the number).
+fn sys_words(m: sysmon::Metric) -> String {
+    let (k, en) = match m {
+        sysmon::Metric::CpuLoad => ("sysTip_cpu", "CPU load: {value}"),
+        sysmon::Metric::CpuTemp => ("sysTip_cpuTemp", "CPU temperature: {value}"),
+        sysmon::Metric::Ram => ("sysTip_ram", "Memory in use: {value}"),
+        sysmon::Metric::GpuLoad => ("sysTip_gpu", "Graphics load: {value}"),
+        sysmon::Metric::GpuTemp => ("sysTip_gpuTemp", "Graphics temperature: {value}"),
+        sysmon::Metric::Vram => ("sysTip_vram", "Graphics memory in use: {value}"),
+        sysmon::Metric::DriveTemp => ("sysTip_drive", "Drive temperature: {value}"),
+    };
+    word(k, en)
+}
+
+/// The sampler started, told its configuration, or stopped (no value chosen, the background off, not Windows); the
+/// values to show now.
+fn sys_apply(app: &AppHandle, s: &Value) -> Vec<sysmon::Shown> {
+    #[cfg(windows)]
+    {
+        let cfg = sys_cfg(s);
+        let want = background_on(s) && !cfg.shown.is_empty();
+        let mut g = SYSMON.lock().unwrap_or_else(|e| e.into_inner());
+        if !want {
+            if let Some(m) = g.take() {
+                m.stop();
+            }
+            SYS_VALUES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            return Vec::new();
+        }
+        match g.as_ref() {
+            Some(m) => m.set(cfg.clone()),
+            None => {
+                let a2 = app.clone();
+                *g = kt_battery::win::sysmon::Monitor::start(
+                    cfg.clone(),
+                    Box::new(move |values| {
+                        *SYS_VALUES.lock().unwrap_or_else(|e| e.into_inner()) = values;
+                        tray_again(&a2);
+                    }),
+                );
+            }
+        }
+        drop(g);
+        // (Only the values still chosen, in the order now chosen: a change of choice shows at once.)
+        let last = SYS_VALUES.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        cfg.shown.iter().filter_map(|m| last.iter().find(|v| v.metric == *m).cloned()).collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, sys_cfg(s), sys_words, SYS_VALUES.lock().map(|g| g.len()));
+        Vec::new()
+    }
+}
+
+/// A left click on a system value (S1, as the user chose: Task Manager, Tools, nothing); any other click on the strip
+/// or a device's icon: Device battery.
+pub fn click(app: &AppHandle, system_left: bool) {
+    if !system_left {
+        open_page(app);
+        return;
+    }
+    let to = cached().and_then(|s| s.get("sysClick").and_then(Value::as_str).and_then(sysmon::ClickTo::parse)).unwrap_or(sysmon::ClickTo::TaskManager);
+    match to {
+        sysmon::ClickTo::Tools => open_page(app),
+        sysmon::ClickTo::Nothing => {}
+        sysmon::ClickTo::TaskManager => {
+            #[cfg(windows)]
+            {
+                let _ = std::thread::Builder::new().name("kt-sysmon-taskmgr".into()).spawn(|| {
+                    kt_battery::win::sysmon::open_task_manager();
+                });
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn kt_sysmon_probe() -> Result<Value, String> {
+    let os = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let (smp, gpu) = kt_battery::win::sysmon::probe();
+            let mut values = Map::new();
+            for m in sysmon::Metric::ALL {
+                values.insert(m.id().to_string(), smp.get(m).map_or(Value::Null, |v| json!((v * 10.0).round() / 10.0)));
+            }
+            json!({ "available": true, "os": os, "values": values, "gpu": gpu })
+        })
+        .await
+        .map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(json!({ "available": false, "os": os, "values": {}, "gpu": "" }))
+    }
 }
 
 /// The page's words changed (desktop.rs): the tray's list said again in them.

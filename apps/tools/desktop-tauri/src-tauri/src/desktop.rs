@@ -56,6 +56,8 @@ struct Desk {
     battery: Option<BatTray>,
     /// How many device icons («kt-bat-<n>») were made: those past the current list are hidden, kept for reuse.
     dev_slots: usize,
+    /// What each device icon shows now (S1: the system's numbers change often — an icon unchanged is left alone).
+    dev_last: Vec<DevPic>,
     /// The drawing the app's icon now carries (None: the app's own picture).
     app_pic: Option<Pic>,
 }
@@ -67,11 +69,13 @@ pub struct Pic {
     pub px: u32,
 }
 
-/// One device's own tray icon: its drawing and its hover text.
+/// One device's own tray icon: its drawing and its hover text. (Piece S1: or one of the system's values — `sys` — whose
+/// left click does what the user chose, battery.rs's click.)
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DevPic {
     pub pic: Pic,
     pub tip: String,
+    pub sys: bool,
 }
 
 /// Device battery's part of the tray: its menu's device lines (lowest first, at most six) and the tooltip's line.
@@ -259,26 +263,36 @@ fn menus_again(app: &AppHandle, l: &Value) {
 /// twice). Main thread only.
 fn device_icons(app: &AppHandle) {
     use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-    let (icons, labels, slots, made) = {
+    let (icons, labels, slots, made, last) = {
         let d = desk();
-        (d.battery.as_ref().map(|b| b.icons.clone()).unwrap_or_default(), d.labels.clone(), d.dev_slots, d.tray_on || tray_icon(app).is_some())
+        (d.battery.as_ref().map(|b| b.icons.clone()).unwrap_or_default(), d.labels.clone(), d.dev_slots, d.tray_on || tray_icon(app).is_some(), d.dev_last.clone())
     };
     // (Never before the app's icon — its handler serves these menus — and never where no tray can be made.)
     let icons = if made && tray_possible().0 { icons } else { Vec::new() };
     let mut have = slots;
     for (i, ic) in icons.iter().enumerate() {
         let id = format!("{DEV_PREFIX}{i}");
-        let img = tauri::image::Image::new_owned(ic.pic.rgba.clone(), ic.pic.px, ic.pic.px);
+        let img = || tauri::image::Image::new_owned(ic.pic.rgba.clone(), ic.pic.px, ic.pic.px);
         if let Some(t) = app.tray_by_id(id.as_str()) {
-            let _ = t.set_icon(Some(img));
-            let _ = t.set_tooltip(Some(ic.tip.clone()));
-            let _ = t.set_visible(true);
+            let before = last.get(i);
+            if before.map(|b| &b.pic) != Some(&ic.pic) {
+                let _ = t.set_icon(Some(img()));
+            }
+            if before.map(|b| &b.tip) != Some(&ic.tip) {
+                let _ = t.set_tooltip(Some(ic.tip.clone()));
+            }
+            if before.is_none() {
+                let _ = t.set_visible(true);
+            }
             continue;
         }
         let Ok(menu) = tray_menu(app, &labels) else { continue };
-        let b = TrayIconBuilder::with_id(id.as_str()).icon(img).tooltip(ic.tip.clone()).menu(&menu).on_tray_icon_event(|tray, ev| {
+        let b = TrayIconBuilder::with_id(id.as_str()).icon(img()).tooltip(ic.tip.clone()).menu(&menu).on_tray_icon_event(|tray, ev| {
             if let TrayIconEvent::Click { button: MouseButton::Left, .. } = ev {
-                crate::battery::open_page(tray.app_handle());
+                // (The slot's present use: a device opens Device battery, a system value does what the user chose.)
+                let id: &str = tray.id().as_ref();
+                let sys = id.strip_prefix(DEV_PREFIX).and_then(|n| n.parse::<usize>().ok()).map_or(false, |i| desk().battery.as_ref().and_then(|b| b.icons.get(i)).map_or(false, |x| x.sys));
+                crate::battery::click(tray.app_handle(), sys);
             }
         });
         #[cfg(kt_tray_left)]
@@ -296,7 +310,9 @@ fn device_icons(app: &AppHandle) {
             let _ = t.set_visible(false);
         }
     }
-    desk().dev_slots = have;
+    let mut d = desk();
+    d.dev_slots = have;
+    d.dev_last = icons;
 }
 
 /// Whether the tray icon is there now (battery.rs: closing to the tray only then).

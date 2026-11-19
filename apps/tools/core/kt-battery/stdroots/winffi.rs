@@ -12,3 +12,8 @@ pub mod summary;
 pub mod taskbar;
 #[path = "../src/win/strip.rs"]
 pub mod strip;
+// (Piece S1: the system on the taskbar's sampler, src/win/sysmon.rs, with its pure half.)
+#[path = "../src/sysmon.rs"]
+pub mod sysmon;
+#[path = "../src/win/sysmon.rs"]
+pub mod winsysmon;

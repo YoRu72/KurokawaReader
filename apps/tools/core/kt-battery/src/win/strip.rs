@@ -14,6 +14,8 @@
 // (`alive()` false), and the shell keeps the tray icons. OFF by default (the «Taskbar» card's switch); every Windows
 // call's failure is a quiet «not shown», never a stop of the program (nothing here panics: no unwrap, no indexing).
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere, stdroots/wincheck.rs); never run on a real taskbar.
+// Piece S1: the system's values (../sysmon.rs's cells: «CPU 12% 54°» …) drawn beside the devices, before or after them;
+// a click says which kind of cell it fell on (sysmon::hit over the spans of the last picture).
 // Copyright (C) 2026 Kurokawa contributors.
 #![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
 use std::ffi::c_void;
@@ -21,6 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
+use crate::sysmon::{self, Hit, SysCell};
 use crate::taskbar::{self, Rect, StripItem, StripLook};
 
 type HWND = isize;
@@ -237,17 +240,20 @@ pub fn local_minute() -> u16 {
 // ---------------------------------------------------------------- the strip's window, on its own thread
 
 enum Cmd {
-    Show(Vec<StripItem>, StripLook),
+    Show(Vec<StripItem>, Vec<SysCell>, bool, StripLook),
     Stop,
 }
 
-/// What a click on the strip says: true for the left button, false for the right.
-pub type OnClick = Box<dyn Fn(bool) + Send + Sync>;
+/// What a click on the strip says: true for the left button, false for the right; and whether it fell on a system
+/// value (piece S1) rather than a device.
+pub type OnClick = Box<dyn Fn(bool, bool) + Send + Sync>;
 /// Told (on a thread of its own) when the strip comes onto the taskbar or leaves it: the shell then shows or hides the
 /// tray's device icons.
 pub type OnChange = Box<dyn Fn() + Send + Sync>;
 
 static CLICK: Mutex<Option<Arc<OnClick>>> = Mutex::new(None);
+/// The last picture's cells (left, right, what), in the strip's own pixels: what a click fell on.
+static SPANS: Mutex<Vec<(i32, i32, Hit)>> = Mutex::new(Vec::new());
 
 /// The running strip. Dropping it (or `stop`) takes it away.
 pub struct Strip {
@@ -273,7 +279,12 @@ impl Strip {
 
     /// The devices to show and how (drawn on the strip's thread).
     pub fn show(&self, items: Vec<StripItem>, look: StripLook) {
-        let _ = self.tx.send(Cmd::Show(items, look));
+        self.show_all(items, Vec::new(), false, look);
+    }
+
+    /// The devices and the system's values (before the devices when `system_first`), and how.
+    pub fn show_all(&self, items: Vec<StripItem>, system: Vec<SysCell>, system_first: bool, look: StripLook) {
+        let _ = self.tx.send(Cmd::Show(items, system, system_first, look));
         self.wake();
     }
 
@@ -312,9 +323,12 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, l: isize) -> isize 
         WM_LBUTTONUP | WM_RBUTTONUP => {
             let f = CLICK.lock().ok().and_then(|g| g.clone());
             if let Some(f) = f {
+                // (The client x in lParam's low word, signed; the cell under it.)
+                let x = i32::from((l & 0xFFFF) as u16 as i16);
+                let system = SPANS.lock().ok().and_then(|g| sysmon::hit(&g, x)) == Some(Hit::System);
                 // (On its own thread: the shell's work never holds this window — or Explorer, its parent — waiting.)
                 let left = m == WM_LBUTTONUP;
-                let _ = std::thread::Builder::new().name("kt-battery-strip-click".into()).spawn(move || f(left));
+                let _ = std::thread::Builder::new().name("kt-battery-strip-click".into()).spawn(move || f(left, system));
             }
             0
         }
@@ -327,6 +341,8 @@ struct State {
     tray: HWND,
     child: bool,
     items: Vec<StripItem>,
+    system: Vec<SysCell>,
+    system_first: bool,
     look: StripLook,
     last: Option<(RECT, RECT, bool, usize)>,
     class: Vec<u16>,
@@ -390,7 +406,7 @@ impl State {
 
     /// Drawn and placed; false when it is not on the taskbar (hidden).
     fn paint(&mut self, force: bool) -> bool {
-        if self.items.is_empty() || !self.ensure() {
+        if (self.items.is_empty() && self.system.is_empty()) || !self.ensure() {
             self.hide();
             return false;
         }
@@ -418,13 +434,17 @@ impl State {
         }
         let nr = { let a = taskbar::anchor(to(bar), to(nr), &beside); RECT { l: a.l, t: a.t, r: a.r, b: a.b } };
         let light = light_taskbar();
-        let key = (bar, nr, light, self.items.len());
+        let key = (bar, nr, light, self.items.len() + self.system.len());
         if !force && self.last == Some(key) {
             return true;
         }
         let bar_h = u32::try_from((bar.b - bar.t).max(0)).unwrap_or(0);
-        let mut cv = taskbar::render_strip(&self.items, bar_h, StripLook { light, ..self.look });
+        let drawn = sysmon::render_bar(&self.items, &self.system, self.system_first, bar_h, StripLook { light, ..self.look });
+        let mut cv = drawn.canvas;
         cv.catch_clicks();
+        if let Ok(mut g) = SPANS.lock() {
+            *g = drawn.spans;
+        }
         let Some((x, y)) = taskbar::place_strip(to(bar), to(nr), cv.w, cv.h) else {
             self.hide();
             self.last = Some(key);
@@ -496,15 +516,17 @@ fn run(rx: Receiver<Cmd>, thread_id: Arc<AtomicU32>, alive: Arc<AtomicBool>, on_
     unsafe { PeekMessageW(&mut msg, 0, 0, 0, PM_NOREMOVE) };
     // SAFETY: no arguments.
     thread_id.store(unsafe { GetCurrentThreadId() }, Ordering::SeqCst);
-    let mut st = State { hwnd: 0, tray: 0, child: true, items: Vec::new(), look: StripLook { light: false, stacked: false, plate: false }, last: None, class, inst };
+    let mut st = State { hwnd: 0, tray: 0, child: true, items: Vec::new(), system: Vec::new(), system_first: false, look: StripLook { light: false, stacked: false, plate: false }, last: None, class, inst };
     // (Commands sent before the queue existed.)
     let mut stop = false;
     let drain = |st: &mut State, stop: &mut bool| {
         let mut changed = false;
         while let Ok(c) = rx.try_recv() {
             match c {
-                Cmd::Show(items, look) => {
+                Cmd::Show(items, system, first, look) => {
                     st.items = items;
+                    st.system = system;
+                    st.system_first = first;
                     st.look = look;
                     changed = true;
                 }

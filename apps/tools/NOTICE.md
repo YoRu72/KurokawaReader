@@ -307,6 +307,20 @@ Everything else of `src/drivers/` and `src/` is ported (pieces 1–6, the tables
 - **Our own interface**: Tools' page in Material 3 Expressive, our own drawn icon per kind of device (no makers'
   logos or product photos), the brand as plain text, Tools' five languages.
 
+## System on the taskbar — inspired by TraySense
+
+The «System on the taskbar» card (CPU load and temperature, memory, the graphics card's load, temperature and memory,
+the system drive's temperature, beside the devices on the taskbar) was inspired by **TraySense** by **DMTWEAKS**:
+
+- Repository: <https://github.com/DMTWEAKS/traysense> (GNU AGPL-3.0)
+- Inspiration only; **no code taken**. Tools' implementation (`core/kt-battery/src/sysmon.rs`,
+  `core/kt-battery/src/win/sysmon.rs`, the strip and tray parts of `desktop-tauri/src-tauri/src/battery.rs`,
+  `src/views/sysmon.ts`) is our own, written from Windows' public interfaces (GetSystemTimes, GlobalMemoryStatusEx,
+  the performance counters, DXGI, D3DKMT, IOCTL_STORAGE_QUERY_PROPERTY), with our own structure, drawings and words.
+- Not taken either: no kernel driver (TraySense installs PawnIO for the CPU temperature), no installer downloaded or
+  run, no restart as administrator, no copy to Program Files, no processor registers read; none of its PawnIO modules.
+  A value Windows does not give an ordinary program without a driver is simply not shown.
+
 ## Other notices
 
 The themes' notices are shown in the app under Settings › About › Open-source licences.

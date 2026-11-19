@@ -407,6 +407,11 @@
     btScan: function (o) { return call('kt_bt_scan', { o: obj(o) }); },
     btAct: function (o) { return call('kt_bt_act', { o: obj(o) }); },
     btOpenSettings: function () { return call('kt_bt_settings'); },
+    /* 0.21, piece S1 — the system on the taskbar (battery.rs over kt-battery sysmon.rs): sysmonProbe() → { available,
+       os, values: { cpu, cpuTemp, ram, gpu, gpuTemp, vram, drive: number | null — per cent or °C }, gpu: the graphics
+       card's name } — one look at what this computer gives (Windows only; elsewhere available: false). Its settings
+       (sysOn, sysOrder, sysUnit, sysEvery, sysClick, sysSide and the six marks) go through batterySettings. */
+    sysmonProbe: function () { return call('kt_sysmon_probe'); },
     onBt: function (cb) { return subscribe('kt:bt', cb); },
   };
   /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a

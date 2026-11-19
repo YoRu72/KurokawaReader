@@ -58,6 +58,8 @@ pub mod runner;
 pub mod sched;
 #[path = "../src/summary.rs"]
 pub mod summary;
+#[path = "../src/sysmon.rs"]
+pub mod sysmon;
 #[path = "../src/taskbar.rs"]
 pub mod taskbar;
 #[path = "../src/transport.rs"]

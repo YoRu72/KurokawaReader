@@ -322,7 +322,9 @@ fn main() {
             battery::kt_bt_list,
             battery::kt_bt_scan,
             battery::kt_bt_act,
-            battery::kt_bt_settings
+            battery::kt_bt_settings,
+            // (0.21, piece S1: the system on the taskbar — what this computer gives.)
+            battery::kt_sysmon_probe
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
