@@ -24,6 +24,8 @@ const F_BIG: u8 = 32;
 /// Two children of a big folder share a map key: a miss in its map is then checked by a scan.
 const F_COLLIDED: u8 = 64;
 const BIG_DIR: usize = 128;
+/// A whole root's walk with at least this many entries (old and new together) is installed aside, then swapped in.
+pub(crate) const ASIDE_MIN: usize = 20_000;
 
 /// What the walker and the watchers know of one entry. Times are milliseconds since 1970 (0: unknown).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -810,6 +812,118 @@ impl Index {
         }
         self.gen += 1;
         true
+    }
+
+    /// Whether `install(w)` is better done aside (`installed_aside` + a swap): a whole root's walk big enough that
+    /// clearing and filling in place would hold the write lock long (and leave the old names as garbage in the
+    /// arena). Small walks and folder rescans are installed in place.
+    pub fn worth_aside(&self, w: &Walked) -> bool {
+        if w.cancelled || w.tree.slots() == 0 {
+            return false;
+        }
+        match self.root_index_of(&w.path) {
+            Some((ri, rest)) if rest.is_empty() => {
+                let old = self.count_under(self.roots[ri].id) as usize;
+                old + w.tree.live >= ASIDE_MIN
+            }
+            _ => false,
+        }
+    }
+
+    /// What `install(w)` would make, built aside under a shared lock (queries go on meanwhile): the walked tree
+    /// becomes the new index as it is (not copied), the other roots are copied into it in their order, and the
+    /// result is swapped in under a short write lock, the old index dropped after the lock is released. Err gives the
+    /// walk back when it is not a whole root of this index. The caller keeps other writers out between this and
+    /// the swap (the service's writers' lock), so nothing changes in between.
+    pub fn installed_aside(&self, w: Walked) -> Result<Index, Walked> {
+        if w.cancelled || w.tree.slots() == 0 || w.tree.flags[0] & F_DEAD != 0 {
+            return Err(w);
+        }
+        let ri = match self.root_index_of(&w.path) {
+            Some((ri, rest)) if rest.is_empty() => ri,
+            _ => return Err(w),
+        };
+        let Walked { tree, unreadable, finished_ms, .. } = w;
+        let mut dst = tree;
+        // A tree made by `Index` helpers may carry its own root records: the new ones are written below.
+        dst.roots.clear();
+        if let Ok(mut g) = dst.path_rank.lock() {
+            *g = None;
+        }
+        // Exactly the room the other roots need (their names and folded forms), so nothing is left over.
+        let (mut n, mut bytes) = (0usize, 0usize);
+        for (k, r) in self.roots.iter().enumerate() {
+            if k == ri {
+                continue;
+            }
+            let mut stack = vec![r.id];
+            while let Some(x) = stack.pop() {
+                n += 1;
+                bytes += self.name_garbage(x as usize);
+                stack.extend(self.children(x));
+            }
+        }
+        dst.reserve(n, bytes);
+        for (k, r) in self.roots.iter().enumerate() {
+            let id = if k == ri {
+                let fl = dst.flags[0] | F_ROOT | F_DIR;
+                dst.flags[0] = fl;
+                dst.parent[0] = NONE;
+                0
+            } else {
+                let s = r.id as usize;
+                let Some(top) = dst.insert_raw(NONE, self.name_bytes(r.id), Some(self.folded(r.id)), self.meta(r.id), F_ROOT | (self.flags[s] & F_UNREAD)) else {
+                    continue;
+                };
+                let mut stack: Vec<(u32, u32)> = self.children(r.id).map(|c| (c, top)).collect();
+                while let Some((x, dparent)) = stack.pop() {
+                    let xi = x as usize;
+                    let Some(d) = dst.insert_raw(dparent, self.name_bytes(x), Some(self.folded(x)), self.meta(x), self.flags[xi] & F_UNREAD) else {
+                        continue;
+                    };
+                    for c in self.children(x) {
+                        stack.push((c, d));
+                    }
+                }
+                top
+            };
+            let mut root = r.clone();
+            root.id = id;
+            if k == ri {
+                root.walked = true;
+                root.last_walk_ms = finished_ms;
+                root.unreadable = unreadable;
+            }
+            dst.roots.push(root);
+        }
+        // Newer than anything the old index had (the «needs saving» check compares generations).
+        dst.gen = (self.gen + 1).max(dst.gen);
+        dst.trim();
+        Ok(dst)
+    }
+
+    /// Gives back the columns' spare room (a walk grows them by doubling) when it is more than an eighth.
+    pub(crate) fn trim(&mut self) {
+        fn t<T>(v: &mut Vec<T>) {
+            if v.capacity() > v.len() + v.len() / 8 + 64 {
+                v.shrink_to_fit();
+            }
+        }
+        t(&mut self.arena);
+        t(&mut self.name_off);
+        t(&mut self.name_len);
+        t(&mut self.fold_off);
+        t(&mut self.fold_len);
+        t(&mut self.grams);
+        t(&mut self.parent);
+        t(&mut self.first_child);
+        t(&mut self.next_sib);
+        t(&mut self.prev_sib);
+        t(&mut self.size);
+        t(&mut self.mtime);
+        t(&mut self.flags);
+        t(&mut self.kind);
+        t(&mut self.free);
     }
 
     // ---- changes ----

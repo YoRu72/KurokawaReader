@@ -12,6 +12,7 @@
 //! - persist: the file (versioned, length-checked, checksummed; never trusted), temp name then rename
 //! - watch: the watcher trait, inotify (Linux), ReadDirectoryChangesW (Windows), the mtime poller (macOS), a fake
 //! - service: the two threads that run it all for the shell
+//! - shellrules: what a shell decides around it (which folders may be chosen, the app-data folder left out, battery)
 //!
 //! Nothing here is sent anywhere, and no file's contents are ever read: names and metadata only. Std only; tested
 //! through stdroots/fileindex.rs (`rustc --edition 2021 --test stdroots/fileindex.rs`) and with the crate.
@@ -19,6 +20,7 @@ pub mod fold;
 pub mod persist;
 pub mod query;
 pub mod service;
+pub mod shellrules;
 pub mod store;
 pub mod walk;
 pub mod watch;

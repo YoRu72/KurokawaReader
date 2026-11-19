@@ -1039,6 +1039,198 @@ fn service_runs_walks_changes_and_the_file() {
     let s3 = Service::start(opts(None, vec![spec]));
     assert!(s3.status().note.unwrap().contains("damaged"));
     wait_until("the rebuild after damage", 10, || s3.search(&Query::text("")).map_or(false, |r| r.total == 4));
+    // Removed by the user: never saved again, even when stopped.
+    s3.discard();
+    let _ = std::fs::remove_file(&file);
+    drop(s3);
+    assert!(!file.exists());
+}
+
+/// Two roots: the made-up one (`n` entries) and a small «other» one.
+fn two_roots(n: usize) -> Index {
+    let mut ix = synthetic(n);
+    ix.add_root(RootSpec { path: root("other"), exclude_names: vec!["skip".into()], ..RootSpec::default() }).unwrap();
+    let o = ix.find(&root("other")).unwrap();
+    ix.insert(o, OsStr::new("keep me.txt"), file(5, 7)).unwrap();
+    let sub = ix.insert(o, OsStr::new("Sub folder"), dirm()).unwrap();
+    ix.insert(sub, OsStr::new("deeper budget.pdf"), file(9, 8)).unwrap();
+    ix
+}
+
+fn fresh_walk(n: usize, at_ms: i64) -> Walked {
+    Walked { path: root("synthetic"), tree: synthetic(n), entries: n as u64, unreadable: 2, skipped: 0, cancelled: false, finished_ms: at_ms }
+}
+
+#[test]
+fn a_big_walk_is_installed_aside_as_it_would_be_in_place() {
+    let n = 30_000;
+    let a = two_roots(n);
+    let mut b = two_roots(n);
+    let w = fresh_walk(n, 99);
+    assert!(a.worth_aside(&w));
+    let gen = a.generation();
+    let aside = a.installed_aside(w).ok().unwrap();
+    assert!(b.install(fresh_walk(n, 99)));
+    assert!(aside.generation() > gen);
+    assert_eq!(aside.stats().entries, b.stats().entries);
+    assert_eq!(aside.stats().folders, b.stats().folders);
+    assert_eq!(aside.stats().files, b.stats().files);
+    assert_eq!(aside.roots(), b.roots());
+    assert_eq!(aside.root_specs(), b.root_specs());
+    let r = aside.roots();
+    assert_eq!((r[0].walked, r[0].last_walk_ms, r[0].unreadable), (true, 99, 2));
+    for t in ["", "keep", "budget", "deeper budget", "path:sub", "*.mkv", "تقرير"] {
+        let (x, y) = (q(&aside, t), q(&b, t));
+        assert_eq!(x.total, y.total, "{t}");
+        let mut px: Vec<_> = x.hits.iter().map(|h| h.path.clone()).collect();
+        let mut py: Vec<_> = y.hits.iter().map(|h| h.path.clone()).collect();
+        px.sort();
+        py.sort();
+        if x.total <= 200 {
+            assert_eq!(px, py, "{t}");
+        }
+    }
+    // No garbage and no spare room left behind: smaller than the index filled in place.
+    assert!(aside.stats().memory_bytes <= b.stats().memory_bytes, "{} > {}", aside.stats().memory_bytes, b.stats().memory_bytes);
+    // It goes on taking changes, under both roots, and keeps the other root's exclusions.
+    let mut aside = aside;
+    assert_eq!(aside.apply(&Change::Created { path: root("other/Sub folder/new one.txt"), meta: file(1, 1) }), Applied::Done);
+    assert_eq!(aside.apply(&Change::Created { path: root("synthetic/Group 01/late arrival.txt"), meta: file(1, 1) }), Applied::Done);
+    assert_eq!(names(&q(&aside, "new one")), vec!["new one.txt"]);
+    assert_eq!(names(&q(&aside, "late arrival")), vec!["late arrival.txt"]);
+    assert!(aside.is_excluded(&root("other/skip/x.txt")));
+    assert!(aside.remove_root(&root("other")));
+    assert_eq!(q(&aside, "keep").total, 0);
+    // Saved and read back whole.
+    let back = Index::from_bytes(&aside.to_bytes()).unwrap();
+    assert_eq!(back.stats().entries, aside.stats().entries);
+    // Small walks, folder rescans, cancelled walks and walks of folders not chosen stay in place.
+    let c = two_roots(100);
+    assert!(!c.worth_aside(&fresh_walk(100, 1)));
+    let mut sub = Walked::start(&root("synthetic/Group 01"), dirm());
+    assert!(!c.worth_aside(&sub));
+    sub.cancelled = true;
+    assert!(c.installed_aside(sub).is_err());
+    let stray = Walked { path: root("elsewhere"), ..fresh_walk(10, 1) };
+    assert!(c.installed_aside(stray).is_err());
+}
+
+/// A source that hands out a made-up tree of `n` entries for any root (the walk itself is not under any lock).
+struct BigSource {
+    n: usize,
+    walks: AtomicU32,
+}
+impl Source for BigSource {
+    fn walk(&self, spec: &RootSpec, dir: &Path, _ctrl: &WalkCtrl) -> Walked {
+        let tree = synthetic_at(&spec.path, self.n);
+        self.walks.fetch_add(1, Ordering::SeqCst);
+        Walked { path: dir.to_path_buf(), tree, entries: self.n as u64, unreadable: 0, skipped: 0, cancelled: false, finished_ms: 1 }
+    }
+}
+
+#[test]
+fn a_search_is_not_held_up_while_a_big_walk_is_installed() {
+    // In place, installing this walk held the write lock for the whole fill (about 0.4 s at a million entries,
+    // built -O); aside, only a swap. The ceiling is generous: a debug build on a busy box searches 200 000 names
+    // in well under it, and only a fill under the write lock would come near it.
+    let n = 200_000;
+    let src = Arc::new(BigSource { n, walks: AtomicU32::new(0) });
+    let mut s = Service::start(ServiceOptions {
+        file: None,
+        roots: vec![RootSpec { path: root("synthetic"), ..RootSpec::default() }],
+        source: src.clone(),
+        fs: Arc::new(StdFs),
+        watcher: Some(Box::new(FakeWatcher::default())),
+        poll_interval: Duration::from_secs(3600),
+        save_every: Duration::from_secs(3600),
+        low_priority: false,
+    });
+    wait_until("the first walk", 60, || !s.status().busy && s.status().stats.entries as usize == n);
+    // One quiet search for scale (the service's queries supersede each other: only one thread searches from here).
+    let t = Instant::now();
+    let _ = s.search(&Query::text("zzqx budget")).unwrap();
+    let quiet = t.elapsed();
+    let done = std::sync::atomic::AtomicBool::new(false);
+    // (Set however the main thread leaves the scope, so the searching thread always ends.)
+    struct Done<'a>(&'a std::sync::atomic::AtomicBool);
+    impl Drop for Done<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let (worst, searches) = std::thread::scope(|sc| {
+        let h = sc.spawn(|| {
+            let (mut worst, mut searches) = (Duration::ZERO, 0u32);
+            while !done.load(Ordering::SeqCst) {
+                let t = Instant::now();
+                if let Ok(r) = s.search(&Query::text("zzqx budget")) {
+                    assert_eq!(r.total, 0);
+                }
+                worst = worst.max(t.elapsed());
+                searches += 1;
+            }
+            (worst, searches)
+        });
+        let _done = Done(&done);
+        // Two installs while the other thread searches.
+        for k in 2..4 {
+            s.rebuild();
+            wait_until("the walk again", 60, || src.walks.load(Ordering::SeqCst) == k && !s.status().busy);
+        }
+        drop(_done);
+        h.join().unwrap()
+    });
+    assert!(searches > 0);
+    assert_eq!(s.status().stats.entries as usize, n);
+    assert!(s.search(&Query::text("budget")).unwrap().total > 0);
+    assert!(worst < quiet * 4 + Duration::from_millis(1500), "a search waited {worst:?} (a quiet one takes {quiet:?})");
+    s.stop();
+}
+
+// ---- the shell's rules ----
+
+#[test]
+fn the_shells_rules_for_folders_battery_and_limits() {
+    use shellrules::*;
+    let chosen = vec![root("data/videos"), root("work")];
+    let app = root("home/me/appdata/kurokawa-tools");
+    assert_eq!(check_new_root(&chosen, &root("music"), true, Some(&app)), Ok(()));
+    assert_eq!(check_new_root(&chosen, &root("data/videos/old"), true, Some(&app)), Err(Refusal::Inside(root("data/videos"))));
+    assert_eq!(check_new_root(&chosen, &root("data"), true, Some(&app)), Err(Refusal::Holds(root("data/videos"))));
+    assert_eq!(check_new_root(&chosen, &root("work"), true, Some(&app)), Err(Refusal::Same(root("work"))));
+    // «/workshop» is not inside «/work».
+    assert_eq!(check_new_root(&chosen, &root("workshop"), true, Some(&app)), Ok(()));
+    assert_eq!(check_new_root(&chosen, &root("music"), false, Some(&app)), Err(Refusal::NotAFolder));
+    assert_eq!(check_new_root(&chosen, Path::new("relative/x"), true, None), Err(Refusal::NotAFolder));
+    assert_eq!(check_new_root(&chosen, &app, true, Some(&app)), Err(Refusal::AppData));
+    assert_eq!(check_new_root(&chosen, &root("home/me/appdata/kurokawa-tools/cache"), true, Some(&app)), Err(Refusal::AppData));
+    // A folder holding the app's data folder is fine: that one is left out of it.
+    assert_eq!(check_new_root(&chosen, &root("home/me"), true, Some(&app)), Ok(()));
+    let s = spec_for(&root("home/me"), &[root("home/me/tmp"), root("elsewhere/x"), root("home/me")], &["node_modules".into(), "a/b".into(), " .git ".into(), "..".into()], Some(&app));
+    assert_eq!(s.exclude, vec![root("home/me/tmp"), app.clone()]);
+    assert_eq!(s.exclude_names, vec!["node_modules".to_string(), ".git".to_string()]);
+    assert_eq!(spec_for(&root("music"), &[], &[], Some(&app)).exclude, Vec::<PathBuf>::new());
+    // Already left out by an exclusion above it: not added twice.
+    assert_eq!(spec_for(&root("home/me"), &[root("home/me/appdata")], &[], Some(&app)).exclude, vec![root("home/me/appdata")]);
+    assert_eq!(Refusal::Inside(root("w")).code(), ("inside", Some(root("w").as_path())));
+    assert_eq!(clamp_limit(None), 200);
+    assert_eq!(clamp_limit(Some(f64::NAN)), 200);
+    assert_eq!(clamp_limit(Some(0.0)), 200);
+    assert_eq!(clamp_limit(Some(750.0)), 750);
+    assert_eq!(clamp_limit(Some(1e12)), MAX_HITS);
+    let sup = |k: &str, on: Option<&str>, st: Option<&str>| Supply { kind: format!("{k}\n"), online: on.map(|x| format!("{x}\n")), status: st.map(|x| format!("{x}\n")) };
+    assert_eq!(linux_on_battery(&[]), None);
+    assert_eq!(linux_on_battery(&[sup("Mains", Some("1"), None), sup("Battery", None, Some("Charging"))]), Some(false));
+    assert_eq!(linux_on_battery(&[sup("Mains", Some("0"), None), sup("Battery", None, Some("Discharging"))]), Some(true));
+    assert_eq!(linux_on_battery(&[sup("Battery", None, Some("Discharging"))]), Some(true));
+    assert_eq!(linux_on_battery(&[sup("Battery", None, Some("Full"))]), Some(false));
+    assert_eq!(linux_on_battery(&[sup("Mains", Some("0"), None), sup("Battery", None, Some("Unknown"))]), Some(true));
+    assert_eq!(linux_on_battery(&[sup("Mains", Some("1"), None)]), Some(false));
+    assert_eq!(windows_on_battery(0, 1), Some(true));
+    assert_eq!(windows_on_battery(1, 8), Some(false));
+    assert_eq!(windows_on_battery(0, 128), Some(false));
+    assert_eq!(windows_on_battery(255, 1), None);
+    let _ = on_battery();
 }
 
 // ---- size and speed ----
@@ -1046,13 +1238,17 @@ fn service_runs_walks_changes_and_the_file() {
 /// A made-up tree of `n` entries: 1 000 folders in 50 groups, names from a small vocabulary with numbers, some
 /// Arabic and Japanese (deterministic).
 fn synthetic(n: usize) -> Index {
+    synthetic_at(&root("synthetic"), n)
+}
+
+fn synthetic_at(at: &Path, n: usize) -> Index {
     let words = ["report", "holiday", "video", "song", "budget", "scan", "invoice", "draft", "final", "photo",
         "lecture", "episode", "backup", "notes", "summary", "تقرير", "صورة", "مدرسة", "東京", "写真", "project", "data"];
     let exts = ["txt", "pdf", "mp4", "jpg", "mkv", "flac", "docx", "zip", "png", "rs", "js", "json"];
     let mut ix = Index::new();
     ix.reserve(n + 2000, n * 26);
-    ix.add_root(RootSpec { path: root("synthetic"), ..RootSpec::default() }).unwrap();
-    let top = ix.find(&root("synthetic")).unwrap();
+    ix.add_root(RootSpec { path: at.to_path_buf(), ..RootSpec::default() }).unwrap();
+    let top = ix.find(at).unwrap();
     let mut x: u64 = 0x2545F4914F6CDD1D;
     let mut rnd = || {
         x ^= x << 13;
@@ -1139,7 +1335,19 @@ fn speed_one_million() {
     let fresh = synthetic(1_000_000);
     let t = Instant::now();
     assert!(ix.install(Walked { path: root("synthetic"), tree: fresh, entries: 0, unreadable: 0, skipped: 0, cancelled: false, finished_ms: 1 }));
-    println!("a 1,000,000-entry walk installed over the old one in {:?}; memory now {:.1} MB", t.elapsed(), ix.stats().memory_bytes as f64 / 1e6);
+    println!("in place: a 1,000,000-entry walk installed over the old one in {:?} (all under the write lock); memory now {:.1} MB", t.elapsed(), ix.stats().memory_bytes as f64 / 1e6);
+    assert_eq!(ix.stats().entries, st.entries);
+    // Aside (what the service does): built under the shared lock, then swapped in; the old one dropped after.
+    let fresh = synthetic(1_000_000);
+    let t = Instant::now();
+    let built = ix.installed_aside(Walked { path: root("synthetic"), tree: fresh, entries: 0, unreadable: 0, skipped: 0, cancelled: false, finished_ms: 2 }).ok().unwrap();
+    let build = t.elapsed();
+    let t = Instant::now();
+    let old = std::mem::replace(&mut ix, built);
+    let lock = t.elapsed();
+    let t = Instant::now();
+    drop(old);
+    println!("aside: built in {build:?} (shared lock), swapped in {lock:?} (the write lock), the old one dropped in {:?} (no lock); memory now {:.1} MB", t.elapsed(), ix.stats().memory_bytes as f64 / 1e6);
     assert_eq!(ix.stats().entries, st.entries);
     // A real walk of a made-up tree (20 000 files in 200 folders) on this disk.
     let tmp = Tmp::new("walkspeed");

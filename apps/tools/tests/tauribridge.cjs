@@ -39,7 +39,10 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
-  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []] };
+  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []],
+  // (Tools 0.21: fast file search — filesearch.rs.)
+  fileSearchStatus: ['kt_fsearch_status', []], fileSearch: ['kt_fsearch_query', ['o']], fileSearchAdd: ['kt_fsearch_add', ['o']], fileSearchRemove: ['kt_fsearch_remove', ['o']],
+  fileSearchExclude: ['kt_fsearch_exclude', ['o']], fileSearchRebuild: ['kt_fsearch_rebuild', []], fileSearchForget: ['kt_fsearch_forget', []], fileSearchPause: ['kt_fsearch_pause', ['o']] };
 // (Preload methods the Tauri bridge has none of. Empty since Tools 0.21 P11 ported the safe-extraction engine —
 // archivePreflight, archiveShelf, archiveJob: extractcmds.rs over kt-core's extractjob.rs —; kept so a new Electron-only
 // call has to be named here.)
@@ -143,7 +146,9 @@ function loadBridge(boot) {
 
   // The shell's own methods: each one command, its object under «o».
   const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' },
-    updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' } };
+    updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' },
+    fileSearch: { text: 'report ext:pdf', kinds: ['document'], sizeMin: 1024, sizeMax: 1048576, after: 1700000000000, before: 1800000000000, sort: 'date', desc: true, limit: 500 },
+    fileSearchAdd: { path: '/a/Videos' }, fileSearchRemove: { path: '/a/Videos' }, fileSearchExclude: { root: '/a/Videos', path: '/a/Videos/old', remove: false }, fileSearchPause: { paused: true, pauseOnBattery: false } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');

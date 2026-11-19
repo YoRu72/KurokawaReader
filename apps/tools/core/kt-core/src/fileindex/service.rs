@@ -63,12 +63,17 @@ struct State {
 
 struct Shared {
     index: RwLock<Index>,
+    /// Held by whoever writes the index from outside the worker (adding, removing a root) and by the worker while it
+    /// builds a walk aside and swaps it in: nothing changes between the build and the swap.
+    writers: Mutex<()>,
     ctrl: WalkCtrl,
     stop: AtomicBool,
     st: Mutex<State>,
     cv: Condvar,
     searcher: Searcher,
     file: Option<PathBuf>,
+    /// Set by `discard`: nothing is saved any more (the user removed the index).
+    discarded: AtomicBool,
 }
 
 pub struct Service {
@@ -142,12 +147,14 @@ impl Service {
         let watch_cmds = ix.root_specs().into_iter().map(WatchCmd::Add).collect();
         let sh = Arc::new(Shared {
             index: RwLock::new(ix),
+            writers: Mutex::new(()),
             ctrl: WalkCtrl::new(),
             stop: AtomicBool::new(false),
             st: Mutex::new(State { jobs, current: None, changes: Vec::new(), note, watch_cmds, save_now: false, applied: 0 }),
             cv: Condvar::new(),
             searcher: Searcher::new(),
             file: o.file.clone(),
+            discarded: AtomicBool::new(false),
         });
         let mut threads = Vec::new();
         {
@@ -179,7 +186,10 @@ impl Service {
     }
 
     pub fn add_root(&self, spec: RootSpec) -> Result<(), PathBuf> {
-        self.sh.index.write().unwrap_or_else(|e| e.into_inner()).add_root(spec.clone())?;
+        {
+            let _w = self.sh.writers.lock().unwrap_or_else(|e| e.into_inner());
+            self.sh.index.write().unwrap_or_else(|e| e.into_inner()).add_root(spec.clone())?;
+        }
         let mut st = self.sh.st.lock().unwrap_or_else(|e| e.into_inner());
         st.jobs.push_back(spec.path.clone());
         st.watch_cmds.push(WatchCmd::Add(spec));
@@ -198,7 +208,10 @@ impl Service {
             st.watch_cmds.push(WatchCmd::Remove(path.to_path_buf()));
             st.changes.retain(|c| !change_under(c, path));
         }
-        let ok = self.sh.index.write().unwrap_or_else(|e| e.into_inner()).remove_root(path);
+        let ok = {
+            let _w = self.sh.writers.lock().unwrap_or_else(|e| e.into_inner());
+            self.sh.index.write().unwrap_or_else(|e| e.into_inner()).remove_root(path)
+        };
         self.sh.st.lock().unwrap_or_else(|e| e.into_inner()).save_now = true;
         self.sh.cv.notify_all();
         ok
@@ -218,6 +231,15 @@ impl Service {
     /// Pauses or resumes the walking (the shell sets it on battery). Watching goes on.
     pub fn set_paused(&self, paused: bool) {
         self.sh.ctrl.pause.store(paused, Ordering::SeqCst);
+        self.sh.cv.notify_all();
+    }
+
+    /// The index is being removed: it is never saved again, and the walk stops (the shell then stops the service
+    /// and deletes the file).
+    pub fn discard(&self) {
+        self.sh.discarded.store(true, Ordering::SeqCst);
+        self.sh.ctrl.cancel.store(true, Ordering::SeqCst);
+        self.sh.searcher.cancel_all();
         self.sh.cv.notify_all();
     }
 
@@ -281,6 +303,9 @@ fn change_under(c: &Change, root: &Path) -> bool {
 
 fn save(sh: &Shared) {
     let Some(f) = &sh.file else { return };
+    if sh.discarded.load(Ordering::SeqCst) {
+        return;
+    }
     let bytes = sh.index.read().unwrap_or_else(|e| e.into_inner()).to_bytes();
     if let Some(dir) = f.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -298,6 +323,42 @@ fn save(sh: &Shared) {
     })();
     if ok.is_err() {
         let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// Installs a walk: a big whole-root walk is built aside under the shared lock (queries go on) and swapped in under
+/// a short write lock, the old index dropped after the lock is released; anything else is installed in place.
+fn install(sh: &Shared, w: super::store::Walked) -> bool {
+    let _w = sh.writers.lock().unwrap_or_else(|e| e.into_inner());
+    let path = w.path.clone();
+    let built = {
+        let ix = sh.index.read().unwrap_or_else(|e| e.into_inner());
+        if ix.worth_aside(&w) { ix.installed_aside(w).map(|n| (ix.generation(), n)) } else { Err(w) }
+    };
+    match built {
+        Ok((gen, fresh)) => {
+            let old = {
+                let mut ix = sh.index.write().unwrap_or_else(|e| e.into_inner());
+                // The writers' lock keeps the index as it was read; should it differ all the same, the newer one stays
+                // and the root is walked again.
+                if ix.generation() == gen {
+                    Some(std::mem::replace(&mut *ix, fresh))
+                } else {
+                    None
+                }
+            };
+            match old {
+                Some(old) => {
+                    drop(old);
+                    true
+                }
+                None => {
+                    sh.st.lock().unwrap_or_else(|e| e.into_inner()).jobs.push_back(path);
+                    true
+                }
+            }
+        }
+        Err(w) => sh.index.write().unwrap_or_else(|e| e.into_inner()).install(w),
     }
 }
 
@@ -365,7 +426,7 @@ fn worker(sh: Arc<Shared>, source: Arc<dyn Source>, save_every: Duration, low: b
                 let w = source.walk(&spec, &dir, &sh.ctrl);
                 let cancelled = w.cancelled || sh.ctrl.cancel.load(Ordering::SeqCst);
                 if !cancelled {
-                    let installed = sh.index.write().unwrap_or_else(|e| e.into_inner()).install(w);
+                    let installed = install(&sh, w);
                     if !installed && dir != spec.path {
                         // Its folder is not indexed (yet): walk the parent instead.
                         if let Some(p) = dir.parent() {
