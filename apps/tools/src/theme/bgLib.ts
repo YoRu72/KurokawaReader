@@ -305,12 +305,16 @@ const adding = new Set<string>();
 export function deleteItem(id: string, undoMs: number): { item: BgItem | null; restore: () => void } {
   const s = getSettings(); const list = libItems(); const item = list.find((x) => x.id === id) ?? null;
   if (!item) return { item: null, restore: () => undefined };
-  const before = { animBgLib: s.animBgLib, animBg: s.animBg };
+  const at = list.indexOf(item);
   const using = s.animBg === `scene:user:${id}`;
   keepTrash([...trash().filter((x) => x !== id), id]);
   updateSettings({ animBgLib: list.filter((x) => x.id !== id), ...(using ? { animBg: 'off' as const } : {}) });
   clearTimeout(timers.get(id)); timers.set(id, window.setTimeout(() => { timers.delete(id); void sweep(); }, undoMs + 500));
-  return { item, restore: () => { clearTimeout(timers.get(id)); timers.delete(id); keepTrash(trash().filter((x) => x !== id)); updateSettings(before); } };
+  return { item, restore: () => { clearTimeout(timers.get(id)); timers.delete(id); keepTrash(trash().filter((x) => x !== id));
+    // Put back into the list as it is NOW (something may have been added, renamed or chosen since), not a copy from before.
+    const now = libItems(); if (now.some((x) => x.id === id)) return;
+    const next = now.slice(); next.splice(Math.min(at, next.length), 0, item);
+    updateSettings({ animBgLib: next, ...(using && getSettings().animBg === 'off' ? { animBg: `scene:user:${id}` as const } : {}) }); } };
 }
 /** The files of entries deleted (and no longer offered back) removed. */
 export async function sweep(): Promise<void> {

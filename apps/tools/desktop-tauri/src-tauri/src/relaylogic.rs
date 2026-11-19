@@ -201,7 +201,8 @@ pub fn origin(u: &str) -> String {
     };
     let scheme = u[..i].to_ascii_lowercase();
     let rest = &u[i + 3..];
-    let host = rest.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
+    // A backslash ends the host as a slash does (the address parser the fetch uses reads it so).
+    let host = rest.split(['/', '\\', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
     let host = host.rsplit('@').next().unwrap_or("").to_string();
     if host.contains(':') && !host.ends_with(']') {
         return format!("{}://{}", scheme, host);
@@ -211,7 +212,7 @@ pub fn origin(u: &str) -> String {
 }
 pub fn is_http(u: &str) -> bool {
     let l = u.to_ascii_lowercase();
-    (l.starts_with("http://") || l.starts_with("https://")) && !u.contains(['\r', '\n', ' ', '\0']) && u.len() <= MAX_URL
+    (l.starts_with("http://") || l.starts_with("https://")) && !u.contains(['\r', '\n', '\t', '\\', ' ', '\0']) && u.len() <= MAX_URL
 }
 
 /// A string value of the top dictionary of a binary property list (Apple's bplist00), or None — only what a bundle's
@@ -742,6 +743,8 @@ mod tests {
         assert_eq!(origin("https://A.test/x?y"), "https://a.test:443");
         assert_eq!(origin("http://a.test:8080/x"), "http://a.test:8080");
         assert_ne!(origin("https://a.test/x"), origin("https://cdn.test/x"));
+        assert_eq!(origin("https://evil.test\\@a.test/seg.ts"), "https://evil.test:443");
+        assert!(!is_http("https://evil.test\\@a.test/seg.ts"));
         assert!(is_http("https://a/b") && !is_http("file:///etc/passwd") && !is_http("data:x"));
         assert_eq!(mpv_line(r#"{"event":"property-change","id":1,"name":"time-pos","data":12.5}"#), Some(MpvNote::Pos(12.5)));
         assert_eq!(mpv_line(r#"{"event":"property-change","id":2,"name":"duration","data":1440.0}"#), Some(MpvNote::Dur(1440.0)));

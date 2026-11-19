@@ -236,7 +236,7 @@ async function page() {
   const DIST = path.join(ROOT, 'dist'); if (!fs.existsSync(path.join(DIST, 'index.html'))) { ok('dist built', false); return; }
   const MEDIA = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-extmedia-'));
   fs.writeFileSync(path.join(MEDIA, 'en.srt'), '1\n00:00:01,000 --> 00:00:03,000\nFirst line\n');
-  let media = true; try { execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=25', '-t', '20', '-c:v', 'libvpx', '-b:v', '200k', path.join(MEDIA, 'clip.webm')]); } catch { media = false; }
+  let media = true; try { execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=25', '-t', '20', '-c:v', 'libvpx', '-b:v', '200k', path.join(MEDIA, 'clip.webm')]); } catch { media = false; if (process.env.KT_REQUIRE_FFMPEG) { console.log('FAIL ffmpeg is required here'); process.exit(1); } }
   const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.webm': 'video/webm', '.srt': 'text/plain' };
   const web = http.createServer((req, res) => {
     let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
