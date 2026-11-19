@@ -60,14 +60,14 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('the app folder is listed, folders first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,app.apk,Movie.mkv,notes.txt,pack.zip,photo.jpg,Song.mp3', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(','));
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-list.png' });
   // sort by size, turned round
-  await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
+  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Sort by")'); await p.waitForTimeout(300); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Sort by")'); await p.waitForTimeout(300); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
   ok('sorted by size, biggest first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).slice(0, 2).join(',') === 'Sub,Movie.mkv');
   // kind filter
   await p.click('.files-kinds .chip:nth-child(3)'); await p.waitForTimeout(150);
   ok('the Music chip keeps the song (and folders)', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,Song.mp3');
   await p.click('.files-kinds .chip:nth-child(1)'); await p.waitForTimeout(150);
   // search within
-  await p.click('.topbar-actions button[aria-label="Filter this folder"]'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
+  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Filter this folder")'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
   ok('the search narrows', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Movie.mkv');
   await p.fill('.files-search', ''); await p.waitForTimeout(150);
   // open a text file: the quick look

@@ -254,7 +254,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const onPathOut = (e: Event) => { if (!(e.target as Element).closest?.('.files-crumbs, .files-head')) setPath(false); };
   const onPathKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPath(false); };
   const setPath = (on: boolean) => { pathOpen = on && phoneNow() && !crumbs.hidden; crumbs.classList.toggle('open', pathOpen); headEl.setAttribute('aria-expanded', String(pathOpen)); offPath(); if (pathOpen) { document.addEventListener('pointerdown', onPathOut, true); document.addEventListener('keydown', onPathKey, true); } };
-  const headEl = h('div', { class: 'title files-head', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-label': t('filesPathMenu'), onclick: () => { if (phoneNow()) setPath(!pathOpen); } }, titleEl, h('span', { class: 'files-head2' }, pathEl, subEl)) as HTMLElement;
+  const headEl = h('div', { class: 'title files-head', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-label': t('filesPathMenu'), onclick: () => { if (phoneNow()) setPath(!pathOpen); } }, titleEl, h('span', { class: 'files-head2' }, pathEl, subEl, h('span', { class: 'files-chev' }, icon('chevronRight')))) as HTMLElement;
   /** The title, a long name cut in its middle so its end (the extension) stays in sight. */
   const setTitle = (text: string, isDir = true) => { const np = nameParts(text, isDir); titleEl.setAttribute('dir', np.dir); titleEl.title = text; titleEl.replaceChildren(h('span', { class: 'mid-head' }, np.head), h('span', { class: 'mid-tail' }, np.tail)); };
   const fab = h('button', { type: 'button', class: 'fab files-fab', 'aria-label': t('newFolder'), onclick: () => fabSheet() }, icon('plus'));
@@ -266,12 +266,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const jobsBadge = h('span', { class: 'files-jobs-badge', 'aria-hidden': 'true' });
   const jobsBtn = iconButton('jobs', t('filesJobs'), () => void useQueue().then((m) => m.jobsSheet(() => (prefs.jobsMode === 'together' ? 'together' : 'one')))); jobsBtn.classList.add('files-jobs-btn'); jobsBtn.hidden = true; jobsBtn.append(jobsBadge);
   const drawJobsBadge = () => { const n = Q?.count() ?? 0; jobsBtn.hidden = n === 0; jobsBadge.textContent = localDigits(n); const lbl = n ? t('filesJobsCount', { n: localDigits(n) }) : t('filesJobs'); jobsBtn.title = lbl; jobsBtn.setAttribute('aria-label', lbl); };
+  let filterBtn!: HTMLElement; let sortBtn!: HTMLElement; // (on a phone these three live in the ⋮ sheet: the bar keeps the name its room)
   const root = h('div', { class: 'view files-view' },
     h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, headEl, h('div', { class: 'topbar-actions' }, jobsBtn,
       iconButton('search', t('search'), () => { if (canEverywhere() && !pk) { void everywhere(); return; } if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
-      iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
+      filterBtn = iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       viewBtn,
-      iconButton('sort', t('sortBy'), () => sortSheet()),
+      sortBtn = iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
     clipBar, search, shelfEl, h('div', { class: 'files-strip' }, rootsRow, crumbs, kindRow), body, selBar, fab) as HTMLElement & { dispose?: () => void };
   // (Extractions left half done — a stop, a crash, a full disk: Finish, Restore the archive, or Leave as is.)
@@ -320,7 +321,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const askAccess = async () => { const pl = plug(); if (!pl) return; const sh = openSheet(t('filesAccessTitle'), t('close')); sh.body.append(h('p', { class: 'hint' }, t('filesAccessHint'))); sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void pl.filesAccess({ ask: true }); } }, icon('key'), t('filesAccessAllow'))); };
   const syncBack = () => { const hide = !collection && (!upOf(at) || (phoneNow() && prefs.view === 'list')); if (backBtn.hidden !== hide) { backBtn.hidden = hide; requestAnimationFrame(() => refitTopbar(root.querySelector('.topbar'))); } };
   const drawCrumbs = () => {
-    syncBack(); { const up = collection ? null : upOf(at); pathEl.firstElementChild!.textContent = up ? readablePath(up) : ''; }
+    syncBack(); { const up = collection ? null : upOf(at); const rt = roots.find((x) => x.path === at); pathEl.firstElementChild!.textContent = up ? readablePath(up) : rt && !collection ? [rt.name, rt.free !== undefined ? formatBytes(rt.free) : ''].filter(Boolean).join(' · ') : ''; }
     if (collection) { crumbs.hidden = true; setPath(false); const c = COLLECTIONS.find(([k]) => k === collection); crumbs.replaceChildren(h('button', { type: 'button', class: 'crumb', onclick: () => drawer() }, t((c?.[1] ?? 'filesRecent') as 'filesRecent'))); titleEl.textContent = t((c?.[1] ?? 'filesRecent') as 'filesRecent'); titleEl.removeAttribute('dir'); return; }
     // (Inside an archive: the folder there, or the archive's own name at its top — decoded, never «%2Fstorage%2F…».)
     const rootHere = roots.find((x) => x.path === at); if (rootHere) setTitle(rootHere.name); else if (isApps(at) && at === 'apps://') setTitle(t('appsTitle')); else setTitle(placeName(at) || t('navFiles'), !isArc(at) || !!parseArc(at).inner);
@@ -522,6 +523,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     subEl.textContent = [dirs ? countFolders(dirs) : '', files ? countFiles(files) : ''].filter(Boolean).join(', '); status.textContent = '';
     syncFast();
   };
+  // (The window crossing 840 px — a turned phone, a resized window —: the rows drawn again in the layout that now fits.)
+  const mqW = window.matchMedia('(min-width: 840px)'); let mqT = 0;
+  const onMqW = () => { clearTimeout(mqT); mqT = window.setTimeout(() => { if (!gone) { syncBack(); draw(window.scrollY); } }, 150); };
+  mqW.addEventListener('change', onMqW);
   const paintView = () => { const next = NEXT_VIEW[prefs.view]; const to = next === 'gallery' ? 'images' : next; viewBtn.dataset.icon = to; viewBtn.replaceChildren(icon(to)); const lbl = t(VIEW_TO[next]); viewBtn.title = lbl; viewBtn.setAttribute('aria-label', lbl); };
   /** The view changed: the first row in sight stays where it is on the screen, the rows are drawn at the new size (their
    *  pictures asked again at it), the button shows what a tap does now. */
@@ -845,6 +850,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const sh = openSheet(t('navFiles'), t('close'));
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     sh.body.append(h('div', { class: 'dest-list' },
+      ...(phoneNow() ? [act('filter', t('filesFilterHere'), () => filterBtn.click()), act(viewBtn.dataset.icon ?? 'grid', viewBtn.title, () => viewBtn.click()), act('sort', t('sortBy'), () => sortSheet())] : []),
       ...(isArc(at) || collection ? [] : [act('folderPlus', t('newFolder'), () => newFolderSheet())]),
       act('check', t('filesSelectAll'), () => { selecting = true; for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }),
       act(prefs.hidden ? 'eye' : 'eye', prefs.hidden ? t('filesHideHidden') : t('filesShowHidden'), () => { prefs.hidden = !prefs.hidden; savePrefs(); void load(); }),
@@ -1299,7 +1305,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; offPath(); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };

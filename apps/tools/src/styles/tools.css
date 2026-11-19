@@ -1666,18 +1666,22 @@ html[data-density='compact'] .te-row { min-height: 38px; }
 .files-strip { display: contents; }
 .topbar .files-head .files-path { display: none; }
 .files-uprow { display: none; }
+.files-chev { display: none; }
 .files-date { display: none; }
 @media (max-width: 839.98px) {
   html:not(.pc) .files-view .topbar .icon-btn { width: 40px; height: 40px; }
+  html:not(.pc) .files-view > .topbar { height: calc(56px + var(--safe-top)) !important; min-height: 56px; }
+  html:not(.pc) .files-view .topbar .topbar-actions > :is([data-icon='filter'], [data-icon='sort'], [data-icon='list'], [data-icon='grid'], [data-icon='images']) { display: none; }
+  html:not(.pc) .files-chev { display: inline-flex; flex: none; align-self: center; margin-inline-start: 2px; opacity: .7; } html:not(.pc) .files-chev svg { width: 16px; height: 16px; transform: rotate(90deg); fill: none; stroke: currentColor; stroke-width: 2.2; }
   html:not(.pc) .files-view .topbar { gap: 0; padding-inline: 4px 6px; }
   html:not(.pc) .files-view .topbar .topbar-actions { gap: 0; }
   html:not(.pc) .files-view .topbar > .files-head { padding-inline: 2px; }
-  html:not(.pc) .files-view .topbar .files-head { cursor: pointer; justify-content: center; gap: 1px; }
-  html:not(.pc) .files-head2 { display: flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; }
-  html:not(.pc) .topbar .files-head .files-path { display: block; flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; font-size: 11.5px; line-height: 1.25; }
+  html:not(.pc) .files-view .topbar .files-head { cursor: pointer; justify-content: center; gap: 2px; line-height: 1.3; min-width: 140px; overflow: visible; }
+  html:not(.pc) .files-head2 { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+  html:not(.pc) .topbar .files-head .files-path { display: block; flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; font-size: 12px; line-height: 1.3; }
   html:not(.pc) .topbar .files-head .files-path > bdi { direction: ltr; unicode-bidi: isolate; }
   html:not(.pc) .files-head2 .files-sub { display: none; }
-  html:not(.pc) .files-view .topbar .files-title { font-size: 18px; }
+  html:not(.pc) .files-view .topbar .files-title { font-size: 18px; line-height: 1.3; }
   html:not(.pc) .files-strip { display: flex; align-items: center; gap: 6px; flex: none; height: 36px; padding: 0 12px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; margin-block: 2px; }
   html:not(.pc) .files-strip::-webkit-scrollbar { display: none; }
   html:not(.pc) .files-strip > .chip-row { display: contents; }

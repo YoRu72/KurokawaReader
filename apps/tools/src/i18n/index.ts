@@ -152,7 +152,7 @@ export function formatDateShort(ts: number | undefined): string {
 /** A list row's date: today the time, else the short date (this year: day and month). */
 export function formatRowDate(ts: number | undefined): string {
   if (!ts) return ''; const d = new Date(ts), n = new Date();
-  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate() ? dtf(dateLocale(), { hour: '2-digit', minute: '2-digit' }).format(d) : formatDateShort(ts);
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate() ? dtf(dateLocale(), { hour: '2-digit', minute: '2-digit' }).format(d) : d.getFullYear() === n.getFullYear() || calendarPref() !== 'gregory' ? formatDateShort(ts) : dtf(dateLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 export function formatDate(ts: number | undefined): string {
   if (!ts) return '';
