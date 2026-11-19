@@ -1,0 +1,73 @@
+// The Android, AndroidX and Android's org.json signatures KtBattery.java uses (org.json's exception checked, as Android's is), as plain stubs (bodies empty): tests/native/batphone.sh
+// splits this file at the «//// path» lines and compiles KtBattery against it — a check of the Java itself (syntax,
+// types, the names it calls), not of Android: GitHub's Android build is the real one.
+//// android/R.java
+package android; public final class R { public static final class drawable { public static final int stat_sys_warning = 17301642; } }
+//// android/os/Build.java
+package android.os; public class Build { public static class VERSION { public static int SDK_INT = 34; } }
+//// android/os/Handler.java
+package android.os; public class Handler {}
+//// android/os/Parcelable.java
+package android.os; public interface Parcelable {}
+//// android/os/Bundle.java
+package android.os; public class Bundle { public Object get(String k) { return null; } }
+//// android/net/Uri.java
+package android.net; public abstract class Uri { public static Uri parse(String s) { return null; } }
+//// android/provider/Settings.java
+package android.provider; public final class Settings { public static final String ACTION_APPLICATION_DETAILS_SETTINGS = "a", ACTION_BLUETOOTH_SETTINGS = "b", ACTION_SETTINGS = "c"; }
+//// android/content/pm/PackageManager.java
+package android.content.pm; public abstract class PackageManager { public static final int PERMISSION_GRANTED = 0; }
+//// android/content/SharedPreferences.java
+package android.content; public interface SharedPreferences { boolean getBoolean(String k, boolean d); int getInt(String k, int d); String getString(String k, String d); Editor edit();
+  interface Editor { Editor putBoolean(String k, boolean v); Editor putInt(String k, int v); Editor putString(String k, String v); void apply(); } }
+//// android/content/Context.java
+package android.content; public abstract class Context { public static final String BLUETOOTH_SERVICE = "bluetooth"; public static final int MODE_PRIVATE = 0, RECEIVER_EXPORTED = 2;
+  public abstract SharedPreferences getSharedPreferences(String n, int m); public abstract int checkSelfPermission(String p); public abstract Object getSystemService(String n); public final <T> T getSystemService(Class<T> c) { return null; }
+  public abstract String getPackageName(); public abstract void startActivity(Intent i); public abstract Context getApplicationContext();
+  public abstract Intent registerReceiver(BroadcastReceiver r, IntentFilter f); public abstract Intent registerReceiver(BroadcastReceiver r, IntentFilter f, int flags);
+  public abstract Intent registerReceiver(BroadcastReceiver r, IntentFilter f, String broadcastPermission, android.os.Handler scheduler);
+  public abstract Intent registerReceiver(BroadcastReceiver r, IntentFilter f, String broadcastPermission, android.os.Handler scheduler, int flags); public abstract void unregisterReceiver(BroadcastReceiver r); }
+//// android/content/BroadcastReceiver.java
+package android.content; public abstract class BroadcastReceiver { public abstract void onReceive(Context c, Intent i); }
+//// android/content/IntentFilter.java
+package android.content; public class IntentFilter { public IntentFilter() {} public IntentFilter(String a) {} public final void addAction(String a) {} public final void addCategory(String c) {} }
+//// android/content/Intent.java
+package android.content; public class Intent { public static final int FLAG_ACTIVITY_NEW_TASK = 0x10000000; public Intent(String a) {} public Intent(String a, android.net.Uri u) {}
+  public Intent addFlags(int f) { return this; } public String getAction() { return null; } public <T extends android.os.Parcelable> T getParcelableExtra(String n) { return null; }
+  public int getIntExtra(String n, int d) { return d; } public String getStringExtra(String n) { return null; } public android.os.Bundle getExtras() { return null; } }
+//// android/app/Activity.java
+package android.app; public abstract class Activity extends android.content.Context { public boolean shouldShowRequestPermissionRationale(String p) { return false; } public final void requestPermissions(String[] p, int code) {} public final void runOnUiThread(Runnable r) {} }
+//// android/app/PendingIntent.java
+package android.app; public final class PendingIntent {}
+//// android/app/Notification.java
+package android.app; public class Notification {}
+//// android/app/NotificationChannel.java
+package android.app; public final class NotificationChannel { public NotificationChannel(String id, CharSequence name, int importance) {} public void setShowBadge(boolean b) {} }
+//// android/app/NotificationManager.java
+package android.app; public class NotificationManager { public static final int IMPORTANCE_DEFAULT = 3; public void createNotificationChannel(NotificationChannel c) {} }
+//// android/bluetooth/BluetoothClass.java
+package android.bluetooth; public final class BluetoothClass { public int getMajorDeviceClass() { return 0; } public int getDeviceClass() { return 0; } }
+//// android/bluetooth/BluetoothDevice.java
+package android.bluetooth; public final class BluetoothDevice implements android.os.Parcelable { public static final String EXTRA_DEVICE = "d", ACTION_ACL_CONNECTED = "c", ACTION_ACL_DISCONNECTED = "x", ACTION_BOND_STATE_CHANGED = "b";
+  public String getAddress() { return null; } public String getAlias() { return null; } public String getName() { return null; } public BluetoothClass getBluetoothClass() { return null; } }
+//// android/bluetooth/BluetoothAdapter.java
+package android.bluetooth; public final class BluetoothAdapter { public static final String ACTION_STATE_CHANGED = "s"; public boolean isEnabled() { return false; } public java.util.Set<BluetoothDevice> getBondedDevices() { return null; } }
+//// android/bluetooth/BluetoothManager.java
+package android.bluetooth; public final class BluetoothManager { public BluetoothAdapter getAdapter() { return null; } }
+//// androidx/core/app/NotificationCompat.java
+package androidx.core.app; public class NotificationCompat { public static final String CATEGORY_STATUS = "status";
+  public static class Builder { public Builder(android.content.Context c, String ch) {} public Builder setSmallIcon(int i) { return this; } public Builder setContentTitle(CharSequence t) { return this; } public Builder setContentText(CharSequence t) { return this; }
+    public Builder setAutoCancel(boolean b) { return this; } public Builder setContentIntent(android.app.PendingIntent p) { return this; } public Builder setCategory(String c) { return this; } public android.app.Notification build() { return null; } } }
+//// androidx/core/app/NotificationManagerCompat.java
+package androidx.core.app; public final class NotificationManagerCompat { public static NotificationManagerCompat from(android.content.Context c) { return null; } public boolean areNotificationsEnabled() { return false; } public void notify(String tag, int id, android.app.Notification n) {} }
+//// org/json/JSONException.java
+package org.json; public class JSONException extends Exception { public JSONException(String m) { super(m); } }
+//// org/json/JSONObject.java
+package org.json; public class JSONObject { public JSONObject() {} public JSONObject(String s) throws JSONException {}
+  public JSONObject put(String k, Object v) throws JSONException { return this; } public JSONObject put(String k, int v) throws JSONException { return this; } public JSONObject put(String k, long v) throws JSONException { return this; } public JSONObject put(String k, boolean v) throws JSONException { return this; }
+  public boolean has(String k) { return false; } public boolean optBoolean(String k) { return false; } public int optInt(String k) { return 0; } public int optInt(String k, int d) { return d; } public long optLong(String k, long d) { return d; }
+  public String optString(String k, String d) { return d; } public JSONObject optJSONObject(String k) { return null; } public java.util.Iterator<String> keys() { return null; } }
+//// org/json/JSONArray.java
+package org.json; public class JSONArray { public JSONArray put(Object v) { return this; } }
+//// KtService.java
+final class KtService { static android.app.PendingIntent openApp(android.content.Context c) { return null; } }

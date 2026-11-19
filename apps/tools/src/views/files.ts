@@ -88,6 +88,9 @@ const arcOk = (): boolean => !!plug() || (canJobs() && !!(window.kurokawaTools a
 /** A storage's refusal in words: a name taken, a name with a separator (or, on Windows, a character it forbids), what
  *  could not be done — the phone's and the computer's shell answer with these codes. */
 const fsErr = (m: string): string => (m === 'exists' ? t('filesNameTaken') : m === 'bad name' ? t('filesBadName') : m === 'cannot rename' ? t('filesFailed') : m);
+/** «Everywhere in my folders» (views/filesearch.ts, loaded on first use): a computer's Tauri shell with its file index
+ *  only — never the phone, Electron or the web. */
+const canEverywhere = (): boolean => !plug() && !!(window.kurokawaTools as unknown as { fileSearch?: unknown } | undefined)?.fileSearch && document.documentElement.classList.contains('pc');
 const rootIcon = (kind: string): string => ({ app: 'download', downloads: 'download', home: 'user', desktop: 'layout', documents: 'file' } as Record<string, string>)[kind] ?? 'storage';
 
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
@@ -125,7 +128,7 @@ type JobRec = { owner: object | null; label: string; cancel: () => void; ended?:
 const liveJobs = new Map<string, JobRec>();
 
 import { isRemote, isVirtual, parseRemote, connections, connectionSheet, connectionMenu, scanSheet, rplug, vplug, vfs, vfsRoots, kindIcon, describe, canShareFolder, folderShareSheet, type Conn, type VRoots } from './filesRemote';
-const KINDS: [string, string, RegExp | null][] = [['all', 'filesKindAll', null], ['image', 'filesKindImages', /^(jpe?g|png|gif|webp|bmp|heic|heif|hif|avif|svg|tiff?|ico|wbmp|jfif|apng)$/], ['audio', 'filesKindMusic', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/], ['video', 'filesKindVideo', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|3gp)$/], ['doc', 'filesKindDocs', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/], ['archive', 'filesKindArchives', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/], ['apk', 'filesKindApps', /^(apk|apks|xapk|apkm)$/]];
+const KINDS: [string, string, RegExp | null][] = [['all', 'filesKindAll', null], ['image', 'filesKindImages', /^(jpe?g|png|gif|webp|bmp|heic|heif|hif|avif|svg|tiff?|ico|wbmp|jfif|apng)$/], ['audio', 'filesKindMusic', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/], ['video', 'filesKindVideo', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|mts|flv|wmv|3gp)$/], ['doc', 'filesKindDocs', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/], ['archive', 'filesKindArchives', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/], ['apk', 'filesKindApps', /^(apk|apks|xapk|apkm)$/]];
 const ICON: Record<string, string> = { video: 'film', audio: 'music', ebook: 'books', image: 'images', sub: 'subtitles', archive: 'archive', doc: 'file', other: 'file', locked: 'lock' };
 const MIMES: [string, string, string][] = [['image/*', 'filesAsImage', 'images'], ['audio/*', 'filesAsMusic', 'music'], ['video/*', 'filesAsVideo', 'film'], ['text/plain', 'filesAsText', 'type'], ['application/pdf', 'filesAsDocument', 'file'], ['application/zip', 'filesAsArchive', 'archive'], ['*/*', 'filesAsAny', 'apps']];
 /** The books and comics the Reader opens (its detect.ts), with the MIME its manifest takes them under. */
@@ -221,7 +224,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const drawJobsBadge = () => { const n = Q?.count() ?? 0; jobsBtn.hidden = n === 0; jobsBadge.textContent = localDigits(n); const lbl = n ? t('filesJobsCount', { n: localDigits(n) }) : t('filesJobs'); jobsBtn.title = lbl; jobsBtn.setAttribute('aria-label', lbl); };
   const root = h('div', { class: 'view files-view' },
     h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, h('div', { class: 'title files-head' }, titleEl, subEl), h('div', { class: 'topbar-actions' }, jobsBtn,
-      iconButton('search', t('search'), () => { if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
+      iconButton('search', t('search'), () => { if (canEverywhere() && !pk) { void everywhere(); return; } if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       viewBtn,
       iconButton('sort', t('sortBy'), () => sortSheet()),
@@ -302,6 +305,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const backStep = (): boolean => {
     if (gone || !root.isConnected) return false;
     if (selecting) { leaveSel(); return true; }
+    if (ew) { ew.close(); return true; }
     if (!search.hidden) { search.value = ''; query = ''; search.hidden = true; draw(); return true; }
     if (collection) { const back = prefs.last && !prefs.last.startsWith('c:') ? prefs.last : roots[0]?.path; if (back) { goUp(back); return true; } return false; }
     const up = upOf(at); if (up) { goUp(up); return true; }
@@ -887,7 +891,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const stem = paths.length === 1 ? baseOf(paths[0]).replace(/\.[^.]+$/, '') : baseOf(at) || 'archive';
     const inp = h('input', { type: 'text', value: `${stem}.zip`, dir: 'auto' }) as HTMLInputElement;
     sh.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), inp), h('p', { class: 'hint' }, t('filesZipHint', { n: localDigits(paths.length) })));
-    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim() || `${stem}.zip`; sh.close(); leaveSel(); const out = `${at}/${name.endsWith('.zip') ? name : name + '.zip'}`; const el = jobRow('zip', t('filesZipping', { name }), () => undefined); try { await createZip(out, paths, (p) => { const b = el.querySelector('.files-job-bar i') as HTMLElement | null; if (b && p.total) b.style.width = `${Math.round((p.done / p.total) * 100)}%`; }); el.remove(); void load(); toast(t('filesZipped', { name })); } catch (err) { el.remove(); toast(String((err as Error).message ?? err), 'error'); } } }, icon('archive'), t('filesZip')));
+    sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { const name = inp.value.trim() || `${stem}.zip`; sh.close(); leaveSel(); const out = `${at}/${name.endsWith('.zip') ? name : name + '.zip'}`; const el = jobRow('zip', t('filesZipping', { name }), () => undefined); try { const r = await createZip(out, paths, (p) => { const b = el.querySelector('.files-job-bar i') as HTMLElement | null; if (b && p.total) b.style.width = `${Math.round((p.done / p.total) * 100)}%`; }); el.remove(); if (r.cancelled) return; void load(); toast(t('filesZipped', { name: r.path ? baseOf(r.path) : name })); } catch (err) { el.remove(); toast(String((err as Error).message ?? err), 'error'); } } }, icon('archive'), t('filesZip')));
   };
 
   // ---- the jobs: copy / move / delete, with their progress, cancel and the question when a name is taken
@@ -1125,6 +1129,18 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     root.append(h('div', { class: 'pick-bar', role: 'toolbar' }, pickCount, h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), pickGo));
     drawPick();
   }
+  // ---- «Everywhere in my folders» (a computer's Tauri shell): its panel over the folder, loaded on first use
+  let ew: import('./filesearch').Everywhere | null = null;
+  const everywhere = async () => {
+    if (gone || pk) return; if (ew) { ew.focus(); return; }
+    const m = await import('./filesearch'); if (gone || ew) return;
+    if (selecting) leaveSel(); search.value = ''; query = ''; search.hidden = true;
+    ew = m.openEverywhere(root, { open: (e) => void open(e), menu: (e, ev) => itemSheet(e, ev), go: (d) => go(d), filter: () => { search.hidden = false; search.focus(); draw(); }, onClose: () => { ew = null; } });
+  };
+  // (Ctrl+Shift+F anywhere in the app — ui/backnav.ts — brings this page and asks it here.)
+  const onEverywhere = () => { if (root.isConnected && canEverywhere() && po.side !== 'b') void everywhere(); };
+  window.addEventListener('kt:filesearch', onEverywhere);
+  if ((window as unknown as { __ktFsearch?: number }).__ktFsearch && po.side !== 'b' && !pk) { delete (window as unknown as { __ktFsearch?: number }).__ktFsearch; if (canEverywhere()) void everywhere(); }
   // ---- start
   let sub: { remove(): void } | null = null;
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
@@ -1164,7 +1180,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (mod && k === 'a') { ev.preventDefault(); selecting = true; for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }
     else if (mod && (k === 'c' || k === 'x') && picked.size && canJobs()) { ev.preventDefault(); copyPicked(k === 'c' ? 'copy' : 'move'); }
     else if (mod && k === 'v' && clipboard && canJobs()) { ev.preventDefault(); void paste(); }
-    else if (mod && k === 'f') { ev.preventDefault(); search.hidden = false; search.focus(); }
+    else if (mod && k === 'f' && !(ev.shiftKey && canEverywhere())) { ev.preventDefault(); search.hidden = false; search.focus(); }
     else if (ev.key === 'Delete' && picked.size) { ev.preventDefault(); void confirmDelete([...picked]); }
     else if (ev.key === 'F2' && one) { ev.preventDefault(); renameSheet(one); }
     else if (ev.key === 'F2' && picked.size > 1) { ev.preventDefault(); void batchRename(); }
@@ -1176,7 +1192,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };

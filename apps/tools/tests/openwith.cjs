@@ -81,7 +81,18 @@ async function manifest() {
   const tor = F.find((f) => f.component === '.MainActivity' && f.patterns.some((p) => /torrent/i.test(p)));
   ok('the .torrent filter: android:host="*" now, .torrent and .TORRENT up to four dots deep', !!tor && tor.hosts.includes('*') && tor.patterns.includes('.*\\\\.torrent') && tor.patterns.includes('.*\\\\..*\\\\..*\\\\..*\\\\.TORRENT'));
   ok('<queries>: VIEW of any type (the chooser\'s apps on Android 11+)', /<queries>[\s\S]*<intent><action android:name="android\.intent\.action\.VIEW" \/><data android:mimeType="\*\/\*" \/><\/intent>[\s\S]*<\/queries>/.test(out));
-  ok('no permission asked anew', (out.match(/<uses-permission /g) || []).length === (before.match(/<uses-permission /g) || []).length);
+  // (0.21 P2, device battery on the phone: «Nearby devices» and the old BLUETOOTH up to Android 11 — the only ones added
+  // since the snapshot; Bluetooth itself not required.)
+  const BT = /\n {4}<uses-permission android:name="android\.permission\.BLUETOOTH" android:maxSdkVersion="30" \/>\n {4}<uses-permission android:name="android\.permission\.BLUETOOTH_CONNECT" \/>\n {4}<uses-feature android:name="android\.hardware\.bluetooth" android:required="false" \/>/;
+  ok('device battery (P2): «Nearby devices» and the old Bluetooth permission (to Android 11), no scan, no location, Bluetooth not required', BT.test(out) && !/BLUETOOTH_SCAN|BLUETOOTH_ADMIN|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION/.test(out));
+  {
+    // (A manifest that already names BLUETOOTH_CONNECT — a plugin's, say: the legacy line and the feature still added, once.)
+    const pre = fixture.replace('<application', '<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <application');
+    const o2 = M.patchManifest(pre); const count = (re) => (o2.match(re) || []).length;
+    ok('a manifest already naming BLUETOOTH_CONNECT: the legacy BLUETOOTH (to Android 11) added exactly once, CONNECT and the feature once', count(/<uses-permission android:name="android\.permission\.BLUETOOTH" android:maxSdkVersion="30" \/>/g) === 1 && count(/android\.permission\.BLUETOOTH"/g) === 1 && count(/android\.permission\.BLUETOOTH_CONNECT"/g) === 1 && count(/<uses-feature android:name="android\.hardware\.bluetooth"/g) === 1);
+    ok('… and patched again: nothing added twice', M.patchManifest(o2) === o2);
+  }
+  ok('no permission asked anew (beyond those two)', (out.match(/<uses-permission /g) || []).length === (before.match(/<uses-permission /g) || []).length + 2);
   // (Android's matching over the result: who answers which file — disabled aliases left out.)
   const on = F.filter((f) => f.enabled);
   const who = (intent) => [...new Set(on.filter((f) => matches(f, intent)).map((f) => f.component.replace(/^\./, '')))].sort().join(',');
@@ -105,7 +116,7 @@ async function manifest() {
   let threw = false; try { M.patchManifest(fixture.replace('</application>', '<activity-alias android:name=".KtImageCopy" android:targetActivity=".MainActivity"><intent-filter><action android:name="android.intent.action.VIEW" /><data android:mimeType="image/*" /></intent-filter></activity-alias></application>')); } catch { threw = true; }
   ok('the build stops when a new filter claims what an alias claims', threw);
   // (Nothing else changed: the output with the intended additions taken out is the snapshot of the output before.)
-  const stripped = out.replace(/\n[ \t]*<!-- open-with:start[\s\S]*?<!-- open-with:end -->/, '').replace(/\n {4}<intent><action android:name="android\.intent\.action\.VIEW" \/><data android:mimeType="\*\/\*" \/><\/intent>/, '')
+  const stripped = out.replace(BT, '').replace(/\n[ \t]*<!-- open-with:start[\s\S]*?<!-- open-with:end -->/, '').replace(/\n {4}<intent><action android:name="android\.intent\.action\.VIEW" \/><data android:mimeType="\*\/\*" \/><\/intent>/, '')
     .replace(/(<data android:scheme="file" \/>\n)\s*<data android:host="\*" \/>\n(\s*<data android:mimeType="application\/octet-stream" \/>\n)((?:\s*<data android:pathPattern="[^"]*torrent" \/>\n)+)/i, (m, a, b) => `${a}${b}        <data android:pathPattern=".*\\\\.torrent" />\n        <data android:pathPattern=".*\\\\..*\\\\.torrent" />\n`);
   ok('nothing else in the manifest changed (snapshot of the output before)', stripped === before, (() => { const a = stripped.split('\n'), b = before.split('\n'); const i = a.findIndex((l, k) => l !== b[k]); return i < 0 ? 'lengths' : [i, a[i], b[i]]; })());
 }

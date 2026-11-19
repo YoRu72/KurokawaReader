@@ -1,8 +1,8 @@
 // The app's settings: kept in localStorage under one key, applied to the document (theme, accent) on change.
 import type { Limits } from './engine/types';
-import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
+import { applyTheme, themeById, THEMES, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
 import { migrateMain } from './theme/app';
-import { loadMine, toDef, pictureKey, pictureAsset } from './theme/custom';
+import type { MyTheme } from './theme/custom';
 import { myStore } from './myStore';
 import { nativePlatform } from './native';
 
@@ -31,7 +31,16 @@ export interface Settings {
   glassBattery?: boolean; glassRail?: boolean;
   /** A computer: the animated background (theme/animbg.ts) — off unless chosen —, how much it moves, and the seed its
    *  shapes and places come from (fixed: the same background each start). */
-  animBg?: 'off' | 'match' | 'drift' | 'flow'; animBgLevel?: 'full' | 'reduced' | 'still'; animBgSeed?: number;
+  animBg?: 'off' | 'match' | 'drift' | 'flow' | `scene:${string}`; animBgLevel?: 'full' | 'reduced' | 'still'; animBgSeed?: number;
+  /** A computer's scenes: where they show (the whole window, the default, or the content area only), whether the app's
+   *  accents follow the scene's own colours (off unless chosen), how much they answer the mouse (Subtle unless chosen). */
+  animBgWhere?: 'whole' | 'content'; animBgTint?: boolean; animBgReact?: 'off' | 'subtle' | 'lively';
+  /** A computer's own background mixes (theme/sceneMix.ts): stored as made, never trusted — cleaned (cleanMixes) on every
+   *  read; chosen as animBg «scene:mix:<id>». They travel in the settings backup with the rest. */
+  animBgMixes?: unknown[];
+  /** A computer's own pictures and videos as the background (theme/bgLib.ts): the list, cleaned (cleanItems) on every
+   *  read; chosen as animBg «scene:user:<id>». The files themselves are in the app's storage, not in the backup. */
+  animBgLib?: unknown[];
   /** The download folder (a path, or a content: URI on Android); '' = the engine's default. */
   downloadDir: string;
   /** Folders chosen lately in the Add sheet, newest first. */
@@ -136,6 +145,12 @@ export interface Settings {
   doh: string; dohSplit?: 'auto' | 'always' | 'off'; /** (0.21 P9) the system's DNS when every DoH resolver failed — off by default. */ dohSystem?: boolean; secureScreen: boolean;
   /** How a video is watched: asked each time, the in-app player (the Player add-on), or another app. */
   playerWith: 'ask' | 'app' | 'external';
+  /** Another app as the player (src/player/external): for each kind of source «ask», «app» or «out» (the outside way) —
+   *  the phone's and the computer's apart (phone-only apps never offered on a computer, and the reverse). */
+  extPlayers?: Partial<Record<'android' | 'desktop', Partial<Record<'torrent' | 'online' | 'http' | 'local', string>>>>;
+  /** (Computer) which player the outside way uses: «auto» (the first known one found), a known player's id, or «chosen»
+   *  (the program picked in the shell's own dialog — kept by the shell, never here). */ extPcPlayer?: string;
+  /** «Mark as watched?» after an app that tells nothing: undefined — for a tracked episode; true — always; false — never. */ extAskWatched?: boolean;
   /** Sounds and the «Download complete» card (downloads/done.ts). */
   sounds?: import('./downloads/done').SoundPrefs;
   net?: Partial<import('./downloads/net').NetPrefs>;
@@ -212,10 +227,25 @@ const DEFAULTS: Settings = {
 export const BUILT_IN = ['player'];
 const withBuiltIn = (s: Settings): Settings => (BUILT_IN.every((b) => s.addons.includes(b)) ? s : { ...s, addons: [...s.addons, ...BUILT_IN.filter((b) => !s.addons.includes(b))] });
 let current: Settings = load();
-// (The reader's own themes, among the others from the start.)
-const mine0 = loadMine(myStore);
-migrateTheme(mine0.length > 0);
-for (const m of mine0) upsertTheme(toDef(m));
+// (The reader's own themes, among the others from the start. Their strict check — theme/custom.ts — is fetched only when
+//  some are kept, so a start without any does not carry it: the page stays hidden that moment, as for the palettes.)
+const raw0 = myStore.load(); const hasMine0 = Array.isArray(raw0) && raw0.length > 0;
+migrateTheme(hasMine0);
+// (The palette themes — theme/palettes.ts — are fetched with Appearance; at the start only when the theme in use, or the
+//  base of one of the reader's, is not yet known: the page stays hidden that moment rather than flash another theme.)
+const known = (id?: string) => THEMES.some((x) => x.id === id);
+if (hasMine0 || !known(current.theme)) {
+  const html = document.documentElement; html.dataset.themeWait = '';
+  void (async () => {
+    let mine0: MyTheme[] = []; let toDef: ((m: MyTheme) => ThemeDef) | null = null;
+    if (hasMine0) { const c = await import('./theme/custom'); toDef = c.toDef; mine0 = c.loadMine(myStore); for (const m of mine0) upsertTheme(toDef(m)); }
+    if (!known(current.theme) || mine0.some((m) => !known(m.base))) {
+      const got = await import('./theme/palettes').then(() => true, () => false); if (!got) return;
+      for (const m of mine0) upsertTheme(toDef!(m));
+    }
+    applyChrome();
+  })().catch(() => undefined).finally(() => { delete html.dataset.themeWait; });
+}
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
 /** Once: the move to themes (kt.themeMigrated, 0.17). Then once (kt.mainTheme, 0.21): «Expressive 3» the main theme
@@ -271,7 +301,7 @@ export function setThemePreview(p: typeof previewing): void { previewing = p; if
 async function picturesOf(def: ThemeDef): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   if (def.pack?.id) Object.assign(out, await import('./themeIo').then((m) => m.themePictures(def.pack!.id)).catch(() => ({})));
-  if (def.custom && def.id !== 'my-preview') for (const m of ['dark', 'light'] as Mode[]) { if ((m === 'dark' ? def.dark : def.light)?.picture !== pictureAsset(def.id, m)) continue; const b = await myStore.io.getFile(pictureKey(def.id, m)).catch(() => undefined); if (b) out[pictureAsset(def.id, m)] = URL.createObjectURL(b); }
+  if (def.custom && def.id !== 'my-preview') { const { pictureKey, pictureAsset } = await import('./theme/custom'); for (const m of ['dark', 'light'] as Mode[]) { if ((m === 'dark' ? def.dark : def.light)?.picture !== pictureAsset(def.id, m)) continue; const b = await myStore.io.getFile(pictureKey(def.id, m)).catch(() => undefined); if (b) out[pictureAsset(def.id, m)] = URL.createObjectURL(b); } }
   return out;
 }
 const isPcNow = () => typeof document !== 'undefined' && document.documentElement.classList.contains('pc');
@@ -287,12 +317,17 @@ export function applyChrome(s: Settings = current): void {
   const got = applyTheme(html, { theme: def.id, mode: wantLight ? 'light' : 'dark', darkTone: s.darkTone, useThemeColours, keepColours: !!s.themeKeepColours, blur: glassNow.blur as Blur, pictures: previewing ? { ...pictures, ...previewing.pictures } : pictures });
   const light = got.mode === 'light';
   html.dataset.ui = light ? 'light' : 'dark';
-  (html.style as CSSStyleDeclaration & { zoom?: string }).zoom = s.uiScale && s.uiScale !== 100 ? String(s.uiScale / 100) : '';
+  // (A theme's own size goes with the reader's: the two multiplied.)
+  const zoom = ((s.uiScale || 100) / 100) * (def.scale ?? 1);
+  (html.style as CSSStyleDeclaration & { zoom?: string }).zoom = Math.abs(zoom - 1) > 0.001 ? String(+zoom.toFixed(3)) : '';
   html.dataset.dark = s.darkTone;
   html.dataset.accent = s.accent === 'theme' ? (useThemeColours ? 'theme' : 'graphite') : s.accent;
   if (s.glassRail === false) html.dataset.railGlass = 'off'; else delete html.dataset.railGlass;
   const roles = ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'];
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light); else if (!useThemeColours) roles.forEach((k) => html.style.removeProperty(k));
+  // (A theme's own colours while one background is shown — a computer's — over the accent.)
+  const per = isPcNow() && s.animBg ? def.perBg?.[s.animBg]?.[got.mode] : undefined;
+  if (per) for (const [k, v] of Object.entries(per)) html.style.setProperty(`--md-${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, v);
   const meta = document.querySelector('meta[name="theme-color"]');
   // (The theme's ground: glass themes their own, Expressive 3 the dark tone's or its soft light one.)
   if (meta) meta.setAttribute('content', got.ground);

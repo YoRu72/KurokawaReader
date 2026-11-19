@@ -15,3 +15,7 @@ cd apps/tools  && npm install && npm run build     # the tools  → apps/tools/d
 ```
 
 Each app has its own release workflow (`.github/workflows/release*.yml`), its own version (`apps/<app>/package.json`) and its own notes (`apps/<app>/docs/notes/`).
+
+## Licence
+
+Kurokawa Reader and the shared code are under the MIT License (`LICENSE`). Kurokawa Tools (`apps/tools`) is under GPL-3.0-or-later (`apps/tools/LICENSE`, credits in `apps/tools/NOTICE.md`).

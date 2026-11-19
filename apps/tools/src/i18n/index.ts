@@ -109,10 +109,10 @@ export function t(key: keyof Strings, vars?: Record<string, string | number>): s
   return s;
 }
 
-/** Numbers interpolated into strings: Western digits in English, Arabic-Indic in Arabic
+/** Numbers interpolated into strings: the digits the interface uses (0–9 unless ١٢٣ was chosen in Arabic)
  *  (strings such as file names pass through untouched). */
 export function formatNumber(v: string | number): string {
-  // (A number inside a sentence is prose: ١٢٣ in Arabic by default; figures that stand alone are data.)
+  // (A number inside a sentence is prose — ١٢٣ in Arabic when «auto» is chosen —; figures that stand alone are data.)
   return typeof v === 'number' ? localDigits(new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false }).format(v), 'prose') : v;
 }
 
@@ -176,17 +176,15 @@ export function isRtlText(text: string): boolean {
   return rtl > ltr;
 }
 
-/** Arabic-Indic digits for Arabic UI. */
-/** A saved visual setting, read here so this file needs nothing of settings.ts. */
-function visualPref(key: string): string | undefined {
-  void key; return undefined;
-  // (The reader keeps such preferences in kr.visual; Tools has none of them yet.)
-  try { return (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as Record<string, string>)[key]; } catch { return undefined; }
-}
-/** How digits are written in the Arabic interface: 'auto' keeps 123 for data (pages, sizes, times, dates) and
- *  ١٢٣ in prose (counted nouns, Hijri dates); the others use one kind throughout. */
+/** A saved visual setting (kr.visual: Settings › Digits writes it, then the page restarts), read once here so this
+ *  file needs nothing of settings.ts and a list of thousands of rows parses nothing. */
+const VISUAL: Record<string, string> = (() => { try { const v: unknown = JSON.parse(localStorage.getItem('kr.visual') ?? '{}'); return v && typeof v === 'object' ? (v as Record<string, string>) : {}; } catch { return {}; } })();
+const visualPref = (key: string): string | undefined => VISUAL[key];
+/** How digits are written in the Arabic interface: 0–9 throughout unless the reader chose otherwise (the owner's rule:
+ *  never ٠–٩ by default); 'eastern' ١٢٣ throughout; 'auto' 123 for data (pages, sizes, times, dates) and ١٢٣ in prose
+ *  (counted nouns, Hijri dates). */
 export function digitsPref(): 'auto' | 'western' | 'eastern' {
-  const v = visualPref('arDigits'); return v === 'western' || v === 'eastern' ? v : 'auto';
+  const v = visualPref('arDigits'); return v === 'auto' || v === 'eastern' ? v : 'western';
 }
 const EASTERN = (s: string) => s.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
 /** Digits as the interface writes them: `prose` for a number inside an Arabic sentence, `data` (the default)

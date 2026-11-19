@@ -9,6 +9,17 @@
 mod appicon;
 // (Stage P7: archives — the shared crate's archive.rs under Tools' kt:archive* channels.)
 mod archives;
+// (Tools 0.21 P11: the safe-extraction engine's commands over kt-core's extractjob.rs.)
+mod extractcmds;
+// (Tools 0.21: fast file search — kt-core's fileindex for the Files page's «Everywhere in my folders».)
+mod filesearch;
+// (0.21, device battery: the page's commands over kt-battery, its background, tray part, notices and start with the
+// system — GPL-3.0-or-later, ../../../NOTICE.md.)
+mod battery;
+// (0.21 W3: the user's own device definitions and «Teach me this device» — listened to only.)
+mod batdefs;
+// (0.21, device battery, piece W4: «Report a device» and the command line, --battery-json and --battery-help.)
+mod batreport;
 mod sevenparse;
 mod commands;
 // (0.21 P9: DNS over HTTPS — kt-core's dohchain put to work, the proxy aria2 uses.)
@@ -43,6 +54,8 @@ mod stream_hybrid;
 #[cfg(feature = "rqbit")]
 mod stream_rqbit;
 mod streamproxy;
+mod extplayer;
+mod relaylogic;
 mod streamserver;
 mod streamtest;
 mod torrentmake;
@@ -112,6 +125,11 @@ fn main() {
     // answers as that program and ends here — vtfake.rs; None at once otherwise. First, before any plugin: a stand-in
     // must never reach the single-instance hand-over.)
     if let Some(code) = vtfake::maybe_run() {
+        std::process::exit(code);
+    }
+    // (Device battery, piece W4: --battery-json prints the devices and --battery-help the help, then the program ends —
+    // before the single-instance guard, the window, the tray, the start with the system: a running copy is left alone.)
+    if let Some(code) = batreport::run_cli() {
         std::process::exit(code);
     }
     let mut builder = tauri::Builder::default();
@@ -203,6 +221,17 @@ fn main() {
             archives::kt_archive_restore,
             archives::kt_archive_existing,
             archives::kt_archive_cancel,
+            extractcmds::kt_archive_preflight,
+            extractcmds::kt_archive_shelf,
+            extractcmds::kt_archive_job,
+            filesearch::kt_fsearch_status,
+            filesearch::kt_fsearch_query,
+            filesearch::kt_fsearch_add,
+            filesearch::kt_fsearch_remove,
+            filesearch::kt_fsearch_exclude,
+            filesearch::kt_fsearch_rebuild,
+            filesearch::kt_fsearch_forget,
+            filesearch::kt_fsearch_pause,
             archives::kt_archive_create,
             archives::kt_selftest_7z,
             archives::kt_selftest_write,
@@ -234,6 +263,17 @@ fn main() {
             streamserver::kt_audio_url,
             streamserver::kt_video_url,
             streamserver::kt_proxy_url,
+            extplayer::kt_relay_open,
+            extplayer::kt_relay_close,
+            extplayer::kt_relay_status,
+            extplayer::kt_ext_player_choose,
+            extplayer::kt_ext_player_args,
+            extplayer::kt_ext_player_forget,
+            extplayer::kt_ext_player_drop_sub,
+            extplayer::kt_ext_players,
+            extplayer::kt_ext_player_start,
+            extplayer::kt_ext_player_status,
+            extplayer::kt_ext_player_stop,
             streamtest::kt_selftest_stream,
             // (Stage P5: the video tools.)
             vtools::kt_video_info,
@@ -282,7 +322,35 @@ fn main() {
             // (The hybrid's self-test side.)
             hybridtest::kt_selftest_hybrid,
             // (The original system: a notice's click kept until the page listens — the bridge's onOpenTask.)
-            notifier::kt_task_take
+            notifier::kt_task_take,
+            // (0.21, device battery: battery.rs over kt-battery.)
+            battery::kt_battery_list,
+            battery::kt_battery_refresh,
+            battery::kt_battery_settings,
+            battery::kt_battery_history,
+            battery::kt_battery_history_clear,
+            // (W3: device definitions and «Teach me this device».)
+            batdefs::kt_battery_defs,
+            batdefs::kt_battery_def_import,
+            batdefs::kt_battery_def_export,
+            batdefs::kt_battery_def_remove,
+            batdefs::kt_battery_def_set,
+            batdefs::kt_battery_teach_list,
+            batdefs::kt_battery_teach_start,
+            batdefs::kt_battery_teach_stop,
+            batdefs::kt_battery_teach_state,
+            batdefs::kt_battery_teach_mark,
+            batdefs::kt_battery_teach_save,
+            batdefs::kt_battery_teach_close,
+            // (Piece W4: «Report a device».)
+            batreport::kt_battery_report,
+            // (Piece 3: connecting Bluetooth devices.)
+            battery::kt_bt_list,
+            battery::kt_bt_scan,
+            battery::kt_bt_act,
+            battery::kt_bt_settings,
+            // (0.21, piece S1: the system on the taskbar — what this computer gives.)
+            battery::kt_sysmon_probe
         ])
         .on_window_event(|window, event| {
             winstate::on_event(window, event);
@@ -292,6 +360,8 @@ fn main() {
             browser::on_event(window, event);
             // (Screen translator: close to the tray while it is on; its windows' focus and ends.)
             screentr::on_event(window, event);
+            // (Device battery: close to the tray while it keeps running in the background.)
+            battery::on_event(window, event);
         })
         .setup(|app| {
             // (Before any request: the app's own requests named as Tools' (shared crate's net.rs), the cookies sites
@@ -420,6 +490,11 @@ fn main() {
             // (Screen translator: its settings read, its keys / tray / start-with-the-computer applied; a --hidden
             // start left in the tray when chosen.)
             screentr::init(&handle);
+            // (Fast file search: started now only when folders were chosen before, on a thread of its own.)
+            filesearch::at_start(&handle);
+            // (Device battery, piece 2: with its background on, its loop and its part of the tray from the start; a
+            // --hidden start with the system left in the tray.)
+            battery::init(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -444,6 +519,10 @@ fn main() {
                 vtjobs::stop_all();
                 // (Screen translator: «auto» and its OCR helpers ended.)
                 screentr::at_exit();
+                // (Fast file search: its index saved, its threads stopped.)
+                filesearch::at_exit();
+                // (Device battery: its loop told to stop.)
+                battery::at_exit();
                 // (The original system: this run's toasts left in the Action Center made to start this program, or
                 // removed.)
                 notifier::at_exit();

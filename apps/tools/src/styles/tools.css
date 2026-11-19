@@ -36,7 +36,7 @@ html.pc .fab { display: none; }
 .task-name { font-weight: 600; font-size: 15px; color: var(--md-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-line { font-size: 12.5px; color: var(--md-on-surface-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-bar { display: block; height: 5px; border-radius: 5px; background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); overflow: hidden; }
-.task-bar i { display: block; height: 100%; border-radius: inherit; background: var(--md-primary); transition: width .4s ease; }
+.task-bar i { display: block; height: 100%; border-radius: inherit; background: var(--th-progress, var(--md-primary)); transition: width .4s ease; }
 .task-bar.big { height: 8px; margin-bottom: 12px; }
 .task-bar.busy-any i { width: 35% !important; animation: kt-slide 1.2s ease-in-out infinite; }
 .state-paused .task-bar i { background: var(--md-outline); }
@@ -101,7 +101,8 @@ html.pc .post-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)
 .accent-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatch { width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 2px transparent; background: var(--sw, var(--md-primary)); position: relative; }
 .swatch.on { box-shadow: 0 0 0 2px var(--md-surface), 0 0 0 4px var(--md-on-surface); }
-.swatch.custom { background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); overflow: hidden; } .swatch.custom input { opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+/* (A wheel of the hues the app uses — rose, violet, blue, teal — in hard segments: nothing between them, so no yellow or orange.) */
+.swatch.custom { background: conic-gradient(from -45deg, #e0607e 0 25%, #9a7be8 0 50%, #4f8fe8 0 75%, #3fb8a6 0); overflow: hidden; } .swatch.custom input { opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .swatch[data-accent='graphite'] { --sw: #9aa0a6; } .swatch[data-accent='mono'] { --sw: #d0d0d0; } .swatch[data-accent='teal'] { --sw: #4db6ac; } .swatch[data-accent='aqua'] { --sw: #4fb3df; } .swatch[data-accent='mint'] { --sw: #6fd1a5; } .swatch[data-accent='olive'] { --sw: #a3b86c; } .swatch[data-accent='gold'] { --sw: #e0b45c; } .swatch[data-accent='sand'] { --sw: #d9b48f; } .swatch[data-accent='coral'] { --sw: #f0876b; } .swatch[data-accent='rose'] { --sw: #e58cae; } .swatch[data-accent='violet'] { --sw: #a98be6; }
 .addon-row, .app-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 40%, transparent); }
 .addon-row:last-child, .app-row:last-child { border-bottom: 0; }
@@ -263,6 +264,22 @@ html.pc .fab-item { flex-direction: row-reverse; }
 .watch-choice:hover, .watch-choice:focus-visible { background: var(--md-secondary-container); }
 .watch-choice b { display: block; font-size: 15px; } .watch-choice small { display: block; color: var(--md-on-surface-variant); font-size: 12.5px; margin-top: 2px; }
 .watch-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--md-primary-container); color: var(--md-on-primary-container); flex: none; }
+.ext-inapp .watch-ic { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.ext-error-msg { margin: 4px 0 6px; line-height: 1.5; }
+.ext-error-why { margin: 0 0 12px; font-size: 12px; opacity: .8; overflow-wrap: anywhere; }
+.ext-error-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 8px 0 4px; }
+.ext-error-actions .btn { justify-content: center; width: 100%; }
+.ext-mark p { margin: 4px 0 14px; line-height: 1.5; }
+.ext-settings { display: grid; gap: 10px; margin: 6px 0 4px; }
+.ext-settings .ext-title { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
+.ext-settings > .hint { margin: 0; }
+.ext-settings .ext-custom { min-width: 0; width: min(100%, 320px); }
+/* (Its rows sit one level below the card, so the card's own row layout is given here: label and control side by side,
+   the arguments line free to wrap under its label.) */
+.settings-view .ext-settings .row:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; min-height: 44px; }
+html.pc .settings-view .ext-settings .row:not([hidden]):not(.ext-args-row) { flex-wrap: nowrap; min-height: 60px; gap: 24px; box-sizing: border-box; }
+.settings-view .ext-settings .ext-args { font-family: 'Inter', system-ui, sans-serif; }
+.ext-none { margin: 0 0 10px; }
 .watch-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Packs: a component being fetched */
@@ -1337,7 +1354,9 @@ html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg
 .shelf-job.blocked { border-inline-start: 4px solid var(--md-outline); }
 .shelf-name { display: flex; align-items: center; gap: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .shelf-hints { margin: 0; padding-inline-start: 18px; font-size: 12.5px; line-height: 1.5; color: var(--md-on-surface-variant); }
-.shelf-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.shelf-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+/* (One width for a row's buttons; a long label such as «Forget this job» wraps inside its button, never cut.) */
+.shelf-actions .btn { width: 100%; min-width: 0; justify-content: center; text-align: center; white-space: normal; line-height: 1.25; }
 .shelf-actions .btn.busy { opacity: .6; }
 
 /* Text size in lists (Files setting): names and details scaled; the grid's own small sizes scaled likewise. */
@@ -1481,6 +1500,45 @@ html:not(.pc) .files-view.has-fast .files-body:has(> .files-list:not(.gallery)) 
 .files-7z-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 :dir(rtl) .files-qline bdi { text-align: right; }
 html.pc .sheet .chip-row.files-filters { display: flex; flex-direction: column; gap: 10px; }
+/* The scenes picker (Settings → Appearance, a computer): pictures in groups, the chosen one ringed in the accent. */
+.settings-view .card > .row.abg-grid-row { display: block; }
+.abg-grid { display: flex; flex-direction: column; gap: 14px; }
+.abg-group-title { font-size: 12.5px; font-weight: 600; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+.abg-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.abg-tile { display: flex; flex-direction: column; gap: 6px; padding: 4px; border: 0; border-radius: var(--sh-md, 14px); background: none; color: var(--md-on-surface); font: inherit; font-size: 13px; text-align: start; cursor: pointer; }
+.abg-tile:hover .abg-thumb { box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-on-surface) 30%, transparent); }
+.abg-tile:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.abg-thumb { display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: var(--sh-sm, 10px); background: var(--md-surface-container-high) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--md-outline-variant); transition: opacity .25s; opacity: .55; }
+.abg-thumb.drawn { opacity: 1; }
+.abg-tile.on .abg-thumb { box-shadow: 0 0 0 3px var(--md-primary); }
+.abg-tile.on .abg-name { font-weight: 650; color: var(--md-primary); }
+.abg-name { padding-inline: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* (A Latin name in an Arabic page sits on the same side as the Arabic ones.) */
+html[dir='rtl'] .abg-name { text-align: right; }
+/* The mixer: «Mix your own» in the picker, the saved mixes' actions, the sheet (views/mixer.ts). */
+.abg-plus { display: grid; place-items: center; background: linear-gradient(135deg, color-mix(in srgb, #6f9fd8 26%, transparent), color-mix(in srgb, #9585dc 22%, transparent)); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #6f9fd8 55%, transparent); opacity: 1; }
+.abg-plus svg { width: 30px; height: 30px; fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; }
+.abg-mix-new .abg-name { color: var(--md-primary); font-weight: 600; }
+.abg-mix-acts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; max-width: 480px; }
+.abg-mix-acts .btn { min-width: 0; }
+.mix-sheet .sheet-body { font-family: var(--font-ui); font-size: 14px; line-height: 1.45; display: flex; flex-direction: column; gap: 12px; padding-bottom: 24px; }
+html.pc .sheet.mix-sheet { max-width: 640px; }
+.mix-sheet .abg-preview.mix-preview { max-width: 520px; width: 100%; align-self: center; flex: 0 0 auto; }
+.mix-budget { margin: -4px 0 0; }
+.mix-controls { display: flex; flex-direction: column; gap: 10px; }
+.mix-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 48px; }
+.mix-label { font-weight: 500; color: var(--md-on-surface); }
+.mix-overlay { display: flex; flex-direction: column; gap: 6px; border-radius: var(--sh-md, 14px); }
+.mix-overlay.on { padding: 6px 14px 10px; background: color-mix(in srgb, var(--md-primary) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--md-primary) 18%, transparent); }
+.mix-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 20px; }
+@media (max-width: 560px) { .mix-pair { grid-template-columns: minmax(0, 1fr); } }
+.mix-slider { display: flex; flex-direction: column; }
+.mix-slider-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--md-on-surface-variant); font-size: 13px; }
+.mix-val { color: var(--md-on-surface); font-variant-numeric: tabular-nums; font-weight: 600; }
+.mix-name input { height: 44px; }
+.sheet-actions.mix-actions { justify-content: stretch; gap: 12px; }
+.mix-actions > .btn { flex: 1 1 0; min-width: 0; }
+
 /* (With the Jobs button there are eight buttons on a phone's Files bar: each a little narrower so they stay on one row beside the back button.) */
 @media (max-width: 420px) { .view > .topbar:has(.files-jobs-btn:not([hidden])) :is(.icon-btn) { width: 36px; } .view > .topbar:has(.files-jobs-btn:not([hidden])) .topbar-actions { gap: 0; } }
 /* (The unfinished-jobs bar: clear of the round add button, and its words kept a real gap from the buttons.) */
@@ -1490,3 +1548,106 @@ html.pc:not(.rail-off) .toast.files-unfinished, html.pc .toast.files-unfinished 
 .files-pcfields { display: flex; flex-direction: column; gap: 14px; margin-bottom: 10px; }
 .files-pcfields { gap: 18px; } .files-pcfields .field { display: flex; flex-direction: column; gap: 6px; margin: 0; } .files-pcfields .field > span { margin: 0; }
 .toast.files-unfinished .toast-act { padding: 8px 12px; } .toast.files-unfinished > .grow { white-space: nowrap; }
+
+/* «Forget this job» (P11 round five): the words spaced apart, the two choices the same width. */
+.forget-sheet .sheet-body { display: grid; gap: 12px; }
+.forget-sheet .sheet-body p { margin: 0; }
+.forget-sheet .forget-name { font-weight: 600; }
+.sheet-actions.equal { flex-wrap: nowrap; }
+.sheet-actions.equal > .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+/* (A question's answers side by side at one width, wrapping to a second row on a narrow screen rather than cutting a label.) */
+.sheet-actions.even { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.sheet-actions.even > .btn { min-width: 0; justify-content: center; text-align: center; white-space: normal; line-height: 1.25; }
+
+/* «Everywhere in my folders» (views/filesearch.ts — a computer's Tauri shell only): the panel takes the folder's place
+   under the top bar; its list is virtual (rows placed absolutely, ROW_H = 60 px). */
+.files-view.fs-on > :not(.topbar):not(.fs-panel) { display: none !important; }
+.fs-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 4px 16px 12px; box-sizing: border-box; }
+.fs-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fs-mode { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--md-surface-container); flex: none; }
+.fs-mode-btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--md-on-surface-variant); font: 500 14px/1 var(--font-ui); cursor: pointer; }
+.fs-mode-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-mode-btn:hover { background: var(--md-surface-container-highest); }
+.fs-mode-btn.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 600; }
+.fs-field { flex: 1 1 280px; min-width: 200px; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 16px; border-radius: 22px; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
+.fs-field:focus-within { box-shadow: inset 0 0 0 2px var(--md-primary); }
+.fs-field > svg { flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-field input.fs-input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; outline: 0; box-shadow: none; background: transparent; color: var(--md-on-surface); font: inherit; font-size: 15px; }
+.fs-field input.fs-input:focus-visible { box-shadow: none; }
+.fs-field input.fs-input::-webkit-search-cancel-button { cursor: pointer; }
+.fs-chips { gap: 8px; align-items: center; }
+.fs-chip svg:last-child:not(:first-child) { width: 14px; height: 14px; opacity: .7; }
+.fs-sep { width: 1px; height: 24px; background: var(--md-outline-variant); margin: 0 4px; }
+.fs-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-radius: 14px; background: var(--md-surface-container); color: var(--md-on-surface-variant); font-size: 13.5px; }
+.fs-banner[hidden] { display: none; }
+.fs-paused { font-weight: 600; color: var(--md-on-surface); }
+.fs-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--md-outline-variant); border-top-color: var(--md-primary); animation: fs-turn 0.9s linear infinite; flex: none; }
+.fs-line { display: flex; align-items: baseline; gap: 10px; padding: 0 6px; font-size: 13px; color: var(--md-on-surface-variant); }
+.fs-line[hidden] { display: none; }
+.fs-took { opacity: .75; }
+.fs-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; border-radius: 18px; outline: 0; overscroll-behavior: contain; }
+.fs-scroll[hidden] { display: none; }
+.fs-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--md-primary); }
+.fs-space { position: relative; width: 100%; }
+.fs-row { position: absolute; inset-inline: 0; height: 56px; margin: 2px 0; box-sizing: border-box; display: grid; grid-template-columns: 40px minmax(0, 1fr) 92px 92px 40px 40px; align-items: center; gap: 12px; padding: 0 8px 0 10px; border-radius: 14px; cursor: pointer; color: var(--md-on-surface); }
+.fs-row:hover { background: var(--md-surface-container); }
+.fs-row.active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--md-primary); }
+.fs-ic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-ic.k-folder { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fs-l1, .fs-l2 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs-l1 { font-size: 14.5px; font-weight: 500; }
+.fs-l2 { font-size: 12.5px; color: var(--md-on-surface-variant); }
+.fs-name, .fs-dir { unicode-bidi: isolate; }
+[dir='rtl'] :is(.fs-root-path, .fs-excl-row > bdi) { text-align: right; }
+.fs-row.active .fs-dir { color: inherit; opacity: .8; }
+.fs-mark { background: color-mix(in srgb, var(--md-primary) 26%, transparent); color: inherit; border-radius: 4px; padding: 0 1px; }
+.fs-size, .fs-date { font-size: 13px; color: var(--md-on-surface-variant); text-align: end; white-space: nowrap; unicode-bidi: isolate; }
+.fs-row.active :is(.fs-size, .fs-date) { color: inherit; }
+.fs-row .icon-btn { width: 40px; height: 40px; opacity: .0; transition: opacity var(--dur-short, .15s); }
+.fs-row:hover .icon-btn, .fs-row.active .icon-btn, .fs-row .icon-btn:focus-visible { opacity: 1; }
+.fs-empty { flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 48px; }
+.fs-empty[hidden] { display: none; }
+.fs-card { max-width: 460px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 32px; border-radius: 28px; background: var(--md-surface-container-low); }
+.fs-card h3 { margin: 4px 0 0; font: 600 19px/1.3 var(--font-ui); color: var(--md-on-surface); }
+.fs-card p { margin: 0; }
+.fs-card .btn { margin-top: 8px; }
+.fs-card-ic { width: 64px; height: 64px; border-radius: 22px; display: grid; place-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-card-ic svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.fs-empty.indexing .fs-card-ic svg { animation: fs-turn 1.6s linear infinite; }
+/* The manage sheet. */
+.fs-sheet .sheet-body { display: flex; flex-direction: column; gap: 10px; }
+.fs-sheet .section-title { margin: 4px 0 0; }
+.fs-roots { display: flex; flex-direction: column; gap: 8px; }
+.fs-root { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 18px; background: var(--md-surface-container); }
+.fs-root-head { display: flex; align-items: center; gap: 12px; }
+.fs-root-ic { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.fs-root-ic svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.fs-root-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-family: var(--font-ui); }
+.fs-root-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 500; unicode-bidi: isolate; text-align: start; }
+.fs-root-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: none; }
+.fs-root-acts .btn { justify-content: center; min-width: 0; }
+.fs-excl { display: flex; flex-direction: column; gap: 4px; padding-inline-start: 50px; }
+.fs-excl-title { font: 600 12px/1.4 var(--font-ui); color: var(--md-on-surface-variant); }
+.fs-excl-row { display: flex; align-items: center; gap: 8px; font: 13px/1.4 var(--font-ui); }
+.fs-excl-row > svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; opacity: .7; }
+.fs-excl-row > bdi { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
+.fs-add { align-self: flex-start; }
+.fs-facts { margin: 2px 0; font-family: var(--font-ui); }
+.fs-switch small { display: block; margin-top: 3px; font-size: 12.5px; opacity: .85; }
+.fs-sheet-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+.fs-sheet-btns .btn { justify-content: center; min-width: 0; }
+@keyframes fs-turn { to { transform: rotate(360deg); } }
+
+/* ---------- A theme's own (theme editor extras, theme/editor.ts): the page hidden for the moment a palette theme in use
+   is fetched at the start (settings.ts); compact density — everything a step closer, the same shapes. ---------- */
+html[data-theme-wait] body { visibility: hidden; }
+html[data-density='compact'] .card { padding: 16px; gap: 10px; }
+html[data-density='compact'] .task-main { padding-block: 4px; }
+html[data-density='compact'] .task-card { padding-block: 4px; }
+html[data-density='compact'] .files-row { padding-block: 4px; contain-intrinsic-size: auto 52px; }
+html[data-density='compact'] .chip { height: 34px; padding: 0 13px; }
+html[data-density='compact'] .btn { height: 38px; padding: 0 18px; }
+html[data-density='compact'] .settings-view .card .row { min-height: 40px; }
+html[data-density='compact'] .te-row { min-height: 38px; }

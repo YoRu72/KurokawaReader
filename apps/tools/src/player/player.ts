@@ -43,7 +43,7 @@ export const mpvExtra = (P: PlayerPrefs): Record<string, string> => {
   return o;
 };
 const nativePlatformIs = (p: string): boolean => { const c = (window as unknown as { Capacitor?: { getPlatform?(): string } }).Capacitor; const k = (window as unknown as { kurokawaTools?: unknown }).kurokawaTools; return p === 'desktop' ? !!k : p === 'web' ? !k && (!c || c.getPlatform?.() === 'web') : c?.getPlatform?.() === p; };
-const VIDEO_EXT = /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mpg|mpeg|ogv|3gp)$/i;
+const VIDEO_EXT = /\.(mkv|mp4|m4v|webm|avi|mov|wmv|flv|ts|m2ts|mts|mpg|mpeg|ogv|3gp)$/i;
 
 export interface PlayerSource { url: string; name: string; task?: Task; fileIndex?: number; localPath?: string; headers?: Record<string, string>; playlist?: PlayerSource[];
   /** Which engine plays it: mpv (the Player add-on's, on Android with its pack) or the web view's own. */
@@ -159,7 +159,13 @@ export function openPlayer(src: PlayerSource): void {
   };
   if (P.orientation !== 'auto') void turnScreen('landscape').catch(() => undefined);
   const clockTick = () => { clock.textContent = new Date().toLocaleTimeString(document.documentElement.lang || undefined, { hour: 'numeric', minute: '2-digit' }); };
-  clockTick(); const clockTimer = window.setInterval(clockTick, 20000);
+  // (Battery: the clock and the ambient light tick only while the video plays on a visible page; paused or hidden, no
+  // timer runs — the clock is set again when it shows.)
+  let firstFrameTimer = 0;
+  const firstFrame = new Promise<void>((ok) => { const done = () => { window.clearTimeout(firstFrameTimer); video.removeEventListener('playing', done); ok(); }; video.addEventListener('playing', done); firstFrameTimer = window.setTimeout(done, 4000); });
+  clockTick(); let clockTimer = 0;
+  const gateTimers = () => { const live = !video.paused && !document.hidden && !playerGone; window.clearInterval(clockTimer); clockTimer = 0; if (live) { clockTick(); clockTimer = window.setInterval(clockTick, 20000); ambientTick(); } else window.clearInterval(ambTimer); };
+  video.addEventListener('play', gateTimers); video.addEventListener('pause', gateTimers); document.addEventListener('visibilitychange', gateTimers);
 
   // ---- playback
   if (src.headers && Object.keys(src.headers).length) toast(t('playerHeadersNote'));
@@ -192,7 +198,23 @@ export function openPlayer(src: PlayerSource): void {
     showControls();
   });
   video.addEventListener('error', () => { const err = video.error; if (!mpv && !converted && !pictureTried && (err?.code === 4 || err?.code === 3)) { void import('./transcode').then(async (T) => { if (T.canConvert()) { const c = await import('./compat'); const pr = await c.probe(src.url).catch(() => null); if (pr) tracksFound = pr; if (await startPicture(T.pictureProblem(pr?.video) ?? (pr?.video?.codec ?? '?').toUpperCase(), Math.max(0, pr?.audio.findIndex((a) => a.isDefault) ?? 0), pr?.duration)) return; } const why = await fetch(src.url, { method: 'HEAD' }).then((r) => (r.ok ? '' : `HTTP ${r.status}`), (e2: unknown) => String((e2 as Error).message ?? e2)).catch(() => '');
-        toast(why ? t('playerSourceFailed', { why }) : err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 8000); showControls(); }); return; } toast(err?.code === 4 || err?.code === 3 ? t('playerCantPlayOther') : t('stateFailed'), 'error', 7000); showControls(); });
+        if (why) toast(t('playerSourceFailed', { why }), 'error', 8000); else problem(err?.code === 3 ? 'damaged' : 'format', err?.message); showControls(); }); return; } if (err?.code === 4 || err?.code === 3) problem(err.code === 3 ? 'damaged' : 'format', err.message); else toast(t('stateFailed'), 'error', 7000); showControls(); });
+  // (Never a silent black screen: a file with no audio track, or whose picture does not decode, is said plainly —
+  // health.ts, loaded after the first frame.)
+  let healthOff: (() => void) | null = null;
+  video.addEventListener('playing', () => { if (healthOff || playerGone) return; healthOff = () => undefined; void import('./health').then((H) => { if (playerGone) return; healthOff = H.watchHealth(video, { name: src.localPath ?? src.name, sound: () => ({ busy: soundChecking || !!beside || !!converted, tracks: tracksFound ? tracksFound.audio.length : null }), pictureBusy: () => !!converted || soundChecking, mpvTracks: mpv ? () => (mpv.tracksKnown() ? mpv.tracks() : null) : undefined, onNoAudio: (k) => notice(k === 'none' ? t('fileNoAudio') : t('fileNoSound')), onNoPicture: () => problem('damaged') }); }); });
+  // (A small notice over the picture, under the top bar: told for a few seconds, the video goes on.)
+  let noticeTimer = 0;
+  function notice(text: string) { let el = root.querySelector<HTMLElement>('.kt-notice'); if (!el) { el = h('div', { class: 'kt-notice', role: 'status' }); root.append(el); } el.textContent = text; el.hidden = false; window.clearTimeout(noticeTimer); noticeTimer = window.setTimeout(() => { el!.hidden = true; }, 6000); }
+  function problem(kind: 'damaged' | 'format', detail?: string) {
+    const tk = src.task; const again = tk && ((tk.kind === 'http' && tk.source.url) || (tk.kind === 'torrent' && tk.source.magnet)) ? () => void redownload(tk) : undefined;
+    void import('./health').then((H) => H.problemSheet(kind, { openWith: () => void openWith(), redownload: kind === 'damaged' ? again : undefined, detail: detail || undefined }));
+  }
+  async function redownload(tk: Task) {
+    const E = await import('../engine'); const name = E.displayName(tk);
+    const { confirmSheet } = await import('../ui/undo'); if (!(await confirmSheet(t('redownload'), [t('confirmRedownload', { name })], t('redownload'), false))) return;
+    try { const eng = E.getEngine(); goingOn = true; close(); await eng.remove(tk.id, true); await eng.add({ source: tk.source, dir: tk.dir, name: tk.kind === 'http' ? name : undefined, meta: tk.meta }); toast(t('taskAdded', { name })); } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+  }
   // Waiting (torrentplayer's honest status): after a moment, why — what the swarm gives now, from how many peers.
   const waitLine = h('div', { class: 'kt-wait', hidden: true }); centre.append(waitLine); let waitTimer = 0;
   const waitTick = async () => {
@@ -268,7 +290,8 @@ export function openPlayer(src: PlayerSource): void {
   scheduleHide();
 
   // ---- seek bar (with previews of the time under the finger)
-  const canPreview = () => !converted && getPrefs().seekPreview && !(src.headers && Object.keys(src.headers).length) && (!!src.localPath || /^(http:\/\/127\.0\.0\.1|blob:|file:|https?:\/\/localhost)/.test(src.url));
+  // (Not for a torrent still coming: each preview would fetch pieces far from where it plays.)
+  const canPreview = () => !converted && getPrefs().seekPreview && !(src.task?.kind === 'torrent' && src.task.state !== 'done') && !(src.headers && Object.keys(src.headers).length) && (!!src.localPath || /^(http:\/\/127\.0\.0\.1|blob:|file:|https?:\/\/localhost)/.test(src.url));
   const previewAt = (clientX: number) => { if (!canPreview() || !video.duration) return; if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } const rr = bar.parentElement!.getBoundingClientRect(); const f = fracAt(clientX); preview.show(f * video.duration, clientX - rr.left, rr.width); };
   const fracAt = (clientX: number) => { const r = bar.getBoundingClientRect(); const rtl = getComputedStyle(bar).direction === 'rtl'; let f = (clientX - r.left) / r.width; if (rtl) f = 1 - f; return Math.max(0, Math.min(1, f)); };
   const seekToX = (clientX: number) => { if (video.duration) seekTo(fracAt(clientX) * video.duration); };
@@ -392,7 +415,7 @@ export function openPlayer(src: PlayerSource): void {
     const l = (r.width - w) / 2, tp = (r.height - hh) / 2; const st = root.style;
     st.setProperty('--vr-l', `${l}px`); st.setProperty('--vr-t', `${tp}px`); st.setProperty('--vr-w', `${w}px`); st.setProperty('--vr-h', `${hh}px`); st.setProperty('--vr-b', `${r.height - tp - hh}px`);
   }
-  new ResizeObserver(() => layoutPicture()).observe(stage); video.addEventListener('resize', () => layoutPicture()); video.addEventListener('loadedmetadata', () => layoutPicture());
+  const stageRo = new ResizeObserver(() => layoutPicture()); stageRo.observe(stage); video.addEventListener('resize', () => layoutPicture()); video.addEventListener('loadedmetadata', () => layoutPicture());
   function applyAspect() { layoutPicture(); if (applyAspectMpv()) return; video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
   function cycleCrop() { crop = CROPS[(CROPS.indexOf(crop) + 1) % CROPS.length]; applyTransform(); flashText(crop ? `${t('cropTo')} ${localDigits(crop)}` : t('cropOff')); }
   function screenshotMpv(): boolean { if (!mpv) return false; mpv.screenshot(getPrefs().frameSubs === true); toast(t('screenshotSaved')); return true; }
@@ -516,12 +539,17 @@ export function openPlayer(src: PlayerSource): void {
     return out;
   }
   async function useTrack(tr: SubTrack | null) {
-    current = tr; ass?.free(); ass = null; subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last; delete subTop.dataset.last;
+    current = tr; ass?.free(); ass = null; dropFontUrls(); subBox.replaceChildren(); subTop.replaceChildren(); delete subBox.dataset.last; delete subTop.dataset.last;
     const SF = await import('./subFont'); const styled = tr?.ass ? SF.styledText(tr.ass) : '';
     if (mpv) { await SF.mpvFont((n, v) => mpv!.set(n, v)); mpv.setTrack('sub', 'no'); if (tr?.ass && !getPrefs().subAssOverride) { mpv.addSub(styled, tr.name, true); assCanvas.hidden = true; remember(key, { sub: tr.id }); return; } }
+    // (Start first: the styled-subtitle renderer, its fonts and the fonts in the video wait for the first frame.)
+    if (tr?.ass && !getPrefs().subAssOverride && !mpv) { await firstFrame; if (current !== tr || playerGone) return; }
     if (tr?.ass && !getPrefs().subAssOverride) { const own = await import('./fonts').then((m) => m.availableFor(styled)).catch(() => ({})); const ff = await fileFonts();
       // (No fonts in the video nor the torrent, and Arabic lines: Uthman Taha Naskh for whatever font they name that is not here.)
       const uth = !ff.length && !getPrefs().subFont && /[\u0600-\u06FF]/.test(styled) ? { name: 'kt uthman', url: new URL((await import('../assets/fonts/UthmanTN1.woff2')).default, new URL('assets/', document.baseURI)).href } : undefined;
+      // (The font files made addresses for this renderer: let go with it — the pack's stay until the player closes.)
+      for (const u of [...ff.filter((x) => !packFonts.includes(x)), ...Object.values(own)]) if (u.startsWith('blob:')) trackFonts.push(u);
+      if (current !== tr || playerGone) { dropFontUrls(); return; }
       ass = await createAssRenderer(video, assCanvas, styled, ff, own, uth); if (ass) { ass.setOffset(-subDelay); assCanvas.hidden = false; } } else assCanvas.hidden = true;
     remember(key, { sub: tr?.id });
   }
@@ -587,6 +615,7 @@ export function openPlayer(src: PlayerSource): void {
 
   // The show's subtitle pack (./subPacks): this episode's file loaded by itself — the one chosen by hand for it, else
   // the match — before the online search, which then leaves it be; every candidate a track to switch to.
+  let trackFonts: string[] = []; const dropFontUrls = () => { for (const u of trackFonts) URL.revokeObjectURL(u); trackFonts = []; };
   let packFonts: string[] = []; let packInfo: { key: string; want: import('./subMatch').Want; scan: import('./subPacks').PackScan; file?: import('./subPacks').PackFile; cands: import('./subPacks').PackFile[]; manual: boolean } | null = null;
   const packTracks = new Map<string, import('./subPacks').PackFile>();
   const showMeta = async () => { const { parseFilename } = await import('../anime/anitomy'); const m = src.task?.meta ?? src.meta; const parsed = parseFilename(src.name); return { key: (await import('./subPacks')).showKey(m ?? { title: parsed.title }), episode: m?.episode ?? parsed.episode, season: m?.season ?? parsed.season, title: m?.title ?? parsed.title }; };
@@ -833,7 +862,10 @@ export function openPlayer(src: PlayerSource): void {
   function cycleAudio() { const a = audioTracks(); if (!a || a.length < 2) { flashText(t('audioOneTrack')); return; } let i = 0; for (let k = 0; k < a.length; k++) if (a[k].enabled) i = k; const n = (i + 1) % a.length; for (let k = 0; k < a.length; k++) a[k].enabled = k === n; flashText(a[n].label || a[n].language || `#${n + 1}`); }
   // ---- sound the decoder cannot play: turned into AAC by ffmpeg and played beside the video (./compat)
   let beside: import('./compat').SoundBeside | null = null; let tracksFound: import('./compat').Probe | null = null;
-  async function checkSound() {
+  // (While the sound is being settled — the probe, the sound beside starting — no verdict on it: health.ts waits.)
+  let soundChecking = false;
+  async function checkSound() { soundChecking = true; try { await checkSound1(); } finally { soundChecking = false; } }
+  async function checkSound1() {
     const c = await import('./compat'); if (mpv || !c.compatHere() || playerGone) return;
     // (Whatever ffprobe says: a video playing a few seconds with not one frame drawn has a picture this view cannot decode.)
     const pic = () => { if (playerGone || converted) return; void import('./transcode').then((T) => { if (T.noPicture(video)) void noPictureHere(); }); };
@@ -877,7 +909,7 @@ export function openPlayer(src: PlayerSource): void {
   async function startBeside(track: number, codec: string) {
     const c = await import('./compat'); const packs = await import('../packs');
     if (packs.packsHere() && !(await packs.ensurePacks(['ffmpeg'], t('packWhyPlayerSound')))) { toast(t('playerNoSound', { codec: codec.toUpperCase() }), 'error', 6000); return; }
-    let base: string | null = null; try { base = await c.audioBase(); } catch { base = null; }
+    let base: string | null = null; try { base = await c.audioBase(src.url); } catch { base = null; }
     if (!base || playerGone) return;
     beside?.stop(); beside = new c.SoundBeside(video, src.url, track, base);
     flashText(t('playerSoundBeside', { codec: (codec || '?').toUpperCase() }), true);
@@ -1300,8 +1332,19 @@ export function openPlayer(src: PlayerSource): void {
     box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
   });
   // Another player (VLC, MX, mpv…) through Android's chooser.
-  function canOpenWith() { return !!(window as unknown as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.(); }
-  async function openWith() { const { ktPlugin } = await import('../native'); const kp = ktPlugin() as unknown as { openWith?(o: { url?: string; path?: string; mime: string; title: string }): Promise<void> } | null; try { video.pause(); await kp?.openWith?.({ url: src.localPath ? undefined : src.url, path: src.localPath, mime: 'video/*', title: src.name }); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
+  function canOpenWith() { return !!window.kurokawaTools || !!(window as unknown as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.(); }
+  /** Another app from here (external/run.ts): the player chooser always, from where it is now; this player closed so
+   *  what the other app tells back is the one «watched»; «the in-app player» brings it back at the same place. */
+  let handingOver = false;
+  async function openWith() {
+    video.pause(); const at = video.currentTime;
+    const ext = await import('./external/run'); const { serviceOf } = await import('./external/logic');
+    // (An online source's subtitles go along; a file's own and the ones beside it the other player finds itself.)
+    const subsNow = src.subtitles ?? [];
+    // (The torrent's stream stays: the other player reads it now, and external/run.ts lets it go when that is done.)
+    goingOn = true; handingOver = true; close();
+    await ext.playExternally({ src: ext.sourceFor({ url: src.url, name: src.name, localPath: src.localPath, headers: src.headers, subtitles: subsNow, startAt: at > 1 ? at : undefined, key }), service: serviceOf({ taskKind: src.task?.kind, localPath: src.localPath, headers: src.headers }), key, task: src.task, fileIndex: src.fileIndex, meta: src.task?.meta ?? src.meta, alreadyWatched: watchedSent, fromPlayer: true, fallback: () => openPlayer({ ...src, startAt: at }) }, true);
+  }
 
   // ---- closing
   function close() {
@@ -1312,7 +1355,7 @@ export function openPlayer(src: PlayerSource): void {
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    converted?.stop(); converted = null; if (src.task?.kind === 'torrent') { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden); if (!goingOn) { const at = location.hash; void import('./returnTo').then((r) => r.playerClosed({ watched: watchedSent, meta: src.task?.meta ?? src.meta, at })); }
+    converted?.stop(); converted = null; if (src.task?.kind === 'torrent' && !handingOver) { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden); window.removeEventListener('resize', drawTools); stageRo.disconnect(); healthOff?.(); healthOff = null; window.clearTimeout(noticeTimer); dropFontUrls(); for (const u of packFonts) URL.revokeObjectURL(u); packFonts = []; window.clearTimeout(firstFrameTimer); document.removeEventListener('visibilitychange', gateTimers); if (!goingOn) { const at = location.hash; void import('./returnTo').then((r) => r.playerClosed({ watched: watchedSent, meta: src.task?.meta ?? src.meta, at })); }
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void turnScreen('auto').catch(() => undefined);

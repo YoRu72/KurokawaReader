@@ -1,0 +1,456 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "meteors",
+  "name": "Meteors"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 1
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#04030f",
+   "light": "#67639f"
+  },
+  {
+   "id": "sky1",
+   "dark": "#120a2c",
+   "light": "#8f86c0"
+  },
+  {
+   "id": "sky2",
+   "dark": "#2a1446",
+   "light": "#bdaad8"
+  },
+  {
+   "id": "sky3",
+   "dark": "#4d2a5e",
+   "light": "#e6cde2"
+  },
+  {
+   "id": "glow",
+   "dark": "#874f8e",
+   "light": "#f8e4ef"
+  },
+  {
+   "id": "cloud",
+   "dark": "#150d2a",
+   "light": "#ece3f3"
+  },
+  {
+   "id": "cloud2",
+   "dark": "#2b1d48",
+   "light": "#ddd0ec"
+  },
+  {
+   "id": "mist",
+   "dark": "#6a558f",
+   "light": "#ffffff"
+  },
+  {
+   "id": "star",
+   "dark": "#eef0ff",
+   "light": "#ffffff"
+  },
+  {
+   "id": "meteor",
+   "dark": "#f4f6ff",
+   "light": "#ffffff"
+  },
+  {
+   "id": "meteor2",
+   "dark": "#ffd0ec",
+   "light": "#ffe4f3"
+  },
+  {
+   "id": "meteor3",
+   "dark": "#bfe4ff",
+   "light": "#e6f4ff"
+  },
+  {
+   "id": "rim",
+   "dark": "#b49ae0",
+   "light": "#ffffff"
+  },
+  {
+   "id": "moon",
+   "dark": "#e9e0ff",
+   "light": "#ffffff"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#a8b4ff",
+   "accent2": "#8fe0ff",
+   "tint": "#0b0b2e"
+  },
+  "light": {
+   "accent": "#3e48a8",
+   "accent2": "#1a6f99",
+   "tint": "#c6c6e6"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0.02,
+   "parallax": 0.02,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.42,
+      "sky1"
+     ],
+     [
+      0.64,
+      "sky2"
+     ],
+     [
+      0.8,
+      "sky3"
+     ]
+    ],
+    "glow": {
+     "x": 0.5,
+     "y": 0.8,
+     "r": 0.95,
+     "colour": "glow",
+     "alpha": 0.38
+    }
+   }
+  },
+  {
+   "id": "moon",
+   "kind": "disc",
+   "depth": 0.02,
+   "parallax": 0.02,
+   "params": {
+    "x": 0.18,
+    "y": 0.3,
+    "r": 0.016,
+    "halo": 7,
+    "colour": "moon",
+    "glow": 0.22
+   }
+  },
+  {
+   "id": "dust",
+   "kind": "bokeh",
+   "depth": 0.02,
+   "parallax": 0.02,
+   "params": {
+    "count": 180,
+    "y0": -0.05,
+    "y1": 0.55,
+    "rmin": 0.6,
+    "rmax": 1.4,
+    "alpha": 0.6,
+    "colours": [
+     "star"
+    ]
+   }
+  },
+  {
+   "id": "stars",
+   "depth": 0.04,
+   "parallax": 0.04
+  },
+  {
+   "id": "meteors",
+   "depth": 0.08,
+   "parallax": 0.08
+  },
+  {
+   "id": "cloud-tops",
+   "kind": "fog",
+   "depth": 0.15,
+   "params": {
+    "y": 0.7,
+    "h": 0.025,
+    "count": 14,
+    "size": 520,
+    "speed": 3,
+    "alpha": 0.25,
+    "colour": "rim"
+   }
+  },
+  {
+   "id": "cloud-far",
+   "kind": "fog",
+   "depth": 0.2,
+   "params": {
+    "y": 0.75,
+    "h": 0.04,
+    "count": 14,
+    "size": 640,
+    "speed": 4,
+    "alpha": 0.22,
+    "colour": "mist"
+   }
+  },
+  {
+   "id": "cloud-sea",
+   "kind": "band",
+   "depth": 0.3,
+   "params": {
+    "y0": 0.68,
+    "y1": 1.02,
+    "top": "cloud2",
+    "bottom": "cloud",
+    "a0": 0,
+    "a1": 1
+   }
+  },
+  {
+   "id": "cloud-mid",
+   "kind": "fog",
+   "depth": 0.45,
+   "params": {
+    "y": 0.82,
+    "h": 0.07,
+    "count": 14,
+    "size": 900,
+    "speed": 7,
+    "alpha": 0.2,
+    "colour": "mist"
+   }
+  },
+  {
+   "id": "cloud-near",
+   "kind": "fog",
+   "depth": 0.8,
+   "params": {
+    "y": 0.97,
+    "h": 0.08,
+    "count": 10,
+    "size": 1300,
+    "speed": 11,
+    "alpha": 0.2,
+    "colour": "cloud2"
+   }
+  }
+ ],
+ "emitters": [
+  {
+   "id": "stars",
+   "layer": "stars",
+   "max": 90,
+   "rate": 1,
+   "prewarm": 1,
+   "shape": {
+    "kind": "rect",
+    "x": 0,
+    "y": 0,
+    "w": 1,
+    "h": 0.6
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 200,
+     "max": 400
+    },
+    {
+     "kind": "size",
+     "min": 2.4,
+     "max": 4.4
+    },
+    {
+     "kind": "alpha",
+     "min": 0.5,
+     "max": 1
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "star"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 1
+    }
+   ],
+   "operators": [
+    {
+     "kind": "twinkle",
+     "speed": 0.3,
+     "depth": 0.6
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 10
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "meteors",
+   "layer": "meteors",
+   "max": 6,
+   "rate": 0.75,
+   "prewarm": 1,
+   "shape": {
+    "kind": "rect",
+    "x": 0.45,
+    "y": -0.06,
+    "w": 0.65,
+    "h": 0.28
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 0.9,
+     "max": 1.4
+    },
+    {
+     "kind": "size",
+     "min": 16,
+     "max": 22
+    },
+    {
+     "kind": "stretch",
+     "min": 10,
+     "max": 14
+    },
+    {
+     "kind": "alpha",
+     "min": 0.8,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -560,
+      300
+     ],
+     "max": [
+      -400,
+      380
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "meteor",
+      "meteor2",
+      "meteor3"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 12
+    }
+   ],
+   "operators": [
+    {
+     "kind": "fade",
+     "in": 0.1,
+     "out": 0.55
+    },
+    {
+     "kind": "bounds",
+     "mode": "kill",
+     "margin": 200
+    }
+   ],
+   "densityParam": "amount",
+   "align": true
+  },
+  {
+   "id": "faint",
+   "layer": "meteors",
+   "max": 6,
+   "rate": 1.1,
+   "prewarm": 1,
+   "shape": {
+    "kind": "rect",
+    "x": 0.35,
+    "y": -0.06,
+    "w": 0.75,
+    "h": 0.4
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 0.7,
+     "max": 1.1
+    },
+    {
+     "kind": "size",
+     "min": 9,
+     "max": 13
+    },
+    {
+     "kind": "stretch",
+     "min": 7,
+     "max": 10
+    },
+    {
+     "kind": "alpha",
+     "min": 0.45,
+     "max": 0.75
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -520,
+      290
+     ],
+     "max": [
+      -380,
+      360
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "meteor",
+      "meteor3"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 12
+    }
+   ],
+   "operators": [
+    {
+     "kind": "fade",
+     "in": 0.1,
+     "out": 0.55
+    },
+    {
+     "kind": "bounds",
+     "mode": "kill",
+     "margin": 200
+    }
+   ],
+   "densityParam": "amount",
+   "align": true
+  }
+ ]
+}

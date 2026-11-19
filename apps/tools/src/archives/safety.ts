@@ -8,7 +8,7 @@ import type { ArchiveInfo } from '../archives';
 import { ktPlugin } from '../native';
 export type { Answers, Choice, Report };
 
-type Desk = { archivePreflight?(o: { path: string; dest: string; password?: string; verify?: boolean; keepFree?: number }): Promise<{ report: Report; facts: Partial<Facts> }>; archiveShelf?(o?: { atStart?: boolean }): Promise<ShelfJob[]>; archiveJob?(o: { id?: string; journal: string; act: string }): Promise<unknown> };
+type Desk = { archivePreflight?(o: { path: string; dest: string; password?: string; verify?: boolean; keepFree?: number }): Promise<{ report: Report; facts: Partial<Facts> }>; archiveShelf?(o?: { atStart?: boolean }): Promise<ShelfJob[]>; archiveJob?(o: { id?: string; journal: string; act: string; password?: string }): Promise<unknown> };
 const desk = (): Desk | null => { const k = window.kurokawaTools as unknown as Desk | undefined; return k?.archivePreflight ? k : null; };
 export interface ShelfJob { journal: string; id: string; archive: string; dest: string; mode: 'inplace' | 'normal'; state: string; why?: string; done: number; total: number; can: string[] }
 
@@ -18,8 +18,11 @@ const volumeOf = (p: string): string => (/^\/(storage|mnt\/media_rw)\/[0-9A-Fa-f
 export const phonePlatform = (dest: string): Platform => (volumeOf(dest).startsWith('/') ? 'android-fat' : 'android');
 
 /** The report for one archive and one destination; nothing is written. */
+/** A stopped job beside the archive that cannot be used for the file now there (its journal, the engine's reason). */
+export interface StaleJob { journal: string; why: string }
 export async function preflightFor(info: ArchiveInfo, path: string, dest: string, o: { password?: string; verify?: boolean; free: number; keepFree: number; existing: string[] }): Promise<Report> {
-  const d = desk(); if (d?.archivePreflight) { try { return (await d.archivePreflight({ path, dest, password: o.password, verify: o.verify, keepFree: o.keepFree })).report; } catch { /* the computer's older engine: the page decides */ } }
+  // (Round six: a job beside the archive that cannot be used for it rides along with the report, so the sheet can offer to forget it.)
+  const d = desk(); if (d?.archivePreflight) { try { const r = await d.archivePreflight({ path, dest, password: o.password, verify: o.verify, keepFree: o.keepFree }); const sj = (r as { facts?: { staleJob?: StaleJob | null } }).facts?.staleJob; return sj ? Object.assign(r.report, { staleJob: sj }) : r.report; } catch { /* the computer's older engine: the page decides */ } }
   const p = ktPlugin() ? phonePlatform(dest) : ((info as ArchiveInfo & { platform?: Platform }).platform ?? 'linux');
   const entries = info.entries.map((e) => ({ path: e.path, dir: e.dir, usize: Math.max(0, e.size), csize: e.compressed ?? 0, method: (e as { method?: number }).method, offset: (e as { offset?: number }).offset, encrypted: (e as { encrypted?: boolean }).encrypted }));
   const zipLike = info.format === 'zip' || info.format === 'tar';
@@ -31,5 +34,5 @@ export const keepBothName = (name: string, taken: (n: string) => boolean): strin
 
 /** The jobs left unfinished (the computer keeps their list; the phone has only the one beside an archive opened). */
 export async function shelfJobs(atStart = false): Promise<ShelfJob[]> { const d = desk(); try { return d?.archiveShelf ? await d.archiveShelf({ atStart }) : []; } catch { return []; } }
-export async function shelfAct(journal: string, act: 'finish' | 'restore' | 'undo' | 'dismiss' | 'restoreV1' | 'leave', id?: string): Promise<unknown> { const d = desk(); if (!d?.archiveJob) throw new Error('unsupported'); return d.archiveJob({ journal, act, id }); }
+export async function shelfAct(journal: string, act: 'finish' | 'restore' | 'undo' | 'dismiss' | 'restoreV1' | 'forget' | 'leave', id?: string, password?: string): Promise<unknown> { const d = desk(); if (!d?.archiveJob) throw new Error('unsupported'); return d.archiveJob({ journal, act, id, ...(password ? { password } : {}) }); }
 export const choiceOf = (a: Answers | undefined, path: string, dir: boolean): Choice | null => S.conflictChoice(a, path, dir);

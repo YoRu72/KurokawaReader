@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-tools",
-  "version": "0.20.5",
+  "version": "0.21.0",
   "description": "Kurokawa Tools — downloads, torrents, streaming and the tools around them, with the Kurokawa add-ons.",
   "private": true,
   "type": "module",
@@ -22,5 +22,5 @@
     "@capacitor/cli": "^6.1.0",
     "@capacitor/android": "^6.1.0"
   },
-  "license": "MIT"
+  "license": "GPL-3.0-or-later"
 }

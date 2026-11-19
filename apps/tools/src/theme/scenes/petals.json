@@ -1,0 +1,468 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "petals",
+  "name": "Petals"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#170f2b",
+   "light": "#8f7ab8"
+  },
+  {
+   "id": "sky1",
+   "dark": "#2f1d4c",
+   "light": "#b9a2d4"
+  },
+  {
+   "id": "sky2",
+   "dark": "#5a3570",
+   "light": "#e0cbe4"
+  },
+  {
+   "id": "sky3",
+   "dark": "#86507f",
+   "light": "#f4e1ec"
+  },
+  {
+   "id": "glow",
+   "dark": "#c27aa6",
+   "light": "#fdeef5"
+  },
+  {
+   "id": "light",
+   "dark": "#f3c6dc",
+   "light": "#ffffff"
+  },
+  {
+   "id": "bok",
+   "dark": "#e59cc2",
+   "light": "#f3bfd8"
+  },
+  {
+   "id": "bok2",
+   "dark": "#a994f0",
+   "light": "#d2c4f6"
+  },
+  {
+   "id": "petal",
+   "dark": "#f4a9cb",
+   "light": "#d2689c"
+  },
+  {
+   "id": "petal2",
+   "dark": "#fbd0e2",
+   "light": "#e48ab4"
+  },
+  {
+   "id": "petal3",
+   "dark": "#ffffff",
+   "light": "#c45d92"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#f29bc6",
+   "accent2": "#b9a2ff",
+   "tint": "#2c1c46"
+  },
+  "light": {
+   "accent": "#a4386f",
+   "accent2": "#5d48ae",
+   "tint": "#e2d2e6"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0.05,
+   "parallax": 0.05,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.45,
+      "sky1"
+     ],
+     [
+      0.82,
+      "sky2"
+     ],
+     [
+      1,
+      "sky3"
+     ]
+    ],
+    "glow": {
+     "x": 0.2,
+     "y": 0.12,
+     "r": 0.9,
+     "colour": "glow",
+     "alpha": 0.32
+    }
+   }
+  },
+  {
+   "id": "light",
+   "kind": "shafts",
+   "depth": 0.05,
+   "parallax": 0.05,
+   "params": {
+    "count": 6,
+    "x0": -0.08,
+    "x1": 0.55,
+    "y0": -0.12,
+    "len": 1.35,
+    "angle": -0.42,
+    "width": 0.09,
+    "alpha": 0.2,
+    "colour": "light"
+   }
+  },
+  {
+   "id": "haze-far",
+   "kind": "bokeh",
+   "depth": 0.12,
+   "parallax": 0.12,
+   "params": {
+    "count": 34,
+    "y0": 0.05,
+    "y1": 1.0,
+    "rmin": 18,
+    "rmax": 64,
+    "alpha": 0.13,
+    "colours": [
+     "bok",
+     "bok2"
+    ]
+   }
+  },
+  {
+   "id": "far",
+   "depth": 0.3
+  },
+  {
+   "id": "floor-glow",
+   "kind": "band",
+   "depth": 0.4,
+   "params": {
+    "y0": 0.62,
+    "y1": 1.05,
+    "top": "sky3",
+    "bottom": "glow",
+    "a0": 0,
+    "a1": 0.4
+   }
+  },
+  {
+   "id": "mid",
+   "depth": 0.6
+  },
+  {
+   "id": "haze-near",
+   "kind": "bokeh",
+   "depth": 0.85,
+   "parallax": 0.85,
+   "params": {
+    "count": 9,
+    "y0": 0.1,
+    "y1": 1.0,
+    "rmin": 90,
+    "rmax": 170,
+    "alpha": 0.07,
+    "colours": [
+     "bok",
+     "bok2"
+    ]
+   }
+  },
+  {
+   "id": "near",
+   "depth": 0.92
+  }
+ ],
+ "emitters": [
+  {
+   "id": "far",
+   "layer": "far",
+   "max": 70,
+   "rate": 3.5,
+   "prewarm": 1,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 40
+    },
+    {
+     "kind": "size",
+     "min": 5,
+     "max": 8
+    },
+    {
+     "kind": "alpha",
+     "min": 0.55,
+     "max": 0.85
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      10,
+      8
+     ],
+     "max": [
+      24,
+      18
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -1.2,
+     "max": 1.2
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "petal",
+      "petal2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 8
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.004,
+     "speed": 0.1,
+     "strength": 14
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 20
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "mid",
+   "layer": "mid",
+   "max": 44,
+   "rate": 2.2,
+   "prewarm": 1,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 40
+    },
+    {
+     "kind": "size",
+     "min": 10,
+     "max": 15
+    },
+    {
+     "kind": "alpha",
+     "min": 0.7,
+     "max": 0.95
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      16,
+      12
+     ],
+     "max": [
+      34,
+      24
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -1.4,
+     "max": 1.4
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "petal",
+      "petal2",
+      "petal3"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 8
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.003,
+     "speed": 0.1,
+     "strength": 20
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "pointer",
+     "strength": -60,
+     "radius": 200
+    },
+    {
+     "kind": "click",
+     "impulse": 130,
+     "radius": 260
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 30
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "near",
+   "layer": "near",
+   "max": 12,
+   "rate": 0.6,
+   "prewarm": 1,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 30
+    },
+    {
+     "kind": "size",
+     "min": 22,
+     "max": 32
+    },
+    {
+     "kind": "alpha",
+     "min": 0.8,
+     "max": 1
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      24,
+      16
+     ],
+     "max": [
+      44,
+      30
+     ]
+    },
+    {
+     "kind": "rotation",
+     "min": 0,
+     "max": 6.28
+    },
+    {
+     "kind": "spin",
+     "min": -1.6,
+     "max": 1.6
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "petal",
+      "petal2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 8
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.002,
+     "speed": 0.1,
+     "strength": 26
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "pointer",
+     "strength": -80,
+     "radius": 240
+    },
+    {
+     "kind": "click",
+     "impulse": 160,
+     "radius": 300
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 50
+    },
+    {
+     "kind": "fade",
+     "in": 0.06,
+     "out": 0.06
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

@@ -524,7 +524,7 @@ body:has(> .kt-player) > .sheet .dest-row { padding: 7px 10px; gap: 10px; font-s
 body:has(> .kt-player) > .sheet .ep-num { width: 30px; height: 30px; border-radius: 8px; font-size: 13px; }
 @media (orientation: landscape) {
   body:has(> .kt-player) > .sheet, html.pc body:has(> .kt-player) > .sheet { inset: 0 0 0 auto; margin: 0; width: min(380px, 46vw); max-width: none; height: 100%; max-height: none; border-radius: var(--sh-xl) 0 0 var(--sh-xl); padding-bottom: 0; animation: side-in-rtl var(--dur-long) var(--ease-emph-decel); }
-  [dir='rtl'] body:has(> .kt-player) > .sheet { inset: 0 auto 0 0; border-radius: 0 var(--sh-xl) var(--sh-xl) 0; animation-name: side-in; }
+  [dir='rtl'] body:has(> .kt-player) > .sheet, html.pc[dir='rtl'] body:has(> .kt-player) > .sheet { inset: 0 auto 0 0; border-radius: 0 var(--sh-xl) var(--sh-xl) 0; animation-name: side-in; }
   body:has(> .kt-player) > .sheet::before { display: none; }
   body:has(> .kt-player) > .sheet .sheet-body { flex: 1; }
   body:has(> .kt-player) > .sheet-scrim { background: rgb(0 0 0 / .25); }
@@ -689,3 +689,7 @@ html.pc .dl-float { bottom: 20px; inset-inline: auto 24px; width: 380px; margin:
 .pack-sheet .row-actions { gap: 12px; }
 .anime-episodes > .card-head { flex-wrap: wrap; row-gap: 10px; column-gap: 10px; }
 .anime-episodes > .card-head > .btn { flex: none; }
+/* (A file with no audio track and the like: a small notice under the player's top bar — player.ts notice().) */
+.kt-notice { position: absolute; top: calc(64px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); z-index: 6; max-width: min(90vw, 520px); padding: 10px 18px; border-radius: 999px; background: rgba(18, 20, 24, 0.82); color: #f1f3f6; font-size: 14px; line-height: 1.4; text-align: center; pointer-events: none; }
+.kt-notice[hidden] { display: none; }
+.kt-problem p.kt-problem-msg { margin: 4px 0 12px; line-height: 1.55; }

@@ -10,6 +10,8 @@
 //   /<token>/audio?src&ss&a      one audio track as AAC (kt:audioUrl; ffmpeg — streamproxy.rs)
 //   /<token>/video?src&ss&a&c    the picture converted as it plays (kt:videoUrl; ffmpeg)
 //   /<token>/p?u&h               an online source with its headers, HLS remuxed to MP4 (kt:proxyUrl)
+//   /r/<session>/…               another program's player through the relay (extplayer.rs, kt:relayOpen) — outside
+//                                the run's token: that token unlocks /f and /p, and is never handed to another program
 // Stopped when the app quits (main.rs) — the port and every file let go.
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -251,6 +253,13 @@ fn handle(mut s: TcpStream, token: &str, stop: &Arc<AtomicBool>) {
     let head_only = req.method == "HEAD";
     let target = req.target.clone();
     let (path, query) = sl::split_target(&target);
+    // (Another program's player reading through the relay: extplayer.rs, a session of its own under this run's token.)
+    // (Mounted outside the run's token: another program reads it, by the session's own 128-bit id.)
+    if path.starts_with("/r/") && crate::extplayer::serve(&mut s, path, &req, head_only, stop) {
+        let _ = s.flush();
+        let _ = s.shutdown(Shutdown::Both);
+        return;
+    }
     match sl::route(path, query, token) {
         sl::Route::Forbidden => simple(&mut s, 403, ""),
         sl::Route::NotFound => simple(&mut s, 404, ""),
@@ -265,7 +274,7 @@ fn handle(mut s: TcpStream, token: &str, stop: &Arc<AtomicBool>) {
 }
 
 /// streamproxy.cjs's localFile(): a file on this computer, with ranges.
-fn serve_file(s: &mut TcpStream, path: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
+pub(crate) fn serve_file(s: &mut TcpStream, path: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
     let p = PathBuf::from(path);
     let size = match std::fs::metadata(&p) {
         Ok(m) if m.is_file() => m.len(),
@@ -306,7 +315,7 @@ fn serve_file(s: &mut TcpStream, path: &str, req: &sl::Head, head_only: bool, st
 }
 
 /// torrentstream.cjs's serve(): a file of a torrent being watched, each part sent once its pieces are in.
-fn serve_torrent(s: &mut TcpStream, key: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
+pub(crate) fn serve_torrent(s: &mut TcpStream, key: &str, req: &sl::Head, head_only: bool, stop: &Arc<AtomicBool>) {
     let sess = match sessions().get(key).cloned() {
         Some(x) if !x.cancelled.load(Ordering::SeqCst) => x,
         _ => {

@@ -19,6 +19,8 @@ on:
       - 'apps/tools/desktop-tauri/**'
       - 'apps/tools/core/**'
       - 'shared/shell-rs/**'
+      - 'scripts/build-scene-wasm.sh'
+      - '.github/actions/scene-wasm/**'
       - 'apps/tools/src/**'
       - 'apps/tools/tests/**'
       - 'apps/tools/desktop/**'
@@ -48,6 +50,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
 
+      # (The scene engine's wasm into public/scene/ before the web build — scripts/build-scene-wasm.sh.)
+      - uses: ./.github/actions/scene-wasm
       - name: Web UI
         working-directory: apps/tools
         run: |
@@ -72,13 +76,14 @@ jobs:
           targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
 
       # The std-only modules' own tests, with rustc alone (the same ones run in the workspace): kt-core, the shell's
-      # recycle bin and API detection, and the shared crate's std-only parts. On Linux (/dev/shm is a second disk
+      # recycle bin and API detection, and the shared crate's std-only parts. (Tools 0.21 P11: the extraction engine
+      # through its test root, stdroots/extractjob.rs, which brings in archsafe.rs and vidjson.rs.) On Linux (/dev/shm is a second disk
       # there, so the file jobs' moves across disks are tested too).
       - name: Std-only unit tests
         if: runner.os == 'Linux'
         run: |
           d="$RUNNER_TEMP/rs-tests"; mkdir -p "$d"
-          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohchain.rs apps/tools/core/kt-core/src/dohproxy.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs; do
+          for f in apps/tools/core/kt-core/src/engine_core.rs apps/tools/core/kt-core/src/filejobs.rs apps/tools/core/kt-core/src/fontnames.rs apps/tools/core/kt-core/src/mega.rs apps/tools/core/kt-core/src/places.rs apps/tools/core/kt-core/src/updatelogic.rs apps/tools/core/kt-core/src/dohchain.rs apps/tools/core/kt-core/src/dohproxy.rs apps/tools/core/kt-core/src/streamlogic.rs apps/tools/desktop-tauri/src-tauri/src/torrentmake.rs apps/tools/desktop-tauri/src-tauri/src/rpc.rs apps/tools/desktop-tauri/src-tauri/src/trash.rs apps/tools/desktop-tauri/src-tauri/apidetect.rs shared/shell-rs/src/util.rs shared/shell-rs/src/files.rs shared/shell-rs/src/testserver.rs shared/shell-rs/src/cookiejar.rs shared/shell-rs/src/doh.rs shared/shell-rs/src/archive.rs shared/shell-rs/src/iconlogic.rs apps/tools/core/kt-core/stdroots/extractjob.rs; do
             n=$(basename "$f" .rs)
             rustc --edition 2021 --test "$f" -o "$d/$n"
             "$d/$n"
@@ -110,6 +115,17 @@ jobs:
             "$d/$n$ext"
           done
 
+      # (Tools 0.21: fast file search's index core — src/fileindex/, a folder of modules, through its test root
+      # stdroots/fileindex.rs — on every system: the Windows watcher (ReadDirectoryChangesW, declared by hand) is
+      # compiled and run only here, inotify on Linux, the mtime poller everywhere. Built -O, as the shell runs it.)
+      - name: Std-only unit tests (file index)
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/rs-tests-fi"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          rustc --edition 2021 --test -O apps/tools/core/kt-core/stdroots/fileindex.rs -o "$d/fileindex$ext"
+          KT_TEST_TMP="$RUNNER_TEMP" "$d/fileindex$ext"
+
       # (Screen translator: its std-only rules — kt-core's screenlogic.rs: monitors and regions, the OCR answers, pixels
       # and the PNG, the portal's answers — on every system.)
       - name: Std-only unit tests (screen translator)
@@ -131,6 +147,21 @@ jobs:
           rustc --edition 2021 --test apps/tools/desktop-tauri/src-tauri/src/gaplogic.rs -o "$d/gaplogic$ext"
           "$d/gaplogic$ext"
           if [ "$RUNNER_OS" = Linux ]; then (cd apps/tools && node tests/hybridcookies.cjs); fi
+
+      # (0.21, device battery: kt-battery's core — model, allow-list, registry, readers' rules, identity, scheduler and
+      # its threaded runner with a stuck fake device — tested together through its test root; the Windows declarations'
+      # sizes; and its Windows platform type-checked (its link attributes apply on Windows only), on every system.)
+      - name: Std-only unit tests (device battery)
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/rs-tests-batt"; mkdir -p "$d"
+          ext=""; if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          for f in apps/tools/core/kt-battery/stdroots/core.rs apps/tools/core/kt-battery/stdroots/winffi.rs; do
+            n=batt-$(basename "$f" .rs)
+            rustc --edition 2021 --test "$f" -o "$d/$n$ext"
+            "$d/$n$ext"
+          done
+          rustc --edition 2021 --crate-type lib --emit=metadata apps/tools/core/kt-battery/stdroots/wincheck.rs -o "$d/batt-wincheck.rmeta"
 
       # (Stage P4, the hybrid torrent engine: its std-only rules — which engine serves a watched torrent, one owner per
       # info-hash, the fallback to aria2, where librqbit writes — and the switch that turns librqbit on in CI's copy.)
@@ -248,6 +279,23 @@ jobs:
           tail -3 "$RUNNER_TEMP/original.log"
           built=no; if [ "$code" = 0 ]; then built=yes; echo "KT_ORIGINAL=$f" >> "$GITHUB_ENV"; fi
           echo "cargo check --features $f ($RUNNER_OS): exit $code — built into this run's program: $built" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # (0.21, device battery: the Xbox controllers' real percentage — Cargo feature battery-wgi, kt-battery's `wgi`, the
+      # windows crate's WinRT parts — is off until it compiles; this try prints the compiler's word on Windows and is
+      # never built into the program here. The rest of kt-battery is in every build.)
+      - name: Device battery — WGI compile try
+        if: matrix.target == '' && runner.os == 'Windows'
+        continue-on-error: true
+        working-directory: apps/tools/desktop-tauri/src-tauri
+        shell: bash
+        run: |
+          set +e
+          cargo check --release --features battery-wgi --message-format short > "$RUNNER_TEMP/battwgi.log" 2>&1
+          code=$?
+          set -e
+          grep -E 'error|warning: unused' "$RUNNER_TEMP/battwgi.log" | head -80 || true
+          tail -3 "$RUNNER_TEMP/battwgi.log"
+          echo "cargo check --features battery-wgi (Windows): exit $code" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # (Stage P4, hybrid engine: librqbit on for CI's builds — the default feature of this checkout's Cargo.toml only,
       # rqbit-feature.cjs; the committed file leaves it out. A build that fails with it is made again without it by

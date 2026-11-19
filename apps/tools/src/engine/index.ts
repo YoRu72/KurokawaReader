@@ -55,7 +55,7 @@ export function parseSources(text: string): TaskSource[] {
   }
   return out;
 }
-export const isVideo = (name: string): boolean => /\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|wmv|flv|ogv|3gp)$/i.test(name);
+export const isVideo = (name: string): boolean => /\.(mkv|mp4|m4v|webm|avi|mov|ts|m2ts|mts|wmv|flv|ogv|3gp)$/i.test(name);
 export const isArchive = (name: string): boolean => /\.(zip|7z|rar|r\d\d|tar|gz|tgz|bz2|xz|zst|001)$/i.test(name);
 /** A finished task's main file on the disk — a torrent of several files: its first chosen one —; '' when it is
  *  not a path the app can hand over (a content:// folder). */

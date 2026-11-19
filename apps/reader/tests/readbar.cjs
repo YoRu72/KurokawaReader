@@ -7,7 +7,7 @@
 //  - with the chrome hidden by a tap the bar stays (the option on) or hides (off);
 //  - the text ends above the floating toolbar and the bar (rects compared), and the place read does not move on the
 //    screen when the chrome is hidden or shown;
-//  - in the Arabic interface its figures are in the interface's digits for prose (١٢٣; src/i18n localDigits), the clock
+//  - in the Arabic interface its figures are in the interface's digits for prose (0–9 by default, ١٢٣ when chosen; src/i18n localDigits), the clock
 //    as the locale writes it, and its start is on the right;
 //  - a PDF shows its page in the book and in its chapter (its outline);
 //  - the bar does not add layout reads per scroll (getBoundingClientRect counted, the bar on and off);
@@ -298,7 +298,7 @@ const chapter = (lang, n) => Array.from({ length: n }, (_, i) => para(i + 1, lan
     await back(p); await p.context().close();
   });
 
-  // ---- 6. The Arabic interface: Arabic digits, the clock as the locale writes it, the start on the right.
+  // ---- 6. The Arabic interface: 0–9 by default (١٢٣ when chosen), the clock as the locale writes it, the start on the right.
   await sect(async () => {
     const p = await phone('ar', withItems); const id = await importBook(p, epubAr);
     await openBook(p, id);
@@ -306,12 +306,17 @@ const chapter = (lang, n) => Array.from({ length: n }, (_, i) => para(i + 1, lan
     await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kr.visual')); v.statusItems = [{ id: 'chapter', on: true, at: 'start' }, { id: 'page', on: true, at: 'start' }, { id: 'clock', on: true, at: 'end' }, { id: 'bookPct', on: true, at: 'end' }, { id: 'chapterLeft', on: true, at: 'end' }]; localStorage.setItem('kr.visual', JSON.stringify(v)); });
     await back(p); await p.reload(); await p.waitForSelector('.library-view'); await openBook(p, id); await settle(p, 600);
     const page = await textOf(p, 'page'), pct = await textOf(p, 'bookPct'), clock = await textOf(p, 'clock');
-    ok('Arabic: the page in Arabic digits', /^[٠-٩]+ \/ [٠-٩]+$/.test(page ?? ''), page);
-    ok('Arabic: the percentage in Arabic digits, with «٪»', /^[٠-٩]+٪/.test(pct ?? '') && !/[0-9%]/.test(pct ?? ''), pct);
-    ok('Arabic: the clock as the locale writes it (Arabic digits, «ص»/«م» after them)', /^[٠-٩]{1,2}:[٠-٩]{2}\s[صم]$/.test((clock ?? '').replace(/[‏؜]/g, '')), clock);
+    // (The digits 0–9 by default — the owner's rule —; ١٢٣ only when chosen, checked after.)
+    ok('Arabic: the page in 0–9 (the default digits)', /^[0-9]+ \/ [0-9]+$/.test(page ?? ''), page);
+    ok('Arabic: the percentage in 0–9, no ٠–٩', /^[0-9]+/.test((pct ?? '').replace(/[\u200e\u200f\u061c]/g, '')) && !/[٠-٩]/.test(pct ?? ''), pct);
+    ok('Arabic: the clock as the locale writes it (0–9, «ص»/«م» after them)', /^[0-9]{1,2}:[0-9]{2}\s[صم]$/.test((clock ?? '').replace(/[\u200e\u200f\u061c]/g, '')), clock);
     ok('Arabic: pages left in words, «صفحة» counted', /^بقي .*صفح|^آخر صفحة/.test(await textOf(p, 'chapterLeft') ?? ''), await textOf(p, 'chapterLeft'));
     const order = await p.evaluate(() => { const r = (s) => document.querySelector(s).getBoundingClientRect(); return { start: r('.read-status .rb-start').right, end: r('.read-status .rb-end').left, chapter: r('.read-status .rb-chapter').right, page: r('.read-status .rb-page').right, w: innerWidth }; });
     ok('Arabic: right to left — the start (the chapter, then the page) on the right, the end on the left', order.start > order.w - 30 && order.end < 30 && order.chapter > order.page, order);
+    // (١٢٣ chosen in Settings: the page in Arabic-Indic digits.)
+    await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kr.visual')); v.arDigits = 'eastern'; localStorage.setItem('kr.visual', JSON.stringify(v)); });
+    await back(p); await p.reload(); await p.waitForSelector('.library-view'); await openBook(p, id); await settle(p, 600);
+    ok('Arabic, ١٢٣ chosen: the page in Arabic-Indic digits', /^[٠-٩]+ \/ [٠-٩]+$/.test(await textOf(p, 'page') ?? ''), await textOf(p, 'page'));
     await back(p); await p.context().close();
   });
 

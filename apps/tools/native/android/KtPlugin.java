@@ -62,7 +62,9 @@ public class KtPlugin extends Plugin {
     }
     private volatile boolean visible = true, behind = false;
     @Override protected void handleOnPause() { super.handleOnPause(); visible = false; }
-    @Override protected void handleOnResume() { super.handleOnResume(); visible = true; if (behind) { behind = false; JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(lastTasks.toString())); } catch (Exception ignored) {} notifyListeners("tasksChanged", ev); } }
+    @Override protected void handleOnResume() { super.handleOnResume(); visible = true; if (behind) { behind = false; JSObject ev = new JSObject(); try { ev.put("tasks", new JSArray(lastTasks.toString())); } catch (Exception ignored) {} notifyListeners("tasksChanged", ev); }
+        // (0.21 P2: back from the «Nearby devices» dialog — the device battery page told the answer.)
+        if (KtBattery.askPending) { KtBattery.askPending = false; final android.app.Activity a = getActivity(); bg.execute(() -> batteryEvent(KtBattery.state(getContext(), a))); } }
     private static KtPlugin self;
     /** The engine when the app made it (for the notification's and the tile's buttons). */
     static KtEngine engineIfAny() { KtPlugin p = self; return p == null ? null : p.engine; }
@@ -72,7 +74,7 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
+    @Override public void load() { wireDoh(); self = this; KtBattery.sink = this::batteryEvent; try { KtBattery.watch(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
         // (0.21 P9: no automatic DoH probe on a metered connection.)
         try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
@@ -282,6 +284,18 @@ public class KtPlugin extends Plugin {
         }
         JSObject r = new JSObject(); r.put("granted", on); call.resolve(r);
     }
+    /* ---------- device battery on the phone (0.21 P2, KtBattery): the paired Bluetooth devices, read only ---------- */
+    private void batteryEvent(JSONObject st) { try { notifyListeners("btBattery", JSObject.fromJSONObject(st)); } catch (Exception ignored) {} }
+    /** Bluetooth here and on, «Nearby devices» allowed, the paired devices with what Android knows of their batteries. */
+    @PluginMethod public void batteryPhoneState(PluginCall call) { final android.app.Activity a = getActivity(); run(call, () -> call.resolve(obj(KtBattery.state(getContext(), a)))); }
+    /** «Allow» tapped: the system's dialog (Android 12+), or App info once Android will not show it again. */
+    @PluginMethod public void batteryPhoneAsk(PluginCall call) { JSObject r = new JSObject(); r.put("access", KtBattery.ask(getContext(), getActivity())); call.resolve(r); }
+    /** what: 'bluetooth' (the system's Bluetooth settings, where pairing is done) | 'app' (App info). */
+    @PluginMethod public void batteryPhoneOpen(PluginCall call) { KtBattery.open(getContext(), call.getString("what", "bluetooth")); call.resolve(); }
+    /** The notices' settings (set: notify, low, marks) and their words in the page's language (labels). */
+    @PluginMethod public void batteryPhoneConfig(PluginCall call) { final JSObject set = call.getObject("set", null), labels = call.getObject("labels", null); run(call, () -> call.resolve(obj(KtBattery.configure(getContext(), set, labels)))); }
+    /** The page open (on: true) or closed: the Bluetooth broadcasts heard while it is open or the notices are on. */
+    @PluginMethod public void batteryPhoneWatch(PluginCall call) { KtBattery.page(getContext(), Boolean.TRUE.equals(call.getBoolean("on", false))); call.resolve(); }
     @PluginMethod public void add(PluginCall call) { askNotify(); run(call, () -> { JSObject r = new JSObject(); r.put("task", obj(engine().add(new JSONObject(call.getData().toString())))); call.resolve(r); }); }
     @PluginMethod public void pause(PluginCall call) { run(call, () -> { engine().pause(call.getString("id", "")); call.resolve(); }); }
     /** `anyway`: «Download now» on one held (Wi-Fi only on mobile data, a low battery) — started in spite of the hold. */
@@ -1185,6 +1199,64 @@ public class KtPlugin extends Plugin {
     }
 
     /* ---------- the player: local files over the stream server, files beside a video, ffmpeg for clips ---------- */
+    /* ---------- another app as the player (src/player/external) ---------- */
+    /** relayOpen({ url, headers, subs, name }) → { token, url, subs }; relayClose({ token }) → { closed }. */
+    @PluginMethod public void relayOpen(PluginCall call) { run(call, () -> call.resolve(obj(engine().stream().relayOpen(call.getData())))); }
+    @PluginMethod public void relayClose(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("closed", engine().stream().relayClose(call.getString("token", ""))); call.resolve(r); }); }
+    @PluginMethod public void relayStatus(PluginCall call) { run(call, () -> call.resolve(obj(engine().stream().relayStatus(call.getString("token", ""))))); }
+    /** A path another app may be given: not inside this app's own folders (its data, cache, files, external private ones). */
+    private boolean shareable(File f) {
+        try {
+            String c = f.getCanonicalPath(); android.content.Context x = getContext();
+            java.util.List<File> own = new java.util.ArrayList<>(java.util.Arrays.asList(x.getFilesDir(), x.getCacheDir(), x.getNoBackupFilesDir(), new File(x.getApplicationInfo().dataDir)));
+            File[] ext = x.getExternalFilesDirs(null); if (ext != null) own.addAll(java.util.Arrays.asList(ext)); File ec = x.getExternalCacheDir(); if (ec != null) own.add(ec);
+            for (File o : own) { if (o == null) continue; String op = o.getCanonicalPath(); if (c.equals(op) || c.startsWith(op + File.separator)) return false; }
+            return f.isFile();
+        } catch (Exception e) { return false; }
+    }
+    /** openPlayerApp({ data | path, mime, title, extras: [{ k, t, v }] }): ACTION_VIEW through the phone's own app list,
+     *  with the union of the documented extras of the players the app knows (t: s string, i int, l long, b boolean, sa
+     *  String[], ua Uri[] — Uri[] http(s) only). Answers when the chosen app closes: { code, action, extras } with only
+     *  the known result keys, each type-checked (VLC's extra_position / extra_duration, MX's and Just Player's
+     *  position / duration / end_by, mpv-android's position / duration). A file is shared by its FileProvider address,
+     *  and only outside this app's own folders; an address only when it is http(s). */
+    @PluginMethod public void openPlayerApp(PluginCall call) {
+        try {
+            String path = call.getString("path", null), data = call.getString("data", ""), mime = call.getString("mime", "video/*");
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            if (path != null && !path.isEmpty()) { File f = fileOf(path); if (!shareable(f)) { call.reject("refused: path"); return; } Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            else { if (!KtStream.isHttp(data)) { call.reject("refused: target"); return; } i.setDataAndType(Uri.parse(data), mime); }
+            JSArray ex = call.getArray("extras", new JSArray());
+            for (int n = 0; n < ex.length() && n < 40; n++) {
+                JSONObject e = ex.getJSONObject(n); String k = e.getString("k"), t = e.getString("t");
+                switch (t) {
+                    case "i": i.putExtra(k, e.getInt("v")); break;
+                    case "l": i.putExtra(k, e.getLong("v")); break;
+                    case "b": i.putExtra(k, e.getBoolean("v")); break;
+                    case "sa": { JSONArray a = e.getJSONArray("v"); String[] o = new String[Math.min(a.length(), 20)]; for (int j = 0; j < o.length; j++) o[j] = a.getString(j); i.putExtra(k, o); break; }
+                    case "ua": { JSONArray a = e.getJSONArray("v"); java.util.List<android.os.Parcelable> o = new java.util.ArrayList<>(); for (int j = 0; j < a.length() && j < 20; j++) { String u = a.getString(j); if (KtStream.isHttp(u)) o.add(Uri.parse(u)); } i.putExtra(k, o.toArray(new android.os.Parcelable[0])); break; }
+                    default: i.putExtra(k, e.optString("v", "")); break;
+                }
+            }
+            // (The chooser forwards the chosen app's result to this call.)
+            startActivityForResult(call, Intent.createChooser(i, call.getString("title", "")), "playerAppDone");
+        } catch (android.content.ActivityNotFoundException e) { call.reject("not installed"); }
+        catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+    @ActivityCallback private void playerAppDone(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject r = new JSObject(); JSObject ex = new JSObject();
+        try {
+            r.put("code", result.getResultCode());
+            Intent d = result.getData(); r.put("action", d == null || d.getAction() == null ? "" : d.getAction());
+            android.os.Bundle b = d == null ? null : d.getExtras();
+            if (b != null) {
+                for (String k : new String[] { "extra_position", "extra_duration", "position", "duration" }) { try { Object v = b.get(k); if (v instanceof Integer || v instanceof Long) ex.put(k, ((Number) v).longValue()); } catch (Throwable ignored) { /* a value that would not unparcel */ } }
+                try { Object v = b.get("end_by"); if (v instanceof String && ((String) v).length() < 40) ex.put("end_by", v); } catch (Throwable ignored) { /* */ }
+            }
+        } catch (Throwable ignored) { /* a result that cannot be read: nothing told */ }
+        r.put("extras", ex); call.resolve(r);
+    }
     @PluginMethod public void proxyUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); JSObject hd = call.getObject("headers", new JSObject()); r.put("url", engine().stream().proxyUrl(call.getString("url", ""), hd.toString())); call.resolve(r); }); }
     /* ---------- the Player add-on's engine: mpv (KtMpv), from the mpv pack ---------- */
     @PluginMethod public void mpvAvailable(PluginCall call) { JSObject r = new JSObject(); r.put("available", KtMpv.available(getContext())); call.resolve(r); }
@@ -1198,7 +1270,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void mpvGet(PluginCall call) { try { JSObject r = new JSObject(); r.put("value", KtMpv.get().getString(call.getString("name", ""))); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }
     @PluginMethod public void mpvClose(PluginCall call) { KtMpv.get().close(); call.resolve(); }
     /** The player's sound for tracks a web view cannot decode: ffmpeg turning them into AAC as they play (needs the ffmpeg pack). */
-    @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); r.put("url", engine().stream().audioBase()); call.resolve(r); }); }
+    @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); String src = call.getString("src", ""); if (src == null || src.isEmpty()) throw new Exception("src"); r.put("url", engine().stream().audioUrl(src)); call.resolve(r); }); }
     @PluginMethod public void localUrl(PluginCall call) { run(call, () -> { JSObject r = new JSObject(); r.put("url", engine().stream().fileUrl(call.getString("path", ""))); call.resolve(r); }); }
     @PluginMethod public void siblings(PluginCall call) {
         File f = fileOf(call.getString("path", "")); JSArray out = new JSArray(); File dir = f.getParentFile(); String base = f.getName().replaceAll("\\.[^.]+$", "").toLowerCase();

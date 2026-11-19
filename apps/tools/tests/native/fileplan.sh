@@ -5,7 +5,7 @@
 # which runs the same cases through the classic KtFileJobs.run.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=$(mktemp -d); LIB=${KT_JARS:-$HOME/.cache/kt-test-jars}; mkdir -p "$LIB" "$D/src"
-J="$LIB/json-20240303.jar"; [ -s "$J" ] || for t in 1 2 3 4; do curl -sSfL -o "$J" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar && break; sleep 4; done
+J=$(sh "$HERE/jsonjar.sh")
 A="$HERE/../../native/android"
 for f in KtFileJobs KtFilePlan KtFileExec KtRemoteRules; do sed "s/^package app.kurokawa.tools;//; s/^final class $f/public final class $f/" "$A/$f.java" > "$D/src/$f.java"; done
 cp "$A/KtCore.java" "$D/src/"

@@ -96,6 +96,116 @@ Do the same once before a local `tauri build` / `tauri dev`.
   and offers its settings (the app's own / the system's, transparent, the name) in Settings on the Tauri shell only.
   Electron keeps `ui/titlebar.ts`. The custom app icon system (`kt:appIcon`) is P6.
 
+## Tools 0.21 P11: the safe-extraction engine, ported
+
+- **The engine** (`../core/kt-core/src/extractjob.rs`, std only): desktop/inplace.cjs rule for rule — the facts and the
+  pre-flight (archsafe.cjs's `preflight`, here too, over kt-core's `archsafe.rs` name table), the plan (conflicts:
+  replace / skip / keep both, set aside), journal v2 (archsafe's text: JSON, newline, CRC-32), the saved tail («KTTAIL2»,
+  the plan, the archive's own tail), the shelf (`<id>.ref` in `<app data>/extract-jobs`), finish / restore / undo /
+  dismiss, cancel at a committed point, progress. The SAME formats as Electron's: a job either shell started, the other
+  can finish, restore or undo. ZIP (stored, deflate, ZipCrypto; AES's password checked by its PBKDF2 verifier) and tar.
+  Tested alone (`rustc --edition 2021 --test core/kt-core/stdroots/extractjob.rs`): `tests/data/extractjob-vectors.tsv`
+  (pre-flight reports, units — the overlap regression —, plans, journal and tail texts; made from the JS engine, run by
+  both: tests/extractsafe.cjs and the Rust tests), and the failure matrix of tests/extractsafe.cjs — killed at every
+  crash point then Finish or Restore, a Restore itself killed at every step, disk full at 10/50/90 %, damaged entries,
+  passwords, names, clashes, a file appearing meanwhile, corrupt / future / v1 journals, a changed archive, busy, cancel,
+  undo with set-aside files, 3,000 entries.
+- **The commands** (`src-tauri/src/extractcmds.rs`, thin): `kt_archive_preflight`, `kt_archive_shelf`, `kt_archive_job`
+  (main.cjs's channels; bridge.js has them, so the page's safety sheet, shelf and Undo appear on this shell), and
+  `kt_archive_extract`'s ZIP/tar part (archive.cjs's routing: through the engine when it decodes every entry itself, or
+  in place; a v2 journal beside the archive → Finish; a first-design one → the shared crate's resume). Here only flate2,
+  the free space, a pid's liveness, the registry and the progress/cancel plumbing. flate2 is miniz_oxide, not zlib: a
+  Restore puts a deflated file back byte for byte only when the bytes come out the same (else the archive is closed as a
+  smaller whole one and the file stays out — the engine's documented fallback).
+- **Found and fixed in both engines**: a Restore killed after it wrote the archive's end left the archive longer than
+  its journal's last commit, and the next Restore refused it («archiveChanged»): now a restoring job's archive may be
+  longer (the restore cuts it back). Added to both: tar devices / FIFOs / sparse files never made («layout»), each file
+  read back before an archive is cut, part files made exclusively under a per-run name, no output written through a link
+  already in the destination (Rust), `planOuts` exported for the shared vectors (JS).
+- **The shared crate** (`shared/shell-rs/src/archive.rs`): `tools_rules(true)` (Tools only; the Reader's answers are
+  unchanged) — formats by content (archiveformat.cjs's vectors), overlapping entries refused in place and `in_place_ok`
+  false, device / FIFO / sparse tar entries refused, setuid / setgid / sticky bits taken off what 7-Zip made, exclusive
+  per-run part files, read-back before the cut; `set_peek` (archives.rs: flate2 for gz, the shipped 7-Zip for xz / bz2).
+  `create_zip_clash`: a ZIP never replaces an archive unasked (`clash`: replace — one rename —, both, cancel; none →
+  «zipExists»); Electron's createZip the same.
+
+- **P11 review fixes (both engines, the same vectors):** Undo/Restore of a finished job never touches a file that took the
+  archive's name (the archive is made again beside it, `restoredTo`); a restore verifies what it is about to cut or extend
+  (size = its last commit plus the write it announced — `pending` —, the restored units' headers) and makes its file
+  exclusively; replaced originals never lost (put back as «name (original)», `originals`; the aside folder kept while
+  anything is in it, `asideKept`; at dismiss only the replaced originals' folder goes); the job's own names (the archive,
+  journal, tail, lock, unit log, their `.tmp`, any `.kurokawa-replaced…` first folder) refused as unsafe names; a bad local
+  header or overlapping data left out with no bytes of its own (checked arithmetic), prepended data refused in place; a
+  failed read-back or flush removes the batch's own outputs and cuts nothing; leftovers of a stopped job removed only from
+  the unit log (`<journal>.log`: unit, name, CRC of each output placed since the last commit) and the job's own part
+  files (`.kt<job>-<unit>.kt-part`, now in both engines); ZIP64 end records for the «smaller archive» fallback; Cancel
+  heard inside a large file (every 8 MiB); Finish can take a password. Rust also flushes every output through a handle
+  that may write and each folder before the journal moves (an `Io::sync` hook; a failed flush fails the commit). Tauri
+  lists, restores and extracts by the journal's version (v2 → the engine). A real cross-engine test: tests/extractsafe.cjs
+  kills a job of one engine at every cut point and finishes/restores it with the other (`stdroots/extractjob_cli.rs`).
+
+- **P11 review, round 3 (both engines, shared vectors):** the unit log is one JSON object per line, and a record counts
+  only for an open unit under its own planned name or a «name (n)» beside it (no name can forge a record or send a delete
+  outside the destination); each name is logged *before* it is linked, with a «placed» crash point right after. Any entry
+  whose last name ends like a job file (`.kurokawa-unzip[.tmp|.log]`, `.kurokawa-tail[.tmp]`, `.kurokawa-lock[.tmp]`, any
+  case, any folder) is refused; the archive's folder is compared resolved (realpath), not by spelling. Every journal is
+  validated before any path in it is used (where it sits, its tail, id, aside folder, every name relative and safe, saved
+  headers ZIP/tar-shaped); a journal found beside an archive is finished only as an in-place job of that very archive
+  (`finish_beside` / `finishBeside`). «done» is saved before the archive is removed; a job with every unit out and the
+  archive gone is finished. forget removes the journal first. Offsets past the directory are clamped; tails over 64 MiB
+  refuse in place; long names / pax over 1 MiB and short ZIP64 fields read alike; folder syncs fail the commit in JS too
+  (except the «cannot sync folders» answers); a restore always creates its file exclusively; «replace» never moves a
+  folder aside (a file over a folder is kept beside); a Finish proves the password first (`passwordNeeded` /
+  `wrongPassword`). The cross-engine test now crosses a «keep both» conflict and Undo of a finished job.
+
+- **P11 review, round 4 (both engines, shared vectors):** «keep both» keeps the new name within the platform's limit (the
+  name limit less `.kt-part`: 247 UTF-8 bytes, or UTF-16 units on Windows / FAT): the base is cut between characters
+  (`both_form` / `bothForm`; an extension too long to leave one character goes with it), and a journal accepts a file
+  unit's output when its name as the rules make it is safe and the output is that name or its «keep both» form — cut, or
+  whole as builds before round four wrote it, so their journals still open. A journal found beside an archive is
+  finished without asking only when this app's registry holds a `<id>.ref` pointing at that very journal; any other is
+  «askBeside <dest>» until the page's sheet (where its files go; Finish / Restore the archive / Leave) is answered
+  (`finishBeside`). Restore and listing from an archive's page reach only the in-place job of that very archive
+  (`restore_beside`, `left_beside`). The archive is removed *before* «done» is saved, so a done job never owns a file at
+  the archive's path and nothing there is ever removed (the old «leftover» removal is gone); a done job's journal beside
+  a new archive of that name is left out of its extraction — listed and extracted as itself (`list_fresh` /
+  `extract_fresh`, additive in the shared crate), a normal extraction goes ahead, in place waits (pre-flight «oldJob»)
+  — and that job keeps its Undo on the shelf, which makes its archive again beside the new one under a free name. Both
+  engines refuse journals and tails with a key named twice and `outs`/`raws` keyed other than by plain unit numbers; an
+  older build's tab-separated unit log is still read (each name still under the own-name rule). Paths are compared
+  resolved; when only one side resolves the answer is «not the same» (refused); when neither does, their absolute
+  spellings are compared.
+- **P11 review, round 5 (both engines):** a stopped in-place job that cannot be taken up for the file now at its path
+  (`archiveChanged`, `archiveGone`, `journalCorrupt` — the user replaced the half-cut archive) is treated like a finished
+  one beside a new archive: listed and extracted as itself, never in place (the pre-flight's `oldJob`; an in-place
+  attempt answers «refused oldJob», which the page words with `fixOldJob`). A blocked job on the shelf offers «Forget this
+  job» (`forget_blocked` / `forgetBlocked`, after a confirmation sheet): only the journal, the saved tail and the unit log
+  at the names the journal's own path gives, and this registry's pointers to it — never outputs, the aside folder or the
+  file at the archive's path; refused for a job that opens (`notBlocked`) or whose lock is held. A job with every unit
+  out (not restoring) is finished whatever is at the archive's path: the file it cut itself (the size of its last or
+  previous commit) is removed by Finish; anything else is never touched, and Undo makes the archive again beside it.
+  Known and left: a 0-byte archive file left by a power loss in an 11e49e4-era build (when «done» was saved before the
+  archive was removed) stays where it is — it cannot be told from a user's file; the user can delete it.
+- **P11 review, round 6 (both engines):** a tail that cannot be read just now (a scanner, a sync tool, a permission
+  hiccup) is `tailUnreadable` — only a missing one is `tailMissing` —; such a job offers Leave only and is never
+  forgotten for it. Forget reads the journal leniently and refuses a file that is not one of ours (`notJournal`) unless
+  this registry points at it; when the half-extracted archive is still beside it (the size of its last or previous
+  commit), the saved tail is kept as `<archive>.kurokawa-tail.kept` (`kept` in the answer; refused as an entry name like
+  the job's own files; never read by a job; a second one is refused, `keptExists`). A journal beside an archive whose
+  folder moved (another drive letter, another computer) is re-rooted from where it sits — only when the stored archive
+  has the journal's own name and the stored tail is its tail; the destination and restore name move with it when they
+  were inside its old folder; the size and header checks still guard it; it is not in this registry under that path, so
+  it is asked about. A job beside that cannot be used is reported with its reason (`staleJob` in the facts, the
+  pre-flight's `staleJob` problem, «refused staleJob») and the sheet offers Forget there too. The job's own cut archive
+  is told by more than its size: at the commit before, its first unit's header must be where the plan saw it; an empty
+  file written more than 5 s after the journal's last save is not the job's. Refusals no longer repeat their kind
+  («refused oldJob», not «refused oldJob oldJob»).
+- **Known limit — two registries.** Electron keeps its jobs' pointers in `<userData>/extract-jobs`, Tauri in
+  `<app data>/extract-jobs` (different folders on every system). A job started by one shell is therefore *not* «ours»
+  for the other: opening that archive in the other shell asks first (the sheet above) instead of finishing silently, and
+  its shelf does not list it. Left as is on purpose (no shared folder between the two apps); the journal format is
+  shared, so Finish / Restore / Undo work across them once asked.
+
 ## After P3: the Files page's gaps, P7 archives, P8 DoH and updater, P6 app icon
 
 - **Files on a computer** (`filecmds.rs`, kt-core `places.rs`): the shell's own `homeDir`, `filesRoots` (home, Downloads,

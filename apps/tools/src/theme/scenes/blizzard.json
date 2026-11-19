@@ -1,0 +1,431 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "blizzard",
+  "name": "Blizzard"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#0b1322",
+   "light": "#6f829c"
+  },
+  {
+   "id": "sky1",
+   "dark": "#1b2a40",
+   "light": "#93a5bb"
+  },
+  {
+   "id": "sky2",
+   "dark": "#33465f",
+   "light": "#b9c6d4"
+  },
+  {
+   "id": "pale",
+   "dark": "#8fa0b8",
+   "light": "#f4f7fb"
+  },
+  {
+   "id": "veil",
+   "dark": "#6f83a0",
+   "light": "#e8edf3"
+  },
+  {
+   "id": "haze",
+   "dark": "#42546e",
+   "light": "#dfe6ee"
+  },
+  {
+   "id": "snow",
+   "dark": "#e4ebf6",
+   "light": "#ffffff"
+  },
+  {
+   "id": "snow2",
+   "dark": "#c2cfe2",
+   "light": "#f4f7fb"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#9fc4ff",
+   "accent2": "#c0b2ff",
+   "tint": "#1b2a40"
+  },
+  "light": {
+   "accent": "#2f5f9a",
+   "accent2": "#5e4fae",
+   "tint": "#c2cddb"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky0"
+     ],
+     [
+      0.5,
+      "sky1"
+     ],
+     [
+      1,
+      "sky2"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "moon",
+   "kind": "disc",
+   "depth": 0.02,
+   "parallax": 0.04,
+   "params": {
+    "x": 0.72,
+    "y": 0.22,
+    "r": 0.045,
+    "halo": 6,
+    "colour": "pale",
+    "glow": 0.3
+   }
+  },
+  {
+   "id": "veil-high",
+   "kind": "fog",
+   "depth": 0.1,
+   "params": {
+    "y": 0.28,
+    "h": 0.22,
+    "count": 10,
+    "size": 1000,
+    "speed": 55,
+    "alpha": 0.14,
+    "colour": "veil"
+   }
+  },
+  {
+   "id": "far",
+   "depth": 0.3
+  },
+  {
+   "id": "haze",
+   "kind": "band",
+   "depth": 0.35,
+   "params": {
+    "y0": 0.5,
+    "y1": 1.05,
+    "top": "haze",
+    "bottom": "veil",
+    "a0": 0,
+    "a1": 0.45
+   }
+  },
+  {
+   "id": "veil",
+   "kind": "fog",
+   "depth": 0.55,
+   "params": {
+    "y": 0.62,
+    "h": 0.28,
+    "count": 12,
+    "size": 1100,
+    "speed": 95,
+    "alpha": 0.15,
+    "colour": "veil"
+   }
+  },
+  {
+   "id": "mid",
+   "depth": 0.6
+  },
+  {
+   "id": "veil-low",
+   "kind": "fog",
+   "depth": 0.8,
+   "params": {
+    "y": 0.9,
+    "h": 0.12,
+    "count": 10,
+    "size": 1300,
+    "speed": 130,
+    "alpha": 0.18,
+    "colour": "veil"
+   }
+  },
+  {
+   "id": "near",
+   "depth": 0.95
+  }
+ ],
+ "emitters": [
+  {
+   "id": "far",
+   "layer": "far",
+   "max": 700,
+   "rate": 60,
+   "prewarm": 1,
+   "wind": 0.6,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 20,
+     "max": 40
+    },
+    {
+     "kind": "size",
+     "min": 2.5,
+     "max": 4.5
+    },
+    {
+     "kind": "alpha",
+     "min": 0.4,
+     "max": 0.75
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      90,
+      20
+     ],
+     "max": [
+      150,
+      50
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "snow",
+      "snow2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.004,
+     "speed": 0.2,
+     "strength": 40
+    },
+    {
+     "kind": "gust",
+     "strength": 140,
+     "period": 4
+    },
+    {
+     "kind": "drag",
+     "k": 0.25
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 10
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "mid",
+   "layer": "mid",
+   "max": 420,
+   "rate": 40,
+   "prewarm": 1,
+   "wind": 0.9,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 15,
+     "max": 30
+    },
+    {
+     "kind": "size",
+     "min": 5,
+     "max": 9
+    },
+    {
+     "kind": "alpha",
+     "min": 0.5,
+     "max": 0.85
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      140,
+      30
+     ],
+     "max": [
+      220,
+      70
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "snow",
+      "snow2"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.003,
+     "speed": 0.25,
+     "strength": 60
+    },
+    {
+     "kind": "gust",
+     "strength": 220,
+     "period": 4
+    },
+    {
+     "kind": "drag",
+     "k": 0.25
+    },
+    {
+     "kind": "pointer",
+     "strength": -70,
+     "radius": 200
+    },
+    {
+     "kind": "click",
+     "impulse": 140,
+     "radius": 260
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 16
+    },
+    {
+     "kind": "fade",
+     "in": 0.05,
+     "out": 0.05
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "near",
+   "layer": "near",
+   "max": 70,
+   "rate": 7,
+   "prewarm": 1,
+   "wind": 1.2,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 8,
+     "max": 16
+    },
+    {
+     "kind": "size",
+     "min": 14,
+     "max": 26
+    },
+    {
+     "kind": "alpha",
+     "min": 0.45,
+     "max": 0.8
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      220,
+      40
+     ],
+     "max": [
+      320,
+      100
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "snow"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.002,
+     "speed": 0.3,
+     "strength": 80
+    },
+    {
+     "kind": "gust",
+     "strength": 300,
+     "period": 4
+    },
+    {
+     "kind": "drag",
+     "k": 0.25
+    },
+    {
+     "kind": "pointer",
+     "strength": -90,
+     "radius": 240
+    },
+    {
+     "kind": "click",
+     "impulse": 180,
+     "radius": 300
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 40
+    },
+    {
+     "kind": "fade",
+     "in": 0.08,
+     "out": 0.08
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

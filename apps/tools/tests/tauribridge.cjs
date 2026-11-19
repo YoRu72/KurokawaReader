@@ -14,10 +14,16 @@ const Module = require('node:module');
 const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
+// (Sources read for the checks below: their line endings made \n once here, so a Windows checkout — CRLF — reads alike. KT_TAURIBRIDGE_SRC points the
+//  reads at another copy of apps/tools, such as a CRLF copy that proves it.)
+const SRCROOT = process.env.KT_TAURIBRIDGE_SRC || ROOT;
+const readText = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 'setUrl', 'move', 'setLimits', 'configure', 'torrentInfo', 'rename', 'list', 'defaultDir', 'roots', 'listDir', 'pathInfo', 'exists', 'siblings', 'readFile', 'writeText', 'writeTemp', 'writeTempBytes', 'removeFile', 'hashFile', 'openPath', 'openExternal', 'open', 'pickDir', 'pickFile', 'saveText', 'clipboardText', 'http', 'checkUpdate', 'deletePath', 'archiveFree', 'fontDirs', 'fontIndex', 'megaDecrypt', 'screenFontAdd', 'screenFontRemove', 'titleBar',
-  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'setDoh', 'dohProbe', 'dohStatus', 'dohUsed', 'installUpdate', 'appIcon',
+  'archiveList', 'archiveExtract', 'archiveTest', 'archiveCreate', 'archiveRestore', 'archiveExisting', 'archiveCancel', 'archivePreflight', 'archiveShelf', 'archiveJob', 'setDoh', 'dohProbe', 'dohStatus', 'dohUsed', 'installUpdate', 'appIcon',
   // (Stage P4.)
   'streamUrl', 'streamDone', 'streamStats', 'fileUrl', 'audioUrl', 'videoUrl', 'proxyUrl',
+  // (0.21 P8: another program as the player — extplayer.rs, the relay in streamserver.rs.)
+  'relayOpen', 'relayClose', 'relayStatus', 'extPlayers', 'extPlayerChoose', 'extPlayerArgs', 'extPlayerForget', 'extPlayerDropSub', 'extPlayerStart', 'extPlayerStatus', 'extPlayerStop',
   // (Stage P6: desktop.rs.)
   'desktopPrefs', 'mini', 'registerMagnet', 'captureUrl', 'siteWindow',
   // (Stage P7: browser.rs.)
@@ -33,11 +39,30 @@ const SLICE = ['retryEngine', 'add', 'pause', 'resume', 'remove', 'setFiles', 's
 const RENAMED = { titleBar: 'kt_title_bar' };
 // (The Tauri shell's own: no channel in the preload; the page uses them where they are.)
 const OWN = { filesJob: ['kt_files_job', ['o']], filesCancel: ['kt_files_cancel', ['o']], filesAnswer: ['kt_files_answer', ['o']],
-  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []] };
-// (The safe-extraction engine's calls — desktop/inplace.cjs over archsafe.cjs: the preflight, the shelf of unfinished jobs, the
-// job actions. Electron only for now: the Tauri bridge deliberately has none, because the page asks for them by presence
-// (src/archives/safety.ts desk(), main.ts) and falls back to the plain extraction without them, showing no shelf.)
-const ELECTRON_ONLY = ['archivePreflight', 'archiveShelf', 'archiveJob'];
+  updateDownload: ['kt_update_download', ['o']], updateInstall: ['kt_update_install', []], homeDir: ['kt_home_dir', []], filesRoots: ['kt_files_roots', []], filesStat: ['kt_files_stat', ['o']], filesMkdir: ['kt_files_mkdir', ['o']], filesRename: ['kt_files_rename', ['o']], videoJsRuntime: ['kt_video_js_runtime', []],
+  // (Tools 0.21: fast file search — filesearch.rs.)
+  fileSearchStatus: ['kt_fsearch_status', []], fileSearch: ['kt_fsearch_query', ['o']], fileSearchAdd: ['kt_fsearch_add', ['o']], fileSearchRemove: ['kt_fsearch_remove', ['o']],
+  fileSearchExclude: ['kt_fsearch_exclude', ['o']], fileSearchRebuild: ['kt_fsearch_rebuild', []], fileSearchForget: ['kt_fsearch_forget', []], fileSearchPause: ['kt_fsearch_pause', ['o']],
+  // (0.21, device battery: battery.rs.)
+  batteryList: ['kt_battery_list', []], batteryRefresh: ['kt_battery_refresh', ['o']], batterySettings: ['kt_battery_settings', ['o']],
+  // (0.21 W2: the battery history, battery.rs.)
+  batteryHistory: ['kt_battery_history', ['o']], batteryHistoryClear: ['kt_battery_history_clear', ['o']],
+  // (0.21 W3: device definitions and «Teach me this device», batdefs.rs.)
+  batteryDefs: ['kt_battery_defs', []], batteryDefImport: ['kt_battery_def_import', ['o']], batteryDefExport: ['kt_battery_def_export', ['o']], batteryDefRemove: ['kt_battery_def_remove', ['o']], batteryDefSet: ['kt_battery_def_set', ['o']],
+  batteryTeachList: ['kt_battery_teach_list', []], batteryTeachStart: ['kt_battery_teach_start', ['o']], batteryTeachStop: ['kt_battery_teach_stop', []], batteryTeachState: ['kt_battery_teach_state', []],
+  batteryTeachMark: ['kt_battery_teach_mark', ['o']], batteryTeachSave: ['kt_battery_teach_save', ['o']], batteryTeachClose: ['kt_battery_teach_close', ['o']],
+  // (0.21 W4: «Report a device», batreport.rs.)
+  batteryReport: ['kt_battery_report', []],
+  // (0.21, device battery piece 3: connecting Bluetooth devices, battery.rs.)
+  btList: ['kt_bt_list', []], btScan: ['kt_bt_scan', ['o']], btAct: ['kt_bt_act', ['o']], btOpenSettings: ['kt_bt_settings', []],
+  // (0.21, piece S1: the system on the taskbar, battery.rs.)
+  sysmonProbe: ['kt_sysmon_probe', []] };
+// (The shell's own events: no channel in the preload.)
+const OWN_EVENTS = ['onFilesJob', 'onBattery', 'onBt'];
+// (Preload methods the Tauri bridge has none of. Empty since Tools 0.21 P11 ported the safe-extraction engine —
+// archivePreflight, archiveShelf, archiveJob: extractcmds.rs over kt-core's extractjob.rs —; kept so a new Electron-only
+// call has to be named here.)
+const ELECTRON_ONLY = [];
 const BOOT = ['platform', 'available', 'reason', 'os', 'ready', 'onTasks', 'onTitleBarState', 'onArchiveProgress', 'onUpdateProgress', 'onHotkeyAdd', 'onOpenTask', 'onBrowser', 'onFfmpegProgress', 'onPackProgress', 'onScreenCaption'];
 const snake = (ch) => ch.replace(/^kt:/, 'kt_').replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
@@ -70,7 +95,7 @@ function loadBridge(boot) {
   };
   if (boot) window.__KT_BOOT__ = boot;
   const ctx = vm.createContext({ window, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, CustomEvent: FakeCustomEvent });
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), ctx, { filename: 'bridge.js' });
+  vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), ctx, { filename: 'bridge.js' });
   return window;
 }
 
@@ -83,9 +108,9 @@ function loadBridge(boot) {
 
   // Names: the slice and the boot-safe ones, every one of them a name the preload has; nothing else.
   const keys = Object.keys(kt).sort();
-  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), 'onFilesJob'])].sort(), 'bridge methods ≠ slice + boot-safe + own');
-  for (const k of keys) assert.ok(k in pre || k in OWN || k === 'onFilesJob', `${k} is not in preload.cjs`);
-  for (const k of [...Object.keys(OWN), 'onFilesJob']) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
+  assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), ...OWN_EVENTS])].sort(), 'bridge methods ≠ slice + boot-safe + own');
+  for (const k of keys) assert.ok(k in pre || k in OWN || OWN_EVENTS.includes(k), `${k} is not in preload.cjs`);
+  for (const k of [...Object.keys(OWN), ...OWN_EVENTS]) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
   assert.equal(kt.platform, 'desktop');
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
@@ -107,8 +132,9 @@ function loadBridge(boot) {
     screenFontAdd: [{ name: 'a.ttf', b64: 'AAEC' }], screenFontRemove: [{ path: '/d/screen-fonts/1-a.ttf' }], titleBar: [{ own: true, act: 'maximize' }],
     archiveList: [{ path: '/x/a.7z', password: 'p' }], archiveExtract: [{ id: 'a1', path: '/x/a.zip', dest: 'cache:', only: ['d/', 'e.txt'], replace: 'both' }], archiveTest: [{ id: 'a2', path: '/x/a.7z', password: 'p' }],
     archiveCreate: [{ id: 'a3', out: '/x/b.zip', inputs: ['/x/c', '/x/d.txt'] }], archiveRestore: [{ path: '/x/a.zip' }], archiveExisting: [{ dest: '/y', names: ['a', 'b/c'] }], archiveCancel: ['a1'],
+    archivePreflight: [{ path: '/x/a.zip', dest: '/y', password: 'p', verify: true, keepFree: 1048576 }], archiveShelf: [{ atStart: true }], archiveJob: [{ id: 'a4', journal: '/x/a.zip.kurokawa-unzip', act: 'restore' }],
     appIcon: [{ set: null }], setDoh: [{ provider: 'mullvad', allowSystem: true }], dohProbe: [], dohStatus: [], dohUsed: [{ hosts: ['files.test'] }], installUpdate: ['https://github.com/o/r/releases/download/tools-v9.9.9/KurokawaTools-9.9.9-win-x64.exe'],
-    streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }],
+    streamUrl: [{ id: 'g1', fileIndex: 2 }], streamDone: [{ id: 'g1' }], streamStats: [{ id: 'g1' }], fileUrl: ['C:\\v/a b.mkv'], audioUrl: [], videoUrl: [], proxyUrl: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' } }], relayOpen: [{ url: 'https://h/a.m3u8', headers: { Referer: 'https://h/' }, subs: [{ url: 'https://h/a.ass', name: 'a.ass' }], name: 'Show' }], relayClose: [{ token: 'ab' }], relayStatus: [{ token: 'ab' }], extPlayers: [], extPlayerChoose: [{ title: 'Pick' }], extPlayerArgs: [{ args: '--fs {url}' }], extPlayerForget: [], extPlayerDropSub: [{ path: '/tmp/kt-sub-a.srt' }], extPlayerStart: [{ player: 'mpv', target: 'https://h/a.m3u8', title: 'x', start: 3, subs: [], headers: {}, slang: [], alang: [] }], extPlayerStatus: [{ id: '1' }], extPlayerStop: [{ id: '1' }],
     desktopPrefs: [{ keepAwake: true, whenDone: 'sleep', notifyDone: false, tray: true, hotkeys: { clip: 'CommandOrControl+Shift+V' } }], mini: [{ action: 'auto', on: true }], registerMagnet: [],
     captureUrl: [{ url: 'https://anilist.co/api/v2/oauth/authorize?client_id=1&response_type=token', marker: 'access_token=', title: 'AniList' }], siteWindow: [{ url: 'https://e.org/', title: 'E' }],
     browse: [{ url: 'https://e.org/' }],
@@ -136,7 +162,13 @@ function loadBridge(boot) {
 
   // The shell's own methods: each one command, its object under «o».
   const ownSamples = { filesJob: { id: 'fj-1', op: 'move', paths: ['/a/x', '/a/D'], dest: '/b', conflict: 'ask' }, filesCancel: { id: 'fj-1' }, filesAnswer: { id: 'fj-1', answer: 'keepAll' },
-    updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' } };
+    updateDownload: { beta: false }, filesStat: { path: '/a/x' }, filesMkdir: { path: '/a/New' }, filesRename: { path: '/a/x', name: 'y' },
+    fileSearch: { text: 'report ext:pdf', kinds: ['document'], sizeMin: 1024, sizeMax: 1048576, after: 1700000000000, before: 1800000000000, sort: 'date', desc: true, limit: 500 },
+    fileSearchAdd: { path: '/a/Videos' }, fileSearchRemove: { path: '/a/Videos' }, fileSearchExclude: { root: '/a/Videos', path: '/a/Videos/old', remove: false }, fileSearchPause: { paused: true, pauseOnBattery: false },
+    batteryRefresh: { key: 'hid:046D:C547:s:A1' }, batteryHistory: { key: 'hid:046D:C547:s:A1', range: 'week' }, batteryHistoryClear: { key: 'bt:{A}' }, batterySettings: { set: { names: { 'bt:{A}': 'Desk mouse' }, noQuery: ['hid:1'], background: true, startup: true, thresholds: { 'bt:{A}': 15 } } },
+    btScan: { seconds: 20 }, btAct: { op: 'connect', addr: '00:11:22:33:44:55' },
+    batteryDefImport: { text: '{"kurokawaDevice":1}', mineFirst: true }, batteryDefExport: { id: 'd1a2b' }, batteryDefRemove: { id: 'd1a2b' }, batteryDefSet: { id: 'd1a2b', on: false, mineFirst: false },
+    batteryTeachStart: { id: 'hid:1234:5678:c:x|FF00:0001:1', seconds: 600, o: 'sheet-1a2b' }, batteryTeachClose: { o: 'sheet-1a2b' }, batteryTeachMark: { mark: 'full' }, batteryTeachSave: { level: 0, charging: 1, name: 'Desk pad', kind: 'controller' } };
   for (const [m, [cmd, ks]] of Object.entries(OWN)) {
     tCalls = []; await kt[m](ownSamples[m]);
     tCalls = tCalls.filter((c) => c.cmd !== 'kt_state');
@@ -200,7 +232,7 @@ function loadBridge(boot) {
   // Without window.__TAURI__.event: the event plugin's own listen command, through __TAURI_INTERNALS__.
   const icalls = [];
   const iwin = { __TAURI_INTERNALS__: { invoke: (cmd, args) => { icalls.push({ cmd, args }); return Promise.resolve(cmd === 'kt_list' ? [] : 1); }, transformCallback: (f) => (typeof f === 'function' ? 7 : 0) } };
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), vm.createContext({ window: iwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON }));
+  vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), vm.createContext({ window: iwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON }));
   iwin.kurokawaTools.onTasks(() => undefined);
   await new Promise((ok) => setTimeout(ok, 10));
   const ls = icalls.filter((c) => c.cmd === 'plugin:event|listen').map((c) => c.args);
@@ -208,7 +240,7 @@ function loadBridge(boot) {
   assert.ok(ls.every((a) => a.handler === 7 && a.target && a.target.kind === 'Any'));
   // No IPC at all: a clear rejection, not a TypeError at load.
   const bare = vm.createContext({ window: {}, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array });
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), bare);
+  vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), bare);
   await assert.rejects(bare.window.kurokawaTools.list(), /IPC/);
 
   // Stage P6: what the system handed the app reaches the page as the preload's kt:open DOM event, once the page listens
@@ -223,7 +255,7 @@ function loadBridge(boot) {
       dispatchEvent: (e) => { if (e.type === 'kt:open') got.push(e.detail); return true; },
       addEventListener: function () { return undefined; },
     };
-    vm.runInContext(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8'), vm.createContext({ window: pwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, CustomEvent: FakeCustomEvent, setTimeout }));
+    vm.runInContext(readText(path.join(SRCROOT, 'desktop-tauri', 'bridge.js')), vm.createContext({ window: pwin, Promise, Object, Array, String, Error, ArrayBuffer, Uint8Array, JSON, CustomEvent: FakeCustomEvent, setTimeout }));
     await new Promise((ok) => setTimeout(ok, 10));
     assert.equal(takes, 0, 'nothing taken before the page listens');
     pwin.addEventListener('kt:open', () => undefined); pwin.addEventListener('kt:open', () => undefined);
@@ -238,6 +270,21 @@ function loadBridge(boot) {
     // (The original system: a click kept before the page listened — kt_task_take — handed to the callback first.)
     assert.deepEqual(JSON.parse(JSON.stringify(hk)), [{ mode: 'clip', text: 'magnet:?x' }]); assert.deepEqual(ot, ['cold1', 'g1']);
     assert.equal(p6calls.filter((c) => c.cmd === 'kt_task_take').length, 1, 'kt_task_take asked once per subscription');
+  }
+
+  // Device battery: kt:battery to onBattery's callback until it is removed.
+  {
+    const got = []; const offB = fresh.onBattery((x) => got.push(x)); await new Promise((ok) => setTimeout(ok, 5));
+    listeners['kt:battery'][0]({ event: 'kt:battery', payload: { now: 5, devices: [{ key: 'bt:{A}' }] } }); offB();
+    for (const f of listeners['kt:battery'] || []) f({ event: 'kt:battery', payload: { now: 6, devices: [] } });
+    assert.deepEqual(JSON.parse(JSON.stringify(got)), [{ now: 5, devices: [{ key: 'bt:{A}' }] }]);
+    assert.equal((listeners['kt:battery'] || []).length, 0, 'unlistened');
+    // (Piece 3: kt:bt to onBt's callback until it is removed.)
+    const gotBt = []; const offBt = fresh.onBt((x) => gotBt.push(x)); await new Promise((ok) => setTimeout(ok, 5));
+    listeners['kt:bt'][0]({ event: 'kt:bt', payload: { available: true, radio: 'on', devices: [] } }); offBt();
+    for (const f of listeners['kt:bt'] || []) f({ event: 'kt:bt', payload: { radio: 'off' } });
+    assert.deepEqual(JSON.parse(JSON.stringify(gotBt)), [{ available: true, radio: 'on', devices: [] }]);
+    assert.equal((listeners['kt:bt'] || []).length, 0, 'kt:bt unlistened');
   }
 
   // Screen translator: a region of null (the whole picture) sent as null, as the preload sends it; kt:screenCaption to
@@ -256,33 +303,33 @@ function loadBridge(boot) {
 
   // Stage P7: the browser's GRAB_JS is main.cjs's, unchanged.
   {
-    const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'));
+    const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(readText(path.join(SRCROOT, 'desktop', 'main.cjs')));
     assert.ok(m, 'GRAB_JS in main.cjs');
     // (Line ends compared as LF: a Windows checkout gives grab.js CRLF — CI run 43543617161's Windows job failed here.)
     const lf = (t) => t.replace(/\r\n/g, '\n').trim();
-    assert.equal(lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'), 'utf8')), lf(JSON.parse(m[1])), 'grab.js ≠ main.cjs GRAB_JS');
+    assert.equal(lf(readText(path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'))), lf(JSON.parse(m[1])), 'grab.js ≠ main.cjs GRAB_JS');
   }
 
   // Screen translator: the OCR helpers' scripts the Tauri shell writes are screentr.cjs's, unchanged (line ends as LF).
   {
-    const cjs = fs.readFileSync(path.join(ROOT, 'desktop', 'screentr.cjs'), 'utf8');
+    const cjs = readText(path.join(SRCROOT, 'desktop', 'screentr.cjs'));
     const lf = (t) => t.replace(/\r\n/g, '\n');
     for (const name of ['kt-ocr.ps1', 'kt-ocr.js']) {
       const at = cjs.indexOf(`script('${name}', \``); assert.ok(at > 0, `${name} in screentr.cjs`);
       let i = at + `script('${name}', \``.length; let body = '';
       for (;;) { const c = cjs[i]; if (c === '\\') { body += cjs[i + 1]; i += 2; continue; } if (c === '`') break; body += c; i++; }
-      assert.equal(lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', name), 'utf8')), lf(body), `src-tauri/src/${name} ≠ screentr.cjs's`);
+      assert.equal(lf(readText(path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src', name))), lf(body), `src-tauri/src/${name} ≠ screentr.cjs's`);
     }
   }
 
   // Rust: every command the bridge calls is registered, with the argument names the bridge sends.
-  const src = path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src');
-  const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
+  const src = path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src');
+  const main = readText(path.join(src, 'main.rs'));
   const handler = main.slice(main.indexOf('generate_handler!['), main.indexOf(']', main.indexOf('generate_handler![')));
   const registered = [...handler.matchAll(/\b\w+::(kt_\w+)/g)].map((m) => m[1]);
   const params = {};
   for (const f of fs.readdirSync(src).filter((x) => x.endsWith('.rs'))) {
-    const code = fs.readFileSync(path.join(src, f), 'utf8');
+    const code = readText(path.join(src, f));
     for (const m of code.matchAll(/#\[tauri::command\]\s*pub async fn (kt_\w+)\(([^)]*)\)/g)) {
       assert.ok(!(m[1] in params), `${m[1]} defined twice`);
       params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
@@ -294,9 +341,47 @@ function loadBridge(boot) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
     assert.deepEqual([...ks].sort(), [...params[cmd]].sort(), `${cmd}: bridge sends ${ks}, Rust takes ${params[cmd]}`);
   }
+  // (Tools 0.21 P11 review: an archive with the engine's journal v2 beside it is never handed to the shared crate's first-design code: list,
+  // restore and extract each ask the journal's version first — the shared crate would read the saved tail as a directory, or drop the journal.)
+  { const ar = readText(path.join(src, 'archives.rs')); const body = (name) => { const i = ar.indexOf(`pub async fn ${name}(`); return ar.slice(i, ar.indexOf('\n}\n', i)); };
+    for (const [cmd, old] of [['kt_archive_list', 'archive::list('], ['kt_archive_restore', 'archive::restore('], ['kt_archive_extract', 'archive::extract(']]) {
+      const b = body(cmd); const v2 = cmd === 'kt_archive_extract' ? b.indexOf('crate::extractcmds::extract(') : b.indexOf('journal_version('); assert.ok(v2 > 0 && v2 < b.indexOf(old), `${cmd}: the journal's version asked before ${old}`); }
+    const ex = readText(path.join(src, 'extractcmds.rs')); const fx = ex.slice(ex.indexOf('pub fn extract('), ex.indexOf('pub fn list_v2('));
+    assert.ok(fx.indexOf('journal_version(') > 0 && fx.indexOf('journal_version(') < fx.indexOf('archive::format_of('), 'extract: a v2 journal finished by the engine before anything else');
+    // (Round four: finished without asking only when this app's registry points at the journal — or the page's sheet confirmed; restore and listing
+    // only for the in-place job of that very archive; a finished job's journal beside a new archive: the archive listed and extracted as itself.)
+    assert.ok(/ej::finish_beside\(path, reg\.as_deref\(\), flag\(o, "finishBeside"\)/.test(fx) && /let reg = registry\(app\);/.test(fx), 'extract: finish_beside with this app\'s registry and the page\'s confirmation');
+    const fn = (name) => ex.slice(ex.indexOf(`pub fn ${name}(`), ex.indexOf('\n}\n', ex.indexOf(`pub fn ${name}(`)));
+    assert.ok(fn('restore_v2').includes('ej::restore_beside(') && !fn('restore_v2').includes('ej::restore('), 'restore_v2: only the job of that very archive');
+    assert.ok(fn('list_v2').includes('ej::left_beside(') && !fn('list_v2').includes('ej::left_entries('), 'list_v2: only the job of that very archive');
+    assert.ok(body('kt_archive_list').includes('archive::list_fresh(') && body('kt_archive_extract').includes('archive::extract_fresh(') && body('kt_archive_extract').includes('archive::list_fresh('), 'a finished job\'s journal beside a new archive: listed and extracted as itself');
+    // (Round five: «Forget this job» for a blocked one goes to the engine's forget_blocked with this app's registry — not the {} that did nothing.)
+    { const i = ex.indexOf('pub async fn kt_archive_job('); const kj = ex.slice(i, ex.indexOf('\n}\n', i)); assert.ok(/"forget" => ej::forget_blocked\(jp, reg\.as_deref\(\), &DISK\)/.test(kj) && /let reg = registry\(&app\);/.test(kj), 'kt_archive_job: forget'); } }
+  // (0.21 P8 round 4) The outside players' relay asks for its sources through the shell's no-redirect client — the
+  // user's DNS-over-HTTPS choice and the app's cookie jar — never a bare reqwest client of its own; that client is
+  // built as client() is (same builder, DoH resolver on its DoH slot) and client() itself still follows redirects.
+  {
+    const ext = readText(path.join(src, 'extplayer.rs'));
+    const rc = ext.slice(ext.indexOf('fn relay_client()'), ext.indexOf('\n}\n', ext.indexOf('fn relay_client()')));
+    assert.ok(/kurokawa_shell::net::client_no_redirect\(\)/.test(rc), 'relay_client uses net::client_no_redirect()');
+    assert.ok(!/Client::builder\(\)|ClientBuilder|Policy::/.test(ext), 'extplayer.rs builds no reqwest client of its own');
+    for (const f of fs.readdirSync(src).filter((x) => x.endsWith('.rs'))) {
+      if (/streamproxy|extplayer|streamserver/.test(f)) assert.ok(!/reqwest::Client::builder\(\)/.test(readText(path.join(src, f))), `${f}: no bare reqwest client`);
+    }
+    const net = readText(path.join(ROOT, '..', '..', 'shared', 'shell-rs', 'src', 'net.rs'));
+    const fnBody = (name) => { const a = net.indexOf(`fn ${name}(`); assert.ok(a > 0, `net.rs: ${name}`); return net.slice(a, net.indexOf('\n}\n', a)); };
+    assert.ok(/client_slot\(doh_active\(\), true\)/.test(fnBody('client')), 'client(): DoH as chosen, redirects followed');
+    assert.ok(/doh_server\(\)\.is_some\(\) \|\| doh_hook\(\)\.is_some\(\)/.test(fnBody('doh_active')), 'doh_active: the chain hook or the one resolver');
+    assert.ok(/client_slot\(doh_active\(\), false\)/.test(fnBody('client_no_redirect')), 'client_no_redirect(): DoH as chosen, no redirects');
+    const sc = fnBody('slot_client');
+    assert.ok(/builder\(follow\)/.test(sc) && /slot_uses_doh\(slot\)/.test(sc) && /dns_resolver\(Arc::new\(DohResolver\)\)/.test(sc), 'slot_client: one builder, DoH resolver on the DoH slots');
+    const b = fnBody('builder');
+    assert.ok(/cookie_provider\(jar\(\)\)/.test(b) && /Policy::limited\(20\)/.test(b) && /Policy::none\(\)/.test(b), 'builder: the shared jar, 20 redirects or none');
+    for (const s of ['PLAIN', 'VIA_DOH', 'PLAIN_NR', 'VIA_DOH_NR']) assert.ok(new RegExp(`static ${s}: OnceLock<reqwest::Client>`).test(net), `net.rs caches ${s}`);
+  }
   // The self-test script: inert without its settings; its verdict; a full run against a fake bridge passes, and fails
   // when one answer is wrong.
-  const stSrc = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'selftest.js'), 'utf8');
+  const stSrc = readText(path.join(SRCROOT, 'desktop-tauri', 'selftest.js'));
   const sw = { addEventListener() { throw new Error('should be inert'); } };
   vm.runInContext(stSrc, vm.createContext({ window: sw, Promise, Object, Array, String, Error, JSON, Uint8Array, Date, setTimeout, clearTimeout }));
   const lib = sw.__KT_SELFTEST_LIB__;

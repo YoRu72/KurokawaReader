@@ -1,0 +1,29 @@
+[package]
+name = "kt-battery"
+# (Never published; Tools' Tauri shell takes it by path, apps/tools/desktop-tauri/src-tauri. GPL-3.0-or-later: the
+# device battery feature is derived from Wireless Device Battery Monitor — ../../NOTICE.md. It lives only under
+# apps/tools; the Reader and shared/ never take it — tests/desktop-files.cjs checks that.)
+version = "0.0.0"
+description = "Kurokawa Tools' device battery: the batteries of mice, keyboards, headsets and controllers"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "kt_battery"
+path = "src/lib.rs"
+
+# The core (model, allow-list, registry, readers' rules, identity, scheduler, runner) and the Windows readers over
+# SetupAPI, HID, CfgMgr32 and XInput are std only: the Windows calls are declared here (src/win/ffi.rs, raw-dylib), so
+# no crate is needed and the whole of it is type-checked on any system (stdroots/wincheck.rs). Only the Xbox
+# controllers' real percentage (Windows.Gaming.Input, a WinRT API) needs the `windows` crate, behind the `wgi` feature —
+# off until CI has compiled it (Tools' src-tauri feature `battery-wgi`, tauri-check.yml «Device battery — WGI compile
+# try»); without it Xbox pads are read through XInput, as coarse levels. Piece 6: AirPods' Bluetooth LE broadcasts
+# (BluetoothLEAdvertisementWatcher, WinRT too — src/win/ble.rs) behind the same feature; without it a paired AirPods
+# card says the build cannot read it. Galaxy Buds' RFCOMM socket (Winsock) is declared by hand like the rest.
+[features]
+wgi = ["dep:windows"]
+
+[target.'cfg(windows)'.dependencies]
+# (The version Tools' shell already resolves through wry — one copy in the build.)
+windows = { version = "0.62.2", optional = true, features = ["Gaming_Input", "Devices_Power", "System_Power", "Foundation", "Foundation_Collections", "Devices_Bluetooth", "Devices_Bluetooth_Advertisement", "Storage_Streams"] }

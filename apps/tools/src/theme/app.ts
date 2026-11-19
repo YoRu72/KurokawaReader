@@ -23,6 +23,8 @@ export const APP_THEME: AppTheme = {
   defaultTheme: MAIN, mainNameKey: 'themeExpressive', mainFirst: true,
   mainLight: { surfaces: E3_LIGHT.surfaces, text: E3_LIGHT.text, roles: E3_LIGHT.roles }, mainDarkRoles: { secondaryContainer: E3_DARK.secondaryContainer },
   mainCopyable: true, mainTag: true, animBg: true, radiusLg: 18,
+  // (0.21: the editor's extras — accents, surface tint, spacing, size, progress colour, light/dark/auto, colours per background.)
+  themeExtras: true,
 };
 
 /* ---------- the main theme back (0.21): Expressive 3 again, once, for those Frost was given without asking ---------- */

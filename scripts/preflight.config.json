@@ -26,6 +26,7 @@
       "filesclip.cjs": 480,
       "filestauri.cjs": 480,
       "hunt.cjs": 480,
+      "scene.cjs": 720,
       "perfviews.cjs": 420
     },
     "budgets": {

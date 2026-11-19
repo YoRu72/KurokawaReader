@@ -1,7 +1,7 @@
 // Settings → Appearance: the theme gallery (theme/gallery.ts), how much glass is blurred, light or dark, the dark
 // tone (for the themes that follow it), the accent; a phone's battery choice, a computer's sidebar choice.
 import { h, icon, toast, openSheet, pickButton } from '../ui/dom';
-import { t, formatBytes } from '../i18n';
+import { t, formatBytes, localDigits } from '../i18n';
 import { getSettings, updateSettings, glassNow, reloadThemePictures, setThemePreview, type Accent, type UiMode, type DarkTone, type Settings } from '../settings';
 import { onBack } from '../ui/backstack';
 import { undoScope } from '../ui/undo';
@@ -11,10 +11,27 @@ import type { EditorDeps } from '../theme/editor';
 import { themeById, DEFAULT_THEME, type BlurPref } from '../theme/themes';
 import { themeGallery } from '../theme/gallery';
 import { themeIo } from '../themeIo';
+import { SCENE_GROUPS, MIX_GROUPS, sceneEntry, type SceneGroup } from '../theme/sceneList';
+// (The palette themes join the list with this page: theme/palettes.ts registers them as it loads.)
+import '../theme/palettes';
+import { allowedHex } from '../theme/hues';
 
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
-const ACCENTS: Accent[] = ['graphite', 'mono', 'teal', 'aqua', 'mint', 'olive', 'gold', 'sand', 'coral', 'rose', 'violet'];
+// (Olive, gold and sand are yellow or amber: no longer offered — still shown while one is the accent in use, so it can
+//  be seen and changed.)
+const ACCENTS: Accent[] = ['graphite', 'mono', 'teal', 'aqua', 'mint', 'coral', 'rose', 'violet'];
+const RETIRED: Accent[] = ['olive', 'gold', 'sand'];
+/** A background's name, by its settings id (the editor's colours per background). */
+function bgName(id: string): string {
+  const s = getSettings();
+  if (id === 'drift' || id === 'flow' || id === 'match') return t(({ drift: 'animBgDrift', flow: 'animBgFlow', match: 'animBgMatch' } as const)[id]);
+  const named = (list: unknown, key: string): string | undefined => { const x = Array.isArray(list) ? list.find((v) => v && typeof v === 'object' && (v as { id?: unknown }).id === key) as { name?: unknown } | undefined : undefined; return typeof x?.name === 'string' ? x.name.slice(0, 40) : undefined; };
+  if (id.startsWith('scene:mix:')) { const e = sceneEntry(id.slice(6)); return e ? t(e.name as 'animBg') : named(s.animBgMixes, id.slice(10)) ?? t('animBgScenes'); }
+  if (id.startsWith('scene:user:')) return named(s.animBgLib, id.slice(11)) ?? t('animBgMine');
+  const e = id.startsWith('scene:') ? sceneEntry(id.slice(6)) : undefined;
+  return e ? t(e.name as 'animBg') : t('animBgScenes');
+}
 
 /** A theme put in use: its own colours brought (or the accent given back), its pictures read. */
 function useTheme(id: string, own: boolean): void {
@@ -54,20 +71,46 @@ export function editorDeps(rerender: () => void): EditorDeps {
     changed: () => rerender(),
     // (The app's Ctrl+Z listener takes the keys first, in the capture phase: the editor's stack goes in as its scope.)
     keys: (handler) => undoScope(handler),
+    // (A computer's backgrounds, for the theme's colours per background.)
+    backgrounds: { current: () => { const b = getSettings().animBg; return pc() && b && b !== 'off' ? b : null; }, name: bgName },
   };
 }
-const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel'] as const;
+const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel', 'animBgWhere', 'animBgTint', 'animBgReact'] as const;
 type AnimPref = NonNullable<Settings['animBg']>; type AnimLevel = NonNullable<Settings['animBgLevel']>;
+/** «Your pictures and videos» chosen in the row while none of them is the background yet: the library shown. */
+let libShown = false;
 /** A computer's animated background: the choice, how much it moves, a live preview and one line saying what it does
  *  now and why (paused, still). Its engine (theme/animbg.ts) is fetched only once it is chosen. */
 function animRows(rerender: () => void): (HTMLElement | null)[] {
   const s = getSettings(); const pref: AnimPref = s.animBg ?? 'off';
   // (The hint says what the choice made does; a pick's third value would be an icon, so the words go here.)
-  const what = { off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') }[pref];
-  const choice = row(t('animBg'), pickButton(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')]], pref, (v) => { updateSettings({ animBg: v as AnimPref }); rerender(); }, t('close')), what);
-  if (pref === 'off') return [choice];
+  // («Motes», «Night snowfall»: scenes of the Rust engine — core/kt-scene, loaded as wasm only when chosen; drift where it cannot load.)
+  // (The scenes are many: the row offers «Scene», and the grid below it shows them all, grouped, as pictures.)
+  // («Your pictures and videos»: «scene:user:<id>», drawn by the same engine path — views/bgLibrary.ts, theme/bgLib.ts.)
+  const isUser = pref.startsWith('scene:user:'); const mine = isUser || libShown; if (isUser) libShown = false;
+  const isSceneNow = pref.startsWith('scene:') && !isUser; const entry = isSceneNow ? sceneEntry(pref.slice(6)) : undefined;
+  type Choice = 'off' | 'match' | 'drift' | 'flow' | 'scene' | 'mine';
+  const what = mine ? t('animBgMineHint') : entry ? t(entry.hint as 'animBgHint') : isSceneNow && pref.startsWith('scene:mix:') ? t('mixMineHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
+  const choice = row(t('animBg'), pickButton<Choice>(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene', t('animBgScenes')], ['mine', t('animBgMine')]], mine ? 'mine' : isSceneNow ? 'scene' : (pref as Choice), (v) => {
+    libShown = v === 'mine';
+    if (v !== 'mine') updateSettings({ animBg: v === 'scene' ? (isSceneNow ? pref : 'scene:night-snowfall') : v });
+    rerender();
+  }, t('close')), what);
+  // (The library: drawn once its module is here — the row keeps its place meanwhile.)
+  const lib = mine ? h('div', { class: 'row abg-grid-row', 'data-bg-lib': '' }) : null;
+  if (lib) void import('./bgLibrary').then((m) => { if (lib.isConnected) m.fillLibrary(lib, rerender); });
+  if (pref === 'off' || (mine && !isUser)) return [choice, lib];
+  const grid = isSceneNow ? sceneGrid(pref.slice(6), rerender) : lib;
   const level: AnimLevel = s.animBgLevel ?? 'full';
   const levelRow = row(t('animBgLevel'), pickButton(t('animBgLevel'), [['full', t('animBgFull')], ['reduced', t('animBgReduced')], ['still', t('animBgStill')]], level, (v) => { updateSettings({ animBgLevel: v as AnimLevel }); rerender(); }, t('close')), level === 'full' ? t('animBgHint') : t(level === 'reduced' ? 'animBgReducedHint' : 'animBgStillHint'));
+  // (A scene: where it shows, whether the app's colours follow it, how much it answers the mouse.)
+  const scene = pref.startsWith('scene:');
+  const where = s.animBgWhere ?? 'whole'; const react = s.animBgReact ?? 'subtle';
+  const sceneRows = scene ? [
+    row(t('animBgWhereRow'), pickButton(t('animBgWhereRow'), [['whole', t('animBgWhole')], ['content', t('animBgContent')]], where, (v) => { updateSettings({ animBgWhere: v as 'whole' | 'content' }); rerender(); }, t('close')), t('animBgWhereHint')),
+    toggle(t('animBgTintRow'), s.animBgTint === true, (v) => { updateSettings({ animBgTint: v }); rerender(); }, t('animBgTintHint')),
+    isUser ? null : row(t('animBgReactRow'), pickButton(t('animBgReactRow'), [['off', t('animBgReactOff')], ['subtle', t('animBgReactSubtle')], ['lively', t('animBgReactLively')]], react, (v) => { updateSettings({ animBgReact: v as 'off' | 'subtle' | 'lively' }); rerender(); }, t('close')), t('animBgReactHint')),
+  ] : [];
   const box = h('div', { class: 'abg-preview', role: 'img', 'aria-label': t('animBgPreview') }, h('div', { class: 'abg-sample' }, h('b', null, t('animBgSample')), h('small', null, t('animBgSampleDim'))));
   const now = h('small', { class: 'src abg-now', 'aria-live': 'polite' });
   void import('../theme/animbg').then((m) => {
@@ -78,13 +121,64 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
     const say = (): void => {
       if (!now.isConnected) { off(); stop(); return; }
       const st = m.animState(); const lv = getSettings().animBgLevel ?? 'full';
-      now.textContent = st.paused ? t(({ hidden: 'animBgPausedHidden', focus: 'animBgPausedFocus', video: 'animBgPausedVideo', fullscreen: 'animBgPausedFull' } as const)[st.paused])
+      now.textContent = st.fallback ? t('animBgSceneFallback') : st.paused ? t(({ hidden: 'animBgPausedHidden', focus: 'animBgPausedFocus', video: 'animBgPausedVideo', fullscreen: 'animBgPausedFull' } as const)[st.paused])
         : lv === 'still' ? t('animBgStillChosen') : st.still ? t(({ motion: 'animBgStillMotion', battery: 'animBgStillBattery', slow: 'animBgStillSlow' } as const)[st.still])
         : t(lv === 'reduced' ? 'animBgMovingReduced' : 'animBgMoving');
     };
     const off = m.watchAnim(say); say();
   });
-  return [choice, levelRow, h('div', { class: 'row abg-row' }, box, now)];
+  return [choice, grid, levelRow, ...sceneRows, h('div', { class: 'row abg-row' }, box, now)];
+}
+
+/** The scenes as a grid of pictures, grouped; each drawn once by the engine (theme/sceneThumbs.ts) and kept. A radio
+ *  group: the chosen one marked, Tab reaches it, the arrow keys move between them. */
+function sceneGrid(current: string, rerender: () => void): HTMLElement {
+  const tiles: HTMLButtonElement[] = [];
+  const pick = (id: string): void => { updateSettings({ animBg: `scene:${id}` }); rerender(); };
+  const tile = (id: string, name: string, hint: string): HTMLButtonElement => {
+    const on = id === current;
+    const b = h('button', { type: 'button', class: 'abg-tile' + (on ? ' on' : ''), role: 'radio', 'aria-checked': on ? 'true' : 'false', tabindex: on ? '0' : '-1', 'data-scene': id, title: hint, onclick: () => pick(id) },
+      h('span', { class: 'abg-thumb' }), h('span', { class: 'abg-name', dir: 'auto' }, name)) as HTMLButtonElement;
+    tiles.push(b); return b;
+  };
+  const group = (gr: SceneGroup) => h('div', { class: 'abg-group' }, h('div', { class: 'abg-group-title' }, t(gr.key as 'animBg')),
+    h('div', { class: 'abg-tiles' }, ...gr.scenes.map((sc) => tile(sc.id, t(sc.name as 'animBg'), t(sc.hint as 'animBg')))));
+  // (The reader's own mixes: «Mix your own» first, then each saved one — read, cleaned, once the mixer's module is here.)
+  const mineTitle = h('div', { class: 'abg-group-title' }, t('animBgGroupMine'));
+  const mixer = () => import('./mixer');
+  const newCard = h('button', { type: 'button', class: 'abg-tile abg-mix-new', 'data-mix-new': '', title: t('mixNewHint'), onclick: () => void mixer().then((x) => x.openMixer(rerender)) },
+    h('span', { class: 'abg-thumb abg-plus' }, icon('plus')), h('span', { class: 'abg-name' }, t('mixNew')));
+  const mineTiles = h('div', { class: 'abg-tiles' }, newCard);
+  const mineActs = h('div', { class: 'abg-mix-acts', hidden: true });
+  const groups = [...SCENE_GROUPS.map(group), ...MIX_GROUPS.map(group), h('div', { class: 'abg-group abg-mine' }, mineTitle, mineTiles, mineActs)];
+  const grid = h('div', { class: 'abg-grid', role: 'radiogroup', 'aria-label': t('animBgScenes'), onkeydown: (e: KeyboardEvent) => {
+    const i = tiles.indexOf(document.activeElement as HTMLButtonElement); if (i < 0) return;
+    const rtl = document.documentElement.dir === 'rtl'; const fwd = ['ArrowDown', rtl ? 'ArrowLeft' : 'ArrowRight']; const back = ['ArrowUp', rtl ? 'ArrowRight' : 'ArrowLeft'];
+    const j = fwd.includes(e.key) ? (i + 1) % tiles.length : back.includes(e.key) ? (i - 1 + tiles.length) % tiles.length : e.key === 'Home' ? 0 : e.key === 'End' ? tiles.length - 1 : -1;
+    if (j < 0) return; e.preventDefault(); tiles[i].tabIndex = -1; tiles[j].tabIndex = 0; tiles[j].focus();
+  } }, ...groups);
+  if (!tiles.some((b) => b.tabIndex === 0) && tiles[0]) tiles[0].tabIndex = 0;
+  // (The pictures: drawn one after another once the grid is on the page — the saved mixes' tiles added first.)
+  void Promise.all([import('../theme/sceneThumbs'), import('../theme/sceneMix')]).then(async ([m, mx]) => {
+    const mine = mx.savedMixes();
+    mineTitle.textContent = mine.length ? t('animBgGroupMineN', { n: localDigits(mine.length) }) : t('animBgGroupMine');
+    for (const x of mine) mineTiles.append(tile(`mix:${x.id}`, x.name, t('mixMineHint')));
+    // (The chosen one a saved mix: what can be done with it, under the group.)
+    const cur = current.startsWith('mix:') ? mine.find((x) => `mix:${x.id}` === current) : undefined;
+    if (cur) {
+      const act = (ic: string, label: string, run: () => void, cls = '') => h('button', { type: 'button', class: 'btn tonal small' + cls, onclick: run }, icon(ic), label);
+      mineActs.append(act('pen', t('mixEdit'), () => void mixer().then((x) => x.openMixer(rerender, cur))), act('type', t('mixRename'), () => void mixer().then((x) => x.renameMix(cur.id, rerender))), act('trash', t('mixDelete'), () => void mixer().then((x) => x.deleteMix(cur.id, rerender)), ' danger'));
+      mineActs.hidden = false;
+    }
+    if (!tiles.some((b) => b.tabIndex === 0) && tiles[0]) tiles[0].tabIndex = 0;
+    await new Promise((r) => requestAnimationFrame(r));
+    for (const b of tiles) {
+      if (!grid.isConnected) break;
+      const url = await m.sceneThumb(b.dataset.scene!); const th = b.querySelector<HTMLElement>('.abg-thumb'); if (!th) continue;
+      th.style.backgroundImage = url.startsWith('gradient:') ? url.slice(9) : `url("${url}")`; th.classList.add('drawn');
+    }
+  });
+  return h('div', { class: 'row abg-grid-row' }, grid);
 }
 
 export function appearanceCard(rerender: () => void): HTMLElement {
@@ -108,8 +202,9 @@ export function appearanceCard(rerender: () => void): HTMLElement {
   const glassHint = def.classic ? t('glassClassicHint') : (s.glassBlur ?? 'auto') === 'auto' ? t('glassAutoNow', { what: blurNow, why }) : t('glassBlurHint');
   const swatches = h('div', { class: 'accent-swatches' },
     ownColours ? h('button', { type: 'button', class: 'swatch theme' + (s.accent === 'theme' ? ' on' : ''), 'data-accent': 'theme', 'aria-label': t('accentTheme'), title: t('accentTheme'), style: { '--sw': (def.dark ?? def.light)!.roles!.primary } }) : null,
-    ...ACCENTS.map((a) => h('button', { type: 'button', class: 'swatch' + (s.accent === a ? ' on' : ''), 'data-accent': a, 'aria-label': a, onclick: () => { updateSettings({ accent: a }); rerender(); } })),
-    h('label', { class: 'swatch custom' + (s.accent === 'custom' ? ' on' : ''), title: 'custom' }, h('input', { type: 'color', value: s.accentCustom, oninput: (e: Event) => updateSettings({ accent: 'custom', accentCustom: (e.target as HTMLInputElement).value }) })));
+    ...[...ACCENTS, ...RETIRED.filter((a) => s.accent === a)].map((a) => h('button', { type: 'button', class: 'swatch' + (s.accent === a ? ' on' : ''), 'data-accent': a, 'aria-label': a, onclick: () => { updateSettings({ accent: a }); rerender(); } })),
+    h('label', { class: 'swatch custom' + (s.accent === 'custom' ? ' on' : ''), title: 'custom' }, h('input', { type: 'color', value: s.accentCustom, oninput: (e: Event) => { const i = e.target as HTMLInputElement; const a = allowedHex(i.value); if (a.moved) { i.value = a.hex; i.dataset.moved = '1'; } updateSettings({ accent: 'custom', accentCustom: a.hex }); },
+      onchange: (e: Event) => { const i = e.target as HTMLInputElement; if (i.dataset.moved) { delete i.dataset.moved; toast(t('editorHueMoved'), 'info'); } } })));
   const themeSwatch = swatches.querySelector<HTMLElement>('.swatch.theme'); if (themeSwatch) themeSwatch.onclick = () => { updateSettings({ accent: 'theme', accentPrev: getSettings().accent === 'theme' ? getSettings().accentPrev : getSettings().accent }); rerender(); };
   const followsTone = def.classic || !!def.followsAccent && !def.force && !def.dark?.surfaces;
   return h('section', { class: 'card', id: 'appearance' }, h('h3', null, t('appearance')),
@@ -124,7 +219,7 @@ export function appearanceCard(rerender: () => void): HTMLElement {
     row(t('accent'), swatches, ownColours ? t('accentThemeHint') : undefined),
     h('div', { class: 'row' }, h('span', null, t('appearanceReset'), h('small', { class: 'src' }, t('appearanceResetHint'))), h('button', { type: 'button', class: 'btn text small', onclick: () => {
       const cur = getSettings(); const before = Object.fromEntries(RESET_KEYS.map((k) => [k, cur[k]])) as Partial<Settings>;
-      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined, animBg: undefined, animBgLevel: undefined }); reloadThemePictures(); rerender();
+      updateSettings({ theme: DEFAULT_THEME, themeChosen: undefined, glassBlur: 'auto', accent: 'graphite', accentCustom: '#7fb8ff', accentPrev: undefined, darkTone: 'default', uiMode: 'system', uiScale: 100, glassRail: undefined, glassBattery: undefined, themeKeepColours: undefined, animBg: undefined, animBgLevel: undefined, animBgWhere: undefined, animBgTint: undefined, animBgReact: undefined }); reloadThemePictures(); rerender();
       toast(t('appearanceResetDone'), 'info', 6000, { label: t('undo'), run: () => { updateSettings(before); reloadThemePictures(); rerender(); } });
     } }, icon('refresh'), t('appearanceReset'))),
     def.by ? h('div', { class: 'row theme-credit' }, h('span', null, t('themeBy', { who: def.by }), h('small', { class: 'src' }, t('themeLicence'))), h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses'))) : null);

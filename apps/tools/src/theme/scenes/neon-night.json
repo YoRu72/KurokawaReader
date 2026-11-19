@@ -1,0 +1,504 @@
+{
+ "format": "ktscene/1",
+ "meta": {
+  "id": "neon-night",
+  "name": "Neon night"
+ },
+ "view": {
+  "fps": 24,
+  "resolution": 0.5
+ },
+ "space": {
+  "w": 1600,
+  "h": 1000,
+  "overscan": 0.06,
+  "fit": "cover"
+ },
+ "palette": [
+  {
+   "id": "sky0",
+   "dark": "#05041a",
+   "light": "#d6e0f3"
+  },
+  {
+   "id": "sky1",
+   "dark": "#0d0930",
+   "light": "#c3d0ec"
+  },
+  {
+   "id": "sky2",
+   "dark": "#1a0f40",
+   "light": "#aebfe4"
+  },
+  {
+   "id": "cyan",
+   "dark": "#38e3ff",
+   "light": "#0a86ad"
+  },
+  {
+   "id": "magenta",
+   "dark": "#ff4fd8",
+   "light": "#b8288e"
+  },
+  {
+   "id": "violet",
+   "dark": "#8a6bff",
+   "light": "#5838c8"
+  },
+  {
+   "id": "arc",
+   "dark": "#4ff0ff",
+   "light": "#0b6f9c"
+  },
+  {
+   "id": "red",
+   "dark": "#ff3355",
+   "light": "#c92f4e"
+  },
+  {
+   "id": "ring",
+   "dark": "#7ff6ff",
+   "light": "#0b7f9e"
+  }
+ ],
+ "ui": {
+  "dark": {
+   "accent": "#38d9f5",
+   "accent2": "#ff5fd6",
+   "tint": "#120c34"
+  },
+  "light": {
+   "accent": "#0e7f99",
+   "accent2": "#b0278f",
+   "tint": "#d6e8f1"
+  }
+ },
+ "params": [
+  {
+   "id": "amount",
+   "type": "slider",
+   "min": 0,
+   "max": 1,
+   "default": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "sky",
+   "kind": "sky",
+   "depth": 0,
+   "parallax": 0,
+   "params": {
+    "stops": [
+     [
+      0,
+      "sky2"
+     ],
+     [
+      0.6,
+      "sky1"
+     ],
+     [
+      1,
+      "sky0"
+     ]
+    ],
+    "glow": {
+     "x": 0.3,
+     "y": 0.7,
+     "r": 0.8,
+     "colour": "violet",
+     "alpha": 0.18
+    }
+   }
+  },
+  {
+   "id": "far",
+   "depth": 0.2,
+   "parallax": 0.15
+  },
+  {
+   "id": "arcs",
+   "kind": "arcs",
+   "depth": 0.4,
+   "parallax": 0.3,
+   "params": {
+    "count": 7,
+    "y0": 0.15,
+    "y1": 0.9,
+    "rmin": 180,
+    "rmax": 700,
+    "width": 1.4,
+    "alpha": 0.5,
+    "colours": [
+     "arc"
+    ]
+   }
+  },
+  {
+   "id": "mid",
+   "depth": 0.55
+  },
+  {
+   "id": "near",
+   "depth": 0.9
+  },
+  {
+   "id": "halftone",
+   "kind": "halftone",
+   "depth": 1,
+   "parallax": 0,
+   "params": {
+    "alpha": 0.07,
+    "cell": 5
+   }
+  },
+  {
+   "id": "glints",
+   "depth": 0.6
+  },
+  {
+   "id": "rings",
+   "depth": 0.9
+  }
+ ],
+ "emitters": [
+  {
+   "id": "far",
+   "layer": "far",
+   "max": 40,
+   "rate": 1,
+   "prewarm": 1,
+   "wind": 0,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 30,
+     "max": 60
+    },
+    {
+     "kind": "size",
+     "min": 20,
+     "max": 42
+    },
+    {
+     "kind": "alpha",
+     "min": 0.25,
+     "max": 0.45
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -3,
+      -2
+     ],
+     "max": [
+      3,
+      2
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "cyan",
+      "magenta",
+      "violet"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.002,
+     "speed": 0.03,
+     "strength": 3
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "swell",
+     "radius": 260,
+     "scale": 0.6
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 60
+    },
+    {
+     "kind": "fade",
+     "in": 0.15,
+     "out": 0.15
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "mid",
+   "layer": "mid",
+   "max": 22,
+   "rate": 0.6,
+   "prewarm": 1,
+   "wind": 0,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 30,
+     "max": 60
+    },
+    {
+     "kind": "size",
+     "min": 50,
+     "max": 80
+    },
+    {
+     "kind": "alpha",
+     "min": 0.2,
+     "max": 0.35
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -4,
+      -3
+     ],
+     "max": [
+      4,
+      3
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "cyan",
+      "magenta",
+      "violet"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.002,
+     "speed": 0.03,
+     "strength": 4
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "swell",
+     "radius": 300,
+     "scale": 0.8
+    },
+    {
+     "kind": "pointer",
+     "strength": -40,
+     "radius": 220
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 90
+    },
+    {
+     "kind": "fade",
+     "in": 0.15,
+     "out": 0.15
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "near",
+   "layer": "near",
+   "max": 9,
+   "rate": 0.25,
+   "prewarm": 1,
+   "wind": 0,
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 30,
+     "max": 60
+    },
+    {
+     "kind": "size",
+     "min": 110,
+     "max": 160
+    },
+    {
+     "kind": "alpha",
+     "min": 0.14,
+     "max": 0.24
+    },
+    {
+     "kind": "velocity",
+     "min": [
+      -5,
+      -3
+     ],
+     "max": [
+      5,
+      3
+     ]
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "cyan",
+      "magenta"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 0
+    }
+   ],
+   "operators": [
+    {
+     "kind": "drift",
+     "scale": 0.0015,
+     "speed": 0.03,
+     "strength": 4
+    },
+    {
+     "kind": "drag",
+     "k": 0.2
+    },
+    {
+     "kind": "swell",
+     "radius": 340,
+     "scale": 1
+    },
+    {
+     "kind": "bounds",
+     "mode": "wrap",
+     "margin": 160
+    },
+    {
+     "kind": "fade",
+     "in": 0.15,
+     "out": 0.15
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "glints",
+   "layer": "glints",
+   "max": 3,
+   "rate": 0.08,
+   "prewarm": 0,
+   "wind": 0,
+   "shape": {
+    "kind": "rect",
+    "x": 0.05,
+    "y": 0.1,
+    "w": 0.9,
+    "h": 0.8
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 0.8,
+     "max": 1.6
+    },
+    {
+     "kind": "size",
+     "min": 3,
+     "max": 5
+    },
+    {
+     "kind": "alpha",
+     "min": 0.8,
+     "max": 1
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "red"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 1
+    }
+   ],
+   "operators": [
+    {
+     "kind": "twinkle",
+     "speed": 1.5,
+     "depth": 0.8
+    },
+    {
+     "kind": "fade",
+     "in": 0.3,
+     "out": 0.5
+    }
+   ],
+   "densityParam": "amount"
+  },
+  {
+   "id": "click-ring",
+   "layer": "rings",
+   "max": 8,
+   "rate": 0,
+   "prewarm": 0,
+   "wind": 0,
+   "onClick": {
+    "count": 1
+   },
+   "initializers": [
+    {
+     "kind": "lifetime",
+     "min": 0.8,
+     "max": 1
+    },
+    {
+     "kind": "size",
+     "min": 14,
+     "max": 16
+    },
+    {
+     "kind": "alpha",
+     "min": 0.8,
+     "max": 0.9
+    },
+    {
+     "kind": "colour",
+     "roles": [
+      "ring"
+     ]
+    },
+    {
+     "kind": "sprite",
+     "id": 3
+    }
+   ],
+   "operators": [
+    {
+     "kind": "grow",
+     "rate": 2.4
+    },
+    {
+     "kind": "fade",
+     "in": 0,
+     "out": 0.9
+    }
+   ],
+   "densityParam": "amount"
+  }
+ ]
+}

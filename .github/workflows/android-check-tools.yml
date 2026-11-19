@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['work-*']
-    paths: ['apps/tools/native/android/**', 'apps/tools/tests/native/**', 'apps/tools/capacitor.config.*', 'apps/tools/package.json', '.github/workflows/android-check-tools.yml']
+    paths: ['apps/tools/native/android/**', 'apps/tools/tests/native/**', 'apps/tools/capacitor.config.*', 'apps/tools/package.json', '.github/workflows/android-check-tools.yml', '.github/actions/json-jar/**']
 
 jobs:
   compile:
@@ -22,8 +22,9 @@ jobs:
         with: { node-version: 22 }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
+      - uses: ./.github/actions/json-jar
       - name: Native tests (downloader, app installer)
-        run: sh tests/native/downloader.sh && sh tests/native/dlrules.sh && sh tests/native/files.sh && sh tests/native/apk.sh && sh tests/native/video.sh && sh tests/native/fileplan.sh && sh tests/native/hls.sh && sh tests/native/screen.sh
+        run: sh tests/native/downloader.sh && sh tests/native/dlrules.sh && sh tests/native/files.sh && sh tests/native/apk.sh && sh tests/native/video.sh && sh tests/native/fileplan.sh && sh tests/native/hls.sh && sh tests/native/screen.sh && sh tests/native/sign.sh && sh tests/native/batphone.sh
       - run: npm install
       - run: npm run build
       - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
@@ -41,7 +42,7 @@ jobs:
         run: |
           set -o pipefail
           # (A release build: R8 runs — a class it strips wrongly, or a rule it rejects, shows here and not on release day.)
-          cd android && sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties && chmod +x gradlew && (./gradlew --version >/dev/null 2>&1 || ./gradlew --version >/dev/null 2>&1 || true) && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
+          cd android && sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties && sed -i '/^org.gradle.jvmargs=/d' gradle.properties && echo 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' >> gradle.properties && chmod +x gradlew && (./gradlew --version >/dev/null 2>&1 || ./gradlew --version >/dev/null 2>&1 || true) && ./gradlew assembleRelease --no-daemon 2>&1 | tee $RUNNER_TEMP/build.log | grep -vE "^\s*$" | tail -n 150
           ls -la app/build/outputs/apk/release/ | awk '{print $5, $9}'
       - name: Packs and APK contents (the Python pack carries yt-dlp; the APK no yt-dlp, no Picnic tables)
         run: python3 scripts/packs.py $RUNNER_TEMP/packs > /dev/null && python3 scripts/checksize.py $RUNNER_TEMP/packs "$(ls android/app/build/outputs/apk/release/*arm64*.apk | head -1)"

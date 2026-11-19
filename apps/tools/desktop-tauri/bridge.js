@@ -175,6 +175,12 @@
     archiveRestore: function (o) { return call('kt_archive_restore', { o: obj(o) }); },
     archiveExisting: function (o) { return call('kt_archive_existing', { o: obj(o) }); },
     archiveCancel: function (id) { return call('kt_archive_cancel', { id: str(id) }); },
+    /* the safe-extraction engine (Tools 0.21 P11: src-tauri/src/extractcmds.rs over kt-core's extractjob.rs, the port of
+       desktop/inplace.cjs — the same journal and shelf): the pre-flight report, the shelf of unfinished and just finished
+       jobs, a job acted on (finish, restore, undo, dismiss, restoreV1, leave). */
+    archivePreflight: function (o) { return call('kt_archive_preflight', { o: obj(o) }); },
+    archiveShelf: function (o) { return call('kt_archive_shelf', { o: obj(o) }); },
+    archiveJob: function (o) { return call('kt_archive_job', { o: obj(o) }); },
     onArchiveProgress: function (cb) { return subscribe('kt:archiveProgress', cb); },
     fontDirs: function () { return call('kt_font_dirs'); },
     fontIndex: function (dirs) { return call('kt_font_index', { dirs: (Array.isArray(dirs) ? dirs : []).map(str) }); },
@@ -204,6 +210,21 @@
     filesStat: function (o) { return call('kt_files_stat', { o: obj(o) }); },
     filesMkdir: function (o) { return call('kt_files_mkdir', { o: obj(o) }); },
     filesRename: function (o) { return call('kt_files_rename', { o: obj(o) }); },
+    /* fast file search (this shell's own, Tools 0.21: src-tauri/src/filesearch.rs over kt-core's fileindex): the
+       folders chosen, the index's state and size — fileSearchStatus() —; a search as the user types, a newer one
+       stopping the one before — fileSearch({ text, kinds, sizeMin, sizeMax, after, before, sort, desc, limit }) →
+       { hits, total, micros } | { cancelled } | { idle } —; a folder chosen or forgotten — fileSearchAdd({ path }) →
+       { ok } | { ok: false, reason, other }, fileSearchRemove({ path }) —; a folder inside one left out —
+       fileSearchExclude({ root, path, remove }) —; fileSearchRebuild(), fileSearchForget() (the index removed),
+       fileSearchPause({ paused, pauseOnBattery }) → the state. Nothing is sent anywhere. */
+    fileSearchStatus: function () { return call('kt_fsearch_status'); },
+    fileSearch: function (o) { return call('kt_fsearch_query', { o: obj(o) }); },
+    fileSearchAdd: function (o) { return call('kt_fsearch_add', { o: obj(o) }); },
+    fileSearchRemove: function (o) { return call('kt_fsearch_remove', { o: obj(o) }); },
+    fileSearchExclude: function (o) { return call('kt_fsearch_exclude', { o: obj(o) }); },
+    fileSearchRebuild: function () { return call('kt_fsearch_rebuild'); },
+    fileSearchForget: function () { return call('kt_fsearch_forget'); },
+    fileSearchPause: function (o) { return call('kt_fsearch_pause', { o: obj(o) }); },
     openPath: function (p) { return call('kt_open_path', { p: str(p) }); },
     openExternal: function (u) { return call('kt_open_external', { u: str(u) }); },
 
@@ -265,6 +286,24 @@
     audioUrl: function () { return call('kt_audio_url'); },
     videoUrl: function () { return call('kt_video_url'); },
     proxyUrl: function (o) { return call('kt_proxy_url', { o: obj(o) }); },
+    /* a player on this computer (src-tauri/src/extplayer.rs): relayOpen({ url, headers, subs, name }) → { token, url,
+       subs } (a session of its own on the stream server, its token in the path), relayClose({ token }),
+       relayStatus({ token }) → { open, lastRead, reads, reading }; extPlayers() → { found, chosen },
+       extPlayerChoose({ title }) → { path } | null (the shell's own dialog; the path kept by the shell),
+       extPlayerArgs({ args }), extPlayerForget(), extPlayerStart({ player, target, title, start, subs, headers, slang,
+       alang }) → { id, reports } (a typed request: the shell picks the program and writes the arguments),
+       extPlayerStatus({ id }) → { running, code, pos, dur, eof }, extPlayerStop({ id }). */
+    relayOpen: function (o) { return call('kt_relay_open', { o: obj(o) }); },
+    relayClose: function (o) { return call('kt_relay_close', { o: obj(o) }); },
+    relayStatus: function (o) { return call('kt_relay_status', { o: obj(o) }); },
+    extPlayers: function () { return call('kt_ext_players'); },
+    extPlayerChoose: function (o) { return call('kt_ext_player_choose', { o: obj(o) }); },
+    extPlayerArgs: function (o) { return call('kt_ext_player_args', { o: obj(o) }); },
+    extPlayerForget: function () { return call('kt_ext_player_forget'); },
+    extPlayerDropSub: function (o) { return call('kt_ext_player_drop_sub', { o: obj(o) }); },
+    extPlayerStart: function (o) { return call('kt_ext_player_start', { o: obj(o) }); },
+    extPlayerStatus: function (o) { return call('kt_ext_player_status', { o: obj(o) }); },
+    extPlayerStop: function (o) { return call('kt_ext_player_stop', { o: obj(o) }); },
     /* stage P6 (src-tauri/src/desktop.rs, rules in desklogic.rs): the computer's side of the downloads — desktopPrefs(o)
        → the choices in force (keepAwake, whenDone, notifyDone, tray, hotkeys; this shell also takes o.labels, the
        interface's words for the tray's menu and a Mac's menu bar, and answers hotkeyErrors { mode: why } for a hotkey
@@ -346,6 +385,67 @@
     screenOcrLangs: function () { return call('kt_screen_ocr_langs'); },
     screenCaptionSize: function (o) { return call('kt_screen_caption', { o: obj(o) }); },
     onScreenCaption: function (cb) { return subscribe('kt:screenCaption', cb); },
+    /* 0.21, device battery (this shell's own; src-tauri/src/battery.rs over apps/tools/core/kt-battery, GPL-3.0-or-later):
+       batteryList() → { available, reason?, now, devices: [{ key, name, kind, brand, connection, source, vid, pid,
+       merged, status, reading, lastGood, checkedAt }], settings, system: { autostart: 'yes' | 'notYet', tray } } (the
+       loop started on this first call, or at the app's start with the background on; Windows only for now — elsewhere
+       available: false); batteryRefresh({ key? }) → true (one device, or all); batterySettings({ set? }) → the settings
+       { intervalMin, low, names, hidden, noQuery, links, background, startup, notifyLow, notifyFull, thresholds } (set:
+       a part of them, kept by the shell; turning the start with the system on or off writes or removes its entry first
+       and rejects with the reason when it cannot); onBattery(cb) — { now, devices } after each change (kt:battery). */
+    batteryList: function () { return call('kt_battery_list'); },
+    batteryRefresh: function (o) { return call('kt_battery_refresh', { o: obj(o) }); },
+    batterySettings: function (o) { return call('kt_battery_settings', { o: obj(o) }); },
+    onBattery: function (cb) { return subscribe('kt:battery', cb); },
+    /* 0.21 W2 — the battery history and the time-left estimate (battery.rs over kt-battery history.rs):
+       batteryHistory({ key, range: 'day' | 'week' | 'month' }) → { key, on, days, now, since, gap, points: [{ t, level |
+       null (away), charging }], stats, estimate: { state: 'empty' | 'full' | 'none', minutes?, why? } };
+       batteryHistoryClear({ key }) → whether there was any. The settings history and historyDays go through
+       batterySettings; a device in batteryList / onBattery carries estimate: { state, minutes } | null. */
+    batteryHistory: function (o) { return call('kt_battery_history', { o: obj(o) }); },
+    batteryHistoryClear: function (o) { return call('kt_battery_history_clear', { o: obj(o) }); },
+    /* 0.21 W3 — the user's own device definitions and «Teach me this device» (batdefs.rs over kt-battery defs.rs and
+       teach.rs; listened to only — nothing is ever sent to a device): batteryDefs() → { list, max, teach, aside };
+       batteryDefImport({ text, mineFirst? }) → { ok, id?, list?, error?: { code, field } }; batteryDefExport({ id }) →
+       { name, text }; batteryDefRemove({ id }) and batteryDefSet({ id, on?, mineFirst? }) → { list };
+       batteryTeachList() → { available, devices }; batteryTeachStart({ id, seconds?, o }), batteryTeachStop(),
+       batteryTeachState(), batteryTeachMark({ mark, undo? }) → the session's state (live rows, marks, proposals);
+       batteryTeachSave({ level, charging?, name, kind }) → { ok, id?, error? }; batteryTeachClose({ o }) drops every captured
+       byte (in memory only; «o» the page's per-sheet token: a start that ends after its sheet closed keeps nothing). */
+    batteryDefs: function () { return call('kt_battery_defs'); },
+    batteryDefImport: function (o) { return call('kt_battery_def_import', { o: obj(o) }); },
+    batteryDefExport: function (o) { return call('kt_battery_def_export', { o: obj(o) }); },
+    batteryDefRemove: function (o) { return call('kt_battery_def_remove', { o: obj(o) }); },
+    batteryDefSet: function (o) { return call('kt_battery_def_set', { o: obj(o) }); },
+    batteryTeachList: function () { return call('kt_battery_teach_list'); },
+    batteryTeachStart: function (o) { return call('kt_battery_teach_start', { o: obj(o) }); },
+    batteryTeachStop: function () { return call('kt_battery_teach_stop'); },
+    batteryTeachState: function () { return call('kt_battery_teach_state'); },
+    batteryTeachMark: function (o) { return call('kt_battery_teach_mark', { o: obj(o) }); },
+    batteryTeachSave: function (o) { return call('kt_battery_teach_save', { o: obj(o) }); },
+    batteryTeachClose: function (o) { return call('kt_battery_teach_close', { o: obj(o) }); },
+    /* 0.21 W4 — «Report a device» (battery.rs's sibling batreport.rs over kt-battery report.rs): batteryReport() → { text,
+       devices, collections } — an English text for the people who add support for a device: the devices the app sees, their
+       HID collections (ids, usage pages, report lengths), the reader that matched, the app's and the system's version; no
+       serial number, Bluetooth address, computer or user name, folder or report content. The page shows it whole; the user
+       copies or saves it. Nothing is sent. (The command line's --battery-json and --battery-help are no bridge method.) */
+    batteryReport: function () { return call('kt_battery_report'); },
+    /* 0.21, device battery piece 3 — connecting Bluetooth devices (battery.rs over kt-battery connect.rs): btList() →
+       { available, reason?, radio: 'on' | 'off' | 'missing', stale, now, scanUntil, devices, found, busy } (a device:
+       { addr, name, kind, picture, brand, le, paired, connected, battery, can }); btScan({ stop?, seconds? }) → the same;
+       btAct({ op: 'connect' | 'disconnect' | 'pair' | 'cancel', addr }) → { result, code } when the action ends (pairing
+       goes through Windows' own window); btOpenSettings() opens Windows' Bluetooth settings; onBt(cb) — the same object
+       as btList's after each change (kt:bt). */
+    btList: function () { return call('kt_bt_list'); },
+    btScan: function (o) { return call('kt_bt_scan', { o: obj(o) }); },
+    btAct: function (o) { return call('kt_bt_act', { o: obj(o) }); },
+    btOpenSettings: function () { return call('kt_bt_settings'); },
+    /* 0.21, piece S1 — the system on the taskbar (battery.rs over kt-battery sysmon.rs): sysmonProbe() → { available,
+       os, values: { cpu, cpuTemp, ram, gpu, gpuTemp, vram, drive: number | null — per cent or °C }, gpu: the graphics
+       card's name } — one look at what this computer gives (Windows only; elsewhere available: false). Its settings
+       (sysOn, sysOrder, sysUnit, sysEvery, sysClick, sysSide and the six marks) go through batterySettings. */
+    sysmonProbe: function () { return call('kt_sysmon_probe'); },
+    onBt: function (cb) { return subscribe('kt:bt', cb); },
   };
   /* stage P6: magnets, links and .torrent files (as data: addresses) the system handed the app — this launch's, a
      second launch's, a Mac's Apple Events — kept by the shell (kt_open_take) and handed to the page as the preload's

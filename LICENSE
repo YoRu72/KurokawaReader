@@ -21,3 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 The bundled fonts have their own licenses; see LICENSES/.
+
+Exception: everything under apps/tools (Kurokawa Tools) is licensed under the GNU General Public License,
+version 3 or later (GPL-3.0-or-later); see apps/tools/LICENSE and apps/tools/NOTICE.md. The reader
+(apps/reader) and the shared code stay under the MIT License above.

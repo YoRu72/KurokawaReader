@@ -1,0 +1,45 @@
+name: Scene engine (wasm)
+
+# Kurokawa Tools' scene engine (apps/tools/core/kt-scene, the Rust behind the animated backgrounds' scenes): its native
+# tests, then the release wasm with the pinned toolchain (scripts/build-scene-wasm.sh — the version is set there),
+# under 150 KB, uploaded as the artifact «ktscene-wasm» (ktscene.wasm) for local runs of tests/scene.cjs (copied to
+# apps/tools/public/scene/). The shipping workflows (release-tools.yml, tauri-check.yml, pages.yml) build it again
+# themselves before their web build: nothing here is committed or released.
+on:
+  push:
+    branches: ['work-*', main]
+    paths:
+      - 'apps/tools/core/kt-scene/**'
+      - 'apps/tools/src/theme/scenes/**'
+      - 'scripts/build-scene-wasm.sh'
+      - '.github/actions/scene-wasm/**'
+      - '.github/workflows/scene-wasm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wasm:
+    name: Native tests and wasm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: ./.github/actions/scene-wasm
+        with: { tests: 'true' }
+      - name: Every module alone (rustc --test)
+        run: |
+          TC=$(sed -n 's/^KT_SCENE_RUST="\${KT_SCENE_RUST:-\([0-9.]*\)}"/\1/p' scripts/build-scene-wasm.sh)
+          RUSTUP_TOOLCHAIN="$TC" sh apps/tools/core/kt-scene/test-alone.sh
+      - name: Size
+        run: |
+          s=$(wc -c < apps/tools/public/scene/ktscene.wasm | tr -d ' ')
+          echo "**ktscene.wasm: $s bytes** (limit 153600)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ktscene-wasm
+          path: apps/tools/public/scene/ktscene.wasm
+          if-no-files-found: error

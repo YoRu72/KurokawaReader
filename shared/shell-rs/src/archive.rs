@@ -7,7 +7,14 @@
 //  - a partial extraction (`ExtractOpts::only`: just these entries and what is under these folders; folders made only
 //    for what is taken out; never in place; None — all — unless given);
 //  - split volumes («x.7z.001», «x.zip.001», «x.zip» beside «x.z01») handed to 7-Zip, which joins them
-//    (`route_split_volumes(true)`; off unless set).
+//    (`route_split_volumes(true)`; off unless set);
+//  - stricter rules (`tools_rules(true)`, Tools 0.21; off unless set, so the Reader's answers are as they were): a
+//    format by what is in the file — a tar by its header (the «ustar» magic or a valid checksum), a gz / xz / bz2 named
+//    as a tar only with a tar header inside (`set_peek` gives the look; with no way to look, the name's word stands) —,
+//    in place a ZIP whose entries overlap refused before anything is written (and `in_place_ok` false), a tar device,
+//    FIFO or sparse entry never made, no setuid / setgid / sticky bit kept on what 7-Zip makes, part files made
+//    exclusively under a per-run name (never a file or link the run did not make), each file read back and its CRC
+//    compared before an archive is cut in place.
 //
 // Archives (stage R5), desktop/archive.cjs in Rust — the same approach, the same answers: ZIP read by the app's own
 // parser (and extracted in place the HatchZip way — last entry first, the archive cut after each committed batch, a
@@ -66,6 +73,22 @@ pub struct Ctx<'a> {
 /* ---------- the app's choices (Tools'; the Reader leaves them as they are) ---------- */
 
 static SPLIT_VOLUMES: AtomicBool = AtomicBool::new(false);
+static STRICT: AtomicBool = AtomicBool::new(false);
+/// What a compressed file holds first (up to 512 bytes): `(file, "gz" | "xz" | "bz2")` → None when it cannot be looked
+/// into (no 7-Zip, damaged, a password). Given by the app (flate2, the shipped 7-Zip).
+pub type Peek = fn(&Path, &str) -> Option<Vec<u8>>;
+static PEEK: OnceLock<Peek> = OnceLock::new();
+/// Tools' stricter rules (see the header); off — the Reader's — unless set.
+pub fn tools_rules(on: bool) {
+    STRICT.store(on, Ordering::SeqCst);
+}
+fn strict() -> bool {
+    STRICT.load(Ordering::SeqCst)
+}
+/// The app's way to look into a gz / xz / bz2 (the stricter rules' format check).
+pub fn set_peek(f: Peek) {
+    let _ = PEEK.set(f);
+}
 static LOCAL_OFFSET: AtomicI64 = AtomicI64::new(0);
 
 /// Split volumes («x.7z.001», «x.zip.001», «x.zip» beside «x.z01») to 7-Zip, as Tools' archive.cjs does.
@@ -285,6 +308,23 @@ pub fn target_for_only(dest: &Path, name: &str, replace: &str, only: Option<&[St
     }
     Ok(Some(out))
 }
+/// free_name with a link counted as there even when it points nowhere (a dangling link is a taken name, never looped on).
+pub fn free_name_nofollow(out: &Path) -> PathBuf {
+    let file = out.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let (base, ext) = match file.rfind('.') {
+        Some(i) if i > 0 => (file[..i].to_string(), file[i..].to_string()),
+        _ => (file.clone(), String::new()),
+    };
+    let dir = out.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let mut i = 2u32;
+    loop {
+        let alt = dir.join(format!("{} ({}){}", base, i, ext));
+        if fs::symlink_metadata(&alt).is_err() {
+            return alt;
+        }
+        i += 1;
+    }
+}
 /// `a.txt` → `a (2).txt`, `a (3).txt`… the first not there.
 pub fn free_name(out: &Path) -> PathBuf {
     let file = out.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -308,23 +348,50 @@ pub fn free_name(out: &Path) -> PathBuf {
 fn lower_name(file: &Path) -> String {
     file.file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
-/// archive.cjs's formatOf: by the first bytes, then the name.
+/// archive.cjs's formatOf: by the first bytes, then the name (with the stricter rules: by what is in it).
 pub fn format_of(file: &Path) -> Result<&'static str, String> {
-    let mut b = [0u8; 8];
+    let peek = PEEK.get().copied();
+    format_by(file, strict(), peek.as_ref().map(|f| f as &dyn Fn(&Path, &str) -> Option<Vec<u8>>))
+}
+/// Whether 512 bytes are a tar header (archive.cjs isTarHead): the «ustar» magic, or the checksum of an old (v7)
+/// header — the sum of the bytes with the checksum field as spaces.
+pub fn is_tar_head(h: &[u8]) -> bool {
+    if h.len() < 512 {
+        return false;
+    }
+    if &h[257..262] == b"ustar" {
+        return true;
+    }
+    let f: String = h[148..156].iter().map(|&c| c as char).collect();
+    let f = f.trim_end_matches(['\0', ' ']).trim();
+    if f.is_empty() || !f.chars().all(|c| ('0'..='7').contains(&c)) {
+        return false;
+    }
+    let mut sum = 0u64;
+    for (i, &v) in h[..512].iter().enumerate() {
+        sum += if (148..156).contains(&i) { 32 } else { v as u64 };
+    }
+    u64::from_str_radix(f, 8).ok() == Some(sum) && h[..512].iter().any(|&v| v != 0)
+}
+/// format_of with the rules chosen: `strict` decides by content (archive.cjs formatOf), `peek` looks into a gz / xz /
+/// bz2 named as a tar.
+pub fn format_by(file: &Path, strict: bool, peek: Option<&dyn Fn(&Path, &str) -> Option<Vec<u8>>>) -> Result<&'static str, String> {
+    let mut b = [0u8; 512];
     let mut f = File::open(file).map_err(es)?;
     let mut got = 0;
-    while got < 8 {
+    while got < 512 {
         let n = f.read(&mut b[got..]).map_err(es)?;
         if n == 0 {
             break;
         }
         got += n;
     }
+    drop(f);
     let n = lower_name(file);
     if SPLIT_VOLUMES.load(Ordering::SeqCst) && split_volume(file) {
         return Ok("7z");
     }
-    let is = |s: &[u8]| b.starts_with(s);
+    let is = |s: &[u8]| got >= s.len() && b.starts_with(s);
     if is(&[0x50, 0x4b]) {
         return Ok("zip");
     }
@@ -334,16 +401,39 @@ pub fn format_of(file: &Path) -> Result<&'static str, String> {
     if is(&[0x52, 0x61, 0x72, 0x21]) {
         return Ok("rar");
     }
-    if is(&[0x1f, 0x8b]) {
-        return Ok(if n.ends_with(".tar.gz") || n.ends_with(".tgz") { "tar.gz" } else { "gz" });
+    let layers: [(&[u8], &'static str, &'static str, &[&str]); 3] = [
+        (&[0x1f, 0x8b], "gz", "tar.gz", &[".tar.gz", ".tgz"]),
+        (&[0xfd, 0x37, 0x7a, 0x58, 0x5a], "xz", "tar.xz", &[".tar.xz", ".txz"]),
+        (&[0x42, 0x5a, 0x68], "bz2", "tar.bz2", &[".tar.bz2", ".tbz2"]),
+    ];
+    for (sig, kind, tar_kind, names) in layers {
+        if !is(sig) {
+            continue;
+        }
+        if !names.iter().any(|x| n.ends_with(x)) {
+            return Ok(kind);
+        }
+        if !strict {
+            return Ok(tar_kind);
+        }
+        // (A name that claims a tar is checked as far as the decompressor can look; with no way to look, the name stands.)
+        let head = peek.and_then(|p| p(file, kind));
+        return Ok(match head {
+            Some(h) if !is_tar_head(&h) && !(h.len() >= 512 && h.iter().all(|&v| v == 0)) => kind,
+            _ => tar_kind,
+        });
     }
-    if is(&[0xfd, 0x37, 0x7a, 0x58, 0x5a]) {
-        return Ok(if n.ends_with(".tar.xz") || n.ends_with(".txz") { "tar.xz" } else { "xz" });
+    if !strict {
+        if n.ends_with(".tar") {
+            return Ok("tar");
+        }
+        return Err("notArchive".to_string());
     }
-    if is(&[0x42, 0x5a, 0x68]) {
-        return Ok(if n.ends_with(".tar.bz2") || n.ends_with(".tbz2") { "tar.bz2" } else { "bz2" });
+    if got >= 512 && is_tar_head(&b) {
+        return Ok("tar");
     }
-    if n.ends_with(".tar") {
+    // (An empty tar: two blocks of zeros.)
+    if n.ends_with(".tar") && got >= 512 && b.iter().all(|&v| v == 0) {
         return Ok("tar");
     }
     Err("notArchive".to_string())
@@ -635,10 +725,45 @@ fn decode_entry<W: Write>(f: &mut File, it: &ZipItem, sink: W, ctx: &Ctx, pr: &P
     Ok(())
 }
 
-/// archive.cjs's writeEntry: into `<out>.part`, checked, then put in place of `out`.
+/// A part file for `out`: `<out>.part` (the Reader's way), or with the stricter rules made exclusively beside it under
+/// a per-run name (`.kt<pid>-<n>.part`: never a file or link the run did not make).
+fn part_for(out: &Path) -> Result<(PathBuf, File), String> {
+    part_for_with(out, strict())
+}
+fn part_for_with(out: &Path, strict: bool) -> Result<(PathBuf, File), String> {
+    if !strict {
+        let part = with_suffix(out, ".part");
+        let file = File::create(&part).map_err(es)?;
+        return Ok((part, file));
+    }
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = out.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+    loop {
+        let part = dir.join(format!(".kt{}-{}.part", std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
+        match OpenOptions::new().write(true).create_new(true).open(&part) {
+            Ok(f) => return Ok((part, f)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(es(e)),
+        }
+    }
+}
+/// The CRC of a file as it now is on the disk (the stricter rules' read-back).
+fn crc_of_file(p: &Path) -> Option<u32> {
+    let mut f = File::open(p).ok()?;
+    let mut buf = vec![0u8; 1 << 20];
+    let mut c = 0xffff_ffffu32;
+    loop {
+        let n = f.read(&mut buf).ok()?;
+        if n == 0 {
+            return Some(c ^ 0xffff_ffff);
+        }
+        c = crc_update(c, &buf[..n]);
+    }
+}
+
+/// archive.cjs's writeEntry: into a part file, checked, then put in place of `out`.
 fn write_entry(f: &mut File, it: &ZipItem, out: &Path, ctx: &Ctx, pr: &Pr, done: &mut u64, total: u64) -> Result<(), String> {
-    let part = with_suffix(out, ".part");
-    let file = File::create(&part).map_err(es)?;
+    let (part, file) = part_for(out)?;
     let r = decode_entry(f, it, BufWriter::new(file), ctx, pr, done, total);
     if let Err(e) = r {
         let _ = fs::remove_file(&part);
@@ -680,6 +805,29 @@ fn extract_zip(file: &Path, dest: &Path, replace: &str, only: Option<&[String]>,
     Ok(n)
 }
 
+/// The first entry whose bytes run into the next one's (two entries overlapping: a reader that follows the directory
+/// and one that follows the local headers see two archives; cutting one would cut the other), or whose local header is
+/// not where the directory says — None when every entry stands alone (inplace.cjs zipUnits' «layout» check).
+pub fn zip_overlap(f: &mut File, ix: &ZipIndex) -> Result<Option<String>, String> {
+    let mut items: Vec<&ZipItem> = ix.items.iter().collect();
+    items.sort_by_key(|x| x.offset);
+    for (i, it) in items.iter().enumerate() {
+        let next = if i + 1 < items.len() { items[i + 1].offset } else { ix.cd_start };
+        let start = match data_start(f, it) {
+            Ok(s) => s,
+            Err(_) => return Ok(Some(it.name.clone())),
+        };
+        if start.saturating_add(it.csize) > next {
+            return Ok(Some(it.name.clone()));
+        }
+    }
+    Ok(None)
+}
+/// A tar entry never made on a computer: a character or block device, a FIFO, a GNU sparse file.
+pub fn special_tar_kind(k: char) -> bool {
+    matches!(k, '3' | '4' | '6' | 'S')
+}
+
 const BATCH_BYTES: u64 = 512 * 1024 * 1024;
 const BATCH_COUNT: usize = 64;
 const KEEP_FREE: u64 = 64 * 1024 * 1024;
@@ -691,6 +839,9 @@ fn sync_file(p: &Path) {
 }
 
 fn zip_in_place(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    zip_in_place_with(file, dest, o, ctx, pr, strict())
+}
+fn zip_in_place_with(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr, strict: bool) -> Result<u64, String> {
     let journal = journal_of(file);
     let tail = tail_of(file);
     let mut f = OpenOptions::new().read(true).write(true).open(file).map_err(es)?;
@@ -709,6 +860,12 @@ fn zip_in_place(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -
         ix = t;
     } else {
         let t = read_zip(&mut Src::open(file, 0)?)?;
+        // (The stricter rules: overlapping entries refused before the tail and the journal are written.)
+        if strict {
+            if let Some(name) = zip_overlap(&mut f, &t)? {
+                return Err(format!("overlappingEntries {}", name));
+            }
+        }
         committed = t.length;
         tail_base = t.cd_start;
         let mut cd = vec![0u8; (t.length - t.cd_start) as usize];
@@ -740,6 +897,7 @@ fn zip_in_place(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -
             return Err("noSpace".to_string());
         }
         let mut written: Vec<PathBuf> = Vec::new();
+        let mut crcs: Vec<u32> = Vec::new();
         for it in items[i..end].iter() {
             if it.dir {
                 fs::create_dir_all(safe_join(dest, &it.name)?).map_err(es)?;
@@ -755,10 +913,19 @@ fn zip_in_place(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -
             pr.tell(done, total, &it.name);
             write_entry(&mut f, it, &out, ctx, pr, &mut done, total)?;
             written.push(out);
+            crcs.push(it.crc);
             n += 1;
         }
         for w in written.iter() {
             sync_file(w);
+        }
+        // (The stricter rules: each file read back and its CRC compared before the archive is cut.)
+        if strict {
+            for (w, c) in written.iter().zip(crcs.iter()) {
+                if crc_of_file(w) != Some(*c) {
+                    return Err(format!("readBack {}", w.to_string_lossy()));
+                }
+            }
         }
         committed = items[end - 1].offset;
         write_atomic(&journal, &zip_journal(committed, dest, ix.length, tail_base))?;
@@ -868,8 +1035,19 @@ pub fn scan_tar(f: &mut File) -> Result<Vec<TarItem>, String> {
 }
 
 fn tar_in_place(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    tar_in_place_with(file, dest, o, ctx, pr, strict())
+}
+fn tar_in_place_with(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr, strict: bool) -> Result<u64, String> {
     let journal = journal_of(file);
     let mut f = OpenOptions::new().read(true).write(true).open(file).map_err(es)?;
+    // (The stricter rules: a device, a FIFO or a sparse file refuses the job before the journal is written.)
+    if strict && !journal.exists() {
+        for it in scan_tar(&mut f)? {
+            if special_tar_kind(it.kind) {
+                return Err(format!("specialEntry {}", it.name));
+            }
+        }
+    }
     if journal.exists() {
         let j = fs::read_to_string(&journal).map_err(es)?;
         let c = json_num(&j, "committed").ok_or_else(|| "badJournal".to_string())?;
@@ -902,11 +1080,11 @@ fn tar_in_place(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -
             }
             if let Some(out) = target_for(dest, &it.name, &o.replace)? {
                 pr.tell(done, total, &it.name);
-                let part = with_suffix(&out, ".part");
+                let (part, mut w) = part_for(&out)?;
+                let mut crc = 0xffff_ffffu32;
                 let r = (|| -> Result<(), String> {
                     f.seek(SeekFrom::Start(it.data)).map_err(es)?;
                     let mut src = (&mut f).take(it.size);
-                    let mut w = File::create(&part).map_err(es)?;
                     let mut buf = vec![0u8; 1 << 16];
                     loop {
                         if pr.stopped() {
@@ -917,16 +1095,22 @@ fn tar_in_place(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -
                             break;
                         }
                         w.write_all(&buf[..k]).map_err(es)?;
+                        crc = crc_update(crc, &buf[..k]);
                     }
                     let _ = w.sync_all();
                     Ok(())
                 })();
+                drop(w);
                 if let Err(e) = r {
                     let _ = fs::remove_file(&part);
                     return Err(e);
                 }
                 let _ = fs::remove_file(&out);
                 fs::rename(&part, &out).map_err(es)?;
+                // (The stricter rules: read back and compared before the archive is cut.)
+                if strict && crc_of_file(&out) != Some(crc ^ 0xffff_ffff) {
+                    return Err(format!("readBack {}", it.name));
+                }
                 n += 1;
             }
         }
@@ -1287,19 +1471,27 @@ fn parent_dir(file: &Path) -> PathBuf {
 
 /// archive.cjs's list.
 pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, String> {
+    list_with(file, password, ctx, has_journal(file))
+}
+/// The archive itself listed as if no journal were beside it (Tools 0.21 P11 round four: a finished engine job's journal
+/// beside a new archive of the same name says nothing about it; `list` would read that job's saved tail).
+pub fn list_fresh(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, String> {
+    list_with(file, password, ctx, false)
+}
+fn list_with(file: &Path, password: Option<&str>, ctx: &Ctx, journal: bool) -> Result<ListInfo, String> {
     let mut entries: Vec<Entry> = Vec::new();
     let mut total = 0u64;
     let mut encrypted = false;
     let mut bad_link: Option<String> = None;
     let format: String;
-    if has_journal(file) && is_tar(file) {
+    if journal && is_tar(file) {
         format = "tar".to_string();
         let mut f = File::open(file).map_err(es)?;
         for it in scan_tar(&mut f)? {
             total += it.size;
             entries.push(Entry { path: it.name, size: it.size as i64, compressed: None, dir: it.kind == '5', mtime: None });
         }
-    } else if has_journal(file) {
+    } else if journal {
         format = "zip".to_string();
         let j = fs::read_to_string(journal_of(file)).map_err(es)?;
         let committed = json_num(&j, "committed").ok_or_else(|| "badJournal".to_string())?;
@@ -1388,10 +1580,16 @@ pub fn list(file: &Path, password: Option<&str>, ctx: &Ctx) -> Result<ListInfo, 
     if bad.is_none() {
         bad = bad_link;
     }
+    // (The stricter rules: a ZIP whose entries overlap is not offered in place.)
+    let overlap = strict() && format == "zip" && !has_journal(file) && {
+        let ix = read_zip(&mut Src::open(file, 0)?)?;
+        let mut f = File::open(file).map_err(es)?;
+        zip_overlap(&mut f, &ix)?.is_some()
+    };
     let sfv = sfv_of(file).and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()));
-    let resumable = has_journal(file);
+    let resumable = journal;
     Ok(ListInfo {
-        in_place_ok: (format == "zip" && !encrypted) || format == "tar",
+        in_place_ok: ((format == "zip" && !encrypted) || format == "tar") && !overlap,
         format,
         entries,
         total,
@@ -1422,6 +1620,17 @@ pub struct ExtractOpts {
 
 /// archive.cjs's extract → the files written.
 pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    extract_with(file, dest, o, ctx, pr, has_journal(file))
+}
+/// The archive extracted as if no journal were beside it (see list_fresh) — never in place: the journal's place is
+/// taken by another job's («refused oldJob», the pre-flight's reason), so nothing beside the archive is written over.
+pub fn extract_fresh(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    if o.in_place && o.only.is_none() {
+        return Err("refused oldJob".to_string());
+    }
+    extract_with(file, dest, o, ctx, pr, false)
+}
+fn extract_with(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr, journal: bool) -> Result<u64, String> {
     // (A partial extraction is never in place: main.cjs's `inPlace: !!o.inPlace && !o.only`.)
     let partial;
     let o = if o.only.is_some() && o.in_place {
@@ -1431,13 +1640,13 @@ pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) ->
         o
     };
     fs::create_dir_all(dest).map_err(es)?;
-    if has_journal(file) {
+    if journal {
         return if is_tar(file) { tar_in_place(file, dest, o, ctx, pr) } else { zip_in_place(file, dest, o, ctx, pr) };
     }
     let fmt = format_of(file)?;
     // HatchZip's rules before anything is touched: a hostile archive refused, an .sfv beside it checked, and with
     // «verify first» every checksum read before the archive is cut.
-    let info = list(file, o.password.as_deref(), ctx)?;
+    let info = list_with(file, o.password.as_deref(), ctx, journal)?;
     if let Some(u) = info.unsafe_path {
         return Err(format!("unsafePath {}", u));
     }
@@ -1493,6 +1702,9 @@ pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) ->
                 if unsafe_name(&it.name) {
                     return Err(format!("unsafePath {}", it.name));
                 }
+                if strict() && special_tar_kind(it.kind) {
+                    return Err(format!("specialEntry {}", it.name));
+                }
             }
             drop(f);
             let info2 = list(&inner, None, ctx)?;
@@ -1506,10 +1718,36 @@ pub fn extract(file: &Path, dest: &Path, o: &ExtractOpts, ctx: &Ctx, pr: &Pr) ->
     } else {
         n = extract_7z(file, dest, o, ctx, pr, (0, 100))?;
     }
+    // (The stricter rules: no setuid / setgid / sticky bit kept on what was taken out.)
+    if strict() {
+        strip_special_bits(dest, &info.entries);
+    }
     if o.delete_after && !o.in_place && !pr.stopped() {
         let _ = fs::remove_file(file);
     }
     Ok(n)
+}
+/// The setuid, setgid and sticky bits taken off the listed entries' outputs (7-Zip keeps a tar's modes on Linux and
+/// macOS); nothing else touched. (Windows has none.)
+fn strip_special_bits(dest: &Path, entries: &[Entry]) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for e in entries {
+            if let Ok(p) = safe_join(dest, &e.path) {
+                if let Ok(m) = fs::symlink_metadata(&p) {
+                    let mode = m.permissions().mode();
+                    if !m.file_type().is_symlink() && mode & 0o7000 != 0 {
+                        let _ = fs::set_permissions(&p, fs::Permissions::from_mode(mode & 0o777));
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dest, entries);
+    }
 }
 
 /* ---------- making a zip ---------- */
@@ -1635,6 +1873,75 @@ struct Central {
 /// archive.cjs's createZip: `inputs` (files, and folders taken whole under their own name) → `out` (made as
 /// `<out>.part`, then put in place) → the files in it.
 pub fn create_zip(out: &Path, inputs: &[PathBuf], ctx: &Ctx, pr: &Pr) -> Result<u64, String> {
+    let (n, total, part) = create_zip_in(out, inputs, ctx, pr, false)?;
+    let _ = fs::remove_file(out);
+    fs::rename(&part, out).map_err(es)?;
+    pr.tell(total, total, "");
+    Ok(n)
+}
+/// Tools' zip (0.21 P11): a name already there is never replaced unasked — `clash` is the user's answer: «replace» (the
+/// new archive put over the old in one rename: a crash leaves the one or the other, whole), «both» (the next free
+/// «name (2).zip»), «cancel» (nothing made: «cancelled»); none → «zipExists», nothing written. The archive is written
+/// to a part file made exclusively for this run; without «replace» it is put in place only where nothing is (a name
+/// taken meanwhile: the next free one with «both», else «zipExists»). → (files, the path it has).
+pub fn create_zip_clash(out: &Path, inputs: &[PathBuf], clash: Option<&str>, ctx: &Ctx, pr: &Pr) -> Result<(u64, PathBuf), String> {
+    let taken = |p: &Path| fs::symlink_metadata(p).is_ok();
+    let mut target = out.to_path_buf();
+    if taken(&target) {
+        match clash {
+            Some("replace") => {}
+            Some("both") => target = free_name_nofollow(out),
+            Some("cancel") => return Err("cancelled".to_string()),
+            _ => return Err("zipExists".to_string()),
+        }
+    }
+    let (n, total, part) = create_zip_in(&target, inputs, ctx, pr, true)?;
+    // (Flushed before it is put in place: a replace never leaves a name pointing at bytes not yet on the disk.)
+    if let Err(e) = OpenOptions::new().write(true).open(&part).and_then(|f| f.sync_all()) {
+        let _ = fs::remove_file(&part);
+        return Err(es(e));
+    }
+    let placed = (|| -> Result<PathBuf, String> {
+        if clash == Some("replace") {
+            fs::rename(&part, &target).map_err(es)?;
+            return Ok(target.clone());
+        }
+        let mut at = target.clone();
+        for _ in 0..1000 {
+            match fs::hard_link(&part, &at) {
+                Ok(()) => {
+                    let _ = fs::remove_file(&part);
+                    return Ok(at);
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                // (A disk without hard links: a rename after a check.)
+                Err(_) if !taken(&at) => {
+                    fs::rename(&part, &at).map_err(es)?;
+                    return Ok(at);
+                }
+                Err(_) => {}
+            }
+            if clash != Some("both") {
+                return Err("zipExists".to_string());
+            }
+            at = free_name_nofollow(&target);
+        }
+        Err("zipExists".to_string())
+    })();
+    match placed {
+        Ok(at) => {
+            pr.tell(total, total, "");
+            Ok((n, at))
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&part);
+            Err(e)
+        }
+    }
+}
+/// The zip written to a part file → (files, bytes read, the part's path); `tools`: the part made exclusively under a
+/// per-run name, else the Reader's `<out>.part`.
+fn create_zip_in(out: &Path, inputs: &[PathBuf], ctx: &Ctx, pr: &Pr, tools: bool) -> Result<(u64, u64, PathBuf), String> {
     let mut files: Vec<(PathBuf, String)> = Vec::new();
     for i in inputs {
         let md = fs::metadata(i).map_err(es)?;
@@ -1649,9 +1956,11 @@ pub fn create_zip(out: &Path, inputs: &[PathBuf], ctx: &Ctx, pr: &Pr) -> Result<
     for (f, _) in files.iter() {
         total += fs::metadata(f).map_err(es)?.len();
     }
-    let part = with_suffix(out, ".part");
-    let r = (|| -> Result<(), String> {
-        let mut w = Out { w: BufWriter::new(File::create(&part).map_err(es)?), pos: 0 };
+    let (part, pf) = part_for_with(out, tools)?;
+    let n_files = files.len() as u64;
+    let files = &files;
+    let r = (move || -> Result<(), String> {
+        let mut w = Out { w: BufWriter::new(pf), pos: 0 };
         let mut central: Vec<Central> = Vec::new();
         let mut done = 0u64;
         for (f, name) in files.iter() {
@@ -1735,10 +2044,7 @@ pub fn create_zip(out: &Path, inputs: &[PathBuf], ctx: &Ctx, pr: &Pr) -> Result<
         let _ = fs::remove_file(&part);
         return Err(e);
     }
-    let _ = fs::remove_file(out);
-    fs::rename(&part, out).map_err(es)?;
-    pr.tell(total, total, "");
-    Ok(files.len() as u64)
+    Ok((n_files, total, part))
 }
 
 /// The ZIP64 end record and its locator (when `z64`), then the end record.
@@ -2475,6 +2781,28 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
     }
 
+    /// Tools 0.21 P11 round four: an archive with another job's journal and tail beside it (a finished engine job's, of
+    /// an older archive of that name) listed and extracted as itself — never from that tail, never in place.
+    #[test]
+    fn fresh_ignores_a_journal_beside() {
+        let d = tmp("fresh");
+        let z = d.join("a.zip");
+        fs::write(&z, zip_store(&[("new.txt", b"new"), ("two.txt", b"22")])).unwrap();
+        fs::write(journal_of(&z), "{\"kt\":\"extract\",\"version\":2}\n00000000\n").unwrap();
+        fs::write(tail_of(&z), zip_store(&[("old.txt", b"old")])).unwrap();
+        let stop = AtomicBool::new(false);
+        let pr = Pr { on: &quiet, stop: &stop };
+        let l = list_fresh(&z, None, &ctx()).unwrap();
+        assert_eq!(l.entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["new.txt", "two.txt"]);
+        assert!(!l.resumable);
+        let o = ExtractOpts { replace: "replace".to_string(), ..Default::default() };
+        assert_eq!(extract_fresh(&z, &d.join("o"), &o, &ctx(), &pr).unwrap(), 2);
+        assert_eq!(fs::read(d.join("o").join("new.txt")).unwrap(), b"new");
+        assert_eq!(extract_fresh(&z, &d.join("o2"), &ExtractOpts { in_place: true, ..o.clone() }, &ctx(), &pr).unwrap_err(), "refused oldJob");
+        assert!(z.exists() && journal_of(&z).exists() && tail_of(&z).exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn sfv_checked_before_extracting() {
         let d = tmp("sfv");
@@ -2504,4 +2832,216 @@ mod tests {
         assert_eq!(pw_arg(Some("")), "-p");
         let _ = fs::remove_dir_all(&d);
     }
+
+    /// Tools' stricter rules (`tools_rules`), each tested through its `_with` / `format_by` form so the Reader's global
+    /// answers are never switched here: tests/archiveformat.cjs's vectors, its overlap regression, devices and FIFOs,
+    /// exclusive part files.
+    #[test]
+    fn tools_rules_formats() {
+        let d = tmp("strict-fmt");
+        // (The stand-in decompressor: what «<file>.inside» holds; none — it cannot look.)
+        let peek = |p: &Path, _k: &str| fs::read(with_suffix(p, ".inside")).ok().map(|b| b[..b.len().min(512)].to_vec());
+        let tar_head = |name: &str, size: usize, magic: bool| {
+            let mut h = vec![0u8; 512];
+            h[..name.len()].copy_from_slice(name.as_bytes());
+            h[100..108].copy_from_slice(b"0000644\0");
+            h[124..136].copy_from_slice(format!("{:011o}\0", size).as_bytes());
+            for b in &mut h[148..156] {
+                *b = 32;
+            }
+            h[156] = b'0';
+            if magic {
+                h[257..265].copy_from_slice(b"ustar\x0000");
+            }
+            let sum: u32 = h.iter().map(|&v| v as u32).sum();
+            h[148..156].copy_from_slice(format!("{:06o}\0 ", sum).as_bytes());
+            h
+        };
+        let tar = |magic: bool| {
+            let mut t = tar_head("a.txt", 5, magic);
+            let mut body = b"hello".to_vec();
+            body.resize(512, 0);
+            t.extend(body);
+            t.extend(vec![0u8; 1024]);
+            t
+        };
+        let w = |n: &str, b: &[u8], inside: Option<&[u8]>| {
+            let p = d.join(n);
+            fs::write(&p, b).unwrap();
+            if let Some(x) = inside {
+                fs::write(with_suffix(&p, ".inside"), x).unwrap();
+            }
+            format_by(&p, true, Some(&peek)).unwrap_or_else(|e| if e == "notArchive" { "notArchive" } else { "error" })
+        };
+        assert_eq!(w("real.tar", &tar(true), None), "tar", "a real tar named .tar");
+        assert_eq!(w("v7.tar", &tar(false), None), "tar", "an old (v7) tar, no magic, valid checksum");
+        assert_eq!(w("fake.tar", "this is only a text file\n".repeat(40).as_bytes(), None), "notArchive");
+        assert_eq!(w("tiny.tar", b"x", None), "notArchive");
+        assert_eq!(w("noext.bin", &tar(true), None), "tar", "a tar under another name");
+        assert_eq!(w("empty.tar", &[0u8; 10240], None), "tar", "an empty tar");
+        let rnd: Vec<u8> = (0..2048u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+        assert_eq!(w("rnd.tar", &rnd, None), "notArchive");
+        let gz = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0];
+        assert_eq!(w("t.tar.gz", &gz, Some(&tar(true))), "tar.gz");
+        assert_eq!(w("t.tgz", &gz, Some(&tar(true))), "tar.gz");
+        assert_eq!(w("p.tar.gz", &gz, Some("words ".repeat(500).as_bytes())), "gz", "gzip of plain text named .tar.gz");
+        assert_eq!(w("q.tgz", &gz, Some(b"hello")), "gz");
+        assert_eq!(w("plain.gz", &gz, Some(&tar(true))), "gz", "a plain .gz name does not claim a tar");
+        assert_eq!(w("bad.tar.gz", &gz, None), "tar.gz", "nothing to look at: the name's word stands");
+        let xz = [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0, 0, 0];
+        let bz = *b"BZh91AY&";
+        assert_eq!(w("x.tar.xz", &xz, Some(&tar(true))), "tar.xz");
+        assert_eq!(w("x.txz", &xz, Some(&tar(true))), "tar.xz");
+        assert_eq!(w("x.tar.bz2", &bz, Some(&tar(true))), "tar.bz2");
+        assert_eq!(w("y.tar.xz", &xz, Some(b"just some words\n")), "xz");
+        assert_eq!(w("y.tbz2", &bz, Some(b"just some words\n")), "bz2");
+        assert_eq!(w("z.xz", &xz, Some(&tar(true))), "xz");
+        assert_eq!(w("z.bz2", &bz, Some(&tar(true))), "bz2");
+        assert_eq!(w("n.tar.xz", &xz, None), "tar.xz");
+        assert_eq!(w("a.dat", b"PK\x03\x04\0\0\0\0", None), "zip");
+        assert_eq!(w("b.dat", &[0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0, 4], None), "7z");
+        assert_eq!(w("c.dat", b"Rar!\x1a\x07\0\0", None), "rar");
+        // (Off — the Reader's — the name still decides.)
+        assert_eq!(format_by(&d.join("fake.tar"), false, None).unwrap(), "tar");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn tools_rules_in_place_refusals() {
+        let d = tmp("strict-ip");
+        // tests/archiveformat.cjs's regression: the first entry's data holds the second one's header and data.
+        let lh = |name: &str, data: &[u8]| {
+            let mut h = vec![0x50, 0x4b, 3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            h.extend_from_slice(&crc32(data).to_le_bytes());
+            h.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            h.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            h.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            h.extend_from_slice(&[0, 0]);
+            h.extend_from_slice(name.as_bytes());
+            h
+        };
+        let cd = |name: &str, data: &[u8], off: u32| {
+            let mut h = vec![0x50, 0x4b, 1, 2, 20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            h.extend_from_slice(&crc32(data).to_le_bytes());
+            h.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            h.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            h.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            h.extend_from_slice(&[0u8; 12]);
+            h.extend_from_slice(&off.to_le_bytes());
+            h.extend_from_slice(name.as_bytes());
+            h
+        };
+        let mk = |overlap: bool| {
+            let b = b"BBBB".to_vec();
+            let bh = lh("b.txt", &b);
+            let adata: Vec<u8> = if overlap { [bh.clone(), b.clone()].concat() } else { b"AAAAAAAAAA".to_vec() };
+            let ah = lh("a.bin", &adata);
+            let boff = if overlap { ah.len() } else { ah.len() + adata.len() } as u32;
+            let body: Vec<u8> = if overlap { [ah.clone(), adata.clone()].concat() } else { [ah.clone(), adata.clone(), bh.clone(), b.clone()].concat() };
+            let c = [cd("a.bin", &adata, 0), cd("b.txt", &b, boff)].concat();
+            let mut e = vec![0x50, 0x4b, 5, 6, 0, 0, 0, 0, 2, 0, 2, 0];
+            e.extend_from_slice(&(c.len() as u32).to_le_bytes());
+            e.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            e.extend_from_slice(&[0, 0]);
+            [body, c, e].concat()
+        };
+        for (overlap, want) in [(true, Some("a.bin".to_string())), (false, None)] {
+            let z = d.join(format!("o{}.zip", overlap));
+            fs::write(&z, mk(overlap)).unwrap();
+            let ix = read_zip(&mut Src::open(&z, 0).unwrap()).unwrap();
+            assert_eq!(zip_overlap(&mut File::open(&z).unwrap(), &ix).unwrap(), want);
+        }
+        let z = d.join("otrue.zip");
+        let before = fs::read(&z).unwrap();
+        let stop = AtomicBool::new(false);
+        let pr = Pr { on: &quiet, stop: &stop };
+        let o = ExtractOpts { in_place: true, replace: "replace".to_string(), ..Default::default() };
+        let e = zip_in_place_with(&z, &d.join("out"), &o, &ctx(), &pr, true).unwrap_err();
+        assert!(e.starts_with("overlappingEntries a.bin"), "{}", e);
+        assert!(fs::read(&z).unwrap() == before && !journal_of(&z).exists() && !tail_of(&z).exists());
+        // a FIFO, a device, a sparse file: refused before the journal is written
+        for k in [b'6', b'3', b'4', b'S'] {
+            let t = d.join(format!("s{}.tar", k as char));
+            fs::write(&t, tar_of(&[("a.txt", b"hello", b'0', ""), ("odd", b"", k, ""), ("z.txt", b"zz", b'0', "")])).unwrap();
+            let before = fs::read(&t).unwrap();
+            let e = tar_in_place_with(&t, &d.join("tout"), &o, &ctx(), &pr, true).unwrap_err();
+            assert_eq!(e, "specialEntry odd");
+            assert!(fs::read(&t).unwrap() == before && !journal_of(&t).exists());
+        }
+        // and a plain tar still goes, read back before each cut
+        let t = d.join("plain.tar");
+        fs::write(&t, tar_of(&[("a.txt", b"hello", b'0', ""), ("z.txt", b"zz", b'0', "")])).unwrap();
+        assert_eq!(tar_in_place_with(&t, &d.join("pout"), &o, &ctx(), &pr, true).unwrap(), 2);
+        assert!(!t.exists() && fs::read(d.join("pout/z.txt")).unwrap() == b"zz");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tools_rules_part_files() {
+        let d = tmp("strict-part");
+        let elsewhere = d.join("elsewhere.txt");
+        fs::write(&elsewhere, b"keep me").unwrap();
+        let out = d.join("a.txt");
+        // A link planted where the Reader's part file would go is never written through: the part is made exclusively
+        // under another name.
+        std::os::unix::fs::symlink(&elsewhere, with_suffix(&out, ".part")).unwrap();
+        let (p1, mut f1) = part_for_with(&out, true).unwrap();
+        let (p2, _f2) = part_for_with(&out, true).unwrap();
+        f1.write_all(b"new").unwrap();
+        assert!(p1 != p2 && p1 != with_suffix(&out, ".part") && p1.parent() == out.parent());
+        assert_eq!(fs::read(&elsewhere).unwrap(), b"keep me");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+
+    /// Tools' zip creation never replaces an archive unasked: no answer → «zipExists», cancel → nothing, keep both → the
+    /// next free name, replace → put over the old in one rename; no part file left either way.
+    #[test]
+    fn zip_clash_policy() {
+        let d = tmp("clash");
+        let src = d.join("in.txt");
+        fs::write(&src, b"fresh contents").unwrap();
+        let out = d.join("a.zip");
+        fs::write(&out, b"the old archive").unwrap();
+        let stop = AtomicBool::new(false);
+        let pr = Pr { on: &quiet, stop: &stop };
+        let inputs = vec![src.clone()];
+        assert_eq!(create_zip_clash(&out, &inputs, None, &ctx(), &pr).unwrap_err(), "zipExists");
+        assert_eq!(create_zip_clash(&out, &inputs, Some("ask"), &ctx(), &pr).unwrap_err(), "zipExists");
+        assert_eq!(create_zip_clash(&out, &inputs, Some("cancel"), &ctx(), &pr).unwrap_err(), "cancelled");
+        assert_eq!(fs::read(&out).unwrap(), b"the old archive");
+        let (n, at) = create_zip_clash(&out, &inputs, Some("both"), &ctx(), &pr).unwrap();
+        assert_eq!((n, at.clone()), (1, d.join("a (2).zip")));
+        assert_eq!(fs::read(&out).unwrap(), b"the old archive");
+        assert_eq!(read_zip(&mut Src::open(&at, 0).unwrap()).unwrap().items[0].name, "in.txt");
+        let (_, at2) = create_zip_clash(&out, &inputs, Some("replace"), &ctx(), &pr).unwrap();
+        assert_eq!(at2, out);
+        assert_eq!(read_zip(&mut Src::open(&out, 0).unwrap()).unwrap().items[0].name, "in.txt");
+        let fresh = d.join("new.zip");
+        assert_eq!(create_zip_clash(&fresh, &inputs, None, &ctx(), &pr).unwrap().1, fresh);
+        let parts: Vec<String> = fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".part")).collect();
+        assert!(parts.is_empty(), "{:?}", parts);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+
+    /// A dangling link where «a (2).zip» would go is a taken name: keep both goes on to «a (3).zip», never loops.
+    #[cfg(unix)]
+    #[test]
+    fn zip_clash_dangling_link() {
+        let d = tmp("clash-link");
+        let src = d.join("in.txt");
+        fs::write(&src, b"x").unwrap();
+        let out = d.join("a.zip");
+        fs::write(&out, b"old").unwrap();
+        std::os::unix::fs::symlink(d.join("nowhere"), d.join("a (2).zip")).unwrap();
+        let stop = AtomicBool::new(false);
+        let pr = Pr { on: &quiet, stop: &stop };
+        let (_, at) = create_zip_clash(&out, &[src], Some("both"), &ctx(), &pr).unwrap();
+        assert_eq!(at, d.join("a (3).zip"));
+        assert!(!d.join("nowhere").exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
 }

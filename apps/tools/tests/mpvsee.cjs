@@ -50,5 +50,13 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.waitForTimeout(4500); const without = await measure('playing'); console.log('clear while playing:', (without * 100).toFixed(1) + '%');
   check('mpv\'s picture shows through the page while it plays', without > 0.97);
   check('and mostly with the controls shown', withControls > 0.6);
+  // (CI, 0.21 P8 round 5: the health check read mpv's still-empty track list as «no audio track», and its notice covered
+  // the top of the picture. Until mpv tells its list nothing is said; once it does, a list with no audio is said.)
+  const shown = () => p.evaluate(() => { const n = document.querySelector('.kt-notice'); return n && !n.hidden ? n.textContent : ''; });
+  for (const at of [30, 40, 50]) { await p.evaluate((t) => window.__emit('mpv', { prop: 'time-pos', value: t }), at); await p.waitForTimeout(260); }
+  check('mpv playing, its track list not told yet: no «no audio» notice', !(await shown()));
+  await p.evaluate(() => window.__emit('mpv', { prop: 'track-list', value: JSON.stringify([{ id: 1, type: 'video', selected: true }]) }));
+  for (const at of [60, 70]) { await p.evaluate((t) => window.__emit('mpv', { prop: 'time-pos', value: t }), at); await p.waitForTimeout(260); }
+  check('…its list told, with no audio track: said', /audio/i.test(await shown()));
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : 'all passed'); await br.close(); web.close(); process.exit(errors.length ? 1 : 0);
 })();

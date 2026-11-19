@@ -6,6 +6,11 @@
 //     the contrast warning and «Fix contrast»; Back with unsaved changes (Keep editing / Discard); save → «My themes»,
 //     in use, still there after a reload; duplicate, rename, delete with Undo, delete for good; a picture background
 //     kept and shown offline; export → import gives the same theme; a malicious file refused; Reset appearance + Undo.
+//  4. (0.21, the editor's extras) accent and second accent, progress colour, surface tint and strength, spacing, size,
+//     light/dark/auto each change the right token live; a yellow pick is moved out of the band with a note; colours per
+//     background on a computer and none of that on a phone; «reset all»; the contrast corrected on save; the import caps
+//     (fields the format lacks dropped, numbers clamped, colours strict, names cleaned and cut, too many backgrounds,
+//     hostile values refused); export → import keeps every extra; the editor opened and closed leaves no listener behind.
 // Only loopback and made-up data; no fixed waits.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
 const esbuild = require(path.join(__dirname, '..', 'node_modules', 'esbuild'));
@@ -30,16 +35,25 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
   const C = bundle('custom'); const P = bundle('packs');
   const good = { v: 1, id: 'my-abc123', name: 'Mine', base: 'frost', radius: 1, accent: 'app', at: 1, dark: { surfaces: { ground: '#0a0b0d', lowest: '#070809', low: '#111316', mid: '#15171b', high: '#1c1f24', highest: '#24282e' }, text: { on: '#e2e4e8', variant: '#b4b8bf', dim: '#8f949c', outline: '#7d828a', outlineVariant: '#2c3036' }, roles: null, tint: '#111316', strength: 0.66, blur: 28, sat: 1.35, edge: 0.07, sheen: 0.05, shadow: 0.7, bg: { kind: 'mesh', colors: ['#2b3540', '#3a3e45', '#2e3237'], solid: '#0a0b0d', veil: 0.2, picBlur: 0 } } };
   const J = (x) => JSON.parse(JSON.stringify(x));
+  const pack = async (theme, assets = []) => { const p = await P.buildPack({ format: 1, id: 'x', name: 'x', version: '1', tokens: { kurokawaMyTheme: 1, theme } }, assets); return p; };
   const refused = (mut) => { const x = J(good); mut(x); try { C.sanitise(x); return false; } catch (e) { return e instanceof C.ThemeFileError; } };
   ok('a well-formed theme passes, and is rebuilt only from colours and numbers', (() => { const s = C.sanitise(J(good)); const def = C.toDef(s); return s.name === 'Mine' && /radial-gradient\(90% 48%/.test(def.dark.bg) && !/url\(/.test(def.dark.bg); })());
   ok('refused: a colour carrying CSS («red; background: url(…)»)', refused((x) => { x.dark.tint = 'red; background: url(https://x/y.png)'; }));
   ok('refused: url() in a background colour', refused((x) => { x.dark.bg.colors[0] = 'url(javascript:alert(1))'; }));
-  ok('refused: a raw CSS field the format does not have', refused((x) => { x.dark.bg.css = 'linear-gradient(red, blue)'; }));
-  ok('refused: an unknown top-level field', refused((x) => { x.style = '* { display: none }'; }));
+  ok('dropped: a raw CSS field the format does not have, and an unknown top-level field — never kept, never used', (() => { const x = J(good); x.dark.bg.css = 'linear-gradient(red, blue)'; x.style = '* { display: none }'; x.dark.onload = 'alert(1)'; const y = C.sanitise(x); const out = JSON.stringify(y) + JSON.stringify(C.toDef(y)); return !/css|style|onload|alert|display/.test(out); })());
+  /* 2b. (0.21) the extras through the sanitiser */
+  const extra = (() => { const x = J(good); Object.assign(x.dark, { accent: '#3a8fd9', accent2: '#c0136f', surfTint: '#3a8fd9', surfMix: 0.12, progress: '#22d3ee' }); x.density = 'compact'; x.scale = 1.1; x.perBg = [{ bg: 'scene:night-snowfall', accent: '#5b7cf0', dark: { primary: '#5b7cf0', onPrimary: '#0b1020', primaryContainer: '#1f2a4a', onPrimaryContainer: '#e0e6ff', secondaryContainer: '#22283a', onSecondaryContainer: '#e3e6ef', tertiaryContainer: '#3a2440', onTertiaryContainer: '#f3e0f6' } }]; return x; })();
+  ok('extras kept: accents, surface tint and strength, progress, spacing, size, colours per background — and built into the tokens', (() => { const y = C.sanitise(J(extra)); const d = C.toDef(y); return y.dark.accent === '#3a8fd9' && y.dark.surfMix === 0.12 && y.density === 'compact' && y.scale === 1.1 && y.perBg.length === 1 && d.density === 'compact' && d.scale === 1.1 && d.dark.progress === '#22d3ee' && d.perBg['scene:night-snowfall'].dark.primary === '#5b7cf0'; })());
+  ok('held: size and tint strength brought into their ranges', (() => { const x = J(extra); x.scale = 99; x.dark.surfMix = -5; const y = C.sanitise(x); return y.scale === 1.25 && y.dark.surfMix === 0; })());
+  ok('refused: more than 12 backgrounds, a background id with a path or markup, a role that is not a colour, a spacing not in the list', refused((x) => { x.perBg = Array.from({ length: 13 }, (_, i) => ({ bg: `drift${i}`, accent: '#123456' })); })
+    && refused((x) => { x.perBg = [{ bg: '../../etc', accent: '#123456' }]; }) && refused((x) => { x.perBg = [{ bg: '<script>', accent: '#123456' }]; })
+    && refused((x) => { x.perBg = [{ bg: 'drift', accent: '#123456', dark: { ...extra.perBg[0].dark, primary: 'expression(alert(1))' } }]; }) && refused((x) => { x.density = 'tiny'; }) && refused((x) => { x.dark.accent = 'javascript:alert(1)'; }));
+  ok('names cleaned and cut: direction overrides and markup dropped, at most 60 characters', (() => { const x = J(good); x.name = '\u202eevil\u202c <b>' + 'x'.repeat(200); const y = C.sanitise(x); return !/[\u202e\u202c<>]/.test(y.name) && [...y.name].length <= 60; })());
+  ok('refused: a huge name list or a number where an object belongs (wrong types)', refused((x) => { x.dark = 5; }) && refused((x) => { x.dark.surfaces = 'red'; }) && refused((x) => { x.perBg = { bg: 'drift' }; }));
+  ok('export → import keeps every extra (a pack round trip, data only)', await (async () => { const p = await pack(J(extra)); const { my } = await C.importTheme(p); const a = J(C.sanitise(J(extra))); delete a.id; delete a.at; const b = J(my); delete b.id; delete b.at; return JSON.stringify(a) === JSON.stringify(b); })());
   ok('refused: a wrong version, a missing mode, a bad id, a kind not in the list', refused((x) => { x.v = 2; }) && refused((x) => { delete x.dark; }) && refused((x) => { x.id = '../../x'; }) && refused((x) => { x.dark.bg.kind = 'css'; }));
   ok('refused: a number that is not a number (string, NaN, Infinity)', refused((x) => { x.dark.blur = '28px'; }) && refused((x) => { x.dark.sat = NaN; }) && refused((x) => { x.radius = Infinity; }));
   ok('held: numbers outside their ranges are brought into them; names lose markup and control characters', (() => { const x = J(good); x.dark.blur = 9999; x.dark.strength = -3; x.name = '<img src=x onerror=alert(1)>Bad\u0007name'; const s = C.sanitise(x); return s.dark.blur === 48 && s.dark.strength === 0 && !/[<>\u0007]/.test(s.name); })());
-  const pack = async (theme, assets = []) => { const p = await P.buildPack({ format: 1, id: 'x', name: 'x', version: '1', tokens: { kurokawaMyTheme: 1, theme } }, assets); return p; };
   const imp = async (bytes) => { try { await C.importTheme(bytes); return 'accepted'; } catch (e) { return e instanceof C.ThemeFileError ? e.code : `other: ${e.message}`; } };
   ok('import refuses: injected CSS in a file', (await imp(await pack((() => { const x = J(good); x.dark.tint = 'url(x)'; return x; })()))) === 'value');
   ok('import refuses: a file that is not a theme pack, and a pack whose header is not a theme', (await imp(new TextEncoder().encode('hello'))) === 'format' && (await imp(await P.buildPack({ format: 1, id: 'x', name: 'x', version: '1', tokens: { something: 1 } }, []))) === 'schema');
@@ -58,11 +72,11 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
     const ctx = await br.newContext({ viewport: { width: o.width, height: o.height }, isMobile: !!o.isMobile, hasTouch: !!o.hasTouch, locale: lang, serviceWorkers: 'block', acceptDownloads: true, colorScheme: 'dark' }); // (A dark system: the default mode follows it.)
     const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(`${lang}: ${e.message}`));
     let offline = false; await ctx.route(/raw\.githubusercontent\.com/, (r) => (offline ? r.abort('internetdisconnected') : r.fulfill({ status: 404, body: '' })));
-    await p.addInitScript((l) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player'], theme: 'frost', themeChosen: true, glassBlur: 'full' })); localStorage.setItem('kt.themeMigrated', '1'); }, lang);
+    await p.addInitScript((l) => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); localStorage.setItem('kr.lang', l); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player'], theme: 'frost', themeChosen: true, glassBlur: 'full', animBg: 'drift', animBgLevel: 'still' })); localStorage.setItem('kt.themeMigrated', '1'); }, lang);
     const tag = `(${lang}, ${size})`;
     const css = (k) => p.evaluate((k) => getComputedStyle(document.documentElement).getPropertyValue(k).trim(), k);
     const gallery = async () => { await p.goto(`http://127.0.0.1:${port}/#/settings/appearance`); await p.waitForSelector('.tg-card[data-theme="frost"] .tg-edit'); };
-    const slide = (label, v, end = true) => p.evaluate(([i, v, end]) => { const r = document.querySelectorAll('.te-slider input')[i]; r.value = String(v); r.dispatchEvent(new Event('input', { bubbles: true })); if (end) r.dispatchEvent(new Event('change', { bubbles: true })); }, [label, v, end]);
+    const slide = (label, v, end = true) => p.evaluate(([i, v, end]) => { const r = document.querySelector(`.te-slider[data-path="${typeof i === 'number' ? ['strength', 'blur'][i] : i}"] input`); r.value = String(v); r.dispatchEvent(new Event('input', { bubbles: true })); if (end) r.dispatchEvent(new Event('change', { bubbles: true })); }, [label, v, end]);
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
     await gallery(); await p.click('.tg-card[data-theme="frost"] .tg-edit'); await p.waitForSelector('.te-panel');
@@ -97,6 +111,46 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
     ok(`«Keep editing» leaves the editor open ${tag}`, !!(await p.$('.te-panel')) && !(await p.$('.sheet .te-choice')));
     await back(); await p.waitForSelector('.sheet .te-choice'); await p.click('.sheet .te-choice >> nth=1'); await p.waitForSelector('.te-panel', { state: 'detached' });
     ok(`«Discard» closes it and the chosen theme is back ${tag}`, (await p.evaluate(() => document.documentElement.dataset.theme)) === 'frost' && (await css('--g-blur')) === blur0);
+    /* 4. the extras, live */
+    const listeners = async () => { const cdp = await ctx.newCDPSession(p); const { result } = await cdp.send('Runtime.evaluate', { expression: 'window' }); const w = await cdp.send('DOMDebugger.getEventListeners', { objectId: result.objectId }); const { result: d } = await cdp.send('Runtime.evaluate', { expression: 'document' }); const dl = await cdp.send('DOMDebugger.getEventListeners', { objectId: d.objectId }); await cdp.detach(); return w.listeners.length + dl.listeners.length; };
+    const lsn0 = await listeners();
+    for (let i = 0; i < 3; i++) { await p.click('.tg-card[data-theme="frost"] .tg-edit'); await p.waitForSelector('.te-panel'); await p.click('.te-foot .btn.text'); await p.waitForSelector('.te-panel', { state: 'detached' }); }
+    ok(`the editor opened and closed three times leaves no listener behind on window or document ${tag}`, (await listeners()) === lsn0, `${lsn0} → ${await listeners()}`);
+    await p.click('.tg-card[data-theme="frost"] .tg-edit'); await p.waitForSelector('.te-panel');
+    const pickColour = (path, v, sel = `.te-colour[data-path="${path}"] input`) => p.$eval(sel, (i, v) => { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); }, v);
+    const primary0 = await css('--md-primary');
+    await pickColour('accent', '#3a8fd9'); await frame();
+    ok(`accent: the picked colour is the accent, live, with its own containers ${tag}`, (await css('--md-primary')) === '#3a8fd9' && (await css('--md-primary-container')) !== '' && primary0 !== '#3a8fd9', await css('--md-primary'));
+    const tc0 = await css('--md-tertiary-container'); await pickColour('accent2', '#c0136f'); await frame();
+    ok(`second accent: the tertiary roles follow it ${tag}`, (await css('--md-tertiary-container')) !== tc0 && (await css('--md-primary')) === '#3a8fd9');
+    await pickColour('accent', '#e0b45c'); await frame();
+    const moved = await p.$eval('.te-colour[data-path="accent"] .te-hex', (e) => e.textContent);
+    ok(`a yellow pick is moved out of the yellow–orange band, with a short note ${tag}`, moved !== '#e0b45c' && (await css('--md-primary')) === moved && !!(await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((e) => /Yellow|الأصفر/.test(e.textContent)), null, { timeout: 5000 }).catch(() => null)), moved);
+    await pickColour('progress', '#22d3ee'); await frame();
+    ok(`progress lines: their own colour (--th-progress) ${tag}`, (await css('--th-progress')) === '#22d3ee');
+    const low0 = await css('--th-solid-low'); await pickColour('surfTint', '#5b7cf0'); await slide('surfMix', 0.3); await frame();
+    ok(`surface tint and its strength: the surfaces take the hue ${tag}`, (await css('--th-solid-low')) !== low0 && await p.$eval('.te-slider[data-path="surfMix"] output', (o) => /30/.test(o.textContent)));
+    await p.click('.te-segrow .te-seg >> nth=0 >> button >> nth=2'); await frame();
+    ok(`light / dark / as the app: «light» shows the theme light ${tag}`, (await p.evaluate(() => document.documentElement.dataset.ui)) === 'light');
+    await p.click('.te-segrow .te-seg >> nth=0 >> button >> nth=0'); await frame();
+    const densityBtn = p.locator('.te-segrow', { hasText: lang === 'ar' ? 'التباعد' : 'Spacing' }).locator('button >> nth=1');
+    await densityBtn.click(); await slide('scale', 1.1); await frame();
+    ok(`spacing compact and size 110 % (× the app's own) ${tag}`, (await p.evaluate(() => [document.documentElement.dataset.density, document.documentElement.style.zoom])).join() === 'compact,1.1');
+    const panelText = await p.$eval('.te-panel', (e) => e.textContent);
+    if (size === 'phone') ok(`phone: the subset — no colours per background, no moving backgrounds; spacing and size there ${tag}`, !(await p.$('.te-perbg-add, .te-perbg')) && !/With a background/.test(panelText) && !/Frost drift/.test(panelText) && !!(await p.$('.te-slider[data-path="scale"]')));
+    else {
+      await p.click('.te-perbg-add'); await p.waitForSelector('.te-perbg[data-bg="drift"]');
+      await pickColour('', '#8f7bff', '.te-perbg[data-bg="drift"] .te-swatch >> nth=0 >> input'); await frame();
+      ok(`computer: colours of the theme's own while «Frost drift» is the background, live; the count «${lang === 'ar' ? 'العدد: 1 من 12' : '1 of 12'}» ${tag}`, (await css('--md-primary')) === '#8f7bff' && /1/.test(await p.$eval('.te-count', (e) => e.textContent)), `${await css('--md-primary')} ${await p.$eval('.te-count', (e) => e.textContent)} ${await p.evaluate(() => document.documentElement.className)}`);
+    }
+    if (size === 'pc') await p.screenshot({ path: path.join(tmp, 'extras-pc.png') }); else await p.screenshot({ path: path.join(tmp, 'extras-phone.png') });
+    await p.click('.te-resetall .btn'); await frame();
+    ok(`«reset all» goes back to the theme's own values (accent, spacing, size) ${tag}`, (await css('--md-primary')) === primary0 && (await p.evaluate(() => [document.documentElement.dataset.density ?? '', document.documentElement.style.zoom])).join() === ',' && !(await p.$('.te-perbg')));
+    await p.click('.te-undo'); await frame();
+    ok(`…and it is one step to undo ${tag}`, (await p.evaluate(() => document.documentElement.dataset.density)) === 'compact');
+    await back(); await p.waitForSelector('.sheet .te-choice'); await p.click('.sheet .te-choice >> nth=1'); await p.waitForSelector('.te-panel', { state: 'detached' });
+    ok(`discarded: spacing, size and accent back as they were ${tag}`, (await p.evaluate(() => [document.documentElement.dataset.density ?? '', document.documentElement.style.zoom])).join() === ',' && (await css('--md-primary')) === primary0);
+
 
     // Save as my theme.
     await p.click('.tg-card[data-theme="frost"] .tg-edit'); await p.waitForSelector('.te-panel');
@@ -149,16 +203,25 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
     const [ch3] = await Promise.all([p.waitForEvent('filechooser'), p.click('.tg-mine-actions .btn.text')]); await ch3.setFiles(path.join(tmp, 'bad.ktheme'));
     await p.waitForSelector('.toast.error');
     ok(`a malicious theme file is refused with a message, nothing added ${tag}`, (await p.$$('.tg-card.mine')).length === 2);
+    // The contrast corrected on save: a white solid ground under thin glass, saved as it is.
+    await p.click('.tg-card[data-theme="frost"] .tg-edit'); await p.waitForSelector('.te-panel');
+    await p.click('.te-chips .chip >> nth=2'); await p.waitForSelector('.te-colour[data-path="bg.solid"] input');
+    await p.$eval('.te-colour[data-path="bg.solid"] input', (i) => { i.value = '#ffffff'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); });
+    await slide(0, 0.05); await frame(); await p.waitForSelector('.te-guard:not([hidden])');
+    await p.click('.te-foot .btn.filled'); await p.waitForSelector('.te-panel', { state: 'detached' });
+    const fixedSave = await p.evaluate(() => { const l = JSON.parse(localStorage.getItem('kt.myThemes')); return l[l.length - 1]; });
+    ok(`saved with text too faint: the contrast is corrected before it is kept, and a note says so ${tag}`, fixedSave.dark.strength > 0.05 && !!(await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((e) => /contrast|التباين/i.test(e.textContent)), null, { timeout: 5000 }).catch(() => null)), JSON.stringify(fixedSave.dark).slice(0, 120));
 
     // Reset appearance, with Undo.
+    const inUse = await p.evaluate(() => document.documentElement.dataset.theme);
     await p.locator('#appearance .row', { hasText: lang === 'ar' ? 'أعِد ضبط المظهر' : 'Reset appearance' }).locator('button').click();
     await p.waitForFunction(() => document.documentElement.dataset.theme === 'classic');
-    await p.click('.toast .toast-act'); await p.waitForFunction((id) => document.documentElement.dataset.theme === id, id1);
+    await p.click('.toast .toast-act'); await p.waitForFunction((id) => document.documentElement.dataset.theme === id, inUse);
     ok(`Reset appearance shows a snackbar; «Undo» puts the theme back ${tag}`, true);
     await ctx.close();
   }
   ok('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
-  if (process.env.KT_SHOTS) for (const f of ['mythemes.png', 'picture.png']) if (fs.existsSync(path.join(tmp, f))) fs.copyFileSync(path.join(tmp, f), path.join(process.env.KT_SHOTS, f));
+  if (process.env.KT_SHOTS) for (const f of ['mythemes.png', 'picture.png', 'extras-pc.png', 'extras-phone.png']) if (fs.existsSync(path.join(tmp, f))) fs.copyFileSync(path.join(tmp, f), path.join(process.env.KT_SHOTS, f));
   await br.close(); web.close(); fs.rmSync(tmp, { recursive: true, force: true });
   console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -52,6 +52,44 @@ struct Desk {
     last_down: f64,
     last_moving: usize,
     mini_was_min: bool,
+    /// Device battery's part of the tray (battery.rs, its background on): None leaves the icon to the downloads' setting.
+    battery: Option<BatTray>,
+    /// How many device icons («kt-bat-<n>») were made: those past the current list are hidden, kept for reuse.
+    dev_slots: usize,
+    /// What each device icon shows now (S1: the system's numbers change often — an icon unchanged is left alone).
+    dev_last: Vec<DevPic>,
+    /// The drawing the app's icon now carries (None: the app's own picture).
+    app_pic: Option<Pic>,
+}
+
+/// A drawn icon: straight RGBA, `px` square (kt-battery taskbar.rs).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pic {
+    pub rgba: Vec<u8>,
+    pub px: u32,
+}
+
+/// One device's own tray icon: its drawing and its hover text. (Piece S1: or one of the system's values — `sys` — whose
+/// left click does what the user chose, battery.rs's click.)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DevPic {
+    pub pic: Pic,
+    pub tip: String,
+    pub sys: bool,
+}
+
+/// Device battery's part of the tray: its menu's device lines (lowest first, at most six) and the tooltip's line.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BatTray {
+    pub lines: Vec<String>,
+    pub tip: String,
+    /// Piece 3: the Bluetooth devices' Connect / Disconnect lines (battery.rs keeps what each does).
+    pub bt: Vec<String>,
+    /// W1, the taskbar like the original: «one icon showing the lowest» — the app's icon carries this drawing.
+    pub app_icon: Option<Pic>,
+    /// «One icon per device»: each device's own icon (in the user's order); while there are any, the app's own icon
+    /// is hidden unless the downloads ask for it (every device icon carries the same menu).
+    pub icons: Vec<DevPic>,
 }
 
 static DESK: OnceLock<Mutex<Desk>> = OnceLock::new();
@@ -130,6 +168,8 @@ pub fn tray_possible() -> (bool, String) {
 }
 
 const TRAY_ID: &str = "kt-downloads";
+/// The app's own tray picture.
+const APP_PNG: &[u8] = include_bytes!("../../../desktop/icon.png");
 
 /// The tray icon once made (Tauri keeps it; looked up by its id rather than held here, so nothing of it crosses threads —
 /// every tray call is made on the main thread).
@@ -138,17 +178,156 @@ fn tray_icon(app: &AppHandle) -> Option<tauri::tray::TrayIcon<tauri::Wry>> {
 }
 
 fn tray_menu(app: &AppHandle, l: &Value) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
     let show = MenuItem::with_id(app, "kt-tray-show", word(l, "app", APP), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "kt-tray-quit", word(l, "quit", "Quit"), true, None::<&str>)?;
-    Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit])
+    let bat = desk().battery.clone();
+    let Some(bat) = bat else {
+        return Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit]);
+    };
+    // (Device battery's background on: its devices — each opens its page —, «Check now», «Open Device battery».)
+    let mut devs: Vec<MenuItem<tauri::Wry>> = Vec::new();
+    for (i, line) in bat.lines.iter().enumerate() {
+        devs.push(MenuItem::with_id(app, format!("kt-tray-bat-dev-{i}"), line, true, None::<&str>)?);
+    }
+    if devs.is_empty() {
+        devs.push(MenuItem::with_id(app, "kt-tray-bat-none", word(l, "batTrayNone", "No device found"), false, None::<&str>)?);
+    }
+    let mut bts: Vec<MenuItem<tauri::Wry>> = Vec::new();
+    for (i, line) in bat.bt.iter().enumerate() {
+        bts.push(MenuItem::with_id(app, format!("kt-tray-bt-{i}"), line, true, None::<&str>)?);
+    }
+    let check = MenuItem::with_id(app, "kt-tray-bat-check", word(l, "batTrayCheck", "Check now"), true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "kt-tray-bat-open", word(l, "batTrayOpen", "Open Device battery"), true, None::<&str>)?;
+    let (s1, s2, s3) = (PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?);
+    let s0 = PredefinedMenuItem::separator(app)?;
+    let mut items: Vec<&dyn IsMenuItem<tauri::Wry>> = devs.iter().map(|d| d as &dyn IsMenuItem<tauri::Wry>).collect();
+    if !bts.is_empty() {
+        items.push(&s0);
+        items.extend(bts.iter().map(|d| d as &dyn IsMenuItem<tauri::Wry>));
+    }
+    let rest: [&dyn IsMenuItem<tauri::Wry>; 7] = [&s1, &check, &open, &s2, &show, &s3, &quit];
+    items.extend(rest);
+    Menu::with_items(app, &items)
+}
+
+/// battery.rs: its part of the tray set (None: taken away). The menu is made again only when the lines changed.
+pub fn set_battery_tray(app: &AppHandle, b: Option<BatTray>) {
+    let menu_changed = {
+        let mut d = desk();
+        if d.battery == b {
+            return;
+        }
+        let m = d.battery.as_ref().map(|x| (&x.lines, &x.bt)) != b.as_ref().map(|x| (&x.lines, &x.bt)) || d.battery.is_some() != b.is_some();
+        d.battery = b;
+        m
+    };
+    let a2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if menu_changed {
+            let l = desk().labels.clone();
+            if let Some(t) = tray_icon(&a2) {
+                if let Ok(m) = tray_menu(&a2, &l) {
+                    let _ = t.set_menu(Some(m));
+                }
+            }
+            menus_again(&a2, &l);
+        }
+        // (The app's icon first — its menu handler serves every device icon's menu —, then the device icons, then the
+        // app's icon hidden or shown as they need.)
+        tray_update(&a2);
+        device_icons(&a2);
+        tray_update(&a2);
+    });
+}
+
+const DEV_PREFIX: &str = "kt-bat-";
+
+/// The device icons' menus made again (the words or the lines changed): the same menu as the app's icon.
+fn menus_again(app: &AppHandle, l: &Value) {
+    let n = desk().dev_slots;
+    for i in 0..n {
+        let id = format!("{DEV_PREFIX}{i}");
+        if let Some(t) = app.tray_by_id(id.as_str()) {
+            if let Ok(m) = tray_menu(app, l) {
+                let _ = t.set_menu(Some(m));
+            }
+        }
+    }
+}
+
+/// W1: one tray icon per device, the level drawn in it (kt-battery taskbar.rs), as the original's tray mode. Made once
+/// per place in the list and reused (its picture, hover text and visibility changed); those past the list hidden. A
+/// left click opens Device battery; the right click shows the same menu as the app's icon. Its menu's items are
+/// handled by the app icon's handler (Tauri's menu events reach every handler, so none is added here — it would act
+/// twice). Main thread only.
+fn device_icons(app: &AppHandle) {
+    use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+    let (icons, labels, slots, made, last) = {
+        let d = desk();
+        (d.battery.as_ref().map(|b| b.icons.clone()).unwrap_or_default(), d.labels.clone(), d.dev_slots, d.tray_on || tray_icon(app).is_some(), d.dev_last.clone())
+    };
+    // (Never before the app's icon — its handler serves these menus — and never where no tray can be made.)
+    let icons = if made && tray_possible().0 { icons } else { Vec::new() };
+    let mut have = slots;
+    for (i, ic) in icons.iter().enumerate() {
+        let id = format!("{DEV_PREFIX}{i}");
+        let img = || tauri::image::Image::new_owned(ic.pic.rgba.clone(), ic.pic.px, ic.pic.px);
+        if let Some(t) = app.tray_by_id(id.as_str()) {
+            let before = last.get(i);
+            if before.map(|b| &b.pic) != Some(&ic.pic) {
+                let _ = t.set_icon(Some(img()));
+            }
+            if before.map(|b| &b.tip) != Some(&ic.tip) {
+                let _ = t.set_tooltip(Some(ic.tip.clone()));
+            }
+            if before.is_none() {
+                let _ = t.set_visible(true);
+            }
+            continue;
+        }
+        let Ok(menu) = tray_menu(app, &labels) else { continue };
+        let b = TrayIconBuilder::with_id(id.as_str()).icon(img()).tooltip(ic.tip.clone()).menu(&menu).on_tray_icon_event(|tray, ev| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, .. } = ev {
+                // (The slot's present use: a device opens Device battery, a system value does what the user chose.)
+                let id: &str = tray.id().as_ref();
+                let sys = id.strip_prefix(DEV_PREFIX).and_then(|n| n.parse::<usize>().ok()).map_or(false, |i| desk().battery.as_ref().and_then(|b| b.icons.get(i)).map_or(false, |x| x.sys));
+                crate::battery::click(tray.app_handle(), sys);
+            }
+        });
+        #[cfg(kt_tray_left)]
+        let b = b.show_menu_on_left_click(false);
+        #[cfg(all(kt_tray_left_old, not(kt_tray_left)))]
+        let b = b.menu_on_left_click(false);
+        if b.build(app).is_ok() {
+            have = have.max(i + 1);
+        } else {
+            break;
+        }
+    }
+    for i in icons.len()..have {
+        if let Some(t) = app.tray_by_id(format!("{DEV_PREFIX}{i}").as_str()) {
+            let _ = t.set_visible(false);
+        }
+    }
+    let mut d = desk();
+    d.dev_slots = have;
+    d.dev_last = icons;
+}
+
+/// Whether the tray icon is there now (battery.rs: closing to the tray only then).
+pub fn tray_is_on() -> bool {
+    desk().tray_on
 }
 
 /// main.cjs's trayUpdate: the icon made (once) or hidden; its tooltip the speed over every moving download.
 fn tray_update(app: &AppHandle) {
-    let (on, labels, moving, down) = {
+    let (on, shown, labels, moving, down, bat_tip, pic, pic_now) = {
         let d = desk();
-        (d.prefs.tray, d.labels.clone(), d.last_moving, d.last_down)
+        // (Shown for the downloads' own setting, or while device battery keeps running in the background — hidden, but
+        // there, while each device has its own icon and the downloads do not ask for it.)
+        let own = d.battery.as_ref().map_or(false, |b| !b.icons.is_empty() && d.dev_slots > 0);
+        (d.prefs.tray || d.battery.is_some(), d.prefs.tray || !own, d.labels.clone(), d.last_moving, d.last_down, d.battery.as_ref().map(|b| b.tip.clone()).unwrap_or_default(), d.battery.as_ref().and_then(|b| b.app_icon.clone()), d.app_pic.clone())
     };
     let mut g = tray_icon(app);
     if !on {
@@ -177,8 +356,25 @@ fn tray_update(app: &AppHandle) {
         }
     }
     if let Some(t) = g.as_ref() {
-        let _ = t.set_visible(true);
-        let _ = t.set_tooltip(Some(logic::tooltip(&word(&labels, "app", APP), moving, down)));
+        // (W1: «one icon showing the lowest» — the app's icon carries the lowest device's drawing; the app's own
+        // picture back otherwise.)
+        if pic != pic_now {
+            let img = match pic.as_ref() {
+                Some(p) => Some(tauri::image::Image::new_owned(p.rgba.clone(), p.px, p.px)),
+                None => tauri::image::Image::from_bytes(APP_PNG).ok(),
+            };
+            if let Some(img) = img {
+                if t.set_icon(Some(img)).is_ok() {
+                    desk().app_pic = pic;
+                }
+            }
+        }
+        let _ = t.set_visible(shown);
+        let mut tip = logic::tooltip(&word(&labels, "app", APP), moving, down);
+        if !bat_tip.is_empty() {
+            tip = kt_battery::summary::clip_utf16(&format!("{tip}\n{bat_tip}"), kt_battery::summary::TIP_MAX_UTF16);
+        }
+        let _ = t.set_tooltip(Some(tip));
         let mut d = desk();
         d.tray_on = true;
         d.tray_why = String::new();
@@ -187,7 +383,7 @@ fn tray_update(app: &AppHandle) {
 
 fn build_tray(app: &AppHandle, labels: &Value) -> Result<tauri::tray::TrayIcon<tauri::Wry>, String> {
     use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../../../desktop/icon.png")).map_err(|e| e.to_string())?;
+    let icon = tauri::image::Image::from_bytes(APP_PNG).map_err(|e| e.to_string())?;
     let menu = tray_menu(app, labels).map_err(|e| e.to_string())?;
     let b = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
@@ -196,6 +392,14 @@ fn build_tray(app: &AppHandle, labels: &Value) -> Result<tauri::tray::TrayIcon<t
         .on_menu_event(|app, ev| match ev.id().as_ref() {
             "kt-tray-show" => show_main(app),
             "kt-tray-quit" => app.exit(0),
+            "kt-tray-bat-check" => crate::battery::check_now(app),
+            id if id == "kt-tray-bat-open" || id.starts_with("kt-tray-bat-dev-") => crate::battery::open_page(app),
+            // (Piece 3: a Bluetooth device's Connect / Disconnect.)
+            id if id.starts_with("kt-tray-bt-") => {
+                if let Ok(i) = id["kt-tray-bt-".len()..].parse::<usize>() {
+                    crate::battery::tray_bt(app, i);
+                }
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, ev| {
@@ -583,6 +787,10 @@ pub async fn kt_desktop_prefs(app: AppHandle, o: Value) -> Result<Value, String>
             tray_update(&a2);
         });
         mac_menu_later(&app, &o);
+        // (Device battery's lines said again in the new words.)
+        if o.get("labels").is_some() {
+            crate::battery::tray_again(&app);
+        }
     }
     if o.get("keepAwake").is_some() {
         let awake = {
@@ -834,11 +1042,15 @@ pub fn at_start(app: &AppHandle) {
 }
 
 /// A second launch, handed over by the single-instance plugin (which ends it): its links kept, this window brought to
-/// the front (main.cjs's second-instance).
+/// the front (main.cjs's second-instance) unless it is a hidden start.
 pub fn second_launch(app: &AppHandle, argv: Vec<String>, cwd: String) {
     let args: Vec<String> = argv.into_iter().skip(1).collect();
     queue(app, &args, Path::new(&cwd));
-    show_main(app);
+    // (A start with the system — --hidden: the screen translator's entry and device battery's each launch one — never
+    // brings the window up.)
+    if !kt_battery::autostart::wants_hidden(&args) {
+        show_main(app);
+    }
 }
 
 /// Addresses a Mac hands over (magnet:, kurokawatools:, a .torrent as file://).

@@ -6,7 +6,7 @@ import { t } from '../i18n';
 
 export interface Category { id: string; name: string; icon: string; exts: string[]; dir?: string; builtin?: boolean }
 export const BUILTIN: Category[] = [
-  { id: 'video', name: 'catVideo', icon: 'film', builtin: true, exts: '3gp asf avi flv m2ts m4v mkv mov mp4 mpe mpeg mpg ogv qt rm rmvb ts vob webm wmv'.split(' ') },
+  { id: 'video', name: 'catVideo', icon: 'film', builtin: true, exts: '3gp asf avi flv m2ts m4v mts mkv mov mp4 mpe mpeg mpg ogv qt rm rmvb ts vob webm wmv'.split(' ') },
   { id: 'music', name: 'catMusic', icon: 'music', builtin: true, exts: 'aac aif aiff alac ape flac m4a mid mp3 mpa oga ogg opus ra wav wma'.split(' ') },
   { id: 'documents', name: 'catDocuments', icon: 'file', builtin: true, exts: 'csv doc docx epub md odp ods odt pdf pps ppt pptx rtf txt xls xlsx xps cbz cbr mobi azw3'.split(' ') },
   { id: 'programs', name: 'catPrograms', icon: 'apps', builtin: true, exts: 'apk appimage bin deb dmg exe flatpak jar msi msix msu pkg rpm run snap xapk'.split(' ') },

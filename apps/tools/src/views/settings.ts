@@ -249,7 +249,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     // folder, or its space freed; ui/handoversheet.ts. Nothing on a phone, the web or the Electron build.)
     const handoverBox = h('div', { class: 'handover-box' });
     if ((window as unknown as { kurokawaHandover?: { shell?: string } }).kurokawaHandover?.shell === 'tauri') void import('../ui/handoversheet').then((m) => { const r = m.handoverRows(); if (r) handoverBox.append(r); }).catch(() => undefined);
-    const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), backupRow, handoverBox, h('div', { class: 'row-actions' },
+    const about = card('about', t('about'), h('p', { class: 'hint' }, t('aboutBody')), h('p', { class: 'hint about-licence' }, t('aboutLicence')), backupRow, handoverBox, h('div', { class: 'row-actions' },
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}`) }, icon('external'), t('sourceCode')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void openExternal(`https://github.com/${REPO}/issues`) }, icon('note'), t('reportIssue')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => void import('./licences').then((m) => m.licencesSheet()) }, icon('info'), t('licenses')),
@@ -330,8 +330,10 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     // The player: how videos are watched (another app, or the in-app player of the Player add-on).
     const plat = nativePlatform();
     const player = plat === 'android' || plat === 'desktop' ? card('player', t('playerSection'),
-      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close'))),
+      row(t('playerWithLabel'), pickButton(t('playerWithLabel'), [['ask', t('playerAsk')], ['app', t('playerApp')], ['external', t('playerExternal')]], s.playerWith, (v) => { updateSettings({ playerWith: v as 'ask' }); rerender(); }, t('close')), t('playerWithHint')),
       ...(s.addons.includes('player') ? [...(plat === 'android' ? [toggle(t('playerEngine') + ' — mpv', s.playerEngine !== 'web', (v) => updateSettings({ playerEngine: v ? 'mpv' : 'web' }), t('playerEngineHint'))] : []), toggle(t('videosTabToggle'), s.videosTab !== false, (v) => updateSettings({ videosTab: v }), t('videosTabHint')), ...fontRows(plat === 'desktop')] : [])) : null;
+    // (Another app for each kind of video — src/player/external/settingsRows.ts, loaded with the page's card.)
+    if (player && s.playerWith !== 'app') { const slot = h('div', { class: 'ext-slot' }); player.insertBefore(slot, player.children[2] ?? null); void import('../player/external/settingsRows').then((m) => { const el = m.externalRows(); if (el) slot.replaceWith(el); else slot.remove(); }); }
     // The player's own preferences (REX Player's groups), with the Player add-on.
     // (The player's own preferences go into the Player card — one «Player», not a second «Player settings» beside it.)
     const playerPrefs = s.addons.includes('player') ? (() => { const into = player ?? card('playerprefs', t('playerSettings')); into.append(h('p', { class: 'hint player-prefs-hint' }, t('playerPrefsHint'))); void import('../player/panel').then((m) => into.append(m.playerPrefsPanel())); return player ? null : into; })() : null;
@@ -382,9 +384,12 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const storage = plat === 'android' || plat === 'desktop' ? card('storage', t('storageSection'), h('h4', null, t('usageTitle')), usage, h('h4', null, t('usagePacks')), packsBox) : null;
     // Translate on screen (the add-on, Android): its own page.
     const screen = (plat === 'android' || plat === 'desktop') && s.addons.includes('screen') ? card('screen', t('scrTitle'), h('p', { class: 'hint' }, t('scrCardHint')), h('a', { class: 'btn filled', href: '#/screen' }, icon('translate'), t('scrOpenPage'))) : null;
+    // Device battery (0.21): the computer's page (views/battery.ts); on Android its own, smaller one — the paired
+    // Bluetooth devices (0.21 P2, views/batphone.ts) —, said in the phone's words.
+    const battery = plat === 'desktop' || plat === 'android' ? card('battery', t('batTitle'), h('p', { class: 'hint' }, t(plat === 'android' ? 'bphCardHint' : 'batCardHint')), h('a', { class: 'btn filled', href: '#/battery' }, icon('gauge'), t('batOpenPage'))) : null;
     // Advanced (phones that carry the Rust core): the download engine — views/engineSettings.ts.
     const advanced = advancedCard(rerender);
-    return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
+    return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, battery, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   // (Back: a search typed is let go first, then a tab of the bar back to «All»; then Settings is left.)

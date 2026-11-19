@@ -6,7 +6,7 @@
 # one deliberate playlist flag, QuickJS named when the APK carries it, and the one update-and-retry on an extractor error.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); D=$(mktemp -d); LIB=${KT_JARS:-$HOME/.cache/kt-test-jars}; mkdir -p "$LIB"
-J="$LIB/json-20240303.jar"; [ -s "$J" ] || for t in 1 2 3 4; do curl -sSfL -o "$J" "https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar" && break; sleep 4; done
+J=$(sh "$HERE/jsonjar.sh")
 mkdir -p "$D/src/android/util" "$D/src/android/content/pm" "$D/src/kotlin/jvm/functions" "$D/src/com/yausername/youtubedl_android" "$D/src/com/yausername/ffmpeg"
 echo 'package android.util; public final class Log { public static int w(String t, String m) { return 0; } public static int w(String t, String m, Throwable e) { return 0; } public static int i(String t, String m) { return 0; } public static int e(String t, String m, Throwable e) { return 0; } public static int d(String t, String m) { return 0; } }' > "$D/src/android/util/Log.java"
 echo 'package android.content.pm; public class ApplicationInfo { public String nativeLibraryDir; }' > "$D/src/android/content/pm/ApplicationInfo.java"
