@@ -153,6 +153,16 @@ ${pathPatterns(['torrent']).map((p) => `        <data android:pathPattern="${p}"
       </intent-filter>
 `);
 }
+// --- device battery on the phone (0.21 P2, KtBattery): the PAIRED devices and the levels Android knows. «Nearby devices»
+// (BLUETOOTH_CONNECT, Android 12+, asked on the page) — never BLUETOOTH_SCAN (nothing is searched for, so neither
+// location nor neverForLocation), never BLUETOOTH_ADMIN (nothing is paired). The old BLUETOOTH up to Android 11 only.
+// Bluetooth is not required: a phone without it still installs the app (the page says so calmly). ---
+if (!manifest.includes('BLUETOOTH_CONNECT')) {
+  manifest = manifest.replace('<application', `<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <application`);
+}
 // --- the screen translator (the «Translate on screen» add-on): appearing over other apps, reading the screen's text
 // (accessibility service) or a picture of it (screen capture), its foreground service and quick-settings tile ---
 if (!manifest.includes('KtScreenService')) {

@@ -125,7 +125,8 @@ function mountInner(route: Route): void {
     case 'animeStudio': current = lazyView(() => import('./views/animeStudio').then((m) => m.animeStudioView(route.id, route.studio))); break;
     case 'install': { const pth = route.p; current = downloadsView(); setTimeout(() => void import('./views/apk').then((m) => m.installSheet(pth)), 80); break; }
     case 'screen': current = lazyView(() => import('./views/screen').then((m) => m.screenView())); break;
-    case 'battery': current = lazyView(() => import('./views/battery').then((m) => m.batteryView())); break;
+    // (0.21 P2: Android has its own, smaller page — the paired Bluetooth devices — views/batphone.ts.)
+    case 'battery': current = lazyView(() => (nativePlatform() === 'android' ? import('./views/batphone').then((m) => m.batPhoneView()) : import('./views/battery').then((m) => m.batteryView()))); break;
     case 'files': current = lazyView(() => import('./views/files').then((m) => m.filesView(route))); break;
     case 'pick': current = lazyView(() => import('./views/pick').then((m) => m.pickView())); break;
     case 'openWith': current = lazyView(() => import('./views/openWith').then((m) => m.openWithView(route))); break;
