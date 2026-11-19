@@ -80,11 +80,11 @@ pub static SETS: &[SetEntry] = &[
 
 pub static TEMPLATES: &[Template] = &[
     // (Corsair Bragi GET: [02 | 00 02 | 00][target 08–0B][02 GET][property 0F battery, 10 charge state, 12 product id].)
-    Template { devices: Products::driver("mk-corsair-bragi"), kind: O, pattern: &[B::Is(0x02), B::In(0x08, 0x0B), B::Is(0x02), B::OneOf(&corsair::PROPS)], why: "Bragi GET (numbered)" },
-    Template { devices: Products::driver("mk-corsair-bragi"), kind: O, pattern: &[B::Is(0x00), B::Is(0x02), B::In(0x08, 0x0B), B::Is(0x02), B::OneOf(&corsair::PROPS)], why: "Bragi GET (report id 0)" },
-    Template { devices: Products::driver("mk-corsair-bragi"), kind: O, pattern: &[B::Is(0x00), B::In(0x08, 0x0B), B::Is(0x02), B::OneOf(&corsair::PROPS)], why: "Bragi GET (plain framing)" },
+    Template { devices: Products::driver("mk-corsair-bragi"), kind: O, pattern: &[B::Is(0x02), B::In(0x08, 0x0B), B::Is(0x02), B::OneOf(&corsair::PROPS)], why: "Bragi GET (numbered)", check: None },
+    Template { devices: Products::driver("mk-corsair-bragi"), kind: O, pattern: &[B::Is(0x00), B::Is(0x02), B::In(0x08, 0x0B), B::Is(0x02), B::OneOf(&corsair::PROPS)], why: "Bragi GET (report id 0)", check: None },
+    Template { devices: Products::driver("mk-corsair-bragi"), kind: O, pattern: &[B::Is(0x00), B::In(0x08, 0x0B), B::Is(0x02), B::OneOf(&corsair::PROPS)], why: "Bragi GET (plain framing)", check: None },
     // (Delux M800 Pro status query: [0C][01][20][00][sequence 01–7F][00 × 28].)
-    Template { devices: Products::driver("mk-delux"), kind: F, pattern: &misc::DELUX_PATTERN, why: "Delux M800 status query, its sequence number" },
+    Template { devices: Products::driver("mk-delux"), kind: F, pattern: &misc::DELUX_PATTERN, why: "Delux M800 status query, its sequence number", check: None },
 ];
 
 #[cfg(test)]
@@ -162,7 +162,7 @@ mod tests {
         assert!(permit(&cid, O, &[0x02, 0x09, 0x01, 0x0F]).is_none(), "SET");
         assert!(permit(&cid, O, &[0x02, 0x09, 0x02, 0x0F, 0x00]).is_none(), "longer");
         assert!(permit(&cid, F, &good).is_none(), "as a feature report");
-        assert!(permit(&id(0x1B1C, 0x0A3E, 0xFF42, 1, -1), O, &good).is_none(), "a headset's id");
+        assert!(permit(&id(0x1B1C, 0x0A3F, 0xFF42, 1, -1), O, &good).is_none(), "an unlisted product");
         // (Delux: the sequence byte 01–7F only; every other byte fixed.)
         let dm = all_models().find(|m| m.driver == "mk-delux" && m.role == Role::Main).unwrap();
         let did = super::testkit::ident(dm);

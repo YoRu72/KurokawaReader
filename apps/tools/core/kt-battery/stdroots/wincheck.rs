@@ -3,6 +3,8 @@
 //! `rustc --edition 2021 --crate-type lib --emit=metadata stdroots/wincheck.rs`, and runs the Windows declarations'
 //! layout test: `rustc --edition 2021 --test stdroots/winffi.rs`. Without the `wgi` feature, as the default build.
 //! Not part of the crate.
+#[path = "../src/airpods.rs"]
+pub mod airpods;
 #[path = "../src/allow.rs"]
 pub mod allow;
 #[path = "../src/autostart.rs"]
@@ -11,6 +13,10 @@ pub mod autostart;
 pub mod bluetooth;
 #[path = "../src/connect.rs"]
 pub mod connect;
+#[path = "../src/galaxybuds.rs"]
+pub mod galaxybuds;
+#[path = "../src/heads/mod.rs"]
+pub mod heads;
 #[path = "../src/hidvalue.rs"]
 pub mod hidvalue;
 #[path = "../src/identity.rs"]
@@ -25,6 +31,8 @@ pub mod model;
 pub mod notice;
 #[path = "../src/pads/mod.rs"]
 pub mod pads;
+#[path = "../src/phonelink.rs"]
+pub mod phonelink;
 #[path = "../src/registry.rs"]
 pub mod registry;
 #[path = "../src/runner.rs"]

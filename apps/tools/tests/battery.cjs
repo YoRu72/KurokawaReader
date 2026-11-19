@@ -24,7 +24,12 @@
 // that sends: off by default, kept as mkAsk; one read by listening alone: on by default, turned off as mkMute), a field
 // that finds a brand (and says when none matches), its count as the language writes it; a mouse in steps, a receiver
 // with no device linked (dimmed), a family switched off said with its brand, a card's menu turning its family's
-// request on. `node tests/battery.cjs [en|ar]`.
+// request on. Piece 6, headsets, earbuds and the rest (mode 'heads', made-up devices): earbuds' cards with their parts
+// (left, right, case — small labelled levels; the card's level the lowest bud in use, never the case; a bud in its case
+// said), «both in the case», «needs a part of Windows this build does not include», headsets in per cent and in steps, a
+// phone from Phone Link, an Xbox pad named in the page's language; «Headsets and earbuds» and «Other» in the same
+// collapsed, searchable design (Galaxy Buds' switch says it connects, off by default; AirPods' and Phone Link's on); the
+// rename sheet's Save is the app's real filled button. `node tests/battery.cjs [en|ar]`.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
@@ -66,8 +71,26 @@ function fake({ lang, mode }) {
   ];
   const MK = ['Logitech:q', 'Razer:q', 'SteelSeries:q', 'Corsair:q', 'Glorious:q', 'Hitscan:q', 'G-Wolves:q', 'WLMouse:q', 'LAMZU:q', 'Arbiter Studio:q', 'Pulsar:q', 'Finalmouse:q', 'Endgame Gear:q', 'VAXEE:q', 'ZOWIE:q', 'Ninjutso:q', 'Sprime:q', 'Darmoshark:q', 'ATK / VXE:q', 'Kysona:q', 'Fantech:q', 'DAREU:q', 'Redragon:q', 'Rapoo:l', 'Keychron:q', 'Royal Kludge:q', 'SONiX:q', 'Semico:q', 'AULA:b', 'MCHOSE:q', 'CHERRY:q', 'Cooler Master:q', 'Machenike:q', 'MSI:q', 'ASUS ROG:q', 'NZXT:q', 'Niceboy:q', 'Motospeed:q', 'Xenta:l', 'Delux:q', 'AJAZZ:q', 'Incott / Wraith:q'];
   const ids = { 'Logitech': 'mk-logitech', 'Razer': 'mk-razer', 'SteelSeries': 'mk-steelseries', 'Corsair': 'mk-corsair', 'Rapoo': 'mk-rapoo', 'AULA': 'mk-aula', 'Xenta': 'mk-xenta', 'Royal Kludge': 'mk-rk' };
-  const miceRows = MK.map((x) => { const [brand, w] = x.split(':'); const ask = w !== 'l'; const listen = w !== 'q'; return { family: ids[brand] || 'mk-' + brand.toLowerCase().replace(/[^a-z0-9]+/g, ''), brand, proven: 'untested', ask, listen, on: !ask }; });
-  const devices = mode === 'mice' ? MICE : mode === 'pads' ? PADS : mode !== 'tauri' && mode !== 'mac' ? [] : [
+  const miceRows = MK.map((x) => { const [brand, w] = x.split(':'); const ask = w !== 'l'; const listen = w !== 'q'; return { family: ids[brand] || 'mk-' + brand.toLowerCase().replace(/[^a-z0-9]+/g, ''), brand, group: 'mice', proven: 'untested', ask, listen, on: !ask }; });
+  // (Piece 6: the headsets' and earbuds' families and the rest's, as the shell gives them; c = connects.)
+  const HS = ['Razer:q', 'SteelSeries:q', 'Corsair:q', 'Logitech G:q', 'ASTRO:q', 'Audeze:q', 'HyperX:q', 'Sony INZONE:q', 'Jabra:q', 'JBL:b', 'Poly / Plantronics:q', 'MOONDROP:q', 'MCHOSE:q', 'Alienware:q', 'Fractal Design:q', 'ASUS ROG:q', 'AirPods / Beats:l', 'Galaxy Buds:c'];
+  const hsIds = { 'Logitech G': 'hs-logitech', 'Sony INZONE': 'hs-sony', 'Poly / Plantronics': 'hs-poly', 'Fractal Design': 'hs-fractal', 'ASUS ROG': 'hs-rog', 'AirPods / Beats': 'hs-airpods', 'Galaxy Buds': 'hs-galaxybuds', 'MAONO': 'ot-maono', 'Phone Link': 'ot-phonelink' };
+  const row6 = (group, prefix) => (x) => { const [brand, w] = x.split(':'); const ask = w !== 'l'; const listen = w === 'l' || w === 'b'; return { family: hsIds[brand] || prefix + brand.toLowerCase().replace(/[^a-z0-9]+/g, ''), brand, group, connects: w === 'c', proven: 'untested', ask, listen, on: !ask }; };
+  miceRows.push(...HS.map(row6('heads', 'hs-')), ...['MAONO:q', 'Phone Link:l'].map(row6('other', 'ot-')));
+  // (Piece 6: made-up headsets, earbuds with parts, a phone.)
+  const part = (p, level, inUse, charging = 'unknown') => ({ part: p, level, charging, inUse });
+  const UNK = { kind: 'unknown' };
+  const HEADS = [
+    mk({ key: 'hid:054C:0EC2:c:{IB}', name: 'Field Buds', kind: 'earbuds', brand: 'Sony INZONE', connection: 'dongle', driver: 'hs-sony', family: 'hs-sony', reading: Object.assign(rd(ex(70), NOW - min), { parts: [part('left', ex(70), true), part('right', UNK, false), part('case', ex(35), false)] }) }),
+    mk({ key: 'spp:A1B2C3D4E5F6', name: 'Galaxy Buds2 Pro', kind: 'earbuds', brand: 'Samsung', connection: 'bluetooth', source: 'spp', driver: 'hs-galaxybuds', family: 'hs-galaxybuds', reading: Object.assign(rd(ex(12), NOW), { parts: [part('left', ex(82), true), part('right', ex(12), true), part('case', ex(5), false, 'yes')] }) }),
+    mk({ key: 'hid:1532:0565:c:{BS}', name: 'Razer BlackShark V2 HyperSpeed', kind: 'headset', brand: 'Razer', connection: 'dongle', driver: 'hs-razer-hs', family: 'hs-razer', reading: rd(ex(64), NOW - 2 * min, 'yes') }),
+    mk({ key: 'hid:1038:12E0:c:{NP}', name: 'SteelSeries Arctis Nova Pro Wireless', kind: 'headset', brand: 'SteelSeries', connection: 'dongle', driver: 'hs-steelseries', family: 'hs-steelseries', reading: rd(st(6, 8), NOW) }),
+    mk({ key: 'hid:1038:230A:c:{GB}', name: 'SteelSeries Arctis GameBuds', kind: 'earbuds', brand: 'SteelSeries', connection: 'dongle', driver: 'hs-steelseries', family: 'hs-steelseries', reading: Object.assign(rd(UNK, NOW), { note: 'inCase' }) }),
+    mk({ key: 'advert:{AP}', name: 'Studio Pods', kind: 'earbuds', brand: 'Apple', connection: 'bluetooth', source: 'advert', driver: 'hs-airpods', family: 'hs-airpods', way: 'passive', reading: Object.assign(rd(UNK, NOW), { note: 'notInBuild' }) }),
+    mk({ key: 'phonelink', name: 'Field Phone', kind: 'phone', brand: '', connection: 'unknown', source: 'phonelink', driver: 'ot-phonelink', family: 'ot-phonelink', way: 'passive', reading: rd(ex(58), NOW - 40 * min) }),
+    dev({ key: 'xinput:1:pad', name: '', kind: 'controller', brand: 'Xbox', connection: 'dongle', source: 'xinput', reading: rd({ kind: 'coarse', value: 'high', bars: 4 }, NOW) }),
+  ];
+  const devices = mode === 'heads' ? HEADS : mode === 'mice' ? MICE : mode === 'pads' ? PADS : mode !== 'tauri' && mode !== 'mac' ? [] : [
     dev({ key: 'hid:1111:2222:s:A1', name: 'Shape Mouse One', kind: 'mouse', brand: 'Acme', reading: rd(ex(64), NOW - 3 * min), lastGood: rd(ex(64), NOW - 3 * min) }),
     dev({ key: 'bt:{K}', name: 'Studio Keys', kind: 'keyboard', brand: '', connection: 'bluetooth', source: 'bluetooth', status: 'notConnected', lastGood: rd(ex(40), NOW - 26 * 60 * min) }),
     dev({ key: 'bt:{H}', name: 'Field Phones', kind: 'headset', connection: 'bluetooth', source: 'bluetooth', reading: rd(ex(9), NOW - 30_000), lastGood: rd(ex(9), NOW - 30_000) }),
@@ -397,6 +420,62 @@ function fake({ lang, mode }) {
     await p.click('.sheet [data-act="padQuery"]'); await p.waitForTimeout(250);
     set = (await calls(p)).filter((c) => c[0] === 'settings').pop();
     check('turned on from the menu: mkAsk with both', JSON.stringify(set[1].set.mkAsk) === '["mk-logitech","mk-razer"]', set);
+    await ctx.close();
+  }
+
+  // ---- Piece 6: headsets, earbuds and the rest.
+  {
+    const { ctx, p } = await open('heads');
+    await p.waitForSelector('.bat-card[data-key="hid:054C:0EC2:c:{IB}"]');
+    const parts = (k) => p.$eval(`.bat-card[data-key="${k}"]`, (e) => ({ cls: e.className, pct: e.querySelector('.bat-pct')?.textContent ?? null, parts: [...e.querySelectorAll('.bat-part')].map((x) => ({ part: x.dataset.part, use: x.dataset.inUse, cls: x.className, label: x.querySelector('.bat-part-head').textContent, val: x.querySelector('.bat-part-val').textContent, bolt: !!x.querySelector('.bat-bolt') })) }));
+    const ib = await parts('hid:054C:0EC2:c:{IB}');
+    check('earbuds: one card with its parts — left, right, case, each labelled', JSON.stringify(ib.parts.map((x) => x.label)) === JSON.stringify(AR ? ['اليسرى', 'اليمنى', 'العلبة'] : ['Left', 'Right', 'Case']), ib.parts);
+    check('… the card\'s level is the bud in use (70), a bud in its case said', /70/.test(ib.pct || '') && ib.parts[1].val === (AR ? 'في العلبة' : 'in the case') && ib.parts[1].cls.includes('out') && /35/.test(ib.parts[2].val), ib);
+    const gb = await parts('spp:A1B2C3D4E5F6');
+    check('the lowest bud in use marks the card low; the case at 5 % is never low', gb.cls.includes('low') && /12/.test(gb.pct || '') && gb.parts[1].cls.includes('low') && !gb.parts[2].cls.includes('low') && gb.parts[2].bolt, gb);
+    const gap = await p.$$eval('.bat-card[data-key="spp:A1B2C3D4E5F6"] .bat-part', (r) => r.slice(0, 2).map((e) => e.getBoundingClientRect()).reduce((a, b) => Math.min(Math.abs(b.left - a.right), Math.abs(a.left - b.right))));
+    check('the parts keep a real gap', gap >= 6, gap);
+    const note = (k) => p.$eval(`.bat-card[data-key="${k}"] .bat-note`, (e) => ({ n: e.dataset.note, t: e.textContent }));
+    const inCase = await note('hid:1038:230A:c:{GB}'); const nib = await note('advert:{AP}');
+    check('«both in the case» said', inCase.n === 'inCase' && inCase.t === (AR ? 'السماعتان كلتاهما في علبتهما' : 'Both earbuds are in their case'), inCase);
+    check('«not available in this build» said calmly', nib.n === 'notInBuild' && nib.t.startsWith(AR ? 'قراءتها تحتاج' : 'Reading these needs'), nib);
+    const ns = await p.$eval('.bat-card[data-key="hid:1038:12E0:c:{NP}"]', (e) => ({ word: e.querySelector('.bat-word')?.textContent, bars: e.querySelectorAll('.bat-bars > i').length, sub: e.querySelector('.bat-sub').textContent }));
+    check('a headset in steps: «6 of 8», its kind said', ns.word === (AR ? '6 من 8' : '6 of 8') && ns.bars === 8 && ns.sub.includes(AR ? 'سماعة رأس' : 'Headset'), ns);
+    const ph = await p.$eval('.bat-card[data-key="phonelink"]', (e) => ({ name: e.querySelector('.bat-name').textContent, sub: e.querySelector('.bat-sub').textContent, kind: e.dataset.kind }));
+    check('a phone through Phone Link: a «phone» card', ph.kind === 'phone' && ph.name === 'Field Phone' && ph.sub.includes(AR ? 'هاتف' : 'Phone'), ph);
+    check('an Xbox pad named in the page\'s language', (await p.textContent('.bat-card[data-key="xinput:1:pad"] .bat-name')) === (AR ? 'يد Xbox رقم 2' : 'Xbox controller 2'));
+    check('no sideways overflow (headsets)', (await overflow(p)) <= 1);
+    await shot(p, 'heads');
+    // «Headsets and earbuds» and «Other»: collapsed, then every family, as «Mice and keyboards».
+    check('«Headsets and earbuds» and «Other»: collapsed at first', (await p.$$('.bat-heads .bat-switch, .bat-other .bat-switch')).length === 0 && (await p.textContent('.bat-heads h3')) === (AR ? 'سماعات الرأس والأذن' : 'Headsets and earbuds') && (await p.textContent('.bat-other h3')) === (AR ? 'أجهزة أخرى' : 'Other'));
+    check('… the headsets\' count as the language writes it', (await p.textContent('.bat-heads .bat-mk-toggle')).includes(AR ? 'العدد: 18' : '(18)'));
+    await p.click('.bat-heads .bat-mk-toggle'); await p.waitForSelector('.bat-heads .bat-switch');
+    const hr = await p.$$eval('.bat-heads .bat-switch', (r) => r.map((e) => ({ fam: e.dataset.family, on: e.querySelector('input').checked, title: e.querySelector('.bat-sw-title').textContent, hint: e.querySelector('small').textContent })));
+    const ht = hr.map((x) => x.title);
+    check('one switch per headset family, sorted by brand', hr.length === 18 && JSON.stringify(ht) === JSON.stringify(ht.slice().sort((a, b) => a.localeCompare(b))), ht.slice(0, 5));
+    check('off by default but the ones that listen (AirPods)', hr.filter((x) => x.on).map((x) => x.fam).join() === 'hs-airpods', hr.filter((x) => x.on));
+    check('Galaxy Buds\' switch says it connects', hr.find((x) => x.fam === 'hs-galaxybuds').hint.startsWith(AR ? 'يتصل إذا شُغِّل' : 'When on, connects'), hr.find((x) => x.fam === 'hs-galaxybuds'));
+    check('the mice\' list stays shut', (await p.$$('.bat-mice .bat-switch')).length === 0);
+    await p.click('.bat-heads [data-row="hs-galaxybuds"]'); await p.waitForTimeout(250);
+    let set = (await calls(p)).filter((c) => c[0] === 'settings').pop();
+    check('a headset family turned on: mkAsk', JSON.stringify(set[1].set.mkAsk) === '["hs-galaxybuds"]', set);
+    await p.fill('.bat-heads .bat-mk-find', 'buds'); await p.waitForTimeout(100);
+    check('the field finds a brand among the headsets', JSON.stringify(await p.$$eval('.bat-heads .bat-switch', (r) => r.filter((e) => !e.hidden).map((e) => e.dataset.family))) === '["hs-galaxybuds"]');
+    await p.fill('.bat-heads .bat-mk-find', ''); await p.waitForTimeout(100);
+    await p.click('.bat-other .bat-mk-toggle'); await p.waitForSelector('.bat-other .bat-switch');
+    const orr = await p.$$eval('.bat-other .bat-switch', (r) => r.map((e) => ({ fam: e.dataset.family, on: e.querySelector('input').checked })));
+    check('«Other»: the microphone off, Phone Link (read only) on', JSON.stringify(orr) === JSON.stringify([{ fam: 'ot-maono', on: false }, { fam: 'ot-phonelink', on: true }]), orr);
+    check('no yellow, amber or orange (headsets)', await p.evaluate(() => [...document.querySelectorAll('.battery-view *')].every((e) => { const c = getComputedStyle(e); return [c.color, c.backgroundColor, c.borderColor, c.fill, c.stroke].every((x) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(x); if (!m) return true; const [r, g, b] = m.slice(1).map(Number); return !(r > 180 && g > 100 && b < 90 && r - b > 120); }); })));
+    check('no sideways overflow (the headset families open)', (await overflow(p)) <= 1);
+    await p.$eval('.bat-heads', (e) => e.scrollIntoView({ block: 'start' })); await p.waitForTimeout(200); await shot(p, 'heads-families');
+    await p.$eval('.bat-other', (e) => e.scrollIntoView({ block: 'center' })); await p.waitForTimeout(200); await shot(p, 'other-families');
+    // The rename sheet's Save: the app's real filled button (it had a class with no style).
+    await p.click('.bat-card[data-key="hid:1532:0565:c:{BS}"] .bat-more'); await p.waitForSelector('.sheet [data-act="rename"]');
+    await p.click('.sheet [data-act="rename"]'); await p.waitForSelector('.bat-rename input');
+    const sv = await p.$$eval('.sheet-actions .bat-eq', (b) => b.map((x) => ({ cls: x.className, bg: getComputedStyle(x).backgroundColor, w: Math.round(x.getBoundingClientRect().width) })));
+    const prim = await p.evaluate(() => { const d = document.createElement('div'); d.style.background = 'var(--md-primary)'; document.body.append(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c; });
+    check('rename: Save is the filled (primary) button, both buttons one width', sv.length === 2 && sv[1].cls.includes('primary') && sv[1].bg === prim && Math.abs(sv[0].w - sv[1].w) <= 1, [sv, prim]);
+    await shot(p, 'rename');
     await ctx.close();
   }
 

@@ -61,6 +61,11 @@ pub trait HidTransport {
     fn read_input(&mut self, _deadline: Instant) -> Result<Vec<u8>, TErr> {
         Err(TErr::Failed("no input pipe".into()))
     }
+    /// The collection's feature report length (Windows' count, the report id included), 0 when not known — piece 6's
+    /// readers that get a feature report of the collection's own length.
+    fn feature_len(&self) -> usize {
+        0
+    }
     /// Drops the reports this handle has queued (not the device's, not another program's): a reply read after a
     /// request is then the device's answer to it, not an older report.
     fn flush(&mut self) {}

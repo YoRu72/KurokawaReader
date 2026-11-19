@@ -409,6 +409,65 @@ extern "system" {
     pub fn GetLastError() -> u32;
 }
 
+// ---- piece 6: Winsock's Bluetooth RFCOMM sockets (winsock2.h, ws2bth.h) — Galaxy Buds' status service (win/spp.rs) ----
+pub type SOCKET = usize;
+pub const INVALID_SOCKET: SOCKET = !0;
+pub const AF_BTH: i32 = 32;
+pub const SOCK_STREAM: i32 = 1;
+pub const BTHPROTO_RFCOMM: i32 = 3;
+/// FIONBIO (_IOW('f', 126, u_long)), as the signed long ioctlsocket takes.
+pub const FIONBIO: i32 = 0x8004_667Eu32 as i32;
+pub const WSAEWOULDBLOCK: i32 = 10035;
+pub const FD_SETSIZE: usize = 64;
+
+/// ws2bth.h SOCKADDR_BTH, declared with 1-byte packing (pshpack1.h): 30 bytes.
+#[repr(C, packed(1))]
+#[derive(Clone, Copy)]
+pub struct SOCKADDR_BTH {
+    pub addressFamily: u16,
+    pub btAddr: u64,
+    pub serviceClassId: GUID,
+    pub port: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct FD_SET {
+    pub fd_count: u32,
+    pub fd_array: [SOCKET; FD_SETSIZE],
+}
+
+impl FD_SET {
+    pub fn one(s: SOCKET) -> FD_SET {
+        let mut f = FD_SET { fd_count: 1, fd_array: [0; FD_SETSIZE] };
+        f.fd_array[0] = s;
+        f
+    }
+    pub fn has(&self, s: SOCKET) -> bool {
+        self.fd_array[..(self.fd_count as usize).min(FD_SETSIZE)].contains(&s)
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct TIMEVAL {
+    pub tv_sec: i32,
+    pub tv_usec: i32,
+}
+
+#[cfg_attr(windows, link(name = "ws2_32", kind = "raw-dylib"))]
+extern "system" {
+    /// (lpWSAData: a WSADATA, 408 bytes on 64-bit Windows, 400 on 32-bit — given a larger buffer.)
+    pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut c_void) -> i32;
+    pub fn WSAGetLastError() -> i32;
+    pub fn socket(af: i32, ty: i32, protocol: i32) -> SOCKET;
+    pub fn ioctlsocket(s: SOCKET, cmd: i32, argp: *mut u32) -> i32;
+    pub fn connect(s: SOCKET, name: *const c_void, namelen: i32) -> i32;
+    pub fn select(nfds: i32, readfds: *mut FD_SET, writefds: *mut FD_SET, exceptfds: *mut FD_SET, timeout: *const TIMEVAL) -> i32;
+    pub fn recv(s: SOCKET, buf: *mut u8, len: i32, flags: i32) -> i32;
+    pub fn closesocket(s: SOCKET) -> i32;
+}
+
 /// A Rust string as a NUL-ended UTF-16 one.
 pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -462,6 +521,13 @@ mod tests {
         assert_eq!(KSCATEGORY_AUDIO.braced(), "{6994AD04-93EF-11D0-A3CC-00A0C9223196}");
         assert_eq!(DEVPKEY_Device_ContainerId.fmtid.braced(), "{8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C}");
         assert_eq!(from_wide(&wide("Mäus")), "Mäus");
+        // (Piece 6: Winsock's Bluetooth address, packed to 30 bytes; select's set.)
+        assert_eq!(std::mem::size_of::<SOCKADDR_BTH>(), 30);
+        assert_eq!(std::mem::offset_of!(SOCKADDR_BTH, serviceClassId), 10);
+        assert_eq!(std::mem::size_of::<FD_SET>(), if cfg!(target_pointer_width = "64") { 520 } else { 260 });
+        assert_eq!(std::mem::size_of::<TIMEVAL>(), 8);
+        assert_eq!(FIONBIO as u32, 0x8004_667E);
+        assert!(FD_SET::one(7).has(7) && !FD_SET::one(7).has(8));
         assert_eq!(from_wide(&[0x41, 0, 0x42]), "A");
     }
 }

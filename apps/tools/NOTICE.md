@@ -40,8 +40,8 @@ Each ported file of `apps/tools/core/kt-battery` names the original files it com
 | `src/brands.cpp` (brand by vendor id and name — text only) | `kind.rs` |
 | `lang/*.txt` (the phrase list) | a checklist for Tools' own strings (`src/i18n`); Arabic written anew |
 
-The other vendor drivers (Logitech, Razer, …), the taskbar widget and the support request are not ported yet (the
-controllers came in piece 4, below).
+The vendor drivers came in pieces 4 to 6 (below); the taskbar widget and the support request are not ported (the last
+table says why).
 Drivers that send undocumented commands are not ported until they are understood.
 
 ### What was taken (piece 2: the background)
@@ -184,6 +184,89 @@ unless marked feature):
 | Delux M800 Pro (feature, template) | `0C 01 20 00 <01–7F> 00 × 28` | status, with its sequence number |
 | Incott / Wraith (feature) | `09 8F` · `09 89` | device info · status |
 
+### Piece 6: headsets, earbuds and the rest
+
+Every headset, earbud and remaining driver of the original is ported or named below with the reason it is not. The
+HID readers are one file per family in `core/kt-battery/src/heads/`, through the same tables, request rules and switches
+as the mice (`mice/mod.rs`); AirPods, Galaxy Buds and Phone Link are not HID: `airpods.rs`, `galaxybuds.rs`,
+`phonelink.rs` (their Windows sides `win/ble.rs`, `win/spp.rs`, `win/mod.rs`). Every reader is «ported, untested».
+Readers that only listen or only read (AirPods' broadcasts, Phone Link's card, the JBL Quantum 350's feature reports)
+are on by default; every reader that sends a status request — and Galaxy Buds, whose reading opens a connection — is off
+until the user turns its family on («Headsets and earbuds» or «Other» on the page, or a device's own menu). Earbuds
+show their parts (left, right, case) on one card; the card's level, the tray and the notices use the lowest part in
+use, never the case (`model.rs` `lowest_in_use`).
+
+| Original (C++) | Here | How it reads; what changed |
+|---|---|---|
+| `razer_headset.cpp` | `heads/razer.rs` | BlackShark V2 HyperSpeed (GET 21 / 2A, sequence and XOR checked), V2 Pro 2020 (the receiver's status feature), V3 X (class 07 GET 80 / 84), V3 / V3 Pro (GET 21 only). Their link drops when asked often: asked at most every five minutes (`Model::gap`), the last reading shown meanwhile with its own time (was a global cache). **Not sent:** V3 / V3 Pro's undocumented three-packet handshake. **Not ported:** BlackShark V2 Pro 2023 (0555) and Barracuda X (0550, 0552) — every query there is wrapped in a «remote mode» switch of the receiver (0552 also an «app mode» switch, 0555 a sacrificial wake frame). |
+| `barracuda_pro.cpp` | — | **Not ported:** see the last table. |
+| `steelseries.cpp` (Arctis), `steelseries_elite.cpp` | `heads/steelseries.rs` | Arctis 1 / 7 / 9 / Pro Wireless / Nova Pro Wireless, the Nova family, the Arctis GameBuds (as earbuds, its two buds' parts), the Nova Elite base station (its direct reply or its pushed frames, on either collection). 0–4 and 0–8 as steps (were × 25 % / × 12.5 %). |
+| `corsair.cpp` (Void / HS, Bragi headsets, headsets behind receivers) | `heads/corsair.rs`, `mice/corsair.rs` | Void family: C9 64 (status 3: no level). Bragi headsets (2A08, 2A02, 0A97, 0A64, 0A62, 0A3E, 0A3D) through the Bragi GET; a headset behind a Slipstream receiver (paired id 0Axx) is a headset's card. |
+| `logitech.cpp` (G headsets) | `heads/logitech.rs`, `mice/logitech.rs`, `allow.rs` | HID++ 2.0 with ADC_MEASUREMENT (1F20) getADCMeasurement added to the HID++ rule; the G headsets the original's voltage curves name (G533, G535, G633 / G635, G933 / G935, G733, PRO X Wireless), by id; the voltage as a coarse word (was a per-model curve to the per cent). |
+| `logitech_g435_0adf.cpp`, `.h` | — | **Not ported:** the battery is read inside the dongle's OTA (firmware-update) session, after REMOTE_SET_MODE switches the dongle's routing — neither is a status read. |
+| `astro.cpp` | `heads/astro.rs` | A50 X / Gen 5 (0C … 06 0C) and A50 Gen 3 / 4, A20 (54 status, 7C battery). No cached level while Astro Command Center holds the collection: «no answer». |
+| `audeze.cpp` | `heads/audeze.rs` | Maxwell: attribute 0CD6, the input report 07 scanned; a dongle named «… Dongle» is «no device linked», nothing sent; 0 % (just switched on) is no level (was a 90 s global); dongle and cable one card. HeadsetControl's 14-packet start left out, as in the original. |
+| `hyperx.cpp` | `heads/hyperx.rs` | Cloud III / II Core, III S, II (HP, Kingston), Alpha, Alpha 2, Flight, Stinger Core / Core Wireless, and the Pulsefire Haste 2 mice (their cards are mice). Voltages as coarse words (Cloud Flight's polynomial and the Stinger's tables dropped); the Haste 2's settle window (a global clock) not kept. |
+| `sony_inzone.cpp` | `heads/sony.rs` | H9 II, H5 and the INZONE Buds (as earbuds with left, right and case; «both in the case» when the dongle takes the request and nothing answers); the transaction id from the clock, sealed with its checksum. |
+| `jabra.cpp` | `heads/jabra.rs` | Link 380 / 390 dongles: battery (12 02) and the headset's name (02 00); NAK is «no device linked». |
+| `jbl.cpp` | `heads/jbl.rs` | Quantum 520 / 650 / 850 / 950 (and X): HIDV3 «get device info» of the battery feature; Quantum 350: its feature reports 68 and 49 read, nothing sent (on by default). |
+| `plantronics.cpp` | `heads/plantronics.rs` | BT600: only GET 0A 1A. **Not sent:** the adapter's attach report (06 01) and the HELLOs to the adapter and the headset (a session with the headset over the air, not a read): read once Poly's own software attached the adapter, else «no answer». The level as its steps. |
+| `maono.cpp` | `heads/maono.rs` | PD200W microphone («Other»): GET register 0042. |
+| `moondrop.cpp` | `heads/moondrop.rs` | GM01 Pro: READ 27 (battery), READ 31 (link). The headset on its cable (no control channel) is not made a card from its path's form. |
+| `mchose_headset.cpp` | `heads/mchose.rs` | V9 Pro 2: read battery (0B), the XOR checked; «off» is asleep, no level kept. |
+| `alienware.cpp` | `heads/alienware.rs` | AW920H on its dongle: C0 0A, the reply fetched as input report 07, its XOR checked; three tries within the deadline. |
+| `fractal.cpp` | `heads/fractal.rs` | Scape: GET_DEVICE_STATE to the dongle and the headset; dongle and cable one card. |
+| `rog.cpp` (Pelta, Delta II) | `heads/rog.rs` | CC 12 07 (battery), CC 12 08 (charging); «asleep» is the dongle's answer this round. |
+| `airpods.cpp` | `airpods.rs`, `win/ble.rs` (the `wgi` feature) | Listening only: Apple's proximity broadcast, matched to a paired device's model, the strongest recent one; buds and case as parts in tenths (the broadcast's own step). Windows' only interface for advertisements is WinRT: behind the `wgi` feature (off by default until CI compiles it); without it a paired AirPods card says «needs a part of Windows this build does not include yet». |
+| `galaxy_buds.cpp`, `galaxy_buds_protocol.h` | `galaxybuds.rs`, `win/spp.rs` | An RFCOMM connection to Samsung's status service, listened to — nothing is sent (the reference shows a status-only use). OFF by default; only buds Windows already reports connected; one connection per reading, under the deadline, closed; never pairing, never a device away or asleep. |
+| `phonelink.cpp` | `phonelink.rs`, `win/mod.rs` | Exactly what the original reads: Phone Link's Start-menu card in the user's own `%LOCALAPPDATA%` (one file, read only, shared, at most 4 MB, two fields); no process, no other file, no private interface. A «phone» card; the reading's time is the file's (its true age). English phrases only (the card is written in Windows' language). |
+| `atk_serial.cpp` | — | **Not ported:** see the last table. |
+| `headsetcontrol.cpp` | — | **Not ported:** see the last table. |
+
+The headsets' requests (`heads/allowed.rs`; each for its reader's listed products only; output reports unless marked
+feature):
+
+| Family | Bytes | What it asks |
+|---|---|---|
+| Razer BlackShark V2 HyperSpeed (template) | `02 00 <60–7F> 00 00 00 04 00 00 80 <21/2A> 00 … <XOR>` (64) | battery · charging |
+| Razer BlackShark V2 Pro 2020 (feature) | `FF 0A 00 FD 04 12 F1 02 05` | the headset's status |
+| Razer BlackShark V3 X (feature, template) | `07 00 <01–FF> 00 00 00 02 07 <80/84> 00 … <XOR of 3–60>` (64) | battery · charging |
+| Razer BlackShark V3 / V3 Pro | `02 00 60 00 00 00 04 00 00 80 21 00 … <XOR>` (64) | battery |
+| SteelSeries Arctis | `06 12` · `06 18` · `00 20` · `00 41 AA` / `41 AA` · `00 40 AA` / `40 AA` · `06 B0` · `00 B0` · `01 B0` | each model's own status read |
+| Corsair | `C9 64` · the Bragi GET templates of piece 5 | battery · battery, charge state, paired id |
+| ASTRO | `02 0C 03 00 06 0C` · `02 54` · `02 7C` | battery · headset status · battery |
+| Audeze | `06 07 80 05 5A 03 00 D6 0C` | attribute 0CD6 (battery) |
+| HyperX | `66 82/8A/89` · `0C 02 03 01 00 02/06/48` · `06 FF BB 02/03` · Kingston's 17-byte `… BB 02/03 00` · `21 BB 03/0C/0B` · `52 01` · `50 02` · `21 FF 05` · feature `FF 07 00 FD 04 …` (connection, battery) | link · charging · battery |
+| Sony INZONE (template) | `02 0C 01 00 FC 08 96 C3 41 04 01 <tid 02–FF> 00 <sum>` (64) | battery info GET |
+| Jabra (templates) | `05 04 00 <seq> 46 12 02` · `05 04 00 <seq> 46 02 00` | battery · name |
+| JBL (feature) | `88 00 DD 01 00 01 00 02 00 0D 00` | device info, feature 000D (battery) |
+| Poly BT600 | `07 01 01 10 06 20 00 00 02 0A 1A` | GET battery |
+| MOONDROP · MCHOSE · Alienware · Fractal · ROG · MAONO | `4B 80 27 00` / `4B 80 31 00` · `55 AA 01 00 01 00 01 0B 00` · `06 C0 0A` · `02 11 21` / `02 F1 21` · `CC 12 07` / `CC 12 08` · `C4 09 00 00 04 42 00 ED FE` | battery, link, status — one or two each |
+| Logitech G headsets (HID++, `permit_hidpp`) | piece 5's rule, with ADC_MEASUREMENT (1F20) function 0 | battery voltage |
+
+### What of the original is not ported, and why (the whole project)
+
+| Original | Why not |
+|---|---|
+| `src/drivers/headsetcontrol.cpp` | It runs a third party's program (HeadsetControl, found next to the app or on PATH, PLAN §9.10) which sends its own HID requests: nothing it sends could be held to `allow.rs`'s table, and Tools does not run outside programs found on the PATH. |
+| `src/drivers/atk_serial.cpp` (ATK N9 Pro, N9 Ultra) | A Windows COM port can only be opened exclusively (the maker's app is blocked while it is held — the very fault of §9.3), and the original rewrites the port's line settings with DTR and RTS raised on every open; that this cannot reset or disturb the dongle cannot be shown without the hardware. |
+| `src/drivers/barracuda_pro.cpp` (Razer Barracuda Pro) | Its reading goes through the receiver's «remote mode», switched on and off around each query — a mode change, not a status read (as the Barracuda X and BlackShark V2 Pro 2023 in `razer_headset.cpp`). |
+| `src/drivers/logitech_g435_0adf.cpp`, `.h` | An OTA (firmware-update) session and REMOTE_SET_MODE before the battery read. |
+| `src/drivers/rongyuan.cpp` | Its F7 request, sent to about eighty receiver ids of fifteen vendors, is the poll that brings the radio link up (a wake) — piece 5. |
+| `razer_headset.cpp`: BlackShark V2 Pro 2023 (0555), Barracuda X (0550, 0552) | «Remote mode» / «app mode» switches and a sacrificial wake frame around each query. |
+| `rog.cpp`: ROG Omni Receiver (1ACE) and the Omni-channel entries | The channel is chosen by the collection's position in its path — piece 5. |
+| `misc_mice.cpp`: AJAZZ AJ179 and the AJ-series on 3151; `msi.cpp`: CLUTCH GM41 | No product ids in the sources / a raw byte made into a percentage — piece 5. |
+| Single requests not sent (the device is still read when something else made it speak, else «needs a query we do not send»): PlayStation's Bluetooth feature 05, 8BitDo's feature 06, GameSir Cyclone 2's 0F 03 (piece 4); Finalmouse's «wake/all» and its lift-off / profile reads, Endgame Gear 4K's 0F probe, Wraith W1's read sweep, AULA HERO 68 Air's message session (piece 5); BlackShark V3's handshake, Poly's attach and HELLOs (piece 6) | Each changes a mode, wakes a link or opens a session. |
+| `src/widget.cpp`, `.h`, `src/labels.cpp`, `.h` (the taskbar widget and its captions) | It lives inside Explorer's taskbar by its internal window classes (§9.9). Tools has its tray icon; an optional strip of its own is planned (PLAN piece 11), not this port. |
+| `src/report.cpp`, `.h` (support request) | It posts to the author's server (§9.12); Tools sends nothing — a local report is planned (piece 11). |
+| `src/main.cpp` (beyond the tray, notices and autostart taken in piece 2), `src/i18n.cpp`, `.h`, `lang/*.txt` | Tools has its own window, settings and five languages; the phrase list was the checklist, Arabic written anew, Hebrew not carried. |
+| `src/linux/*`, `linux/*` (udev rule, desktop file), `src/platform_compat.h`, `build-linux.sh`, `Makefile*` | The Linux build is a later piece (PLAN piece 10); its udev rule (all raw HID nodes, read/write: §9.11) will not be taken as it is. |
+| `installer/*`, `res/*`, `build.bat`, `scripts/*` | The original's own installer, icons and release scripts: Tools has its own. |
+| `tests/*`, `docs/*` | Their C++ tests and protocol notes were read as references; our tests are written anew with made-up reports. |
+
+Everything else of `src/drivers/` and `src/` is ported (pieces 1–6, the tables above): `brands`, `devices`, `hid`,
+`generic`, `xinput`, the controllers', the mice' and keyboards', the headsets' and earbuds' drivers.
+
 ### What was changed
 
 - **Every device call has a deadline**, and each device is asked on its own thread: one stuck device never delays
@@ -191,9 +274,9 @@ unless marked feature):
   device in turn on one thread).
 - **One table of allowed writes** (`allow.rs`): nothing can be sent to a device unless the table names the device
   exactly (vendor and product, with usage and interface where needed) and the exact bytes. Devices are opened for
-  queries only, never read/write by default, never exclusively. The table holds only the controllers' and the mice' and
-  keyboards' status requests above, each sent only once the user turned its family on; where a byte varies (HID++'s
-  device and feature index, Corsair's target and property, Delux's sequence number) it is bounded to listed values.
+  queries only, never read/write by default, never exclusively. The table holds only the controllers', the mice' and
+  keyboards' and the headsets' status requests above, each sent only once the user turned its family on; where a byte varies (HID++'s
+  device and feature index, Corsair's target and property, Delux's sequence number) it is bounded to listed values (piece 6: a sequence or transaction id with the checksum that covers it).
 - **No device is matched by its vendor id alone.**
 - **Coarse levels stay coarse**: XInput's four levels are shown as bars, never as made-up percentages (the original
   showed 5/25/60/100 %).

@@ -66,6 +66,8 @@ const F_STATUS: u16 = 0x1000;
 const F_VOLTAGE: u16 = 0x1001;
 const F_NAME: u16 = 0x0005;
 const F_INFO: u16 = 0x0003;
+/// Piece 6: ADC_MEASUREMENT, G headsets' battery voltage (heads/logitech.rs).
+const F_ADC: u16 = 0x1F20;
 
 fn is_short(id: &HidIdent) -> bool {
     matches!((id.usage_page, id.usage), (0xFF00, 0x0001) | (0xFF43, 0x0301))
@@ -249,6 +251,21 @@ pub fn voltage(p: &[u8]) -> Option<(Level, Charging)> {
     Some((from_millivolts(mv), charging(p[2] & 0x80 != 0)))
 }
 
+/// ADC_MEASUREMENT getADCMeasurement (piece 6, G headsets): [mV hi][mV lo][flags: 3 charging]. The voltage as a coarse
+/// word (the original turned it into a per cent with HeadsetControl's per-model curves); 0 mV: no level.
+pub fn adc(p: &[u8]) -> Option<(Level, Charging)> {
+    if p.len() < 3 {
+        return None;
+    }
+    let mv = u32::from(p[0]) << 8 | u32::from(p[1]);
+    let ch = match p[2] {
+        0x03 => Charging::Yes,
+        0x01 => Charging::No,
+        _ => Charging::Unknown,
+    };
+    Some((if mv == 0 { Level::Unknown } else { from_millivolts(mv) }, ch))
+}
+
 fn reg_charging(b: u8) -> Charging {
     charging((0x21..=0x26).contains(&b))
 }
@@ -306,7 +323,7 @@ fn read20(pp: &mut Pp, idx: u8, deadline: Instant, now: u64) -> Dev {
             }
         }
         let mut found: Option<(Level, Charging)> = None;
-        for (feat, func, parse) in [(F_UNIFIED, 1u8, unified as fn(&[u8]) -> Option<(Level, Charging)>), (F_STATUS, 0, status), (F_VOLTAGE, 0, voltage)] {
+        for (feat, func, parse) in [(F_UNIFIED, 1u8, unified as fn(&[u8]) -> Option<(Level, Charging)>), (F_STATUS, 0, status), (F_VOLTAGE, 0, voltage), (F_ADC, 0, adc)] {
             let f = pp.feature_index(idx, feat, deadline)?;
             if f == 0 {
                 continue;

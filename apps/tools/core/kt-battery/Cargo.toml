@@ -18,10 +18,12 @@ path = "src/lib.rs"
 # no crate is needed and the whole of it is type-checked on any system (stdroots/wincheck.rs). Only the Xbox
 # controllers' real percentage (Windows.Gaming.Input, a WinRT API) needs the `windows` crate, behind the `wgi` feature —
 # off until CI has compiled it (Tools' src-tauri feature `battery-wgi`, tauri-check.yml «Device battery — WGI compile
-# try»); without it Xbox pads are read through XInput, as coarse levels.
+# try»); without it Xbox pads are read through XInput, as coarse levels. Piece 6: AirPods' Bluetooth LE broadcasts
+# (BluetoothLEAdvertisementWatcher, WinRT too — src/win/ble.rs) behind the same feature; without it a paired AirPods
+# card says the build cannot read it. Galaxy Buds' RFCOMM socket (Winsock) is declared by hand like the rest.
 [features]
 wgi = ["dep:windows"]
 
 [target.'cfg(windows)'.dependencies]
 # (The version Tools' shell already resolves through wry — one copy in the build.)
-windows = { version = "0.62.2", optional = true, features = ["Gaming_Input", "Devices_Power", "System_Power", "Foundation", "Foundation_Collections"] }
+windows = { version = "0.62.2", optional = true, features = ["Gaming_Input", "Devices_Power", "System_Power", "Foundation", "Foundation_Collections", "Devices_Bluetooth", "Devices_Bluetooth_Advertisement", "Storage_Streams"] }

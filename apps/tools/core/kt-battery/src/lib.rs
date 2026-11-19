@@ -20,6 +20,12 @@
 //! - mice: piece 5 — mice' and keyboards' own readers (Logitech HID++, Razer, SteelSeries, Corsair and some forty
 //!   more families): passive listening on by default; status requests, sealed in allow (exact bytes, bounded templates,
 //!   HID++ with the device's own feature index), only when the user turns that family on
+//! - heads: piece 6 — headsets' own readers (Razer BlackShark, SteelSeries Arctis, Corsair, Logitech G, ASTRO, Audeze,
+//!   HyperX, Sony INZONE, Jabra, JBL, Poly, MOONDROP, MCHOSE, Alienware, Fractal, ROG) and a microphone (MAONO), through
+//!   mice/mod.rs's tables and switches; status requests sealed in allow (heads/allowed.rs)
+//! - airpods, galaxybuds, phonelink: piece 6's readers that are not HID — AirPods' Bluetooth LE broadcasts (listened
+//!   to; behind the `wgi` feature on Windows), Galaxy Buds' pushed status on their serial-port service (off until
+//!   turned on), a phone's level from Phone Link's card in the user's own profile (read only)
 //! - identity: stable keys per unit and the explicit merge rules
 //! - sched: per-device timing, deadlines, back-off, asleep devices left alone
 //! - runner: the background loop over a Platform
@@ -29,10 +35,13 @@
 //!
 //! `win` (Windows only) is the platform: SetupAPI, HID, CfgMgr32, XInput and the Run key (advapi32) declared in win/ffi.rs, type-checked on
 //! any system through stdroots/wincheck.rs; Windows.Gaming.Input behind the `wgi` feature.
+pub mod airpods;
 pub mod allow;
 pub mod autostart;
 pub mod bluetooth;
 pub mod connect;
+pub mod galaxybuds;
+pub mod heads;
 pub mod hidvalue;
 pub mod identity;
 pub mod kind;
@@ -40,6 +49,7 @@ pub mod mice;
 pub mod model;
 pub mod notice;
 pub mod pads;
+pub mod phonelink;
 pub mod registry;
 pub mod runner;
 pub mod sched;

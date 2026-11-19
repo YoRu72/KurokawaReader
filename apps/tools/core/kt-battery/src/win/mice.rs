@@ -11,6 +11,9 @@
 // battery field of its own, it is left to the generic reader rather than shown as «off».
 // Handles: the request collection read/write only when allow.rs names it and the reader sends output reports; feature
 // requests on a handle with no read or write access; listening on a shared read handle; never an exclusive open.
+// Piece 6: the headsets go through here too (heads/*.rs, the same tables); a model with a least gap between queries
+// (BlackShark V3) gets its last reading again, with its own time, until the gap has passed; an Audeze dongle that names
+// itself alone is «no device linked» before anything is sent; JBL's reply is read on its request collection.
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere); real devices decide.
 // Copyright (C) 2026 Kurokawa contributors.
 use super::{hid, hid_connection, rank, NoDevice};
@@ -44,6 +47,8 @@ pub struct Learned {
 #[derive(Default)]
 pub struct MiceState {
     units: Mutex<BTreeMap<String, Unit>>,
+    /// Piece 6: the last reading of a card whose model asks for a least gap between queries (Model::gap_s), with when.
+    kept: Mutex<BTreeMap<String, (u64, Outcome)>>,
     slots: Mutex<BTreeMap<String, Vec<u8>>>,
     learned: Mutex<BTreeMap<String, Learned>>,
     ask: Mutex<Vec<Family>>,
@@ -61,6 +66,18 @@ impl MiceState {
         }
         if let Ok(mut g) = self.mute.lock() {
             *g = mute.iter().filter_map(|s| Family::parse(s)).collect();
+        }
+    }
+
+    /// Piece 6: whether a family's switch lets its reader work (AirPods' and Phone Link's listening, Galaxy Buds'
+    /// connection — the readers that are not HID, win/mod.rs).
+    pub fn family_on(&self, f: Family) -> bool {
+        let (ask, mute) = (lock(&self.ask), lock(&self.mute));
+        let listens = mice::DRIVERS.iter().any(|d| d.family == f && d.way == Way::Passive);
+        if listens {
+            !mute.contains(&f)
+        } else {
+            ask.contains(&f)
         }
     }
 
@@ -141,6 +158,9 @@ impl MiceState {
         if let Ok(mut l) = self.learned.lock() {
             l.retain(|k, _| cards.contains_key(k) || cards.values().any(|u| &u.base == k));
         }
+        if let Ok(mut k) = self.kept.lock() {
+            k.retain(|key, _| cards.contains_key(key));
+        }
         if let Ok(mut g) = self.units.lock() {
             *g = cards;
         }
@@ -157,9 +177,25 @@ impl MiceState {
         }
         let reply = u.colls.iter().find(|(_, m)| m.role == Role::Reply).map(|x| x.0.clone());
         let long = u.colls.iter().find(|(_, m)| m.role == Role::Long).map(|x| x.0.clone());
+        // (Piece 6: a headset whose link drops when asked often — the last reading again, with its own time, until its gap
+        //  has passed.)
+        if let Some((_, m)) = mains.first() {
+            let kept = self.kept.lock().ok().and_then(|g| g.get(&device.key).copied());
+            if mice::is_on(m, &ask, &mute) {
+                if let Some(o) = mice::within_gap(m, kept, now) {
+                    return o;
+                }
+            }
+        }
         let mut best = Outcome::Failed;
         for (c, m) in mains {
             let on = mice::is_on(m, &ask, &mute);
+            // (Piece 6: a dongle that names itself as alone — nothing asked.)
+            if on {
+                if let Some(o) = crate::heads::product_says(m, &c.product, now) {
+                    return o;
+                }
+            }
             let a = if !on {
                 mice::read(&mut Chans::one(&mut NoDevice(c.ident.clone())), m, u.slot, false, deadline, now)
             } else {
@@ -180,7 +216,8 @@ impl MiceState {
                     continue;
                 };
                 // (The W1's pushed status comes on its own collection's input reports: a second, listening handle.)
-                let rx_coll = if m.driver == "mk-incott" { Some(c.clone()) } else { reply.clone() };
+                // (JBL's HIDV3 reply comes on the request collection's own input reports too.)
+                let rx_coll = if m.driver == "mk-incott" || m.driver == "hs-jbl" { Some(c.clone()) } else { reply.clone() };
                 let mut rx = rx_coll.and_then(|r| hid::WinHid::open_listen(&r, false).ok());
                 let mut lg = long.as_ref().and_then(|l| hid::WinHid::open_listen(l, true).ok());
                 let mut ch = Chans { main: &mut main, reply: rx.as_mut().map(|t| t as &mut dyn HidTransport), long: lg.as_mut().map(|t| t as &mut dyn HidTransport) };
@@ -210,6 +247,11 @@ impl MiceState {
             let out = a.out;
             if let Outcome::Read(r) = &out {
                 if r.level != Level::Unknown {
+                    if m.gap_s > 0 {
+                        if let Ok(mut g) = self.kept.lock() {
+                            g.insert(device.key.clone(), (now, out));
+                        }
+                    }
                     return out;
                 }
             }

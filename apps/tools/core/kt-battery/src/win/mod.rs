@@ -10,15 +10,19 @@
 // vendor, product, usage page and usage) becomes that controller's entry — one per unit, or per slot of a receiver —
 // and the generic reader leaves that unit alone; its query listens on its own handle (shared, never exclusive), and
 // sends a status request only for a family the user turned on. Piece 5: the mice' and keyboards' own readers
-// (mice/*.rs) the same way — win/mice.rs.
+// (mice/*.rs) the same way — win/mice.rs. Piece 6: the headsets go through win/mice.rs too (heads/*.rs); AirPods' Bluetooth
+// LE broadcasts (win/ble.rs, behind `wgi`), Phone Link's card file and Galaxy Buds' status service (win/spp.rs) are
+// added here, each under its family's switch.
 // UNVERIFIED here: compiled only on Windows (type-checked elsewhere); real devices decide.
 // Copyright (C) 2026 Kurokawa contributors.
 pub mod autostart;
+pub mod ble;
 pub mod bt;
 pub mod btconn;
 pub mod ffi;
 pub mod hid;
 pub mod mice;
+pub mod spp;
 pub mod wgi;
 pub mod xinput;
 
@@ -46,6 +50,8 @@ pub struct WinPlatform {
     pad_on: Mutex<Vec<Family>>,
     /// Piece 5: the mice' and keyboards' units, slots and switches.
     mice: mice::MiceState,
+    /// Piece 6: Galaxy Buds' cards and their Bluetooth addresses.
+    buds: Mutex<BTreeMap<String, u64>>,
 }
 
 impl WinPlatform {
@@ -160,7 +166,102 @@ fn bt_candidates(nodes: &[bluetooth::BtNode], hid: &[hid::HidColl], now: u64) ->
         .collect()
 }
 
+/// Piece 6: the readers that are not HID — AirPods' broadcasts, Phone Link's card, Galaxy Buds — each under its switch.
+fn other_candidates(m: &mice::MiceState, nodes: &[bluetooth::BtNode], now: u64) -> (Vec<Candidate>, BTreeMap<String, u64>) {
+    use crate::mice::Family as F;
+    use crate::model::Note;
+    let mut out = Vec::new();
+    let paired = crate::airpods::paired(nodes);
+    if !paired.is_empty() {
+        let on = m.family_on(F::AirPods);
+        let heard = if on && ble::available() {
+            ble::ensure();
+            ble::adverts()
+        } else {
+            Vec::new()
+        };
+        for p in &paired {
+            let mut d = Device::new(format!("advert:{}", p.container.to_ascii_uppercase()), Source::Advert);
+            d.container = p.container.clone();
+            d.name = p.name.clone();
+            d.kind = if crate::airpods::is_single(p.pid) { Kind::Headset } else { Kind::Earbuds };
+            d.brand = "Apple".into();
+            d.connection = Connection::Bluetooth;
+            d.pid = p.pid;
+            d.vid = 0x004C;
+            d.driver = "hs-airpods";
+            let reading = if !on {
+                Reading::unknown(Note::QueryOff, Charging::Unknown, now)
+            } else if !ble::available() {
+                Reading::unknown(Note::NotInBuild, Charging::Unknown, now)
+            } else {
+                match crate::airpods::pick(p, &heard, now) {
+                    Some(a) => crate::airpods::reading(&a, a.at),
+                    None => Reading::unknown(Note::None, Charging::Unknown, now),
+                }
+            };
+            out.push(Candidate { device: d, reading: Some(reading), offline: false });
+        }
+    }
+    if m.family_on(F::PhoneLink) {
+        if let Some((name, level, written)) = phone_link() {
+            let mut d = Device::new("phonelink".into(), Source::PhoneLink);
+            d.name = name;
+            d.kind = Kind::Phone;
+            d.driver = "ot-phonelink";
+            if let Some(r) = crate::phonelink::reading(level, written, now) {
+                out.push(Candidate { device: d, reading: Some(r), offline: false });
+            }
+        }
+    }
+    let mut addrs = BTreeMap::new();
+    for b in crate::galaxybuds::connected_buds(nodes) {
+        let key = format!("spp:{:012X}", b.addr);
+        let mut d = Device::new(key.clone(), Source::Spp);
+        d.container = b.container.clone();
+        d.name = b.name.clone();
+        d.kind = Kind::Earbuds;
+        d.brand = "Samsung".into();
+        d.connection = Connection::Bluetooth;
+        d.driver = "hs-galaxybuds";
+        addrs.insert(key, b.addr);
+        out.push(Candidate { device: d, reading: None, offline: false });
+    }
+    (out, addrs)
+}
+
+/// Phone Link's companion card in the user's own %LOCALAPPDATA%: (phone, level, when the file was written, ms) — read
+/// only, at most 4 MB, sharing the file with Phone Link (std's open shares reading and writing).
+fn phone_link() -> Option<(String, u8, u64)> {
+    let base = std::env::var_os("LOCALAPPDATA")?;
+    let path = std::path::Path::new(&base).join(crate::phonelink::REL_PATH);
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > crate::phonelink::MAX_BYTES {
+        return None;
+    }
+    let written = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+    let mut bytes = Vec::new();
+    use std::io::Read;
+    std::fs::File::open(&path).ok()?.take(crate::phonelink::MAX_BYTES).read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8(bytes).ok()?;
+    let (name, level) = crate::phonelink::parse(text.trim_start_matches('\u{FEFF}'))?;
+    Some((name, level, written))
+}
+
 impl WinPlatform {
+    fn query_buds(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
+        if !self.mice.family_on(crate::mice::Family::GalaxyBuds) {
+            // (Off: no connection is made — said on the card.)
+            return Outcome::Read(Reading::unknown(crate::model::Note::QueryOff, Charging::Unknown, now));
+        }
+        let Some(addr) = self.buds.lock().ok().and_then(|g| g.get(&device.key).copied()) else { return Outcome::Failed };
+        match spp::read(addr, deadline) {
+            Ok(st) => Outcome::Read(crate::galaxybuds::reading(&st, now)),
+            Err(TErr::Timeout) => Outcome::NoAnswer,
+            Err(_) => Outcome::Failed,
+        }
+    }
+
     fn query_pad(&self, device: &Device, deadline: Instant, now: u64) -> Outcome {
         let list = match self.pads.lock() {
             Ok(m) => m.get(&device.key).cloned().unwrap_or_default(),
@@ -258,7 +359,13 @@ impl Platform for WinPlatform {
         if let Ok(mut m) = self.pads.lock() {
             *m = pad_map;
         }
-        let bt = bt_candidates(&bt::nodes(), &colls, now);
+        let nodes = bt::nodes();
+        let bt = bt_candidates(&nodes, &colls, now);
+        let (others, buds) = other_candidates(&self.mice, &nodes, now);
+        out.extend(others);
+        if let Ok(mut g) = self.buds.lock() {
+            *g = buds;
+        }
         let bt_xbox = bt.iter().any(|c| c.device.vid == 0x045E && c.device.kind == Kind::Controller);
         out.extend(bt);
         let pads = if bt_xbox { Vec::new() } else { wgi::pads() };
@@ -281,7 +388,8 @@ impl Platform for WinPlatform {
         for f in xbox::xinput_found(&xinput::slots(), precise, third, bt_xbox) {
             let mut d = Device::new(identity::xinput_key(f.user, f.headset), Source::XInput);
             d.kind = if f.headset { Kind::Headset } else { Kind::Controller };
-            d.name = if f.headset { "Xbox headset".into() } else { format!("Xbox controller {}", f.user + 1) };
+            // (Named by the page in the interface's language — batXboxPad / batXboxHeadset, the slot from the key.)
+            d.name = String::new();
             d.brand = "Xbox".into();
             d.connection = Connection::Dongle;
             let level = f.level.map_or(Level::Unknown, Level::Coarse);
@@ -296,6 +404,9 @@ impl Platform for WinPlatform {
         }
         if device.source == Source::Vendor {
             return self.mice.query(device, deadline, now);
+        }
+        if device.source == Source::Spp {
+            return self.query_buds(device, deadline, now);
         }
         let colls = match self.colls.lock() {
             Ok(m) => m.get(&device.key).cloned().unwrap_or_default(),

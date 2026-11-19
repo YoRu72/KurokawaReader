@@ -83,7 +83,9 @@ fn level_json(l: Level) -> Value {
 }
 
 fn reading_json(r: &Reading) -> Value {
-    json!({ "level": level_json(r.level), "charging": r.charging.as_str(), "asleep": r.asleep, "takenAt": r.taken_at, "note": r.note.as_str() })
+    // (Piece 6: a device of several cells — earbuds' left, right and case — each as it reports it.)
+    let parts: Vec<Value> = r.parts.iter().flatten().map(|p| json!({ "part": p.name.as_str(), "level": level_json(p.level), "charging": p.charging.as_str(), "inUse": p.in_use })).collect();
+    json!({ "level": level_json(r.level), "charging": r.charging.as_str(), "asleep": r.asleep, "takenAt": r.taken_at, "note": r.note.as_str(), "parts": parts })
 }
 
 fn way_str(w: Way) -> &'static str {
@@ -116,7 +118,7 @@ fn pads_json(settings: &Value) -> Value {
     json!(rows)
 }
 
-/// The mice' and keyboards' families, one row each: brand as text, how far proven, whether a reader of it listens and
+/// The mice' and keyboards' families (and piece 6's headsets', earbuds' and the rest, by `group`), one row each: brand as text, how far proven, whether a reader of it listens and
 /// whether one sends a request, and whether its switch is on (a family that sends: in mkAsk; one that only listens: not
 /// in mkMute).
 fn mice_json(settings: &Value) -> Value {
@@ -131,7 +133,7 @@ fn mice_json(settings: &Value) -> Value {
             let listen = ds.iter().any(|d| d.way == Way::Passive);
             let tested = !ds.is_empty() && ds.iter().all(|d| d.proven == pads::Proven::Tested);
             let on = if ask { has(&ask_on, f.as_str()) } else { !has(&mute, f.as_str()) };
-            json!({ "family": f.as_str(), "brand": f.brand(), "proven": if tested { "tested" } else { "untested" }, "ask": ask, "listen": listen, "on": on })
+            json!({ "family": f.as_str(), "brand": f.brand(), "group": f.group().as_str(), "connects": f.connects(), "proven": if tested { "tested" } else { "untested" }, "ask": ask, "listen": listen, "on": on })
         })
         .collect();
     json!(rows)
@@ -385,7 +387,17 @@ fn level_word(l: Level) -> String {
 }
 
 fn name_of(s: &Value, d: &DeviceState) -> String {
-    s.get("names").and_then(|m| m.get(&d.device.key)).and_then(Value::as_str).map(str::to_string).filter(|n| !n.is_empty()).or_else(|| Some(d.device.name.clone()).filter(|n| !n.trim().is_empty())).unwrap_or_else(|| word("batUnnamed", "Wireless device"))
+    s.get("names").and_then(|m| m.get(&d.device.key)).and_then(Value::as_str).map(str::to_string).filter(|n| !n.is_empty()).or_else(|| Some(d.device.name.clone()).filter(|n| !n.trim().is_empty())).or_else(|| xbox_name(&d.device.key)).unwrap_or_else(|| word("batUnnamed", "Wireless device"))
+}
+
+/// An XInput slot's name in the interface's words (the key «xinput:<user>:pad|headset»; the page names it the same way).
+fn xbox_name(key: &str) -> Option<String> {
+    let mut it = key.strip_prefix("xinput:")?.split(':');
+    let user: u8 = it.next()?.parse().ok()?;
+    match it.next()? {
+        "headset" => Some(word("batXboxHeadset", "Xbox headset")),
+        _ => Some(word("batXboxPad", "Xbox controller {n}").replace("{n}", &digits(user.saturating_add(1)))),
+    }
 }
 
 fn hidden_keys(s: &Value) -> Vec<String> {

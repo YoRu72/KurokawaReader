@@ -12,8 +12,8 @@
 // Only GET is sent (allow.rs's templates bound target and property); nothing switches the device to software mode.
 // Changed here: only the products the original names as Slipstream receivers of mice and keyboards (2B00, and 1BDC from
 // its tested pairing) — it sent these GETs to every 1B1C product with a 64/65-byte vendor collection; the Void, HS and
-// Virtuoso headsets (C9 64, and the Bragi ids 0Axx, 2A02, 2A08) are the headset piece's, and a headset found behind a
-// receiver (paired id 0Axx) is left to it; the 0–1000 level rounded to whole per cent (finer than per cent: not invented
+// Virtuoso headsets (C9 64, and the Bragi ids 0Axx, 2A02, 2A08) are piece 6's (heads/corsair.rs, which reads its Bragi
+// headsets through `read_bragi` here), and a headset found behind a receiver (paired id 0Axx) is a headset's card; the 0–1000 level rounded to whole per cent (finer than per cent: not invented
 // precision; the original added 5 then divided by 10 and clamped); a level of 0 or over 1000 after its two retries is
 // no level (the original skipped the target).
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -128,10 +128,10 @@ fn read_target(bg: &mut Bragi, ch: &mut Chans, target: u8, deadline: Instant, no
     if target != SELF {
         if let Ok(Some(p)) = bg.get(ch, target, PRODUCT, deadline) {
             if p >> 8 == 0x0A {
-                // (A headset behind the receiver: the headset piece's.)
-                return Err(TErr::Refused);
-            }
-            if let Some((n, k)) = paired_name(p) {
+                // (Piece 6: a headset behind the receiver — Corsair's headsets use ids 0Axx: a headset's card.)
+                a.kind = Some(Kind::Headset);
+                a.name = Some("Corsair wireless headset".to_string());
+            } else if let Some((n, k)) = paired_name(p) {
                 a.name = Some(n.to_string());
                 a.kind = Some(k);
             }
@@ -227,11 +227,12 @@ mod tests {
         f.replies.extend([vec![rep(1, 0, 1500)], vec![rep(1, 0, 1500)], vec![rep(1, 0, 1500)]]);
         let a = crate::mice::read(&mut Chans::one(&mut f), m, Some(0x09), true, soon(), 7);
         assert_eq!(a.out, dozing(7));
-        // (A headset behind the receiver: left to the headset piece.)
+        // (A headset behind the receiver: a headset's card, piece 6.)
         let mut f = fake(m);
         f.replies.extend([vec![rep(1, 0, 600)], vec![rep(1, 0, 0)], vec![rep(1, 0, 0x0A3E)]]);
         let a = crate::mice::read(&mut Chans::one(&mut f), m, Some(0x09), true, soon(), 7);
-        assert_eq!(a.out, dozing(7));
+        assert_eq!(a.out, at(pctl(60), Charging::No));
+        assert_eq!((a.kind, a.name.as_deref()), (Some(Kind::Headset), Some("Corsair wireless headset")));
         // (A slot the receiver does not have: nothing sent.)
         let mut f = fake(m);
         assert_eq!(crate::mice::read(&mut Chans::one(&mut f), m, Some(0x08), true, soon(), 7).out, Outcome::Failed);

@@ -37,6 +37,9 @@
 // - A receiver with several devices: one card each (Logitech's slots 1–6, Corsair's paired targets 09–0B; win/mice.rs
 //   keeps the slots a receiver's reader found while it stays plugged in). A mouse on its cable with its receiver also plugged in: one card, by an explicit rule
 //   only (Model::pair — the same product pair, one of each present — or the same HID++ unit id).
+// Piece 6: the headsets' families (heads/*.rs, and the non-HID AirPods, Galaxy Buds, Phone Link) are families of this
+// table too — Family::group puts them in the page's «Headsets and earbuds» or «Other»; their models are chained after
+// these (all_models), their requests in heads/allowed.rs.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 pub mod allowed;
 pub mod proto;
@@ -127,10 +130,52 @@ pub enum Family {
     Delux,
     Ajazz,
     Incott,
+    // (Piece 6: headsets and earbuds — heads/*.rs, airpods.rs, galaxybuds.rs — and the rest: a microphone, a phone.)
+    RazerHs,
+    SteelSeriesHs,
+    CorsairHs,
+    LogitechHs,
+    Astro,
+    Audeze,
+    HyperX,
+    Sony,
+    Jabra,
+    Jbl,
+    Poly,
+    Moondrop,
+    MchoseHs,
+    Alienware,
+    Fractal,
+    RogHs,
+    AirPods,
+    GalaxyBuds,
+    Maono,
+    PhoneLink,
+}
+
+/// Which list of the page a family is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    /// «Mice and keyboards» (piece 5).
+    Mice,
+    /// «Headsets and earbuds» (piece 6).
+    Heads,
+    /// «Other» (piece 6: a wireless microphone, a phone through Phone Link).
+    Other,
+}
+
+impl Group {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Group::Mice => "mice",
+            Group::Heads => "heads",
+            Group::Other => "other",
+        }
+    }
 }
 
 impl Family {
-    pub const ALL: [Family; 42] = [
+    pub const ALL: [Family; 62] = [
         Family::Logitech,
         Family::Razer,
         Family::SteelSeries,
@@ -173,6 +218,26 @@ impl Family {
         Family::Delux,
         Family::Ajazz,
         Family::Incott,
+        Family::RazerHs,
+        Family::SteelSeriesHs,
+        Family::CorsairHs,
+        Family::LogitechHs,
+        Family::Astro,
+        Family::Audeze,
+        Family::HyperX,
+        Family::Sony,
+        Family::Jabra,
+        Family::Jbl,
+        Family::Poly,
+        Family::Moondrop,
+        Family::MchoseHs,
+        Family::Alienware,
+        Family::Fractal,
+        Family::RogHs,
+        Family::AirPods,
+        Family::GalaxyBuds,
+        Family::Maono,
+        Family::PhoneLink,
     ];
     /// The setting's id (prefixed: never one of the controllers' ids).
     pub fn as_str(self) -> &'static str {
@@ -219,6 +284,26 @@ impl Family {
             Family::Delux => "mk-delux",
             Family::Ajazz => "mk-ajazz",
             Family::Incott => "mk-incott",
+            Family::RazerHs => "hs-razer",
+            Family::SteelSeriesHs => "hs-steelseries",
+            Family::CorsairHs => "hs-corsair",
+            Family::LogitechHs => "hs-logitech",
+            Family::Astro => "hs-astro",
+            Family::Audeze => "hs-audeze",
+            Family::HyperX => "hs-hyperx",
+            Family::Sony => "hs-sony",
+            Family::Jabra => "hs-jabra",
+            Family::Jbl => "hs-jbl",
+            Family::Poly => "hs-poly",
+            Family::Moondrop => "hs-moondrop",
+            Family::MchoseHs => "hs-mchose",
+            Family::Alienware => "hs-alienware",
+            Family::Fractal => "hs-fractal",
+            Family::RogHs => "hs-rog",
+            Family::AirPods => "hs-airpods",
+            Family::GalaxyBuds => "hs-galaxybuds",
+            Family::Maono => "ot-maono",
+            Family::PhoneLink => "ot-phonelink",
         }
     }
     pub fn parse(s: &str) -> Option<Family> {
@@ -269,7 +354,44 @@ impl Family {
             Family::Delux => "Delux",
             Family::Ajazz => "AJAZZ",
             Family::Incott => "Incott / Wraith",
+            Family::RazerHs => "Razer",
+            Family::SteelSeriesHs => "SteelSeries",
+            Family::CorsairHs => "Corsair",
+            Family::LogitechHs => "Logitech G",
+            Family::Astro => "ASTRO",
+            Family::Audeze => "Audeze",
+            Family::HyperX => "HyperX",
+            Family::Sony => "Sony INZONE",
+            Family::Jabra => "Jabra",
+            Family::Jbl => "JBL",
+            Family::Poly => "Poly / Plantronics",
+            Family::Moondrop => "MOONDROP",
+            Family::MchoseHs => "MCHOSE",
+            Family::Alienware => "Alienware",
+            Family::Fractal => "Fractal Design",
+            Family::RogHs => "ASUS ROG",
+            Family::AirPods => "AirPods / Beats",
+            Family::GalaxyBuds => "Galaxy Buds",
+            Family::Maono => "MAONO",
+            Family::PhoneLink => "Phone Link",
         }
+    }
+    /// The page's list it is in.
+    pub fn group(self) -> Group {
+        match self.as_str().split('-').next() {
+            Some("hs") => Group::Heads,
+            Some("ot") => Group::Other,
+            _ => Group::Mice,
+        }
+    }
+    /// Read over HID through the tables (else: Bluetooth LE advertisements, a serial-port service, a file).
+    pub fn hid(self) -> bool {
+        !matches!(self, Family::AirPods | Family::GalaxyBuds | Family::PhoneLink)
+    }
+    /// Its reader opens a connection to the device (Galaxy Buds' status service) rather than sending a request: still
+    /// off until the user turns it on.
+    pub fn connects(self) -> bool {
+        self == Family::GalaxyBuds
     }
 }
 
@@ -350,6 +472,34 @@ pub static DRIVERS: &[Driver] = &[
     d("mk-delux", Family::Delux, Way::Query, "src/drivers/misc_mice.cpp (Delux M800 Pro)"),
     d("mk-ajazz", Family::Ajazz, Way::Query, "src/drivers/misc_mice.cpp (AJ139 V2)"),
     d("mk-incott", Family::Incott, Way::Query, "src/drivers/misc_mice.cpp (Incott, Wraith W1)"),
+    // (Piece 6.)
+    d("hs-razer-hs", Family::RazerHs, Way::Query, "src/drivers/razer_headset.cpp (BlackShark V2 HyperSpeed)"),
+    d("hs-razer-v2pro", Family::RazerHs, Way::Query, "src/drivers/razer_headset.cpp (BlackShark V2 Pro 2020)"),
+    d("hs-razer-v3x", Family::RazerHs, Way::Query, "src/drivers/razer_headset.cpp (BlackShark V3 X)"),
+    d("hs-razer-v3", Family::RazerHs, Way::Query, "src/drivers/razer_headset.cpp (BlackShark V3 / V3 Pro)"),
+    d("hs-steelseries", Family::SteelSeriesHs, Way::Query, "src/drivers/steelseries.cpp (Arctis)"),
+    d("hs-ss-elite", Family::SteelSeriesHs, Way::Query, "src/drivers/steelseries_elite.cpp"),
+    d("hs-corsair-void", Family::CorsairHs, Way::Query, "src/drivers/corsair.cpp (Void, HS)"),
+    d("hs-corsair-bragi", Family::CorsairHs, Way::Query, "src/drivers/corsair.cpp (Bragi headsets)"),
+    d("hs-logitech", Family::LogitechHs, Way::Query, "src/drivers/logitech.cpp (G headsets, ADC_MEASUREMENT)"),
+    d("hs-astro-x", Family::Astro, Way::Query, "src/drivers/astro.cpp (A50 X, A50 Gen 5)"),
+    d("hs-astro", Family::Astro, Way::Query, "src/drivers/astro.cpp (A50 Gen 3 / 4, A20)"),
+    d("hs-audeze", Family::Audeze, Way::Query, "src/drivers/audeze.cpp"),
+    d("hs-hyperx", Family::HyperX, Way::Query, "src/drivers/hyperx.cpp"),
+    d("hs-sony", Family::Sony, Way::Query, "src/drivers/sony_inzone.cpp"),
+    d("hs-jabra", Family::Jabra, Way::Query, "src/drivers/jabra.cpp"),
+    d("hs-jbl", Family::Jbl, Way::Query, "src/drivers/jbl.cpp (HIDV3)"),
+    d("hs-jbl-350", Family::Jbl, Way::Passive, "src/drivers/jbl.cpp (Quantum 350)"),
+    d("hs-poly", Family::Poly, Way::Query, "src/drivers/plantronics.cpp"),
+    d("hs-moondrop", Family::Moondrop, Way::Query, "src/drivers/moondrop.cpp"),
+    d("hs-mchose", Family::MchoseHs, Way::Query, "src/drivers/mchose_headset.cpp"),
+    d("hs-alienware", Family::Alienware, Way::Query, "src/drivers/alienware.cpp"),
+    d("hs-fractal", Family::Fractal, Way::Query, "src/drivers/fractal.cpp"),
+    d("hs-rog", Family::RogHs, Way::Query, "src/drivers/rog.cpp (Pelta, Delta II)"),
+    d("hs-airpods", Family::AirPods, Way::Passive, "src/drivers/airpods.cpp"),
+    d("hs-galaxybuds", Family::GalaxyBuds, Way::Query, "src/drivers/galaxy_buds.cpp, galaxy_buds_protocol.h"),
+    d("ot-maono", Family::Maono, Way::Query, "src/drivers/maono.cpp"),
+    d("ot-phonelink", Family::PhoneLink, Way::Passive, "src/drivers/phonelink.cpp"),
 ];
 
 pub fn driver(id: &str) -> Option<&'static Driver> {
@@ -456,11 +606,14 @@ pub struct Model {
     /// The length a feature report is sent with when the device wants its own report's length, not the collection's
     /// longest (Machenike: 21 of 1001); 0 = the collection's.
     pub feat_len: u16,
+    /// Piece 6: the least time between two queries, in seconds (BlackShark V3's 2.4 GHz link drops when asked every few
+    /// seconds: 300); a query sooner gives the last reading again, with its own time. 0 = the user's interval.
+    pub gap_s: u16,
 }
 
 impl Model {
     pub const fn new(driver: &'static str, vid: u16, pid: u16, name: &'static str, kind: Kind, via: Via) -> Model {
-        Model { driver, vid, pid, page: Page::Any, usage: None, iface: None, input: Len::Any, output: Len::Any, feature: Len::Any, role: Role::Main, name, kind, via, slots: &[], pair: "", arg: 0, product_name: false, product: "", feat_len: 0 }
+        Model { driver, vid, pid, page: Page::Any, usage: None, iface: None, input: Len::Any, output: Len::Any, feature: Len::Any, role: Role::Main, name, kind, via, slots: &[], pair: "", arg: 0, product_name: false, product: "", feat_len: 0, gap_s: 0 }
     }
     pub const fn page(mut self, p: u16) -> Model {
         self.page = Page::Is(p);
@@ -508,6 +661,10 @@ impl Model {
     }
     pub const fn product_is(mut self, p: &'static str) -> Model {
         self.product = p;
+        self
+    }
+    pub const fn gap(mut self, s: u16) -> Model {
+        self.gap_s = s;
         self
     }
     pub const fn feat_len(mut self, n: u16) -> Model {
@@ -617,8 +774,9 @@ pub static TABLES: &[&[Model]] = &[
     misc::MODELS,
 ];
 
+/// Every family's table, the headsets' (piece 6, heads/mod.rs) after the mice' and keyboards'.
 pub fn all_models() -> impl Iterator<Item = &'static Model> {
-    TABLES.iter().flat_map(|t| t.iter())
+    TABLES.iter().chain(crate::heads::TABLES.iter()).flat_map(|t| t.iter())
 }
 
 /// The reader for one collection, by its identity and report lengths.
@@ -666,8 +824,9 @@ pub fn find_any(id: &HidIdent) -> Option<&'static Model> {
 /// keyboard's own collections; feature reports go through the control pipe).
 pub fn sends_output(driver: &str) -> bool {
     driver == "mk-logitech"
-        || allowed::SETS.iter().any(|e| e.kind == ReportKind::Output && e.devices.driver == Some(driver))
-        || allowed::TEMPLATES.iter().any(|t| t.kind == ReportKind::Output && t.devices.driver == Some(driver))
+        || driver == "hs-logitech"
+        || allowed::SETS.iter().chain(crate::heads::allowed::SETS.iter()).any(|e| e.kind == ReportKind::Output && e.devices.driver == Some(driver))
+        || allowed::TEMPLATES.iter().chain(crate::heads::allowed::TEMPLATES.iter()).any(|t| t.kind == ReportKind::Output && t.devices.driver == Some(driver))
         // (Finalmouse's entries list its receivers by id: each its own report id.)
         || driver == "mk-finalmouse"
 }
@@ -933,6 +1092,24 @@ pub fn listen<R>(t: &mut dyn HidTransport, window: Duration, deadline: Instant, 
     }
 }
 
+/// Piece 6: a reading kept for a model with a least gap between queries (Model::gap_s) — the same reading, with its own
+/// time, while the gap has not passed; else None (ask the device).
+pub fn within_gap(m: &Model, kept: Option<(u64, Outcome)>, now: u64) -> Option<Outcome> {
+    let (at, out) = kept?;
+    if m.gap_s == 0 || now < at || now - at >= u64::from(m.gap_s) * 1000 {
+        return None;
+    }
+    match out {
+        Outcome::Read(r) if r.level != Level::Unknown => Some(out),
+        _ => None,
+    }
+}
+
+/// The 8-bit XOR of `b`.
+pub fn xor8(b: &[u8]) -> u8 {
+    b.iter().fold(0u8, |a, &x| a ^ x)
+}
+
 /// The 8-bit sum of `b`.
 pub fn sum8(b: &[u8]) -> u8 {
     b.iter().fold(0u8, |a, &x| a.wrapping_add(x))
@@ -979,6 +1156,7 @@ pub fn read(ch: &mut Chans, m: &Model, slot: Option<u8>, on: bool, deadline: Ins
         "mk-nzxt" => nzxt::read(ch, m, deadline, now).into(),
         "mk-niceboy" => niceboy::read(ch, m, deadline, now).into(),
         "mk-motospeed" | "mk-delux" | "mk-ajazz" | "mk-incott" | "mk-xenta" => misc::read(ch, m, deadline, now),
+        id if id.starts_with("hs-") || id.starts_with("ot-") => crate::heads::read(ch, m, slot, deadline, now),
         _ => Outcome::Failed.into(),
     }
 }
@@ -1039,7 +1217,9 @@ mod tests {
             assert!(m.vid != 0 && m.pid != 0, "{}: a product id, never a vendor alone", m.name);
             assert!(driver(m.driver).is_some(), "{}: driver {}", m.name, m.driver);
             assert!(!m.name.is_empty());
-            assert!(matches!(m.kind, Kind::Mouse | Kind::Keyboard), "{}: mice and keyboards only here", m.name);
+            if m.driver().family.group() == Group::Mice {
+                assert!(matches!(m.kind, Kind::Mouse | Kind::Keyboard), "{}: mice and keyboards only in that list", m.name);
+            }
             // (One model per collection: the same product, page, usage, interface and lengths never twice.)
             let k = (m.vid, m.pid, format!("{:?}{:?}{:?}{:?}{:?}{:?}", m.page, m.usage, m.iface, m.input, m.output, m.feature));
             assert!(seen.insert(k), "{} {:04X}:{:04X} listed twice for one collection", m.name, m.vid, m.pid);
@@ -1058,15 +1238,17 @@ mod tests {
         for d in DRIVERS {
             assert_eq!(d.proven, Proven::PortedUntested, "{}: nothing is tested on hardware here", d.id);
             assert_eq!(d.on_by_default(), d.way == Way::Passive, "{}", d.id);
-            assert!(d.id.starts_with("mk-") && crate::pads::driver(d.id).is_none(), "{}: never a controller reader's id", d.id);
+            assert!(d.id.split('-').next() == d.family.as_str().split('-').next() && crate::pads::driver(d.id).is_none(), "{}: never a controller reader's id", d.id);
         }
         for f in Family::ALL {
             assert_eq!(Family::parse(f.as_str()), Some(f));
             assert!(crate::pads::Family::parse(f.as_str()).is_none());
             assert!(DRIVERS.iter().any(|d| d.family == f), "{:?} has a reader", f);
-            assert!(all_models().any(|m| m.driver().family == f), "{:?} has a product", f);
+            assert_eq!(all_models().any(|m| m.driver().family == f), f.hid(), "{:?}: a HID family has a product, the others none", f);
         }
-        assert_eq!(listen_families(), vec![Family::Rapoo, Family::Aula, Family::Xenta]);
+        assert_eq!(listen_families(), vec![Family::Rapoo, Family::Aula, Family::Xenta, Family::Jbl, Family::AirPods, Family::PhoneLink]);
+        assert!(query_families().contains(&Family::GalaxyBuds), "connecting to earbuds: off until turned on");
+        assert_eq!((Family::Logitech.group(), Family::RazerHs.group(), Family::PhoneLink.group(), Family::Maono.group()), (Group::Mice, Group::Heads, Group::Other, Group::Other));
         assert!(query_families().contains(&Family::Logitech) && !query_families().contains(&Family::Rapoo) && !query_families().contains(&Family::Xenta));
         // (Every model of a reader that sends has an allow entry for its product, and every allow entry is for a
         //  product of a reader that sends.)
@@ -1074,7 +1256,7 @@ mod tests {
             let id = ident(m);
             assert!(allow::may_write(&id), "{} {:04X}:{:04X}: sends, so allow.rs names it", m.name, m.vid, m.pid);
         }
-        for e in allowed::SETS.iter().map(|e| e.devices).chain(allowed::TEMPLATES.iter().map(|t| t.devices)) {
+        for e in allowed::SETS.iter().chain(crate::heads::allowed::SETS.iter()).map(|e| e.devices).chain(allowed::TEMPLATES.iter().chain(crate::heads::allowed::TEMPLATES.iter()).map(|t| t.devices)) {
             for &pid in e.pids {
                 let m = all_models().find(|m| m.vid == e.vid && m.pid == pid).unwrap_or_else(|| panic!("an allow entry for an unlisted product {:04X}:{:04X}", e.vid, pid));
                 assert_eq!(m.driver().way, Way::Query, "{}: a passive reader has no allow entry", m.name);

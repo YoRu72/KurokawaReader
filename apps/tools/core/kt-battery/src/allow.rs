@@ -182,17 +182,19 @@ impl B {
     }
 }
 
-/// A request with bounded variable bytes: exactly `pattern.len()` bytes, each one taken by its B.
+/// A request with bounded variable bytes: exactly `pattern.len()` bytes, each one taken by its B — and, where a byte is
+/// a checksum of the variable ones (piece 6: a transaction id with its checksum), `check` must hold as well.
 pub struct Template {
     pub devices: Products,
     pub kind: ReportKind,
     pub pattern: &'static [B],
     pub why: &'static str,
+    pub check: Option<fn(&[u8]) -> bool>,
 }
 
 impl Template {
     pub fn takes(&self, bytes: &[u8]) -> bool {
-        bytes.len() == self.pattern.len() && self.pattern.iter().zip(bytes).all(|(b, &v)| b.takes(v))
+        bytes.len() == self.pattern.len() && self.pattern.iter().zip(bytes).all(|(b, &v)| b.takes(v)) && self.check.map_or(true, |c| c(bytes))
     }
 }
 
@@ -200,6 +202,16 @@ impl Template {
 pub static ALLOWED_SETS: &[SetEntry] = crate::mice::allowed::SETS;
 /// The mice' and keyboards' bounded templates.
 pub static TEMPLATES: &[Template] = crate::mice::allowed::TEMPLATES;
+/// Piece 6: the headsets' exact requests and bounded templates (heads/allowed.rs).
+pub static HEAD_SETS: &[SetEntry] = crate::heads::allowed::SETS;
+pub static HEAD_TEMPLATES: &[Template] = crate::heads::allowed::TEMPLATES;
+
+fn all_sets() -> impl Iterator<Item = &'static SetEntry> {
+    ALLOWED_SETS.iter().chain(HEAD_SETS.iter())
+}
+fn all_templates() -> impl Iterator<Item = &'static Template> {
+    TEMPLATES.iter().chain(HEAD_TEMPLATES.iter())
+}
 
 /// Logitech HID++ (1.0 and 2.0), the protocol's public description (Logitech's HID++ 2.0 drafts; Solaar): a short
 /// report (id 10, 7 bytes) or a long one (id 11, 20 bytes): [id][device index][feature index][function << 4 | sw id]
@@ -220,6 +232,7 @@ pub mod hidpp {
         (0x1001, &[0x00]),             // BATTERY_VOLTAGE GetBatteryInfo
         (0x0005, &[0x00, 0x01, 0x02]), // DEVICE_NAME getCount, getDeviceName, getDeviceType
         (0x0003, &[0x00]),             // DEVICE_INFORMATION getDeviceInfo (the unit id)
+        (0x1F20, &[0x00]),             // ADC_MEASUREMENT getADCMeasurement (piece 6: G headsets' battery voltage)
     ];
     pub const REGISTERS: &[u8] = &[0x0D, 0x07];
     pub fn device_index_ok(i: u8) -> bool {
@@ -271,7 +284,7 @@ impl HidppSession {
 /// FF43:0301 / 0302.
 pub fn hidpp_device(id: &HidIdent) -> bool {
     id.vid == 0x046D
-        && crate::mice::logitech::PIDS.contains(&id.pid)
+        && (crate::mice::logitech::PIDS.contains(&id.pid) || crate::heads::logitech::PIDS.contains(&id.pid))
         && matches!((id.usage_page, id.usage), (0xFF00, 0x0001) | (0xFF00, 0x0002) | (0xFF43, 0x0202) | (0xFF43, 0x0301) | (0xFF43, 0x0302))
 }
 
@@ -350,12 +363,12 @@ fn permit_from(table: &[AllowEntry], id: &HidIdent, kind: ReportKind, bytes: &[u
         .map(|_| AllowedWrite { ident: id.clone(), kind, bytes: bytes.to_vec(), _seal: Seal })
 }
 
-fn permit_sets(sets: &[SetEntry], templates: &[Template], id: &HidIdent, kind: ReportKind, bytes: &[u8]) -> Option<AllowedWrite> {
+fn permit_sets(id: &HidIdent, kind: ReportKind, bytes: &[u8]) -> Option<AllowedWrite> {
     if bytes.is_empty() {
         return None;
     }
-    let listed = sets.iter().any(|e| e.kind == kind && e.devices.matches(id) && e.bytes.iter().any(|b| *b == bytes));
-    let shaped = templates.iter().any(|t| t.kind == kind && t.devices.matches(id) && t.takes(bytes));
+    let listed = all_sets().any(|e| e.kind == kind && e.devices.matches(id) && e.bytes.iter().any(|b| *b == bytes));
+    let shaped = all_templates().any(|t| t.kind == kind && t.devices.matches(id) && t.takes(bytes));
     if listed || shaped {
         Some(AllowedWrite { ident: id.clone(), kind, bytes: bytes.to_vec(), _seal: Seal })
     } else {
@@ -366,12 +379,12 @@ fn permit_sets(sets: &[SetEntry], templates: &[Template], id: &HidIdent, kind: R
 /// The only way to a write (HID++ apart: `permit_hidpp`): `bytes` exactly as the tables list them for this device and
 /// kind — or as a template bounds them —, else None.
 pub fn permit(id: &HidIdent, kind: ReportKind, bytes: &[u8]) -> Option<AllowedWrite> {
-    permit_from(ALLOWED, id, kind, bytes).or_else(|| permit_sets(ALLOWED_SETS, TEMPLATES, id, kind, bytes))
+    permit_from(ALLOWED, id, kind, bytes).or_else(|| permit_sets(id, kind, bytes))
 }
 
 /// Whether the tables allow any write to this device (else it is opened for queries only).
 pub fn may_write(id: &HidIdent) -> bool {
-    may_write_in(ALLOWED, id) || ALLOWED_SETS.iter().any(|e| e.devices.matches(id)) || TEMPLATES.iter().any(|t| t.devices.matches(id)) || hidpp_device(id)
+    may_write_in(ALLOWED, id) || all_sets().any(|e| e.devices.matches(id)) || all_templates().any(|t| t.devices.matches(id)) || hidpp_device(id)
 }
 
 fn may_write_in(table: &[AllowEntry], id: &HidIdent) -> bool {

@@ -312,6 +312,9 @@ impl HidTransport for WinHid {
     fn ident(&self) -> &HidIdent {
         &self.ident
     }
+    fn feature_len(&self) -> usize {
+        self.feature_len
+    }
     fn mode(&self) -> OpenMode {
         self.mode
     }

@@ -33,7 +33,7 @@ pub trait Platform: Send + Sync + 'static {
 
 /// Whether a device is asked through `query` (else its reader brought its reading with the enumeration).
 pub fn needs_query(d: &Device) -> bool {
-    d.source == Source::HidGeneric || d.source == Source::Pad || d.source == Source::Vendor
+    d.source == Source::HidGeneric || d.source == Source::Pad || d.source == Source::Vendor || d.source == Source::Spp
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -82,8 +82,16 @@ pub enum Source {
     XInput,
     /// A controller's own reader (pads/*.rs: PlayStation, Nintendo, Steam, 8BitDo, GameSir, Flydigi, BEITONG).
     Pad,
-    /// A mouse's or keyboard's own reader (mice/*.rs: Logitech HID++, Razer, SteelSeries, Corsair and the rest).
+    /// A mouse's or keyboard's own reader (mice/*.rs: Logitech HID++, Razer, SteelSeries, Corsair and the rest), and
+    /// piece 6's headsets' (heads/*.rs), which go through the same tables.
     Vendor,
+    /// Piece 6: what earbuds broadcast to anyone near (AirPods' Bluetooth LE advertisements — airpods.rs): listened to.
+    Advert,
+    /// Piece 6: a phone's level as Phone Link keeps it in a file of the user's own profile (phonelink.rs): read.
+    PhoneLink,
+    /// Piece 6: Galaxy Buds' status, pushed on Samsung's serial-port service once connected (galaxybuds.rs) — only
+    /// when the user turned that on.
+    Spp,
 }
 
 impl Source {
@@ -95,6 +103,9 @@ impl Source {
             Source::XInput => "xinput",
             Source::Pad => "pad",
             Source::Vendor => "vendor",
+            Source::Advert => "advert",
+            Source::PhoneLink => "phonelink",
+            Source::Spp => "spp",
         }
     }
     /// Which reading wins when two readers see one physical device (identity.rs): a controller's own reader first (it
@@ -102,7 +113,7 @@ impl Source {
     /// original: «its HID field can read 0»), a real percentage over a coarse one.
     pub fn rank(self) -> u8 {
         match self {
-            Source::Pad | Source::Vendor => 5,
+            Source::Pad | Source::Vendor | Source::Advert | Source::PhoneLink | Source::Spp => 5,
             Source::Bluetooth => 4,
             Source::XboxWgi => 3,
             Source::HidGeneric => 2,
@@ -244,6 +255,11 @@ pub enum Note {
     NoPad,
     /// A mouse's or keyboard's receiver with no device linked to it (or the device switched off).
     Unlinked,
+    /// Piece 6: earbuds with both buds in their case (the dongle or the case answers, the buds do not).
+    InCase,
+    /// Piece 6: the reader needs a part of Windows this build does not carry (AirPods' advertisements need WinRT,
+    /// the `wgi` feature).
+    NotInBuild,
 }
 
 impl Note {
@@ -254,6 +270,8 @@ impl Note {
             Note::QueryOff => "queryOff",
             Note::NoPad => "noPad",
             Note::Unlinked => "unlinked",
+            Note::InCase => "inCase",
+            Note::NotInBuild => "notInBuild",
         }
     }
 }
@@ -320,6 +338,67 @@ impl Device {
     }
 }
 
+/// Piece 6: a part of a device with its own cell — an earbud, the earbuds' case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartName {
+    Left,
+    Right,
+    Case,
+}
+
+impl PartName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PartName::Left => "left",
+            PartName::Right => "right",
+            PartName::Case => "case",
+        }
+    }
+}
+
+/// One part's level as the device reports it. `in_use`: out of the case (a bud), or worn — the case is never «in use».
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Part {
+    pub name: PartName,
+    pub level: Level,
+    pub charging: Charging,
+    pub in_use: bool,
+}
+
+/// Up to three parts (left, right, case), kept by value so a Reading stays Copy.
+pub type Parts = [Option<Part>; 3];
+
+/// How a level compares for «lowest» (an exact level by its value; coarse and steps by their nearest word's share).
+fn rank_of(l: Level) -> Option<u16> {
+    match l {
+        Level::Exact(p) => Some(u16::from(p.get()) * 10),
+        Level::Steps(s) => Some(u16::from(s.n()) * 1000 / u16::from(s.max())),
+        Level::Coarse(c) => Some(match c {
+            Coarse::Empty => 0,
+            Coarse::Low => 150,
+            Coarse::Medium => 450,
+            Coarse::High => 750,
+            Coarse::Full => 1000,
+        }),
+        Level::Unknown => None,
+    }
+}
+
+/// The level that stands for the whole device (the tray, the notices, the low mark): the lowest part in use that has a
+/// level; with none in use, the lowest bud that has one; never the case (it is not what runs out in the ear).
+pub fn lowest_in_use(parts: &Parts) -> (Level, Charging) {
+    let pick = |want_use: bool| {
+        parts
+            .iter()
+            .flatten()
+            .filter(|p| p.name != PartName::Case && (!want_use || p.in_use))
+            .filter_map(|p| rank_of(p.level).map(|r| (r, *p)))
+            .min_by_key(|(r, _)| *r)
+            .map(|(_, p)| (p.level, p.charging))
+    };
+    pick(true).or_else(|| pick(false)).unwrap_or((Level::Unknown, Charging::Unknown))
+}
+
 /// One answer of a device, with the time it was taken (ms since the Unix epoch, the caller's clock).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reading {
@@ -330,18 +409,26 @@ pub struct Reading {
     pub taken_at: u64,
     /// Why `level` is Unknown, when the reader knows.
     pub note: Note,
+    /// Piece 6: a device with several cells (earbuds: left, right, case), each as it reports it; `level` and
+    /// `charging` are then `lowest_in_use`'s.
+    pub parts: Parts,
 }
 
 impl Reading {
     pub fn new(level: Level, charging: Charging, taken_at: u64) -> Reading {
-        Reading { level, charging, asleep: false, taken_at, note: Note::None }
+        Reading { level, charging, asleep: false, taken_at, note: Note::None, parts: [None; 3] }
     }
     pub fn asleep(taken_at: u64) -> Reading {
-        Reading { level: Level::Unknown, charging: Charging::Unknown, asleep: true, taken_at, note: Note::None }
+        Reading { level: Level::Unknown, charging: Charging::Unknown, asleep: true, taken_at, note: Note::None, parts: [None; 3] }
     }
     /// No level, and why.
     pub fn unknown(note: Note, charging: Charging, taken_at: u64) -> Reading {
-        Reading { level: Level::Unknown, charging, asleep: false, taken_at, note }
+        Reading { level: Level::Unknown, charging, asleep: false, taken_at, note, parts: [None; 3] }
+    }
+    /// A device of several parts: its level the lowest part in use (never the case). No part with a level: Unknown.
+    pub fn with_parts(parts: Parts, taken_at: u64) -> Reading {
+        let (level, charging) = lowest_in_use(&parts);
+        Reading { level, charging, asleep: false, taken_at, note: Note::None, parts }
     }
     /// How old it is at `now` (0 when the clock went back).
     pub fn age_ms(&self, now: u64) -> u64 {
@@ -408,6 +495,31 @@ mod tests {
         assert!(!r.is_fresh(61_001, 60_000));
         let a = Reading::asleep(5);
         assert!(a.asleep && a.level == Level::Unknown);
+    }
+
+    #[test]
+    fn parts_the_lowest_in_use_never_the_case() {
+        let p = |name, v: i64, in_use| Some(Part { name, level: Level::Exact(Percent::new(v).unwrap()), charging: Charging::No, in_use });
+        // (Left 80 in the ear, right 20 in the case, the case 5: the left one stands for the earbuds.)
+        let r = Reading::with_parts([p(PartName::Left, 80, true), p(PartName::Right, 20, false), p(PartName::Case, 5, false)], 9);
+        assert_eq!(r.level, Level::Exact(Percent::new(80).unwrap()));
+        assert!(!r.level.is_low(15), "the case at 5 % tells nothing");
+        // (Both in the ear: the lower one.)
+        let r = Reading::with_parts([p(PartName::Left, 80, true), p(PartName::Right, 12, true), p(PartName::Case, 90, false)], 9);
+        assert_eq!(r.level, Level::Exact(Percent::new(12).unwrap()));
+        assert!(r.level.is_low(15));
+        // (None in use: the lower bud, still not the case.)
+        let r = Reading::with_parts([p(PartName::Left, 60, false), p(PartName::Right, 40, false), p(PartName::Case, 3, false)], 9);
+        assert_eq!(r.level, Level::Exact(Percent::new(40).unwrap()));
+        // (Only the case has a level: no level for the device.)
+        let r = Reading::with_parts([None, None, p(PartName::Case, 50, false)], 9);
+        assert_eq!(r.level, Level::Unknown);
+        assert_eq!(r.parts[2].map(|x| x.name.as_str()), Some("case"));
+        // (Steps against a percentage: compared by their share.)
+        let s = Some(Part { name: PartName::Left, level: Level::Steps(Steps::new(1, 10).unwrap()), charging: Charging::Yes, in_use: true });
+        let r = Reading::with_parts([s, p(PartName::Right, 50, true), None], 9);
+        assert_eq!((r.level, r.charging), (Level::Steps(Steps::new(1, 10).unwrap()), Charging::Yes));
+        assert_eq!(Reading::new(Level::Unknown, Charging::No, 0).parts, [None; 3]);
     }
 
     #[test]
