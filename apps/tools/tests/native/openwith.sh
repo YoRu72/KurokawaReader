@@ -3,8 +3,7 @@
 # of the Android classes it uses (no Android SDK here: the stubs say only what the code calls, so a wrong name or
 # type fails), then its alias table (KINDS) run for a few class names. Needs javac and org.json (the jar apk.sh fetches).
 set -e
-HERE=$(cd "$(dirname "$0")" && pwd); D=$(mktemp -d); LIB=${KT_JARS:-$HOME/.cache/kt-test-jars}; J="$LIB/json-20240303.jar"
-[ -s "$J" ] || { mkdir -p "$LIB"; curl -sSfL -o "$J" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar; }
+HERE=$(cd "$(dirname "$0")" && pwd); D=$(mktemp -d); LIB=${KT_JARS:-$HOME/.cache/kt-test-jars}; J=$(sh "$HERE/jsonjar.sh")
 mkdir -p "$D/src/android/app" "$D/src/android/content/pm" "$D/src/android/net" "$D/src/android/os" "$D/src/app/kurokawa/tools"
 cat > "$D/src/android/content/Context.java" <<'J'
 package android.content; public abstract class Context { public abstract ContentResolver getContentResolver(); public abstract String getPackageName(); public abstract android.content.pm.PackageManager getPackageManager(); public void startActivity(Intent i) {} }

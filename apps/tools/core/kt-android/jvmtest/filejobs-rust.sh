@@ -8,8 +8,7 @@
 set -e
 SO=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); [ -f "$SO" ] || { echo "no library at $1"; exit 1; }
 HERE=$(cd "$(dirname "$0")" && pwd); A="$HERE/../../../native/android"; T="$HERE/../../../tests/native"; D=$(mktemp -d)
-LIB=${KT_JARS:-$HOME/.cache/kt-test-jars}; mkdir -p "$LIB"; J="$LIB/json-20240303.jar"
-[ -s "$J" ] || for t in 1 2 3 4; do curl -sSfL -o "$J" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar && break; sleep 4; done
+J=$(sh "$T/jsonjar.sh")
 trap 'rm -rf "$D"' EXIT
 mkdir -p "$D/src"
 for f in KtFileJobs KtFilePlan KtFileExec KtRemoteRules; do sed "s/^final class $f/public final class $f/; s/^package .*;//" "$A/$f.java" > "$D/src/$f.java"; done

@@ -1,22 +1,22 @@
 {
   "_": "Accepted number of en.ts keys missing in each language (a missing key falls back to English). strict=true: a higher count fails the preflight; false: it only warns. Written by: node scripts/preflight.mjs <app> --write-i18n-baseline",
-  "date": "2026-11-15",
-  "enKeys": 3671,
+  "date": "2026-11-19",
+  "enKeys": 4874,
   "languages": {
     "ar": {
       "missing": 0,
       "strict": true
     },
     "ja": {
-      "missing": 1237,
+      "missing": 1236,
       "strict": false
     },
     "ko": {
-      "missing": 1237,
+      "missing": 1236,
       "strict": false
     },
     "zh": {
-      "missing": 1237,
+      "missing": 1236,
       "strict": false
     }
   }

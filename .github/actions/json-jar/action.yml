@@ -1,0 +1,19 @@
+name: org.json jar for the native tests
+description: >-
+  Restores org.json's jar (the version apps/tools/tests/native/jsonjar.sh names) from the Actions cache, or fetches it
+  from Maven Central with that script's tries and growing pauses (Maven answers 429 at times), so the native test
+  scripts of one job find it in ~/.cache/kt-test-jars and never download it themselves. Run it once per job before
+  the first script that needs the jar.
+runs:
+  using: composite
+  steps:
+    - name: org.json jar from the cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/kt-test-jars/json-20240303.jar
+        # (Keyed on the version, and on the fetch script, which holds the version and any checksum it checks.)
+        key: org-json-20240303-${{ hashFiles('apps/tools/tests/native/jsonjar.sh') }}
+    - name: org.json jar (fetched when the cache had none)
+      shell: bash
+      # (A composite step runs from the workspace root, whatever the job's working-directory.)
+      run: sh apps/tools/tests/native/jsonjar.sh

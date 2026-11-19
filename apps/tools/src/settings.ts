@@ -2,7 +2,7 @@
 import type { Limits } from './engine/types';
 import { applyTheme, themeById, THEMES, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
 import { migrateMain } from './theme/app';
-import { loadMine, toDef, pictureKey, pictureAsset } from './theme/custom';
+import type { MyTheme } from './theme/custom';
 import { myStore } from './myStore';
 import { nativePlatform } from './native';
 
@@ -227,16 +227,24 @@ const DEFAULTS: Settings = {
 export const BUILT_IN = ['player'];
 const withBuiltIn = (s: Settings): Settings => (BUILT_IN.every((b) => s.addons.includes(b)) ? s : { ...s, addons: [...s.addons, ...BUILT_IN.filter((b) => !s.addons.includes(b))] });
 let current: Settings = load();
-// (The reader's own themes, among the others from the start.)
-const mine0 = loadMine(myStore);
-migrateTheme(mine0.length > 0);
-for (const m of mine0) upsertTheme(toDef(m));
+// (The reader's own themes, among the others from the start. Their strict check — theme/custom.ts — is fetched only when
+//  some are kept, so a start without any does not carry it: the page stays hidden that moment, as for the palettes.)
+const raw0 = myStore.load(); const hasMine0 = Array.isArray(raw0) && raw0.length > 0;
+migrateTheme(hasMine0);
 // (The palette themes — theme/palettes.ts — are fetched with Appearance; at the start only when the theme in use, or the
 //  base of one of the reader's, is not yet known: the page stays hidden that moment rather than flash another theme.)
 const known = (id?: string) => THEMES.some((x) => x.id === id);
-if (!known(current.theme) || mine0.some((m) => !known(m.base))) {
+if (hasMine0 || !known(current.theme)) {
   const html = document.documentElement; html.dataset.themeWait = '';
-  void import('./theme/palettes').then(() => { for (const m of mine0) upsertTheme(toDef(m)); applyChrome(); }, () => undefined).finally(() => { delete html.dataset.themeWait; });
+  void (async () => {
+    let mine0: MyTheme[] = []; let toDef: ((m: MyTheme) => ThemeDef) | null = null;
+    if (hasMine0) { const c = await import('./theme/custom'); toDef = c.toDef; mine0 = c.loadMine(myStore); for (const m of mine0) upsertTheme(toDef(m)); }
+    if (!known(current.theme) || mine0.some((m) => !known(m.base))) {
+      const got = await import('./theme/palettes').then(() => true, () => false); if (!got) return;
+      for (const m of mine0) upsertTheme(toDef!(m));
+    }
+    applyChrome();
+  })().catch(() => undefined).finally(() => { delete html.dataset.themeWait; });
 }
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
@@ -293,7 +301,7 @@ export function setThemePreview(p: typeof previewing): void { previewing = p; if
 async function picturesOf(def: ThemeDef): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   if (def.pack?.id) Object.assign(out, await import('./themeIo').then((m) => m.themePictures(def.pack!.id)).catch(() => ({})));
-  if (def.custom && def.id !== 'my-preview') for (const m of ['dark', 'light'] as Mode[]) { if ((m === 'dark' ? def.dark : def.light)?.picture !== pictureAsset(def.id, m)) continue; const b = await myStore.io.getFile(pictureKey(def.id, m)).catch(() => undefined); if (b) out[pictureAsset(def.id, m)] = URL.createObjectURL(b); }
+  if (def.custom && def.id !== 'my-preview') { const { pictureKey, pictureAsset } = await import('./theme/custom'); for (const m of ['dark', 'light'] as Mode[]) { if ((m === 'dark' ? def.dark : def.light)?.picture !== pictureAsset(def.id, m)) continue; const b = await myStore.io.getFile(pictureKey(def.id, m)).catch(() => undefined); if (b) out[pictureAsset(def.id, m)] = URL.createObjectURL(b); } }
   return out;
 }
 const isPcNow = () => typeof document !== 'undefined' && document.documentElement.classList.contains('pc');

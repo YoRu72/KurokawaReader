@@ -188,7 +188,7 @@ export interface VisualSettings {
   /** The book page kept matched to the interface's style: a style chosen brings its page theme (readertheme/pagetheme.ts). */
   pageFollowsStyle: boolean;
   darkTone: 'dim' | 'grey' | 'black'; // the dark interface's surfaces: near-black, Material grey, or pure black (OLED)
-  arDigits: 'auto' | 'western' | 'eastern'; // digits in the Arabic interface: 123 for data and ١٢٣ in prose, or one of them throughout
+  arDigits: 'auto' | 'western' | 'eastern'; // digits in the Arabic interface: 0–9 throughout (the default), ١٢٣ throughout, or 'auto' (123 for data, ١٢٣ in prose)
   sizeUnits: 'latin' | 'arabic'; // KB/MB/GB, or كيلوبايت/ميغابايت/قيقابايت in Arabic
   bookPage: 'chaptered' | 'always' | 'never'; // open a book's own page (chapters, tracking) before the reader
   anilistEnabled: boolean; // AniList tracking shown in the app
@@ -386,7 +386,7 @@ export const DEFAULTS: VisualSettings = {
   uiStyle: 'classic',
   glassBlur: 'auto',
   pageFollowsStyle: false,
-  arDigits: 'auto',
+  arDigits: 'western',
   sizeUnits: 'latin',
   bookPage: 'chaptered',
   anilistEnabled: false,
@@ -476,6 +476,10 @@ function load(): VisualSettings {
     if (!localStorage.getItem('kr.bookFormatMigrated')) { s.bookFormat = true; localStorage.setItem('kr.bookFormatMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
     // 0.64: alignment is no longer forced by book formatting; what it justified (and «Justified») is «Smart justify».
     if (!localStorage.getItem('kr.alignMigrated')) { if (s.bookFormat || s.align === 'justify') s.align = 'smart'; localStorage.setItem('kr.alignMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
+    // After 0.64.2: Arabic digits 0–9 by default (the owner's rule: ٠–٩ only when chosen). «auto» (١٢٣ in prose) was the old
+    // default and the whole settings object is stored at every change, so it cannot be told from one chosen: it becomes
+    // 0–9 once for everyone; chosen again after that, it stays. A choice of ١٢٣ throughout is kept.
+    if (!localStorage.getItem('kr.digitsMigrated')) { if (s.arDigits === 'auto') s.arDigits = 'western'; localStorage.setItem('kr.digitsMigrated', '1'); if (raw) localStorage.setItem(KEY, JSON.stringify(s)); }
     // 0.59.8: the dots and polka textures are gone; a page that had one is plain again.
     if (!['none', 'paper', 'linen', 'parchment'].includes(s.texture as string)) s.texture = 'none';
     // 0.61.1: the edge guard is off by default; 0.61.0 stored the old default (on) with every other setting, so it is

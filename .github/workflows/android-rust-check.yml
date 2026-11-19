@@ -28,6 +28,7 @@ on:
       - 'apps/tools/tests/native/**'
       - 'apps/tools/android/**'
       - '.github/workflows/android-rust-check.yml'
+      - '.github/actions/json-jar/**'
   workflow_dispatch:
 
 permissions:
@@ -47,6 +48,7 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
+      - uses: ./.github/actions/json-jar
 
       - name: Rust (stable) with the three Android targets
         run: |

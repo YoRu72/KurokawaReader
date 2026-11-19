@@ -130,7 +130,7 @@ const DESKTOP = () => {
     await choose(p, ['o1', 'a1', 'a2', 'a3', 'a4']); await openDelete(p);
     const c = await counts(p); const label = await p.$eval('.del-opt', (e) => e.textContent);
     ok('Arabic: right to left, the box in Arabic', (await p.evaluate(() => document.documentElement.dir)) === 'rtl' && /احذف الملفَّ من الجهاز أيضًا/.test(label), label);
-    ok('Arabic: the counts as «العدد: …» in Arabic digits', /العدد: ٢/.test(c.can) && /العدد: ١/.test(c.cannot) && /العدد: ١/.test(c.own), c);
+    ok('Arabic: the counts as «العدد: …», in 0–9 (the default digits)', /العدد: 2/.test(c.can) && /العدد: 1/.test(c.cannot) && /العدد: 1/.test(c.own) && !/[٠-٩]/.test(c.can + c.cannot + c.own), c);
     await shot(p, 'delete-dialog-phone-ar.png');
     await ctx.close();
   }
