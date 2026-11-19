@@ -36,8 +36,7 @@ const bundle = (name) => { esbuild.buildSync({ entryPoints: [path.join(__dirname
   ok('a well-formed theme passes, and is rebuilt only from colours and numbers', (() => { const s = C.sanitise(J(good)); const def = C.toDef(s); return s.name === 'Mine' && /radial-gradient\(90% 48%/.test(def.dark.bg) && !/url\(/.test(def.dark.bg); })());
   ok('refused: a colour carrying CSS («red; background: url(…)»)', refused((x) => { x.dark.tint = 'red; background: url(https://x/y.png)'; }));
   ok('refused: url() in a background colour', refused((x) => { x.dark.bg.colors[0] = 'url(javascript:alert(1))'; }));
-  ok('refused: a raw CSS field the format does not have', refused((x) => { x.dark.bg.css = 'linear-gradient(red, blue)'; }));
-  ok('refused: an unknown top-level field', refused((x) => { x.style = '* { display: none }'; }));
+  ok('dropped: a raw CSS field the format does not have, and an unknown top-level field — never kept, never used', (() => { const x = J(good); x.dark.bg.css = 'linear-gradient(red, blue)'; x.style = '* { display: none }'; const y = C.sanitise(x); const out = JSON.stringify(y) + JSON.stringify(C.toDef(y)); return !/css|style|display/.test(out); })());
   ok('refused: a wrong version, a missing mode, a bad id, a kind not in the list', refused((x) => { x.v = 2; }) && refused((x) => { delete x.dark; }) && refused((x) => { x.id = '../../x'; }) && refused((x) => { x.dark.bg.kind = 'css'; }));
   ok('refused: a number that is not a number (string, NaN, Infinity)', refused((x) => { x.dark.blur = '28px'; }) && refused((x) => { x.dark.sat = NaN; }) && refused((x) => { x.radius = Infinity; }));
   ok('held: numbers outside their ranges are brought into them; names lose markup and control characters', (() => { const x = J(good); x.dark.blur = 9999; x.dark.strength = -3; x.name = '<img src=x onerror=alert(1)>Bad\u0007name'; const s = C.sanitise(x); return s.dark.blur === 48 && s.dark.strength === 0 && !/[<>\u0007]/.test(s.name); })());

@@ -4,6 +4,8 @@ import { h, openSheet } from '../ui/dom';
 import { t } from '../i18n';
 import { THEMES } from '../theme/themes';
 import { themeName } from '../theme/gallery';
+// (The palette themes, with the notices of those whose colours came from others.)
+import '../theme/palettes';
 
 export function licencesSheet(): void {
   const { body } = openSheet(t('licenses'), t('close'));

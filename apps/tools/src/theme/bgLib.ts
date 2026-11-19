@@ -12,6 +12,7 @@ import { db } from '../db';
 import { getSettings, updateSettings } from '../settings';
 import { sniffImage, imageSize, MAX_PIXELS } from '../anime/covers';
 import type { RGBA } from './themes';
+import { BANNED, shiftHue, hueOf } from './hues';
 
 /* ---------- caps ---------- */
 /** At most this many backgrounds, and this much stored for all of them. */
@@ -113,27 +114,8 @@ export async function thumbUrl(id: string): Promise<string> {
 /* ---------- colours ---------- */
 const hexOf = (c: RGBA): string => '#' + [0, 1, 2].map((i) => Math.round(Math.max(0, Math.min(255, c[i]))).toString(16).padStart(2, '0')).join('');
 export const parseHex = (s: string): RGBA => [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16), 1];
-function hsl(c: RGBA): [number, number, number] {
-  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b); const l = (mx + mn) / 2; const d = mx - mn;
-  if (!d) return [0, 0, l];
-  const s = d / (1 - Math.abs(2 * l - 1)); let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; if (h < 0) h += 360;
-  return [h, s, l];
-}
-function fromHsl(h: number, s: number, l: number): RGBA {
-  const c = (1 - Math.abs(2 * l - 1)) * s; const x = c * (1 - Math.abs(((h / 60) % 2) - 1)); const m = l - c / 2;
-  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  return [(r + m) * 255, (g + m) * 255, (b + m) * 255, 1];
-}
-/** The hues the app never shows (yellow, amber, gold, orange: 20°–85°). */
-export const BANNED: readonly [number, number] = [20, 85];
-/** A colour moved out of the banned hues to the nearest allowed neighbour — a rose red below, a green above — keeping
- *  its lightness and saturation; a colour with almost no hue stays (a neutral). */
-export function shiftHue(c: RGBA): RGBA {
-  const [h, s, l] = hsl(c); const chroma = (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) / 255;
-  if (chroma < 0.06 || h < BANNED[0] || h > BANNED[1]) return [c[0], c[1], c[2], 1];
-  return fromHsl(h < (BANNED[0] + BANNED[1]) / 2 ? 352 : 95, s, l);
-}
-export const hueOf = (c: RGBA): number => hsl(c)[0];
+// (The hue rule and its arithmetic live in theme/hues.ts, shared with the theme editor.)
+export { BANNED, shiftHue, hueOf };
 const chromaOf = (c: RGBA): number => (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) / 255;
 /** A picture's few colours: a median cut of its pixels (a small copy's, the nearly transparent ones left out) into
  *  eight boxes, the near ones merged, most present first; at most six. */

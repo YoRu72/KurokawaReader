@@ -36,7 +36,7 @@ html.pc .fab { display: none; }
 .task-name { font-weight: 600; font-size: 15px; color: var(--md-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-line { font-size: 12.5px; color: var(--md-on-surface-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-bar { display: block; height: 5px; border-radius: 5px; background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); overflow: hidden; }
-.task-bar i { display: block; height: 100%; border-radius: inherit; background: var(--md-primary); transition: width .4s ease; }
+.task-bar i { display: block; height: 100%; border-radius: inherit; background: var(--th-progress, var(--md-primary)); transition: width .4s ease; }
 .task-bar.big { height: 8px; margin-bottom: 12px; }
 .task-bar.busy-any i { width: 35% !important; animation: kt-slide 1.2s ease-in-out infinite; }
 .state-paused .task-bar i { background: var(--md-outline); }
@@ -101,7 +101,8 @@ html.pc .post-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)
 .accent-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatch { width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 2px transparent; background: var(--sw, var(--md-primary)); position: relative; }
 .swatch.on { box-shadow: 0 0 0 2px var(--md-surface), 0 0 0 4px var(--md-on-surface); }
-.swatch.custom { background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); overflow: hidden; } .swatch.custom input { opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+/* (A wheel of the hues the app uses — rose, violet, blue, teal — in hard segments: nothing between them, so no yellow or orange.) */
+.swatch.custom { background: conic-gradient(from -45deg, #e0607e 0 25%, #9a7be8 0 50%, #4f8fe8 0 75%, #3fb8a6 0); overflow: hidden; } .swatch.custom input { opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .swatch[data-accent='graphite'] { --sw: #9aa0a6; } .swatch[data-accent='mono'] { --sw: #d0d0d0; } .swatch[data-accent='teal'] { --sw: #4db6ac; } .swatch[data-accent='aqua'] { --sw: #4fb3df; } .swatch[data-accent='mint'] { --sw: #6fd1a5; } .swatch[data-accent='olive'] { --sw: #a3b86c; } .swatch[data-accent='gold'] { --sw: #e0b45c; } .swatch[data-accent='sand'] { --sw: #d9b48f; } .swatch[data-accent='coral'] { --sw: #f0876b; } .swatch[data-accent='rose'] { --sw: #e58cae; } .swatch[data-accent='violet'] { --sw: #a98be6; }
 .addon-row, .app-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 40%, transparent); }
 .addon-row:last-child, .app-row:last-child { border-bottom: 0; }
@@ -1626,3 +1627,15 @@ html.pc:not(.rail-off) .toast.files-unfinished, html.pc .toast.files-unfinished 
 .fs-sheet-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
 .fs-sheet-btns .btn { justify-content: center; min-width: 0; }
 @keyframes fs-turn { to { transform: rotate(360deg); } }
+
+/* ---------- A theme's own (theme editor extras, theme/editor.ts): the page hidden for the moment a palette theme in use
+   is fetched at the start (settings.ts); compact density — everything a step closer, the same shapes. ---------- */
+html[data-theme-wait] body { visibility: hidden; }
+html[data-density='compact'] .card { padding: 16px; gap: 10px; }
+html[data-density='compact'] .task-main { padding-block: 4px; }
+html[data-density='compact'] .task-card { padding-block: 4px; }
+html[data-density='compact'] .files-row { padding-block: 4px; contain-intrinsic-size: auto 52px; }
+html[data-density='compact'] .chip { height: 34px; padding: 0 13px; }
+html[data-density='compact'] .btn { height: 38px; padding: 0 18px; }
+html[data-density='compact'] .settings-view .card .row { min-height: 40px; }
+html[data-density='compact'] .te-row { min-height: 38px; }

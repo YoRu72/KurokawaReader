@@ -1,6 +1,6 @@
 // The app's settings: kept in localStorage under one key, applied to the document (theme, accent) on change.
 import type { Limits } from './engine/types';
-import { applyTheme, themeById, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
+import { applyTheme, themeById, THEMES, readEnv, resolveBlur, migrateLook, upsertTheme, removeTheme, DEFAULT_THEME, type BlurPref, type Blur, type ThemeDef, type Mode } from './theme/themes';
 import { migrateMain } from './theme/app';
 import { loadMine, toDef, pictureKey, pictureAsset } from './theme/custom';
 import { myStore } from './myStore';
@@ -231,6 +231,13 @@ let current: Settings = load();
 const mine0 = loadMine(myStore);
 migrateTheme(mine0.length > 0);
 for (const m of mine0) upsertTheme(toDef(m));
+// (The palette themes — theme/palettes.ts — are fetched with Appearance; at the start only when the theme in use, or the
+//  base of one of the reader's, is not yet known: the page stays hidden that moment rather than flash another theme.)
+const known = (id?: string) => THEMES.some((x) => x.id === id);
+if (!known(current.theme) || mine0.some((m) => !known(m.base))) {
+  const html = document.documentElement; html.dataset.themeWait = '';
+  void import('./theme/palettes').then(() => { for (const m of mine0) upsertTheme(toDef(m)); applyChrome(); }, () => undefined).finally(() => { delete html.dataset.themeWait; });
+}
 if (!current.subLangs.length) { const ui = (localStorage.getItem('kr.lang') || navigator.language || 'en').slice(0, 2); current.subLangs = [...new Set([ui, 'en'])]; }
 const listeners = new Set<(s: Settings) => void>();
 /** Once: the move to themes (kt.themeMigrated, 0.17). Then once (kt.mainTheme, 0.21): «Expressive 3» the main theme
@@ -302,12 +309,17 @@ export function applyChrome(s: Settings = current): void {
   const got = applyTheme(html, { theme: def.id, mode: wantLight ? 'light' : 'dark', darkTone: s.darkTone, useThemeColours, keepColours: !!s.themeKeepColours, blur: glassNow.blur as Blur, pictures: previewing ? { ...pictures, ...previewing.pictures } : pictures });
   const light = got.mode === 'light';
   html.dataset.ui = light ? 'light' : 'dark';
-  (html.style as CSSStyleDeclaration & { zoom?: string }).zoom = s.uiScale && s.uiScale !== 100 ? String(s.uiScale / 100) : '';
+  // (A theme's own size goes with the reader's: the two multiplied.)
+  const zoom = ((s.uiScale || 100) / 100) * (def.scale ?? 1);
+  (html.style as CSSStyleDeclaration & { zoom?: string }).zoom = Math.abs(zoom - 1) > 0.001 ? String(+zoom.toFixed(3)) : '';
   html.dataset.dark = s.darkTone;
   html.dataset.accent = s.accent === 'theme' ? (useThemeColours ? 'theme' : 'graphite') : s.accent;
   if (s.glassRail === false) html.dataset.railGlass = 'off'; else delete html.dataset.railGlass;
   const roles = ['--md-primary', '--md-on-primary', '--md-primary-container', '--md-on-primary-container', '--md-secondary-container', '--md-on-secondary-container', '--md-tertiary-container', '--md-on-tertiary-container'];
   if (s.accent === 'custom') applyCustomAccent(html, s.accentCustom, light); else if (!useThemeColours) roles.forEach((k) => html.style.removeProperty(k));
+  // (A theme's own colours while one background is shown — a computer's — over the accent.)
+  const per = isPcNow() && s.animBg ? def.perBg?.[s.animBg]?.[got.mode] : undefined;
+  if (per) for (const [k, v] of Object.entries(per)) html.style.setProperty(`--md-${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, v);
   const meta = document.querySelector('meta[name="theme-color"]');
   // (The theme's ground: glass themes their own, Expressive 3 the dark tone's or its soft light one.)
   if (meta) meta.setAttribute('content', got.ground);

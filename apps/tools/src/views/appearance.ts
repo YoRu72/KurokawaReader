@@ -12,10 +12,26 @@ import { themeById, DEFAULT_THEME, type BlurPref } from '../theme/themes';
 import { themeGallery } from '../theme/gallery';
 import { themeIo } from '../themeIo';
 import { SCENE_GROUPS, MIX_GROUPS, sceneEntry, type SceneGroup } from '../theme/sceneList';
+// (The palette themes join the list with this page: theme/palettes.ts registers them as it loads.)
+import '../theme/palettes';
+import { allowedHex } from '../theme/hues';
 
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
-const ACCENTS: Accent[] = ['graphite', 'mono', 'teal', 'aqua', 'mint', 'olive', 'gold', 'sand', 'coral', 'rose', 'violet'];
+// (Olive, gold and sand are yellow or amber: no longer offered — still shown while one is the accent in use, so it can
+//  be seen and changed.)
+const ACCENTS: Accent[] = ['graphite', 'mono', 'teal', 'aqua', 'mint', 'coral', 'rose', 'violet'];
+const RETIRED: Accent[] = ['olive', 'gold', 'sand'];
+/** A background's name, by its settings id (the editor's colours per background). */
+function bgName(id: string): string {
+  const s = getSettings();
+  if (id === 'drift' || id === 'flow' || id === 'match') return t(({ drift: 'animBgDrift', flow: 'animBgFlow', match: 'animBgMatch' } as const)[id]);
+  const named = (list: unknown, key: string): string | undefined => { const x = Array.isArray(list) ? list.find((v) => v && typeof v === 'object' && (v as { id?: unknown }).id === key) as { name?: unknown } | undefined : undefined; return typeof x?.name === 'string' ? x.name.slice(0, 40) : undefined; };
+  if (id.startsWith('scene:mix:')) { const e = sceneEntry(id.slice(6)); return e ? t(e.name as 'animBg') : named(s.animBgMixes, id.slice(10)) ?? t('animBgScenes'); }
+  if (id.startsWith('scene:user:')) return named(s.animBgLib, id.slice(11)) ?? t('animBgMine');
+  const e = id.startsWith('scene:') ? sceneEntry(id.slice(6)) : undefined;
+  return e ? t(e.name as 'animBg') : t('animBgScenes');
+}
 
 /** A theme put in use: its own colours brought (or the accent given back), its pictures read. */
 function useTheme(id: string, own: boolean): void {
@@ -55,6 +71,8 @@ export function editorDeps(rerender: () => void): EditorDeps {
     changed: () => rerender(),
     // (The app's Ctrl+Z listener takes the keys first, in the capture phase: the editor's stack goes in as its scope.)
     keys: (handler) => undoScope(handler),
+    // (A computer's backgrounds, for the theme's colours per background.)
+    backgrounds: { current: () => { const b = getSettings().animBg; return pc() && b && b !== 'off' ? b : null; }, name: bgName },
   };
 }
 const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel', 'animBgWhere', 'animBgTint', 'animBgReact'] as const;
@@ -184,8 +202,9 @@ export function appearanceCard(rerender: () => void): HTMLElement {
   const glassHint = def.classic ? t('glassClassicHint') : (s.glassBlur ?? 'auto') === 'auto' ? t('glassAutoNow', { what: blurNow, why }) : t('glassBlurHint');
   const swatches = h('div', { class: 'accent-swatches' },
     ownColours ? h('button', { type: 'button', class: 'swatch theme' + (s.accent === 'theme' ? ' on' : ''), 'data-accent': 'theme', 'aria-label': t('accentTheme'), title: t('accentTheme'), style: { '--sw': (def.dark ?? def.light)!.roles!.primary } }) : null,
-    ...ACCENTS.map((a) => h('button', { type: 'button', class: 'swatch' + (s.accent === a ? ' on' : ''), 'data-accent': a, 'aria-label': a, onclick: () => { updateSettings({ accent: a }); rerender(); } })),
-    h('label', { class: 'swatch custom' + (s.accent === 'custom' ? ' on' : ''), title: 'custom' }, h('input', { type: 'color', value: s.accentCustom, oninput: (e: Event) => updateSettings({ accent: 'custom', accentCustom: (e.target as HTMLInputElement).value }) })));
+    ...[...ACCENTS, ...RETIRED.filter((a) => s.accent === a)].map((a) => h('button', { type: 'button', class: 'swatch' + (s.accent === a ? ' on' : ''), 'data-accent': a, 'aria-label': a, onclick: () => { updateSettings({ accent: a }); rerender(); } })),
+    h('label', { class: 'swatch custom' + (s.accent === 'custom' ? ' on' : ''), title: 'custom' }, h('input', { type: 'color', value: s.accentCustom, oninput: (e: Event) => { const i = e.target as HTMLInputElement; const a = allowedHex(i.value); if (a.moved) { i.value = a.hex; i.dataset.moved = '1'; } updateSettings({ accent: 'custom', accentCustom: a.hex }); },
+      onchange: (e: Event) => { const i = e.target as HTMLInputElement; if (i.dataset.moved) { delete i.dataset.moved; toast(t('editorHueMoved'), 'info'); } } })));
   const themeSwatch = swatches.querySelector<HTMLElement>('.swatch.theme'); if (themeSwatch) themeSwatch.onclick = () => { updateSettings({ accent: 'theme', accentPrev: getSettings().accent === 'theme' ? getSettings().accentPrev : getSettings().accent }); rerender(); };
   const followsTone = def.classic || !!def.followsAccent && !def.force && !def.dark?.surfaces;
   return h('section', { class: 'card', id: 'appearance' }, h('h3', null, t('appearance')),

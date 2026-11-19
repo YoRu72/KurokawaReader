@@ -15,11 +15,19 @@ import { APP_THEME } from './app';
  *  colours, wherever they do not move (a phone, the animated background off, an app without them: APP_THEME.animBg). */
 export type BgKind = 'theme' | 'mesh' | 'solid' | 'picture' | 'pack' | 'drift' | 'flow';
 export interface MyBg { kind: BgKind; colors: [string, string, string]; solid: string; veil: number; picBlur: number; /** The reader's picture: its brightest and darkest colour (measured when it was chosen). */ extremes?: [string, string]; /** A downloaded pack's picture. */ pack?: { id: string; asset: string } }
-export interface MyMode { surfaces: Surfaces; text: TextRoles; roles: Roles | null; tint: string; strength: number; blur: number; sat: number; edge: number; sheen: number; shadow: number; bg: MyBg }
-export interface MyTheme { v: 1; id: string; name: string; base: string; radius: number; accent: 'app' | 'theme'; force?: Mode; dark?: MyMode; light?: MyMode; at: number }
+export interface MyMode { surfaces: Surfaces; text: TextRoles; roles: Roles | null; tint: string; strength: number; blur: number; sat: number; edge: number; sheen: number; shadow: number; bg: MyBg;
+  /** (The editor's extras.) The two accents the roles were made from; the hue laid over the surfaces and how much
+   *  (`surfaces` already carry it); the progress lines' colour. */
+  accent?: string; accent2?: string; surfTint?: string; surfMix?: number; progress?: string }
+/** Colours of the theme's own while one background is shown (its id as in the settings: «drift», «scene:…»). */
+export interface MyPerBg { bg: string; accent: string; accent2?: string; dark?: Roles; light?: Roles }
+export interface MyTheme { v: 1; id: string; name: string; base: string; radius: number; accent: 'app' | 'theme'; force?: Mode; dark?: MyMode; light?: MyMode; at: number;
+  density?: 'compact' | 'comfortable'; scale?: number; perBg?: MyPerBg[] }
 
 /** The ranges every number is held to (the editor's sliders use them too). */
-export const RANGES = { strength: [0, 0.98, 0.01], blur: [0, 48, 1], sat: [0.5, 2.5, 0.05], edge: [0, 0.4, 0.01], sheen: [0, 0.4, 0.01], shadow: [0, 1, 0.05], radius: [0, 2, 0.05], veil: [0, 0.85, 0.01], picBlur: [0, 40, 1] } as const;
+export const RANGES = { strength: [0, 0.98, 0.01], blur: [0, 48, 1], sat: [0.5, 2.5, 0.05], edge: [0, 0.4, 0.01], sheen: [0, 0.4, 0.01], shadow: [0, 1, 0.05], radius: [0, 2, 0.05], veil: [0, 0.85, 0.01], picBlur: [0, 40, 1], surfMix: [0, 0.35, 0.01], scale: [0.85, 1.25, 0.05] } as const;
+/** At most this many backgrounds with colours of their own in one theme. */
+export const PER_BG_MAX = 12;
 const M3E = { xs: 8, sm: 12, md: 16, lg: 20, xl: 28, xxl: 36 };
 const HEX = /^#[0-9a-f]{6}([0-9a-f]{2})?$/i;
 const toHex = (c: RGBA): string => '#' + [c[0], c[1], c[2]].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('') + (c[3] < 1 ? Math.round(c[3] * 255).toString(16).padStart(2, '0') : '');
@@ -89,11 +97,12 @@ export function toDef(my: MyTheme): ThemeDef {
       pane: tint(v.strength), card: tint(v.strength * 0.8), sheet: tint(Math.min(0.96, v.strength + 0.18)), fill: Math.min(0.9, 0.35 + v.strength * 0.4),
       blur: v.blur, sat: v.sat, edge: `rgb(255 255 255 / ${v.edge})`, sheen: `inset 0 1px 0 rgb(255 255 255 / ${v.sheen})`,
       shadow: d <= 0 ? 'none' : `0 ${Math.round(18 * d)}px ${Math.round(44 * d)}px -${Math.round(16 * d)}px rgb(0 0 0 / ${(light ? 0.28 : 0.75) * d}), 0 1px ${Math.round(3 * d)}px rgb(0 0 0 / ${(light ? 0.08 : 0.35) * d})`,
-      scrim: light ? 'rgb(20 24 30 / .32)' : 'rgb(3 4 5 / .6)',
+      scrim: light ? 'rgb(20 24 30 / .32)' : 'rgb(3 4 5 / .6)', progress: v.progress,
     };
   };
   const radius = Object.fromEntries(Object.entries(M3E).map(([k, r]) => [k, Math.round(r * my.radius)])) as ThemeDef['radius'];
-  const def: ThemeDef = { id: my.id, name: my.name, custom: true, base: my.base, force: my.force, followsAccent: my.accent === 'app', radius };
+  const def: ThemeDef = { id: my.id, name: my.name, custom: true, base: my.base, force: my.force, followsAccent: my.accent === 'app', radius, density: my.density, scale: my.scale };
+  if (my.perBg?.length) def.perBg = Object.fromEntries(my.perBg.map((p) => [p.bg, { dark: p.dark, light: p.light }]));
   if (my.dark) def.dark = build('dark', my.dark);
   if (my.light) def.light = build('light', my.light);
   if (base.pack && ((my.dark?.bg.kind === 'theme') || (my.light?.bg.kind === 'theme'))) def.pack = base.pack;
@@ -135,24 +144,24 @@ export function fixContrast(my: MyTheme, mode: Mode, darkTone: DarkTone): MyThem
 export class ThemeFileError extends Error { constructor(public code: 'size' | 'schema' | 'value' | 'picture' | 'format', msg: string) { super(msg); } }
 const fail = (code: ThemeFileError['code'], m: string): never => { throw new ThemeFileError(code, m); };
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
-const onlyKeys = (o: Record<string, unknown>, allowed: string[], where: string) => { for (const k of Object.keys(o)) if (!allowed.includes(k)) fail('schema', `${where}: unknown field «${k.slice(0, 30)}»`); };
 const colour = (x: unknown, where: string): string => (typeof x === 'string' && HEX.test(x) ? x.toLowerCase() : fail('value', `${where}: not a colour`));
 const num = (x: unknown, k: keyof typeof RANGES, where: string): number => (typeof x === 'number' && Number.isFinite(x) ? clamp(x, k) : fail('value', `${where}: not a number`));
 const word = <T extends string>(x: unknown, ok: readonly T[], where: string): T => (typeof x === 'string' && (ok as readonly string[]).includes(x) ? (x as T) : fail('value', `${where}: not one of ${ok.join('/')}`));
 const SURF = ['ground', 'lowest', 'low', 'mid', 'high', 'highest']; const TEXT = ['on', 'variant', 'dim', 'outline', 'outlineVariant'];
 const ROLES = ['primary', 'onPrimary', 'primaryContainer', 'onPrimaryContainer', 'secondaryContainer', 'onSecondaryContainer', 'tertiaryContainer', 'onTertiaryContainer'];
-const colours = (x: unknown, keys: string[], where: string): Record<string, string> => { if (!isObj(x)) fail('schema', `${where}: missing`); const o = x as Record<string, unknown>; onlyKeys(o, keys, where); return Object.fromEntries(keys.map((k) => [k, colour(o[k], `${where}.${k}`)])); };
+// (Fields the format does not have are dropped: every value is read by its name and rebuilt, nothing else is kept.)
+const colours = (x: unknown, keys: string[], where: string): Record<string, string> => { if (!isObj(x)) fail('schema', `${where}: missing`); const o = x as Record<string, unknown>; return Object.fromEntries(keys.map((k) => [k, colour(o[k], `${where}.${k}`)])); };
 function sanitiseMode(x: unknown, where: string): MyMode {
   if (!isObj(x)) return fail('schema', `${where}: missing`);
-  onlyKeys(x, ['surfaces', 'text', 'roles', 'tint', 'strength', 'blur', 'sat', 'edge', 'sheen', 'shadow', 'bg'], where);
   const bg = x.bg; if (!isObj(bg)) return fail('schema', `${where}.bg: missing`);
-  onlyKeys(bg, ['kind', 'colors', 'solid', 'veil', 'picBlur', 'extremes', 'pack'], `${where}.bg`);
   if (!Array.isArray(bg.colors) || bg.colors.length !== 3) fail('schema', `${where}.bg.colors: three colours`);
   let pack: MyBg['pack'];
-  if (bg.pack !== undefined) { if (!isObj(bg.pack)) fail('schema', `${where}.bg.pack`); const p = bg.pack as Record<string, unknown>; onlyKeys(p, ['id', 'asset'], `${where}.bg.pack`); const ID = /^[a-z0-9-]{1,40}$/; if (typeof p.id !== 'string' || !ID.test(p.id) || typeof p.asset !== 'string' || !ID.test(p.asset)) fail('value', `${where}.bg.pack: not a pack name`); pack = { id: p.id as string, asset: p.asset as string }; }
+  if (bg.pack !== undefined) { if (!isObj(bg.pack)) fail('schema', `${where}.bg.pack`); const p = bg.pack as Record<string, unknown>; const ID = /^[a-z0-9-]{1,40}$/; if (typeof p.id !== 'string' || !ID.test(p.id) || typeof p.asset !== 'string' || !ID.test(p.asset)) fail('value', `${where}.bg.pack: not a pack name`); pack = { id: p.id as string, asset: p.asset as string }; }
   let extremes: [string, string] | undefined;
   if (bg.extremes !== undefined) { if (!Array.isArray(bg.extremes) || bg.extremes.length !== 2) fail('schema', `${where}.bg.extremes`); extremes = [colour((bg.extremes as unknown[])[0], `${where}.bg.extremes`), colour((bg.extremes as unknown[])[1], `${where}.bg.extremes`)]; }
+  const opt = (k: string): string | undefined => (x[k] === undefined ? undefined : colour(x[k], `${where}.${k}`));
   return {
+    accent: opt('accent'), accent2: opt('accent2'), surfTint: opt('surfTint'), progress: opt('progress'), surfMix: x.surfMix === undefined ? undefined : num(x.surfMix, 'surfMix', `${where}.surfMix`),
     surfaces: colours(x.surfaces, SURF, `${where}.surfaces`) as unknown as Surfaces, text: colours(x.text, TEXT, `${where}.text`) as unknown as TextRoles,
     roles: x.roles === null || x.roles === undefined ? null : (colours(x.roles, ROLES, `${where}.roles`) as unknown as Roles),
     tint: colour(x.tint, `${where}.tint`), strength: num(x.strength, 'strength', `${where}.strength`), blur: num(x.blur, 'blur', `${where}.blur`), sat: num(x.sat, 'sat', `${where}.sat`),
@@ -160,20 +169,32 @@ function sanitiseMode(x: unknown, where: string): MyMode {
     bg: { kind: word(bg.kind, ['theme', 'mesh', 'solid', 'picture', 'pack', 'drift', 'flow'] as const, `${where}.bg.kind`), colors: (bg.colors as unknown[]).map((c, i) => colour(c, `${where}.bg.colors[${i}]`)) as [string, string, string], solid: colour(bg.solid, `${where}.bg.solid`), veil: num(bg.veil, 'veil', `${where}.bg.veil`), picBlur: num(bg.picBlur, 'picBlur', `${where}.bg.picBlur`), extremes, pack },
   };
 }
+/** A name shown as text only: control characters, direction overrides and markup-like brackets dropped, spaces
+ *  folded, at most 60 characters (whole ones, never half of a pair). */
+export const cleanThemeName = (v: string): string => [...v.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069<>]/g, ' ').replace(/\s+/g, ' ').trim()].slice(0, 60).join('').trim();
 /** A theme read from anywhere (storage, a backup, a file): strictly checked, rebuilt from its colours and numbers. */
 export function sanitise(x: unknown, opts: { newId?: boolean } = {}): MyTheme {
   if (!isObj(x)) return fail('schema', 'not a theme');
-  onlyKeys(x, ['v', 'id', 'name', 'base', 'radius', 'accent', 'force', 'dark', 'light', 'at'], 'theme');
   if (x.v !== 1) fail('schema', 'unknown theme version');
   if (typeof x.id !== 'string' || !/^my-[a-z0-9]{1,24}$/.test(x.id)) fail('value', 'id');
   if (typeof x.base !== 'string' || !/^[a-z0-9-]{1,40}$/.test(x.base)) fail('value', 'base');
   // (A name is shown as text only; control characters and markup-like brackets are dropped, and it is kept short.)
-  const name = typeof x.name === 'string' ? x.name.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 60) : '';
+  const name = typeof x.name === 'string' ? cleanThemeName(x.name) : '';
   if (!name) fail('value', 'name');
   const my: MyTheme = { v: 1, id: opts.newId ? uidTheme() : (x.id as string), name, base: x.base as string, radius: num(x.radius, 'radius', 'radius'), accent: word(x.accent, ['app', 'theme'] as const, 'accent'), at: typeof x.at === 'number' && Number.isFinite(x.at) ? x.at : Date.now() };
   if (x.force !== undefined) my.force = word(x.force, ['dark', 'light'] as const, 'force');
   if (x.dark !== undefined) my.dark = sanitiseMode(x.dark, 'dark');
   if (x.light !== undefined) my.light = sanitiseMode(x.light, 'light');
+  if (x.density !== undefined) my.density = word(x.density, ['compact', 'comfortable'] as const, 'density');
+  if (x.scale !== undefined) my.scale = num(x.scale, 'scale', 'scale');
+  if (x.perBg !== undefined) {
+    if (!Array.isArray(x.perBg) || x.perBg.length > PER_BG_MAX) fail('schema', 'perBg');
+    my.perBg = (x.perBg as unknown[]).map((e, i) => {
+      if (!isObj(e) || typeof e.bg !== 'string' || !/^[a-z0-9:~_-]{1,80}$/.test(e.bg)) return fail('value', `perBg[${i}].bg`);
+      const r = (k: 'dark' | 'light') => (e[k] === undefined ? undefined : (colours(e[k], ROLES, `perBg[${i}].${k}`) as unknown as Roles));
+      return { bg: e.bg, accent: colour(e.accent, `perBg[${i}].accent`), accent2: e.accent2 === undefined ? undefined : colour(e.accent2, `perBg[${i}].accent2`), dark: r('dark'), light: r('light') };
+    });
+  }
   if (!my.dark && !my.light) fail('schema', 'no mode');
   return my;
 }
@@ -228,7 +249,6 @@ export async function importTheme(bytes: Uint8Array): Promise<{ my: MyTheme; pic
   try { parsed = await parsePack(buf); } catch (e) { if (e instanceof PackError) fail(e.kind === 'checksum' ? 'format' : 'format', e.message); throw e; }
   const tok = parsed.header.tokens;
   if (!isObj(tok) || tok.kurokawaMyTheme !== 1) fail('schema', 'not a theme of one\'s own');
-  onlyKeys(tok as Record<string, unknown>, ['kurokawaMyTheme', 'theme'], 'tokens');
   const my = sanitise((tok as Record<string, unknown>).theme, { newId: true });
   if (parsed.assets.length > 2) fail('schema', 'too many pictures');
   const pictures: Partial<Record<Mode, Blob>> = {};

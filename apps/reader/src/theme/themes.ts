@@ -42,6 +42,8 @@ export interface ModeTokens {
   /** A theme of the reader's whose background moves (a computer, when the animated background matches the theme):
    *  the design and its three colours; `bg` is then its still stand-in. */
   anim?: 'drift' | 'flow'; animColors?: [string, string, string];
+  /** The colour of progress lines (unset: the accent). */
+  progress?: string;
 }
 export type Tint = string | { from: keyof Surfaces; a: number };
 export interface ThemeDef {
@@ -63,7 +65,12 @@ export interface ThemeDef {
   pack?: { id: string; size: number; assets: Partial<Record<Mode, string>> };
   /** Uses the reader's accent (true) or carries its own roles. */
   followsAccent?: boolean;
-  /** The colours the gallery's miniature is drawn from, when the theme is not applied. */
+  /** An app with the theme editor's extras (APP_THEME.themeExtras): how close together things sit, the interface's
+   *  size (× the app's own), and colours of its own while one of the backgrounds is shown (by its id, per mode). */
+  density?: 'compact' | 'comfortable'; scale?: number; perBg?: Record<string, Partial<Record<Mode, Partial<Roles>>>>;
+  /** A theme drawn from a palette of its own (theme/palettes.ts, an app's own): its colours are its identity, so the
+   *  calm rules for the glass themes (near-neutral grounds) do not bind it; the no-yellow rule and contrast still do. */
+  palette?: boolean;
 }
 
 /* ---------- the app's own surfaces (the same values as base.css), by mode and dark tone ---------- */
@@ -73,12 +80,14 @@ export const APP_SURFACES: Record<'light' | DarkTone, Surfaces> = {
   black: { ground: '#000000', lowest: '#000000', low: '#0e0f10', mid: '#151617', high: '#1f2022', highest: '#2a2b2e' },
   light: { ground: '#f7f8fa', lowest: '#ffffff', low: '#f1f3f5', mid: '#eaedf0', high: '#e3e6ea', highest: '#dcdfe4' },
 };
+/** Muted text over the grey dark tone (base.css sets the same). */
+export const GREY_DIM = '#a9abb0';
 export const APP_TEXT: Record<Mode, TextRoles> = {
   dark: { on: '#e4e4e6', variant: '#c6c8cc', dim: '#9a9ca1', outline: '#8e9196', outlineVariant: '#44474c' },
   light: { on: '#1a1c1e', variant: '#43474c', dim: '#6b7077', outline: '#767a80', outlineVariant: '#c5c8cd' },
 };
 
-const MIT = (who: string, year: string) => `MIT License
+export const MIT = (who: string, year: string): string => `MIT License
 
 Copyright (c) ${year} ${who}
 
@@ -151,6 +160,8 @@ export interface AppTheme {
   /** The main theme carries a pencil (a copy of it among the reader's own); a «Default» tag when it is the default. */ mainCopyable: boolean; mainTag: boolean;
   /** The moving backgrounds ('drift', 'flow') are offered; otherwise a theme that has one shows its still stand-in. */ animBg: boolean;
   /** The large radius a copied theme without its own is scaled from. */ radiusLg: number;
+  /** The editor offers accents, surface tint, density, size, progress colour and colours per background (the app's
+   *  stylesheet reads data-density and --th-progress; the app applies `scale` and `perBg`). */ themeExtras?: boolean;
 }
 const CLASSIC: ThemeDef = { id: 'classic', nameKey: APP_THEME.mainNameKey, classic: true, followsAccent: true };
 
@@ -309,10 +320,12 @@ export function resolve(c: Choice): Resolved {
   const own = mode === 'dark' ? def.dark : def.light;
   const tokens = def.classic ? null : own ?? (mode === 'dark' ? FROST.dark! : FROST.light!);
   const appS = mode === 'light' ? APP_SURFACES.light : APP_SURFACES[c.darkTone];
-  if (def.classic) { const L = mode === 'light' ? APP_THEME.mainLight : undefined; return { def, mode, tokens: null, surfaces: L?.surfaces ?? appS, text: L?.text ?? APP_TEXT[mode], roles: null, pane: [0, 0, 0, 0], card: [0, 0, 0, 0], sheet: [0, 0, 0, 0] }; }
+  // (An app with the editor's extras, whose stylesheet sets the same: the grey dark tone's brightest surface is lighter than the others' tones, so its muted text is a step lighter, to read at 4.5:1 there too.)
+  const grey = APP_THEME.themeExtras && mode === 'dark' && c.darkTone === 'grey' ? { dim: GREY_DIM } : null;
+  if (def.classic) { const L = mode === 'light' ? APP_THEME.mainLight : undefined; return { def, mode, tokens: null, surfaces: L?.surfaces ?? appS, text: L?.text ?? { ...APP_TEXT[mode], ...grey }, roles: null, pane: [0, 0, 0, 0], card: [0, 0, 0, 0], sheet: [0, 0, 0, 0] }; }
   // (Frost follows the dark tone: the refined graphite for the default, unless the earlier colours were kept.)
   const surfaces = tokens?.surfaces ?? (mode === 'dark' ? (c.darkTone === 'default' && !c.keepColours ? FROST_GRAPHITE : appS) : c.keepColours ? appS : FROST_LIGHT);
-  const text = tokens?.text ?? APP_TEXT[mode];
+  const text = { ...(tokens?.text ?? APP_TEXT[mode]), ...(tokens?.surfaces ? null : grey) };
   const tint = (t: Tint): RGBA => { if (typeof t === 'string') return parseColor(t); const b = parseColor(surfaces[t.from]); return [b[0], b[1], b[2], t.a]; };
   return { def, mode, tokens, surfaces, text, roles: c.useThemeColours ? tokens?.roles ?? null : null, pane: tokens ? tint(tokens.pane) : [0, 0, 0, 0], card: tokens ? tint(tokens.card) : [0, 0, 0, 0], sheet: tokens ? tint(tokens.sheet) : [0, 0, 0, 0] };
 }
@@ -370,6 +383,7 @@ export function applyTheme(html: HTMLElement, st: ApplyState): { mode: Mode; gro
   for (const k of SET) html.style.removeProperty(k); SET.clear();
   const r = resolve(st);
   html.dataset.theme = r.def.id;
+  if (r.def.density) html.dataset.density = r.def.density; else delete html.dataset.density;
   if (!r.tokens) { delete html.dataset.glass; delete html.dataset.picture; delete html.dataset.anim; return { mode: r.mode, ground: r.surfaces.ground, glass: false }; }
   const t = r.tokens; html.dataset.glass = st.blur;
   const S = r.surfaces; const g = parseColor(S.ground);
@@ -386,6 +400,7 @@ export function applyTheme(html: HTMLElement, st: ApplyState): { mode: Mode; gro
   for (const [name, tint] of [['pane', r.pane], ['card', r.card], ['sheet', r.sheet]] as const) { put(html, `--g-${name}-t`, css(tint)); put(html, `--g-${name}-s`, css(over([tint[0], tint[1], tint[2], Math.max(tint[3], .82)], mid))); }
   put(html, '--g-blur', `${t.blur}px`); put(html, '--g-sat', String(t.sat)); put(html, '--g-edge', t.edge); put(html, '--g-sheen', t.sheen); put(html, '--g-shadow', t.shadow);
   if (t.scrim) put(html, '--md-scrim', t.scrim);
+  if (t.progress) put(html, '--th-progress', t.progress);
   const pic = t.picture ? st.pictures?.[t.picture] : undefined;
   put(html, '--th-bg', [t.veil && pic ? t.veil : '', pic ? `url("${pic}")` : '', t.bg].filter(Boolean).join(', ') || 'none');
   if (pic && t.bgBlur) { put(html, '--th-bg-filter', `blur(${t.bgBlur}px)`); put(html, '--th-bg-bleed', `${Math.round(t.bgBlur * 2)}px`); }

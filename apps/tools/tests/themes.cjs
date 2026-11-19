@@ -5,7 +5,10 @@
 //  3. the move to themes: a fresh install, untouched settings, chosen colours kept; Classic gives back the old
 //     computed colours exactly;
 //  4. blur Off leaves no backdrop-filter anywhere (a sheet open too); Reduced keeps it to the bars and sheets;
-//  5. PC and phone each show only their own glass option.
+//  5. PC and phone each show only their own glass option;
+//  6. (0.21) the twelve palette themes (theme/palettes.ts) are all there, in dark and light; every theme × mode: each
+//     text role at 4.5:1 or more on every surface container (drawn on the glass) and each «on» colour on its role; no
+//     colour of any theme in the yellow–orange hues; a palette theme in use at the start is fetched and applied.
 // Only loopback, made-up data, no fixed waits.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
 const esbuild = require(path.join(__dirname, '..', 'node_modules', 'esbuild'));
@@ -16,7 +19,8 @@ let fails = 0; const ok = (n, c, extra = '') => { console.log((c ? 'ok   ' : 'FA
 
 // The theme module itself, bundled for Node.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-themes-'));
-esbuild.buildSync({ entryPoints: [path.join(__dirname, '..', 'src', 'theme', 'themes.ts')], bundle: true, format: 'cjs', platform: 'node', outfile: path.join(tmp, 'themes.js'), logLevel: 'silent' });
+// (With the palette themes, which add themselves to the list as they load, and the hue rule.)
+esbuild.buildSync({ stdin: { contents: "export * from './themes'; export * from './palettes'; export { banned, allowedHex } from './hues';", resolveDir: path.join(__dirname, '..', 'src', 'theme'), loader: 'ts' }, bundle: true, format: 'cjs', platform: 'node', outfile: path.join(tmp, 'themes.js'), logLevel: 'silent' });
 const T = require(path.join(tmp, 'themes.js'));
 
 // What today's look computes to (captured from the build before themes): Classic must give it back exactly.
@@ -41,7 +45,7 @@ const OLD = {
     const lits = (str) => (String(str).match(/#[0-9a-f]{6}\b|rgba?\([^)]*\)/gi) || []).filter((x) => !/var\(/.test(x));
     const bad = [];
     for (const def of T.THEMES) for (const mode of T.modesOf(def)) {
-      const tok = mode === 'dark' ? def.dark : def.light; if (!tok || def.classic) continue;
+      const tok = mode === 'dark' ? def.dark : def.light; if (!tok || def.classic || def.palette) continue;
       const lim = mode === 'dark' ? 0.10 : 0.12; const tag = `${def.id} ${mode}`;
       const surf = tok.surfaces ?? (mode === 'dark' ? T.FROST_GRAPHITE : T.FROST_LIGHT);
       for (const [k, c] of Object.entries(surf)) if (hsl(c).s > lim) bad.push(`${tag} ${k} ${c} S ${(hsl(c).s * 100).toFixed(0)}%`);
@@ -53,7 +57,35 @@ const OLD = {
         if (k === 'primary' && x.s > 0.4) bad.push(`${tag} primary ${c} S ${(x.s * 100).toFixed(0)}%`); }
     }
     ok('comfortable to the eyes: grounds and glass ≤ 10 % (dark) / 12 % (light) saturation, glass saturation ≤ 1.05, the background a whisper of hue, accents muted, none yellow', !bad.length, bad.join('; '));
+    ok('the calm rules bind every glass theme but the palette ones (whose colours are their identity: checked below)', T.THEMES.filter((x) => !x.palette && !x.classic).length >= 7);
     ok('a theme taken out of the app (ember) falls back to the default', T.themeById('ember').id === 'classic' && !T.THEMES.some((x) => x.id === 'ember'));
+  }
+  /* 6. (0.21) the palette themes; every surface; no yellow anywhere */
+  {
+    const WANT = ['resonance', 'neon-night', 'plum-dusk', 'glacier', 'aurora-lake', 'claret', 'argent', 'lilac-milk', 'abyss', 'slate-rain', 'sakura-night', 'nebula'];
+    const missing = WANT.filter((id) => { const d = T.THEMES.find((x) => x.id === id); return !d || !d.dark || !d.light || !d.nameKey || !d.dark.roles || !d.light.roles; });
+    ok(`the twelve palette themes are there, each in dark and light with its own colours (${WANT.length})`, !missing.length && ['classic', 'frost'].every((id) => T.THEMES.some((x) => x.id === id)), missing.join(', '));
+    const P = T.parseColor; let worst = { r: 99 }; let n = 0;
+    for (const def of T.THEMES) for (const mode of T.modesOf(def)) for (const darkTone of def.followsAccent ? ['default', 'grey', 'black'] : ['default']) {
+      const r = T.resolve({ theme: def.id, mode, darkTone, useThemeColours: true }); const ground = P(r.surfaces.ground);
+      const unders = r.tokens ? r.tokens.extremes.map((e) => T.over(r.card, T.over(P(e), ground))) : [ground];
+      const note = (ratio, what) => { n++; if (ratio < worst.r) worst = { r: ratio, what: `${def.id} ${mode} ${darkTone} ${what}` }; };
+      for (const u of unders) for (const k of ['lowest', 'low', 'mid', 'high', 'highest']) {
+        const sf = r.tokens ? T.over([...P(r.surfaces[k]).slice(0, 3), r.tokens.fill], u) : P(r.surfaces[k]);
+        for (const tx of ['on', 'variant', 'dim']) note(T.contrast(T.over(P(r.text[tx]), sf), sf), `${tx} on ${k}`);
+      }
+      if (r.roles) for (const [a, b] of [['onPrimary', 'primary'], ['onPrimaryContainer', 'primaryContainer'], ['onSecondaryContainer', 'secondaryContainer'], ['onTertiaryContainer', 'tertiaryContainer']]) {
+        const bc = T.over(P(r.roles[b]), unders[0]); note(T.contrast(T.over(P(r.roles[a]), bc), bc), `${a} on ${b}`);
+      }
+    }
+    ok(`every theme × mode (× dark tone): text ≥ 4.5:1 on every surface container, each «on» colour on its role (${n} pairs; lowest ${worst.r.toFixed(2)}: ${worst.what})`, worst.r >= 4.5);
+    const lits = (str) => (String(str).match(/#[0-9a-f]{6}\b|rgba?\([^)]*\)/gi) || []);
+    const yellow = [];
+    for (const def of T.THEMES) for (const mode of ['dark', 'light']) { const tok = def[mode]; if (!tok) continue;
+      for (const [k, v] of Object.entries(tok)) for (const c of typeof v === 'object' && v ? Object.values(v).flatMap(lits) : lits(v)) if (T.banned(P(c))) yellow.push(`${def.id} ${mode} ${k} ${c}`); }
+    ok('no colour of any theme in the yellow–orange hues (20°–85°)', !yellow.length, yellow.slice(0, 6).join('; '));
+    ok('a colour picked in that band is moved to the nearest allowed hue; others are kept', T.allowedHex('#e0b45c').moved && !T.banned(P(T.allowedHex('#e0b45c').hex)) && T.allowedHex('#ff9900').moved && !T.allowedHex('#22d3ee').moved && T.allowedHex('#22D3EE').hex === '#22d3ee' && !T.allowedHex('#8a8580').moved);
+    ok('credits: Sakura Night and Plum Dusk carry their MIT notices', /Catppuccin/.test(T.themeById('sakura-night').notice || '') && /Ros/.test(T.themeById('plum-dusk').notice || ''));
   }
   ok('the blur follows the platform (phone Reduced, computer Full, WebKitGTK Reduced) and the system\'s wishes', T.resolveBlur('auto', { platform: 'android', phone: true, webkitGtk: false, reducedTransparency: false, reducedMotion: false, lowBattery: false }).blur === 'reduced'
     && T.resolveBlur('auto', { platform: 'desktop', phone: false, webkitGtk: false, deviceMemory: 16, reducedTransparency: false, reducedMotion: false, lowBattery: false }).blur === 'full'
@@ -78,7 +110,7 @@ const OLD = {
   const go = async (p, hash, sel) => { await p.goto(URL0 + hash); await p.waitForSelector(sel); await p.waitForFunction(() => document.documentElement.dataset.theme !== undefined); };
 
   /* 1b. the drawn background within the declared extremes */
-  for (const id of (process.env.KT_ONLY ? [process.env.KT_ONLY] : ['frost', 'aurora', 'obsidian', 'washi', 'frosted-glass'])) for (const mode of T.modesOf(T.themeById(id))) {
+  for (const id of (process.env.KT_ONLY ? [process.env.KT_ONLY] : ['frost', 'aurora', 'obsidian', 'washi', 'frosted-glass', 'neon-night', 'resonance'])) for (const mode of T.modesOf(T.themeById(id))) {
     const { p, ctx } = await page(PHONE, { theme: id, uiMode: mode, accent: T.themeById(id).followsAccent ? 'graphite' : 'theme', glassBlur: 'off', __migrated: 1 });
     await go(p, '', '.downloads-view');
     // (Everything over the background made invisible, and seen to be so, before the picture is taken.)
@@ -95,7 +127,8 @@ const OLD = {
      below — never the title after the buttons, on the far side), and the bar settled (the same layout twice) */
   {
     const bad = [];
-    for (const lang of ['en', 'ar']) for (const def of T.THEMES.filter((x) => !x.custom)) {
+    // (Of the palette themes, two: they share one shape; each is fetched at the start here, as when it is in use.)
+    for (const lang of ['en', 'ar']) for (const def of T.THEMES.filter((x) => !x.custom && (!x.palette || ['neon-night', 'sakura-night'].includes(x.id)))) {
       const { p, ctx } = await page({ w: 360, h: 780, mobile: true, dpr: 2 }, { theme: def.id, glassBlur: 'full', __migrated: 1 }, lang);
       // (As on a phone: the native bridge there gives the bar all its buttons — the narrow case.)
       await p.addInitScript(() => { const L = {}; const plugin = new Proxy({ addListener: (ev, fn) => { (L[ev] = L[ev] || []).push(fn); return { remove() {} }; }, list: async () => ({ tasks: [] }) }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
@@ -114,8 +147,8 @@ const OLD = {
 
   /* 2. tokens on every main screen */
   const SCREENS = [['', '.downloads-view'], ['#/search', '.view'], ['#/videos', '.view'], ['#/settings', '.settings-view']];
-  for (const lang of ['en', 'ar']) for (const [size, o] of [['phone', PHONE], ['pc', PC]]) for (const id of ['frost', 'aurora', 'obsidian', 'classic']) {
-    const { p, ctx } = await page(o, { theme: id, accent: id === 'aurora' ? 'theme' : 'graphite', glassBlur: 'full', __migrated: 1 }, lang);
+  for (const lang of ['en', 'ar']) for (const [size, o] of [['phone', PHONE], ['pc', PC]]) for (const id of ['frost', 'aurora', 'obsidian', 'classic', 'neon-night']) {
+    const { p, ctx } = await page(o, { theme: id, accent: id === 'aurora' || id === 'neon-night' ? 'theme' : 'graphite', glassBlur: 'full', __migrated: 1 }, lang);
     let good = true; let why = '';
     for (const [hash, sel] of SCREENS) {
       await go(p, hash, sel);
@@ -180,6 +213,14 @@ const OLD = {
     await ctx.close();
   }
 
+  /* 6b. the accent swatches: none yellow, amber or olive offered; the custom one's wheel within the allowed hues */
+  {
+    const { p, ctx } = await page(PC, { theme: 'classic', __migrated: 1 }); await go(p, '#/settings/appearance', '#appearance .accent-swatches');
+    const r = await p.evaluate(() => ({ offered: [...document.querySelectorAll('.accent-swatches .swatch[data-accent]')].map((b) => b.dataset.accent), wheel: getComputedStyle(document.querySelector('.swatch.custom')).backgroundImage }));
+    const wheel = (r.wheel.match(/rgba?\([^)]*\)/g) || []).map((c) => T.parseColor(c.replace(/,/g, ' ')));
+    ok('accents offered: none yellow, amber or olive; the custom swatch\'s wheel has no yellow or orange', !r.offered.some((a) => ['gold', 'sand', 'olive'].includes(a)) && r.offered.length >= 6 && wheel.length >= 4 && !wheel.some((c) => T.banned(c)), JSON.stringify(r));
+    await ctx.close();
+  }
   ok('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await br.close(); web.close(); fs.rmSync(tmp, { recursive: true, force: true });
   console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
