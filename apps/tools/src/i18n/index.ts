@@ -149,6 +149,11 @@ export function formatDateShort(ts: number | undefined): string {
   const d = new Date(ts); const same = d.getFullYear() === new Date().getFullYear();
   return dtf(dateLocale(), same ? SHORT_THIS_YEAR : SHORT_OTHER_YEAR).format(d);
 }
+/** A list row's date: today the time, else the short date (this year: day and month). */
+export function formatRowDate(ts: number | undefined): string {
+  if (!ts) return ''; const d = new Date(ts), n = new Date();
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate() ? dtf(dateLocale(), { hour: '2-digit', minute: '2-digit' }).format(d) : d.getFullYear() === n.getFullYear() || calendarPref() !== 'gregory' ? formatDateShort(ts) : dtf(dateLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
 export function formatDate(ts: number | undefined): string {
   if (!ts) return '';
   const civil = dtf(dateLocale(), MEDIUM).format(new Date(ts));

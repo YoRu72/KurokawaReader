@@ -12,6 +12,8 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
 (async () => {
   await new Promise((r) => server.listen(5483, r));
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 412, height: 900 }, deviceScaleFactor: 1 });
+  // (The phone's rows are compact by default — no ⋮ on them; this test drives the comfortable row.)
+  await p.addInitScript(() => { try { const v = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); v.density = 'comfortable'; localStorage.setItem('kt.files.prefs', JSON.stringify(v)); } catch { /* none */ } });
   const errors = []; p.on('pageerror', (e) => errors.push(String(e))); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|blocked by CORS policy/.test(m.text())) errors.push(m.text()); }); await p.route(/api\.github\.com/, (r) => r.fulfill({ json: [], headers: { 'access-control-allow-origin': '*' } }));
   await p.addInitScript(() => {
     const tree = { '/storage/emulated/0/Download/Kurokawa': { 'Song.mp3': 5000000, Sub: {}, Subway: {}, 'Show.S01E01.720p.mkv': 900, '.gitignore': 10, 'archive.tar.gz': 50, README: 20 }, '/storage/emulated/0/Download/Kurokawa/Sub': { 'in.txt': 1 }, '/storage/emulated/0/Download/Kurokawa/Subway': {}, '/storage/emulated/0': { DCIM: {}, Music: {}, 'readme.md': 300 }, '/storage/emulated/0/DCIM': { 'pic.jpg': 9 }, '/storage/emulated/0/Music': { 'tune.mp3': 5 } };

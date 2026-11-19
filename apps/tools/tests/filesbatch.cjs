@@ -256,7 +256,7 @@ async function picker(browser, port, z, lang) {
   await p.goto(`http://localhost:${port}/#/`); await p.waitForTimeout(800); await p.evaluate(() => { location.hash = '#/pick?t=1'; }); await p.waitForSelector('.files-view.picker .files-row', { timeout: 15000 }); await p.waitForTimeout(500);
   const mark = (n) => p.evaluate((nm) => { const r = [...document.querySelectorAll('.files-row')].find((x) => x.querySelector('.files-name')?.title === nm); const m = r?.querySelector('.pick-mark'); return m ? (m.classList.contains('order') ? m.textContent : 'icon') : null; }, n);
   await rowOf(p, 'Song.mp3').click(); await p.waitForTimeout(200); await rowOf(p, 'Sub').click(); await p.waitForTimeout(500); await rowOf(p, 'in.txt').click(); await p.waitForTimeout(200);
-  await p.click('.files-view .files-back'); await p.waitForTimeout(500); await rowOf(p, 'photo.jpg').click(); await p.waitForTimeout(250);
+  await p.click('.files-view .files-uprow'); await p.waitForTimeout(500); await rowOf(p, 'photo.jpg').click(); await p.waitForTimeout(250);
   ok(L('picked across two folders: Song 1, (in.txt 2 in Sub), photo 3'), (await mark('Song.mp3')) === '1' && (await mark('photo.jpg')) === '3', [await mark('Song.mp3'), await mark('photo.jpg')]);
   const e = errors.filter((x) => !/favicon/.test(x)); ok(L('no page errors'), !e.length, e); await p.close();
 }

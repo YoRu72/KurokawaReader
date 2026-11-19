@@ -26,6 +26,8 @@ const fit = (bar: HTMLElement) => {
   if (bar.classList.contains('stacked') === on && title.classList.contains('tb-stacked') === on) return;
   bar.classList.toggle('stacked', on); title.classList.toggle('tb-stacked', on); bar.querySelector(':scope > .topbar-actions')?.classList.toggle('tb-stacked', on);
 };
+/** Measure one bar again (a button shown or hidden changes the room without changing the bar's own size). */
+export const refitTopbar = (bar: HTMLElement | null) => { if (bar?.isConnected && !document.documentElement.classList.contains('pc')) fit(bar); };
 export function startFitTopbar(): void {
   if (document.documentElement.classList.contains('pc')) return;
   // (Measured in the next frame, not inside the observer's own call: changing the bar's height there would ask it for

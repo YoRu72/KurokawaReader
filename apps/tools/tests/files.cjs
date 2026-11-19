@@ -10,6 +10,8 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await new Promise((r) => server.listen(5481, r));
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 412, height: 900 }, deviceScaleFactor: 1 });
   const errors = []; p.on('pageerror', (e) => errors.push(String(e))); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|blocked by CORS policy/.test(m.text())) errors.push(m.text()); }); await p.route(/api\.github\.com/, (r) => r.fulfill({ json: [], headers: { 'access-control-allow-origin': '*' } }));
+  // (The phone's rows are compact by default — no ⋮ on them; this test drives the comfortable row.)
+  await p.addInitScript(() => { try { const v = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); v.density = 'comfortable'; localStorage.setItem('kt.files.prefs', JSON.stringify(v)); } catch { /* none */ } });
   await p.addInitScript(() => {
     // the pretend phone
     const tree = { '/storage/emulated/0/Download/Kurokawa': { 'Movie.mkv': 734003200, 'Song.mp3': 5000000, 'notes.txt': 1200, 'photo.jpg': 2500000, 'pack.zip': 90000, 'app.apk': 30000000, Sub: {} }, '/storage/emulated/0': { DCIM: {}, Music: {}, 'readme.md': 300 } };
@@ -58,14 +60,14 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('the app folder is listed, folders first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,app.apk,Movie.mkv,notes.txt,pack.zip,photo.jpg,Song.mp3', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(','));
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-list.png' });
   // sort by size, turned round
-  await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions button[aria-label="Sort by"]'); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
+  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Sort by")'); await p.waitForTimeout(300); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Sort by")'); await p.waitForTimeout(300); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
   ok('sorted by size, biggest first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).slice(0, 2).join(',') === 'Sub,Movie.mkv');
   // kind filter
   await p.click('.files-kinds .chip:nth-child(3)'); await p.waitForTimeout(150);
   ok('the Music chip keeps the song (and folders)', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,Song.mp3');
   await p.click('.files-kinds .chip:nth-child(1)'); await p.waitForTimeout(150);
   // search within
-  await p.click('.topbar-actions button[aria-label="Filter this folder"]'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
+  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Filter this folder")'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
   ok('the search narrows', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Movie.mkv');
   await p.fill('.files-search', ''); await p.waitForTimeout(150);
   // open a text file: the quick look
@@ -75,7 +77,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   // a folder opened: breadcrumbs
   await p.click('.files-row:has-text("Sub")'); await p.waitForTimeout(300);
   ok('breadcrumbs follow', (await p.$$eval('.files-crumbs .crumb', (e) => e.map((x) => x.textContent))).join('/') === 'Kurokawa/Sub');
-  await p.click('.files-crumbs .crumb:first-child'); await p.waitForTimeout(300);
+  await p.click('.files-head'); await p.click('.files-crumbs .crumb:first-child'); await p.waitForTimeout(300);
   // selection by a long press: the bar
   const row = await p.$('.files-row:has-text("Song.mp3")'); const bb = await row.boundingBox(); await p.mouse.move(bb.x + 40, bb.y + 20); await p.mouse.down(); await p.waitForTimeout(650); await p.mouse.up(); await p.waitForTimeout(200);
   ok('held: the selection bar shows one', !(await p.$eval('.files-selbar', (e) => e.hidden)) && /1/.test(await p.textContent('.files-selcount')));
@@ -147,7 +149,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.click('.files-row:has-text("a.jpg") .files-main'); await p.waitForSelector('.files-viewer', { timeout: 5000 });
   ok('a picture inside the zip opens in the viewer, counted among its neighbours', (await p.textContent('.files-viewer')).includes('/ 2'));
   await p.keyboard.press('Escape'); await p.waitForTimeout(200);
-  await p.click('.files-crumbs .crumb:has-text("pack.zip")'); await p.waitForSelector('.files-row:has-text("docs")'); ok('the crumb returns to the zip root', (await p.$$('.files-row')).length === 3);
+  await p.click('.files-head'); await p.click('.files-crumbs .crumb:has-text("pack.zip")'); await p.waitForSelector('.files-row:has-text("docs")'); ok('the crumb returns to the zip root', (await p.$$('.files-row')).length === 3);
   // the installed apps as a place: listed from the drawer, an app entered shows its APKs and folders, its sheet offers the backup
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.click('.files-drawer .files-drawer-row:has-text("Installed apps")'); await p.waitForSelector('.files-row:has-text("Game")', { timeout: 8000 });
   ok('the apps are listed with their packages', (await p.textContent('.files-row:has-text("Game")')).includes('org.example.game'));
@@ -165,7 +167,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   await p.click('.files-row:has-text("base.apk") .files-main'); await p.waitForFunction(() => window.__calls.some((c) => c === 'arcList:/data/app/org.example.game/base.apk'), null, { timeout: 4000 }).catch(() => undefined);
   ok("an installed app's base.apk opens as a folder (not the installer)", await p.evaluate(() => window.__calls.includes('arcList:/data/app/org.example.game/base.apk') && !document.querySelector('.sheet')));
   await p.goto('http://127.0.0.1:5481/#/files?p=' + encodeURIComponent('apps://org.example.game')); await p.waitForSelector('.files-row:has-text("base.apk")');
-  await p.click('.files-crumbs .crumb:has-text("Apps")'); await p.waitForSelector('.files-row:has-text("Notes")');
+  await p.click('.files-head'); await p.click('.files-crumbs .crumb:has-text("Apps")'); await p.waitForSelector('.files-row:has-text("Notes")');
   await p.click('.files-row:has-text("Notes") button[aria-label="More"]'); await p.waitForSelector('.sheet .dest-row:has-text("Back up")', { timeout: 5000 });
   ok("an app's sheet offers backup, launch, info, uninstall", (await p.$$('.sheet .dest-row')).length >= 6); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   // a place an older version saved as «apps:» opens as the installed apps; Back from an app's folder goes up to «apps://»
