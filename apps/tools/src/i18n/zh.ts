@@ -2567,6 +2567,7 @@ export const zh: Partial<Strings> = {
   batDefTeach: "教它认识设备",
   batDefImport: "导入文件",
   batDefNone: "还没有定义。",
+  batDefAside: "未能完整读取定义文件，已将其另存为“⁨battery-defs.json.bad⁩”；能读取的定义列在此处。",
   batDefSub: "{ids} · 报告 {report}，字节 {byte}",
   batDefOnLabel: "用此定义读取「{name}」",
   batDefBuiltInUsed: "此设备由 {family} 读取器读取；你的定义暂不使用。",

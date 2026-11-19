@@ -19,7 +19,8 @@
 //   controls (page 0x06, where a battery strength lives) are listened to.
 // - Captured bytes stay in memory only (this module has no file, no log): a bounded ring (MAX_FRAMES reports of at most
 //   MAX_LEN bytes), per-report counts, and the marks' small snapshots; a listening run ends by itself after its time
-//   (at most MAX_SECONDS); dropping the Capture drops everything.
+//   (at most MAX_SECONDS), or once nobody looked at it for IDLE_MS (then its bytes and marks are dropped); dropping the
+//   Capture drops everything.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use crate::allow::HidIdent;
 use crate::defs::{self, ChargeRule, Definition, Field, Match, Scale};
@@ -41,6 +42,10 @@ pub const MAX_SECONDS: u64 = 1_800;
 /// are a stick, a counter or a clock — not a battery).
 pub const MARK_WINDOW_MS: u64 = 5_000;
 pub const MOVE_WINDOW_MS: u64 = 2_000;
+/// A run nobody looks at — no state poll and no mark for this long (the page polls every second while its sheet is
+/// open) — stops itself and drops what it heard: a sheet closed while its start was still on the way never leaves a
+/// device listened to.
+pub const IDLE_MS: u64 = 30_000;
 pub const MAX_LEVEL: usize = 6;
 pub const MAX_CHARGE: usize = 4;
 
@@ -215,6 +220,8 @@ pub struct Capture {
     pub gone: bool,
     pub started: u64,
     pub until: u64,
+    /// When the page last looked (a state poll or a mark), on the run's clock.
+    pub touched: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,8 +279,21 @@ impl Capture {
         &self.marks
     }
 
+    /// The page looked at `now` (a state poll): the run keeps going.
+    pub fn touch(&mut self, now: u64) {
+        self.touched = self.touched.max(now);
+    }
+
+    /// Everything heard and marked dropped (the run went idle).
+    fn forget(&mut self) {
+        self.frames.clear();
+        self.ids.clear();
+        self.marks.clear();
+    }
+
     /// The user's mark at `now`: a snapshot of every report id heard in the last few seconds.
     pub fn mark(&mut self, kind: MarkKind, now: u64) -> Result<(), MarkErr> {
+        self.touch(now);
         if self.marks.len() >= MAX_MARKS {
             return Err(MarkErr::TooMany);
         }
@@ -574,7 +594,8 @@ impl Listening {
             c.listening = true;
             c.gone = false;
             c.started = clock();
-            c.until = c.started + secs * 1_000;
+            c.until = c.started.saturating_add(secs * 1_000);
+            c.touched = c.started;
         }
         let stop = Arc::new(AtomicBool::new(false));
         let s2 = stop.clone();
@@ -582,7 +603,16 @@ impl Listening {
             .name("kt-battery-teach".into())
             .spawn(move || {
                 let mut gone = false;
+                let mut idle = false;
                 while !s2.load(Ordering::Relaxed) && Instant::now() < end {
+                    {
+                        // (Nobody looked for IDLE_MS: stop, and drop what was heard.)
+                        let c = cap.lock().unwrap_or_else(|e| e.into_inner());
+                        if clock().saturating_sub(c.touched) > IDLE_MS {
+                            idle = true;
+                            break;
+                        }
+                    }
                     let began = Instant::now();
                     match t.read_input((began + Duration::from_millis(200)).min(end)) {
                         Ok(r) => cap.lock().unwrap_or_else(|e| e.into_inner()).push(clock(), &r),
@@ -602,6 +632,9 @@ impl Listening {
                 let mut c = cap.lock().unwrap_or_else(|e| e.into_inner());
                 c.listening = false;
                 c.gone = gone;
+                if idle {
+                    c.forget();
+                }
             })
             .map_err(|e| TErr::Failed(e.to_string()))?;
         Ok(Listening { stop, join: Some(join) })
@@ -777,6 +810,52 @@ mod tests {
         assert!(!c.listening, "stopped");
         assert_eq!(c.rows().len(), 2);
         assert_eq!(c.until, 5 + 60_000);
+    }
+
+    #[test]
+    fn a_run_nobody_looks_at_stops_itself_and_drops_what_it_heard() {
+        use std::sync::atomic::AtomicU64;
+        let now = Arc::new(AtomicU64::new(1_000));
+        let n2 = now.clone();
+        let calls = Arc::new(AtomicU64::new(0));
+        let k2 = calls.clone();
+        let clock: Arc<dyn Fn() -> u64 + Send + Sync> = Arc::new(move || {
+            k2.fetch_add(1, Ordering::SeqCst);
+            n2.load(Ordering::SeqCst)
+        });
+        let cap = Arc::new(Mutex::new(Capture::default()));
+        let mut t = FakeHid::new(id(0xFF00, 1));
+        t.mode = OpenMode::Read;
+        t.stream.extend([vec![4, 1, 2], vec![4, 1, 3]]);
+        let l = Listening::start(Box::new(t), 600, cap.clone(), clock).unwrap();
+        let wait = |f: &dyn Fn(&Capture) -> bool| {
+            let until = Instant::now() + Duration::from_secs(5);
+            while !f(&cap.lock().unwrap()) && Instant::now() < until {
+                std::thread::yield_now();
+            }
+        };
+        wait(&|c| c.rows().iter().map(|r| r.count).sum::<u64>() >= 2);
+        cap.lock().unwrap().mark(MarkKind::Full, 1_500).unwrap();
+        // (Looked at within IDLE_MS: still listening.)
+        now.store(1_500 + IDLE_MS - 1, Ordering::SeqCst);
+        cap.lock().unwrap().touch(1_500 + IDLE_MS - 1);
+        now.store(1_500 + 2 * IDLE_MS - 2, Ordering::SeqCst);
+        // (The run has looked at the clock a few times since: a condition, not a fixed wait.)
+        let c0 = calls.load(Ordering::SeqCst);
+        let until = Instant::now() + Duration::from_secs(5);
+        while calls.load(Ordering::SeqCst) < c0 + 3 && Instant::now() < until {
+            std::thread::yield_now();
+        }
+        assert!(calls.load(Ordering::SeqCst) >= c0 + 3);
+        assert!(cap.lock().unwrap().listening, "a poll keeps it going");
+        // (Then nobody looks for longer than IDLE_MS: it stops, its bytes and marks gone.)
+        now.store(1_500 + 2 * IDLE_MS + 1, Ordering::SeqCst);
+        wait(&|c| !c.listening);
+        let c = cap.lock().unwrap();
+        assert!(!c.listening && !c.gone, "stopped, the device not gone");
+        assert!(c.rows().is_empty() && c.marks().is_empty() && c.frames.is_empty(), "frames and marks dropped");
+        drop(c);
+        drop(l);
     }
 
     #[test]

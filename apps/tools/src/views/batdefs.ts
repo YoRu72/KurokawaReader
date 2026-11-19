@@ -17,7 +17,7 @@ import { t, localDigits, countMinutes } from '../i18n';
 type Lvl = { kind: 'exact'; value: number } | { kind: 'coarse'; value: string; bars: number } | { kind: 'steps'; value: number; max: number } | { kind: 'unknown' };
 export type DefEntry = { id: string; on: boolean; mineFirst: boolean; name: string; kind: string; note: string; vid: string; pid: string; usagePage: string | null; usage: string | null;
   interface: number | null; productName: string; builtin: string | null; level: { report: number; byte: number; mask: number; shift: number; how: 'scale' | 'steps' | 'table' }; charging: boolean };
-type DefsReply = { list: DefEntry[]; max: number; teach: boolean };
+type DefsReply = { list: DefEntry[]; max: number; teach: boolean; aside?: boolean };
 type DefErr = { code: string; field: string };
 type ImportReply = { ok: boolean; id?: string; list?: DefEntry[]; error?: DefErr };
 type TeachDev = { id: string; unit: string; name: string; vid: string; pid: string; usagePage: string; usage: string; interface: number; verdict: string; family?: string | null };
@@ -31,9 +31,9 @@ export type TeachState = { open: boolean; id?: string; name?: string; vid?: stri
 export type DefsDesk = {
   batteryDefs(): Promise<DefsReply>; batteryDefImport(o: { text: string; mineFirst?: boolean }): Promise<ImportReply>; batteryDefExport(o: { id: string }): Promise<{ name: string; text: string }>;
   batteryDefRemove(o: { id: string }): Promise<{ list: DefEntry[] }>; batteryDefSet(o: { id: string; on?: boolean; mineFirst?: boolean }): Promise<{ list: DefEntry[] }>;
-  batteryTeachList(): Promise<{ available: boolean; devices: TeachDev[] }>; batteryTeachStart(o: { id: string; seconds?: number }): Promise<TeachState>; batteryTeachStop(): Promise<TeachState>;
+  batteryTeachList(): Promise<{ available: boolean; devices: TeachDev[] }>; batteryTeachStart(o: { id: string; seconds?: number; o: string }): Promise<TeachState>; batteryTeachStop(): Promise<TeachState>;
   batteryTeachState(): Promise<TeachState>; batteryTeachMark(o: { mark?: string; undo?: boolean }): Promise<TeachState>;
-  batteryTeachSave(o: { level: number; charging?: number; name: string; kind: string }): Promise<ImportReply>; batteryTeachClose(): Promise<boolean> };
+  batteryTeachSave(o: { level: number; charging?: number; name: string; kind: string }): Promise<ImportReply>; batteryTeachClose(o: { o: string }): Promise<boolean> };
 export const defsDesk = (): DefsDesk | null => { const d = (window as unknown as { kurokawaTools?: Partial<DefsDesk> }).kurokawaTools; return d?.batteryDefs && d.batteryTeachList ? d as DefsDesk : null; };
 
 /** What the page lends: redrawing it, a level's words, a kind's drawing and words, a family's brand and its switch. */
@@ -180,6 +180,8 @@ export function defsPanel(d: DefsDesk, ctx: DefsCtx): { card(): HTMLElement | nu
     if (!state || !state.teach) return null;
     const list = state.list;
     return h('section', { class: 'card bat-settings bat-defs', 'data-group': 'defs' }, h('h3', null, t('batDefTitle')), h('p', { class: 'hint' }, t('batDefHint')),
+      // (The shell set a damaged file aside on its first read: said calmly, once per visit.)
+      state.aside ? h('p', { class: 'hint', 'data-state': 'aside' }, t('batDefAside')) : null,
       h('div', { class: 'bat-eq-row' },
         h('button', { type: 'button', class: 'btn tonal', 'data-act': 'teach', onclick: () => teach() }, icon('target'), t('batDefTeach')),
         h('button', { type: 'button', class: 'btn tonal', 'data-act': 'import', onclick: importFile }, icon('import'), t('batDefImport'))),
@@ -191,8 +193,12 @@ export function defsPanel(d: DefsDesk, ctx: DefsCtx): { card(): HTMLElement | nu
   const teach = (pre?: { vid: number; pid: number }) => {
     let closed = false; let timer = 0; let st: TeachState = { open: false };
     let pickL = ''; let pickC = ''; let name = ''; let kind = 'other';
+    // (This sheet's own token, sent with start and close: a start still on the way when the sheet closes is stopped by
+    // the shell, and dropped here too.)
+    const sheetId = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    const closeRun = () => void d.batteryTeachClose({ o: sheetId }).catch(() => false);
     const stopPoll = () => { if (timer) { clearInterval(timer); timer = 0; } };
-    const sh = openSheet(t('batTeachTitle'), t('close'), { onClose: () => { closed = true; stopPoll(); void d.batteryTeachClose().catch(() => false); } });
+    const sh = openSheet(t('batTeachTitle'), t('close'), { onClose: () => { closed = true; stopPoll(); closeRun(); } });
     sh.el.classList.add('bat-teach-sheet');
     const wrap = h('div', { class: 'bat-teach' }); sh.body.append(wrap);
     const fail = (e: unknown) => toast(String((e as Error)?.message ?? e), 'error');
@@ -275,13 +281,14 @@ export function defsPanel(d: DefsDesk, ctx: DefsCtx): { card(): HTMLElement | nu
         paintSave();
       };
       const took = (s: TeachState) => {
-        if (closed) return;
+        // (The sheet closed while this answer was on the way — a start that began listening after all: closed again.)
+        if (closed) { closeRun(); return; }
         if (s.error) { toast(t(s.error === 'quiet' ? 'batTeachQuiet' : 'batTeachTooMany'), 'error'); return; }
         st = s; paint();
         if (st.listening && !timer) timer = window.setInterval(() => void d.batteryTeachState().then(took, () => undefined), 1000);
         if (!st.listening) stopPoll();
       };
-      const start = () => d.batteryTeachStart({ id: dev.id }).then(took, fail);
+      const start = () => d.batteryTeachStart({ id: dev.id, o: sheetId }).then(took, fail);
       const stop = () => d.batteryTeachStop().then(took, fail);
       const mark = (m: string) => d.batteryTeachMark({ mark: m }).then(took, fail);
       const save = async () => {

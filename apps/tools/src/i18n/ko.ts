@@ -2567,6 +2567,7 @@ export const ko: Partial<Strings> = {
   batDefTeach: "장치 가르치기",
   batDefImport: "파일 가져오기",
   batDefNone: "아직 정의가 없습니다.",
+  batDefAside: "정의 파일을 모두 읽지 못해 «⁨battery-defs.json.bad⁩»(으)로 따로 보관했습니다. 읽을 수 있었던 정의는 여기에 있습니다.",
   batDefSub: "{ids} · 보고서 {report}, 바이트 {byte}",
   batDefOnLabel: "이 정의로 「{name}」 읽기",
   batDefBuiltInUsed: "이 장치는 {family} 읽기 기능이 읽으며, 내 정의는 보류됩니다.",

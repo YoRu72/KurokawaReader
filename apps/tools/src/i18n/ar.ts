@@ -3657,6 +3657,7 @@ export const ar: Partial<Strings> = {
   batDefTeach: "علِّمني جهازًا",
   batDefImport: "استيراد ملف",
   batDefNone: "لا تعريفات بعدُ.",
+  batDefAside: "تعذّرت قراءةُ ملفّ التعريفات كاملًا، فنُحّي جانبًا باسم «⁨battery-defs.json.bad⁩»، وما أمكنت قراءتُه مُدرَجٌ هنا.",
   batDefSub: "{ids} · التقرير {report}، البايت {byte}",
   batDefOnLabel: "اقرأ «⁨{name}⁩» بهذا التعريف",
   batDefBuiltInUsed: "يقرأ هذا الجهازَ قارئُ {family}، وتعريفك محفوظٌ جانبًا.",

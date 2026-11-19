@@ -3662,6 +3662,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   batDefTeach: "Teach me a device",
   batDefImport: "Import a file",
   batDefNone: "No definitions yet.",
+  batDefAside: "The definitions file could not be read whole, so it was kept aside as «⁨battery-defs.json.bad⁩»; what could be read is listed here.",
   batDefSub: "{ids} · report {report}, byte {byte}",
   batDefOnLabel: "Read «{name}» with this definition",
   batDefBuiltInUsed: "The {family} reader reads this device; yours is kept aside.",

@@ -2567,6 +2567,7 @@ export const ja: Partial<Strings> = {
   batDefTeach: "デバイスを教える",
   batDefImport: "ファイルを読み込む",
   batDefNone: "定義はまだありません。",
+  batDefAside: "定義ファイルを完全には読み込めなかったため、「⁨battery-defs.json.bad⁩」として別に保管しました。読み込めた定義はここに表示しています。",
   batDefSub: "{ids} · レポート {report}、バイト {byte}",
   batDefOnLabel: "「{name}」をこの定義で読む",
   batDefBuiltInUsed: "このデバイスは {family} の読み取りが使われ、あなたの定義は保留中です。",
