@@ -34,6 +34,14 @@
 // user allows (off by default) — and mkMute — the families read by listening that the user turned off (on by default).
 // A device read by one of them carries its { driver, family, proven, way } as a controller's does; a reading's note
 // may be 'unlinked' (a receiver with no device linked to it).
+// Piece P1, Linux and macOS (the end of this file): the loop runs over kt-battery's LinuxPlatform (the kernel's
+// peripheral batteries, the raw HID nodes through every family reader, BlueZ's levels) or MacPlatform (ioreg and
+// system_profiler); system gains { os, access? } — on Linux, when a node Tools would read is closed to this user,
+// access: { needed, saved, file, steps } (the udev rule written to the app's own folder, the commands to install it;
+// Tools never runs sudo); a reading's note may be 'noAccess'. A Mac has no family reader yet: its pads and mice rows
+// are empty and the page says so. Start with the system: the XDG autostart file (Linux), a LaunchAgent (macOS).
+// Connecting on Linux goes through bluetoothctl (kt-battery linux/bt.rs); btOpenSettings opens the desktop's own
+// Bluetooth settings (Linux) or the system's (macOS).
 // Copyright (C) 2026 Kurokawa contributors.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -292,9 +300,9 @@ fn flag(v: &Value, k: &str) -> bool {
     v.get(k).and_then(Value::as_bool).unwrap_or(false)
 }
 
-/// «Keep running in the background» in force: chosen, and on a system with a reader (Windows for now).
+/// «Keep running in the background» in force: chosen, and on a system with a reader (Windows; piece P1: Linux, macOS).
 fn background_on(v: &Value) -> bool {
-    cfg!(windows) && flag(v, "background")
+    cfg!(any(windows, target_os = "linux", target_os = "macos")) && flag(v, "background")
 }
 
 /// Whether the start with the system should be there: both switches on (a hidden start needs the background).
@@ -338,7 +346,7 @@ fn start(app: &AppHandle) -> Option<Live> {
     Some(Live { handle, last, _watch: watch })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn start(_app: &AppHandle) -> Option<Live> {
     let _ = (state_json, changed);
     None
@@ -570,7 +578,11 @@ fn autostart_apply(on: bool) -> Result<(), String> {
         std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        mac_autostart_apply(on)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = (exe_path, autostart::HIDDEN_FLAG);
         if on {
@@ -582,7 +594,7 @@ fn autostart_apply(on: bool) -> Result<(), String> {
 }
 
 fn autostart_support() -> &'static str {
-    if cfg!(any(windows, target_os = "linux")) {
+    if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         "yes"
     } else {
         "notYet"
@@ -626,8 +638,10 @@ pub fn init(app: &AppHandle) {
 
 // ---- commands ----
 
-fn system_json() -> Value {
-    json!({ "autostart": autostart_support(), "tray": crate::desktop::tray_possible().0 })
+fn system_json(app: &AppHandle) -> Value {
+    let mut v = json!({ "autostart": autostart_support(), "tray": crate::desktop::tray_possible().0 });
+    p1_system(app, &mut v);
+    v
 }
 
 #[tauri::command]
@@ -637,9 +651,9 @@ pub async fn kt_battery_list(app: AppHandle) -> Result<Value, String> {
         match live(&app) {
             Some((_, last)) => {
                 let devices = last.lock().map(|g| g.clone()).unwrap_or_default();
-                json!({ "available": true, "now": now_ms(), "devices": devices, "pads": pads_json(&settings), "mice": mice_json(&settings), "settings": settings, "system": system_json() })
+                json!({ "available": true, "now": now_ms(), "devices": devices, "pads": p1_rows(pads_json(&settings)), "mice": p1_rows(mice_json(&settings)), "settings": settings, "system": system_json(&app) })
             }
-            None => json!({ "available": false, "reason": "platform", "now": now_ms(), "devices": [], "pads": pads_json(&settings), "mice": mice_json(&settings), "settings": settings, "system": system_json() }),
+            None => json!({ "available": false, "reason": "platform", "now": now_ms(), "devices": [], "pads": pads_json(&settings), "mice": mice_json(&settings), "settings": settings, "system": system_json(&app) }),
         }
     })
     .await
@@ -806,7 +820,7 @@ fn bt_tray_lines() -> Vec<String> {
 /// With the background on, the tray's paired list read again now and then (at most once a minute, on its own thread
 /// with the list's limit) — never while nothing asks for the tray.
 fn bt_tray_tick(app: &AppHandle) {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let now = now_ms();
         {
@@ -824,7 +838,7 @@ fn bt_tray_tick(app: &AppHandle) {
             }
         });
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (app, &BT_READ_AT);
     }
@@ -833,7 +847,7 @@ fn bt_tray_tick(app: &AppHandle) {
 /// A tray line chosen: its action, on its own thread; a failure told as a notice.
 pub fn tray_bt(app: &AppHandle, i: usize) {
     let Some((addr, op, name)) = BT_TRAY.lock().unwrap_or_else(|e| e.into_inner()).get(i).cloned() else { return };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let a2 = app.clone();
         let _ = std::thread::Builder::new().name("kt-bt-tray-act".into()).spawn(move || {
@@ -846,7 +860,7 @@ pub fn tray_bt(app: &AppHandle, i: usize) {
             }
         });
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (app, addr, op, name);
     }
@@ -863,13 +877,13 @@ fn bt_addr(o: &Value) -> Option<u64> {
 #[tauri::command]
 pub async fn kt_bt_list(app: AppHandle) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         {
             let Some(c) = bt(&app) else { return bt_unavailable() };
             c.set_levels(bt_levels());
             snap_json(&c.refresh())
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = (&app, snap_json as fn(&Snapshot) -> Value, bt_levels as fn() -> Vec<(String, u8)>);
             bt_unavailable()
@@ -884,12 +898,12 @@ pub async fn kt_bt_scan(app: AppHandle, o: Value) -> Result<Value, String> {
     let stop = o.get("stop").and_then(Value::as_bool).unwrap_or(false);
     let secs = o.get("seconds").and_then(Value::as_u64).unwrap_or(20);
     tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         {
             let Some(c) = bt(&app) else { return bt_unavailable() };
             snap_json(&if stop { c.scan_stop() } else { c.scan_start(secs.saturating_mul(1_000)) })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = (&app, stop, secs);
             bt_unavailable()
@@ -908,7 +922,7 @@ pub async fn kt_bt_act(app: AppHandle, o: Value) -> Result<Value, String> {
         return Err("unknown action".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         {
             let Some(c) = bt(&app) else { return json!({ "result": "noRadio", "code": 0 }) };
             let Some(op) = op else {
@@ -920,7 +934,7 @@ pub async fn kt_bt_act(app: AppHandle, o: Value) -> Result<Value, String> {
             let end = c.act(addr, op);
             json!({ "result": end.as_str(), "code": end.code() })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = (&app, addr, op, End::Done);
             json!({ "result": "noRadio", "code": 0 })
@@ -937,9 +951,137 @@ pub async fn kt_bt_settings(app: AppHandle) -> Result<(), String> {
         use tauri_plugin_opener::OpenerExt;
         app.opener().open_url("ms-settings:bluetooth", None::<&str>).map_err(|e| e.to_string())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        if kt_battery::linux::bt::open_settings() {
+            Ok(())
+        } else {
+            Err("no Bluetooth settings found on this desktop".into())
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url("x-apple.systempreferences:com.apple.preferences.Bluetooth", None::<&str>).map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = app;
         Err("not on this system yet".into())
     }
 }
+
+// ---- piece P1: Linux and macOS ----
+
+/// The loop over a platform that brings no arrival watcher (Linux, macOS: enumeration each interval and on «Check
+/// now»).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn start_on<P: runner::Platform>(app: &AppHandle, platform: Arc<P>) -> Option<Live> {
+    use tauri::Emitter;
+    let last: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (l2, app2) = (last.clone(), app.clone());
+    let publish = Box::new(move |list: Vec<DeviceState>| {
+        let v: Vec<Value> = list.iter().map(state_json).collect();
+        if let Ok(mut g) = l2.lock() {
+            *g = v.clone();
+        }
+        let _ = app2.emit("kt:battery", json!({ "now": now_ms(), "devices": v }));
+        changed(&app2, list);
+    });
+    let (handle, _join) = runner::spawn(platform, prefs_of(&load(app)), Arc::new(now_ms), publish).ok()?;
+    Some(Live { handle, last })
+}
+
+#[cfg(target_os = "linux")]
+fn start(app: &AppHandle) -> Option<Live> {
+    start_on(app, Arc::new(kt_battery::linux::LinuxPlatform::new()))
+}
+
+#[cfg(target_os = "macos")]
+fn start(app: &AppHandle) -> Option<Live> {
+    start_on(app, Arc::new(kt_battery::macos::MacPlatform::new()))
+}
+
+/// A Mac has no family reader yet (they need IOKit's HID manager): no switches for them on its page.
+fn p1_rows(rows: Value) -> Value {
+    if cfg!(target_os = "macos") {
+        json!([])
+    } else {
+        rows
+    }
+}
+
+/// The system's part of batteryList: its name, and on Linux whether the udev rule is wanted (written to the app's
+/// own folder then — never to /etc: the page shows the commands).
+fn p1_system(app: &AppHandle, v: &mut Value) {
+    let os = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    v["os"] = json!(os);
+    #[cfg(target_os = "linux")]
+    {
+        let (sys, dev) = (std::path::Path::new("/sys"), std::path::Path::new("/dev"));
+        if !kt_battery::linux::needs_rule(sys, dev) {
+            v["access"] = json!({ "needed": false });
+            return;
+        }
+        let dir = app.path().app_data_dir().ok();
+        let saved = dir.as_ref().map(|d| (d.join(kt_battery::udev::RULE_FILE), d.to_string_lossy().into_owned()));
+        let ok = saved.as_ref().map_or(false, |(p, _)| autostart::write_file(p, &kt_battery::udev::rules_for(&kt_battery::linux::rule_ids(sys))).is_ok());
+        let steps = saved.as_ref().map(|(_, d)| kt_battery::udev::install_steps(d)).unwrap_or_default();
+        v["access"] = json!({ "needed": true, "saved": ok, "file": saved.map(|(p, _)| p.to_string_lossy().into_owned()), "steps": steps });
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+    }
+}
+
+/// A Mac's start with the system: this feature's own LaunchAgent, written or removed.
+#[cfg(target_os = "macos")]
+fn mac_autostart_apply(on: bool) -> Result<(), String> {
+    let home = std::env::var("HOME").ok();
+    let p = autostart::agent_path(home.as_deref()).ok_or("no home folder")?;
+    if !on {
+        return autostart::remove_file(&p).map_err(|e| e.to_string());
+    }
+    let exe = exe_path().ok_or("this program's path is not known")?;
+    if !autostart::mac_exe_ok(&exe) {
+        return Err("move Kurokawa Tools to the Applications folder first".into());
+    }
+    let text = autostart::launch_agent(&exe).ok_or("this program's path cannot be written to a LaunchAgent")?;
+    autostart::write_file(&p, &text).map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "linux")]
+type BtConn = connect::Conn<kt_battery::linux::bt::LinuxBt>;
+
+#[cfg(target_os = "linux")]
+static BT: OnceLock<BtConn> = OnceLock::new();
+
+/// Linux: connecting through bluetoothctl (kt-battery linux/bt.rs).
+#[cfg(target_os = "linux")]
+fn bt(app: &AppHandle) -> Option<&'static BtConn> {
+    use tauri::Emitter;
+    Some(BT.get_or_init(|| {
+        let p = Arc::new(kt_battery::linux::bt::LinuxBt::default());
+        let a2 = app.clone();
+        let publish = Arc::new(move |s: Snapshot| {
+            let _ = a2.emit("kt:bt", snap_json(&s));
+            *BT_LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some(s);
+            if let Some(v) = cached() {
+                tray_push(&a2, &v);
+            }
+        });
+        connect::Conn::new(p, connect::Limits::default(), Arc::new(now_ms), publish)
+    }))
+}
+
+/// Linux: pairing is the desktop's own settings' (bluetoothctl's pair is never used) — no window to parent.
+#[cfg(target_os = "linux")]
+fn bt_parent(_app: &AppHandle) {}

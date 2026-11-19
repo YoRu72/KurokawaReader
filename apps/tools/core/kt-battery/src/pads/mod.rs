@@ -199,7 +199,8 @@ impl Model {
     }
 }
 
-fn all_models() -> impl Iterator<Item = &'static Model> {
+/// Every controller model the readers know (piece P1: the udev rule's list is made from it, udev.rs).
+pub fn all_models() -> impl Iterator<Item = &'static Model> {
     playstation::MODELS
         .iter()
         .chain(nintendo::MODELS.iter())

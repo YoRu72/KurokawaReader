@@ -92,6 +92,10 @@ pub enum Source {
     /// Piece 6: Galaxy Buds' status, pushed on Samsung's serial-port service once connected (galaxybuds.rs) — only
     /// when the user turned that on.
     Spp,
+    /// Linux and macOS (piece P1): a level the system itself keeps — Linux's /sys/class/power_supply entries of
+    /// peripherals (the kernel's own drivers: hid-*, sony, playstation, nintendo, hidpp…), BlueZ's level through UPower,
+    /// macOS's IORegistry «BatteryPercent» and its Bluetooth report. Read only; nothing is sent by Tools.
+    System,
 }
 
 impl Source {
@@ -106,6 +110,7 @@ impl Source {
             Source::Advert => "advert",
             Source::PhoneLink => "phonelink",
             Source::Spp => "spp",
+            Source::System => "system",
         }
     }
     /// Which reading wins when two readers see one physical device (identity.rs): a controller's own reader first (it
@@ -114,7 +119,7 @@ impl Source {
     pub fn rank(self) -> u8 {
         match self {
             Source::Pad | Source::Vendor | Source::Advert | Source::PhoneLink | Source::Spp => 5,
-            Source::Bluetooth => 4,
+            Source::Bluetooth | Source::System => 4,
             Source::XboxWgi => 3,
             Source::HidGeneric => 2,
             Source::XInput => 1,
@@ -260,6 +265,9 @@ pub enum Note {
     /// Piece 6: the reader needs a part of Windows this build does not carry (AirPods' advertisements need WinRT,
     /// the `wgi` feature).
     NotInBuild,
+    /// Piece P1 (Linux): the device's raw HID node cannot be opened by this user — the page shows the steps (a udev
+    /// rule for the listed devices only; Tools never runs sudo).
+    NoAccess,
 }
 
 impl Note {
@@ -272,6 +280,7 @@ impl Note {
             Note::Unlinked => "unlinked",
             Note::InCase => "inCase",
             Note::NotInBuild => "notInBuild",
+            Note::NoAccess => "noAccess",
         }
     }
 }
