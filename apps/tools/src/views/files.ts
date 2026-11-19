@@ -118,7 +118,7 @@ const subJobs = new Map<string, (ev: JobEvent) => void>();
 /** Jobs started plainly (the engine checked the sizes), and moves that were a rename on one storage (nothing copied to check). */
 const sizeChecked = new Set<string>(); const renamedMoves = new Set<string>();
 let stagesSwept = false;
-const setClip = (c: typeof clipboard) => { clipboard = c; for (const f of clipWatch) f(); };
+const setClip = (c: typeof clipboard) => { clipboard = c; keepResume({ clip: c ? { op: c.op, paths: c.paths } : null }); for (const f of clipWatch) f(); };
 /** `dest` is one of `paths` or lies inside one — a folder pasted into itself (whole names compared, letter case aside:
  *  the phone's storage ignores it; /a/b and /a/bc are strangers; a computer's «\\» is a «/»). */
 export const intoItself = (paths: string[], dest: string): boolean => { const norm = (x: string) => x.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() + '/'; const d = norm(dest); return paths.some((p) => d.startsWith(norm(p))); };
@@ -126,6 +126,26 @@ export const intoItself = (paths: string[], dest: string): boolean => { const no
 // pane gone — the page moved on — leaves its jobs to the next pane that hears of them.)
 type JobRec = { owner: object | null; label: string; cancel: () => void; ended?: boolean };
 const liveJobs = new Map<string, JobRec>();
+/* ---------- surviving a restart of the page (Android ending its renderer to free memory) ---------- */
+// (The phone's engine jobs run on in the app while the page is loaded again: what each one is — its words for the Jobs
+// sheet and its row — is kept beside it, a few dozen at most, so the page that comes back can show them again.)
+type LiveNote = { label: string; kind: 'copy' | 'move' | 'delete'; from: string; to?: string; what?: string };
+const LIVE = 'kt.files.live';
+const liveNotes = (): Record<string, LiveNote> => { try { const v = JSON.parse(localStorage.getItem(LIVE) ?? '{}') as unknown; return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, LiveNote>) : {}; } catch { return {}; } };
+const liveNote = (id: string, n: LiveNote | null) => { const all = liveNotes(); if (n) all[id] = n; else if (!(id in all)) return; else delete all[id]; const ks = Object.keys(all); for (const k of ks.slice(0, Math.max(0, ks.length - 40))) delete all[k]; try { if (Object.keys(all).length) localStorage.setItem(LIVE, JSON.stringify(all)); else localStorage.removeItem(LIVE); } catch { /* none */ } };
+/** Where the page stood — the folder (and the other pane's), its scroll, the clipboard —, kept small, for the page that
+ *  comes back after Android ended its renderer (ui/restore.ts reads it once, then only on such a return). */
+const RESUME = 'kt.resume.files';
+type ResumeFiles = { at?: string; b?: string; y?: number; clip?: { op: 'copy' | 'move'; paths: string[] } | null };
+let resumeTimer = 0; let resumeNext: ResumeFiles | null = null;
+const keepResume = (part: Partial<ResumeFiles>) => {
+  if (!plug()) return; // (the phone only: a computer's page is never ended this way)
+  if (!resumeNext) { try { resumeNext = JSON.parse(localStorage.getItem(RESUME) ?? '{}') as ResumeFiles; } catch { resumeNext = {}; } }
+  const next: ResumeFiles = { ...resumeNext, ...part }; if (next.clip) next.clip = { op: next.clip.op, paths: next.clip.paths.slice(0, 500) }; resumeNext = next;
+  window.clearTimeout(resumeTimer); resumeTimer = window.setTimeout(() => { try { const t0 = JSON.stringify(next); if (t0.length < 200000) localStorage.setItem(RESUME, t0); } catch { /* none */ } }, 300);
+};
+/** What ui/restore.ts handed over for the page that came back (taken once). */
+const takeResume = (): ResumeFiles | null => { const w = window as unknown as { __ktResumeFiles?: ResumeFiles | null }; const r = w.__ktResumeFiles ?? null; w.__ktResumeFiles = null; return r; };
 
 import { isRemote, isVirtual, parseRemote, connections, connectionSheet, connectionMenu, scanSheet, rplug, vplug, vfs, vfsRoots, kindIcon, describe, canShareFolder, folderShareSheet, type Conn, type VRoots } from './filesRemote';
 const KINDS: [string, string, RegExp | null][] = [['all', 'filesKindAll', null], ['image', 'filesKindImages', /^(jpe?g|png|gif|webp|bmp|heic|heif|hif|avif|svg|tiff?|ico|wbmp|jfif|apng)$/], ['audio', 'filesKindMusic', /^(mp3|m4a|flac|ogg|opus|wav|aac|wma)$/], ['video', 'filesKindVideo', /^(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|mts|flv|wmv|3gp)$/], ['doc', 'filesKindDocs', /^(pdf|epub|mobi|azw3?|docx?|xlsx?|pptx?|txt|md|rtf|odt|cbz|cbr)$/], ['archive', 'filesKindArchives', /^(zip|7z|rar|tar|gz|tgz|xz|bz2|zst|lz4|iso|001)$/], ['apk', 'filesKindApps', /^(apk|apks|xapk|apkm)$/]];
@@ -142,6 +162,20 @@ const parentOf = (p: string): string => { const top = /^([a-z]+:\/\/)[^/]*\/?$/.
 /** «apps:» and «apps:/» (left by an older version) mended to «apps://». */
 const mendScheme = (p: string): string => p.replace(/^([a-z]+):\/?$/, '$1://');
 const baseOf = (p: string): string => p.replace(/\/+$/, '').split('/').pop() ?? p;
+/** `p`'s answer, or null when it has not come within `ms` (it is not stopped: its answer is simply not waited for). */
+const within = <T,>(p: Promise<T>, ms: number): Promise<T | null> => new Promise((res) => { const tm = setTimeout(() => res(null), ms); p.then((v) => { clearTimeout(tm); res(v); }, () => { clearTimeout(tm); res(null); }); });
+/** A listing's entries made safe to draw: a path and a name always text (a name missing taken from the path), a date and
+ *  a size always numbers — one odd entry from a storage never stops the folder from showing. Entries without a path go. */
+export const sane = (list: unknown): Entry[] => {
+  if (!Array.isArray(list)) return []; const out: Entry[] = [];
+  for (const x of list as Partial<Entry>[]) {
+    if (!x || typeof x !== 'object' || typeof x.path !== 'string' || !x.path) continue;
+    const name = typeof x.name === 'string' && x.name ? x.name : baseOf(x.path) || x.path;
+    const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+    out.push({ ...x, name, path: x.path, dir: !!x.dir, size: num(x.size, -1), mtime: num(x.mtime, 0), ext: typeof x.ext === 'string' ? x.ext : undefined } as Entry);
+  }
+  return out;
+};
 /** A row's second line with each part isolated — «4 B» and a date stay whole in the Arabic page (no «2025/03/B · 094»). */
 const metaNodes = (meta: string): (Node | string)[] => meta ? meta.split(' · ').flatMap((x, i) => (i ? [' · ', h('bdi', null, x)] : [h('bdi', null, x)])) : [];
 /** A file's name in a row: cut in its middle when too long, the extension always in sight («HOREMAJO_03_KARAO…D (1).zip»),
@@ -233,6 +267,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // (Extractions left half done — a stop, a crash, a full disk: Finish, Restore the archive, or Leave as is.)
   if (!quiet) void import('./extractShelf').then((m) => m.shelfBanner(shelfEl)).catch(() => {});
   body.append(sizeNote, listEl, status, jobsEl);
+  // (A phone's button tapped twice in a blink — a thumb's bounce —: done once. Only a finger's taps; a mouse's are its own.)
+  { let byTouch = false; let last: { el: Element | null; at: number } = { el: null, at: 0 };
+    root.addEventListener('pointerdown', (e) => { byTouch = e.pointerType === 'touch'; }, true);
+    root.addEventListener('click', (e) => { if (!byTouch) return; const b = (e.target as Element).closest?.('button, [role="button"]'); if (!b) return; const now = performance.now(); if (last.el === b && now - last.at < 450) { e.stopPropagation(); e.preventDefault(); return; } last = { el: b, at: now }; }, true); }
   let at = mendScheme(route.p ?? (route.c ? '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? ''))); let remotes: Conn[] = [];
   let vroots: VRoots = { shell: null, trees: [], shizuku: false };
   const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); void remoteNow; let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
@@ -251,12 +289,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // ---- the storages and the way here
   const loadRoots = async () => {
     const fx = fsx();
-    if (fx) { try { const r = await fx.filesRoots(); roots = r.roots.map((x) => ({ ...x, name: rootName(x) })); allFiles = r.allFiles; } catch { roots = []; } }
-    else { const d = desk(); const home = d?.homeDir ? await d.homeDir().catch(() => '') : ''; roots = home ? [{ kind: 'phone', path: home, name: t('filesHome'), readable: true }] : []; }
+    // (Each part asked with a deadline: one that never answers — a plugin call lost to a restarted page — leaves the
+    // others, and the folder, to show; never a blank page.)
+    if (fx) { try { const r = await within(fx.filesRoots(), 6000); if (!r) throw new Error('slow'); roots = (Array.isArray(r.roots) ? r.roots : []).filter((x) => x && typeof x.path === 'string').map((x) => ({ ...x, name: rootName(x) })); allFiles = r.allFiles !== false; } catch { roots = []; } }
+    else { const d = desk(); const home = d?.homeDir ? (await within(d.homeDir().catch(() => ''), 6000)) ?? '' : ''; roots = home ? [{ kind: 'phone', path: home, name: t('filesHome'), readable: true }] : []; }
     rootsRow.replaceChildren(...roots.filter((r) => r.kind !== 'remote' && r.kind !== 'saf' && r.kind !== 'root').map((r) => h('button', { type: 'button', class: 'chip' + (at === r.path || at.startsWith(r.path + '/') ? ' on' : ''), onclick: () => { if (!r.readable) { void askAccess(); return; } go(r.path); } },
       icon(rootIcon(r.kind)), h('span', null, r.name), r.free !== undefined ? h('small', { class: 'src' }, ` ${formatBytes(r.free)}`) : null)));
-    remotes = await connections(); for (const c of remotes) roots.push({ kind: 'remote', path: `remote://${c.id}`, name: c.name, readable: true });
-    vroots = await vfsRoots(); if (vroots.shell) roots.push({ kind: 'root', path: 'root://', name: t('filesRootStorage'), readable: true }); for (const tr of vroots.trees) roots.push({ kind: 'saf', path: `saf://${tr.id}`, name: tr.name, readable: true });
+    remotes = (await within(connections().catch(() => [] as Conn[]), 4000)) ?? []; for (const c of remotes) roots.push({ kind: 'remote', path: `remote://${c.id}`, name: c.name, readable: true });
+    vroots = (await within(vfsRoots().catch(() => vroots), 4000)) ?? vroots; if (vroots.shell) roots.push({ kind: 'root', path: 'root://', name: t('filesRootStorage'), readable: true }); for (const tr of vroots.trees) roots.push({ kind: 'saf', path: `saf://${tr.id}`, name: tr.name, readable: true });
     if (!at) { at = roots[0]?.path ?? ''; }
   };
   // (An archive that wants a password: asked here, the Files browser's own sheet; the right one is remembered by the archives module.)
@@ -313,20 +353,41 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   // (Only the latest listing asked for draws: a slow folder answering after the reader went on is dropped. Another place
   // asked: the rows of the last one let go at once — nothing chosen, selected all or deleted, from a folder no longer shown.)
-  let loadSeq = 0; let shownAt: string | null = null;
+  let loadSeq = 0; let shownAt: string | null = null; let firstLoad = true;
+  // (A listing that has not answered in a while — a storage slow to wake, a question of Android's still open, a call lost
+  // to a page the system restarted —: a calm card instead of a spinner for ever, with Try again and the storage's top.
+  // The answer, when it comes, still replaces it.)
+  const STILL_MS = (window as unknown as { __ktStillMs?: number }).__ktStillMs ?? 8000;
+  const topOf = (p: string): string | null => roots.find((x) => p === x.path || p.startsWith(x.path + '/'))?.path ?? roots[0]?.path ?? null;
+  const stateCard = (kind: 'still' | 'gone' | 'failed', why = ''): HTMLElement => {
+    const top = topOf(at); const lines = { still: [t('filesStillReading'), t('filesStillHint')], gone: ['', ''], failed: [t('filesShowFailed'), why] }[kind];
+    return h('div', { class: 'files-state', 'data-state': kind, role: 'status' }, kind === 'still' ? h('div', { class: 'spinner small' }) : icon(kind === 'gone' ? 'folder' : 'alert'),
+      lines[0] ? h('b', null, lines[0]) : null, lines[1] ? h('small', { class: 'src', dir: 'auto' }, lines[1]) : null,
+      h('div', { class: 'files-state-acts' }, h('button', { type: 'button', class: 'btn tonal files-state-retry', onclick: () => void load() }, icon('refresh'), t('tryAgain')),
+        top && top !== at ? h('button', { type: 'button', class: 'btn tonal files-state-root', onclick: () => go(top) }, icon('storage'), t('filesGoRoot')) : null));
+  };
   const load = async () => {
-    const my = ++loadSeq; const want = collection ? `c:${collection}` : at; const stale = () => gone || my !== loadSeq;
+    const my = ++loadSeq; const want = collection ? `c:${collection}` : at; const stale = () => gone || my !== loadSeq; const first = firstLoad; firstLoad = false;
     if (want !== shownAt) { entries = []; picked.clear(); selecting = false; shownAt = want; }
-    drawCrumbs(); void checkWritable(); drawPaste(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection || isArc(at);
-    let got: Entry[] = []; let note = '';
+    try { drawCrumbs(); } catch { /* the way here is drawn again next time */ }
+    void checkWritable(); drawPaste(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection || isArc(at);
+    const still = window.setTimeout(() => { if (!stale()) listEl.replaceChildren(stateCard('still')); }, STILL_MS);
+    let got: Entry[] = []; let note = ''; let missing = false;
     try {
       if (collection) { const pl = plug(); const r = pl ? await pl.filesCollection({ kind: collection, limit: 600 }) : { entries: [] }; if (stale()) return; got = r.entries; }
-      else { const r = await listDir(at); if (stale()) return; const hid = (await import('./filesMore')).hiddenPaths(); if (stale()) return; got = (hid.length ? r.entries.filter((e) => !hid.includes(e.path)) : r.entries).filter((e) => !e.name.startsWith(STAGE)); if (!r.exists) note = t('folderNotFound'); if (r.truncated) toast(t('filesTruncated'), 'info'); }
+      else { const r = await listDir(at); if (stale()) return; const hid = (await import('./filesMore')).hiddenPaths(); if (stale()) return; const all = sane(r?.entries); got = (hid.length ? all.filter((e) => !hid.includes(e.path)) : all).filter((e) => !e.name.startsWith(STAGE)); if (r?.exists === false) { note = t('folderNotFound'); missing = true; } if (r?.truncated) toast(t('filesTruncated'), 'info'); }
     }
-    catch (e) { if (stale()) return; got = []; note = String((e as Error).message ?? e); }
-    entries = got; { const have = new Set(got.map((e) => e.path)); for (const x of [...picked]) if (!have.has(x)) picked.delete(x); } if (!picked.size) selecting = false; reorder();
+    catch (e) { if (stale()) return; got = []; note = String((e as Error)?.message ?? e); }
+    finally { window.clearTimeout(still); }
+    // (The folder the page came back to — the last one, remembered — is gone or no longer allowed: its storage's top instead.)
+    if (missing && first && !route.p && !collection) { const top = topOf(at); if (top && top !== at) { go(top, 'replace'); return; } }
+    entries = sane(got); { const have = new Set(entries.map((e) => e.path)); for (const x of [...picked]) if (!have.has(x)) picked.delete(x); } if (!picked.size) selecting = false; reorder();
     // (Back to a folder seen before: where it was scrolled to.)
-    const y = scrollMemo.get(want) ?? 0; draw(y); drawSel(); status.textContent = note;
+    const y = scrollMemo.get(want) ?? 0;
+    try { draw(y); drawSel(); } catch (err) { listEl.replaceChildren(stateCard('failed', String((err as Error)?.message ?? err))); return; }
+    // (A folder gone: the list says it is empty, the line under it why, and the way to the storage's top beside them.)
+    status.textContent = note; if (missing) listEl.append(stateCard('gone'));
+    if (!quiet && !collection && !missing) keepResume(po.side === 'b' ? { b: at } : { at, y });
     if (y) requestAnimationFrame(() => { if (stale()) return; window.scrollTo(0, y); body.scrollTop = y; });
   };
   const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
@@ -352,7 +413,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const sizeable = (e: Entry): boolean => e.dir && !collection && !isVirtual(e.path) && !isApps(e.path) && !!(plug() || desk()?.listDir);
   const sizeList = async (p: string): Promise<Entry[]> => { const pl = plug(); if (pl) return (await pl.filesList({ path: p, counts: false, hidden: true })).entries; return (await desk()!.listDir!(p)).entries ?? []; };
   let batch: { stop: boolean; done: number; total: number; run: { cancel(): void } | null } | null = null;
-  const refreshRow = (path: string) => { const r = rowEls.get(path); if (r?.el.isConnected) r.el.replaceWith(row(r.e)); };
+  const refreshRow = (path: string) => { const r = rowEls.get(path); if (r?.el.isConnected) r.el.replaceWith(safeRow(r.e)); };
   const paintSizeNote = (list: Entry[]) => {
     if (batch) { const b = batch; sizeNote.hidden = false; sizeNote.replaceChildren(h('span', { class: 'grow' }, t('filesSizeBatch', { done: localDigits(b.done), total: localDigits(b.total) })), h('button', { type: 'button', class: 'btn text small', onclick: () => { b.stop = true; b.run?.cancel(); } }, t('cancel'))); return; }
     const unknown = prefs.sort === 'size' ? list.filter((e) => sizeable(e) && !sizeOf(e.path, e.mtime)) : [];
@@ -421,14 +482,16 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const rowsOf = (from: number, to: number): DocumentFragment => {
       const frag = document.createDocumentFragment(); let lastDay = '';
       if (byDay) for (let i = from - 1; i >= 0; i--) if (!list[i].dir) { lastDay = dayOf(list[i].mtime); break; }
-      for (let i = from; i < to; i++) { const e = list[i]; if (byDay && !e.dir) { const day = dayOf(e.mtime); if (day !== lastDay) { lastDay = day; frag.append(h('div', { class: 'files-section' }, day)); } } frag.append(row(e)); }
+      for (let i = from; i < to; i++) { const e = list[i]; if (byDay && !e.dir) { let day = ''; try { day = dayOf(e.mtime); } catch { /* none */ } if (day !== lastDay) { lastDay = day; frag.append(h('div', { class: 'files-section' }, day)); } } frag.append(safeRow(e)); }
       return frag;
     };
     chunkIo = typeof IntersectionObserver === 'function' ? new IntersectionObserver((es) => {
       for (const x of es) {
         const c = x.target as HTMLElement & { from?: number; to?: number };
+        // (The page taken out — another tab, kept to come back to —: nothing is «out of sight» then; slices stay as they are.)
+        if (!c.isConnected || !listEl.isConnected) continue;
         if (x.isIntersecting && c.dataset.away) { delete c.dataset.away; c.replaceChildren(rowsOf(c.from!, c.to!)); c.style.height = ''; }
-        else if (!x.isIntersecting && !c.dataset.away && c.childElementCount) { c.style.height = `${c.offsetHeight}px`; c.dataset.away = '1'; dropThumbs(c); c.replaceChildren(); }
+        else if (!x.isIntersecting && !c.dataset.away && c.childElementCount) { c.style.height = `${c.offsetHeight}px`; c.dataset.away = '1'; dropThumbs(c); for (const [k, v] of rowEls) if (c.contains(v.el)) rowEls.delete(k); c.replaceChildren(); }
       }
     }, { root: null, rootMargin: '1600px 0px' }) : null;
     const slice = (): HTMLElement => { const from = drawn; drawn = Math.min(list.length, drawn + CHUNK); const c = h('div', { class: 'files-chunk' }) as HTMLElement & { from?: number; to?: number }; c.from = from; c.to = drawn; c.append(rowsOf(from, drawn)); chunkIo?.observe(c); return c; };
@@ -436,7 +499,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     // (The fast scroller's: slices drawn down to an index, in place before the sentinel that asks for more.)
     fastList = list; drawTo = (i) => { const sen = listEl.querySelector('.files-more-sentinel'); while (drawn <= i && drawn < list.length) { const c = slice(); if (sen) sen.before(c); else listEl.append(c); } if (drawn >= list.length) { moreIo?.disconnect(); moreIo = null; sen?.remove(); } };
     // (A scroll to come back to: drawn down to it first.)
-    while (minPx && drawn < list.length && listEl.offsetHeight < minPx + window.innerHeight) listEl.append(slice());
+    // (A page laid out at no size — built while hidden —: one slice is enough until it is seen; never the whole folder.)
+    while (minPx && drawn < list.length && listEl.offsetHeight < minPx + window.innerHeight) { const h0 = listEl.offsetHeight; listEl.append(slice()); if (listEl.offsetHeight <= h0) break; }
     if (ensure) { const at = list.findIndex((x) => x.path === ensure); while (at >= drawn && drawn < list.length) listEl.append(slice()); }
     // (Watched anew after each slice: a slice too short to push the sentinel out of reach — a grid on a tall screen —
     // left it «still in view», and no change, no call: the list stopped there.)
@@ -455,6 +519,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const now = anchor ? rowEls.get(anchor.path)?.el : null;
     if (anchor && now) { const d = now.getBoundingClientRect().top - anchor.top; if (d) { if (body.scrollHeight > body.clientHeight + 1 && body.scrollTop) body.scrollTop += d; else window.scrollBy(0, d); } }
     if (!anchor) { window.scrollTo(0, 0); }
+  };
+  /** A row that cannot be drawn — whatever is odd about its entry — is drawn plainly, never taking the list with it. */
+  const safeRow = (e: Entry): HTMLElement => {
+    try { return row(e); } catch { const el = h('div', { class: 'files-row odd', role: 'button', tabindex: '0', onclick: () => { if (!selecting) void open(e); } }, h('span', { class: 'files-ic' }, icon(e.dir ? 'folder' : 'file')), h('span', { class: 'grow files-main' }, h('bdi', { class: 'files-name', dir: 'auto' }, String(e.name ?? e.path)))); rowEls.set(e.path, { el, e }); return el; }
   };
   const row = (e: Entry): HTMLElement => {
     const k = e.dir ? 'folder' : /\.kurokawa$/i.test(e.name) ? 'locked' : kindOfFile(e.name); const thumbable = !e.dir && (k === 'image' || k === 'video' || /\.apk$/i.test(e.name));
@@ -945,7 +1013,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     }
     const label = label0 ?? (op === 'delete' ? t('filesDeleting', { n: countItems(paths.length) }) : op === 'move' ? t('filesMoving', { n: countItems(paths.length) }) : t('filesCopying', { n: countItems(paths.length) }));
     ownRow(id, label, () => void pl.filesCancel({ id }));
-    try { await pl.filesJob({ id, op, paths, dest, conflict: 'ask' }); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(String((err as Error).message ?? err), 'error'); return false; }
+    try { await pl.filesJob({ id, op, paths, dest, conflict: 'ask' }); if (plug()) liveNote(id, { label, kind: op, from: parentOf(paths[0] ?? ''), to: dest, what: whatOf(paths) }); return true; } catch (err) { liveJobs.delete(id); jobsEl.querySelector(`[data-id="${id}"]`)?.remove(); toast(String((err as Error).message ?? err), 'error'); return false; }
   };
   // ---- «Verify after copying»: the Full check (views/filesVerify.ts)
   const rootOf = (p: string): string => roots.filter((r) => p === r.path || p.startsWith(r.path.replace(/\/+$/, '') + '/')).sort((a, b) => a.path.length - b.path.length)[0]?.path ?? '';  // (the shortest: the storage itself — the app's folder lies inside the phone's)
@@ -1023,8 +1091,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const drawPaste = drawClip;
   // (A copy stays on the clipboard, to paste again elsewhere; a cut is marked busy while its move runs, and what the move
   // left behind stays cut. Entries of an archive are taken out, never moved.)
+  let pasting = false;
   const paste = async () => {
-    const c = clipboard; if (!c || !canJobs()) return;
+    const c = clipboard; if (!c || !canJobs() || pasting) return; pasting = true;
+    try { await pasteNow(c); } finally { pasting = false; }
+  };
+  const pasteNow = async (c: NonNullable<typeof clipboard>) => {
     const why = pasteBlock(); if (why) { toast(why, 'error'); return; }
     if (c.paths.every(isArc)) { await extractEntries(c.paths, at); return; }
     if (c.op === 'copy') { await startJob('copy', c.paths, at); return; }
@@ -1085,6 +1157,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (ev.status === 'conflict') { conflictSheet(ev); return; }
     el?.remove(); void load();
     if (rec) { rec.ended = true; setTimeout(() => liveJobs.delete(ev.id), 2000); }
+    liveNote(ev.id, null);
     // (An archive's entries moved in from their hidden folder: the folder goes, whatever happened.)
     const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void jobs()?.filesJob({ id: nid('fq'), op: 'delete', paths: [stage] }).catch(() => undefined); }
     const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); }
@@ -1143,13 +1216,30 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   if ((window as unknown as { __ktFsearch?: number }).__ktFsearch && po.side !== 'b' && !pk) { delete (window as unknown as { __ktFsearch?: number }).__ktFsearch; if (canEverywhere()) void everywhere(); }
   // ---- start
   let sub: { remove(): void } | null = null;
+  // (Back after Android ended the page: the clipboard as it was, the folder's scroll; the engine's jobs still running
+  // shown again — their rows, the Jobs sheet, a name-taken question they wait on asked again.)
+  { const back = !quiet && !pk ? takeResume() : null;
+    if (back?.clip && !clipboard && Array.isArray(back.clip.paths) && back.clip.paths.length) setClip({ op: back.clip.op === 'move' ? 'move' : 'copy', paths: back.clip.paths.filter((x) => typeof x === 'string') });
+    if (back?.y && back.at === at) scrollMemo.set(at, back.y); }
+  const pfl = plug() as unknown as { filesLive?(): Promise<{ jobs?: { id: string; asking?: JobEvent | null }[] }> } | null;
+  if (!quiet && !pk && pfl?.filesLive) void pfl.filesLive().then(async (r) => {
+    const live = Array.isArray(r?.jobs) ? r.jobs : []; const notes = liveNotes();
+    for (const id of Object.keys(notes)) if (!live.some((j) => j.id === id)) liveNote(id, null);
+    for (const j of live) {
+      const n = notes[j.id]; if (gone || !n || liveJobs.has(j.id)) continue;
+      const cancel = () => void jobs()?.filesCancel({ id: j.id }); liveJobs.set(j.id, { owner: me, label: n.label, cancel }); jobRow(j.id, n.label, cancel);
+      (await useQueue()).adopt({ id: j.id, kind: n.kind, label: n.label, what: n.what, from: n.from, to: n.to, cancel, start: async () => true }, qhost);
+      if (j.asking && !gone) conflictSheet({ ...j.asking, id: j.id, status: 'conflict' });
+    }
+  }).catch(() => undefined);
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
   // (The queue: another pane's jobs show here too; jobs an earlier run left waiting are offered — never run — once per start.)
   if (Q) { offQ = Q.subscribe(drawJobsBadge); drawJobsBadge(); }
   // (Offered again at the next page until the user has answered: «queueOffered» is set by the answer, not by the offer.)
   if (!quiet && !pk && canJobs() && !queueOffered) { try { if (localStorage.getItem('kt.files.queue') || localStorage.getItem('kt.files.queue.unfinished')) void useQueue().then((m) => { if (!gone && !queueOffered) offUnfinished = m.offerUnfinished(resumeSaved, () => { queueOffered = true; }); }); } catch { /* none */ } }
   const pl = plug(); if (pl) void import('./filesMore').then((m) => m.pruneTrash());
-  void (async () => { await loadRoots(); drawKinds(); if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); if (!pk && po.side !== 'b' && localStorage.getItem('kt.files.renamejob')) void import('./filesBatchUi').then((m) => m.interruptedBanner(batchHost([]), body)); })();
+  listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' })));
+  void (async () => { try { await loadRoots(); } catch { /* the storages' row stays as it is */ } drawKinds(); if (gone) return; if (!at && !collection) { status.textContent = t('filesNoStorage'); return; } await load(); if (route.save) void saveSharedSheet(); if (!pk && po.side !== 'b' && localStorage.getItem('kt.files.renamejob')) void import('./filesBatchUi').then((m) => m.interruptedBanner(batchHost([]), body)); })();
   let wake: { release(): Promise<void> } | null = null;
   if (prefs.keepOn) void (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen').then((w) => { wake = w; }).catch(() => undefined);
   // Back (the phone's, a mouse's, Alt+←, the arrow in the bar): the open sheet or viewer closes first (the app's back
@@ -1189,10 +1279,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     else if ((ev.altKey && ev.key === 'ArrowUp') || (ev.key === 'Backspace' && !mod)) { const up = collection ? null : upOf(at); if (up) { ev.preventDefault(); goUp(up); } }
   };
   window.addEventListener('keydown', onKeys);
+  const onScrollKeep = () => { if (!quiet && !collection && root.isConnected && shownAt === at) keepResume({ at, y: scrollNow() }); };
+  window.addEventListener('scroll', onScrollKeep, { passive: true }); body.addEventListener('scroll', onScrollKeep, { passive: true });
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };

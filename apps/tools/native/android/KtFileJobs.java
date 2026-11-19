@@ -27,7 +27,7 @@ final class KtFileJobs {
     private KtFileJobs() {}
 
     interface Events { void on(JSONObject ev); }
-    static final class Job { final String id; final AtomicBoolean cancel = new AtomicBoolean(); volatile String conflict = "ask"; final Object lock = new Object(); volatile String answer; Job(String id) { this.id = id; } }
+    static final class Job { final String id; final AtomicBoolean cancel = new AtomicBoolean(); volatile String conflict = "ask"; final Object lock = new Object(); volatile String answer; /** The name-taken question it waits on (asked again of a page loaded anew). */ volatile JSONObject asking; Job(String id) { this.id = id; } }
     static final Map<String, Job> jobs = new ConcurrentHashMap<>();
     static void cancel(String id) { Job j = jobs.get(id); if (j != null) { j.cancel.set(true); synchronized (j.lock) { j.answer = "skip"; j.lock.notifyAll(); } } }
     /** The page's answer to a name already taken: skip, replace, keep (both), or the same for all that follow (…All). */
@@ -153,7 +153,7 @@ final class KtFileJobs {
     private static String resolve(Job j, File from, File to, Events ev) throws Exception {
         if (!j.conflict.equals("ask")) return j.conflict;
         JSONObject o = new JSONObject(); o.put("id", j.id); o.put("status", "conflict"); o.put("from", from.getAbsolutePath()); o.put("to", to.getAbsolutePath()); o.put("size", from.isFile() ? from.length() : 0); o.put("existingSize", to.isFile() ? to.length() : 0); o.put("mtime", from.lastModified()); o.put("existingMtime", to.lastModified()); o.put("dir", from.isDirectory());
-        synchronized (j.lock) { j.answer = null; ev.on(o); while (j.answer == null && !j.cancel.get()) j.lock.wait(60000); return j.answer == null ? "skip" : j.answer; }
+        synchronized (j.lock) { j.answer = null; j.asking = o; try { ev.on(o); while (j.answer == null && !j.cancel.get()) j.lock.wait(60000); } finally { j.asking = null; } return j.answer == null ? "skip" : j.answer; }
     }
     static String extOf(String name) { int i = name.lastIndexOf('.'); return i > 0 && i < name.length() - 1 && name.length() - i <= 8 ? name.substring(i + 1).toLowerCase(Locale.ROOT) : ""; }
     static File keepBoth(File to) { return keepBoth(to, false); }

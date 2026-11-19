@@ -4,6 +4,7 @@
 // is under the finger and wants the same move: a field, a row that swipes, a strip that scrolls sideways, a drawer.
 // (Touch events: once the web view takes a finger for scrolling it cancels its pointer events; touch events keep coming.)
 
+import { claimTouch, touchTaken } from './touchOwner';
 const isPc = (): boolean => document.documentElement.classList.contains('pc');
 const rtl = (): boolean => getComputedStyle(document.documentElement).direction === 'rtl';
 const reduced = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -69,13 +70,13 @@ export function pullToRefresh(area: HTMLElement, run: () => Promise<unknown> | u
   const start = (e: TouchEvent) => {
     on = false; pulling = false; pull = 0;
     if (busy || e.touches.length !== 1 || isPc() || document.querySelector('.sheet') || !top()) return;
-    const t = e.target as Element; if (t.closest(`${FIELD}, [data-no-pull]`)) return;
+    const t = e.target as Element; if (t.closest(`${FIELD}, [data-no-pull], .files-fast`)) return;
     const inner = scroller(t, area, 'y'); if (inner && inner.scrollTop > 0) return;
     y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; on = true;
   };
   const move = (e: TouchEvent) => {
     if (!on) return; const p = e.touches[0]; const dy = p.clientY - y0, dx = Math.abs(p.clientX - x0);
-    if (!pulling) { if (dy < -4 || dx > 16) { on = false; return; } if (dy > 10 && dy > dx * 1.5 && top()) pulling = true; else return; }
+    if (!pulling) { if (dy < -4 || dx > 16 || e.touches.length !== 1 || touchTaken('pull')) { on = false; return; } if (dy > 10 && dy > dx * 1.5 && top() && claimTouch('pull')) pulling = true; else return; }
     e.preventDefault(); pull = Math.max(0, dy) * 0.5; show(pull);
   };
   const end = async () => {
@@ -108,7 +109,8 @@ export function pageSwipe(o: { enabled: () => boolean; step: (dir: 1 | -1) => bo
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
     if (!on) return; const p = e.touches[0]; const ax = Math.abs(p.clientX - x0), ay = Math.abs(p.clientY - y0);
-    if (!axis) { if (ax < 12 && ay < 12) return; axis = ax > ay * 1.6 ? 'x' : 'y'; if (axis === 'y') { on = false; return; } if ((e.target as Element).closest?.('[data-edge-drawer]') && along(p.clientX) > 0 && (rtl() ? window.innerWidth - x0 : x0) < window.innerWidth * 0.4) { on = false; return; } }
+    if (touchTaken('page') || e.touches.length !== 1) { if (axis === 'x') settle(); on = false; return; }
+    if (!axis) { if (ax < 12 && ay < 12) return; axis = ax > ay * 1.6 && claimTouch('page') ? 'x' : 'y'; if (axis === 'y') { on = false; return; } if ((e.target as Element).closest?.('[data-edge-drawer]') && along(p.clientX) > 0 && (rtl() ? window.innerWidth - x0 : x0) < window.innerWidth * 0.4) { on = false; return; } }
     e.preventDefault(); dx = along(p.clientX);
     const v = o.view(); if (v && !reduced()) { const d = Math.sign(dx) * Math.min(80, Math.abs(dx) * 0.3); v.style.transition = 'none'; v.style.transform = `translateX(${d * (rtl() ? -1 : 1)}px)`; v.style.opacity = String(1 - Math.min(0.35, Math.abs(dx) / 900)); }
   }, { passive: false });

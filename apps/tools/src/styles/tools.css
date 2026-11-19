@@ -822,7 +822,7 @@ html.pc .files-view.has-clip .files-body { padding-bottom: 96px; }
 .files-sizenote .grow { min-width: 0; overflow-wrap: anywhere; }
 .files-sizenote .btn { flex: none; }
 .files-sizectl { display: flex; gap: 8px; padding: 4px 0 8px; }
-.files-selbar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--nav-h, 64px) + 12px); display: flex; align-items: center; gap: 2px; padding: 6px 6px; border-radius: 28px; background: var(--md-surface-container-highest); box-shadow: 0 6px 20px rgba(0,0,0,.25); z-index: 30; overflow: hidden; }
+.files-selbar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--nav-h, 64px) + 12px + var(--safe-bottom, 0px)); display: flex; align-items: center; gap: 2px; padding: 6px 6px; border-radius: 28px; background: var(--md-surface-container-highest); box-shadow: 0 6px 20px rgba(0,0,0,.25); z-index: 30; overflow: hidden; }
 .files-selbar > * { flex: none; }
 .files-selbar > .icon-btn { width: 40px; height: 40px; }
 .files-selcount { font-weight: 600; padding: 0 10px; white-space: nowrap; }
@@ -1651,3 +1651,12 @@ html[data-density='compact'] .chip { height: 34px; padding: 0 13px; }
 html[data-density='compact'] .btn { height: 38px; padding: 0 18px; }
 html[data-density='compact'] .settings-view .card .row { min-height: 40px; }
 html[data-density='compact'] .te-row { min-height: 38px; }
+
+/* Files: a folder that has not answered yet, is gone, or could not be shown — a calm card, never a blank page. */
+.files-state { display: grid; justify-items: center; gap: 8px; padding: 32px 20px; text-align: center; color: var(--md-on-surface-variant); }
+.files-state > svg { width: 32px; height: 32px; opacity: .7; }
+.files-state > b { color: var(--md-on-surface); font-weight: 600; }
+.files-state > small { max-width: 36ch; line-height: 1.45; }
+.files-state-acts { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; width: min(100%, 360px); margin-top: 8px; }
+.files-state-acts .btn { min-height: 48px; min-width: 0; justify-content: center; }
+.files-state-acts .btn > span, .files-state-acts .btn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
