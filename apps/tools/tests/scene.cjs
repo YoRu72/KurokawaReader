@@ -121,11 +121,12 @@ function init({ settings, phone, lang, trapAfter }) {
     ok('…and nothing of the engine fetched before it is chosen', !fetched(/sceneHost|ktscene\.wasm/));
     // (Chosen: the grid of pictures, grouped, the chosen one marked; drawn once each, no live engine per picture.)
     await choose(p, T.snow);
-    const grid = await p.evaluate(() => ({ tiles: document.querySelectorAll('#appearance .abg-tile').length, groups: document.querySelectorAll('#appearance .abg-group').length, on: [...document.querySelectorAll('#appearance .abg-tile[aria-checked="true"]')].map((b) => b.dataset.scene) }));
-    ok('the scenes as a grid: 14 pictures in 4 groups, Night snowfall marked', grid.tiles === 14 && grid.groups === 4 && grid.on.join() === 'night-snowfall', grid);
+    // (The built-in scenes; the mixer's presets and «Your mixes» follow as three more groups — tests/scenemix.cjs.)
+    const grid = await p.evaluate(() => ({ tiles: document.querySelectorAll('#appearance .abg-tile[data-scene]:not([data-scene^="mix:"])').length, groups: document.querySelectorAll('#appearance .abg-group').length, on: [...document.querySelectorAll('#appearance .abg-tile[aria-checked="true"]')].map((b) => b.dataset.scene) }));
+    ok('the scenes as a grid: 14 pictures in 4 groups (and the mixer\'s 3), Night snowfall marked', grid.tiles === 14 && grid.groups === 7 && grid.on.join() === 'night-snowfall', grid);
     ok(`…«${T.motes}» and «${T.aurora}» among them`, (await p.locator('#appearance .abg-tile', { hasText: T.motes }).count()) === 1 && (await p.locator('#appearance .abg-tile', { hasText: T.aurora }).count()) === 1);
-    const drawn = await waitFor(p, () => document.querySelectorAll('#appearance .abg-thumb.drawn').length === 14, null, 30000);
-    const pics = await p.evaluate(() => [...document.querySelectorAll('#appearance .abg-thumb')].map((x) => x.style.backgroundImage.slice(0, 22)));
+    const drawn = await waitFor(p, () => document.querySelectorAll('#appearance .abg-tile[data-scene] .abg-thumb.drawn').length === document.querySelectorAll('#appearance .abg-tile[data-scene]').length, null, 45000);
+    const pics = await p.evaluate(() => [...document.querySelectorAll('#appearance .abg-tile[data-scene] .abg-thumb')].map((x) => x.style.backgroundImage.slice(0, 22)));
     ok(`every picture drawn (${HAVE ? 'by the engine' : 'the sky, without the engine'})`, drawn && pics.every((u) => (HAVE ? u.startsWith('url("data:image/') : u.startsWith('linear-gradient'))), pics.slice(0, 3));
     if (HAVE) ok('…and let go: no engine scene kept for a picture (the page and the preview only)', (await p.evaluate(() => window.__ktAnimPerf.liveScenes())) <= 2);
     // (Keyboard: Tab reaches the chosen one, the arrows move between them.)

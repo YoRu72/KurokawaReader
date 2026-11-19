@@ -1,7 +1,7 @@
 // Settings → Appearance: the theme gallery (theme/gallery.ts), how much glass is blurred, light or dark, the dark
 // tone (for the themes that follow it), the accent; a phone's battery choice, a computer's sidebar choice.
 import { h, icon, toast, openSheet, pickButton } from '../ui/dom';
-import { t, formatBytes } from '../i18n';
+import { t, formatBytes, localDigits } from '../i18n';
 import { getSettings, updateSettings, glassNow, reloadThemePictures, setThemePreview, type Accent, type UiMode, type DarkTone, type Settings } from '../settings';
 import { onBack } from '../ui/backstack';
 import { undoScope } from '../ui/undo';
@@ -11,7 +11,7 @@ import type { EditorDeps } from '../theme/editor';
 import { themeById, DEFAULT_THEME, type BlurPref } from '../theme/themes';
 import { themeGallery } from '../theme/gallery';
 import { themeIo } from '../themeIo';
-import { SCENE_GROUPS, sceneEntry } from '../theme/sceneList';
+import { SCENE_GROUPS, MIX_GROUPS, sceneEntry, type SceneGroup } from '../theme/sceneList';
 
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
@@ -68,7 +68,7 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
   // (The scenes are many: the row offers «Scene», and the grid below it shows them all, grouped, as pictures.)
   const isSceneNow = pref.startsWith('scene:'); const entry = isSceneNow ? sceneEntry(pref.slice(6)) : undefined;
   type Choice = 'off' | 'match' | 'drift' | 'flow' | 'scene';
-  const what = entry ? t(entry.hint as 'animBgHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
+  const what = entry ? t(entry.hint as 'animBgHint') : isSceneNow && pref.startsWith('scene:mix:') ? t('mixMineHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
   const choice = row(t('animBg'), pickButton<Choice>(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene', t('animBgScenes')]], isSceneNow ? 'scene' : (pref as Choice), (v) => { updateSettings({ animBg: v === 'scene' ? (isSceneNow ? pref : 'scene:night-snowfall') : v }); rerender(); }, t('close')), what);
   if (pref === 'off') return [choice];
   const grid = isSceneNow ? sceneGrid(pref.slice(6), rerender) : null;
@@ -106,13 +106,22 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
 function sceneGrid(current: string, rerender: () => void): HTMLElement {
   const tiles: HTMLButtonElement[] = [];
   const pick = (id: string): void => { updateSettings({ animBg: `scene:${id}` }); rerender(); };
-  const groups = SCENE_GROUPS.map((gr) => h('div', { class: 'abg-group' }, h('div', { class: 'abg-group-title' }, t(gr.key as 'animBg')),
-    h('div', { class: 'abg-tiles' }, ...gr.scenes.map((sc) => {
-      const on = sc.id === current;
-      const b = h('button', { type: 'button', class: 'abg-tile' + (on ? ' on' : ''), role: 'radio', 'aria-checked': on ? 'true' : 'false', tabindex: on ? '0' : '-1', 'data-scene': sc.id, title: t(sc.hint as 'animBg'), onclick: () => pick(sc.id) },
-        h('span', { class: 'abg-thumb' }), h('span', { class: 'abg-name' }, t(sc.name as 'animBg'))) as HTMLButtonElement;
-      tiles.push(b); return b;
-    }))));
+  const tile = (id: string, name: string, hint: string): HTMLButtonElement => {
+    const on = id === current;
+    const b = h('button', { type: 'button', class: 'abg-tile' + (on ? ' on' : ''), role: 'radio', 'aria-checked': on ? 'true' : 'false', tabindex: on ? '0' : '-1', 'data-scene': id, title: hint, onclick: () => pick(id) },
+      h('span', { class: 'abg-thumb' }), h('span', { class: 'abg-name', dir: 'auto' }, name)) as HTMLButtonElement;
+    tiles.push(b); return b;
+  };
+  const group = (gr: SceneGroup) => h('div', { class: 'abg-group' }, h('div', { class: 'abg-group-title' }, t(gr.key as 'animBg')),
+    h('div', { class: 'abg-tiles' }, ...gr.scenes.map((sc) => tile(sc.id, t(sc.name as 'animBg'), t(sc.hint as 'animBg')))));
+  // (The reader's own mixes: «Mix your own» first, then each saved one — read, cleaned, once the mixer's module is here.)
+  const mineTitle = h('div', { class: 'abg-group-title' }, t('animBgGroupMine'));
+  const mixer = () => import('./mixer');
+  const newCard = h('button', { type: 'button', class: 'abg-tile abg-mix-new', 'data-mix-new': '', title: t('mixNewHint'), onclick: () => void mixer().then((x) => x.openMixer(rerender)) },
+    h('span', { class: 'abg-thumb abg-plus' }, icon('plus')), h('span', { class: 'abg-name' }, t('mixNew')));
+  const mineTiles = h('div', { class: 'abg-tiles' }, newCard);
+  const mineActs = h('div', { class: 'abg-mix-acts', hidden: true });
+  const groups = [...SCENE_GROUPS.map(group), ...MIX_GROUPS.map(group), h('div', { class: 'abg-group abg-mine' }, mineTitle, mineTiles, mineActs)];
   const grid = h('div', { class: 'abg-grid', role: 'radiogroup', 'aria-label': t('animBgScenes'), onkeydown: (e: KeyboardEvent) => {
     const i = tiles.indexOf(document.activeElement as HTMLButtonElement); if (i < 0) return;
     const rtl = document.documentElement.dir === 'rtl'; const fwd = ['ArrowDown', rtl ? 'ArrowLeft' : 'ArrowRight']; const back = ['ArrowUp', rtl ? 'ArrowRight' : 'ArrowLeft'];
@@ -120,8 +129,19 @@ function sceneGrid(current: string, rerender: () => void): HTMLElement {
     if (j < 0) return; e.preventDefault(); tiles[i].tabIndex = -1; tiles[j].tabIndex = 0; tiles[j].focus();
   } }, ...groups);
   if (!tiles.some((b) => b.tabIndex === 0) && tiles[0]) tiles[0].tabIndex = 0;
-  // (The pictures: drawn one after another once the grid is on the page.)
-  void import('../theme/sceneThumbs').then(async (m) => {
+  // (The pictures: drawn one after another once the grid is on the page — the saved mixes' tiles added first.)
+  void Promise.all([import('../theme/sceneThumbs'), import('../theme/sceneMix')]).then(async ([m, mx]) => {
+    const mine = mx.savedMixes();
+    mineTitle.textContent = mine.length ? t('animBgGroupMineN', { n: localDigits(mine.length) }) : t('animBgGroupMine');
+    for (const x of mine) mineTiles.append(tile(`mix:${x.id}`, x.name, t('mixMineHint')));
+    // (The chosen one a saved mix: what can be done with it, under the group.)
+    const cur = current.startsWith('mix:') ? mine.find((x) => `mix:${x.id}` === current) : undefined;
+    if (cur) {
+      const act = (ic: string, label: string, run: () => void, cls = '') => h('button', { type: 'button', class: 'btn tonal small' + cls, onclick: run }, icon(ic), label);
+      mineActs.append(act('pen', t('mixEdit'), () => void mixer().then((x) => x.openMixer(rerender, cur))), act('type', t('mixRename'), () => void mixer().then((x) => x.renameMix(cur.id, rerender))), act('trash', t('mixDelete'), () => void mixer().then((x) => x.deleteMix(cur.id, rerender)), ' danger'));
+      mineActs.hidden = false;
+    }
+    if (!tiles.some((b) => b.tabIndex === 0) && tiles[0]) tiles[0].tabIndex = 0;
     await new Promise((r) => requestAnimationFrame(r));
     for (const b of tiles) {
       if (!grid.isConnected) break;

@@ -3,6 +3,7 @@
 // again). Never a live engine per thumbnail. Without the engine, the scene's sky as a gradient. Loaded lazily.
 import { openScene, sceneSky } from './sceneHost';
 import { sceneTheme } from './animbg';
+import { mixKey } from './sceneMix';
 
 const cache = new Map<string, string>();
 const W = 320, H = 200, PX = 1.5;
@@ -11,7 +12,8 @@ let queue: Promise<unknown> = Promise.resolve();
 /** A thumbnail of scene `id` as an image URL (or a CSS gradient, prefixed «gradient:»), for the theme now. */
 export function sceneThumb(id: string): Promise<string> {
   const th = sceneTheme(document.documentElement);
-  const key = `${id}|${th.light ? 'l' : 'd'}|${th.ground.map((v) => Math.round(v)).join(',')}`;
+  // (A mix: its contents too — a saved mix changed is drawn again.)
+  const key = `${id}|${th.light ? 'l' : 'd'}|${th.ground.map((v) => Math.round(v)).join(',')}${id.startsWith('mix:') ? '|' + mixKey(id.slice(4)) : ''}`;
   const hit = cache.get(key); if (hit) return Promise.resolve(hit);
   // (One at a time, each after a frame: the page stays responsive while a dozen are drawn.)
   const job = queue.then(() => new Promise<void>((r) => requestAnimationFrame(() => r()))).then(async () => {

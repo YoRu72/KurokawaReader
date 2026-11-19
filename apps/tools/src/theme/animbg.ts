@@ -363,6 +363,12 @@ function perfHook(): void {
     bench: (): Promise<unknown> => import('./sceneHost').then((m) => m.bench4096()),
     hash: (): number | null => globalInst?.scene?.hash() ?? null,
     liveScenes: (): Promise<number> => import('./sceneHost').then((m) => m.liveScenes()),
+    /** The mixer's rules (tests/scenemix.cjs): compose, clean, the presets; `load` runs a mix in the engine once. */
+    mix: (): Promise<unknown> => Promise.all([import('./sceneHost'), import('./sceneMix')]).then(([h, m]) => ({
+      budget: m.MIX_BUDGET, presets: m.PRESETS, clean: m.cleanMix, cleanAll: m.cleanMixes,
+      compose: (x: import('./sceneMix').Mix) => { const c = h.composeMix(x); const d = c.def as { layers: unknown[]; emitters: { id: string; max: number }[]; palette: unknown[] }; return { total: c.total, dropped: c.dropped, scale: c.scale, wind: c.wind, layers: d.layers.length, emitters: d.emitters.map((e) => [e.id, e.max]), palette: d.palette.length }; },
+      load: async (x: import('./sceneMix').Mix): Promise<unknown> => { m.setDraft(x); try { const run = await h.openScene('mix:~draft', 3, 'thumb'); try { run.viewport(800, 500); for (let i = 0; i < 30; i++) run.step(1000 / 30); return run.stats(); } finally { run.free(); } } finally { m.setDraft(null); } },
+    })),
     /** What the scene's veils and halos are kept on: sizes, and how many of them have left the page (must be 0). */
     touched: (): Record<string, number> => { const all = [...touched.panels, ...touched.halos, ...touched.bare]; return { panels: touched.panels.size, halos: touched.halos.size, bare: touched.bare.size, gone: all.filter((e) => !e.isConnected).length, lastPanels: lastPanels.length }; },
   });
@@ -506,8 +512,10 @@ class Inst {
   ptr: [number, number, number] | null = null;
   /** The camera (a scene on the whole window): where the pointer pulls it (−1…1), where it is, the click's zoom pulse. */
   cam = { tx: 0, ty: 0, x: 0, y: 0, pulse: 0, sent: '' }; react = 0;
-  constructor(public host: HTMLElement, public asked: AnimKind, public level: AnimLevel, public seed: number, public global: boolean) {
-    this.kind = isScene(asked) ? 'drift' : asked;
+  /** A preview of the art as it is (the mixer's): no scrim — nothing is written over it. */
+  art = false;
+  constructor(public host: HTMLElement, public asked: AnimKind, public level: AnimLevel, public seed: number, public global: boolean, art = false) {
+    this.art = art; this.kind = isScene(asked) ? 'drift' : asked;
     this.canvas = document.createElement('canvas'); this.canvas.className = 'abg-canvas'; this.canvas.setAttribute('aria-hidden', 'true');
     this.g = this.canvas.getContext('2d', { alpha: false });
     this.canvas.addEventListener('contextrestored', () => { this.drawn = false; this.paint(); });
@@ -522,7 +530,7 @@ class Inst {
     try {
       const m = await import('./sceneHost'); const run = await m.openScene(id, this.seed);
       if (this.dead) { run.free(); return; }
-      run.trapAfter = trapAfter();
+      run.trapAfter = trapAfter(); run.thumb = this.art;
       if (this.global) { run.dom = sceneDom; run.onScrim = (sc) => applyScrim(sc, run.veil); }
       run.setTheme(sceneTheme(this.host)); run.setSpeed(this.level === 'reduced' ? 0.6 : 1);
       this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene'; this.nextBake = performance.now() + RARE_BAKE_MS;
@@ -713,9 +721,9 @@ class Inst {
   }
 }
 function prune(): void { for (const i of [...insts]) if (!i.host.isConnected) i.destroy(); }
-function mountInst(host: HTMLElement, kind: AnimKind, level: AnimLevel, global: boolean): Inst {
+function mountInst(host: HTMLElement, kind: AnimKind, level: AnimLevel, global: boolean, art = false): Inst {
   if (!document.getElementById(CSS_ID)) { const s = document.createElement('style'); s.id = CSS_ID; s.textContent = CSS; document.head.append(s); }
-  const i = new Inst(host, kind, level, seedPref(), global); insts.add(i); host.dataset.kind = kind; host.dataset.level = level;
+  const i = new Inst(host, kind, level, seedPref(), global, art); insts.add(i); host.dataset.kind = kind; host.dataset.level = level;
   if (insts.size === 1) gate.on(); else i.sync();
   return i;
 }
@@ -756,6 +764,6 @@ export function syncAnimBg(): void {
   for (const i of insts) if (i !== globalInst && i.host.isConnected) i.refresh();
 }
 /** A small live preview inside `host` (the Appearance page); taken down when `host` leaves the page. */
-export function previewAnimBg(host: HTMLElement, kind: AnimKind): () => void {
-  const i = mountInst(host, kind, levelPref(), false); return () => i.destroy();
+export function previewAnimBg(host: HTMLElement, kind: AnimKind, opts: { art?: boolean } = {}): () => void {
+  const i = mountInst(host, kind, levelPref(), false, !!opts.art); return () => i.destroy();
 }

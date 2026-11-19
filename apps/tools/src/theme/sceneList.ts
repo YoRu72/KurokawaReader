@@ -10,4 +10,10 @@ export const SCENE_GROUPS: SceneGroup[] = [
   { key: 'animBgGroupAbstract', scenes: [e('motes', 'Motes'), e('neon-night', 'Neon')] },
 ];
 export const SCENES_ALL: SceneEntry[] = SCENE_GROUPS.flatMap((g) => g.scenes);
-export const sceneEntry = (id: string): SceneEntry | undefined => SCENES_ALL.find((s) => s.id === id);
+/** The mixer's ready-made presets (theme/sceneMix.ts PRESETS holds what they are made of), as «mix:<id>». */
+const m = (id: string, n: string): SceneEntry => ({ id: `mix:${id}`, name: `mixP${n}`, hint: `mixP${n}Hint` });
+export const MIX_GROUPS: SceneGroup[] = [
+  { key: 'animBgGroupSnowy', scenes: [m('cold-light', 'ColdLight'), m('night-snow', 'NightSnow'), m('blizzard-dusk', 'BlizzardDusk'), m('frosted-window', 'Frosted'), m('aurora-snow', 'AuroraSnow'), m('first-snow', 'FirstSnow')] },
+  { key: 'animBgGroupRainy', scenes: [m('soft-rain', 'SoftRain'), m('night-rain', 'NightRain')] },
+];
+export const sceneEntry = (id: string): SceneEntry | undefined => SCENES_ALL.find((s) => s.id === id) ?? MIX_GROUPS.flatMap((g) => g.scenes).find((s) => s.id === id);

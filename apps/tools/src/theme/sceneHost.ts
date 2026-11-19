@@ -32,12 +32,14 @@ import starfield from './scenes/starfield.json';
 import meteors from './scenes/meteors.json';
 import petals from './scenes/petals.json';
 import neonNight from './scenes/neon-night.json';
+import { compose, mixById, type Mix, type Composed } from './sceneMix';
 
 /** The scenes this build has, by id. */
 const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake, 'snowflakes': snowflakes, 'blizzard': blizzard, 'first-snow': firstSnow, 'rain': rain, 'waves': waves, 'underwater': underwater, 'fireflies': fireflies, 'starfield': starfield, 'meteors': meteors, 'petals': petals, 'neon-night': neonNight };
 export const SCENE_IDS = Object.keys(SCENES);
 const ABI = 2;
 const PARAM_SPEED = 0;
+const PARAM_WIND_X = 2;
 const PARAM_REACT = 5;
 
 interface Exports {
@@ -704,12 +706,25 @@ export class SceneRun {
 
 /** A built-in scene started in the engine (throws UnknownScene, or when the engine or the scene cannot be loaded). */
 export async function openScene(id: string, seed: number, slot: EngineSlot = 'main'): Promise<SceneRun> {
-  const def = SCENES[id]; if (!def) throw new UnknownScene(`no scene «${id}» in this build`);
+  const one = defOf(id); if (!one) throw new UnknownScene(`no scene «${id}» in this build`);
   const eng = await loadEngine(slot);
   let h: number;
-  try { h = loadInto(eng.ex, JSON.stringify(def), seed); } catch (e) { poison(eng); throw e; }
+  try { h = loadInto(eng.ex, JSON.stringify(one.def), seed); } catch (e) { poison(eng); throw e; }
   if (h <= 0) throw new Error(`ktscene: «${id}» refused (${h})`);
-  return new SceneRun(eng, h, def);
+  const run = new SceneRun(eng, h, one.def);
+  // (A mix's wind: the engine's own parameter, every emitter taking its share of it.)
+  if (one.wind) { try { eng.ex.scene_param(h, PARAM_WIND_X, one.wind); } catch (e) { poison(eng); run.free(); throw new SceneTrap(`ktscene trapped: ${e instanceof Error ? e.message : String(e)}`); } }
+  return run;
+}
+/** A mix composed from this build's scenes (the mixer's particle count, the tests). */
+export const composeMix = (m: Mix): Composed => compose(m, SCENES);
+/** A scene's document by id: a built-in one, or a mix («mix:<id>»: a preset, a saved mix, the mixer's draft) composed
+ *  now from the built-in ones (theme/sceneMix.ts); its wind (units/s). */
+export function defOf(id: string): { def: unknown; wind: number } | null {
+  const d = SCENES[id]; if (d) return { def: d, wind: 0 };
+  if (!id.startsWith('mix:')) return null;
+  const m = mixById(id.slice(4)); if (!m) return null;
+  const c = compose(m, SCENES); return { def: c.def, wind: c.wind };
 }
 
 /** The wasm step for a scene of 4,096 particles (the perf gate's number): ms a step, averaged over `n` steps of 1/60 s. */
@@ -730,7 +745,7 @@ export async function bench4096(n = 240): Promise<{ stepMs: number; live: number
 /** The sky of a scene file as a gradient (its first sky layer's stops, resolved for the mode): what a thumbnail shows
  *  when the engine cannot run here. */
 export function sceneSky(id: string, light: boolean): string[] {
-  const def = SCENES[id] as { palette?: unknown; layers?: { kind?: string; params?: { stops?: [number, string | number][] } }[] } | undefined; if (!def) return [];
+  const def = defOf(id)?.def as { palette?: unknown; layers?: { kind?: string; params?: { stops?: [number, string | number][] } }[] } | undefined; if (!def) return [];
   // (A malformed stop — not a pair, no number — is left out; nothing here may throw: the picker draws on after it.)
   try {
     const specs = palSpecs(def, light); const ids = (Array.isArray(def.palette) ? def.palette : []).map((p: unknown, i: number) => (typeof p === 'object' && p && 'id' in p ? String((p as { id: unknown }).id) : String(i)));

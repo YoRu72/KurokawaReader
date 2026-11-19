@@ -15,9 +15,21 @@
   "fit": "cover"
  },
  "palette": [
-  "primary-container",
-  "tertiary-container",
-  "primary",
+  {
+   "id": "primary-container",
+   "dark": "primary-container",
+   "light": "#5470c4"
+  },
+  {
+   "id": "tertiary-container",
+   "dark": "tertiary-container",
+   "light": "#2f93a3"
+  },
+  {
+   "id": "primary",
+   "dark": "primary",
+   "light": "#3a4a9e"
+  },
   {
    "id": "sky0",
    "dark": "#0a0c18",
@@ -33,12 +45,20 @@
    "dark": "#1a1d36",
    "light": "#d3d9ec"
   },
-  "secondary-container",
-  "tertiary",
+  {
+   "id": "secondary-container",
+   "dark": "secondary-container",
+   "light": "#7560c4"
+  },
+  {
+   "id": "tertiary",
+   "dark": "tertiary",
+   "light": "#2a7590"
+  },
   {
    "id": "haze",
    "dark": "#2a3160",
-   "light": "#c9d1f0"
+   "light": "#b8c4ec"
   }
  ],
  "params": [

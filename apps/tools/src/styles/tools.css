@@ -1505,6 +1505,29 @@ html.pc .sheet .chip-row.files-filters { display: flex; flex-direction: column; 
 .abg-tile.on .abg-thumb { box-shadow: 0 0 0 3px var(--md-primary); }
 .abg-tile.on .abg-name { font-weight: 650; color: var(--md-primary); }
 .abg-name { padding-inline: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The mixer: «Mix your own» in the picker, the saved mixes' actions, the sheet (views/mixer.ts). */
+.abg-plus { display: grid; place-items: center; background: linear-gradient(135deg, color-mix(in srgb, #6f9fd8 26%, transparent), color-mix(in srgb, #9585dc 22%, transparent)); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #6f9fd8 55%, transparent); opacity: 1; }
+.abg-plus svg { width: 30px; height: 30px; fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; }
+.abg-mix-new .abg-name { color: var(--md-primary); font-weight: 600; }
+.abg-mix-acts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; max-width: 480px; }
+.abg-mix-acts .btn { min-width: 0; }
+.mix-sheet .sheet-body { font-family: var(--font-ui); font-size: 14px; line-height: 1.45; display: flex; flex-direction: column; gap: 12px; padding-bottom: 24px; }
+html.pc .sheet.mix-sheet { max-width: 640px; }
+.mix-sheet .abg-preview.mix-preview { max-width: 520px; width: 100%; align-self: center; flex: 0 0 auto; }
+.mix-budget { margin: -4px 0 0; }
+.mix-controls { display: flex; flex-direction: column; gap: 10px; }
+.mix-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 48px; }
+.mix-label { font-weight: 500; color: var(--md-on-surface); }
+.mix-overlay { display: flex; flex-direction: column; gap: 6px; border-radius: var(--sh-md, 14px); }
+.mix-overlay.on { padding: 6px 14px 10px; background: color-mix(in srgb, var(--md-primary) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--md-primary) 18%, transparent); }
+.mix-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 20px; }
+@media (max-width: 560px) { .mix-pair { grid-template-columns: minmax(0, 1fr); } }
+.mix-slider { display: flex; flex-direction: column; }
+.mix-slider-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--md-on-surface-variant); font-size: 13px; }
+.mix-val { color: var(--md-on-surface); font-variant-numeric: tabular-nums; font-weight: 600; }
+.mix-name input { height: 44px; }
+.sheet-actions.mix-actions { justify-content: stretch; gap: 12px; }
+.mix-actions > .btn { flex: 1 1 0; min-width: 0; }
 
 /* (With the Jobs button there are eight buttons on a phone's Files bar: each a little narrower so they stay on one row beside the back button.) */
 @media (max-width: 420px) { .view > .topbar:has(.files-jobs-btn:not([hidden])) :is(.icon-btn) { width: 36px; } .view > .topbar:has(.files-jobs-btn:not([hidden])) .topbar-actions { gap: 0; } }

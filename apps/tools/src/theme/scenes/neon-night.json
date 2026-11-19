@@ -18,47 +18,47 @@
   {
    "id": "sky0",
    "dark": "#05041a",
-   "light": "#dfe6f4"
+   "light": "#d6e0f3"
   },
   {
    "id": "sky1",
    "dark": "#0d0930",
-   "light": "#ced9ee"
+   "light": "#c3d0ec"
   },
   {
    "id": "sky2",
    "dark": "#1a0f40",
-   "light": "#bccbe8"
+   "light": "#aebfe4"
   },
   {
    "id": "cyan",
    "dark": "#38e3ff",
-   "light": "#2fa6c8"
+   "light": "#0a86ad"
   },
   {
    "id": "magenta",
    "dark": "#ff4fd8",
-   "light": "#cf5aa8"
+   "light": "#b8288e"
   },
   {
    "id": "violet",
    "dark": "#8a6bff",
-   "light": "#7a62dc"
+   "light": "#5838c8"
   },
   {
    "id": "arc",
    "dark": "#4ff0ff",
-   "light": "#2a86ab"
+   "light": "#0b6f9c"
   },
   {
    "id": "red",
    "dark": "#ff3355",
-   "light": "#e0566e"
+   "light": "#c92f4e"
   },
   {
    "id": "ring",
    "dark": "#7ff6ff",
-   "light": "#2a9fb8"
+   "light": "#0b7f9e"
   }
  ],
  "ui": {
@@ -380,7 +380,7 @@
     {
      "kind": "swell",
      "radius": 340,
-     "scale": 1.0
+     "scale": 1
     },
     {
      "kind": "bounds",
@@ -464,7 +464,7 @@
     {
      "kind": "lifetime",
      "min": 0.8,
-     "max": 1.0
+     "max": 1
     },
     {
      "kind": "size",
@@ -494,7 +494,7 @@
     },
     {
      "kind": "fade",
-     "in": 0.0,
+     "in": 0,
      "out": 0.9
     }
    ],

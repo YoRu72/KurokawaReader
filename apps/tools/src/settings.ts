@@ -35,6 +35,9 @@ export interface Settings {
   /** A computer's scenes: where they show (the whole window, the default, or the content area only), whether the app's
    *  accents follow the scene's own colours (off unless chosen), how much they answer the mouse (Subtle unless chosen). */
   animBgWhere?: 'whole' | 'content'; animBgTint?: boolean; animBgReact?: 'off' | 'subtle' | 'lively';
+  /** A computer's own background mixes (theme/sceneMix.ts): stored as made, never trusted — cleaned (cleanMixes) on every
+   *  read; chosen as animBg «scene:mix:<id>». They travel in the settings backup with the rest. */
+  animBgMixes?: unknown[];
   /** The download folder (a path, or a content: URI on Android); '' = the engine's default. */
   downloadDir: string;
   /** Folders chosen lately in the Add sheet, newest first. */
