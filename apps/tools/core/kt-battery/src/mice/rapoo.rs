@@ -13,6 +13,7 @@
 // window per round under the deadline (the original kept handles open between rounds in a global, g_rapoo, to catch
 // reports it then drained) — a mouse that pushes less often than the window says nothing this round; the cable and the
 // receiver of one mouse: one card by the pair rule.
+// D1: v1.1.0's VT3 Pro Max receiver and the 13-byte VT3 Max Gen 2 receiver (V110 below).
 // Copyright (C) 2026 Kurokawa contributors. Std only.
 use super::*;
 
@@ -60,6 +61,11 @@ pub static MODELS: &[Model] = &{
     }
     out
 };
+
+/// D1 (the original's v1.1.0 rapoo.cpp at commit 7cc44f2; zbndev/rapoo_battery, the original's issues 1396 and 2258):
+/// the VT3 Pro Max receiver (1244, no cable id known) sends the legacy BB B0 report; a VT3 Max Gen 2 receiver (1417) of
+/// another firmware has a 13-byte collection whose report 07 still carries the state and level at 7 / 8.
+pub static V110: &[Model] = &[r(0x1417, "Rapoo VT3 Max (Gen 2)", Via::Receiver, "rp:vt3max", false).input(Len::Eq(13)), r(0x1244, "Rapoo VT3 Pro Max", Via::Receiver, "", true)];
 
 /// One pushed status report (the 0 report id already dropped): (level, charging), None when it is not one.
 pub fn decode(r: &[u8], legacy: bool) -> Option<(Level, Charging)> {

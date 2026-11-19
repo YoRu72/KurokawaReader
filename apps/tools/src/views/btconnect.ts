@@ -36,6 +36,8 @@ const PIC: Record<string, string> = {
   speaker: '<rect x="11.5" y="4.5" width="25" height="39" rx="7"/><circle cx="24" cy="28" r="8"/><circle class="f" cx="24" cy="28" r="3"/><circle class="f" cx="24" cy="13" r="2.4"/>',
   phone: '<rect x="13.5" y="4" width="21" height="40" rx="5.5"/><path d="M21 9h6"/><path d="M21.5 39h5"/>',
   pen: '<path d="M33.5 6.5l8 8L19 37l-10.5 3 3-10.5L33.5 6.5Z"/><path d="M29.3 10.7l8 8"/><path class="f" d="M11.5 29.5l7.5 7.5-10.5 3Z"/>',
+  // (D1: a wireless microphone — the original's v1.1.0 kind.)
+  microphone: '<rect x="17.5" y="4.5" width="13" height="23" rx="6.5"/><path d="M11 22.5a13 13 0 0 0 26 0"/><path d="M24 35.5V43M17 43h14"/><rect class="f" x="20.5" y="8.5" width="7" height="10" rx="3.5"/>',
   other: '<rect x="8" y="8" width="32" height="32" rx="9"/><path d="M19 19l10 10-5 5V14l5 5-10 10"/>',
 };
 const RUNE = '<path d="M7 7l10 10-5 5V2l5 5L7 17"/>';

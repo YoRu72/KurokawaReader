@@ -19,6 +19,8 @@ pub enum Kind {
     Controller,
     Speaker,
     Phone,
+    /// D1: a wireless microphone (the original's v1.1.0 kind; MAONO PD200W).
+    Microphone,
     Other,
 }
 
@@ -32,6 +34,7 @@ impl Kind {
             Kind::Controller => "controller",
             Kind::Speaker => "speaker",
             Kind::Phone => "phone",
+            Kind::Microphone => "microphone",
             Kind::Other => "other",
         }
     }
@@ -44,6 +47,7 @@ impl Kind {
             "controller" => Kind::Controller,
             "speaker" => Kind::Speaker,
             "phone" => Kind::Phone,
+            "microphone" => Kind::Microphone,
             _ => Kind::Other,
         }
     }
@@ -533,7 +537,7 @@ mod tests {
 
     #[test]
     fn kind_names_round_trip() {
-        for k in [Kind::Mouse, Kind::Keyboard, Kind::Headset, Kind::Earbuds, Kind::Controller, Kind::Speaker, Kind::Phone, Kind::Other] {
+        for k in [Kind::Mouse, Kind::Keyboard, Kind::Headset, Kind::Earbuds, Kind::Controller, Kind::Speaker, Kind::Phone, Kind::Microphone, Kind::Other] {
             assert_eq!(Kind::parse(k.as_str()), k);
         }
         assert_eq!(Kind::parse("toaster"), Kind::Other);

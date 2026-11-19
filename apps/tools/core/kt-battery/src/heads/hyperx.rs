@@ -16,6 +16,10 @@
 //   Cloud Stinger Core / Cloud Core Wireless (FF00:0001, feature FF): set the «connection» or «battery» command, 20 ms,
 //   get feature FF: connection [11] 01 on; battery [9] 03 on battery / 05 charging / 06 full, [11–12] mV; the
 //   PlayStation receivers (0A93, 1713, 173F) may hand back the previous report first: read again, up to ten times.
+// D1 (the original's v1.1.0 hyperx.cpp at commit 7cc44f2): the Pulsefire Haste 2 Mini (03F0:0DA0) as the other Haste 2
+// dongles; the Cloud Flight S (0951:16EA / 16EB, FF13:0001, 62-byte reports) with the Cloud II (Kingston) reads
+// (LennardKittner/HyperHeadset); the Cloud Stinger Core Wireless DTS receiver (03F0:0A8E) as the PlayStation receivers
+// (its reply re-read until it is the battery's, HyperBatteryMonitor PR 16).
 // Changed here: matched by product and collection (as the original's table); voltages as coarse words, never a
 // percentage from a fitted curve (Cloud Flight's polynomial, the Stinger's tables); «full» (06) as Full; the Haste 2's
 // settle window after power-on (a global clock in the original) is not kept: a reading right after the mouse is
@@ -57,11 +61,15 @@ pub static MODELS: &[Model] = &[
     hx(0x03F0, 0x0AB5, "HyperX Pulsefire Haste 2 Core Wireless", HASTE).kind_of(Kind::Mouse).vendor_page().output(Len::Min(2)).input(Len::Min(8)),
     hx(0x03F0, 0x0D97, "HyperX Pulsefire Haste 2 Wireless", HASTE).kind_of(Kind::Mouse).vendor_page().output(Len::Min(2)).input(Len::Min(8)),
     hx(0x03F0, 0x0F98, "HyperX Pulsefire Haste 2 Wireless", HASTE).kind_of(Kind::Mouse).vendor_page().output(Len::Min(2)).input(Len::Min(8)),
+    hx(0x03F0, 0x0DA0, "HyperX Pulsefire Haste 2 Mini", HASTE).kind_of(Kind::Mouse).vendor_page().output(Len::Min(2)).input(Len::Min(8)),
+    hx(0x0951, 0x16EA, "HyperX Cloud Flight S", C2K).page(0xFF13).usage(0x0001).input(Len::Eq(62)).output(Len::Eq(62)),
+    hx(0x0951, 0x16EB, "HyperX Cloud Flight S", C2K).page(0xFF13).usage(0x0001).input(Len::Eq(62)).output(Len::Eq(62)),
     hx(0x0951, 0x16C4, "HyperX Cloud Flight", FLIGHT).vendor_page().output(Len::Min(3)),
     hx(0x0951, 0x1723, "HyperX Cloud Flight", FLIGHT).vendor_page().output(Len::Min(3)),
     hx(0x0951, 0x1749, "HyperX Cloud Flight", FLIGHT).vendor_page().output(Len::Min(3)),
     hx(0x03F0, 0x0E90, "HyperX Cloud Flight", FLIGHT).vendor_page().output(Len::Min(3)),
     hx(0x03F0, 0x0A93, "HyperX Cloud Stinger Core Wireless", STINGER).page(0xFF00).usage(0x0001).feature(Len::Min(32)),
+    hx(0x03F0, 0x0A8E, "HyperX Cloud Stinger Core Wireless DTS", STINGER).page(0xFF00).usage(0x0001).feature(Len::Min(32)),
     hx(0x0951, 0x170B, "HyperX Cloud Stinger Core Wireless", STINGER).page(0xFF00).usage(0x0001).feature(Len::Min(32)),
     hx(0x0951, 0x1713, "HyperX Cloud Stinger Core Wireless", STINGER).page(0xFF00).usage(0x0001).feature(Len::Min(32)),
     hx(0x0951, 0x173F, "HyperX Cloud Core Wireless", STINGER).page(0xFF00).usage(0x0001).feature(Len::Min(32)),
@@ -177,7 +185,7 @@ fn flight(ch: &mut Chans, deadline: Instant, now: u64) -> Result<Outcome, TErr> 
 }
 
 fn stinger(ch: &mut Chans, m: &Model, deadline: Instant, now: u64) -> Result<Outcome, TErr> {
-    let ps = matches!(m.pid, 0x0A93 | 0x1713 | 0x173F);
+    let ps = matches!(m.pid, 0x0A93 | 0x1713 | 0x173F | 0x0A8E);
     let len = ch.main.feature_len().max(32);
     let mut exchange = |q: &[u8], good: &dyn Fn(&[u8]) -> bool| -> Result<(bool, Vec<u8>), TErr> {
         send(&mut *ch.main, crate::allow::ReportKind::Feature, q, deadline)?;

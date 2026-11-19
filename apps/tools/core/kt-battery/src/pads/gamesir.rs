@@ -74,6 +74,23 @@ pub fn parse_cyclone(r: &[u8]) -> Parsed {
     }
 }
 
+/// D1 — PARSE ONLY: the GameSir Cyclone Pro's «base info» packet, read over Bluetooth LE by the original's v1.1.0
+/// (src/drivers/gamesir_ble_protocol.h at commit 7cc44f2): [0..5] address [6..7] hardware [8..9] Bluetooth [10..11]
+/// firmware [12..17] build date [18] battery 0–100, or 255 while charging (no level then); some firmware puts C9 first.
+/// Not wired: reading it needs a GATT connection to the pad (a connection we do not make), so the Cyclone Pro's dongle
+/// (3537:1015) keeps Windows' / XInput's word. Some((level, charging)).
+pub fn ble_base_info(p: &[u8]) -> Option<(Option<u8>, bool)> {
+    let p = if p.len() == 20 && p[0] == 0xC9 { &p[1..] } else { p };
+    if p.len() != 19 {
+        return None;
+    }
+    match p[18] {
+        0xFF => Some((None, true)),
+        v if v <= 100 => Some((Some(v), false)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::read;
@@ -119,5 +136,20 @@ mod tests {
         let mut f = fake(c);
         f.stream.push_back(report(0x12, 64, &[(36, 44)]));
         assert_eq!(read(&mut f, c, false, false, soon(), 1), Outcome::Read(Reading::new(pct(44), Charging::No, 1)));
+    }
+
+    #[test]
+    fn cyclone_pro_base_info_parse_only() {
+        let mut p = [0u8; 19];
+        p[18] = 77;
+        assert_eq!(ble_base_info(&p), Some((Some(77), false)));
+        p[18] = 0xFF;
+        assert_eq!(ble_base_info(&p), Some((None, true)), "charging: no level");
+        let mut c = vec![0xC9];
+        c.extend_from_slice(&p);
+        assert_eq!(ble_base_info(&c), Some((None, true)), "a C9 first");
+        p[18] = 101;
+        assert_eq!(ble_base_info(&p), None);
+        assert_eq!(ble_base_info(&p[..18]), None, "short");
     }
 }

@@ -14,6 +14,18 @@
 //  - arg 2 (new mice): FF01 / FF0B, output report 4D [4D][01][01 read][00 len][00 09 = device info][00][00][xor 2–7];
 //    reply 4D, the same command, len data bytes and their xor: data [0..1] 3837, [10] link (0 not linked),
 //    [11] charging, [12] percent; len < 14 (the header and one FF): the mouse off.
+// D1 (the original's v1.1.0 mchose_a5.cpp, mchose_keyboard.cpp, mchose_modern.cpp at commit 7cc44f2; their references:
+// z750sasr/mchose-a5-pro-max-web-driver docs/PROTOCOL.md, HeyOkay/HaloBattery providers/mchose.py, Klegus/mchose-macos,
+// M HUB's GLW keyboard class):
+//  - The K7 V2 Ultra+ on its cable (3837:4028) answers the «new» mice' request too; with its receiver: one card.
+//  - A5 Pro / A5 Pro Max, first generation (VID 2023: F013, F015 1K / 4K receivers, F018, F017 and F019 the cables),
+//    interface 2, FFFF, 65-byte feature report 0: [00][00 00][route 02 mouse][len 02][page 00][cmd 83] — the same bytes
+//    as the «83» status read of proto.rs — read back as feature 0: [00][A1 ok][..][..][..][page 00][83][charging]
+//    [level], FF no level; 34 ms after the request, up to eight reads with one resend in the middle.
+//  - Keyboards on the 3837:3033 receiver (G75 V2, G87 V2, K99 V3), «GLW» frames on its 0001:0000 collection (65-byte
+//    reports, no report id): [55][05 func config][00][sum 38][size 38][offset 00 00][00] → [AA][05][00][sum of size,
+//    offset and data][size][00 00][00][data…], data[32]: bit 7 charging, bits 0–6 percent. Asked at most every ten
+//    minutes (Model::gap: the keyboard decides when to sleep), as the original. A «QHW» keyboard (K87S) never answers.
 // Changed here: products by id (the original asked every 5253 product); the request's length fixed at 65 bytes (the
 // original sized it to the collection: another length is another collection here).
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -28,6 +40,85 @@ const fn g3(pid: u16, via: Via) -> Model {
 const fn modern(pid: u16, page: u16) -> Model {
     Model::new("mk-mchose", 0x3837, pid, "MCHOSE mouse", Kind::Mouse, Via::Receiver).page(page).output(Len::Min(64)).input(Len::Min(21)).arg(2).product_name()
 }
+const fn a5(pid: u16, name: &'static str, via: Via) -> Model {
+    Model::new("mk-mchose-a5", 0x2023, 0, name, Kind::Mouse, via).with_pid(pid).iface(2).page(0xFFFF).feature(Len::Min(65))
+}
+
+/// D1: the A5 Pro / Pro Max (first generation) and the GLW keyboards' receiver.
+pub static A5: [Model; 6] = [
+    a5(0xF013, "MCHOSE A5 Pro / Pro Max", Via::Receiver),
+    a5(0xF015, "MCHOSE A5 Pro / Pro Max", Via::Receiver),
+    a5(0xF018, "MCHOSE A5 Pro Max", Via::Receiver),
+    a5(0xF017, "MCHOSE A5 Pro", Via::Cable),
+    a5(0xF019, "MCHOSE A5 Pro Max", Via::Cable),
+    Model::new("mk-mchose-kb", 0x3837, 0x3033, "MCHOSE keyboard", Kind::Keyboard, Via::Receiver).page(0x0001).usage(0x0000).input(Len::Eq(65)).output(Len::Eq(65)).gap(600).product_name(),
+];
+
+pub const GLW_FUNC: [u8; 6] = [0x00, 0x55, 0x05, 0x00, 0x38, 0x38];
+
+/// An A5 reply: (charging byte, level), or None.
+pub fn a5_reply(r: &[u8]) -> Option<(u8, u8)> {
+    let at = if r.len() >= 9 && r[1] == 0xA1 {
+        1
+    } else if r.len() >= 8 && r[0] == 0xA1 {
+        0
+    } else {
+        return None;
+    };
+    if r[at + 4] != 0x00 || r[at + 5] != 0x83 || r[at + 7] == 0xFF {
+        return None;
+    }
+    Some((r[at + 6], r[at + 7]))
+}
+
+pub fn read_a5(ch: &mut Chans, _m: &Model, deadline: Instant, now: u64) -> Outcome {
+    let mut r = feat_ask(&mut *ch.main, &super::proto::P83, 0x00, 65, ms(34), 3, deadline, &mut a5_reply);
+    if r == Err(TErr::BadReply) {
+        r = feat_ask(&mut *ch.main, &super::proto::P83, 0x00, 65, ms(34), 5, deadline, &mut a5_reply);
+    }
+    match r {
+        Ok((c, l)) => match pct(i64::from(l)) {
+            Some(lv) => got(lv, charging(c != 0), now),
+            None => no_level(charging(c != 0), now),
+        },
+        Err(TErr::BadReply) => dozing(now),
+        Err(e) => failed(&e),
+    }
+}
+
+/// A GLW «func config» reply's battery byte, or None.
+pub fn glw_reply(r: &[u8]) -> Option<u8> {
+    if r.len() < 41 || r[0] != 0xAA || r[1] != 0x05 || r[5] != 0 || r[6] != 0 {
+        return None;
+    }
+    let size = usize::from(r[4]);
+    if size < 33 || 8 + size > r.len() || sum8(&r[4..8]).wrapping_add(sum8(&r[8..8 + size])) != r[3] {
+        return None;
+    }
+    Some(r[40])
+}
+
+pub fn read_glw(ch: &mut Chans, _m: &Model, deadline: Instant, now: u64) -> Outcome {
+    let mut last = Err(TErr::Timeout);
+    for i in 0..2 {
+        if i > 0 {
+            pause(ms(150), deadline);
+        }
+        last = out_ask(ch, &GLW_FUNC, ms(500), deadline, &mut glw_reply);
+        if last.is_ok() || last == Err(TErr::Gone) {
+            break;
+        }
+    }
+    match last {
+        Ok(v) => match pct(i64::from(v & 0x7F)) {
+            Some(l) => got(l, charging(v & 0x80 != 0), now),
+            None => no_level(Charging::Unknown, now),
+        },
+        Err(TErr::Gone) => Outcome::Failed,
+        // (Asked, no reply: asleep, off or busy — or a QHW keyboard.)
+        Err(_) => dozing(now),
+    }
+}
 
 pub static MODELS: &[Model] = &[
     inv(0x5253, 0x1020),
@@ -38,8 +129,10 @@ pub static MODELS: &[Model] = &[
     inv(0x3837, 0x1012),
     g3(0x4245, Via::Receiver),
     g3(0x418C, Via::Cable),
-    modern(0x1014, 0xFF01),
-    modern(0x1014, 0xFF0B),
+    modern(0x1014, 0xFF01).pair("mc:k7v2u"),
+    modern(0x1014, 0xFF0B).pair("mc:k7v2u"),
+    modern(0x4028, 0xFF01).via_of(Via::Cable).pair("mc:k7v2u"),
+    modern(0x4028, 0xFF0B).via_of(Via::Cable).pair("mc:k7v2u"),
     modern(0x1018, 0xFF01),
     modern(0x1018, 0xFF0B),
     modern(0x1016, 0xFF01),
@@ -186,5 +279,32 @@ mod tests {
         let mut f = fake(n);
         f.replies.push_back(vec![report(0x4D, 64, &[(1, 0x01), (2, 0x01), (3, 1), (5, 0x09), (8, 0xFF)])]);
         assert_eq!(read1(&mut f, n), dozing(7), "the header and one FF: the mouse off");
+    }
+
+    #[test]
+    fn v110_a5_and_glw() {
+        let m = model("mk-mchose-a5", 0xF013);
+        let mut f = fake(m);
+        f.feature_replies.push_back(report(0x00, 65, &[(1, 0xA1), (5, 0x00), (6, 0x83), (7, 1), (8, 71)]));
+        assert_eq!(read1(&mut f, m), at(pctl(71), Charging::Yes));
+        assert_eq!((f.sent.clone(), f.kinds.clone()), (vec![super::super::proto::P83.to_vec()], vec![ReportKind::Feature]));
+        let mut f = fake(m);
+        f.features.insert(0x00, report(0x00, 65, &[(1, 0xA3), (5, 0x00), (6, 0x83)]));
+        assert_eq!(read1(&mut f, m), dozing(7), "unsupported (A3) eight times: the mouse silent");
+        assert_eq!(f.sent.len(), 2, "one resend in the middle");
+        assert_eq!(a5_reply(&report(0x00, 65, &[(1, 0xA1), (5, 0x00), (6, 0x83), (8, 0xFF)])), None);
+        let k = model("mk-mchose-kb", 0x3033);
+        assert_eq!(k.gap_s, 600, "at most every ten minutes");
+        let mut r = report(0xAA, 64, &[(1, 0x05), (4, 56), (8 + 32, 0x80 | 85)]);
+        r[3] = sum8(&r[4..8]).wrapping_add(sum8(&r[8..64]));
+        let mut f = fake(k);
+        f.replies.push_back(vec![r.clone()]);
+        assert_eq!(read1(&mut f, k), at(pctl(85), Charging::Yes));
+        assert_eq!(f.sent, vec![GLW_FUNC.to_vec()]);
+        r[3] ^= 1;
+        let mut f = fake(k);
+        f.replies.extend([vec![r.clone()], vec![r]]);
+        assert_eq!(read1(&mut f, k), dozing(7), "a bad sum twice");
+        assert_eq!(merge_pairs(&[model("mk-mchose", 0x1014), model("mk-mchose", 0x4028)]), vec![vec![1, 0]]);
     }
 }

@@ -6,7 +6,7 @@
 // stops querying and refreshes one device through the bridge; a pushed change redrawn; the empty state; «not on this
 // system»; the Electron build's calm word with no button; no sideways overflow; leaving the page lets go of the
 // subscription and the timer. Piece 2: the «Background» group (switches only: keep running in the background, start
-// with the system hidden — needing the first, «not yet» on a Mac, a refusal from the shell said and drawn back —, low
+// with the system hidden — needing the first, offered on a Mac too (the shell's LaunchAgent), a refusal from the shell said and drawn back —, low
 // and fully-charged notices), the low marks (10/15/20/30; a device's own mark or «no notice» in its menu, and the card's
 // red following it), none of it in the Electron build or another system. Screenshots (PC 1280×800) into KT_SHOTS when
 // set. Piece 3, «Connect a device» (btList, btScan, btAct, btOpenSettings, onBt — bridge.js's signatures): the paired
@@ -94,6 +94,8 @@ function fake({ lang, mode }) {
     mk({ key: 'hid:1038:230A:c:{GB}', name: 'SteelSeries Arctis GameBuds', kind: 'earbuds', brand: 'SteelSeries', connection: 'dongle', driver: 'hs-steelseries', family: 'hs-steelseries', reading: Object.assign(rd(UNK, NOW), { note: 'inCase' }) }),
     mk({ key: 'advert:{AP}', name: 'Studio Pods', kind: 'earbuds', brand: 'Apple', connection: 'bluetooth', source: 'advert', driver: 'hs-airpods', family: 'hs-airpods', way: 'passive', reading: Object.assign(rd(UNK, NOW), { note: 'notInBuild' }) }),
     mk({ key: 'phonelink', name: 'Field Phone', kind: 'phone', brand: '', connection: 'unknown', source: 'phonelink', driver: 'ot-phonelink', family: 'ot-phonelink', way: 'passive', reading: rd(ex(58), NOW - 40 * min) }),
+    // (D1: the microphone kind, the original's v1.1.0.)
+    mk({ key: 'hid:352F:040E:c:{MC}', name: 'Studio Mic', kind: 'microphone', brand: 'MAONO', connection: 'dongle', driver: 'ot-maono', family: 'ot-maono', reading: rd(ex(77), NOW - min) }),
     dev({ key: 'xinput:1:pad', name: '', kind: 'controller', brand: 'Xbox', connection: 'dongle', source: 'xinput', reading: rd({ kind: 'coarse', value: 'high', bars: 4 }, NOW) }),
   ];
   const devices = mode === 'heads' ? HEADS : mode === 'mice' ? MICE : mode === 'pads' ? PADS : mode !== 'tauri' && mode !== 'mac' ? [] : [
@@ -106,7 +108,8 @@ function fake({ lang, mode }) {
     dev({ key: 'hid:5555:6666:p:x', name: 'Quiet Pad', kind: 'controller', status: 'notQueried' }),
   ];
   let settings = { intervalMin: 1, low: 15, names: {}, hidden: [], noQuery: ['hid:5555:6666:p:x'], links: [], background: false, startup: false, notifyLow: true, notifyFull: false, thresholds: {} };
-  const system = mode === 'mac' ? { autostart: 'notYet', tray: true } : { autostart: 'yes', tray: true };
+  // (A Mac: the shell starts with the system through its LaunchAgent now — the same 'yes' as Windows and Linux.)
+  const system = { autostart: 'yes', tray: true };
   window.__calls = []; window.__subs = 0; let cb = null;
   // (Piece 3: the connect panel's fake — a device: { addr, name, kind, picture, brand, le, paired, connected, battery, can }.)
   const BT = (addr, o) => ({ addr, name: '', kind: 'other', picture: 'other', brand: '', le: false, paired: true, connected: false, battery: null, can: 'both', ...o });
@@ -450,6 +453,8 @@ function fake({ lang, mode }) {
     check('a headset in steps: «6 of 8», its kind said', ns.word === (AR ? '6 من 8' : '6 of 8') && ns.bars === 8 && ns.sub.includes(AR ? 'سماعة رأس' : 'Headset'), ns);
     const ph = await p.$eval('.bat-card[data-key="phonelink"]', (e) => ({ name: e.querySelector('.bat-name').textContent, sub: e.querySelector('.bat-sub').textContent, kind: e.dataset.kind }));
     check('a phone through Phone Link: a «phone» card', ph.kind === 'phone' && ph.name === 'Field Phone' && ph.sub.includes(AR ? 'هاتف' : 'Phone'), ph);
+    const mic = await p.$eval('.bat-card[data-key="hid:352F:040E:c:{MC}"]', (e) => ({ kind: e.dataset.kind, sub: e.querySelector('.bat-sub').textContent, svg: e.querySelector('.bat-ic svg').innerHTML }));
+    check('D1: a microphone card — its own drawing and word', mic.kind === 'microphone' && mic.sub.includes(AR ? 'لاقط صوت' : 'Microphone') && mic.svg.includes('M5.5 11a6.5') && !mic.sub.includes('batKind'), mic);
     check('Phone Link named as Windows names it in the page\'s language', ph.sub.includes(AR ? 'ارتباط الهاتف' : 'Phone Link') && (AR ? !ph.sub.includes('Phone Link') : true), ph.sub);
     check('an Xbox pad named in the page\'s language', (await p.textContent('.bat-card[data-key="xinput:1:pad"] .bat-name')) === (AR ? 'يد Xbox رقم 2' : 'Xbox controller 2'));
     check('no sideways overflow (headsets)', (await overflow(p)) <= 1);
@@ -701,12 +706,13 @@ function fake({ lang, mode }) {
     await ctx.close();
   }
   {
-    // (A Mac: the start with the system is «not yet», said calmly, its switch off.)
+    // (A Mac: the start with the system is offered as on the other systems — the shell writes its LaunchAgent —, its
+    //  switch usable once the background is on, with the usual line.)
     const { ctx, p } = await open('mac');
     await p.waitForSelector('.bat-bg [data-row="startup"]');
     await p.click('.bat-bg [data-row="background"]'); await p.waitForTimeout(250);
     const m = await p.$eval('.bat-bg [data-row="startup"]', (e) => ({ dis: e.querySelector('input').disabled, hint: e.querySelector('small').textContent }));
-    check('a Mac: start with the system «not yet», its switch off', m.dis && m.hint === (AR ? 'لم يُتَح هذا على هذا النظام بعدُ.' : 'Not available on this system yet.'), m);
+    check('a Mac: start with the system offered (LaunchAgent), its switch usable', !m.dis && m.hint === (AR ? 'يُفتَح في علبة النظام عند تسجيل دخولك.' : 'Opens in the tray when you sign in.'), m);
     await ctx.close();
   }
   {

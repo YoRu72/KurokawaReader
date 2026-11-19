@@ -114,7 +114,7 @@ pub fn read_compx_feature(ch: &mut Chans, m: &Model, deadline: Instant, now: u64
                 dozing(now)
             }
         }
-        "mk-dareu" => match feat_then_read(ch, &COMPX_BATTERY, STEP, deadline, &mut |r| if r.len() == 17 && r[0] == 0x09 && r[1] == 0x04 && r[2] == 0 && r[6] <= 100 { Some((r[6], r[7])) } else { None }) {
+        "mk-dareu" | "mk-sharkoon" => match feat_then_read(ch, &COMPX_BATTERY, STEP, deadline, &mut |r| if r.len() == 17 && r[0] == 0x09 && r[1] == 0x04 && r[2] == 0 && r[6] <= 100 { Some((r[6], r[7])) } else { None }) {
             Ok((p, c)) => got(pct(i64::from(p)).unwrap_or(Level::Unknown), charging(c != 0), now),
             Err(e) => failed(&e),
         },

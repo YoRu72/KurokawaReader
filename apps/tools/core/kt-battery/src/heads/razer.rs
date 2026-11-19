@@ -16,6 +16,8 @@
 //     [62] = XOR of 3–60; read back after 60 ms: [2] txid, [7] 07, [8] cmd, [6] ≥ 2, status [1] 02 / 01, value [10].
 //   V3 / V3 Pro (0576 / 0577 V3 Pro, 0579 / 057A V3, interface 5): 64-byte output 02 [60] … GET class 21 → [13] percent,
 //     [14] charging.
+// D1 (the original's v1.1.0 razer_headset.cpp at commit 7cc44f2): GET class 2A after the battery — [13] = 1 while
+// charging on the cable —, and 0576 / 0579 named as the cables (0577 / 057A the receivers): one card by the pair rule.
 // Changed here: the V3 / V3 Pro «handshake» the original sent before each read (three packets of classes 02 and 2A with
 // direction 00 — not documented as reads) is not sent: only GET 21; a headset that answers only after Synapse's
 // handshake says «no answer». Their link drops when asked every few seconds: asked at most every five minutes
@@ -41,10 +43,10 @@ pub static MODELS: &[Model] = &[
     hs("hs-razer-v2pro", 0x0528, "Razer BlackShark V2 Pro (2020)", Via::Receiver).iface(3).page(0xFF00).usage(1).feature(Len::Eq(64)),
     hs("hs-razer-v3x", 0x057D, "Razer BlackShark V3 X", Via::Receiver).iface(0).feature(Len::Min(64)).gap(300),
     hs("hs-razer-v3x", 0x057C, "Razer BlackShark V3 X", Via::Cable).iface(0).feature(Len::Min(64)).gap(300),
-    hs("hs-razer-v3", 0x0576, "Razer BlackShark V3 Pro", Via::Receiver).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300),
-    hs("hs-razer-v3", 0x0577, "Razer BlackShark V3 Pro", Via::Receiver).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300),
-    hs("hs-razer-v3", 0x0579, "Razer BlackShark V3", Via::Receiver).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300),
-    hs("hs-razer-v3", 0x057A, "Razer BlackShark V3", Via::Receiver).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300),
+    hs("hs-razer-v3", 0x0576, "Razer BlackShark V3 Pro", Via::Cable).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300).pair("rz:v3pro"),
+    hs("hs-razer-v3", 0x0577, "Razer BlackShark V3 Pro", Via::Receiver).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300).pair("rz:v3pro"),
+    hs("hs-razer-v3", 0x0579, "Razer BlackShark V3", Via::Cable).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300).pair("rz:v3"),
+    hs("hs-razer-v3", 0x057A, "Razer BlackShark V3", Via::Receiver).iface(5).output(Len::Min(64)).input(Len::Min(15)).gap(300).pair("rz:v3"),
 ];
 
 pub const HS_BATTERY: u8 = 0x21;
@@ -87,13 +89,13 @@ pub fn v3x_check(b: &[u8]) -> bool {
 }
 
 /// V3 / V3 Pro: GET class 21 (battery), direction 80 (to the headset).
-pub const fn v3_get() -> [u8; 64] {
+pub const fn v3_get_of(class: u8) -> [u8; 64] {
     let mut b = [0u8; 64];
     b[0] = 0x02;
     b[2] = 0x60;
     b[6] = 0x04;
     b[9] = 0x80;
-    b[10] = 0x21;
+    b[10] = class;
     let mut x = 0u8;
     let mut i = 0;
     while i < 62 {
@@ -103,7 +105,12 @@ pub const fn v3_get() -> [u8; 64] {
     b[62] = x;
     b
 }
+pub const fn v3_get() -> [u8; 64] {
+    v3_get_of(0x21)
+}
 pub const V3_GET: [u8; 64] = v3_get();
+/// D1: GET class 2A, the charging state (v1.1.0 reads it after the battery: its [13] = 1 charging on the cable).
+pub const V3_CHARGING: [u8; 64] = v3_get_of(0x2A);
 
 /// A sequence number from the clock (each request its own, so a reply is tied to it).
 fn seq_of(now: u64, k: u8) -> u8 {
@@ -216,7 +223,10 @@ fn read_v3x(ch: &mut Chans, now: u64, deadline: Instant) -> Outcome {
 
 fn read_v3(ch: &mut Chans, now: u64, deadline: Instant) -> Outcome {
     match out_ask(ch, &V3_GET, ms(600), deadline, &mut |r| if r.len() >= 15 && r[0] == 0x02 && r[2] == 0x60 && r[10] == 0x21 { Some((r[13], r[14])) } else { None }) {
-        Ok((p, c)) if p <= 100 => got(pct(i64::from(p)).unwrap_or(Level::Unknown), charging(c != 0), now),
+        Ok((p, c)) if p <= 100 => {
+            let cable = c == 0 && out_ask(ch, &V3_CHARGING, ms(600), deadline, &mut |r| if r.len() >= 15 && r[0] == 0x02 && r[2] == 0x60 && r[10] == 0x2A { Some(r[13]) } else { None }) == Ok(1);
+            got(pct(i64::from(p)).unwrap_or(Level::Unknown), charging(c != 0 || cable), now)
+        }
         Ok(_) => no_level(Charging::Unknown, now),
         Err(e) => failed(&e),
     }
@@ -346,7 +356,18 @@ mod tests {
         r[13] = 81;
         f.replies.push_back(vec![r]);
         assert_eq!(read1(&mut f, m), at(pctl(81), Charging::No));
-        assert_eq!(f.sent, vec![V3_GET.to_vec()], "only the GET — no handshake");
+        assert_eq!(f.sent, vec![V3_GET.to_vec(), V3_CHARGING.to_vec()], "the GETs only — no handshake");
+        let mut f = fake(m);
+        let mut r = vec![0u8; 64];
+        r[0] = 0x02;
+        r[2] = 0x60;
+        r[10] = 0x21;
+        r[13] = 81;
+        let mut c = r.clone();
+        c[10] = 0x2A;
+        c[13] = 1;
+        f.replies.extend([vec![r], vec![c]]);
+        assert_eq!(read1(&mut f, m), at(pctl(81), Charging::Yes), "D1: charging on the cable (GET 2A)");
         assert!(permit(&ident(m), ReportKind::Output, &V3_GET).is_some());
         // (The gap: a reading kept within five minutes, asked again after.)
         let kept = Some((1_000, at(pctl(81), Charging::No)));

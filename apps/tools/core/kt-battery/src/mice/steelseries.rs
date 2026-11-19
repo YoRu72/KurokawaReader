@@ -10,6 +10,13 @@
 //   Rival Pro (interface 2, UWB base): output 00 92 → 92 00 <mouse %> <flag> <spare battery %>.
 // The headsets of steelseries.cpp (Arctis 1 / 7 / 9 / Pro / Nova …) and steelseries_elite.cpp (Arctis Nova Elite base
 // station 2244) are the headset piece's.
+// D1 (the original's v1.1.0 steelseries.cpp at commit 7cc44f2; its references: rivalcfg issue 276 and its
+// device_aerox3_wireless_gen2 branch, yurtemre7/steel-mouse): the Aerox 3 Wireless CS2 Dragon Lore Edition (1878
+// receiver, 187A cable) with the step layout; the Aerox 3 Wireless Gen 2 (1890 / 1892) with a percent layout — [1] 00 on
+// battery, 01 charging, 02 charged on the cable; [2] 0–100 (FF not measured yet); 00 00 through the receiver: the
+// mouse off. SteelSeries GG keeps its own commands going and the receiver answers only the latest: the request is
+// resent every 100 ms until a reply echoes it (within one second); the receiver's 40 FF (it cannot reach the mouse)
+// ends the wait.
 // Changed here: the Aerox level as its own 0–20 steps (the original: × 5 %); the Rival 650 on cable and receiver one
 // card by the pair rule.
 // Copyright (C) 2026 Kurokawa contributors. Std only.
@@ -28,6 +35,10 @@ pub static MODELS: &[Model] = &[
     m(0x185A, "SteelSeries Aerox 9 Wireless", Via::Cable, 3, "ss:aerox9"),
     m(0x1840, "SteelSeries Prime Wireless", Via::Receiver, 3, "ss:prime"),
     m(0x1842, "SteelSeries Prime Wireless", Via::Cable, 3, "ss:prime"),
+    m(0x1878, "SteelSeries Aerox 3 Wireless CS2 Dragon Lore Edition", Via::Receiver, 3, "ss:aerox3dl"),
+    m(0x187A, "SteelSeries Aerox 3 Wireless CS2 Dragon Lore Edition", Via::Cable, 3, "ss:aerox3dl"),
+    m(0x1890, "SteelSeries Aerox 3 Wireless Gen 2", Via::Receiver, 3, "ss:aerox3g2").arg(3),
+    m(0x1892, "SteelSeries Aerox 3 Wireless Gen 2", Via::Cable, 3, "ss:aerox3g2").arg(3),
     m(0x1830, "SteelSeries Rival 3 Wireless", Via::Receiver, 3, "").arg(1),
     m(0x1872, "SteelSeries Rival 3 Wireless Gen 2", Via::Receiver, 3, "").arg(1),
     m(0x172B, "SteelSeries Rival 650 Wireless", Via::Cable, 0, "ss:rival650").arg(1),
@@ -40,12 +51,50 @@ pub const AEROX_RX: [u8; 2] = [0x00, 0xD2];
 pub const RIVAL: [u8; 3] = [0x00, 0xAA, 0x01];
 pub const RIVAL_PRO: [u8; 2] = [0x00, 0x92];
 
+/// The Aerox request resent every 100 ms until a reply echoes it, within one second: Ok(reply), Err(Refused) for the
+/// receiver's «cannot reach the mouse» (40 FF).
+fn echo(ch: &mut Chans, req: &[u8; 2], min: usize, deadline: Instant) -> Result<Vec<u8>, TErr> {
+    let end = deadline.min(Instant::now() + ms(1000));
+    let mut last = Err(TErr::Timeout);
+    while Instant::now() < end {
+        last = out_ask(ch, req, ms(100), end, &mut |r| {
+            if r.len() >= min && r[0] == req[1] {
+                Some(Ok(r.to_vec()))
+            } else if r.len() >= 2 && r[0] == 0x40 && r[1] == 0xFF {
+                Some(Err(TErr::Refused))
+            } else {
+                None
+            }
+        })
+        .and_then(|x| x);
+        if last != Err(TErr::Timeout) {
+            break;
+        }
+    }
+    last
+}
+
 pub fn read(ch: &mut Chans, m: &Model, deadline: Instant, now: u64) -> Outcome {
     match m.arg {
+        // (Aerox 3 Wireless Gen 2: the percent layout.)
+        3 => {
+            let req = if m.via == Via::Cable { AEROX_CABLE } else { AEROX_RX };
+            match echo(ch, &req, 3, deadline) {
+                Ok(r) if r[1] > 0x02 => no_level(Charging::Unknown, now),
+                Ok(r) if m.via != Via::Cable && r[1] == 0 && r[2] == 0 => unlinked(now),
+                Ok(r) => match pct(i64::from(r[2])) {
+                    Some(l) => got(l, charging(r[1] != 0), now),
+                    None => no_level(charging(r[1] != 0), now),
+                },
+                Err(TErr::Refused) => unlinked(now),
+                Err(e) => failed(&e),
+            }
+        }
         // (Aerox, Prime.)
         0 => {
             let req = if m.via == Via::Cable { AEROX_CABLE } else { AEROX_RX };
-            match out_ask(ch, &req, ms(300), deadline, &mut |r| if r.len() >= 2 { Some(r[1]) } else { None }) {
+            match echo(ch, &req, 2, deadline).map(|r| r[1]) {
+                Err(TErr::Refused) => unlinked(now),
                 Ok(b) => {
                     let raw = b & 0x7F;
                     if raw == 0 {
@@ -107,5 +156,28 @@ mod tests {
         let mut f = fake(pro);
         f.replies.push_back(vec![vec![0x00, 0x92]]);
         assert_eq!(read1(&mut f, pro), Outcome::NoAnswer, "short");
+        // (D1: the echo — GG's reply to its own command skipped, our request resent; 40 FF: the mouse unreachable.)
+        let mut f = fake(rx);
+        f.replies.extend([vec![vec![0x00, 0x61, 0x01]], vec![vec![0x00, 0xD2, 0x05]]]);
+        assert_eq!(read1(&mut f, rx), at(steps(4, 20).unwrap(), Charging::No));
+        assert_eq!(f.sent, vec![AEROX_RX.to_vec(), AEROX_RX.to_vec()]);
+        let mut f = fake(rx);
+        f.replies.push_back(vec![vec![0x00, 0x40, 0xFF]]);
+        assert_eq!(read1(&mut f, rx), unlinked(7));
+        let g2 = model("mk-steelseries", 0x1890);
+        let mut f = fake(g2);
+        f.replies.push_back(vec![vec![0x00, 0xD2, 0x01, 67]]);
+        assert_eq!(read1(&mut f, g2), at(pctl(67), Charging::Yes), "Gen 2: a percentage");
+        let mut f = fake(g2);
+        f.replies.push_back(vec![vec![0x00, 0xD2, 0x00, 0x00]]);
+        assert_eq!(read1(&mut f, g2), unlinked(7), "00 00 through the receiver: off");
+        let g2c = model("mk-steelseries", 0x1892);
+        let mut f = fake(g2c);
+        f.replies.push_back(vec![vec![0x00, 0x92, 0x02, 0xFF]]);
+        assert_eq!(read1(&mut f, g2c), no_level(Charging::Yes, 7), "FF: not measured yet");
+        let dl = model("mk-steelseries", 0x187A);
+        let mut f = fake(dl);
+        f.replies.push_back(vec![vec![0x00, 0x92, 0x8B]]);
+        assert_eq!(read1(&mut f, dl), at(steps(10, 20).unwrap(), Charging::Yes), "the Dragon Lore's capture: 50 %, charging");
     }
 }

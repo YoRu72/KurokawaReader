@@ -12,6 +12,8 @@ pub mod autostart;
 pub mod bluetooth;
 #[path = "../src/connect.rs"]
 pub mod connect;
+#[path = "../src/fastpair.rs"]
+pub mod fastpair;
 #[path = "../src/galaxybuds.rs"]
 pub mod galaxybuds;
 #[path = "../src/heads/mod.rs"]
@@ -44,6 +46,8 @@ pub mod macparse;
 pub mod mice;
 #[path = "../src/model.rs"]
 pub mod model;
+#[path = "../src/nothingear.rs"]
+pub mod nothingear;
 #[path = "../src/notice.rs"]
 pub mod notice;
 #[path = "../src/pads/mod.rs"]
