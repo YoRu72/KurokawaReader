@@ -407,7 +407,11 @@ pub fn propose(marks: &[Mark], changed: &BTreeMap<u8, Vec<u8>>) -> Proposal {
         kinds.dedup();
         let weak = kinds.len() < 2;
         for id in ids {
-            let snaps: Vec<&Snap> = lv.iter().map(|m| m.snaps.iter().find(|s| s.id == id).expect("filtered above")).collect();
+            // (Every level mark's snapshot of this report — a mark without one leaves the report out, never a panic.)
+            let snaps: Vec<&Snap> = lv.iter().filter_map(|m| m.snaps.iter().find(|s| s.id == id)).collect();
+            if snaps.len() != lv.len() {
+                continue;
+            }
             let len = snaps.iter().map(|s| s.bytes.len()).min().unwrap_or(0).min(usize::from(defs::MAX_BYTE) + 1);
             for byte in 1..len {
                 let mut best: Option<LevelCand> = None;
@@ -416,7 +420,7 @@ pub fn propose(marks: &[Mark], changed: &BTreeMap<u8, Vec<u8>>) -> Proposal {
                         continue;
                     }
                     let field = Field { report: id, byte: byte as u16, mask, shift };
-                    let values: Vec<(MarkKind, u32)> = lv.iter().zip(&snaps).map(|(m, s)| (m.kind, u32::from((s.bytes[byte] & mask) >> shift))).collect();
+                    let values: Vec<(MarkKind, u32)> = lv.iter().zip(&snaps).map(|(m, s)| (m.kind, u32::from((s.bytes.get(byte).copied().unwrap_or(0) & mask) >> shift))).collect();
                     if let Some(c) = fit(field, &values, weak, changed.get(&id).and_then(|c| c.get(byte)).copied().unwrap_or(0)) {
                         if best.as_ref().map_or(true, |b| c.score > b.score) {
                             best = Some(c);
@@ -481,7 +485,7 @@ fn fit(field: Field, values: &[(MarkKind, u32)], weak: bool, changed_bits: u8) -
     }
     if top > 20 {
         let s = if fall { Scale::Linear { min: top, max: 0, steps: false } } else { Scale::Linear { min: 0, max: top, steps: false } };
-        let near_top = full_v.map_or(false, |f| if fall { f * 10 <= top } else { f * 10 >= top * 9 });
+        let near_top = full_v.map_or(false, |f| if fall { f.saturating_mul(10) <= top } else { f.saturating_mul(10) >= top.saturating_mul(9) });
         cands.push((Fit::Full, s, if near_top { 30 } else { 10 }));
     }
     for (f, scale, bonus) in cands {
@@ -523,19 +527,25 @@ fn propose_charging(marks: &[Mark], level: Option<Field>) -> Vec<ChargeCand> {
     let mut out = Vec::new();
     let ids: Vec<u8> = on[0].snaps.iter().map(|s| s.id).filter(|id| on.iter().chain(&off).all(|m| m.snaps.iter().any(|s| s.id == *id))).collect();
     for id in ids {
-        let get = |m: &&Mark| m.snaps.iter().find(|s| s.id == id).expect("filtered above").clone();
-        let a: Vec<Snap> = on.iter().map(get).collect();
-        let b: Vec<Snap> = off.iter().map(get).collect();
+        let get = |m: &&Mark| m.snaps.iter().find(|s| s.id == id).cloned();
+        let a: Vec<Snap> = on.iter().filter_map(get).collect();
+        let b: Vec<Snap> = off.iter().filter_map(get).collect();
+        // (A mark without this report leaves it out, never a panic.)
+        let (Some(a0), Some(b0)) = (a.first(), b.first()) else { continue };
+        if a.len() != on.len() || b.len() != off.len() {
+            continue;
+        }
         let len = a.iter().chain(&b).map(|s| s.bytes.len()).min().unwrap_or(0).min(usize::from(defs::MAX_BYTE) + 1);
         for byte in 1..len {
             let moved = a.iter().chain(&b).fold(0u8, |m, s| m | s.moved.get(byte).copied().unwrap_or(0));
-            let diff_bits = (a[0].bytes[byte] ^ b[0].bytes[byte]).count_ones() as i32;
+            let at = |s: &Snap| s.bytes.get(byte).copied().unwrap_or(0);
+            let diff_bits = (at(a0) ^ at(b0)).count_ones() as i32;
             for bit in 0..8u8 {
                 if moved >> bit & 1 == 1 {
                     continue;
                 }
-                let v = |s: &Snap| s.bytes[byte] >> bit & 1;
-                let va = v(&a[0]);
+                let v = |s: &Snap| at(s) >> bit & 1;
+                let va = v(a0);
                 if !a.iter().all(|s| v(s) == va) || !b.iter().all(|s| v(s) != va) {
                     continue;
                 }

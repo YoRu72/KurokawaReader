@@ -132,14 +132,14 @@ impl Scheduler {
             Some(s) if s.in_flight.map(|f| f.0) == Some(t.seq) => s.misses,
             _ => return Done::Stale,
         };
-        let next_miss = self.backoff(misses + 1);
-        let s = self.slots.get_mut(&t.key).expect("checked above");
+        let next_miss = self.backoff(misses.saturating_add(1));
+        let Some(s) = self.slots.get_mut(&t.key) else { return Done::Stale };
         s.in_flight = None;
         match out {
             Outcome::Read(_) => {
                 s.asleep = false;
                 s.misses = 0;
-                s.next_due = now + interval;
+                s.next_due = now.saturating_add(interval);
             }
             Outcome::Asleep => {
                 s.asleep = true;
@@ -147,8 +147,8 @@ impl Scheduler {
                 s.next_due = u64::MAX;
             }
             Outcome::NoAnswer | Outcome::Failed => {
-                s.misses = misses + 1;
-                s.next_due = now + next_miss;
+                s.misses = misses.saturating_add(1);
+                s.next_due = now.saturating_add(next_miss);
             }
         }
         Done::Accepted
@@ -166,12 +166,12 @@ impl Scheduler {
         let mut gone = Vec::new();
         let keys: Vec<String> = self.slots.iter().filter(|(_, s)| s.in_flight.map_or(false, |f| f.1 <= now)).map(|(k, _)| k.clone()).collect();
         for k in keys {
-            let misses = self.slots[&k].misses + 1;
+            let Some(misses) = self.slots.get(&k).map(|s| s.misses.saturating_add(1)) else { continue };
             let wait = self.backoff(misses);
-            let s = self.slots.get_mut(&k).unwrap();
+            let Some(s) = self.slots.get_mut(&k) else { continue };
             s.in_flight = None;
             s.misses = misses;
-            s.next_due = now + wait;
+            s.next_due = now.saturating_add(wait);
             gone.push(k);
         }
         gone

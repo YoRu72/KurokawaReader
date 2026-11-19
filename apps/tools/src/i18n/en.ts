@@ -3905,7 +3905,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   // (Device battery, piece P1: Linux and macOS — the access card, the Mac note, the systems' own words.)
   batNote_noAccess: "Linux does not let Kurokawa Tools read this device yet — see «Allow reading on Linux» below",
   batAccessTitle: "Allow reading on Linux",
-  batAccessBody: "Some devices here can only be read through their raw HID node, which Linux keeps closed to your account. A udev rule opens it to you — for the devices Kurokawa Tools has a reader for, and no others.",
+  batAccessBody: "Some devices here can only be read through their raw HID node, which Linux keeps closed to your account. A udev rule opens it to you — only the interface through which each device Kurokawa Tools has a reader for gives its battery, never a keyboard's typing or a mouse's movement; over Bluetooth, game controllers only.",
   batAccessFile: "The rule is saved here:",
   batAccessSteps: "Run these two commands in a terminal (they ask for your password):",
   batAccessAfter: "Then unplug the device and plug it in again (or turn it off and on), and refresh. Kurokawa Tools never runs these commands itself; to undo, delete the file from /etc/udev/rules.d.",

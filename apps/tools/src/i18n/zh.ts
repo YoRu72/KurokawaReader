@@ -2810,7 +2810,7 @@ export const zh: Partial<Strings> = {
   // (Device battery, piece P1: Linux and macOS — the access card, the Mac note, the systems' own words.)
   batNote_noAccess: "Linux 尚未允许 Kurokawa Tools 读取此设备——请看下方的“在 Linux 上允许读取”",
   batAccessTitle: "在 Linux 上允许读取",
-  batAccessBody: "这里的部分设备只能通过其 raw HID 节点读取，而 Linux 对你的账户关闭了它。udev 规则可以只为 Kurokawa Tools 有读取器的设备向你开放，不涉及其他设备。",
+  batAccessBody: "这里的部分设备只能通过其 raw HID 节点读取，而 Linux 对你的账户关闭了它。udev 规则只为你开放 Kurokawa Tools 有读取器的设备中报告电量的那个接口，绝不开放键盘输入或鼠标移动；蓝牙下仅限游戏手柄。",
   batAccessFile: "规则已保存在这里：",
   batAccessSteps: "在终端中运行以下两条命令（会要求输入密码）：",
   batAccessAfter: "然后拔下设备再插上（或关机再开机），并刷新。Kurokawa Tools 从不自行运行这些命令；如需撤销，请从 /etc/udev/rules.d 删除该文件。",

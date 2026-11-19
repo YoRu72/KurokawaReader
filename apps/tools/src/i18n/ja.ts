@@ -2810,7 +2810,7 @@ export const ja: Partial<Strings> = {
   // (Device battery, piece P1: Linux and macOS — the access card, the Mac note, the systems' own words.)
   batNote_noAccess: "Linux はまだ Kurokawa Tools にこのデバイスの読み取りを許可していません。下の「Linux で読み取りを許可」をご覧ください",
   batAccessTitle: "Linux で読み取りを許可",
-  batAccessBody: "ここにある一部のデバイスは raw HID ノードからしか読み取れず、Linux はそれをあなたのアカウントに閉じています。udev ルールで、Kurokawa Tools が読み取れるデバイスに限り、あなたに開くことができます。",
+  batAccessBody: "ここにある一部のデバイスは raw HID ノードからしか読み取れず、Linux はそれをあなたのアカウントに閉じています。udev ルールで、Kurokawa Tools が読み取れるデバイスのうち、バッテリーを伝えるインターフェースだけをあなたに開きます。キーボードの入力やマウスの動きは開きません。Bluetooth ではゲームコントローラーのみです。",
   batAccessFile: "ルールはここに保存されました:",
   batAccessSteps: "ターミナルで次の 2 つのコマンドを実行してください（パスワードを求められます）:",
   batAccessAfter: "その後デバイスを抜き差しし（または電源を入れ直し）、更新してください。Kurokawa Tools がこれらのコマンドを自ら実行することはありません。元に戻すには /etc/udev/rules.d からファイルを削除します。",

@@ -310,26 +310,20 @@ pub fn inventory_of(nodes: &[HidrawNode]) -> Vec<crate::report::HidSeen> {
         .collect()
 }
 
-/// Whether a node is one Tools would read: a reader's device, or one declaring a battery field (the generic reader).
+/// Whether a node is one the udev rule is for: a reader's device. (A device that only declares a battery field is not
+/// added: the rule would have to name it by its ids alone — its keyboard or pointer with it. The generic reader still
+/// reads such a node when the system already lets this user open it.)
 fn wanted(n: &HidrawNode) -> bool {
-    udev_listed(n.vid, n.pid) || hiddesc::parse(&n.descriptor).iter().any(|c| !c.battery.is_empty())
+    udev_listed(n.vid, n.pid)
 }
 
-/// The vendor and product ids the udev rule names: every reader's device, and the devices present now that declare a
-/// battery field and that the kernel does not read itself (never «every node»).
-pub fn rule_ids(sys: &Path) -> Vec<(u16, u16)> {
-    let supplies = sysfs::power_supplies(sys);
-    let mut ids = crate::udev::listed_ids();
-    for n in sysfs::hidraw_nodes(sys).iter().filter(|n| !sysfs::kept_by_kernel(&n.hid_path, &supplies) && wanted(n)) {
-        ids.push((n.vid, n.pid));
-    }
-    ids.retain(|(v, p)| *v != 0 && *p != 0);
-    ids.sort();
-    ids.dedup();
-    ids
+/// The vendor and product ids the udev rule names: the readers' devices, nothing else (never «every node», never a
+/// device for its battery field alone). `sys` is no longer looked at; kept so the shell's call stands.
+pub fn rule_ids(_sys: &Path) -> Vec<(u16, u16)> {
+    crate::udev::listed_ids()
 }
 
-/// Whether a node Tools would read is there but closed to this user (the page then offers the udev rule).
+/// Whether a reader's device is there but closed to this user (the page then offers the udev rule).
 pub fn needs_rule(sys: &Path, dev: &Path) -> bool {
     let supplies = sysfs::power_supplies(sys);
     sysfs::hidraw_nodes(sys).iter().filter(|n| !sysfs::kept_by_kernel(&n.hid_path, &supplies)).any(|n| wanted(n) && !hidraw::may_open(&dev.join(&n.node), false))
