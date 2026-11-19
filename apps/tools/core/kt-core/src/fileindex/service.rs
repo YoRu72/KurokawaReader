@@ -74,6 +74,9 @@ struct Shared {
     file: Option<PathBuf>,
     /// Set by `discard`: nothing is saved any more (the user removed the index).
     discarded: AtomicBool,
+    /// Held for the whole of a save, and by `discard` while it removes the file: a save already under way when the
+    /// user removes the index finishes first and its file is removed with the rest — it can never land afterwards.
+    saving: Mutex<()>,
 }
 
 pub struct Service {
@@ -155,6 +158,7 @@ impl Service {
             searcher: Searcher::new(),
             file: o.file.clone(),
             discarded: AtomicBool::new(false),
+            saving: Mutex::new(()),
         });
         let mut threads = Vec::new();
         {
@@ -241,6 +245,13 @@ impl Service {
         self.sh.ctrl.cancel.store(true, Ordering::SeqCst);
         self.sh.searcher.cancel_all();
         self.sh.cv.notify_all();
+        let _g = self.sh.saving.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(f) = &self.sh.file {
+            let mut tmp = f.as_os_str().to_os_string();
+            tmp.push(".tmp");
+            let _ = std::fs::remove_file(PathBuf::from(tmp));
+            let _ = std::fs::remove_file(f);
+        }
     }
 
     pub fn save_now(&self) {
@@ -303,6 +314,7 @@ fn change_under(c: &Change, root: &Path) -> bool {
 
 fn save(sh: &Shared) {
     let Some(f) = &sh.file else { return };
+    let _g = sh.saving.lock().unwrap_or_else(|e| e.into_inner());
     if sh.discarded.load(Ordering::SeqCst) {
         return;
     }
