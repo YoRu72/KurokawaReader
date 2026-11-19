@@ -38,6 +38,9 @@ export interface Settings {
   /** A computer's own background mixes (theme/sceneMix.ts): stored as made, never trusted — cleaned (cleanMixes) on every
    *  read; chosen as animBg «scene:mix:<id>». They travel in the settings backup with the rest. */
   animBgMixes?: unknown[];
+  /** A computer's own pictures and videos as the background (theme/bgLib.ts): the list, cleaned (cleanItems) on every
+   *  read; chosen as animBg «scene:user:<id>». The files themselves are in the app's storage, not in the backup. */
+  animBgLib?: unknown[];
   /** The download folder (a path, or a content: URI on Android); '' = the engine's default. */
   downloadDir: string;
   /** Folders chosen lately in the Add sheet, newest first. */

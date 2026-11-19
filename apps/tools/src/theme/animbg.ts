@@ -15,9 +15,14 @@
 // Scenes («scene:motes», «scene:night-snowfall»): compositions simulated by our Rust engine (core/kt-scene, loaded as wasm by sceneHost.ts, both
 // fetched only when a scene is chosen) and drawn on the same canvas, under the same gate, throttle and teardown. When
 // the engine cannot be loaded the background is «drift» instead, and one console.info line says why.
+// The reader's own pictures and videos («scene:user:<id>», theme/bgLib.ts + bgRun.ts) take the same path: the same
+// canvas, gate, veils and halos; their run plays a video only while the gate lets the background move.
 import { getSettings } from '../settings';
 import { contrast, over, type RGBA } from './themes';
 import type { SceneRun } from './sceneHost';
+import type { UserBgRun } from './bgRun';
+/** What draws a scene's frames: the engine's run, or a background of the reader's own (theme/bgRun.ts, «scene:user:<id>»). */
+type Run = SceneRun | UserBgRun;
 
 /** The two drawn designs. */
 export type Design = 'drift' | 'flow';
@@ -324,6 +329,7 @@ const CSS = `html.abg body{background:transparent}html.abg{background:var(--th-g
 .abg-canvas{position:absolute;inset:-16px;width:calc(100% + 32px);height:calc(100% + 32px);display:block;will-change:transform}
 .abg-grain{position:absolute;inset:0;background-size:96px 96px;pointer-events:none}
 html.abg-scene :is(${PANELS}):not([data-abg-bare]){background-image:linear-gradient(rgb(var(--abg-g) / var(--abg-p,var(--abg-p0,0))),rgb(var(--abg-g) / var(--abg-p,var(--abg-p0,0))))!important}
+html.abg-glasslight :is(${PANELS}){-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 html.abg-scene [data-abg-halo]{text-shadow:0 0 1px rgb(var(--abg-g) / .7),0 0 6px rgb(var(--abg-g) / .55),0 0 14px rgb(var(--abg-g) / .4)}
 html.abg-scene.abg-whole:not([data-glass]) .nav-rail{background-color:color-mix(in srgb,var(--md-surface-container-low,var(--md-surface)) 45%,transparent);border-color:transparent}
 html.abg-scene.abg-whole[data-glass] .nav-rail{background-color:var(--g-pane-t)}
@@ -363,6 +369,8 @@ function perfHook(): void {
     bench: (): Promise<unknown> => import('./sceneHost').then((m) => m.bench4096()),
     hash: (): number | null => globalInst?.scene?.hash() ?? null,
     liveScenes: (): Promise<number> => import('./sceneHost').then((m) => m.liveScenes()),
+    /** The background library's rules and the Wallpaper Engine reader (tests/bglibrary.cjs). */
+    bglib: () => Promise.all([import('./bgLib'), import('./bgRun'), import('./weLib'), import('../settings')]).then(([l, r, w, st]) => ({ lib: l, run: r, we: w, set: (x: Partial<import('../settings').Settings>) => st.updateSettings(x) })),
     /** The mixer's rules (tests/scenemix.cjs): compose, clean, the presets; `load` runs a mix in the engine once. */
     mix: (): Promise<unknown> => Promise.all([import('./sceneHost'), import('./sceneMix')]).then(([h, m]) => ({
       budget: m.MIX_BUDGET, presets: m.PRESETS, clean: m.cleanMix, cleanAll: m.cleanMixes,
@@ -379,7 +387,7 @@ const saidFallback = new Set<string>();
 /** Said once a page for each reason, quietly: why «drift» is drawn instead of the scene. */
 function noteFallback(why: unknown): void {
   const name = (why as { ktKind?: string } | null)?.ktKind ?? ''; const msg = why instanceof Error ? why.message : String(why);
-  const line = name === 'unknown' ? `[animbg] ${msg}: drawing «drift» instead`
+  const line = name === 'unknown' || name === 'missing' ? `[animbg] ${msg}: drawing «drift» instead`
     : name === 'trap' ? `[animbg] the scene engine stopped (${msg}): drawing «drift» instead`
     : `[animbg] scene engine unavailable (${msg}): drawing «drift» instead`;
   if (saidFallback.has(name)) return; saidFallback.add(name);
@@ -466,7 +474,7 @@ function clearScene(): void {
   for (const el of touched.panels) el.style.removeProperty('--abg-p'); for (const el of touched.halos) el.removeAttribute('data-abg-halo'); for (const el of touched.bare) el.removeAttribute('data-abg-bare');
   touched.panels = new Set(); touched.halos = new Set(); touched.bare = new Set(); lastPanels = []; lastSig = '';
   for (const v of ['--abg-g', '--abg-p0', '--abg-g-on']) html.style.removeProperty(v);
-  for (const c of ['abg-scene', 'abg-whole', 'abg-content']) if (html.classList.contains(c)) html.classList.remove(c);
+  for (const c of ['abg-scene', 'abg-whole', 'abg-content', 'abg-glasslight']) if (html.classList.contains(c)) html.classList.remove(c);
   untint();
 }
 /* ---------- «Match the app's colours to the background»: the scene's small UI palette on the theme's tokens ---------- */
@@ -503,7 +511,7 @@ class Inst {
   /** Self-throttle: how late the asked frames come (a running average, ms) and the slow-down it led to (1, 2 or 4). */
   raf2 = 0; late = 0; slow = 1; tooSlow = false; stepAt = 0;
   /** The design drawn (a scene's fallback: drift); a scene once loaded, and device pixels per CSS pixel of its canvas. */
-  kind: Design; scene: SceneRun | null = null; sceneState: 'loading' | 'ready' | 'failed' | null = null; k = 1;
+  kind: Design; scene: Run | null = null; sceneState: 'loading' | 'ready' | 'failed' | null = null; k = 1;
   pf: PerfCount = perfNew();
   /** The scrim made again: its timer (one at a time), when it is due, a second one asked after it, when it was last made,
    *  and the rare one with nothing seen to change (a running scene only). The page watched while a scene runs on it. */
@@ -528,14 +536,15 @@ class Inst {
   /** The engine and the scene fetched (lazily); on any failure, «drift» from then on. */
   async loadScene(id: string): Promise<void> {
     try {
-      const m = await import('./sceneHost'); const run = await m.openScene(id, this.seed);
+      const run: Run = id.startsWith('user:') ? await import('./bgRun').then((m) => m.openUserBg(id.slice(5))) : await import('./sceneHost').then((m) => m.openScene(id, this.seed));
       if (this.dead) { run.free(); return; }
       run.trapAfter = trapAfter(); run.thumb = this.art;
+      // (Mounted for the page or a preview: the reader's own background playing as the gate says from its first frame.)
       if (this.global) { run.dom = sceneDom; run.onScrim = (sc) => applyScrim(sc, run.veil); }
       run.setTheme(sceneTheme(this.host)); run.setSpeed(this.level === 'reduced' ? 0.6 : 1);
       this.scene = run; this.sceneState = 'ready'; this.host.dataset.engine = 'scene'; this.nextBake = performance.now() + RARE_BAKE_MS;
       this.page(); this.watchPage(); this.bakeTwice(800, 2500);
-      this.w = this.h = 0; this.resize();
+      this.w = this.h = 0; this.resize(); this.sync();
     } catch (e) { this.sceneFailed(e); }
   }
   /** The scene could not start, or its engine trapped: everything of it let go, «drift» drawn from now on. */
@@ -683,12 +692,17 @@ class Inst {
     if (this.dead) return;
     if (!this.host.isConnected) { this.destroy(); return; }
     const st = gate.st; const still = this.level === 'still' || !!st.still || this.tooSlow;
+    this.play(this.held === null && !still && !st.paused);
     if (this.held !== null) return;
     if (still) { this.cancel(); if (!this.drawn || this.vt !== STILL_AT[this.kind]) { this.vt = STILL_AT[this.kind]; this.draw(this.vt); } this.host.dataset.state = 'still'; return; }
     if (st.paused) { this.cancel(); this.host.dataset.state = 'paused'; return; }
     this.host.dataset.state = 'running';
     if (!this.timer && !this.raf) { this.last = 0; this.late = 0; this.stepAt = performance.now() + 1000; this.schedule(0); }
   }
+  /** A video of the reader's own plays only while the background may move. */
+  play(on: boolean): void { const r = this.scene; if (r && 'setRunning' in r) r.setRunning(on); }
+  /** The frames came late (a slow-down), or on time again: a background of the reader's own lightens the glass. */
+  slowed(): void { const r = this.scene; if (r && 'throttled' in r) r.throttled(this.slow > 1 || this.tooSlow); }
   schedule(wait: number): void { this.timer = window.setTimeout(() => { this.timer = 0; this.raf = requestAnimationFrame(this.tick); }, Math.max(0, wait)); }
   tick = (now: number): void => {
     this.raf = 0; if (this.dead) return;
@@ -704,9 +718,9 @@ class Inst {
     //  late at a quarter, the still frame. Back up again once they come on time.)
     if (this.tooSlow) return;
     if (p - this.stepAt > 2000) {
-      if (this.late > 14 && this.slow < 4) { this.slow *= 2; this.late = 0; this.stepAt = p; this.pf.slowDowns++; }
-      else if (this.late > 14) { this.tooSlow = true; this.pf.slowDowns++; this.sync(); for (const w of watchers) w(); return; }
-      else if (this.late < 2 && this.slow > 1) { this.slow /= 2; this.stepAt = p + 8000; this.pf.slowUps++; }
+      if (this.late > 14 && this.slow < 4) { this.slow *= 2; this.late = 0; this.stepAt = p; this.pf.slowDowns++; this.slowed(); }
+      else if (this.late > 14) { this.tooSlow = true; this.pf.slowDowns++; this.slowed(); this.sync(); for (const w of watchers) w(); return; }
+      else if (this.late < 2 && this.slow > 1) { this.slow /= 2; this.stepAt = p + 8000; this.pf.slowUps++; this.slowed(); }
     }
     this.host.dataset.slow = String(this.slow);
     this.draw(this.vt, gap);
@@ -763,6 +777,8 @@ export function syncAnimBg(): void {
   } else globalInst.refresh();
   for (const i of insts) if (i !== globalInst && i.host.isConnected) i.refresh();
 }
+/** The page's background mounted again (a background of the reader's own changed: its run reads it anew). */
+export function reloadAnimBg(): void { if (globalInst) { globalInst.destroy(); globalInst = null; } syncAnimBg(); }
 /** A small live preview inside `host` (the Appearance page); taken down when `host` leaves the page. */
 export function previewAnimBg(host: HTMLElement, kind: AnimKind, opts: { art?: boolean } = {}): () => void {
   const i = mountInst(host, kind, levelPref(), false, !!opts.art); return () => i.destroy();

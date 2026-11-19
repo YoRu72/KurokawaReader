@@ -59,6 +59,8 @@ export function editorDeps(rerender: () => void): EditorDeps {
 }
 const RESET_KEYS = ['theme', 'themeChosen', 'glassBlur', 'accent', 'accentCustom', 'accentPrev', 'darkTone', 'uiMode', 'uiScale', 'glassRail', 'glassBattery', 'themeKeepColours', 'animBg', 'animBgLevel', 'animBgWhere', 'animBgTint', 'animBgReact'] as const;
 type AnimPref = NonNullable<Settings['animBg']>; type AnimLevel = NonNullable<Settings['animBgLevel']>;
+/** «Your pictures and videos» chosen in the row while none of them is the background yet: the library shown. */
+let libShown = false;
 /** A computer's animated background: the choice, how much it moves, a live preview and one line saying what it does
  *  now and why (paused, still). Its engine (theme/animbg.ts) is fetched only once it is chosen. */
 function animRows(rerender: () => void): (HTMLElement | null)[] {
@@ -66,12 +68,21 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
   // (The hint says what the choice made does; a pick's third value would be an icon, so the words go here.)
   // («Motes», «Night snowfall»: scenes of the Rust engine — core/kt-scene, loaded as wasm only when chosen; drift where it cannot load.)
   // (The scenes are many: the row offers «Scene», and the grid below it shows them all, grouped, as pictures.)
-  const isSceneNow = pref.startsWith('scene:'); const entry = isSceneNow ? sceneEntry(pref.slice(6)) : undefined;
-  type Choice = 'off' | 'match' | 'drift' | 'flow' | 'scene';
-  const what = entry ? t(entry.hint as 'animBgHint') : isSceneNow && pref.startsWith('scene:mix:') ? t('mixMineHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
-  const choice = row(t('animBg'), pickButton<Choice>(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene', t('animBgScenes')]], isSceneNow ? 'scene' : (pref as Choice), (v) => { updateSettings({ animBg: v === 'scene' ? (isSceneNow ? pref : 'scene:night-snowfall') : v }); rerender(); }, t('close')), what);
-  if (pref === 'off') return [choice];
-  const grid = isSceneNow ? sceneGrid(pref.slice(6), rerender) : null;
+  // («Your pictures and videos»: «scene:user:<id>», drawn by the same engine path — views/bgLibrary.ts, theme/bgLib.ts.)
+  const isUser = pref.startsWith('scene:user:'); const mine = isUser || libShown; if (isUser) libShown = false;
+  const isSceneNow = pref.startsWith('scene:') && !isUser; const entry = isSceneNow ? sceneEntry(pref.slice(6)) : undefined;
+  type Choice = 'off' | 'match' | 'drift' | 'flow' | 'scene' | 'mine';
+  const what = mine ? t('animBgMineHint') : entry ? t(entry.hint as 'animBgHint') : isSceneNow && pref.startsWith('scene:mix:') ? t('mixMineHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
+  const choice = row(t('animBg'), pickButton<Choice>(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene', t('animBgScenes')], ['mine', t('animBgMine')]], mine ? 'mine' : isSceneNow ? 'scene' : (pref as Choice), (v) => {
+    libShown = v === 'mine';
+    if (v !== 'mine') updateSettings({ animBg: v === 'scene' ? (isSceneNow ? pref : 'scene:night-snowfall') : v });
+    rerender();
+  }, t('close')), what);
+  // (The library: drawn once its module is here — the row keeps its place meanwhile.)
+  const lib = mine ? h('div', { class: 'row abg-grid-row', 'data-bg-lib': '' }) : null;
+  if (lib) void import('./bgLibrary').then((m) => { if (lib.isConnected) m.fillLibrary(lib, rerender); });
+  if (pref === 'off' || (mine && !isUser)) return [choice, lib];
+  const grid = isSceneNow ? sceneGrid(pref.slice(6), rerender) : lib;
   const level: AnimLevel = s.animBgLevel ?? 'full';
   const levelRow = row(t('animBgLevel'), pickButton(t('animBgLevel'), [['full', t('animBgFull')], ['reduced', t('animBgReduced')], ['still', t('animBgStill')]], level, (v) => { updateSettings({ animBgLevel: v as AnimLevel }); rerender(); }, t('close')), level === 'full' ? t('animBgHint') : t(level === 'reduced' ? 'animBgReducedHint' : 'animBgStillHint'));
   // (A scene: where it shows, whether the app's colours follow it, how much it answers the mouse.)
@@ -80,7 +91,7 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
   const sceneRows = scene ? [
     row(t('animBgWhereRow'), pickButton(t('animBgWhereRow'), [['whole', t('animBgWhole')], ['content', t('animBgContent')]], where, (v) => { updateSettings({ animBgWhere: v as 'whole' | 'content' }); rerender(); }, t('close')), t('animBgWhereHint')),
     toggle(t('animBgTintRow'), s.animBgTint === true, (v) => { updateSettings({ animBgTint: v }); rerender(); }, t('animBgTintHint')),
-    row(t('animBgReactRow'), pickButton(t('animBgReactRow'), [['off', t('animBgReactOff')], ['subtle', t('animBgReactSubtle')], ['lively', t('animBgReactLively')]], react, (v) => { updateSettings({ animBgReact: v as 'off' | 'subtle' | 'lively' }); rerender(); }, t('close')), t('animBgReactHint')),
+    isUser ? null : row(t('animBgReactRow'), pickButton(t('animBgReactRow'), [['off', t('animBgReactOff')], ['subtle', t('animBgReactSubtle')], ['lively', t('animBgReactLively')]], react, (v) => { updateSettings({ animBgReact: v as 'off' | 'subtle' | 'lively' }); rerender(); }, t('close')), t('animBgReactHint')),
   ] : [];
   const box = h('div', { class: 'abg-preview', role: 'img', 'aria-label': t('animBgPreview') }, h('div', { class: 'abg-sample' }, h('b', null, t('animBgSample')), h('small', null, t('animBgSampleDim'))));
   const now = h('small', { class: 'src abg-now', 'aria-live': 'polite' });
