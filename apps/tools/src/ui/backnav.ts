@@ -50,7 +50,9 @@ export function wirePcBack(): void {
   // (The mouse's back button: its press kept from the page, so no text is selected and the browser does not go
   // back a page on its own. Its forward button, and Alt+→: forward again to where back came from.)
   window.addEventListener('mousedown', (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); }, true);
-  window.addEventListener('mouseup', (e) => { if (e.button === 3) { e.preventDefault(); goBack(); } else if (e.button === 4) { e.preventDefault(); history.forward(); } }, true);
+  // (The Files page on a computer keeps a history of its own per pane — Alt+←/→ and the side buttons walk that: views/filesPc.ts.)
+  const filesOwns = (): boolean => { const el = document.querySelector('.files-view.pcx'); return !!el && el.getClientRects().length > 0; };
+  window.addEventListener('mouseup', (e) => { if (filesOwns()) return; if (e.button === 3) { e.preventDefault(); goBack(); } else if (e.button === 4) { e.preventDefault(); history.forward(); } }, true);
   const typing = (e: Event) => !!(e.target as HTMLElement).matches?.('input, textarea, select, [contenteditable], [contenteditable] *');
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { if (!e.defaultPrevented && !e.altKey && !e.ctrlKey && !e.metaKey && !typing(e) && goBack('esc')) e.preventDefault(); return; }
@@ -58,7 +60,7 @@ export function wirePcBack(): void {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f' && (window.kurokawaTools as unknown as { fileSearch?: unknown } | undefined)?.fileSearch && document.documentElement.classList.contains('pc')) {
       e.preventDefault(); if (location.hash.startsWith('#/files')) window.dispatchEvent(new Event('kt:filesearch')); else { (window as unknown as { __ktFsearch?: number }).__ktFsearch = 1; navigate('/files'); } return;
     }
-    if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.ctrlKey || e.metaKey || e.shiftKey || typing(e)) return;
+    if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.ctrlKey || e.metaKey || e.shiftKey || typing(e) || filesOwns()) return;
     e.preventDefault(); if (e.key === 'ArrowLeft') goBack(); else history.forward();
   });
   // (For the tests and the audit: the stack as it stands.)

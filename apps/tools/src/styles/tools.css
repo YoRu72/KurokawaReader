@@ -1769,11 +1769,14 @@ html:not(.pc) .files-list.dense .files-row.picked .files-ic::after { content: ''
 .files-menu .files-menu-sub { margin-top: 12px; }
 
 /* ---- Files on a computer (views/filesPc.ts): details list, navigation pane, address bar, status bar ---- */
-html.pc .files-view.pcx { display: grid; grid-template-columns: var(--pcx-nav-w, 240px) 4px minmax(0, 1fr); align-items: start; }
-html.pc .files-view.pcx.pcx-solo, html.pc .files-view.pcx.pcx-nav-off { grid-template-columns: minmax(0, 1fr); }
-html.pc .files-view.pcx:not(.pcx-solo):not(.pcx-nav-off) > .pcx-main { grid-column: 3; }
-html.pc .files-view.pcx > .pcx-main { min-width: 0; overflow-x: clip; display: flex; flex-direction: column; min-height: 100vh; }
+html.pc .files-view.pcx { display: grid; grid-template-columns: var(--pcx-nav-w, 240px) 4px minmax(0, 1fr); align-items: start; align-content: start; min-height: 100vh; overflow-x: clip; }
+html.pc .files-view.pcx > :not(.pcx-nav):not(.pcx-sep) { grid-column: 3; min-width: 0; }
+html.pc .files-view.pcx > .pcx-nav { grid-column: 1; grid-row: 1 / span 40; }
+html.pc .files-view.pcx > .pcx-sep { grid-column: 2; grid-row: 1 / span 40; }
+html.pc .files-view.pcx.pcx-solo, html.pc .files-view.pcx.pcx-nav-off, html.pc .files-view.pcx.fs-on { grid-template-columns: minmax(0, 1fr); }
+html.pc .files-view.pcx.pcx-solo > *, html.pc .files-view.pcx.pcx-nav-off > :not(.pcx-nav):not(.pcx-sep), html.pc .files-view.pcx.fs-on > * { grid-column: 1; }
 html.pc .files-view.pcx.pcx-nav-off > .pcx-nav, html.pc .files-view.pcx.pcx-nav-off > .pcx-sep { display: none; }
+html.pc .files-view.pcx.fs-on { display: flex; flex-direction: column; min-height: 0; overflow-x: visible; } /* (the Everywhere panel is the page's own flex column) */
 .pcx-nav { position: sticky; top: 0; height: 100vh; overflow: auto; box-sizing: border-box; padding: 8px 6px 16px; background: var(--md-surface-container-low, var(--md-surface)); border-inline-end: 1px solid var(--md-outline-variant); scrollbar-width: thin; }
 .pcx-sep { position: sticky; top: 0; height: 100vh; cursor: col-resize; background: transparent; margin-inline-start: -2px; width: 4px; z-index: 2; }
 .pcx-sep:hover, .pcx-sep:focus-visible { background: var(--md-primary); outline: none; opacity: .5; }
@@ -1846,3 +1849,5 @@ html.pc .files-view.pcx .files-strip .files-roots, html.pc .files-view.pcx .file
 .pcx-mi svg, .pcx-mi-ic { width: 18px; height: 18px; flex: none; }
 .pcx-mi.on svg:last-child { color: var(--md-primary); }
 .pcx-band { position: fixed; z-index: 900; pointer-events: none; border: 1px solid var(--md-primary); background: color-mix(in srgb, var(--md-primary) 16%, transparent); border-radius: 2px; }
+.nv-l bdi { display: block; }
+[dir="rtl"] .nv-l bdi, [dir="rtl"] .pcx-mi bdi { text-align: right; }

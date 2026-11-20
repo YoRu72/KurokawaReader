@@ -73,7 +73,7 @@ export function mount(host: PcHost): PcCtl {
   const sortKey = `${LS}.sort.${host.side ?? 'a'}`;
   let sortS: SortSet = (() => { try { const s = JSON.parse(localStorage.getItem(sortKey) ?? 'null') as SortSet | null; if (s && s.sort) return s; } catch { /* none */ } return { sort: prefs.sort, desc: prefs.desc, ff: prefs.foldersFirst !== false }; })();
   const saveSort = () => { try { localStorage.setItem(sortKey, JSON.stringify(sortS)); } catch { /* none */ } };
-  const hasNav = host.side !== 'b'; let navOpen = st.nav !== false;
+  const hasNav = host.side !== 'b'; let navOpen = st.nav === undefined ? !host.dual : st.nav; // (beside a second pane the page is narrow: the pane waits until it is asked for)
   const hide = new Set(st.hide ?? []); const widths = (): Record<string, number> => ({ ...DEFW, ...(st.cols ?? {}) });
   let wMain = 9999; const squeezed = (c: Col): boolean => (c === 'type' && wMain < 620) || (c === 'mod' && wMain < 430);
   const vis = (): Col[] => ['name', ...COLS.filter((c) => !hide.has(c) && !squeezed(c))];
@@ -81,18 +81,17 @@ export function mount(host: PcHost): PcCtl {
   const details = (): boolean => prefs.view === 'list';
 
   // ---- the layout: the page's own parts move into one column; the navigation pane stands beside it
-  const main = h('div', { class: 'pcx-main' }); main.append(...root.childNodes);
   const bar = h('div', { class: 'pcx-bar' }); const addr = h('div', { class: 'pcx-addr', dir: 'ltr' }); const errEl = h('p', { class: 'pcx-err', role: 'alert', hidden: true });
   const status = h('div', { class: 'pcx-status', role: 'status', 'aria-label': t('pcStatus') }); const stText = h('span', { class: 'pcx-st-text' }); const stCount = h('span', { class: 'pcx-st-count' });
   const nav = h('nav', { class: 'pcx-nav', 'aria-label': t('pcNavPane') }) as HTMLElement; const sep = h('div', { class: 'pcx-sep', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical', 'aria-label': t('pcNavResize') });
-  root.append(...(hasNav ? [nav, sep] : []), main); root.classList.add('pcx'); if (!hasNav) root.classList.add('pcx-solo');
-  const strip = main.querySelector('.files-strip'); strip?.before(bar, errEl); main.append(status);
+  root.append(...(hasNav ? [nav, sep] : [])); root.classList.add('pcx'); if (!hasNav) root.classList.add('pcx-solo');
+  const strip = root.querySelector(':scope > .files-strip'); strip?.before(bar, errEl); root.append(status);
   listEl.tabIndex = 0; listEl.setAttribute('role', 'grid'); listEl.setAttribute('aria-multiselectable', 'true');
-  const topbar = main.querySelector('.topbar') as HTMLElement | null;
+  const topbar = root.querySelector(':scope > .topbar') as HTMLElement | null;
   const fitTop = () => { const h0 = topbar?.offsetHeight ?? 56; root.style.setProperty('--pcx-tb', `${h0}px`); root.style.setProperty('--pcx-bar', `${h0 + bar.offsetHeight}px`); };
   // (A narrow page — two panes side by side — drops Type, then Modified, rather than running out of its column.)
-  const fitW = () => { const w = main.clientWidth; if (!w) return; const was = vis().join(); wMain = w; if (vis().join() !== was) { paintHead(); host.redraw(); } };
-  let ro: ResizeObserver | null = null; if (typeof ResizeObserver === 'function') { ro = new ResizeObserver(() => { fitTop(); fitW(); }); if (topbar) ro.observe(topbar); ro.observe(bar); ro.observe(main); } fitTop();
+  const fitW = () => { const w = root.clientWidth - (hasNav && navOpen ? nav.offsetWidth + 4 : 0); if (w <= 0) return; const was = vis().join(); wMain = w; if (vis().join() !== was) { paintHead(); host.redraw(); } };
+  let ro: ResizeObserver | null = null; if (typeof ResizeObserver === 'function') { ro = new ResizeObserver(() => { fitTop(); fitW(); }); if (topbar) ro.observe(topbar); ro.observe(bar); ro.observe(root); } fitTop();
   const setNavW = (w: number, keep = true) => { const v = Math.max(180, Math.min(360, Math.round(w))); root.style.setProperty('--pcx-nav-w', `${v}px`); if (keep) { st.navW = v; writeSaved(st); } };
   setNavW(st.navW ?? 240, false);
   const paintNavOpen = () => { root.classList.toggle('pcx-nav-off', !navOpen || !hasNav); navBtn.setAttribute('aria-pressed', String(navOpen)); };
@@ -111,7 +110,7 @@ export function mount(host: PcHost): PcCtl {
   const navBtn = iconButton('sidebar', t('pcNavPane'), toggleNav); navBtn.classList.add('pcx-navbtn'); navBtn.hidden = !hasNav; navBtn.setAttribute('aria-pressed', String(navOpen));
   const backB = iconButton('back', t('back'), () => step(-1)); const fwdB = iconButton('arrowRight', t('pcForward'), () => step(1)); fwdB.classList.add('pcx-fwd');
   const upB = iconButton('arrowUp', t('pcUp'), () => host.goUp()); const refresh = () => { kids.clear(); pending.clear(); host.load(); }; const refB = iconButton('refresh', t('refresh'), refresh);
-  const step = (d: number) => { console.log('STEP', d, host.side, hs.hi, hs.hist.join('|')); const to = hs.hi + d; if (to < 0 || to >= hs.hist.length) return; hs.hi = to; moving = hs.hist[to]; host.go(moving, 'replace'); paintBar(); };
+  const step = (d: number) => { const to = hs.hi + d; if (to < 0 || to >= hs.hist.length) return; hs.hi = to; moving = hs.hist[to]; host.go(moving, 'replace'); paintBar(); };
   const paintBar = () => { backB.disabled = hs.hi <= 0; fwdB.disabled = hs.hi >= hs.hist.length - 1; upB.disabled = !host.upOf(); };
   bar.append(navBtn, backB, fwdB, upB, addr, refB); paintNavOpen();
   const driveOf = (p: string): PcRoot | null => host.roots().filter((r) => r.readable !== false && (p === r.path || p.startsWith(r.path.replace(/\/+$/, '') + '/'))).sort((a, b) => a.path.length - b.path.length)[0] ?? null;

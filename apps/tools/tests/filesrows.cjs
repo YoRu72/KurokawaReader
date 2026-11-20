@@ -63,7 +63,7 @@ async function run(browser, port, lang, pc, z) {
     ok(L('comfortable: no date cell at the end'), await p.$eval('.files-row', (r) => !r.querySelector('.files-date')));
   } else {
     const r = await p.$eval('.files-row', (e) => ({ h: Math.round(e.getBoundingClientRect().height), dense: !!e.closest('.dense') }));
-    ok(L('the computer keeps its row (not the dense one)'), !r.dense && r.h !== 56 && !!(await p.$('.files-row .icon-btn[data-icon="more"]')) && (await p.$$('.files-uprow')).length === 0, r);
+    ok(L('the computer has its own details row (32 px, not the phone\'s dense one, no ⋮ on the row)'), !r.dense && r.h === 32 && !!(await p.$('.files-row.d-row')) && !(await p.$('.files-row .icon-btn[data-icon="more"]')) && (await p.$$('.files-uprow')).length === 0, r);
     ok(L('the computer keeps its crumbs and its title lines'), (await p.$eval('.files-crumbs', (e) => getComputedStyle(e).position)) !== 'fixed' && (await p.$eval('.files-strip', (e) => getComputedStyle(e).display)) === 'contents' && (await p.$eval('.files-path', (e) => getComputedStyle(e).display)) === 'none');
     if (SHOTS) await p.screenshot({ path: path.join(SHOTS, 'F2a-pc.png') });
   }

@@ -181,7 +181,7 @@ async function gallery(browser, port, z, lang) {
   // a computer: Ctrl + wheel in the grid
   const pc = await page(browser, port, z, lang, { at: K + '/Pics', seed: SEED_PICS, pc: true });
   await pc.p.click(btn); await pc.p.waitForTimeout(500); const g0 = await colsOf(pc.p);
-  await pc.p.mouse.move(500, 400); await pc.p.keyboard.down('Control'); await pc.p.mouse.wheel(0, 120); await pc.p.waitForTimeout(400); await pc.p.keyboard.up('Control'); const g1 = await colsOf(pc.p);
+  const lb = await pc.p.locator('.files-list').boundingBox(); await pc.p.mouse.move(lb.x + 120, lb.y + 80); await pc.p.keyboard.down('Control'); await pc.p.mouse.wheel(0, 120); await pc.p.waitForTimeout(400); await pc.p.keyboard.up('Control'); const g1 = await colsOf(pc.p);
   ok(L(`PC: Ctrl + wheel changes the columns in the grid (${g0} -> ${g1})`), g1 === g0 + 1, [g0, g1]);
   await pc.p.close();
 }

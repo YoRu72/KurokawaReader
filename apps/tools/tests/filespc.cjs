@@ -40,7 +40,7 @@ function fakeTauri({ lang, dual }) {
   const br = await chromium.launch(); const esb = require('esbuild');
   const out = esb.buildSync({ entryPoints: [path.join(__dirname, '..', 'src/i18n', `${lang}.ts`)], bundle: true, write: false, format: 'cjs', platform: 'node' }); const m = { exports: {} }; new Function('module', 'exports', out.outputFiles[0].text)(m, m.exports); const T = { ...m.exports.en, ...m.exports[lang] };
   const L = (s) => `[${lang}] ${s}`; const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name) }); };
-  const open = async (w, hgt, dual) => { const ctx = await br.newContext({ viewport: { width: w, height: hgt } }); const page = await ctx.newPage(); page.errors = []; page.on('pageerror', (e) => page.errors.push(String(e))); await page.route(/api\.github\.com|raw\.githubusercontent\.com/, (r) => r.fulfill({ status: 404, body: '' })); await page.addInitScript(fakeTauri, { lang, dual: !!dual }); await page.addInitScript({ content: BRIDGE }); return page; };
+  const open = async (w, hgt, dual) => { const ctx = await br.newContext({ viewport: { width: w, height: hgt }, colorScheme: lang === 'en' ? 'dark' : 'light' }); const page = await ctx.newPage(); page.errors = []; page.on('pageerror', (e) => page.errors.push(String(e))); await page.route(/api\.github\.com|raw\.githubusercontent\.com/, (r) => r.fulfill({ status: 404, body: '' })); await page.addInitScript(fakeTauri, { lang, dual: !!dual }); await page.addInitScript({ content: BRIDGE }); return page; };
   const page = await open(1280, 800);
   const goTo = async (p) => { await page.goto(`${base}#/files?p=${encodeURIComponent(p)}`); await page.waitForSelector('.d-row', { timeout: 15000 }); await page.waitForTimeout(350); };
   const names = () => page.evaluate(() => [...document.querySelectorAll('.d-row .files-name')].map((x) => x.getAttribute('title')));
@@ -61,7 +61,7 @@ function fakeTauri({ lang, dual }) {
   ok(L('size at the end; a date and a time in the Modified cell'), /\d/.test(cells.zip[1]) && cells.dir[1] === '' && /\d+:\d\d/.test(cells.zip[3]), cells);
   const bb = await row('apple.txt').boundingBox(); const icb = await row('apple.txt').locator('.files-ic').boundingBox();
   ok(L('rows 32 px high, the icon 20 px'), Math.round(bb.height) === 32 && Math.round(icb.width) === 20, [bb.height, icb.width]);
-  await shot(page, 'F5a-pc-' + lang + '.png');
+  
   // sort: click, again flips; the arrow shows it
   await page.click('.pcx-hb[data-col="size"]'); await page.waitForTimeout(200);
   ok(L('click Size: by size, smallest first (folders first)'), (await names()).slice(2).join(',') === 'echo.txt,apple.txt,cherry.zip,delta.png,banana.mp4', await names());
@@ -109,7 +109,7 @@ function fakeTauri({ lang, dual }) {
   await page.click('.pcx-navbtn'); await page.waitForTimeout(250); ok(L('the button opens it again'), await page.locator('.pcx-nav').isVisible());
 
   // ---- 3. the address bar and history
-  await goTo('/home/u/src'); await shot(page, 'F5a-pc-tree-' + lang + '.png');
+  await goTo('/home/u/src'); await shot(page, lang === 'en' ? 'F5a-pc-en-dark.png' : 'F5a-pc-ar-light.png');
   const cr = await page.evaluate(() => [...document.querySelectorAll('.pcx-crumb')].map((x) => x.textContent.trim()));
   ok(L('crumbs as buttons with a chevron after each'), cr.join('/') === '//home/u/src'.replace('//', '/').split('/').join('/') || (cr.length === 4 && cr[3] === 'src'), cr);
   await page.click('.pcx-crumb.last + .pcx-chev'); await page.waitForSelector('.pcx-menu');
@@ -121,9 +121,8 @@ function fakeTauri({ lang, dual }) {
   await page.fill('.pcx-input', '/home/u/nowhere'); await page.keyboard.press('Enter'); await page.waitForTimeout(300);
   ok(L('a path that does not exist: a calm error, still editing'), (await page.locator('.pcx-err').isVisible()) && (await page.locator('.pcx-err').textContent()) === T.pcNoPath && await page.locator('.pcx-input').count() === 1, await page.evaluate(() => ({ err: document.querySelector('.pcx-err')?.outerHTML, inp: document.querySelectorAll('.pcx-input').length, ae: document.activeElement?.className })));
   await page.keyboard.press('Escape'); await page.waitForTimeout(150); ok(L('Esc cancels: the crumbs again, nothing moved'), await page.locator('.pcx-input').count() === 0 && (await here()) === '/home/u/src/Alpha' && !(await page.locator('.pcx-err').isVisible()));
-  await page.keyboard.press('Alt+d'); await page.fill('.pcx-input', '"/home/u/dst"'); await page.keyboard.press('Enter'); await waitHere('/home/u/dst');
+  await page.keyboard.press('Alt+d'); await page.fill('.pcx-input', '"/home/u/dst"'); await shot(page, 'F5a-address-edit-' + lang + '.png'); await page.keyboard.press('Enter'); await waitHere('/home/u/dst');
   ok(L('a path pasted with quotes is understood'), (await here()) === '/home/u/dst', await here());
-  await shot(page, 'F5a-address-edit-' + lang + '.png');
   await page.keyboard.press('F4'); await page.fill('.pcx-input', '/home/u/src/banana.mp4'); await page.keyboard.press('Enter'); await waitHere('/home/u/src');
   ok(L('a file path: its folder opens and the file is selected'), (await here()) === '/home/u/src' && (await picked()).join() === 'banana.mp4', [await here(), await picked()]);
   await page.keyboard.press('Alt+ArrowLeft'); await waitHere('/home/u/dst'); const bk = await here(); await page.keyboard.press('Alt+ArrowRight'); await waitHere('/home/u/src'); const fw = await here();
@@ -147,7 +146,7 @@ function fakeTauri({ lang, dual }) {
   await page.keyboard.press('Control+a'); ok(L('Ctrl+A selects all'), (await picked()).length === 7);
   await page.keyboard.press('Escape'); await page.waitForTimeout(150); ok(L('Esc clears the selection'), (await picked()).length === 0);
   const lastB = await row('echo.txt').boundingBox(); const firstB = await row('Alpha').boundingBox();
-  await page.mouse.move(lastB.x + 400, lastB.y + lastB.height + 50); await page.mouse.down(); await page.mouse.move(lastB.x + 420, firstB.y + 40, { steps: 6 }); await shot(page, 'F5a-band-' + lang + '.png'); await page.mouse.up(); await page.waitForTimeout(150);
+  await page.mouse.move(lastB.x + 400, lastB.y + lastB.height + 50); await page.mouse.down(); await page.mouse.move(lastB.x + 420, firstB.y + 40, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(150);
   ok(L('rubber band over empty space selects the rows it touches'), (await picked()).length >= 5, await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); return [e?.className, e?.parentElement?.className]; }, [lastB.x + 400, lastB.y + lastB.height + 50]));
   await page.mouse.click(lastB.x + 400, lastB.y + lastB.height + 50); await page.waitForTimeout(100); ok(L('a click on empty space clears'), (await picked()).length === 0);
   await row('apple.txt').click(); await page.keyboard.press('F2'); await page.waitForSelector('.pcx-rename');
@@ -178,15 +177,15 @@ function fakeTauri({ lang, dual }) {
   await page.context().close();
 
   // ---- 7. two panes: each with its own address and history
-  const p2 = await open(1280, 800, true); p2.on('console', (m) => { if (/STEP/.test(m.text())) console.log(m.text()); }); await p2.goto(`${base}#/files?p=${encodeURIComponent('/home/u/src')}`); await p2.waitForSelector('.files-pane[data-side="b"] .d-row', { timeout: 15000 }); await p2.waitForTimeout(500);
+  const p2 = await open(1280, 800, true); await p2.goto(`${base}#/files?p=${encodeURIComponent('/home/u/src')}`); await p2.waitForSelector('.files-pane[data-side="b"] .d-row', { timeout: 15000 }); await p2.waitForTimeout(500);
   const where = () => p2.evaluate(() => ['a', 'b'].map((s) => document.querySelector(`.files-pane[data-side="${s}"] .pcx-crumb.last`)?.title));
   ok(L('two panes, each with its own address bar'), (await where()).join() === '/home/u/src,/home/u/src/Beta', await where()); await shot(p2, 'F5a-two-panes-' + lang + '.png');
   await p2.click('.files-pane[data-side="b"] .d-row'); await p2.keyboard.press('Backspace'); await p2.waitForTimeout(500);
   ok(L('one pane goes up, the other stays'), (await where()).join() === '/home/u/src,/home/u/src', await where());
-  const act = await p2.evaluate(() => [document.activeElement?.tagName, document.activeElement?.className, document.querySelector('.files-pane[data-side="b"] .pcx-bar button:first-of-type')?.outerHTML.slice(0, 80), [...document.querySelectorAll('.files-pane[data-side="b"] .pcx-bar button')].map((b) => b.disabled)]);
-  await p2.mouse.move(1000, 400); await p2.waitForTimeout(100);
-  await p2.evaluate(() => { window.__k = []; addEventListener('keydown', (e) => window.__k.push([e.key, e.altKey, e.defaultPrevented]), false); });
-  await p2.keyboard.press('Alt+ArrowLeft'); await p2.waitForTimeout(400); act.push(await p2.evaluate(() => window.__k)); ok(L('history is per pane'), (await where()).join() === '/home/u/src,/home/u/src/Beta', [await where(), act]);
+  await p2.waitForTimeout(800); const drift = await where(); ok(L('the pane stays where Backspace took it'), drift.join() === '/home/u/src,/home/u/src', drift);
+  const pw0 = await where(); await p2.locator('.files-pane[data-side="b"] .pcx-head').hover(); await p2.keyboard.press('Alt+ArrowLeft'); await p2.waitForTimeout(400); const pw1 = await where();
+  ok(L('history is per pane: Alt+← steps back in the pane in use only'), pw1[0] === pw0[0] && pw1[1] !== pw0[1], [pw0, pw1]);
+  await p2.keyboard.press('Alt+ArrowRight'); await p2.waitForTimeout(400); ok(L('… Alt+→ forward again'), (await where()).join() === pw0.join(), await where());
   await p2.click('.files-pane[data-side="a"] .d-row'); await p2.keyboard.press('F6'); await p2.waitForTimeout(150);
   ok(L('F6 moves focus to the other pane'), await p2.evaluate(() => !!document.activeElement?.closest?.('.files-pane[data-side="b"]')), await p2.evaluate(() => document.activeElement?.className));
   ok(L('only the first pane carries the navigation pane'), await p2.locator('.pcx-nav').count() === 1);
