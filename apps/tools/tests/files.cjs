@@ -132,7 +132,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   // two panes on a wide screen: turned on from the menu, each with its own place; a selection sent across as a copy job
   await p.click('.sheet-head button[aria-label="Close"]').catch(() => {});
   await p.setViewportSize({ width: 1100, height: 800 }); await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0'); await p.waitForSelector('.files-row');
-  await p.click('.topbar button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Two panes")'); await p.waitForSelector('.files-dual'); await p.waitForTimeout(400);
+  await p.click('.topbar-actions button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Two panes")'); await p.waitForSelector('.files-dual'); await p.waitForTimeout(400);
   ok('two panes drawn', (await p.$$('.files-dual .files-pane')).length === 2);
   await p.click('.files-pane[data-side="b"] .files-row:has-text("DCIM")'); await p.waitForTimeout(400);
   ok('the second pane went its own way', (await p.textContent('.files-pane[data-side="b"] .files-crumbs')).toLowerCase().includes('dcim') && !(await p.textContent('.files-pane[data-side="a"] .files-crumbs')).toLowerCase().includes('dcim'));

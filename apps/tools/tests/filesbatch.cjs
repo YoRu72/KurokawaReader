@@ -62,7 +62,7 @@ async function badges(browser, port, z, lang) {
   await p.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.files-body').scrollTop = 0; }); await p.waitForTimeout(500);
   const d = (n) => String(n);
   ok(L('select-all: the three keep 1, 2, 3; the rest follow in the list\'s order (the folder first)'), (await badge(p, far)) === d(1) && (await badge(p, 'file 002.txt')) === d(2) && (await badge(p, 'file 000.txt')) === d(3) && (await badge(p, 'Inner')) === d(4) && (await badge(p, 'file 001.txt')) === d(5) && (await badge(p, 'file 003.txt')) === d(6), [await badge(p, far), await badge(p, 'file 001.txt'), await badge(p, 'file 003.txt')]);
-  await p.click('.files-selbar button[aria-label="More"], .files-selbar button[aria-label="المزيد"]'); await p.waitForSelector('.sheet .dest-row'); await p.locator('.sheet .dest-row', { hasText: /Invert|عكس/ }).first().click(); await p.waitForTimeout(300);
+  await p.click('.files-selhead button[aria-label="Invert the selection"], .files-selhead button[aria-label="عكس التحديد"]'); await p.waitForTimeout(300); // (Invert lives in the selection header)
   ok(L('invert after select-all: nothing left picked'), await p.$eval('.files-view', (v) => !v.classList.contains('selecting')) || (await p.$$('.files-check.order')).length === 0);
   const e = errors.filter((x) => !/favicon/.test(x)); ok(L('no page errors'), !e.length, e); await p.close();
 }
@@ -182,7 +182,7 @@ async function runs(browser, port, z, lang) {
 
 async function pcTests(browser, port, z, lang) {
   const L = (s) => `[${lang}-pc] ${s}`; const { p, errors } = await open(browser, port, z, { lang, pc: true, many: 5000, width: 1280 });
-  await tap(p, 'Many'); await p.waitForSelector('.files-row:has(.files-name[title="file 000.txt"])'); await p.waitForTimeout(600);
+  await rowOf(p, 'Many').locator('.files-main').dblclick(); await p.waitForSelector('.files-row:has(.files-name[title="file 000.txt"])'); await p.waitForTimeout(600); // (a computer's details list: a click selects, a double-click opens)
   await p.keyboard.press('Control+a'); await p.waitForTimeout(500);
   const t0 = Date.now(); await p.keyboard.press('F2'); await p.waitForSelector('.batch-sheet .batch-row', { timeout: 20000 }); const opened = Date.now() - t0; await p.waitForTimeout(300);
   ok(L(`F2 on a multi-selection opens the sheet (5,001 items, ${opened} ms)`), opened < 6000 && (await p.textContent('.batch-sheet .sheet-head h3')).includes(D(lang)(5001)), opened);
@@ -199,7 +199,7 @@ async function pcTests(browser, port, z, lang) {
   await p.keyboard.press('Escape'); await p.waitForTimeout(200); await p.keyboard.press('Control+a'); await p.waitForTimeout(200); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   await p.close();
   const q = await open(browser, port, z, { lang, pc: true, many: 120, width: 1280 }); const pp = q.p;
-  await tap(pp, 'Many'); await pp.waitForSelector('.files-row:has(.files-name[title="file 000.txt"])'); await pp.waitForTimeout(400);
+  await rowOf(pp, 'Many').locator('.files-main').dblclick(); await pp.waitForSelector('.files-row:has(.files-name[title="file 000.txt"])'); await pp.waitForTimeout(400);
   await hold(pp, 'file 000.txt').catch(() => undefined); if (!(await pp.$eval('.files-view', (v) => v.classList.contains('selecting')))) { await pp.keyboard.press('Control+a'); }
   await pp.keyboard.press('Control+a'); await pp.waitForTimeout(300); await pp.keyboard.press('F2'); await pp.waitForSelector('.batch-sheet .batch-row'); await pp.waitForTimeout(250);
   await radio(pp, 'name', 1); await nameInputs(pp).nth(0).fill('Z'); await sw(pp, 2); await pp.waitForTimeout(300); await run(pp);

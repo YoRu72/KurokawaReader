@@ -5,6 +5,7 @@
 import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { kindOfFile } from './taskFiles';
+import { isArc, arcPath, parseArc } from './filesArc';
 import { nameEl, prefs, savePrefs, type Entry, type SortSet } from './files';
 
 export type PcRoot = { kind: string; path: string; name: string; readable: boolean; free?: number; total?: number };
@@ -85,7 +86,7 @@ export function mount(host: PcHost): PcCtl {
   const status = h('div', { class: 'pcx-status', role: 'status', 'aria-label': t('pcStatus') }); const stText = h('span', { class: 'pcx-st-text' }); const stCount = h('span', { class: 'pcx-st-count' });
   const nav = h('nav', { class: 'pcx-nav', 'aria-label': t('pcNavPane') }) as HTMLElement; const sep = h('div', { class: 'pcx-sep', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical', 'aria-label': t('pcNavResize') });
   root.append(...(hasNav ? [nav, sep] : [])); root.classList.add('pcx'); if (!hasNav) root.classList.add('pcx-solo');
-  const strip = root.querySelector(':scope > .files-strip'); strip?.before(bar, errEl); root.append(status);
+  const strip = root.querySelector(':scope > .files-strip'); (root.querySelector(':scope > .topbar') ?? strip)?.after(bar, errEl); root.append(status);
   listEl.tabIndex = 0; listEl.setAttribute('role', 'grid'); listEl.setAttribute('aria-multiselectable', 'true');
   const topbar = root.querySelector(':scope > .topbar') as HTMLElement | null;
   const fitTop = () => { const h0 = topbar?.offsetHeight ?? 56; root.style.setProperty('--pcx-tb', `${h0}px`); root.style.setProperty('--pcx-bar', `${h0 + bar.offsetHeight}px`); };
@@ -113,8 +114,13 @@ export function mount(host: PcHost): PcCtl {
   const step = (d: number) => { const to = hs.hi + d; if (to < 0 || to >= hs.hist.length) return; hs.hi = to; moving = hs.hist[to]; host.go(moving, 'replace'); paintBar(); };
   const paintBar = () => { backB.disabled = hs.hi <= 0; fwdB.disabled = hs.hi >= hs.hist.length - 1; upB.disabled = !host.upOf(); };
   bar.append(navBtn, backB, fwdB, upB, addr, refB); paintNavOpen();
+  // (One toolbar row: the page's old top bar — drawer, back, title — gives way; its search, filter, view, sort and ⋮ come into this row.)
+  { const acts = root.querySelector(':scope > .topbar .topbar-actions'); if (acts) bar.append(acts); }
   const driveOf = (p: string): PcRoot | null => host.roots().filter((r) => r.readable !== false && (p === r.path || p.startsWith(r.path.replace(/\/+$/, '') + '/'))).sort((a, b) => a.path.length - b.path.length)[0] ?? null;
   const crumbsOf = (p: string): { label: string; path: string }[] => {
+    // (Inside an archive: the folder that holds it, then the archive's own parts — decoded, never «%2Fstorage%2F…».)
+    if (isArc(p)) { const { archive, inner } = parseArc(p); const out = crumbsOf(archive); let acc = ''; for (const seg of inner.split('/').filter(Boolean)) { acc += (acc ? '/' : '') + seg; out.push({ label: seg, path: arcPath(archive, acc) }); } return out; }
+    const sch = /^[a-z]+:\/\/[^/]*/.exec(p); if (sch && !/^file:/.test(p)) { const out = [{ label: decodeURIComponent(sch[0]).replace(/\/\/$/, '//'), path: sch[0] }]; let acc = sch[0]; for (const seg of p.slice(sch[0].length).split('/').filter(Boolean)) { acc += `/${seg}`; out.push({ label: seg, path: acc }); } return out; }
     const r = driveOf(p); const basePath = r ? r.path : p.startsWith('/') ? '/' : (/^[A-Za-z]:/.exec(p)?.[0] ?? p); const bp = basePath.replace(/\/+$/, '') || '/';
     const out = [{ label: bp === '/' ? '/' : baseOf(bp), path: bp === '/' ? '/' : basePath }]; let acc = bp === '/' ? '' : bp;
     for (const s of p.slice(bp === '/' ? 1 : bp.length).split('/').filter(Boolean)) { acc += `/${s}`; out.push({ label: s, path: acc }); } return out;
@@ -229,7 +235,7 @@ export function mount(host: PcHost): PcCtl {
     const c = vis(); ic.classList.remove('thumb'); ic.removeAttribute('data-thumb');
     const el = h('div', { class: 'files-row d-row' + (host.picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'row', tabindex: '-1', 'aria-selected': String(host.picked.has(e.path)), 'data-p': e.path,
       onclick: (ev: Event) => pick(e, ev as MouseEvent), ondblclick: (ev: Event) => { ev.preventDefault(); host.open(e); }, oncontextmenu: (ev: Event) => { ev.preventDefault(); if (!host.picked.has(e.path)) { host.setSel([e.path]); anchor = cur = e.path; } host.itemMenu(e, ev); } },
-      h('span', { class: 'd-name', role: 'gridcell' }, ic, nameEl(e.name, e.dir)),
+      h('span', { class: 'd-name files-main', role: 'gridcell' }, ic, nameEl(e.name, e.dir)),
       ...c.slice(1).map((k) => h('span', { class: `d-${k}`, role: 'gridcell' }, k === 'size' ? (!e.dir && e.size >= 0 ? formatBytes(e.size) : '') : k === 'type' ? typeWord(e) : whenOf(e.mtime)))) as HTMLElement;
     if (host.dual) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = host.picked.has(e.path) ? [...host.picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }
     return el;

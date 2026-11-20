@@ -108,9 +108,9 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   // ---- 4. a late listing (two panes, where a pane goes its own way without a new page): Music asked first (slow),
   // Kurokawa after (fast) — Kurokawa stays drawn, and a paste there goes to Kurokawa
   await p.click('.files-pane[data-side="a"] .files-selbar button[aria-label="Close"]').catch(() => {}); await p.waitForTimeout(150);
-  await p.click('.files-pane[data-side="a"] .files-row:has-text("readme.md") button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Copy")'); await p.waitForTimeout(150);
+  await p.click('.files-pane[data-side="a"] .files-row:has-text("readme.md")', { button: 'right' }); await p.click('.sheet .dest-row:has-text("Copy")'); await p.waitForTimeout(150);
   await p.evaluate((x) => { window.__delay[x] = 700; }, P + '/Music');
-  await p.click('.files-pane[data-side="a"] .files-row:has-text("Music") .files-main'); await p.waitForTimeout(30); await p.click('.files-pane[data-side="a"] .files-roots .chip:nth-child(1)'); await p.waitForTimeout(1200);
+  await p.locator('.files-pane[data-side="a"] .files-row:has-text("Music")').dispatchEvent('dblclick'); await p.waitForTimeout(30); await p.click('.files-pane[data-side="a"] .pcx-bar button[data-icon="arrowUp"]'); await p.waitForTimeout(1200);
   const rowsA = await p.$$eval('.files-pane[data-side="a"] .files-row .files-name', (e) => e.map((x) => x.textContent));
   ok('a late listing does not cover the newer folder', rowsA.includes('Song.mp3') && !rowsA.includes('tune.mp3'), rowsA);
   await pasteClick('.files-pane[data-side="a"] '); await p.waitForTimeout(400);

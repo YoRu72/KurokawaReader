@@ -1769,14 +1769,17 @@ html:not(.pc) .files-list.dense .files-row.picked .files-ic::after { content: ''
 .files-menu .files-menu-sub { margin-top: 12px; }
 
 /* ---- Files on a computer (views/filesPc.ts): details list, navigation pane, address bar, status bar ---- */
-html.pc .files-view.pcx { display: grid; grid-template-columns: var(--pcx-nav-w, 240px) 4px minmax(0, 1fr); align-items: start; align-content: start; min-height: 100vh; overflow-x: clip; }
+html.pc .files-view.pcx { display: grid; grid-template-columns: var(--pcx-nav-w, 240px) 4px minmax(0, 1fr); grid-template-rows: repeat(19, auto) minmax(0, 1fr) auto; align-items: start; height: 100dvh; min-height: 0; overflow: hidden; }
+html.pc .files-view.pcx > .topbar { display: none; }
+html.pc .files-view.pcx > .files-body { grid-row: 20; align-self: stretch; overflow: auto; min-height: 0; padding: 0 8px 12px; }
+html.pc .files-view.pcx > .pcx-status { grid-row: 21; }
 html.pc .files-view.pcx > :not(.pcx-nav):not(.pcx-sep) { grid-column: 3; min-width: 0; }
-html.pc .files-view.pcx > .pcx-nav { grid-column: 1; grid-row: 1 / span 40; }
-html.pc .files-view.pcx > .pcx-sep { grid-column: 2; grid-row: 1 / span 40; }
+html.pc .files-view.pcx > .pcx-nav { grid-column: 1; grid-row: 1 / span 21; }
+html.pc .files-view.pcx > .pcx-sep { grid-column: 2; grid-row: 1 / span 21; }
 html.pc .files-view.pcx.pcx-solo, html.pc .files-view.pcx.pcx-nav-off, html.pc .files-view.pcx.fs-on { grid-template-columns: minmax(0, 1fr); }
 html.pc .files-view.pcx.pcx-solo > *, html.pc .files-view.pcx.pcx-nav-off > :not(.pcx-nav):not(.pcx-sep), html.pc .files-view.pcx.fs-on > * { grid-column: 1; }
 html.pc .files-view.pcx.pcx-nav-off > .pcx-nav, html.pc .files-view.pcx.pcx-nav-off > .pcx-sep { display: none; }
-html.pc .files-view.pcx.fs-on { display: flex; flex-direction: column; min-height: 0; overflow-x: visible; } /* (the Everywhere panel is the page's own flex column) */
+html.pc .files-view.pcx.fs-on { display: flex; flex-direction: column; min-height: 0; } /* (the Everywhere panel is the page's own flex column) */
 .pcx-nav { position: sticky; top: 0; height: 100vh; overflow: auto; box-sizing: border-box; padding: 8px 6px 16px; background: var(--md-surface-container-low, var(--md-surface)); border-inline-end: 1px solid var(--md-outline-variant); scrollbar-width: thin; }
 .pcx-sep { position: sticky; top: 0; height: 100vh; cursor: col-resize; background: transparent; margin-inline-start: -2px; width: 4px; z-index: 2; }
 .pcx-sep:hover, .pcx-sep:focus-visible { background: var(--md-primary); outline: none; opacity: .5; }
@@ -1795,8 +1798,9 @@ html.pc .files-view.pcx.fs-on { display: flex; flex-direction: column; min-heigh
 .nv-disk { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
 .nv-bar { display: block; height: 4px; border-radius: 2px; background: var(--md-surface-container-highest); overflow: hidden; }
 .nv-bar i { display: block; height: 100%; background: var(--md-primary); border-radius: 2px; }
-.pcx-bar { display: flex; align-items: center; gap: 4px; padding: 4px 12px; position: sticky; top: var(--pcx-tb, 56px); z-index: 4; background: var(--md-surface); }
-.pcx-bar > .icon-btn { width: 36px; height: 36px; flex: none; }
+.pcx-bar { display: flex; align-items: center; gap: 4px; padding: 4px 12px; z-index: 4; background: var(--md-surface); }
+.pcx-bar .icon-btn { width: 40px; height: 40px; flex: none; }
+.pcx-bar .topbar-actions { display: flex; align-items: center; gap: 0; flex: none; }
 .pcx-bar > .icon-btn:disabled { opacity: .38; }
 .pcx-addr { flex: 1; min-width: 0; display: flex; align-items: center; height: 36px; padding: 0 6px; border-radius: 18px; background: var(--md-surface-container-high); overflow: hidden; cursor: text; }
 .pcx-addr.editing { padding: 0; box-shadow: inset 0 0 0 2px var(--md-primary); background: var(--md-surface); }
@@ -1809,7 +1813,7 @@ html.pc .files-view.pcx.fs-on { display: flex; flex-direction: column; min-heigh
 .pcx-chev svg { width: 16px; height: 16px; }
 .pcx-fill { flex: 1; align-self: stretch; min-width: 8px; }
 .pcx-err { margin: 0 16px 4px; padding: 6px 14px; border-radius: 12px; background: var(--md-error-container); color: var(--md-on-error-container); font-size: 13px; }
-.pcx-head { display: grid; grid-template-columns: var(--pcx-cols, minmax(160px, 1fr) 96px 150px 190px); align-items: stretch; position: sticky; top: var(--pcx-bar, 100px); z-index: 3; height: 34px; background: var(--md-surface); border-bottom: 1px solid var(--md-outline-variant); font-size: 13px; }
+.pcx-head { display: grid; grid-template-columns: var(--pcx-cols, minmax(160px, 1fr) 96px 150px 190px); align-items: stretch; position: sticky; top: 0; z-index: 3; height: 34px; background: var(--md-surface); border-bottom: 1px solid var(--md-outline-variant); font-size: 13px; }
 .pcx-hc { position: relative; display: flex; min-width: 0; }
 .pcx-hb { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--md-on-surface-variant); font: inherit; font-weight: 600; padding: 0 10px; cursor: pointer; text-align: start; overflow: hidden; white-space: nowrap; }
 .pcx-hb:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
@@ -1819,21 +1823,20 @@ html.pc .files-view.pcx.fs-on { display: flex; flex-direction: column; min-heigh
 .pcx-grip::after { content: ''; position: absolute; inset-block: 0; inset-inline-start: 3px; width: 1px; background: var(--md-outline-variant); }
 .pcx-grip:hover::after { background: var(--md-primary); width: 2px; }
 html.pc .files-view.pcx-details .files-list { display: flex; flex-direction: column; }
-html.pc .files-view.pcx-details .files-body { padding: 0 8px 12px; flex: 1; min-height: 60vh; }
 html.pc .files-view.pcx-details .files-row.d-row { display: grid; grid-template-columns: var(--pcx-cols, minmax(160px, 1fr) 96px 150px 190px); align-items: center; gap: 0; height: 32px; padding: 0; border-radius: 8px; contain-intrinsic-size: auto 32px; font-size: 14px; scroll-margin-top: 140px; }
 .d-row:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
 .d-row.picked, .d-row.picked:hover { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 .d-row > span { padding: 0 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.d-row .d-name { display: flex; align-items: center; gap: 10px; padding-inline-start: 8px; }
+.d-row .d-name { display: flex; flex-direction: row; align-items: center; gap: 10px; padding-inline-start: 8px; }
 .d-row .d-name .files-ic { width: 20px; height: 20px; min-width: 20px; flex: none; border-radius: 4px; background: transparent; display: inline-flex; align-items: center; justify-content: center; }
 .d-row .d-name .files-ic svg { width: 20px; height: 20px; }
 .d-row .d-name .files-name { min-width: 0; flex: 0 1 auto; display: inline-flex; overflow: hidden; white-space: nowrap; -webkit-line-clamp: unset; font-size: 14px; }
 .d-row .d-size { text-align: end; color: var(--md-on-surface-variant); font-variant-numeric: tabular-nums; }
 .d-row .d-type, .d-row .d-mod { color: var(--md-on-surface-variant); }
 .pcx-rename { flex: 1; min-width: 0; height: 26px; box-sizing: border-box; border: 0; border-radius: 6px; padding: 0 8px; font: inherit; font-size: 14px; background: var(--md-surface); color: var(--md-on-surface); box-shadow: inset 0 0 0 2px var(--md-primary); outline: none; }
-html.pc .files-view.pcx-details .files-selbar { display: none; }
+html.pc .files-view.pcx-details .files-selbar { position: absolute; left: 50%; right: auto; bottom: 52px; transform: translateX(-50%); width: min(720px, calc(100% - 32px)); box-sizing: border-box; z-index: 6; } /* (the selection's actions float above the status bar) */
 html.pc .files-view.pcx .files-strip .files-roots, html.pc .files-view.pcx .files-strip .files-crumbs { display: none; }
-.pcx-status { position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 2px 14px; background: var(--md-surface-container); border-top: 1px solid var(--md-outline-variant); font-size: 13px; color: var(--md-on-surface-variant); }
+.pcx-status { z-index: 4; display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 2px 14px; background: var(--md-surface-container); border-top: 1px solid var(--md-outline-variant); font-size: 13px; color: var(--md-on-surface-variant); }
 .pcx-st-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pcx-st-count { white-space: nowrap; }
 .pcx-st-count:not(:empty) + .pcx-st-text:not(:empty)::before { content: '· '; }
