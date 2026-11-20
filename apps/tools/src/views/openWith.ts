@@ -17,7 +17,7 @@ export type OwPlug = {
   openRequest?(): Promise<{ request: string | null }>; openDone?(o: { id: string; back: boolean }): Promise<void>;
   openFetch?(o: { uri: string; jobId: string; dir?: string }): Promise<{ path: string; size: number }>; openFetchCancel?(o: { jobId: string }): Promise<void>;
   uriRead?(o: { uri?: string; path?: string; max: number; offset?: number }): Promise<{ b64: string; size: number; whole: boolean }>; uriWrite?(o: { uri?: string; path?: string; b64: string }): Promise<unknown>;
-  contentUrl?(o: { uri: string }): Promise<{ url: string }>; openWithStates?(o: { names: string[] }): Promise<{ states: Record<string, number> }>; openWithSet?(o: { name: string; state: 'on' | 'off' | 'default' }): Promise<void>;
+  contentUrl?(o: { uri: string }): Promise<{ url: string }>; openWithStates?(o: { names: string[] }): Promise<{ states: Record<string, number> }>; openWithSet?(o: { name: string; state: 'on' | 'off' | 'default' }): Promise<void>; pickerStorage?(o: { on?: boolean }): Promise<{ on: boolean }>;
   appsFor?(o: { path: string; mime: string }): Promise<{ apps: AppChoice[] }>; openIn?(o: { path: string; mime: string; pkg: string; cls: string }): Promise<void>;
   filesList?(o: { path: string }): Promise<{ exists: boolean; entries: Entry[] }>; hashFile?(o: { path: string }): Promise<{ md5: string; sha1: string; sha256: string }>;
   shareFile?(o: { path: string; title: string }): Promise<void>; pickDir?(): Promise<{ dir: string } | null>;
@@ -168,6 +168,7 @@ export async function otherAppsSheet(): Promise<void> {
   const p = plug(); if (!p?.openWithSet || !p.openWithStates) return;
   const sh = openSheet(t('owSettingsRow'), t('close')); sh.el.classList.add('ow-settings');
   const list = h('div', { class: 'ow-list' }); sh.body.append(h('p', { class: 'hint' }, t('owSettingsHint')), list, h('p', { class: 'hint ow-note' }, t('owAndroidDelay')));
+  if (p.pickerStorage) sh.body.append(pickerModeBlock(p.pickerStorage.bind(p)));
   const draw = async () => {
     const st = (await p.openWithStates!({ names: ENTRIES.map((e) => e.alias) }).catch(() => ({ states: {} as Record<string, number> }))).states;
     list.replaceChildren(...ENTRIES.map((e) => {
@@ -177,6 +178,22 @@ export async function otherAppsSheet(): Promise<void> {
   };
   sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: async () => { for (const e of ENTRIES) await p.openWithSet!({ name: e.alias, state: 'default' }).catch(() => undefined); await draw(); toast(t('owResetDone')); } }, icon('undo'), t('owResetDefaults')));
   await draw();
+}
+
+/** «In other apps' file pickers, Kurokawa Tools appears as»: its own browser (the documents provider off — Android
+ *  then lists Tools as an app and opens Files as a picker) or storage places (the provider on — the only way to save
+ *  into Tools' folders from another app). The state shown is read back from the phone, never assumed. */
+function pickerModeBlock(call: (o: { on?: boolean }) => Promise<{ on: boolean }>): HTMLElement {
+  const note = h('p', { class: 'hint pm-error', hidden: true }); const chips = h('div', { class: 'pm-chips' });
+  const draw = (on: boolean) => chips.replaceChildren(...([['own', t('pmOwn'), !on], ['storage', t('pmStorage'), on]] as [string, string, boolean][]).map(([id, label, sel]) =>
+    h('button', { type: 'button', class: 'chip' + (sel ? ' on' : ''), 'data-pm': id, 'aria-pressed': String(sel), onclick: () => void change(id === 'storage') }, label)));
+  const change = async (on: boolean) => {
+    note.hidden = true;
+    try { const r = await call({ on }); draw(!!r.on); if (!!r.on !== on) throw new Error('state'); }
+    catch { note.textContent = t('pmFailed'); note.hidden = false; try { draw(!!(await call({})).on); } catch { /* as drawn */ } }
+  };
+  void call({}).then((r) => draw(!!r.on)).catch(() => { note.textContent = t('pmFailed'); note.hidden = false; });
+  return h('div', { class: 'pm-block' }, h('p', { class: 'files-sec' }, t('pmTitle')), chips, h('p', { class: 'hint' }, t('pmHint')), note);
 }
 
 /* ---------- Files' own chooser: «Open with…», «Just once» / «Always» ---------- */

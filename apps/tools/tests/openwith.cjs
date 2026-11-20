@@ -47,6 +47,7 @@ function table() {
   ok('MainActivity.looksMpegTs: the same packet test as the page\'s sniffTs', /b\[0\] == 0x47 && b\[188\] == 0x47/.test(main) && /b\[4\] == 0x47 && b\[196\] == 0x47/.test(main));
   const plugin = fs.readFileSync(path.join(A, 'KtPlugin.java'), 'utf8');
   ok('the plugin: request, fetch, done, bytes, switches, apps', ['openRequest', 'openFetch', 'openFetchCancel', 'openDone', 'uriRead', 'uriWrite', 'contentUrl', 'openWithStates', 'openWithSet', 'appsFor', 'openIn'].every((m) => new RegExp(`@PluginMethod public void ${m}\\(`).test(plugin)));
+  ok('pickerStorage: the provider switched with DONT_KILL_APP, the state read back; the default applied once at load; no provider links handed out while it is off', /public void pickerStorage\(/.test(plugin) && /pickerProvider\(\), want \?/.test(plugin) && /applyPickerDefault\(\);/.test(plugin) && /applyDefaultNow\(sp\.getBoolean\("pickerDefault"/.test(plugin) && /if \(providerOn\(\)\) try \{ return android\.provider\.DocumentsContract\.buildDocumentUri\(KtDocumentsProvider\.AUTHORITY/.test(fs.readFileSync(path.join(A, 'KtPickActivity.java'), 'utf8')));
   ok('switches: DONT_KILL_APP, only Kt… names', /setComponentEnabledSetting\([^;]*DONT_KILL_APP\)/.test(plugin) && /matches\("Kt\[A-Za-z\]\+"\)/.test(plugin));
   ok('overlay copies KtOpenActivity.java', fs.readFileSync(path.join(A, 'overlay.mjs'), 'utf8').includes("'KtOpenActivity.java'"));
   let javac = false; try { execFileSync('javac', ['-version'], { stdio: 'ignore' }); javac = true; } catch { /* none */ }
@@ -171,6 +172,8 @@ async function pages(C) {
       kt.uriWrite = async (x) => { window.__writes.push(x); return { size: 1 }; };
       kt.archiveExisting = async () => ({ existing: [] }); kt.archiveFree = async () => ({ free: 3e10 });
       kt.openWithStates = async ({ names }) => ({ states: Object.fromEntries(names.map((n) => [n, window.__states[n] ?? 0])) });
+      window.__pmOn = false; window.__pmFail = false; window.__pmCalls = [];
+      kt.pickerStorage = async (o) => { window.__pmCalls.push(o); if (o.on !== undefined) { if (window.__pmFail) throw new Error('refused'); window.__pmOn = o.on; } return { on: window.__pmOn }; };
       kt.openWithSet = async ({ name, state }) => { window.__sets.push(`${name}:${state}`); window.__states[name] = state === 'on' ? 1 : state === 'off' ? 2 : 0; };
       const ic = (c) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" rx="12" fill="${c}"/></svg>`)}`;
       kt.appsFor = async () => ({ apps: [{ pkg: 'com.example.pdfreader', cls: 'R', label: 'PDF Reader', icon: ic('#5b7fa6') }, { pkg: 'com.example.drive', cls: 'D', label: 'Drive', icon: ic('#4f8a6e') }] });
@@ -265,6 +268,18 @@ async function pages(C) {
     const rows = await p.$$eval('.ow-switch', (rs) => rs.map((r) => [r.querySelector('input').dataset.alias, r.querySelector('input').checked, r.querySelector('small').textContent]));
     ok(`[${lang}] eleven switches, each with a line; picture, text, catch-all off`, rows.length === 11 && rows.every((r) => r[2].length > 10) && rows.filter((r) => !r[1]).map((r) => r[0]).join() === 'KtImage,KtText,KtAnyFile', rows.map((r) => r.slice(0, 2)));
     await shot(p, lang === 'en' ? 'openwith-settings.png' : 'openwith-settings-ar.png');
+    const chip = (id) => p.$eval(`.pm-chips [data-pm="${id}"]`, (b) => b.classList.contains('on') && b.getAttribute('aria-pressed') === 'true');
+    ok(`[${lang}] file pickers: «its own browser» in force (read from the plugin), storage places off`, (await chip('own')) && !(await chip('storage')) && (await p.textContent('.pm-block .hint')).length > 40);
+    await p.locator('.pm-block').scrollIntoViewIfNeeded(); await p.evaluate(() => document.querySelector('.pm-block').scrollIntoView({ block: 'center' })); await p.waitForTimeout(200);
+    if (process.env.KT_SHOTS) await p.screenshot({ path: path.join(process.env.KT_SHOTS, `F3-setting-${lang}.png`) });
+    if (lang === 'en') {
+      await p.click('.pm-chips [data-pm="storage"]'); await p.waitForTimeout(250);
+      ok('storage places chosen: applied through the plugin, the state shown is the one returned', JSON.stringify(await p.evaluate(() => window.__pmCalls)) === '[{},{"on":true}]' && (await chip('storage')) && !(await chip('own')) && await p.$eval('.pm-error', (e) => e.hidden));
+      await p.evaluate(() => { window.__pmFail = true; }); await p.click('.pm-chips [data-pm="own"]'); await p.waitForTimeout(300);
+      ok('a change refused: a calm line, and the state shown stays the real one (storage places)', !(await p.$eval('.pm-error', (e) => e.hidden)) && /could not be changed/.test(await p.textContent('.pm-error')) && (await chip('storage')));
+      await p.evaluate(() => { window.__pmFail = false; }); await p.click('.pm-chips [data-pm="own"]'); await p.waitForTimeout(250);
+      ok('then its own browser again, the line gone', (await chip('own')) && await p.$eval('.pm-error', (e) => e.hidden));
+    }
     if (lang === 'en') {
       await p.click('.ow-switch:has(input[data-alias="KtImage"]) input'); await p.click('.ow-switch:has(input[data-alias="KtArchive"]) input'); await p.click('.ow-switch:has(input[data-alias="KtArchive"]) input'); await p.waitForTimeout(300);
       ok('switches: picture on, archive off and on again (back to as installed)', JSON.stringify(await p.evaluate(() => window.__sets)) === '["KtImage:on","KtArchive:off","KtArchive:default"]', await p.evaluate(() => window.__sets));
@@ -297,6 +312,7 @@ async function pages(C) {
     await page.route(/api\.github\.com/, (r) => r.fulfill({ json: [] }));
     await page.goto(`http://localhost:${port}/#/files?p=${encodeURIComponent('/home/u')}`); await page.waitForTimeout(1500);
     await page.click('.files-view .topbar-actions button:last-child'); await page.waitForTimeout(300); await page.click('.sheet .dest-row:has-text("Files settings")'); await page.waitForTimeout(600);
+    ok('computer: no file-pickers setting (phones only)', !(await page.$('.pm-block')));
     ok('computer: no «Show Kurokawa in other apps» (phones only); «Default apps» there', !(await page.$('.ow-open-settings')) && !!(await page.$('.ow-open-defaults')));
     ok('computer: no page errors', !errs.length, errs); await page.close(); }
   await browser.close(); server.close();

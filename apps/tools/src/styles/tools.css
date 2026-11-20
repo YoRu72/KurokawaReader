@@ -1182,6 +1182,9 @@ html.picking { --nav-h: 0px; }
 .pick-head b { font: 600 15px/1.3 var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-head small { color: var(--md-on-surface-variant); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-view.picker .files-body { padding-bottom: calc(96px + var(--safe-bottom, 0px)); }
+.files-view.picker .files-clipbar, .files-view.picker .files-selbar { display: none !important; }
+.pick-bar.single { justify-content: flex-end; }
+.pick-head .pick-all { flex: none; display: flex; align-items: center; gap: 10px; min-height: 44px; margin-inline-start: auto; font: 500 13px/1.3 var(--font-ui); }
 .files-row.pick-off { opacity: .42; }
 .files-row.pick-off .files-ic { filter: grayscale(1); }
 .files-row.pick-off .pick-mark { visibility: hidden; }
@@ -1726,3 +1729,5 @@ html:not(.pc) .files-view.selecting:not(.picker) .files-selhead { height: var(--
 html:not(.pc) .files-list.dense .files-row.picked .files-ic { position: relative; background: var(--md-primary); color: var(--md-on-primary); }
 html:not(.pc) .files-list.dense .files-row.picked .files-ic > * { visibility: hidden; }
 html:not(.pc) .files-list.dense .files-row.picked .files-ic::after { content: ''; position: absolute; left: 50%; top: 50%; width: 9px; height: 17px; border: solid var(--md-on-primary); border-width: 0 3px 3px 0; transform: translate(-50%, -62%) rotate(45deg); }
+.pm-chips { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 4px 0 8px; }
+.pm-chips .chip { height: auto; min-height: 44px; padding: 10px 16px; white-space: normal; text-align: start; line-height: 1.35; border-radius: 16px; }

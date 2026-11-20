@@ -32,28 +32,25 @@ public class KtDocumentsProvider extends DocumentsProvider {
     private static final String[] DOC_COLS = { Document.COLUMN_DOCUMENT_ID, Document.COLUMN_MIME_TYPE, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS, Document.COLUMN_SIZE };
 
     /** The roots: id → folder. */
-    private List<File[]> roots() {
-        List<File[]> out = new ArrayList<>();
-        File app = KtEngine.defaultDirOf(getContext()); out.add(new File[] { app });
+    private List<KtPickLogic.Root> roots() {
+        File app = KtEngine.defaultDirOf(getContext());
         boolean all = Build.VERSION.SDK_INT >= 30 ? Environment.isExternalStorageManager() : getContext().checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED;
-        if (all) {
-            File ext = Environment.getExternalStorageDirectory(); if (ext != null) out.add(new File[] { ext });
-            for (File f : getContext().getExternalFilesDirs(null)) { if (f == null) continue; String p = f.getAbsolutePath(); int i = p.indexOf("/Android/"); if (i <= 0) continue; File vol = new File(p.substring(0, i)); if (ext != null && vol.getAbsolutePath().equals(ext.getAbsolutePath())) continue; out.add(new File[] { vol }); }
-        }
-        return out;
+        File ext = all ? Environment.getExternalStorageDirectory() : null; List<File> cards = new ArrayList<>();
+        if (all) for (File f : getContext().getExternalFilesDirs(null)) { if (f == null) continue; String p = f.getAbsolutePath(); int i = p.indexOf("/Android/"); if (i <= 0) continue; File vol = new File(p.substring(0, i)); if (ext != null && vol.getAbsolutePath().equals(ext.getAbsolutePath())) continue; cards.add(vol); }
+        return KtPickLogic.roots(app, all, ext, cards);
     }
     @Override public boolean onCreate() { return true; }
 
     @Override public Cursor queryRoots(String[] projection) {
         MatrixCursor c = new MatrixCursor(projection != null ? projection : ROOT_COLS);
-        List<File[]> rs = roots(); boolean ar = Locale.getDefault().getLanguage().equals("ar");
+        List<KtPickLogic.Root> rs = roots(); boolean ar = Locale.getDefault().getLanguage().equals("ar");
         for (int i = 0; i < rs.size(); i++) {
-            File d = rs.get(i)[0]; String id = "r" + i;
+            KtPickLogic.Root rt = rs.get(i); File d = rt.dir; String id = "r" + i;
             MatrixCursor.RowBuilder r = c.newRow();
             r.add(Root.COLUMN_ROOT_ID, id); r.add(Root.COLUMN_DOCUMENT_ID, docId(d)); r.add(Root.COLUMN_ICON, getContext().getApplicationInfo().icon);
-            r.add(Root.COLUMN_TITLE, i == 0 ? (ar ? "أدوات كوروكاوا" : "Kurokawa Tools") : (ar ? "أدوات كوروكاوا · " : "Kurokawa Tools · ") + (i == 1 ? (ar ? "الهاتف" : "Phone") : d.getName()));
-            r.add(Root.COLUMN_SUMMARY, i == 0 ? (ar ? "التنزيلات" : "Downloads") : d.getAbsolutePath());
-            r.add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_CREATE | Root.FLAG_SUPPORTS_SEARCH | Root.FLAG_SUPPORTS_IS_CHILD | Root.FLAG_LOCAL_ONLY);
+            r.add(Root.COLUMN_TITLE, KtPickLogic.title(rt, i, ar));
+            r.add(Root.COLUMN_SUMMARY, KtPickLogic.summary(rt, ar));
+            r.add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_CREATE | Root.FLAG_SUPPORTS_SEARCH | Root.FLAG_SUPPORTS_IS_CHILD | Root.FLAG_SUPPORTS_RECENTS | Root.FLAG_LOCAL_ONLY);
             r.add(Root.COLUMN_AVAILABLE_BYTES, d.getUsableSpace()); r.add(Root.COLUMN_MIME_TYPES, "*/*");
         }
         return c;
@@ -62,7 +59,7 @@ public class KtDocumentsProvider extends DocumentsProvider {
     private File fileOf(String id) throws FileNotFoundException {
         File f = new File(id); String p;
         try { p = f.getCanonicalPath(); } catch (IOException e) { throw new FileNotFoundException(id); }
-        boolean inside = false; for (File[] r : roots()) { try { String rp = r[0].getCanonicalPath(); if (p.equals(rp) || p.startsWith(rp + "/")) inside = true; } catch (IOException ignored) {} }
+        boolean inside = false; for (KtPickLogic.Root r : roots()) { try { String rp = r.dir.getCanonicalPath(); if (p.equals(rp) || p.startsWith(rp + "/")) inside = true; } catch (IOException ignored) {} }
         if (!inside) throw new FileNotFoundException("outside: " + id);
         return f;
     }
@@ -83,9 +80,19 @@ public class KtDocumentsProvider extends DocumentsProvider {
     @Override public Cursor querySearchDocuments(String rootId, String query, String[] projection) throws FileNotFoundException {
         MatrixCursor c = new MatrixCursor(projection != null ? projection : DOC_COLS);
         int i; try { i = Integer.parseInt(rootId.substring(1)); } catch (Exception e) { return c; }
-        List<File[]> rs = roots(); if (i >= rs.size()) return c;
-        LinkedList<File> q = new LinkedList<>(); q.add(rs.get(i)[0]); String needle = query.toLowerCase(Locale.ROOT); int n = 0, seen = 0;
+        List<KtPickLogic.Root> rs = roots(); if (i >= rs.size()) return c;
+        LinkedList<File> q = new LinkedList<>(); q.add(rs.get(i).dir); String needle = query.toLowerCase(Locale.ROOT); int n = 0, seen = 0;
         while (!q.isEmpty() && n < 200 && seen < 50000) { File d = q.removeFirst(); File[] k = d.listFiles(); if (k == null) continue; for (File f : k) { seen++; if (f.getName().startsWith(".")) continue; if (f.getName().toLowerCase(Locale.ROOT).contains(needle)) { row(c, f); n++; } if (f.isDirectory() && !f.getName().equals("Android")) q.add(f); } }
+        return c;
+    }
+    /** «Recent»: the newest files of Download, Documents and Pictures (of the root's storage), a bounded walk. */
+    @Override public Cursor queryRecentDocuments(String rootId, String[] projection) throws FileNotFoundException {
+        MatrixCursor c = new MatrixCursor(projection != null ? projection : DOC_COLS);
+        int i; try { i = Integer.parseInt(rootId.substring(1)); } catch (Exception e) { return c; }
+        List<KtPickLogic.Root> rs = roots(); if (i >= rs.size()) return c;
+        File base = rs.get(i).dir; List<File> from = new ArrayList<>();
+        if (rs.get(i).kind == KtPickLogic.APP) from.add(base); else for (String n : new String[] { "Download", "Documents", "Pictures" }) from.add(new File(base, n));
+        for (File f : KtPickLogic.recents(from, KtPickLogic.RECENT_LIMIT, KtPickLogic.RECENT_VISIT, KtPickLogic.RECENT_DEPTH)) row(c, f);
         return c;
     }
     @Override public boolean isChildDocument(String parentId, String id) { return id.startsWith(parentId.endsWith("/") ? parentId : parentId + "/"); }
