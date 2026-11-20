@@ -45,7 +45,7 @@ jobs:
     name: Web build & tests
     needs: version
     runs-on: ubuntu-latest
-    timeout-minutes: 75   # (21 minutes in the 0.20.0 run, some 30 with the 0.21 tests and the scene engine's native tests)
+    timeout-minutes: 150  # (21 minutes in the 0.20.0 run; with the ffmpeg tests running and 0.22's tests the whole chain passed 75 minutes and 0.22.0's re-run was cut off there)
     defaults: { run: { working-directory: apps/tools } }
     steps:
       - uses: actions/checkout@v4
