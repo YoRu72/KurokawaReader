@@ -9,7 +9,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
 const arcOf = (archive, inner = '') => `arc://${encodeURIComponent(archive)}${inner ? '/' + inner : ''}`;
 
 async function phone(browser, port, z, lang) {
-  const L = (s) => `[${lang}-phone] ${s}`; const { page: p, errors } = await F.open(browser, { lang, pc: false, z, many: 120 });
+  const L = (s) => `[${lang}-phone] ${s}`; const { page: p, errors } = await F.open(browser, { lang, pc: false, z, many: 120, dense: true });
   const where = async () => { const h = await p.evaluate(() => location.hash); const m = /[?&]p=([^&]*)/.exec(h); return m ? decodeURIComponent(m[1]) : h; };
   const sysBack = async () => { await p.evaluate(() => window.__back()); await p.waitForTimeout(500); };
   const row = (name) => p.locator(`.files-row:has(.files-name[title="${name}"])`).first();
@@ -19,7 +19,7 @@ async function phone(browser, port, z, lang) {
   ok(L('Files opens on its folder; no arrow at the top'), (await p.textContent('.files-title')) === 'Kurokawa' && await p.$eval('.files-view .files-back', (b) => b.hidden), await where());
   await tap('Sub'); await tap('Deeper');
   ok(L('down two folders (the «..» row stands in for the arrow)'), (await where()) === `${K}/Sub/Deeper` && !!(await p.$('.files-uprow')));
-  await row('deep.txt').locator('.icon-btn[data-icon="more"]').click(); await p.waitForSelector('.sheet'); await sysBack();
+  await p.locator('.files-view .topbar .icon-btn[data-icon="more"]').first().click(); await p.waitForSelector('.sheet'); await sysBack(); // (the real phone layout: the page's «More» sheet)
   ok(L('Back closes the open sheet first, the folder stays'), !(await p.$('.sheet')) && (await where()) === `${K}/Sub/Deeper`);
   const b = await row('deep.txt').boundingBox(); await p.mouse.move(b.x + 80, b.y + 20); await p.mouse.down(); await p.waitForTimeout(650); await p.mouse.up(); await p.waitForTimeout(200);
   ok(L('(a selection made)'), await p.$eval('.files-view', (v) => v.classList.contains('selecting')));

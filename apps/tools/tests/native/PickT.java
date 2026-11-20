@@ -29,6 +29,16 @@ public class PickT {
         ok("hidden files left out; a file below the depth bound not reached", !hid && !deep);
         ok("the walk stops at the entries bound", KtPickLogic.recents(Arrays.asList(new File(d, "Download")), 64, 10, 6).size() <= 10);
         ok("no folders: nothing", KtPickLogic.recents(new ArrayList<File>(), 64, 100, 6).isEmpty());
+        ok("first run, no other app holds anything on the provider: its own browser", KtPickLogic.firstRunChoice(false, 0) == KtPickLogic.OWN_BROWSER);
+        ok("first run, other apps hold links or folder access: storage places kept", KtPickLogic.firstRunChoice(false, 3) == KtPickLogic.STORAGE_PLACES);
+        ok("a choice already made: kept, whatever is held", KtPickLogic.firstRunChoice(true, 0) == KtPickLogic.KEEP && KtPickLogic.firstRunChoice(true, 5) == KtPickLogic.KEEP);
+        ok("switching to its own browser by hand asks only when something is held", KtPickLogic.askBeforeOwnBrowser(2) && !KtPickLogic.askBeforeOwnBrowser(0));
+        // (A symlink inside the folder leading out of it: neither followed nor listed.)
+        File out = java.nio.file.Files.createTempDirectory("ktout").toFile(); w(new File(out, "secret.txt"), t + 9999999L); w(new File(out, "sub/s2.txt"), t + 9999998L);
+        File base = new File(d, "Linked"); base.mkdirs(); w(new File(base, "mine.txt"), t);
+        boolean linked = true; try { java.nio.file.Files.createSymbolicLink(new File(base, "away").toPath(), out.toPath()); java.nio.file.Files.createSymbolicLink(new File(base, "away.txt").toPath(), new File(out, "secret.txt").toPath()); } catch (Exception e) { linked = false; }
+        List<File> lk = KtPickLogic.recents(Arrays.asList(base), 64, 1000, 6); boolean leaked = false; for (File f : lk) if (!f.getName().equals("mine.txt")) leaked = true;
+        ok("links leading out of the folder: not followed, not listed" + (linked ? "" : " (no symlinks here: not checked)"), !leaked && lk.size() == 1);
         System.out.println(fails == 0 ? "all passed" : fails + " failed"); System.exit(fails == 0 ? 0 : 1);
     }
 }

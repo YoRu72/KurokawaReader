@@ -9,7 +9,7 @@ const seen = (b: HTMLElement): boolean => { if (b.hidden || !b.getClientRects().
 export function placePill(el: HTMLElement): void {
   if (!el.isConnected || el.classList.contains('in-player') || el.classList.contains('swiped')) return;
   // (A sheet opened over the page after the pill: the pill is the page's, and would lie over the sheet's switches and
-  // buttons — it waits out of sight, its time still running, and comes back when the sheet closes. A pill offered from
+  // buttons — it waits out of sight, its time standing still (ui/undo.ts), and comes back when the sheet closes. A pill offered from
   // inside a sheet — an Undo for something done there — stays.)
   if (el.dataset.sheetAt === undefined) el.dataset.sheetAt = document.querySelectorAll('.sheet').length ? '1' : '0';
   const sheetNow = !!document.querySelector('.sheet'); el.classList.toggle('behind-sheet', sheetNow && el.dataset.sheetAt === '0');

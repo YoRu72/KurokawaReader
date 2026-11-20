@@ -31,11 +31,14 @@ for (const [code, name] of Object.entries(NAMES)) {
   await fs.mkdir(path.join(app, `src/main/res/values-${code}`), { recursive: true });
   await fs.writeFile(path.join(app, `src/main/res/values-${code}/strings.xml`), `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="app_name">${name}</string>\n    <string name="title_activity_main">${name}</string>\n</resources>\n`);
 }
-// FileProvider paths: the cache (fetched APKs) and the external files dir (downloads).
+// FileProvider paths: the cache (fetched APKs), the external files dir (downloads), the main storage and the other volumes.
 const fpPath = path.join(app, 'src/main/res/xml/file_paths.xml');
 try {
   let fp = await fs.readFile(fpPath, 'utf8');
   if (!fp.includes('kt_cache')) fp = fp.replace('</paths>', '    <cache-path name="kt_cache" path="." />\n    <external-files-path name="kt_files" path="." />\n    <files-path name="kt_int" path="." />\n    <external-path name="kt_ext" path="." />\n</paths>');
+  // (Other volumes — a memory card, a USB drive, /storage/XXXX-XXXX —: a file picked there has a link too, read-only and
+  // one by one as every grant of the picker's; the provider of storage places may be off.)
+  if (!fp.includes('kt_vol')) fp = fp.replace('</paths>', '    <root-path name="kt_vol" path="storage/" />\n</paths>');
   await fs.writeFile(fpPath, fp);
 } catch { /* the template ships it */ }
 

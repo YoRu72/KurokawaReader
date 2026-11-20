@@ -900,6 +900,7 @@ html.pc .files-view.has-clip .files-body { padding-bottom: 96px; }
 .files-dual.one { grid-template-columns: 1fr; }
 .files-dual .files-pane { min-width: 0; border-inline-end: 1px solid var(--md-outline-variant); }
 .files-dual .files-pane:last-child { border-inline-end: 0; }
+.files-dual .files-pane.pane-active { outline: 2px solid color-mix(in srgb, var(--md-primary) 60%, transparent); outline-offset: -2px; }
 .files-dual .files-pane .files-fab { position: sticky; }
 .files-pane .files-body.drop-over { outline: 2px dashed var(--md-primary); outline-offset: -4px; border-radius: 16px; }
 .files-row[draggable="true"] { cursor: grab; }
@@ -1195,6 +1196,8 @@ html.picking { --nav-h: 0px; }
 .files-row.picked .pick-mark { color: var(--md-primary); }
 .files-list.grid .files-row .pick-mark { position: absolute; inset-block-start: 6px; inset-inline-end: 6px; width: 32px; height: 32px; border-radius: 50%; background: rgb(0 0 0 / .45); }
 .pick-bar { position: fixed; inset-inline: 12px; bottom: calc(12px + var(--safe-bottom, 0px)); z-index: 31; display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px; border-radius: 28px; background: var(--md-surface-container-highest); box-shadow: 0 6px 24px rgb(0 0 0 / .35); }
+.pick-refused { position: fixed; inset-inline: 12px; bottom: calc(84px + var(--safe-bottom, 0px)); z-index: 31; margin: 0; padding: 12px 18px; border-radius: 20px; background: var(--md-error-container); color: var(--md-on-error-container); font-size: 14px; line-height: 1.4; }
+.pick-refused[hidden] { display: none; }
 .pick-bar .pick-count { flex: 1 1 auto; min-width: 0; font: 500 14px/1.3 var(--font-ui); color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-bar .pick-count.has { color: var(--md-on-surface); }
 .pick-bar .btn { flex: none; min-height: 44px; }

@@ -32,7 +32,7 @@ async function page(browser, port, z, lang, multiple) {
   const req = multiple ? { id: 'r2', action: 'android.intent.action.GET_CONTENT', multiple: true, mimes: ['text/*'], caller: 'Aegisub Mobile' } : { id: 'r1', action: 'android.intent.action.GET_CONTENT', multiple: false, mimes: ['image/*'], caller: 'Telegram' };
   await p.addInitScript((req) => {
     const kt = window.Capacitor.Plugins.KurokawaTools; window.__done = [];
-    kt.pickRequest = async () => ({ request: JSON.stringify(req) }); kt.pickDone = async (o) => { window.__done.push(o); };
+    kt.pickRequest = async () => ({ request: JSON.stringify(req) }); kt.pickDone = async (o) => { if (window.__refuse && o.paths.includes(window.__refuse)) { window.__tried = (window.__tried || 0) + 1; return { refused: [window.__refuse], why: 'nolink' }; } window.__done.push(o); };
     const pic = () => { const c = document.createElement('canvas'); c.width = 96; c.height = 96; const g = c.getContext('2d'); const gr = g.createLinearGradient(0, 0, 96, 96); gr.addColorStop(0, '#4d6a8a'); gr.addColorStop(1, '#1c2733'); g.fillStyle = gr; g.fillRect(0, 0, 96, 96); g.fillStyle = 'rgba(255,255,255,.25)'; g.beginPath(); g.arc(64, 34, 14, 0, 7); g.fill(); return c.toDataURL('image/jpeg'); };
     kt.filesThumb = async (o) => ({ url: /\.jpg$/.test(o.path) ? pic() : null });
   }, req);
@@ -56,6 +56,12 @@ async function page(browser, port, z, lang, multiple) {
     ok(L('switched off again: dimmed once more'), await row('Song.mp3').evaluate((e) => e.classList.contains('pick-off')));
     ok(L('paste bar and action bar hidden in pick mode'), !(await p.isVisible('.files-clipbar')) && !(await p.isVisible('.files-selbar')));
     if (process.env.KT_SHOTS && lang === 'en') { await p.emulateMedia({ colorScheme: 'dark' }); await p.waitForTimeout(300); await p.screenshot({ path: path.join(process.env.KT_SHOTS, 'F3-pick-single-en-dark.png') }); await p.emulateMedia({ colorScheme: 'light' }); }
+    // (A file Android cannot give the asking app a link to — the fake plugin says so —: nothing handed back, the screen
+    // says which and why, and the picker stays; tapped again, it is tried again.)
+    await p.evaluate((k) => { window.__refuse = `${k}/photo.jpg`; }, K); await row('photo.jpg').click(); await p.waitForSelector('.pick-refused:not([hidden])', { timeout: 3000 }).catch(() => undefined);
+    const note = await p.textContent('.pick-refused').catch(() => '');
+    ok(L('a file that cannot be handed over: said, which and why; nothing handed back; still picking'), /photo\.jpg/.test(note) && /cannot be handed over/.test(note) && /Cancel/.test(note) && (await p.evaluate(() => window.__done.length)) === 0 && (await p.evaluate(() => window.__tried)) === 1 && !!(await p.$('.files-view.picker')), note);
+    await p.evaluate(() => { window.__refuse = null; });
     await row('photo.jpg').click(); await p.waitForTimeout(500);
     const done = await p.evaluate(() => window.__done);
     ok(L('one tap on the file hands it back at once, with the request\'s mark'), done.length === 1 && done[0].id === 'r1' && JSON.stringify(done[0].paths) === JSON.stringify([`${K}/photo.jpg`]), done);
@@ -71,6 +77,12 @@ async function page(browser, port, z, lang, multiple) {
     await p.evaluate(() => window.__back()); await p.waitForTimeout(500);
     ok(L('Back: up a folder, still in the picker, the choice kept'), !!(await p.$('.files-view.picker')) && (await p.textContent('.files-title')) === 'Sub' && /2|٢|ملفان/.test(await p.textContent('.pick-bar .pick-count')));
     if (lang === 'en') {
+      await p.evaluate((k) => { window.__refuse = `${k}/Sub/Deeper/deep.txt`; }, K); await p.click('.pick-bar .btn.primary'); await p.waitForSelector('.pick-refused:not([hidden])', { timeout: 3000 }).catch(() => undefined);
+      const note = await p.textContent('.pick-refused').catch(() => '');
+      ok(L('one of two cannot be handed over: none handed back (never fewer than chosen), the screen says which, Add off'), /deep\.txt/.test(note) && /Take them out/.test(note) && (await p.evaluate(() => window.__done.length)) === 0 && await p.$eval('.pick-bar .btn.primary', (b) => b.disabled), note);
+      await p.evaluate(() => { window.__refuse = null; }); await row('Deeper').click(); await p.waitForTimeout(500); await row('deep.txt').click(); await p.waitForTimeout(200);
+      ok(L('…taken out of the choice: the line goes, Add on again'), await p.$eval('.pick-refused', (e) => e.hidden) && !(await p.$eval('.pick-bar .btn.primary', (b) => b.disabled)));
+      await row('deep.txt').click(); await p.waitForTimeout(200); await p.evaluate(() => window.__back()); await p.waitForTimeout(500);
       await p.click('.pick-bar .btn.primary'); await p.waitForTimeout(500);
       const done = await p.evaluate(() => window.__done);
       ok(L('Add: both handed back, in the order chosen'), done.length === 1 && done[0].id === 'r2' && JSON.stringify(done[0].paths) === JSON.stringify([`${K}/Sub/in.txt`, `${K}/Sub/Deeper/deep.txt`]), done);

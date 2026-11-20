@@ -47,14 +47,16 @@ final class KtPickLogic {
     static List<File> recents(List<File> bases, int limit, int visit, int depth) {
         final List<File> found = new ArrayList<>(); int seen = 0;
         LinkedList<Object[]> q = new LinkedList<>();
-        for (File b : bases) if (b != null) q.add(new Object[] { b, 0 });
+        for (File b : bases) if (b != null) { String root = canon(b); if (root != null) q.add(new Object[] { b, 0, root }); }
         while (!q.isEmpty() && seen < visit) {
-            Object[] it = q.removeFirst(); File d = (File) it[0]; int lv = (Integer) it[1];
+            Object[] it = q.removeFirst(); File d = (File) it[0]; int lv = (Integer) it[1]; String root = (String) it[2];
             File[] kids = d.listFiles(); if (kids == null) continue;
             for (File f : kids) {
                 if (++seen > visit) break;
                 if (f.getName().startsWith(".")) continue;
-                if (f.isDirectory()) { if (lv < depth) q.add(new Object[] { f, lv + 1 }); }
+                // (A link leading out of the folder given — a symlink to elsewhere — is not followed, nor listed.)
+                if (!inside(canon(f), root)) continue;
+                if (f.isDirectory()) { if (lv < depth) q.add(new Object[] { f, lv + 1, root }); }
                 else found.add(f);
             }
         }
@@ -62,7 +64,16 @@ final class KtPickLogic {
         return found.size() > limit ? new ArrayList<>(found.subList(0, limit)) : found;
     }
 
+    static String canon(File f) { try { return f.getCanonicalPath(); } catch (Exception e) { return null; } }
+    static boolean inside(String p, String root) { return p != null && root != null && (p.equals(root) || p.startsWith(root.endsWith(File.separator) ? root : root + File.separator)); }
+
     /** First run after the update: the default («its own browser», the provider off) is applied once; a choice made
      *  since is never overridden. */
     static boolean applyDefaultNow(boolean alreadyApplied) { return !alreadyApplied; }
+    /** The first run's choice: nothing (made already), «its own browser» (the provider off), or — other apps already
+     *  holding links or folder access on the provider (`grants`) — «storage places» kept on, so nothing they hold breaks. */
+    static final int KEEP = 0, OWN_BROWSER = 1, STORAGE_PLACES = 2;
+    static int firstRunChoice(boolean alreadyApplied, int grants) { if (alreadyApplied) return KEEP; return grants > 0 ? STORAGE_PLACES : OWN_BROWSER; }
+    /** Switching to «its own browser» by hand asks first (naming what breaks) when other apps hold such grants. */
+    static boolean askBeforeOwnBrowser(int grants) { return grants > 0; }
 }

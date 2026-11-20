@@ -951,12 +951,20 @@ public class KtPlugin extends Plugin {
     /** The files chosen (`paths`), or none (`cancel`): handed to the other app, and this app steps back so it is in front again. */
     @PluginMethod public void pickDone(PluginCall call) {
         final java.util.List<File> files = new java.util.ArrayList<>(); JSArray a = call.getArray("paths");
-        if (a != null) for (int i = 0; i < a.length(); i++) { String p = a.optString(i, ""); if (!p.isEmpty()) files.add(fileOf(p)); }
+        final java.util.List<String> asked = new java.util.ArrayList<>();
+        if (a != null) for (int i = 0; i < a.length(); i++) { String p = a.optString(i, ""); if (!p.isEmpty()) { files.add(fileOf(p)); asked.add(p); } }
         final KtPickActivity pick = KtPickActivity.current; final android.app.Activity me = getActivity();
         if (pick == null) { call.reject("no request"); return; }
         final String forId = call.getString("id", ""); if (forId != null && !forId.isEmpty() && !forId.equals(pick.id)) { call.resolve(); return; }
         pick.runOnUiThread(() -> {
-            try { pick.answer(files.isEmpty() ? null : files); } catch (Throwable ignored) {}
+            java.util.List<Integer> refused = null;
+            try { refused = pick.answer(files.isEmpty() ? null : files); } catch (Throwable ignored) {}
+            // (A chosen file no link can be given to: nothing handed back, the page says which — the asking app never
+            // gets fewer files than were shown as chosen.)
+            if (refused != null && !refused.isEmpty()) {
+                JSArray ra = new JSArray(); for (Integer i : refused) ra.put(asked.get(i));
+                JSObject r = new JSObject(); r.put("refused", ra); r.put("why", "nolink"); call.resolve(r); return;
+            }
             try { if (me != null) me.moveTaskToBack(true); } catch (Throwable ignored) {}
             call.resolve();
         });
@@ -967,10 +975,19 @@ public class KtPlugin extends Plugin {
     private void applyPickerDefault() {
         try {
             android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE);
-            if (!KtPickLogic.applyDefaultNow(sp.getBoolean("pickerDefault", false))) return;
-            getContext().getPackageManager().setComponentEnabledSetting(pickerProvider(), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
-            sp.edit().putBoolean("pickerDefault", true).apply();
+            // (Other apps already holding links or folder access on the provider: it stays on — «storage places» —, and the
+            // setting's sheet says why, once; else «its own browser», as for a fresh install.)
+            int choice = KtPickLogic.firstRunChoice(sp.getBoolean("pickerDefault", false), grantsOnOurs());
+            if (choice == KtPickLogic.KEEP) return;
+            if (choice == KtPickLogic.OWN_BROWSER) getContext().getPackageManager().setComponentEnabledSetting(pickerProvider(), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+            sp.edit().putBoolean("pickerDefault", true).putBoolean("pickerKept", choice == KtPickLogic.STORAGE_PLACES).apply();
         } catch (Throwable ignored) {}
+    }
+    /** How many links or folder accesses other apps hold, persisted, on the provider (Android keeps the list). */
+    private int grantsOnOurs() {
+        int n = 0;
+        try { for (android.content.UriPermission u : getContext().getContentResolver().getOutgoingPersistedUriPermissions()) if (u != null && u.getUri() != null && KtDocumentsProvider.AUTHORITY.equals(u.getUri().getAuthority())) n++; } catch (Throwable ignored) {}
+        return n;
     }
     /** The provider's state: `on` given: set first (true: storage places, false: Tools' own browser). Answers `on`, the state really in force. */
     @PluginMethod public void pickerStorage(PluginCall call) {
@@ -978,9 +995,11 @@ public class KtPlugin extends Plugin {
         try {
             if (want != null) {
                 pm.setComponentEnabledSetting(pickerProvider(), want ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
-                getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("pickerDefault", true).apply();
+                getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("pickerDefault", true).putBoolean("pickerKept", false).apply();
             }
-            JSObject r = new JSObject(); r.put("on", pm.getComponentEnabledSetting(pickerProvider()) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED); call.resolve(r);
+            JSObject r = new JSObject(); r.put("on", pm.getComponentEnabledSetting(pickerProvider()) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED);
+            int grants = grantsOnOurs(); r.put("others", grants); r.put("ask", KtPickLogic.askBeforeOwnBrowser(grants));
+            r.put("kept", getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getBoolean("pickerKept", false)); call.resolve(r);
         } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /* ---------- others' «Open with» / «Share» (KtOpenActivity holds the request and its grant; openwith.json) ---------- */

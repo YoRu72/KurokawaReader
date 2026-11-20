@@ -56,11 +56,14 @@ public class KtPickActivity extends Activity {
         } catch (Throwable e) { answer(null); }
     }
 
-    /** The answer: the files chosen, or null (cancelled). */
-    void answer(List<File> files) {
-        List<Uri> us = new ArrayList<>();
-        if (files != null) for (File f : files) { Uri u = uriFor(f); if (u != null) us.add(u); }
-        if (us.isEmpty()) { setResult(RESULT_CANCELED); finish(); return; }
+    /** The answer: the files chosen, or null (cancelled). A chosen file that cannot be given a link is never dropped
+     *  silently: nothing is answered, and the places (in `files`) of those that cannot are returned for the page to say
+     *  so — the caller gets every file shown as chosen, or none. Empty: answered. */
+    List<Integer> answer(List<File> files) {
+        List<Uri> us = new ArrayList<>(); List<Integer> refused = new ArrayList<>();
+        if (files != null) for (int i = 0; i < files.size(); i++) { Uri u = uriFor(files.get(i)); if (u != null) us.add(u); else refused.add(i); }
+        if (!refused.isEmpty()) return refused;
+        if (us.isEmpty()) { setResult(RESULT_CANCELED); finish(); return refused; }
         Intent r = new Intent();
         String type = null; try { type = getContentResolver().getType(us.get(0)); } catch (Throwable ignored) {}
         if (type != null) r.setDataAndType(us.get(0), type); else r.setData(us.get(0));
@@ -68,7 +71,7 @@ public class KtPickActivity extends Activity {
         for (int i = 1; i < us.size(); i++) clip.addItem(new ClipData.Item(us.get(i)));
         r.setClipData(clip);
         r.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        setResult(RESULT_OK, r); finish();
+        setResult(RESULT_OK, r); finish(); return refused;
     }
     /** Whether the app's documents provider is on (Settings → «In other apps' file pickers»). */
     private boolean providerOn() {

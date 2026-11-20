@@ -40,7 +40,7 @@ const overlap = (a, b) => !!a && !!b && a.l < b.r - 0.5 && a.r > b.l + 0.5 && a.
 
 async function phone(browser, port, z, lang) {
   const L = (s) => `[${lang}-phone 360] ${s}`; const s = S[lang]; const rtl = lang === 'ar';
-  const { page: p, errors } = await F.open(browser, { lang, z, many: 150, width: 360, height: 800 });
+  const { page: p, errors } = await F.open(browser, { lang, z, many: 150, width: 360, height: 800, dense: true });
   await p.addInitScript(extra, { P }); const cdp = await p.context().newCDPSession(p);
   const touch = async (pts, gap = 0) => { await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: pts[0][0], y: pts[0][1] }] }); for (const [x, y] of pts.slice(1)) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); if (gap) await new Promise((r) => setTimeout(r, gap)); } await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); };
   const line = (x0, y0, x1, y1, n = 12) => Array.from({ length: n + 1 }, (_, i) => [x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n]);
@@ -98,6 +98,24 @@ async function phone(browser, port, z, lang) {
   ok(L('another page: the pill does not follow; the held action done once'), !(await p.$('.toast.undo-snack:not(.files-unfinished)')) && (await p.evaluate(() => window.__cleared)) === 4);
   await p.evaluate(() => new Promise((r) => setTimeout(r, 300)));
   ok(L('…and never a second time'), (await p.evaluate(() => window.__cleared)) === 4);
+  // behind a sheet opened after it, the pill's time stands still (the clock may run past it); seen again, it has what
+  // was left — 3 s at least — and then the held action is done, once
+  await offer(); const c0 = await p.evaluate(() => window.__cleared);
+  await p.evaluate(() => { const d = document.createElement('div'); d.className = 'sheet test-sheet'; document.body.append(d); });
+  await p.waitForFunction(() => document.querySelector('.undo-snack')?.classList.contains('behind-sheet'));
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+  await p.evaluate(() => { const now = Date.now; window.__realNow = now; Date.now = () => now() + 60000; });
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 700)));
+  const waits = !!(await p.$('.toast.undo-snack:not(.files-unfinished)')) && (await p.evaluate(() => window.__cleared)) === c0;
+  await p.evaluate(() => document.querySelector('.test-sheet').remove());
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 900)));
+  const back = !!(await p.$('.toast.undo-snack:not(.files-unfinished):not(.behind-sheet)')) && (await p.evaluate(() => window.__cleared)) === c0;
+  await p.waitForFunction((c) => window.__cleared > c, c0, { timeout: 8000 }).catch(() => undefined); await p.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+  const doneOnce = (await p.evaluate(() => window.__cleared)) === c0 + 1 && !(await p.$('.toast.undo-snack:not(.files-unfinished)'));
+  await p.evaluate(() => { Date.now = window.__realNow; });
+  ok(L('behind a sheet: the pill\'s time stands still, the held action waits'), waits);
+  ok(L('…seen again: still offered for a while'), back);
+  ok(L('…then done, once'), doneOnce, await p.evaluate(() => window.__cleared));
 
   // above the selection bar
   await go(`/files?p=${encodeURIComponent(K)}`); await p.waitForSelector(rowSel('Song.mp3')); await offer();

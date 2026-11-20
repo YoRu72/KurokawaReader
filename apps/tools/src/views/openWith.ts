@@ -183,17 +183,26 @@ export async function otherAppsSheet(): Promise<void> {
 /** «In other apps' file pickers, Kurokawa Tools appears as»: its own browser (the documents provider off — Android
  *  then lists Tools as an app and opens Files as a picker) or storage places (the provider on — the only way to save
  *  into Tools' folders from another app). The state shown is read back from the phone, never assumed. */
-function pickerModeBlock(call: (o: { on?: boolean }) => Promise<{ on: boolean }>): HTMLElement {
+type PmState = { on: boolean; others?: number; ask?: boolean; kept?: boolean };
+function pickerModeBlock(call: (o: { on?: boolean }) => Promise<PmState>): HTMLElement {
   const note = h('p', { class: 'hint pm-error', hidden: true }); const chips = h('div', { class: 'pm-chips' });
+  // (The update found other apps already using the storage places: they were kept on — one calm line says so.)
+  const kept = h('p', { class: 'hint pm-kept', hidden: true }, t('pmKeptForOthers')); let last: PmState = { on: false };
+  const seen = (r: PmState) => { last = r; kept.hidden = !(r.kept && r.on); draw(!!r.on); };
   const draw = (on: boolean) => chips.replaceChildren(...([['own', t('pmOwn'), !on], ['storage', t('pmStorage'), on]] as [string, string, boolean][]).map(([id, label, sel]) =>
     h('button', { type: 'button', class: 'chip' + (sel ? ' on' : ''), 'data-pm': id, 'aria-pressed': String(sel), onclick: () => void change(id === 'storage') }, label)));
   const change = async (on: boolean) => {
-    note.hidden = true;
-    try { const r = await call({ on }); draw(!!r.on); if (!!r.on !== on) throw new Error('state'); }
-    catch { note.textContent = t('pmFailed'); note.hidden = false; try { draw(!!(await call({})).on); } catch { /* as drawn */ } }
+    note.hidden = true; if (on === !!last.on) return;
+    // (To its own browser while other apps hold links or folders on the storage places: asked once, naming what breaks.)
+    if (!on && (last.ask || (last.others ?? 0) > 0)) {
+      const { confirmSheet } = await import('../ui/undo');
+      if (!(await confirmSheet(t('pmAskTitle'), [t('pmAskBody', { n: String(last.others ?? 0) })], t('pmAskOk')))) return;
+    }
+    try { const r = await call({ on }); seen(r); if (!!r.on !== on) throw new Error('state'); }
+    catch { note.textContent = t('pmFailed'); note.hidden = false; try { seen(await call({})); } catch { /* as drawn */ } }
   };
-  void call({}).then((r) => draw(!!r.on)).catch(() => { note.textContent = t('pmFailed'); note.hidden = false; });
-  return h('div', { class: 'pm-block' }, h('p', { class: 'files-sec' }, t('pmTitle')), chips, h('p', { class: 'hint' }, t('pmHint')), note);
+  void call({}).then(seen).catch(() => { note.textContent = t('pmFailed'); note.hidden = false; });
+  return h('div', { class: 'pm-block' }, h('p', { class: 'files-sec' }, t('pmTitle')), chips, kept, h('p', { class: 'hint' }, t('pmHint')), note);
 }
 
 /* ---------- Files' own chooser: «Open with…», «Just once» / «Always» ---------- */

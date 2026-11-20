@@ -13,7 +13,7 @@ const LINE = { en: 'Android closed the page to free memory; you are back where y
 function extra() {
   const base = window.Capacitor.Plugins.KurokawaTools;
   const over = {
-    pageRestored: async () => { const g = sessionStorage.getItem('kt-test-gone') === '1'; sessionStorage.removeItem('kt-test-gone'); return { gone: g, crashed: false, at: g ? Date.now() : 0 }; },
+    pageRestored: async () => { const g = sessionStorage.getItem('kt-test-gone') === '1'; sessionStorage.removeItem('kt-test-gone'); const c = sessionStorage.getItem('kt-test-crashed') === '1'; sessionStorage.removeItem('kt-test-crashed'); return { gone: g, crashed: g && c, at: g ? Date.now() : 0 }; },
     filesLive: async () => { const ids = Object.keys(JSON.parse(localStorage.getItem('kt.files.live') || '{}')); window.__liveAsked = (window.__liveAsked || 0) + 1; return { jobs: sessionStorage.getItem('kt-test-live') === '1' ? ids.map((id) => ({ id, asking: { id, status: 'conflict', from: '/a/Song.mp3', to: '/b/Song.mp3', size: 5, existingSize: 4, mtime: 1, existingMtime: 1, dir: false } })) : [] }; },
   };
   window.Capacitor.Plugins.KurokawaTools = new Proxy(base, { get: (t, k) => (k in over ? over[k] : t[k]) });
@@ -54,8 +54,79 @@ async function run(browser, port, z, lang) {
   const errs = errors.filter((e) => !/favicon/.test(e)); ok(L('no page errors'), !errs.length, errs);
   await p.close();
 }
+/** A cut whose move runs when the renderer ends (the real phone layout): back, the bar says it is moving and Paste stays
+ *  off — no second move of the same items —; the move ends: the bar goes. A cut whose move is no longer running is put
+ *  down (its items are moved, or half moved). And a Paste whose items are gone says so on the bar, starting nothing. */
+async function runCut(browser, port, z, lang) {
+  const L = (s) => `[${lang}-phone dense] ${s}`;
+  const { page: p, errors } = await F.open(browser, { lang, z, width: 412, height: 915, dense: true }); await p.addInitScript(extra);
+  const go = (h) => p.evaluate((x) => { location.hash = x; }, h);
+  await p.goto(`http://localhost:${port}/index.html#/files?p=${encodeURIComponent(K)}`); await p.waitForSelector('.files-row');
+  await p.evaluate(() => sessionStorage.setItem('kt-test-live', '1'));
+  await p.click('.files-row:has(.files-name[title="Song.mp3"])', { button: 'right' }); await p.click('.files-selbar [data-icon="scissors"]'); await p.waitForSelector('.files-clipbar:not([hidden])');
+  await go(`/files?p=${encodeURIComponent(`${K}/Sub`)}`); await p.waitForSelector('.files-row:has(.files-name[title="in.txt"])');
+  await p.evaluate(() => { window.__stuck = true; }); await p.click('.files-clip-paste');
+  await p.waitForFunction(() => Object.keys(JSON.parse(localStorage.getItem('kt.files.live') || '{}')).length === 1);
+  await p.waitForFunction(() => !!JSON.parse(localStorage.getItem('kt.resume.files') || '{}').clip?.busy);
+  const id = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.resume.files')).clip.busy);
+  // the renderer ends while the move runs
+  await p.evaluate(() => { sessionStorage.setItem('kt-test-gone', '1'); }); await p.goto(`http://localhost:${port}/index.html`);
+  await p.waitForSelector('.files-clipbar:not([hidden])', { timeout: 8000 }).catch(() => undefined);
+  await p.waitForFunction(() => window.__liveAsked, null, { timeout: 4000 }).catch(() => undefined);
+  ok(L('back: the cut shows as moving'), !!(await p.$('.files-clipbar:not([hidden])')));
+  ok(L('…and Paste stays off (no second move)'), await p.$eval('.files-clip-paste', (b) => b.disabled).catch(() => false));
+  const calls0 = await p.evaluate(() => window.__calls.filter((c) => c.startsWith('move:')).length);
+  await p.click('.files-clip-paste', { force: true, timeout: 1000 }).catch(() => undefined); await p.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  ok(L('…a press starts nothing'), (await p.evaluate(() => window.__calls.filter((c) => c.startsWith('move:')).length)) === calls0);
+  await p.evaluate((i) => window.__emit('files', { id: i, status: 'done', done: 1, total: 1, files: 1, failed: [], skipped: 0, left: 0, remaining: [] }), id);
+  await p.waitForSelector('.files-clipbar[hidden]', { state: 'attached', timeout: 4000 }).catch(() => undefined);
+  ok(L('the move ends: the bar goes'), !(await p.$('.files-clipbar:not([hidden])')));
+  // a cut whose move no longer runs: put down on the way back
+  await p.evaluate((i) => localStorage.setItem('kt.resume.files', JSON.stringify({ clip: { op: 'move', paths: ['/x/Song.mp3'], busy: i } })), id);
+  await p.evaluate(() => { sessionStorage.setItem('kt-test-gone', '1'); sessionStorage.removeItem('kt-test-live'); localStorage.removeItem('kt.files.live'); localStorage.removeItem('kt.restore.last'); window.__liveAsked = 0; });
+  await p.goto(`http://localhost:${port}/index.html#/files?p=${encodeURIComponent(K)}`); await p.waitForSelector('.files-row');
+  await p.waitForFunction(() => window.__liveAsked, null, { timeout: 4000 }).catch(() => undefined); await p.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  ok(L('a cut whose move no longer runs: put down'), !(await p.$('.files-clipbar:not([hidden])')));
+  // a Paste whose items are gone: the bar says so, no job
+  await p.click('.files-row:has(.files-name[title="Song.mp3"])', { button: 'right' }); await p.click('.files-selbar [data-icon="copy"]'); await p.waitForSelector('.files-clipbar:not([hidden])');
+  await p.evaluate((k) => window.Capacitor.Plugins.KurokawaTools.filesJob({ id: 'gone1', op: 'delete', paths: [`${k}/Song.mp3`] }), K);
+  await p.waitForFunction(() => !document.querySelector('.files-row .files-name[title="Song.mp3"]'), null, { timeout: 4000 }).catch(() => undefined);
+  await go(`/files?p=${encodeURIComponent(`${K}/Sub`)}`); await p.waitForSelector('.files-row:has(.files-name[title="in.txt"])');
+  const n0 = await p.evaluate(() => window.__calls.filter((c) => c.startsWith('copy:')).length);
+  await p.click('.files-clip-paste'); await p.waitForFunction(() => document.querySelector('.files-clip-why.blocked'), null, { timeout: 4000 }).catch(() => undefined);
+  ok(L('a Paste whose items are gone: the bar says so'), (await p.$eval('.files-clip-why', (e) => e.textContent).catch(() => '')) === (lang === 'ar' ? 'لم تعد العناصر المنسوخة في مواضعها' : 'The items on the clipboard are no longer where they were'));
+  ok(L('…and starts no job'), (await p.evaluate(() => window.__calls.filter((c) => c.startsWith('copy:')).length)) === n0);
+  const errs = errors.filter((e) => !/favicon/.test(e)); ok(L('no page errors'), !errs.length, errs);
+  await p.close();
+}
+/** Never a loop: a second renderer loss within a minute opens the app at its start, with one line; so does a second
+ *  CRASH on the same page, whenever it comes. */
+async function runTwice(browser, port, z, lang) {
+  const L = (s) => `[${lang}-phone] ${s}`; const TWICE = { en: 'The page was closed twice in a row, so Tools opened at the start.', ar: 'أُغلقت الصفحة مرتين متتاليتين، ففُتحت الأدوات من بدايتها.' };
+  const { page: p, errors } = await F.open(browser, { lang, z, width: 360, height: 800 }); await p.addInitScript(extra);
+  const toasts = () => p.$$eval('.toast', (t) => t.map((x) => x.textContent));
+  const lose = async (crash) => { await p.evaluate((c) => { sessionStorage.setItem('kt-test-gone', '1'); if (c) sessionStorage.setItem('kt-test-crashed', '1'); }, crash); await p.goto(`http://localhost:${port}/index.html`); await p.waitForSelector('.view'); await p.waitForSelector('.toast', { timeout: 4000 }).catch(() => undefined); };
+  const atSub = () => p.evaluate((k) => decodeURIComponent(location.hash).endsWith(`${k}/Sub`), K);
+  await p.goto(`http://localhost:${port}/index.html#/files?p=${encodeURIComponent(K)}`); await p.waitForSelector('.files-row'); await p.evaluate((k) => { location.hash = `/files?p=${encodeURIComponent(`${k}/Sub`)}`; }, K); await p.waitForSelector('.files-row:has(.files-name[title="in.txt"])');
+  await lose(false); await p.waitForFunction((k) => decodeURIComponent(location.hash).endsWith(`${k}/Sub`), K, { timeout: 8000 }).catch(() => undefined);
+  ok(L('a first loss: brought back'), await atSub());
+  await p.waitForSelector('.files-row'); await lose(false);
+  ok(L('a second loss within a minute: at the start'), !(await atSub()), await p.evaluate(() => location.hash));
+  ok(L('…with one calm line'), (await toasts()).includes(TWICE[lang]), await toasts());
+  // a crash on the same page the second time (long after): at the start too
+  await p.goto(`http://localhost:${port}/index.html#/files?p=${encodeURIComponent(K)}`); await p.waitForSelector('.files-row'); await p.evaluate((k) => { location.hash = `/files?p=${encodeURIComponent(`${k}/Sub`)}`; }, K); await p.waitForSelector('.files-row:has(.files-name[title="in.txt"])');
+  await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kt.restore.last') || '{}'); localStorage.setItem('kt.restore.last', JSON.stringify({ ...v, at: Date.now() - 120000 })); });
+  await lose(true); await p.waitForFunction((k) => decodeURIComponent(location.hash).endsWith(`${k}/Sub`), K, { timeout: 8000 }).catch(() => undefined);
+  ok(L('a first crash, long after: brought back'), await atSub());
+  await p.waitForSelector('.files-row');
+  await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kt.restore.last') || '{}'); localStorage.setItem('kt.restore.last', JSON.stringify({ ...v, at: Date.now() - 120000 })); });
+  await lose(true);
+  ok(L('a second crash on the same page: at the start, one line'), !(await atSub()) && (await toasts()).includes(TWICE[lang]), await toasts());
+  const errs = errors.filter((e) => !/favicon/.test(e)); ok(L('no page errors'), !errs.length, errs);
+  await p.close();
+}
 (async () => {
   const z = await F.zipListing(); const srv = await F.serve(); const port = srv.address().port; const browser = await chromium.launch();
-  for (const lang of process.argv[2] ? [process.argv[2]] : ['en', 'ar']) await run(browser, port, z, lang);
+  for (const lang of process.argv[2] ? [process.argv[2]] : ['en', 'ar']) { await run(browser, port, z, lang); await runCut(browser, port, z, lang); await runTwice(browser, port, z, lang); }
   await browser.close(); srv.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -6,6 +6,7 @@ import { h, icon, iconButton, toast } from '../ui/dom';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { kindOfFile } from './taskFiles';
 import { isArc, arcPath, parseArc } from './filesArc';
+import { resolvePath, dirOfPath } from './filesPath';
 import { nameEl, prefs, savePrefs, type Entry, type SortSet } from './files';
 
 export type PcRoot = { kind: string; path: string; name: string; readable: boolean; free?: number; total?: number };
@@ -32,7 +33,7 @@ const MINW: Record<string, number> = { size: 72, type: 96, mod: 132 }; const DEF
 const SORT_OF: Record<Col, SortSet['sort']> = { name: 'name', size: 'size', type: 'type', mod: 'date' };
 const LABEL: Record<Col, 'pcColName' | 'pcColSize' | 'pcColType' | 'pcColModified'> = { name: 'pcColName', size: 'pcColSize', type: 'pcColType', mod: 'pcColModified' };
 const baseOf = (p: string): string => p.replace(/\/+$/, '').split('/').pop() || p;
-const dirOf = (p: string): string => p.replace(/\/+$/, '').replace(/\/[^/]*$/, '') || '/';
+const dirOf = dirOfPath;
 const rtl = (el: Element): boolean => getComputedStyle(el).direction === 'rtl';
 const timeFmt = (): Intl.DateTimeFormat => { try { return new Intl.DateTimeFormat(document.documentElement.lang || undefined, { timeStyle: 'short', numberingSystem: 'latn' } as Intl.DateTimeFormatOptions); } catch { return new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }); } };
 let tf: Intl.DateTimeFormat | null = null;
@@ -68,7 +69,14 @@ export function popMenu(at: { x: number; y: number } | HTMLElement, items: MI[])
 
 const taken = new WeakSet<KeyboardEvent>();
 const HIST: Record<string, { hist: string[]; hi: number }> = {}; let moving = ''; let pendingSel = '';
-const open = new Set<string>(); const kids = new Map<string, Entry[]>();
+/** A map that keeps only the `cap` entries used last (the tree's listings: every sync and expand adds one; a folder let
+ *  go is listed again when it is shown again). */
+class Lru<K, V> extends Map<K, V> {
+  constructor(readonly cap: number) { super(); }
+  override get(k: K): V | undefined { const v = super.get(k); if (v !== undefined) { super.delete(k); super.set(k, v); } return v; }
+  override set(k: K, v: V): this { super.delete(k); super.set(k, v); while (this.size > this.cap) { const old = this.keys().next(); if (old.done) break; super.delete(old.value); } return this; }
+}
+const open = new Set<string>(); const kids = new Lru<string, Entry[]>(300);
 export function mount(host: PcHost): PcCtl {
   const { root, body, listEl } = host; const st = readSaved(); let dead = false;
   const sortKey = `${LS}.sort.${host.side ?? 'a'}`;
@@ -115,7 +123,7 @@ export function mount(host: PcHost): PcCtl {
   const paintBar = () => { backB.disabled = hs.hi <= 0; fwdB.disabled = hs.hi >= hs.hist.length - 1; upB.disabled = !host.upOf(); };
   bar.append(navBtn, backB, fwdB, upB, addr, refB); paintNavOpen();
   // (One toolbar row: the page's old top bar — drawer, back, title — gives way; its search, filter, view, sort and ⋮ come into this row.)
-  { const acts = root.querySelector(':scope > .topbar .topbar-actions'); if (acts) bar.append(acts); }
+  const topEl = root.querySelector(':scope > .topbar'); const acts = topEl?.querySelector(':scope > .topbar-actions') ?? null; if (acts) bar.append(acts);
   const driveOf = (p: string): PcRoot | null => host.roots().filter((r) => r.readable !== false && (p === r.path || p.startsWith(r.path.replace(/\/+$/, '') + '/'))).sort((a, b) => a.path.length - b.path.length)[0] ?? null;
   const crumbsOf = (p: string): { label: string; path: string }[] => {
     // (Inside an archive: the folder that holds it, then the archive's own parts — decoded, never «%2Fstorage%2F…».)
@@ -137,7 +145,7 @@ export function mount(host: PcHost): PcCtl {
     parts.push(h('span', { class: 'pcx-fill' })); addr.replaceChildren(...parts); addr.classList.remove('editing');
   };
   const showErr = (on: boolean) => { errEl.hidden = !on; if (on) errEl.textContent = t('pcNoPath'); };
-  const cleanPath = (s: string): string => { let v = s.trim().replace(/^["'“”]+|["'“”]+$/g, '').trim(); if (/^[A-Za-z]:\\|\\\\/.test(v) || (v.includes('\\') && !v.includes('/'))) v = v.replace(/\\/g, '/'); return v.length > 1 ? v.replace(/\/+$/, '') || '/' : v; };
+  const cleanPath = (s: string): string => { let v = s.trim().replace(/^["'“”]+|["'“”]+$/g, '').trim(); if (/^[A-Za-z]:\\|\\\\/.test(v) || (v.includes('\\') && !v.includes('/'))) v = v.replace(/\\/g, '/'); return /^(\/|[A-Za-z]:(\/|$))/.test(v) ? resolvePath(v) : v.length > 1 ? v.replace(/\/+$/, '') || '/' : v; };
   const edit = () => {
     if (addr.classList.contains('editing')) { (addr.querySelector('input') as HTMLInputElement | null)?.select(); return; }
     const inp = h('input', { type: 'text', class: 'pcx-input', value: host.at(), dir: 'ltr', spellcheck: 'false', autocomplete: 'off', 'aria-label': t('pcAddress') }) as HTMLInputElement;
@@ -338,7 +346,12 @@ export function mount(host: PcHost): PcCtl {
     at(p) { if (!p) return; if (moving && moving === p) moving = ''; else if (hs.hist[hs.hi] !== p) { hs.hist = hs.hist.slice(0, hs.hi + 1); hs.hist.push(p); hs.hi = hs.hist.length - 1; if (hs.hist.length > 100) { hs.hist.shift(); hs.hi--; } } reveal(p); paintAddr(); paintBar(); paintNav(); showErr(false); void lastList; },
     key, sortSet: () => sortS, adopt() { sortS = { sort: prefs.sort, desc: prefs.desc, ff: prefs.foldersFirst !== false }; saveSort(); paintHead(); },
     focus() { (listEl as HTMLElement).focus(); },
-    dispose() { dead = true; ro?.disconnect(); openMenu?.shut(); body.removeEventListener('contextmenu', onCtx); body.removeEventListener('pointerdown', onDown); root.removeEventListener('mouseup', onMouse); pending.clear(); },
+    dispose() {
+      dead = true; ro?.disconnect(); openMenu?.shut(); body.removeEventListener('contextmenu', onCtx); body.removeEventListener('pointerdown', onDown); root.removeEventListener('mouseup', onMouse); pending.clear();
+      // (Unmounted — the window turned to the phone's layout, or the page left —: the page's own parts as they were.)
+      if (acts && topEl) topEl.append(acts); for (const x of [bar, errEl, status, nav, sep]) x.remove();
+      root.classList.remove('pcx', 'pcx-solo', 'pcx-nav-off', 'pcx-details'); root.style.removeProperty('--pcx-cols');
+    },
   };
   return ctl;
 }

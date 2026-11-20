@@ -5,6 +5,7 @@
 // installer) or by any app (Open with…, Open as a kind); a selection (held) copied, cut, pasted, deleted, renamed,
 // shared, zipped, with properties; the operations as jobs with their progress and a question when a name is taken;
 // what other apps share to «Save to device» saved where you choose.
+import { resolvePath, dirOfPath, intoItself } from './filesPath';
 import { sideDrawer, swipeToOpen } from '../ui/sideSwipe';
 import { swipeable } from '../ui/swipe';
 import { claimTouch } from '../ui/touchOwner';
@@ -123,6 +124,8 @@ const clipWatch = new Set<() => void>();
 const scrollMemo = new Map<string, number>();
 /** The pane last touched (two side by side): the one Back walks up. */
 let activePane: object | null = null;
+/** The panes told when the pane the keys go to changes (its focus ring drawn). */
+const paneWatch = new Set<() => void>();
 /** The hidden folders an archive's entries are taken out to before they are moved in (by the move job's id). */
 const stagings = new Map<string, string>();
 const STAGE = '.kurokawa-extract-';
@@ -131,10 +134,11 @@ const subJobs = new Map<string, (ev: JobEvent) => void>();
 /** Jobs started plainly (the engine checked the sizes), and moves that were a rename on one storage (nothing copied to check). */
 const sizeChecked = new Set<string>(); const renamedMoves = new Set<string>();
 let stagesSwept = false;
-const setClip = (c: typeof clipboard) => { clipboard = c; keepResume({ clip: c ? { op: c.op, paths: c.paths } : null }); for (const f of clipWatch) f(); };
-/** `dest` is one of `paths` or lies inside one — a folder pasted into itself (whole names compared, letter case aside:
- *  the phone's storage ignores it; /a/b and /a/bc are strangers; a computer's «\\» is a «/»). */
-export const intoItself = (paths: string[], dest: string): boolean => { const norm = (x: string) => x.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() + '/'; const d = norm(dest); return paths.some((p) => d.startsWith(norm(p))); };
+/** What a paste found gone from the clipboard (said on its bar): '' none, 'all' every item, else how many. Any new
+ *  clipboard puts it down. */
+let clipGone = '';
+const setClip = (c: typeof clipboard, gone = '') => { clipboard = c; clipGone = c ? gone : ''; keepResume({ clip: c ? { op: c.op, paths: c.paths, ...(c.busy ? { busy: c.busy } : {}) } : null }); for (const f of clipWatch) f(); };
+export { intoItself }; // (views/filesPath.ts)
 // (The jobs under way and the pane that asked for each: only that pane answers a job's questions and shows its row; a
 // pane gone — the page moved on — leaves its jobs to the next pane that hears of them.)
 type JobRec = { owner: object | null; label: string; cancel: () => void; ended?: boolean };
@@ -149,12 +153,12 @@ const liveNote = (id: string, n: LiveNote | null) => { const all = liveNotes(); 
 /** Where the page stood — the folder (and the other pane's), its scroll, the clipboard —, kept small, for the page that
  *  comes back after Android ended its renderer (ui/restore.ts reads it once, then only on such a return). */
 const RESUME = 'kt.resume.files';
-type ResumeFiles = { at?: string; b?: string; y?: number; clip?: { op: 'copy' | 'move'; paths: string[] } | null };
+type ResumeFiles = { at?: string; b?: string; y?: number; clip?: { op: 'copy' | 'move'; paths: string[]; busy?: string } | null };
 let resumeTimer = 0; let resumeNext: ResumeFiles | null = null;
 const keepResume = (part: Partial<ResumeFiles>) => {
   if (!plug()) return; // (the phone only: a computer's page is never ended this way)
   if (!resumeNext) { try { resumeNext = JSON.parse(localStorage.getItem(RESUME) ?? '{}') as ResumeFiles; } catch { resumeNext = {}; } }
-  const next: ResumeFiles = { ...resumeNext, ...part }; if (next.clip) next.clip = { op: next.clip.op, paths: next.clip.paths.slice(0, 500) }; resumeNext = next;
+  const next: ResumeFiles = { ...resumeNext, ...part }; if (next.clip) next.clip = { op: next.clip.op, paths: next.clip.paths.slice(0, 500), ...(next.clip.busy ? { busy: next.clip.busy } : {}) }; resumeNext = next;
   window.clearTimeout(resumeTimer); resumeTimer = window.setTimeout(() => { try { const t0 = JSON.stringify(next); if (t0.length < 200000) localStorage.setItem(RESUME, t0); } catch { /* none */ } }, 300);
 };
 /** What ui/restore.ts handed over for the page that came back (taken once). */
@@ -171,7 +175,7 @@ const readerMime = (name: string): string | null => READER_MIME[(name.split('.')
 const mimeOf = (p: string): string => { const k = kindOfFile(p); if (/\.(txt|nfo|md|srt|ass|vtt|json|xml|log|csv|ini|cfg)$/i.test(p)) return 'text/plain'; if (/\.pdf$/i.test(p)) return 'application/pdf'; if (/\.apk$/i.test(p)) return 'application/vnd.android.package-archive'; return ({ video: 'video/*', audio: 'audio/*', image: 'image/*', ebook: 'application/epub+zip', archive: 'application/zip' } as Record<string, string>)[k] ?? '*/*'; };
 // (A place under a scheme — «apps://com.x», «remote://id» — has the scheme's root above it, «apps://»; trimming the
 // last part as a folder would leave «apps:/», which became «apps:», a place that lists nothing.)
-const parentOf = (p: string): string => { const top = /^([a-z]+:\/\/)[^/]*\/?$/.exec(p); if (top) return top[1]; return p.replace(/\/+$/, '').replace(/\/[^/]*$/, '') || '/'; };
+const parentOf = (p: string): string => { const top = /^([a-z]+:\/\/)[^/]*\/?$/.exec(p); if (top) return top[1]; return dirOfPath(p); };
 /** «apps:» and «apps:/» (left by an older version) mended to «apps://». */
 const mendScheme = (p: string): string => p.replace(/^([a-z]+):\/?$/, '$1://');
 const baseOf = (p: string): string => p.replace(/\/+$/, '').split('/').pop() ?? p;
@@ -238,7 +242,8 @@ const dayOf = (ms: number): string => { const d = new Date(ms); const now = new 
  *  address; embedded (two panes) it keeps quiet and tells the other pane through `peer`. */
 export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void; /** The view (list or grid) changed: button and rows redrawn in place. */ restyle: () => void; /** A computer's keyboard focus moved here from the other pane (F6, Tab). */ focusPc?: () => void };
 /** Another app's «pick a file» (views/pick.ts): the page as a picker — files of the kind asked chosen, folders walked. */
-export type PickMode = { req: PickRequest; done: (paths: string[]) => void; cancel: () => void };
+/** `done` may answer the paths that could not be handed over (nothing was): the screen says so and waits. */
+export type PickMode = { req: PickRequest; done: (paths: string[]) => void | Promise<string[] | void>; cancel: () => void };
 type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null; pick?: PickMode; /** Opened by another app («Open with»): its folders walked inside the page; Back at `start` hands back to that app. */ handedIn?: { start: string; leave: () => void } };
 /** Two panes when the reader asked and the screen is wide enough, else one. */
 export function filesView(route: { p?: string; save?: string; c?: string }): HTMLElement {
@@ -373,7 +378,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const scrollNow = (): number => Math.max(window.scrollY, body.scrollTop);
   let movedOn = false; // (this page has gone elsewhere: its scroll was kept then, not again when it is taken down)
   const keepScroll = () => { if (movedOn) return; const k = collection ? `c:${collection}` : at; if (k && shownAt === k) scrollMemo.set(k, scrollNow()); };
-  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else if (!pk) prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; try { pcCtl?.bar(); } catch { /* drawn again with the listing */ } if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
+  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : /^(\/|[A-Za-z]:\/)/.test(path) ? resolvePath(path) : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else if (!pk) prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; try { pcCtl?.bar(); } catch { /* drawn again with the listing */ } if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
   const openCollection = (kind: string) => { if (gone) return; keepScroll(); collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!quiet) { movedOn = true; navigate(`/files?c=${kind}`); } void load(); };
   /** The place above `p`: the folder up; inside an archive the folder up there, and from its top the folder that holds
    *  the archive; null at a storage's top (the top of Files). */
@@ -594,6 +599,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // (The window crossing 840 px — a turned phone, a resized window —: the rows drawn again in the layout that now fits.)
   const mqW = window.matchMedia('(min-width: 840px)'); let mqT = 0;
   const onMqW = () => { clearTimeout(mqT); mqT = window.setTimeout(() => { if (!gone) { syncBack(); draw(window.scrollY); if (selecting) drawSel(); } }, 150); };
+  // (The app's layout turning from the computer's to the phone's — a window made narrow —: the computer's parts are
+  // taken down, their listeners with them; turning back, they are put up again.)
+  const pcObs = new MutationObserver(() => {
+    if (gone) return;
+    if (pcCtl && phoneNow()) { pcCtl.dispose(); pcCtl = null; void load(); }
+    else if (!pcCtl && pcm && !phoneNow() && !pk && !po.handedIn) void load();
+  });
+  pcObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   mqW.addEventListener('change', onMqW);
   const paintView = () => { const next = NEXT_VIEW[prefs.view]; const to = next === 'gallery' ? 'images' : next; viewBtn.dataset.icon = to; viewBtn.replaceChildren(icon(to)); const lbl = t(VIEW_TO[next]); viewBtn.title = lbl; viewBtn.setAttribute('aria-label', lbl); };
   /** The view changed: the first row in sight stays where it is on the screen, the rows are drawn at the new size (their
@@ -753,7 +766,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       slots.push(slot('delete', 'trash', t('delete'), () => void confirmDelete(ps())));
       if (one) slots.push(slot('rename', 'pen', t('rename'), () => renameSheet(one))); else if (arcOk()) slots.push(slot('archive', 'archive', t('filesCompress'), () => void compress(ps()))); else slots.push(slot('rename', 'pen', t('filesBatchRename'), () => void batchRename()));
     }
-    slots.push(slot('more', 'more', t('more'), () => { if (one && !arc) itemSheet(one, undefined, true); else if (!arc) multiMoreSheet(); else selectionSheet([]); }));
+    slots.push(slot('more', 'more', t('more'), () => { if (one) itemSheet(one, undefined, true); else if (!arc) multiMoreSheet(); else selectionSheet([]); })); // (one entry, in an archive too: its own ways — Extract to, Open, Share)
     selBar.replaceChildren(...slots);
   };
   /** The chosen put on the clipboard — a cut inside an archive is a copy (an archive is not changed from here). */
@@ -768,19 +781,28 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let showAll = false; const pickLastKey = 'kt.files.pickLast';
   const pickable = (e: Entry): boolean => !!pk && !e.dir && !isVirtual(e.path) && !isApps(e.path) && (showAll || mimeMatches(mimeOfName(e.name), pk.req.mimes));
   /** The answer: the folder it came from is kept (apart from ordinary browsing) for next time. */
-  const finishPick = (paths: string[]) => { if (!pk || !paths.length) return; const dir = paths[0].replace(/\/[^/]*$/, '') || '/'; try { localStorage.setItem(pickLastKey, dir); } catch { /* none */ } pk.done(pickResult(pk.req, paths)); };
+  const finishPick = (paths: string[]) => {
+    if (!pk || !paths.length) return; if (paths.some((x) => refused.has(x))) { drawPick(); return; }
+    const dir = paths[0].replace(/\/[^/]*$/, '') || '/'; try { localStorage.setItem(pickLastKey, dir); } catch { /* none */ }
+    void Promise.resolve(pk.done(pickResult(pk.req, paths))).then((r) => { if (gone || !Array.isArray(r) || !r.length) return; for (const x of r) refused.add(x); drawPick(); });
+  };
+  // (Files Android could not give the asking app a link to: said here — which, and why —, and nothing handed back
+  // until they are taken out of the choice, or Cancel.)
+  const refused = new Set<string>(); const pickNote = h('p', { class: 'pick-refused', role: 'alert', hidden: true });
   const pickCount = h('span', { class: 'pick-count' });
   const pickGo = h('button', { type: 'button', class: 'btn primary', onclick: () => { if (pk && chosen.size) finishPick([...chosen.keys()]); } }) as HTMLButtonElement;
   const drawPick = () => {
     if (!pk) return; const n = chosen.size; const one = n === 1 ? [...chosen.values()][0] : undefined;
     pickCount.classList.toggle('has', n > 0); pickCount.textContent = !n ? t('pickNothingYet') : one ? one.name : countFiles(n);
-    pickGo.replaceChildren(icon('check'), n ? t('pickAddN', { n: localDigits(n) }) : t('pickAdd')); pickGo.disabled = !n;
+    const bad = [...chosen.values()].filter((e) => refused.has(e.path)); pickNote.hidden = !bad.length;
+    if (bad.length) pickNote.textContent = `${bad.length === 1 ? t('pickRefusedOne', { name: bad[0].name }) : t('pickRefusedMany', { n: localDigits(bad.length) })} ${pk.req.multiple ? t('pickRefusedFix') : t('pickRefusedFixOne')}`;
+    pickGo.replaceChildren(icon('check'), n ? t('pickAddN', { n: localDigits(n) }) : t('pickAdd')); pickGo.disabled = !n || bad.length > 0;
   };
   const choose = (e: Entry) => {
     if (!pk) return;
     if (!pickable(e)) { toast(isVirtual(e.path) || isApps(e.path) ? t('pickNotHere') : t('pickWrongKind')); return; }
-    if (!pk.req.multiple) { chosen.clear(); chosen.set(e.path, e); finishPick([e.path]); return; }
-    if (chosen.has(e.path)) chosen.delete(e.path); else chosen.set(e.path, e);
+    if (!pk.req.multiple) { chosen.clear(); chosen.set(e.path, e); refused.delete(e.path); finishPick([e.path]); return; }
+    if (chosen.has(e.path)) chosen.delete(e.path); else { chosen.set(e.path, e); refused.delete(e.path); } // (chosen again: tried again)
     draw(); drawPick();
   };
 
@@ -1225,6 +1247,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const pasteBlock = (): string | null => {
     const c = clipboard; if (!c) return null;
     if (c.busy) return t('filesPasteBusy');
+    if (clipGone === 'all') return t('filesClipAllGone');
     if (!at || collection || isApps(at)) return t('filesPasteNoFolder');
     if (isArc(at)) return t('arcNoPaste');
     if (writable === false) return t('filesPasteReadOnly');
@@ -1232,6 +1255,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (c.op === 'move' && c.paths.every((p) => parentOf(p) === at)) return t('filesPasteSameFolder');
     if (c.paths.some(isVirtual) && !c.paths.every(isArc) && isVirtual(at)) return t('remoteNoBetween');
     return null;
+  };
+  /** Which of `paths` are no longer there (the storage says so; an unknown answer counts as there: the job tells). */
+  const gonePaths = async (paths: string[]): Promise<string[]> => {
+    const fx = fsx(); if (!fx) return []; const out: string[] = [];
+    for (const p of paths.slice(0, 200)) { if (isArc(p) || isVirtual(p)) continue; try { const r = await fx.filesStat({ path: p, shallow: true } as never); if (r && r.exists === false) out.push(p); } catch { /* unknown */ } }
+    return out;
   };
   const canPaste = (): boolean => !!clipboard && canJobs() && !pasteBlock();
   // (Whether this folder takes new files: asked of the phone once per folder — its own facts, not its contents.)
@@ -1246,7 +1275,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (!c || !show) { clipBar.replaceChildren(); return; }
     const why = pasteBlock(); const one = c.paths.length === 1; const fromArc = c.paths.every(isArc);
     const what = one ? nameEl(baseOf(c.paths[0]), false, 'files-clip-name') : h('b', { class: 'files-clip-name' }, t('filesClipCount', { n: localDigits(c.paths.length) }));
-    const how = c.busy ? t('filesPasteBusy') : fromArc ? t('filesClipExtract') : c.op === 'copy' ? t('filesClipCopy') : t('filesClipMove');
+    const how = c.busy ? t('filesPasteBusy') : clipGone ? t('filesClipSomeGone', { n: localDigits(Number(clipGone)) }) : fromArc ? t('filesClipExtract') : c.op === 'copy' ? t('filesClipCopy') : t('filesClipMove');
     const pasteB = h('button', { type: 'button', class: 'btn filled small files-clip-paste', title: why ?? t('filesPaste'), onclick: () => void paste() }, icon('paste'), h('span', null, t('filesPaste'))) as HTMLButtonElement;
     pasteB.disabled = !!why;
     clipBar.replaceChildren(h('span', { class: 'files-clip-ic' }, icon(c.op === 'move' ? 'scissors' : 'copy')),
@@ -1265,6 +1294,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const pasteNow = async (c: NonNullable<typeof clipboard>) => {
     const why = pasteBlock(); if (why) { toast(why, 'error'); return; }
     if (c.paths.every(isArc)) { await extractEntries(c.paths, at); return; }
+    // (Items gone since they were put on the clipboard — moved or deleted elsewhere, or a cut half-moved before the
+    // page was ended —: the bar says so, and no job starts; what is still there stays on it for the next Paste.)
+    const missing = await gonePaths(c.paths); if (clipboard !== c) return;
+    if (missing.length) { const rest = c.paths.filter((p) => !missing.includes(p)); setClip(rest.length ? { op: c.op, paths: rest } : c, rest.length ? String(missing.length) : 'all'); return; }
     if (c.op === 'copy') { await startJob('copy', c.paths, at); return; }
     const id = nid('fj'); setClip({ ...c, busy: id });
     if (!(await startJob('move', c.paths, at, id)) && clipboard?.busy === id) setClip({ op: 'move', paths: c.paths });
@@ -1311,6 +1344,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const onJob = (ev: JobEvent) => {
     if (ends(ev)) Q?.finish(ev.id);
     const subJob = subJobs.get(ev.id); if (subJob) { subJob(ev); return; }
+    // (A cut whose move ended — this page's, or one a page Android ended had started —: what the move left stays cut.)
+    if (ends(ev)) { const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); } }
     const rec = liveJobs.get(ev.id);
     if (rec && rec.owner !== me) {
       if (rec.owner || rec.ended) { if (ends(ev)) void load(); return; }
@@ -1326,7 +1361,6 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     liveNote(ev.id, null);
     // (An archive's entries moved in from their hidden folder: the folder goes, whatever happened.)
     const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void jobs()?.filesJob({ id: nid('fq'), op: 'delete', paths: [stage] }).catch(() => undefined); }
-    const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); }
     if (ev.status === 'done') { if (ev.failed?.length) summarySheet(ev); else if (ev.left) toast(t('filesLeftInPlace', { n: localDigits(ev.left) }), 'info', 5000); else if (ev.skipped) toast(t('filesDoneSkipped', { n: localDigits(ev.skipped) })); else if (renamedMoves.has(ev.id)) toast(t('filesVerifyRenamed'), 'info', 5000); else if (ev.verified !== undefined) toast(t('filesVerifiedDone', { n: localDigits(ev.verified) })); else if (sizeChecked.has(ev.id)) toast(t('filesDoneSizes')); else toast(t('filesDone')); sizeChecked.delete(ev.id); renamedMoves.delete(ev.id); }
     else if (ev.status === 'cancelled') { if (ev.failed?.length) summarySheet(ev); else toast(ev.left ? t('filesCancelledLeft', { n: localDigits(ev.left) }) : t('filesCancelled')); }
     else if (ev.status === 'failed') toast(ev.message ?? t('filesFailed'), 'error');
@@ -1365,7 +1399,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const kinds = kindsAsked(pk.req.mimes, { image: t('filesKindImages'), video: t('filesKindVideo'), audio: t('filesKindMusic'), text: t('filesKindDocs') });
     const sub = [pk.req.caller ? t('pickFor', { app: pk.req.caller }) : '', kinds.length ? t('pickKinds', { kinds: kinds.join(document.documentElement.lang === 'ar' ? '، ' : ', ') }) : ''].filter(Boolean).join(' · ');
     (crumbs.parentElement ?? crumbs).before(h('div', { class: 'pick-head' }, icon(pk.req.multiple ? 'copy' : 'file'), h('span', { class: 'grow' }, h('b', null, pk.req.multiple ? t('pickTitleMany') : t('pickTitle')), sub ? h('small', { dir: 'auto' }, sub) : null), ...(pk.req.mimes.length && !pk.req.mimes.includes('*/*') ? [h('label', { class: 'switch-row pick-all' }, h('span', null, t('pickShowAll')), h('input', { type: 'checkbox', onchange: (ev: Event) => { showAll = (ev.target as HTMLInputElement).checked; draw(); } }))] : [])));
-    root.append(h('div', { class: 'pick-bar' + (pk.req.multiple ? '' : ' single'), role: 'toolbar' }, ...(pk.req.multiple ? [pickCount] : [h('span', { class: 'grow' })]), h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), ...(pk.req.multiple ? [pickGo] : [])));
+    root.append(pickNote, h('div', { class: 'pick-bar' + (pk.req.multiple ? '' : ' single'), role: 'toolbar' }, ...(pk.req.multiple ? [pickCount] : [h('span', { class: 'grow' })]), h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), ...(pk.req.multiple ? [pickGo] : [])));
     drawPick();
   }
   // ---- «Everywhere in my folders» (a computer's Tauri shell): its panel over the folder, loaded on first use
@@ -1384,12 +1418,17 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let sub: { remove(): void } | null = null;
   // (Back after Android ended the page: the clipboard as it was, the folder's scroll; the engine's jobs still running
   // shown again — their rows, the Jobs sheet, a name-taken question they wait on asked again.)
+  let restoredBusy = '';
   { const back = !quiet && !pk ? takeResume() : null;
-    if (back?.clip && !clipboard && Array.isArray(back.clip.paths) && back.clip.paths.length) setClip({ op: back.clip.op === 'move' ? 'move' : 'copy', paths: back.clip.paths.filter((x) => typeof x === 'string') });
+    // (A cut whose move was running stays busy — no second Paste — while the engine still runs that move, and goes
+    // when it does not: its items are moved, or half moved. A copy comes back as it was.)
+    if (back?.clip && !clipboard && Array.isArray(back.clip.paths) && back.clip.paths.length) { const op = back.clip.op === 'move' ? 'move' : 'copy'; const busy = op === 'move' && typeof back.clip.busy === 'string' ? back.clip.busy : ''; setClip({ op, paths: back.clip.paths.filter((x) => typeof x === 'string'), ...(busy ? { busy } : {}) }); restoredBusy = busy; }
     if (back?.y && back.at === at) scrollMemo.set(at, back.y); }
   const pfl = plug() as unknown as { filesLive?(): Promise<{ jobs?: { id: string; asking?: JobEvent | null }[] }> } | null;
+  const dropBusy = (live: { id: string }[]) => { if (restoredBusy && clipboard?.busy === restoredBusy && !live.some((j) => j.id === restoredBusy)) setClip(null); restoredBusy = ''; };
+  if (restoredBusy && !pfl?.filesLive) dropBusy([]);
   if (!quiet && !pk && pfl?.filesLive) void pfl.filesLive().then(async (r) => {
-    const live = Array.isArray(r?.jobs) ? r.jobs : []; const notes = liveNotes();
+    const live = Array.isArray(r?.jobs) ? r.jobs : []; const notes = liveNotes(); dropBusy(live);
     for (const id of Object.keys(notes)) if (!live.some((j) => j.id === id)) liveNote(id, null);
     for (const j of live) {
       const n = notes[j.id]; if (gone || !n || liveJobs.has(j.id)) continue;
@@ -1397,7 +1436,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       (await useQueue()).adopt({ id: j.id, kind: n.kind, label: n.label, what: n.what, from: n.from, to: n.to, cancel, start: async () => true }, qhost);
       if (j.asking && !gone) conflictSheet({ ...j.asking, id: j.id, status: 'conflict' });
     }
-  }).catch(() => undefined);
+  }).catch(() => dropBusy([]));
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
   // (The queue: another pane's jobs show here too; jobs an earlier run left waiting are offered — never run — once per start.)
   if (Q) { offQ = Q.subscribe(drawJobsBadge); drawJobsBadge(); }
@@ -1411,10 +1450,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // Back (the phone's, a mouse's, Alt+←, the arrow in the bar): the open sheet or viewer closes first (the app's back
   // stack does that), then the selection or the filter, then up a folder at a time to the top of Files, and only then
   // Files is left — for the place the reader came from, not always the downloads.
-  root.addEventListener('pointerdown', () => { activePane = me; }, true);
+  // (Two panes side by side: the keys go to the pane last clicked in or focused — F6, Tab —, ringed; never by hover.)
+  const isMine = (): boolean => (activePane ? activePane === me : po.side !== 'b');
+  const markActive = () => { if (activePane === me) return; activePane = me; for (const f of paneWatch) f(); };
+  const drawActive = () => root.classList.toggle('pane-active', !!po.peer?.() && isMine()); paneWatch.add(drawActive); drawActive();
+  root.addEventListener('pointerdown', markActive, true); root.addEventListener('focusin', markActive);
   const unBack = onBackStep(() => {
     if (gone || !root.isConnected) return false;
-    if (po.peer?.() && (activePane ? activePane !== me : po.side === 'b')) return false;
+    if (po.peer?.() && !isMine()) return false;
     // (Opened by another app and still where it began: Back hands back to that app.)
     if (po.handedIn && at === po.handedIn.start && !selecting && search.hidden && !collection) { po.handedIn.leave(); return true; }
     if (backStep()) return true;
@@ -1430,7 +1473,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (!root.isConnected || document.querySelector('.sheet') || !document.documentElement.classList.contains('pc')) return;
     const el = ev.target as HTMLElement; if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable) { if (ev.key === 'Escape' && el === search) { search.value = ''; query = ''; search.hidden = true; draw(); } return; }
     // (Only the pane last clicked in, when two are side by side.)
-    if (po.peer?.() && !root.contains(document.activeElement) && !root.matches(':hover')) return;
+    if (po.peer?.() && !isMine()) return; drawActive();
     const mod = ev.ctrlKey || ev.metaKey; const k = ev.key.toLowerCase();
     const one = picked.size === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
     if (pcCtl?.key(ev)) return;
@@ -1451,7 +1494,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { pcCtl?.dispose(); keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  root.dispose = () => { pcCtl?.dispose(); pcCtl = null; pcObs.disconnect(); stopSub?.(); stopSub = null; window.visualViewport?.removeEventListener('resize', onVv); keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); paneWatch.delete(drawActive); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   /** What the computer's file manager (views/filesPc.ts) may reach of this pane. */
   const pcHost = (): import('./filesPc').PcHost => ({
     root, body, listEl, side: po.side, dual: !!po.embedded, peer: () => po.peer?.() ?? null,

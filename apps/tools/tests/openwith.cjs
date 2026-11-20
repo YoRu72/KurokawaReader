@@ -47,9 +47,15 @@ function table() {
   ok('MainActivity.looksMpegTs: the same packet test as the page\'s sniffTs', /b\[0\] == 0x47 && b\[188\] == 0x47/.test(main) && /b\[4\] == 0x47 && b\[196\] == 0x47/.test(main));
   const plugin = fs.readFileSync(path.join(A, 'KtPlugin.java'), 'utf8');
   ok('the plugin: request, fetch, done, bytes, switches, apps', ['openRequest', 'openFetch', 'openFetchCancel', 'openDone', 'uriRead', 'uriWrite', 'contentUrl', 'openWithStates', 'openWithSet', 'appsFor', 'openIn'].every((m) => new RegExp(`@PluginMethod public void ${m}\\(`).test(plugin)));
-  ok('pickerStorage: the provider switched with DONT_KILL_APP, the state read back; the default applied once at load; no provider links handed out while it is off', /public void pickerStorage\(/.test(plugin) && /pickerProvider\(\), want \?/.test(plugin) && /applyPickerDefault\(\);/.test(plugin) && /applyDefaultNow\(sp\.getBoolean\("pickerDefault"/.test(plugin) && /if \(providerOn\(\)\) try \{ return android\.provider\.DocumentsContract\.buildDocumentUri\(KtDocumentsProvider\.AUTHORITY/.test(fs.readFileSync(path.join(A, 'KtPickActivity.java'), 'utf8')));
+  ok('pickerStorage: the provider switched with DONT_KILL_APP, the state read back; the default applied once at load; no provider links handed out while it is off', /public void pickerStorage\(/.test(plugin) && /pickerProvider\(\), want \?/.test(plugin) && /applyPickerDefault\(\);/.test(plugin) && /firstRunChoice\(sp\.getBoolean\("pickerDefault", false\), grantsOnOurs\(\)\)/.test(plugin) && /getOutgoingPersistedUriPermissions\(\)/.test(plugin) && /if \(providerOn\(\)\) try \{ return android\.provider\.DocumentsContract\.buildDocumentUri\(KtDocumentsProvider\.AUTHORITY/.test(fs.readFileSync(path.join(A, 'KtPickActivity.java'), 'utf8')));
   ok('switches: DONT_KILL_APP, only Kt… names', /setComponentEnabledSetting\([^;]*DONT_KILL_APP\)/.test(plugin) && /matches\("Kt\[A-Za-z\]\+"\)/.test(plugin));
   ok('overlay copies KtOpenActivity.java', fs.readFileSync(path.join(A, 'overlay.mjs'), 'utf8').includes("'KtOpenActivity.java'"));
+  { // (FileProvider: a file picked on a memory card or a USB drive has a link too — the other volumes under /storage/, added
+    // also to an app built before, read-only grants as always.)
+    const ov = fs.readFileSync(path.join(A, 'overlay.mjs'), 'utf8'); const m = /if \(!fp\.includes\('kt_vol'\)\) fp = fp\.replace\('<\/paths>', '(.*?)\\n<\/paths>'\);/.exec(ov);
+    ok('FileProvider paths: the other volumes (<root-path … path="storage/">), added even where the older paths are', !!m && /<root-path name="kt_vol" path="storage\/" \/>/.test(m[1]), m && m[1]);
+    const pick = fs.readFileSync(path.join(A, 'KtPickActivity.java'), 'utf8');
+    ok('the picker grants read only, and never drops a file it cannot link', pick.includes('FLAG_GRANT_READ_URI_PERMISSION') && !pick.includes('FLAG_GRANT_WRITE_URI_PERMISSION') && /if \(!refused\.isEmpty\(\)\) return refused;/.test(pick)); }
   let javac = false; try { execFileSync('javac', ['-version'], { stdio: 'ignore' }); javac = true; } catch { /* none */ }
   if (javac) { try { const out = execFileSync('sh', [path.join(__dirname, 'native', 'openwith.sh')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); ok('KtOpenActivity compiles against the stubs and maps its aliases', /all passed/.test(out), out); } catch (e) { ok('KtOpenActivity compiles against the stubs', false, String(e.stdout || e.message)); } }
   else console.log('skip KtOpenActivity javac check (no javac)');
@@ -173,7 +179,7 @@ async function pages(C) {
       kt.archiveExisting = async () => ({ existing: [] }); kt.archiveFree = async () => ({ free: 3e10 });
       kt.openWithStates = async ({ names }) => ({ states: Object.fromEntries(names.map((n) => [n, window.__states[n] ?? 0])) });
       window.__pmOn = false; window.__pmFail = false; window.__pmCalls = [];
-      kt.pickerStorage = async (o) => { window.__pmCalls.push(o); if (o.on !== undefined) { if (window.__pmFail) throw new Error('refused'); window.__pmOn = o.on; } return { on: window.__pmOn }; };
+      kt.pickerStorage = async (o) => { window.__pmCalls.push(o); if (o.on !== undefined) { if (window.__pmFail) throw new Error('refused'); window.__pmOn = o.on; } return { on: window.__pmOn, others: window.__pmOthers || 0, ask: (window.__pmOthers || 0) > 0, kept: !!window.__pmKept }; };
       kt.openWithSet = async ({ name, state }) => { window.__sets.push(`${name}:${state}`); window.__states[name] = state === 'on' ? 1 : state === 'off' ? 2 : 0; };
       const ic = (c) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" rx="12" fill="${c}"/></svg>`)}`;
       kt.appsFor = async () => ({ apps: [{ pkg: 'com.example.pdfreader', cls: 'R', label: 'PDF Reader', icon: ic('#5b7fa6') }, { pkg: 'com.example.drive', cls: 'D', label: 'Drive', icon: ic('#4f8a6e') }] });
@@ -279,6 +285,18 @@ async function pages(C) {
       ok('a change refused: a calm line, and the state shown stays the real one (storage places)', !(await p.$eval('.pm-error', (e) => e.hidden)) && /could not be changed/.test(await p.textContent('.pm-error')) && (await chip('storage')));
       await p.evaluate(() => { window.__pmFail = false; }); await p.click('.pm-chips [data-pm="own"]'); await p.waitForTimeout(250);
       ok('then its own browser again, the line gone', (await chip('own')) && await p.$eval('.pm-error', (e) => e.hidden));
+      // (The update found other apps holding links on the storage places — kept on —: one calm line; switching to its
+      // own browser asks once, naming what breaks; Cancel changes nothing.)
+      await p.evaluate(() => { window.__pmOthers = 2; window.__pmKept = true; }); await p.click('.pm-chips [data-pm="storage"]'); await p.waitForTimeout(250);
+      ok('kept for other apps: the one calm line under the choice', !(await p.$eval('.pm-kept', (e) => e.hidden)) && /Other apps already use Kurokawa Tools' storage places, so they were kept/.test(await p.textContent('.pm-kept')));
+      const n0 = await p.evaluate(() => window.__pmCalls.length); await p.click('.pm-chips [data-pm="own"]'); await p.waitForSelector('.confirm-sheet', { timeout: 3000 }).catch(() => undefined);
+      const ask = await p.textContent('.confirm-sheet').catch(() => '');
+      ok('to its own browser with links held: asked first, naming the consequence', /stop working/.test(ask) && /\(2\)/.test(ask) && (await p.evaluate(() => window.__pmCalls.length)) === n0, ask.slice(0, 160));
+      await p.click('.confirm-sheet .btn.tonal'); await p.waitForTimeout(300);
+      ok('…Cancel: nothing changed', (await chip('storage')) && (await p.evaluate(() => window.__pmCalls.length)) === n0);
+      await p.click('.pm-chips [data-pm="own"]'); await p.waitForSelector('.confirm-sheet'); await p.click('.confirm-sheet .btn.primary'); await p.waitForTimeout(300);
+      ok('…confirmed: its own browser, the line gone', (await chip('own')) && await p.$eval('.pm-kept', (e) => e.hidden));
+      await p.evaluate(() => { window.__pmOthers = 0; window.__pmKept = false; });
     }
     if (lang === 'en') {
       await p.click('.ow-switch:has(input[data-alias="KtImage"]) input'); await p.click('.ow-switch:has(input[data-alias="KtArchive"]) input'); await p.click('.ow-switch:has(input[data-alias="KtArchive"]) input'); await p.waitForTimeout(300);
