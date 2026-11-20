@@ -18,7 +18,7 @@ async function prime(p) {
     kt.filesThumb = async (o) => { window.__thumbs.push(o.path.split('/').pop() + '@' + o.px); const c = document.createElement('canvas'); c.width = 8; c.height = 8; c.getContext('2d').fillRect(0, 0, 8, 8); return { url: /\.jpg$/.test(o.path) ? c.toDataURL() : null }; };
   });
 }
-const state = (p) => p.evaluate((sel) => { const b = document.querySelector(sel); const l = document.querySelector('.files-view .files-list'); return { icon: b?.dataset.icon, label: b?.getAttribute('aria-label'), cls: l?.className, view: JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').view, hash: location.hash, same: !!window.__listRef && window.__listRef === l }; }, BTN);
+const state = (p) => p.evaluate((sel) => { const b = document.querySelector(sel); const l = document.querySelector('.files-view .files-list'); return { icon: b?.dataset.icon, label: b?.getAttribute('aria-label'), cls: l?.className, view: /^#\/pick/.test(location.hash) ? (localStorage.getItem('kt.files.pickView') || 'list') : JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').view, hash: location.hash, same: !!window.__listRef && window.__listRef === l }; }, BTN);
 
 async function cycle(p, L, lang, what) {
   await p.evaluate(() => { window.__listRef = document.querySelector('.files-view .files-list'); });
