@@ -19,7 +19,7 @@ export type PcHost = {
   filterShut: () => boolean; setView: (v: 'list' | 'grid' | 'gallery') => void;
 };
 export type PcCtl = {
-  details(): boolean; row(e: Entry, ic: HTMLElement): HTMLElement; header(): HTMLElement; sync(list: Entry[]): void; sel(): void; at(p: string): void;
+  details(): boolean; row(e: Entry, ic: HTMLElement): HTMLElement; header(): HTMLElement; sync(list: Entry[]): void; sel(): void; at(p: string): void; bar(): void;
   key(ev: KeyboardEvent): boolean; sortSet(): SortSet; adopt(): void; focus(): void; dispose(): void;
 };
 
@@ -334,6 +334,7 @@ export function mount(host: PcHost): PcCtl {
       paintNav();
     },
     sel() { paintSel(); for (const r of listEl.querySelectorAll('.d-row')) r.setAttribute('aria-selected', String(host.picked.has((r as HTMLElement).dataset.p ?? ''))); },
+    bar() { paintBar(); },
     at(p) { if (!p) return; if (moving && moving === p) moving = ''; else if (hs.hist[hs.hi] !== p) { hs.hist = hs.hist.slice(0, hs.hi + 1); hs.hist.push(p); hs.hi = hs.hist.length - 1; if (hs.hist.length > 100) { hs.hist.shift(); hs.hi--; } } reveal(p); paintAddr(); paintBar(); paintNav(); showErr(false); void lastList; },
     key, sortSet: () => sortS, adopt() { sortS = { sort: prefs.sort, desc: prefs.desc, ff: prefs.foldersFirst !== false }; saveSort(); paintHead(); },
     focus() { (listEl as HTMLElement).focus(); },

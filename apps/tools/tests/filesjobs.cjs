@@ -106,15 +106,15 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   await p.click('.files-pane[data-side="a"] .files-selbar button[aria-label="To the other pane"]'); await p.click('.sheet .dest-row:has-text("Move")'); await p.waitForTimeout(400);
   ok('a folder into the pane showing its inside: refused with a word, no job', !(await calls()).some((c) => c.startsWith('move:DCIM')) && /cannot be pasted into itself/.test(await p.textContent('.toast').catch(() => '')), await calls());
   // ---- 4. a late listing (two panes, where a pane goes its own way without a new page): Music asked first (slow),
-  // Kurokawa after (fast) — Kurokawa stays drawn, and a paste there goes to Kurokawa
+  // then Up (fast) — the folder above stays drawn, and a paste there goes to it
   await p.click('.files-pane[data-side="a"] .files-selbar button[aria-label="Close"]').catch(() => {}); await p.waitForTimeout(150);
   await p.click('.files-pane[data-side="a"] .files-row:has-text("readme.md")', { button: 'right' }); await p.click('.sheet .dest-row:has-text("Copy")'); await p.waitForTimeout(150);
   await p.evaluate((x) => { window.__delay[x] = 700; }, P + '/Music');
-  await p.locator('.files-pane[data-side="a"] .files-row:has-text("Music")').dispatchEvent('dblclick'); await p.waitForTimeout(30); await p.click('.files-pane[data-side="a"] .pcx-bar button[data-icon="arrowUp"]'); await p.waitForTimeout(1200);
+  await p.click('.files-pane[data-side="a"] .files-row:has-text("Music") .files-main'); await p.waitForTimeout(30); await p.click('.files-pane[data-side="a"] .pcx-bar button[data-icon="arrowUp"]'); await p.waitForTimeout(1200);
   const rowsA = await p.$$eval('.files-pane[data-side="a"] .files-row .files-name', (e) => e.map((x) => x.textContent));
-  ok('a late listing does not cover the newer folder', rowsA.includes('Song.mp3') && !rowsA.includes('tune.mp3'), rowsA);
+  ok('a late listing does not cover the newer folder', rowsA.includes('readme.md') && !rowsA.includes('tune.mp3'), rowsA);
   await pasteClick('.files-pane[data-side="a"] '); await p.waitForTimeout(400);
-  ok('… and the paste goes to the folder shown', (await calls()).includes(`copy:readme.md>${K}`), await calls());
+  ok('… and the paste goes to the folder shown', (await calls()).includes(`copy:readme.md>${P}`), await calls());
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

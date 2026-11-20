@@ -122,7 +122,7 @@ async function scroller(browser, port, z, lang) {
   const { p: q, errors: e2 } = await page(browser, port, z, lang, { at: K + '/Many', pc: true, many: 30 });
   await q.evaluate((k) => { for (let i = 0; i < 300; i++) window.__put(`${k}/Many/zeta ${String(i).padStart(4, '0')}.txt`, false, 100 + i); }, K);
   await q.click('.topbar-actions .icon-btn[data-icon="more"]'); await q.locator('.sheet .dest-row, .menu-row', { hasText: /Refresh|تحديث/ }).first().click(); await q.waitForSelector('.files-row'); await q.waitForTimeout(500);
-  await q.evaluate(() => window.scrollBy(0, 800)); await q.waitForTimeout(400);
+  await q.evaluate(() => { const b = document.querySelector('.files-body'); if (b && b.scrollHeight > b.clientHeight + 1) b.scrollTop += 800; else window.scrollBy(0, 800); }); await q.waitForTimeout(400);
   ok(L('PC: no handle, the bubble shows while scrolling'), (await q.locator('.files-fast-thumb').isHidden()) && (await q.locator('.files-fast.bubble').count()) === 1 && /\S/.test(await q.textContent('.files-fast-bubble')));
   await q.close(); ok(L('PC: no page errors'), !e2.filter((x) => !/favicon/.test(x)).length, e2);
 }

@@ -373,7 +373,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const scrollNow = (): number => Math.max(window.scrollY, body.scrollTop);
   let movedOn = false; // (this page has gone elsewhere: its scroll was kept then, not again when it is taken down)
   const keepScroll = () => { if (movedOn) return; const k = collection ? `c:${collection}` : at; if (k && shownAt === k) scrollMemo.set(k, scrollNow()); };
-  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else if (!pk) prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
+  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else if (!pk) prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; try { pcCtl?.bar(); } catch { /* drawn again with the listing */ } if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
   const openCollection = (kind: string) => { if (gone) return; keepScroll(); collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!quiet) { movedOn = true; navigate(`/files?c=${kind}`); } void load(); };
   /** The place above `p`: the folder up; inside an archive the folder up there, and from its top the folder that holds
    *  the archive; null at a storage's top (the top of Files). */
@@ -492,7 +492,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   // ---- the fast scroller of a long list (views/filesScroll.ts): a handle on the end edge with a bubble naming the place
   let fastList: Entry[] = []; let drawTo: (i: number) => void = () => undefined; let fast: { update(): void; dispose(): void } | null = null;
-  const pageTop = (): number => (root.querySelector('.topbar') as HTMLElement | null)?.getBoundingClientRect().bottom ?? 0;
+  const pageTop = (): number => (pcCtl && body.scrollHeight > body.clientHeight + 1 ? body.getBoundingClientRect().top : ((root.querySelector('.topbar') as HTMLElement | null)?.getBoundingClientRect().bottom ?? 0));
   const scrollRoot = (): HTMLElement => (body.scrollHeight > body.clientHeight + 1 ? body : (document.scrollingElement as HTMLElement));
   const sliceEls = () => [...listEl.children].filter((c) => (c as { from?: number }).from !== undefined) as (HTMLElement & { from: number; to: number })[];
   const fastIndex = (): number => { const edge = pageTop(); for (const c of sliceEls()) { const r = c.getBoundingClientRect(); if (r.bottom > edge + 1) return c.from + Math.min(1, Math.max(0, (edge - r.top) / Math.max(1, r.height))) * (c.to - c.from); } return 0; };
