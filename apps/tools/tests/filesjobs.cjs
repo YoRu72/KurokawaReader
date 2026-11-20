@@ -62,11 +62,11 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   // ---- 2. a folder cut, then its own inside: no Paste there (nor in the + sheet); a sibling sharing its prefix keeps it
   await goTo(K); await itemAct('Sub', 'Cut'); await p.click('.files-row:has-text("Sub") >> nth=0'); await p.waitForTimeout(300);
   ok('inside the cut folder Paste is not offered', !(await pasteShown()));
-  await p.click('.files-fab'); await p.waitForSelector('.sheet'); ok('… nor in the + sheet', !(await p.$('.sheet .dest-row:has-text("Paste here")'))); await p.keyboard.press('Escape'); await p.waitForTimeout(250);
+  ok('… nor in the + sheet (the + is out of the way while the paste bar is up)', !(await p.$eval('.files-fab', (e) => e.getClientRects().length > 0)));
   await goTo(K + '/Subway'); ok('a sibling sharing the name\'s start (Sub → Subway) is offered Paste', await pasteShown());
   // ---- 3. the batch rename: extensions kept, clashes shown
-  await goTo(K); await itemAct('README', 'Select'); await p.click('.files-selbar button[aria-label="Select all"]'); await p.waitForTimeout(100);
-  await p.click('.files-selbar button[aria-label="Rename all…"]'); await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250);
+  await goTo(K); await itemAct('README', 'Select'); await p.click('.files-selhead button[aria-label="Select all"]:visible, .files-selbar button[aria-label="Select all"]:visible'); await p.waitForTimeout(100);
+  if (await p.locator('.files-selbar button[aria-label="Rename all…"]').count()) await p.click('.files-selbar button[aria-label="Rename all…"]'); else { await p.click('.files-selbar [data-icon="more"]'); await p.locator('.sheet .dest-row', { hasText: 'Rename all…' }).first().click(); } await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250);
   const preview = () => p.$$eval('.batch-sheet .batch-row', (e) => Object.fromEntries(e.map((x) => [x.querySelector('.batch-old').textContent, x.querySelector('.batch-new').textContent])));
   const goOff = () => p.$eval('.batch-sheet .sheet-actions .btn.primary', (e) => e.disabled);
   const radio = (g, i) => p.locator('.batch-sheet [role=radiogroup]').nth(g).locator('[role=radio]').nth(i).click();

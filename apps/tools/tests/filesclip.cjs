@@ -26,7 +26,7 @@ async function suite(browser, port, z, lang, pc) {
   const hold = async (name) => { await row(name).evaluate((r) => r.scrollIntoView({ block: 'center' })); await p.waitForTimeout(100); const b = await row(name).boundingBox(); await p.mouse.move(b.x + 80, b.y + b.height / 2); await p.mouse.down(); await p.waitForTimeout(650); await p.mouse.up(); await p.waitForTimeout(200); };
   const tap = async (name) => { await row(name).locator('.files-main').click(); await p.waitForTimeout(150); };
   const pick = async (...names) => { await hold(names[0]); for (const n of names.slice(1)) await tap(n); };
-  const sel = (icon) => p.click(`.files-selbar button[data-icon="${icon}"]`);
+  const sel = (icon) => p.click(pc || icon !== 'check' ? `.files-selbar button[data-icon="${icon}"]` : '.files-selhead button[data-icon="check"]');
   const bar = () => p.evaluate(() => { const b = document.querySelector('.files-view .files-clipbar'); if (!b || b.hidden || !b.getClientRects().length) return null; const pb = b.querySelector('.files-clip-paste'); return { name: b.querySelector('.files-clip-name')?.textContent ?? '', why: b.querySelector('.files-clip-why')?.textContent ?? '', blocked: !!b.querySelector('.files-clip-why.blocked'), disabled: pb.disabled, box: b.getBoundingClientRect().toJSON() }; });
   const has = (q) => p.evaluate((x) => window.__tree.has(x), q);
   const kidsOf = (d) => p.evaluate((x) => [...window.__tree.keys()].filter((k) => k.replace(/\/[^/]*$/, '') === x).map((k) => k.split('/').pop()), d);

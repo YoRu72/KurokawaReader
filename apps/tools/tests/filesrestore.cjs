@@ -26,7 +26,7 @@ async function run(browser, port, z, lang) {
   await p.goto(`http://localhost:${port}/index.html#/files?p=${encodeURIComponent(K)}`); await p.waitForSelector('.files-row');
   await p.evaluate(() => sessionStorage.setItem('kt-test-live', '1'));   // (the engine reports what really runs: the job below, while it runs)
   // a copy on the clipboard, a job that runs on (never ends), then into a long folder, scrolled down
-  await p.click('.files-row:has(.files-name[title="Song.mp3"])', { button: 'right' }); await p.click('.files-selbar .icon-btn[data-icon="copy"]'); await p.waitForSelector('.files-clipbar:not([hidden])');
+  await p.click('.files-row:has(.files-name[title="Song.mp3"])', { button: 'right' }); await p.click('.files-selbar [data-icon="copy"]'); await p.waitForSelector('.files-clipbar:not([hidden])');
   await go(`/files?p=${encodeURIComponent(`${K}/Sub`)}`); await p.waitForSelector('.files-row:has(.files-name[title="in.txt"])');
   await p.evaluate(() => { window.__stuck = true; }); await p.click('.files-clip-paste'); await p.waitForFunction(() => Object.keys(JSON.parse(localStorage.getItem('kt.files.live') || '{}')).length === 1);
   await go(`/files?p=${encodeURIComponent(`${K}/Many`)}`); await p.waitForSelector('.files-row:has(.files-name[title="file 010.txt"])');

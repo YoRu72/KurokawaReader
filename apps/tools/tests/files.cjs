@@ -84,7 +84,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   // the same by a finger (a real touch, through Chromium): held once, it selects one — and the tap that follows the
   // lift does not undo it
   {
-    await p.click('.files-selbar button[aria-label="Close"]'); await p.waitForTimeout(200);
+    await p.click('.files-selhead button[aria-label="Close"]'); await p.waitForTimeout(200);
     const tc = await p.context().newCDPSession(p); await tc.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     const r2 = await (await p.$('.files-row:has-text("Song.mp3")')).boundingBox(); const pt = [{ x: r2.x + 40, y: r2.y + 20 }];
     await tc.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pt }); await p.waitForTimeout(700);

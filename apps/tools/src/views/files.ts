@@ -7,6 +7,7 @@
 // what other apps share to «Save to device» saved where you choose.
 import { sideDrawer, swipeToOpen } from '../ui/sideSwipe';
 import { swipeable } from '../ui/swipe';
+import { claimTouch } from '../ui/touchOwner';
 import { pullToRefresh } from '../ui/gestures';
 import { h, icon, iconButton, toast, openSheet, pickSheet, onLongPress } from '../ui/dom';
 import { t, formatBytes, formatDate, formatDateShort, formatRowDate, localDigits, countFiles, countItems, countFolders } from '../i18n';
@@ -242,6 +243,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
   const search = h('input', { type: 'search', class: 'files-search', placeholder: t('filesSearchHere'), hidden: true, oninput: () => { query = search.value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
   const selBar = h('div', { class: 'files-selbar', hidden: true });
+  // (A phone's header while choosing: close, the count, select all, invert — in the one bar's place.)
+  const selHead = h('div', { class: 'files-selhead' });
   const shelfEl = h('div', { class: 'files-shelf', hidden: true });
   // (What is on the clipboard, while it is: how many — or the one's name —, copied or to be moved, Paste here and Cancel.)
   const clipBar = h('div', { class: 'files-clipbar', role: 'toolbar', 'aria-label': t('filesClipboard'), hidden: true });
@@ -275,6 +278,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       sortBtn = iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
     clipBar, search, shelfEl, h('div', { class: 'files-strip' }, rootsRow, crumbs, kindRow), body, selBar, fab) as HTMLElement & { dispose?: () => void };
+  root.querySelector('.topbar')?.append(selHead);
   // (Extractions left half done — a stop, a crash, a full disk: Finish, Restore the archive, or Leave as is.)
   if (!quiet) void import('./extractShelf').then((m) => m.shelfBanner(shelfEl)).catch(() => {});
   body.append(sizeNote, listEl, status, jobsEl);
@@ -357,6 +361,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const backStep = (): boolean => {
     if (gone || !root.isConnected) return false;
     if (selecting) { leaveSel(); return true; }
+    if (phoneNow() && !pk && clipboard && !clipboard.busy && canJobs() && at === clipAt && !isArc(at)) { clipAt = ''; setClip(null); return true; } // (a phone's paste bar, in the folder where it was filled: Back only puts the clipboard down; walking on, Back walks up)
     if (ew) { ew.close(); return true; }
     if (!search.hidden) { search.value = ''; query = ''; search.hidden = true; draw(); return true; }
     if (collection) { const back = prefs.last && !prefs.last.startsWith('c:') ? prefs.last : roots[0]?.path; if (back) { goUp(back); return true; } return false; }
@@ -525,7 +530,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   // (The window crossing 840 px — a turned phone, a resized window —: the rows drawn again in the layout that now fits.)
   const mqW = window.matchMedia('(min-width: 840px)'); let mqT = 0;
-  const onMqW = () => { clearTimeout(mqT); mqT = window.setTimeout(() => { if (!gone) { syncBack(); draw(window.scrollY); } }, 150); };
+  const onMqW = () => { clearTimeout(mqT); mqT = window.setTimeout(() => { if (!gone) { syncBack(); draw(window.scrollY); if (selecting) drawSel(); } }, 150); };
   mqW.addEventListener('change', onMqW);
   const paintView = () => { const next = NEXT_VIEW[prefs.view]; const to = next === 'gallery' ? 'images' : next; viewBtn.dataset.icon = to; viewBtn.replaceChildren(icon(to)); const lbl = t(VIEW_TO[next]); viewBtn.title = lbl; viewBtn.setAttribute('aria-label', lbl); };
   /** The view changed: the first row in sight stays where it is on the screen, the rows are drawn at the new size (their
@@ -562,11 +567,13 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       if (canThumb && prefs.thumbs !== false) thumbInto(ic, e);
       return pr;
     }
-    const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
+    const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', 'data-p': e.path, onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, nameEl(e.name, e.dir), h('small', { class: 'src' }, ...metaNodes(metaD))),
       trail(e)); rowEls.set(e.path, { el, e });
     // (A computer's right-click: the item's menu at the pointer; a long press — or a right-click while choosing —: choosing.)
-    onLongPress(el, (ev) => { if (ev.type === 'contextmenu' && !selecting && document.documentElement.classList.contains('pc')) { itemSheet(e, ev); return; } if (!selecting) { selecting = true; } toggle(e); });
+    onLongPress(el, (ev) => { if (ev.type === 'contextmenu' && !selecting && document.documentElement.classList.contains('pc')) { itemSheet(e, ev); return; } if (!selecting) { selecting = true; } toggle(e); if (phoneNow() && ev.type === 'pointerdown' && picked.has(e.path)) startDrag(e, ev as PointerEvent); });
+    // (A phone: a tap on the 36 px icon chooses the row; a tap elsewhere opens it.)
+    if (!ae.special) ic.addEventListener('click', (ev) => { if (!phoneNow() || prefs.view !== 'list') return; ev.stopPropagation(); selecting = true; toggle(e); });
     if (canThumb && prefs.thumbs !== false) thumbInto(ic, e);
     // (A phone: a row swiped back toward the reading's start is deleted (asked first, as always) — the other way
     // is the drawer's.)
@@ -615,9 +622,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let selRo: ResizeObserver | null = null;
   const watchSelBar = (on: boolean): void => { if (!on) { selRo?.disconnect(); selRo = null; return; } if (!selRo && typeof ResizeObserver !== 'undefined') { selRo = new ResizeObserver(() => { if (!selBar.hidden && selActs.length) paintSelBar(); }); selRo.observe(selBar); } };
   const drawSel = () => {
-    selBar.hidden = !selecting; if (!selecting) { watchSelBar(false); root.classList.remove('selecting'); return; } root.classList.add('selecting'); watchSelBar(true);
+    selBar.hidden = !selecting; if (!selecting) { watchSelBar(false); root.classList.remove('selecting'); document.documentElement.classList.remove('files-selecting'); selBar.classList.remove('phone-sel'); return; } root.classList.add('selecting');
     const n = picked.size; const one = n === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
     const all = (): void => { for (const e of shown()) picked.add(e.path); applySel(); drawSel(); };
+    if (phoneNow() && !pk) { watchSelBar(false); paintPhoneSel(n, one, all); return; }
+    document.documentElement.classList.remove('files-selecting'); selBar.classList.remove('phone-sel'); watchSelBar(true);
     // (Inside an archive only what reads: copy (taken out on Paste), share, take out; cut shown greyed with its reason.)
     if (isArc(at)) {
       selMore = false;
@@ -640,10 +649,43 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     paintSelBar();
   };
   const leaveSel = () => { selecting = false; picked.clear(); applySel(); drawSel(); };
+  const invertSel = () => { for (const e of shown()) { if (picked.has(e.path)) picked.delete(e.path); else picked.add(e.path); } if (!picked.size) selecting = false; applySel(); drawSel(); };
+  // (Drag-choosing: after the long press, the finger moving on over rows chooses the rows it passes; at the screen's top or
+  // bottom edge the list scrolls. The touch is the drag's alone — taken through the touch owner — until the finger is up.)
+  let dragOff: (() => void) | null = null;
+  const startDrag = (e: Entry, ev: PointerEvent) => {
+    dragOff?.(); if (!claimTouch('files-drag')) return;
+    const list = shown(); const idx = new Map(list.map((x, i) => [x.path, i] as const)); let last = idx.get(e.path) ?? -1; let px = ev.clientX, py = ev.clientY; let raf = 0; let moved = false; // (the layout shifts when choosing starts: a finger that has not moved chooses nothing more)
+    const hit = () => { if (!moved) return; const r = (document.elementFromPoint(px, py) as HTMLElement | null)?.closest<HTMLElement>('.files-row'); const i = r?.dataset.p !== undefined ? idx.get(r.dataset.p) : undefined; if (i === undefined || last < 0 || i === last) return; const [a, b] = i > last ? [last + 1, i] : [i, last - 1]; for (let k = a; k <= b; k++) picked.add(list[k].path); last = i; applySel(); drawSel(); };
+    const tick = () => { raf = requestAnimationFrame(tick); const H = window.innerHeight; if (py > H - 100) window.scrollBy(0, Math.min(22, 4 + (py - (H - 100)) / 3)); else if (py < pageTop() + 70) window.scrollBy(0, -Math.min(22, 4 + (pageTop() + 70 - py) / 3)); hit(); };
+    const mv = (m: PointerEvent) => { px = m.clientX; py = m.clientY; if (!moved && Math.hypot(px - ev.clientX, py - ev.clientY) > 12) moved = true; hit(); };
+    const tm = (m: TouchEvent) => { if (m.cancelable) m.preventDefault(); };
+    const stop = () => { cancelAnimationFrame(raf); document.removeEventListener('pointermove', mv, true); document.removeEventListener('pointerup', stop, true); document.removeEventListener('pointercancel', stop, true); document.removeEventListener('touchmove', tm); if (dragOff === stop) dragOff = null; };
+    document.addEventListener('pointermove', mv, true); document.addEventListener('pointerup', stop, true); document.addEventListener('pointercancel', stop, true); document.addEventListener('touchmove', tm, { passive: false });
+    dragOff = stop; raf = requestAnimationFrame(tick);
+  };
+  /** A phone's selection: the header (close, count, select all, invert) and the bar at the bottom — five equal slots. */
+  const paintPhoneSel = (n: number, one: Entry | undefined, all: () => void): void => {
+    const root_ = document.documentElement; root_.classList.add('files-selecting'); selBar.classList.add('phone-sel');
+    selHead.replaceChildren(iconButton('close', t('close'), leaveSel), h('span', { class: 'files-selcount grow' }, t('filesSelCount', { n: localDigits(n) })), iconButton('check', t('filesSelectAll'), all), iconButton('swap', t('filesInvert'), invertSel));
+    const arc = isArc(at); const ps = () => [...picked];
+    const slot = (id: string, ic: string, label: string, run: () => void, off = false): HTMLElement => { const b = h('button', { type: 'button', 'aria-label': label, 'data-icon': ic, class: 'sel-slot' + (id === 'delete' ? ' danger' : '') + (off ? ' files-off' : ''), 'data-slot': id, onclick: run }, icon(ic), h('span', { class: 'sel-lbl' }, label)) as HTMLButtonElement; if (off) b.disabled = true; return b; };
+    const slots: HTMLElement[] = [];
+    if (canJobs()) slots.push(slot('copy', 'copy', t('filesCopy'), () => copyPicked('copy')));
+    if (arc) { if (canJobs()) { const cut = slot('cut', 'scissors', t('filesCut'), () => undefined, true); cut.title = t('arcNoCut'); slots.push(cut); } if (canJobs()) slots.push(slot('extract', 'archive', t('extractHere'), () => { const p = ps(); leaveSel(); void extractEntries(p, parentOf(parseArc(at).archive)); })); if (plug()) slots.push(slot('share', 'share', t('share'), () => { const p = ps(); leaveSel(); void shareArc(p); })); }
+    else {
+      if (canJobs()) slots.push(slot('cut', 'scissors', t('filesCut'), () => copyPicked('move')));
+      slots.push(slot('delete', 'trash', t('delete'), () => void confirmDelete(ps())));
+      if (one) slots.push(slot('rename', 'pen', t('rename'), () => renameSheet(one))); else if (arcOk()) slots.push(slot('archive', 'archive', t('filesCompress'), () => void compress(ps()))); else slots.push(slot('rename', 'pen', t('filesBatchRename'), () => void batchRename()));
+    }
+    slots.push(slot('more', 'more', t('more'), () => { if (one && !arc) itemSheet(one, undefined, true); else selectionSheet([]); }));
+    selBar.replaceChildren(...slots);
+  };
   /** The chosen put on the clipboard — a cut inside an archive is a copy (an archive is not changed from here). */
+  let clipAt = '';
   const copyPicked = (op: 'copy' | 'move', paths = [...picked]) => {
     if (!paths.length) return; const fromArc = paths.some(isArc); const o = fromArc ? 'copy' : op;
-    setClip({ op: o, paths }); if (fromArc && op === 'move') toast(t('arcCutAsCopy')); if (selecting) leaveSel(); // (the clipboard bar says the rest)
+    setClip({ op: o, paths }); clipAt = at; if (fromArc && op === 'move') toast(t('arcCutAsCopy')); if (selecting) leaveSel(); // (the clipboard bar says the rest)
   };
 
   // ---- the picker: what is chosen (kept while folders are walked), the bar with Cancel and Select
@@ -785,7 +827,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const fabSheet = () => {
     const sh = openSheet(t('create'), t('close'));
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
-    sh.body.append(h('div', { class: 'dest-list' }, act('folderPlus', t('newFolder'), () => newFolderSheet()), ...(canPaste() ? [act('copy', t('filesPaste'), () => void paste())] : []), ...(clipboard && !clipboard.busy ? [act('close', t('filesClipClear'), () => setClip(null))] : []), act('bookmarkAdd', t('filesBookmarkHere'), () => { const b = bookmarks(); if (!b.some((x) => x.path === at)) { b.push({ name: placeName(at) || at, path: at }); saveBookmarks(b); } toast(t('filesBookmarked')); }), ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : [])));
+    sh.body.append(h('div', { class: 'dest-list' }, act('folderPlus', t('newFolder'), () => newFolderSheet()), ...(!phoneNow() && canPaste() ? [act('copy', t('filesPaste'), () => void paste())] : []), ...(!phoneNow() && clipboard && !clipboard.busy ? [act('close', t('filesClipClear'), () => setClip(null))] : []), act('bookmarkAdd', t('filesBookmarkHere'), () => { const b = bookmarks(); if (!b.some((x) => x.path === at)) { b.push({ name: placeName(at) || at, path: at }); saveBookmarks(b); } toast(t('filesBookmarked')); }), ...(plug() ? [act('upload', t('filesSavedShared'), () => void saveSharedSheet())] : [])));
   };
 
   // ---- sheets: an item's, the selection's, sort, more, rename, new folder, properties, delete
@@ -1309,7 +1351,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  root.dispose = () => { keepScroll(); gone = true; dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   const pane = root as unknown as Pane;
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };
